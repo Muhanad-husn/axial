@@ -1,0 +1,13 @@
+$ uv run axial schema show config/domains/syria
+schema version: 0.1
+field: cardinality=primary_plus_secondary count=3
+claim_type: cardinality=primary_plus_optional_secondary count=22
+empirical_scope: cardinality=single count=5
+theory_school: cardinality=primary_plus_optional_secondary count=28
+artifact_role: cardinality=single count=6
+role_in_argument: cardinality=single count=7
+exit=0
+
+$ uv run axial schema show config/domains/does-not-exist
+error: missing schema file: config\domains\does-not-exist\schema.yaml
+exit=1
