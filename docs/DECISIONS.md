@@ -19,14 +19,16 @@ ambiguities during the setup build.
 | DEC-11 | 2026-07-06 | **Branch protection shape (proposed at Checkpoint 0):** require a PR before merge with `required_approving_review_count = 0` — a solo founder cannot approve their own PR, so requiring 1 review would deadlock every merge; review authority lives in the reviewer subagent + founder approval instead. `enforce_admins = true` (blocks direct pushes to `main` even for the owner). `required_status_checks` deferred to Phase 4, when the `tdd-ci` Actions workflow exists to name as a required check. |
 | DEC-12 | 2026-07-06 | `.gitignore` excludes `secrets/secrets.toml`, `.env`, caches, and build output, but **not** `data/` — the PRD's `data/gold/` will hold human-labeled answer keys that are likely worth committing; that call belongs to the sprint that builds gold-set generation. |
 | DEC-13 | 2026-07-06 | **Repo made public.** Branch protection on private repos requires GitHub Pro; founder chose public visibility over upgrading or skipping the backstop. Protection now live on `main`: PRs required, `enforce_admins: true`, 0 required approving reviews, no force-pushes or deletions. |
+| DEC-14 | 2026-07-06 | **Reviewer written from scratch, not reused from `pr-review-toolkit`.** Inspected the plugin: its `code-reviewer` is CLAUDE.md-guideline-focused and `pr-test-analyzer` is coverage-focused; neither has the required two-stage ordering (spec-compliance first) nor "does the test encode intent?" as the leading check. Borrowed two ideas: confidence-scored findings (report only ≥ 80) and behavior-over-implementation test evaluation. The plugin's agents remain available as supplementary tools. |
+| DEC-15 | 2026-07-06 | **Hook scripts are PowerShell (`.ps1` with `shell: powershell` on each hook entry), not `.sh`.** Divergence from the skeletons, per current hooks docs guidance for Windows hosts ("On Windows, write hook scripts in PowerShell and add `shell: powershell`"). Verified against live docs 2026-07-06; all other mechanics (frontmatter `hooks:`, `if:` permission-rule syntax, stdin JSON, exit code 2, MCP-tool matchers, hot-reload with first-file-in-new-dir restart caveat) match the skeletons. Hook commands invoke via `& '${CLAUDE_PROJECT_DIR}/.claude/hooks/<script>.ps1' <args>`. |
 
 ## Progress Tracker
 
 | Phase | Status | Date | Notes |
 |-------|--------|------|-------|
 | 0 — Repository foundation | DONE | 2026-07-06 | Skeleton + green baseline; Checkpoint 0 approved; merged via PR; branch protection enabled (DEC-11 shape). |
-| 1 — CLAUDE.md handbook | IN PROGRESS | 2026-07-06 | Handbook written on `setup/01-handbook`; awaiting Checkpoint 1. |
-| 2 — Role subagents | — | | |
+| 1 — CLAUDE.md handbook | DONE | 2026-07-06 | Merged via PR #2 with founder amendment (Developer Principles). Fresh-reader verify passed. |
+| 2 — Role subagents | IN PROGRESS | 2026-07-06 | Five roles written on `setup/02-role-subagents`; awaiting Checkpoint 2. |
 | 3 — Hard gates (hooks) | — | | |
 | 4 — Vendored TDD harness | — | | |
 | 5 — Sprint & role wiring | — | | |
