@@ -5,7 +5,7 @@
 - **GitHub issue:** #6
 - **Branch:** feat/schema-loader/01-cli-skeleton
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ◐ pr-prepared
 - **Walking skeleton?** yes
 
 ## Goal — the minimum testable behaviour
@@ -48,13 +48,14 @@ Then  it exits 0 and prints the version declared in pyproject.toml (e.g. "axial 
 
 ## Definition of done
 
-- [ ] Outer acceptance test authored by the test-author, committed RED (with the founder-approved `.claude/allow-red-commit` flag), seen to fail for the right reason — then locked.
-- [ ] All seeded unit behaviours covered; full suite passes locally; outer test GREEN.
-- [ ] Refactor pass complete with the bar green.
-- [ ] Slice's tests run in CI.
-- [ ] Reviewer's two-stage review passed.
-- [ ] Evidence collected and PR prepared into `main` — merge awaits founder approval.
+- [x] Outer acceptance test authored by the test-author, committed RED (with the founder-approved `.claude/allow-red-commit` flag), seen to fail for the right reason — then locked.
+- [x] All seeded unit behaviours covered; full suite passes locally; outer test GREEN.
+- [x] Refactor pass complete with the bar green.
+- [x] Slice's tests run in CI.
+- [x] Reviewer's two-stage review passed.
+- [x] Evidence collected and PR prepared into `main` — merge awaits founder approval.
 
 ## Status / progress log
 
 - 2026-07-06 planned.
+- 2026-07-06 red outer test committed (724dec6); implementation green (1ac5600); CI green; two-stage review passed (no findings ≥ 80); PR prepared: https://github.com/Muhanad-husn/axial/pull/10 — awaiting founder approval.
