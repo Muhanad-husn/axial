@@ -87,6 +87,17 @@ class UnknownCardinalityError(SchemaError):
         )
 
 
+class MissingTagIdError(SchemaError):
+    """Raised when a `values` entry is a mapping but omits the `id` key."""
+
+    def __init__(self, axis_name: str, entry: Any):
+        self.axis_name = axis_name
+        self.entry = entry
+        super().__init__(
+            f"axis {axis_name!r} has a values entry missing required 'id' key: {entry!r}"
+        )
+
+
 def _flatten_value_count(axis_name: str, raw_values: Any, raw_groups: Any) -> int:
     """Count an axis's controlled-vocabulary entries regardless of shape.
 
@@ -101,12 +112,36 @@ def _flatten_value_count(axis_name: str, raw_values: Any, raw_groups: Any) -> in
     raise MissingValuesOrGroupsError(axis_name)
 
 
+def _flatten_tag_ids(axis_name: str, raw_values: Any, raw_groups: Any) -> set[str]:
+    """Extract the set of tag ids an axis declares, regardless of shape.
+
+    Mirrors `_flatten_value_count`'s shape-handling: a flat list of scalars
+    (e.g. field) yields the scalars themselves; a list of {id, ...} tag
+    objects (e.g. claim_type) yields each `id`; a mapping of group-name ->
+    list of values (e.g. theory_school) yields the flattened leaf values.
+    """
+    if raw_groups is not None:
+        return {value for group_values in raw_groups.values() for value in group_values}
+    if raw_values is not None:
+        tag_ids: set[str] = set()
+        for value in raw_values:
+            if isinstance(value, dict):
+                if "id" not in value:
+                    raise MissingTagIdError(axis_name, value)
+                tag_ids.add(value["id"])
+            else:
+                tag_ids.add(value)
+        return tag_ids
+    raise MissingValuesOrGroupsError(axis_name)
+
+
 @dataclass
 class Axis:
     name: str
     applies_to: list[str]
     cardinality: str
     value_count: int
+    tag_ids: set[str] = field(default_factory=set)
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -150,6 +185,7 @@ def load_schema(domain_dir: str | Path) -> Schema:
             value_count=_flatten_value_count(
                 axis_name, axis_raw.get("values"), axis_raw.get("groups")
             ),
+            tag_ids=_flatten_tag_ids(axis_name, axis_raw.get("values"), axis_raw.get("groups")),
             raw=axis_raw,
         )
 

@@ -1,0 +1,14 @@
+# Minimal broken-pair fixture for tests/test_schema_validate.py.
+#
+# Schema declares three tags on the `topic` axis (alpha, beta, gamma); the
+# paired codebook.yaml in this same directory deliberately omits `gamma`, so
+# `axial schema validate` must exit nonzero naming `gamma` and `topic`.
+
+domain: fixture-missing-tag
+version: 0.1
+
+axes:
+  topic:
+    applies_to: [prose]
+    cardinality: single
+    values: [alpha, beta, gamma]

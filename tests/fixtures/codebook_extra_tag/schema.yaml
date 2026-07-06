@@ -1,0 +1,15 @@
+# Minimal broken-pair fixture for tests/test_schema_validate.py.
+#
+# Schema declares two tags on the `topic` axis (alpha, beta); the paired
+# codebook.yaml in this same directory carries an extra tag, `delta`, that
+# the schema never declares, so `axial schema validate` must exit nonzero
+# naming `delta`.
+
+domain: fixture-extra-tag
+version: 0.1
+
+axes:
+  topic:
+    applies_to: [prose]
+    cardinality: single
+    values: [alpha, beta]

@@ -1,0 +1,307 @@
+# Syria v0.1 placeholder codebook (PRD Appendices A-F).
+#
+# Mirrors config/domains/syria/schema.yaml: exactly the schema's tag
+# set, no more, no less (see src/axial/validate.py's cross-check).
+# Terse definitions/examples -- placeholder, to be swapped after the
+# gold-set eval (PRD Appendix G, line 400).
+#
+# Tag-set convention (must match src/axial/schema.py's _flatten_tag_ids):
+#   - claim_type: the top-level tag `id`s (Appendix B). Subtags refine
+#     a claim_type tag, they do not get separate codebook entries --
+#     the schema's own comment says subtags 'refine, they do not
+#     multiply the count'.
+#   - theory_school: the flattened grouped leaf values (Appendix E),
+#     regardless of which group (state/violence/ideology) they sit
+#     under in the schema.
+
+axes:
+  field:
+    state:
+      definition: The state as an object of analysis -- formation, capacity, autonomy, legitimacy, sovereignty.
+      positive_example: A passage substantively discussing state.
+      negative_example: A passage with no bearing on state.
+    violence:
+      definition: Organized violence as an object of analysis -- its logics, actors, targeting, mobilization.
+      positive_example: A passage substantively discussing violence.
+      negative_example: A passage with no bearing on violence.
+    ideology:
+      definition: Ideology and belief systems as an object of analysis -- doctrine, practice, narrative.
+      positive_example: A passage substantively discussing ideology.
+      negative_example: A passage with no bearing on ideology.
+  claim_type:
+    state-formation:
+      definition: How states form, consolidate, or dissolve (Tilly, Badie, Scott, Zaum).
+      positive_example: A passage substantively discussing state formation.
+      negative_example: A passage with no bearing on state formation.
+    state-capacity:
+      definition: What a state can do -- infrastructural, despotic, extractive, coercive capacity (Mann).
+      positive_example: A passage substantively discussing state capacity.
+      negative_example: A passage with no bearing on state capacity.
+    state-autonomy:
+      definition: State independence from social forces, distinct from capacity (Skocpol).
+      positive_example: A passage substantively discussing state autonomy.
+      negative_example: A passage with no bearing on state autonomy.
+    state-society-relations:
+      definition: Migdal-style state/society co-shaping; strong-society/weak-state dynamics.
+      positive_example: A passage substantively discussing state society relations.
+      negative_example: A passage with no bearing on state society relations.
+    legitimacy-and-legitimation:
+      definition: How authority is justified, accepted, or contested.
+      positive_example: A passage substantively discussing legitimacy and legitimation.
+      negative_example: A passage with no bearing on legitimacy and legitimation.
+    sovereignty-and-recognition:
+      definition: Sovereignty as norm, practice, and contested claim; recognition; sovereign exception.
+      positive_example: A passage substantively discussing sovereignty and recognition.
+      negative_example: A passage with no bearing on sovereignty and recognition.
+    statehood-gradations:
+      definition: 'Statehood as non-binary: weak, failed, quasi, unrecognized, or contracted.'
+      positive_example: A passage substantively discussing statehood gradations.
+      negative_example: A passage with no bearing on statehood gradations.
+    violence-logic:
+      definition: Why organized violence takes the forms it does (selectivity, instrumentality).
+      positive_example: A passage substantively discussing violence logic.
+      negative_example: A passage with no bearing on violence logic.
+    violence-actors:
+      definition: Militaries, paramilitaries, insurgents, organized crime, civilians-as-perpetrators.
+      positive_example: A passage substantively discussing violence actors.
+      negative_example: A passage with no bearing on violence actors.
+    civilian-targeting:
+      definition: 'Violence against non-combatants: ethnic cleansing, genocide, mass atrocity.'
+      positive_example: A passage substantively discussing civilian targeting.
+      negative_example: A passage with no bearing on civilian targeting.
+    mobilization-and-recruitment:
+      definition: How violent organizations recruit, retain, and discipline members.
+      positive_example: A passage substantively discussing mobilization and recruitment.
+      negative_example: A passage with no bearing on mobilization and recruitment.
+    war-and-state:
+      definition: The reciprocal relationship between war-making and state-making.
+      positive_example: A passage substantively discussing war and state.
+      negative_example: A passage with no bearing on war and state.
+    nationalism-theory:
+      definition: What nationalism is and how it works (modernist, ethno-symbolist, practice-based).
+      positive_example: A passage substantively discussing nationalism theory.
+      negative_example: A passage with no bearing on nationalism theory.
+    identity-and-group-formation:
+      definition: How social groups form, persist, or dissolve; groupness as a variable.
+      positive_example: A passage substantively discussing identity and group formation.
+      negative_example: A passage with no bearing on identity and group formation.
+    ideology-as-system:
+      definition: Doctrines and codified beliefs; programmatic ideology.
+      positive_example: A passage substantively discussing ideology as system.
+      negative_example: A passage with no bearing on ideology as system.
+    ideology-as-practice:
+      definition: 'Ideology-in-action: banal nationalism, performative authoritarianism.'
+      positive_example: A passage substantively discussing ideology as practice.
+      negative_example: A passage with no bearing on ideology as practice.
+    legitimating-narratives:
+      definition: Origin myths, golden-age narratives, and threat narratives.
+      positive_example: A passage substantively discussing legitimating narratives.
+      negative_example: A passage with no bearing on legitimating narratives.
+    religion-and-politics:
+      definition: Religion's role in political order and legitimation.
+      positive_example: A passage substantively discussing religion and politics.
+      negative_example: A passage with no bearing on religion and politics.
+    power-typology:
+      definition: Typologies of power forms (e.g. Mann's IEMP model).
+      positive_example: A passage substantively discussing power typology.
+      negative_example: A passage with no bearing on power typology.
+    revolution-and-contention:
+      definition: Revolutions, social movements, and contentious politics.
+      positive_example: A passage substantively discussing revolution and contention.
+      negative_example: A passage with no bearing on revolution and contention.
+    comparative-method:
+      definition: Methodological claims about case selection and comparative-historical method.
+      positive_example: A passage substantively discussing comparative method.
+      negative_example: A passage with no bearing on comparative method.
+    normative-political-theory:
+      definition: Explicitly normative, rather than explanatory, political claims.
+      positive_example: A passage substantively discussing normative political theory.
+      negative_example: A passage with no bearing on normative political theory.
+  empirical_scope:
+    scope:general:
+      definition: Theory with no specific empirical case.
+      positive_example: A passage substantively discussing general.
+      negative_example: A passage with no bearing on general.
+    scope:comparative:
+      definition: Explicit cross-case comparison.
+      positive_example: A passage substantively discussing comparative.
+      negative_example: A passage with no bearing on comparative.
+    scope:regional:
+      definition: A region without single-country focus.
+      positive_example: A passage substantively discussing regional.
+      negative_example: A passage with no bearing on regional.
+    scope:country-case:
+      definition: A specific country case.
+      positive_example: A passage substantively discussing country case.
+      negative_example: A passage with no bearing on country case.
+    scope:sub-national:
+      definition: A city, sub-region, single group, or institution below the country level.
+      positive_example: A passage substantively discussing sub national.
+      negative_example: A passage with no bearing on sub national.
+  theory_school:
+    colonial-postcolonial:
+      definition: Colonial and postcolonial accounts of state formation.
+      positive_example: A passage substantively discussing colonial postcolonial.
+      negative_example: A passage with no bearing on colonial postcolonial.
+    marxist-political-economy:
+      definition: Marxist political-economy approaches to the state.
+      positive_example: A passage substantively discussing marxist political economy.
+      negative_example: A passage with no bearing on marxist political economy.
+    cultural-ideational:
+      definition: Cultural and ideational approaches to the state.
+      positive_example: A passage substantively discussing cultural ideational.
+      negative_example: A passage with no bearing on cultural ideational.
+    bellicist:
+      definition: War-makes-states approach to state formation (Tilly).
+      positive_example: A passage substantively discussing bellicist.
+      negative_example: A passage with no bearing on bellicist.
+    neo-bellicist:
+      definition: Revised bellicist accounts of war and state formation.
+      positive_example: A passage substantively discussing neo bellicist.
+      negative_example: A passage with no bearing on neo bellicist.
+    external-statebuilding:
+      definition: Externally driven statebuilding and intervention.
+      positive_example: A passage substantively discussing external statebuilding.
+      negative_example: A passage with no bearing on external statebuilding.
+    neo-marxist:
+      definition: Neo-Marxist theories of the state.
+      positive_example: A passage substantively discussing neo marxist.
+      negative_example: A passage with no bearing on neo marxist.
+    modernization-developmental:
+      definition: Modernization and developmental-state theory.
+      positive_example: A passage substantively discussing modernization developmental.
+      negative_example: A passage with no bearing on modernization developmental.
+    institutionalist-state-centered:
+      definition: State-centered institutionalist theory.
+      positive_example: A passage substantively discussing institutionalist state centered.
+      negative_example: A passage with no bearing on institutionalist state centered.
+    structuralist:
+      definition: Structuralist theories of state and society.
+      positive_example: A passage substantively discussing structuralist.
+      negative_example: A passage with no bearing on structuralist.
+    state-in-society:
+      definition: Migdal's state-in-society approach.
+      positive_example: A passage substantively discussing state in society.
+      negative_example: A passage with no bearing on state in society.
+    constructivist:
+      definition: Constructivist approaches to state and identity.
+      positive_example: A passage substantively discussing constructivist.
+      negative_example: A passage with no bearing on constructivist.
+    opportunity-feasibility:
+      definition: Opportunity and feasibility accounts of civil violence.
+      positive_example: A passage substantively discussing opportunity feasibility.
+      negative_example: A passage with no bearing on opportunity feasibility.
+    constructivist-anti-essentialist:
+      definition: Constructivist, anti-essentialist accounts of violence.
+      positive_example: A passage substantively discussing constructivist anti essentialist.
+      negative_example: A passage with no bearing on constructivist anti essentialist.
+    biological-evolutionary:
+      definition: Biological and evolutionary theories of violence.
+      positive_example: A passage substantively discussing biological evolutionary.
+      negative_example: A passage with no bearing on biological evolutionary.
+    structural-violence:
+      definition: Structural-violence approaches (Galtung-style).
+      positive_example: A passage substantively discussing structural violence.
+      negative_example: A passage with no bearing on structural violence.
+    civilizing-decline:
+      definition: Eliasian civilizing-process accounts of declining violence.
+      positive_example: A passage substantively discussing civilizing decline.
+      negative_example: A passage with no bearing on civilizing decline.
+    state-centered-organizational:
+      definition: Weberian/neo-Weberian, organization-centered accounts of violence.
+      positive_example: A passage substantively discussing state centered organizational.
+      negative_example: A passage with no bearing on state centered organizational.
+    micro-sociological:
+      definition: Micro-sociological, interactionist accounts of violence (Kalyvas, Malesevic).
+      positive_example: A passage substantively discussing micro sociological.
+      negative_example: A passage with no bearing on micro sociological.
+    interpretive-constructivist:
+      definition: Interpretive-constructivist accounts of violence.
+      positive_example: A passage substantively discussing interpretive constructivist.
+      negative_example: A passage with no bearing on interpretive constructivist.
+    marxist-critical-pol-econ:
+      definition: Marxist and critical political-economy accounts of violence.
+      positive_example: A passage substantively discussing marxist critical pol econ.
+      negative_example: A passage with no bearing on marxist critical pol econ.
+    postcolonial-decolonial:
+      definition: Postcolonial and decolonial accounts of violence.
+      positive_example: A passage substantively discussing postcolonial decolonial.
+      negative_example: A passage with no bearing on postcolonial decolonial.
+    criminological:
+      definition: Criminological theories of violence (rational-choice, strain, routine-activity).
+      positive_example: A passage substantively discussing criminological.
+      negative_example: A passage with no bearing on criminological.
+    materialist:
+      definition: Classical and neo-Marxist materialist theories of ideology.
+      positive_example: A passage substantively discussing materialist.
+      negative_example: A passage with no bearing on materialist.
+    systematic:
+      definition: Structuralist and functionalist theories of ideology.
+      positive_example: A passage substantively discussing systematic.
+      negative_example: A passage with no bearing on systematic.
+    discursive:
+      definition: Post-Marxist and discourse-theoretic approaches to ideology.
+      positive_example: A passage substantively discussing discursive.
+      negative_example: A passage with no bearing on discursive.
+    historical-sociological:
+      definition: Historical-sociological approaches to ideology (Mannheim, Malesevic).
+      positive_example: A passage substantively discussing historical sociological.
+      negative_example: A passage with no bearing on historical sociological.
+    subject-centered:
+      definition: Identity-based and psychoanalytical approaches to ideology.
+      positive_example: A passage substantively discussing subject centered.
+      negative_example: A passage with no bearing on subject centered.
+  artifact_role:
+    case-study:
+      definition: Empirical or quantitative tables; structured evidence for a case or comparison.
+      positive_example: A passage substantively discussing case study.
+      negative_example: A passage with no bearing on case study.
+    framework-illustration:
+      definition: Conceptual diagrams expressing a framework visually.
+      positive_example: A passage substantively discussing framework illustration.
+      negative_example: A passage with no bearing on framework illustration.
+    quote-pool:
+      definition: Block-quoted primary-source material (interviews, archival fragments, manifestos).
+      positive_example: A passage substantively discussing quote pool.
+      negative_example: A passage with no bearing on quote pool.
+    framework:
+      definition: The author's own typology, taxonomy, or model.
+      positive_example: A passage substantively discussing framework.
+      negative_example: A passage with no bearing on framework.
+    reference-material:
+      definition: Glossaries, indexes, chronologies, or maps -- descriptive scaffolding.
+      positive_example: A passage substantively discussing reference material.
+      negative_example: A passage with no bearing on reference material.
+    discard:
+      definition: Cover images, running heads, page numbers -- retained but non-retrievable.
+      positive_example: A passage substantively discussing discard.
+      negative_example: A passage with no bearing on discard.
+  role_in_argument:
+    role:setup:
+      definition: Establishes context or background before the claim.
+      positive_example: A passage substantively discussing setup.
+      negative_example: A passage with no bearing on setup.
+    role:claim:
+      definition: States the author's central argument or thesis.
+      positive_example: A passage substantively discussing claim.
+      negative_example: A passage with no bearing on claim.
+    role:evidence:
+      definition: Supports a claim with data, cases, or citations.
+      positive_example: A passage substantively discussing evidence.
+      negative_example: A passage with no bearing on evidence.
+    role:counter-position:
+      definition: Presents an opposing view or objection.
+      positive_example: A passage substantively discussing counter position.
+      negative_example: A passage with no bearing on counter position.
+    role:synthesis:
+      definition: Integrates or reconciles multiple positions.
+      positive_example: A passage substantively discussing synthesis.
+      negative_example: A passage with no bearing on synthesis.
+    role:methodological:
+      definition: Discusses method, case selection, or approach.
+      positive_example: A passage substantively discussing methodological.
+      negative_example: A passage with no bearing on methodological.
+    role:digression:
+      definition: Tangential material not load-bearing for the argument.
+      positive_example: A passage substantively discussing digression.
+      negative_example: A passage with no bearing on digression.

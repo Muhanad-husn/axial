@@ -1,0 +1,13 @@
+# Deliberately missing the `gamma` tag that schema.yaml (same directory)
+# declares on the `topic` axis. See tests/test_schema_validate.py.
+
+axes:
+  topic:
+    alpha:
+      definition: "Definition of alpha."
+      positive_example: "A passage that is an example of alpha."
+      negative_example: "A passage that is not an example of alpha."
+    beta:
+      definition: "Definition of beta."
+      positive_example: "A passage that is an example of beta."
+      negative_example: "A passage that is not an example of beta."

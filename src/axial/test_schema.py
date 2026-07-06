@@ -7,6 +7,7 @@ import pytest
 from axial.schema import (
     MalformedSchemaError,
     MissingSchemaFileError,
+    MissingTagIdError,
     MissingValuesOrGroupsError,
     MissingVersionError,
     NonMappingAxisError,
@@ -217,3 +218,87 @@ def test_grouped_values_flatten_for_value_count(tmp_path):
     schema = load_schema(tmp_path)
 
     assert schema.axes["theory_school"].value_count == 3
+
+
+def test_tag_ids_for_flat_scalar_axis_are_the_scalars_themselves(tmp_path):
+    _write_schema(
+        tmp_path,
+        """
+        version: 0.1
+        axes:
+          field:
+            applies_to: [prose, artifact]
+            cardinality: primary_plus_secondary
+            values: [state, violence, ideology]
+        """,
+    )
+
+    schema = load_schema(tmp_path)
+
+    assert schema.axes["field"].tag_ids == {"state", "violence", "ideology"}
+
+
+def test_tag_ids_for_claim_type_shaped_values_are_the_ids(tmp_path):
+    _write_schema(
+        tmp_path,
+        """
+        version: 0.1
+        axes:
+          claim_type:
+            applies_to: [prose]
+            cardinality: primary_plus_optional_secondary
+            values:
+              - id: state-formation
+                status: firm
+                subtags: [formation:bellicist]
+              - id: state-autonomy
+                status: firm
+        """,
+    )
+
+    schema = load_schema(tmp_path)
+
+    assert schema.axes["claim_type"].tag_ids == {"state-formation", "state-autonomy"}
+
+
+def test_tag_ids_for_grouped_values_are_the_flattened_leaf_values(tmp_path):
+    _write_schema(
+        tmp_path,
+        """
+        version: 0.1
+        axes:
+          theory_school:
+            applies_to: [prose]
+            cardinality: primary_plus_optional_secondary
+            status: candidate
+            groups:
+              state: [bellicist, neo-bellicist]
+              violence: [criminological]
+        """,
+    )
+
+    schema = load_schema(tmp_path)
+
+    assert schema.axes["theory_school"].tag_ids == {"bellicist", "neo-bellicist", "criminological"}
+
+
+def test_tag_ids_raises_typed_error_for_claim_type_entry_missing_id(tmp_path):
+    _write_schema(
+        tmp_path,
+        """
+        version: 0.1
+        axes:
+          claim_type:
+            applies_to: [prose]
+            cardinality: primary_plus_optional_secondary
+            values:
+              - id: state-formation
+                status: firm
+              - status: firm
+        """,
+    )
+
+    with pytest.raises(MissingTagIdError, match=re.escape("claim_type")) as exc_info:
+        load_schema(tmp_path)
+
+    assert exc_info.value.axis_name == "claim_type"
