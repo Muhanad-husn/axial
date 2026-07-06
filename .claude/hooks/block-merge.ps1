@@ -1,8 +1,15 @@
 # Subagents-never-merge gate (DEC-3). PreToolUse hook: reads tool input as JSON on
 # stdin, exits 2 (block) on any merge / push-to-main / branch-delete attempt.
-# Wired per-subagent in role frontmatter (Bash) and globally for the GitHub
-# plugin's merge-capable tools. The orchestrator's own approved merge path is NOT
-# wired through this script.
+#
+# Two wirings, one script (DEC-18 defense in depth against the frontmatter-hook
+# reliability bug, GH issue #18392):
+#   - role frontmatter (Bash), called with the arg 'subagent' -> always enforces;
+#   - global settings.json (Bash + the GitHub plugin's tools), no arg -> enforces
+#     for Bash only when stdin carries agent_type (i.e. a subagent is running), so
+#     the orchestrator's founder-approved merge/cleanup path stays open. The plugin
+#     merge tool is blocked for everyone, orchestrator included.
+
+param([string]$Mode = '')
 
 $ErrorActionPreference = 'Stop'
 
@@ -13,6 +20,7 @@ function Block([string]$reason) {
 
 try { $j = [Console]::In.ReadToEnd() | ConvertFrom-Json } catch { exit 0 }
 $tool = "$($j.tool_name)"
+$isSubagent = ($Mode -eq 'subagent') -or ("$($j.agent_type)" -ne '')
 
 if ($tool -like 'mcp__*') {
     if ($tool -match 'merge_pull_request$' -or $tool -match 'merge') {
@@ -28,6 +36,7 @@ if ($tool -like 'mcp__*') {
 }
 
 if ($tool -eq 'Bash') {
+    if (-not $isSubagent) { exit 0 }
     $cmd = "$($j.tool_input.command)"
     if ($cmd -match 'git\s+(\S+\s+)*merge')            { Block "subagents never run git merge." }
     if ($cmd -match 'gh\s+pr\s+merge')                 { Block "subagents never merge PRs." }

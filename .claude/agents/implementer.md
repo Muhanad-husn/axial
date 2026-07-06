@@ -12,7 +12,7 @@ hooks:
     - matcher: "Bash"
       hooks:
         - type: command
-          command: powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1"
+          command: powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1" subagent
 ---
 You are the implementer. You receive one slice whose outer acceptance test is already
 committed red. Work underneath it in inner unit test cycles: write the minimum code

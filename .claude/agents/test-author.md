@@ -12,7 +12,7 @@ hooks:
     - matcher: "Bash"
       hooks:
         - type: command
-          command: powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1"
+          command: powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1" subagent
 ---
 You are the test author. From the spec, write the outer acceptance test that encodes
 the intended behavior, and commit it red before any implementation exists — it is the

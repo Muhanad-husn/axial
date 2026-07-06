@@ -1,12 +1,16 @@
-# Role path guard (roster path rules). PreToolUse hook on Edit|Write, wired in each
-# writing role's frontmatter with the role name as the argument. Reads tool input as
-# JSON on stdin; exits 2 (block) when the target path violates the role's boundary.
+# Role path guard (roster path rules). PreToolUse hook on Edit|Write. Reads tool
+# input as JSON on stdin; exits 2 (block) when the target path violates the role's
+# boundary.
 #
 #   spec-author  -> may write ONLY under specs/
 #   test-author  -> may write ONLY under tests/
 #   implementer  -> may write anywhere EXCEPT tests/ and specs/
+#
+# Two wirings, one script (DEC-18): role frontmatter passes the role name
+# explicitly; the global settings.json wiring passes no arg and the role is taken
+# from stdin agent_type. Non-role agents and the main session pass through.
 
-param([Parameter(Mandatory = $true)][string]$Role)
+param([string]$Role = '')
 
 $ErrorActionPreference = 'Stop'
 
@@ -16,6 +20,8 @@ function Block([string]$reason) {
 }
 
 try { $j = [Console]::In.ReadToEnd() | ConvertFrom-Json } catch { exit 0 }
+if (-not $Role) { $Role = "$($j.agent_type)" }
+if (-not $Role) { exit 0 }
 $filePath = "$($j.tool_input.file_path)"
 if (-not $filePath) { exit 0 }
 
@@ -42,7 +48,9 @@ switch ($Role) {
         if ($rel -match '^specs/') { Block "implementer may not touch specs/ - raise a spec-drift issue instead (tried: $rel)." }
     }
     default {
-        Block "unknown role '$Role' - failing closed."
+        # Not one of the three path-ruled roles (orchestrator, triage, reviewer,
+        # utility agents): no path restriction from this guard.
+        exit 0
     }
 }
 
