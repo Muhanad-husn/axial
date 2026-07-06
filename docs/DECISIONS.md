@@ -40,5 +40,5 @@ ambiguities during the setup build.
 | 2 — Role subagents | DONE | 2026-07-06 | Merged via PR #3. Roles load after one restart (documented caveat). |
 | 3 — Hard gates (hooks) | DONE | 2026-07-06 | All gates verified live (43/43 script cases + in-session battery). Two real defects caught and fixed (DEC-15 form fix, DEC-18 double-wiring). Checkpoint 3 approved. |
 | 4 — Vendored TDD harness | DONE | 2026-07-06 | Vendored @ 593e7ab, audited clean, adapted (DEC-19..21); smoke tests + green Actions run; Checkpoint 4 approved. |
-| 5 — Sprint & role wiring | IN PROGRESS | 2026-07-06 | Skills + labels + sample backlog drafted on `setup/05-sprint`; awaiting Checkpoint 5. |
+| 5 — Sprint & role wiring | DONE | 2026-07-06 | Checkpoint 5 approved; issues #6–#8 filed, plans back-filled. Note: plugin `issue_write` returned 403 (its token lacks issue-write on this repo) — `gh issue create` fallback used, as the skill sanctions; revisit plugin auth if the plugin path is wanted. |
 | 6 — Dry run & validation | — | | |

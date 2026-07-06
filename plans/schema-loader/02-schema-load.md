@@ -2,7 +2,7 @@
 
 - **Feature:** schema-loader
 - **Slice slug:** schema-load
-- **GitHub issue:** #TBD
+- **GitHub issue:** #7
 - **Branch:** feat/schema-loader/02-schema-load
 - **Project directory:** .
 - **Status:** ☐ todo

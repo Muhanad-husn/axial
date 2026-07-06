@@ -2,7 +2,7 @@
 
 - **Feature:** schema-loader
 - **Slice slug:** cli-skeleton
-- **GitHub issue:** #TBD
+- **GitHub issue:** #6
 - **Branch:** feat/schema-loader/01-cli-skeleton
 - **Project directory:** .
 - **Status:** ☐ todo

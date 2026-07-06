@@ -2,7 +2,7 @@
 
 - **Feature:** schema-loader
 - **Slice slug:** codebook-validate
-- **GitHub issue:** #TBD
+- **GitHub issue:** #8
 - **Branch:** feat/schema-loader/03-codebook-validate
 - **Project directory:** .
 - **Status:** ☐ todo

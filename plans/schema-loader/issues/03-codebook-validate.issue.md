@@ -1,7 +1,7 @@
 # feat(schema-loader): codebook cross-validation + `axial schema validate` [slice 03]
 
 **Spec:** specs/PRODUCT.md §7.1, §8 P0-6, Appendices B–F · **Plan:** plans/schema-loader/03-codebook-validate.md
-**Depends on:** #<slice-02 issue>
+**Depends on:** #7
 **Labels:** sub:ingestion-v0
 
 ## Deliverable

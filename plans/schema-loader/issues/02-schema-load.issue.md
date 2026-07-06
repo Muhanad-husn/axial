@@ -1,7 +1,7 @@
 # feat(schema-loader): domain schema loader + `axial schema show` [slice 02]
 
 **Spec:** specs/PRODUCT.md §4, §7.1, Appendix G · **Plan:** plans/schema-loader/02-schema-load.md
-**Depends on:** #<slice-01 issue>
+**Depends on:** #6
 **Labels:** sub:ingestion-v0
 
 ## Deliverable
