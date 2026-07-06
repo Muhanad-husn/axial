@@ -18,13 +18,14 @@ ambiguities during the setup build.
 | DEC-10 | 2026-07-06 | **GitHub plugin tool names recorded (Phase 0):** namespace `mcp__plugin_github_github__*`. Merge-capable tool for the Phase-3 gate: `mcp__plugin_github_github__merge_pull_request`. Other write-capable tools that can touch `main` directly and must be considered by the gate: `create_or_update_file`, `push_files`, `delete_file` (all can target a branch, including `main`). Issue tools for Phase 5: `issue_write`, `issue_read`, `list_issues`, `search_issues`, `sub_issue_write`, `add_issue_comment`. PR tools: `create_pull_request`, `update_pull_request`, `pull_request_read`, `pull_request_review_write`, `list_pull_requests`. |
 | DEC-11 | 2026-07-06 | **Branch protection shape (proposed at Checkpoint 0):** require a PR before merge with `required_approving_review_count = 0` — a solo founder cannot approve their own PR, so requiring 1 review would deadlock every merge; review authority lives in the reviewer subagent + founder approval instead. `enforce_admins = true` (blocks direct pushes to `main` even for the owner). `required_status_checks` deferred to Phase 4, when the `tdd-ci` Actions workflow exists to name as a required check. |
 | DEC-12 | 2026-07-06 | `.gitignore` excludes `secrets/secrets.toml`, `.env`, caches, and build output, but **not** `data/` — the PRD's `data/gold/` will hold human-labeled answer keys that are likely worth committing; that call belongs to the sprint that builds gold-set generation. |
+| DEC-13 | 2026-07-06 | **Repo made public.** Branch protection on private repos requires GitHub Pro; founder chose public visibility over upgrading or skipping the backstop. Protection now live on `main`: PRs required, `enforce_admins: true`, 0 required approving reviews, no force-pushes or deletions. |
 
 ## Progress Tracker
 
 | Phase | Status | Date | Notes |
 |-------|--------|------|-------|
 | 0 — Repository foundation | DONE | 2026-07-06 | Skeleton + green baseline; Checkpoint 0 approved; merged via PR; branch protection enabled (DEC-11 shape). |
-| 1 — CLAUDE.md handbook | — | | |
+| 1 — CLAUDE.md handbook | IN PROGRESS | 2026-07-06 | Handbook written on `setup/01-handbook`; awaiting Checkpoint 1. |
 | 2 — Role subagents | — | | |
 | 3 — Hard gates (hooks) | — | | |
 | 4 — Vendored TDD harness | — | | |
