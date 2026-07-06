@@ -1,0 +1,31 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="axial-title axial-desc">
+  <title id="axial-title">Axial</title>
+  <desc id="axial-desc">Three axes radiating from a shared origin, with terminal nodes in three states, representing multi-axis tagging around a common point.</desc>
+
+  <!-- Axes (lines through the origin) -->
+  <g stroke-linecap="round" fill="none">
+    <!-- Axis C: ink -->
+    <line x1="23.63" y1="81" x2="96.37" y2="39" stroke="#1F2933" stroke-width="3.4"/>
+    <!-- Axis B: ink -->
+    <line x1="23.63" y1="39" x2="96.37" y2="81" stroke="#1F2933" stroke-width="3.4"/>
+    <!-- Axis A: accent (primary) -->
+    <line x1="60" y1="18" x2="60" y2="102" stroke="#C8553D" stroke-width="3.8"/>
+  </g>
+
+  <!-- Origin hub -->
+  <circle cx="60" cy="60" r="7" fill="#1F2933"/>
+  <circle cx="60" cy="60" r="2.6" fill="#C8553D"/>
+
+  <!-- Terminal nodes -->
+  <!-- Axis A (accent, primary): solid accent -->
+  <circle cx="60" cy="18" r="7.5" fill="#C8553D"/>
+  <circle cx="60" cy="102" r="7.5" fill="#C8553D"/>
+
+  <!-- Axis B: solid ink -->
+  <circle cx="23.63" cy="39" r="5.6" fill="#1F2933"/>
+  <circle cx="96.37" cy="81" r="5.6" fill="#1F2933"/>
+
+  <!-- Axis C: open ring (secondary / optional facet) -->
+  <circle cx="23.63" cy="81" r="5.4" fill="#FFFFFF" stroke="#1F2933" stroke-width="2.6"/>
+  <circle cx="96.37" cy="39" r="5.4" fill="#FFFFFF" stroke="#1F2933" stroke-width="2.6"/>
+</svg>
