@@ -1,0 +1,16 @@
+$ axial schema validate config/domains/syria
+axis field: consistent
+axis claim_type: consistent
+axis empirical_scope: consistent
+axis theory_school: consistent
+axis artifact_role: consistent
+axis role_in_argument: consistent
+exit=0
+
+$ axial schema validate tests/fixtures/codebook_missing_tag
+error: schema tag 'gamma' on axis 'topic' has no codebook entry
+exit=1
+
+$ axial schema validate tests/fixtures/codebook_extra_tag
+error: codebook tag 'delta' on axis 'topic' is not declared by the schema
+exit=1
