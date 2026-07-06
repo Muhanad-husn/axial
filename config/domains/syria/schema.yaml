@@ -1,0 +1,184 @@
+# Syria v0 domain schema (placeholder codebook).
+#
+# Transcribed from specs/PRODUCT.md Appendices A-G. This is the v0 placeholder
+# schema referenced throughout the PRD ("specified in full in Appendices A-G");
+# it is expected to be revised once the gold-set eval closes (PRD §11 step 7).
+#
+# Status flags on claim_type / theory_school tags follow the PRD legend:
+#   firm       -- build as-is
+#   tentative  -- likely to shift after the gold set
+#   contested  -- the gold set must resolve this
+#   candidate  -- provisional axis/tag, kept-or-cut by the eval
+
+domain: syria
+version: 0.1
+
+axes:
+  # Appendix A -- Field axis.
+  field:
+    applies_to: [prose, artifact]
+    cardinality: primary_plus_secondary
+    values: [state, violence, ideology]
+
+  # Appendix B -- Claim-type axis. ~23 tags; sub-tags refine, they do not
+  # multiply the count.
+  claim_type:
+    applies_to: [prose]
+    cardinality: primary_plus_optional_secondary
+    values:
+      # -- State domain --
+      - id: state-formation
+        status: firm
+        subtags:
+          - formation:bellicist
+          - formation:colonial-import
+          - formation:bottom-up
+          - formation:post-conflict
+      - id: state-capacity
+        status: firm
+        subtags:
+          - capacity:infrastructural
+          - capacity:despotic
+          - capacity:extractive
+          - capacity:coercive
+      - id: state-autonomy
+        status: firm
+      - id: state-society-relations
+        status: contested
+      - id: legitimacy-and-legitimation
+        status: firm
+        subtags:
+          - legitimacy:traditional
+          - legitimacy:rational-legal
+          - legitimacy:charismatic
+          - legitimacy:juridical-vs-empirical
+          - legitimacy:compliance-without-belief
+      - id: sovereignty-and-recognition
+        status: firm
+      - id: statehood-gradations
+        status: tentative
+
+      # -- Violence domain --
+      - id: violence-logic
+        status: firm
+        subtags:
+          - violence:selective-vs-indiscriminate
+          - violence:instrumental-vs-constitutive
+      - id: violence-actors
+        status: firm
+      - id: civilian-targeting
+        status: firm
+      - id: mobilization-and-recruitment
+        status: firm
+      - id: war-and-state
+        status: contested
+
+      # -- Ideology domain --
+      - id: nationalism-theory
+        status: firm
+        subtags:
+          - nationalism:modernist
+          - nationalism:ethno-symbolist
+          - nationalism:practice-based
+      - id: identity-and-group-formation
+        status: contested
+      - id: ideology-as-system
+        status: firm
+      - id: ideology-as-practice
+        status: firm
+      - id: legitimating-narratives
+        status: contested
+      - id: religion-and-politics
+        status: tentative
+
+      # -- Cross-cutting --
+      - id: power-typology
+        status: firm
+      - id: revolution-and-contention
+        status: firm
+      - id: comparative-method
+        status: firm
+      - id: normative-political-theory
+        status: tentative
+
+  # Appendix C -- Empirical-scope axis.
+  empirical_scope:
+    applies_to: [prose]
+    cardinality: single
+    values:
+      - scope:general
+      - scope:comparative
+      - scope:regional
+      - scope:country-case
+      - scope:sub-national
+    extra_fields:
+      scope:country-case: { country: controlled_list }
+
+  # Appendix E -- Theory-school axis [CANDIDATE]. Grouped controlled
+  # vocabulary preserved by group (State / Violence / Ideology) since the
+  # groups are the load-bearing structure the eval watches for cross-field
+  # recurrence; the loader flattens these into the axis's value count.
+  theory_school:
+    applies_to: [prose]
+    cardinality: primary_plus_optional_secondary
+    status: candidate
+    groups:
+      state:
+        - colonial-postcolonial
+        - marxist-political-economy
+        - cultural-ideational
+        - bellicist
+        - neo-bellicist
+        - external-statebuilding
+        - neo-marxist
+        - modernization-developmental
+        - institutionalist-state-centered
+        - structuralist
+        - state-in-society
+        - constructivist
+      violence:
+        - opportunity-feasibility
+        - constructivist-anti-essentialist
+        - biological-evolutionary
+        - structural-violence
+        - civilizing-decline
+        - state-centered-organizational
+        - micro-sociological
+        - interpretive-constructivist
+        - marxist-critical-pol-econ
+        - postcolonial-decolonial
+        - criminological
+      ideology:
+        - materialist
+        - systematic
+        - discursive
+        - historical-sociological
+        - subject-centered
+
+  # Appendix D -- Artifact-role axis.
+  artifact_role:
+    applies_to: [artifact]
+    cardinality: single
+    values:
+      - case-study
+      - framework-illustration
+      - quote-pool
+      - framework
+      - reference-material
+      - discard
+
+  # Appendix F -- Role-in-argument axis [FIRM].
+  role_in_argument:
+    applies_to: [prose]
+    cardinality: single
+    values:
+      - role:setup
+      - role:claim
+      - role:evidence
+      - role:counter-position
+      - role:synthesis
+      - role:methodological
+      - role:digression
+
+# Appendix G -- expandable controlled list for scope:country-case.
+country_list: [Syria, Turkey, Lebanon, Iraq, Rwanda]

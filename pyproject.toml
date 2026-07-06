@@ -3,7 +3,9 @@ name = "axial"
 version = "0.1.0"
 description = "Axial: corpus ingestion pipeline turning academic sources into a tagged Obsidian knowledge graph. Built by a one-person agentic engineering org."
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "pyyaml>=6.0.3",
+]
 
 [project.scripts]
 axial = "axial.cli:main"

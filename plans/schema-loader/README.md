@@ -18,7 +18,7 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 | # | Slice | Goal (one line) | Status | Issue | PR |
 |---|-------|-----------------|--------|-------|----|
 | 01 | [cli-skeleton](01-cli-skeleton.md) | `uv run axial --version` works end to end (package + CLI + CI thread) | ☐ todo | [#6](https://github.com/Muhanad-husn/axial/issues/6) | — |
-| 02 | [schema-load](02-schema-load.md) | `axial schema show <domain-dir>` lists the axes of the committed Syria schema | ☐ todo | [#7](https://github.com/Muhanad-husn/axial/issues/7) | — |
+| 02 | [schema-load](02-schema-load.md) | `axial schema show <domain-dir>` lists the axes of the committed Syria schema | ⏳ in review | [#7](https://github.com/Muhanad-husn/axial/issues/7) | [#11](https://github.com/Muhanad-husn/axial/pull/11) |
 | 03 | [codebook-validate](03-codebook-validate.md) | `axial schema validate <domain-dir>` cross-checks schema ↔ codebook, hard-failing on mismatches | ☐ todo | [#8](https://github.com/Muhanad-husn/axial/issues/8) | — |
 
 ## Out of scope (whole feature)

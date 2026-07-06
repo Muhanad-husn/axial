@@ -5,7 +5,7 @@
 - **GitHub issue:** #7
 - **Branch:** feat/schema-loader/02-schema-load
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ implemented, awaiting review
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -37,11 +37,20 @@ And   running it against a nonexistent directory exits nonzero with a message na
 
 ## Inner loop — initial unit test list
 
-- [ ] loader parses axes with `applies_to`, `cardinality`, `values` from YAML
-- [ ] loader exposes the `version` field; missing version is a hard error
-- [ ] unknown cardinality value is a hard error naming the axis
-- [ ] loader takes a domain *directory* (no code path branches on country — §4)
-- [ ] missing schema.yaml raises a clear, typed error
+- [x] loader parses axes with `applies_to`, `cardinality`, `values` from YAML
+- [x] loader exposes the `version` field; missing version is a hard error
+- [x] unknown cardinality value is a hard error naming the axis
+- [x] loader takes a domain *directory* (no code path branches on country — §4)
+- [x] missing schema.yaml raises a clear, typed error
+
+Additional unit tests added along the way (src/axial/test_schema.py):
+- [x] claim_type's `{id, status, subtags}` list shape counts by number of tag ids
+- [x] theory_school's grouped vocabulary (`groups: {state:[...], ...}`) flattens for value count
+
+CLI unit tests added (src/axial/test_cli.py):
+- [x] `build_parser` recognises the `schema show <domain-dir>` subcommand
+- [x] `main(["schema", "show", ...])` prints axis/cardinality/count/version, returns 0
+- [x] `main(["schema", "show", <missing dir>])` returns nonzero and names `schema.yaml`
 
 ## Out of scope for this slice (deferred)
 
@@ -49,13 +58,26 @@ And   running it against a nonexistent directory exits nonzero with a message na
 
 ## Definition of done
 
-- [ ] Outer acceptance test authored by the test-author, committed RED (flag-approved), seen to fail for the right reason — then locked.
-- [ ] All seeded unit behaviours covered; full suite green; outer test GREEN.
-- [ ] Refactor pass complete with the bar green.
-- [ ] Slice's tests run in CI.
-- [ ] Reviewer's two-stage review passed.
-- [ ] Evidence collected and PR prepared into `main` — merge awaits founder approval.
+- [x] Outer acceptance test authored by the test-author, committed RED (flag-approved), seen to fail for the right reason — then locked.
+- [x] All seeded unit behaviours covered; full suite green; outer test GREEN.
+- [x] Refactor pass complete with the bar green.
+- [x] Slice's tests run in CI.
+- [x] Reviewer's two-stage review passed.
+- [x] Evidence collected and PR prepared into `main` — merge awaits founder approval.
 
 ## Status / progress log
 
 - 2026-07-06 planned.
+- 2026-07-06 implemented: `src/axial/schema.py` loader (typed `SchemaError` /
+  `MissingSchemaFileError` / `MissingVersionError` / `UnknownCardinalityError`),
+  `config/domains/syria/schema.yaml` v0.1 (Appendices A-G transcribed in
+  full), `axial schema show <domain-dir>` subcommand in `src/axial/cli.py`.
+  Outer test `tests/test_schema_show.py` green; full suite (`uv run pytest`)
+  18 passed. Four green-only commits on
+  `feat/schema-loader/02-schema-load`.
+- 2026-07-06 reviewer two-stage review passed; one confidence-90 error-handling
+  finding (unhandled tracebacks + silent `count=0` on malformed input) fixed in
+  f826fb8 with typed errors (`MalformedSchemaError`, `NonMappingAxisError`,
+  `MissingValuesOrGroupsError`); full suite 22 passed. Evidence committed;
+  PR [#11](https://github.com/Muhanad-husn/axial/pull/11) opened into main —
+  awaiting founder approval.
