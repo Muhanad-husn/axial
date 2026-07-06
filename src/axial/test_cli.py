@@ -40,3 +40,55 @@ def test_main_returns_zero_for_version(capsys):
 
     assert exit_code == 0
     assert f"axial {axial.__version__}" in captured.out
+
+
+def _write_minimal_schema(domain_dir):
+    domain_dir.mkdir(parents=True, exist_ok=True)
+    (domain_dir / "schema.yaml").write_text(
+        """
+        version: 0.9
+        axes:
+          field:
+            applies_to: [prose, artifact]
+            cardinality: single
+            values: [state, violence, ideology]
+        """,
+        encoding="utf-8",
+    )
+
+
+def test_build_parser_recognises_schema_show_subcommand():
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["schema", "show", "config/domains/syria"])
+
+    assert args.command == "schema"
+    assert args.schema_command == "show"
+    assert args.domain_dir == "config/domains/syria"
+
+
+def test_main_schema_show_prints_axis_cardinality_count_and_version(tmp_path, capsys):
+    from axial.cli import main
+
+    domain_dir = tmp_path / "some-domain"
+    _write_minimal_schema(domain_dir)
+
+    exit_code = main(["schema", "show", str(domain_dir)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "field" in captured.out
+    assert "single" in captured.out
+    assert "3" in captured.out
+    assert "0.9" in captured.out
+
+
+def test_main_schema_show_against_missing_domain_dir_is_nonzero_and_names_path(capsys):
+    from axial.cli import main
+
+    exit_code = main(["schema", "show", "no/such/domain-dir"])
+    captured = capsys.readouterr()
+
+    assert exit_code != 0
+    assert "schema.yaml" in captured.err or "schema.yaml" in captured.out
