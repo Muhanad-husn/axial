@@ -7,6 +7,7 @@ import pytest
 from axial.schema import (
     MalformedSchemaError,
     MissingSchemaFileError,
+    MissingTagIdError,
     MissingValuesOrGroupsError,
     MissingVersionError,
     NonMappingAxisError,
@@ -279,3 +280,25 @@ def test_tag_ids_for_grouped_values_are_the_flattened_leaf_values(tmp_path):
     schema = load_schema(tmp_path)
 
     assert schema.axes["theory_school"].tag_ids == {"bellicist", "neo-bellicist", "criminological"}
+
+
+def test_tag_ids_raises_typed_error_for_claim_type_entry_missing_id(tmp_path):
+    _write_schema(
+        tmp_path,
+        """
+        version: 0.1
+        axes:
+          claim_type:
+            applies_to: [prose]
+            cardinality: primary_plus_optional_secondary
+            values:
+              - id: state-formation
+                status: firm
+              - status: firm
+        """,
+    )
+
+    with pytest.raises(MissingTagIdError, match=re.escape("claim_type")) as exc_info:
+        load_schema(tmp_path)
+
+    assert exc_info.value.axis_name == "claim_type"

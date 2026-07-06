@@ -87,6 +87,17 @@ class UnknownCardinalityError(SchemaError):
         )
 
 
+class MissingTagIdError(SchemaError):
+    """Raised when a `values` entry is a mapping but omits the `id` key."""
+
+    def __init__(self, axis_name: str, entry: Any):
+        self.axis_name = axis_name
+        self.entry = entry
+        super().__init__(
+            f"axis {axis_name!r} has a values entry missing required 'id' key: {entry!r}"
+        )
+
+
 def _flatten_value_count(axis_name: str, raw_values: Any, raw_groups: Any) -> int:
     """Count an axis's controlled-vocabulary entries regardless of shape.
 
@@ -112,7 +123,15 @@ def _flatten_tag_ids(axis_name: str, raw_values: Any, raw_groups: Any) -> set[st
     if raw_groups is not None:
         return {value for group_values in raw_groups.values() for value in group_values}
     if raw_values is not None:
-        return {value["id"] if isinstance(value, dict) else value for value in raw_values}
+        tag_ids: set[str] = set()
+        for value in raw_values:
+            if isinstance(value, dict):
+                if "id" not in value:
+                    raise MissingTagIdError(axis_name, value)
+                tag_ids.add(value["id"])
+            else:
+                tag_ids.add(value)
+        return tag_ids
     raise MissingValuesOrGroupsError(axis_name)
 
 
