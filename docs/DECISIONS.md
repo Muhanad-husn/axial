@@ -23,7 +23,7 @@ ambiguities during the setup build.
 
 | Phase | Status | Date | Notes |
 |-------|--------|------|-------|
-| 0 — Repository foundation | IN PROGRESS | 2026-07-06 | Skeleton + green baseline on `setup/00-foundation`; awaiting Checkpoint 0. |
+| 0 — Repository foundation | DONE | 2026-07-06 | Skeleton + green baseline; Checkpoint 0 approved; merged via PR; branch protection enabled (DEC-11 shape). |
 | 1 — CLAUDE.md handbook | — | | |
 | 2 — Role subagents | — | | |
 | 3 — Hard gates (hooks) | — | | |
