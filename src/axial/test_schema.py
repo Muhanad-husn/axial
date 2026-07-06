@@ -5,8 +5,12 @@ import re
 import pytest
 
 from axial.schema import (
+    MalformedSchemaError,
     MissingSchemaFileError,
+    MissingValuesOrGroupsError,
     MissingVersionError,
+    NonMappingAxisError,
+    SchemaError,
     UnknownCardinalityError,
     load_schema,
 )
@@ -140,6 +144,58 @@ def test_claim_type_shaped_values_count_by_id_entries(tmp_path):
     schema = load_schema(tmp_path)
 
     assert schema.axes["claim_type"].value_count == 2
+
+
+def test_invalid_yaml_is_a_clear_typed_error_not_a_traceback(tmp_path):
+    _write_schema(
+        tmp_path,
+        """
+        version: 0.1
+        axes:
+          field: [this is not, valid: yaml: mapping
+        """,
+    )
+
+    with pytest.raises(MalformedSchemaError, match=re.escape(str(tmp_path / "schema.yaml"))):
+        load_schema(tmp_path)
+
+
+def test_malformed_schema_error_is_a_schema_error(tmp_path):
+    _write_schema(tmp_path, "version: 0.1\naxes: [not, a, mapping, :::")
+
+    with pytest.raises(SchemaError):
+        load_schema(tmp_path)
+
+
+def test_non_mapping_axis_body_is_a_hard_error_naming_the_axis(tmp_path):
+    _write_schema(
+        tmp_path,
+        """
+        version: 0.1
+        axes:
+          field: just_a_string
+        """,
+    )
+
+    with pytest.raises(NonMappingAxisError, match="field"):
+        load_schema(tmp_path)
+
+
+def test_axis_missing_values_and_groups_is_a_hard_error_naming_the_axis(tmp_path):
+    _write_schema(
+        tmp_path,
+        """
+        version: 0.1
+        axes:
+          field:
+            applies_to: [prose]
+            cardinality: single
+            vals: [state]
+        """,
+    )
+
+    with pytest.raises(MissingValuesOrGroupsError, match="field"):
+        load_schema(tmp_path)
 
 
 def test_grouped_values_flatten_for_value_count(tmp_path):

@@ -35,12 +35,44 @@ class MissingSchemaFileError(SchemaError):
         super().__init__(f"missing schema file: {schema_path}")
 
 
+class MalformedSchemaError(SchemaError):
+    """Raised when `<domain-dir>/schema.yaml` is not valid YAML."""
+
+    def __init__(self, schema_path: Path, reason: str):
+        self.schema_path = schema_path
+        self.reason = reason
+        super().__init__(f"schema at {schema_path} is not valid YAML: {reason}")
+
+
 class MissingVersionError(SchemaError):
     """Raised when the schema has no top-level `version` field."""
 
     def __init__(self, schema_path: Path):
         self.schema_path = schema_path
         super().__init__(f"schema at {schema_path} is missing a required 'version' field")
+
+
+class NonMappingAxisError(SchemaError):
+    """Raised when an axis's body is not a mapping (e.g. a bare scalar)."""
+
+    def __init__(self, axis_name: str, axis_raw: Any):
+        self.axis_name = axis_name
+        self.axis_raw = axis_raw
+        super().__init__(
+            f"axis {axis_name!r} must be a mapping of its fields "
+            f"(applies_to, cardinality, values/groups), got {type(axis_raw).__name__}"
+        )
+
+
+class MissingValuesOrGroupsError(SchemaError):
+    """Raised when an axis declares neither `values` nor `groups`."""
+
+    def __init__(self, axis_name: str):
+        self.axis_name = axis_name
+        super().__init__(
+            f"axis {axis_name!r} declares neither 'values' nor 'groups'; "
+            "a controlled vocabulary is required"
+        )
 
 
 class UnknownCardinalityError(SchemaError):
@@ -55,7 +87,7 @@ class UnknownCardinalityError(SchemaError):
         )
 
 
-def _flatten_value_count(raw_values: Any, raw_groups: Any) -> int:
+def _flatten_value_count(axis_name: str, raw_values: Any, raw_groups: Any) -> int:
     """Count an axis's controlled-vocabulary entries regardless of shape.
 
     Handles: a flat list of scalars (e.g. field), a list of {id, ...} tag
@@ -64,9 +96,9 @@ def _flatten_value_count(raw_values: Any, raw_groups: Any) -> int:
     """
     if raw_groups is not None:
         return sum(len(group_values) for group_values in raw_groups.values())
-    if raw_values is None:
-        return 0
-    return len(raw_values)
+    if raw_values is not None:
+        return len(raw_values)
+    raise MissingValuesOrGroupsError(axis_name)
 
 
 @dataclass
@@ -94,13 +126,19 @@ def load_schema(domain_dir: str | Path) -> Schema:
         raise MissingSchemaFileError(schema_path)
 
     with schema_path.open("r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f) or {}
+        try:
+            raw = yaml.safe_load(f) or {}
+        except yaml.YAMLError as exc:
+            raise MalformedSchemaError(schema_path, str(exc)) from exc
 
     if "version" not in raw or raw["version"] is None:
         raise MissingVersionError(schema_path)
 
     axes: dict[str, Axis] = {}
     for axis_name, axis_raw in (raw.get("axes") or {}).items():
+        if not isinstance(axis_raw, dict):
+            raise NonMappingAxisError(axis_name, axis_raw)
+
         cardinality = axis_raw.get("cardinality")
         if cardinality not in KNOWN_CARDINALITIES:
             raise UnknownCardinalityError(axis_name, cardinality)
@@ -109,7 +147,9 @@ def load_schema(domain_dir: str | Path) -> Schema:
             name=axis_name,
             applies_to=axis_raw.get("applies_to", []),
             cardinality=cardinality,
-            value_count=_flatten_value_count(axis_raw.get("values"), axis_raw.get("groups")),
+            value_count=_flatten_value_count(
+                axis_name, axis_raw.get("values"), axis_raw.get("groups")
+            ),
             raw=axis_raw,
         )
 
