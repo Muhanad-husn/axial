@@ -5,7 +5,7 @@
 - **GitHub issue:** #8
 - **Branch:** feat/schema-loader/03-codebook-validate
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ PR open (#12), awaiting founder approval
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -62,3 +62,4 @@ And   run against a fixture whose codebook carries a tag absent from the schema,
 ## Status / progress log
 
 - 2026-07-06 planned.
+- 2026-07-06 red outer test committed (9f83156); implementer greened (41 passed); reviewer stage-1 PASS, one stage-2 finding (untyped KeyError) fixed (79094d3); evidence committed; PR #12 opened into main. Awaiting founder approval to merge.
