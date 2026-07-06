@@ -11,8 +11,10 @@ dev = [
     "ruff>=0.6",
 ]
 
+# tests/ holds only outer acceptance contracts (test-author, locked once red);
+# inner unit tests are co-located under src/ (implementer's domain) - DEC-20.
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "src"]
 
 [tool.ruff]
 line-length = 100
