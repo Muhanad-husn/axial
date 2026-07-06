@@ -32,7 +32,7 @@ ambiguities during the setup build.
 | 0 — Repository foundation | DONE | 2026-07-06 | Skeleton + green baseline; Checkpoint 0 approved; merged via PR; branch protection enabled (DEC-11 shape). |
 | 1 — CLAUDE.md handbook | DONE | 2026-07-06 | Merged via PR #2 with founder amendment (Developer Principles). Fresh-reader verify passed. |
 | 2 — Role subagents | DONE | 2026-07-06 | Merged via PR #3. Roles load after one restart (documented caveat). |
-| 3 — Hard gates (hooks) | IN PROGRESS | 2026-07-06 | Scripts + wiring on `setup/03-hard-gates`; 33/33 script-level tests pass; live in-session verification needs the restart. Awaiting Checkpoint 3. |
+| 3 — Hard gates (hooks) | DONE | 2026-07-06 | All gates verified live (43/43 script cases + in-session battery). Two real defects caught and fixed (DEC-15 form fix, DEC-18 double-wiring). Checkpoint 3 approved. |
 | 4 — Vendored TDD harness | — | | |
 | 5 — Sprint & role wiring | — | | |
 | 6 — Dry run & validation | — | | |
