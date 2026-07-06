@@ -101,12 +101,28 @@ def _flatten_value_count(axis_name: str, raw_values: Any, raw_groups: Any) -> in
     raise MissingValuesOrGroupsError(axis_name)
 
 
+def _flatten_tag_ids(axis_name: str, raw_values: Any, raw_groups: Any) -> set[str]:
+    """Extract the set of tag ids an axis declares, regardless of shape.
+
+    Mirrors `_flatten_value_count`'s shape-handling: a flat list of scalars
+    (e.g. field) yields the scalars themselves; a list of {id, ...} tag
+    objects (e.g. claim_type) yields each `id`; a mapping of group-name ->
+    list of values (e.g. theory_school) yields the flattened leaf values.
+    """
+    if raw_groups is not None:
+        return {value for group_values in raw_groups.values() for value in group_values}
+    if raw_values is not None:
+        return {value["id"] if isinstance(value, dict) else value for value in raw_values}
+    raise MissingValuesOrGroupsError(axis_name)
+
+
 @dataclass
 class Axis:
     name: str
     applies_to: list[str]
     cardinality: str
     value_count: int
+    tag_ids: set[str] = field(default_factory=set)
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -150,6 +166,7 @@ def load_schema(domain_dir: str | Path) -> Schema:
             value_count=_flatten_value_count(
                 axis_name, axis_raw.get("values"), axis_raw.get("groups")
             ),
+            tag_ids=_flatten_tag_ids(axis_name, axis_raw.get("values"), axis_raw.get("groups")),
             raw=axis_raw,
         )
 
