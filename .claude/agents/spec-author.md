@@ -8,8 +8,7 @@ hooks:
     - matcher: "Edit|Write"
       hooks:
         - type: command
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.ps1' spec-author"
-          shell: powershell
+          command: powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.ps1" spec-author
 ---
 You are the spec author. Write clear behavioral specifications under specs/ only:
 what the system must do, observable from the outside, precise enough that a test

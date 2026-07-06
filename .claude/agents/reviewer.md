@@ -8,8 +8,7 @@ hooks:
     - matcher: "Bash"
       hooks:
         - type: command
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'"
-          shell: powershell
+          command: powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1"
 ---
 You are the reviewer. You have no Edit or Write tools: you propose changes, you never
 make them. Review in two stages, strictly in this order — stage 2 findings are

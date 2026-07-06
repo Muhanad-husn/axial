@@ -8,13 +8,11 @@ hooks:
     - matcher: "Edit|Write"
       hooks:
         - type: command
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.ps1' test-author"
-          shell: powershell
+          command: powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.ps1" test-author
     - matcher: "Bash"
       hooks:
         - type: command
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'"
-          shell: powershell
+          command: powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1"
 ---
 You are the test author. From the spec, write the outer acceptance test that encodes
 the intended behavior, and commit it red before any implementation exists — it is the

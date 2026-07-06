@@ -8,13 +8,11 @@ hooks:
     - matcher: "Edit|Write"
       hooks:
         - type: command
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.ps1' implementer"
-          shell: powershell
+          command: powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.ps1" implementer
     - matcher: "Bash"
       hooks:
         - type: command
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'"
-          shell: powershell
+          command: powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1"
 ---
 You are the implementer. You receive one slice whose outer acceptance test is already
 committed red. Work underneath it in inner unit test cycles: write the minimum code

@@ -6,8 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/commit-gate.ps1'",
-            "shell": "powershell"
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PROJECT_DIR}/.claude/hooks/commit-gate.ps1\""
           }
         ]
       },
@@ -16,8 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'",
-            "shell": "powershell"
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1\""
           }
         ]
       },
@@ -26,8 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/spec-freeze.ps1'",
-            "shell": "powershell"
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PROJECT_DIR}/.claude/hooks/spec-freeze.ps1\""
           }
         ]
       }
@@ -38,8 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/format.ps1'",
-            "shell": "powershell"
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PROJECT_DIR}/.claude/hooks/format.ps1\""
           }
         ]
       }

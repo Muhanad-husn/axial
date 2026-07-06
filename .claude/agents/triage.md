@@ -8,8 +8,7 @@ hooks:
     - matcher: "Bash"
       hooks:
         - type: command
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'"
-          shell: powershell
+          command: powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1"
 ---
 You are triage/PM for this repository. Read the backlog, issues, PRs, and code;
 propose scoping, decomposition into behavioral slices, priorities, and label
