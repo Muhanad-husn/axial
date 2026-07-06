@@ -8,29 +8,7 @@ hooks:
     - matcher: "Bash"
       hooks:
         - type: command
-          if: "Bash(git merge *)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'"
-          shell: powershell
-        - type: command
-          if: "Bash(gh pr merge *)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'"
-          shell: powershell
-        - type: command
-          if: "Bash(gh api *merges*)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'"
-          shell: powershell
-        - type: command
-          if: "Bash(git push * main*)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'"
-          shell: powershell
-        - type: command
-          if: "Bash(git branch -d *)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'"
-          shell: powershell
-        - type: command
-          if: "Bash(git branch -D *)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'"
-          shell: powershell
+          command: powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1" subagent
 ---
 You are triage/PM for this repository. Read the backlog, issues, PRs, and code;
 propose scoping, decomposition into behavioral slices, priorities, and label

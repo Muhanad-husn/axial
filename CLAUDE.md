@@ -59,10 +59,11 @@ wait for the founder.
 ## Spec discipline
 
 Specs are frozen during implementation, enforced by a hook on `specs/`. Spec-authoring
-happens in deliberate windows: the founder enables spec mode, the spec-author writes
-or revises, the freeze returns. Drift found mid-build routes to a `spec-drift` GitHub
-issue for the founder to adjudicate. The point is that the contract everyone builds
-against cannot quietly change under their feet.
+happens in deliberate windows: on the founder's word, the orchestrator creates the
+flag file `.claude/spec-mode` (which lifts the freeze), dispatches the spec-author,
+and deletes the flag when the pass ends. Drift found mid-build routes to a
+`spec-drift` GitHub issue for the founder to adjudicate. The point is that the
+contract everyone builds against cannot quietly change under their feet.
 
 ## The gates
 
@@ -74,9 +75,11 @@ Two rules are hooks with exit-code enforcement, not advice:
    are required and direct pushes to `main` are rejected. The orchestrator's own
    merge path stays open, used only on founder approval.
 2. **No commit on a red suite.** A pre-commit hook runs the test suite (`uv run
-   pytest` in this repo) and blocks the commit if it fails. The only intended red
-   commit is the outer acceptance test itself, committed by the test author before
-   implementation starts.
+   pytest` in this repo) and blocks the commit if it fails; it also blocks any
+   direct commit on `main`. The only intended red commit is the outer acceptance
+   test itself, committed by the test author before implementation starts: for
+   exactly that commit, with founder approval, the orchestrator creates the flag
+   file `.claude/allow-red-commit` and removes it immediately after.
 
 If a gate fires, the answer is to fix the cause, never to bypass the hook.
 
