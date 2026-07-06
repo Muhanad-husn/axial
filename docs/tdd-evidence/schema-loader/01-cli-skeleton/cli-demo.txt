@@ -1,0 +1,3 @@
+PS D:\axial> uv run axial --version
+axial 0.1.0
+exit code: 0
