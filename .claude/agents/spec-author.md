@@ -8,20 +8,7 @@ hooks:
     - matcher: "Edit|Write"
       hooks:
         - type: command
-          if: "Edit(src/**)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/deny.ps1' spec-author-src"
-          shell: powershell
-        - type: command
-          if: "Write(src/**)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/deny.ps1' spec-author-src"
-          shell: powershell
-        - type: command
-          if: "Edit(tests/**)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/deny.ps1' spec-author-tests"
-          shell: powershell
-        - type: command
-          if: "Write(tests/**)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/deny.ps1' spec-author-tests"
+          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.ps1' spec-author"
           shell: powershell
 ---
 You are the spec author. Write clear behavioral specifications under specs/ only:

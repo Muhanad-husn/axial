@@ -8,45 +8,11 @@ hooks:
     - matcher: "Edit|Write"
       hooks:
         - type: command
-          if: "Edit(tests/**)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/deny.ps1' implementer-tests"
-          shell: powershell
-        - type: command
-          if: "Write(tests/**)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/deny.ps1' implementer-tests"
-          shell: powershell
-        - type: command
-          if: "Edit(specs/**)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/deny.ps1' implementer-specs"
-          shell: powershell
-        - type: command
-          if: "Write(specs/**)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/deny.ps1' implementer-specs"
+          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.ps1' implementer"
           shell: powershell
     - matcher: "Bash"
       hooks:
         - type: command
-          if: "Bash(git merge *)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'"
-          shell: powershell
-        - type: command
-          if: "Bash(gh pr merge *)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'"
-          shell: powershell
-        - type: command
-          if: "Bash(gh api *merges*)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'"
-          shell: powershell
-        - type: command
-          if: "Bash(git push * main*)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'"
-          shell: powershell
-        - type: command
-          if: "Bash(git branch -d *)"
-          command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'"
-          shell: powershell
-        - type: command
-          if: "Bash(git branch -D *)"
           command: "& '${CLAUDE_PROJECT_DIR}/.claude/hooks/block-merge.ps1'"
           shell: powershell
 ---

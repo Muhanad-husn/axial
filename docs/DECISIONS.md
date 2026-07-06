@@ -21,6 +21,8 @@ ambiguities during the setup build.
 | DEC-13 | 2026-07-06 | **Repo made public.** Branch protection on private repos requires GitHub Pro; founder chose public visibility over upgrading or skipping the backstop. Protection now live on `main`: PRs required, `enforce_admins: true`, 0 required approving reviews, no force-pushes or deletions. |
 | DEC-14 | 2026-07-06 | **Reviewer written from scratch, not reused from `pr-review-toolkit`.** Inspected the plugin: its `code-reviewer` is CLAUDE.md-guideline-focused and `pr-test-analyzer` is coverage-focused; neither has the required two-stage ordering (spec-compliance first) nor "does the test encode intent?" as the leading check. Borrowed two ideas: confidence-scored findings (report only ≥ 80) and behavior-over-implementation test evaluation. The plugin's agents remain available as supplementary tools. |
 | DEC-15 | 2026-07-06 | **Hook scripts are PowerShell (`.ps1` with `shell: powershell` on each hook entry), not `.sh`.** Divergence from the skeletons, per current hooks docs guidance for Windows hosts ("On Windows, write hook scripts in PowerShell and add `shell: powershell`"). Verified against live docs 2026-07-06; all other mechanics (frontmatter `hooks:`, `if:` permission-rule syntax, stdin JSON, exit code 2, MCP-tool matchers, hot-reload with first-file-in-new-dir restart caveat) match the skeletons. Hook commands invoke via `& '${CLAUDE_PROJECT_DIR}/.claude/hooks/<script>.ps1' <args>`. |
+| DEC-16 | 2026-07-06 | **Gate scripts decide from stdin JSON, not `if:` permission-rule filters.** Divergence from the skeletons: `if: "Bash(git merge *)"` filters can be dodged by compound commands (`git add && git merge`) and `Edit(specs/**)` globs are fragile against absolute Windows paths. Instead, hooks fire on the whole tool matcher (`Bash`, `Edit\|Write`) and each script parses `tool_input` itself and exits 0/2. Also strengthens the roster to allowlists: spec-author may write *only* `specs/`, test-author *only* `tests/` (the skeletons only denied known-other areas). Verified with a 33-case exit-code suite (all pass), including compound commands, `Write`-vs-`Edit`, path traversal, and out-of-project paths. |
+| DEC-17 | 2026-07-06 | **Two founder-toggled flag files, both gitignored:** `.claude/spec-mode` lifts the spec-freeze for a deliberate spec-authoring pass; `.claude/allow-red-commit` permits DEC-1's one intended red commit (the outer acceptance test). The orchestrator creates/removes them only on founder approval. Documented in CLAUDE.md. |
 
 ## Progress Tracker
 
@@ -28,8 +30,8 @@ ambiguities during the setup build.
 |-------|--------|------|-------|
 | 0 — Repository foundation | DONE | 2026-07-06 | Skeleton + green baseline; Checkpoint 0 approved; merged via PR; branch protection enabled (DEC-11 shape). |
 | 1 — CLAUDE.md handbook | DONE | 2026-07-06 | Merged via PR #2 with founder amendment (Developer Principles). Fresh-reader verify passed. |
-| 2 — Role subagents | IN PROGRESS | 2026-07-06 | Five roles written on `setup/02-role-subagents`; awaiting Checkpoint 2. |
-| 3 — Hard gates (hooks) | — | | |
+| 2 — Role subagents | DONE | 2026-07-06 | Merged via PR #3. Roles load after one restart (documented caveat). |
+| 3 — Hard gates (hooks) | IN PROGRESS | 2026-07-06 | Scripts + wiring on `setup/03-hard-gates`; 33/33 script-level tests pass; live in-session verification needs the restart. Awaiting Checkpoint 3. |
 | 4 — Vendored TDD harness | — | | |
 | 5 — Sprint & role wiring | — | | |
 | 6 — Dry run & validation | — | | |
