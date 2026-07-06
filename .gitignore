@@ -10,3 +10,6 @@ build/
 .claude/spec-mode
 .claude/allow-red-commit
 .claude/settings.local.json
+PR_BODY.md
+PR_BODY.generated.md
+.tdd-branch-cleanup.log

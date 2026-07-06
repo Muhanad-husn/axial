@@ -1,0 +1,77 @@
+# Template: Playwright end-to-end tests with evidence artifacts (report + screenshots + videos).
+# This is the job that produces the review evidence safe-pr links to.
+# Customise: Node version, install/build/start commands, and the BASE_URL / webServer config.
+#
+# PROJECT IN A SUBDIRECTORY? `defaults.run.working-directory` makes the `run:` steps (npm ci, playwright
+# test) execute in the app dir. BUT the `uses:` actions resolve paths from the REPO ROOT — so when the app
+# is in a subfolder you MUST prefix the subfolder on:
+#   • setup-node `cache-dependency-path`  (e.g. apps/web/package-lock.json)
+#   • upload-artifact `path:`              (e.g. apps/web/playwright-report/ and apps/web/test-results/)
+# If the app IS at the repo root, delete the `defaults:` block and drop the subfolder prefixes.
+#
+# Verify action versions with find-docs/ctx7 before committing.
+name: E2E
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+defaults:
+  run:
+    working-directory: .            # <-- app dir from repo root, e.g. apps/web (delete this block if repo root)
+
+jobs:
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json   # <-- repo-root-relative, e.g. apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Cache the Playwright browser binaries, keyed on the installed Playwright version.
+      - name: Get Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+      - name: Install Playwright browsers
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps
+      - name: Install Playwright OS deps (cache hit path)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps
+
+      # Build the app if needed (Playwright's webServer config starts it; adjust to your project).
+      - name: Build
+        run: npm run build --if-present
+
+      - name: Run Playwright e2e tests
+        run: npx playwright test
+        env:
+          BASE_URL: http://localhost:3000   # match playwright.config webServer/baseURL
+
+      # Upload the HTML report, screenshots and videos on pass OR fail so reviewers can inspect them.
+      # NOTE: these paths are REPO-ROOT-relative — prefix the subfolder if the app is in a subdirectory.
+      - name: Upload Playwright evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14

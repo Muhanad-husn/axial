@@ -1,0 +1,43 @@
+# Template: Node/TypeScript unit tests + build.
+# Customise: Node version, package manager, and the test/build commands to match the project's package.json.
+#
+# PROJECT IN A SUBDIRECTORY? If the app is NOT at the repo root (monorepo package, sandbox/ app), set the
+# project directory in TWO places below: `defaults.run.working-directory` (affects every `run:` step) and
+# `cache-dependency-path` (resolved from the REPO ROOT, so it must include the subfolder). If the app IS at
+# the repo root, delete the `defaults:` block and the `cache-dependency-path:` line.
+#
+# Verify action versions with find-docs/ctx7 before committing.
+name: Unit
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+defaults:
+  run:
+    working-directory: .          # <-- app dir from repo root, e.g. services/api (delete this block if repo root)
+
+jobs:
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20          # set to the project's supported version
+          cache: npm                # change to pnpm/yarn if used
+          cache-dependency-path: package-lock.json   # <-- repo-root-relative, e.g. services/api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Run the project's unit suite. Use the script the project actually defines.
+      - name: Run unit tests
+        run: npm test
+
+      # Optional: prove it still builds. Drop if there is no build step.
+      - name: Build
+        run: npm run build --if-present

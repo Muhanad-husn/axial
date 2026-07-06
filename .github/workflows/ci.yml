@@ -1,0 +1,31 @@
+# CI for this repo (tdd-ci deliverable): runs the full suite - outer acceptance
+# contracts in tests/ plus inner unit tests under src/ - and lint, on every push
+# and on PRs into main. No secrets are read or committed; if a job ever needs
+# credentials, inject them via repo Actions secrets.
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+jobs:
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run test suite
+        run: uv run pytest -q
+
+      - name: Lint
+        run: uv run ruff check .
