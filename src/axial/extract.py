@@ -19,7 +19,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from docling.document_converter import DocumentConverter
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.types.doc import PictureItem, SectionHeaderItem, TableItem, TitleItem
 from docling_core.types.doc.document import DoclingDocument
 
@@ -67,9 +69,25 @@ def _leaf_node(item: Any, order: str) -> dict:
     return node
 
 
+def _build_converter() -> DocumentConverter:
+    """Build a DocumentConverter with OCR disabled.
+
+    OCR is a stated product non-goal (PRD §3, "No OCR path") and intake
+    already guarantees a real, born-digital text layer before extract runs.
+    Disabling it also avoids RapidOCR's model download from modelscope.cn on
+    first run -- the flakiest of docling's model dependencies -- without
+    affecting prose/table detection, which come from the PDF text layer and
+    the layout/TableFormer models respectively.
+    """
+    pipeline_options = PdfPipelineOptions(do_ocr=False)
+    return DocumentConverter(
+        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
+    )
+
+
 def convert(path: Path) -> DoclingDocument:
     """Run docling's DocumentConverter over `path`, returning its document model."""
-    converter = DocumentConverter()
+    converter = _build_converter()
     result = converter.convert(str(path))
     return result.document
 
