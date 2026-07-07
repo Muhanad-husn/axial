@@ -1,0 +1,41 @@
+# Real invocations of 'axial envelope' through the CLI boundary.
+# (docling weight-loading progress lines trimmed for readability.)
+
+## 1. First run — stub provider (no network): computes and writes the envelope
+$ AXIAL_LLM_PROVIDER=stub uv run axial envelope tests/fixtures/envelope/thesis_paper.pdf
+{"author": null, "date": null, "scope": "Comparative, drawing on cases from the post-conflict statebuilding literature.", "source_id": "thesis_paper-82bcba3c2d51", "stated_argument": "Infrastructural power better explains durable post-conflict order than coercive capacity alone.", "thesis": "State capacity in post-conflict settings depends more on infrastructural reach than on coercive force alone.", "title": "Thesis Paper", "toc": ["Introduction", "Comparative Cases", "Conclusion"]}
+exit: 0
+
+## The envelope written to data/envelopes/ (§7.3 shape):
+$ cat data/envelopes/thesis_paper-82bcba3c2d51.json
+{
+  "author": null,
+  "date": null,
+  "scope": "Comparative, drawing on cases from the post-conflict statebuilding literature.",
+  "source_id": "thesis_paper-82bcba3c2d51",
+  "stated_argument": "Infrastructural power better explains durable post-conflict order than coercive capacity alone.",
+  "thesis": "State capacity in post-conflict settings depends more on infrastructural reach than on coercive force alone.",
+  "title": "Thesis Paper",
+  "toc": [
+    "Introduction",
+    "Comparative Cases",
+    "Conclusion"
+  ]
+}
+
+## 2. Second run — poison 'explode' provider: reuses the stored envelope, ZERO LLM calls
+##    (explode.complete() would raise if called; a clean exit 0 proves no recompute — PRD §10)
+$ AXIAL_LLM_PROVIDER=explode uv run axial envelope tests/fixtures/envelope/thesis_paper.pdf
+{"author": null, "date": null, "scope": "Comparative, drawing on cases from the post-conflict statebuilding literature.", "source_id": "thesis_paper-82bcba3c2d51", "stated_argument": "Infrastructural power better explains durable post-conflict order than coercive capacity alone.", "thesis": "State capacity in post-conflict settings depends more on infrastructural reach than on coercive force alone.", "title": "Thesis Paper", "toc": ["Introduction", "Comparative Cases", "Conclusion"]}
+exit: 0
+
+## 3. Real-provider misconfiguration on a cache MISS: clean typed error, no traceback
+$ AXIAL_LLM_PROVIDER=bogus uv run axial envelope tests/fixtures/envelope/thesis_paper.pdf
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  56%|#####5    | 431/770 [00:00<00:00, 4304.30it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 4238.53it/s]
+error: unknown LLM provider: 'bogus'
+exit: 1
+
+$ AXIAL_LLM_PROVIDER=openrouter OPENROUTER_API_KEY= uv run axial envelope tests/fixtures/envelope/thesis_paper.pdf
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  50%|#####     | 387/770 [00:00<00:00, 3867.03it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 3860.78it/s]
+error: OpenRouter provider selected but 'OPENROUTER_API_KEY' is not set in the environment
+exit: 1
