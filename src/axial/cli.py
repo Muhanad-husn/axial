@@ -6,6 +6,7 @@ import sys
 
 import axial
 from axial.codebook import CodebookError, load_codebook
+from axial.envelope import EnvelopeError, run_envelope
 from axial.extract import ExtractError, extract
 from axial.intake import IntakeError, intake
 from axial.schema import SchemaError, load_schema
@@ -46,6 +47,12 @@ def build_parser() -> argparse.ArgumentParser:
         "extract", help="run structural extraction, emitting a hierarchical JSON tree"
     )
     extract_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
+
+    envelope_parser = subparsers.add_parser(
+        "envelope",
+        help="run the structural-envelope pass, writing data/envelopes/<source_id>.json",
+    )
+    envelope_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
 
     return parser
 
@@ -105,6 +112,17 @@ def _extract(source_path: str) -> int:
     return 0
 
 
+def _envelope(source_path: str) -> int:
+    try:
+        envelope = run_envelope(source_path)
+    except EnvelopeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(envelope, sort_keys=True))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -124,6 +142,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "extract":
         return _extract(args.source_path)
+
+    if args.command == "envelope":
+        return _envelope(args.source_path)
 
     parser.print_help()
     return 0
