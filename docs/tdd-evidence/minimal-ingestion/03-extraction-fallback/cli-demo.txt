@@ -1,0 +1,249 @@
+# axial extract — Unstructured fallback path (slice 03)
+# The AXIAL_FORCE_DOCLING_FAILURE seam forces docling to fail/degenerate so the
+# Unstructured fallback runs. stdout stays pure JSON; the fallback is logged to stderr.
+
+==================================================================
+$ AXIAL_FORCE_DOCLING_FAILURE=degenerate axial extract tests/fixtures/extract/prose_and_table.pdf
+--- stderr (fallback log) ---
+fallback: docling failed for prose_and_table.pdf (docling returned degenerate (empty/structureless) output); using unstructured as fallback
+No languages specified, defaulting to English.
+--- stdout (structural tree, pretty-printed) ---
+{
+    "children": [
+        {
+            "label": "NarrativeText",
+            "order": "1",
+            "text": "Introduction This document is a fixture for testing structural extraction. It contains ordinary prose describing a simple argument about state formation, followed by a table of illustrative data.",
+            "type": "prose"
+        },
+        {
+            "label": "NarrativeText",
+            "order": "2",
+            "text": "The argument proceeds in two stages: first a claim is stated, then supporting evidence is presented in tabular form below.",
+            "type": "prose"
+        },
+        {
+            "children": [],
+            "label": "Title",
+            "order": "3",
+            "text": "Case",
+            "type": "prose"
+        },
+        {
+            "children": [],
+            "label": "Title",
+            "order": "4",
+            "text": "Year",
+            "type": "prose"
+        },
+        {
+            "children": [],
+            "label": "Title",
+            "order": "5",
+            "text": "Outcome",
+            "type": "prose"
+        },
+        {
+            "children": [
+                {
+                    "label": "UncategorizedText",
+                    "order": "6.1",
+                    "text": "1990",
+                    "type": "prose"
+                }
+            ],
+            "label": "Title",
+            "order": "6",
+            "text": "Alpha",
+            "type": "prose"
+        },
+        {
+            "children": [],
+            "label": "Title",
+            "order": "7",
+            "text": "Consolidated",
+            "type": "prose"
+        },
+        {
+            "children": [
+                {
+                    "label": "UncategorizedText",
+                    "order": "8.1",
+                    "text": "2001",
+                    "type": "prose"
+                }
+            ],
+            "label": "Title",
+            "order": "8",
+            "text": "Beta",
+            "type": "prose"
+        },
+        {
+            "children": [],
+            "label": "Title",
+            "order": "9",
+            "text": "Fragmented",
+            "type": "prose"
+        },
+        {
+            "children": [
+                {
+                    "label": "UncategorizedText",
+                    "order": "10.1",
+                    "text": "2015",
+                    "type": "prose"
+                }
+            ],
+            "label": "Title",
+            "order": "10",
+            "text": "Gamma",
+            "type": "prose"
+        },
+        {
+            "children": [
+                {
+                    "label": "NarrativeText",
+                    "order": "11.1",
+                    "text": "Discussion The table above illustrates three cases with divergent outcomes despite similar starting conditions, motivating the comparative discussion that follows.",
+                    "type": "prose"
+                },
+                {
+                    "label": "NarrativeText",
+                    "order": "11.2",
+                    "text": "A second paragraph of discussion prose closes out this section, giving the fixture at least two paragraphs per prose section as required by the acceptance test.",
+                    "type": "prose"
+                }
+            ],
+            "label": "Title",
+            "order": "11",
+            "text": "Consolidated",
+            "type": "prose"
+        }
+    ]
+}
+(exit code: 0)
+
+==================================================================
+$ AXIAL_FORCE_DOCLING_FAILURE=exception axial extract tests/fixtures/extract/prose_and_table.pdf
+--- stderr (fallback log) ---
+fallback: docling failed for prose_and_table.pdf (docling raised an exception: failed to convert tests\fixtures\extract\prose_and_table.pdf with docling: forced docling failure via AXIAL_FORCE_DOCLING_FAILURE=exception); using unstructured as fallback
+No languages specified, defaulting to English.
+--- stdout (structural tree, pretty-printed) ---
+{
+    "children": [
+        {
+            "label": "NarrativeText",
+            "order": "1",
+            "text": "Introduction This document is a fixture for testing structural extraction. It contains ordinary prose describing a simple argument about state formation, followed by a table of illustrative data.",
+            "type": "prose"
+        },
+        {
+            "label": "NarrativeText",
+            "order": "2",
+            "text": "The argument proceeds in two stages: first a claim is stated, then supporting evidence is presented in tabular form below.",
+            "type": "prose"
+        },
+        {
+            "children": [],
+            "label": "Title",
+            "order": "3",
+            "text": "Case",
+            "type": "prose"
+        },
+        {
+            "children": [],
+            "label": "Title",
+            "order": "4",
+            "text": "Year",
+            "type": "prose"
+        },
+        {
+            "children": [],
+            "label": "Title",
+            "order": "5",
+            "text": "Outcome",
+            "type": "prose"
+        },
+        {
+            "children": [
+                {
+                    "label": "UncategorizedText",
+                    "order": "6.1",
+                    "text": "1990",
+                    "type": "prose"
+                }
+            ],
+            "label": "Title",
+            "order": "6",
+            "text": "Alpha",
+            "type": "prose"
+        },
+        {
+            "children": [],
+            "label": "Title",
+            "order": "7",
+            "text": "Consolidated",
+            "type": "prose"
+        },
+        {
+            "children": [
+                {
+                    "label": "UncategorizedText",
+                    "order": "8.1",
+                    "text": "2001",
+                    "type": "prose"
+                }
+            ],
+            "label": "Title",
+            "order": "8",
+            "text": "Beta",
+            "type": "prose"
+        },
+        {
+            "children": [],
+            "label": "Title",
+            "order": "9",
+            "text": "Fragmented",
+            "type": "prose"
+        },
+        {
+            "children": [
+                {
+                    "label": "UncategorizedText",
+                    "order": "10.1",
+                    "text": "2015",
+                    "type": "prose"
+                }
+            ],
+            "label": "Title",
+            "order": "10",
+            "text": "Gamma",
+            "type": "prose"
+        },
+        {
+            "children": [
+                {
+                    "label": "NarrativeText",
+                    "order": "11.1",
+                    "text": "Discussion The table above illustrates three cases with divergent outcomes despite similar starting conditions, motivating the comparative discussion that follows.",
+                    "type": "prose"
+                },
+                {
+                    "label": "NarrativeText",
+                    "order": "11.2",
+                    "text": "A second paragraph of discussion prose closes out this section, giving the fixture at least two paragraphs per prose section as required by the acceptance test.",
+                    "type": "prose"
+                }
+            ],
+            "label": "Title",
+            "order": "11",
+            "text": "Consolidated",
+            "type": "prose"
+        }
+    ]
+}
+(exit code: 0)
+
+==================================================================
+# Control: no seam set -> normal docling path, no fallback logged (exit 0).
+$ axial extract tests/fixtures/extract/prose_and_table.pdf   # (normal docling path; see slice-02 evidence for full tree)
