@@ -1,0 +1,22 @@
+# axial intake — real CLI invocations (slice 01)
+
+$ axial intake tests/fixtures/intake/text_layer.pdf
+intake ok: text_layer.pdf (format=pdf, text_layer_ok=True)
+(exit code: 0)
+
+$ axial intake tests/fixtures/intake/text.docx
+intake ok: text.docx (format=docx, text_layer_ok=True)
+(exit code: 0)
+
+$ axial intake tests/fixtures/intake/no_text_layer.pdf
+error: no text layer found in tests\fixtures\intake\no_text_layer.pdf; scanned/image-only sources are rejected (no OCR path in this slice)
+(exit code: 1)
+
+$ axial intake tests/fixtures/intake/unsupported.txt
+error: unsupported file extension '.txt' for tests\fixtures\intake\unsupported.txt; expected one of ['.docx', '.pdf']
+(exit code: 1)
+
+$ axial intake tests/fixtures/intake/unsupported.png
+error: unsupported file extension '.png' for tests\fixtures\intake\unsupported.png; expected one of ['.docx', '.pdf']
+(exit code: 1)
+
