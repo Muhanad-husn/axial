@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from docling_core.types.doc.document import DoclingDocument, TableData
 from docling_core.types.doc.labels import DocItemLabel
-from unstructured.documents.elements import NarrativeText, Table, Title
+from unstructured.documents.elements import Header, NarrativeText, Table, Title
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "extract"
@@ -217,6 +217,28 @@ def test_normalize_unstructured_emits_the_same_prose_artifact_tree_shape():
 
     assert second_section["order"] == "2"
     assert second_section["children"][0]["order"] == "2.1"
+
+
+def test_normalize_unstructured_header_does_not_open_a_section():
+    """Regression: Unstructured's `Header` element is running/page-header
+    furniture (e.g. a Word section header), not a heading over body content.
+    It must not open a section -- prose that follows it belongs at the top
+    level (or under whatever real Title section is open), never nested as
+    the header's child."""
+    from axial.extract import _normalize_unstructured
+
+    elements = [
+        Header(text="Running header"),
+        NarrativeText(text="Preamble prose."),
+    ]
+
+    tree = _normalize_unstructured(elements)
+
+    header_node, prose_node = tree["children"]
+    assert header_node["type"] == "prose"
+    assert "children" not in header_node, "Header must not open a section"
+    assert prose_node["type"] == "prose"
+    assert prose_node["order"] == "2", "prose must sit at the top level, not nested under Header"
 
 
 def test_fallback_logs_source_filename_and_reason_to_stderr(monkeypatch, capsys):

@@ -37,7 +37,6 @@ from unstructured.documents.elements import (
     Element,
     FigureCaption,
     Formula,
-    Header,
     Image,
     PageBreak,
     Table as UnstructuredTable,
@@ -67,9 +66,13 @@ _UNSTRUCTURED_ARTIFACT_TYPES = (
     Formula,
     CheckBox,
 )
-# Title/Header-like elements open a section node, exactly like docling's
-# TitleItem/SectionHeaderItem.
-_UNSTRUCTURED_SECTION_TYPES = (Title, Header)
+# Only Title elements open a section node, matching docling's
+# TitleItem/SectionHeaderItem. Unstructured's `Header` is running/page-header
+# furniture (e.g. a Word section header), not a heading over body content --
+# treating it as a section-opener would nest unrelated body prose under it.
+# It still classifies as an ordinary "prose" leaf node below (not an artifact),
+# it just never opens a section.
+_UNSTRUCTURED_SECTION_TYPES = (Title,)
 
 
 class ExtractError(Exception):
