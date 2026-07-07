@@ -5,6 +5,7 @@ import sys
 
 import axial
 from axial.codebook import CodebookError, load_codebook
+from axial.intake import IntakeError, intake
 from axial.schema import SchemaError, load_schema
 from axial.validate import cross_validate
 
@@ -33,6 +34,11 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument(
         "domain_dir", help="path to a domain directory containing schema.yaml and codebook.yaml"
     )
+
+    intake_parser = subparsers.add_parser(
+        "intake", help="validate a source file and probe it for a real text layer"
+    )
+    intake_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
 
     return parser
 
@@ -70,6 +76,17 @@ def _schema_validate(domain_dir: str) -> int:
     return 1
 
 
+def _intake(source_path: str) -> int:
+    try:
+        source = intake(source_path)
+    except IntakeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"intake ok: {source.path.name} (format={source.format}, text_layer_ok=True)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -83,6 +100,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "schema" and args.schema_command == "validate":
         return _schema_validate(args.domain_dir)
+
+    if args.command == "intake":
+        return _intake(args.source_path)
 
     parser.print_help()
     return 0
