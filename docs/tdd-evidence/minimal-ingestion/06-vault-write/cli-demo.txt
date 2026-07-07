@@ -1,0 +1,38 @@
+### axial vault write — real end-to-end invocation (stub LLM provider, no network)
+
+$ AXIAL_LLM_PROVIDER=stub uv run axial envelope tests/fixtures/envelope/thesis_paper.pdf   # arrange: stored envelope
+(envelope written, exit 0)
+
+$ AXIAL_LLM_PROVIDER=stub uv run axial vault write tests/fixtures/envelope/thesis_paper.pdf
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  49%|####8     | 376/770 [00:00<00:00, 3753.94it/s]Loading weights:  98%|#########7| 752/770 [00:00<00:00, 3407.63it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 3468.03it/s]
+["data\\vault\\prose\\thesis_paper-82bcba3c2d51_1_introduction_001.md", "data\\vault\\prose\\thesis_paper-82bcba3c2d51_1_introduction_002.md", "data\\vault\\prose\\thesis_paper-82bcba3c2d51_2_comparative-cases_001.md", "data\\vault\\prose\\thesis_paper-82bcba3c2d51_2_comparative-cases_002.md", "data\\vault\\prose\\thesis_paper-82bcba3c2d51_3_conclusion_001.md", "data\\vault\\prose\\thesis_paper-82bcba3c2d51_3_conclusion_002.md"]
+exit=0
+
+### written prose notes:
+thesis_paper-82bcba3c2d51_1_introduction_001.md
+thesis_paper-82bcba3c2d51_1_introduction_002.md
+thesis_paper-82bcba3c2d51_2_comparative-cases_001.md
+thesis_paper-82bcba3c2d51_2_comparative-cases_002.md
+thesis_paper-82bcba3c2d51_3_conclusion_001.md
+thesis_paper-82bcba3c2d51_3_conclusion_002.md
+
+### data/vault/artifacts/ stays empty this phase:
+  (empty)
+
+### one note in full (frontmatter + body):
+--- data/vault/prose/thesis_paper-82bcba3c2d51_1_introduction_001.md ---
+---
+"chunk_id": "thesis_paper-82bcba3c2d51_1_introduction_001"
+"section": "Introduction"
+"chunk_text": "Stub chunk one: a claim and its immediate support."
+"source_meta":
+  "author": !!null "null"
+  "title": "Thesis Paper"
+  "date": !!null "null"
+  "thesis": "State capacity in post-conflict settings depends more on infrastructural\
+    \ reach than on coercive force alone."
+  "scope": "Comparative, drawing on cases from the post-conflict statebuilding literature."
+---
+# Introduction
+
+Stub chunk one: a claim and its immediate support.

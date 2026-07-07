@@ -12,6 +12,7 @@ from axial.extract import ExtractError, extract
 from axial.intake import IntakeError, intake
 from axial.schema import SchemaError, load_schema
 from axial.validate import cross_validate
+from axial.vault import VaultError, run_vault_write
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -60,6 +61,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="run the argumentative-chunking pass, emitting prose chunk records to stdout",
     )
     chunk_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
+
+    vault_parser = subparsers.add_parser("vault", help="vault operations")
+    vault_subparsers = vault_parser.add_subparsers(dest="vault_command")
+
+    vault_write_parser = vault_subparsers.add_parser(
+        "write",
+        help="run the chunking pass and write one prose note per chunk to data/vault/prose/",
+    )
+    vault_write_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
 
     return parser
 
@@ -141,6 +151,17 @@ def _chunk(source_path: str) -> int:
     return 0
 
 
+def _vault_write(source_path: str) -> int:
+    try:
+        written = run_vault_write(source_path)
+    except VaultError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps([str(path) for path in written]))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -166,6 +187,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "chunk":
         return _chunk(args.source_path)
+
+    if args.command == "vault" and args.vault_command == "write":
+        return _vault_write(args.source_path)
 
     parser.print_help()
     return 0
