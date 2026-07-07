@@ -81,6 +81,49 @@ def test_render_note_body_contains_chunk_text_below_frontmatter():
     assert "This is the chunk's own prose text." in body
 
 
+def _split_frontmatter_like_outer_test(text: str) -> tuple[dict, str]:
+    """Mirror tests/test_vault_write.py's `_split_frontmatter`: scan for the
+    first line (after the opening '---') whose stripped value is exactly
+    '---' and treat it as the closing delimiter."""
+    lines = text.splitlines()
+    assert lines[0].strip() == "---"
+    closing_index = None
+    for index in range(1, len(lines)):
+        if lines[index].strip() == "---":
+            closing_index = index
+            break
+    assert closing_index is not None
+    frontmatter_text = "\n".join(lines[1:closing_index])
+    body = "\n".join(lines[closing_index + 1 :])
+    return yaml.safe_load(frontmatter_text), body
+
+
+def test_render_note_survives_chunk_text_containing_a_bare_triple_dash_line():
+    """A chunk's text (or section) may itself contain a line that is exactly
+    '---' (e.g. a Markdown horizontal rule from docling/Unstructured output).
+    yaml.safe_dump's default folded scalar style would emit that embedded
+    '---' on its own indented line inside the chunk_text value, which a
+    frontmatter splitter scanning for the first bare '---' line (exactly
+    what the locked outer test's `_split_frontmatter` does) would mistake
+    for the closing delimiter, truncating/corrupting the frontmatter."""
+    from axial.vault import build_frontmatter, render_note
+
+    record = {
+        "chunk_id": "paper-abc123_1_introduction_001",
+        "section": "Introduction",
+        "text": "First line of the chunk.\n---\nSecond line after a bare rule.",
+    }
+
+    frontmatter = build_frontmatter(record, _ENVELOPE)
+    note_text = render_note(frontmatter, record["text"])
+
+    parsed_frontmatter, body = _split_frontmatter_like_outer_test(note_text)
+
+    assert parsed_frontmatter == frontmatter
+    assert parsed_frontmatter["chunk_text"] == record["text"]
+    assert record["text"] in body
+
+
 # --- note writing --------------------------------------------------------------
 
 
@@ -110,6 +153,22 @@ def test_write_chunk_note_does_not_touch_artifacts_dir(tmp_path):
     write_chunk_note(_RECORD, _ENVELOPE, vault_dir)
 
     assert not (vault_dir / "artifacts").exists()
+
+
+def test_write_chunk_note_rerun_overwrites_in_place_without_duplicating(tmp_path):
+    """Re-running vault write on the same chunk must update its note
+    idempotently, not create a second file (plan seeded behavior)."""
+    from axial.vault import write_chunk_note
+
+    vault_dir = tmp_path / "vault"
+
+    first_path = write_chunk_note(_RECORD, _ENVELOPE, vault_dir)
+    second_path = write_chunk_note(_RECORD, _ENVELOPE, vault_dir)
+
+    assert first_path == second_path
+    prose_files = [p for p in (vault_dir / "prose").iterdir() if p.is_file()]
+    assert len(prose_files) == 1
+    assert prose_files[0] == first_path
 
 
 # --- orchestration -------------------------------------------------------------

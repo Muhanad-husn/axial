@@ -104,8 +104,24 @@ def build_frontmatter(record: dict[str, Any], envelope: dict[str, Any]) -> dict[
 
 def render_note(frontmatter: dict[str, Any], body: str) -> str:
     """Render a note's full text: a `---`-delimited YAML frontmatter block
-    followed by the body (standard Obsidian/Jekyll convention)."""
-    frontmatter_yaml = yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True)
+    followed by the body (standard Obsidian/Jekyll convention).
+
+    `default_style='"'` forces every scalar (including multi-line chunk
+    text) into a single double-quoted line with embedded newlines escaped
+    as `\\n`. Without it, PyYAML's default folded/plain scalar style can
+    fold a long chunk_text value across multiple lines, and if that value
+    itself contains a line that is exactly `---` (a plausible Markdown
+    horizontal rule or table border in real docling/Unstructured output),
+    the folded output would place that embedded `---` on its own line
+    inside the frontmatter block -- indistinguishable from the closing
+    delimiter to a splitter that scans for the first bare `---` line
+    (exactly what the locked outer test's frontmatter parser does). Forcing
+    double-quoted scalars guarantees no `---` line can ever appear inside
+    the frontmatter body itself.
+    """
+    frontmatter_yaml = yaml.safe_dump(
+        frontmatter, sort_keys=False, allow_unicode=True, default_style='"'
+    )
     return f"---\n{frontmatter_yaml}---\n{body}"
 
 
