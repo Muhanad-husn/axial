@@ -26,6 +26,13 @@ no network access:
 The real provider, OpenRouter, is a thin HTTP client behind the same
 interface, built with `httpx` (already a transitive dependency of docling;
 added here as a direct one since it's imported directly).
+
+Every error this module can raise is an `LLMError` (or a subclass), so
+callers -- e.g. `axial.envelope.run_envelope` -- can catch one type and wrap
+it into their own typed error hierarchy instead of letting a bare
+`ValueError`/`httpx` exception/traceback escape to the CLI.
+`LLMConfigError` (missing API key, unknown provider) also subclasses
+`ValueError` for backward compatibility with existing callers.
 """
 
 from __future__ import annotations
@@ -99,7 +106,17 @@ class ExplodingLLMClient:
         )
 
 
-class OpenRouterError(Exception):
+class LLMError(Exception):
+    """Base class for all LLM-client errors (config, transport, response)."""
+
+
+class LLMConfigError(LLMError, ValueError):
+    """Raised for a misconfigured LLM provider: a missing API key or an
+    unknown `provider` value. Subclasses `ValueError` too, so existing
+    callers that catch `ValueError` for this condition keep working."""
+
+
+class OpenRouterError(LLMError):
     """Raised when the OpenRouter API returns an error or malformed response."""
 
 
@@ -161,7 +178,7 @@ def _build_openrouter_client(llm_config: dict[str, Any]) -> OpenRouterClient:
     api_key_env = llm_config.get("api_key_env", "OPENROUTER_API_KEY")
     api_key = os.environ.get(api_key_env)
     if not api_key:
-        raise ValueError(
+        raise LLMConfigError(
             f"OpenRouter provider selected but {api_key_env!r} is not set in the environment"
         )
     return OpenRouterClient(api_key=api_key, model=model, base_url=base_url)
@@ -182,4 +199,4 @@ def get_client(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> LLMClient:
         return ExplodingLLMClient()
     if provider == "openrouter":
         return _build_openrouter_client(llm_config)
-    raise ValueError(f"unknown LLM provider: {provider!r}")
+    raise LLMConfigError(f"unknown LLM provider: {provider!r}")

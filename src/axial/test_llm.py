@@ -117,6 +117,43 @@ def test_get_client_unknown_provider_raises(monkeypatch, tmp_path):
         get_client(config_path=tmp_path / "does_not_exist.yaml")
 
 
+# --- typed LLM error hierarchy (so callers can catch one type and wrap it,
+# instead of a bare ValueError/traceback reaching the CLI) -------------------
+
+
+def test_missing_api_key_raises_llm_config_error(monkeypatch, tmp_path):
+    from axial.llm import LLMConfigError, PROVIDER_ENV_VAR, get_client
+
+    monkeypatch.delenv(PROVIDER_ENV_VAR, raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text("llm:\n  provider: openrouter\n", encoding="utf-8")
+
+    with pytest.raises(LLMConfigError):
+        get_client(config_path=config_path)
+
+
+def test_unknown_provider_raises_llm_config_error(monkeypatch, tmp_path):
+    from axial.llm import LLMConfigError, PROVIDER_ENV_VAR, get_client
+
+    monkeypatch.setenv(PROVIDER_ENV_VAR, "not-a-real-provider")
+
+    with pytest.raises(LLMConfigError):
+        get_client(config_path=tmp_path / "does_not_exist.yaml")
+
+
+def test_llm_config_error_is_an_llm_error():
+    from axial.llm import LLMConfigError, LLMError
+
+    assert issubclass(LLMConfigError, LLMError)
+
+
+def test_openrouter_error_is_an_llm_error():
+    from axial.llm import LLMError, OpenRouterError
+
+    assert issubclass(OpenRouterError, LLMError)
+
+
 # --- OpenRouter client: mocked transport, never a live network call --------
 
 

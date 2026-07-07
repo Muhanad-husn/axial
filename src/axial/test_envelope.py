@@ -297,6 +297,61 @@ def test_run_envelope_wraps_extraction_failures(monkeypatch, tmp_path):
         )
 
 
+def test_run_envelope_wraps_llm_client_selection_errors(monkeypatch, tmp_path):
+    """A missing API key / unknown provider (`LLMConfigError`, raised by
+    `get_client()`) must surface as a typed `EnvelopeError`, not a bare
+    `ValueError`/traceback -- so the CLI's `except EnvelopeError` handler in
+    `cli.py` renders a clean `error: ...` for a real-provider misconfiguration
+    instead of crashing (see llm.py's LLMError hierarchy)."""
+    import axial.envelope as envelope_mod
+    from axial.llm import LLMConfigError
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(envelope_mod, "extract", lambda path: _tree_with_sections())
+
+    def _boom(*args, **kwargs):
+        raise LLMConfigError("unknown LLM provider: 'bogus'")
+
+    monkeypatch.setattr(envelope_mod, "get_client", _boom)
+
+    with pytest.raises(envelope_mod.LLMFailedError) as exc_info:
+        envelope_mod.run_envelope(source, client=None, envelopes_dir=tmp_path / "envelopes")
+
+    assert isinstance(exc_info.value, envelope_mod.EnvelopeError)
+
+
+def test_run_envelope_honors_the_configured_envelopes_dir_when_not_passed_explicitly(
+    monkeypatch, tmp_path
+):
+    """`paths.envelopes_dir` in `config/pipeline.yaml` must actually be read
+    and honored as the default output directory when `run_envelope` is
+    called without an explicit `envelopes_dir` -- the config key is not
+    dead. Mirrors how `get_client()` reads a `config_path`-relative file."""
+    import axial.envelope as envelope_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    configured_dir = tmp_path / "configured-envelopes"
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text(
+        f"paths:\n  envelopes_dir: {configured_dir.as_posix()}\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(envelope_mod, "extract", lambda path: _tree_with_sections())
+
+    envelope_mod.run_envelope(source, client=StubLLMClient(), config_path=config_path)
+
+    written = list(configured_dir.glob("*.json"))
+    assert len(written) == 1, (
+        f"expected the envelope to be written under the configured "
+        f"envelopes_dir {configured_dir}, found: {written}"
+    )
+
+
 def test_run_envelope_writes_a_file_that_round_trips_the_locked_fields(monkeypatch, tmp_path):
     import axial.envelope as envelope_mod
 

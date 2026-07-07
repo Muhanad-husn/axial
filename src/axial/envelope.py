@@ -18,8 +18,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+import httpx
+import yaml
+
 from axial.extract import ExtractError, extract
-from axial.llm import LLMClient, get_client
+from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient, LLMError, get_client
 
 ENVELOPES_DIR = Path("data/envelopes")
 
@@ -65,6 +68,17 @@ class ExtractionFailedError(EnvelopeError):
         super().__init__(str(cause))
 
 
+class LLMFailedError(EnvelopeError):
+    """Raised when the LLM client -- selection/config or the completion call
+    itself -- fails (e.g. a missing API key, an unknown provider, or a
+    provider transport error), so the CLI renders a clean `error: ...`
+    instead of a bare traceback."""
+
+    def __init__(self, cause: LLMError | httpx.HTTPError):
+        self.cause = cause
+        super().__init__(str(cause))
+
+
 class EnvelopeParseError(EnvelopeError):
     """Raised when the model's response is not parseable as a JSON object."""
 
@@ -88,6 +102,21 @@ def compute_source_id(path: Path) -> str:
 def envelope_path(source_id: str, envelopes_dir: Path = ENVELOPES_DIR) -> Path:
     """The write-once path for `source_id`'s envelope JSON."""
     return envelopes_dir / f"{source_id}.json"
+
+
+def _default_envelopes_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
+    """Read `paths.envelopes_dir` from `config/pipeline.yaml` (the same
+    pipeline-config file `llm.get_client` reads its `llm:` block from), so
+    the config-declared path is actually honored rather than only the
+    hardcoded `ENVELOPES_DIR` default. An absent file/key falls back to
+    `ENVELOPES_DIR`."""
+    if not config_path.is_file():
+        return ENVELOPES_DIR
+    with config_path.open("r", encoding="utf-8") as handle:
+        document = yaml.safe_load(handle) or {}
+    paths_config = document.get("paths", {}) or {}
+    configured = paths_config.get("envelopes_dir")
+    return Path(configured) if configured else ENVELOPES_DIR
 
 
 def _is_envelope_heading(node: dict) -> bool:
@@ -192,9 +221,14 @@ def write_envelope(envelope: dict[str, Any], path: Path) -> None:
 def run_envelope(
     source_path: str | Path,
     client: LLMClient | None = None,
-    envelopes_dir: Path = ENVELOPES_DIR,
+    envelopes_dir: Path | None = None,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
 ) -> dict[str, Any]:
     """Run the structural-envelope pass on `source_path`.
+
+    `envelopes_dir` defaults to `config/pipeline.yaml`'s `paths.envelopes_dir`
+    (falling back to `ENVELOPES_DIR` if the file/key is absent) when not
+    given explicitly, so the config-declared path is actually honored.
 
     Computes the stable source_id first (no LLM call needed) and checks
     `data/envelopes/<source_id>.json` before doing anything else: a cache
@@ -203,6 +237,9 @@ def run_envelope(
     """
     path = Path(source_path)
     source_id = compute_source_id(path)
+
+    if envelopes_dir is None:
+        envelopes_dir = _default_envelopes_dir(config_path)
 
     out_path = envelope_path(source_id, envelopes_dir)
     if out_path.exists():
@@ -215,9 +252,12 @@ def run_envelope(
 
     prompt = compose_prompt(tree)
 
-    if client is None:
-        client = get_client()
-    raw_response = client.complete(prompt)
+    try:
+        if client is None:
+            client = get_client(config_path=config_path)
+        raw_response = client.complete(prompt)
+    except (LLMError, httpx.HTTPError) as exc:
+        raise LLMFailedError(exc) from exc
 
     parsed = parse_response(raw_response)
     validate_envelope_fields(parsed)
