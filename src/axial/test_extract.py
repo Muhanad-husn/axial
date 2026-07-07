@@ -74,6 +74,36 @@ def test_normalize_produces_a_nested_tree_not_a_flat_list():
     assert section["children"], "expected the section to nest its content"
 
 
+def test_normalize_flattens_content_before_first_section_header_to_top_level():
+    from axial.extract import normalize
+
+    doc = DoclingDocument(name="preamble")
+    doc.add_text(label=DocItemLabel.TEXT, text="Preamble paragraph.")
+    doc.add_heading(text="Introduction", level=1)
+    doc.add_text(label=DocItemLabel.TEXT, text="First paragraph.")
+
+    tree = normalize(doc)
+
+    preamble, section = tree["children"]
+    assert preamble["type"] == "prose"
+    assert preamble["order"] == "1"
+    assert preamble["text"] == "Preamble paragraph."
+    assert "children" not in preamble
+
+    assert section["order"] == "2"
+    assert section["children"][0]["order"] == "2.1"
+
+
+def test_normalize_empty_document_yields_empty_children_without_crashing():
+    from axial.extract import normalize
+
+    doc = DoclingDocument(name="empty")
+
+    tree = normalize(doc)
+
+    assert tree == {"children": []}
+
+
 def test_normalize_is_deterministic_across_runs():
     from axial.extract import normalize
 
