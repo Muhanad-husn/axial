@@ -11,11 +11,18 @@ envelope exists yet, this pass raises a typed error telling the caller to run
 `axial envelope` first -- it never falls back to recomputing one.
 
 Chunk records carry a stable, deterministic `chunk_id` (`<source_id>_<section
-slug>_<NNN>`, derived from the source_id, the section's own verbatim heading,
-and the chunk's position within that section -- no randomness, no
-timestamps) and `section` (the section's verbatim heading text), satisfying
-PRD §8 P0-4's "stable chunk_ids" and "preserve section provenance". This
-slice emits chunk records to stdout only; vault persistence is slice 06.
+order>_<section slug>_<NNN>`, derived from the source_id, the section node's
+already-unique `order` field, the section's own verbatim heading, and the
+chunk's position within that section -- no randomness, no timestamps) and
+`section` (the section's verbatim heading text), satisfying PRD §8 P0-4's
+"stable chunk_ids" and "preserve section provenance". The `order` component
+is required for uniqueness: `extract.py`'s tree-builder opens a new
+top-level section node for every heading in reading order without nesting,
+so a real source can have multiple top-level sections sharing the same
+heading text (e.g. repeated "Introduction"/"Notes"/"Conclusion" across
+chapters) -- the heading slug alone would collide across them, but each
+section's `order` is unique by construction. This slice emits chunk records
+to stdout only; vault persistence is slice 06.
 """
 
 from __future__ import annotations
@@ -35,7 +42,7 @@ from axial.envelope import (
 )
 from axial.extract import ExtractError, extract
 from axial.llm import (
-    CHUNK_PROMPT_MARKER,
+    CHUNK_PASS_NAME,
     DEFAULT_PIPELINE_CONFIG_PATH,
     LLMClient,
     LLMError,
@@ -43,7 +50,6 @@ from axial.llm import (
 )
 
 _CHUNK_PROMPT_TEMPLATE = """\
-{marker}
 You are deciding argumentative chunk boundaries for the TARGET SECTION below, \
 given this source's structural envelope and its surrounding sections for \
 context. Chunks should reflect argumentative units (a claim and its \
@@ -176,7 +182,6 @@ def compose_chunk_prompt(
     neighbours = "\n\n".join(neighbour_texts) if neighbour_texts else _NO_NEIGHBOURS_PLACEHOLDER
 
     return _CHUNK_PROMPT_TEMPLATE.format(
-        marker=CHUNK_PROMPT_MARKER,
         stated_argument=envelope.get("stated_argument", ""),
         thesis=envelope.get("thesis", ""),
         scope=envelope.get("scope", ""),
@@ -218,17 +223,25 @@ def parse_response(raw: str) -> list[dict[str, Any]]:
 
 
 def build_chunk_records(
-    source_id: str, section_label: str, chunks: list[dict[str, Any]]
+    source_id: str, section_order: str, section_label: str, chunks: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Assemble chunk records carrying a stable, deterministic `chunk_id`
-    (`<source_id>_<section slug>_<NNN>`) and `section` (the section's own
-    verbatim heading), per PRD §8 P0-4."""
+    (`<source_id>_<section order>_<section slug>_<NNN>`) and `section` (the
+    section's own verbatim heading), per PRD §8 P0-4.
+
+    `section_order` (the section node's own `order` field, e.g. "1", "2") is
+    folded into the id specifically so that two distinct top-level sections
+    sharing the same heading text (extract.py opens a fresh section node per
+    heading occurrence, unnested) never collide on chunk_id -- the heading
+    slug alone is not unique across a real multi-chapter source.
+    """
     slug = _slugify(section_label)
+    order_key = section_order.replace(".", "-") if section_order else "0"
     records = []
     for index, chunk in enumerate(chunks, start=1):
         records.append(
             {
-                "chunk_id": f"{source_id}_{slug}_{index:03d}",
+                "chunk_id": f"{source_id}_{order_key}_{slug}_{index:03d}",
                 "section": section_label,
                 "text": chunk["text"],
             }
@@ -290,11 +303,12 @@ def run_chunk(
         prompt = compose_chunk_prompt(section, prev_section, next_section, envelope)
 
         try:
-            raw_response = client.complete(prompt)
+            raw_response = client.complete(prompt, pass_name=CHUNK_PASS_NAME)
         except (LLMError, httpx.HTTPError) as exc:
             raise LLMFailedError(exc) from exc
 
         chunks = parse_response(raw_response)
-        all_records.extend(build_chunk_records(source_id, section_label, chunks))
+        section_order = section.get("order", "")
+        all_records.extend(build_chunk_records(source_id, section_order, section_label, chunks))
 
     return all_records

@@ -13,16 +13,22 @@ require no network access:
 
     AXIAL_LLM_PROVIDER=stub     -> StubLLMClient, a fixture-canned client
                                      used by tests and CI (no network). Its
-                                     canned response is pass-aware: a prompt
-                                     containing CHUNK_PROMPT_MARKER (the
-                                     chunking pass, src/axial/chunk.py) gets
-                                     a chunk-shaped canned response; any
-                                     other prompt (the envelope pass) gets
-                                     the original envelope-shaped one. This
-                                     resolves the shared-stub collision
-                                     between passes with different response
-                                     shapes -- see tests/test_chunk.py's
-                                     module docstring, seam decision 1.
+                                     canned response is pass-aware via the
+                                     `pass_name` argument to `.complete()`
+                                     (e.g. `pass_name="chunk"`, passed by
+                                     src/axial/chunk.py, selects a
+                                     chunk-shaped canned response; anything
+                                     else -- including the envelope pass,
+                                     which never passes it -- gets the
+                                     original envelope-shaped one). Dispatch
+                                     is out-of-band (a call argument), never
+                                     embedded in the prompt text itself, so
+                                     no internal marker ever reaches a real
+                                     model. This resolves the shared-stub
+                                     collision between passes with different
+                                     response shapes -- see
+                                     tests/test_chunk.py's module docstring,
+                                     seam decision 1.
     AXIAL_LLM_PROVIDER=explode  -> ExplodingLLMClient, a poison client whose
                                      `.complete()` raises if ever invoked.
                                      Selecting it is never itself an error --
@@ -35,19 +41,23 @@ require no network access:
     AXIAL_LLM_PROVIDER=record   -> RecordLLMClient. Delegates to the exact
                                      same canned-response dispatch as `stub`
                                      (so its replies are indistinguishable
-                                     from `stub`'s for the same prompt), with
-                                     one side effect: every prompt received
-                                     by `.complete()` is appended, JSON-
-                                     encoded on its own line, to the file
-                                     named by `AXIAL_LLM_RECORD_PATH`
-                                     (creating parent directories as
-                                     needed). This is the seam that makes an
-                                     assembled prompt observable black-box
-                                     from a subprocess test.
+                                     from `stub`'s for the same prompt/
+                                     pass_name), with one side effect: every
+                                     prompt received by `.complete()` is
+                                     appended, JSON-encoded on its own line,
+                                     to the file named by
+                                     `AXIAL_LLM_RECORD_PATH` (creating parent
+                                     directories as needed). This is the
+                                     seam that makes an assembled prompt
+                                     observable black-box from a subprocess
+                                     test.
 
 The real provider, OpenRouter, is a thin HTTP client behind the same
 interface, built with `httpx` (already a transitive dependency of docling;
-added here as a direct one since it's imported directly).
+added here as a direct one since it's imported directly). It accepts and
+ignores the `pass_name` argument -- that seam exists only so the
+stub/record test clients can pick a canned response, and must never affect
+what is actually sent to a real model.
 
 Every error this module can raise is an `LLMError` (or a subclass), so
 callers -- e.g. `axial.envelope.run_envelope` -- can catch one type and wrap
@@ -72,18 +82,24 @@ RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
 DEFAULT_PIPELINE_CONFIG_PATH = Path("config/pipeline.yaml")
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# Stable marker every chunking-pass prompt carries (see src/axial/chunk.py),
-# used by the stub/record canned-response dispatch below to tell a chunking
-# prompt apart from an envelope prompt without either pass dictating the
-# other's response schema.
-CHUNK_PROMPT_MARKER = "AXIAL_CHUNK_PASS_V1"
+# Pass name a chunking-pass call identifies itself with (see
+# src/axial/chunk.py), passed out-of-band as `pass_name` to `.complete()` --
+# never embedded in the prompt text -- so the stub/record canned-response
+# dispatch below can tell a chunking call apart from an envelope call
+# without leaking an internal marker into a real model's prompt.
+CHUNK_PASS_NAME = "chunk"
 
 
 class LLMClient(Protocol):
     """A single-method completion interface every provider implements."""
 
-    def complete(self, prompt: str) -> str:
-        """Send `prompt` to the model and return its raw text response."""
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        """Send `prompt` to the model and return its raw text response.
+
+        `pass_name` identifies which pass is calling (e.g. "chunk") purely
+        for the test-only stub/record clients' canned-response dispatch; a
+        real provider must accept and ignore it.
+        """
         ...
 
 
@@ -109,13 +125,13 @@ class StubLLMClient:
         }
     )
 
-    # Canned response for a chunking-pass prompt (identified by
-    # CHUNK_PROMPT_MARKER). Deliberately generic/unrelated to any particular
-    # fixture's body text: the chunking pass owns chunk_id/section
-    # provenance itself (derived from the source_id and section label, not
-    # from the model), so the canned "chunks" here only need to be a
-    # well-formed, non-empty array of chunk-text objects for the parser to
-    # turn into records.
+    # Canned response for a chunking-pass call (identified by
+    # `pass_name=CHUNK_PASS_NAME`, never by prompt content). Deliberately
+    # generic/unrelated to any particular fixture's body text: the chunking
+    # pass owns chunk_id/section provenance itself (derived from the
+    # source_id and section label, not from the model), so the canned
+    # "chunks" here only need to be a well-formed, non-empty array of
+    # chunk-text objects for the parser to turn into records.
     _CANNED_CHUNK_RESPONSE = json.dumps(
         {
             "chunks": [
@@ -128,18 +144,18 @@ class StubLLMClient:
     def __init__(self) -> None:
         self.call_count = 0
 
-    def complete(self, prompt: str) -> str:
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
         self.call_count += 1
-        return _canned_response_for(prompt)
+        return _canned_response_for(pass_name)
 
 
-def _canned_response_for(prompt: str) -> str:
-    """Dispatch the canned response by pass: a chunking-pass prompt (carrying
-    CHUNK_PROMPT_MARKER) gets the chunk-shaped canned response; anything else
-    (the envelope pass) gets the original envelope-shaped canned response.
-    Shared by `StubLLMClient` and `RecordLLMClient` so `record` is
-    indistinguishable from `stub` for the same prompt."""
-    if CHUNK_PROMPT_MARKER in prompt:
+def _canned_response_for(pass_name: str | None) -> str:
+    """Dispatch the canned response by pass: `pass_name == CHUNK_PASS_NAME`
+    gets the chunk-shaped canned response; anything else (the envelope pass,
+    which never passes `pass_name`) gets the original envelope-shaped canned
+    response. Shared by `StubLLMClient` and `RecordLLMClient` so `record` is
+    indistinguishable from `stub` for the same call."""
+    if pass_name == CHUNK_PASS_NAME:
         return StubLLMClient._CANNED_CHUNK_RESPONSE
     return StubLLMClient._CANNED_RESPONSE
 
@@ -148,7 +164,7 @@ class RecordLLMClient:
     """Test/CI-only client selected via `AXIAL_LLM_PROVIDER=record`: appends
     every prompt it receives, JSON-encoded on its own line, to
     `AXIAL_LLM_RECORD_PATH` (creating parent directories as needed), then
-    returns exactly what `StubLLMClient` would return for that same prompt.
+    returns exactly what `StubLLMClient` would return for that same call.
     This makes an assembled prompt observable black-box from a subprocess
     test without inventing a second canned-response contract."""
 
@@ -156,12 +172,12 @@ class RecordLLMClient:
         self._record_path = record_path
         self.call_count = 0
 
-    def complete(self, prompt: str) -> str:
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
         self.call_count += 1
         self._record_path.parent.mkdir(parents=True, exist_ok=True)
         with self._record_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(prompt) + "\n")
-        return _canned_response_for(prompt)
+        return _canned_response_for(pass_name)
 
 
 class ExplodingLLMClient:
@@ -174,7 +190,7 @@ class ExplodingLLMClient:
     this provider configured.
     """
 
-    def complete(self, prompt: str) -> str:
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
         raise RuntimeError(
             "ExplodingLLMClient.complete() was invoked -- this indicates an "
             "LLM-backed pass attempted to recompute instead of reusing a "
@@ -215,7 +231,7 @@ class OpenRouterClient:
         self._model = model
         self._client = httpx.Client(base_url=base_url, transport=transport)
 
-    def complete(self, prompt: str) -> str:
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
         response = self._client.post(
             "/chat/completions",
             headers={"Authorization": f"Bearer {self._api_key}"},

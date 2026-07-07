@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from axial.llm import CHUNK_PROMPT_MARKER, StubLLMClient
+from axial.llm import CHUNK_PASS_NAME, StubLLMClient
 
 
 def _tree_with_sections(*, middle_body: bool = True) -> dict:
@@ -65,7 +65,21 @@ def test_compose_chunk_prompt_contains_target_envelope_and_both_neighbours():
     assert "Intro body sentence." in prompt
     assert "Conclusion body sentence." in prompt
     assert _ENVELOPE["stated_argument"] in prompt
-    assert CHUNK_PROMPT_MARKER in prompt
+
+
+def test_compose_chunk_prompt_never_leaks_the_internal_pass_dispatch_marker():
+    """The chunk prompt is what a real model (OpenRouter) sees verbatim, so
+    it must never carry an internal test-dispatch marker -- pass identity is
+    threaded out-of-band via `pass_name` on `.complete()`, not embedded in
+    prompt text."""
+    from axial.chunk import compose_chunk_prompt
+
+    tree = _tree_with_sections()
+    intro, middle, conclusion = tree["children"]
+
+    prompt = compose_chunk_prompt(middle, intro, conclusion, _ENVELOPE)
+
+    assert "AXIAL_CHUNK_PASS_V1" not in prompt
 
 
 def test_compose_chunk_prompt_with_no_neighbours_still_contains_target_and_envelope():
@@ -141,12 +155,12 @@ def test_build_chunk_records_have_stable_ids_and_section_provenance():
     from axial.chunk import build_chunk_records
 
     records = build_chunk_records(
-        "paper-abc123", "Comparative Cases", [{"text": "a"}, {"text": "b"}]
+        "paper-abc123", "2", "Comparative Cases", [{"text": "a"}, {"text": "b"}]
     )
 
     assert [r["chunk_id"] for r in records] == [
-        "paper-abc123_comparative-cases_001",
-        "paper-abc123_comparative-cases_002",
+        "paper-abc123_2_comparative-cases_001",
+        "paper-abc123_2_comparative-cases_002",
     ]
     assert all(r["section"] == "Comparative Cases" for r in records)
 
@@ -155,10 +169,27 @@ def test_build_chunk_records_is_deterministic_across_calls():
     from axial.chunk import build_chunk_records
 
     chunks = [{"text": "a"}, {"text": "b"}]
-    first = build_chunk_records("paper-abc123", "Conclusion", chunks)
-    second = build_chunk_records("paper-abc123", "Conclusion", chunks)
+    first = build_chunk_records("paper-abc123", "3", "Conclusion", chunks)
+    second = build_chunk_records("paper-abc123", "3", "Conclusion", chunks)
 
     assert [r["chunk_id"] for r in first] == [r["chunk_id"] for r in second]
+
+
+def test_build_chunk_records_does_not_collide_across_sections_sharing_a_heading():
+    """extract.py's tree-builder opens a fresh top-level section node per
+    heading occurrence (unnested), so a real source can have two distinct
+    sections both titled e.g. "Introduction" -- folding the section's own
+    `order` into chunk_id must keep their chunk_ids from colliding even
+    though the heading slug is identical (review finding: chunk_id
+    collisions on duplicate section headings)."""
+    from axial.chunk import build_chunk_records
+
+    chunks = [{"text": "a"}]
+    first_chapter = build_chunk_records("paper-abc123", "1", "Introduction", chunks)
+    second_chapter = build_chunk_records("paper-abc123", "4", "Introduction", chunks)
+
+    assert first_chapter[0]["chunk_id"] != second_chapter[0]["chunk_id"]
+    assert first_chapter[0]["section"] == second_chapter[0]["section"] == "Introduction"
 
 
 # --- run_chunk: envelope-required, no-recompute, neighbour context ----------
@@ -251,6 +282,74 @@ def test_run_chunk_produces_chunk_ids_stable_across_repeat_runs(monkeypatch, tmp
     second = chunk_mod.run_chunk(source, client=StubLLMClient(), envelopes_dir=envelopes_dir)
 
     assert {r["chunk_id"] for r in first} == {r["chunk_id"] for r in second}
+
+
+def test_run_chunk_calls_the_client_with_the_chunk_pass_name(monkeypatch, tmp_path):
+    """The chunk pass must identify itself out-of-band via `pass_name`
+    (never embedded in the prompt text) so stub/record dispatch correctly
+    without leaking an internal marker into a real model's prompt."""
+    import axial.chunk as chunk_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+    envelopes_dir = tmp_path / "envelopes"
+    envelopes_dir.mkdir()
+
+    source_id = chunk_mod.compute_source_id(source)
+    env_path = chunk_mod.envelope_path(source_id, envelopes_dir)
+    env_path.write_text(json.dumps(_ENVELOPE), encoding="utf-8")
+
+    monkeypatch.setattr(chunk_mod, "extract", lambda path: _tree_with_sections())
+
+    calls = []
+
+    class _CapturingClient:
+        def complete(self, prompt, pass_name=None):
+            calls.append(pass_name)
+            return json.dumps({"chunks": [{"text": "a"}]})
+
+    chunk_mod.run_chunk(source, client=_CapturingClient(), envelopes_dir=envelopes_dir)
+
+    assert calls and all(name == CHUNK_PASS_NAME for name in calls)
+
+
+def test_run_chunk_gives_distinct_chunk_ids_for_sections_sharing_a_heading(monkeypatch, tmp_path):
+    import axial.chunk as chunk_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+    envelopes_dir = tmp_path / "envelopes"
+    envelopes_dir.mkdir()
+
+    source_id = chunk_mod.compute_source_id(source)
+    env_path = chunk_mod.envelope_path(source_id, envelopes_dir)
+    env_path.write_text(json.dumps(_ENVELOPE), encoding="utf-8")
+
+    duplicate_heading_tree = {
+        "children": [
+            {
+                "type": "prose",
+                "order": "1",
+                "text": "Introduction",
+                "children": [{"type": "prose", "order": "1.1", "text": "Chapter one intro."}],
+            },
+            {
+                "type": "prose",
+                "order": "2",
+                "text": "Introduction",
+                "children": [{"type": "prose", "order": "2.1", "text": "Chapter two intro."}],
+            },
+        ]
+    }
+    monkeypatch.setattr(chunk_mod, "extract", lambda path: duplicate_heading_tree)
+
+    records = chunk_mod.run_chunk(source, client=StubLLMClient(), envelopes_dir=envelopes_dir)
+
+    chunk_ids = [r["chunk_id"] for r in records]
+    assert len(chunk_ids) == len(set(chunk_ids)), (
+        f"expected no chunk_id collisions across sections sharing a heading, got: {chunk_ids}"
+    )
+    assert all(r["section"] == "Introduction" for r in records)
 
 
 def test_run_chunk_wraps_extraction_failures(monkeypatch, tmp_path):
