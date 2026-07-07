@@ -1,0 +1,104 @@
+"""Corpus intake: extension gate + text-layer probe (PRD §5 stage 1, §8 P0-1).
+
+Accepts only `.pdf` and `.docx`. Rejects everything else with a clear,
+typed, logged reason. Verifies a real text layer exists before anything
+downstream runs -- a scanned/image-only PDF is rejected, never silently
+passed through an OCR path (there is none in this slice).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from docx import Document
+from pypdf import PdfReader
+
+SUPPORTED_EXTENSIONS = {".pdf", ".docx"}
+
+
+class IntakeError(Exception):
+    """Base class for all intake errors."""
+
+
+class UnsupportedExtensionError(IntakeError):
+    """Raised when a file's extension is not among SUPPORTED_EXTENSIONS."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.extension = path.suffix
+        super().__init__(
+            f"unsupported file extension {self.extension!r} for {path}; "
+            f"expected one of {sorted(SUPPORTED_EXTENSIONS)}"
+        )
+
+
+class MissingSourceFileError(IntakeError):
+    """Raised when the input path does not exist or is not a file."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        super().__init__(f"missing or unreadable source file: {path}")
+
+
+class NoTextLayerError(IntakeError):
+    """Raised when a source has no extractable text layer."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        super().__init__(
+            f"no text layer found in {path}; scanned/image-only sources are rejected "
+            "(no OCR path in this slice)"
+        )
+
+
+@dataclass
+class Source:
+    """Source-metadata stub returned on successful intake."""
+
+    path: Path
+    format: str
+    text_layer_ok: bool
+
+
+def check_extension(path: Path) -> str:
+    """Validate `path`'s extension and return the detected format ('pdf'/'docx')."""
+    extension = path.suffix.lower()
+    if extension not in SUPPORTED_EXTENSIONS:
+        raise UnsupportedExtensionError(path)
+    return extension.lstrip(".")
+
+
+def _pdf_has_text_layer(path: Path) -> bool:
+    reader = PdfReader(str(path))
+    text = "".join(page.extract_text() or "" for page in reader.pages)
+    return bool(text.strip())
+
+
+def _docx_has_text_layer(path: Path) -> bool:
+    document = Document(str(path))
+    return any(paragraph.text.strip() for paragraph in document.paragraphs)
+
+
+def has_text_layer(path: Path, fmt: str) -> bool:
+    """Probe `path` (of detected format `fmt`, 'pdf' or 'docx') for real body text."""
+    if fmt == "pdf":
+        return _pdf_has_text_layer(path)
+    if fmt == "docx":
+        return _docx_has_text_layer(path)
+    raise ValueError(f"unknown format {fmt!r}")  # pragma: no cover - guarded by check_extension
+
+
+def intake(path: str | Path) -> Source:
+    """Run intake on `path`: validate extension, verify a text layer, return metadata."""
+    path = Path(path)
+
+    if not path.is_file():
+        raise MissingSourceFileError(path)
+
+    fmt = check_extension(path)
+
+    if not has_text_layer(path, fmt):
+        raise NoTextLayerError(path)
+
+    return Source(path=path, format=fmt, text_layer_ok=True)
