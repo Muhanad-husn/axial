@@ -21,11 +21,29 @@ jobs:
         with:
           enable-cache: true
 
+      # docling downloads its layout + TableFormer weights from the Hugging Face
+      # Hub on first conversion (docling-project/docling-layout-heron and
+      # docling-project/docling-models). Cache them across runs so only the very
+      # first run pays the download; OCR is disabled in extract.py, so no
+      # modelscope/RapidOCR weights are ever fetched.
+      - name: Cache docling model weights
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-cache-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            hf-cache-
+
       - name: Install dependencies
         run: uv sync
 
+      # The one real-docling end-to-end unit test is marked `slow`; it is
+      # deselected here because the outer acceptance test (tests/test_extract.py)
+      # already exercises the real docling path end-to-end via the CLI. Every
+      # other test - all fast unit tests and every outer acceptance contract -
+      # runs.
       - name: Run test suite
-        run: uv run pytest -q
+        run: uv run pytest -q -m "not slow"
 
       - name: Lint
         run: uv run ruff check .
