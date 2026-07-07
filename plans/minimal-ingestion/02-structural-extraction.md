@@ -5,7 +5,7 @@
 - **GitHub issue:** #14
 - **Branch:** feat/minimal-ingestion/02-structural-extraction
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ PR #20 open — awaiting founder merge approval
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -63,3 +63,8 @@ And   each node preserves its source ordering / section provenance
 ## Status / progress log
 
 - 2026-07-06 planned.
+- 2026-07-07 built test-first: red outer test (58c6e99), docling implementation
+  (ad60e05), OCR disabled per §3 (d68c9a3), CI docling-weight caching (b8fb913),
+  edge-case regression tests (561cb80), evidence (c185bb4). Reviewer two-stage
+  review passed (Stage 1 spec-compliance PASS, Stage 2 no blocking findings).
+  Full suite 68 passed. PR #20 opened into main — awaiting founder merge approval.

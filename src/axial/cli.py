@@ -1,10 +1,12 @@
 """Command-line entry point for axial."""
 
 import argparse
+import json
 import sys
 
 import axial
 from axial.codebook import CodebookError, load_codebook
+from axial.extract import ExtractError, extract
 from axial.intake import IntakeError, intake
 from axial.schema import SchemaError, load_schema
 from axial.validate import cross_validate
@@ -39,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
         "intake", help="validate a source file and probe it for a real text layer"
     )
     intake_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
+
+    extract_parser = subparsers.add_parser(
+        "extract", help="run structural extraction, emitting a hierarchical JSON tree"
+    )
+    extract_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
 
     return parser
 
@@ -87,6 +94,17 @@ def _intake(source_path: str) -> int:
     return 0
 
 
+def _extract(source_path: str) -> int:
+    try:
+        tree = extract(source_path)
+    except ExtractError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(tree, sort_keys=True))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -103,6 +121,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "intake":
         return _intake(args.source_path)
+
+    if args.command == "extract":
+        return _extract(args.source_path)
 
     parser.print_help()
     return 0

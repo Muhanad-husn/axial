@@ -1,0 +1,58 @@
+# axial extract — real CLI invocation through the boundary (slice 02)
+
+$ axial extract tests/fixtures/extract/prose_and_table.pdf
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  43%|####3     | 332/770 [00:00<00:00, 3305.88it/s]Loading weights:  86%|########6 | 663/770 [00:00<00:00, 3151.21it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 3173.15it/s]
+{
+    "children": [
+        {
+            "children": [
+                {
+                    "label": "text",
+                    "order": "1.1",
+                    "text": "This document is a fixture for testing structural extraction. It contains ordinary prose describing a simple argument about state formation, followed by a table of illustrative data.",
+                    "type": "prose"
+                },
+                {
+                    "label": "text",
+                    "order": "1.2",
+                    "text": "The argument proceeds in two stages: first a claim is stated, then supporting evidence is presented in tabular form below.",
+                    "type": "prose"
+                },
+                {
+                    "label": "table",
+                    "order": "1.3",
+                    "type": "artifact"
+                }
+            ],
+            "label": "section_header",
+            "order": "1",
+            "text": "Introduction",
+            "type": "prose"
+        },
+        {
+            "children": [
+                {
+                    "label": "text",
+                    "order": "2.1",
+                    "text": "The table above illustrates three cases with divergent outcomes despite similar starting conditions, motivating the comparative discussion that follows.",
+                    "type": "prose"
+                },
+                {
+                    "label": "text",
+                    "order": "2.2",
+                    "text": "A second paragraph of discussion prose closes out this section, giving the fixture at least two paragraphs per prose section as required by the acceptance test.",
+                    "type": "prose"
+                }
+            ],
+            "label": "section_header",
+            "order": "2",
+            "text": "Discussion",
+            "type": "prose"
+        }
+    ]
+}
+(exit code: 0)
+
+$ axial extract tests/fixtures/extract/does_not_exist.pdf
+error: missing or unreadable source file: tests\fixtures\extract\does_not_exist.pdf
+(exit code: 1)
