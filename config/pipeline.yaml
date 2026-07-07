@@ -14,3 +14,4 @@ llm:
 
 paths:
   envelopes_dir: data/envelopes
+  vault_dir: data/vault
