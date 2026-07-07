@@ -1,0 +1,8 @@
+$ AXIAL_LLM_PROVIDER=stub uv run axial envelope tests/fixtures/envelope/thesis_paper.pdf
+(envelope written, exit 0)
+
+$ AXIAL_LLM_PROVIDER=stub uv run axial chunk tests/fixtures/envelope/thesis_paper.pdf
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  43%|####2     | 330/770 [00:00<00:00, 3285.14it/s]Loading weights:  86%|########5 | 659/770 [00:00<00:00, 3021.24it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 3127.39it/s]
+[{"chunk_id": "thesis_paper-82bcba3c2d51_1_introduction_001", "section": "Introduction", "text": "Stub chunk one: a claim and its immediate support."}, {"chunk_id": "thesis_paper-82bcba3c2d51_1_introduction_002", "section": "Introduction", "text": "Stub chunk two: a second argumentative unit."}, {"chunk_id": "thesis_paper-82bcba3c2d51_2_comparative-cases_001", "section": "Comparative Cases", "text": "Stub chunk one: a claim and its immediate support."}, {"chunk_id": "thesis_paper-82bcba3c2d51_2_comparative-cases_002", "section": "Comparative Cases", "text": "Stub chunk two: a second argumentative unit."}, {"chunk_id": "thesis_paper-82bcba3c2d51_3_conclusion_001", "section": "Conclusion", "text": "Stub chunk one: a claim and its immediate support."}, {"chunk_id": "thesis_paper-82bcba3c2d51_3_conclusion_002", "section": "Conclusion", "text": "Stub chunk two: a second argumentative unit."}]
+
+exit code: 0

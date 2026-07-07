@@ -35,6 +35,47 @@ def test_stub_client_records_call_count():
     assert client.call_count == 2
 
 
+def test_stub_client_returns_envelope_shaped_response_for_a_non_chunk_prompt():
+    from axial.llm import StubLLMClient
+
+    client = StubLLMClient()
+
+    raw = client.complete("an ordinary envelope prompt")
+    parsed = json.loads(raw)
+
+    assert "thesis" in parsed
+    assert "chunks" not in parsed
+
+
+def test_stub_client_returns_chunk_shaped_response_for_the_chunk_pass_name():
+    from axial.llm import CHUNK_PASS_NAME, StubLLMClient
+
+    client = StubLLMClient()
+
+    raw = client.complete("some chunking prompt", pass_name=CHUNK_PASS_NAME)
+    parsed = json.loads(raw)
+
+    assert isinstance(parsed["chunks"], list) and len(parsed["chunks"]) > 0
+    for chunk in parsed["chunks"]:
+        assert isinstance(chunk["text"], str) and chunk["text"].strip()
+
+
+def test_stub_client_dispatch_is_by_pass_name_not_prompt_content():
+    """The chunk-vs-envelope canned-response dispatch must be driven by the
+    out-of-band `pass_name` argument, never by scanning prompt text -- so an
+    ordinary prompt that happens to mention "chunk" still gets the
+    envelope-shaped response when no pass_name is given."""
+    from axial.llm import StubLLMClient
+
+    client = StubLLMClient()
+
+    raw = client.complete("a prompt that happens to mention chunk boundaries")
+    parsed = json.loads(raw)
+
+    assert "thesis" in parsed
+    assert "chunks" not in parsed
+
+
 def test_exploding_client_construction_does_not_raise():
     from axial.llm import ExplodingLLMClient
 
@@ -60,6 +101,55 @@ def test_get_client_selects_stub_via_env_override(monkeypatch, tmp_path):
     client = get_client(config_path=tmp_path / "does_not_exist.yaml")
 
     assert isinstance(client, StubLLMClient)
+
+
+def test_get_client_selects_record_via_env_override(monkeypatch, tmp_path):
+    from axial.llm import PROVIDER_ENV_VAR, RECORD_PATH_ENV_VAR, RecordLLMClient, get_client
+
+    monkeypatch.setenv(PROVIDER_ENV_VAR, "record")
+    monkeypatch.setenv(RECORD_PATH_ENV_VAR, str(tmp_path / "prompts.jsonl"))
+
+    client = get_client(config_path=tmp_path / "does_not_exist.yaml")
+
+    assert isinstance(client, RecordLLMClient)
+
+
+def test_get_client_record_without_record_path_raises_llm_config_error(monkeypatch, tmp_path):
+    from axial.llm import LLMConfigError, PROVIDER_ENV_VAR, RECORD_PATH_ENV_VAR, get_client
+
+    monkeypatch.setenv(PROVIDER_ENV_VAR, "record")
+    monkeypatch.delenv(RECORD_PATH_ENV_VAR, raising=False)
+
+    with pytest.raises(LLMConfigError):
+        get_client(config_path=tmp_path / "does_not_exist.yaml")
+
+
+def test_record_client_appends_json_encoded_prompts_creating_parent_dirs(tmp_path):
+    from axial.llm import RecordLLMClient
+
+    record_path = tmp_path / "nested" / "prompts.jsonl"
+    client = RecordLLMClient(record_path)
+
+    client.complete("prompt one")
+    client.complete("prompt two")
+
+    lines = record_path.read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line) for line in lines] == ["prompt one", "prompt two"]
+
+
+def test_record_client_response_matches_stub_for_the_same_call(tmp_path):
+    from axial.llm import CHUNK_PASS_NAME, RecordLLMClient, StubLLMClient
+
+    stub = StubLLMClient()
+    record = RecordLLMClient(tmp_path / "prompts.jsonl")
+
+    envelope_prompt = "an ordinary envelope prompt"
+    chunk_prompt = "some chunking prompt"
+
+    assert record.complete(envelope_prompt) == stub.complete(envelope_prompt)
+    assert record.complete(chunk_prompt, pass_name=CHUNK_PASS_NAME) == stub.complete(
+        chunk_prompt, pass_name=CHUNK_PASS_NAME
+    )
 
 
 def test_get_client_selects_explode_via_env_override(monkeypatch, tmp_path):
@@ -199,6 +289,29 @@ def test_openrouter_client_raises_a_typed_error_on_malformed_response():
 
     with pytest.raises(OpenRouterError):
         client.complete("hello world")
+
+
+def test_openrouter_client_ignores_pass_name_and_never_forwards_it():
+    """`pass_name` is a stub/record-only dispatch seam; a real provider must
+    accept it (so callers can pass it uniformly) but never let it leak into
+    the actual request sent to the model."""
+    from axial.llm import OpenRouterClient
+
+    captured_requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    result = client.complete("hello world", pass_name="chunk")
+
+    assert result == "model reply"
+    body = json.loads(captured_requests[0].content)
+    assert body["messages"] == [{"role": "user", "content": "hello world"}]
+    assert "chunk" not in json.dumps(body)
 
 
 def test_openrouter_client_raises_on_http_error_status():

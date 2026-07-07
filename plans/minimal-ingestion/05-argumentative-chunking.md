@@ -67,3 +67,8 @@ And   the stored envelope is read from disk, not recomputed
 ## Status / progress log
 
 - 2026-07-06 planned.
+- 2026-07-07 shipped to PR. Red outer test `af8646a`, implementation `ae6797c`,
+  review fixes `32343c8` (chunk_id uniqueness via `order`; pass marker moved
+  out-of-band). Two-stage review: stage 1 pass, two stage-2 findings addressed.
+  Suite 150 passed, ruff clean. PR: https://github.com/Muhanad-husn/axial/pull/24
+  (Closes #17). Awaiting founder approval to merge.

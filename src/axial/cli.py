@@ -5,6 +5,7 @@ import json
 import sys
 
 import axial
+from axial.chunk import ChunkError, run_chunk
 from axial.codebook import CodebookError, load_codebook
 from axial.envelope import EnvelopeError, run_envelope
 from axial.extract import ExtractError, extract
@@ -53,6 +54,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="run the structural-envelope pass, writing data/envelopes/<source_id>.json",
     )
     envelope_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
+
+    chunk_parser = subparsers.add_parser(
+        "chunk",
+        help="run the argumentative-chunking pass, emitting prose chunk records to stdout",
+    )
+    chunk_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
 
     return parser
 
@@ -123,6 +130,17 @@ def _envelope(source_path: str) -> int:
     return 0
 
 
+def _chunk(source_path: str) -> int:
+    try:
+        records = run_chunk(source_path)
+    except ChunkError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(records))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -145,6 +163,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "envelope":
         return _envelope(args.source_path)
+
+    if args.command == "chunk":
+        return _chunk(args.source_path)
 
     parser.print_help()
     return 0
