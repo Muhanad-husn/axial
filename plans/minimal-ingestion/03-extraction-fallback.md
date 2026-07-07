@@ -5,7 +5,7 @@
 - **GitHub issue:** #15
 - **Branch:** feat/minimal-ingestion/03-extraction-fallback
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ PR #21 open — awaiting founder merge approval
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -64,3 +64,10 @@ And   the fallback tree uses the same prose/artifact node shape as the docling p
 ## Status / progress log
 
 - 2026-07-06 planned.
+- 2026-07-07 built test-first: red outer test (896129f) using the
+  AXIAL_FORCE_DOCLING_FAILURE seam; Unstructured fast-strategy fallback +
+  degeneracy detector + shared _build_tree (3634c92, a879556); review-found
+  Header-opens-section bug fixed (c5938c7); evidence (09e6677). Reviewer
+  two-stage review DONE_WITH_CONCERNS — Stage 1 PASS; one bug fixed; two items
+  tracked (fragile fallback nesting; env-var seam). Full suite 79 passed.
+  PR #21 opened into main — awaiting founder merge approval.

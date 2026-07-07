@@ -1,4 +1,5 @@
-"""Inner unit tests for the axial extract module (issue #14, slice 02)."""
+"""Inner unit tests for the axial extract module (issue #14 slice 02;
+issue #15 slice 03 -- extraction fallback)."""
 
 import json
 from pathlib import Path
@@ -6,6 +7,7 @@ from pathlib import Path
 import pytest
 from docling_core.types.doc.document import DoclingDocument, TableData
 from docling_core.types.doc.labels import DocItemLabel
+from unstructured.documents.elements import Header, NarrativeText, Table, Title
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "extract"
@@ -141,3 +143,135 @@ def test_extract_runs_docling_end_to_end_on_the_fixture_and_normalizes_it():
     node_types = {node["type"] for node in _iter(tree)}
     assert "prose" in node_types
     assert "artifact" in node_types
+
+
+# --- slice 03: extraction fallback (issue #15) -----------------------------
+
+
+def test_is_degenerate_flags_an_empty_docling_document():
+    from axial.extract import is_degenerate
+
+    empty_doc = DoclingDocument(name="empty")
+
+    assert is_degenerate(empty_doc) is True
+
+
+def test_is_degenerate_is_false_for_a_document_with_real_items():
+    from axial.extract import is_degenerate
+
+    assert is_degenerate(_synthetic_document()) is False
+
+
+def test_extract_routes_a_raised_docling_exception_to_the_unstructured_fallback(monkeypatch):
+    """A docling exception must not crash extract(); it must route to the
+    Unstructured adapter and still yield a normalized tree."""
+    import axial.extract as extract_mod
+
+    def _boom(path):
+        raise RuntimeError("simulated docling crash")
+
+    fake_elements = [Title(text="Section"), NarrativeText(text="Body text.")]
+
+    monkeypatch.setattr(extract_mod, "convert", _boom)
+    monkeypatch.setattr(extract_mod, "_partition_with_unstructured", lambda path: fake_elements)
+
+    tree = extract_mod.extract(PROSE_AND_TABLE_PDF)
+
+    assert tree["children"], "expected a fallback tree, not a crash"
+    assert tree["children"][0]["type"] == "prose"
+
+
+def test_extract_falls_back_when_docling_output_is_degenerate(monkeypatch):
+    """Degenerate (empty/structureless) docling output must also route to the
+    Unstructured fallback, without raising."""
+    import axial.extract as extract_mod
+
+    fake_elements = [Title(text="Section"), NarrativeText(text="Body text.")]
+
+    monkeypatch.setattr(extract_mod, "convert", lambda path: DoclingDocument(name="empty"))
+    monkeypatch.setattr(extract_mod, "_partition_with_unstructured", lambda path: fake_elements)
+
+    tree = extract_mod.extract(PROSE_AND_TABLE_PDF)
+
+    assert tree["children"], "expected a fallback tree for degenerate docling output"
+
+
+def test_normalize_unstructured_emits_the_same_prose_artifact_tree_shape():
+    from axial.extract import _normalize_unstructured
+
+    elements = [
+        Title(text="Introduction"),
+        NarrativeText(text="First paragraph."),
+        Table(text="a table cell"),
+        Title(text="Discussion"),
+        NarrativeText(text="Closing paragraph."),
+    ]
+
+    tree = _normalize_unstructured(elements)
+
+    first_section, second_section = tree["children"]
+    assert first_section["type"] == "prose"
+    assert first_section["order"] == "1"
+    assert [child["type"] for child in first_section["children"]] == ["prose", "artifact"]
+    assert [child["order"] for child in first_section["children"]] == ["1.1", "1.2"]
+
+    assert second_section["order"] == "2"
+    assert second_section["children"][0]["order"] == "2.1"
+
+
+def test_normalize_unstructured_header_does_not_open_a_section():
+    """Regression: Unstructured's `Header` element is running/page-header
+    furniture (e.g. a Word section header), not a heading over body content.
+    It must not open a section -- prose that follows it belongs at the top
+    level (or under whatever real Title section is open), never nested as
+    the header's child."""
+    from axial.extract import _normalize_unstructured
+
+    elements = [
+        Header(text="Running header"),
+        NarrativeText(text="Preamble prose."),
+    ]
+
+    tree = _normalize_unstructured(elements)
+
+    header_node, prose_node = tree["children"]
+    assert header_node["type"] == "prose"
+    assert "children" not in header_node, "Header must not open a section"
+    assert prose_node["type"] == "prose"
+    assert prose_node["order"] == "2", "prose must sit at the top level, not nested under Header"
+
+
+def test_fallback_logs_source_filename_and_reason_to_stderr(monkeypatch, capsys):
+    import axial.extract as extract_mod
+
+    fake_elements = [Title(text="Section"), NarrativeText(text="Body text.")]
+    monkeypatch.setattr(extract_mod, "_partition_with_unstructured", lambda path: fake_elements)
+
+    extract_mod._fallback(PROSE_AND_TABLE_PDF, "docling raised an exception: boom")
+
+    captured = capsys.readouterr()
+    assert captured.out == "", "the fallback log must go to stderr, not stdout"
+    stderr_lower = captured.err.lower()
+    assert "docling" in stderr_lower
+    assert "unstructured" in stderr_lower
+    assert "fallback" in stderr_lower
+    assert PROSE_AND_TABLE_PDF.name in captured.err
+
+
+def test_extract_does_not_fall_back_when_docling_succeeds(monkeypatch, capsys):
+    """No-regression: a successful docling conversion must not invoke the
+    Unstructured fallback or log anything about it."""
+    import axial.extract as extract_mod
+
+    monkeypatch.setattr(extract_mod, "convert", lambda path: _synthetic_document())
+
+    def _fail_if_called(path):
+        raise AssertionError("unstructured fallback must not run when docling succeeds")
+
+    monkeypatch.setattr(extract_mod, "_partition_with_unstructured", _fail_if_called)
+
+    tree = extract_mod.extract(PROSE_AND_TABLE_PDF)
+
+    assert tree["children"], "expected the normal docling tree"
+    captured = capsys.readouterr()
+    assert "fallback" not in captured.err.lower()
