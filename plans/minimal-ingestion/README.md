@@ -22,7 +22,7 @@ one CLI stage subcommand and builds on the previous stage's output.
 
 | # | Slice | Goal (one line) | Status | Issue | PR |
 |---|-------|-----------------|--------|-------|----|
-| 01 | [intake](01-intake.md) | `axial intake <file>` accepts PDF/DOCX with a real text layer, rejects everything else with a logged reason | ☐ todo | [#13](https://github.com/Muhanad-husn/axial/issues/13) | — |
+| 01 | [intake](01-intake.md) | `axial intake <file>` accepts PDF/DOCX with a real text layer, rejects everything else with a logged reason | ☑ in review | [#13](https://github.com/Muhanad-husn/axial/issues/13) | [#19](https://github.com/Muhanad-husn/axial/pull/19) |
 | 02 | [structural-extraction](02-structural-extraction.md) | `axial extract <file>` runs docling → a hierarchical tree separating prose from artifacts | ☐ todo | [#14](https://github.com/Muhanad-husn/axial/issues/14) | — |
 | 03 | [extraction-fallback](03-extraction-fallback.md) | on docling failure/degenerate output, `axial extract` falls back to Unstructured, logged | ☐ todo | [#15](https://github.com/Muhanad-husn/axial/issues/15) | — |
 | 04 | [structural-envelope](04-structural-envelope.md) | `axial envelope <file>` makes one LLM call/source → an envelope JSON, written once | ☐ todo | [#16](https://github.com/Muhanad-husn/axial/issues/16) | — |

@@ -5,7 +5,7 @@
 - **GitHub issue:** #13
 - **Branch:** feat/minimal-ingestion/01-intake
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ in review — PR [#19](https://github.com/Muhanad-husn/axial/pull/19)
 - **Walking skeleton?** no (phase-1 skeleton already ships package/CLI/CI)
 
 ## Goal — the minimum testable behaviour
@@ -63,3 +63,4 @@ And   against an unsupported file (e.g. .txt/.png) it exits nonzero naming the r
 ## Status / progress log
 
 - 2026-07-06 planned.
+- 2026-07-07 red outer test locked (9d4b9ac); implemented green (57 passed); reviewer two-stage pass, no findings ≥80; PR #19 prepared into main, awaiting founder approval.
