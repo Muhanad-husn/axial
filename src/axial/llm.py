@@ -8,11 +8,21 @@ Provider selection (`get_client`) reads `config/pipeline.yaml`'s `llm:`
 block for the default provider/model, but honors an environment-variable
 override, `AXIAL_LLM_PROVIDER` -- mirroring the `AXIAL_FORCE_DOCLING_FAILURE`
 fault-injection convention already established in `src/axial/extract.py`.
-Two provider values are test/CI seams, not production providers, and require
-no network access:
+Three provider values are test/CI seams, not production providers, and
+require no network access:
 
     AXIAL_LLM_PROVIDER=stub     -> StubLLMClient, a fixture-canned client
-                                     used by tests and CI (no network).
+                                     used by tests and CI (no network). Its
+                                     canned response is pass-aware: a prompt
+                                     containing CHUNK_PROMPT_MARKER (the
+                                     chunking pass, src/axial/chunk.py) gets
+                                     a chunk-shaped canned response; any
+                                     other prompt (the envelope pass) gets
+                                     the original envelope-shaped one. This
+                                     resolves the shared-stub collision
+                                     between passes with different response
+                                     shapes -- see tests/test_chunk.py's
+                                     module docstring, seam decision 1.
     AXIAL_LLM_PROVIDER=explode  -> ExplodingLLMClient, a poison client whose
                                      `.complete()` raises if ever invoked.
                                      Selecting it is never itself an error --
@@ -22,6 +32,18 @@ no network access:
                                      configuring it on a run that should hit
                                      a cache and crashing instead proves the
                                      pass tried to call the LLM again.
+    AXIAL_LLM_PROVIDER=record   -> RecordLLMClient. Delegates to the exact
+                                     same canned-response dispatch as `stub`
+                                     (so its replies are indistinguishable
+                                     from `stub`'s for the same prompt), with
+                                     one side effect: every prompt received
+                                     by `.complete()` is appended, JSON-
+                                     encoded on its own line, to the file
+                                     named by `AXIAL_LLM_RECORD_PATH`
+                                     (creating parent directories as
+                                     needed). This is the seam that makes an
+                                     assembled prompt observable black-box
+                                     from a subprocess test.
 
 The real provider, OpenRouter, is a thin HTTP client behind the same
 interface, built with `httpx` (already a transitive dependency of docling;
@@ -46,8 +68,15 @@ import httpx
 import yaml
 
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
+RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
 DEFAULT_PIPELINE_CONFIG_PATH = Path("config/pipeline.yaml")
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+# Stable marker every chunking-pass prompt carries (see src/axial/chunk.py),
+# used by the stub/record canned-response dispatch below to tell a chunking
+# prompt apart from an envelope prompt without either pass dictating the
+# other's response schema.
+CHUNK_PROMPT_MARKER = "AXIAL_CHUNK_PASS_V1"
 
 
 class LLMClient(Protocol):
@@ -80,12 +109,59 @@ class StubLLMClient:
         }
     )
 
+    # Canned response for a chunking-pass prompt (identified by
+    # CHUNK_PROMPT_MARKER). Deliberately generic/unrelated to any particular
+    # fixture's body text: the chunking pass owns chunk_id/section
+    # provenance itself (derived from the source_id and section label, not
+    # from the model), so the canned "chunks" here only need to be a
+    # well-formed, non-empty array of chunk-text objects for the parser to
+    # turn into records.
+    _CANNED_CHUNK_RESPONSE = json.dumps(
+        {
+            "chunks": [
+                {"text": "Stub chunk one: a claim and its immediate support."},
+                {"text": "Stub chunk two: a second argumentative unit."},
+            ]
+        }
+    )
+
     def __init__(self) -> None:
         self.call_count = 0
 
     def complete(self, prompt: str) -> str:
         self.call_count += 1
-        return self._CANNED_RESPONSE
+        return _canned_response_for(prompt)
+
+
+def _canned_response_for(prompt: str) -> str:
+    """Dispatch the canned response by pass: a chunking-pass prompt (carrying
+    CHUNK_PROMPT_MARKER) gets the chunk-shaped canned response; anything else
+    (the envelope pass) gets the original envelope-shaped canned response.
+    Shared by `StubLLMClient` and `RecordLLMClient` so `record` is
+    indistinguishable from `stub` for the same prompt."""
+    if CHUNK_PROMPT_MARKER in prompt:
+        return StubLLMClient._CANNED_CHUNK_RESPONSE
+    return StubLLMClient._CANNED_RESPONSE
+
+
+class RecordLLMClient:
+    """Test/CI-only client selected via `AXIAL_LLM_PROVIDER=record`: appends
+    every prompt it receives, JSON-encoded on its own line, to
+    `AXIAL_LLM_RECORD_PATH` (creating parent directories as needed), then
+    returns exactly what `StubLLMClient` would return for that same prompt.
+    This makes an assembled prompt observable black-box from a subprocess
+    test without inventing a second canned-response contract."""
+
+    def __init__(self, record_path: Path) -> None:
+        self._record_path = record_path
+        self.call_count = 0
+
+    def complete(self, prompt: str) -> str:
+        self.call_count += 1
+        self._record_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._record_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(prompt) + "\n")
+        return _canned_response_for(prompt)
 
 
 class ExplodingLLMClient:
@@ -197,6 +273,14 @@ def get_client(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> LLMClient:
         return StubLLMClient()
     if provider == "explode":
         return ExplodingLLMClient()
+    if provider == "record":
+        record_path_str = os.environ.get(RECORD_PATH_ENV_VAR)
+        if not record_path_str:
+            raise LLMConfigError(
+                f"record provider selected but {RECORD_PATH_ENV_VAR!r} is not "
+                f"set in the environment"
+            )
+        return RecordLLMClient(Path(record_path_str))
     if provider == "openrouter":
         return _build_openrouter_client(llm_config)
     raise LLMConfigError(f"unknown LLM provider: {provider!r}")
