@@ -1,0 +1,16 @@
+# Pipeline configuration: providers, model-per-pass, paths, batch sizes
+# (PRD §6). Model-per-pass tuning is deferred (see plans/minimal-ingestion/
+# 04-structural-envelope.md, "out of scope"); v0 gives every LLM-backed pass
+# the same provider/model.
+#
+# The provider here is the default; it is overridden without editing this
+# file by the AXIAL_LLM_PROVIDER environment variable (see src/axial/llm.py),
+# which is how tests and CI select the no-network `stub`/`explode` seams.
+llm:
+  provider: openrouter
+  model: openrouter/auto
+  base_url: https://openrouter.ai/api/v1
+  api_key_env: OPENROUTER_API_KEY
+
+paths:
+  envelopes_dir: data/envelopes

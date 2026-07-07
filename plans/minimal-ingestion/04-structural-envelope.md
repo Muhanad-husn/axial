@@ -5,7 +5,7 @@
 - **GitHub issue:** #16
 - **Branch:** feat/minimal-ingestion/04-structural-envelope
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ PR #22 prepared — awaiting founder approval
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -68,3 +68,4 @@ And   running `axial envelope <fixture>` again reuses the stored envelope withou
 ## Status / progress log
 
 - 2026-07-06 planned.
+- 2026-07-07 built through the role pipeline: red outer test `3c466a9` (locked), implementation `0879ca5`, reviewer stage-2 fixes `907a939`, evidence `b059be4`. Full suite green (121 passed), ruff clean, CI green. PR #22 opened into `main` — paused for founder approval.

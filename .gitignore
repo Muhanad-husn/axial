@@ -13,3 +13,4 @@ build/
 PR_BODY.md
 PR_BODY.generated.md
 .tdd-branch-cleanup.log
+data/envelopes/
