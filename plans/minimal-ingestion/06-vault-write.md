@@ -69,3 +69,7 @@ And   the prose pool is a separate surface from data/vault/artifacts/ (which sta
 ## Status / progress log
 
 - 2026-07-06 planned.
+- 2026-07-08 built test-first: red outer acceptance test (`7b352d3`), implementation
+  (`acb64b5`), reviewer two-stage review (stage 1 pass; stage 2 frontmatter `---`
+  delimiter fix + idempotency test in `e7a21ea`). Full suite 164 passed. PR #26
+  opened into `main` — awaiting founder approval.
