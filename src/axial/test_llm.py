@@ -200,10 +200,13 @@ def test_get_client_reads_provider_from_config_file_when_no_env_override(monkeyp
 
 
 def test_get_client_openrouter_requires_an_api_key_env_var(monkeypatch, tmp_path):
-    from axial.llm import PROVIDER_ENV_VAR, get_client
+    from axial.llm import PROVIDER_ENV_VAR, SECRETS_PATH_ENV_VAR, get_client
 
     monkeypatch.delenv(PROVIDER_ENV_VAR, raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    # Redirect the secrets-file seam so this test is hermetic against the
+    # developer's real secrets/secrets.toml (issue #23, requirement 4).
+    monkeypatch.setenv(SECRETS_PATH_ENV_VAR, str(tmp_path / "does_not_exist_secrets.toml"))
     config_path = tmp_path / "pipeline.yaml"
     config_path.write_text("llm:\n  provider: openrouter\n", encoding="utf-8")
 
@@ -225,10 +228,13 @@ def test_get_client_unknown_provider_raises(monkeypatch, tmp_path):
 
 
 def test_missing_api_key_raises_llm_config_error(monkeypatch, tmp_path):
-    from axial.llm import LLMConfigError, PROVIDER_ENV_VAR, get_client
+    from axial.llm import LLMConfigError, PROVIDER_ENV_VAR, SECRETS_PATH_ENV_VAR, get_client
 
     monkeypatch.delenv(PROVIDER_ENV_VAR, raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    # Redirect the secrets-file seam so this test is hermetic against the
+    # developer's real secrets/secrets.toml (issue #23, requirement 4).
+    monkeypatch.setenv(SECRETS_PATH_ENV_VAR, str(tmp_path / "does_not_exist_secrets.toml"))
     config_path = tmp_path / "pipeline.yaml"
     config_path.write_text("llm:\n  provider: openrouter\n", encoding="utf-8")
 
