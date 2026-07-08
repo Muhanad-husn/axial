@@ -22,6 +22,24 @@ _RECORD = {
     "text": "This is the chunk's own prose text.",
 }
 
+# issue #32 slice 02 -- artifact record shape (mirrors
+# `axial.artifacts.build_artifact_record`'s output).
+_ARTIFACT_RECORD = {
+    "artifact_id": "paper-abc123_art_1.2",
+    "artifact_role": "case-study",
+    "field": {"primary": "state", "secondary": ["ideology"]},
+    "source_id": "paper-abc123",
+    "section": "Introduction",
+}
+
+_DISCARD_ARTIFACT_RECORD = {
+    "artifact_id": "paper-abc123_art_1.3",
+    "artifact_role": "discard",
+    "field": {"primary": "state", "secondary": []},
+    "source_id": "paper-abc123",
+    "section": "Introduction",
+}
+
 
 # --- frontmatter assembly ----------------------------------------------------
 
@@ -169,6 +187,84 @@ def test_write_chunk_note_rerun_overwrites_in_place_without_duplicating(tmp_path
     assert prose_files[0] == first_path
 
 
+# --- artifact frontmatter/note (issue #32 slice 02) --------------------------
+
+
+def test_build_artifact_frontmatter_carries_role_field_and_provenance():
+    from axial.vault import build_artifact_frontmatter
+
+    frontmatter = build_artifact_frontmatter(_ARTIFACT_RECORD)
+
+    assert frontmatter["artifact_id"] == _ARTIFACT_RECORD["artifact_id"]
+    assert frontmatter["artifact_role"] == _ARTIFACT_RECORD["artifact_role"]
+    assert frontmatter["field"] == _ARTIFACT_RECORD["field"]
+    assert frontmatter["source_id"] == _ARTIFACT_RECORD["source_id"]
+    assert frontmatter["section"] == _ARTIFACT_RECORD["section"]
+
+
+def test_build_artifact_frontmatter_retrievable_true_for_non_discard_role():
+    from axial.vault import build_artifact_frontmatter
+
+    frontmatter = build_artifact_frontmatter(_ARTIFACT_RECORD)
+
+    assert frontmatter["retrievable"] is True
+
+
+def test_build_artifact_frontmatter_retrievable_false_for_discard_role():
+    from axial.vault import build_artifact_frontmatter
+
+    frontmatter = build_artifact_frontmatter(_DISCARD_ARTIFACT_RECORD)
+
+    assert frontmatter["retrievable"] is False
+
+
+def test_write_artifact_note_writes_under_artifacts_dir_named_by_artifact_id(tmp_path):
+    from axial.vault import write_artifact_note
+
+    vault_dir = tmp_path / "vault"
+    note_path = write_artifact_note(_ARTIFACT_RECORD, vault_dir)
+
+    assert note_path == vault_dir / "artifacts" / f"{_ARTIFACT_RECORD['artifact_id']}.md"
+    assert note_path.is_file()
+
+
+def test_write_artifact_note_does_not_touch_prose_dir(tmp_path):
+    from axial.vault import write_artifact_note
+
+    vault_dir = tmp_path / "vault"
+    write_artifact_note(_ARTIFACT_RECORD, vault_dir)
+
+    assert not (vault_dir / "prose").exists()
+
+
+def test_write_artifact_note_rerun_overwrites_in_place_without_duplicating(tmp_path):
+    from axial.vault import write_artifact_note
+
+    vault_dir = tmp_path / "vault"
+
+    first_path = write_artifact_note(_ARTIFACT_RECORD, vault_dir)
+    second_path = write_artifact_note(_ARTIFACT_RECORD, vault_dir)
+
+    assert first_path == second_path
+    artifact_files = [p for p in (vault_dir / "artifacts").iterdir() if p.is_file()]
+    assert len(artifact_files) == 1
+
+
+def test_write_artifact_note_frontmatter_is_yaml_parseable_with_real_boolean(tmp_path):
+    from axial.vault import write_artifact_note
+
+    vault_dir = tmp_path / "vault"
+    note_path = write_artifact_note(_DISCARD_ARTIFACT_RECORD, vault_dir)
+
+    text = note_path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    closing_index = lines.index("---", 1)
+    frontmatter = yaml.safe_load("\n".join(lines[1:closing_index]))
+
+    assert frontmatter["retrievable"] is False
+    assert isinstance(frontmatter["retrievable"], bool)
+
+
 # --- orchestration -------------------------------------------------------------
 
 
@@ -195,3 +291,84 @@ def test_run_vault_write_raises_missing_source_error_for_nonexistent_file(tmp_pa
             envelopes_dir=tmp_path / "envelopes",
             vault_dir=tmp_path / "vault",
         )
+
+
+def _arrange_stored_envelope(tmp_path):
+    """Shared arrange step for the artifact-routing orchestration tests
+    below: a real source file plus a pre-written stored envelope, so
+    `run_vault_write` gets past its envelope-existence check."""
+    import json as _json
+
+    from axial.envelope import compute_source_id, envelope_path
+
+    source_path = tmp_path / "source.pdf"
+    source_path.write_bytes(b"%PDF-1.4 fake")
+
+    envelopes_dir = tmp_path / "envelopes"
+    source_id = compute_source_id(source_path)
+    env_path = envelope_path(source_id, envelopes_dir)
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.write_text(_json.dumps(_ENVELOPE), encoding="utf-8")
+
+    return source_path, envelopes_dir
+
+
+def test_run_vault_write_writes_both_prose_and_artifact_notes(monkeypatch, tmp_path):
+    import axial.vault as vault_mod
+
+    source_path, envelopes_dir = _arrange_stored_envelope(tmp_path)
+    vault_dir = tmp_path / "vault"
+
+    monkeypatch.setattr(vault_mod, "run_chunk", lambda *a, **k: [_RECORD])
+    monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [_ARTIFACT_RECORD])
+
+    written = vault_mod.run_vault_write(
+        source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir
+    )
+
+    prose_note = vault_dir / "prose" / f"{_RECORD['chunk_id']}.md"
+    artifact_note = vault_dir / "artifacts" / f"{_ARTIFACT_RECORD['artifact_id']}.md"
+    assert prose_note.is_file()
+    assert artifact_note.is_file()
+    assert set(written) == {prose_note, artifact_note}
+
+
+def test_run_vault_write_wraps_artifacts_error_into_vault_error(monkeypatch, tmp_path):
+    import axial.vault as vault_mod
+    from axial.artifacts import ArtifactsError
+
+    source_path, envelopes_dir = _arrange_stored_envelope(tmp_path)
+    vault_dir = tmp_path / "vault"
+
+    monkeypatch.setattr(vault_mod, "run_chunk", lambda *a, **k: [_RECORD])
+
+    def _raise_artifacts_error(*a, **k):
+        raise ArtifactsError("boom")
+
+    monkeypatch.setattr(vault_mod, "run_artifacts", _raise_artifacts_error)
+
+    with pytest.raises(vault_mod.VaultError):
+        vault_mod.run_vault_write(source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir)
+
+
+def test_run_vault_write_wraps_tag_not_in_schema_error_into_vault_error(monkeypatch, tmp_path):
+    """Issue #32 slice 02 carry-in: `axial.artifacts.run_artifacts` can now
+    raise `axial.tag.TagNotInSchemaError` (a `TagError`, not an
+    `ArtifactsError`) directly for an out-of-schema `artifact_role`/`field`
+    value -- `run_vault_write` must still wrap it into a `VaultError`
+    subclass rather than letting a bare `TagError` escape to the CLI."""
+    import axial.vault as vault_mod
+    from axial.tag import TagNotInSchemaError
+
+    source_path, envelopes_dir = _arrange_stored_envelope(tmp_path)
+    vault_dir = tmp_path / "vault"
+
+    monkeypatch.setattr(vault_mod, "run_chunk", lambda *a, **k: [_RECORD])
+
+    def _raise_tag_error(*a, **k):
+        raise TagNotInSchemaError("artifact_role", "not-a-real-role")
+
+    monkeypatch.setattr(vault_mod, "run_artifacts", _raise_tag_error)
+
+    with pytest.raises(vault_mod.VaultError):
+        vault_mod.run_vault_write(source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir)

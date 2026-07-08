@@ -211,7 +211,13 @@ def _tag(source_path: str, domain_dir: str) -> int:
 def _artifacts(source_path: str, domain: str) -> int:
     try:
         records = run_artifacts(source_path, domain_dir=domain)
-    except ArtifactsError as exc:
+    except (ArtifactsError, TagError) as exc:
+        # `TagError` (specifically `axial.tag.TagNotInSchemaError`) is
+        # caught here too: `axial.artifacts` reuses that shared error for
+        # both the `artifact_role` and `field` axes (issue #32 slice 02's
+        # carry-in convergence), and it is a `TagError`, not an
+        # `ArtifactsError` -- so this CLI handler must catch both to avoid a
+        # bare traceback.
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

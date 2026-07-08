@@ -248,12 +248,23 @@ class StubLLMClient:
 
 def _canned_artifact_response() -> str:
     """The canned response for an artifacts-pass call (identified by
-    `pass_name=ARTIFACTS_PASS_NAME`, never by prompt content): a single
+    `pass_name=ARTIFACTS_PASS_NAME`, never by prompt content): an
     `artifact_role` value, read fresh from `STUB_ARTIFACT_ROLE_ENV_VAR` on
     every call so tests can force an out-of-schema role on demand (see
-    tests/test_artifacts.py's module docstring, seam decision 2)."""
+    tests/test_artifacts.py's module docstring, seam decision 2), plus a
+    `field` value (issue #32 slice 02) in the same
+    `{"primary": <str>, "secondary": [...]}` shape `_CANNED_TAG_RESPONSE`
+    already uses for the `primary_plus_secondary` cardinality -- real,
+    in-schema members of config/domains/syria/schema.yaml's `field` axis, so
+    the end-to-end stub path validates cleanly regardless of which
+    artifact_role is in play."""
     role = os.environ.get(STUB_ARTIFACT_ROLE_ENV_VAR) or _DEFAULT_STUB_ARTIFACT_ROLE
-    return json.dumps({"artifact_role": role})
+    return json.dumps(
+        {
+            "artifact_role": role,
+            "field": {"primary": "state", "secondary": ["ideology"]},
+        }
+    )
 
 
 def _canned_xref_response() -> str:

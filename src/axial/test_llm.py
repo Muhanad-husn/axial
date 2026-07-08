@@ -86,6 +86,23 @@ def test_stub_client_returns_artifact_shaped_response_for_the_artifacts_pass_nam
     assert "thesis" not in parsed
 
 
+def test_stub_client_artifact_response_carries_a_primary_secondary_field_value():
+    """Issue #32 slice 02: the artifacts-pass canned response must also
+    carry a `field` value in the same `{"primary": ..., "secondary": [...]}`
+    shape the tag pass already uses for its primary_plus_secondary axes, so
+    the artifacts pass can classify `field` end-to-end against the stub."""
+    from axial.llm import ARTIFACTS_PASS_NAME, StubLLMClient
+
+    client = StubLLMClient()
+
+    raw = client.complete("some artifact classification prompt", pass_name=ARTIFACTS_PASS_NAME)
+    parsed = json.loads(raw)
+
+    field = parsed["field"]
+    assert isinstance(field["primary"], str) and field["primary"].strip()
+    assert isinstance(field["secondary"], list)
+
+
 def test_stub_client_artifact_role_defaults_to_an_unset_env_var(monkeypatch):
     from axial.llm import ARTIFACTS_PASS_NAME, STUB_ARTIFACT_ROLE_ENV_VAR, StubLLMClient
 
