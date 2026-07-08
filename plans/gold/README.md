@@ -1,7 +1,7 @@
 # Feature: Gold-set generation
 
-PRD build phase 4 (§11), the Academic deliverable: sample ~30–50 tagged prose chunks
-from 5–10 sources, **stratified** across field × source-type (book/paper) × empirical-scope
+PRD build phase 4 (§11), the Academic deliverable: sample ~100–120 tagged prose chunks
+from ~20–28 sources, **stratified** across field × source-type (book/paper) × empirical-scope
 (§9), and emit `data/gold/label_sheet.xlsx` — one row per chunk, one column per axis, with
 dropdown validation sourced from the codebook (§7.5, Appendix I). Pre-labeled columns
 (`field`, `empirical_scope`) arrive filled with the tagger's guess; blind columns
@@ -56,10 +56,16 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
   `AXIAL_LLM_PROVIDER=stub` (as the phase-3 tests do), or seed a handful of tagged note `.md`
   files directly into the vault dir. The test-author picks the lighter arrangement,
   consistent with #45 (arrange from stored fixtures, not live docling).
-- **Sample-size band scales to the fixture.** P0-9 targets 30–50 chunks from 5–10 sources in
-  production; a test fixture has far fewer. The band is configurable with a sensible default
-  and clamps to available chunks, so the acceptance test asserts stratum coverage + the
-  clamped band rather than a literal 30–50 on a tiny fixture.
+- **Sample-size band scales to the fixture.** P0-9 targets ~100–120 chunks from ~20–28
+  sources (~4–6 chunks each) in production; a test fixture has far fewer. The band is
+  configurable with a sensible default (100–120) and clamps to available chunks, so the
+  acceptance test asserts stratum coverage + the clamped band rather than a literal 100–120
+  on a tiny fixture.
+- **Source curation is a founder prerequisite, not a code path.** Reaching ~100–120 chunks
+  needs ~20–28 sources ingested and tagged into `data/vault/prose/` *before* `axial gold
+  sample` runs, balanced across book/paper and spanning the field and scope values (so scope
+  is not all `country-case`). The sampler only selects from what the vault already holds; it
+  clamps and logs a shortfall if the strata are thin.
 - **Determinism.** Selection is seedable and stably ordered so a re-run reproduces the same
   sample and re-emitting the sheet is idempotent (overwrites, never appends).
 - **Dependencies are shipped.** Gold-set generation reads the output of the `tag` (#27–#31)
