@@ -141,6 +141,24 @@ def test_parse_tag_response_rejects_multiple_values():
         )
 
 
+def test_parse_tag_response_rejects_a_non_scalar_dict_value_as_a_tag_error():
+    from axial.tag import TagError, parse_tag_response
+
+    raw = json.dumps({"role_in_argument": {"nested": "oops"}})
+
+    with pytest.raises(TagError):
+        parse_tag_response(raw, "role_in_argument")
+
+
+def test_parse_tag_response_rejects_a_single_element_list_of_a_dict_as_a_tag_error():
+    from axial.tag import TagError, parse_tag_response
+
+    raw = json.dumps({"role_in_argument": [{"nested": "oops"}]})
+
+    with pytest.raises(TagError):
+        parse_tag_response(raw, "role_in_argument")
+
+
 # --- schema validation -------------------------------------------------------
 
 

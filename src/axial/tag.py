@@ -176,7 +176,13 @@ def parse_tag_response(raw: str, axis_name: str) -> str:
     if len(values) != 1:
         raise TagCardinalityError(axis_name, values)
 
-    return values[0]
+    value = values[0]
+    if not isinstance(value, str):
+        raise TagParseError(
+            f"expected {axis_name!r} value to be a string, got {type(value).__name__}: {value!r}"
+        )
+
+    return value
 
 
 def validate_tag(schema: Schema, axis_name: str, value: Any) -> None:
