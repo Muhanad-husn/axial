@@ -94,6 +94,45 @@ def test_main_schema_show_against_missing_domain_dir_is_nonzero_and_names_path(c
     assert "schema.yaml" in captured.err or "schema.yaml" in captured.out
 
 
+def test_build_parser_recognises_tag_subcommand_with_default_domain():
+    from axial.cli import build_parser
+    from axial.tag import DEFAULT_DOMAIN_DIR
+
+    parser = build_parser()
+    args = parser.parse_args(["tag", "some/source.pdf"])
+
+    assert args.command == "tag"
+    assert args.source_path == "some/source.pdf"
+    assert args.domain_dir == str(DEFAULT_DOMAIN_DIR)
+
+
+def test_build_parser_recognises_tag_subcommand_domain_override():
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["tag", "some/source.pdf", "--domain", "custom/domain"])
+
+    assert args.domain_dir == "custom/domain"
+
+
+def test_main_tag_against_a_tag_error_is_nonzero_and_prints_error(monkeypatch, capsys):
+    import axial.cli as cli_mod
+    from axial.tag import TagError
+
+    def _boom(source_path, domain_dir):
+        raise TagError("simulated tag failure")
+
+    monkeypatch.setattr(
+        cli_mod, "run_tag", lambda source_path, domain_dir: _boom(source_path, domain_dir)
+    )
+
+    exit_code = cli_mod.main(["tag", "some/source.pdf"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "simulated tag failure" in captured.err
+
+
 def test_build_parser_recognises_artifacts_subcommand_with_default_domain():
     from axial.artifacts import DEFAULT_DOMAIN_DIR
     from axial.cli import build_parser

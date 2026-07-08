@@ -5,13 +5,14 @@ import json
 import sys
 
 import axial
-from axial.artifacts import ArtifactsError, DEFAULT_DOMAIN_DIR, run_artifacts
+from axial.artifacts import ArtifactsError, run_artifacts
 from axial.chunk import ChunkError, run_chunk
 from axial.codebook import CodebookError, load_codebook
 from axial.envelope import EnvelopeError, run_envelope
 from axial.extract import ExtractError, extract
 from axial.intake import IntakeError, intake
 from axial.schema import SchemaError, load_schema
+from axial.tag import DEFAULT_DOMAIN_DIR, TagError, run_tag
 from axial.validate import cross_validate
 from axial.vault import VaultError, run_vault_write
 
@@ -62,6 +63,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="run the argumentative-chunking pass, emitting prose chunk records to stdout",
     )
     chunk_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
+
+    tag_parser = subparsers.add_parser(
+        "tag",
+        help="run the tagging pass, emitting tagged chunk records to stdout",
+    )
+    tag_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
+    tag_parser.add_argument(
+        "--domain",
+        dest="domain_dir",
+        default=str(DEFAULT_DOMAIN_DIR),
+        help="path to a domain directory containing schema.yaml and codebook.yaml",
+    )
 
     artifacts_parser = subparsers.add_parser(
         "artifacts",
@@ -166,6 +179,17 @@ def _chunk(source_path: str) -> int:
     return 0
 
 
+def _tag(source_path: str, domain_dir: str) -> int:
+    try:
+        records = run_tag(source_path, domain_dir=domain_dir)
+    except TagError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(records))
+    return 0
+
+
 def _artifacts(source_path: str, domain: str) -> int:
     try:
         records = run_artifacts(source_path, domain_dir=domain)
@@ -213,6 +237,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "chunk":
         return _chunk(args.source_path)
+
+    if args.command == "tag":
+        return _tag(args.source_path, args.domain_dir)
 
     if args.command == "artifacts":
         return _artifacts(args.source_path, args.domain)
