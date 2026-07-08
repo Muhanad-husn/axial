@@ -37,6 +37,21 @@ flagged non-retrievable"). Any error from the internal artifacts pass
 (`axial.artifacts.ArtifactsError` or `axial.tag.TagError`, e.g. an
 out-of-schema `artifact_role`/`field` value) is wrapped into a
 `VaultError` subclass here too, so the CLI never renders a bare traceback.
+
+Once both note sets are known, a final backlink pass (issue #34 slice 02)
+runs the already-implemented cross-reference-detection pass internally via
+`axial.xref.run_xref` (detection itself is unchanged from slice 01) and
+materializes each detected `(chunk_id, artifact_id)` pair as bidirectional
+frontmatter: `artifact_refs` (a list of artifact_ids) on the referencing
+prose note, `cited_by` (a list of chunk_ids) on the referenced artifact
+note (PRD §7.2, §8 P0-7). Both fields are always present as a list --
+`[]` when a note carries no references, never absent/null/a dangling bare
+scalar. `build_backlink_maps` computes both directions from the xref pairs
+up front (deduping via a set, so a repeated pair never doubles an entry),
+and every note is written fresh each run with its backlink list already
+resolved -- idempotent by construction, never by patching an existing file
+on disk. Any error from the internal xref pass (`axial.xref.XrefError`) is
+wrapped into a `VaultError` subclass here too.
 """
 
 from __future__ import annotations
@@ -61,6 +76,7 @@ from axial.envelope import (
 )
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
 from axial.tag import TagError, run_tag
+from axial.xref import XrefError, run_xref
 
 # Source-level fields reused verbatim from the envelope (PRD §7.2), excluding
 # `fields`, a schema-driven axis tag deferred to phase-3 tagging.
@@ -126,6 +142,16 @@ class ArtifactClassificationFailedError(VaultError):
         super().__init__(str(cause))
 
 
+class XrefFailedError(VaultError):
+    """Raised when the internal cross-reference-detection pass
+    (`axial.xref.run_xref`) fails, so the CLI always renders a clean
+    `error: ...` line, never a bare traceback (issue #34 slice 02)."""
+
+    def __init__(self, cause: XrefError):
+        self.cause = cause
+        super().__init__(str(cause))
+
+
 def _default_vault_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
     """Read `paths.vault_dir` from `config/pipeline.yaml` (mirrors
     `axial.envelope._default_envelopes_dir`), falling back to `VAULT_DIR`
@@ -145,7 +171,11 @@ def _default_vault_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path
 _VERBATIM_AXIS_BLOCKS = ("field", "claim_type", "theory_school")
 
 
-def build_frontmatter(record: dict[str, Any], envelope: dict[str, Any]) -> dict[str, Any]:
+def build_frontmatter(
+    record: dict[str, Any],
+    envelope: dict[str, Any],
+    artifact_refs: list[str] | None = None,
+) -> dict[str, Any]:
     """Assemble a chunk note's frontmatter mapping from a tagged record
     (`axial.tag.build_tagged_record`'s shape): `chunk_id`, `section`,
     `chunk_text`, and `source_meta` (the five source-level fields, PRD §7.2)
@@ -154,7 +184,9 @@ def build_frontmatter(record: dict[str, Any], envelope: dict[str, Any]) -> dict[
     `theory_school` (nested, carried through as the tagger produced them),
     and `empirical_scope` reshaped from the tagger's flat scalar + separate
     top-level `country` into Appendix H's nested `{value, country}` mapping
-    (issue #31 slice 04)."""
+    (issue #31 slice 04). `artifact_refs` (issue #34 slice 02) is the list of
+    artifact_ids the cross-reference pass detected this chunk citing --
+    always a list, `[]` when none, never a dangling absent/null field."""
     frontmatter: dict[str, Any] = {
         "chunk_id": record["chunk_id"],
         "section": record["section"],
@@ -173,6 +205,8 @@ def build_frontmatter(record: dict[str, Any], envelope: dict[str, Any]) -> dict[
         if record.get("country") is not None:
             empirical_scope["country"] = record["country"]
         frontmatter["empirical_scope"] = empirical_scope
+
+    frontmatter["artifact_refs"] = list(artifact_refs) if artifact_refs else []
 
     return frontmatter
 
@@ -204,10 +238,17 @@ def _note_path(vault_dir: Path, chunk_id: str) -> Path:
     return vault_dir / "prose" / f"{chunk_id}.md"
 
 
-def write_chunk_note(record: dict[str, Any], envelope: dict[str, Any], vault_dir: Path) -> Path:
+def write_chunk_note(
+    record: dict[str, Any],
+    envelope: dict[str, Any],
+    vault_dir: Path,
+    artifact_refs: list[str] | None = None,
+) -> Path:
     """Write one chunk's note under `<vault_dir>/prose/<chunk_id>.md`,
-    creating parent directories as needed."""
-    frontmatter = build_frontmatter(record, envelope)
+    creating parent directories as needed. `artifact_refs` (issue #34 slice
+    02) is this chunk's detected backlink list, threaded through to
+    `build_frontmatter` verbatim."""
+    frontmatter = build_frontmatter(record, envelope, artifact_refs=artifact_refs)
     body = f"# {record['section']}\n\n{record['chunk_text']}\n"
     note_text = render_note(frontmatter, body)
 
@@ -217,14 +258,20 @@ def write_chunk_note(record: dict[str, Any], envelope: dict[str, Any], vault_dir
     return path
 
 
-def build_artifact_frontmatter(record: dict[str, Any]) -> dict[str, Any]:
+def build_artifact_frontmatter(
+    record: dict[str, Any], cited_by: list[str] | None = None
+) -> dict[str, Any]:
     """Assemble one artifact note's frontmatter mapping: `artifact_id`,
     `artifact_role`, `field`, `source_id`, `section` reused verbatim from
     the artifact record (`axial.artifacts.build_artifact_record`'s shape),
     plus a `retrievable` boolean that is `False` only for the `discard`
-    role (PRD §8 P0-5) -- every other in-schema role is retrievable."""
+    role (PRD §8 P0-5) -- every other in-schema role is retrievable.
+    `cited_by` (issue #34 slice 02) is the list of chunk_ids the
+    cross-reference pass detected citing this artifact -- always a list,
+    `[]` when none, never a dangling absent/null field."""
     frontmatter = {field: record.get(field) for field in ARTIFACT_FRONTMATTER_FIELDS}
     frontmatter["retrievable"] = record["artifact_role"] != DISCARD_ROLE
+    frontmatter["cited_by"] = list(cited_by) if cited_by else []
     return frontmatter
 
 
@@ -232,11 +279,15 @@ def _artifact_note_path(vault_dir: Path, artifact_id: str) -> Path:
     return vault_dir / "artifacts" / f"{artifact_id}.md"
 
 
-def write_artifact_note(record: dict[str, Any], vault_dir: Path) -> Path:
+def write_artifact_note(
+    record: dict[str, Any], vault_dir: Path, cited_by: list[str] | None = None
+) -> Path:
     """Write one artifact's note under
     `<vault_dir>/artifacts/<artifact_id>.md`, creating parent directories as
-    needed -- a surface separate from `<vault_dir>/prose/` (PRD §8 P0-8)."""
-    frontmatter = build_artifact_frontmatter(record)
+    needed -- a surface separate from `<vault_dir>/prose/` (PRD §8 P0-8).
+    `cited_by` (issue #34 slice 02) is this artifact's detected backlink
+    list, threaded through to `build_artifact_frontmatter` verbatim."""
+    frontmatter = build_artifact_frontmatter(record, cited_by=cited_by)
     body = f"# {record['section']}\n\nArtifact `{record['artifact_id']}` ({record['artifact_role']}).\n"
     note_text = render_note(frontmatter, body)
 
@@ -244,6 +295,32 @@ def write_artifact_note(record: dict[str, Any], vault_dir: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(note_text, encoding="utf-8")
     return path
+
+
+def build_backlink_maps(
+    pairs: list[dict[str, str]],
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Build the two backlink maps from `axial.xref.run_xref`'s
+    `{"chunk_id", "artifact_id"}` pairs (issue #34 slice 02): chunk_id ->
+    sorted unique artifact_ids it references, and artifact_id -> sorted
+    unique chunk_ids that reference it. Deduping via a `set` per key before
+    sorting guarantees no run can double an entry, even if a pair repeats
+    (e.g. the stub's uniform per-run canned response) -- the source of this
+    slice's idempotency, independent of how many times `run_vault_write`
+    itself is re-run (each run rebuilds these maps from scratch and
+    overwrites the notes, never patching them in place)."""
+    chunk_to_artifacts: dict[str, set[str]] = {}
+    artifact_to_chunks: dict[str, set[str]] = {}
+    for pair in pairs:
+        chunk_id = pair["chunk_id"]
+        artifact_id = pair["artifact_id"]
+        chunk_to_artifacts.setdefault(chunk_id, set()).add(artifact_id)
+        artifact_to_chunks.setdefault(artifact_id, set()).add(chunk_id)
+
+    return (
+        {chunk_id: sorted(ids) for chunk_id, ids in chunk_to_artifacts.items()},
+        {artifact_id: sorted(ids) for artifact_id, ids in artifact_to_chunks.items()},
+    )
 
 
 def run_vault_write(
@@ -263,7 +340,15 @@ def run_vault_write(
     artifact-classification pass internally via `axial.artifacts.run_artifacts`
     and write one note per classified artifact under `<vault_dir>/artifacts/`
     (issue #32 slice 02) -- two separate surfaces sharing metadata conventions
-    (PRD §8 P0-8).
+    (PRD §8 P0-8); finally, once both note sets are known, run the
+    cross-reference-detection pass internally via `axial.xref.run_xref`
+    (detection unchanged from issue #34 slice 01) and materialize each
+    detected `(chunk_id, artifact_id)` pair as bidirectional frontmatter --
+    `artifact_refs` on the referencing prose note, `cited_by` on the
+    referenced artifact note (issue #34 slice 02). Every note is written
+    fresh with its backlink list computed up front, so a rerun naturally
+    overwrites rather than accumulates -- idempotent by construction, never
+    by patching an existing file in place.
     """
     path = Path(source_path)
     try:
@@ -291,9 +376,32 @@ def run_vault_write(
     except (ArtifactsError, TagError) as exc:
         raise ArtifactClassificationFailedError(exc) from exc
 
+    try:
+        xref_pairs = run_xref(
+            path,
+            client=client,
+            domain_dir=domain_dir,
+            envelopes_dir=envelopes_dir,
+            config_path=config_path,
+        )
+    except XrefError as exc:
+        raise XrefFailedError(exc) from exc
+
+    chunk_to_artifacts, artifact_to_chunks = build_backlink_maps(xref_pairs)
+
     if vault_dir is None:
         vault_dir = _default_vault_dir(config_path)
 
-    prose_paths = [write_chunk_note(record, envelope, vault_dir) for record in records]
-    artifact_paths = [write_artifact_note(record, vault_dir) for record in artifact_records]
+    prose_paths = [
+        write_chunk_note(
+            record, envelope, vault_dir, artifact_refs=chunk_to_artifacts.get(record["chunk_id"])
+        )
+        for record in records
+    ]
+    artifact_paths = [
+        write_artifact_note(
+            record, vault_dir, cited_by=artifact_to_chunks.get(record["artifact_id"])
+        )
+        for record in artifact_records
+    ]
     return prose_paths + artifact_paths
