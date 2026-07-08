@@ -6,11 +6,15 @@
 # The provider here is the default; it is overridden without editing this
 # file by the AXIAL_LLM_PROVIDER environment variable (see src/axial/llm.py),
 # which is how tests and CI select the no-network `stub`/`explode` seams.
+#
+# The OpenRouter API key and model name are NOT configured here (issue #23):
+# they come from `[openrouter]` in secrets/secrets.toml (api_key, plus
+# building_model/production_high/production_low selected by llm_tier), with
+# the OPENROUTER_API_KEY environment variable as a fallback for the key only
+# when secrets.toml is absent or lacks it. See secrets/secrets.example.toml.
 llm:
   provider: openrouter
-  model: openrouter/auto
   base_url: https://openrouter.ai/api/v1
-  api_key_env: OPENROUTER_API_KEY
 
 paths:
   envelopes_dir: data/envelopes

@@ -67,3 +67,4 @@ And   a country-case with a missing or out-of-list country exits non-zero with a
 ## Status / progress log
 
 - 2026-07-08 planned.
+- 2026-07-08 red-green-refactor complete; PR #40 prepared, awaiting founder approval.

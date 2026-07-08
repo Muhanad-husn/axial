@@ -1,0 +1,14 @@
+=== requirement 2: tier -> model selection (key from secrets.toml, primary) ===
+OK   building tier: model='nvidia/nemotron-3-ultra-550b-a55b:free' key=set
+OK   production_high tier: model='deepseek/deepseek-v4-pro' key=set
+OK   production_low tier: model='deepseek/deepseek-v4-flash' key=set
+
+=== requirement 1: api-key resolution order ===
+OK   env fallback (no secrets file): model='nvidia/nemotron-3-ultra-550b-a55b:free' key=set
+RAISED LLMConfigError  neither source has a key: OpenRouter provider selected but no API key was found: set '[openrouter].api_key' in secrets/secrets.toml or the OPENROUTER_API_KEY environment variable
+
+=== review fix 2: misconfigured non-building tier fails loudly ===
+RAISED LLMConfigError  production_high selected but its model key absent: llm_tier 'production_high' was selected but secrets.toml has no 'production_high' key naming a model for it; set '[openrouter].production_high' in secrets/secrets.toml
+
+=== review fix 1: malformed secrets.toml is a typed LLMConfigError, not a raw traceback ===
+RAISED LLMConfigError  malformed TOML: secrets file 'C:\Users\mou97\AppData\Local\Temp\tmp6alt1g5j\secrets.toml' is not valid TOML: Expected '=' after a key in a key/value pair (at line 1, column 6)
