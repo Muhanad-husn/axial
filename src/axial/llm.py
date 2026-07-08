@@ -109,6 +109,11 @@ TAG_PASS_NAME = "tag"
 # CHUNK_PASS_NAME above.
 ARTIFACTS_PASS_NAME = "artifacts"
 
+# Pass name a cross-reference-detection call identifies itself with (see
+# src/axial/xref.py). Same out-of-band dispatch convention as
+# CHUNK_PASS_NAME above.
+XREF_PASS_NAME = "xref"
+
 # Fault-injection seam (mirroring `AXIAL_FORCE_DOCLING_FAILURE` in
 # extract.py): forces the `pass_name=ARTIFACTS_PASS_NAME` canned response to
 # carry exactly this string as the returned `artifact_role`, valid or not,
@@ -122,6 +127,17 @@ STUB_ARTIFACT_ROLE_ENV_VAR = "AXIAL_STUB_ARTIFACT_ROLE"
 # path. Must remain a member of config/domains/syria/schema.yaml's
 # artifact_role axis (Appendix D).
 _DEFAULT_STUB_ARTIFACT_ROLE = "case-study"
+
+# Fault-injection seam (mirroring STUB_ARTIFACT_ROLE_ENV_VAR above): drives
+# the `pass_name=XREF_PASS_NAME` canned response's referenced-artifact-id(s)
+# on demand, read fresh from the environment on every call. Unset/"" means
+# the default: the stub references NO artifact for any chunk (the
+# empty/no-references case). Set to a string `S` means the stub references
+# exactly `S` for every chunk-level xref call in the run -- a real,
+# discovered artifact_id drives the happy path; a syntactically
+# artifact-id-shaped but nonexistent string drives the dangling-link path
+# (see tests/test_xref.py's module docstring, seam decision 2).
+STUB_XREF_TARGET_ENV_VAR = "AXIAL_STUB_XREF_TARGET"
 
 
 class LLMClient(Protocol):
@@ -200,20 +216,37 @@ def _canned_artifact_response() -> str:
     return json.dumps({"artifact_role": role})
 
 
+def _canned_xref_response() -> str:
+    """The canned response for a xref-pass call (identified by
+    `pass_name=XREF_PASS_NAME`, never by prompt content): a list of
+    referenced artifact ids, read fresh from `STUB_XREF_TARGET_ENV_VAR` on
+    every call so tests can drive the happy/dangling/empty reference paths
+    deterministically (see tests/test_xref.py's module docstring, seam
+    decision 2). Unset/"" yields an empty list (no references); set to a
+    string yields a single-element list containing exactly that string."""
+    target = os.environ.get(STUB_XREF_TARGET_ENV_VAR) or ""
+    referenced = [target] if target else []
+    return json.dumps({"referenced_artifact_ids": referenced})
+
+
 def _canned_response_for(pass_name: str | None) -> str:
     """Dispatch the canned response by pass: `pass_name == CHUNK_PASS_NAME`
     gets the chunk-shaped canned response, `pass_name == TAG_PASS_NAME` gets
     the tag-shaped canned response, `pass_name == ARTIFACTS_PASS_NAME` gets
-    the artifact-role-shaped canned response; anything else (the envelope
-    pass, which never passes `pass_name`) gets the original envelope-shaped
-    canned response. Shared by `StubLLMClient` and `RecordLLMClient` so
-    `record` is indistinguishable from `stub` for the same call."""
+    the artifact-role-shaped canned response, `pass_name == XREF_PASS_NAME`
+    gets the referenced-artifact-ids-shaped canned response; anything else
+    (the envelope pass, which never passes `pass_name`) gets the original
+    envelope-shaped canned response. Shared by `StubLLMClient` and
+    `RecordLLMClient` so `record` is indistinguishable from `stub` for the
+    same call."""
     if pass_name == CHUNK_PASS_NAME:
         return StubLLMClient._CANNED_CHUNK_RESPONSE
     if pass_name == TAG_PASS_NAME:
         return StubLLMClient._CANNED_TAG_RESPONSE
     if pass_name == ARTIFACTS_PASS_NAME:
         return _canned_artifact_response()
+    if pass_name == XREF_PASS_NAME:
+        return _canned_xref_response()
     return StubLLMClient._CANNED_RESPONSE
 
 

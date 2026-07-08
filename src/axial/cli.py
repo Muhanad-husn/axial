@@ -15,6 +15,7 @@ from axial.schema import SchemaError, load_schema
 from axial.tag import DEFAULT_DOMAIN_DIR, TagError, run_tag
 from axial.validate import cross_validate
 from axial.vault import VaultError, run_vault_write
+from axial.xref import XrefError, run_xref
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -82,6 +83,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     artifacts_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
     artifacts_parser.add_argument(
+        "--domain",
+        default=str(DEFAULT_DOMAIN_DIR),
+        help=(
+            "path to a domain directory containing schema.yaml and codebook.yaml "
+            f"(default: {DEFAULT_DOMAIN_DIR})"
+        ),
+    )
+
+    xref_parser = subparsers.add_parser(
+        "xref",
+        help=(
+            "run the cross-reference-detection pass, emitting (chunk_id, "
+            "artifact_id) reference pairs to stdout"
+        ),
+    )
+    xref_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
+    xref_parser.add_argument(
         "--domain",
         default=str(DEFAULT_DOMAIN_DIR),
         help=(
@@ -201,6 +219,17 @@ def _artifacts(source_path: str, domain: str) -> int:
     return 0
 
 
+def _xref(source_path: str, domain: str) -> int:
+    try:
+        pairs = run_xref(source_path, domain_dir=domain)
+    except XrefError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(pairs))
+    return 0
+
+
 def _vault_write(source_path: str) -> int:
     try:
         written = run_vault_write(source_path)
@@ -243,6 +272,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "artifacts":
         return _artifacts(args.source_path, args.domain)
+
+    if args.command == "xref":
+        return _xref(args.source_path, args.domain)
 
     if args.command == "vault" and args.vault_command == "write":
         return _vault_write(args.source_path)
