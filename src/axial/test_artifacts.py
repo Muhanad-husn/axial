@@ -1,0 +1,316 @@
+"""Inner unit tests for the axial artifacts module (issue #30 slice 01 --
+artifact classification)."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from axial.codebook import Codebook, TagEntry
+from axial.llm import ARTIFACTS_PASS_NAME, StubLLMClient
+from axial.schema import Axis, Schema
+
+
+def _tree_with_one_artifact() -> dict:
+    return {
+        "children": [
+            {
+                "type": "prose",
+                "order": "1",
+                "text": "Introduction",
+                "children": [
+                    {"type": "prose", "order": "1.1", "text": "Intro body sentence."},
+                    {"type": "artifact", "order": "1.2", "label": "table"},
+                ],
+            },
+            {
+                "type": "prose",
+                "order": "2",
+                "text": "Discussion",
+                "children": [
+                    {"type": "prose", "order": "2.1", "text": "Discussion body sentence."},
+                ],
+            },
+        ]
+    }
+
+
+def _tree_with_no_artifacts() -> dict:
+    return {
+        "children": [
+            {
+                "type": "prose",
+                "order": "1",
+                "text": "Introduction",
+                "children": [{"type": "prose", "order": "1.1", "text": "Intro body sentence."}],
+            }
+        ]
+    }
+
+
+_SCHEMA = Schema(
+    version="1.0",
+    axes={
+        "artifact_role": Axis(
+            name="artifact_role",
+            applies_to=["artifact"],
+            cardinality="single",
+            value_count=6,
+            tag_ids={
+                "case-study",
+                "framework-illustration",
+                "quote-pool",
+                "framework",
+                "reference-material",
+                "discard",
+            },
+        )
+    },
+)
+
+_CODEBOOK = Codebook(
+    axes={
+        "artifact_role": {
+            "case-study": TagEntry(
+                definition="Empirical or quantitative tables.",
+                positive_example="A table of case data.",
+                negative_example="An unrelated table.",
+            ),
+            "discard": TagEntry(
+                definition="Cover images, running heads, page numbers.",
+                positive_example="A running head image.",
+                negative_example="A substantive table.",
+            ),
+        }
+    }
+)
+
+
+# --- artifact-node collection + section provenance --------------------------
+
+
+def test_artifact_nodes_with_section_pairs_each_artifact_with_its_enclosing_heading():
+    from axial.artifacts import _artifact_nodes_with_section
+
+    tree = _tree_with_one_artifact()
+
+    pairs = _artifact_nodes_with_section(tree)
+
+    assert len(pairs) == 1
+    node, section = pairs[0]
+    assert node["order"] == "1.2"
+    assert section == "Introduction"
+
+
+def test_artifact_nodes_with_section_finds_nested_artifacts_recursively():
+    from axial.artifacts import _artifact_nodes_with_section
+
+    tree = {
+        "children": [
+            {
+                "type": "prose",
+                "order": "1",
+                "text": "Introduction",
+                "children": [
+                    {
+                        "type": "prose",
+                        "order": "1.1",
+                        "text": "wrapper",
+                        "children": [{"type": "artifact", "order": "1.1.1", "label": "figure"}],
+                    }
+                ],
+            }
+        ]
+    }
+
+    pairs = _artifact_nodes_with_section(tree)
+
+    assert len(pairs) == 1
+    node, section = pairs[0]
+    assert node["order"] == "1.1.1"
+    assert section == "Introduction"
+
+
+def test_artifact_nodes_with_section_returns_empty_for_no_artifacts():
+    from axial.artifacts import _artifact_nodes_with_section
+
+    tree = _tree_with_no_artifacts()
+
+    assert _artifact_nodes_with_section(tree) == []
+
+
+# --- artifact_id / record shape ----------------------------------------------
+
+
+def test_build_artifact_record_keeps_dotted_order_verbatim():
+    from axial.artifacts import build_artifact_record
+
+    record = build_artifact_record(
+        source_id="paper-abc123",
+        node={"type": "artifact", "order": "1.2"},
+        section="Introduction",
+        role="case-study",
+    )
+
+    assert record["artifact_id"] == "paper-abc123_art_1.2"
+    assert record["section"] == "Introduction"
+    assert record["source_id"] == "paper-abc123"
+    assert record["artifact_role"] == "case-study"
+
+
+def test_build_artifact_record_is_deterministic():
+    from axial.artifacts import build_artifact_record
+
+    node = {"type": "artifact", "order": "3"}
+    first = build_artifact_record(
+        source_id="paper-abc123", node=node, section="Introduction", role="case-study"
+    )
+    second = build_artifact_record(
+        source_id="paper-abc123", node=node, section="Introduction", role="case-study"
+    )
+
+    assert first == second
+
+
+# --- prompt composition ------------------------------------------------------
+
+
+def test_compose_artifact_prompt_includes_codebook_definitions_and_examples():
+    from axial.artifacts import compose_artifact_prompt
+
+    prompt = compose_artifact_prompt("Introduction", _CODEBOOK)
+
+    assert "Empirical or quantitative tables." in prompt
+    assert "A table of case data." in prompt
+    assert "case-study" in prompt
+    assert "discard" in prompt
+
+
+# --- role parsing + schema validation ----------------------------------------
+
+
+def test_parse_artifact_role_extracts_the_role_string():
+    from axial.artifacts import parse_artifact_role
+
+    raw = json.dumps({"artifact_role": "case-study"})
+
+    assert parse_artifact_role(raw) == "case-study"
+
+
+def test_parse_artifact_role_rejects_invalid_json():
+    from axial.artifacts import ArtifactParseError, parse_artifact_role
+
+    with pytest.raises(ArtifactParseError):
+        parse_artifact_role("not json")
+
+
+def test_validate_artifact_role_accepts_an_in_schema_role():
+    from axial.artifacts import validate_artifact_role
+
+    validate_artifact_role("case-study", _SCHEMA)  # must not raise
+
+
+def test_validate_artifact_role_accepts_discard_as_a_valid_role():
+    from axial.artifacts import validate_artifact_role
+
+    validate_artifact_role("discard", _SCHEMA)  # must not raise
+
+
+def test_validate_artifact_role_rejects_an_out_of_schema_role():
+    from axial.artifacts import TagNotInSchemaError, validate_artifact_role
+
+    with pytest.raises(TagNotInSchemaError) as exc_info:
+        validate_artifact_role("not-a-real-role", _SCHEMA)
+
+    message = str(exc_info.value)
+    assert "not-a-real-role" in message
+    assert "artifact_role" in message
+
+
+# --- run_artifacts: end-to-end with monkeypatched extract/schema/codebook ---
+
+
+def test_run_artifacts_classifies_discard_normally(monkeypatch, tmp_path):
+    import axial.artifacts as artifacts_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(artifacts_mod, "extract", lambda path: _tree_with_one_artifact())
+    monkeypatch.setattr(artifacts_mod, "load_schema", lambda domain_dir: _SCHEMA)
+    monkeypatch.setattr(artifacts_mod, "load_codebook", lambda domain_dir: _CODEBOOK)
+
+    class _DiscardClient:
+        def complete(self, prompt, pass_name=None):
+            return json.dumps({"artifact_role": "discard"})
+
+    records = artifacts_mod.run_artifacts(source, client=_DiscardClient())
+
+    assert len(records) == 1
+    assert records[0]["artifact_role"] == "discard"
+    assert records[0]["section"] == "Introduction"
+
+
+def test_run_artifacts_zero_artifacts_yields_zero_records_and_no_llm_call(monkeypatch, tmp_path):
+    import axial.artifacts as artifacts_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(artifacts_mod, "extract", lambda path: _tree_with_no_artifacts())
+
+    stub_client = StubLLMClient()
+    records = artifacts_mod.run_artifacts(source, client=stub_client)
+
+    assert records == []
+    assert stub_client.call_count == 0
+
+
+def test_run_artifacts_raises_on_out_of_schema_role(monkeypatch, tmp_path):
+    import axial.artifacts as artifacts_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(artifacts_mod, "extract", lambda path: _tree_with_one_artifact())
+    monkeypatch.setattr(artifacts_mod, "load_schema", lambda domain_dir: _SCHEMA)
+    monkeypatch.setattr(artifacts_mod, "load_codebook", lambda domain_dir: _CODEBOOK)
+
+    class _BogusClient:
+        def complete(self, prompt, pass_name=None):
+            return json.dumps({"artifact_role": "not-a-real-role"})
+
+    with pytest.raises(artifacts_mod.TagNotInSchemaError):
+        artifacts_mod.run_artifacts(source, client=_BogusClient())
+
+
+def test_run_artifacts_calls_the_client_with_the_artifacts_pass_name(monkeypatch, tmp_path):
+    import axial.artifacts as artifacts_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(artifacts_mod, "extract", lambda path: _tree_with_one_artifact())
+    monkeypatch.setattr(artifacts_mod, "load_schema", lambda domain_dir: _SCHEMA)
+    monkeypatch.setattr(artifacts_mod, "load_codebook", lambda domain_dir: _CODEBOOK)
+
+    calls = []
+
+    class _CapturingClient:
+        def complete(self, prompt, pass_name=None):
+            calls.append(pass_name)
+            return json.dumps({"artifact_role": "case-study"})
+
+    artifacts_mod.run_artifacts(source, client=_CapturingClient())
+
+    assert calls == [ARTIFACTS_PASS_NAME]
+
+
+def test_run_artifacts_missing_source_file_raises_missing_source_error(tmp_path):
+    from axial.artifacts import MissingSourceError, run_artifacts
+
+    missing = tmp_path / "does_not_exist.pdf"
+
+    with pytest.raises(MissingSourceError):
+        run_artifacts(missing, client=StubLLMClient())
