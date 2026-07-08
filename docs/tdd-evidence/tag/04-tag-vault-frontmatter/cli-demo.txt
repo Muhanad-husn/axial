@@ -1,0 +1,44 @@
+### source_id: thesis_paper-82bcba3c2d51
+
+### $ axial envelope tests/fixtures/envelope/thesis_paper.pdf   (arrange: stored envelope)
+exit=0 (envelope stored)
+
+### $ axial vault write tests/fixtures/envelope/thesis_paper.pdf
+["data\\vault\\prose\\thesis_paper-82bcba3c2d51_1_introduction_001.md", "data\\vault\\prose\\thesis_paper-82bcba3c2d51_1_introduction_002.md", "data\\vault\\prose\\thesis_paper-82bcba3c2d51_2_comparative-cases_001.md", "data\\vault\\prose\\thesis_paper-82bcba3c2d51_2_comparative-cases_002.md", "data\\vault\\prose\\thesis_paper-82bcba3c2d51_3_conclusion_001.md", "data\\vault\\prose\\thesis_paper-82bcba3c2d51_3_conclusion_002.md"]
+exit=0
+
+### one written note (data/vault/prose/thesis_paper-82bcba3c2d51_1_introduction_001.md):
+
+---
+"chunk_id": "thesis_paper-82bcba3c2d51_1_introduction_001"
+"section": "Introduction"
+"chunk_text": "Stub chunk one: a claim and its immediate support."
+"source_meta":
+  "author": !!null "null"
+  "title": "Thesis Paper"
+  "date": !!null "null"
+  "thesis": "State capacity in post-conflict settings depends more on infrastructural\
+    \ reach than on coercive force alone."
+  "scope": "Comparative, drawing on cases from the post-conflict statebuilding literature."
+"schema_version": "0.1"
+"role_in_argument": "role:claim"
+"field":
+  "primary": "state"
+  "secondary":
+  - "ideology"
+"claim_type":
+  "primary": "state-formation"
+  "secondary": !!null "null"
+  "subtags":
+  - "formation:bellicist"
+"theory_school":
+  "primary": "bellicist"
+  "secondary": !!null "null"
+  "status": "candidate"
+"empirical_scope":
+  "value": "scope:country-case"
+  "country": "Syria"
+---
+# Introduction
+
+Stub chunk one: a claim and its immediate support.
