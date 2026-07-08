@@ -730,8 +730,8 @@ def test_vault_write_artifact_pool_is_idempotent_on_repeat_runs(clean_vault):
 
     second_contents = {p.name: p.read_bytes() for p in second_files}
     assert second_contents == first_contents, (
-        f"expected every artifact note's byte content to be identical "
-        f"across two consecutive `axial vault write` runs over the same "
-        f"fixture+env (idempotent overwrite, not drift), but at least one "
-        f"note's content differed"
+        "expected every artifact note's byte content to be identical "
+        "across two consecutive `axial vault write` runs over the same "
+        "fixture+env (idempotent overwrite, not drift), but at least one "
+        "note's content differed"
     )
