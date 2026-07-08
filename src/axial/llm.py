@@ -311,11 +311,21 @@ def _secrets_path() -> Path:
 
 def _load_openrouter_secrets(secrets_path: Path) -> dict[str, Any]:
     """Read the `[openrouter]` table from `secrets_path`; an absent file or
-    table yields an empty dict so the env-var/default fallbacks apply."""
+    table yields an empty dict so the env-var/default fallbacks apply.
+
+    A syntactically invalid TOML file is a configuration error, not a
+    transport/parsing detail that should escape as a raw
+    `tomllib.TOMLDecodeError` -- every error this module raises must be an
+    `LLMError` (module docstring), so it is re-raised as `LLMConfigError`,
+    mirroring `_resolve_api_key`'s error style.
+    """
     if not secrets_path.is_file():
         return {}
     with secrets_path.open("rb") as handle:
-        document = tomllib.load(handle)
+        try:
+            document = tomllib.load(handle)
+        except tomllib.TOMLDecodeError as exc:
+            raise LLMConfigError(f"secrets file '{secrets_path}' is not valid TOML: {exc}") from exc
     return document.get("openrouter", {}) or {}
 
 
@@ -351,12 +361,29 @@ def _resolve_model(secrets: dict[str, Any], llm_config: dict[str, Any]) -> str:
     defaults to the building tier. Falls back to `config/pipeline.yaml`'s
     `llm.model`, and finally to the building-tier default model, only when
     secrets.toml doesn't name a model for the selected tier (e.g. the file
-    is absent entirely)."""
+    is absent entirely).
+
+    A non-`building` tier (`production_high`/`production_low`) whose model
+    key is missing from secrets.toml is a misconfiguration, not a case to
+    paper over: silently falling through to `DEFAULT_BUILDING_MODEL` there
+    would make a run believed to use a paid production model silently use
+    the free building model instead. Only the `building` tier keeps the
+    fallback chain, so today's no-secrets-file behavior is unchanged.
+    """
     tier = secrets.get("llm_tier") or DEFAULT_LLM_TIER
     model_key = TIER_TO_MODEL_KEY.get(tier)
     if model_key is None:
         raise LLMConfigError(f"unknown llm_tier: {tier!r}")
-    return secrets.get(model_key) or llm_config.get("model") or DEFAULT_BUILDING_MODEL
+    model = secrets.get(model_key) or llm_config.get("model")
+    if model:
+        return model
+    if tier != BUILDING_TIER:
+        raise LLMConfigError(
+            f"llm_tier {tier!r} was selected but secrets.toml has no "
+            f"{model_key!r} key naming a model for it; set "
+            f"'[openrouter].{model_key}' in secrets/secrets.toml"
+        )
+    return DEFAULT_BUILDING_MODEL
 
 
 def _build_openrouter_client(llm_config: dict[str, Any]) -> OpenRouterClient:
