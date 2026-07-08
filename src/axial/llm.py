@@ -20,19 +20,24 @@ require no network access:
                                      chunk-shaped canned response;
                                      `pass_name="tag"`, passed by
                                      src/axial/tag.py, selects a tag-shaped
-                                     canned response; anything else --
-                                     including the envelope pass, which
-                                     never passes it -- gets the original
-                                     envelope-shaped one). Dispatch is
-                                     out-of-band (a call argument), never
-                                     embedded in the prompt text itself, so
-                                     no internal marker ever reaches a real
-                                     model. This resolves the shared-stub
-                                     collision between passes with different
-                                     response shapes -- see
+                                     canned response; `pass_name="artifacts"`,
+                                     passed by src/axial/artifacts.py, selects
+                                     an artifact-role-shaped canned response
+                                     whose `artifact_role` value honors the
+                                     `AXIAL_STUB_ARTIFACT_ROLE` fault-injection
+                                     seam below; anything else -- including
+                                     the envelope pass, which never passes
+                                     it -- gets the original envelope-shaped
+                                     one). Dispatch is out-of-band (a call
+                                     argument), never embedded in the prompt
+                                     text itself, so no internal marker ever
+                                     reaches a real model. This resolves the
+                                     shared-stub collision between passes
+                                     with different response shapes -- see
                                      tests/test_chunk.py's module docstring,
-                                     seam decision 1, and tests/test_tag.py's
-                                     seam decision 1.
+                                     seam decision 1, tests/test_tag.py's seam
+                                     decision 1, and tests/test_artifacts.py's
+                                     module docstring, seam decisions 1-2.
     AXIAL_LLM_PROVIDER=explode  -> ExplodingLLMClient, a poison client whose
                                      `.complete()` raises if ever invoked.
                                      Selecting it is never itself an error --
@@ -98,6 +103,25 @@ CHUNK_PASS_NAME = "chunk"
 # stub/record dispatch can tell a tag call apart from both a chunk call and
 # an envelope call.
 TAG_PASS_NAME = "tag"
+
+# Pass name an artifact-classification call identifies itself with (see
+# src/axial/artifacts.py). Same out-of-band dispatch convention as
+# CHUNK_PASS_NAME above.
+ARTIFACTS_PASS_NAME = "artifacts"
+
+# Fault-injection seam (mirroring `AXIAL_FORCE_DOCLING_FAILURE` in
+# extract.py): forces the `pass_name=ARTIFACTS_PASS_NAME` canned response to
+# carry exactly this string as the returned `artifact_role`, valid or not,
+# so tests can drive the schema-validation hard-error path deterministically
+# without needing a real model to misbehave. Unset/"" means the default
+# in-schema role below applies.
+STUB_ARTIFACT_ROLE_ENV_VAR = "AXIAL_STUB_ARTIFACT_ROLE"
+
+# The default, fixed in-schema `artifact_role` the stub/record canned
+# response carries when STUB_ARTIFACT_ROLE_ENV_VAR is unset -- the happy
+# path. Must remain a member of config/domains/syria/schema.yaml's
+# artifact_role axis (Appendix D).
+_DEFAULT_STUB_ARTIFACT_ROLE = "case-study"
 
 
 class LLMClient(Protocol):
@@ -166,17 +190,30 @@ class StubLLMClient:
         return _canned_response_for(pass_name)
 
 
+def _canned_artifact_response() -> str:
+    """The canned response for an artifacts-pass call (identified by
+    `pass_name=ARTIFACTS_PASS_NAME`, never by prompt content): a single
+    `artifact_role` value, read fresh from `STUB_ARTIFACT_ROLE_ENV_VAR` on
+    every call so tests can force an out-of-schema role on demand (see
+    tests/test_artifacts.py's module docstring, seam decision 2)."""
+    role = os.environ.get(STUB_ARTIFACT_ROLE_ENV_VAR) or _DEFAULT_STUB_ARTIFACT_ROLE
+    return json.dumps({"artifact_role": role})
+
+
 def _canned_response_for(pass_name: str | None) -> str:
     """Dispatch the canned response by pass: `pass_name == CHUNK_PASS_NAME`
     gets the chunk-shaped canned response, `pass_name == TAG_PASS_NAME` gets
-    the tag-shaped canned response; anything else (the envelope pass, which
-    never passes `pass_name`) gets the original envelope-shaped canned
-    response. Shared by `StubLLMClient` and `RecordLLMClient` so `record` is
-    indistinguishable from `stub` for the same call."""
+    the tag-shaped canned response, `pass_name == ARTIFACTS_PASS_NAME` gets
+    the artifact-role-shaped canned response; anything else (the envelope
+    pass, which never passes `pass_name`) gets the original envelope-shaped
+    canned response. Shared by `StubLLMClient` and `RecordLLMClient` so
+    `record` is indistinguishable from `stub` for the same call."""
     if pass_name == CHUNK_PASS_NAME:
         return StubLLMClient._CANNED_CHUNK_RESPONSE
     if pass_name == TAG_PASS_NAME:
         return StubLLMClient._CANNED_TAG_RESPONSE
+    if pass_name == ARTIFACTS_PASS_NAME:
+        return _canned_artifact_response()
     return StubLLMClient._CANNED_RESPONSE
 
 

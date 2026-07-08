@@ -60,13 +60,14 @@ And   a stub returning a role absent from the schema exits non-zero with a clear
 
 ## Definition of done
 
-- [ ] Outer acceptance test authored by the test-author, committed RED (flag-approved), seen to fail for the right reason — then locked.
-- [ ] All seeded unit behaviours covered; full suite passes locally; outer test GREEN.
-- [ ] Refactor pass complete with the bar green.
-- [ ] Slice's tests run in CI.
-- [ ] Reviewer's two-stage review passed.
-- [ ] Evidence collected and PR prepared into `main` — merge awaits founder approval.
+- [x] Outer acceptance test authored by the test-author, committed RED (flag-approved), seen to fail for the right reason — then locked.
+- [x] All seeded unit behaviours covered; full suite passes locally; outer test GREEN.
+- [x] Refactor pass complete with the bar green.
+- [x] Slice's tests run in CI.
+- [x] Reviewer's two-stage review passed.
+- [x] Evidence collected and PR prepared into `main` — merge awaits founder approval.
 
 ## Status / progress log
 
 - 2026-07-08 planned.
+- 2026-07-08 red outer test committed `2ab07ed` (locked); implementation `2f158dd` (189 passed); evidence `46264f9`. Reviewer two-stage pass clean. PR #36 opened into `main`; awaiting founder approval.

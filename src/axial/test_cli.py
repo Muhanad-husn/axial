@@ -131,3 +131,40 @@ def test_main_tag_against_a_tag_error_is_nonzero_and_prints_error(monkeypatch, c
 
     assert exit_code == 1
     assert "simulated tag failure" in captured.err
+
+
+def test_build_parser_recognises_artifacts_subcommand_with_default_domain():
+    from axial.artifacts import DEFAULT_DOMAIN_DIR
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["artifacts", "some-source.pdf"])
+
+    assert args.command == "artifacts"
+    assert args.source_path == "some-source.pdf"
+    assert args.domain == str(DEFAULT_DOMAIN_DIR)
+
+
+def test_build_parser_recognises_artifacts_domain_override():
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["artifacts", "some-source.pdf", "--domain", "some/other/domain"])
+
+    assert args.domain == "some/other/domain"
+
+
+def test_main_artifacts_prints_error_and_returns_nonzero_on_artifacts_error(monkeypatch, capsys):
+    import axial.cli as cli_mod
+    from axial.artifacts import ArtifactsError
+
+    def _boom(source_path, domain_dir=None):
+        raise ArtifactsError("simulated artifacts failure")
+
+    monkeypatch.setattr(cli_mod, "run_artifacts", _boom)
+
+    exit_code = cli_mod.main(["artifacts", "some-source.pdf"])
+    captured = capsys.readouterr()
+
+    assert exit_code != 0
+    assert "simulated artifacts failure" in captured.err

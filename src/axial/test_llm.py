@@ -73,6 +73,56 @@ def test_stub_client_returns_tag_shaped_response_for_the_tag_pass_name():
     assert "thesis" not in parsed
 
 
+def test_stub_client_returns_artifact_shaped_response_for_the_artifacts_pass_name():
+    from axial.llm import ARTIFACTS_PASS_NAME, StubLLMClient
+
+    client = StubLLMClient()
+
+    raw = client.complete("some artifact classification prompt", pass_name=ARTIFACTS_PASS_NAME)
+    parsed = json.loads(raw)
+
+    assert isinstance(parsed["artifact_role"], str) and parsed["artifact_role"].strip()
+    assert "chunks" not in parsed
+    assert "thesis" not in parsed
+
+
+def test_stub_client_artifact_role_defaults_to_an_unset_env_var(monkeypatch):
+    from axial.llm import ARTIFACTS_PASS_NAME, STUB_ARTIFACT_ROLE_ENV_VAR, StubLLMClient
+
+    monkeypatch.delenv(STUB_ARTIFACT_ROLE_ENV_VAR, raising=False)
+    client = StubLLMClient()
+
+    raw = client.complete("prompt", pass_name=ARTIFACTS_PASS_NAME)
+    parsed = json.loads(raw)
+
+    assert parsed["artifact_role"]
+
+
+def test_stub_client_honors_the_forced_artifact_role_env_var(monkeypatch):
+    from axial.llm import ARTIFACTS_PASS_NAME, STUB_ARTIFACT_ROLE_ENV_VAR, StubLLMClient
+
+    monkeypatch.setenv(STUB_ARTIFACT_ROLE_ENV_VAR, "not-a-real-role")
+    client = StubLLMClient()
+
+    raw = client.complete("prompt", pass_name=ARTIFACTS_PASS_NAME)
+    parsed = json.loads(raw)
+
+    assert parsed["artifact_role"] == "not-a-real-role"
+
+
+def test_record_client_response_matches_stub_for_the_artifacts_pass_name(tmp_path):
+    from axial.llm import ARTIFACTS_PASS_NAME, RecordLLMClient, StubLLMClient
+
+    stub = StubLLMClient()
+    record = RecordLLMClient(tmp_path / "prompts.jsonl")
+
+    prompt = "some artifact classification prompt"
+
+    assert record.complete(prompt, pass_name=ARTIFACTS_PASS_NAME) == stub.complete(
+        prompt, pass_name=ARTIFACTS_PASS_NAME
+    )
+
+
 def test_stub_client_dispatch_is_by_pass_name_not_prompt_content():
     """The chunk-vs-envelope canned-response dispatch must be driven by the
     out-of-band `pass_name` argument, never by scanning prompt text -- so an
