@@ -1,0 +1,30 @@
+# Fixture domain for tests/test_tag_domain_dir_config.py (issue #38).
+#
+# Deliberately NOT a copy of config/domains/syria/schema.yaml: this fixture's
+# only job is to prove `axial tag`'s domain-directory resolution actually
+# loads THIS directory when `paths.domain_dir` in `config/pipeline.yaml`
+# names it -- never silently falling back to the real Syria domain. Its
+# `version` is chosen to be unambiguously different from Syria's ("0.1") so
+# a tagged record's `schema_version` can only match this fixture's version if
+# this directory was genuinely loaded (not the Syria default).
+#
+# Only declares `role_in_argument`, and its vocabulary includes `role:claim`
+# -- the exact value StubLLMClient's canned tag-pass response always returns
+# for `role_in_argument` (see src/axial/llm.py's `_CANNED_TAG_RESPONSE`) --
+# so a plain stub-driven `axial tag` run tags cleanly against this minimal
+# vocabulary without needing to replicate Syria's full axis set.
+# `src/axial/tag.py`'s `run_tag` only tags axes the loaded schema actually
+# declares (see its `TAGGED_AXES` comment), so omitting empirical_scope/
+# field/claim_type/theory_school here is not a hard error -- those axes are
+# simply never tagged for this fixture domain.
+
+domain: tag38-alt-fixture
+version: "9.9-tag38-alt-fixture"
+
+axes:
+  role_in_argument:
+    applies_to: [prose]
+    cardinality: single
+    values:
+      - role:claim
+      - role:tag38-alt-fixture-marker

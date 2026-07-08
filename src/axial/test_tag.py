@@ -948,3 +948,43 @@ def test_run_tag_raises_a_hard_error_for_an_undeclared_claim_type_subtag(monkeyp
     message = str(exc_info.value)
     assert "claim_type" in message
     assert "not-a-real-subtag" in message
+
+
+def test_default_domain_dir_returns_configured_path_when_present(tmp_path):
+    """`_default_domain_dir` reads `paths.domain_dir` from `config/
+    pipeline.yaml` (mirrors `axial.envelope._default_envelopes_dir`'s own
+    `paths.envelopes_dir` behavior) -- issue #38."""
+    import axial.tag as tag_mod
+
+    configured_dir = tmp_path / "configured-domain"
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text(
+        f"paths:\n  domain_dir: {configured_dir.as_posix()}\n",
+        encoding="utf-8",
+    )
+
+    assert tag_mod._default_domain_dir(config_path) == configured_dir
+
+
+def test_default_domain_dir_falls_back_to_syria_when_key_absent(tmp_path):
+    """An absent `paths.domain_dir` key (other `paths:` keys present) falls
+    back to `DEFAULT_DOMAIN_DIR` (config/domains/syria) -- issue #38."""
+    import axial.tag as tag_mod
+
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text(
+        "paths:\n  envelopes_dir: some/other/dir\n",
+        encoding="utf-8",
+    )
+
+    assert tag_mod._default_domain_dir(config_path) == tag_mod.DEFAULT_DOMAIN_DIR
+
+
+def test_default_domain_dir_falls_back_to_syria_when_config_file_absent(tmp_path):
+    """A nonexistent config_path also falls back to `DEFAULT_DOMAIN_DIR`,
+    never raising -- issue #38."""
+    import axial.tag as tag_mod
+
+    config_path = tmp_path / "does-not-exist.yaml"
+
+    assert tag_mod._default_domain_dir(config_path) == tag_mod.DEFAULT_DOMAIN_DIR

@@ -1,0 +1,15 @@
+# Paired codebook for schema.yaml in this same directory (issue #38 fixture
+# domain). Mirrors config/domains/syria/codebook.yaml's shape exactly, with
+# entries for every tag schema.yaml (this directory) declares -- only
+# role_in_argument, since that is the only axis this fixture domain defines.
+
+axes:
+  role_in_argument:
+    role:claim:
+      definition: A claim asserted by the author.
+      positive_example: A passage stating a claim.
+      negative_example: A passage with no claim.
+    role:tag38-alt-fixture-marker:
+      definition: A fixture-only marker tag; never returned by the stub's canned response.
+      positive_example: N/A (fixture-only tag id, present only to give this axis more than one value).
+      negative_example: N/A (fixture-only tag id).

@@ -1,0 +1,14 @@
+$ uv run axial tag --help
+usage: axial tag [-h] [--domain DOMAIN_DIR] source_path
+
+positional arguments:
+  source_path          path to a .pdf or .docx source file
+
+options:
+  -h, --help           show this help message and exit
+  --domain DOMAIN_DIR  path to a domain directory containing schema.yaml and
+                       codebook.yaml (default: resolved from
+                       config/pipeline.yaml's paths.domain_dir, falling back
+                       to config\domains\syria when absent)
+
+exit code: 0

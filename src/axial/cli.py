@@ -73,8 +73,12 @@ def build_parser() -> argparse.ArgumentParser:
     tag_parser.add_argument(
         "--domain",
         dest="domain_dir",
-        default=str(DEFAULT_DOMAIN_DIR),
-        help="path to a domain directory containing schema.yaml and codebook.yaml",
+        default=None,
+        help=(
+            "path to a domain directory containing schema.yaml and codebook.yaml "
+            "(default: resolved from config/pipeline.yaml's paths.domain_dir, "
+            f"falling back to {DEFAULT_DOMAIN_DIR} when absent)"
+        ),
     )
 
     artifacts_parser = subparsers.add_parser(
