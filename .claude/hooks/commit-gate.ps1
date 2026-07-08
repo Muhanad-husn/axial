@@ -33,6 +33,27 @@ if ($branch -eq 'main') {
 
 if (Test-Path (Join-Path $projectDir '.claude/allow-red-commit')) { exit 0 }
 
+# Docs-only fast path: if every file in this commit is documentation or a plan, the
+# code test suite result cannot change, so skip pytest. This runs AFTER the main-branch
+# block and the allow-red-commit escape hatch above, so neither is affected. Fails safe:
+# it skips ONLY when certain the commit is docs-only; an empty set, any non-docs file, or
+# any error falls through to the suite run below.
+try {
+    $staged = @(& git -C $projectDir diff --cached --name-only 2>$null | Where-Object { $_ })
+    # `git commit -a/--all` sweeps in tracked-but-unstaged edits; fold them in so a code
+    # file cannot ride along unseen. Detected generously - a false positive here only makes
+    # us run the suite, never skip it.
+    if ($cmd -match '(^|\s)-[A-Za-z]*a[A-Za-z]*(\s|$)' -or $cmd -match '--all\b') {
+        $staged += @(& git -C $projectDir diff --name-only 2>$null | Where-Object { $_ })
+    }
+    $files = @($staged | Select-Object -Unique)
+    $nonDocs = @($files | Where-Object { -not ($_ -imatch '\.(md|txt|rst)$' -or $_ -imatch '^(plans|docs)/') })
+    if ($files.Count -gt 0 -and $nonDocs.Count -eq 0) {
+        [Console]::Error.WriteLine("Docs-only commit ($($files.Count) file(s)); skipping the test suite - no code changed.")
+        exit 0
+    }
+} catch { }  # any failure: fall through to the suite
+
 # Fast per-commit gate (founder-approved policy): run only the hermetic src/ unit
 # suite, in parallel across cores (pytest-xdist) -- ~6s for 220 tests. The heavy
 # tests/ acceptance contracts drive the real docling pipeline end-to-end through
