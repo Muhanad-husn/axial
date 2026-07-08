@@ -83,6 +83,15 @@ import yaml
 
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
+
+# Slice 02 (issue #28) test/CI-only seam: when set to a non-empty value,
+# the stub/record clients' tag-pass response becomes this raw string
+# verbatim instead of the default canned tag response, letting a test drive
+# a malformed tag payload (e.g. a missing/out-of-list country) end-to-end
+# via subprocess without inventing a second stub client shape. Read at call
+# time (not import time) so a test can set/unset it per-subprocess-env.
+# Never affects the chunk or envelope canned responses.
+STUB_TAG_RESPONSE_ENV_VAR = "AXIAL_STUB_TAG_RESPONSE"
 DEFAULT_PIPELINE_CONFIG_PATH = Path("config/pipeline.yaml")
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -152,11 +161,20 @@ class StubLLMClient:
     )
 
     # Canned response for a tag-pass call (identified by
-    # `pass_name=TAG_PASS_NAME`, never by prompt content). The value must be
-    # a real member of the Syria v0 domain schema's `role_in_argument` axis
-    # (config/domains/syria/schema.yaml) so the stub-driven end-to-end path
-    # validates cleanly against the loaded schema (PRD §7.1).
-    _CANNED_TAG_RESPONSE = json.dumps({"role_in_argument": "role:claim"})
+    # `pass_name=TAG_PASS_NAME`, never by prompt content). Every value must
+    # be a real member of the Syria v0 domain schema's respective axis
+    # (config/domains/syria/schema.yaml) -- role:claim in role_in_argument,
+    # scope:country-case in empirical_scope, Syria in country_list -- so the
+    # stub-driven end-to-end path validates cleanly against the loaded
+    # schema (PRD §7.1) and exercises the scope:country-case/country branch
+    # by default (tests/test_tag.py slice 02 seam decision 5).
+    _CANNED_TAG_RESPONSE = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "empirical_scope": "scope:country-case",
+            "country": "Syria",
+        }
+    )
 
     def __init__(self) -> None:
         self.call_count = 0
@@ -169,13 +187,18 @@ class StubLLMClient:
 def _canned_response_for(pass_name: str | None) -> str:
     """Dispatch the canned response by pass: `pass_name == CHUNK_PASS_NAME`
     gets the chunk-shaped canned response, `pass_name == TAG_PASS_NAME` gets
-    the tag-shaped canned response; anything else (the envelope pass, which
-    never passes `pass_name`) gets the original envelope-shaped canned
-    response. Shared by `StubLLMClient` and `RecordLLMClient` so `record` is
+    the tag-shaped canned response (or, if `AXIAL_STUB_TAG_RESPONSE` is set
+    to a non-empty value, that raw string verbatim -- read at call time, and
+    only for tag-pass calls); anything else (the envelope pass, which never
+    passes `pass_name`) gets the original envelope-shaped canned response.
+    Shared by `StubLLMClient` and `RecordLLMClient` so `record` is
     indistinguishable from `stub` for the same call."""
     if pass_name == CHUNK_PASS_NAME:
         return StubLLMClient._CANNED_CHUNK_RESPONSE
     if pass_name == TAG_PASS_NAME:
+        override = os.environ.get(STUB_TAG_RESPONSE_ENV_VAR, "")
+        if override:
+            return override
         return StubLLMClient._CANNED_TAG_RESPONSE
     return StubLLMClient._CANNED_RESPONSE
 

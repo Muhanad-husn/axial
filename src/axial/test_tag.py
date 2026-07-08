@@ -1,5 +1,7 @@
 """Inner unit tests for the axial tag module (issue #27 slice 01 -- tag
-spine: role_in_argument, schema-driven, hard-error, versioned)."""
+spine: role_in_argument, schema-driven, hard-error, versioned; issue #28
+slice 02 -- empirical_scope axis + the scope:country-case country extra
+field)."""
 
 from __future__ import annotations
 
@@ -36,6 +38,20 @@ _SCHEMA = Schema(
             tag_ids={"role:claim", "role:evidence", "role:setup"},
         ),
     },
+)
+
+_SCHEMA_WITH_COUNTRY = Schema(
+    version="0.1",
+    axes={
+        "empirical_scope": Axis(
+            name="empirical_scope",
+            applies_to=["prose"],
+            cardinality="single",
+            value_count=2,
+            tag_ids={"scope:country-case", "scope:general"},
+        ),
+    },
+    country_list=["Syria", "Turkey"],
 )
 
 _CODEBOOK = Codebook(
@@ -179,6 +195,50 @@ def test_validate_tag_rejects_an_absent_value_naming_axis_and_tag():
     assert "role:not-a-real-tag" in message
 
 
+# --- country-case extra field (issue #28 slice 02) --------------------------
+
+
+def test_parse_country_response_returns_the_country():
+    from axial.tag import parse_country_response
+
+    raw = json.dumps({"empirical_scope": "scope:country-case", "country": "Syria"})
+
+    assert parse_country_response(raw) == "Syria"
+
+
+def test_parse_country_response_rejects_a_missing_country_key():
+    from axial.tag import CountryCaseMissingCountryError, parse_country_response
+
+    raw = json.dumps({"empirical_scope": "scope:country-case"})
+
+    with pytest.raises(CountryCaseMissingCountryError):
+        parse_country_response(raw)
+
+
+def test_parse_country_response_rejects_an_empty_country_value():
+    from axial.tag import CountryCaseMissingCountryError, parse_country_response
+
+    raw = json.dumps({"empirical_scope": "scope:country-case", "country": ""})
+
+    with pytest.raises(CountryCaseMissingCountryError):
+        parse_country_response(raw)
+
+
+def test_validate_country_accepts_an_in_list_value():
+    from axial.tag import validate_country
+
+    validate_country(_SCHEMA_WITH_COUNTRY, "Syria")  # does not raise
+
+
+def test_validate_country_rejects_an_out_of_list_value_naming_it():
+    from axial.tag import CountryNotInListError, validate_country
+
+    with pytest.raises(CountryNotInListError) as exc_info:
+        validate_country(_SCHEMA_WITH_COUNTRY, "Atlantis")
+
+    assert "Atlantis" in str(exc_info.value)
+
+
 # --- record assembly ---------------------------------------------------------
 
 
@@ -194,6 +254,36 @@ def test_build_tagged_record_carries_provenance_and_schema_version():
     assert record["chunk_text"] == "x"
     assert record["role_in_argument"] == "role:claim"
     assert record["schema_version"] == "0.1"
+    assert "empirical_scope" not in record
+    assert "country" not in record
+
+
+def test_build_tagged_record_carries_empirical_scope_and_country_when_given():
+    from axial.tag import build_tagged_record
+
+    chunk_record = {"chunk_id": "id1", "section": "Introduction", "text": "x"}
+
+    record = build_tagged_record(
+        chunk_record,
+        "role:claim",
+        "0.1",
+        empirical_scope="scope:country-case",
+        country="Syria",
+    )
+
+    assert record["empirical_scope"] == "scope:country-case"
+    assert record["country"] == "Syria"
+
+
+def test_build_tagged_record_omits_country_when_not_given():
+    from axial.tag import build_tagged_record
+
+    chunk_record = {"chunk_id": "id1", "section": "Introduction", "text": "x"}
+
+    record = build_tagged_record(chunk_record, "role:claim", "0.1", empirical_scope="scope:general")
+
+    assert record["empirical_scope"] == "scope:general"
+    assert "country" not in record
 
 
 # --- run_tag: zero chunks, happy path, hard error ----------------------------
@@ -302,3 +392,173 @@ def test_run_tag_raises_a_hard_error_for_an_out_of_schema_tag(monkeypatch, tmp_p
 
     with pytest.raises(tag_mod.TagNotInSchemaError):
         tag_mod.run_tag(tmp_path / "paper.pdf", client=_OutOfSchemaClient(), domain_dir=domain_dir)
+
+
+# --- run_tag: empirical_scope + country-case extra field (issue #28 slice 02) --
+
+
+def _write_domain_with_empirical_scope(
+    tmp_path, country_list: tuple[str, ...] = ("Syria", "Turkey")
+):
+    """Write a minimal schema.yaml + codebook.yaml covering both
+    role_in_argument and empirical_scope (with a country_list), for
+    `run_tag` country-case unit tests."""
+    domain_dir = tmp_path / "domain"
+    domain_dir.mkdir()
+    countries_block = ", ".join(country_list)
+    (domain_dir / "schema.yaml").write_text(
+        "version: 0.1\n"
+        "axes:\n"
+        "  role_in_argument:\n"
+        "    applies_to: [prose]\n"
+        "    cardinality: single\n"
+        "    values: [role:claim, role:evidence]\n"
+        "  empirical_scope:\n"
+        "    applies_to: [prose]\n"
+        "    cardinality: single\n"
+        "    values: [scope:country-case, scope:general]\n"
+        f"country_list: [{countries_block}]\n",
+        encoding="utf-8",
+    )
+    (domain_dir / "codebook.yaml").write_text(
+        "axes:\n"
+        "  role_in_argument:\n"
+        "    role:claim: {definition: d, positive_example: p, negative_example: n}\n"
+        "    role:evidence: {definition: d, positive_example: p, negative_example: n}\n"
+        "  empirical_scope:\n"
+        "    scope:country-case: {definition: d, positive_example: p, negative_example: n}\n"
+        "    scope:general: {definition: d, positive_example: p, negative_example: n}\n",
+        encoding="utf-8",
+    )
+    return domain_dir
+
+
+def _one_chunk_run_chunk(monkeypatch, tag_mod):
+    monkeypatch.setattr(
+        tag_mod,
+        "run_chunk",
+        lambda *args, **kwargs: [
+            {"chunk_id": "c1", "section": "Introduction", "text": "chunk one"}
+        ],
+    )
+
+
+def test_run_tag_country_case_record_carries_empirical_scope_and_country(monkeypatch, tmp_path):
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_empirical_scope(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    class _Client:
+        def complete(self, prompt, pass_name=None):
+            return json.dumps(
+                {
+                    "role_in_argument": "role:claim",
+                    "empirical_scope": "scope:country-case",
+                    "country": "Syria",
+                }
+            )
+
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+
+    assert len(records) == 1
+    assert records[0]["role_in_argument"] == "role:claim"
+    assert records[0]["empirical_scope"] == "scope:country-case"
+    assert records[0]["country"] == "Syria"
+
+
+def test_run_tag_non_country_case_record_carries_no_country(monkeypatch, tmp_path):
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_empirical_scope(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    class _Client:
+        def complete(self, prompt, pass_name=None):
+            return json.dumps(
+                {"role_in_argument": "role:claim", "empirical_scope": "scope:general"}
+            )
+
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+
+    assert records[0]["empirical_scope"] == "scope:general"
+    assert "country" not in records[0]
+
+
+def test_run_tag_country_case_missing_country_raises_hard_error(monkeypatch, tmp_path):
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_empirical_scope(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    class _Client:
+        def complete(self, prompt, pass_name=None):
+            return json.dumps(
+                {"role_in_argument": "role:claim", "empirical_scope": "scope:country-case"}
+            )
+
+    with pytest.raises(tag_mod.CountryCaseMissingCountryError):
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+
+
+def test_run_tag_country_case_out_of_list_country_raises_naming_the_value(monkeypatch, tmp_path):
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_empirical_scope(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    class _Client:
+        def complete(self, prompt, pass_name=None):
+            return json.dumps(
+                {
+                    "role_in_argument": "role:claim",
+                    "empirical_scope": "scope:country-case",
+                    "country": "Atlantis",
+                }
+            )
+
+    with pytest.raises(tag_mod.CountryNotInListError) as exc_info:
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+
+    assert "Atlantis" in str(exc_info.value)
+
+
+def test_run_tag_makes_exactly_one_llm_call_per_chunk_even_with_two_tagged_axes(
+    monkeypatch, tmp_path
+):
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_empirical_scope(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    calls = []
+
+    class _Client:
+        def complete(self, prompt, pass_name=None):
+            calls.append(pass_name)
+            return json.dumps(
+                {"role_in_argument": "role:claim", "empirical_scope": "scope:general"}
+            )
+
+    tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+
+    assert calls == [TAG_PASS_NAME]
+
+
+def test_run_tag_regresses_role_in_argument_when_empirical_scope_axis_absent(monkeypatch, tmp_path):
+    """A domain that doesn't declare empirical_scope (e.g. slice 01's
+    minimal fixture domain) must still tag role_in_argument alone, with no
+    empirical_scope/country keys added and no error for the axis the schema
+    doesn't define."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    stub_client = StubLLMClient()
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=stub_client, domain_dir=domain_dir)
+
+    assert len(records) == 1
+    assert records[0]["role_in_argument"] == "role:claim"
+    assert "empirical_scope" not in records[0]
+    assert "country" not in records[0]
