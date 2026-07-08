@@ -13,8 +13,17 @@ try { $j = [Console]::In.ReadToEnd() | ConvertFrom-Json } catch { exit 0 }
 $cmd = "$($j.tool_input.command)"
 if ($cmd -notmatch 'git\s+(\S+\s+)*commit') { exit 0 }
 
-$projectDir = $env:CLAUDE_PROJECT_DIR
-if (-not $projectDir) { $projectDir = Split-Path (Split-Path $PSScriptRoot) }
+# Resolve the worktree this commit actually targets from the tool's cwd, not the
+# session-fixed CLAUDE_PROJECT_DIR -- that stays bound to the launch checkout and
+# misfires for git-worktree sessions (a commit in a feature worktree was blocked
+# as "on main" because the launch checkout happened to be on main). Normalize to
+# the git root of that cwd so the branch guard and pytest run against the tree
+# being committed.
+$opDir = "$($j.cwd)"
+if (-not $opDir) { $opDir = $env:CLAUDE_PROJECT_DIR }
+if (-not $opDir) { $opDir = Split-Path (Split-Path $PSScriptRoot) }
+$projectDir = (& git -C $opDir rev-parse --show-toplevel 2>$null)
+if (-not $projectDir) { $projectDir = $opDir }
 
 $branch = (& git -C $projectDir rev-parse --abbrev-ref HEAD 2>$null)
 if ($branch -eq 'main') {
