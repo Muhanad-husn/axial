@@ -22,6 +22,7 @@ fail.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -41,6 +42,12 @@ if TYPE_CHECKING:
 # force the docling step to fail or degenerate deterministically, without
 # needing docling to genuinely misbehave on a real source.
 FORCE_FAILURE_ENV_VAR = "AXIAL_FORCE_DOCLING_FAILURE"
+
+# Persisted structural-tree cache (PRD §5 stage 2, §7.4, §8 P0-2): one JSON
+# per source in data/trees/, keyed by source_id (the same deterministic id
+# used for the envelope, axial.envelope.compute_source_id). Mirrors
+# axial.envelope.ENVELOPES_DIR's repo-root/cwd-relative constant exactly.
+TREES_DIR = Path("data/trees")
 
 _artifact_types: tuple[type, ...] | None = None
 _section_types: tuple[type, ...] | None = None
@@ -307,6 +314,23 @@ def _normalize_unstructured(elements: list[Element]) -> dict:
     )
 
 
+def tree_path(source_id: str, trees_dir: Path = TREES_DIR) -> Path:
+    """The persisted-tree path for `source_id` (PRD §7.4: 'One JSON per
+    source in data/trees/, keyed by source_id')."""
+    return trees_dir / f"{source_id}.json"
+
+
+def load_persisted_tree(path: Path) -> dict:
+    """Read a persisted structural tree back verbatim."""
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def persist_tree(tree: dict, path: Path) -> None:
+    """Write the structural tree JSON, creating parent directories as needed."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(tree), encoding="utf-8")
+
+
 def _log_fallback(path: Path, reason: str) -> None:
     """Log the fallback event to stderr (never stdout, which stays pure JSON).
 
@@ -325,21 +349,56 @@ def extract(path: str | Path) -> dict:
     with docling, and normalize. If docling fails or returns degenerate
     (empty/structureless) output, fall back to Unstructured for that source
     and log the fallback (PRD §8 P0-2).
+
+    The resulting tree is produced once per source_id and persisted to
+    `data/trees/<source_id>.json` (PRD §7.4, §8 P0-2): a source whose
+    source_id already has a persisted tree is read back verbatim here,
+    without ever running docling/Unstructured again.
+
+    The `AXIAL_FORCE_DOCLING_FAILURE` fault-injection seam (see
+    tests/test_extract_fallback.py) exists purely to exercise the
+    docling-failure/fallback path deterministically on demand; honoring the
+    persisted-tree cache under it (reading a stale/real tree instead of
+    forcing the failure, or writing the synthetic forced-failure result over
+    a source's real cached tree) would defeat the seam and corrupt the real
+    cache for every other caller of that same source. So while the seam is
+    active, both the cache read and the cache write are skipped for this
+    call; the source's real persisted tree (if any) is left untouched.
     """
     try:
         source = intake(path)
     except IntakeError as exc:
         raise SourceValidationError(exc) from exc
 
+    # Local import: avoids a circular import (axial.envelope imports
+    # `extract` from this module at its own module top).
+    from axial.envelope import compute_source_id
+
+    source_id = compute_source_id(source.path)
+    out_path = tree_path(source_id, TREES_DIR)
+    forced = _forced_failure_mode() is not None
+
+    if not forced and out_path.exists():
+        return load_persisted_tree(out_path)
+
     try:
         document = _convert_with_seam(source.path)
     except Exception as exc:  # docling can raise a variety of internal errors
-        return _fallback(source.path, f"docling raised an exception: {exc}")
+        tree = _fallback(source.path, f"docling raised an exception: {exc}")
+        if not forced:
+            persist_tree(tree, out_path)
+        return tree
 
     if is_degenerate(document):
-        return _fallback(source.path, "docling returned degenerate (empty/structureless) output")
+        tree = _fallback(source.path, "docling returned degenerate (empty/structureless) output")
+        if not forced:
+            persist_tree(tree, out_path)
+        return tree
 
-    return normalize(document)
+    tree = normalize(document)
+    if not forced:
+        persist_tree(tree, out_path)
+    return tree
 
 
 def _fallback(path: Path, reason: str) -> dict:

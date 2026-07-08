@@ -162,7 +162,9 @@ def test_is_degenerate_is_false_for_a_document_with_real_items():
     assert is_degenerate(_synthetic_document()) is False
 
 
-def test_extract_routes_a_raised_docling_exception_to_the_unstructured_fallback(monkeypatch):
+def test_extract_routes_a_raised_docling_exception_to_the_unstructured_fallback(
+    monkeypatch, tmp_path
+):
     """A docling exception must not crash extract(); it must route to the
     Unstructured adapter and still yield a normalized tree."""
     import axial.extract as extract_mod
@@ -172,6 +174,7 @@ def test_extract_routes_a_raised_docling_exception_to_the_unstructured_fallback(
 
     fake_elements = [Title(text="Section"), NarrativeText(text="Body text.")]
 
+    monkeypatch.setattr(extract_mod, "TREES_DIR", tmp_path)
     monkeypatch.setattr(extract_mod, "convert", _boom)
     monkeypatch.setattr(extract_mod, "_partition_with_unstructured", lambda path: fake_elements)
 
@@ -181,13 +184,14 @@ def test_extract_routes_a_raised_docling_exception_to_the_unstructured_fallback(
     assert tree["children"][0]["type"] == "prose"
 
 
-def test_extract_falls_back_when_docling_output_is_degenerate(monkeypatch):
+def test_extract_falls_back_when_docling_output_is_degenerate(monkeypatch, tmp_path):
     """Degenerate (empty/structureless) docling output must also route to the
     Unstructured fallback, without raising."""
     import axial.extract as extract_mod
 
     fake_elements = [Title(text="Section"), NarrativeText(text="Body text.")]
 
+    monkeypatch.setattr(extract_mod, "TREES_DIR", tmp_path)
     monkeypatch.setattr(extract_mod, "convert", lambda path: DoclingDocument(name="empty"))
     monkeypatch.setattr(extract_mod, "_partition_with_unstructured", lambda path: fake_elements)
 
@@ -258,11 +262,82 @@ def test_fallback_logs_source_filename_and_reason_to_stderr(monkeypatch, capsys)
     assert PROSE_AND_TABLE_PDF.name in captured.err
 
 
-def test_extract_does_not_fall_back_when_docling_succeeds(monkeypatch, capsys):
+# --- tree persistence/reuse (issue #45) -------------------------------------
+
+
+def test_extract_persists_the_returned_tree_keyed_by_source_id(monkeypatch, tmp_path):
+    """A fresh source_id (no persisted tree yet) must be written to
+    `<trees_dir>/<source_id>.json`, with content identical to what extract()
+    returns."""
+    import axial.extract as extract_mod
+    from axial.envelope import compute_source_id
+
+    monkeypatch.setattr(extract_mod, "TREES_DIR", tmp_path)
+    monkeypatch.setattr(extract_mod, "convert", lambda path: _synthetic_document())
+
+    tree = extract_mod.extract(PROSE_AND_TABLE_PDF)
+
+    source_id = compute_source_id(PROSE_AND_TABLE_PDF)
+    persisted_path = tmp_path / f"{source_id}.json"
+    assert persisted_path.exists()
+    assert json.loads(persisted_path.read_text(encoding="utf-8")) == tree
+
+
+def test_extract_reuses_a_persisted_tree_without_converting(monkeypatch, tmp_path):
+    """When a persisted tree already exists for the source's source_id,
+    extract() must return it verbatim and must never call docling/Unstructured
+    conversion again."""
+    import axial.extract as extract_mod
+    from axial.envelope import compute_source_id
+
+    monkeypatch.setattr(extract_mod, "TREES_DIR", tmp_path)
+
+    source_id = compute_source_id(PROSE_AND_TABLE_PDF)
+    persisted_path = tmp_path / f"{source_id}.json"
+    sentinel_tree = {"children": [{"type": "prose", "order": "0", "text": "sentinel"}]}
+    persisted_path.write_text(json.dumps(sentinel_tree), encoding="utf-8")
+
+    def _fail_if_called(path):
+        raise AssertionError("docling conversion must not run when a persisted tree exists")
+
+    monkeypatch.setattr(extract_mod, "convert", _fail_if_called)
+    monkeypatch.setattr(extract_mod, "_partition_with_unstructured", _fail_if_called)
+
+    tree = extract_mod.extract(PROSE_AND_TABLE_PDF)
+
+    assert tree == sentinel_tree
+
+
+def test_extract_persists_the_tree_from_the_unstructured_fallback_path(monkeypatch, tmp_path):
+    """Reuse must cover the fallback path too: when docling fails/degenerates
+    and Unstructured produces the tree instead, that tree is still persisted
+    keyed by source_id."""
+    import axial.extract as extract_mod
+    from axial.envelope import compute_source_id
+
+    monkeypatch.setattr(extract_mod, "TREES_DIR", tmp_path)
+
+    def _boom(path):
+        raise RuntimeError("simulated docling crash")
+
+    fake_elements = [Title(text="Section"), NarrativeText(text="Body text.")]
+    monkeypatch.setattr(extract_mod, "convert", _boom)
+    monkeypatch.setattr(extract_mod, "_partition_with_unstructured", lambda path: fake_elements)
+
+    tree = extract_mod.extract(PROSE_AND_TABLE_PDF)
+
+    source_id = compute_source_id(PROSE_AND_TABLE_PDF)
+    persisted_path = tmp_path / f"{source_id}.json"
+    assert persisted_path.exists()
+    assert json.loads(persisted_path.read_text(encoding="utf-8")) == tree
+
+
+def test_extract_does_not_fall_back_when_docling_succeeds(monkeypatch, capsys, tmp_path):
     """No-regression: a successful docling conversion must not invoke the
     Unstructured fallback or log anything about it."""
     import axial.extract as extract_mod
 
+    monkeypatch.setattr(extract_mod, "TREES_DIR", tmp_path)
     monkeypatch.setattr(extract_mod, "convert", lambda path: _synthetic_document())
 
     def _fail_if_called(path):
