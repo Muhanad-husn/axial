@@ -5,6 +5,7 @@ import json
 import sys
 
 import axial
+from axial.artifacts import ArtifactsError, run_artifacts
 from axial.chunk import ChunkError, run_chunk
 from axial.codebook import CodebookError, load_codebook
 from axial.envelope import EnvelopeError, run_envelope
@@ -73,6 +74,20 @@ def build_parser() -> argparse.ArgumentParser:
         dest="domain_dir",
         default=str(DEFAULT_DOMAIN_DIR),
         help="path to a domain directory containing schema.yaml and codebook.yaml",
+    )
+
+    artifacts_parser = subparsers.add_parser(
+        "artifacts",
+        help="run the artifact-classification pass, emitting one record per artifact node to stdout",
+    )
+    artifacts_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
+    artifacts_parser.add_argument(
+        "--domain",
+        default=str(DEFAULT_DOMAIN_DIR),
+        help=(
+            "path to a domain directory containing schema.yaml and codebook.yaml "
+            f"(default: {DEFAULT_DOMAIN_DIR})"
+        ),
     )
 
     vault_parser = subparsers.add_parser("vault", help="vault operations")
@@ -175,6 +190,17 @@ def _tag(source_path: str, domain_dir: str) -> int:
     return 0
 
 
+def _artifacts(source_path: str, domain: str) -> int:
+    try:
+        records = run_artifacts(source_path, domain_dir=domain)
+    except ArtifactsError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(records))
+    return 0
+
+
 def _vault_write(source_path: str) -> int:
     try:
         written = run_vault_write(source_path)
@@ -214,6 +240,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "tag":
         return _tag(args.source_path, args.domain_dir)
+
+    if args.command == "artifacts":
+        return _artifacts(args.source_path, args.domain)
 
     if args.command == "vault" and args.vault_command == "write":
         return _vault_write(args.source_path)

@@ -73,6 +73,56 @@ def test_stub_client_returns_tag_shaped_response_for_the_tag_pass_name():
     assert "thesis" not in parsed
 
 
+def test_stub_client_returns_artifact_shaped_response_for_the_artifacts_pass_name():
+    from axial.llm import ARTIFACTS_PASS_NAME, StubLLMClient
+
+    client = StubLLMClient()
+
+    raw = client.complete("some artifact classification prompt", pass_name=ARTIFACTS_PASS_NAME)
+    parsed = json.loads(raw)
+
+    assert isinstance(parsed["artifact_role"], str) and parsed["artifact_role"].strip()
+    assert "chunks" not in parsed
+    assert "thesis" not in parsed
+
+
+def test_stub_client_artifact_role_defaults_to_an_unset_env_var(monkeypatch):
+    from axial.llm import ARTIFACTS_PASS_NAME, STUB_ARTIFACT_ROLE_ENV_VAR, StubLLMClient
+
+    monkeypatch.delenv(STUB_ARTIFACT_ROLE_ENV_VAR, raising=False)
+    client = StubLLMClient()
+
+    raw = client.complete("prompt", pass_name=ARTIFACTS_PASS_NAME)
+    parsed = json.loads(raw)
+
+    assert parsed["artifact_role"]
+
+
+def test_stub_client_honors_the_forced_artifact_role_env_var(monkeypatch):
+    from axial.llm import ARTIFACTS_PASS_NAME, STUB_ARTIFACT_ROLE_ENV_VAR, StubLLMClient
+
+    monkeypatch.setenv(STUB_ARTIFACT_ROLE_ENV_VAR, "not-a-real-role")
+    client = StubLLMClient()
+
+    raw = client.complete("prompt", pass_name=ARTIFACTS_PASS_NAME)
+    parsed = json.loads(raw)
+
+    assert parsed["artifact_role"] == "not-a-real-role"
+
+
+def test_record_client_response_matches_stub_for_the_artifacts_pass_name(tmp_path):
+    from axial.llm import ARTIFACTS_PASS_NAME, RecordLLMClient, StubLLMClient
+
+    stub = StubLLMClient()
+    record = RecordLLMClient(tmp_path / "prompts.jsonl")
+
+    prompt = "some artifact classification prompt"
+
+    assert record.complete(prompt, pass_name=ARTIFACTS_PASS_NAME) == stub.complete(
+        prompt, pass_name=ARTIFACTS_PASS_NAME
+    )
+
+
 def test_stub_client_dispatch_is_by_pass_name_not_prompt_content():
     """The chunk-vs-envelope canned-response dispatch must be driven by the
     out-of-band `pass_name` argument, never by scanning prompt text -- so an
@@ -200,10 +250,13 @@ def test_get_client_reads_provider_from_config_file_when_no_env_override(monkeyp
 
 
 def test_get_client_openrouter_requires_an_api_key_env_var(monkeypatch, tmp_path):
-    from axial.llm import PROVIDER_ENV_VAR, get_client
+    from axial.llm import PROVIDER_ENV_VAR, SECRETS_PATH_ENV_VAR, get_client
 
     monkeypatch.delenv(PROVIDER_ENV_VAR, raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    # Redirect the secrets-file seam so this test is hermetic against the
+    # developer's real secrets/secrets.toml (issue #23, requirement 4).
+    monkeypatch.setenv(SECRETS_PATH_ENV_VAR, str(tmp_path / "does_not_exist_secrets.toml"))
     config_path = tmp_path / "pipeline.yaml"
     config_path.write_text("llm:\n  provider: openrouter\n", encoding="utf-8")
 
@@ -225,10 +278,13 @@ def test_get_client_unknown_provider_raises(monkeypatch, tmp_path):
 
 
 def test_missing_api_key_raises_llm_config_error(monkeypatch, tmp_path):
-    from axial.llm import LLMConfigError, PROVIDER_ENV_VAR, get_client
+    from axial.llm import LLMConfigError, PROVIDER_ENV_VAR, SECRETS_PATH_ENV_VAR, get_client
 
     monkeypatch.delenv(PROVIDER_ENV_VAR, raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    # Redirect the secrets-file seam so this test is hermetic against the
+    # developer's real secrets/secrets.toml (issue #23, requirement 4).
+    monkeypatch.setenv(SECRETS_PATH_ENV_VAR, str(tmp_path / "does_not_exist_secrets.toml"))
     config_path = tmp_path / "pipeline.yaml"
     config_path.write_text("llm:\n  provider: openrouter\n", encoding="utf-8")
 
@@ -338,3 +394,76 @@ def test_openrouter_client_raises_on_http_error_status():
 
     with pytest.raises(httpx.HTTPStatusError):
         client.complete("hello world")
+
+
+# --- secrets.toml error handling (issue #23 review findings) --------------
+
+
+def test_malformed_secrets_toml_raises_llm_config_error(monkeypatch, tmp_path):
+    """A syntactically invalid secrets.toml must not let a raw
+    `tomllib.TOMLDecodeError` escape -- every error this module raises must
+    be an `LLMError` (module docstring)."""
+    from axial.llm import LLMConfigError, PROVIDER_ENV_VAR, SECRETS_PATH_ENV_VAR, get_client
+
+    monkeypatch.setenv(PROVIDER_ENV_VAR, "openrouter")
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text("[openrouter\napi_key = broken", encoding="utf-8")
+    monkeypatch.setenv(SECRETS_PATH_ENV_VAR, str(secrets_path))
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text("llm:\n  provider: openrouter\n", encoding="utf-8")
+
+    with pytest.raises(LLMConfigError) as exc_info:
+        get_client(config_path=config_path)
+
+    assert str(secrets_path) in str(exc_info.value)
+
+
+def test_malformed_secrets_toml_error_names_the_offending_path(tmp_path):
+    from axial.llm import LLMConfigError, _load_openrouter_secrets
+
+    secrets_path = tmp_path / "bad_secrets.toml"
+    secrets_path.write_text("not = valid = toml", encoding="utf-8")
+
+    with pytest.raises(LLMConfigError) as exc_info:
+        _load_openrouter_secrets(secrets_path)
+
+    assert str(secrets_path) in str(exc_info.value)
+
+
+def test_missing_production_tier_model_key_raises_llm_config_error(monkeypatch, tmp_path):
+    """A non-building tier with no matching model key in secrets.toml must
+    fail loudly rather than silently falling back to DEFAULT_BUILDING_MODEL
+    (issue #23 review finding 2)."""
+    from axial.llm import LLMConfigError, PROVIDER_ENV_VAR, SECRETS_PATH_ENV_VAR, get_client
+
+    monkeypatch.setenv(PROVIDER_ENV_VAR, "openrouter")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text(
+        '[openrouter]\napi_key = "sk-fixture"\nllm_tier = "production_high"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(SECRETS_PATH_ENV_VAR, str(secrets_path))
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text("llm:\n  provider: openrouter\n", encoding="utf-8")
+
+    with pytest.raises(LLMConfigError):
+        get_client(config_path=config_path)
+
+
+def test_missing_building_tier_model_key_still_falls_back_to_default(monkeypatch, tmp_path):
+    """The `building` tier must keep its default fallback so today's
+    no-secrets-file behavior is unchanged (issue #23 review finding 2)."""
+    from axial.llm import DEFAULT_BUILDING_MODEL, _resolve_model
+
+    model = _resolve_model(secrets={}, llm_config={})
+
+    assert model == DEFAULT_BUILDING_MODEL
+
+
+def test_missing_production_tier_model_key_raises_directly_from_resolve_model():
+    from axial.llm import LLMConfigError, _resolve_model
+
+    with pytest.raises(LLMConfigError):
+        _resolve_model(secrets={"llm_tier": "production_low"}, llm_config={})

@@ -20,19 +20,24 @@ require no network access:
                                      chunk-shaped canned response;
                                      `pass_name="tag"`, passed by
                                      src/axial/tag.py, selects a tag-shaped
-                                     canned response; anything else --
-                                     including the envelope pass, which
-                                     never passes it -- gets the original
-                                     envelope-shaped one). Dispatch is
-                                     out-of-band (a call argument), never
-                                     embedded in the prompt text itself, so
-                                     no internal marker ever reaches a real
-                                     model. This resolves the shared-stub
-                                     collision between passes with different
-                                     response shapes -- see
+                                     canned response; `pass_name="artifacts"`,
+                                     passed by src/axial/artifacts.py, selects
+                                     an artifact-role-shaped canned response
+                                     whose `artifact_role` value honors the
+                                     `AXIAL_STUB_ARTIFACT_ROLE` fault-injection
+                                     seam below; anything else -- including
+                                     the envelope pass, which never passes
+                                     it -- gets the original envelope-shaped
+                                     one). Dispatch is out-of-band (a call
+                                     argument), never embedded in the prompt
+                                     text itself, so no internal marker ever
+                                     reaches a real model. This resolves the
+                                     shared-stub collision between passes
+                                     with different response shapes -- see
                                      tests/test_chunk.py's module docstring,
-                                     seam decision 1, and tests/test_tag.py's
-                                     seam decision 1.
+                                     seam decision 1, tests/test_tag.py's seam
+                                     decision 1, and tests/test_artifacts.py's
+                                     module docstring, seam decisions 1-2.
     AXIAL_LLM_PROVIDER=explode  -> ExplodingLLMClient, a poison client whose
                                      `.complete()` raises if ever invoked.
                                      Selecting it is never itself an error --
@@ -75,6 +80,7 @@ from __future__ import annotations
 
 import json
 import os
+import tomllib
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -92,8 +98,22 @@ RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
 # time (not import time) so a test can set/unset it per-subprocess-env.
 # Never affects the chunk or envelope canned responses.
 STUB_TAG_RESPONSE_ENV_VAR = "AXIAL_STUB_TAG_RESPONSE"
+SECRETS_PATH_ENV_VAR = "AXIAL_SECRETS_PATH"
 DEFAULT_PIPELINE_CONFIG_PATH = Path("config/pipeline.yaml")
+DEFAULT_SECRETS_PATH = Path("secrets/secrets.toml")
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+# Model-tier keys read from `[openrouter]` in secrets.toml (issue #23,
+# requirement 2); `llm_tier` selects among them.
+BUILDING_TIER = "building"
+PRODUCTION_HIGH_TIER = "production_high"
+PRODUCTION_LOW_TIER = "production_low"
+DEFAULT_LLM_TIER = BUILDING_TIER
+
+# Fallback model used only when secrets.toml doesn't name one for the
+# selected tier (e.g. secrets.toml is entirely absent). Replaces the old
+# hardcoded `openrouter/auto` default for the building tier.
+DEFAULT_BUILDING_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 
 # Pass name a chunking-pass call identifies itself with (see
 # src/axial/chunk.py), passed out-of-band as `pass_name` to `.complete()` --
@@ -107,6 +127,25 @@ CHUNK_PASS_NAME = "chunk"
 # stub/record dispatch can tell a tag call apart from both a chunk call and
 # an envelope call.
 TAG_PASS_NAME = "tag"
+
+# Pass name an artifact-classification call identifies itself with (see
+# src/axial/artifacts.py). Same out-of-band dispatch convention as
+# CHUNK_PASS_NAME above.
+ARTIFACTS_PASS_NAME = "artifacts"
+
+# Fault-injection seam (mirroring `AXIAL_FORCE_DOCLING_FAILURE` in
+# extract.py): forces the `pass_name=ARTIFACTS_PASS_NAME` canned response to
+# carry exactly this string as the returned `artifact_role`, valid or not,
+# so tests can drive the schema-validation hard-error path deterministically
+# without needing a real model to misbehave. Unset/"" means the default
+# in-schema role below applies.
+STUB_ARTIFACT_ROLE_ENV_VAR = "AXIAL_STUB_ARTIFACT_ROLE"
+
+# The default, fixed in-schema `artifact_role` the stub/record canned
+# response carries when STUB_ARTIFACT_ROLE_ENV_VAR is unset -- the happy
+# path. Must remain a member of config/domains/syria/schema.yaml's
+# artifact_role axis (Appendix D).
+_DEFAULT_STUB_ARTIFACT_ROLE = "case-study"
 
 
 class LLMClient(Protocol):
@@ -184,14 +223,25 @@ class StubLLMClient:
         return _canned_response_for(pass_name)
 
 
+def _canned_artifact_response() -> str:
+    """The canned response for an artifacts-pass call (identified by
+    `pass_name=ARTIFACTS_PASS_NAME`, never by prompt content): a single
+    `artifact_role` value, read fresh from `STUB_ARTIFACT_ROLE_ENV_VAR` on
+    every call so tests can force an out-of-schema role on demand (see
+    tests/test_artifacts.py's module docstring, seam decision 2)."""
+    role = os.environ.get(STUB_ARTIFACT_ROLE_ENV_VAR) or _DEFAULT_STUB_ARTIFACT_ROLE
+    return json.dumps({"artifact_role": role})
+
+
 def _canned_response_for(pass_name: str | None) -> str:
     """Dispatch the canned response by pass: `pass_name == CHUNK_PASS_NAME`
     gets the chunk-shaped canned response, `pass_name == TAG_PASS_NAME` gets
     the tag-shaped canned response (or, if `AXIAL_STUB_TAG_RESPONSE` is set
     to a non-empty value, that raw string verbatim -- read at call time, and
-    only for tag-pass calls); anything else (the envelope pass, which never
-    passes `pass_name`) gets the original envelope-shaped canned response.
-    Shared by `StubLLMClient` and `RecordLLMClient` so `record` is
+    only for tag-pass calls), `pass_name == ARTIFACTS_PASS_NAME` gets the
+    artifact-role-shaped canned response; anything else (the envelope pass,
+    which never passes `pass_name`) gets the original envelope-shaped canned
+    response. Shared by `StubLLMClient` and `RecordLLMClient` so `record` is
     indistinguishable from `stub` for the same call."""
     if pass_name == CHUNK_PASS_NAME:
         return StubLLMClient._CANNED_CHUNK_RESPONSE
@@ -200,6 +250,8 @@ def _canned_response_for(pass_name: str | None) -> str:
         if override:
             return override
         return StubLLMClient._CANNED_TAG_RESPONSE
+    if pass_name == ARTIFACTS_PASS_NAME:
+        return _canned_artifact_response()
     return StubLLMClient._CANNED_RESPONSE
 
 
@@ -307,15 +359,98 @@ def _load_pipeline_llm_config(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) 
     return document.get("llm", {}) or {}
 
 
-def _build_openrouter_client(llm_config: dict[str, Any]) -> OpenRouterClient:
-    model = llm_config.get("model", "openrouter/auto")
-    base_url = llm_config.get("base_url", DEFAULT_OPENROUTER_BASE_URL)
-    api_key_env = llm_config.get("api_key_env", "OPENROUTER_API_KEY")
-    api_key = os.environ.get(api_key_env)
+def _secrets_path() -> Path:
+    """Resolve the path to read `[openrouter]` secrets from: the
+    `AXIAL_SECRETS_PATH` env override when set/non-empty, else
+    `secrets/secrets.toml` relative to the repo root -- mirroring the
+    `AXIAL_LLM_PROVIDER` / `AXIAL_LLM_RECORD_PATH` env-var seam convention
+    already used in this module (issue #23, requirement 4)."""
+    override = os.environ.get(SECRETS_PATH_ENV_VAR, "")
+    return Path(override) if override else DEFAULT_SECRETS_PATH
+
+
+def _load_openrouter_secrets(secrets_path: Path) -> dict[str, Any]:
+    """Read the `[openrouter]` table from `secrets_path`; an absent file or
+    table yields an empty dict so the env-var/default fallbacks apply.
+
+    A syntactically invalid TOML file is a configuration error, not a
+    transport/parsing detail that should escape as a raw
+    `tomllib.TOMLDecodeError` -- every error this module raises must be an
+    `LLMError` (module docstring), so it is re-raised as `LLMConfigError`,
+    mirroring `_resolve_api_key`'s error style.
+    """
+    if not secrets_path.is_file():
+        return {}
+    with secrets_path.open("rb") as handle:
+        try:
+            document = tomllib.load(handle)
+        except tomllib.TOMLDecodeError as exc:
+            raise LLMConfigError(f"secrets file '{secrets_path}' is not valid TOML: {exc}") from exc
+    return document.get("openrouter", {}) or {}
+
+
+# Maps an `llm_tier` selector value to the secrets.toml key naming that
+# tier's model (issue #23, requirement 2). "building" maps to
+# "building_model" rather than to itself so the key mirrors the other two
+# ("production_high", "production_low"), which are already model-name keys.
+TIER_TO_MODEL_KEY = {
+    BUILDING_TIER: "building_model",
+    PRODUCTION_HIGH_TIER: "production_high",
+    PRODUCTION_LOW_TIER: "production_low",
+}
+
+
+def _resolve_api_key(secrets: dict[str, Any]) -> str:
+    """API key resolution order (issue #23, requirement 1): secrets.toml's
+    `api_key` is PRIMARY; `OPENROUTER_API_KEY` is the fallback used only
+    when the file is absent or lacks the key; neither present is a hard
+    `LLMConfigError`."""
+    api_key = secrets.get("api_key") or os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         raise LLMConfigError(
-            f"OpenRouter provider selected but {api_key_env!r} is not set in the environment"
+            "OpenRouter provider selected but no API key was found: set "
+            "'[openrouter].api_key' in secrets/secrets.toml or the "
+            "OPENROUTER_API_KEY environment variable"
         )
+    return api_key
+
+
+def _resolve_model(secrets: dict[str, Any], llm_config: dict[str, Any]) -> str:
+    """Model resolution (issue #23, requirement 2): `llm_tier` selects which
+    of the three model-name keys in secrets.toml to use; an unset selector
+    defaults to the building tier. Falls back to `config/pipeline.yaml`'s
+    `llm.model`, and finally to the building-tier default model, only when
+    secrets.toml doesn't name a model for the selected tier (e.g. the file
+    is absent entirely).
+
+    A non-`building` tier (`production_high`/`production_low`) whose model
+    key is missing from secrets.toml is a misconfiguration, not a case to
+    paper over: silently falling through to `DEFAULT_BUILDING_MODEL` there
+    would make a run believed to use a paid production model silently use
+    the free building model instead. Only the `building` tier keeps the
+    fallback chain, so today's no-secrets-file behavior is unchanged.
+    """
+    tier = secrets.get("llm_tier") or DEFAULT_LLM_TIER
+    model_key = TIER_TO_MODEL_KEY.get(tier)
+    if model_key is None:
+        raise LLMConfigError(f"unknown llm_tier: {tier!r}")
+    model = secrets.get(model_key) or llm_config.get("model")
+    if model:
+        return model
+    if tier != BUILDING_TIER:
+        raise LLMConfigError(
+            f"llm_tier {tier!r} was selected but secrets.toml has no "
+            f"{model_key!r} key naming a model for it; set "
+            f"'[openrouter].{model_key}' in secrets/secrets.toml"
+        )
+    return DEFAULT_BUILDING_MODEL
+
+
+def _build_openrouter_client(llm_config: dict[str, Any]) -> OpenRouterClient:
+    secrets = _load_openrouter_secrets(_secrets_path())
+    base_url = llm_config.get("base_url", DEFAULT_OPENROUTER_BASE_URL)
+    api_key = _resolve_api_key(secrets)
+    model = _resolve_model(secrets, llm_config)
     return OpenRouterClient(api_key=api_key, model=model, base_url=base_url)
 
 
