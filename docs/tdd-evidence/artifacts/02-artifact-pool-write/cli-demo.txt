@@ -1,0 +1,34 @@
+### axial vault write --help (updated help text) ###
+usage: axial vault write [-h] source_path
+
+positional arguments:
+  source_path  path to a .pdf or .docx source file
+
+options:
+  -h, --help   show this help message and exit
+
+### Arrange: axial envelope (stub) ###
+envelope stored (exit 0)
+
+### axial vault write (stub) — writes prose + artifact notes ###
+["data\\vault\\prose\\prose_and_table-8bf9b6c2a681_1_introduction_001.md", "data\\vault\\prose\\prose_and_table-8bf9b6c2a681_1_introduction_002.md", "data\\vault\\prose\\prose_and_table-8bf9b6c2a681_2_discussion_001.md", "data\\vault\\prose\\prose_and_table-8bf9b6c2a681_2_discussion_002.md", "data\\vault\\artifacts\\prose_and_table-8bf9b6c2a681_art_1.3.md"]
+exit=0
+
+### artifact pool contents ###
+prose_and_table-8bf9b6c2a681_art_1.3.md
+
+### one artifact note (frontmatter: artifact_role, field, provenance, retrievable) ###
+---
+"artifact_id": "prose_and_table-8bf9b6c2a681_art_1.3"
+"artifact_role": "case-study"
+"field":
+  "primary": "state"
+  "secondary":
+  - "ideology"
+"source_id": "prose_and_table-8bf9b6c2a681"
+"section": "Introduction"
+"retrievable": !!bool "true"
+---
+# Introduction
+
+Artifact `prose_and_table-8bf9b6c2a681_art_1.3` (case-study).
