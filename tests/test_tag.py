@@ -105,6 +105,90 @@ Test hygiene: any envelope file this test creates under data/envelopes/ is
 removed in fixture teardown (mirrors tests/test_chunk.py's clean_envelopes).
 Tagged records and chunk records are stdout-only; nothing else is written to
 the repo.
+
+---------------------------------------------------------------------------
+Slice 02 (issue #28, plans/tag/02-scope-and-country.md) -- empirical_scope
+axis + the scope:country-case `country` extra field
+---------------------------------------------------------------------------
+
+Given an extracted fixture source with a stored envelope and chunks,
+      AXIAL_LLM_PROVIDER=stub returning empirical_scope=scope:country-case
+      with country=Syria
+When  the user runs `axial tag <fixture>`
+Then  each record carries exactly one `empirical_scope` value drawn from
+      the schema
+And   a `scope:country-case` record carries a `country` drawn from the
+      schema's country_list
+And   a country-case with a missing or out-of-list country exits non-zero
+      with a clear error
+
+See specs/PRODUCT.md Appendix C (empirical-scope axis, single-cardinality,
+with `scope:country-case`'s `country` extra field drawn from Appendix G's
+`country_list`) and §7.1 ("a tag not in the schema is a hard error, not a
+silent pass").
+
+Seam decision 5 -- default stub tag response now carries empirical_scope +
+country, agreed with the implementer as the fixed seam for this slice
+-----------------------------------------------------------------------
+The Gherkin's Given clause locks the stub's DEFAULT tag-shaped canned
+response (see src/axial/llm.py's `_CANNED_TAG_RESPONSE`, dispatched by
+`pass_name=TAG_PASS_NAME` exactly as slice 01's seam decision 1 describes)
+to include `empirical_scope: "scope:country-case"` and `country: "Syria"`
+alongside slice 01's `role_in_argument: "role:claim"`. That means a plain
+`axial tag <fixture>` run under `AXIAL_LLM_PROVIDER=stub` -- no special env
+-- is sufficient to exercise the happy path end-to-end, mirroring how
+slice 01 needed no special env either. This test does not hardcode "Syria"
+into any assertion (see seam decision 6); it only relies on the Given
+clause's stub behavior to *produce* a country-case record to check against
+the schema-loaded country_list.
+
+To drive the two hard-error scenarios (missing / out-of-list country) end
+to end via subprocess without a second stub client shape, the fixed seam
+agreed with the implementer is the env var `AXIAL_STUB_TAG_RESPONSE`: when
+set, the stub's tag-pass response becomes that raw JSON string verbatim
+instead of the default canned one, letting this test drive exactly which
+malformed tag payload the pipeline receives -- without this test asserting
+anything about how the override is implemented internally, only that the
+env var name and shape are honored end-to-end.
+
+Seam decision 6 -- empirical_scope vocabulary and country_list loaded at
+test time, never hardcoded (mirrors slice 01's seam decision 2)
+-----------------------------------------------------------------------
+Exactly as slice 01 refused to hardcode `role_in_argument` vocabulary, this
+test never hardcodes `"scope:country-case"`, any other scope value, or any
+country name as a *correctness* assertion. It calls `load_schema` at test
+time and asserts every record's `empirical_scope` is a member of
+`schema.axes["empirical_scope"].tag_ids`, and every country-case record's
+`country` is a member of `schema.country_list`. The one place a literal
+value is compared is in the two hard-error scenarios' fabricated
+`AXIAL_STUB_TAG_RESPONSE` payloads themselves (test *input*, not a
+correctness assertion about schema vocabulary) and in checking that the
+CLI's error output actually names the offending out-of-list value the test
+itself chose to inject -- that is an error-quality check ("clear error"
+per the Gherkin), not a vocabulary hardcode.
+
+Seam decision 7 -- "exactly one" enforced as a scalar, not a list
+-----------------------------------------------------------------------
+The Gherkin says "exactly one empirical_scope value", and Appendix C
+declares `cardinality: single`. This test asserts `record["empirical_scope"]`
+is itself a `str` (a single scalar tag id), not a list/array of one -- a
+list-of-one would satisfy a naive "at least one, all in schema" check but
+would misrepresent the axis's single-cardinality contract and silently
+permit a future regression to multi-valued scope tagging.
+
+Seam decision 8 -- error scenarios assert exit-code and message quality,
+not exact wording
+-----------------------------------------------------------------------
+Mirroring this file's existing `_assert_not_argparse_fallback` discipline,
+the two hard-error tests assert: (a) a non-zero exit code, (b) the combined
+output carries none of `ARGPARSE_FALLBACK_MARKERS` (so a generic argparse
+failure -- e.g. a malformed CLI invocation -- cannot masquerade as the real
+country-validation error path), and (c) for the out-of-list case, that the
+offending value itself ("Atlantis", chosen locally in that test, not a
+module-level constant, since it is disposable test input rather than a
+locked vocabulary term) appears in the combined stdout+stderr, proving the
+error actually names what was wrong rather than failing generically. No
+assertion pins the exact wording of the error message beyond that.
 """
 
 from __future__ import annotations
@@ -126,6 +210,12 @@ DOMAIN_DIR = REPO_ROOT / "config" / "domains" / "syria"
 THESIS_PAPER_PDF = FIXTURES_DIR / "thesis_paper.pdf"
 
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
+
+# Slice 02's fixed seam (agreed with the implementer): when set, the stub's
+# tag-pass response becomes this raw JSON string verbatim instead of the
+# default canned tag response, so this test can drive malformed country-case
+# payloads end-to-end via subprocess (seam decision 5).
+STUB_TAG_RESPONSE_ENV_VAR = "AXIAL_STUB_TAG_RESPONSE"
 
 # argparse's fallback error for an as-yet-nonexistent subcommand, e.g.
 # "axial: error: argument command: invalid choice: 'tag' (choose from
@@ -167,8 +257,12 @@ def _run_chunk(provider: str, *args: str) -> subprocess.CompletedProcess:
     return _run_axial("chunk", provider, *args)
 
 
-def _run_tag(provider: str, *args: str) -> subprocess.CompletedProcess:
-    return _run_axial("tag", provider, *args)
+def _run_tag(
+    provider: str,
+    *args: str,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
+    return _run_axial("tag", provider, *args, extra_env=extra_env)
 
 
 def _assert_not_argparse_fallback(result: subprocess.CompletedProcess, command: str) -> None:
@@ -372,4 +466,209 @@ def test_tag_emits_one_schema_valid_versioned_record_per_chunk(clean_envelopes):
     # read, not recomputed -- PRD §10, mirrors test_chunk.py) ---
     assert envelope_path.exists(), (
         f"expected the stored envelope at {envelope_path} to still exist after `axial tag` ran"
+    )
+
+
+def test_tag_assigns_single_in_schema_empirical_scope_and_country(clean_envelopes):
+    """Slice 02 happy path (issue #28). Given the stub's default tag-pass
+    response carries empirical_scope=scope:country-case with country=Syria
+    (seam decision 5, the Gherkin's Given clause), a plain `axial tag
+    <fixture>` run must emit records that each carry exactly one
+    empirical_scope value drawn from the schema, and -- for a
+    scope:country-case record -- a country drawn from the schema's
+    country_list. Also checks slice 01's role_in_argument is not regressed."""
+    _arrange_stored_envelope()
+
+    # --- load the schema at test time: never hardcode the empirical_scope
+    # vocabulary, the country_list, or the role_in_argument vocabulary
+    # (seam decision 6) ---
+    schema = load_schema(str(DOMAIN_DIR))
+    valid_scopes = schema.axes["empirical_scope"].tag_ids
+    assert valid_scopes, "arrange step failed: schema's empirical_scope axis has no tag ids"
+    valid_roles = schema.axes["role_in_argument"].tag_ids
+    assert valid_roles, "arrange step failed: schema's role_in_argument axis has no tag ids"
+    valid_countries = schema.country_list
+    assert valid_countries, "arrange step failed: schema's country_list is empty"
+
+    tag_result = _run_tag("stub", str(THESIS_PAPER_PDF))
+    _assert_not_argparse_fallback(tag_result, "tag")
+    assert tag_result.returncode == 0, (
+        f"expected exit code 0 for `axial tag` on a fixture source with a "
+        f"stored envelope and the stub LLM provider configured, got "
+        f"{tag_result.returncode}\nstdout: {tag_result.stdout!r}\n"
+        f"stderr: {tag_result.stderr!r}"
+    )
+
+    tag_records = _parse_tag_records(tag_result.stdout)
+    assert tag_records, (
+        f"expected at least one tagged record on stdout, got none; stdout: {tag_result.stdout!r}"
+    )
+
+    country_case_seen = False
+    for record in tag_records:
+        assert isinstance(record, dict), (
+            f"expected each tagged record to be a JSON object, got "
+            f"{type(record).__name__}: {record!r}"
+        )
+
+        # --- exactly one empirical_scope value, a scalar, drawn from the
+        # schema (Gherkin + seam decision 7) ---
+        scope = record.get("empirical_scope")
+        assert isinstance(scope, str), (
+            f"expected tagged record's 'empirical_scope' to be a single "
+            f"scalar string (Appendix C: cardinality 'single'; Gherkin: "
+            f"'exactly one empirical_scope value'), got "
+            f"{type(scope).__name__}: {scope!r} (full record: {record!r})"
+        )
+        assert scope in valid_scopes, (
+            f"expected tagged record's 'empirical_scope' to be a member of "
+            f"the schema's empirical_scope tag set {sorted(valid_scopes)} "
+            f"(PRD §7.1, 'every tag applied by the tagger must exist in the "
+            f"loaded schema'), got {scope!r} (full record: {record!r})"
+        )
+
+        # --- a scope:country-case record carries an in-list country ---
+        if scope == "scope:country-case":
+            country_case_seen = True
+            country = record.get("country")
+            assert isinstance(country, str) and country.strip(), (
+                f"expected a scope:country-case tagged record to carry a "
+                f"non-empty string 'country' (Appendix C/G, Gherkin: 'a "
+                f"scope:country-case record carries a country drawn from "
+                f"the schema's country_list'), got {country!r} (full "
+                f"record: {record!r})"
+            )
+            assert country in valid_countries, (
+                f"expected the country-case record's 'country' to be a "
+                f"member of the schema's country_list {valid_countries!r}, "
+                f"got {country!r} (full record: {record!r})"
+            )
+        else:
+            assert "country" not in record or not record.get("country"), (
+                f"expected a non-country-case tagged record to carry no "
+                f"'country' field, got {record.get('country')!r} in a "
+                f"{scope!r}-scoped record (full record: {record!r})"
+            )
+
+        # --- regression: slice 01's role_in_argument still present and
+        # in-schema ---
+        role = record.get("role_in_argument")
+        assert role in valid_roles, (
+            f"regression: expected tagged record's 'role_in_argument' to "
+            f"still be a member of the schema's role_in_argument tag set "
+            f"{sorted(valid_roles)} (slice 01 contract), got {role!r} "
+            f"(full record: {record!r})"
+        )
+
+    # --- the Given clause locks the stub's default tag response to
+    # scope:country-case/Syria, so at least one record must have exercised
+    # the country-case branch above; otherwise this test would silently
+    # never check the country assertions at all ---
+    assert country_case_seen, (
+        f"expected at least one tagged record with empirical_scope == "
+        f"'scope:country-case' given the stub's default tag-pass response "
+        f"(seam decision 5), got none among: {tag_records!r}"
+    )
+
+
+def test_tag_country_case_missing_country_errors_out(clean_envelopes):
+    """Slice 02 error path (issue #28). A scope:country-case tag response
+    with no `country` key at all is a hard error: `axial tag` must exit
+    non-zero with a clear error, not silently pass or crash generically."""
+    _arrange_stored_envelope()
+
+    malformed_response = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "empirical_scope": "scope:country-case",
+        }
+    )
+
+    tag_result = _run_tag(
+        "stub",
+        str(THESIS_PAPER_PDF),
+        extra_env={STUB_TAG_RESPONSE_ENV_VAR: malformed_response},
+    )
+    _assert_not_argparse_fallback(tag_result, "tag")
+
+    assert tag_result.returncode != 0, (
+        f"expected a non-zero exit code for `axial tag` when the tag-pass "
+        f"response declares empirical_scope=scope:country-case with no "
+        f"'country' key at all (PRD Appendix C/G, Gherkin: 'a country-case "
+        f"with a missing ... country exits non-zero with a clear error'), "
+        f"got exit code 0\nstdout: {tag_result.stdout!r}\n"
+        f"stderr: {tag_result.stderr!r}"
+    )
+
+    assert tag_result.stderr.strip(), (
+        f"expected `axial tag` to report a clear, non-empty error on "
+        f"stderr for a missing-country country-case record (the CLI's "
+        f"error convention is `error: ...`, per slice 01's hard-error "
+        f"handling), got empty stderr\nstdout: {tag_result.stdout!r}\n"
+        f"stderr: {tag_result.stderr!r}"
+    )
+    combined = tag_result.stdout + tag_result.stderr
+    for marker in ARGPARSE_FALLBACK_MARKERS:
+        assert marker not in combined, (
+            f"expected a real country-validation error path, not a generic "
+            f"argparse fallback (found {marker!r}) masquerading as the "
+            f"missing-country error\nstdout: {tag_result.stdout!r}\n"
+            f"stderr: {tag_result.stderr!r}"
+        )
+
+
+def test_tag_country_case_out_of_list_country_errors_out(clean_envelopes):
+    """Slice 02 error path (issue #28). A scope:country-case tag response
+    whose `country` value is not a member of the schema's country_list is
+    a hard error: `axial tag` must exit non-zero with a clear error naming
+    the offending value."""
+    _arrange_stored_envelope()
+
+    offending_country = "Atlantis"
+    schema = load_schema(str(DOMAIN_DIR))
+    assert offending_country not in schema.country_list, (
+        f"test setup invariant broken: {offending_country!r} must not "
+        f"already be a member of the schema's country_list "
+        f"{schema.country_list!r}, or this test would not actually be "
+        f"exercising the out-of-list error path"
+    )
+
+    malformed_response = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "empirical_scope": "scope:country-case",
+            "country": offending_country,
+        }
+    )
+
+    tag_result = _run_tag(
+        "stub",
+        str(THESIS_PAPER_PDF),
+        extra_env={STUB_TAG_RESPONSE_ENV_VAR: malformed_response},
+    )
+    _assert_not_argparse_fallback(tag_result, "tag")
+
+    assert tag_result.returncode != 0, (
+        f"expected a non-zero exit code for `axial tag` when the tag-pass "
+        f"response declares country={offending_country!r}, which is not a "
+        f"member of the schema's country_list (PRD Appendix C/G, Gherkin: "
+        f"'a country-case with a ... out-of-list country exits non-zero "
+        f"with a clear error'), got exit code 0\nstdout: "
+        f"{tag_result.stdout!r}\nstderr: {tag_result.stderr!r}"
+    )
+
+    combined = tag_result.stdout + tag_result.stderr
+    for marker in ARGPARSE_FALLBACK_MARKERS:
+        assert marker not in combined, (
+            f"expected a real country-validation error path, not a generic "
+            f"argparse fallback (found {marker!r}) masquerading as the "
+            f"out-of-list-country error\nstdout: {tag_result.stdout!r}\n"
+            f"stderr: {tag_result.stderr!r}"
+        )
+    assert offending_country in combined, (
+        f"expected `axial tag`'s error output to name the offending "
+        f"country value {offending_country!r} (Gherkin: 'clear error'; "
+        f"this test's own error-quality bar), got combined output that "
+        f"does not mention it\nstdout: {tag_result.stdout!r}\n"
+        f"stderr: {tag_result.stderr!r}"
     )
