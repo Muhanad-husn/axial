@@ -37,7 +37,7 @@ Given a populated prose vault whose tagged notes span at least two field values 
 When  the user runs `axial gold sample`
 Then  a set of chunk records is written under data/gold/chunks/
 And   the selection includes at least one chunk for each represented field value and each represented empirical_scope value
-And   the number of selected chunks sits within the configured band (default 30–50), clamped to the number of available chunks
+And   the number of selected chunks sits within the configured band (default 100–120), clamped to the number of available chunks
 And   each written record carries chunk_id, source, section, chunk_text and the chunk's field, empirical_scope, claim_type and theory_school tags
 And   re-running produces the same selection (deterministic) and does not accumulate stale records
 ```

@@ -28,7 +28,7 @@ This PRD covers **Phase A (ingestion) and the gold-corpus / evaluation loop only
 
 1. **Structure-aware ingestion.** Produce Obsidian notes whose chunk boundaries follow the source's argument, using full structural context (thesis, table of contents, surrounding sections) rather than isolated-section splitting.
 2. **Multi-axis tagging from a swappable schema.** Tag every prose chunk and artifact against a versioned domain schema loaded at runtime — never hardcoded — so the same pipeline runs on a new country by editing the schema.
-3. **Measured tagging reliability.** Generate a stratified gold corpus of ~30–50 human-labeled chunks and score the automated tagger against it, per axis, producing an agreement number that decides which contested tags survive.
+3. **Measured tagging reliability.** Generate a stratified gold corpus of ~100–120 human-labeled chunks and score the automated tagger against it, per axis, producing an agreement number that decides which contested tags survive.
 4. **Separation of prose and artifacts.** Route non-text artifacts (tables, figures, block quotes, typologies) to a distinct retrievable pool, pre-tagged for role, with bidirectional links back to citing prose.
 5. **Buildable without the Academic in the loop.** The pipeline runs end-to-end on a placeholder codebook; the Academic's labeling is a data swap plus an eval run, never a code change.
 
@@ -195,7 +195,7 @@ One JSON per source in `data/trees/`, keyed by `source_id` (the same determinist
 - [ ] Notes carry valid three-level frontmatter and backlinks.
 
 **P0-9 Gold-set generation & label sheet.**
-- [ ] Emits ~30–50 chunks from 5–10 sources, stratified across field × source-type (book/paper) × scope.
+- [ ] Emits ~100–120 chunks from ~20–28 sources, stratified across field × source-type (book/paper) × scope.
 - [ ] Produces `label_sheet.xlsx` with one row per chunk, one column per axis, codebook-sourced dropdowns.
 
 **P0-10 Eval harness.**
@@ -224,7 +224,7 @@ One JSON per source in `data/trees/`, keyed by `source_id` (the same determinist
 
 The gold set is the measurement instrument, so its construction is specified, not left to build-time judgment.
 
-- **Size & stratification:** ~30–50 chunks from 5–10 sources, ~4–6 chunks each, stratified so every field, both source types (book/paper), and each scope value get at least a few instances.
+- **Size & stratification:** ~100–120 chunks from ~20–28 sources, ~4–6 chunks each, stratified so every field, both source types (book/paper), and each scope value get at least a few instances.
 - **Hybrid labeling** (bounds the Academic's effort where our guesses are reliable, gets clean signal where they are not):
   - **Blind** (Academic labels from scratch): `claim-type`, `theory-school`.
   - **Pre-labeled** (pipeline proposes, Academic corrects): `field`, `empirical-scope`.
@@ -255,7 +255,7 @@ The config/data seam is the pause point. Because the tagger reads the codebook f
 1. **Scaffolding & schema loader** — repo per §6, schema/codebook loader, axes as config. *No Academic dependency.*
 2. **Minimal ingestion** — intake → docling(+fallback) → envelope → chunking → vault write, on the **placeholder** Syria codebook (Appendices A–G). *No Academic dependency.*
 3. **Tagging + artifact routing + cross-reference.**
-4. **Gold-set generation** — run 2–3 on 5–10 sampled sources; emit the label sheet. *Produces the Academic deliverable.*
+4. **Gold-set generation** — run 2–3 on ~20–28 sampled sources; emit the label sheet. *Produces the Academic deliverable.*
 5. **⏸ ACADEMIC LABELING** — Academic fills the sheet (hybrid, §9). *Pause here, or continue building 6–7 on placeholder labels.*
 6. **Eval harness** — score, decide contested/candidate tags.
 7. **Schema revision + second batch** — revise the schema from eval findings, re-run, compare. Only then consider the full ~120-source corpus (out of scope for v0).
