@@ -1,0 +1,22 @@
+### Arrange: store the source envelope (prerequisite for xref's run_chunk)
+envelope exit=0
+
+### 1) Empty case: AXIAL_STUB_XREF_TARGET unset -> no references detected
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  35%|###5      | 272/770 [00:00<00:00, 2715.57it/s]Loading weights:  72%|#######1  | 551/770 [00:00<00:00, 2758.53it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 2877.33it/s]
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  37%|###7      | 285/770 [00:00<00:00, 2835.65it/s]Loading weights:  74%|#######4  | 573/770 [00:00<00:00, 2860.24it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 2907.53it/s]
+[]
+exit=0
+
+### Discovered this source's real artifact_id: prose_and_table-8bf9b6c2a681_art_1.3
+
+### 2) Happy path: stub canned to reference that real artifact from every chunk
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  42%|####1     | 321/770 [00:00<00:00, 3197.38it/s]Loading weights:  83%|########3 | 641/770 [00:00<00:00, 2926.77it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 2963.06it/s]
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  40%|###9      | 305/770 [00:00<00:00, 3029.99it/s]Loading weights:  79%|#######8  | 608/770 [00:00<00:00, 2956.19it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 2949.73it/s]
+[{"chunk_id": "prose_and_table-8bf9b6c2a681_1_introduction_001", "artifact_id": "prose_and_table-8bf9b6c2a681_art_1.3"}, {"chunk_id": "prose_and_table-8bf9b6c2a681_1_introduction_002", "artifact_id": "prose_and_table-8bf9b6c2a681_art_1.3"}, {"chunk_id": "prose_and_table-8bf9b6c2a681_2_discussion_001", "artifact_id": "prose_and_table-8bf9b6c2a681_art_1.3"}, {"chunk_id": "prose_and_table-8bf9b6c2a681_2_discussion_002", "artifact_id": "prose_and_table-8bf9b6c2a681_art_1.3"}]
+exit=0
+
+### 3) Dangling link: stub references a shaped-but-nonexistent id -> no pair (no dangling link)
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  44%|####3     | 337/770 [00:00<00:00, 3363.12it/s]Loading weights:  88%|########7 | 674/770 [00:00<00:00, 3201.81it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 3216.77it/s]
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  43%|####3     | 334/770 [00:00<00:00, 3320.52it/s]Loading weights:  87%|########6 | 667/770 [00:00<00:00, 3201.54it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 3238.05it/s]
+[]
+exit=0
