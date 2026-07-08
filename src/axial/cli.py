@@ -113,7 +113,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     vault_write_parser = vault_subparsers.add_parser(
         "write",
-        help="run the chunking pass and write one prose note per chunk to data/vault/prose/",
+        help=(
+            "run the chunking + artifact-classification passes and write one prose "
+            "note per chunk to data/vault/prose/ and one note per artifact to "
+            "data/vault/artifacts/"
+        ),
     )
     vault_write_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
 
