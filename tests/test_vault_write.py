@@ -154,6 +154,25 @@ clean_envelopes). Any file or directory this test causes to newly appear
 under data/vault/ is likewise removed in teardown (clean_vault, below),
 so runs stay idempotent and the repo is never polluted by a real e2e-run
 artifact.
+
+Arrange-mechanism change (issue #45, tree-cache) -- no behavioral assertion
+changed
+-----------------------------------------------------------------------
+This test's PURPOSE is vault-write's own behavior -- it CONSUMES the stored
+envelope and this fixture's chunk records, never asserting anything about
+extraction/tree shape itself (that is tests/test_extract.py's contract). The
+arrange step's `axial envelope` call internally calls `axial.extract.
+extract`, which -- per the now-locked tree-persist contract
+(tests/test_tree_persist.py, PRD §7.4) -- reuses a persisted tree verbatim
+at data/trees/<source_id>.json instead of re-running docling. So
+`_arrange_stored_envelope` below now pre-places the committed REAL tree
+fixture (tests/fixtures/envelope/thesis_paper_tree.json -- exactly `axial
+extract`'s own output for this fixture, see that directory's _generate.py
+for the regeneration recipe) before calling `axial envelope`, exactly as it
+would look after a real extraction, only without paying for one. Every
+existing assertion is unchanged. data/trees/ isolation is handled by the
+shared, content-snapshot-based `_isolate_persisted_tree_and_envelope_state`
+autouse fixture in tests/conftest.py.
 """
 
 from __future__ import annotations
@@ -166,14 +185,18 @@ from pathlib import Path
 import pytest
 import yaml
 
+from axial.envelope import compute_source_id
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "envelope"
 ENVELOPES_DIR = REPO_ROOT / "data" / "envelopes"
+TREES_DIR = REPO_ROOT / "data" / "trees"
 VAULT_DIR = REPO_ROOT / "data" / "vault"
 PROSE_DIR = VAULT_DIR / "prose"
 ARTIFACTS_DIR = VAULT_DIR / "artifacts"
 
 THESIS_PAPER_PDF = FIXTURES_DIR / "thesis_paper.pdf"
+THESIS_PAPER_TREE_FIXTURE = FIXTURES_DIR / "thesis_paper_tree.json"
 
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 
@@ -244,11 +267,26 @@ def _existing_envelope_files() -> set[Path]:
     return set(ENVELOPES_DIR.glob("*.json"))
 
 
+def _place_tree_fixture(source_pdf: Path, tree_fixture_path: Path) -> Path:
+    """Pre-place the committed REAL tree fixture at
+    data/trees/<source_id>.json (source_id via
+    axial.envelope.compute_source_id) so `axial.extract.extract` reuses it
+    verbatim instead of running docling (see module docstring, "Arrange-
+    mechanism change"). Returns the tree path."""
+    source_id = compute_source_id(source_pdf)
+    tree_path = TREES_DIR / f"{source_id}.json"
+    tree_path.parent.mkdir(parents=True, exist_ok=True)
+    tree_path.write_bytes(tree_fixture_path.read_bytes())
+    return tree_path
+
+
 def _arrange_stored_envelope() -> Path:
-    """Run `axial envelope` with the stub provider so a stored envelope
-    exists on disk before vault write, and return its path. Asserts the
-    arrange step itself succeeded and produced exactly one new envelope
-    file. (Mirrors tests/test_chunk.py's helper of the same name.)"""
+    """Pre-place the real tree fixture, then run `axial envelope` with the
+    stub provider so a stored envelope exists on disk before vault write,
+    and return its path. Asserts the arrange step itself succeeded and
+    produced exactly one new envelope file. (Mirrors tests/test_chunk.py's
+    helper of the same name.)"""
+    _place_tree_fixture(THESIS_PAPER_PDF, THESIS_PAPER_TREE_FIXTURE)
     before_files = _existing_envelope_files()
 
     result = _run_envelope("stub", str(THESIS_PAPER_PDF))

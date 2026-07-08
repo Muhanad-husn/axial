@@ -7,6 +7,34 @@ Ephemeral-toolchain script -- NOT a test-time dependency. Run with:
 Regenerates the committed fixture binary in this directory. The test suite
 (tests/test_envelope.py) depends only on the committed binary and never
 invokes this script.
+
+Companion fixture -- thesis_paper_tree.json (issue #45, tree-cache)
+-----------------------------------------------------------------------
+tests/fixtures/envelope/thesis_paper_tree.json is the REAL persisted
+structural tree `axial extract` produces for thesis_paper.pdf, committed so
+downstream tests that only CONSUME the tree (tests/test_envelope.py,
+tests/test_chunk.py, tests/test_tag.py, tests/test_vault_write.py) can
+pre-place it at data/trees/<source_id>.json (source_id via
+axial.envelope.compute_source_id) instead of paying for a real docling run
+just to obtain input they never assert on. This is not a mystery blob: it is
+exactly `axial extract`'s own stdout for this fixture, and it must stay
+byte-identical to what a fresh extraction produces, since axial.extract.extract
+reuses a persisted tree verbatim (PRD §7.4) -- a stale/hand-edited fixture
+here would silently diverge from real behavior. Regenerate it after any
+change to thesis_paper.pdf or to the extraction/normalization logic with:
+
+    rm -f data/trees/*.json  # ensure a fresh, non-cached extraction
+    uv run axial extract tests/fixtures/envelope/thesis_paper.pdf > /dev/null
+    cp data/trees/thesis_paper-*.json tests/fixtures/envelope/thesis_paper_tree.json
+    rm -f data/trees/*.json  # don't leave scratch state behind
+
+Verify the regenerated fixture matches a second fresh extraction (determinism
+check) before committing:
+
+    rm -f data/trees/*.json
+    uv run axial extract tests/fixtures/envelope/thesis_paper.pdf > /tmp/fresh.json
+    diff <(python -m json.tool tests/fixtures/envelope/thesis_paper_tree.json) <(python -m json.tool /tmp/fresh.json)
+    rm -f data/trees/*.json
 """
 
 from pathlib import Path
