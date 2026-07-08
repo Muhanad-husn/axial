@@ -219,15 +219,22 @@ class StubLLMClient:
     # `pass_name=TAG_PASS_NAME`, never by prompt content). Every value must
     # be a real member of the Syria v0 domain schema's respective axis
     # (config/domains/syria/schema.yaml) -- role:claim in role_in_argument,
-    # scope:country-case in empirical_scope, Syria in country_list -- so the
-    # stub-driven end-to-end path validates cleanly against the loaded
-    # schema (PRD §7.1) and exercises the scope:country-case/country branch
-    # by default (tests/test_tag.py slice 02 seam decision 5).
+    # scope:country-case in empirical_scope, Syria in country_list, and (issue
+    # #29 slice 03) state/ideology in field, state-formation (+ its own
+    # declared formation:bellicist subtag) in claim_type, bellicist in
+    # theory_school -- so the stub-driven end-to-end path validates cleanly
+    # against the loaded schema (PRD §7.1) and exercises the scope:country-
+    # case/country branch by default (tests/test_tag.py slice 02 seam
+    # decision 5) plus every primary+secondary axis's nested shape (slice 03
+    # seam decision 9).
     _CANNED_TAG_RESPONSE = json.dumps(
         {
             "role_in_argument": "role:claim",
             "empirical_scope": "scope:country-case",
             "country": "Syria",
+            "field": {"primary": "state", "secondary": ["ideology"]},
+            "claim_type": {"primary": "state-formation", "subtags": ["formation:bellicist"]},
+            "theory_school": {"primary": "bellicist", "status": "candidate"},
         }
     )
 

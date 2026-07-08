@@ -1,7 +1,8 @@
 """Inner unit tests for the axial tag module (issue #27 slice 01 -- tag
 spine: role_in_argument, schema-driven, hard-error, versioned; issue #28
 slice 02 -- empirical_scope axis + the scope:country-case country extra
-field)."""
+field; issue #29 slice 03 -- field/claim_type/theory_school, the shared
+primary+secondary cardinality validator)."""
 
 from __future__ import annotations
 
@@ -52,6 +53,52 @@ _SCHEMA_WITH_COUNTRY = Schema(
         ),
     },
     country_list=["Syria", "Turkey"],
+)
+
+_SCHEMA_WITH_MULTI_VALUE_AXES = Schema(
+    version="0.1",
+    axes={
+        "field": Axis(
+            name="field",
+            applies_to=["prose"],
+            cardinality="primary_plus_secondary",
+            value_count=3,
+            tag_ids={"state", "violence", "ideology"},
+            raw={
+                "cardinality": "primary_plus_secondary",
+                "values": ["state", "violence", "ideology"],
+            },
+        ),
+        "claim_type": Axis(
+            name="claim_type",
+            applies_to=["prose"],
+            cardinality="primary_plus_optional_secondary",
+            value_count=2,
+            tag_ids={"state-formation", "state-autonomy"},
+            raw={
+                "cardinality": "primary_plus_optional_secondary",
+                "values": [
+                    {
+                        "id": "state-formation",
+                        "subtags": ["formation:bellicist", "formation:colonial-import"],
+                    },
+                    {"id": "state-autonomy"},
+                ],
+            },
+        ),
+        "theory_school": Axis(
+            name="theory_school",
+            applies_to=["prose"],
+            cardinality="primary_plus_optional_secondary",
+            value_count=2,
+            tag_ids={"bellicist", "structuralist"},
+            raw={
+                "cardinality": "primary_plus_optional_secondary",
+                "status": "candidate",
+                "groups": {"state": ["bellicist", "structuralist"]},
+            },
+        ),
+    },
 )
 
 _CODEBOOK = Codebook(
@@ -195,6 +242,179 @@ def test_validate_tag_rejects_an_absent_value_naming_axis_and_tag():
     assert "role:not-a-real-tag" in message
 
 
+# --- shared primary+secondary multi-value axis parsing/validation
+# (issue #29 slice 03) ---------------------------------------------------
+
+
+def test_parse_multi_value_tag_response_primary_plus_secondary_defaults_empty_list():
+    from axial.tag import parse_multi_value_tag_response
+
+    raw = json.dumps({"field": {"primary": "state"}})
+
+    parsed = parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["field"])
+
+    assert parsed == {"primary": "state", "secondary": []}
+
+
+def test_parse_multi_value_tag_response_primary_plus_secondary_keeps_given_list():
+    from axial.tag import parse_multi_value_tag_response
+
+    raw = json.dumps({"field": {"primary": "state", "secondary": ["violence", "ideology"]}})
+
+    parsed = parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["field"])
+
+    assert parsed["secondary"] == ["violence", "ideology"]
+
+
+def test_parse_multi_value_tag_response_optional_secondary_defaults_to_none():
+    from axial.tag import parse_multi_value_tag_response
+
+    raw = json.dumps({"claim_type": {"primary": "state-formation"}})
+
+    parsed = parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["claim_type"])
+
+    assert parsed["secondary"] is None
+
+
+def test_parse_multi_value_tag_response_optional_secondary_rejects_a_list():
+    from axial.tag import TagParseError, parse_multi_value_tag_response
+
+    raw = json.dumps(
+        {"claim_type": {"primary": "state-formation", "secondary": ["state-autonomy"]}}
+    )
+
+    with pytest.raises(TagParseError):
+        parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["claim_type"])
+
+
+def test_parse_multi_value_tag_response_defaults_subtags_empty_when_axis_declares_them():
+    from axial.tag import parse_multi_value_tag_response
+
+    raw = json.dumps({"claim_type": {"primary": "state-formation"}})
+
+    parsed = parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["claim_type"])
+
+    assert parsed["subtags"] == []
+
+
+def test_parse_multi_value_tag_response_keeps_given_subtags():
+    from axial.tag import parse_multi_value_tag_response
+
+    raw = json.dumps(
+        {"claim_type": {"primary": "state-formation", "subtags": ["formation:bellicist"]}}
+    )
+
+    parsed = parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["claim_type"])
+
+    assert parsed["subtags"] == ["formation:bellicist"]
+
+
+def test_parse_multi_value_tag_response_omits_subtags_when_axis_has_no_subtag_concept():
+    from axial.tag import parse_multi_value_tag_response
+
+    raw = json.dumps({"field": {"primary": "state"}})
+
+    parsed = parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["field"])
+
+    assert "subtags" not in parsed
+
+
+def test_parse_multi_value_tag_response_rejects_missing_axis_key():
+    from axial.tag import TagParseError, parse_multi_value_tag_response
+
+    with pytest.raises(TagParseError):
+        parse_multi_value_tag_response(
+            json.dumps({"nope": {"primary": "state"}}), _SCHEMA_WITH_MULTI_VALUE_AXES.axes["field"]
+        )
+
+
+def test_parse_multi_value_tag_response_rejects_a_bare_scalar_value():
+    from axial.tag import TagParseError, parse_multi_value_tag_response
+
+    with pytest.raises(TagParseError):
+        parse_multi_value_tag_response(
+            json.dumps({"field": "state"}), _SCHEMA_WITH_MULTI_VALUE_AXES.axes["field"]
+        )
+
+
+def test_validate_multi_value_tag_accepts_a_fully_in_schema_value():
+    from axial.tag import validate_multi_value_tag
+
+    parsed = {"primary": "state", "secondary": ["violence"]}
+    validate_multi_value_tag(_SCHEMA_WITH_MULTI_VALUE_AXES, "field", parsed)  # does not raise
+
+
+def test_validate_multi_value_tag_rejects_an_out_of_schema_primary_naming_axis_and_tag():
+    from axial.tag import TagNotInSchemaError, validate_multi_value_tag
+
+    parsed = {"primary": "field:not-a-real-field", "secondary": []}
+
+    with pytest.raises(TagNotInSchemaError) as exc_info:
+        validate_multi_value_tag(_SCHEMA_WITH_MULTI_VALUE_AXES, "field", parsed)
+
+    message = str(exc_info.value)
+    assert "field" in message
+    assert "field:not-a-real-field" in message
+
+
+def test_validate_multi_value_tag_rejects_an_out_of_schema_secondary():
+    from axial.tag import TagNotInSchemaError, validate_multi_value_tag
+
+    parsed = {"primary": "state", "secondary": ["not-a-real-secondary"]}
+
+    with pytest.raises(TagNotInSchemaError):
+        validate_multi_value_tag(_SCHEMA_WITH_MULTI_VALUE_AXES, "field", parsed)
+
+
+def test_validate_multi_value_tag_accepts_a_subtag_declared_under_its_own_primary():
+    from axial.tag import validate_multi_value_tag
+
+    parsed = {"primary": "state-formation", "secondary": None, "subtags": ["formation:bellicist"]}
+    validate_multi_value_tag(_SCHEMA_WITH_MULTI_VALUE_AXES, "claim_type", parsed)  # does not raise
+
+
+def test_validate_multi_value_tag_rejects_an_undeclared_subtag_naming_axis_and_subtag():
+    from axial.tag import TagNotInSchemaError, validate_multi_value_tag
+
+    parsed = {"primary": "state-formation", "secondary": None, "subtags": ["not-a-real-subtag"]}
+
+    with pytest.raises(TagNotInSchemaError) as exc_info:
+        validate_multi_value_tag(_SCHEMA_WITH_MULTI_VALUE_AXES, "claim_type", parsed)
+
+    message = str(exc_info.value)
+    assert "claim_type" in message
+    assert "not-a-real-subtag" in message
+
+
+def test_validate_multi_value_tag_rejects_a_subtag_declared_under_a_different_primary():
+    """A subtag valid under one claim_type id is not automatically valid
+    under another (Appendix B)."""
+    from axial.tag import TagNotInSchemaError, validate_multi_value_tag
+
+    # "state-autonomy" declares no subtags at all, so this one -- which only
+    # belongs to "state-formation" -- must be rejected here.
+    parsed = {"primary": "state-autonomy", "secondary": None, "subtags": ["formation:bellicist"]}
+
+    with pytest.raises(TagNotInSchemaError):
+        validate_multi_value_tag(_SCHEMA_WITH_MULTI_VALUE_AXES, "claim_type", parsed)
+
+
+def test_axis_extras_surfaces_a_schema_declared_status():
+    from axial.tag import _axis_extras
+
+    extras = _axis_extras(_SCHEMA_WITH_MULTI_VALUE_AXES.axes["theory_school"])
+
+    assert extras == {"status": "candidate"}
+
+
+def test_axis_extras_is_empty_when_the_axis_declares_no_status():
+    from axial.tag import _axis_extras
+
+    extras = _axis_extras(_SCHEMA_WITH_MULTI_VALUE_AXES.axes["field"])
+
+    assert extras == {}
+
+
 # --- country-case extra field (issue #28 slice 02) --------------------------
 
 
@@ -284,6 +504,26 @@ def test_build_tagged_record_omits_country_when_not_given():
 
     assert record["empirical_scope"] == "scope:general"
     assert "country" not in record
+
+
+def test_build_tagged_record_adds_one_key_per_multi_value_axis():
+    from axial.tag import build_tagged_record
+
+    chunk_record = {"chunk_id": "id1", "section": "Introduction", "text": "x"}
+
+    record = build_tagged_record(
+        chunk_record,
+        "role:claim",
+        "0.1",
+        multi_value_axes={
+            "field": {"primary": "state", "secondary": []},
+            "claim_type": {"primary": "state-formation", "secondary": None, "subtags": []},
+        },
+    )
+
+    assert record["field"] == {"primary": "state", "secondary": []}
+    assert record["claim_type"] == {"primary": "state-formation", "secondary": None, "subtags": []}
+    assert "theory_school" not in record
 
 
 # --- run_tag: zero chunks, happy path, hard error ----------------------------
@@ -562,3 +802,149 @@ def test_run_tag_regresses_role_in_argument_when_empirical_scope_axis_absent(mon
     assert records[0]["role_in_argument"] == "role:claim"
     assert "empirical_scope" not in records[0]
     assert "country" not in records[0]
+
+
+# --- run_tag: field/claim_type/theory_school (issue #29 slice 03) -----------
+
+
+def _write_domain_with_multi_value_axes(tmp_path):
+    """Write a schema.yaml + codebook.yaml covering role_in_argument plus
+    the three primary+secondary axes (field, claim_type with its own
+    per-tag subtags, theory_school with an axis-level status), for
+    `run_tag` multi-value-axis unit tests."""
+    domain_dir = tmp_path / "domain"
+    domain_dir.mkdir()
+    (domain_dir / "schema.yaml").write_text(
+        "version: 0.1\n"
+        "axes:\n"
+        "  role_in_argument:\n"
+        "    applies_to: [prose]\n"
+        "    cardinality: single\n"
+        "    values: [role:claim]\n"
+        "  field:\n"
+        "    applies_to: [prose]\n"
+        "    cardinality: primary_plus_secondary\n"
+        "    values: [state, violence, ideology]\n"
+        "  claim_type:\n"
+        "    applies_to: [prose]\n"
+        "    cardinality: primary_plus_optional_secondary\n"
+        "    values:\n"
+        "      - id: state-formation\n"
+        "        subtags: [formation:bellicist, formation:colonial-import]\n"
+        "      - id: state-autonomy\n"
+        "  theory_school:\n"
+        "    applies_to: [prose]\n"
+        "    cardinality: primary_plus_optional_secondary\n"
+        "    status: candidate\n"
+        "    groups:\n"
+        "      state: [bellicist, structuralist]\n",
+        encoding="utf-8",
+    )
+    (domain_dir / "codebook.yaml").write_text(
+        "axes:\n"
+        "  role_in_argument:\n"
+        "    role:claim: {definition: d, positive_example: p, negative_example: n}\n"
+        "  field:\n"
+        "    state: {definition: d, positive_example: p, negative_example: n}\n"
+        "    violence: {definition: d, positive_example: p, negative_example: n}\n"
+        "    ideology: {definition: d, positive_example: p, negative_example: n}\n"
+        "  claim_type:\n"
+        "    state-formation: {definition: d, positive_example: p, negative_example: n}\n"
+        "    state-autonomy: {definition: d, positive_example: p, negative_example: n}\n"
+        "  theory_school:\n"
+        "    bellicist: {definition: d, positive_example: p, negative_example: n}\n"
+        "    structuralist: {definition: d, positive_example: p, negative_example: n}\n",
+        encoding="utf-8",
+    )
+    return domain_dir
+
+
+def test_run_tag_assigns_field_claim_type_theory_school_in_the_appendix_h_shape(
+    monkeypatch, tmp_path
+):
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    class _Client:
+        def complete(self, prompt, pass_name=None):
+            return json.dumps(
+                {
+                    "role_in_argument": "role:claim",
+                    "field": {"primary": "state", "secondary": ["ideology"]},
+                    "claim_type": {
+                        "primary": "state-formation",
+                        "subtags": ["formation:bellicist"],
+                    },
+                    "theory_school": {"primary": "bellicist"},
+                }
+            )
+
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record["field"] == {"primary": "state", "secondary": ["ideology"]}
+    assert record["claim_type"] == {
+        "primary": "state-formation",
+        "secondary": None,
+        "subtags": ["formation:bellicist"],
+    }
+    # theory_school.status always comes from the schema, never the model
+    # (which omitted it here entirely).
+    assert record["theory_school"] == {
+        "primary": "bellicist",
+        "secondary": None,
+        "status": "candidate",
+    }
+
+
+def test_run_tag_raises_a_hard_error_for_an_out_of_schema_field_primary(monkeypatch, tmp_path):
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    class _Client:
+        def complete(self, prompt, pass_name=None):
+            return json.dumps(
+                {
+                    "role_in_argument": "role:claim",
+                    "field": {"primary": "not-a-real-field", "secondary": []},
+                    "claim_type": {"primary": "state-formation", "subtags": []},
+                    "theory_school": {"primary": "bellicist"},
+                }
+            )
+
+    with pytest.raises(tag_mod.TagNotInSchemaError) as exc_info:
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+
+    message = str(exc_info.value)
+    assert "field" in message
+    assert "not-a-real-field" in message
+
+
+def test_run_tag_raises_a_hard_error_for_an_undeclared_claim_type_subtag(monkeypatch, tmp_path):
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    class _Client:
+        def complete(self, prompt, pass_name=None):
+            return json.dumps(
+                {
+                    "role_in_argument": "role:claim",
+                    "field": {"primary": "state", "secondary": []},
+                    "claim_type": {"primary": "state-formation", "subtags": ["not-a-real-subtag"]},
+                    "theory_school": {"primary": "bellicist"},
+                }
+            )
+
+    with pytest.raises(tag_mod.TagNotInSchemaError) as exc_info:
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+
+    message = str(exc_info.value)
+    assert "claim_type" in message
+    assert "not-a-real-subtag" in message
