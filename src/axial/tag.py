@@ -57,6 +57,8 @@ from typing import Any
 
 import httpx
 
+import yaml
+
 from axial.chunk import ChunkError, run_chunk
 from axial.codebook import Codebook, CodebookError, load_codebook
 from axial.llm import (
@@ -69,6 +71,22 @@ from axial.llm import (
 from axial.schema import Axis, Schema, SchemaError, load_schema
 
 DEFAULT_DOMAIN_DIR = Path("config/domains/syria")
+
+
+def _default_domain_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
+    """Read `paths.domain_dir` from `config/pipeline.yaml` (mirrors
+    `axial.envelope._default_envelopes_dir`'s exact structure for
+    `paths.envelopes_dir`), so a config-declared domain directory is
+    actually honored rather than only the hardcoded `DEFAULT_DOMAIN_DIR`
+    default. An absent file/key falls back to `DEFAULT_DOMAIN_DIR`."""
+    if not config_path.is_file():
+        return DEFAULT_DOMAIN_DIR
+    with config_path.open("r", encoding="utf-8") as handle:
+        document = yaml.safe_load(handle) or {}
+    paths_config = document.get("paths", {}) or {}
+    configured = paths_config.get("domain_dir")
+    return Path(configured) if configured else DEFAULT_DOMAIN_DIR
+
 
 ROLE_IN_ARGUMENT_AXIS = "role_in_argument"
 EMPIRICAL_SCOPE_AXIS = "empirical_scope"
@@ -519,7 +537,7 @@ def run_tag(
     client: LLMClient | None = None,
     envelopes_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
-    domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
+    domain_dir: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     """Run the tagging pass on `source_path`.
 
@@ -534,7 +552,15 @@ def run_tag(
     also required and validated against the schema's `country_list`
     (Appendix C/G). A source whose chunking yields zero chunks yields zero
     tagged records without ever calling the LLM for the tag pass.
+
+    `domain_dir`, when omitted, is resolved from `config_path`'s
+    `paths.domain_dir` (falling back to `DEFAULT_DOMAIN_DIR` when absent --
+    `_default_domain_dir`, mirroring `_default_envelopes_dir`); an explicit
+    `domain_dir` always overrides config (issue #38).
     """
+    if domain_dir is None:
+        domain_dir = _default_domain_dir(config_path)
+
     try:
         schema = load_schema(domain_dir)
     except SchemaError as exc:

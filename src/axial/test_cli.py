@@ -95,15 +95,18 @@ def test_main_schema_show_against_missing_domain_dir_is_nonzero_and_names_path(c
 
 
 def test_build_parser_recognises_tag_subcommand_with_default_domain():
+    """`--domain` omitted defaults to `None` (an unresolved sentinel), not a
+    hardcoded path -- `run_tag` resolves it from `config/pipeline.yaml`'s
+    `paths.domain_dir` (falling back to `DEFAULT_DOMAIN_DIR`) when omitted
+    (issue #38)."""
     from axial.cli import build_parser
-    from axial.tag import DEFAULT_DOMAIN_DIR
 
     parser = build_parser()
     args = parser.parse_args(["tag", "some/source.pdf"])
 
     assert args.command == "tag"
     assert args.source_path == "some/source.pdf"
-    assert args.domain_dir == str(DEFAULT_DOMAIN_DIR)
+    assert args.domain_dir is None
 
 
 def test_build_parser_recognises_tag_subcommand_domain_override():
