@@ -38,12 +38,19 @@ jobs:
         run: uv sync
 
       # The one real-docling end-to-end unit test is marked `slow`; it is
-      # deselected here because the outer acceptance test (tests/test_extract.py)
-      # already exercises the real docling path end-to-end via the CLI. Every
-      # other test - all fast unit tests and every outer acceptance contract -
-      # runs.
-      - name: Run test suite
-        run: uv run pytest -q -m "not slow"
+      # deselected because the outer acceptance test (tests/test_extract.py)
+      # already exercises the real docling path end-to-end via the CLI.
+      #
+      # The suite is run in two passes. The hermetic src/ unit tests parallelize
+      # cleanly across cores (pytest-xdist). The tests/ acceptance contracts drive
+      # the CLI through subprocesses that share the real data/envelopes and
+      # data/vault scratch dirs, so they must run serially -- parallel workers
+      # would clobber each other's envelope/vault state. Both passes must pass.
+      - name: Run unit tests (parallel)
+        run: uv run pytest src -q -m "not slow" -n auto
+
+      - name: Run acceptance tests (serial)
+        run: uv run pytest tests -q -m "not slow"
 
       - name: Lint
         run: uv run ruff check .
