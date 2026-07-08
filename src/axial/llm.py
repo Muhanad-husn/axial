@@ -80,6 +80,7 @@ from __future__ import annotations
 
 import json
 import os
+import tomllib
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -88,8 +89,22 @@ import yaml
 
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
+SECRETS_PATH_ENV_VAR = "AXIAL_SECRETS_PATH"
 DEFAULT_PIPELINE_CONFIG_PATH = Path("config/pipeline.yaml")
+DEFAULT_SECRETS_PATH = Path("secrets/secrets.toml")
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+# Model-tier keys read from `[openrouter]` in secrets.toml (issue #23,
+# requirement 2); `llm_tier` selects among them.
+BUILDING_TIER = "building"
+PRODUCTION_HIGH_TIER = "production_high"
+PRODUCTION_LOW_TIER = "production_low"
+DEFAULT_LLM_TIER = BUILDING_TIER
+
+# Fallback model used only when secrets.toml doesn't name one for the
+# selected tier (e.g. secrets.toml is entirely absent). Replaces the old
+# hardcoded `openrouter/auto` default for the building tier.
+DEFAULT_BUILDING_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 
 # Pass name a chunking-pass call identifies itself with (see
 # src/axial/chunk.py), passed out-of-band as `pass_name` to `.complete()` --
@@ -321,15 +336,98 @@ def _load_pipeline_llm_config(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) 
     return document.get("llm", {}) or {}
 
 
-def _build_openrouter_client(llm_config: dict[str, Any]) -> OpenRouterClient:
-    model = llm_config.get("model", "openrouter/auto")
-    base_url = llm_config.get("base_url", DEFAULT_OPENROUTER_BASE_URL)
-    api_key_env = llm_config.get("api_key_env", "OPENROUTER_API_KEY")
-    api_key = os.environ.get(api_key_env)
+def _secrets_path() -> Path:
+    """Resolve the path to read `[openrouter]` secrets from: the
+    `AXIAL_SECRETS_PATH` env override when set/non-empty, else
+    `secrets/secrets.toml` relative to the repo root -- mirroring the
+    `AXIAL_LLM_PROVIDER` / `AXIAL_LLM_RECORD_PATH` env-var seam convention
+    already used in this module (issue #23, requirement 4)."""
+    override = os.environ.get(SECRETS_PATH_ENV_VAR, "")
+    return Path(override) if override else DEFAULT_SECRETS_PATH
+
+
+def _load_openrouter_secrets(secrets_path: Path) -> dict[str, Any]:
+    """Read the `[openrouter]` table from `secrets_path`; an absent file or
+    table yields an empty dict so the env-var/default fallbacks apply.
+
+    A syntactically invalid TOML file is a configuration error, not a
+    transport/parsing detail that should escape as a raw
+    `tomllib.TOMLDecodeError` -- every error this module raises must be an
+    `LLMError` (module docstring), so it is re-raised as `LLMConfigError`,
+    mirroring `_resolve_api_key`'s error style.
+    """
+    if not secrets_path.is_file():
+        return {}
+    with secrets_path.open("rb") as handle:
+        try:
+            document = tomllib.load(handle)
+        except tomllib.TOMLDecodeError as exc:
+            raise LLMConfigError(f"secrets file '{secrets_path}' is not valid TOML: {exc}") from exc
+    return document.get("openrouter", {}) or {}
+
+
+# Maps an `llm_tier` selector value to the secrets.toml key naming that
+# tier's model (issue #23, requirement 2). "building" maps to
+# "building_model" rather than to itself so the key mirrors the other two
+# ("production_high", "production_low"), which are already model-name keys.
+TIER_TO_MODEL_KEY = {
+    BUILDING_TIER: "building_model",
+    PRODUCTION_HIGH_TIER: "production_high",
+    PRODUCTION_LOW_TIER: "production_low",
+}
+
+
+def _resolve_api_key(secrets: dict[str, Any]) -> str:
+    """API key resolution order (issue #23, requirement 1): secrets.toml's
+    `api_key` is PRIMARY; `OPENROUTER_API_KEY` is the fallback used only
+    when the file is absent or lacks the key; neither present is a hard
+    `LLMConfigError`."""
+    api_key = secrets.get("api_key") or os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         raise LLMConfigError(
-            f"OpenRouter provider selected but {api_key_env!r} is not set in the environment"
+            "OpenRouter provider selected but no API key was found: set "
+            "'[openrouter].api_key' in secrets/secrets.toml or the "
+            "OPENROUTER_API_KEY environment variable"
         )
+    return api_key
+
+
+def _resolve_model(secrets: dict[str, Any], llm_config: dict[str, Any]) -> str:
+    """Model resolution (issue #23, requirement 2): `llm_tier` selects which
+    of the three model-name keys in secrets.toml to use; an unset selector
+    defaults to the building tier. Falls back to `config/pipeline.yaml`'s
+    `llm.model`, and finally to the building-tier default model, only when
+    secrets.toml doesn't name a model for the selected tier (e.g. the file
+    is absent entirely).
+
+    A non-`building` tier (`production_high`/`production_low`) whose model
+    key is missing from secrets.toml is a misconfiguration, not a case to
+    paper over: silently falling through to `DEFAULT_BUILDING_MODEL` there
+    would make a run believed to use a paid production model silently use
+    the free building model instead. Only the `building` tier keeps the
+    fallback chain, so today's no-secrets-file behavior is unchanged.
+    """
+    tier = secrets.get("llm_tier") or DEFAULT_LLM_TIER
+    model_key = TIER_TO_MODEL_KEY.get(tier)
+    if model_key is None:
+        raise LLMConfigError(f"unknown llm_tier: {tier!r}")
+    model = secrets.get(model_key) or llm_config.get("model")
+    if model:
+        return model
+    if tier != BUILDING_TIER:
+        raise LLMConfigError(
+            f"llm_tier {tier!r} was selected but secrets.toml has no "
+            f"{model_key!r} key naming a model for it; set "
+            f"'[openrouter].{model_key}' in secrets/secrets.toml"
+        )
+    return DEFAULT_BUILDING_MODEL
+
+
+def _build_openrouter_client(llm_config: dict[str, Any]) -> OpenRouterClient:
+    secrets = _load_openrouter_secrets(_secrets_path())
+    base_url = llm_config.get("base_url", DEFAULT_OPENROUTER_BASE_URL)
+    api_key = _resolve_api_key(secrets)
+    model = _resolve_model(secrets, llm_config)
     return OpenRouterClient(api_key=api_key, model=model, base_url=base_url)
 
 
