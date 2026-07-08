@@ -64,7 +64,7 @@ What the principle does **not** mean: it is not user-facing flexibility, not a c
 Seven stages, each a discrete, independently testable module. Every stage reads the domain schema; none embeds domain content.
 
 1. **Intake.** Accept PDF or DOCX. Verify a real text layer exists; reject scanned / no-text-layer files with a clear, logged message. No OCR path. Output: validated source + source metadata stub.
-2. **Structural extraction.** Run docling to produce a hierarchical tree that separates prose sections from non-text artifacts. If docling fails or produces degenerate output on a source, fall back to Unstructured for that source. Output: structural tree.
+2. **Structural extraction.** Run docling to produce a hierarchical tree that separates prose sections from non-text artifacts. If docling fails or produces degenerate output on a source, fall back to Unstructured for that source. This tree is produced once per source, persisted, and reused by every later stage for that source (not re-extracted). Output: structural tree (persisted).
 3. **Structural-envelope pass.** One API call per source extracts the author's stated thesis, table of contents, scope, and stated argument from intro/abstract/conclusion. This "envelope" is produced once and reused by every later stage for that source. Output: envelope (JSON).
 4. **Argumentative chunking.** For each prose section, an API call decides chunk boundaries *with the envelope plus surrounding sections in context* — never the isolated section. Chunks reflect argumentative units (a claim and its support), not fixed sizes. Output: prose chunks.
 5. **Artifact classification & routing.** Each non-text artifact receives a role tag from the artifact-role taxonomy and is routed to a separate artifact pool with metadata. A lightweight model suffices — this is feature-based routing, not deep reasoning. Output: tagged artifacts in the artifact pool.
@@ -104,6 +104,7 @@ axial/
     llm/                       # provider clients (OpenRouter, NVIDIA), retries
     eval/                      # gold-set scoring harness
   data/
+    trees/                     # one JSON per source (persisted structural tree)
     envelopes/                 # one JSON per source
     vault/
       prose/                   # prose-pool notes (.md with frontmatter)
@@ -142,7 +143,11 @@ Artifact notes carry: `artifact_role`, `fields`, source/section provenance, and 
 
 One JSON per source in `data/envelopes/`: `{source_id, author, title, date, thesis, toc[], scope, stated_argument}`. Produced once in stage 3; consumed by stages 4 and 6, and reusable by downstream phases outside this PRD.
 
-### 7.4 Gold-set label sheet
+### 7.4 Structural tree
+
+One JSON per source in `data/trees/`, keyed by `source_id` (the same deterministic id used for the envelope — `axial.envelope.compute_source_id`): the hierarchical tree from stage 2 — a root with `children`, each node carrying a `type` (`prose` or `artifact`) and an `order`. The shape is exactly the extraction pass's output (whether from docling or the Unstructured fallback); this subsection adds persistence, not a new shape. Produced once in stage 2 and reused by every later stage for that source (stages 4–7 and the tag/vault/xref passes read the persisted tree). A source is re-extracted only when no persisted tree exists for its `source_id`.
+
+### 7.5 Gold-set label sheet
 
 `data/gold/label_sheet.xlsx`: **one row per chunk, one column per axis.** Columns: `chunk_id`, `source`, `section`, `chunk_text`, then one column per axis with **dropdown validation sourced from the codebook**. Hybrid labeling per §9. The same sheet, once returned, is the machine-readable answer key for scoring — no transformation step between labeling and eval.
 
@@ -160,6 +165,7 @@ One JSON per source in `data/envelopes/`: `{source_id, author, title, date, thes
 **P0-2 Structural extraction with fallback.**
 - [ ] docling produces a hierarchical tree separating prose from non-text artifacts.
 - [ ] On docling failure/degenerate output for a source, Unstructured runs as fallback for that source; the fallback is logged.
+- [ ] The structural tree is written once per source (keyed by `source_id`) and read by later stages (not re-extracted); a source is re-extracted only when no persisted tree exists for its `source_id`.
 
 **P0-3 Structural-envelope pass.**
 - [ ] One envelope JSON per source containing thesis, TOC, scope, stated argument.
@@ -222,7 +228,7 @@ The gold set is the measurement instrument, so its construction is specified, no
 - **Hybrid labeling** (bounds the Academic's effort where our guesses are reliable, gets clean signal where they are not):
   - **Blind** (Academic labels from scratch): `claim-type`, `theory-school`.
   - **Pre-labeled** (pipeline proposes, Academic corrects): `field`, `empirical-scope`.
-- **Instrument:** the label sheet in §7.4. Dropdowns come from the codebook so the Academic never sees operator reasoning or free-types a tag.
+- **Instrument:** the label sheet in §7.5. Dropdowns come from the codebook so the Academic never sees operator reasoning or free-types a tag.
 
 ---
 
