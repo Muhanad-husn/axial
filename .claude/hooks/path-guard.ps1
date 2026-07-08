@@ -25,16 +25,25 @@ if (-not $Role) { exit 0 }
 $filePath = "$($j.tool_input.file_path)"
 if (-not $filePath) { exit 0 }
 
-$projectDir = $env:CLAUDE_PROJECT_DIR
-if (-not $projectDir) { $projectDir = Split-Path (Split-Path $PSScriptRoot) }
+# Resolve the worktree from the tool's cwd, not the session-fixed
+# CLAUDE_PROJECT_DIR -- that stays bound to the launch checkout and mis-scopes
+# role path rules for git-worktree sessions. Normalize to the git root of cwd.
+$opDir = "$($j.cwd)"
+if (-not $opDir) { $opDir = $env:CLAUDE_PROJECT_DIR }
+if (-not $opDir) { $opDir = Split-Path (Split-Path $PSScriptRoot) }
+$projectDir = (& git -C $opDir rev-parse --show-toplevel 2>$null)
+if (-not $projectDir) { $projectDir = $opDir }
 
-# Normalize to a project-relative forward-slash path.
+# Normalize to a project-relative forward-slash path. Require a trailing
+# separator on the root so a sibling worktree sharing a name prefix
+# (D:\axial-xref vs D:\axial) is not mistaken for being inside the project.
 $full = [System.IO.Path]::GetFullPath($filePath)
-$root = [System.IO.Path]::GetFullPath($projectDir)
-if (-not $full.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+$rootTrim = [System.IO.Path]::GetFullPath($projectDir).TrimEnd('\', '/')
+$sep = [System.IO.Path]::DirectorySeparatorChar
+if ($full -ne $rootTrim -and -not $full.StartsWith($rootTrim + $sep, [System.StringComparison]::OrdinalIgnoreCase)) {
     Block "this role may not write outside the project ($filePath)."
 }
-$rel = $full.Substring($root.Length).TrimStart('\', '/').Replace('\', '/')
+$rel = $full.Substring($rootTrim.Length).TrimStart('\', '/').Replace('\', '/')
 
 switch ($Role) {
     'spec-author' {
