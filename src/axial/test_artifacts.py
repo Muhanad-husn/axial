@@ -86,6 +86,45 @@ _CODEBOOK = Codebook(
     }
 )
 
+# --- issue #32 slice 02: schema/codebook fixtures with a `field` axis -------
+
+_SCHEMA_WITH_FIELD = Schema(
+    version="1.0",
+    axes={
+        **_SCHEMA.axes,
+        "field": Axis(
+            name="field",
+            applies_to=["prose", "artifact"],
+            cardinality="primary_plus_secondary",
+            value_count=3,
+            tag_ids={"state", "violence", "ideology"},
+        ),
+    },
+)
+
+_CODEBOOK_WITH_FIELD = Codebook(
+    axes={
+        **_CODEBOOK.axes,
+        "field": {
+            "state": TagEntry(
+                definition="The state as an object of analysis.",
+                positive_example="A passage about state capacity.",
+                negative_example="A passage with no bearing on state.",
+            ),
+            "violence": TagEntry(
+                definition="Armed conflict and coercion.",
+                positive_example="A passage about violence.",
+                negative_example="A passage with no bearing on violence.",
+            ),
+            "ideology": TagEntry(
+                definition="Ideological framing.",
+                positive_example="A passage about ideology.",
+                negative_example="A passage with no bearing on ideology.",
+            ),
+        },
+    }
+)
+
 
 # --- artifact-node collection + section provenance --------------------------
 
@@ -173,6 +212,34 @@ def test_build_artifact_record_is_deterministic():
     assert first == second
 
 
+def test_build_artifact_record_omits_field_key_when_none_given():
+    from axial.artifacts import build_artifact_record
+
+    record = build_artifact_record(
+        source_id="paper-abc123",
+        node={"type": "artifact", "order": "1.2"},
+        section="Introduction",
+        role="case-study",
+    )
+
+    assert "field" not in record
+
+
+def test_build_artifact_record_carries_field_when_given():
+    from axial.artifacts import build_artifact_record
+
+    field = {"primary": "state", "secondary": ["ideology"]}
+    record = build_artifact_record(
+        source_id="paper-abc123",
+        node={"type": "artifact", "order": "1.2"},
+        section="Introduction",
+        role="case-study",
+        field=field,
+    )
+
+    assert record["field"] == field
+
+
 # --- prompt composition ------------------------------------------------------
 
 
@@ -185,6 +252,16 @@ def test_compose_artifact_prompt_includes_codebook_definitions_and_examples():
     assert "A table of case data." in prompt
     assert "case-study" in prompt
     assert "discard" in prompt
+
+
+def test_compose_artifact_prompt_includes_field_codebook_entries():
+    from axial.artifacts import compose_artifact_prompt
+
+    prompt = compose_artifact_prompt("Introduction", _CODEBOOK_WITH_FIELD)
+
+    assert "The state as an object of analysis." in prompt
+    assert "state" in prompt
+    assert "ideology" in prompt
 
 
 # --- role parsing + schema validation ----------------------------------------
@@ -283,6 +360,61 @@ def test_run_artifacts_raises_on_out_of_schema_role(monkeypatch, tmp_path):
 
     with pytest.raises(artifacts_mod.TagNotInSchemaError):
         artifacts_mod.run_artifacts(source, client=_BogusClient())
+
+
+def test_artifacts_tag_not_in_schema_error_is_the_shared_tag_module_class():
+    """Issue #32 slice 02 carry-in: the locally-defined `TagNotInSchemaError`
+    is dropped; `axial.artifacts.TagNotInSchemaError` must be the exact same
+    class object as `axial.tag.TagNotInSchemaError`, not a lookalike."""
+    import axial.artifacts as artifacts_mod
+    import axial.tag as tag_mod
+
+    assert artifacts_mod.TagNotInSchemaError is tag_mod.TagNotInSchemaError
+
+
+def test_run_artifacts_classifies_field_alongside_artifact_role(monkeypatch, tmp_path):
+    import axial.artifacts as artifacts_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(artifacts_mod, "extract", lambda path: _tree_with_one_artifact())
+    monkeypatch.setattr(artifacts_mod, "load_schema", lambda domain_dir: _SCHEMA_WITH_FIELD)
+    monkeypatch.setattr(artifacts_mod, "load_codebook", lambda domain_dir: _CODEBOOK_WITH_FIELD)
+
+    class _FieldClient:
+        def complete(self, prompt, pass_name=None):
+            return json.dumps(
+                {
+                    "artifact_role": "case-study",
+                    "field": {"primary": "state", "secondary": ["ideology"]},
+                }
+            )
+
+    records = artifacts_mod.run_artifacts(source, client=_FieldClient())
+
+    assert len(records) == 1
+    assert records[0]["field"] == {"primary": "state", "secondary": ["ideology"]}
+
+
+def test_run_artifacts_raises_on_out_of_schema_field_primary(monkeypatch, tmp_path):
+    import axial.artifacts as artifacts_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(artifacts_mod, "extract", lambda path: _tree_with_one_artifact())
+    monkeypatch.setattr(artifacts_mod, "load_schema", lambda domain_dir: _SCHEMA_WITH_FIELD)
+    monkeypatch.setattr(artifacts_mod, "load_codebook", lambda domain_dir: _CODEBOOK_WITH_FIELD)
+
+    class _BogusFieldClient:
+        def complete(self, prompt, pass_name=None):
+            return json.dumps(
+                {"artifact_role": "case-study", "field": {"primary": "not-a-real-field"}}
+            )
+
+    with pytest.raises(artifacts_mod.TagNotInSchemaError):
+        artifacts_mod.run_artifacts(source, client=_BogusFieldClient())
 
 
 def test_run_artifacts_calls_the_client_with_the_artifacts_pass_name(monkeypatch, tmp_path):
