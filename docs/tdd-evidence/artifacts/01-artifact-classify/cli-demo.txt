@@ -1,0 +1,10 @@
+$ AXIAL_LLM_PROVIDER=stub axial artifacts tests/fixtures/extract/prose_and_table.pdf
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  34%|###3      | 261/770 [00:00<00:00, 2602.87it/s]Loading weights:  68%|######7   | 522/770 [00:00<00:00, 2446.01it/s]Loading weights: 100%|#########9| 768/770 [00:00<00:00, 2452.13it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 2466.32it/s]
+[{"artifact_id": "prose_and_table-8bf9b6c2a681_art_1.3", "artifact_role": "case-study", "source_id": "prose_and_table-8bf9b6c2a681", "section": "Introduction"}]
+EXIT: 0
+
+# Hard-error path: stub forced to return an out-of-schema role
+$ AXIAL_STUB_ARTIFACT_ROLE=not-a-real-role AXIAL_LLM_PROVIDER=stub axial artifacts tests/fixtures/extract/prose_and_table.pdf
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  34%|###4      | 262/770 [00:00<00:00, 2618.45it/s]Loading weights:  68%|######8   | 524/770 [00:00<00:00, 2423.30it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 2520.87it/s]
+error: artifact_role 'not-a-real-role' is not a member of the schema's 'artifact_role' axis
+EXIT: 1
