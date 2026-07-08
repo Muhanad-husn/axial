@@ -60,6 +60,19 @@ def test_stub_client_returns_chunk_shaped_response_for_the_chunk_pass_name():
         assert isinstance(chunk["text"], str) and chunk["text"].strip()
 
 
+def test_stub_client_returns_tag_shaped_response_for_the_tag_pass_name():
+    from axial.llm import TAG_PASS_NAME, StubLLMClient
+
+    client = StubLLMClient()
+
+    raw = client.complete("some tagging prompt", pass_name=TAG_PASS_NAME)
+    parsed = json.loads(raw)
+
+    assert isinstance(parsed["role_in_argument"], str) and parsed["role_in_argument"].strip()
+    assert "chunks" not in parsed
+    assert "thesis" not in parsed
+
+
 def test_stub_client_dispatch_is_by_pass_name_not_prompt_content():
     """The chunk-vs-envelope canned-response dispatch must be driven by the
     out-of-band `pass_name` argument, never by scanning prompt text -- so an
