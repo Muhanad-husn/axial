@@ -404,6 +404,10 @@ def test_run_vault_write_composes_the_tagger_not_the_chunker_directly(monkeypatc
     # stub it to [] so this prose-composition test stays hermetic (no real
     # docling on the fake PDF) and still asserts exactly one prose note.
     monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [])
+    # issue #34 slice 02: run_vault_write now also runs the backlink pass;
+    # stub it to [] so this test stays hermetic (no real chunking/xref on
+    # the fake PDF).
+    monkeypatch.setattr(vault_mod, "run_xref", lambda *a, **k: [])
 
     written = vault_mod.run_vault_write(
         source_path,
@@ -464,9 +468,11 @@ def test_run_vault_write_writes_both_prose_and_artifact_notes(monkeypatch, tmp_p
     vault_dir = tmp_path / "vault"
 
     # run_vault_write now composes run_tag (not run_chunk) for the prose half
-    # (slice 04) plus run_artifacts for the artifact half (this slice).
+    # (slice 04) plus run_artifacts for the artifact half (issue #32 slice 02)
+    # plus run_xref for the backlink half (issue #34 slice 02).
     monkeypatch.setattr(vault_mod, "run_tag", lambda *a, **k: [_RECORD])
     monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [_ARTIFACT_RECORD])
+    monkeypatch.setattr(vault_mod, "run_xref", lambda *a, **k: [])
 
     written = vault_mod.run_vault_write(
         source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir
@@ -515,6 +521,210 @@ def test_run_vault_write_wraps_tag_not_in_schema_error_into_vault_error(monkeypa
         raise TagNotInSchemaError("artifact_role", "not-a-real-role")
 
     monkeypatch.setattr(vault_mod, "run_artifacts", _raise_tag_error)
+
+    with pytest.raises(vault_mod.VaultError):
+        vault_mod.run_vault_write(source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir)
+
+
+# --- backlinks (issue #34 slice 02 -- xref-backlinks) -------------------------
+
+_XREF_PAIRS = [
+    {"chunk_id": "chunk-1", "artifact_id": "art-1"},
+    {"chunk_id": "chunk-1", "artifact_id": "art-2"},
+    {"chunk_id": "chunk-2", "artifact_id": "art-1"},
+]
+
+
+def test_build_backlink_maps_groups_pairs_by_chunk_and_by_artifact():
+    from axial.vault import build_backlink_maps
+
+    chunk_to_artifacts, artifact_to_chunks = build_backlink_maps(_XREF_PAIRS)
+
+    assert chunk_to_artifacts == {"chunk-1": ["art-1", "art-2"], "chunk-2": ["art-1"]}
+    assert artifact_to_chunks == {"art-1": ["chunk-1", "chunk-2"], "art-2": ["chunk-1"]}
+
+
+def test_build_backlink_maps_dedupes_repeated_pairs():
+    from axial.vault import build_backlink_maps
+
+    pairs = [{"chunk_id": "chunk-1", "artifact_id": "art-1"}] * 3
+    chunk_to_artifacts, artifact_to_chunks = build_backlink_maps(pairs)
+
+    assert chunk_to_artifacts == {"chunk-1": ["art-1"]}
+    assert artifact_to_chunks == {"art-1": ["chunk-1"]}
+
+
+def test_build_backlink_maps_empty_pairs_yields_empty_maps():
+    from axial.vault import build_backlink_maps
+
+    chunk_to_artifacts, artifact_to_chunks = build_backlink_maps([])
+
+    assert chunk_to_artifacts == {}
+    assert artifact_to_chunks == {}
+
+
+def test_build_frontmatter_defaults_artifact_refs_to_empty_list():
+    from axial.vault import build_frontmatter
+
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+
+    assert frontmatter["artifact_refs"] == []
+
+
+def test_build_frontmatter_carries_given_artifact_refs():
+    from axial.vault import build_frontmatter
+
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE, artifact_refs=["art-1", "art-2"])
+
+    assert frontmatter["artifact_refs"] == ["art-1", "art-2"]
+
+
+def test_build_artifact_frontmatter_defaults_cited_by_to_empty_list():
+    from axial.vault import build_artifact_frontmatter
+
+    frontmatter = build_artifact_frontmatter(_ARTIFACT_RECORD)
+
+    assert frontmatter["cited_by"] == []
+
+
+def test_build_artifact_frontmatter_carries_given_cited_by():
+    from axial.vault import build_artifact_frontmatter
+
+    frontmatter = build_artifact_frontmatter(_ARTIFACT_RECORD, cited_by=["chunk-1", "chunk-2"])
+
+    assert frontmatter["cited_by"] == ["chunk-1", "chunk-2"]
+
+
+def test_write_chunk_note_writes_given_artifact_refs_into_frontmatter(tmp_path):
+    from axial.vault import write_chunk_note
+
+    vault_dir = tmp_path / "vault"
+    note_path = write_chunk_note(_RECORD, _ENVELOPE, vault_dir, artifact_refs=["art-1"])
+
+    frontmatter, _ = _split_frontmatter_like_outer_test(note_path.read_text(encoding="utf-8"))
+    assert frontmatter["artifact_refs"] == ["art-1"]
+
+
+def test_write_artifact_note_writes_given_cited_by_into_frontmatter(tmp_path):
+    from axial.vault import write_artifact_note
+
+    vault_dir = tmp_path / "vault"
+    note_path = write_artifact_note(_ARTIFACT_RECORD, vault_dir, cited_by=["chunk-1"])
+
+    frontmatter, _ = _split_frontmatter_like_outer_test(note_path.read_text(encoding="utf-8"))
+    assert frontmatter["cited_by"] == ["chunk-1"]
+
+
+def test_run_vault_write_backlink_pass_writes_bidirectional_frontmatter(monkeypatch, tmp_path):
+    """`run_vault_write` runs `axial.xref.run_xref` after both prose and
+    artifact notes are computed and materializes each pair as bidirectional
+    frontmatter (issue #34 slice 02)."""
+    import axial.vault as vault_mod
+
+    source_path, envelopes_dir = _arrange_stored_envelope(tmp_path)
+    vault_dir = tmp_path / "vault"
+
+    monkeypatch.setattr(vault_mod, "run_tag", lambda *a, **k: [_RECORD])
+    monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [_ARTIFACT_RECORD])
+    monkeypatch.setattr(
+        vault_mod,
+        "run_xref",
+        lambda *a, **k: [
+            {"chunk_id": _RECORD["chunk_id"], "artifact_id": _ARTIFACT_RECORD["artifact_id"]}
+        ],
+    )
+
+    vault_mod.run_vault_write(source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir)
+
+    prose_note = vault_dir / "prose" / f"{_RECORD['chunk_id']}.md"
+    artifact_note = vault_dir / "artifacts" / f"{_ARTIFACT_RECORD['artifact_id']}.md"
+
+    prose_frontmatter, _ = _split_frontmatter_like_outer_test(
+        prose_note.read_text(encoding="utf-8")
+    )
+    artifact_frontmatter, _ = _split_frontmatter_like_outer_test(
+        artifact_note.read_text(encoding="utf-8")
+    )
+
+    assert prose_frontmatter["artifact_refs"] == [_ARTIFACT_RECORD["artifact_id"]]
+    assert artifact_frontmatter["cited_by"] == [_RECORD["chunk_id"]]
+
+
+def test_run_vault_write_backlink_pass_leaves_unreferenced_notes_with_empty_lists(
+    monkeypatch, tmp_path
+):
+    import axial.vault as vault_mod
+
+    source_path, envelopes_dir = _arrange_stored_envelope(tmp_path)
+    vault_dir = tmp_path / "vault"
+
+    monkeypatch.setattr(vault_mod, "run_tag", lambda *a, **k: [_RECORD])
+    monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [_ARTIFACT_RECORD])
+    monkeypatch.setattr(vault_mod, "run_xref", lambda *a, **k: [])
+
+    vault_mod.run_vault_write(source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir)
+
+    prose_note = vault_dir / "prose" / f"{_RECORD['chunk_id']}.md"
+    artifact_note = vault_dir / "artifacts" / f"{_ARTIFACT_RECORD['artifact_id']}.md"
+
+    prose_frontmatter, _ = _split_frontmatter_like_outer_test(
+        prose_note.read_text(encoding="utf-8")
+    )
+    artifact_frontmatter, _ = _split_frontmatter_like_outer_test(
+        artifact_note.read_text(encoding="utf-8")
+    )
+
+    assert prose_frontmatter["artifact_refs"] == []
+    assert artifact_frontmatter["cited_by"] == []
+
+
+def test_run_vault_write_backlink_pass_rerun_does_not_duplicate(monkeypatch, tmp_path):
+    import axial.vault as vault_mod
+
+    source_path, envelopes_dir = _arrange_stored_envelope(tmp_path)
+    vault_dir = tmp_path / "vault"
+
+    monkeypatch.setattr(vault_mod, "run_tag", lambda *a, **k: [_RECORD])
+    monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [_ARTIFACT_RECORD])
+    monkeypatch.setattr(
+        vault_mod,
+        "run_xref",
+        lambda *a, **k: [
+            {"chunk_id": _RECORD["chunk_id"], "artifact_id": _ARTIFACT_RECORD["artifact_id"]}
+        ],
+    )
+
+    vault_mod.run_vault_write(source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir)
+    vault_mod.run_vault_write(source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir)
+
+    prose_note = vault_dir / "prose" / f"{_RECORD['chunk_id']}.md"
+    artifact_note = vault_dir / "artifacts" / f"{_ARTIFACT_RECORD['artifact_id']}.md"
+
+    prose_frontmatter, _ = _split_frontmatter_like_outer_test(
+        prose_note.read_text(encoding="utf-8")
+    )
+    artifact_frontmatter, _ = _split_frontmatter_like_outer_test(
+        artifact_note.read_text(encoding="utf-8")
+    )
+
+    assert prose_frontmatter["artifact_refs"] == [_ARTIFACT_RECORD["artifact_id"]]
+    assert artifact_frontmatter["cited_by"] == [_RECORD["chunk_id"]]
+
+
+def test_run_vault_write_wraps_xref_error_into_vault_error(monkeypatch, tmp_path):
+    import axial.vault as vault_mod
+    from axial.xref import XrefError
+
+    source_path, envelopes_dir = _arrange_stored_envelope(tmp_path)
+    vault_dir = tmp_path / "vault"
+
+    monkeypatch.setattr(vault_mod, "run_tag", lambda *a, **k: [_RECORD])
+    monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [_ARTIFACT_RECORD])
+
+    def _raise_xref_error(*a, **k):
+        raise XrefError("boom")
+
+    monkeypatch.setattr(vault_mod, "run_xref", _raise_xref_error)
 
     with pytest.raises(vault_mod.VaultError):
         vault_mod.run_vault_write(source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir)

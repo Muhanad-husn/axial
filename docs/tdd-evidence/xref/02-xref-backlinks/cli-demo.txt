@@ -1,0 +1,36 @@
+### axial vault write — bidirectional xref backlinks [issue #34, slice 02]
+# stub provider; AXIAL_STUB_XREF_TARGET cans the xref pass to reference the real artifact.
+
+$ AXIAL_LLM_PROVIDER=stub axial envelope tests/fixtures/extract/prose_and_table.pdf   # arrange: store the envelope (no recompute)
+exit=0 (envelope stored)
+
+$ AXIAL_LLM_PROVIDER=stub AXIAL_STUB_XREF_TARGET=prose_and_table-8bf9b6c2a681_art_1.3 axial vault write tests/fixtures/extract/prose_and_table.pdf
+["data\\vault\\prose\\prose_and_table-8bf9b6c2a681_1_introduction_001.md", "data\\vault\\prose\\prose_and_table-8bf9b6c2a681_1_introduction_002.md", "data\\vault\\prose\\prose_and_table-8bf9b6c2a681_2_discussion_001.md", "data\\vault\\prose\\prose_and_table-8bf9b6c2a681_2_discussion_002.md", "data\\vault\\artifacts\\prose_and_table-8bf9b6c2a681_art_1.3.md"]
+exit=0
+
+--- PROSE note -> artifact_refs (forward link to the artifact) ---
+# data/vault/prose/prose_and_table-8bf9b6c2a681_1_introduction_001.md
+"artifact_refs":
+- "prose_and_table-8bf9b6c2a681_art_1.3"
+---
+# data/vault/prose/prose_and_table-8bf9b6c2a681_1_introduction_002.md
+"artifact_refs":
+- "prose_and_table-8bf9b6c2a681_art_1.3"
+---
+# data/vault/prose/prose_and_table-8bf9b6c2a681_2_discussion_001.md
+"artifact_refs":
+- "prose_and_table-8bf9b6c2a681_art_1.3"
+---
+# data/vault/prose/prose_and_table-8bf9b6c2a681_2_discussion_002.md
+"artifact_refs":
+- "prose_and_table-8bf9b6c2a681_art_1.3"
+---
+
+--- ARTIFACT note -> cited_by (back-links to every referencing chunk) ---
+# data/vault/artifacts/prose_and_table-8bf9b6c2a681_art_1.3.md
+"cited_by":
+- "prose_and_table-8bf9b6c2a681_1_introduction_001"
+- "prose_and_table-8bf9b6c2a681_1_introduction_002"
+- "prose_and_table-8bf9b6c2a681_2_discussion_001"
+- "prose_and_table-8bf9b6c2a681_2_discussion_002"
+---
