@@ -23,7 +23,7 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 
 | # | Slice | Goal (one line) | Status | Issue | PR |
 |---|-------|-----------------|--------|-------|----|
-| 01 | [artifact-classify](01-artifact-classify.md) | `axial artifacts <file>` gives each artifact node exactly one `artifact_role` (Appendix D, schema-driven, hard-error); emits records | ☐ todo | [#30](https://github.com/Muhanad-husn/axial/issues/30) | — |
+| 01 | [artifact-classify](01-artifact-classify.md) | `axial artifacts <file>` gives each artifact node exactly one `artifact_role` (Appendix D, schema-driven, hard-error); emits records | ⏳ PR open | [#30](https://github.com/Muhanad-husn/axial/issues/30) | [#36](https://github.com/Muhanad-husn/axial/pull/36) |
 | 02 | [artifact-pool-write](02-artifact-pool-write.md) | artifact notes written to `data/vault/artifacts/` with `artifact_role` + `field` + provenance; `discard` retained-but-flagged non-retrievable | ☐ todo | [#32](https://github.com/Muhanad-husn/axial/issues/32) | — |
 
 ## Out of scope (whole feature)
