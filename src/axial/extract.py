@@ -25,54 +25,93 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Any, Callable, Iterable
-
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling_core.types.doc import PictureItem, SectionHeaderItem, TableItem, TitleItem
-from docling_core.types.doc.document import DoclingDocument
-from unstructured.documents.elements import (
-    CheckBox,
-    Element,
-    FigureCaption,
-    Formula,
-    Image,
-    PageBreak,
-    Table as UnstructuredTable,
-    TableChunk,
-    Title,
-)
-from unstructured.partition.docx import partition_docx
-from unstructured.partition.pdf import partition_pdf
+from typing import TYPE_CHECKING, Any, Callable, Iterable
 
 from axial.intake import IntakeError, intake
 
-_ARTIFACT_TYPES = (TableItem, PictureItem)
-_SECTION_TYPES = (TitleItem, SectionHeaderItem)
+if TYPE_CHECKING:
+    # Only used as type annotations; kept out of the runtime import path so
+    # importing this module doesn't force docling/unstructured (and torch) to
+    # load. See the lazy accessors below for the runtime equivalents.
+    from docling.document_converter import DocumentConverter
+    from docling_core.types.doc.document import DoclingDocument
+    from unstructured.documents.elements import Element
 
 # Fault-injection seam (locked by tests/test_extract_fallback.py): lets tests
 # force the docling step to fail or degenerate deterministically, without
 # needing docling to genuinely misbehave on a real source.
 FORCE_FAILURE_ENV_VAR = "AXIAL_FORCE_DOCLING_FAILURE"
 
-# Unstructured element classes that map to the locked "artifact" node type:
-# tables and non-text visual elements.
-_UNSTRUCTURED_ARTIFACT_TYPES = (
-    UnstructuredTable,
-    TableChunk,
-    Image,
-    FigureCaption,
-    Formula,
-    CheckBox,
-)
-# Only Title elements open a section node, matching docling's
-# TitleItem/SectionHeaderItem. Unstructured's `Header` is running/page-header
-# furniture (e.g. a Word section header), not a heading over body content --
-# treating it as a section-opener would nest unrelated body prose under it.
-# It still classifies as an ordinary "prose" leaf node below (not an artifact),
-# it just never opens a section.
-_UNSTRUCTURED_SECTION_TYPES = (Title,)
+_artifact_types: tuple[type, ...] | None = None
+_section_types: tuple[type, ...] | None = None
+_unstructured_artifact_types: tuple[type, ...] | None = None
+_unstructured_section_types: tuple[type, ...] | None = None
+
+
+def _get_artifact_types() -> tuple[type, ...]:
+    """Lazily build the docling isinstance tuple so importing this module
+    doesn't force docling to load."""
+    global _artifact_types
+    if _artifact_types is None:
+        from docling_core.types.doc import PictureItem, TableItem
+
+        _artifact_types = (TableItem, PictureItem)
+    return _artifact_types
+
+
+def _get_section_types() -> tuple[type, ...]:
+    """Lazily build the docling isinstance tuple so importing this module
+    doesn't force docling to load."""
+    global _section_types
+    if _section_types is None:
+        from docling_core.types.doc import SectionHeaderItem, TitleItem
+
+        _section_types = (TitleItem, SectionHeaderItem)
+    return _section_types
+
+
+def _get_unstructured_artifact_types() -> tuple[type, ...]:
+    """Lazily build the unstructured isinstance tuple -- element classes that
+    map to the locked "artifact" node type: tables and non-text visual
+    elements -- so importing this module doesn't force unstructured to load.
+    """
+    global _unstructured_artifact_types
+    if _unstructured_artifact_types is None:
+        from unstructured.documents.elements import (
+            CheckBox,
+            FigureCaption,
+            Formula,
+            Image,
+            Table as UnstructuredTable,
+            TableChunk,
+        )
+
+        _unstructured_artifact_types = (
+            UnstructuredTable,
+            TableChunk,
+            Image,
+            FigureCaption,
+            Formula,
+            CheckBox,
+        )
+    return _unstructured_artifact_types
+
+
+def _get_unstructured_section_types() -> tuple[type, ...]:
+    """Lazily build the unstructured isinstance tuple. Only Title elements
+    open a section node, matching docling's TitleItem/SectionHeaderItem.
+    Unstructured's `Header` is running/page-header furniture (e.g. a Word
+    section header), not a heading over body content -- treating it as a
+    section-opener would nest unrelated body prose under it. It still
+    classifies as an ordinary "prose" leaf node below (not an artifact), it
+    just never opens a section.
+    """
+    global _unstructured_section_types
+    if _unstructured_section_types is None:
+        from unstructured.documents.elements import Title
+
+        _unstructured_section_types = (Title,)
+    return _unstructured_section_types
 
 
 class ExtractError(Exception):
@@ -98,7 +137,7 @@ class ConversionError(ExtractError):
 
 def _classify(item: Any) -> str:
     """Map a docling doc item to the locked node `type`: 'prose' or 'artifact'."""
-    return "artifact" if isinstance(item, _ARTIFACT_TYPES) else "prose"
+    return "artifact" if isinstance(item, _get_artifact_types()) else "prose"
 
 
 def _leaf_node(item: Any, order: str) -> dict:
@@ -162,6 +201,12 @@ def _build_converter() -> DocumentConverter:
     affecting prose/table detection, which come from the PDF text layer and
     the layout/TableFormer models respectively.
     """
+    # Local import: defers docling's (torch-backed) load until a conversion
+    # actually runs.
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+
     pipeline_options = PdfPipelineOptions(do_ocr=False)
     return DocumentConverter(
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
@@ -178,7 +223,7 @@ def convert(path: Path) -> DoclingDocument:
 def normalize(document: DoclingDocument) -> dict:
     """Normalize a docling document into the locked `{children, type, order}` tree."""
     items = (item for item, _level in document.iterate_items())
-    return _build_tree(items, lambda item: isinstance(item, _SECTION_TYPES), _leaf_node)
+    return _build_tree(items, lambda item: isinstance(item, _get_section_types()), _leaf_node)
 
 
 def is_degenerate(document: DoclingDocument) -> bool:
@@ -207,13 +252,17 @@ def _convert_with_seam(path: Path) -> DoclingDocument:
             path, "forced docling failure via AXIAL_FORCE_DOCLING_FAILURE=exception"
         )
     if mode == "degenerate":
+        # Local import: defers docling's (torch-backed) load; only needed on
+        # this forced-failure test path.
+        from docling_core.types.doc.document import DoclingDocument
+
         return DoclingDocument(name="forced-degenerate")
     return convert(path)
 
 
 def _classify_unstructured(element: Element) -> str:
     """Map an Unstructured element to the locked node `type`: 'prose' or 'artifact'."""
-    return "artifact" if isinstance(element, _UNSTRUCTURED_ARTIFACT_TYPES) else "prose"
+    return "artifact" if isinstance(element, _get_unstructured_artifact_types()) else "prose"
 
 
 def _unstructured_leaf_node(element: Element, order: str) -> dict:
@@ -233,6 +282,11 @@ def _partition_with_unstructured(path: Path) -> list[Element]:
     text extraction only -- no OCR, no hi_res layout models, no tesseract --
     matching intake's born-digital-only guarantee.
     """
+    # Local import: defers unstructured's load until the fallback path
+    # actually runs.
+    from unstructured.partition.docx import partition_docx
+    from unstructured.partition.pdf import partition_pdf
+
     if path.suffix.lower() == ".docx":
         return partition_docx(filename=str(path))
     return partition_pdf(filename=str(path), strategy="fast")
@@ -241,10 +295,14 @@ def _partition_with_unstructured(path: Path) -> list[Element]:
 def _normalize_unstructured(elements: list[Element]) -> dict:
     """Normalize an Unstructured element stream into the same locked
     `{children, type, order}` tree shape as `normalize()`."""
+    # Local import: defers unstructured's load until the fallback path
+    # actually runs.
+    from unstructured.documents.elements import PageBreak
+
     items = (element for element in elements if not isinstance(element, PageBreak))
     return _build_tree(
         items,
-        lambda element: isinstance(element, _UNSTRUCTURED_SECTION_TYPES),
+        lambda element: isinstance(element, _get_unstructured_section_types()),
         _unstructured_leaf_node,
     )
 

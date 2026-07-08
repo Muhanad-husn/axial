@@ -26,6 +26,7 @@ packages = ["src/axial"]
 [dependency-groups]
 dev = [
     "pytest>=8",
+    "pytest-xdist>=3",
     "ruff>=0.6",
 ]
 

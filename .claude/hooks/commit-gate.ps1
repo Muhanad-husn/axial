@@ -33,8 +33,16 @@ if ($branch -eq 'main') {
 
 if (Test-Path (Join-Path $projectDir '.claude/allow-red-commit')) { exit 0 }
 
+# Fast per-commit gate (founder-approved policy): run only the hermetic src/ unit
+# suite, in parallel across cores (pytest-xdist) -- ~6s for 220 tests. The heavy
+# tests/ acceptance contracts drive the real docling pipeline end-to-end through
+# many `uv run axial` subprocesses (~10 min) and share the data/ scratch dirs, so
+# they are NOT run on every inner red-green commit. They still gate every PR: CI
+# runs the full suite (required check) and safe-pr runs it locally before the PR.
+# This keeps "no commit on a red suite" as a real, fast signal without re-running
+# the full end-to-end pipeline on every commit.
 Push-Location $projectDir
-try { & uv run pytest -q 2>&1 | Out-Null; $green = ($LASTEXITCODE -eq 0) }
+try { & uv run pytest src -q -m "not slow" -n auto 2>&1 | Out-Null; $green = ($LASTEXITCODE -eq 0) }
 finally { Pop-Location }
 
 if (-not $green) {
