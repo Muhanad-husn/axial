@@ -3,6 +3,9 @@ write)."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 import yaml
 
@@ -19,8 +22,25 @@ _ENVELOPE = {
 _RECORD = {
     "chunk_id": "paper-abc123_1_introduction_001",
     "section": "Introduction",
-    "text": "This is the chunk's own prose text.",
+    "chunk_text": "This is the chunk's own prose text.",
+    "role_in_argument": "role:claim",
+    "schema_version": "1.0.0",
+    "empirical_scope": "scope:country-case",
+    "country": "Syria",
+    "field": {"primary": "field:political-science", "secondary": ["field:history"]},
+    "claim_type": {
+        "primary": "claim:causal",
+        "secondary": None,
+        "subtags": ["claim:causal:mechanism"],
+    },
+    "theory_school": {"primary": "school:realism", "secondary": None, "status": "candidate"},
 }
+
+_NON_COUNTRY_RECORD = {
+    **_RECORD,
+    "empirical_scope": "scope:national",
+}
+del _NON_COUNTRY_RECORD["country"]
 
 # issue #32 slice 02 -- artifact record shape (mirrors
 # `axial.artifacts.build_artifact_record`'s output).
@@ -51,7 +71,7 @@ def test_build_frontmatter_carries_chunk_id_section_chunk_text():
 
     assert frontmatter["chunk_id"] == _RECORD["chunk_id"]
     assert frontmatter["section"] == _RECORD["section"]
-    assert frontmatter["chunk_text"] == _RECORD["text"]
+    assert frontmatter["chunk_text"] == _RECORD["chunk_text"]
 
 
 def test_build_frontmatter_source_meta_carries_five_fields_from_envelope():
@@ -67,6 +87,63 @@ def test_build_frontmatter_source_meta_carries_five_fields_from_envelope():
         "thesis": "Envelope thesis text.",
         "scope": "Envelope scope text.",
     }
+
+
+# --- axis block (issue #31 slice 04) -----------------------------------------
+
+
+def test_build_frontmatter_carries_schema_version():
+    from axial.vault import build_frontmatter
+
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+
+    assert frontmatter["schema_version"] == _RECORD["schema_version"]
+
+
+def test_build_frontmatter_role_in_argument_is_a_flat_scalar():
+    from axial.vault import build_frontmatter
+
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+
+    assert frontmatter["role_in_argument"] == _RECORD["role_in_argument"]
+
+
+def test_build_frontmatter_field_and_claim_type_carried_through_verbatim():
+    from axial.vault import build_frontmatter
+
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+
+    assert frontmatter["field"] == _RECORD["field"]
+    assert frontmatter["claim_type"] == _RECORD["claim_type"]
+
+
+def test_build_frontmatter_theory_school_carries_primary_and_status():
+    from axial.vault import build_frontmatter
+
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+
+    assert frontmatter["theory_school"]["primary"] == _RECORD["theory_school"]["primary"]
+    assert frontmatter["theory_school"]["status"] == _RECORD["theory_school"]["status"]
+
+
+def test_build_frontmatter_empirical_scope_nests_value_and_country():
+    from axial.vault import build_frontmatter
+
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+
+    assert frontmatter["empirical_scope"] == {
+        "value": _RECORD["empirical_scope"],
+        "country": _RECORD["country"],
+    }
+
+
+def test_build_frontmatter_empirical_scope_omits_country_when_record_has_none():
+    from axial.vault import build_frontmatter
+
+    frontmatter = build_frontmatter(_NON_COUNTRY_RECORD, _ENVELOPE)
+
+    assert frontmatter["empirical_scope"] == {"value": _NON_COUNTRY_RECORD["empirical_scope"]}
+    assert "country" not in frontmatter["empirical_scope"]
 
 
 # --- note rendering -----------------------------------------------------------
@@ -125,19 +202,18 @@ def test_render_note_survives_chunk_text_containing_a_bare_triple_dash_line():
     from axial.vault import build_frontmatter, render_note
 
     record = {
-        "chunk_id": "paper-abc123_1_introduction_001",
-        "section": "Introduction",
-        "text": "First line of the chunk.\n---\nSecond line after a bare rule.",
+        **_RECORD,
+        "chunk_text": "First line of the chunk.\n---\nSecond line after a bare rule.",
     }
 
     frontmatter = build_frontmatter(record, _ENVELOPE)
-    note_text = render_note(frontmatter, record["text"])
+    note_text = render_note(frontmatter, record["chunk_text"])
 
     parsed_frontmatter, body = _split_frontmatter_like_outer_test(note_text)
 
     assert parsed_frontmatter == frontmatter
-    assert parsed_frontmatter["chunk_text"] == record["text"]
-    assert record["text"] in body
+    assert parsed_frontmatter["chunk_text"] == record["chunk_text"]
+    assert record["chunk_text"] in body
 
 
 # --- note writing --------------------------------------------------------------
@@ -293,6 +369,74 @@ def test_run_vault_write_raises_missing_source_error_for_nonexistent_file(tmp_pa
         )
 
 
+def _write_stored_envelope(envelopes_dir: Path, source_path: Path) -> None:
+    from axial.envelope import compute_source_id, envelope_path
+
+    envelopes_dir.mkdir(parents=True, exist_ok=True)
+    source_id = compute_source_id(source_path)
+    envelope = {**_ENVELOPE, "source_id": source_id}
+    envelope_path(source_id, envelopes_dir).write_text(json.dumps(envelope), encoding="utf-8")
+
+
+def test_run_vault_write_composes_the_tagger_not_the_chunker_directly(monkeypatch, tmp_path):
+    """`run_vault_write` must run one thread from source to tagged prose
+    notes -- via `axial.tag.run_tag` (which itself runs the chunker
+    internally) -- rather than calling `axial.chunk.run_chunk` directly."""
+    import axial.vault as vault_mod
+
+    source_path = tmp_path / "source.pdf"
+    source_path.write_bytes(b"%PDF-1.4 fake")
+    _write_stored_envelope(tmp_path / "envelopes", source_path)
+
+    tagged_records = [dict(_RECORD)]
+    calls = []
+
+    def _fake_run_tag(*args, **kwargs):
+        calls.append(kwargs)
+        return tagged_records
+
+    def _fail_run_chunk(*args, **kwargs):
+        raise AssertionError("run_vault_write must not call run_chunk directly")
+
+    monkeypatch.setattr(vault_mod, "run_tag", _fake_run_tag)
+    monkeypatch.setattr(vault_mod, "run_chunk", _fail_run_chunk, raising=False)
+    # issue #32 slice 02: run_vault_write now also runs the artifact pass;
+    # stub it to [] so this prose-composition test stays hermetic (no real
+    # docling on the fake PDF) and still asserts exactly one prose note.
+    monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [])
+
+    written = vault_mod.run_vault_write(
+        source_path,
+        envelopes_dir=tmp_path / "envelopes",
+        vault_dir=tmp_path / "vault",
+    )
+
+    assert len(calls) == 1
+    assert len(written) == 1
+    assert written[0].stem == _RECORD["chunk_id"]
+
+
+def test_run_vault_write_wraps_tag_error_as_a_vault_error(monkeypatch, tmp_path):
+    import axial.vault as vault_mod
+    from axial.tag import TagError
+
+    source_path = tmp_path / "source.pdf"
+    source_path.write_bytes(b"%PDF-1.4 fake")
+    _write_stored_envelope(tmp_path / "envelopes", source_path)
+
+    def _failing_run_tag(*args, **kwargs):
+        raise TagError("boom")
+
+    monkeypatch.setattr(vault_mod, "run_tag", _failing_run_tag)
+
+    with pytest.raises(vault_mod.VaultError):
+        vault_mod.run_vault_write(
+            source_path,
+            envelopes_dir=tmp_path / "envelopes",
+            vault_dir=tmp_path / "vault",
+        )
+
+
 def _arrange_stored_envelope(tmp_path):
     """Shared arrange step for the artifact-routing orchestration tests
     below: a real source file plus a pre-written stored envelope, so
@@ -319,7 +463,9 @@ def test_run_vault_write_writes_both_prose_and_artifact_notes(monkeypatch, tmp_p
     source_path, envelopes_dir = _arrange_stored_envelope(tmp_path)
     vault_dir = tmp_path / "vault"
 
-    monkeypatch.setattr(vault_mod, "run_chunk", lambda *a, **k: [_RECORD])
+    # run_vault_write now composes run_tag (not run_chunk) for the prose half
+    # (slice 04) plus run_artifacts for the artifact half (this slice).
+    monkeypatch.setattr(vault_mod, "run_tag", lambda *a, **k: [_RECORD])
     monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [_ARTIFACT_RECORD])
 
     written = vault_mod.run_vault_write(
@@ -340,7 +486,7 @@ def test_run_vault_write_wraps_artifacts_error_into_vault_error(monkeypatch, tmp
     source_path, envelopes_dir = _arrange_stored_envelope(tmp_path)
     vault_dir = tmp_path / "vault"
 
-    monkeypatch.setattr(vault_mod, "run_chunk", lambda *a, **k: [_RECORD])
+    monkeypatch.setattr(vault_mod, "run_tag", lambda *a, **k: [_RECORD])
 
     def _raise_artifacts_error(*a, **k):
         raise ArtifactsError("boom")
@@ -363,7 +509,7 @@ def test_run_vault_write_wraps_tag_not_in_schema_error_into_vault_error(monkeypa
     source_path, envelopes_dir = _arrange_stored_envelope(tmp_path)
     vault_dir = tmp_path / "vault"
 
-    monkeypatch.setattr(vault_mod, "run_chunk", lambda *a, **k: [_RECORD])
+    monkeypatch.setattr(vault_mod, "run_tag", lambda *a, **k: [_RECORD])
 
     def _raise_tag_error(*a, **k):
         raise TagNotInSchemaError("artifact_role", "not-a-real-role")

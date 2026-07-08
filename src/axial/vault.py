@@ -1,21 +1,29 @@
-"""Vault write: persists prose chunks and classified artifacts as Obsidian
-notes under `data/vault/prose/` and `data/vault/artifacts/` respectively
-(PRD §5 stage 7; §8 P0-5/P0-8) -- two separate, independently queryable
-surfaces sharing metadata conventions.
+"""Vault write: persists tagged prose chunks and classified artifacts as
+Obsidian notes under `data/vault/prose/` and `data/vault/artifacts/`
+respectively (PRD §5 stage 7; §7.2; §8 P0-5/P0-8) -- two separate,
+independently queryable surfaces sharing metadata conventions (see
+plans/minimal-ingestion/06-vault-write.md, plans/tag/04-tag-vault-frontmatter.md,
+and plans/artifacts/02-artifact-pool-write.md).
 
-This pass runs the argumentative-chunking pass itself, internally, via
-`axial.chunk.run_chunk` -- exactly as `axial chunk` does -- and reuses
-`axial.envelope.compute_source_id`/`envelope_path`/`_default_envelopes_dir`
-to locate and read the source's stored envelope (never recomputing it, PRD
-§10 "no recompute"). If no stored envelope exists yet, this pass raises a
-typed error telling the caller to run `axial envelope` first, mirroring
-`axial.chunk`'s `MissingEnvelopeError`.
+This pass runs the tagging pass itself, internally, via `axial.tag.run_tag`
+-- exactly as `axial tag` does, which itself runs the argumentative-chunking
+pass internally -- so chunk_id/section/chunk_text provenance and every axis
+tag are computed exactly once, in tag.py (never reimplemented here). This
+pass also reuses `axial.envelope.compute_source_id`/`envelope_path`/
+`_default_envelopes_dir` to locate and read the source's stored envelope
+(never recomputing it, PRD §10 "no recompute"). If no stored envelope
+exists yet, this pass raises a typed error telling the caller to run `axial
+envelope` first, mirroring `axial.chunk`'s `MissingEnvelopeError`.
 
 Each chunk is written to its own note at `<vault_dir>/prose/<chunk_id>.md`,
 opening with a `---`-delimited YAML frontmatter block (PyYAML `safe_dump`)
-carrying `chunk_id`, `section`, `chunk_text`, and a `source_meta` mapping
+carrying `chunk_id`, `section`, `chunk_text`, a `source_meta` mapping
 (`author`, `title`, `date`, `thesis`, `scope`) reused verbatim from the
-envelope (PRD §7.2), followed by a readable body containing the chunk text.
+envelope, and the chunk-level axis block (`schema_version`,
+`role_in_argument`, `field`, `claim_type`, `theory_school`,
+`empirical_scope`) carried through from the tagged record and reshaped to
+match Appendix H's nesting (PRD §7.2), followed by a readable body
+containing the chunk text.
 
 The artifact pool (`<vault_dir>/artifacts/`) is a separate surface (issue
 #32 slice 02): this pass also runs the artifact-classification pass
@@ -45,7 +53,6 @@ from axial.artifacts import (
     DISCARD_ROLE,
     run_artifacts,
 )
-from axial.chunk import ChunkError, run_chunk
 from axial.envelope import (
     MissingSourceError as _EnvelopeMissingSourceError,
     compute_source_id,
@@ -53,7 +60,7 @@ from axial.envelope import (
     _default_envelopes_dir,
 )
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
-from axial.tag import TagError
+from axial.tag import TagError, run_tag
 
 # Source-level fields reused verbatim from the envelope (PRD §7.2), excluding
 # `fields`, a schema-driven axis tag deferred to phase-3 tagging.
@@ -95,10 +102,13 @@ class MissingEnvelopeError(VaultError):
         )
 
 
-class ChunkingFailedError(VaultError):
-    """Raised when the underlying argumentative-chunking pass fails."""
+class TaggingFailedError(VaultError):
+    """Raised when the underlying tagging pass (`axial.tag.run_tag`, which
+    itself runs the chunker internally) fails, so the CLI renders a clean
+    `error: ...` instead of a bare traceback (mirrors the pre-slice-04
+    `ChunkingFailedError` wrapping pattern, one level up the composition)."""
 
-    def __init__(self, cause: ChunkError):
+    def __init__(self, cause: TagError):
         self.cause = cause
         super().__init__(str(cause))
 
@@ -129,16 +139,42 @@ def _default_vault_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path
     return Path(configured) if configured else VAULT_DIR
 
 
+# Axis blocks carried through verbatim from the tagged record's own nested
+# shape (issue #29 slice 03), which already matches Appendix H's illustrated
+# nesting keys exactly -- no reshaping needed for these three.
+_VERBATIM_AXIS_BLOCKS = ("field", "claim_type", "theory_school")
+
+
 def build_frontmatter(record: dict[str, Any], envelope: dict[str, Any]) -> dict[str, Any]:
-    """Assemble a chunk note's frontmatter mapping: `chunk_id`, `section`,
-    `chunk_text` from the chunk record, and `source_meta` (the five
-    source-level fields, PRD §7.2) reused verbatim from the envelope."""
-    return {
+    """Assemble a chunk note's frontmatter mapping from a tagged record
+    (`axial.tag.build_tagged_record`'s shape): `chunk_id`, `section`,
+    `chunk_text`, and `source_meta` (the five source-level fields, PRD §7.2)
+    reused verbatim from the envelope, plus the chunk-level axis block --
+    `schema_version`, `role_in_argument` (flat scalar), `field`/`claim_type`/
+    `theory_school` (nested, carried through as the tagger produced them),
+    and `empirical_scope` reshaped from the tagger's flat scalar + separate
+    top-level `country` into Appendix H's nested `{value, country}` mapping
+    (issue #31 slice 04)."""
+    frontmatter: dict[str, Any] = {
         "chunk_id": record["chunk_id"],
         "section": record["section"],
-        "chunk_text": record["text"],
+        "chunk_text": record["chunk_text"],
         "source_meta": {field: envelope.get(field) for field in SOURCE_META_FIELDS},
+        "schema_version": record["schema_version"],
+        "role_in_argument": record["role_in_argument"],
     }
+
+    for axis_name in _VERBATIM_AXIS_BLOCKS:
+        if axis_name in record:
+            frontmatter[axis_name] = record[axis_name]
+
+    if "empirical_scope" in record:
+        empirical_scope: dict[str, Any] = {"value": record["empirical_scope"]}
+        if record.get("country") is not None:
+            empirical_scope["country"] = record["country"]
+        frontmatter["empirical_scope"] = empirical_scope
+
+    return frontmatter
 
 
 def render_note(frontmatter: dict[str, Any], body: str) -> str:
@@ -172,7 +208,7 @@ def write_chunk_note(record: dict[str, Any], envelope: dict[str, Any], vault_dir
     """Write one chunk's note under `<vault_dir>/prose/<chunk_id>.md`,
     creating parent directories as needed."""
     frontmatter = build_frontmatter(record, envelope)
-    body = f"# {record['section']}\n\n{record['text']}\n"
+    body = f"# {record['section']}\n\n{record['chunk_text']}\n"
     note_text = render_note(frontmatter, body)
 
     path = _note_path(vault_dir, record["chunk_id"])
@@ -219,12 +255,15 @@ def run_vault_write(
     domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
 ) -> list[Path]:
     """Run vault write on `source_path`: read the stored envelope (never
-    recomputing it), run the argumentative-chunking pass internally via
-    `axial.chunk.run_chunk` and write one prose note per chunk under
-    `<vault_dir>/prose/`, then run the artifact-classification pass
-    internally via `axial.artifacts.run_artifacts` and write one note per
-    classified artifact under `<vault_dir>/artifacts/` (issue #32 slice 02)
-    -- two separate surfaces sharing metadata conventions (PRD §8 P0-8).
+    recomputing it), run the tagging pass internally via `axial.tag.run_tag`
+    (which itself runs the argumentative-chunking pass internally -- one
+    thread from source to tagged prose notes) and write one prose note per
+    tagged chunk under `<vault_dir>/prose/`, its frontmatter carrying the axis
+    block + `schema_version` (issue #31 slice 04); then run the
+    artifact-classification pass internally via `axial.artifacts.run_artifacts`
+    and write one note per classified artifact under `<vault_dir>/artifacts/`
+    (issue #32 slice 02) -- two separate surfaces sharing metadata conventions
+    (PRD §8 P0-8).
     """
     path = Path(source_path)
     try:
@@ -241,11 +280,9 @@ def run_vault_write(
     envelope = json.loads(env_path.read_text(encoding="utf-8"))
 
     try:
-        records = run_chunk(
-            path, client=client, envelopes_dir=envelopes_dir, config_path=config_path
-        )
-    except ChunkError as exc:
-        raise ChunkingFailedError(exc) from exc
+        records = run_tag(path, client=client, envelopes_dir=envelopes_dir, config_path=config_path)
+    except TagError as exc:
+        raise TaggingFailedError(exc) from exc
 
     try:
         artifact_records = run_artifacts(
