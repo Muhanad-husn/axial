@@ -139,9 +139,32 @@ exact stdout envelope shape, so this test's parsing helper accepts any of:
 a bare top-level JSON array, a JSON object with a top-level "artifacts"
 array, or newline-delimited JSON (one record object per line).
 
-Test hygiene: this slice writes nothing to disk (records go to stdout only
--- routing to data/vault/artifacts/ is slice 02's job), so no fixture
-teardown is needed.
+Test hygiene: this slice writes nothing to disk on its own account (records
+go to stdout only -- routing to data/vault/artifacts/ is slice 02's job).
+The one thing it does write -- the pre-placed tree fixture under
+data/trees/, see below -- is isolated by tests/conftest.py's shared,
+content-snapshot-based `_isolate_persisted_tree_and_envelope_state` autouse
+fixture, so no local fixture is needed here either.
+
+Arrange-mechanism change (issue #45, tree-cache) -- no behavioral assertion
+changed
+-----------------------------------------------------------------------
+This test's PURPOSE is artifact classification (artifact_id/artifact_role/
+provenance) -- it consumes the structural tree only as input (walking its
+`type == "artifact"` nodes), it never asserts anything about extraction/tree
+shape itself (that is tests/test_extract.py's contract). `axial artifacts`
+calls `axial.extract.extract` directly, which -- per the now-locked
+tree-persist contract (tests/test_tree_persist.py, PRD §7.4) -- reuses a
+persisted tree verbatim at data/trees/<source_id>.json instead of re-running
+docling. So this test now pre-places the committed REAL tree fixture
+(tests/fixtures/extract/prose_and_table_tree.json -- exactly `axial
+extract`'s own output for this fixture, see that directory's _generate.py
+for the regeneration recipe) before every run, exactly as it would look
+after a real extraction, only without paying for one. Every existing
+assertion is unchanged: the stub LLM's artifact_role response does not
+depend on the source text, and the artifact node's own shape (hence
+artifact_id/section) is byte-identical to a real extraction's, since the
+fixture IS a real extraction's output.
 """
 
 from __future__ import annotations
@@ -155,8 +178,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "extract"
 DEFAULT_DOMAIN_DIR = REPO_ROOT / "config" / "domains" / "syria"
+TREES_DIR = REPO_ROOT / "data" / "trees"
 
 PROSE_AND_TABLE_PDF = FIXTURES_DIR / "prose_and_table.pdf"
+PROSE_AND_TABLE_TREE_FIXTURE = FIXTURES_DIR / "prose_and_table_tree.json"
 
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 # New seam this test relies on -- see module docstring, seam decision 2.
@@ -274,9 +299,25 @@ def _expected_source_id() -> str:
     return compute_source_id(PROSE_AND_TABLE_PDF)
 
 
+def _place_tree_fixture(source_pdf: Path, tree_fixture_path: Path) -> Path:
+    """Pre-place the committed REAL tree fixture at
+    data/trees/<source_id>.json (source_id via
+    axial.envelope.compute_source_id) so `axial.extract.extract` reuses it
+    verbatim instead of running docling (see module docstring, "Arrange-
+    mechanism change"). Returns the tree path."""
+    from axial.envelope import compute_source_id
+
+    source_id = compute_source_id(source_pdf)
+    tree_path = TREES_DIR / f"{source_id}.json"
+    tree_path.parent.mkdir(parents=True, exist_ok=True)
+    tree_path.write_bytes(tree_fixture_path.read_bytes())
+    return tree_path
+
+
 def test_artifacts_emits_one_record_per_artifact_node_with_id_role_and_provenance():
     in_schema_roles = _in_schema_artifact_roles()
     source_id = _expected_source_id()
+    _place_tree_fixture(PROSE_AND_TABLE_PDF, PROSE_AND_TABLE_TREE_FIXTURE)
 
     # --- first run: stub provider, no forced role -- the happy path ---
     first = _run_artifacts(str(PROSE_AND_TABLE_PDF))
@@ -359,6 +400,7 @@ def test_artifacts_hard_errors_on_a_role_absent_from_the_schema():
         f"schema value, but the schema's artifact_role axis is "
         f"{sorted(in_schema_roles)}"
     )
+    _place_tree_fixture(PROSE_AND_TABLE_PDF, PROSE_AND_TABLE_TREE_FIXTURE)
 
     result = _run_artifacts(
         str(PROSE_AND_TABLE_PDF),

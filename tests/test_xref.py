@@ -150,7 +150,28 @@ Test hygiene: this slice writes nothing to disk on its own account beyond
 the stored envelope the `axial envelope` arrange step produces (records go
 to stdout only -- writing backlinks into vault notes is slice 02's job), so
 only that envelope file is cleaned up (mirrors tests/test_chunk.py's
-clean_envelopes fixture).
+clean_envelopes fixture). The one other thing this test's arrange steps
+write -- the pre-placed tree fixture under data/trees/, see below -- is
+isolated by tests/conftest.py's shared, content-snapshot-based
+`_isolate_persisted_tree_and_envelope_state` autouse fixture.
+
+Arrange-mechanism change (issue #45, tree-cache) -- no behavioral assertion
+changed
+-----------------------------------------------------------------------
+This test's PURPOSE is xref detection -- it CONSUMES the stored envelope,
+this fixture's chunk records, and its artifact records, never asserting
+anything about extraction/tree shape itself (that is
+tests/test_extract.py's contract). The arrange steps' `axial envelope`/
+`axial chunk`/`axial artifacts` calls all internally call `axial.extract.
+extract` for the same source, which -- per the now-locked tree-persist
+contract (tests/test_tree_persist.py, PRD §7.4) -- reuses a persisted tree
+verbatim at data/trees/<source_id>.json instead of re-running docling. So
+`_arrange_stored_envelope` below now pre-places the committed REAL tree
+fixture (tests/fixtures/extract/prose_and_table_tree.json -- exactly `axial
+extract`'s own output for this fixture, see that directory's _generate.py
+for the regeneration recipe) once, before the first of those calls; every
+later call for the same source_id reuses that same cached tree. Every
+existing assertion is unchanged.
 """
 
 from __future__ import annotations
@@ -162,11 +183,15 @@ from pathlib import Path
 
 import pytest
 
+from axial.envelope import compute_source_id
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "extract"
 ENVELOPES_DIR = REPO_ROOT / "data" / "envelopes"
+TREES_DIR = REPO_ROOT / "data" / "trees"
 
 PROSE_AND_TABLE_PDF = FIXTURES_DIR / "prose_and_table.pdf"
+PROSE_AND_TABLE_TREE_FIXTURE = FIXTURES_DIR / "prose_and_table_tree.json"
 
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 # New seam this test relies on -- see module docstring, seam decision 2.
@@ -287,10 +312,25 @@ def clean_envelopes():
         created.unlink()
 
 
+def _place_tree_fixture(source_pdf: Path, tree_fixture_path: Path) -> Path:
+    """Pre-place the committed REAL tree fixture at
+    data/trees/<source_id>.json (source_id via
+    axial.envelope.compute_source_id) so `axial.extract.extract` reuses it
+    verbatim instead of running docling (see module docstring, "Arrange-
+    mechanism change"). Returns the tree path."""
+    source_id = compute_source_id(source_pdf)
+    tree_path = TREES_DIR / f"{source_id}.json"
+    tree_path.parent.mkdir(parents=True, exist_ok=True)
+    tree_path.write_bytes(tree_fixture_path.read_bytes())
+    return tree_path
+
+
 def _arrange_stored_envelope() -> None:
-    """Run `axial envelope` with the stub provider so a stored envelope
-    exists on disk before chunking -- `axial chunk` (and, per the slice
-    plan, `axial xref` via run_chunk) never recomputes one (PRD section 10)."""
+    """Pre-place the real tree fixture, then run `axial envelope` with the
+    stub provider so a stored envelope exists on disk before chunking --
+    `axial chunk` (and, per the slice plan, `axial xref` via run_chunk)
+    never recomputes one (PRD section 10)."""
+    _place_tree_fixture(PROSE_AND_TABLE_PDF, PROSE_AND_TABLE_TREE_FIXTURE)
     result = _run_axial("envelope", str(PROSE_AND_TABLE_PDF))
     _assert_not_argparse_fallback(result, "envelope")
     assert result.returncode == 0, (

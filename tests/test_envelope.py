@@ -88,6 +88,29 @@ its second section is headed "Discussion", not "Conclusion".
 Test hygiene: any envelope file this test creates under data/envelopes/ is
 removed in fixture teardown so repeated runs are idempotent and the repo
 is never polluted by a real e2e-run artifact.
+
+Arrange-mechanism change (issue #45, tree-cache) -- no behavioral assertion
+changed
+-----------------------------------------------------------------------
+This test's PURPOSE is the envelope pass's own behavior (thesis/toc/scope/
+stated_argument written from the LLM's response; reuse without a second LLM
+call) -- it consumes the structural tree only as input to the envelope
+prompt, it never asserts anything about extraction/tree shape itself (that
+is tests/test_extract.py's contract). `run_envelope` calls `axial.extract.
+extract`, which -- per the now-locked tree-persist contract
+(tests/test_tree_persist.py, PRD §7.4) -- reuses a persisted tree verbatim
+at data/trees/<source_id>.json instead of re-running docling. So this test
+now pre-places the committed REAL tree fixture (tests/fixtures/envelope/
+thesis_paper_tree.json -- exactly `axial extract`'s own output for this
+fixture, see that directory's _generate.py for the regeneration recipe)
+before the first `axial envelope` run, exactly as it would look after a real
+extraction, only without paying for one. Every existing assertion is
+unchanged: the stub LLM response (and therefore the envelope's own written
+content) does not depend on the source text at all, so this is purely an
+arrange-mechanism speedup, not a behavior change. data/trees/ isolation is
+handled by the shared, content-snapshot-based
+`_isolate_persisted_tree_and_envelope_state` autouse fixture in
+tests/conftest.py.
 """
 
 from __future__ import annotations
@@ -99,11 +122,15 @@ from pathlib import Path
 
 import pytest
 
+from axial.envelope import compute_source_id
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "envelope"
 ENVELOPES_DIR = REPO_ROOT / "data" / "envelopes"
+TREES_DIR = REPO_ROOT / "data" / "trees"
 
 THESIS_PAPER_PDF = FIXTURES_DIR / "thesis_paper.pdf"
+THESIS_PAPER_TREE_FIXTURE = FIXTURES_DIR / "thesis_paper_tree.json"
 
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 
@@ -149,6 +176,19 @@ def _existing_envelope_files() -> set[Path]:
     return set(ENVELOPES_DIR.glob("*.json"))
 
 
+def _place_tree_fixture(source_pdf: Path, tree_fixture_path: Path) -> Path:
+    """Pre-place the committed REAL tree fixture at
+    data/trees/<source_id>.json (source_id via
+    axial.envelope.compute_source_id) so `axial.extract.extract` reuses it
+    verbatim instead of running docling (see module docstring, "Arrange-
+    mechanism change"). Returns the tree path."""
+    source_id = compute_source_id(source_pdf)
+    tree_path = TREES_DIR / f"{source_id}.json"
+    tree_path.parent.mkdir(parents=True, exist_ok=True)
+    tree_path.write_bytes(tree_fixture_path.read_bytes())
+    return tree_path
+
+
 @pytest.fixture
 def clean_envelopes():
     """Snapshot data/envelopes/*.json before the test and delete any file
@@ -163,6 +203,11 @@ def clean_envelopes():
 
 def test_envelope_writes_once_and_reuses_without_a_second_llm_call(clean_envelopes):
     before_files = _existing_envelope_files()
+
+    # --- arrange: pre-place the real tree fixture so the envelope pass
+    # doesn't pay for a real docling run for input it never asserts on
+    # (issue #45; see module docstring, "Arrange-mechanism change") ---
+    _place_tree_fixture(THESIS_PAPER_PDF, THESIS_PAPER_TREE_FIXTURE)
 
     # --- first run: stub provider, must produce exactly one new envelope file ---
     first = _run_envelope("stub", str(THESIS_PAPER_PDF))

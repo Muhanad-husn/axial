@@ -78,11 +78,13 @@ tests/test_extract.py) -- born-digital, with both a prose section and at
 least one table, so a real extraction is distinguishable from the sentinel
 by the presence of an `artifact` node alone.
 
-Test hygiene: any file this test causes to newly appear under
-data/trees/ is removed in fixture teardown (clean_trees, mirroring the
-clean_envelopes/clean_vault snapshot-teardown pattern in
-tests/test_chunk.py / tests/test_vault_write.py). This test does not invoke
-`axial envelope` and so never touches data/envelopes/.
+Test hygiene: data/trees/ isolation (both new files this test creates, and
+the deliberate sentinel-content overwrite the reuse test below performs on a
+pre-existing path) is handled by the shared, content-snapshot-based
+`_isolate_persisted_tree_and_envelope_state` autouse fixture in
+tests/conftest.py -- restoring original bytes for any pre-existing file this
+test overwrites, and deleting any file it newly creates. This test does not
+invoke `axial envelope` and so never touches data/envelopes/.
 """
 
 from __future__ import annotations
@@ -90,8 +92,6 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-
-import pytest
 
 from axial.envelope import compute_source_id
 
@@ -154,27 +154,7 @@ def _iter_nodes(node: dict) -> list:
     return collected
 
 
-def _existing_tree_files() -> set[Path]:
-    if not TREES_DIR.exists():
-        return set()
-    return set(TREES_DIR.glob("*.json"))
-
-
-@pytest.fixture
-def clean_trees():
-    """Snapshot data/trees/*.json before the test and delete any file the
-    test caused to appear, so runs stay idempotent and the repo is never
-    polluted by a real e2e-run artifact or a test-planted sentinel file.
-    Mirrors tests/test_chunk.py's clean_envelopes / tests/test_vault_write.py's
-    clean_vault."""
-    before = _existing_tree_files()
-    yield
-    after = _existing_tree_files()
-    for created in after - before:
-        created.unlink()
-
-
-def test_extract_persists_tree_for_a_fresh_source_matching_stdout(clean_trees):
+def test_extract_persists_tree_for_a_fresh_source_matching_stdout():
     """Forward direction (PRD §7.4 / §8 P0-2): a source with no persisted
     tree yet gets one written at data/trees/<source_id>.json, with content
     identical to what `axial extract` printed to stdout."""
@@ -236,7 +216,7 @@ def test_extract_persists_tree_for_a_fresh_source_matching_stdout(clean_trees):
     )
 
 
-def test_extract_reuses_persisted_tree_verbatim_instead_of_re_extracting(clean_trees):
+def test_extract_reuses_persisted_tree_verbatim_instead_of_re_extracting():
     """Reuse direction (PRD §5 stage 2, §8 P0-2, §7.4): when a persisted
     tree already exists for a source's source_id, `axial extract` must
     return/print it verbatim and must NOT re-run docling. Proven
