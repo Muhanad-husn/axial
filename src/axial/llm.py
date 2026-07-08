@@ -17,17 +17,21 @@ require no network access:
                                      `pass_name` argument to `.complete()`
                                      (e.g. `pass_name="chunk"`, passed by
                                      src/axial/chunk.py, selects a
-                                     chunk-shaped canned response; anything
-                                     else -- including the envelope pass,
-                                     which never passes it -- gets the
-                                     original envelope-shaped one). Dispatch
-                                     is out-of-band (a call argument), never
+                                     chunk-shaped canned response;
+                                     `pass_name="tag"`, passed by
+                                     src/axial/tag.py, selects a tag-shaped
+                                     canned response; anything else --
+                                     including the envelope pass, which
+                                     never passes it -- gets the original
+                                     envelope-shaped one). Dispatch is
+                                     out-of-band (a call argument), never
                                      embedded in the prompt text itself, so
                                      no internal marker ever reaches a real
                                      model. This resolves the shared-stub
                                      collision between passes with different
                                      response shapes -- see
                                      tests/test_chunk.py's module docstring,
+                                     seam decision 1, and tests/test_tag.py's
                                      seam decision 1.
     AXIAL_LLM_PROVIDER=explode  -> ExplodingLLMClient, a poison client whose
                                      `.complete()` raises if ever invoked.
@@ -89,6 +93,12 @@ DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # without leaking an internal marker into a real model's prompt.
 CHUNK_PASS_NAME = "chunk"
 
+# Pass name a tagging-pass call identifies itself with (see
+# src/axial/tag.py), out-of-band exactly like CHUNK_PASS_NAME above -- so the
+# stub/record dispatch can tell a tag call apart from both a chunk call and
+# an envelope call.
+TAG_PASS_NAME = "tag"
+
 
 class LLMClient(Protocol):
     """A single-method completion interface every provider implements."""
@@ -141,6 +151,13 @@ class StubLLMClient:
         }
     )
 
+    # Canned response for a tag-pass call (identified by
+    # `pass_name=TAG_PASS_NAME`, never by prompt content). The value must be
+    # a real member of the Syria v0 domain schema's `role_in_argument` axis
+    # (config/domains/syria/schema.yaml) so the stub-driven end-to-end path
+    # validates cleanly against the loaded schema (PRD §7.1).
+    _CANNED_TAG_RESPONSE = json.dumps({"role_in_argument": "role:claim"})
+
     def __init__(self) -> None:
         self.call_count = 0
 
@@ -151,12 +168,15 @@ class StubLLMClient:
 
 def _canned_response_for(pass_name: str | None) -> str:
     """Dispatch the canned response by pass: `pass_name == CHUNK_PASS_NAME`
-    gets the chunk-shaped canned response; anything else (the envelope pass,
-    which never passes `pass_name`) gets the original envelope-shaped canned
+    gets the chunk-shaped canned response, `pass_name == TAG_PASS_NAME` gets
+    the tag-shaped canned response; anything else (the envelope pass, which
+    never passes `pass_name`) gets the original envelope-shaped canned
     response. Shared by `StubLLMClient` and `RecordLLMClient` so `record` is
     indistinguishable from `stub` for the same call."""
     if pass_name == CHUNK_PASS_NAME:
         return StubLLMClient._CANNED_CHUNK_RESPONSE
+    if pass_name == TAG_PASS_NAME:
+        return StubLLMClient._CANNED_TAG_RESPONSE
     return StubLLMClient._CANNED_RESPONSE
 
 
