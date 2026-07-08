@@ -1,0 +1,22 @@
+### Slice 02 demo: empirical_scope + scope:country-case country extra field
+
+$ AXIAL_LLM_PROVIDER=stub axial envelope tests/fixtures/envelope/thesis_paper.pdf   (arrange: store an envelope)
+  exit=0 (envelope stored)
+
+--- Happy path: stub returns empirical_scope=scope:country-case, country=Syria ---
+$ AXIAL_LLM_PROVIDER=stub axial tag tests/fixtures/envelope/thesis_paper.pdf
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  58%|#####7    | 444/770 [00:00<00:00, 4439.60it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 4417.29it/s]
+[{"chunk_id": "thesis_paper-82bcba3c2d51_1_introduction_001", "section": "Introduction", "chunk_text": "Stub chunk one: a claim and its immediate support.", "role_in_argument": "role:claim", "schema_version": "0.1", "empirical_scope": "scope:country-case", "country": "Syria"}, {"chunk_id": "thesis_paper-82bcba3c2d51_1_introduction_002", "section": "Introduction", "chunk_text": "Stub chunk two: a second argumentative unit.", "role_in_argument": "role:claim", "schema_version": "0.1", "empirical_scope": "scope:country-case", "country": "Syria"}, {"chunk_id": "thesis_paper-82bcba3c2d51_2_comparative-cases_001", "section": "Comparative Cases", "chunk_text": "Stub chunk one: a claim and its immediate support.", "role_in_argument": "role:claim", "schema_version": "0.1", "empirical_scope": "scope:country-case", "country": "Syria"}, {"chunk_id": "thesis_paper-82bcba3c2d51_2_comparative-cases_002", "section": "Comparative Cases", "chunk_text": "Stub chunk two: a second argumentative unit.", "role_in_argument": "role:claim", "schema_version": "0.1", "empirical_scope": "scope:country-case", "country": "Syria"}, {"chunk_id": "thesis_paper-82bcba3c2d51_3_conclusion_001", "section": "Conclusion", "chunk_text": "Stub chunk one: a claim and its immediate support.", "role_in_argument": "role:claim", "schema_version": "0.1", "empirical_scope": "scope:country-case", "country": "Syria"}, {"chunk_id": "thesis_paper-82bcba3c2d51_3_conclusion_002", "section": "Conclusion", "chunk_text": "Stub chunk two: a second argumentative unit.", "role_in_argument": "role:claim", "schema_version": "0.1", "empirical_scope": "scope:country-case", "country": "Syria"}]
+  exit=0
+
+--- Error path: country-case with a MISSING country (hard error) ---
+$ AXIAL_STUB_TAG_RESPONSE='{"role_in_argument":"role:claim","empirical_scope":"scope:country-case"}' axial tag tests/fixtures/envelope/thesis_paper.pdf
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  46%|####6     | 355/770 [00:00<00:00, 3526.12it/s]Loading weights:  96%|#########5| 739/770 [00:00<00:00, 3706.91it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 3703.61it/s]
+error: empirical_scope 'scope:country-case' requires a 'country' value, but none was provided
+  exit=1
+
+--- Error path: country-case with an OUT-OF-LIST country 'Atlantis' (hard error naming it) ---
+$ AXIAL_STUB_TAG_RESPONSE='{...,"country":"Atlantis"}' axial tag tests/fixtures/envelope/thesis_paper.pdf
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  61%|######    | 467/770 [00:00<00:00, 4669.26it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 4521.35it/s]
+error: country 'Atlantis' is not in the schema's country_list
+  exit=1
