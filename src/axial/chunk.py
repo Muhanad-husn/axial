@@ -193,7 +193,8 @@ def compose_chunk_prompt(
 def parse_response(raw: str) -> list[dict[str, Any]]:
     """Parse the model's raw chunking response into a list of chunk-text
     objects (each with at least a "text" key). Accepts a top-level object
-    with a "chunks" array, or a bare top-level array."""
+    with a "chunks" array, or a bare top-level array. Array entries that are
+    bare strings are normalized to {"text": <string>} before validation."""
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -213,13 +214,15 @@ def parse_response(raw: str) -> list[dict[str, Any]]:
             f"expected chunk data to be a JSON array, got {type(chunks).__name__}: {chunks!r}"
         )
 
-    for chunk in chunks:
+    normalized = [{"text": chunk} if isinstance(chunk, str) else chunk for chunk in chunks]
+
+    for chunk in normalized:
         if not isinstance(chunk, dict) or not isinstance(chunk.get("text"), str):
             raise ChunkParseError(
                 f"expected each chunk to be an object with a string 'text' key, got {chunk!r}"
             )
 
-    return chunks
+    return normalized
 
 
 def build_chunk_records(
