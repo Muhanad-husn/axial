@@ -104,3 +104,42 @@ def test_parse_model_json_raises_when_fenced_content_still_isnt_json():
         parse_model_json(raw)
 
     assert "not actually json" in str(exc_info.value)
+
+
+# --- raw control characters inside JSON strings (issue #72 follow-up) -------
+
+
+def test_parse_model_json_accepts_raw_control_characters_inside_a_string_value():
+    """A live model emitted a literal newline/tab inside a JSON string value
+    (strict json.loads rejects this as an "Invalid control character").
+    That's an unambiguous literal-newline-in-text intent, not malformed
+    JSON, so it must parse and preserve the raw characters."""
+    from axial.model_json import parse_model_json
+
+    raw = '{"text": "line one\nline two\ttabbed"}'
+
+    assert parse_model_json(raw) == {"text": "line one\nline two\ttabbed"}
+
+
+def test_parse_model_json_accepts_raw_control_characters_inside_a_fenced_json_string():
+    from axial.model_json import parse_model_json
+
+    inner = '{"text": "line one\nline two\ttabbed"}'
+    raw = f"```json\n{inner}\n```"
+
+    assert parse_model_json(raw) == {"text": "line one\nline two\ttabbed"}
+
+
+def test_parse_model_json_still_raises_on_genuinely_broken_json_with_snippet():
+    from axial.model_json import ModelJsonError, parse_model_json
+
+    raw = '{"text": "unterminated string with a raw\nnewline in it'
+
+    with pytest.raises(ModelJsonError) as exc_info:
+        parse_model_json(raw)
+
+    # the snippet is a `repr()` of raw, so a raw embedded newline shows up
+    # escaped (`\n`) rather than literal -- assert on the repr, not `raw`
+    # itself, and confirm the decode error is still surfaced.
+    assert repr(raw) in str(exc_info.value)
+    assert "Unterminated string" in str(exc_info.value)

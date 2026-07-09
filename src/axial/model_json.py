@@ -6,6 +6,10 @@ the prompts' "no fences" instruction; that is semantically a valid answer and
 should not abort the pass. When parsing genuinely fails, the resulting error
 must quote the raw response so the failure is diagnosable from worker logs
 instead of just a bare `Expecting value: line 1 column 1 (char 0)`.
+`json.loads` is called with `strict=False` because real model outputs carry
+literal control characters (e.g. a raw newline or tab) inside JSON string
+text fields, which strict-mode JSON rejects despite the intent being
+unambiguous.
 """
 
 from __future__ import annotations
@@ -59,6 +63,6 @@ def parse_model_json(raw: str) -> Any:
     `ModelJsonError` whose message includes the decode error and a truncated
     snippet of the original raw text."""
     try:
-        return json.loads(_strip_fence(raw))
+        return json.loads(_strip_fence(raw), strict=False)
     except json.JSONDecodeError as exc:
         raise ModelJsonError(f"{exc}; raw response was: {_snippet(raw)}") from exc
