@@ -383,8 +383,12 @@ def parse_multi_value_tag_response(raw: str, axis: Axis) -> dict[str, Any]:
     "subtags": [...] (optional)}}`. `"primary_plus_secondary"` (Appendix A)
     always yields a `secondary` list (zero or more, defaulting to `[]` when
     omitted); `"primary_plus_optional_secondary"` (Appendix B/E) yields
-    `secondary` as `None` or a single scalar string, never a list. When the
-    axis's own vocabulary structurally declares subtags at all
+    `secondary` as `None` or a single scalar string, never a list -- but since
+    the shared tagging prompt shows the list shape for the sibling
+    cardinality, a model may still answer with a list here, so `[]` is
+    normalized to `None` and a single-element list to its lone element before
+    anything longer than that is rejected as a genuine cardinality violation.
+    When the axis's own vocabulary structurally declares subtags at all
     (`_axis_declares_subtags`), `subtags` defaults to `[]` if the model
     omitted it, so e.g. `claim_type.subtags` is always a list."""
     axis_name = axis.name
@@ -418,6 +422,11 @@ def parse_multi_value_tag_response(raw: str, axis: Axis) -> dict[str, Any]:
             secondary = [secondary]
     else:
         secondary = raw_secondary
+        if isinstance(secondary, list):
+            if len(secondary) == 0:
+                secondary = None
+            elif len(secondary) == 1:
+                secondary = secondary[0]
         if secondary is not None and not isinstance(secondary, str):
             raise TagParseError(
                 f"expected {axis_name!r}.secondary, when present, to be a "

@@ -276,12 +276,48 @@ def test_parse_multi_value_tag_response_optional_secondary_defaults_to_none():
     assert parsed["secondary"] is None
 
 
-def test_parse_multi_value_tag_response_optional_secondary_rejects_a_list():
-    from axial.tag import TagParseError, parse_multi_value_tag_response
+def test_parse_multi_value_tag_response_optional_secondary_empty_list_becomes_none():
+    from axial.tag import parse_multi_value_tag_response
+
+    raw = json.dumps({"claim_type": {"primary": "state-formation", "secondary": []}})
+
+    parsed = parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["claim_type"])
+
+    assert parsed["secondary"] is None
+
+
+def test_parse_multi_value_tag_response_optional_secondary_single_element_list_becomes_scalar():
+    from axial.tag import parse_multi_value_tag_response
 
     raw = json.dumps(
         {"claim_type": {"primary": "state-formation", "secondary": ["state-autonomy"]}}
     )
+
+    parsed = parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["claim_type"])
+
+    assert parsed["secondary"] == "state-autonomy"
+
+
+def test_parse_multi_value_tag_response_optional_secondary_rejects_a_multi_element_list():
+    from axial.tag import TagParseError, parse_multi_value_tag_response
+
+    raw = json.dumps(
+        {
+            "claim_type": {
+                "primary": "state-formation",
+                "secondary": ["state-autonomy", "state-formation"],
+            }
+        }
+    )
+
+    with pytest.raises(TagParseError):
+        parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["claim_type"])
+
+
+def test_parse_multi_value_tag_response_optional_secondary_rejects_a_single_element_list_of_non_string():
+    from axial.tag import TagParseError, parse_multi_value_tag_response
+
+    raw = json.dumps({"claim_type": {"primary": "state-formation", "secondary": [3]}})
 
     with pytest.raises(TagParseError):
         parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["claim_type"])
