@@ -15,7 +15,6 @@ notes' frontmatter is slice 02.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +30,7 @@ from axial.envelope import (
     MissingSourceError as _EnvelopeMissingSourceError,
     compute_source_id,
 )
+from axial.model_json import ModelJsonError, parse_model_json
 from axial.llm import (
     DEFAULT_PIPELINE_CONFIG_PATH,
     LLMClient,
@@ -119,8 +119,8 @@ def parse_referenced_artifact_ids(raw: str) -> list[str]:
     artifact_id strings. Accepts a top-level object with a
     "referenced_artifact_ids" key, or a bare top-level array."""
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        data = parse_model_json(raw)
+    except ModelJsonError as exc:
         raise XrefParseError(f"model response was not valid JSON: {exc}") from exc
 
     if isinstance(data, dict):

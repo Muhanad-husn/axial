@@ -30,7 +30,6 @@ pair rather than reinventing a field parser here.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +48,7 @@ from axial.llm import (
     LLMError,
     get_client,
 )
+from axial.model_json import ModelJsonError, parse_model_json
 from axial.schema import Schema, SchemaError, load_schema
 from axial.tag import (
     TagNotInSchemaError,
@@ -226,8 +226,8 @@ def parse_artifact_role(raw: str) -> str:
     non-empty `artifact_role` string. Accepts a top-level object with an
     `artifact_role` key."""
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        data = parse_model_json(raw)
+    except ModelJsonError as exc:
         raise ArtifactParseError(f"model response was not valid JSON: {exc}") from exc
 
     if not isinstance(data, dict) or "artifact_role" not in data:

@@ -180,6 +180,29 @@ def test_parse_tag_response_rejects_invalid_json():
         parse_tag_response("not json at all", "role_in_argument")
 
 
+def test_parse_tag_response_accepts_a_markdown_fenced_response():
+    """issue #72: deepseek-v4-flash sometimes wraps its JSON answer in a
+    markdown fence despite the prompt's "no fences" instruction."""
+    from axial.tag import parse_tag_response
+
+    raw = f"```json\n{json.dumps({'role_in_argument': 'role:claim'})}\n```"
+
+    assert parse_tag_response(raw, "role_in_argument") == "role:claim"
+
+
+def test_parse_tag_response_rejects_prose_with_a_snippet_in_the_message():
+    """issue #72: parse errors must quote the raw response so failures are
+    diagnosable from worker logs."""
+    from axial.tag import TagParseError, parse_tag_response
+
+    raw = "I cannot tag this claim."
+
+    with pytest.raises(TagParseError) as exc_info:
+        parse_tag_response(raw, "role_in_argument")
+
+    assert raw in str(exc_info.value)
+
+
 def test_parse_tag_response_rejects_missing_axis_key():
     from axial.tag import TagParseError, parse_tag_response
 

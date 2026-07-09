@@ -51,7 +51,6 @@ without ever calling the LLM for the tag pass.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +67,7 @@ from axial.llm import (
     LLMError,
     get_client,
 )
+from axial.model_json import ModelJsonError, parse_model_json
 from axial.schema import Axis, Schema, SchemaError, load_schema
 
 DEFAULT_DOMAIN_DIR = Path("config/domains/syria")
@@ -326,8 +326,8 @@ def parse_tag_response(raw: str, axis_name: str) -> str:
     must never be silently dropped.
     """
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        data = parse_model_json(raw)
+    except ModelJsonError as exc:
         raise TagParseError(f"model response was not valid JSON: {exc}") from exc
 
     if not isinstance(data, dict) or axis_name not in data:
@@ -416,8 +416,8 @@ def parse_multi_value_tag_response(raw: str, axis: Axis) -> dict[str, Any]:
     omitted it, so e.g. `claim_type.subtags` is always a list."""
     axis_name = axis.name
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        data = parse_model_json(raw)
+    except ModelJsonError as exc:
         raise TagParseError(f"model response was not valid JSON: {exc}") from exc
 
     if not isinstance(data, dict) or axis_name not in data:
@@ -513,8 +513,8 @@ def parse_country_response(raw: str, axis_name: str | None = None) -> str:
     top-level sibling key (issue #62); the caller (`run_tag`) passes the
     scope axis's own name, so this parser never hardcodes it."""
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        data = parse_model_json(raw)
+    except ModelJsonError as exc:
         raise TagParseError(f"model response was not valid JSON: {exc}") from exc
 
     country: Any = data.get("country") if isinstance(data, dict) else None

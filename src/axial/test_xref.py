@@ -81,6 +81,29 @@ def test_parse_referenced_artifact_ids_rejects_invalid_json():
         parse_referenced_artifact_ids("not json")
 
 
+def test_parse_referenced_artifact_ids_accepts_a_markdown_fenced_response():
+    """issue #72: deepseek-v4-flash sometimes wraps its JSON answer in a
+    markdown fence despite the prompt's "no fences" instruction."""
+    from axial.xref import parse_referenced_artifact_ids
+
+    raw = f"```json\n{json.dumps({'referenced_artifact_ids': ['paper_art_1']})}\n```"
+
+    assert parse_referenced_artifact_ids(raw) == ["paper_art_1"]
+
+
+def test_parse_referenced_artifact_ids_rejects_prose_with_a_snippet_in_the_message():
+    """issue #72: parse errors must quote the raw response so failures are
+    diagnosable from worker logs."""
+    from axial.xref import XrefParseError, parse_referenced_artifact_ids
+
+    raw = "I cannot find any references here."
+
+    with pytest.raises(XrefParseError) as exc_info:
+        parse_referenced_artifact_ids(raw)
+
+    assert raw in str(exc_info.value)
+
+
 def test_parse_referenced_artifact_ids_rejects_missing_key():
     from axial.xref import XrefParseError, parse_referenced_artifact_ids
 
