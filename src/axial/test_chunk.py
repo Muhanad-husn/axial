@@ -148,6 +148,43 @@ def test_parse_response_rejects_a_chunk_without_text():
         parse_response(json.dumps({"chunks": [{"no_text": "a"}]}))
 
 
+def test_parse_response_normalizes_bare_string_chunks_in_chunks_array():
+    from axial.chunk import parse_response
+
+    raw = json.dumps({"chunks": ["a", "b"]})
+
+    chunks = parse_response(raw)
+
+    assert chunks == [{"text": "a"}, {"text": "b"}]
+
+
+def test_parse_response_normalizes_bare_string_chunks_in_bare_array():
+    from axial.chunk import parse_response
+
+    raw = json.dumps(["a", "b"])
+
+    chunks = parse_response(raw)
+
+    assert chunks == [{"text": "a"}, {"text": "b"}]
+
+
+def test_parse_response_normalizes_mixed_string_and_object_chunks():
+    from axial.chunk import parse_response
+
+    raw = json.dumps({"chunks": [{"text": "a", "extra": "kept"}, "b"]})
+
+    chunks = parse_response(raw)
+
+    assert chunks == [{"text": "a", "extra": "kept"}, {"text": "b"}]
+
+
+def test_parse_response_rejects_a_chunk_that_is_neither_string_nor_object():
+    from axial.chunk import ChunkParseError, parse_response
+
+    with pytest.raises(ChunkParseError):
+        parse_response(json.dumps({"chunks": [42]}))
+
+
 # --- chunk_id / section provenance -------------------------------------------
 
 
