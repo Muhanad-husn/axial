@@ -555,6 +555,110 @@ def test_openrouter_client_does_not_retry_a_malformed_response_shape(monkeypatch
     assert call_count == 1
 
 
+# --- empty-completion retry (issue #66) ------------------------------------
+
+
+def test_openrouter_client_retries_an_empty_completion_then_succeeds(monkeypatch):
+    """A provider occasionally returns HTTP 200 with an empty `content` --
+    that must be treated as transient (retried), not passed through to a
+    downstream JSON parser (issue #66)."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    result = client.complete("hello world")
+
+    assert result == "model reply"
+    assert call_count == 2
+
+
+def test_openrouter_client_gives_up_after_max_attempts_on_persistent_empty_completion(monkeypatch):
+    """If every attempt yields an empty completion, the client must give up
+    after the same bounded budget as any other transient failure and raise
+    a typed `OpenRouterError` naming the condition (issue #66)."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient, OpenRouterError
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    with pytest.raises(OpenRouterError, match="empty completion"):
+        client.complete("hello world")
+
+    assert call_count == 3
+
+
+def test_openrouter_client_treats_whitespace_only_content_as_empty(monkeypatch):
+    """A whitespace-only `content` (e.g. a stray newline) is functionally
+    empty and must be retried exactly like a fully empty string (issue #66)."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(200, json={"choices": [{"message": {"content": "  \n"}}]})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    result = client.complete("hello world")
+
+    assert result == "model reply"
+    assert call_count == 2
+
+
+def test_openrouter_client_treats_null_content_as_empty_not_malformed(monkeypatch):
+    """`content: null` is a shape the API can legitimately return for an
+    empty completion -- it must be retried like any other empty completion,
+    not raise the immediate malformed-shape error (issue #66)."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(200, json={"choices": [{"message": {"content": None}}]})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    result = client.complete("hello world")
+
+    assert result == "model reply"
+    assert call_count == 2
+
+
 # --- secrets.toml error handling (issue #23 review findings) --------------
 
 

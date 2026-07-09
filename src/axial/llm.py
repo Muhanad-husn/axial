@@ -370,6 +370,12 @@ _REQUEST_TIMEOUT = httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=15.0
 # attempts, short exponential backoff between them. Any other failure (a
 # non-retryable 4xx via `raise_for_status`, or a malformed response shape)
 # fails immediately, exactly as before this issue.
+#
+# Issue #66 extends the same budget to a well-shaped HTTP 200 whose
+# `content` is empty/whitespace/None: a provider occasionally answers with
+# nothing, and that is transient exactly like a timeout or a 5xx -- the
+# downstream JSON parser must never see it -- whereas a genuinely malformed
+# response shape (missing keys) still fails immediately, unretried.
 _MAX_ATTEMPTS = 3
 _RETRY_BACKOFF_SECONDS = (0.5, 2.0)
 
@@ -425,9 +431,17 @@ class OpenRouterClient:
             response.raise_for_status()
             data = response.json()
             try:
-                return data["choices"][0]["message"]["content"]
+                content = data["choices"][0]["message"]["content"]
             except (KeyError, IndexError, TypeError) as exc:
                 raise OpenRouterError(f"unexpected OpenRouter response shape: {data!r}") from exc
+
+            if content is None or not content.strip():
+                if is_last_attempt:
+                    raise OpenRouterError("empty completion from provider")
+                _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
+                continue
+
+            return content
 
         raise AssertionError("unreachable: the retry loop always returns or raises")
 
