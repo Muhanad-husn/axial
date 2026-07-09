@@ -316,7 +316,14 @@ def parse_tag_response(raw: str, axis_name: str) -> str:
 
     Accepts a top-level JSON object with `axis_name` as a key, whose value
     is either a bare string (the common case) or a single-element list.
-    Zero or multiple values is a cardinality error, not a silent pick.
+    Zero or multiple values is a cardinality error, not a silent pick. Also
+    accepts the `{"primary": ..., "secondary": ...}` object shape the shared
+    multi-axis prompt shows for primary+secondary axes -- deepseek-v4-flash
+    sometimes echoes that dialect back for a single-cardinality axis too
+    (issue #62) -- using `primary` as the value and ignoring unrelated extra
+    keys (e.g. a nested `country`), but raising `TagCardinalityError` when
+    `secondary` is non-empty, since a second value asserted on a single axis
+    must never be silently dropped.
     """
     try:
         data = json.loads(raw)
@@ -328,6 +335,22 @@ def parse_tag_response(raw: str, axis_name: str) -> str:
         raise TagParseError(f"expected a top-level {axis_name!r} key, got: {keys}")
 
     raw_value = data[axis_name]
+
+    if isinstance(raw_value, dict):
+        primary = raw_value.get("primary")
+        if not isinstance(primary, str):
+            raise TagParseError(
+                f"expected {axis_name!r} value to be a string, got an object "
+                f"without a string 'primary': {raw_value!r}"
+            )
+        secondary = raw_value.get("secondary")
+        secondary_values = (
+            secondary if isinstance(secondary, list) else ([secondary] if secondary else [])
+        )
+        if secondary_values:
+            raise TagCardinalityError(axis_name, [primary, *secondary_values])
+        return primary
+
     values = raw_value if isinstance(raw_value, list) else [raw_value]
 
     if len(values) != 1:
@@ -477,20 +500,33 @@ def _axis_extras(axis: Axis) -> dict[str, Any]:
     return extras
 
 
-def parse_country_response(raw: str) -> str:
+def parse_country_response(raw: str, axis_name: str | None = None) -> str:
     """Parse the model's raw tagging response for its `country` extra field
     (Appendix C/G, required when `empirical_scope == "scope:country-case"`).
     A missing or empty `country` key is a hard error (`CountryCaseMissing
-    CountryError`), not a silent pass."""
+    CountryError`), not a silent pass. When the top-level `country` is
+    absent/empty and `axis_name` is given, also accepts `country` nested
+    inside `data[axis_name]` (e.g. `{"empirical_scope": {"primary": ...,
+    "country": ...}}`), since deepseek-v4-flash sometimes answers
+    `empirical_scope` in the object dialect the shared prompt shows for
+    primary+secondary axes and nests `country` there instead of as a
+    top-level sibling key (issue #62); the caller (`run_tag`) passes the
+    scope axis's own name, so this parser never hardcodes it."""
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise TagParseError(f"model response was not valid JSON: {exc}") from exc
 
-    if not isinstance(data, dict) or not data.get("country"):
+    country: Any = data.get("country") if isinstance(data, dict) else None
+
+    if not country and axis_name is not None and isinstance(data, dict):
+        axis_value = data.get(axis_name)
+        if isinstance(axis_value, dict):
+            country = axis_value.get("country")
+
+    if not country:
         raise CountryCaseMissingCountryError()
 
-    country = data["country"]
     if not isinstance(country, str):
         raise TagParseError(
             f"expected 'country' value to be a string, got {type(country).__name__}: {country!r}"
@@ -640,7 +676,7 @@ def run_tag(
                 # C/G; predates and is independent of the shared
                 # primary+secondary validator above).
                 if axis_name == EMPIRICAL_SCOPE_AXIS and value == COUNTRY_CASE_SCOPE_VALUE:
-                    country = parse_country_response(raw_response)
+                    country = parse_country_response(raw_response, axis_name)
                     validate_country(schema, country)
 
         tagged_records.append(

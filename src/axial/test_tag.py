@@ -222,6 +222,68 @@ def test_parse_tag_response_rejects_a_single_element_list_of_a_dict_as_a_tag_err
         parse_tag_response(raw, "role_in_argument")
 
 
+# --- object-shaped single-axis dialect (issue #62) --------------------------
+
+
+def test_parse_tag_response_accepts_an_object_shaped_value_using_its_primary():
+    from axial.tag import parse_tag_response
+
+    raw = json.dumps({"empirical_scope": {"primary": "scope:country-case", "country": "Syria"}})
+
+    value = parse_tag_response(raw, "empirical_scope")
+
+    assert value == "scope:country-case"
+
+
+def test_parse_tag_response_rejects_an_object_shaped_value_with_a_non_empty_secondary_list():
+    from axial.tag import TagCardinalityError, parse_tag_response
+
+    raw = json.dumps(
+        {"role_in_argument": {"primary": "role:claim", "secondary": ["role:evidence"]}}
+    )
+
+    with pytest.raises(TagCardinalityError):
+        parse_tag_response(raw, "role_in_argument")
+
+
+def test_parse_tag_response_rejects_an_object_shaped_value_with_a_non_empty_secondary_string():
+    from axial.tag import TagCardinalityError, parse_tag_response
+
+    raw = json.dumps({"role_in_argument": {"primary": "role:claim", "secondary": "role:evidence"}})
+
+    with pytest.raises(TagCardinalityError):
+        parse_tag_response(raw, "role_in_argument")
+
+
+def test_parse_tag_response_accepts_an_object_shaped_value_with_an_empty_secondary_list():
+    from axial.tag import parse_tag_response
+
+    raw = json.dumps({"role_in_argument": {"primary": "role:claim", "secondary": []}})
+
+    value = parse_tag_response(raw, "role_in_argument")
+
+    assert value == "role:claim"
+
+
+def test_parse_tag_response_accepts_an_object_shaped_value_with_a_none_secondary():
+    from axial.tag import parse_tag_response
+
+    raw = json.dumps({"role_in_argument": {"primary": "role:claim", "secondary": None}})
+
+    value = parse_tag_response(raw, "role_in_argument")
+
+    assert value == "role:claim"
+
+
+def test_parse_tag_response_rejects_an_object_shaped_value_without_a_string_primary():
+    from axial.tag import TagParseError, parse_tag_response
+
+    raw = json.dumps({"role_in_argument": {"secondary": "role:evidence"}})
+
+    with pytest.raises(TagParseError):
+        parse_tag_response(raw, "role_in_argument")
+
+
 # --- schema validation -------------------------------------------------------
 
 
@@ -478,6 +540,45 @@ def test_parse_country_response_rejects_an_empty_country_value():
 
     with pytest.raises(CountryCaseMissingCountryError):
         parse_country_response(raw)
+
+
+def test_parse_country_response_accepts_a_nested_country_when_top_level_absent():
+    from axial.tag import parse_country_response
+
+    raw = json.dumps({"empirical_scope": {"primary": "scope:country-case", "country": "Syria"}})
+
+    assert parse_country_response(raw, "empirical_scope") == "Syria"
+
+
+def test_parse_country_response_prefers_the_top_level_country_over_a_nested_one():
+    from axial.tag import parse_country_response
+
+    raw = json.dumps(
+        {
+            "empirical_scope": {"primary": "scope:country-case", "country": "Iraq"},
+            "country": "Syria",
+        }
+    )
+
+    assert parse_country_response(raw, "empirical_scope") == "Syria"
+
+
+def test_parse_country_response_rejects_missing_country_in_both_places():
+    from axial.tag import CountryCaseMissingCountryError, parse_country_response
+
+    raw = json.dumps({"empirical_scope": {"primary": "scope:country-case"}})
+
+    with pytest.raises(CountryCaseMissingCountryError):
+        parse_country_response(raw, "empirical_scope")
+
+
+def test_parse_country_response_rejects_a_non_string_nested_country():
+    from axial.tag import TagParseError, parse_country_response
+
+    raw = json.dumps({"empirical_scope": {"primary": "scope:country-case", "country": 7}})
+
+    with pytest.raises(TagParseError):
+        parse_country_response(raw, "empirical_scope")
 
 
 def test_validate_country_accepts_an_in_list_value():
