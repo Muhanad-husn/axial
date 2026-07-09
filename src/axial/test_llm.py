@@ -400,10 +400,18 @@ def test_openrouter_client_ignores_pass_name_and_never_forwards_it():
     assert "chunk" not in json.dumps(body)
 
 
-def test_openrouter_client_raises_on_http_error_status():
+def test_openrouter_client_raises_on_http_error_status(monkeypatch):
+    """A persistent 5xx is retried (issue #60) but still fails in the end,
+    exactly with the same `httpx.HTTPStatusError` type as before."""
+    import axial.llm as llm_module
     from axial.llm import OpenRouterClient
 
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
     def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
         return httpx.Response(500, json={"error": "boom"})
 
     transport = httpx.MockTransport(handler)
@@ -411,6 +419,140 @@ def test_openrouter_client_raises_on_http_error_status():
 
     with pytest.raises(httpx.HTTPStatusError):
         client.complete("hello world")
+
+    assert call_count == 3
+
+
+# --- timeout and bounded retry (issue #60) ----------------------------------
+
+
+def test_openrouter_client_carries_the_explicit_request_timeout():
+    """httpx's 5s default read timeout kills a real completion before a
+    slow model finishes; the client must be built with an explicit,
+    generous timeout instead (issue #60)."""
+    from axial.llm import OpenRouterClient, _REQUEST_TIMEOUT
+
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=None)
+
+    assert client._client.timeout == _REQUEST_TIMEOUT
+    assert client._client.timeout.read == 180.0
+    assert client._client.timeout.connect == 15.0
+    assert client._client.timeout.write == 30.0
+    assert client._client.timeout.pool == 15.0
+
+
+def test_openrouter_client_retries_a_read_timeout_then_succeeds(monkeypatch):
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:
+            raise httpx.ReadTimeout("timed out", request=request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    result = client.complete("hello world")
+
+    assert result == "model reply"
+    assert call_count == 3
+
+
+def test_openrouter_client_retries_a_429_then_succeeds(monkeypatch):
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(429, json={"error": "rate limited"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    result = client.complete("hello world")
+
+    assert result == "model reply"
+    assert call_count == 2
+
+
+def test_openrouter_client_gives_up_after_max_attempts_on_a_persistent_timeout(monkeypatch):
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    with pytest.raises(httpx.ReadTimeout):
+        client.complete("hello world")
+
+    assert call_count == 3
+
+
+def test_openrouter_client_does_not_retry_a_non_retryable_4xx(monkeypatch):
+    """A 400 (or any non-429 4xx) is not transient and must fail on the
+    first attempt, exactly as before this issue."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(400, json={"error": "bad request"})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        client.complete("hello world")
+
+    assert call_count == 1
+
+
+def test_openrouter_client_does_not_retry_a_malformed_response_shape(monkeypatch):
+    """A malformed response body is a parsing bug, not a transient
+    transport failure -- it must still fail immediately with
+    `OpenRouterError`, never retried."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient, OpenRouterError
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(200, json={"unexpected": "shape"})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    with pytest.raises(OpenRouterError):
+        client.complete("hello world")
+
+    assert call_count == 1
 
 
 # --- secrets.toml error handling (issue #23 review findings) --------------

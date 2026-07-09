@@ -80,6 +80,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import tomllib
 from pathlib import Path
 from typing import Any, Protocol
@@ -358,6 +359,26 @@ class OpenRouterError(LLMError):
     """Raised when the OpenRouter API returns an error or malformed response."""
 
 
+# httpx's 5s default read timeout kills a real completion before it starts:
+# the envelope pass's prompt carries a whole document, and a model can
+# legitimately take minutes to answer it (issue #60). connect/write/pool
+# stay tight -- only the read side needs to be generous.
+_REQUEST_TIMEOUT = httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=15.0)
+
+# Bounded retry (issue #60): a single transient failure -- a read timeout,
+# HTTP 429, or a 5xx -- must not abort a multi-hour ingestion run. 3 total
+# attempts, short exponential backoff between them. Any other failure (a
+# non-retryable 4xx via `raise_for_status`, or a malformed response shape)
+# fails immediately, exactly as before this issue.
+_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = (0.5, 2.0)
+
+# Module-level indirection so tests can patch out the actual sleep (e.g.
+# `monkeypatch.setattr(llm, "_sleep", lambda seconds: None)`) instead of
+# waiting out the real backoff.
+_sleep = time.sleep
+
+
 class OpenRouterClient:
     """Thin HTTP client for OpenRouter's chat-completions endpoint.
 
@@ -375,23 +396,40 @@ class OpenRouterClient:
     ) -> None:
         self._api_key = api_key
         self._model = model
-        self._client = httpx.Client(base_url=base_url, transport=transport)
+        self._client = httpx.Client(
+            base_url=base_url, transport=transport, timeout=_REQUEST_TIMEOUT
+        )
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
-        response = self._client.post(
-            "/chat/completions",
-            headers={"Authorization": f"Bearer {self._api_key}"},
-            json={
-                "model": self._model,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-        )
-        response.raise_for_status()
-        data = response.json()
-        try:
-            return data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise OpenRouterError(f"unexpected OpenRouter response shape: {data!r}") from exc
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            is_last_attempt = attempt == _MAX_ATTEMPTS
+            try:
+                response = self._client.post(
+                    "/chat/completions",
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    json={
+                        "model": self._model,
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                )
+            except httpx.TimeoutException:
+                if is_last_attempt:
+                    raise
+                _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
+                continue
+
+            if not is_last_attempt and (response.status_code == 429 or response.status_code >= 500):
+                _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
+                continue
+
+            response.raise_for_status()
+            data = response.json()
+            try:
+                return data["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError) as exc:
+                raise OpenRouterError(f"unexpected OpenRouter response shape: {data!r}") from exc
+
+        raise AssertionError("unreachable: the retry loop always returns or raises")
 
 
 def _forced_provider() -> str | None:
