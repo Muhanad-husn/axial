@@ -41,6 +41,7 @@ paths -- can leak state to another test that happens to share a source_id.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -89,3 +90,70 @@ def _isolate_persisted_tree_and_envelope_state():
         for path in after_snapshot:
             if path not in before_snapshot:
                 path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Isolated vault root (issue #68) -- opt-in, NOT autouse.
+# ---------------------------------------------------------------------------
+#
+# tests/test_vault_write.py, tests/test_vault_tag_frontmatter.py, and
+# tests/test_vault_artifacts.py exercise `axial vault write`, which persists
+# one note per chunk/artifact under `<vault_dir>/prose/` and
+# `<vault_dir>/artifacts/`. Several of those tests assert an EXACT file
+# count under the vault directory (e.g. "exactly one prose note per chunk"),
+# not just "our own notes are present" -- so simply cleaning up after the
+# fact (the `_isolate_persisted_tree_and_envelope_state` pattern above) is
+# not enough once real content already lives in `data/vault/`: the count
+# assertions fail WHILE the test runs, before any teardown gets a chance to
+# restore anything (verified directly: 4/7 vault tests fail against the
+# real, now-populated `data/vault/prose/`, all on file-count assertions).
+#
+# `axial vault write` (and every pass it composes internally --
+# `axial.envelope`, `axial.chunk`, `axial.tag`, `axial.artifacts`) resolves
+# `vault_dir`/`envelopes_dir`/`domain_dir` from `config/pipeline.yaml`
+# and/or hardcoded defaults, all expressed as PLAIN paths relative to the
+# process's current working directory (see src/axial/vault.py's
+# `_default_vault_dir`, src/axial/envelope.py's `_default_envelopes_dir`,
+# src/axial/extract.py's module-level `TREES_DIR`, and src/axial/tag.py's/
+# src/axial/artifacts.py's module-level `DEFAULT_DOMAIN_DIR`) -- none of
+# them read an env-var override, and the CLI exposes no `--vault-dir`/
+# `--config` flag (verified by reading src/axial/cli.py). So the one seam
+# available from tests/ ALONE, without editing src/ or the real
+# `config/pipeline.yaml` (both out of bounds for the test-author role, and
+# the latter is live production config a concurrent ingestion run also
+# reads), is to run the CLI subprocess from a different working directory:
+# a fresh, isolated staging root where `data/trees/`, `data/envelopes/`,
+# and `data/vault/` all resolve to empty, private locations that never
+# alias the real `data/` tree the ingestion run is writing into.
+#
+# This fixture builds exactly that staging root, one per test
+# (`tmp_path` is pytest's own per-test temp directory, created outside this
+# repo entirely -- so it can never collide with a concurrent worker writing
+# into the real `data/vault/`, and nothing here ever reads, moves, or
+# deletes a single byte under the real `data/vault/`). The only thing
+# copied in is a read-only snapshot of the domain schema/codebook
+# (`config/domains/syria/{schema.yaml,codebook.yaml}`), needed because
+# `axial tag`/`axial artifacts`/`axial vault write` resolve the default
+# domain directory as the plain relative path `config/domains/syria`, which
+# must physically exist under the staging cwd for the internal
+# tag/artifacts passes `axial vault write` composes to find it.
+_DOMAIN_DIR_PARTS = ("config", "domains", "syria")
+_DOMAIN_FILES = ("schema.yaml", "codebook.yaml")
+
+
+@pytest.fixture
+def isolated_vault_root(tmp_path: Path) -> Path:
+    """An isolated staging root (opt-in -- pass this fixture explicitly to
+    the tests that write the vault): a fresh directory, private to this one
+    test, that the vault-write acceptance tests run the `axial` CLI
+    subprocess from (as `cwd`) instead of the real repo root. `data/trees/`,
+    `data/envelopes/`, and `data/vault/` under this root all start empty and
+    are torn down with `tmp_path` itself -- no cleanup step is needed, and
+    the real `data/vault/` is never touched. See module docstring above for
+    why this is the isolation seam (issue #68)."""
+    domain_src = REPO_ROOT.joinpath(*_DOMAIN_DIR_PARTS)
+    domain_dst = tmp_path.joinpath(*_DOMAIN_DIR_PARTS)
+    domain_dst.mkdir(parents=True, exist_ok=True)
+    for filename in _DOMAIN_FILES:
+        shutil.copyfile(domain_src / filename, domain_dst / filename)
+    return tmp_path

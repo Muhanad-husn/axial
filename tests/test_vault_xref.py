@@ -115,6 +115,31 @@ one of that fixture's protected directories, so this test defines its own
 `clean_vault` fixture (mirroring tests/test_vault_write.py's and
 tests/test_vault_artifacts.py's fixture of the same name) to remove any
 file/directory it newly creates there.
+
+Arrange-mechanism change (issue #68, vault isolation) -- no behavioral
+assertion changed
+-----------------------------------------------------------------------
+Exactly as tests/test_vault_write.py, tests/test_vault_tag_frontmatter.py,
+and tests/test_vault_artifacts.py now document: once real gold-corpus notes
+started landing in the real `data/vault/prose/`, this test's own local
+`clean_vault` fixture (described above) became actively dangerous, not just
+insufficient -- it set-differenced the ENTIRE real `data/vault/` tree via
+`.rglob("*")` and deleted anything "newly appeared" at teardown, which is
+exactly the shape that destroys a concurrently-written real note (a live
+ingestion worker's note, created during this test's run, looks identical to
+this test's own output to a blind before/after diff). No CLI flag or env
+var exists to redirect `vault_dir`/`envelopes_dir`/the domain directory,
+and editing the real `config/pipeline.yaml` is out of bounds. So every
+`axial` subprocess this test spawns now runs with `cwd` set to
+`isolated_vault_root` (tests/conftest.py's opt-in fixture, issue #68): a
+fresh per-test staging directory outside this repo entirely.
+`TREES_DIR`/`VAULT_DIR`/`PROSE_DIR`/`ARTIFACTS_DIR` are now computed from
+that root instead of hardcoded at `REPO_ROOT`; the former `clean_vault`
+fixture (and its `_vault_files`/`_vault_dirs` diff-and-delete helpers)
+above is superseded by `isolated_vault_root` and removed entirely -- the
+real `data/vault/` is never read, moved, or written by this test. Every
+behavioral assertion below is unchanged -- only where the CLI runs and
+where this test looks for its own output moved.
 """
 
 from __future__ import annotations
@@ -124,17 +149,12 @@ import os
 import subprocess
 from pathlib import Path
 
-import pytest
 import yaml
 
 from axial.envelope import compute_source_id
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "extract"
-TREES_DIR = REPO_ROOT / "data" / "trees"
-VAULT_DIR = REPO_ROOT / "data" / "vault"
-PROSE_DIR = VAULT_DIR / "prose"
-ARTIFACTS_DIR = VAULT_DIR / "artifacts"
 
 PROSE_AND_TABLE_PDF = FIXTURES_DIR / "prose_and_table.pdf"
 PROSE_AND_TABLE_TREE_FIXTURE = FIXTURES_DIR / "prose_and_table_tree.json"
@@ -155,41 +175,63 @@ ARGPARSE_FALLBACK_MARKERS = (
 )
 
 
+def _trees_dir(root: Path) -> Path:
+    return root / "data" / "trees"
+
+
+def _vault_dir(root: Path) -> Path:
+    return root / "data" / "vault"
+
+
+def _prose_dir(root: Path) -> Path:
+    return _vault_dir(root) / "prose"
+
+
+def _artifacts_dir(root: Path) -> Path:
+    return _vault_dir(root) / "artifacts"
+
+
 def _run_axial(
     args: list[str],
     provider: str,
     *,
+    cwd: Path,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env[PROVIDER_ENV_VAR] = provider
     if extra_env:
         env.update(extra_env)
+    # `--project REPO_ROOT` tells uv which project/venv to run against while
+    # `cwd` (which may be `isolated_vault_root`, outside this repo entirely
+    # -- see module docstring, "Arrange-mechanism change (issue #68...)")
+    # controls the actual process working directory `axial`'s own relative
+    # path resolution sees.
     return subprocess.run(
-        ["uv", "run", "axial", *args],
-        cwd=REPO_ROOT,
+        ["uv", "run", "--project", str(REPO_ROOT), "axial", *args],
+        cwd=cwd,
         capture_output=True,
         text=True,
         env=env,
     )
 
 
-def _run_envelope(provider: str, *args: str) -> subprocess.CompletedProcess:
-    return _run_axial(["envelope", *args], provider)
+def _run_envelope(provider: str, *args: str, cwd: Path) -> subprocess.CompletedProcess:
+    return _run_axial(["envelope", *args], provider, cwd=cwd)
 
 
-def _run_chunk(provider: str, *args: str) -> subprocess.CompletedProcess:
-    return _run_axial(["chunk", *args], provider)
+def _run_chunk(provider: str, *args: str, cwd: Path) -> subprocess.CompletedProcess:
+    return _run_axial(["chunk", *args], provider, cwd=cwd)
 
 
-def _run_artifacts(provider: str, *args: str) -> subprocess.CompletedProcess:
-    return _run_axial(["artifacts", *args], provider)
+def _run_artifacts(provider: str, *args: str, cwd: Path) -> subprocess.CompletedProcess:
+    return _run_axial(["artifacts", *args], provider, cwd=cwd)
 
 
 def _run_vault_write(
-    provider: str, *args: str, extra_env: dict[str, str] | None = None
+    provider: str, *args: str, cwd: Path, extra_env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess:
-    return _run_axial(["vault", "write", *args], provider, extra_env=extra_env)
+    return _run_axial(["vault", "write", *args], provider, cwd=cwd, extra_env=extra_env)
 
 
 def _assert_not_argparse_fallback(result: subprocess.CompletedProcess, command: str) -> None:
@@ -203,23 +245,23 @@ def _assert_not_argparse_fallback(result: subprocess.CompletedProcess, command: 
         )
 
 
-def _place_tree_fixture(source_pdf: Path, tree_fixture_path: Path) -> Path:
+def _place_tree_fixture(source_pdf: Path, tree_fixture_path: Path, root: Path) -> Path:
     """Pre-place the committed REAL tree fixture at
-    data/trees/<source_id>.json so `axial.extract.extract` reuses it
+    <root>/data/trees/<source_id>.json so `axial.extract.extract` reuses it
     verbatim instead of running docling (PRD §7.4)."""
     source_id = compute_source_id(source_pdf)
-    tree_path = TREES_DIR / f"{source_id}.json"
+    tree_path = _trees_dir(root) / f"{source_id}.json"
     tree_path.parent.mkdir(parents=True, exist_ok=True)
     tree_path.write_bytes(tree_fixture_path.read_bytes())
     return tree_path
 
 
-def _arrange_stored_envelope() -> None:
+def _arrange_stored_envelope(root: Path) -> None:
     """Pre-place the real tree fixture, then run `axial envelope` with the
     stub provider so a stored envelope exists on disk before vault write --
     `vault write` never recomputes one (PRD §10 "no recompute")."""
-    _place_tree_fixture(PROSE_AND_TABLE_PDF, PROSE_AND_TABLE_TREE_FIXTURE)
-    result = _run_envelope("stub", str(PROSE_AND_TABLE_PDF))
+    _place_tree_fixture(PROSE_AND_TABLE_PDF, PROSE_AND_TABLE_TREE_FIXTURE, root)
+    result = _run_envelope("stub", str(PROSE_AND_TABLE_PDF), cwd=root)
     _assert_not_argparse_fallback(result, "envelope")
     assert result.returncode == 0, (
         f"arrange step failed: expected exit code 0 for `axial envelope` on "
@@ -273,10 +315,10 @@ def _parse_json_records(stdout: str, *, array_key: str, kind: str) -> list[dict]
     return records
 
 
-def _arrange_known_chunk_ids() -> set[str]:
+def _arrange_known_chunk_ids(root: Path) -> set[str]:
     """Run `axial chunk` (already green) to discover the exact set of real
     chunk_ids this fixture yields -- see module docstring, seam decision 3."""
-    result = _run_chunk("stub", str(PROSE_AND_TABLE_PDF))
+    result = _run_chunk("stub", str(PROSE_AND_TABLE_PDF), cwd=root)
     _assert_not_argparse_fallback(result, "chunk")
     assert result.returncode == 0, (
         f"arrange step failed: expected exit code 0 for `axial chunk` on "
@@ -292,10 +334,10 @@ def _arrange_known_chunk_ids() -> set[str]:
     return chunk_ids
 
 
-def _arrange_known_artifact_id() -> str:
+def _arrange_known_artifact_id(root: Path) -> str:
     """Run `axial artifacts` (already green) to discover this fixture's one
     real artifact_id -- see module docstring, seam decision 3."""
-    result = _run_artifacts("stub", str(PROSE_AND_TABLE_PDF))
+    result = _run_artifacts("stub", str(PROSE_AND_TABLE_PDF), cwd=root)
     _assert_not_argparse_fallback(result, "artifacts")
     assert result.returncode == 0, (
         f"arrange step failed: expected exit code 0 for `axial artifacts` "
@@ -314,48 +356,6 @@ def _arrange_known_artifact_id() -> str:
         f"non-empty 'artifact_id', got {artifact_id!r} (record: {records[0]!r})"
     )
     return artifact_id
-
-
-def _vault_files() -> set[Path]:
-    if not VAULT_DIR.exists():
-        return set()
-    return {p for p in VAULT_DIR.rglob("*") if p.is_file()}
-
-
-def _vault_dirs() -> set[Path]:
-    if not VAULT_DIR.exists():
-        return set()
-    return {p for p in VAULT_DIR.rglob("*") if p.is_dir()}
-
-
-@pytest.fixture
-def clean_vault():
-    """Snapshot data/vault/ (files and directories) before the test and
-    remove anything the test caused to newly appear, so runs stay
-    idempotent and the repo is never polluted by a real e2e-run artifact
-    (mirrors tests/test_vault_write.py's and tests/test_vault_artifacts.py's
-    fixture of the same name)."""
-    vault_existed_before = VAULT_DIR.exists()
-    before_files = _vault_files()
-    before_dirs = _vault_dirs()
-    yield
-    after_files = _vault_files()
-    for created in after_files - before_files:
-        created.unlink()
-
-    after_dirs = _vault_dirs()
-    new_dirs = after_dirs - before_dirs
-    for created_dir in sorted(new_dirs, key=lambda p: len(p.parts), reverse=True):
-        try:
-            created_dir.rmdir()
-        except OSError:
-            pass  # not empty -- holds content that predates this test's run
-
-    if not vault_existed_before and VAULT_DIR.exists():
-        try:
-            VAULT_DIR.rmdir()
-        except OSError:
-            pass
 
 
 def _split_frontmatter(text: str, note_path: Path) -> tuple[dict, str]:
@@ -433,14 +433,18 @@ def _normalized_backlink_list(value, field_name: str, note_path: Path) -> list:
     return value
 
 
-def test_vault_write_backlinks_are_bidirectional_and_idempotent(clean_vault):
-    _arrange_stored_envelope()
-    known_chunk_ids = _arrange_known_chunk_ids()
-    known_artifact_id = _arrange_known_artifact_id()
+def test_vault_write_backlinks_are_bidirectional_and_idempotent(isolated_vault_root):
+    root = isolated_vault_root
+    prose_dir = _prose_dir(root)
+    artifacts_dir = _artifacts_dir(root)
+
+    _arrange_stored_envelope(root)
+    known_chunk_ids = _arrange_known_chunk_ids(root)
+    known_artifact_id = _arrange_known_artifact_id(root)
 
     # --- Run 1 (target unset -- the default): a note with no references
     # carries an empty or absent backlink field, never a dangling one. ---
-    no_ref_result = _run_vault_write("stub", str(PROSE_AND_TABLE_PDF))
+    no_ref_result = _run_vault_write("stub", str(PROSE_AND_TABLE_PDF), cwd=root)
     _assert_not_argparse_fallback(no_ref_result, "vault write")
     assert no_ref_result.returncode == 0, (
         f"expected exit code 0 for `axial vault write` when the underlying "
@@ -449,7 +453,7 @@ def test_vault_write_backlinks_are_bidirectional_and_idempotent(clean_vault):
     )
 
     for chunk_id in known_chunk_ids:
-        note_path = _find_note_for_id(PROSE_DIR, chunk_id, "chunk_id")
+        note_path = _find_note_for_id(prose_dir, chunk_id, "chunk_id")
         frontmatter = _read_frontmatter(note_path)
         refs = _normalized_backlink_list(
             frontmatter.get("artifact_refs"), "artifact_refs", note_path
@@ -461,7 +465,7 @@ def test_vault_write_backlinks_are_bidirectional_and_idempotent(clean_vault):
             f"or absent backlink field'), got {refs!r}"
         )
 
-    artifact_note_path = _find_note_for_id(ARTIFACTS_DIR, known_artifact_id, "artifact_id")
+    artifact_note_path = _find_note_for_id(artifacts_dir, known_artifact_id, "artifact_id")
     artifact_frontmatter = _read_frontmatter(artifact_note_path)
     cited_by = _normalized_backlink_list(
         artifact_frontmatter.get("cited_by"), "cited_by", artifact_note_path
@@ -481,6 +485,7 @@ def test_vault_write_backlinks_are_bidirectional_and_idempotent(clean_vault):
     happy_result = _run_vault_write(
         "stub",
         str(PROSE_AND_TABLE_PDF),
+        cwd=root,
         extra_env={STUB_XREF_TARGET_ENV_VAR: known_artifact_id},
     )
     _assert_not_argparse_fallback(happy_result, "vault write")
@@ -493,7 +498,7 @@ def test_vault_write_backlinks_are_bidirectional_and_idempotent(clean_vault):
 
     prose_refs_after_happy_run: dict[str, list[str]] = {}
     for chunk_id in known_chunk_ids:
-        note_path = _find_note_for_id(PROSE_DIR, chunk_id, "chunk_id")
+        note_path = _find_note_for_id(prose_dir, chunk_id, "chunk_id")
         frontmatter = _read_frontmatter(note_path)
         refs = _normalized_backlink_list(
             frontmatter.get("artifact_refs"), "artifact_refs", note_path
@@ -540,6 +545,7 @@ def test_vault_write_backlinks_are_bidirectional_and_idempotent(clean_vault):
     repeat_result = _run_vault_write(
         "stub",
         str(PROSE_AND_TABLE_PDF),
+        cwd=root,
         extra_env={STUB_XREF_TARGET_ENV_VAR: known_artifact_id},
     )
     _assert_not_argparse_fallback(repeat_result, "vault write")
@@ -550,7 +556,7 @@ def test_vault_write_backlinks_are_bidirectional_and_idempotent(clean_vault):
     )
 
     for chunk_id in known_chunk_ids:
-        note_path = _find_note_for_id(PROSE_DIR, chunk_id, "chunk_id")
+        note_path = _find_note_for_id(prose_dir, chunk_id, "chunk_id")
         frontmatter = _read_frontmatter(note_path)
         refs_after_repeat = _normalized_backlink_list(
             frontmatter.get("artifact_refs"), "artifact_refs", note_path
