@@ -376,8 +376,21 @@ _REQUEST_TIMEOUT = httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=15.0
 # nothing, and that is transient exactly like a timeout or a 5xx -- the
 # downstream JSON parser must never see it -- whereas a genuinely malformed
 # response shape (missing keys) still fails immediately, unretried.
+#
+# Issue #69 extends the same budget again to a well-shaped HTTP 200 whose
+# `choices[0].finish_reason` is present and not `"stop"` (e.g. `"length"`):
+# the completion was cut off mid-output, and a truncated JSON fragment is
+# just as unusable to a downstream parser as an empty one -- retryable
+# within the same budget, with a final-attempt failure naming the reason. A
+# missing/null `finish_reason` is accepted as success: some providers omit
+# it, and absence must not be punished.
 _MAX_ATTEMPTS = 3
 _RETRY_BACKOFF_SECONDS = (0.5, 2.0)
+
+# Explicit, generous `max_tokens` sent with every request (issue #69):
+# chunking responses echo whole section text back, and a conservative
+# provider default can truncate that long before this budget is reached.
+_MAX_COMPLETION_TOKENS = 16384
 
 # Module-level indirection so tests can patch out the actual sleep (e.g.
 # `monkeypatch.setattr(llm, "_sleep", lambda seconds: None)`) instead of
@@ -416,6 +429,7 @@ class OpenRouterClient:
                     json={
                         "model": self._model,
                         "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": _MAX_COMPLETION_TOKENS,
                     },
                 )
             except httpx.TimeoutException:
@@ -431,12 +445,24 @@ class OpenRouterClient:
             response.raise_for_status()
             data = response.json()
             try:
-                content = data["choices"][0]["message"]["content"]
+                choice = data["choices"][0]
+                content = choice["message"]["content"]
             except (KeyError, IndexError, TypeError) as exc:
                 raise OpenRouterError(f"unexpected OpenRouter response shape: {data!r}") from exc
 
-            if content is None or not content.strip():
+            # A missing/null finish_reason is accepted as success -- some
+            # providers omit it -- only a present-and-not-"stop" value (e.g.
+            # "length") signals a truncated completion (issue #69).
+            finish_reason = choice.get("finish_reason")
+            is_empty = content is None or not content.strip()
+            is_truncated = finish_reason is not None and finish_reason != "stop"
+
+            if is_empty or is_truncated:
                 if is_last_attempt:
+                    if is_truncated:
+                        raise OpenRouterError(
+                            f"completion truncated: finish_reason={finish_reason!r}"
+                        )
                     raise OpenRouterError("empty completion from provider")
                 _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
                 continue

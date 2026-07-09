@@ -659,6 +659,172 @@ def test_openrouter_client_treats_null_content_as_empty_not_malformed(monkeypatc
     assert call_count == 2
 
 
+# --- truncated-completion retry (issue #69) --------------------------------
+
+
+def test_openrouter_client_retries_a_truncated_completion_then_succeeds(monkeypatch):
+    """A `finish_reason` other than `"stop"` (e.g. `"length"`) means the
+    provider cut the completion short -- that must be retried like any other
+    transient failure, not passed through to a downstream JSON parser
+    (issue #69)."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": '{"partial": "cut off'}, "finish_reason": "length"}
+                    ]
+                },
+            )
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "model reply"}, "finish_reason": "stop"}]},
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    result = client.complete("hello world")
+
+    assert result == "model reply"
+    assert call_count == 2
+
+
+def test_openrouter_client_gives_up_after_max_attempts_on_persistent_truncation(monkeypatch):
+    """If every attempt is truncated, the client must give up after the same
+    bounded budget as any other transient failure and raise a typed
+    `OpenRouterError` naming the finish_reason (issue #69)."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient, OpenRouterError
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "still cut off"}, "finish_reason": "length"}]
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    with pytest.raises(OpenRouterError, match="length"):
+        client.complete("hello world")
+
+    assert call_count == 3
+
+
+def test_openrouter_client_accepts_null_finish_reason(monkeypatch):
+    """A `finish_reason: null` is a provider that legitimately omits the
+    field -- it must be accepted as success, not retried (issue #69)."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "model reply"}, "finish_reason": None}]},
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    result = client.complete("hello world")
+
+    assert result == "model reply"
+    assert call_count == 1
+
+
+def test_openrouter_client_accepts_absent_finish_reason(monkeypatch):
+    """A response with no `finish_reason` key at all (a provider that omits
+    it entirely) must be accepted as success, not retried (issue #69)."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    result = client.complete("hello world")
+
+    assert result == "model reply"
+    assert call_count == 1
+
+
+def test_openrouter_client_request_body_carries_max_tokens():
+    """The request body must include an explicit `max_tokens` so
+    legitimately long completions (chunking responses echo section text)
+    aren't cut by a conservative provider default (issue #69)."""
+    from axial.llm import OpenRouterClient, _MAX_COMPLETION_TOKENS
+
+    captured_requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    client.complete("hello world")
+
+    body = json.loads(captured_requests[0].content)
+    assert body["max_tokens"] == _MAX_COMPLETION_TOKENS
+
+
+def test_openrouter_client_does_not_double_retry_empty_and_truncated_in_one_attempt(monkeypatch):
+    """A response that is BOTH empty and non-`"stop"` must only consume one
+    retry per attempt (share the same transient-this-attempt path), so the
+    3-attempt budget still yields exactly 3 requests, not more (issue #69)."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient, OpenRouterError
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": ""}, "finish_reason": "length"}]},
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    with pytest.raises(OpenRouterError):
+        client.complete("hello world")
+
+    assert call_count == 3
+
+
 # --- secrets.toml error handling (issue #23 review findings) --------------
 
 
