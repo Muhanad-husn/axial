@@ -1061,6 +1061,132 @@ def test_run_tag_country_case_out_of_list_country_is_accepted_and_logged(
     assert "country_list" in captured.err
 
 
+def test_run_tag_country_case_missing_country_then_clean_reasks_and_succeeds(monkeypatch, tmp_path):
+    """A country-case response missing `country` is degenerate model noise
+    (issue #92), the same species as a blank tag (#85/#80): it re-asks
+    within `complete_json`'s bounded budget rather than dying fatally, and a
+    clean follow-up response succeeds after exactly one re-ask."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_empirical_scope(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    missing_country = json.dumps(
+        {"role_in_argument": "role:claim", "empirical_scope": "scope:country-case"}
+    )
+    clean = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "empirical_scope": "scope:country-case",
+            "country": "Syria",
+        }
+    )
+
+    class _ScriptedClient:
+        def __init__(self):
+            self._responses = [missing_country, clean]
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            response = self._responses[self.call_count]
+            self.call_count += 1
+            return response
+
+    client = _ScriptedClient()
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert len(records) == 1
+    assert records[0]["empirical_scope"] == "scope:country-case"
+    assert records[0]["country"] == "Syria"
+    assert client.call_count == 2
+
+
+def test_run_tag_country_case_persistent_missing_country_raises_after_three_attempts(
+    monkeypatch, tmp_path
+):
+    """PERSISTENT country absence (#77 adjudication) stays a hard error: once
+    `complete_json`'s bounded re-ask budget (3 attempts) is exhausted, the
+    final attempt's `CountryCaseMissingCountryError` propagates unchanged."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_empirical_scope(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    class _CountingClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return json.dumps(
+                {"role_in_argument": "role:claim", "empirical_scope": "scope:country-case"}
+            )
+
+    client = _CountingClient()
+
+    with pytest.raises(tag_mod.CountryCaseMissingCountryError):
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert client.call_count == 3
+
+
+def test_run_tag_country_case_country_present_makes_exactly_one_call(monkeypatch, tmp_path):
+    """A country-case response WITH a non-empty country never re-asks -- the
+    new validator check is a no-op on the already-valid, common case."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_empirical_scope(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    class _CountingClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return json.dumps(
+                {
+                    "role_in_argument": "role:claim",
+                    "empirical_scope": "scope:country-case",
+                    "country": "Syria",
+                }
+            )
+
+    client = _CountingClient()
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert records[0]["country"] == "Syria"
+    assert client.call_count == 1
+
+
+def test_run_tag_non_country_case_scope_with_no_country_is_unaffected(monkeypatch, tmp_path):
+    """A non-country-case `empirical_scope` (e.g. `scope:general`) never
+    requires `country` at all -- the new check is scoped strictly to
+    `scope:country-case` and never fires for any other scope value, so this
+    still makes exactly one call."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_empirical_scope(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    class _CountingClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return json.dumps(
+                {"role_in_argument": "role:claim", "empirical_scope": "scope:general"}
+            )
+
+    client = _CountingClient()
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert records[0]["empirical_scope"] == "scope:general"
+    assert "country" not in records[0]
+    assert client.call_count == 1
+
+
 def test_run_tag_makes_exactly_one_llm_call_per_chunk_even_with_two_tagged_axes(
     monkeypatch, tmp_path
 ):

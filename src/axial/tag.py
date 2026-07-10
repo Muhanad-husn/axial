@@ -446,6 +446,17 @@ def reject_degenerate_tag_values(raw: str, axes_to_tag: list[str], schema: Schem
     parsing at all; a non-degenerate response is parsed again there (cheap,
     and keeps this validator fully decoupled from `run_tag`'s bookkeeping).
 
+    When a single-cardinality axis's value resolves to
+    `COUNTRY_CASE_SCOPE_VALUE`, also runs `parse_country_response` -- the
+    exact parser `run_tag` itself later uses for the country extra -- so a
+    country-case response missing/blank `country` is the same re-askable
+    degeneracy as a blank tag, rather than surfacing only after this
+    validator returns, outside `complete_json`'s re-ask budget (issue #92).
+    A transient omission gets the bounded re-ask; PERSISTENT absence still
+    surfaces `CountryCaseMissingCountryError` unchanged once re-asks are
+    exhausted, since `complete_json` propagates the final attempt's
+    exception unchanged -- preserving the #77-adjudicated hard error.
+
     Deliberately never calls `validate_tag`/`validate_multi_value_tag`: a
     genuine non-empty out-of-vocabulary tag must stay immediately fatal
     (`TagNotInSchemaError`, the P0-6 schema-gap signal), never smoothed over
@@ -468,6 +479,8 @@ def reject_degenerate_tag_values(raw: str, axes_to_tag: list[str], schema: Schem
         else:
             value = parse_tag_response(raw, axis_name)
             _reject_blank_tag(value, axis_name)
+            if value == COUNTRY_CASE_SCOPE_VALUE:
+                parse_country_response(raw, axis_name)
 
 
 # Keys ignored when hunting for the lone remaining candidate entry in an
