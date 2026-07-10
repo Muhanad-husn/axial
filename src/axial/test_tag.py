@@ -604,19 +604,24 @@ def test_parse_country_response_rejects_a_non_string_nested_country():
         parse_country_response(raw, "empirical_scope")
 
 
-def test_validate_country_accepts_an_in_list_value():
-    from axial.tag import validate_country
+def test_log_country_not_in_list_is_silent_for_an_in_list_value(capsys):
+    from axial.tag import log_country_not_in_list
 
-    validate_country(_SCHEMA_WITH_COUNTRY, "Syria")  # does not raise
+    log_country_not_in_list(_SCHEMA_WITH_COUNTRY, "Syria")  # does not raise
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
 
 
-def test_validate_country_rejects_an_out_of_list_value_naming_it():
-    from axial.tag import CountryNotInListError, validate_country
+def test_log_country_not_in_list_logs_an_out_of_list_value_to_stderr(capsys):
+    from axial.tag import log_country_not_in_list
 
-    with pytest.raises(CountryNotInListError) as exc_info:
-        validate_country(_SCHEMA_WITH_COUNTRY, "Atlantis")
+    log_country_not_in_list(_SCHEMA_WITH_COUNTRY, "Atlantis")  # does not raise
 
-    assert "Atlantis" in str(exc_info.value)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Atlantis" in captured.err
+    assert "country_list" in captured.err
 
 
 # --- record assembly ---------------------------------------------------------
@@ -901,7 +906,12 @@ def test_run_tag_country_case_missing_country_raises_hard_error(monkeypatch, tmp
         tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
 
 
-def test_run_tag_country_case_out_of_list_country_raises_naming_the_value(monkeypatch, tmp_path):
+def test_run_tag_country_case_out_of_list_country_is_accepted_and_logged(
+    monkeypatch, tmp_path, capsys
+):
+    """Spec-drift #77 (adjudicated 2026-07-10): an out-of-list country is
+    no longer fatal -- it is accepted verbatim on the record and logged to
+    stderr as a candidate addition, naming the value and 'country_list'."""
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
@@ -917,10 +927,13 @@ def test_run_tag_country_case_out_of_list_country_raises_naming_the_value(monkey
                 }
             )
 
-    with pytest.raises(tag_mod.CountryNotInListError) as exc_info:
-        tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
 
-    assert "Atlantis" in str(exc_info.value)
+    assert records[0]["country"] == "Atlantis"
+
+    captured = capsys.readouterr()
+    assert "Atlantis" in captured.err
+    assert "country_list" in captured.err
 
 
 def test_run_tag_makes_exactly_one_llm_call_per_chunk_even_with_two_tagged_axes(

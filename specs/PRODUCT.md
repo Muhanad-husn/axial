@@ -275,7 +275,6 @@ The config/data seam is the pause point. Because the tagger reads the codebook f
 Genuinely unresolved; everything else in this document is settled.
 
 - **[data]** Codebook config format detail — confirm YAML (assumed) vs. JSON, and the exact loader interface. *Non-blocking; YAML assumed for the build.*
-- **[data]** `scope:country-case` country field: controlled list (~15 corpus countries, catches aliasing like Türkiye/Turkey) vs. free-text. *Lean: controlled list, expandable.*
 - **[data/academic]** Theory-school as its own axis vs. claim-type sub-tags vs. Phase-C-only scaffolding. *Deferred to the eval (§10).*
 - **[data]** Agreement metric + survival threshold: raw agreement vs. κ, and the exact cutoff. *Starting hypothesis in §10; tune after first gold set.*
 - **[engineering]** Long-section chunking coherence across multiple calls (overlap window vs. recursive summary). *P1-1.*
@@ -333,7 +332,7 @@ Cardinality: exactly one value.
 - `scope:general` **[FIRM]** — theory with no specific empirical case (Mann on autonomy; Brubaker on groupness).
 - `scope:comparative` **[FIRM]** — explicit cross-case comparison (Skocpol on France/Russia/China).
 - `scope:regional` **[FIRM]** — a region without single-country focus (MENA, post-Soviet, post-colonial Africa).
-- `scope:country-case` **[FIRM]** — a specific country; carries an additional `country` field. Most of the Syria literature (Hinnebusch, Akdedian).
+- `scope:country-case` **[FIRM]** — a specific country; carries an additional `country` field. Most of the Syria literature (Hinnebusch, Akdedian). The model supplies `country` as free text: a non-empty string is required — a missing or empty value stays the hard error it is today — but the value is not validated against a fixed list. Values outside the schema's `country_list` are accepted and logged as candidate additions, never fatal in v0. The controlled list plus its aliasing layer returns as enforced vocabulary only at the post-eval schema revision (§11 step 7).
 - `scope:sub-national` **[TENTATIVE]** — a city, sub-region, single rebel group, or institution. Rule of thumb: if the claim generalizes to the country, tag `country-case`; if it is about the sub-national unit's distinctiveness, tag `sub-national`.
 
 Rationale for the axis: a brief like "does Mann's infrastructural power apply to post-2011 Syria" must retrieve `capacity:infrastructural × scope:general` (Mann) and `capacity:infrastructural × scope:country-case:Syria` (Hinnebusch, Akdedian) *separately*, then synthesize. Without scope, both fall in one undifferentiated bucket.
@@ -386,7 +385,7 @@ axes:
     cardinality: single
     values: [scope:general, scope:comparative, scope:regional, scope:country-case, scope:sub-national]
     extra_fields:
-      scope:country-case: { country: controlled_list }   # see Open Questions
+      scope:country-case: { country: free_text }   # required non-empty; see Appendix C
   theory_school:
     applies_to: [prose]
     cardinality: primary_plus_optional_secondary
@@ -400,7 +399,7 @@ axes:
     applies_to: [prose]
     cardinality: single
     values: [role:setup, role:claim, role:evidence, role:counter-position, role:synthesis, role:methodological, role:digression]
-country_list: [Syria, Turkey, Lebanon, Iraq, Rwanda]   # expandable
+country_list: [Syria, Turkey, Lebanon, Iraq, Rwanda]   # known-corpus reference for logging/aliasing in v0, not a validation gate; becomes enforced vocabulary at §11 step 7
 ```
 
 `codebook.yaml` mirrors this, adding `definition`, `positive_example`, `negative_example` per tag (the Appendix B–F text is the source for those).

@@ -112,7 +112,7 @@ axes:
       - scope:country-case
       - scope:sub-national
     extra_fields:
-      scope:country-case: { country: controlled_list }
+      scope:country-case: { country: free_text }   # required non-empty; see Appendix C
 
   # Appendix E -- Theory-school axis [CANDIDATE]. Grouped controlled
   # vocabulary preserved by group (State / Violence / Ideology) since the
@@ -180,5 +180,7 @@ axes:
       - role:methodological
       - role:digression
 
-# Appendix G -- expandable controlled list for scope:country-case.
+# Appendix G -- known-corpus reference for logging/aliasing in v0, not a
+# validation gate; becomes enforced vocabulary at the post-eval schema
+# revision (PRD §11 step 7).
 country_list: [Syria, Turkey, Lebanon, Iraq, Rwanda]
