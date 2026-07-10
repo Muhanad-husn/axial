@@ -470,19 +470,69 @@ def reject_degenerate_tag_values(raw: str, axes_to_tag: list[str], schema: Schem
             _reject_blank_tag(value, axis_name)
 
 
+# Keys ignored when hunting for the lone remaining candidate entry in an
+# object-shaped single-axis value (`_value_echo_entry`) -- the same "extras"
+# a country-case empirical_scope response may carry alongside its value,
+# plus the primary+secondary shape's own `secondary`/`subtags` (issue #88
+# point 3).
+_AUXILIARY_TAG_OBJECT_KEYS = frozenset({"country", "secondary", "subtags"})
+
+
+def _value_echo_entry(raw_value: dict[str, Any]) -> str | None:
+    """After excluding `_AUXILIARY_TAG_OBJECT_KEYS`, return the lone
+    remaining entry's value when exactly one such entry ECHOES its own key as
+    its string value (`{X: X}`) -- the observed "value-as-key" dialect (e.g.
+    `{'scope:country-case': 'scope:country-case', 'country': ...}`, issue
+    #88 point 3): the model echoes the tag id back as both key and value
+    instead of naming it under `'primary'` or `'value'`. Deliberately
+    narrower than "any lone string entry": a lone entry whose key and value
+    DIFFER (e.g. free-form `{'reasoning': 'some prose'}`) is never a
+    candidate here -- accepting it would let prose parse cleanly only to die
+    fatally at `validate_tag` outside `complete_json`'s re-ask budget,
+    converting today's re-askable `TagParseError` into a source-killer
+    (review finding on issue #88). Returns `None` (never a silent pick) when
+    zero or more than one such echoing candidate remains, so the caller
+    raises `TagParseError` instead."""
+    candidates = [
+        key
+        for key, value in raw_value.items()
+        if key not in _AUXILIARY_TAG_OBJECT_KEYS and isinstance(value, str) and value == key
+    ]
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def parse_tag_response(raw: str, axis_name: str) -> str:
     """Parse the model's raw tagging response into a single axis value.
 
     Accepts a top-level JSON object with `axis_name` as a key, whose value
     is either a bare string (the common case) or a single-element list.
-    Zero or multiple values is a cardinality error, not a silent pick. Also
-    accepts the `{"primary": ..., "secondary": ...}` object shape the shared
-    multi-axis prompt shows for primary+secondary axes -- deepseek-v4-flash
-    sometimes echoes that dialect back for a single-cardinality axis too
-    (issue #62) -- using `primary` as the value and ignoring unrelated extra
-    keys (e.g. a nested `country`), but raising `TagCardinalityError` when
-    `secondary` is non-empty, since a second value asserted on a single axis
-    must never be silently dropped.
+    Zero or multiple values is a cardinality error, not a silent pick.
+
+    Also accepts an object-shaped value -- the dialects deepseek-v4-flash
+    modally answers with for a single-cardinality axis instead of a bare
+    string, most often for `empirical_scope` on `scope:country-case` chunks
+    (issue #62, widened by issue #88) -- resolved in this priority order:
+
+      1. a string `'primary'` (issue #62's original shape, from the shared
+         multi-axis prompt's primary+secondary object dialect);
+      2. else a string `'value'` (issue #88 point 2: `{'value':
+         'scope:country-case', 'country': ...}`);
+      3. else, after excluding auxiliary keys (`'country'`, `'secondary'`,
+         `'subtags'`), exactly ONE remaining entry whose string value ECHOES
+         its own key (`{X: X}`) (issue #88 point 3, the "value-as-key"
+         dialect: `{'scope:country-case': 'scope:country-case', 'country':
+         ...}`) -- narrower than "any lone string entry" on purpose: a lone
+         entry whose key and value differ (e.g. free-form `{'reasoning':
+         'some prose'}`) is never a candidate, since that would let real
+         prose parse cleanly here only to die fatally at `validate_tag`
+         outside the re-ask budget;
+      4. else `TagParseError` -- a genuine multi-candidate (or non-echoing)
+         object is never a silent pick.
+
+    Whichever path resolves the value, a non-empty `secondary` (list or
+    scalar) still raises `TagCardinalityError`, since a second value
+    asserted on a single axis must never be silently dropped; unrelated
+    extra keys (e.g. a nested `country`) are otherwise ignored here.
     """
     try:
         data = parse_model_json(raw)
@@ -497,18 +547,26 @@ def parse_tag_response(raw: str, axis_name: str) -> str:
 
     if isinstance(raw_value, dict):
         primary = raw_value.get("primary")
-        if not isinstance(primary, str):
-            raise TagParseError(
-                f"expected {axis_name!r} value to be a string, got an object "
-                f"without a string 'primary': {raw_value!r}"
-            )
+        value_key = raw_value.get("value")
+        if isinstance(primary, str):
+            extracted = primary
+        elif isinstance(value_key, str):
+            extracted = value_key
+        else:
+            extracted = _value_echo_entry(raw_value)
+            if extracted is None:
+                raise TagParseError(
+                    f"expected {axis_name!r} value to be a string, got an object "
+                    f"without a string 'primary', 'value', or exactly one other "
+                    f"self-echoing entry ({{X: X}}): {raw_value!r}"
+                )
         secondary = raw_value.get("secondary")
         secondary_values = (
             secondary if isinstance(secondary, list) else ([secondary] if secondary else [])
         )
         if secondary_values:
-            raise TagCardinalityError(axis_name, [primary, *secondary_values])
-        return primary
+            raise TagCardinalityError(axis_name, [extracted, *secondary_values])
+        return extracted
 
     values = raw_value if isinstance(raw_value, list) else [raw_value]
 

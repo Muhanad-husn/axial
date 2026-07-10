@@ -227,10 +227,14 @@ def test_parse_tag_response_rejects_multiple_values():
         )
 
 
-def test_parse_tag_response_rejects_a_non_scalar_dict_value_as_a_tag_error():
+def test_parse_tag_response_rejects_a_two_candidate_dict_value_as_a_tag_error():
+    """A dict with two remaining (non-auxiliary) string-valued entries and no
+    'primary'/'value' key is never a silent pick -- issue #88 point 3 widens
+    single-candidate object dialects, but a genuine multi-candidate object
+    still errors."""
     from axial.tag import TagError, parse_tag_response
 
-    raw = json.dumps({"role_in_argument": {"nested": "oops"}})
+    raw = json.dumps({"role_in_argument": {"a": "x", "b": "y"}})
 
     with pytest.raises(TagError):
         parse_tag_response(raw, "role_in_argument")
@@ -304,6 +308,105 @@ def test_parse_tag_response_rejects_an_object_shaped_value_without_a_string_prim
     raw = json.dumps({"role_in_argument": {"secondary": "role:evidence"}})
 
     with pytest.raises(TagParseError):
+        parse_tag_response(raw, "role_in_argument")
+
+
+# --- widened single-axis object dialects (issue #88) ------------------------
+
+
+def test_parse_tag_response_accepts_an_object_shaped_value_using_its_value_key():
+    """`{'value': <str>, 'country': ...}` -- deepseek-v4-flash's modal dialect
+    for scope:country-case chunks (issue #88 point 2)."""
+    from axial.tag import parse_tag_response
+
+    raw = json.dumps({"empirical_scope": {"value": "scope:country-case", "country": "Syria"}})
+
+    value = parse_tag_response(raw, "empirical_scope")
+
+    assert value == "scope:country-case"
+
+
+def test_parse_tag_response_accepts_the_value_as_key_dialect():
+    """`{'scope:country-case': 'scope:country-case', 'country': ...}` -- the
+    other modal dialect (issue #88 point 3): exactly one remaining entry
+    (after excluding 'country'/'secondary'/'subtags') with a string value."""
+    from axial.tag import parse_tag_response
+
+    raw = json.dumps(
+        {"empirical_scope": {"scope:country-case": "scope:country-case", "country": "Syria"}}
+    )
+
+    value = parse_tag_response(raw, "empirical_scope")
+
+    assert value == "scope:country-case"
+
+
+def test_parse_tag_response_primary_wins_over_value_when_both_present():
+    from axial.tag import parse_tag_response
+
+    raw = json.dumps({"role_in_argument": {"primary": "role:claim", "value": "role:evidence"}})
+
+    value = parse_tag_response(raw, "role_in_argument")
+
+    assert value == "role:claim"
+
+
+def test_parse_tag_response_value_key_wins_over_a_bare_single_candidate_entry():
+    """'value' beats the value-as-key fallback when both a 'value' key and
+    another candidate entry are present."""
+    from axial.tag import parse_tag_response
+
+    raw = json.dumps(
+        {"role_in_argument": {"value": "role:claim", "role:evidence": "role:evidence"}}
+    )
+
+    value = parse_tag_response(raw, "role_in_argument")
+
+    assert value == "role:claim"
+
+
+def test_parse_tag_response_rejects_an_object_with_only_auxiliary_keys_and_no_candidate():
+    from axial.tag import TagParseError, parse_tag_response
+
+    raw = json.dumps({"empirical_scope": {"country": "Syria", "secondary": []}})
+
+    with pytest.raises(TagParseError):
+        parse_tag_response(raw, "empirical_scope")
+
+
+def test_parse_tag_response_rejects_a_single_candidate_object_whose_value_is_not_a_string():
+    from axial.tag import TagParseError, parse_tag_response
+
+    raw = json.dumps({"role_in_argument": {"nested": ["not", "a", "string"]}})
+
+    with pytest.raises(TagParseError):
+        parse_tag_response(raw, "role_in_argument")
+
+
+def test_parse_tag_response_rejects_a_single_non_echo_string_entry():
+    """Rule 3 is narrowed to the observed value-as-key ECHO dialect (key ==
+    value) only -- a lone entry whose key and value differ (e.g. free-form
+    'reasoning' prose) is never a candidate, since accepting any lone string
+    entry would let real prose parse cleanly here only to die fatally at
+    `validate_tag` outside the re-ask budget, rather than staying a
+    re-askable `TagParseError` (review finding on issue #88)."""
+    from axial.tag import TagParseError, parse_tag_response
+
+    raw = json.dumps({"role_in_argument": {"reasoning": "some prose"}})
+
+    with pytest.raises(TagParseError):
+        parse_tag_response(raw, "role_in_argument")
+
+
+def test_parse_tag_response_extracted_object_value_still_honors_secondary_cardinality_error():
+    """The widened extraction paths (value-key, value-as-key) still route
+    through the same non-empty-secondary cardinality check the 'primary'
+    path already had."""
+    from axial.tag import TagCardinalityError, parse_tag_response
+
+    raw = json.dumps({"role_in_argument": {"value": "role:claim", "secondary": ["role:evidence"]}})
+
+    with pytest.raises(TagCardinalityError):
         parse_tag_response(raw, "role_in_argument")
 
 
@@ -602,6 +705,28 @@ def test_parse_country_response_rejects_a_non_string_nested_country():
 
     with pytest.raises(TagParseError):
         parse_country_response(raw, "empirical_scope")
+
+
+def test_parse_country_response_accepts_a_nested_country_with_the_value_key_dialect():
+    """`parse_country_response` reads `data[axis_name]['country']` regardless
+    of how the axis's own value was extracted -- confirms the nested-country
+    fallback composes with the 'value' key dialect (issue #88)."""
+    from axial.tag import parse_country_response
+
+    raw = json.dumps({"empirical_scope": {"value": "scope:country-case", "country": "Syria"}})
+
+    assert parse_country_response(raw, "empirical_scope") == "Syria"
+
+
+def test_parse_country_response_accepts_a_nested_country_with_the_value_as_key_dialect():
+    """Same, for the value-as-key dialect (issue #88)."""
+    from axial.tag import parse_country_response
+
+    raw = json.dumps(
+        {"empirical_scope": {"scope:country-case": "scope:country-case", "country": "Syria"}}
+    )
+
+    assert parse_country_response(raw, "empirical_scope") == "Syria"
 
 
 def test_log_country_not_in_list_is_silent_for_an_in_list_value(capsys):
@@ -1372,6 +1497,146 @@ def test_run_tag_out_of_vocab_non_empty_tag_is_immediately_fatal_with_no_reask(
         tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert client.call_count == 1
+
+
+# --- run_tag: widened single-axis object dialects (issue #88) ---------------
+
+
+def test_run_tag_zaum_payload_carries_scope_and_country_with_zero_reasks(monkeypatch, tmp_path):
+    """The exact zaum payload that killed a 5h36m run (issue #88): the model
+    answers empirical_scope in the `{'value': ..., 'country': ...}` dialect.
+    Must parse cleanly on the first response -- zero re-asks needed -- and
+    the record carries both empirical_scope and country."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_empirical_scope(tmp_path, country_list=("East Timor",))
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    class _CountingClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return json.dumps(
+                {
+                    "role_in_argument": "role:claim",
+                    "empirical_scope": {"value": "scope:country-case", "country": "East Timor"},
+                }
+            )
+
+    client = _CountingClient()
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert len(records) == 1
+    assert records[0]["empirical_scope"] == "scope:country-case"
+    assert records[0]["country"] == "East Timor"
+    assert client.call_count == 1
+
+
+def test_run_tag_value_as_key_dialect_carries_scope_and_country_with_zero_reasks(
+    monkeypatch, tmp_path
+):
+    """The other modal dialect (issue #88 point 3): the axis value's dict has
+    exactly one non-auxiliary entry, keyed by the tag value itself."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_empirical_scope(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    class _CountingClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return json.dumps(
+                {
+                    "role_in_argument": "role:claim",
+                    "empirical_scope": {
+                        "scope:country-case": "scope:country-case",
+                        "country": "Syria",
+                    },
+                }
+            )
+
+    client = _CountingClient()
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert len(records) == 1
+    assert records[0]["empirical_scope"] == "scope:country-case"
+    assert records[0]["country"] == "Syria"
+    assert client.call_count == 1
+
+
+def test_run_tag_two_candidate_object_dialect_still_errors(monkeypatch, tmp_path):
+    """A genuine multi-candidate object is never a silent pick -- it stays a
+    (re-askable) TagParseError, and since it never resolves cleanly within
+    complete_json's bounded budget, run_tag ultimately raises."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
+    monkeypatch.setattr(
+        tag_mod,
+        "run_chunk",
+        lambda *args, **kwargs: [
+            {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"}
+        ],
+    )
+
+    class _AlwaysAmbiguousClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return json.dumps({"role_in_argument": {"a": "role:claim", "b": "role:claim"}})
+
+    client = _AlwaysAmbiguousClient()
+
+    with pytest.raises(tag_mod.TagParseError):
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert client.call_count == 3
+
+
+def test_run_tag_reasks_and_succeeds_when_value_key_extracted_value_is_first_empty_string(
+    monkeypatch, tmp_path
+):
+    """The #85 degenerate-response re-ask composes automatically with the
+    widened extraction paths: an empty string extracted via the 'value' key
+    still routes through `reject_degenerate_tag_values` and re-asks rather
+    than failing schema validation on ''."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
+    monkeypatch.setattr(
+        tag_mod,
+        "run_chunk",
+        lambda *args, **kwargs: [
+            {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"}
+        ],
+    )
+
+    degenerate = json.dumps({"role_in_argument": {"value": ""}})
+    clean = json.dumps({"role_in_argument": {"value": "role:claim"}})
+
+    class _ScriptedClient:
+        def __init__(self):
+            self._responses = [degenerate, clean]
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            response = self._responses[self.call_count]
+            self.call_count += 1
+            return response
+
+    client = _ScriptedClient()
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert len(records) == 1
+    assert records[0]["role_in_argument"] == "role:claim"
+    assert client.call_count == 2
 
 
 def test_default_domain_dir_returns_configured_path_when_present(tmp_path):
