@@ -17,7 +17,10 @@ require no network access:
                                      `pass_name` argument to `.complete()`
                                      (e.g. `pass_name="chunk"`, passed by
                                      src/axial/chunk.py, selects a
-                                     chunk-shaped canned response;
+                                     chunk-shaped canned response (or, if
+                                     `AXIAL_STUB_CHUNK_RESPONSE` is set to a
+                                     non-empty value, that raw string
+                                     verbatim -- issue #100);
                                      `pass_name="tag"`, passed by
                                      src/axial/tag.py, selects a tag-shaped
                                      canned response; `pass_name="artifacts"`,
@@ -99,6 +102,16 @@ RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
 # time (not import time) so a test can set/unset it per-subprocess-env.
 # Never affects the chunk or envelope canned responses.
 STUB_TAG_RESPONSE_ENV_VAR = "AXIAL_STUB_TAG_RESPONSE"
+
+# Issue #100 test/CI-only seam: mirrors STUB_TAG_RESPONSE_ENV_VAR above,
+# exactly, for the chunk pass instead of the tag pass. When set to a
+# non-empty value, the stub/record clients' chunk-pass response becomes this
+# raw string verbatim instead of the default canned chunk response, letting
+# a test drive a malformed/invalid-escape chunk payload end-to-end via
+# subprocess (e.g. tests/test_chunk_invalid_escapes.py). Read at call time
+# (not import time), like STUB_TAG_RESPONSE_ENV_VAR. Never affects the tag,
+# artifacts, xref, or envelope canned responses.
+STUB_CHUNK_RESPONSE_ENV_VAR = "AXIAL_STUB_CHUNK_RESPONSE"
 
 # Issue #81 test/CI-only fault-injection seam: when set to a positive,
 # 1-indexed base-10 integer N, the Nth tag-pass call (pass_name ==
@@ -336,6 +349,9 @@ def _canned_response_for(pass_name: str | None) -> str:
     `RecordLLMClient` so `record` is indistinguishable from `stub` for the
     same call."""
     if pass_name == CHUNK_PASS_NAME:
+        override = os.environ.get(STUB_CHUNK_RESPONSE_ENV_VAR, "")
+        if override:
+            return override
         return StubLLMClient._CANNED_CHUNK_RESPONSE
     if pass_name == TAG_PASS_NAME:
         _maybe_fail_tag_call()

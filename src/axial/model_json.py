@@ -10,6 +10,31 @@ instead of just a bare `Expecting value: line 1 column 1 (char 0)`.
 literal control characters (e.g. a raw newline or tab) inside JSON string
 text fields, which strict-mode JSON rejects despite the intent being
 unambiguous.
+
+Issue #100: deepseek-v4-flash, chunking a book dense with Arabic
+transliterations, persistently emits Python-style invalid escapes (e.g.
+`\\'`) inside JSON string values -- content-driven, not stochastic, so it
+survives every one of `complete_json`'s bounded re-asks. `_repair_invalid_escapes`
+drops the backslash from any `\\X` pair whose `X` is outside JSON's legal
+escape set (`" \\ / b f n r t u`) before `json.loads` ever sees the text.
+
+Why a single linear left-to-right pass over the whole raw text is safe and a
+true no-op on already-valid JSON, with no need to track whether the scanner
+is "inside a string": a valid JSON document can only contain a bare
+backslash inside a string (a backslash anywhere else is a syntax error
+`json.loads` would reject regardless of this repair), and *inside* a string
+every backslash must already begin one of the legal escape pairs above --
+otherwise the document was already invalid before repair ran. So repairing
+"a backslash followed by an illegal escape char, anywhere in the text" can
+only ever fire on text that would otherwise fail to parse; it can never
+touch a backslash that is part of a legal escape in valid JSON, because
+every backslash in valid JSON already starts a legal pair. The scanner
+still must walk left-to-right and consume matched escape pairs two
+characters at a time (never a regex lookbehind/lookahead over already-
+consumed backslashes), so a legal `\\\\` (escaped backslash) immediately
+followed by a literal `'` is read as TWO independent tokens -- the escaped
+backslash, THEN a bare apostrophe -- and the apostrophe is left alone rather
+than misread as part of a `\\'` pair.
 """
 
 from __future__ import annotations
@@ -27,6 +52,42 @@ from typing import Any, Callable
 _FENCE_RE = re.compile(r"\A\s*```[^\n]*\n(?P<body>.*)```\s*\Z", re.DOTALL)
 
 _SNIPPET_LIMIT = 300
+
+# JSON's legal single-character escapes (RFC 8259 §7): the char immediately
+# following a backslash inside a string. `u` is included here even though a
+# real `\uXXXX` escape needs 4 following hex digits too -- this repair only
+# decides whether to drop the backslash, never touches what comes after, so
+# `\u` sequences are always left completely untouched (module docstring).
+_LEGAL_ESCAPE_CHARS = frozenset('"\\/bfnrtu')
+
+
+def _repair_invalid_escapes(raw: str) -> str:
+    """Drop the backslash from any `\\X` pair in `raw` whose `X` is outside
+    JSON's legal escape set, left to right, consuming matched pairs two
+    characters at a time so a legal `\\\\` is never misread as starting a
+    pair with whatever character follows it (see module docstring for the
+    full reasoning and the `\\\\'` vs `\\'` distinction). A true no-op on
+    already-valid JSON."""
+    if "\\" not in raw:
+        return raw
+    out: list[str] = []
+    i = 0
+    n = len(raw)
+    while i < n:
+        char = raw[i]
+        if char == "\\" and i + 1 < n:
+            next_char = raw[i + 1]
+            if next_char in _LEGAL_ESCAPE_CHARS:
+                out.append(char)
+                out.append(next_char)
+            else:
+                # Illegal escape: drop the backslash, keep the char.
+                out.append(next_char)
+            i += 2
+            continue
+        out.append(char)
+        i += 1
+    return "".join(out)
 
 
 class ModelJsonError(ValueError):
@@ -139,8 +200,12 @@ def parse_model_json(raw: str) -> Any:
     language tag, closing ```). Plain JSON (with or without surrounding
     whitespace) parses exactly as `json.loads` would. On failure, raises
     `ModelJsonError` whose message includes the decode error and a truncated
-    snippet of the original raw text."""
+    snippet of the original raw text. Before parsing, any invalid string
+    escape (a backslash followed by a character outside JSON's legal escape
+    set) is repaired by dropping the backslash (issue #100) -- a no-op on
+    already-valid JSON; text broken beyond that repair still raises
+    `ModelJsonError` exactly as before."""
     try:
-        return json.loads(_strip_fence(raw), strict=False)
+        return json.loads(_repair_invalid_escapes(_strip_fence(raw)), strict=False)
     except json.JSONDecodeError as exc:
         raise ModelJsonError(f"{exc}; raw response was: {_snippet(raw)}") from exc

@@ -60,6 +60,55 @@ def test_stub_client_returns_chunk_shaped_response_for_the_chunk_pass_name():
         assert isinstance(chunk["text"], str) and chunk["text"].strip()
 
 
+def test_stub_client_chunk_response_defaults_to_an_unset_env_var(monkeypatch):
+    from axial.llm import CHUNK_PASS_NAME, STUB_CHUNK_RESPONSE_ENV_VAR, StubLLMClient
+
+    monkeypatch.delenv(STUB_CHUNK_RESPONSE_ENV_VAR, raising=False)
+    client = StubLLMClient()
+
+    raw = client.complete("some chunking prompt", pass_name=CHUNK_PASS_NAME)
+    parsed = json.loads(raw)
+
+    assert isinstance(parsed["chunks"], list) and len(parsed["chunks"]) > 0
+
+
+def test_stub_client_honors_the_forced_chunk_response_env_var(monkeypatch):
+    from axial.llm import CHUNK_PASS_NAME, STUB_CHUNK_RESPONSE_ENV_VAR, StubLLMClient
+
+    override = '{"chunks": [{"text": "overridden chunk text"}]}'
+    monkeypatch.setenv(STUB_CHUNK_RESPONSE_ENV_VAR, override)
+    client = StubLLMClient()
+
+    raw = client.complete("some chunking prompt", pass_name=CHUNK_PASS_NAME)
+
+    assert raw == override
+
+
+def test_stub_client_chunk_response_override_does_not_affect_other_passes(monkeypatch):
+    from axial.llm import STUB_CHUNK_RESPONSE_ENV_VAR, TAG_PASS_NAME, StubLLMClient
+
+    monkeypatch.setenv(STUB_CHUNK_RESPONSE_ENV_VAR, '{"chunks": [{"text": "overridden"}]}')
+    client = StubLLMClient()
+
+    raw = client.complete("some tagging prompt", pass_name=TAG_PASS_NAME)
+    parsed = json.loads(raw)
+
+    assert "role_in_argument" in parsed
+    assert "chunks" not in parsed
+
+
+def test_record_client_honors_the_forced_chunk_response_env_var(monkeypatch, tmp_path):
+    from axial.llm import CHUNK_PASS_NAME, STUB_CHUNK_RESPONSE_ENV_VAR, RecordLLMClient
+
+    override = '{"chunks": [{"text": "overridden chunk text"}]}'
+    monkeypatch.setenv(STUB_CHUNK_RESPONSE_ENV_VAR, override)
+    record = RecordLLMClient(tmp_path / "prompts.jsonl")
+
+    raw = record.complete("some chunking prompt", pass_name=CHUNK_PASS_NAME)
+
+    assert raw == override
+
+
 def test_stub_client_returns_tag_shaped_response_for_the_tag_pass_name():
     from axial.llm import TAG_PASS_NAME, StubLLMClient
 
