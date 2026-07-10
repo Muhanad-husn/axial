@@ -195,10 +195,28 @@ class ChunkParseError(ChunkError):
     non-empty array of chunk-text objects."""
 
 
+_SLUG_MAX_LEN = 80
+
+
 def _slugify(label: str) -> str:
     """A filesystem/id-safe slug for a section heading, used inside
-    chunk_id. Falls back to "section" if the heading has no alphanumerics."""
+    chunk_id. Falls back to "section" if the heading has no alphanumerics.
+
+    Capped at `_SLUG_MAX_LEN` chars (issue #94): an unbounded slug -- e.g. a
+    section heading that restates a paper's full title -- pushes the note
+    filename (`<chunk_id>.md`, `axial.vault._note_path`) past Windows'
+    260-char MAX_PATH. The cut trims back to the nearest hyphen boundary
+    within the cap where one exists, so the slug never ends mid-word; a
+    trailing hyphen left behind by that trim is stripped. Uniqueness is
+    unaffected: `build_chunk_records` folds the section's own `order` into
+    chunk_id, which already disambiguates sections whose slugs coincide."""
     slug = re.sub(r"[^a-z0-9]+", "-", label.strip().lower()).strip("-")
+    if len(slug) > _SLUG_MAX_LEN:
+        truncated = slug[:_SLUG_MAX_LEN]
+        cut = truncated.rfind("-")
+        if cut > 0:
+            truncated = truncated[:cut]
+        slug = truncated.rstrip("-")
     return slug or "section"
 
 
