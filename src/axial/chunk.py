@@ -48,6 +48,7 @@ from axial.llm import (
     LLMError,
     get_client,
 )
+from axial.model_json import ModelJsonError, parse_model_json
 
 _CHUNK_PROMPT_TEMPLATE = """\
 You are deciding argumentative chunk boundaries for the TARGET SECTION below, \
@@ -196,8 +197,8 @@ def parse_response(raw: str) -> list[dict[str, Any]]:
     with a "chunks" array, or a bare top-level array. Array entries that are
     bare strings are normalized to {"text": <string>} before validation."""
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        data = parse_model_json(raw)
+    except ModelJsonError as exc:
         raise ChunkParseError(f"model response was not valid JSON: {exc}") from exc
 
     if isinstance(data, dict):

@@ -138,6 +138,29 @@ def test_parse_response_rejects_invalid_json():
         parse_response("not json at all")
 
 
+def test_parse_response_accepts_a_markdown_fenced_response():
+    """issue #72: deepseek-v4-flash sometimes wraps its JSON answer in a
+    markdown fence despite the prompt's "no fences" instruction."""
+    from axial.envelope import parse_response
+
+    raw = f"```json\n{json.dumps({'thesis': 'This paper argues X.'})}\n```"
+
+    assert parse_response(raw) == {"thesis": "This paper argues X."}
+
+
+def test_parse_response_rejects_prose_with_a_snippet_in_the_message():
+    """issue #72: parse errors must quote the raw response so failures are
+    diagnosable from worker logs."""
+    from axial.envelope import EnvelopeParseError, parse_response
+
+    raw = "I cannot summarize this paper."
+
+    with pytest.raises(EnvelopeParseError) as exc_info:
+        parse_response(raw)
+
+    assert raw in str(exc_info.value)
+
+
 def test_parse_response_rejects_a_non_object_json_value():
     from axial.envelope import EnvelopeParseError, parse_response
 

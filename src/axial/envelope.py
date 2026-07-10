@@ -23,6 +23,7 @@ import yaml
 
 from axial.extract import ExtractError, extract
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient, LLMError, get_client
+from axial.model_json import ModelJsonError, parse_model_json
 
 ENVELOPES_DIR = Path("data/envelopes")
 
@@ -165,8 +166,8 @@ def compose_prompt(tree: dict) -> str:
 def parse_response(raw: str) -> dict[str, Any]:
     """Parse the model's raw text response as a JSON object."""
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        data = parse_model_json(raw)
+    except ModelJsonError as exc:
         raise EnvelopeParseError(f"model response was not valid JSON: {exc}") from exc
     if not isinstance(data, dict):
         raise EnvelopeParseError(

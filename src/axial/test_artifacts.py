@@ -282,6 +282,29 @@ def test_parse_artifact_role_rejects_invalid_json():
         parse_artifact_role("not json")
 
 
+def test_parse_artifact_role_accepts_a_markdown_fenced_response():
+    """issue #72: deepseek-v4-flash sometimes wraps its JSON answer in a
+    markdown fence despite the prompt's "no fences" instruction."""
+    from axial.artifacts import parse_artifact_role
+
+    raw = f"```json\n{json.dumps({'artifact_role': 'case-study'})}\n```"
+
+    assert parse_artifact_role(raw) == "case-study"
+
+
+def test_parse_artifact_role_rejects_prose_with_a_snippet_in_the_message():
+    """issue #72: parse errors must quote the raw response so failures are
+    diagnosable from worker logs."""
+    from axial.artifacts import ArtifactParseError, parse_artifact_role
+
+    raw = "I cannot classify this section."
+
+    with pytest.raises(ArtifactParseError) as exc_info:
+        parse_artifact_role(raw)
+
+    assert raw in str(exc_info.value)
+
+
 def test_validate_artifact_role_accepts_an_in_schema_role():
     from axial.artifacts import validate_artifact_role
 
