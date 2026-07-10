@@ -252,6 +252,58 @@ def test_build_chunk_records_does_not_collide_across_sections_sharing_a_heading(
     assert first_chapter[0]["section"] == second_chapter[0]["section"] == "Introduction"
 
 
+# --- _slugify cap (issue #94: bounded note filenames) -----------------------
+
+
+def test_slugify_caps_long_heading_at_80_chars():
+    from axial.chunk import _slugify
+
+    heading = "Word " * 60  # slugifies far past the 80-char cap
+    slug = _slugify(heading)
+
+    assert len(slug) <= 80
+
+
+def test_slugify_cuts_at_hyphen_boundary_not_mid_word():
+    from axial.chunk import _slugify
+
+    # Built from 4-char words ("aaaa-bbbb-...") so the raw 80-char cut point
+    # falls mid-word; the capped slug must back up to the preceding hyphen
+    # rather than emit a truncated word fragment.
+    words = [chr(ord("a") + (i % 26)) * 4 for i in range(30)]
+    heading = " ".join(words)
+    slug = _slugify(heading)
+
+    assert len(slug) <= 80
+    for chunk in slug.split("-"):
+        assert chunk == chunk[:4] and len(chunk) == 4, (
+            f"expected every hyphen-separated piece of the capped slug to be "
+            f"a whole 4-char word, got fragment {chunk!r} in slug {slug!r}"
+        )
+
+
+def test_slugify_never_returns_a_trailing_hyphen():
+    from axial.chunk import _slugify
+
+    heading = "Word " * 60
+    slug = _slugify(heading)
+
+    assert not slug.endswith("-")
+
+
+def test_slugify_unchanged_for_short_headings_below_the_cap():
+    from axial.chunk import _slugify
+
+    assert _slugify("Comparative Cases") == "comparative-cases"
+    assert _slugify("Introduction") == "introduction"
+
+
+def test_slugify_all_symbol_heading_still_falls_back_to_section():
+    from axial.chunk import _slugify
+
+    assert _slugify("!!! ??? ***") == "section"
+
+
 # --- run_chunk: envelope-required, no-recompute, neighbour context ----------
 
 
