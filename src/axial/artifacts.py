@@ -30,11 +30,14 @@ pair rather than reinventing a field parser here.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import httpx
+import yaml
 
+from axial.checkpoint import append_checkpoint_record, load_checkpoint_records
 from axial.codebook import Codebook, CodebookError, load_codebook
 from axial.envelope import (
     MissingSourceError as _EnvelopeMissingSourceError,
@@ -59,6 +62,35 @@ from axial.tag import (
 # Default domain directory for the artifacts pass, overridable via a
 # `domain_dir` argument to `run_artifacts` (and the CLI's `--domain` flag).
 DEFAULT_DOMAIN_DIR = Path("config/domains/syria")
+
+# Default artifacts-pass checkpoint directory, mirroring `axial.tag.TAGS_DIR`
+# exactly (issue #98).
+ARTIFACTS_DIR = Path("data/artifacts")
+
+
+def _default_artifacts_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
+    """Resolve the artifacts-checkpoint directory, mirroring
+    `axial.tag._default_tags_dir` exactly: honor `config/pipeline.yaml`'s
+    `paths.artifacts_dir` when declared, else fall back to the module-level
+    `ARTIFACTS_DIR` default (`data/artifacts`, resolved relative to the
+    current working directory). An absent file/key falls back to
+    `ARTIFACTS_DIR`."""
+    if not config_path.is_file():
+        return ARTIFACTS_DIR
+    with config_path.open("r", encoding="utf-8") as handle:
+        document = yaml.safe_load(handle) or {}
+    paths_config = document.get("paths", {}) or {}
+    configured = paths_config.get("artifacts_dir")
+    return Path(configured) if configured else ARTIFACTS_DIR
+
+
+def artifacts_checkpoint_path(source_id: str, artifacts_dir: Path = ARTIFACTS_DIR) -> Path:
+    """The resume path for `source_id`'s artifacts-pass checkpoint (one JSON
+    classified-artifact record per line, appended as each artifact is
+    classified), keyed by the content-hashed source_id -- mirrors
+    `axial.tag.tags_checkpoint_path` exactly (issue #98)."""
+    return artifacts_dir / f"{source_id}.jsonl"
+
 
 _ARTIFACT_ROLE_AXIS = "artifact_role"
 FIELD_AXIS = "field"
@@ -137,6 +169,45 @@ class LLMFailedError(ArtifactsError):
 class ArtifactParseError(ArtifactsError):
     """Raised when the model's classification response is not parseable
     into a single, non-empty `artifact_role` string."""
+
+
+class ArtifactCheckpointCorruptError(ArtifactsError):
+    """Raised by `load_artifact_checkpoint` when a NON-final line of an
+    artifacts checkpoint file is not valid JSON (issue #98, mirroring
+    `axial.tag.TagCheckpointCorruptError`). A torn FINAL line is tolerated (a
+    hard process kill can only ever tear the line currently being appended,
+    always the last one); a torn line anywhere else is genuine corruption
+    unrelated to a kill mid-append, and is a loud, diagnosable error naming
+    the checkpoint path and the offending 1-indexed line number, rather than
+    a silent partial load."""
+
+    def __init__(self, path: Path, line_no: int, cause: json.JSONDecodeError):
+        self.path = path
+        self.line_no = line_no
+        self.cause = cause
+        super().__init__(
+            f"corrupt artifacts checkpoint {path}: line {line_no} is not valid JSON: {cause}"
+        )
+
+
+def append_artifact_checkpoint(path: Path, record: dict[str, Any]) -> None:
+    """Append one classified-artifact record to `path` AS IT IS PRODUCED
+    (issue #98, mirroring `axial.tag.append_tag_checkpoint`): heal any torn
+    tail left by an earlier hard kill, then write+flush the JSON line -- so a
+    mid-artifacts-pass failure leaves every already-classified artifact
+    durably on disk for the resume run."""
+    append_checkpoint_record(path, record)
+
+
+def load_artifact_checkpoint(path: Path) -> list[dict[str, Any]]:
+    """Load already-classified artifact records from an artifacts-pass
+    checkpoint file (the inverse of `append_artifact_checkpoint`), mirroring
+    `axial.tag.load_tag_checkpoint` exactly: a torn final line is healed
+    (dropped, its artifact simply re-classified on resume); a torn non-final
+    line raises `ArtifactCheckpointCorruptError` naming the path and the
+    offending 1-indexed line number. Returns an empty list when the file
+    does not exist yet."""
+    return load_checkpoint_records(path, ArtifactCheckpointCorruptError)
 
 
 # `TagNotInSchemaError` is reused verbatim from `axial.tag` (imported above)
@@ -226,6 +297,15 @@ def _artifact_nodes_with_section(tree: dict) -> list[tuple[dict, str]]:
     return pairs
 
 
+def artifact_id_for_node(source_id: str, node: dict) -> str:
+    """The stable, deterministic `artifact_id` for `node`
+    (`<source_id>_art_<order>`, keeping the node's dotted `order` verbatim)
+    -- factored out of `build_artifact_record` (issue #98) so the checkpoint
+    skip-set can be computed BEFORE a node is classified, not only after."""
+    order = node.get("order", "")
+    return f"{source_id}_art_{order}"
+
+
 def build_artifact_record(
     source_id: str,
     node: dict,
@@ -239,9 +319,8 @@ def build_artifact_record(
     02's `{"primary": ..., "secondary": [...]}` mapping) when given -- a
     schema lacking a `field` axis (e.g. a minimal test fixture domain) omits
     the key entirely rather than emitting `field: null`."""
-    order = node.get("order", "")
     record: dict[str, Any] = {
-        "artifact_id": f"{source_id}_art_{order}",
+        "artifact_id": artifact_id_for_node(source_id, node),
         "artifact_role": role,
         "source_id": source_id,
         "section": section,
@@ -306,6 +385,7 @@ def run_artifacts(
     client: LLMClient | None = None,
     domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    artifacts_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Run the artifact-classification pass on `source_path`.
 
@@ -315,6 +395,21 @@ def run_artifacts(
     prompt composed from the domain codebook's `artifact_role` entries, then
     validates the returned role against the domain schema's `artifact_role`
     axis -- an out-of-schema role is a hard error.
+
+    Artifacts-pass checkpoint/resume (issue #98, mirroring `axial.tag.run_tag`'s
+    `tags_dir` seam): OPT-IN, active only when `artifacts_dir` is supplied
+    (`axial vault write`'s composition threads one in, into BOTH its own
+    direct call and the one nested inside `axial.xref.run_xref` -- see
+    `axial.vault.run_vault_write`'s docstring for why the second call site
+    matters too). Standalone `axial artifacts`/`axial xref` pass none and so
+    behave exactly as before, re-classifying every run. When active: each
+    classified record is appended to `<artifacts_dir>/<source_id>.jsonl` as
+    it is produced (write+flush per artifact); on a later run, artifacts
+    whose `artifact_id` already appears there are reused verbatim and NOT
+    re-sent to the model -- only the missing ones are classified, and
+    checkpointed + fresh records recombine in the tree's stable node order.
+    A mid-pass failure therefore leaves every already-classified artifact on
+    disk, so the retry resumes instead of restarting.
     """
     path = Path(source_path)
     try:
@@ -341,14 +436,33 @@ def run_artifacts(
     except CodebookError as exc:
         raise CodebookLoadFailedError(exc) from exc
 
-    if client is None:
-        try:
-            client = get_client(config_path=config_path)
-        except LLMError as exc:
-            raise LLMFailedError(exc) from exc
+    # Artifacts-pass checkpoint/resume (issue #98), opt-in via `artifacts_dir`.
+    checkpoint_path: Path | None = None
+    already_classified: dict[str, dict[str, Any]] = {}
+    if artifacts_dir is not None:
+        checkpoint_path = artifacts_checkpoint_path(source_id, artifacts_dir)
+        already_classified = {
+            record["artifact_id"]: record for record in load_artifact_checkpoint(checkpoint_path)
+        }
 
     records: list[dict[str, Any]] = []
     for node, section in pairs:
+        # Resume: an artifact already checkpointed by an earlier run is
+        # reused verbatim and never re-sent to the model -- records
+        # recombine in the tree's stable node order (issue #98, mirroring
+        # `run_tag`'s own resume convention).
+        artifact_id = artifact_id_for_node(source_id, node)
+        checkpointed = already_classified.get(artifact_id)
+        if checkpointed is not None:
+            records.append(checkpointed)
+            continue
+
+        if client is None:
+            try:
+                client = get_client(config_path=config_path)
+            except LLMError as exc:
+                raise LLMFailedError(exc) from exc
+
         prompt = compose_artifact_prompt(section, codebook)
 
         try:
@@ -381,6 +495,13 @@ def run_artifacts(
                 "secondary": parsed_field["secondary"],
             }
 
-        records.append(build_artifact_record(source_id, node, section, role, field_value))
+        record = build_artifact_record(source_id, node, section, role, field_value)
+        # Persist this artifact's classified record before moving to the
+        # next one (write+flush per artifact), so a failure on a later
+        # artifact leaves every already-classified one durably checkpointed
+        # for the resume run.
+        if checkpoint_path is not None:
+            append_artifact_checkpoint(checkpoint_path, record)
+        records.append(record)
 
     return records

@@ -127,6 +127,75 @@ def test_stub_client_honors_the_forced_artifact_role_env_var(monkeypatch):
     assert parsed["artifact_role"] == "not-a-real-role"
 
 
+@pytest.fixture(autouse=True)
+def _reset_artifact_call_counter():
+    """The AXIAL_STUB_ARTIFACT_FAIL_AT counter is a per-process module
+    global; reset it before every test so counts don't bleed across tests in
+    one pytest process (mirrors `test_resume.py`'s own `_tag_pass_call_count`
+    reset fixture, issue #98)."""
+    import axial.llm as llm_mod
+
+    llm_mod._artifact_pass_call_count = 0
+    yield
+    llm_mod._artifact_pass_call_count = 0
+
+
+def test_artifact_fail_at_raises_on_the_nth_artifact_call_only(monkeypatch):
+    from axial.llm import ARTIFACTS_PASS_NAME, LLMError, StubLLMClient
+
+    monkeypatch.setenv("AXIAL_STUB_ARTIFACT_FAIL_AT", "2")
+    client = StubLLMClient()
+
+    # First artifacts call succeeds.
+    client.complete("p1", pass_name=ARTIFACTS_PASS_NAME)
+    # Second artifacts call raises an LLMError subclass.
+    with pytest.raises(LLMError):
+        client.complete("p2", pass_name=ARTIFACTS_PASS_NAME)
+    # Third and later still succeed (only the Nth fails).
+    assert client.complete("p3", pass_name=ARTIFACTS_PASS_NAME)
+
+
+def test_artifact_fail_at_counts_only_artifacts_pass_calls(monkeypatch):
+    from axial.llm import ARTIFACTS_PASS_NAME, CHUNK_PASS_NAME, LLMError, StubLLMClient
+
+    monkeypatch.setenv("AXIAL_STUB_ARTIFACT_FAIL_AT", "2")
+    client = StubLLMClient()
+
+    # Chunk-pass calls never advance the artifacts counter.
+    client.complete("c1", pass_name=CHUNK_PASS_NAME)
+    client.complete("c2", pass_name=CHUNK_PASS_NAME)
+
+    # So the first artifacts call is call #1 (succeeds), the second is #2 (fails).
+    client.complete("a1", pass_name=ARTIFACTS_PASS_NAME)
+    with pytest.raises(LLMError):
+        client.complete("a2", pass_name=ARTIFACTS_PASS_NAME)
+
+
+@pytest.mark.parametrize("value", ["", "0", "-3", "notanumber"])
+def test_artifact_fail_at_never_fails_for_unset_or_nonpositive(monkeypatch, value):
+    from axial.llm import ARTIFACTS_PASS_NAME, StubLLMClient
+
+    monkeypatch.setenv("AXIAL_STUB_ARTIFACT_FAIL_AT", value)
+    client = StubLLMClient()
+    for _ in range(5):
+        assert client.complete("p", pass_name=ARTIFACTS_PASS_NAME)
+
+
+def test_artifact_fail_at_is_honored_by_record_client(monkeypatch, tmp_path):
+    from axial.llm import ARTIFACTS_PASS_NAME, LLMError, RecordLLMClient
+
+    monkeypatch.setenv("AXIAL_STUB_ARTIFACT_FAIL_AT", "1")
+    client = RecordLLMClient(tmp_path / "rec.jsonl")
+    with pytest.raises(LLMError):
+        client.complete("p", pass_name=ARTIFACTS_PASS_NAME)
+
+
+def test_stub_injected_artifact_failure_error_is_an_llm_error():
+    from axial.llm import LLMError, StubInjectedArtifactFailureError
+
+    assert issubclass(StubInjectedArtifactFailureError, LLMError)
+
+
 def test_record_client_response_matches_stub_for_the_artifacts_pass_name(tmp_path):
     from axial.llm import ARTIFACTS_PASS_NAME, RecordLLMClient, StubLLMClient
 
