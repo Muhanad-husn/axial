@@ -291,6 +291,31 @@ def test_run_xref_wraps_artifacts_errors(monkeypatch, tmp_path):
         xref_mod.run_xref(source, client=StubLLMClient())
 
 
+def test_run_xref_wraps_tag_errors_from_run_artifacts(monkeypatch, tmp_path):
+    """Live-failure regression (issue #90): `axial.artifacts.run_artifacts`
+    can raise `axial.tag.TagNotInSchemaError` (a `TagError`, not an
+    `ArtifactsError`) directly for an out-of-schema `artifact_role`/`field`
+    value -- `run_xref` must wrap it into `ArtifactsFailedError` too, rather
+    than letting a bare `TagError` escape as a raw traceback (mirrors
+    `axial.vault`'s existing `(ArtifactsError, TagError)` catch for its own
+    direct `run_artifacts` call)."""
+    import axial.xref as xref_mod
+    from axial.tag import TagNotInSchemaError
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(xref_mod, "run_chunk", lambda path, **kwargs: _chunk_records())
+
+    def _raise_tag_error(path, **kwargs):
+        raise TagNotInSchemaError("field", "")
+
+    monkeypatch.setattr(xref_mod, "run_artifacts", _raise_tag_error)
+
+    with pytest.raises(xref_mod.ArtifactsFailedError):
+        xref_mod.run_xref(source, client=StubLLMClient())
+
+
 # --- run_xref: bounded re-ask on complete-but-unparseable JSON (#76) -------
 
 

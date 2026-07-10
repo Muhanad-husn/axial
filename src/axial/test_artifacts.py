@@ -530,3 +530,187 @@ def test_run_artifacts_raises_artifact_parse_error_on_persistently_malformed_jso
         artifacts_mod.run_artifacts(source, client=client)
 
     assert client.call_count == 3
+
+
+# --- run_artifacts: degeneracy re-ask on empty axis values (issue #90) ------
+
+
+def test_reject_degenerate_artifact_values_accepts_a_non_degenerate_response():
+    from axial.artifacts import reject_degenerate_artifact_values
+
+    raw = json.dumps(
+        {"artifact_role": "case-study", "field": {"primary": "state", "secondary": ["ideology"]}}
+    )
+
+    reject_degenerate_artifact_values(raw, _SCHEMA_WITH_FIELD)  # must not raise
+
+
+def test_reject_degenerate_artifact_values_rejects_a_blank_artifact_role():
+    from axial.artifacts import ArtifactParseError, reject_degenerate_artifact_values
+
+    raw = json.dumps({"artifact_role": "  ", "field": {"primary": "state"}})
+
+    with pytest.raises(ArtifactParseError):
+        reject_degenerate_artifact_values(raw, _SCHEMA_WITH_FIELD)
+
+
+def test_reject_degenerate_artifact_values_rejects_a_blank_field_primary():
+    from axial.artifacts import ArtifactParseError, reject_degenerate_artifact_values
+
+    raw = json.dumps({"artifact_role": "case-study", "field": {"primary": ""}})
+
+    with pytest.raises(ArtifactParseError):
+        reject_degenerate_artifact_values(raw, _SCHEMA_WITH_FIELD)
+
+
+def test_reject_degenerate_artifact_values_rejects_a_blank_field_secondary_entry():
+    from axial.artifacts import ArtifactParseError, reject_degenerate_artifact_values
+
+    raw = json.dumps(
+        {"artifact_role": "case-study", "field": {"primary": "state", "secondary": [""]}}
+    )
+
+    with pytest.raises(ArtifactParseError):
+        reject_degenerate_artifact_values(raw, _SCHEMA_WITH_FIELD)
+
+
+def test_reject_degenerate_artifact_values_ignores_field_when_schema_lacks_the_axis():
+    """A schema without a `field` axis (e.g. this module's minimal
+    `_SCHEMA` fixture) is not checked for field degeneracy at all -- mirrors
+    `run_artifacts`'s own `field_axis is not None` gate."""
+    from axial.artifacts import reject_degenerate_artifact_values
+
+    raw = json.dumps({"artifact_role": "case-study"})
+
+    reject_degenerate_artifact_values(raw, _SCHEMA)  # must not raise
+
+
+def test_run_artifacts_reasks_then_succeeds_on_an_empty_field_primary(monkeypatch, tmp_path):
+    """issue #90: an empty-string `field.primary` from the model must
+    trigger a bounded re-ask (via `complete_json`'s `validate` seam), never
+    reach `validate_multi_value_tag` and die as a raw, unwrapped
+    `TagNotInSchemaError` for tag `''`."""
+    import axial.artifacts as artifacts_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(artifacts_mod, "extract", lambda path: _tree_with_one_artifact())
+    monkeypatch.setattr(artifacts_mod, "load_schema", lambda domain_dir: _SCHEMA_WITH_FIELD)
+    monkeypatch.setattr(artifacts_mod, "load_codebook", lambda domain_dir: _CODEBOOK_WITH_FIELD)
+
+    degenerate = json.dumps({"artifact_role": "case-study", "field": {"primary": ""}})
+    valid = json.dumps(
+        {"artifact_role": "case-study", "field": {"primary": "state", "secondary": []}}
+    )
+
+    class _ScriptedClient:
+        def __init__(self):
+            self._responses = [degenerate, valid]
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            response = self._responses[self.call_count]
+            self.call_count += 1
+            return response
+
+    client = _ScriptedClient()
+    records = artifacts_mod.run_artifacts(source, client=client)
+
+    assert len(records) == 1
+    assert records[0]["field"]["primary"] == "state"
+    assert client.call_count == 2
+
+
+def test_run_artifacts_raises_typed_error_on_persistently_empty_field_primary(
+    monkeypatch, tmp_path
+):
+    import axial.artifacts as artifacts_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(artifacts_mod, "extract", lambda path: _tree_with_one_artifact())
+    monkeypatch.setattr(artifacts_mod, "load_schema", lambda domain_dir: _SCHEMA_WITH_FIELD)
+    monkeypatch.setattr(artifacts_mod, "load_codebook", lambda domain_dir: _CODEBOOK_WITH_FIELD)
+
+    degenerate = json.dumps({"artifact_role": "case-study", "field": {"primary": ""}})
+
+    class _AlwaysDegenerateClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return degenerate
+
+    client = _AlwaysDegenerateClient()
+
+    with pytest.raises(artifacts_mod.ArtifactParseError):
+        artifacts_mod.run_artifacts(source, client=client)
+
+    assert client.call_count == 3
+
+
+def test_run_artifacts_reasks_then_succeeds_on_a_blank_artifact_role(monkeypatch, tmp_path):
+    import axial.artifacts as artifacts_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(artifacts_mod, "extract", lambda path: _tree_with_one_artifact())
+    monkeypatch.setattr(artifacts_mod, "load_schema", lambda domain_dir: _SCHEMA)
+    monkeypatch.setattr(artifacts_mod, "load_codebook", lambda domain_dir: _CODEBOOK)
+
+    degenerate = json.dumps({"artifact_role": "   "})
+    valid = json.dumps({"artifact_role": "discard"})
+
+    class _ScriptedClient:
+        def __init__(self):
+            self._responses = [degenerate, valid]
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            response = self._responses[self.call_count]
+            self.call_count += 1
+            return response
+
+    client = _ScriptedClient()
+    records = artifacts_mod.run_artifacts(source, client=client)
+
+    assert len(records) == 1
+    assert records[0]["artifact_role"] == "discard"
+    assert client.call_count == 2
+
+
+def test_run_artifacts_out_of_vocab_field_primary_stays_immediately_fatal_one_call(
+    monkeypatch, tmp_path
+):
+    """A genuine (non-empty) out-of-vocabulary `field.primary` must NEVER be
+    smoothed over by the degeneracy re-ask -- it stays immediately fatal
+    (P0-6), exactly one LLM call."""
+    import axial.artifacts as artifacts_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(artifacts_mod, "extract", lambda path: _tree_with_one_artifact())
+    monkeypatch.setattr(artifacts_mod, "load_schema", lambda domain_dir: _SCHEMA_WITH_FIELD)
+    monkeypatch.setattr(artifacts_mod, "load_codebook", lambda domain_dir: _CODEBOOK_WITH_FIELD)
+
+    class _BogusFieldClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return json.dumps(
+                {"artifact_role": "case-study", "field": {"primary": "not-a-real-field"}}
+            )
+
+    client = _BogusFieldClient()
+
+    with pytest.raises(artifacts_mod.TagNotInSchemaError):
+        artifacts_mod.run_artifacts(source, client=client)
+
+    assert client.call_count == 1
