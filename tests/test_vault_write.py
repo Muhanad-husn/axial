@@ -173,6 +173,32 @@ would look after a real extraction, only without paying for one. Every
 existing assertion is unchanged. data/trees/ isolation is handled by the
 shared, content-snapshot-based `_isolate_persisted_tree_and_envelope_state`
 autouse fixture in tests/conftest.py.
+
+Arrange-mechanism change (issue #68, vault isolation) -- no behavioral
+assertion changed
+-----------------------------------------------------------------------
+Once real gold-corpus notes started landing in the real `data/vault/prose/`
+(27 today, ~9,500 expected), every count-based assertion below (e.g. "exactly
+one prose note per chunk") broke against the real, populated vault -- not a
+cleanup-timing problem (the real notes are still there WHILE the test runs,
+before any teardown could remove anything), so this needed an actual
+isolated `vault_dir`, not just a snapshot/restore. No CLI flag or env var
+exists to redirect `vault_dir`/`envelopes_dir`/the domain directory (all
+resolved by src/axial/vault.py, src/axial/envelope.py, src/axial/extract.py,
+src/axial/tag.py as plain paths relative to the process's cwd -- verified by
+reading each), and editing the real `config/pipeline.yaml` is out of bounds
+(live production config a concurrent ingestion run also reads). So every
+`axial` subprocess this test spawns now runs with `cwd` set to
+`isolated_vault_root` (tests/conftest.py's opt-in fixture, issue #68): a
+fresh per-test staging directory outside this repo entirely, where
+`data/trees/`, `data/envelopes/`, and `data/vault/` all resolve to empty,
+private locations. `TREES_DIR`/`ENVELOPES_DIR`/`VAULT_DIR`/`PROSE_DIR`/
+`ARTIFACTS_DIR` are now computed from that root instead of hardcoded at
+`REPO_ROOT`. The real `data/vault/` is never read, moved, or written by this
+test; the former `clean_envelopes`/`clean_vault` fixtures are no longer
+needed (torn down for free with `tmp_path`) and are removed. Every
+behavioral assertion below is byte-for-byte the same as before this change --
+only where the CLI runs and where this test looks for its own output moved.
 """
 
 from __future__ import annotations
@@ -182,18 +208,12 @@ import os
 import subprocess
 from pathlib import Path
 
-import pytest
 import yaml
 
 from axial.envelope import compute_source_id
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "envelope"
-ENVELOPES_DIR = REPO_ROOT / "data" / "envelopes"
-TREES_DIR = REPO_ROOT / "data" / "trees"
-VAULT_DIR = REPO_ROOT / "data" / "vault"
-PROSE_DIR = VAULT_DIR / "prose"
-ARTIFACTS_DIR = VAULT_DIR / "artifacts"
 
 THESIS_PAPER_PDF = FIXTURES_DIR / "thesis_paper.pdf"
 THESIS_PAPER_TREE_FIXTURE = FIXTURES_DIR / "thesis_paper_tree.json"
@@ -219,35 +239,61 @@ ARGPARSE_FALLBACK_MARKERS = (
 )
 
 
+def _trees_dir(root: Path) -> Path:
+    return root / "data" / "trees"
+
+
+def _envelopes_dir(root: Path) -> Path:
+    return root / "data" / "envelopes"
+
+
+def _vault_dir(root: Path) -> Path:
+    return root / "data" / "vault"
+
+
+def _prose_dir(root: Path) -> Path:
+    return _vault_dir(root) / "prose"
+
+
+def _artifacts_dir(root: Path) -> Path:
+    return _vault_dir(root) / "artifacts"
+
+
 def _run_axial(
     args: list[str],
     provider: str,
     *,
+    cwd: Path,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env[PROVIDER_ENV_VAR] = provider
     if extra_env:
         env.update(extra_env)
+    # `--project REPO_ROOT` tells uv which project/venv to run against while
+    # `cwd` (which may be `isolated_vault_root`, outside this repo entirely
+    # -- see module docstring, "Arrange-mechanism change (issue #68...)")
+    # controls the actual process working directory `axial`'s own relative
+    # path resolution (vault_dir/envelopes_dir/trees_dir/domain_dir) sees.
     return subprocess.run(
-        ["uv", "run", "axial", *args],
-        cwd=REPO_ROOT,
+        ["uv", "run", "--project", str(REPO_ROOT), "axial", *args],
+        cwd=cwd,
         capture_output=True,
         text=True,
         env=env,
     )
 
 
-def _run_envelope(provider: str, *args: str) -> subprocess.CompletedProcess:
-    return _run_axial(["envelope", *args], provider)
+def _run_envelope(provider: str, *args: str, cwd: Path) -> subprocess.CompletedProcess:
+    return _run_axial(["envelope", *args], provider, cwd=cwd)
 
 
-def _run_chunk(provider: str, *args: str) -> subprocess.CompletedProcess:
-    return _run_axial(["chunk", *args], provider)
+def _run_chunk(provider: str, *args: str, cwd: Path) -> subprocess.CompletedProcess:
+    return _run_axial(["chunk", *args], provider, cwd=cwd)
 
 
-def _run_vault_write(provider: str, *args: str) -> subprocess.CompletedProcess:
-    return _run_axial(["vault", "write", *args], provider)
+def _run_vault_write(provider: str, *args: str, cwd: Path) -> subprocess.CompletedProcess:
+    return _run_axial(["vault", "write", *args], provider, cwd=cwd)
 
 
 def _assert_not_argparse_fallback(result: subprocess.CompletedProcess, command: str) -> None:
@@ -261,35 +307,36 @@ def _assert_not_argparse_fallback(result: subprocess.CompletedProcess, command: 
         )
 
 
-def _existing_envelope_files() -> set[Path]:
-    if not ENVELOPES_DIR.exists():
+def _existing_envelope_files(root: Path) -> set[Path]:
+    envelopes_dir = _envelopes_dir(root)
+    if not envelopes_dir.exists():
         return set()
-    return set(ENVELOPES_DIR.glob("*.json"))
+    return set(envelopes_dir.glob("*.json"))
 
 
-def _place_tree_fixture(source_pdf: Path, tree_fixture_path: Path) -> Path:
+def _place_tree_fixture(source_pdf: Path, tree_fixture_path: Path, root: Path) -> Path:
     """Pre-place the committed REAL tree fixture at
-    data/trees/<source_id>.json (source_id via
+    <root>/data/trees/<source_id>.json (source_id via
     axial.envelope.compute_source_id) so `axial.extract.extract` reuses it
     verbatim instead of running docling (see module docstring, "Arrange-
     mechanism change"). Returns the tree path."""
     source_id = compute_source_id(source_pdf)
-    tree_path = TREES_DIR / f"{source_id}.json"
+    tree_path = _trees_dir(root) / f"{source_id}.json"
     tree_path.parent.mkdir(parents=True, exist_ok=True)
     tree_path.write_bytes(tree_fixture_path.read_bytes())
     return tree_path
 
 
-def _arrange_stored_envelope() -> Path:
+def _arrange_stored_envelope(root: Path) -> Path:
     """Pre-place the real tree fixture, then run `axial envelope` with the
     stub provider so a stored envelope exists on disk before vault write,
     and return its path. Asserts the arrange step itself succeeded and
     produced exactly one new envelope file. (Mirrors tests/test_chunk.py's
     helper of the same name.)"""
-    _place_tree_fixture(THESIS_PAPER_PDF, THESIS_PAPER_TREE_FIXTURE)
-    before_files = _existing_envelope_files()
+    _place_tree_fixture(THESIS_PAPER_PDF, THESIS_PAPER_TREE_FIXTURE, root)
+    before_files = _existing_envelope_files(root)
 
-    result = _run_envelope("stub", str(THESIS_PAPER_PDF))
+    result = _run_envelope("stub", str(THESIS_PAPER_PDF), cwd=root)
     _assert_not_argparse_fallback(result, "envelope")
     assert result.returncode == 0, (
         f"arrange step failed: expected exit code 0 for `axial envelope` on "
@@ -297,10 +344,10 @@ def _arrange_stored_envelope() -> Path:
         f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
 
-    new_files = _existing_envelope_files() - before_files
+    new_files = _existing_envelope_files(root) - before_files
     assert len(new_files) == 1, (
         f"arrange step failed: expected exactly one new file under "
-        f"{ENVELOPES_DIR} after `axial envelope`, got {len(new_files)}: "
+        f"{_envelopes_dir(root)} after `axial envelope`, got {len(new_files)}: "
         f"{sorted(new_files)}\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
     return next(iter(new_files))
@@ -354,12 +401,12 @@ def _parse_chunk_records(stdout: str) -> list[dict]:
     return records
 
 
-def _arrange_expected_chunk_records() -> list[dict]:
+def _arrange_expected_chunk_records(root: Path) -> list[dict]:
     """Independently run `axial chunk` (stub) to obtain the real chunk
     records for the fixture, used as the expected set `vault write` must
     match one-for-one (see module docstring, seam decision 2). Requires a
     stored envelope to already exist."""
-    result = _run_chunk("stub", str(THESIS_PAPER_PDF))
+    result = _run_chunk("stub", str(THESIS_PAPER_PDF), cwd=root)
     _assert_not_argparse_fallback(result, "chunk")
     assert result.returncode == 0, (
         f"arrange step failed: expected exit code 0 for `axial chunk` on "
@@ -386,61 +433,6 @@ def _arrange_expected_chunk_records() -> list[dict]:
             f"non-empty 'text', got {record!r}"
         )
     return records
-
-
-def _vault_files() -> set[Path]:
-    if not VAULT_DIR.exists():
-        return set()
-    return {p for p in VAULT_DIR.rglob("*") if p.is_file()}
-
-
-def _vault_dirs() -> set[Path]:
-    if not VAULT_DIR.exists():
-        return set()
-    return {p for p in VAULT_DIR.rglob("*") if p.is_dir()}
-
-
-@pytest.fixture
-def clean_envelopes():
-    """Snapshot data/envelopes/*.json before the test and delete any file
-    the test caused to appear, so runs stay idempotent and the repo is
-    never polluted by a real e2e-run artifact. (Mirrors
-    tests/test_chunk.py's fixture of the same name.)"""
-    before = _existing_envelope_files()
-    yield
-    after = _existing_envelope_files()
-    for created in after - before:
-        created.unlink()
-
-
-@pytest.fixture
-def clean_vault():
-    """Snapshot data/vault/ (files and directories) before the test and
-    remove anything the test caused to newly appear -- files first, then
-    now-empty directories deepest-first, then the data/vault/ root itself
-    if the whole tree was newly created -- so runs stay idempotent and the
-    repo is never polluted by a real e2e-run artifact."""
-    vault_existed_before = VAULT_DIR.exists()
-    before_files = _vault_files()
-    before_dirs = _vault_dirs()
-    yield
-    after_files = _vault_files()
-    for created in after_files - before_files:
-        created.unlink()
-
-    after_dirs = _vault_dirs()
-    new_dirs = after_dirs - before_dirs
-    for created_dir in sorted(new_dirs, key=lambda p: len(p.parts), reverse=True):
-        try:
-            created_dir.rmdir()
-        except OSError:
-            pass  # not empty -- holds content that predates this test's run
-
-    if not vault_existed_before and VAULT_DIR.exists():
-        try:
-            VAULT_DIR.rmdir()
-        except OSError:
-            pass
 
 
 def _split_frontmatter(text: str, note_path: Path) -> tuple[dict, str]:
@@ -475,13 +467,14 @@ def _split_frontmatter(text: str, note_path: Path) -> tuple[dict, str]:
     return frontmatter, body
 
 
-def _find_note_for_chunk(chunk_id: str) -> Path:
-    assert PROSE_DIR.exists(), (
-        f"expected {PROSE_DIR} to exist after `axial vault write` ran, but it does not"
+def _find_note_for_chunk(chunk_id: str, root: Path) -> Path:
+    prose_dir = _prose_dir(root)
+    assert prose_dir.exists(), (
+        f"expected {prose_dir} to exist after `axial vault write` ran, but it does not"
     )
-    matches = [p for p in PROSE_DIR.iterdir() if p.is_file() and p.stem == chunk_id]
+    matches = [p for p in prose_dir.iterdir() if p.is_file() and p.stem == chunk_id]
     assert len(matches) == 1, (
-        f"expected exactly one note file under {PROSE_DIR} whose filename "
+        f"expected exactly one note file under {prose_dir} whose filename "
         f"stem equals chunk_id {chunk_id!r} (plan inner-loop: 'one file is "
         f"written per chunk under data/vault/prose/, named by chunk_id'), "
         f"got {len(matches)}: {sorted(matches)}"
@@ -490,14 +483,15 @@ def _find_note_for_chunk(chunk_id: str) -> Path:
 
 
 def test_vault_write_creates_one_prose_note_per_chunk_with_three_level_frontmatter(
-    clean_envelopes, clean_vault
+    isolated_vault_root,
 ):
-    envelope_path = _arrange_stored_envelope()
+    root = isolated_vault_root
+    envelope_path = _arrange_stored_envelope(root)
     envelope = json.loads(envelope_path.read_bytes())
 
-    expected_records = _arrange_expected_chunk_records()
+    expected_records = _arrange_expected_chunk_records(root)
 
-    result = _run_vault_write("stub", str(THESIS_PAPER_PDF))
+    result = _run_vault_write("stub", str(THESIS_PAPER_PDF), cwd=root)
     _assert_not_argparse_fallback(result, "vault write")
     assert result.returncode == 0, (
         f"expected exit code 0 for `axial vault write` on a fixture source "
@@ -505,14 +499,15 @@ def test_vault_write_creates_one_prose_note_per_chunk_with_three_level_frontmatt
         f"{result.returncode}\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
 
-    assert PROSE_DIR.exists(), (
-        f"expected `axial vault write` to create {PROSE_DIR} and write "
+    prose_dir = _prose_dir(root)
+    assert prose_dir.exists(), (
+        f"expected `axial vault write` to create {prose_dir} and write "
         f"prose notes into it, but it does not exist after a successful run"
     )
 
-    prose_files = [p for p in PROSE_DIR.iterdir() if p.is_file()]
+    prose_files = [p for p in prose_dir.iterdir() if p.is_file()]
     assert len(prose_files) == len(expected_records), (
-        f"expected exactly one prose note per chunk under {PROSE_DIR} "
+        f"expected exactly one prose note per chunk under {prose_dir} "
         f"(Gherkin: 'writes one prose note per chunk'), got "
         f"{len(prose_files)} file(s) for {len(expected_records)} chunk "
         f"record(s). Files: {sorted(p.name for p in prose_files)}; expected "
@@ -521,7 +516,7 @@ def test_vault_write_creates_one_prose_note_per_chunk_with_three_level_frontmatt
 
     for expected in expected_records:
         chunk_id = expected["chunk_id"]
-        note_path = _find_note_for_chunk(chunk_id)
+        note_path = _find_note_for_chunk(chunk_id, root)
         frontmatter, body = _split_frontmatter(note_path.read_text(encoding="utf-8"), note_path)
 
         assert frontmatter.get("chunk_id") == chunk_id, (
@@ -584,12 +579,13 @@ def test_vault_write_creates_one_prose_note_per_chunk_with_three_level_frontmatt
     )
 
 
-def test_vault_write_prose_pool_is_separate_from_empty_artifact_pool(clean_envelopes, clean_vault):
-    _arrange_stored_envelope()
-    expected_records = _arrange_expected_chunk_records()
+def test_vault_write_prose_pool_is_separate_from_empty_artifact_pool(isolated_vault_root):
+    root = isolated_vault_root
+    _arrange_stored_envelope(root)
+    expected_records = _arrange_expected_chunk_records(root)
     expected_chunk_ids = {record["chunk_id"] for record in expected_records}
 
-    result = _run_vault_write("stub", str(THESIS_PAPER_PDF))
+    result = _run_vault_write("stub", str(THESIS_PAPER_PDF), cwd=root)
     _assert_not_argparse_fallback(result, "vault write")
     assert result.returncode == 0, (
         f"expected exit code 0 for `axial vault write` on a fixture source "
@@ -597,14 +593,17 @@ def test_vault_write_prose_pool_is_separate_from_empty_artifact_pool(clean_envel
         f"{result.returncode}\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
 
+    prose_dir = _prose_dir(root)
+    artifacts_dir = _artifacts_dir(root)
+
     # every expected chunk's note must land under prose/, not artifacts/.
     for chunk_id in expected_chunk_ids:
-        _find_note_for_chunk(chunk_id)
+        _find_note_for_chunk(chunk_id, root)
 
-    if ARTIFACTS_DIR.exists():
-        artifact_files = [p for p in ARTIFACTS_DIR.rglob("*") if p.is_file()]
+    if artifacts_dir.exists():
+        artifact_files = [p for p in artifacts_dir.rglob("*") if p.is_file()]
         assert artifact_files == [], (
-            f"expected {ARTIFACTS_DIR} to stay empty this phase (Gherkin: "
+            f"expected {artifacts_dir} to stay empty this phase (Gherkin: "
             f"'the prose pool is a separate surface from "
             f"data/vault/artifacts/, which stays empty this phase'; plan: "
             f"'This slice may create the empty artifact directory but "
@@ -614,13 +613,13 @@ def test_vault_write_prose_pool_is_separate_from_empty_artifact_pool(clean_envel
 
     for chunk_id in expected_chunk_ids:
         artifact_matches = (
-            [p for p in ARTIFACTS_DIR.iterdir() if p.is_file() and p.stem == chunk_id]
-            if ARTIFACTS_DIR.exists()
+            [p for p in artifacts_dir.iterdir() if p.is_file() and p.stem == chunk_id]
+            if artifacts_dir.exists()
             else []
         )
         assert artifact_matches == [], (
             f"expected no prose note for chunk {chunk_id!r} to be written "
-            f"under {ARTIFACTS_DIR} -- the prose pool "
-            f"({PROSE_DIR}) and the artifact pool ({ARTIFACTS_DIR}) must "
+            f"under {artifacts_dir} -- the prose pool "
+            f"({prose_dir}) and the artifact pool ({artifacts_dir}) must "
             f"be separate surfaces (PRD §8 P0-8), got: {artifact_matches}"
         )
