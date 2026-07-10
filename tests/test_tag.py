@@ -136,15 +136,32 @@ Given an extracted fixture source with a stored envelope and chunks,
 When  the user runs `axial tag <fixture>`
 Then  each record carries exactly one `empirical_scope` value drawn from
       the schema
-And   a `scope:country-case` record carries a `country` drawn from the
-      schema's country_list
-And   a country-case with a missing or out-of-list country exits non-zero
-      with a clear error
+And   a `scope:country-case` record carries a non-empty `country` value
+And   a country-case with a missing or empty country exits non-zero with a
+      clear error
+And   a country-case whose country is outside the schema's country_list
+      still succeeds, carries that country verbatim, and is logged as a
+      candidate addition
 
 See specs/PRODUCT.md Appendix C (empirical-scope axis, single-cardinality,
-with `scope:country-case`'s `country` extra field drawn from Appendix G's
-`country_list`) and §7.1 ("a tag not in the schema is a hard error, not a
-silent pass").
+with `scope:country-case`'s `country` extra field, model-supplied free
+text) and §7.1 ("a tag not in the schema is a hard error, not a silent
+pass" -- note `country` is explicitly carved out of this rule per the
+Contract change below; the rule still governs every other axis).
+
+Contract change (spec-drift #77, adjudicated 2026-07-10)
+-----------------------------------------------------------------------
+Issue #77: the placeholder Appendix G `country_list` (5 corpus countries)
+hard-errored real comparative sources (`country 'Chile'`, `country
+'Libya'`), aborting multi-hour tag passes. Founder adjudication (option b):
+v0 accepts any non-empty `country` string; a missing/empty value is still
+the hard error it always was, but an out-of-list value is no longer fatal
+-- it is accepted, carried verbatim on the record, and logged (stderr) as
+a candidate addition. The controlled list returns as an enforced
+validation layer only at the post-eval schema revision (PRD §11 step 7).
+This changes the *validation* behavior only: the happy-path Given clause
+below (stub default response, country=Syria, in-list) is unaffected, since
+in-list behavior is unchanged.
 
 Seam decision 5 -- default stub tag response now carries empirical_scope +
 country, agreed with the implementer as the fixed seam for this slice
@@ -161,14 +178,15 @@ into any assertion (see seam decision 6); it only relies on the Given
 clause's stub behavior to *produce* a country-case record to check against
 the schema-loaded country_list.
 
-To drive the two hard-error scenarios (missing / out-of-list country) end
-to end via subprocess without a second stub client shape, the fixed seam
-agreed with the implementer is the env var `AXIAL_STUB_TAG_RESPONSE`: when
-set, the stub's tag-pass response becomes that raw JSON string verbatim
-instead of the default canned one, letting this test drive exactly which
-malformed tag payload the pipeline receives -- without this test asserting
-anything about how the override is implemented internally, only that the
-env var name and shape are honored end-to-end.
+To drive the remaining hard-error scenario (missing country) and the
+out-of-list acceptance-and-logging scenario end to end via subprocess
+without a second stub client shape, the fixed seam agreed with the
+implementer is the env var `AXIAL_STUB_TAG_RESPONSE`: when set, the stub's
+tag-pass response becomes that raw JSON string verbatim instead of the
+default canned one, letting this test drive exactly which tag payload the
+pipeline receives -- without this test asserting anything about how the
+override is implemented internally, only that the env var name and shape
+are honored end-to-end.
 
 Seam decision 6 -- empirical_scope vocabulary and country_list loaded at
 test time, never hardcoded (mirrors slice 01's seam decision 2)
@@ -177,14 +195,18 @@ Exactly as slice 01 refused to hardcode `role_in_argument` vocabulary, this
 test never hardcodes `"scope:country-case"`, any other scope value, or any
 country name as a *correctness* assertion. It calls `load_schema` at test
 time and asserts every record's `empirical_scope` is a member of
-`schema.axes["empirical_scope"].tag_ids`, and every country-case record's
-`country` is a member of `schema.country_list`. The one place a literal
-value is compared is in the two hard-error scenarios' fabricated
+`schema.axes["empirical_scope"].tag_ids`. For a country-case record it
+asserts `country` is a non-empty string (Contract change above:
+membership in `schema.country_list` is no longer a correctness
+requirement on the happy path, since the stub's default `country: "Syria"`
+happens to be in-list but need not be). The one place a literal value is
+compared is in the hard-error/acceptance scenarios' fabricated
 `AXIAL_STUB_TAG_RESPONSE` payloads themselves (test *input*, not a
 correctness assertion about schema vocabulary) and in checking that the
-CLI's error output actually names the offending out-of-list value the test
-itself chose to inject -- that is an error-quality check ("clear error"
-per the Gherkin), not a vocabulary hardcode.
+CLI's stderr output actually names the offending/out-of-list value the
+test itself chose to inject -- that is an error/log-quality check ("clear
+error" / "logged as a candidate addition" per the Gherkin), not a
+vocabulary hardcode.
 
 Seam decision 7 -- "exactly one" enforced as a scalar, not a list
 -----------------------------------------------------------------------
@@ -195,19 +217,29 @@ list-of-one would satisfy a naive "at least one, all in schema" check but
 would misrepresent the axis's single-cardinality contract and silently
 permit a future regression to multi-valued scope tagging.
 
-Seam decision 8 -- error scenarios assert exit-code and message quality,
-not exact wording
+Seam decision 8 -- error/acceptance scenarios assert exit-code and
+message quality, not exact wording
 -----------------------------------------------------------------------
 Mirroring this file's existing `_assert_not_argparse_fallback` discipline,
-the two hard-error tests assert: (a) a non-zero exit code, (b) the combined
-output carries none of `ARGPARSE_FALLBACK_MARKERS` (so a generic argparse
-failure -- e.g. a malformed CLI invocation -- cannot masquerade as the real
-country-validation error path), and (c) for the out-of-list case, that the
-offending value itself ("Atlantis", chosen locally in that test, not a
-module-level constant, since it is disposable test input rather than a
-locked vocabulary term) appears in the combined stdout+stderr, proving the
-error actually names what was wrong rather than failing generically. No
-assertion pins the exact wording of the error message beyond that.
+the missing-country hard-error test asserts: (a) a non-zero exit code, (b)
+the combined output carries none of `ARGPARSE_FALLBACK_MARKERS` (so a
+generic argparse failure -- e.g. a malformed CLI invocation -- cannot
+masquerade as the real country-validation error path), and (c) non-empty
+stderr. No assertion pins the exact wording of the error message beyond
+that.
+
+Contract change (spec-drift #77, adjudicated 2026-07-10): the former
+out-of-list hard-error test is replaced by an acceptance-and-logging test.
+It asserts (a) exit code 0, (b) no `ARGPARSE_FALLBACK_MARKERS`, (c) the
+tagged record carries the out-of-list country verbatim, and (d) stderr
+names the offending value AND contains the substring `"country_list"` --
+this is deliberately specific (not just "non-empty stderr") because no
+such diagnostic channel exists yet; this test fixes it as the seam the
+implementer builds to: a stderr line naming the out-of-list country and
+the string `country_list`, mirroring `axial.extract`'s existing
+`_log_fallback` convention (non-fatal diagnostics go to stderr, stdout
+stays pure JSON). No assertion pins the exact wording beyond those two
+substrings.
 
 ---------------------------------------------------------------------------
 Slice 03 (issue #29, plans/tag/03-primary-secondary-axes.md) -- the
@@ -621,20 +653,20 @@ def test_tag_assigns_single_in_schema_empirical_scope_and_country(clean_envelope
     (seam decision 5, the Gherkin's Given clause), a plain `axial tag
     <fixture>` run must emit records that each carry exactly one
     empirical_scope value drawn from the schema, and -- for a
-    scope:country-case record -- a country drawn from the schema's
-    country_list. Also checks slice 01's role_in_argument is not regressed."""
+    scope:country-case record -- a non-empty country value (Contract
+    change, spec-drift #77: membership in the schema's country_list is no
+    longer required for correctness; see the dedicated out-of-list
+    acceptance test below for that boundary). Also checks slice 01's
+    role_in_argument is not regressed."""
     _arrange_stored_envelope()
 
     # --- load the schema at test time: never hardcode the empirical_scope
-    # vocabulary, the country_list, or the role_in_argument vocabulary
-    # (seam decision 6) ---
+    # vocabulary or the role_in_argument vocabulary (seam decision 6) ---
     schema = load_schema(str(DOMAIN_DIR))
     valid_scopes = schema.axes["empirical_scope"].tag_ids
     assert valid_scopes, "arrange step failed: schema's empirical_scope axis has no tag ids"
     valid_roles = schema.axes["role_in_argument"].tag_ids
     assert valid_roles, "arrange step failed: schema's role_in_argument axis has no tag ids"
-    valid_countries = schema.country_list
-    assert valid_countries, "arrange step failed: schema's country_list is empty"
 
     tag_result = _run_tag("stub", str(THESIS_PAPER_PDF))
     _assert_not_argparse_fallback(tag_result, "tag")
@@ -673,21 +705,19 @@ def test_tag_assigns_single_in_schema_empirical_scope_and_country(clean_envelope
             f"loaded schema'), got {scope!r} (full record: {record!r})"
         )
 
-        # --- a scope:country-case record carries an in-list country ---
+        # --- a scope:country-case record carries a non-empty country value
+        # (Contract change, spec-drift #77: this happy path's country
+        # happens to be in-list, but membership is no longer part of the
+        # correctness contract -- see the dedicated out-of-list acceptance
+        # test below) ---
         if scope == "scope:country-case":
             country_case_seen = True
             country = record.get("country")
             assert isinstance(country, str) and country.strip(), (
                 f"expected a scope:country-case tagged record to carry a "
                 f"non-empty string 'country' (Appendix C/G, Gherkin: 'a "
-                f"scope:country-case record carries a country drawn from "
-                f"the schema's country_list'), got {country!r} (full "
-                f"record: {record!r})"
-            )
-            assert country in valid_countries, (
-                f"expected the country-case record's 'country' to be a "
-                f"member of the schema's country_list {valid_countries!r}, "
-                f"got {country!r} (full record: {record!r})"
+                f"scope:country-case record carries a non-empty country "
+                f"value'), got {country!r} (full record: {record!r})"
             )
         else:
             assert "country" not in record or not record.get("country"), (
@@ -763,60 +793,111 @@ def test_tag_country_case_missing_country_errors_out(clean_envelopes):
         )
 
 
-def test_tag_country_case_out_of_list_country_errors_out(clean_envelopes):
-    """Slice 02 error path (issue #28). A scope:country-case tag response
-    whose `country` value is not a member of the schema's country_list is
-    a hard error: `axial tag` must exit non-zero with a clear error naming
-    the offending value."""
+# --- Contract change (spec-drift #77, adjudicated 2026-07-10) -------------
+# The placeholder Appendix G country_list (5 corpus countries) hard-errored
+# real comparative sources mid-run (`country 'Chile'`, `country 'Libya'`,
+# both confirmed casualties during gold-corpus ingestion). Founder
+# adjudication (issue #77, option b): v0 accepts any non-empty `country`
+# string; an out-of-list value is no longer fatal. It is:
+#   (a) accepted -- `axial tag` exits 0,
+#   (b) carried verbatim on the tagged record (never rejected, substituted,
+#       or silently coerced to an in-list value), and
+#   (c) logged as a candidate addition -- a non-fatal diagnostic on stderr
+#       (stdout stays pure JSON, mirroring `axial.extract`'s existing
+#       `_log_fallback` convention) naming both the offending country value
+#       and the string "country_list", so the log line is unambiguous
+#       about what the value fell outside of. This test fixes that stderr
+#       shape as the seam the implementer builds to; it does not pin exact
+#       wording beyond those two substrings.
+# A missing/empty country is UNCHANGED -- still the hard error asserted by
+# `test_tag_country_case_missing_country_errors_out` above.
+# ---------------------------------------------------------------------------
+def test_tag_country_case_out_of_list_country_is_accepted_and_logged(clean_envelopes):
+    """Slice 02, contract change (spec-drift #77, adjudicated 2026-07-10).
+    A scope:country-case tag response whose `country` value is not a member
+    of the schema's country_list is no longer a hard error: `axial tag`
+    must exit 0, carry that country verbatim on the tagged record, and log
+    it on stderr as a candidate addition (naming the value and the string
+    'country_list')."""
     _arrange_stored_envelope()
 
-    offending_country = "Atlantis"
+    offending_country = "Chile"
     schema = load_schema(str(DOMAIN_DIR))
     assert offending_country not in schema.country_list, (
         f"test setup invariant broken: {offending_country!r} must not "
         f"already be a member of the schema's country_list "
         f"{schema.country_list!r}, or this test would not actually be "
-        f"exercising the out-of-list error path"
+        f"exercising the out-of-list acceptance path"
     )
 
-    malformed_response = json.dumps(
+    # --- arrange completeness: the tag loop validates every axis in the
+    # response, not just empirical_scope/country (§7.1) -- under the OLD
+    # contract the out-of-list raise fired before the loop reached the
+    # other axes, masking this gap; now that out-of-list is non-fatal, the
+    # loop correctly continues and needs a complete, in-schema payload for
+    # the remaining tagged axes, mirroring StubLLMClient's own canned
+    # response shape (src/axial/llm.py `_CANNED_TAG_RESPONSE`) ---
+    tag_response = json.dumps(
         {
             "role_in_argument": "role:claim",
             "empirical_scope": "scope:country-case",
             "country": offending_country,
+            "field": {"primary": "state", "secondary": ["ideology"]},
+            "claim_type": {"primary": "state-formation", "subtags": ["formation:bellicist"]},
+            "theory_school": {"primary": "bellicist", "status": "candidate"},
         }
     )
 
     tag_result = _run_tag(
         "stub",
         str(THESIS_PAPER_PDF),
-        extra_env={STUB_TAG_RESPONSE_ENV_VAR: malformed_response},
+        extra_env={STUB_TAG_RESPONSE_ENV_VAR: tag_response},
     )
     _assert_not_argparse_fallback(tag_result, "tag")
 
-    assert tag_result.returncode != 0, (
-        f"expected a non-zero exit code for `axial tag` when the tag-pass "
-        f"response declares country={offending_country!r}, which is not a "
-        f"member of the schema's country_list (PRD Appendix C/G, Gherkin: "
-        f"'a country-case with a ... out-of-list country exits non-zero "
-        f"with a clear error'), got exit code 0\nstdout: "
-        f"{tag_result.stdout!r}\nstderr: {tag_result.stderr!r}"
+    assert tag_result.returncode == 0, (
+        f"expected exit code 0 for `axial tag` when the tag-pass response "
+        f"declares country={offending_country!r}, which is not a member of "
+        f"the schema's country_list -- adjudicated spec-drift #77: an "
+        f"out-of-list country is accepted, never fatal, in v0 -- got exit "
+        f"code {tag_result.returncode}\nstdout: {tag_result.stdout!r}\n"
+        f"stderr: {tag_result.stderr!r}"
     )
 
-    combined = tag_result.stdout + tag_result.stderr
-    for marker in ARGPARSE_FALLBACK_MARKERS:
-        assert marker not in combined, (
-            f"expected a real country-validation error path, not a generic "
-            f"argparse fallback (found {marker!r}) masquerading as the "
-            f"out-of-list-country error\nstdout: {tag_result.stdout!r}\n"
-            f"stderr: {tag_result.stderr!r}"
+    tag_records = _parse_tag_records(tag_result.stdout)
+    assert tag_records, (
+        f"expected at least one tagged record on stdout, got none; stdout: {tag_result.stdout!r}"
+    )
+    country_case_records = [
+        record for record in tag_records if record.get("empirical_scope") == "scope:country-case"
+    ]
+    assert country_case_records, (
+        f"expected at least one scope:country-case tagged record given "
+        f"this test's fabricated response, got none among: {tag_records!r}"
+    )
+    for record in country_case_records:
+        assert record.get("country") == offending_country, (
+            f"expected the out-of-list country {offending_country!r} to be "
+            f"carried verbatim on the tagged record (adjudicated spec-drift "
+            f"#77: out-of-list values are accepted as-is, never rejected or "
+            f"substituted), got {record.get('country')!r} (full record: "
+            f"{record!r})"
         )
-    assert offending_country in combined, (
-        f"expected `axial tag`'s error output to name the offending "
-        f"country value {offending_country!r} (Gherkin: 'clear error'; "
-        f"this test's own error-quality bar), got combined output that "
-        f"does not mention it\nstdout: {tag_result.stdout!r}\n"
-        f"stderr: {tag_result.stderr!r}"
+
+    # --- the out-of-list value must still be surfaced as a non-fatal
+    # diagnostic, on stderr (stdout stays pure JSON), naming both the
+    # offending country and the country_list it fell outside of ---
+    assert offending_country in tag_result.stderr, (
+        f"expected `axial tag`'s stderr to name the out-of-list country "
+        f"value {offending_country!r} as a candidate addition (adjudicated "
+        f"spec-drift #77: out-of-list values are 'logged as candidate "
+        f"additions'), got stderr: {tag_result.stderr!r}"
+    )
+    assert "country_list" in tag_result.stderr, (
+        f"expected `axial tag`'s stderr diagnostic for the out-of-list "
+        f"country to name the schema's country_list (so the log line is "
+        f"unambiguous about what the value fell outside of), got stderr: "
+        f"{tag_result.stderr!r}"
     )
 
 

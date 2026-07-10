@@ -25,9 +25,10 @@ code change (PRD §4):
   - `cardinality == "single"` (`role_in_argument`, `empirical_scope`):
     `parse_tag_response` / `validate_tag`, exactly as slices 01/02 built
     them. When `empirical_scope` resolves to `"scope:country-case"`, the
-    same response must also carry a `country` drawn from the schema's
-    `country_list` (Appendix C/G) -- missing or out-of-list is a hard
-    error too.
+    same response must also carry a non-empty `country` (Appendix C/G) --
+    missing or empty is a hard error, but a value outside the schema's
+    `country_list` is accepted verbatim and logged to stderr as a
+    candidate addition, never fatal (spec-drift #77).
   - `cardinality in {"primary_plus_secondary", "primary_plus_optional_
     secondary"}` (`field`, `claim_type`, `theory_school`):
     `parse_multi_value_tag_response` / `validate_multi_value_tag`, one
@@ -51,6 +52,7 @@ without ever calling the LLM for the tag pass.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -240,16 +242,6 @@ class CountryCaseMissingCountryError(TagError):
         super().__init__(
             "empirical_scope 'scope:country-case' requires a 'country' value, but none was provided"
         )
-
-
-class CountryNotInListError(TagError):
-    """Raised when a scope:country-case record's 'country' is not a member
-    of the schema's country_list (PRD Appendix G), naming the offending
-    value so the CLI's error output is actionable."""
-
-    def __init__(self, country: Any):
-        self.country = country
-        super().__init__(f"country {country!r} is not in the schema's country_list")
 
 
 def list_prose_axes(schema: Schema) -> list[str]:
@@ -534,12 +526,22 @@ def parse_country_response(raw: str, axis_name: str | None = None) -> str:
     return country
 
 
-def validate_country(schema: Schema, country: str) -> None:
-    """Validate that `country` exists in the loaded schema's `country_list`
-    (Appendix G); raises `CountryNotInListError` naming the offending value
-    if not."""
+def log_country_not_in_list(schema: Schema, country: str) -> None:
+    """Log a non-fatal diagnostic to stderr when `country` is not a member
+    of the loaded schema's `country_list` (Appendix G).
+
+    Spec-drift #77 (adjudicated 2026-07-10): a controlled country list is no
+    longer enforced in v0 -- any non-empty `country` is accepted verbatim --
+    but an out-of-list value is surfaced as a candidate addition for later
+    review, never raised. Mirrors `axial.extract`'s `_log_fallback`
+    convention: stderr only, stdout stays pure JSON.
+    """
     if country not in schema.country_list:
-        raise CountryNotInListError(country)
+        print(
+            f"country {country!r} is not in the schema's country_list; "
+            f"logging as a candidate addition",
+            file=sys.stderr,
+        )
 
 
 def build_tagged_record(
@@ -594,9 +596,11 @@ def run_tag(
     `cardinality` (`single` vs. one of `MULTI_VALUE_CARDINALITIES`), never
     by axis name -- see the module docstring. When `empirical_scope`
     resolves to `"scope:country-case"`, the same response's `country` is
-    also required and validated against the schema's `country_list`
-    (Appendix C/G). A source whose chunking yields zero chunks yields zero
-    tagged records without ever calling the LLM for the tag pass.
+    also required (non-empty, or `CountryCaseMissingCountryError`); a value
+    outside the schema's `country_list` (Appendix C/G) is accepted verbatim
+    and logged to stderr as a candidate addition, never fatal (spec-drift
+    #77). A source whose chunking yields zero chunks yields zero tagged
+    records without ever calling the LLM for the tag pass.
 
     `domain_dir`, when omitted, is resolved from `config_path`'s
     `paths.domain_dir` (falling back to `DEFAULT_DOMAIN_DIR` when absent --
@@ -671,15 +675,16 @@ def run_tag(
                 value = parse_tag_response(raw_response, axis_name)
                 validate_tag(schema, axis_name, value)
                 values[axis_name] = value
-                # Country validation is checked immediately after
-                # empirical_scope, before any later axis is parsed, so a
-                # missing/out-of-list country is reported even when a
-                # malformed response omits later axes entirely (Appendix
-                # C/G; predates and is independent of the shared
-                # primary+secondary validator above).
+                # Country is parsed immediately after empirical_scope,
+                # before any later axis is parsed, so a missing/empty
+                # country is reported even when a malformed response omits
+                # later axes entirely (Appendix C/G; predates and is
+                # independent of the shared primary+secondary validator
+                # above). An out-of-list value is never fatal (spec-drift
+                # #77): it is accepted verbatim and merely logged.
                 if axis_name == EMPIRICAL_SCOPE_AXIS and value == COUNTRY_CASE_SCOPE_VALUE:
                     country = parse_country_response(raw_response, axis_name)
-                    validate_country(schema, country)
+                    log_country_not_in_list(schema, country)
 
         tagged_records.append(
             build_tagged_record(
