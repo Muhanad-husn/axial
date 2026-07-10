@@ -430,6 +430,69 @@ def test_validate_tag_rejects_an_absent_value_naming_axis_and_tag():
     assert "role:not-a-real-tag" in message
 
 
+# --- axis-prefixed value normalization (issue #96) --------------------------
+
+
+def test_validate_tag_normalizes_axis_prefixed_value_when_suffix_in_vocab():
+    """`field:ideology` -- the field axis's own name prefixed onto its real
+    'ideology' value -- normalizes to 'ideology' instead of raising."""
+    from axial.tag import validate_tag
+
+    result = validate_tag(_SCHEMA, "field", "field:ideology")
+
+    assert result == "ideology"
+
+
+def test_validate_tag_still_rejects_prefixed_but_out_of_vocab_value():
+    """`field:ethnicity` carries the field-axis-name prefix, but 'ethnicity'
+    is not a real field value either -- normalization must not rescue it."""
+    from axial.tag import TagNotInSchemaError, validate_tag
+
+    with pytest.raises(TagNotInSchemaError) as exc_info:
+        validate_tag(_SCHEMA, "field", "field:ethnicity")
+
+    message = str(exc_info.value)
+    assert "field" in message
+    assert "field:ethnicity" in message
+
+
+def test_validate_tag_still_rejects_bare_out_of_vocab_value():
+    """A bare out-of-vocab value with no prefix at all is unaffected by the
+    new normalization and still raises."""
+    from axial.tag import TagNotInSchemaError, validate_tag
+
+    with pytest.raises(TagNotInSchemaError) as exc_info:
+        validate_tag(_SCHEMA, "field", "ethnicity")
+
+    message = str(exc_info.value)
+    assert "field" in message
+    assert "ethnicity" in message
+
+
+def test_validate_tag_does_not_touch_an_axis_whose_own_vocabulary_is_prefixed():
+    """`role_in_argument`'s own vocabulary is itself prefix-shaped
+    (`role:*`); its real value `role:setup` is already in-vocabulary, so
+    normalization never even fires (the first condition, 'raw value NOT in
+    vocabulary', is false) and the value survives verbatim."""
+    from axial.tag import validate_tag
+
+    result = validate_tag(_SCHEMA, "role_in_argument", "role:setup")
+
+    assert result == "role:setup"
+
+
+def test_validate_tag_non_string_value_is_unaffected_and_still_rejected():
+    """A non-string value can never carry a `'<axis_name>:'` prefix, so
+    normalization is a no-op (and must not raise e.g. AttributeError trying
+    string operations on it) -- it still fails schema validation as before."""
+    from axial.tag import TagNotInSchemaError, validate_tag
+
+    with pytest.raises(TagNotInSchemaError) as exc_info:
+        validate_tag(_SCHEMA, "field", 123)
+
+    assert "123" in str(exc_info.value)
+
+
 # --- shared primary+secondary multi-value axis parsing/validation
 # (issue #29 slice 03) ---------------------------------------------------
 
@@ -608,6 +671,28 @@ def test_validate_multi_value_tag_rejects_an_undeclared_subtag_naming_axis_and_s
     message = str(exc_info.value)
     assert "claim_type" in message
     assert "not-a-real-subtag" in message
+
+
+def test_validate_multi_value_tag_normalizes_a_prefixed_primary_in_place():
+    """`validate_multi_value_tag` mutates `parsed["primary"]` to the
+    normalized suffix (issue #96), so callers reading `parsed` afterward
+    (both `run_tag` and `axial.artifacts`) see the normalized value."""
+    from axial.tag import validate_multi_value_tag
+
+    parsed = {"primary": "field:ideology", "secondary": []}
+    validate_multi_value_tag(_SCHEMA_WITH_MULTI_VALUE_AXES, "field", parsed)
+
+    assert parsed["primary"] == "ideology"
+
+
+def test_validate_multi_value_tag_normalizes_prefixed_secondary_entries_in_place():
+    """Each `secondary` list entry is normalized the same way as `primary`."""
+    from axial.tag import validate_multi_value_tag
+
+    parsed = {"primary": "state", "secondary": ["field:ideology", "violence"]}
+    validate_multi_value_tag(_SCHEMA_WITH_MULTI_VALUE_AXES, "field", parsed)
+
+    assert parsed["secondary"] == ["ideology", "violence"]
 
 
 def test_validate_multi_value_tag_rejects_a_subtag_declared_under_a_different_primary():
