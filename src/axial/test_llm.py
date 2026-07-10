@@ -464,6 +464,55 @@ def test_openrouter_client_retries_a_read_timeout_then_succeeds(monkeypatch):
     assert call_count == 3
 
 
+def test_openrouter_client_retries_a_read_error_then_succeeds(monkeypatch):
+    """A raw TCP reset surfaces as httpx.ReadError -- a TransportError
+    subclass but not a TimeoutException -- and must be retried exactly like
+    a timeout (issue #82)."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise httpx.ReadError("connection forcibly closed", request=request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    result = client.complete("hello world")
+
+    assert result == "model reply"
+    assert call_count == 2
+
+
+def test_openrouter_client_gives_up_after_max_attempts_on_a_persistent_read_error(monkeypatch):
+    """A persistent ReadError exhausts the retry budget and propagates,
+    exactly like a persistent timeout (issue #82)."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        raise httpx.ReadError("connection forcibly closed", request=request)
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    with pytest.raises(httpx.ReadError):
+        client.complete("hello world")
+
+    assert call_count == 3
+
+
 def test_openrouter_client_retries_a_429_then_succeeds(monkeypatch):
     import axial.llm as llm_module
     from axial.llm import OpenRouterClient

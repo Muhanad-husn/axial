@@ -431,7 +431,11 @@ _REQUEST_TIMEOUT = httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=15.0
 # HTTP 429, or a 5xx -- must not abort a multi-hour ingestion run. 3 total
 # attempts, short exponential backoff between them. Any other failure (a
 # non-retryable 4xx via `raise_for_status`, or a malformed response shape)
-# fails immediately, exactly as before this issue.
+# fails immediately, exactly as before this issue. Issue #82 widens the
+# caught exception from `httpx.TimeoutException` to its superclass
+# `httpx.TransportError`: a raw TCP reset surfaces as `httpx.ReadError` (or
+# `ConnectError`/`WriteError`/`RemoteProtocolError`), not a timeout, and is
+# exactly as transient.
 #
 # Issue #66 extends the same budget to a well-shaped HTTP 200 whose
 # `content` is empty/whitespace/None: a provider occasionally answers with
@@ -502,7 +506,7 @@ class OpenRouterClient:
                         "max_tokens": _MAX_COMPLETION_TOKENS,
                     },
                 )
-            except httpx.TimeoutException:
+            except httpx.TransportError:
                 if is_last_attempt:
                     raise
                 _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
