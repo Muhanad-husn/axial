@@ -874,6 +874,63 @@ def test_openrouter_client_does_not_double_retry_empty_and_truncated_in_one_atte
     assert call_count == 3
 
 
+# --- malformed API response body retry (issue #86) -------------------------
+
+
+def test_openrouter_client_retries_a_malformed_response_body_then_succeeds(monkeypatch):
+    """An HTTP 200 whose body is not valid JSON (e.g. a proxy error page)
+    must be retried within the same bounded budget as any other transient
+    failure, not let a raw `json.JSONDecodeError` escape (issue #86)."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(200, content=b"<html>proxy error</html>")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    result = client.complete("hello world")
+
+    assert result == "model reply"
+    assert call_count == 2
+
+
+def test_openrouter_client_gives_up_after_max_attempts_on_persistent_malformed_body(monkeypatch):
+    """If every attempt returns a non-JSON body, the client must give up
+    after the same bounded budget as any other transient failure and raise a
+    typed `OpenRouterError` (an `LLMError` -- the CLI error surface) naming
+    the condition with a body snippet for diagnosability (issue #86)."""
+    import axial.llm as llm_module
+    from axial.llm import LLMError, OpenRouterClient, OpenRouterError
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+    garbage = b"<html>proxy error</html>" + b"\n" * 5
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(200, content=garbage)
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    with pytest.raises(OpenRouterError, match="malformed") as exc_info:
+        client.complete("hello world")
+
+    assert call_count == 3
+    assert isinstance(exc_info.value, LLMError)
+    assert "proxy error" in str(exc_info.value)
+
+
 # --- secrets.toml error handling (issue #23 review findings) --------------
 
 
