@@ -99,6 +99,23 @@ RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
 # time (not import time) so a test can set/unset it per-subprocess-env.
 # Never affects the chunk or envelope canned responses.
 STUB_TAG_RESPONSE_ENV_VAR = "AXIAL_STUB_TAG_RESPONSE"
+
+# Issue #81 test/CI-only fault-injection seam: when set to a positive,
+# 1-indexed base-10 integer N, the Nth tag-pass call (pass_name ==
+# TAG_PASS_NAME) any stub/record client makes IN THE CURRENT PROCESS raises
+# a `StubInjectedTagFailureError` (an `LLMError` subclass) instead of
+# returning the canned tag response; every call before the Nth still returns
+# the normal canned response. The counter (`_tag_pass_call_count`) is
+# per-process and never persisted across processes -- a fresh `axial`
+# subprocess starts counting from zero. Read fresh from the environment on
+# every call (like STUB_TAG_RESPONSE_ENV_VAR above); unset/""/non-positive
+# means "never fail" (today's behavior). Honored by the shared canned-response
+# dispatch both `stub` and `record` delegate to, so either provider drives it.
+# This is the only existing seam that can let the first K tag calls succeed
+# and the (K+1)th fail -- exactly what a mid-tag-pass checkpoint/resume test
+# needs (issue #81).
+STUB_TAG_FAIL_AT_ENV_VAR = "AXIAL_STUB_TAG_FAIL_AT"
+
 SECRETS_PATH_ENV_VAR = "AXIAL_SECRETS_PATH"
 DEFAULT_PIPELINE_CONFIG_PATH = Path("config/pipeline.yaml")
 DEFAULT_SECRETS_PATH = Path("secrets/secrets.toml")
@@ -163,6 +180,13 @@ _DEFAULT_STUB_ARTIFACT_ROLE = "case-study"
 # artifact-id-shaped but nonexistent string drives the dangling-link path
 # (see tests/test_xref.py's module docstring, seam decision 2).
 STUB_XREF_TARGET_ENV_VAR = "AXIAL_STUB_XREF_TARGET"
+
+# Per-process, 1-indexed counter of tag-pass canned-response dispatches,
+# driving the AXIAL_STUB_TAG_FAIL_AT fault-injection seam (issue #81). A
+# module global so it is shared across both the `stub` and `record` clients
+# (which delegate to the same `_canned_response_for` dispatch) and reset
+# naturally to zero at the start of every fresh `axial` subprocess.
+_tag_pass_call_count = 0
 
 
 class LLMClient(Protocol):
@@ -296,6 +320,7 @@ def _canned_response_for(pass_name: str | None) -> str:
     if pass_name == CHUNK_PASS_NAME:
         return StubLLMClient._CANNED_CHUNK_RESPONSE
     if pass_name == TAG_PASS_NAME:
+        _maybe_fail_tag_call()
         override = os.environ.get(STUB_TAG_RESPONSE_ENV_VAR, "")
         if override:
             return override
@@ -357,6 +382,43 @@ class LLMConfigError(LLMError, ValueError):
 
 class OpenRouterError(LLMError):
     """Raised when the OpenRouter API returns an error or malformed response."""
+
+
+class StubInjectedTagFailureError(LLMError):
+    """Raised by the shared stub/record canned-response dispatch when the
+    `AXIAL_STUB_TAG_FAIL_AT` seam fires on the Nth tag-pass call (issue #81).
+
+    A subclass of `LLMError` (never a bare exception) precisely so it
+    propagates like a real transport-level failure: unchanged through
+    `axial.model_json.complete_json` (which catches only malformed JSON) and
+    caught by `axial.tag.run_tag`'s `except (LLMError, httpx.HTTPError)` ->
+    `LLMFailedError` -> `axial.vault.run_vault_write`'s `except TagError` ->
+    `TaggingFailedError` -> the CLI's `except VaultError` typed-error/
+    non-zero-exit path -- i.e. exactly today's mid-tag failure contract, not
+    a new branch."""
+
+
+def _maybe_fail_tag_call() -> None:
+    """Advance the per-process tag-pass call counter and, when
+    `AXIAL_STUB_TAG_FAIL_AT` names a positive integer equal to the new count,
+    raise `StubInjectedTagFailureError` (issue #81's mid-tag fault seam).
+
+    Read fresh from the environment on every call; an unset, empty,
+    non-integer, or non-positive value never fails (today's behavior). The
+    counter advances for every tag-pass dispatch regardless, so the "Nth tag
+    call" is well-defined independent of whether the seam is armed."""
+    global _tag_pass_call_count
+    _tag_pass_call_count += 1
+    raw = os.environ.get(STUB_TAG_FAIL_AT_ENV_VAR, "")
+    try:
+        fail_at = int(raw)
+    except (TypeError, ValueError):
+        return
+    if fail_at > 0 and _tag_pass_call_count == fail_at:
+        raise StubInjectedTagFailureError(
+            f"{STUB_TAG_FAIL_AT_ENV_VAR}={fail_at}: injected tag-pass failure "
+            f"on tag call #{_tag_pass_call_count} (issue #81 fault-injection seam)"
+        )
 
 
 # httpx's 5s default read timeout kills a real completion before it starts:

@@ -74,8 +74,9 @@ from axial.envelope import (
     envelope_path,
     _default_envelopes_dir,
 )
+from axial.chunk import _default_chunks_dir
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
-from axial.tag import TagError, run_tag
+from axial.tag import TagError, _default_tags_dir, run_tag
 from axial.xref import XrefError, run_xref
 
 # Source-level fields reused verbatim from the envelope (PRD §7.2), excluding
@@ -330,6 +331,8 @@ def run_vault_write(
     vault_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
+    chunks_dir: Path | None = None,
+    tags_dir: Path | None = None,
 ) -> list[Path]:
     """Run vault write on `source_path`: read the stored envelope (never
     recomputing it), run the tagging pass internally via `axial.tag.run_tag`
@@ -364,8 +367,26 @@ def run_vault_write(
         raise MissingEnvelopeError(env_path)
     envelope = json.loads(env_path.read_text(encoding="utf-8"))
 
+    # Per-chunk checkpoint/resume (issue #81): scoped to vault write. Resolve
+    # both checkpoint dirs here and thread them into the internal passes so the
+    # chunk-pass checkpoint is reused (zero chunking LLM calls on a resumed
+    # run) and the tag-pass checkpoint drives per-chunk resume; the standalone
+    # `axial chunk`/`axial tag` passes, which never receive these, keep their
+    # existing recompute-every-run behavior.
+    if chunks_dir is None:
+        chunks_dir = _default_chunks_dir(config_path)
+    if tags_dir is None:
+        tags_dir = _default_tags_dir(config_path)
+
     try:
-        records = run_tag(path, client=client, envelopes_dir=envelopes_dir, config_path=config_path)
+        records = run_tag(
+            path,
+            client=client,
+            envelopes_dir=envelopes_dir,
+            config_path=config_path,
+            tags_dir=tags_dir,
+            chunks_dir=chunks_dir,
+        )
     except TagError as exc:
         raise TaggingFailedError(exc) from exc
 
@@ -383,6 +404,7 @@ def run_vault_write(
             domain_dir=domain_dir,
             envelopes_dir=envelopes_dir,
             config_path=config_path,
+            chunks_dir=chunks_dir,
         )
     except XrefError as exc:
         raise XrefFailedError(exc) from exc

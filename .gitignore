@@ -15,3 +15,5 @@ PR_BODY.generated.md
 .tdd-branch-cleanup.log
 data/envelopes/
 data/trees/
+data/chunks/
+data/tags/

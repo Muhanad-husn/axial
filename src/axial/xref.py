@@ -160,6 +160,7 @@ def run_xref(
     domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
     envelopes_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    chunks_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Run the cross-reference-detection pass on `source_path`.
 
@@ -184,7 +185,11 @@ def run_xref(
 
     try:
         chunk_records = run_chunk(
-            path, client=client, envelopes_dir=envelopes_dir, config_path=config_path
+            path,
+            client=client,
+            envelopes_dir=envelopes_dir,
+            config_path=config_path,
+            chunks_dir=chunks_dir,
         )
     except ChunkError as exc:
         raise ChunkingFailedError(exc) from exc
