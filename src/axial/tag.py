@@ -52,6 +52,7 @@ without ever calling the LLM for the tag pass.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,7 @@ import httpx
 import yaml
 
 from axial.chunk import ChunkError, run_chunk
+from axial.envelope import compute_source_id
 from axial.codebook import Codebook, CodebookError, load_codebook
 from axial.llm import (
     DEFAULT_PIPELINE_CONFIG_PATH,
@@ -88,6 +90,105 @@ def _default_domain_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Pat
     paths_config = document.get("paths", {}) or {}
     configured = paths_config.get("domain_dir")
     return Path(configured) if configured else DEFAULT_DOMAIN_DIR
+
+
+TAGS_DIR = Path("data/tags")
+
+
+def _default_tags_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
+    """Resolve the tag-checkpoint directory, mirroring
+    `axial.envelope._default_envelopes_dir` / `axial.chunk._default_chunks_dir`
+    exactly: honor `config/pipeline.yaml`'s `paths.tags_dir` when declared,
+    else fall back to the module-level `TAGS_DIR` default (`data/tags`,
+    resolved relative to the current working directory). An absent file/key
+    falls back to `TAGS_DIR`."""
+    if not config_path.is_file():
+        return TAGS_DIR
+    with config_path.open("r", encoding="utf-8") as handle:
+        document = yaml.safe_load(handle) or {}
+    paths_config = document.get("paths", {}) or {}
+    configured = paths_config.get("tags_dir")
+    return Path(configured) if configured else TAGS_DIR
+
+
+def tags_checkpoint_path(source_id: str, tags_dir: Path = TAGS_DIR) -> Path:
+    """The resume path for `source_id`'s tag-pass checkpoint (one JSON tagged
+    record per line, appended as each chunk is tagged), keyed by the
+    content-hashed source_id so an edited file never reuses a stale tag set
+    (issue #81 point 2)."""
+    return tags_dir / f"{source_id}.jsonl"
+
+
+def _heal_torn_checkpoint_tail(path: Path) -> None:
+    """Truncate a torn tail left by a hard kill mid-`append_tag_checkpoint`
+    (issue #81 hardening), so the next append always starts a fresh record on
+    its own line. `append_tag_checkpoint` only ever writes and flushes one
+    line at a time, so a kill can only tear the byte sequence currently being
+    written -- always whatever comes after the last completed newline.
+    Appending straight onto a torn tail without healing first would glue the
+    next record onto the fragment, corrupting THAT line too; truncating the
+    torn bytes first (rather than e.g. prefixing a newline guard) restores
+    the file to "every line complete" before the new line is ever written, so
+    `load_tag_checkpoint` sees a clean file afterward. A no-op when the file
+    doesn't exist yet or already ends cleanly (empty, or ends with '\\n')."""
+    if not path.exists():
+        return
+    data = path.read_bytes()
+    if not data or data.endswith(b"\n"):
+        return
+    last_newline = data.rfind(b"\n")
+    healed = data[: last_newline + 1] if last_newline != -1 else b""
+    path.write_bytes(healed)
+
+
+def append_tag_checkpoint(path: Path, record: dict[str, Any]) -> None:
+    """Append one tagged record to `path` AS IT IS PRODUCED (issue #81 point
+    2): heal any torn tail left by an earlier hard kill (see
+    `_heal_torn_checkpoint_tail`), then open in append mode, write the JSON
+    line, and close so the write is flushed to disk before the next chunk is
+    tagged -- so a mid-tag failure leaves every already-tagged chunk durably
+    on disk for the resume run. Creates parent directories as needed."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _heal_torn_checkpoint_tail(path)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record) + "\n")
+
+
+def load_tag_checkpoint(path: Path) -> list[dict[str, Any]]:
+    """Load already-tagged records from a tag-pass checkpoint file (the
+    inverse of `append_tag_checkpoint`), skipping blank lines. Returns an
+    empty list when the file does not exist yet (the first, never-interrupted
+    run).
+
+    Hardening (issue #81): a hard process kill (OOM kill, Stop-Process) mid-
+    `append_tag_checkpoint` can leave the file's LAST line partially flushed
+    -- since each append writes and flushes exactly one line before
+    returning, a kill can only ever tear the line currently in flight, which
+    is always the last one. That torn final line is dropped silently (its
+    chunk simply re-tags on the resume run) rather than raising -- a torn
+    checkpoint would otherwise permanently poison that source's resume,
+    strictly worse than no checkpoint at all. A torn line that is NOT the
+    last one is genuine corruption unrelated to a kill mid-append (e.g. disk
+    corruption or a manual edit), and still raises loudly
+    (`TagCheckpointCorruptError`, naming the path and the offending
+    1-indexed line number)."""
+    if not path.exists():
+        return []
+    numbered_lines = [
+        (line_no, stripped)
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if (stripped := line.strip())
+    ]
+    records: list[dict[str, Any]] = []
+    for index, (line_no, line) in enumerate(numbered_lines):
+        is_last = index == len(numbered_lines) - 1
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            if is_last:
+                break
+            raise TagCheckpointCorruptError(path, line_no, exc) from exc
+    return records
 
 
 ROLE_IN_ARGUMENT_AXIS = "role_in_argument"
@@ -241,6 +342,25 @@ class CountryCaseMissingCountryError(TagError):
     def __init__(self):
         super().__init__(
             "empirical_scope 'scope:country-case' requires a 'country' value, but none was provided"
+        )
+
+
+class TagCheckpointCorruptError(TagError):
+    """Raised by `load_tag_checkpoint` when a NON-final line of a tag
+    checkpoint file is not valid JSON (issue #81 hardening). A torn FINAL
+    line is tolerated (a hard process kill can only ever tear the line
+    currently being appended, always the last one -- see
+    `load_tag_checkpoint`'s docstring); a torn line anywhere else is genuine
+    corruption unrelated to a kill mid-append, and is a loud, diagnosable
+    error naming the checkpoint path and the offending 1-indexed line
+    number, rather than a silent partial load."""
+
+    def __init__(self, path: Path, line_no: int, cause: json.JSONDecodeError):
+        self.path = path
+        self.line_no = line_no
+        self.cause = cause
+        super().__init__(
+            f"corrupt tag checkpoint {path}: line {line_no} is not valid JSON: {cause}"
         )
 
 
@@ -585,6 +705,8 @@ def run_tag(
     envelopes_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     domain_dir: str | Path | None = None,
+    tags_dir: Path | None = None,
+    chunks_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Run the tagging pass on `source_path`.
 
@@ -606,6 +728,20 @@ def run_tag(
     `paths.domain_dir` (falling back to `DEFAULT_DOMAIN_DIR` when absent --
     `_default_domain_dir`, mirroring `_default_envelopes_dir`); an explicit
     `domain_dir` always overrides config (issue #38).
+
+    Tag-pass checkpoint/resume (issue #81 point 2/3): OPT-IN, active only when
+    a `tags_dir` is supplied (the `axial vault write` composition threads one
+    in; standalone `axial tag` passes none and so behaves exactly as before,
+    re-tagging every run -- the reuse feature is deliberately scoped to vault
+    write). When active: each tagged record is appended to
+    `<tags_dir>/<source_id>.jsonl` as it is produced (write+flush per chunk);
+    on a later run, chunks whose `chunk_id` already appears there are reused
+    verbatim and NOT re-sent to the model, only the missing ones are tagged,
+    and checkpointed + fresh records recombine in the chunker's stable order.
+    A mid-tag failure therefore leaves every already-tagged chunk on disk, so
+    the retry resumes instead of restarting. `chunks_dir`, when supplied, is
+    threaded through to the internal `run_chunk` so the chunk-pass checkpoint
+    is reused on the same terms (no chunking LLM call on a resumed run).
     """
     if domain_dir is None:
         domain_dir = _default_domain_dir(config_path)
@@ -622,10 +758,28 @@ def run_tag(
 
     try:
         chunk_records = run_chunk(
-            source_path, client=client, envelopes_dir=envelopes_dir, config_path=config_path
+            source_path,
+            client=client,
+            envelopes_dir=envelopes_dir,
+            config_path=config_path,
+            chunks_dir=chunks_dir,
         )
     except ChunkError as exc:
         raise ChunkingFailedError(exc) from exc
+
+    # Tag-pass checkpoint/resume (issue #81 point 2/3), opt-in via `tags_dir`.
+    # The checkpoint is keyed by the content-hashed source_id -- the same one
+    # `run_chunk` (which already validated the file exists, above) derives --
+    # read here from the source path, which every `axial vault write` (the only
+    # caller that supplies `tags_dir`) has on disk.
+    checkpoint_path: Path | None = None
+    already_tagged: dict[str, dict[str, Any]] = {}
+    if tags_dir is not None:
+        source_id = compute_source_id(Path(source_path))
+        checkpoint_path = tags_checkpoint_path(source_id, tags_dir)
+        already_tagged = {
+            record["chunk_id"]: record for record in load_tag_checkpoint(checkpoint_path)
+        }
 
     # Only tag axes the loaded schema actually declares (TAGGED_AXES'
     # comment above): a minimal domain missing empirical_scope is tagged on
@@ -634,6 +788,15 @@ def run_tag(
 
     tagged_records: list[dict[str, Any]] = []
     for chunk_record in chunk_records:
+        # Resume: a chunk already checkpointed by an earlier run is reused
+        # verbatim and never re-sent to the model -- records recombine in the
+        # chunker's stable order (issue #81 point 2), so note writing is
+        # identical to a never-interrupted run.
+        checkpointed = already_tagged.get(chunk_record["chunk_id"])
+        if checkpointed is not None:
+            tagged_records.append(checkpointed)
+            continue
+
         if client is None:
             try:
                 client = get_client(config_path=config_path)
@@ -686,15 +849,19 @@ def run_tag(
                     country = parse_country_response(raw_response, axis_name)
                     log_country_not_in_list(schema, country)
 
-        tagged_records.append(
-            build_tagged_record(
-                chunk_record,
-                values[ROLE_IN_ARGUMENT_AXIS],
-                schema.version,
-                empirical_scope=values.get(EMPIRICAL_SCOPE_AXIS),
-                country=country,
-                multi_value_axes=multi_value_axes,
-            )
+        record = build_tagged_record(
+            chunk_record,
+            values[ROLE_IN_ARGUMENT_AXIS],
+            schema.version,
+            empirical_scope=values.get(EMPIRICAL_SCOPE_AXIS),
+            country=country,
+            multi_value_axes=multi_value_axes,
         )
+        # Persist this chunk's tagged record before moving to the next one
+        # (write+flush per chunk), so a failure on a later chunk leaves every
+        # already-tagged chunk durably checkpointed for the resume run.
+        if checkpoint_path is not None:
+            append_tag_checkpoint(checkpoint_path, record)
+        tagged_records.append(record)
 
     return tagged_records

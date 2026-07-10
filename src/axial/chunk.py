@@ -28,11 +28,14 @@ to stdout only; vault persistence is slice 06.
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
 import httpx
+import yaml
 
 from axial.envelope import (
     MissingSourceError as _EnvelopeMissingSourceError,
@@ -49,6 +52,74 @@ from axial.llm import (
     get_client,
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
+
+CHUNKS_DIR = Path("data/chunks")
+
+
+def _default_chunks_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
+    """Resolve the chunk-checkpoint directory, mirroring
+    `axial.envelope._default_envelopes_dir`'s structure exactly: honor
+    `config/pipeline.yaml`'s `paths.chunks_dir` when declared, else fall back
+    to the module-level `CHUNKS_DIR` default (`data/chunks`, resolved relative
+    to the current working directory -- the same cwd-relative convention the
+    envelope/vault dirs already use, so an isolated staging root's checkpoints
+    never alias the real `data/` tree). An absent file/key falls back to
+    `CHUNKS_DIR`."""
+    if not config_path.is_file():
+        return CHUNKS_DIR
+    with config_path.open("r", encoding="utf-8") as handle:
+        document = yaml.safe_load(handle) or {}
+    paths_config = document.get("paths", {}) or {}
+    configured = paths_config.get("chunks_dir")
+    return Path(configured) if configured else CHUNKS_DIR
+
+
+def chunks_checkpoint_path(source_id: str, chunks_dir: Path = CHUNKS_DIR) -> Path:
+    """The reuse-once path for `source_id`'s chunk-pass checkpoint (one JSON
+    chunk record per line), keyed by the content-hashed source_id so an edited
+    file (a new source_id) never reuses stale chunks (issue #81 point 1)."""
+    return chunks_dir / f"{source_id}.jsonl"
+
+
+def write_chunk_checkpoint(records: list[dict[str, Any]], path: Path) -> None:
+    """Persist a source's chunk records to `path`, one JSON record per line,
+    creating parent directories as needed (issue #81 point 1). Written once,
+    after the chunking pass produces the records.
+
+    Hardening (issue #81): written atomically -- the full content goes to a
+    temp file in the same directory first, then swapped onto `path` via
+    `os.replace` (an atomic rename on both POSIX and Windows) -- so a hard
+    process kill (OOM kill, Stop-Process) mid-write can never leave a
+    partial/torn file visible under the final name. Unlike the tag
+    checkpoint's append-and-tolerate-a-torn-tail strategy, this file is
+    written once as a whole and is load-bearing for chunk_ids (a torn one
+    would corrupt every downstream chunk_id lookup), so "never partially
+    visible" is the simpler, correct guarantee here rather than "tolerate and
+    heal"."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record) + "\n")
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def load_chunk_checkpoint(path: Path) -> list[dict[str, Any]]:
+    """Load chunk records from a chunk-pass checkpoint file (the inverse of
+    `write_chunk_checkpoint`), skipping blank lines."""
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        records.append(json.loads(line))
+    return records
+
 
 _CHUNK_PROMPT_TEMPLATE = """\
 You are deciding argumentative chunk boundaries for the TARGET SECTION below, \
@@ -258,6 +329,7 @@ def run_chunk(
     client: LLMClient | None = None,
     envelopes_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    chunks_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Run the argumentative-chunking pass on `source_path`.
 
@@ -266,12 +338,31 @@ def run_chunk(
     tree, calls the LLM with the envelope plus the section's neighbours (not
     the isolated section) to decide chunk boundaries. A section with no
     chunkable prose yields zero chunks without an LLM call or an error.
+
+    Chunk-pass checkpoint (issue #81 point 1): OPT-IN, active only when a
+    `chunks_dir` is supplied (the `axial vault write` composition threads one
+    in; standalone `axial chunk` passes none and so behaves exactly as before,
+    recomputing every run -- the reuse feature is deliberately scoped to vault
+    write, not the standalone pass whose own contract re-runs each time). When
+    active: once the source's chunk records are produced they are persisted to
+    `<chunks_dir>/<source_id>.jsonl` (one record per line); a later run that
+    finds this file reuses it verbatim and makes NO chunking LLM call
+    (mirroring the envelope pass's "no recompute" reuse). Keyed by the
+    content-hashed source_id, so an edited file gets a fresh id and never
+    reuses stale chunks -- the reuse-once check runs before any envelope read
+    or extraction, so a hit short-circuits the whole pass with zero work.
     """
     path = Path(source_path)
     try:
         source_id = compute_source_id(path)
     except _EnvelopeMissingSourceError as exc:
         raise MissingSourceError(exc) from exc
+
+    checkpoint_path = (
+        chunks_checkpoint_path(source_id, chunks_dir) if chunks_dir is not None else None
+    )
+    if checkpoint_path is not None and checkpoint_path.exists():
+        return load_chunk_checkpoint(checkpoint_path)
 
     if envelopes_dir is None:
         envelopes_dir = _default_envelopes_dir(config_path)
@@ -317,4 +408,6 @@ def run_chunk(
         section_order = section.get("order", "")
         all_records.extend(build_chunk_records(source_id, section_order, section_label, chunks))
 
+    if checkpoint_path is not None:
+        write_chunk_checkpoint(all_records, checkpoint_path)
     return all_records
