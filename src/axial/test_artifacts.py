@@ -714,3 +714,210 @@ def test_run_artifacts_out_of_vocab_field_primary_stays_immediately_fatal_one_ca
         artifacts_mod.run_artifacts(source, client=client)
 
     assert client.call_count == 1
+
+
+# --- issue #98: per-artifact checkpoint/resume -------------------------------
+
+
+def _tree_with_two_artifacts() -> dict:
+    return {
+        "children": [
+            {
+                "type": "prose",
+                "order": "1",
+                "text": "Findings",
+                "children": [
+                    {"type": "prose", "order": "1.1", "text": "Findings body sentence."},
+                    {"type": "artifact", "order": "1.2", "label": "table"},
+                    {"type": "artifact", "order": "1.3", "label": "table"},
+                ],
+            }
+        ]
+    }
+
+
+def test_artifacts_checkpoint_append_load_round_trips(tmp_path):
+    from axial.artifacts import append_artifact_checkpoint, load_artifact_checkpoint
+
+    path = tmp_path / "artifacts" / "src-abc.jsonl"
+    record_one = {"artifact_id": "src-abc_art_1", "artifact_role": "case-study"}
+    record_two = {"artifact_id": "src-abc_art_2", "artifact_role": "discard"}
+
+    append_artifact_checkpoint(path, record_one)
+    append_artifact_checkpoint(path, record_two)
+
+    loaded = load_artifact_checkpoint(path)
+    assert loaded == [record_one, record_two]
+
+
+def test_artifacts_checkpoint_path_is_keyed_by_source_id(tmp_path):
+    from axial.artifacts import artifacts_checkpoint_path
+
+    path = artifacts_checkpoint_path("src-abc123", tmp_path)
+    assert path == tmp_path / "src-abc123.jsonl"
+
+
+def test_load_artifact_checkpoint_missing_file_returns_empty_list(tmp_path):
+    from axial.artifacts import load_artifact_checkpoint
+
+    assert load_artifact_checkpoint(tmp_path / "nonexistent.jsonl") == []
+
+
+def test_load_artifact_checkpoint_drops_torn_final_line(tmp_path):
+    from axial.artifacts import append_artifact_checkpoint, load_artifact_checkpoint
+
+    path = tmp_path / "artifacts" / "src-abc.jsonl"
+    intact = {"artifact_id": "src-abc_art_1", "artifact_role": "case-study"}
+    append_artifact_checkpoint(path, intact)
+
+    full_second = json.dumps({"artifact_id": "src-abc_art_2", "artifact_role": "discard"})
+    torn_tail = full_second[:15]
+    assert not torn_tail.endswith("}")
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(torn_tail)  # no trailing newline: simulates a torn in-flight write
+
+    loaded = load_artifact_checkpoint(path)
+    assert loaded == [intact]
+
+
+def test_load_artifact_checkpoint_raises_naming_path_and_line_for_a_non_final_torn_line(tmp_path):
+    from axial.artifacts import ArtifactCheckpointCorruptError, load_artifact_checkpoint
+
+    path = tmp_path / "artifacts" / "src.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    intact_first = json.dumps({"artifact_id": "a"})
+    torn_middle = '{"artifact_id": "b", "broken'
+    intact_last = json.dumps({"artifact_id": "c"})
+    path.write_text(f"{intact_first}\n{torn_middle}\n{intact_last}\n", encoding="utf-8")
+
+    with pytest.raises(ArtifactCheckpointCorruptError) as exc_info:
+        load_artifact_checkpoint(path)
+
+    message = str(exc_info.value)
+    assert str(path) in message
+    assert "2" in message  # 1-indexed line number of the torn (non-final) line
+
+
+def test_append_artifact_checkpoint_heals_a_torn_tail_before_appending(tmp_path):
+    from axial.artifacts import append_artifact_checkpoint, load_artifact_checkpoint
+
+    path = tmp_path / "artifacts" / "src.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"artifact_id": "a"}\n{"artifact_id": "b", "brok', encoding="utf-8")
+
+    append_artifact_checkpoint(path, {"artifact_id": "c"})
+
+    loaded = load_artifact_checkpoint(path)
+    assert loaded == [{"artifact_id": "a"}, {"artifact_id": "c"}]
+
+
+def test_run_artifacts_writes_a_source_keyed_checkpoint_when_artifacts_dir_given(
+    monkeypatch, tmp_path
+):
+    import axial.artifacts as artifacts_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+    source_id = artifacts_mod.compute_source_id(source)
+    artifacts_dir = tmp_path / "artifacts"
+
+    monkeypatch.setattr(artifacts_mod, "extract", lambda path: _tree_with_two_artifacts())
+    monkeypatch.setattr(artifacts_mod, "load_schema", lambda domain_dir: _SCHEMA)
+    monkeypatch.setattr(artifacts_mod, "load_codebook", lambda domain_dir: _CODEBOOK)
+
+    class _StaticClient:
+        def complete(self, prompt, pass_name=None):
+            return json.dumps({"artifact_role": "case-study"})
+
+    records = artifacts_mod.run_artifacts(
+        source, client=_StaticClient(), artifacts_dir=artifacts_dir
+    )
+
+    checkpoint = artifacts_dir / f"{source_id}.jsonl"
+    assert checkpoint.is_file()
+    persisted = artifacts_mod.load_artifact_checkpoint(checkpoint)
+    assert [r["artifact_id"] for r in persisted] == [r["artifact_id"] for r in records]
+    assert len(persisted) == 2
+
+
+def test_run_artifacts_resume_skips_already_checkpointed_artifacts(monkeypatch, tmp_path):
+    """Skip-set arithmetic (issue #98): an artifact already present in the
+    checkpoint is reused verbatim and never re-sent to the model -- only the
+    missing artifact(s) are classified."""
+    import axial.artifacts as artifacts_mod
+    from axial.artifacts import append_artifact_checkpoint, artifacts_checkpoint_path
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+    source_id = artifacts_mod.compute_source_id(source)
+    artifacts_dir = tmp_path / "artifacts"
+
+    monkeypatch.setattr(artifacts_mod, "extract", lambda path: _tree_with_two_artifacts())
+    monkeypatch.setattr(artifacts_mod, "load_schema", lambda domain_dir: _SCHEMA)
+    monkeypatch.setattr(artifacts_mod, "load_codebook", lambda domain_dir: _CODEBOOK)
+
+    # Pre-seed the checkpoint with the first artifact only.
+    checkpoint = artifacts_checkpoint_path(source_id, artifacts_dir)
+    seeded = {
+        "artifact_id": f"{source_id}_art_1.2",
+        "artifact_role": "discard",
+        "source_id": source_id,
+        "section": "Findings",
+    }
+    append_artifact_checkpoint(checkpoint, seeded)
+
+    class _CountingClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return json.dumps({"artifact_role": "case-study"})
+
+    counting = _CountingClient()
+    records = artifacts_mod.run_artifacts(source, client=counting, artifacts_dir=artifacts_dir)
+
+    # Only the missing (second) artifact was classified.
+    assert counting.call_count == 1
+    assert [r["artifact_id"] for r in records] == [
+        f"{source_id}_art_1.2",
+        f"{source_id}_art_1.3",
+    ]
+    # The seeded record is reused verbatim (its role is unchanged).
+    assert records[0]["artifact_role"] == "discard"
+
+    persisted = artifacts_mod.load_artifact_checkpoint(checkpoint)
+    assert len(persisted) == 2  # no duplicate line for the already-checkpointed artifact
+
+
+def test_run_artifacts_checkpoint_disabled_by_default(monkeypatch, tmp_path):
+    """When `artifacts_dir` is omitted (today's `axial artifacts` behavior,
+    unchanged), no checkpoint file is ever written and every run
+    re-classifies every artifact from scratch (issue #98's "direct axial
+    artifacts ... invocations unchanged")."""
+    import axial.artifacts as artifacts_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(artifacts_mod, "extract", lambda path: _tree_with_two_artifacts())
+    monkeypatch.setattr(artifacts_mod, "load_schema", lambda domain_dir: _SCHEMA)
+    monkeypatch.setattr(artifacts_mod, "load_codebook", lambda domain_dir: _CODEBOOK)
+
+    class _CountingClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return json.dumps({"artifact_role": "case-study"})
+
+    first_client = _CountingClient()
+    artifacts_mod.run_artifacts(source, client=first_client)
+    assert first_client.call_count == 2
+
+    # A second run with no artifacts_dir re-classifies everything again --
+    # proof no checkpoint was written/consulted by the first run.
+    second_client = _CountingClient()
+    artifacts_mod.run_artifacts(source, client=second_client)
+    assert second_client.call_count == 2

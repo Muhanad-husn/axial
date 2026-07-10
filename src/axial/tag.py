@@ -62,6 +62,11 @@ import httpx
 import yaml
 
 from axial.chunk import ChunkError, run_chunk
+from axial.checkpoint import (
+    append_checkpoint_record,
+    heal_torn_checkpoint_tail as _shared_heal_torn_checkpoint_tail,
+    load_checkpoint_records,
+)
 from axial.envelope import compute_source_id
 from axial.codebook import Codebook, CodebookError, load_codebook
 from axial.llm import (
@@ -121,37 +126,20 @@ def tags_checkpoint_path(source_id: str, tags_dir: Path = TAGS_DIR) -> Path:
 
 def _heal_torn_checkpoint_tail(path: Path) -> None:
     """Truncate a torn tail left by a hard kill mid-`append_tag_checkpoint`
-    (issue #81 hardening), so the next append always starts a fresh record on
-    its own line. `append_tag_checkpoint` only ever writes and flushes one
-    line at a time, so a kill can only tear the byte sequence currently being
-    written -- always whatever comes after the last completed newline.
-    Appending straight onto a torn tail without healing first would glue the
-    next record onto the fragment, corrupting THAT line too; truncating the
-    torn bytes first (rather than e.g. prefixing a newline guard) restores
-    the file to "every line complete" before the new line is ever written, so
-    `load_tag_checkpoint` sees a clean file afterward. A no-op when the file
-    doesn't exist yet or already ends cleanly (empty, or ends with '\\n')."""
-    if not path.exists():
-        return
-    data = path.read_bytes()
-    if not data or data.endswith(b"\n"):
-        return
-    last_newline = data.rfind(b"\n")
-    healed = data[: last_newline + 1] if last_newline != -1 else b""
-    path.write_bytes(healed)
+    (issue #81 hardening) -- thin wrapper around the shared
+    `axial.checkpoint.heal_torn_checkpoint_tail`, kept as a module-level name
+    here since it predates the shared extraction and existing callers/tests
+    reach it via `axial.tag`."""
+    _shared_heal_torn_checkpoint_tail(path)
 
 
 def append_tag_checkpoint(path: Path, record: dict[str, Any]) -> None:
     """Append one tagged record to `path` AS IT IS PRODUCED (issue #81 point
-    2): heal any torn tail left by an earlier hard kill (see
-    `_heal_torn_checkpoint_tail`), then open in append mode, write the JSON
-    line, and close so the write is flushed to disk before the next chunk is
-    tagged -- so a mid-tag failure leaves every already-tagged chunk durably
-    on disk for the resume run. Creates parent directories as needed."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _heal_torn_checkpoint_tail(path)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record) + "\n")
+    2): heal any torn tail left by an earlier hard kill, then write+flush the
+    JSON line -- so a mid-tag failure leaves every already-tagged chunk
+    durably on disk for the resume run. Delegates to the shared
+    `axial.checkpoint.append_checkpoint_record` (issue #98 extraction)."""
+    append_checkpoint_record(path, record)
 
 
 def load_tag_checkpoint(path: Path) -> list[dict[str, Any]]:
@@ -171,24 +159,9 @@ def load_tag_checkpoint(path: Path) -> list[dict[str, Any]]:
     last one is genuine corruption unrelated to a kill mid-append (e.g. disk
     corruption or a manual edit), and still raises loudly
     (`TagCheckpointCorruptError`, naming the path and the offending
-    1-indexed line number)."""
-    if not path.exists():
-        return []
-    numbered_lines = [
-        (line_no, stripped)
-        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
-        if (stripped := line.strip())
-    ]
-    records: list[dict[str, Any]] = []
-    for index, (line_no, line) in enumerate(numbered_lines):
-        is_last = index == len(numbered_lines) - 1
-        try:
-            records.append(json.loads(line))
-        except json.JSONDecodeError as exc:
-            if is_last:
-                break
-            raise TagCheckpointCorruptError(path, line_no, exc) from exc
-    return records
+    1-indexed line number). Delegates the mechanics to the shared
+    `axial.checkpoint.load_checkpoint_records` (issue #98 extraction)."""
+    return load_checkpoint_records(path, TagCheckpointCorruptError)
 
 
 ROLE_IN_ARGUMENT_AXIS = "role_in_argument"

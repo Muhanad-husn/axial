@@ -66,6 +66,7 @@ from axial.artifacts import (
     ArtifactsError,
     DEFAULT_DOMAIN_DIR as _ARTIFACTS_DEFAULT_DOMAIN_DIR,
     DISCARD_ROLE,
+    _default_artifacts_dir,
     run_artifacts,
 )
 from axial.envelope import (
@@ -333,6 +334,7 @@ def run_vault_write(
     domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
     chunks_dir: Path | None = None,
     tags_dir: Path | None = None,
+    artifacts_dir: Path | None = None,
 ) -> list[Path]:
     """Run vault write on `source_path`: read the stored envelope (never
     recomputing it), run the tagging pass internally via `axial.tag.run_tag`
@@ -367,16 +369,20 @@ def run_vault_write(
         raise MissingEnvelopeError(env_path)
     envelope = json.loads(env_path.read_text(encoding="utf-8"))
 
-    # Per-chunk checkpoint/resume (issue #81): scoped to vault write. Resolve
-    # both checkpoint dirs here and thread them into the internal passes so the
-    # chunk-pass checkpoint is reused (zero chunking LLM calls on a resumed
-    # run) and the tag-pass checkpoint drives per-chunk resume; the standalone
-    # `axial chunk`/`axial tag` passes, which never receive these, keep their
-    # existing recompute-every-run behavior.
+    # Per-chunk / per-artifact checkpoint/resume (issue #81, extended by
+    # issue #98): scoped to vault write. Resolve every checkpoint dir here
+    # and thread them into the internal passes so the chunk-pass checkpoint
+    # is reused (zero chunking LLM calls on a resumed run), the tag-pass
+    # checkpoint drives per-chunk resume, and the artifacts-pass checkpoint
+    # drives per-artifact resume; the standalone `axial chunk`/`axial tag`/
+    # `axial artifacts`/`axial xref` passes, which never receive these, keep
+    # their existing recompute-every-run behavior.
     if chunks_dir is None:
         chunks_dir = _default_chunks_dir(config_path)
     if tags_dir is None:
         tags_dir = _default_tags_dir(config_path)
+    if artifacts_dir is None:
+        artifacts_dir = _default_artifacts_dir(config_path)
 
     try:
         records = run_tag(
@@ -392,11 +398,21 @@ def run_vault_write(
 
     try:
         artifact_records = run_artifacts(
-            path, client=client, domain_dir=domain_dir, config_path=config_path
+            path,
+            client=client,
+            domain_dir=domain_dir,
+            config_path=config_path,
+            artifacts_dir=artifacts_dir,
         )
     except (ArtifactsError, TagError) as exc:
         raise ArtifactClassificationFailedError(exc) from exc
 
+    # `artifacts_dir` is threaded into `run_xref` too (issue #98): `run_xref`
+    # runs `run_artifacts` internally a SECOND time for the same source in
+    # this same process (see module docstring) -- without sharing the
+    # checkpoint here, that second call would silently reclassify every
+    # artifact again (a real double-spend bug this checkpoint also fixes),
+    # even on a run that never failed at all.
     try:
         xref_pairs = run_xref(
             path,
@@ -405,6 +421,7 @@ def run_vault_write(
             envelopes_dir=envelopes_dir,
             config_path=config_path,
             chunks_dir=chunks_dir,
+            artifacts_dir=artifacts_dir,
         )
     except XrefError as exc:
         raise XrefFailedError(exc) from exc

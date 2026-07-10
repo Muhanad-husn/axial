@@ -168,6 +168,7 @@ def run_xref(
     envelopes_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     chunks_dir: Path | None = None,
+    artifacts_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Run the cross-reference-detection pass on `source_path`.
 
@@ -177,6 +178,12 @@ def run_xref(
     text and the source's known artifact ids, then filters the parsed
     referenced ids against the real artifact-id set before emitting pairs --
     a referenced id absent from that set (a dangling link) yields no pair.
+
+    `artifacts_dir` (issue #98), when supplied, is threaded straight through
+    to this pass's own internal `run_artifacts` call, so it reuses the SAME
+    artifacts-pass checkpoint `axial.vault.run_vault_write`'s own direct
+    `run_artifacts` call just wrote/reused, instead of reclassifying every
+    artifact a second time. Standalone `axial xref` passes none, unchanged.
     """
     path = Path(source_path)
     try:
@@ -203,7 +210,11 @@ def run_xref(
 
     try:
         artifact_records = run_artifacts(
-            path, client=client, domain_dir=domain_dir, config_path=config_path
+            path,
+            client=client,
+            domain_dir=domain_dir,
+            config_path=config_path,
+            artifacts_dir=artifacts_dir,
         )
     except (ArtifactsError, TagError) as exc:
         raise ArtifactsFailedError(exc) from exc

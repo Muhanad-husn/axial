@@ -116,6 +116,19 @@ STUB_TAG_RESPONSE_ENV_VAR = "AXIAL_STUB_TAG_RESPONSE"
 # needs (issue #81).
 STUB_TAG_FAIL_AT_ENV_VAR = "AXIAL_STUB_TAG_FAIL_AT"
 
+# Issue #98 test/CI-only fault-injection seam: exactly `STUB_TAG_FAIL_AT_ENV_VAR`
+# above, mirrored for the artifacts pass instead of the tag pass. When set to
+# a positive, 1-indexed base-10 integer N, the Nth artifacts-pass call
+# (pass_name == ARTIFACTS_PASS_NAME) any stub/record client makes IN THE
+# CURRENT PROCESS raises a `StubInjectedArtifactFailureError` (an `LLMError`
+# subclass) instead of returning the canned artifact response; every call
+# before the Nth still returns the normal canned response. The counter
+# (`_artifact_pass_call_count`) is per-process and never persisted across
+# processes. Read fresh from the environment on every call; unset/""/
+# non-positive means "never fail" (today's behavior). Honored by the shared
+# canned-response dispatch both `stub` and `record` delegate to.
+STUB_ARTIFACT_FAIL_AT_ENV_VAR = "AXIAL_STUB_ARTIFACT_FAIL_AT"
+
 SECRETS_PATH_ENV_VAR = "AXIAL_SECRETS_PATH"
 DEFAULT_PIPELINE_CONFIG_PATH = Path("config/pipeline.yaml")
 DEFAULT_SECRETS_PATH = Path("secrets/secrets.toml")
@@ -187,6 +200,11 @@ STUB_XREF_TARGET_ENV_VAR = "AXIAL_STUB_XREF_TARGET"
 # (which delegate to the same `_canned_response_for` dispatch) and reset
 # naturally to zero at the start of every fresh `axial` subprocess.
 _tag_pass_call_count = 0
+
+# Per-process, 1-indexed counter of artifacts-pass canned-response
+# dispatches, driving the AXIAL_STUB_ARTIFACT_FAIL_AT fault-injection seam
+# (issue #98), mirroring `_tag_pass_call_count` above exactly.
+_artifact_pass_call_count = 0
 
 
 class LLMClient(Protocol):
@@ -326,6 +344,7 @@ def _canned_response_for(pass_name: str | None) -> str:
             return override
         return StubLLMClient._CANNED_TAG_RESPONSE
     if pass_name == ARTIFACTS_PASS_NAME:
+        _maybe_fail_artifact_call()
         return _canned_artifact_response()
     if pass_name == XREF_PASS_NAME:
         return _canned_xref_response()
@@ -396,6 +415,47 @@ class StubInjectedTagFailureError(LLMError):
     `TaggingFailedError` -> the CLI's `except VaultError` typed-error/
     non-zero-exit path -- i.e. exactly today's mid-tag failure contract, not
     a new branch."""
+
+
+class StubInjectedArtifactFailureError(LLMError):
+    """Raised by the shared stub/record canned-response dispatch when the
+    `AXIAL_STUB_ARTIFACT_FAIL_AT` seam fires on the Nth artifacts-pass call
+    (issue #98, mirroring `StubInjectedTagFailureError` from issue #81).
+
+    A subclass of `LLMError` (never a bare exception) precisely so it
+    propagates like a real transport-level failure: unchanged through
+    `axial.model_json.complete_json` and caught by
+    `axial.artifacts.run_artifacts`'s `except (LLMError, httpx.HTTPError)` ->
+    `LLMFailedError` -> `axial.vault.run_vault_write`'s `except
+    (ArtifactsError, TagError)` -> `ArtifactClassificationFailedError` -> the
+    CLI's `except VaultError` typed-error/non-zero-exit path -- i.e. exactly
+    today's mid-artifacts-pass failure contract, not a new branch."""
+
+
+def _maybe_fail_artifact_call() -> None:
+    """Advance the per-process artifacts-pass call counter and, when
+    `AXIAL_STUB_ARTIFACT_FAIL_AT` names a positive integer equal to the new
+    count, raise `StubInjectedArtifactFailureError` (issue #98's mid-
+    artifacts fault seam). Mirrors `_maybe_fail_tag_call` exactly.
+
+    Read fresh from the environment on every call; an unset, empty,
+    non-integer, or non-positive value never fails (today's behavior). The
+    counter advances for every artifacts-pass dispatch regardless, so the
+    "Nth artifacts call" is well-defined independent of whether the seam is
+    armed."""
+    global _artifact_pass_call_count
+    _artifact_pass_call_count += 1
+    raw = os.environ.get(STUB_ARTIFACT_FAIL_AT_ENV_VAR, "")
+    try:
+        fail_at = int(raw)
+    except (TypeError, ValueError):
+        return
+    if fail_at > 0 and _artifact_pass_call_count == fail_at:
+        raise StubInjectedArtifactFailureError(
+            f"{STUB_ARTIFACT_FAIL_AT_ENV_VAR}={fail_at}: injected artifacts-pass "
+            f"failure on artifacts call #{_artifact_pass_call_count} (issue #98 "
+            f"fault-injection seam)"
+        )
 
 
 def _maybe_fail_tag_call() -> None:
