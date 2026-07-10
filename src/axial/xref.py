@@ -30,7 +30,7 @@ from axial.envelope import (
     MissingSourceError as _EnvelopeMissingSourceError,
     compute_source_id,
 )
-from axial.model_json import ModelJsonError, parse_model_json
+from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.llm import (
     DEFAULT_PIPELINE_CONFIG_PATH,
     LLMClient,
@@ -204,9 +204,11 @@ def run_xref(
         prompt = compose_xref_prompt(chunk["text"], artifact_id_list)
 
         try:
-            raw_response = client.complete(prompt, pass_name=XREF_PASS_NAME)
+            raw_response = complete_json(client, prompt, pass_name=XREF_PASS_NAME)
         except (LLMError, httpx.HTTPError) as exc:
             raise LLMFailedError(exc) from exc
+        except ModelJsonError as exc:
+            raise XrefParseError(f"model response was not valid JSON: {exc}") from exc
 
         referenced_ids = parse_referenced_artifact_ids(raw_response)
         pairs.extend(build_xref_pairs(chunk["chunk_id"], referenced_ids, known_artifact_ids))

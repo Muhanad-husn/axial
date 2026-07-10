@@ -48,7 +48,7 @@ from axial.llm import (
     LLMError,
     get_client,
 )
-from axial.model_json import ModelJsonError, parse_model_json
+from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.schema import Schema, SchemaError, load_schema
 from axial.tag import (
     TagNotInSchemaError,
@@ -301,9 +301,11 @@ def run_artifacts(
         prompt = compose_artifact_prompt(section, codebook)
 
         try:
-            raw_response = client.complete(prompt, pass_name=ARTIFACTS_PASS_NAME)
+            raw_response = complete_json(client, prompt, pass_name=ARTIFACTS_PASS_NAME)
         except (LLMError, httpx.HTTPError) as exc:
             raise LLMFailedError(exc) from exc
+        except ModelJsonError as exc:
+            raise ArtifactParseError(f"model response was not valid JSON: {exc}") from exc
 
         role = parse_artifact_role(raw_response)
         validate_artifact_role(role, schema)

@@ -432,3 +432,83 @@ def test_run_chunk_wraps_extraction_failures(monkeypatch, tmp_path):
 
     with pytest.raises(chunk_mod.ExtractionFailedError):
         chunk_mod.run_chunk(source, client=StubLLMClient(), envelopes_dir=envelopes_dir)
+
+
+# --- run_chunk: bounded re-ask on complete-but-unparseable JSON (#76) ------
+
+
+def _one_section_setup(tmp_path, chunk_mod):
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+    envelopes_dir = tmp_path / "envelopes"
+    envelopes_dir.mkdir()
+
+    source_id = chunk_mod.compute_source_id(source)
+    env_path = chunk_mod.envelope_path(source_id, envelopes_dir)
+    env_path.write_text(json.dumps(_ENVELOPE), encoding="utf-8")
+
+    return source, envelopes_dir
+
+
+def _single_section_tree() -> dict:
+    """Exactly one prose section with chunkable body text, so a test can
+    make deterministic assertions about the number of LLM calls (unlike
+    `_tree_with_sections()`, which yields chunkable prose in all three
+    sections by default)."""
+    return {
+        "children": [
+            {
+                "type": "prose",
+                "order": "1",
+                "text": "Introduction",
+                "children": [{"type": "prose", "order": "1.1", "text": "Intro body sentence."}],
+            }
+        ]
+    }
+
+
+def test_run_chunk_succeeds_when_first_completion_is_malformed_json(monkeypatch, tmp_path):
+    import axial.chunk as chunk_mod
+
+    source, envelopes_dir = _one_section_setup(tmp_path, chunk_mod)
+    monkeypatch.setattr(chunk_mod, "extract", lambda path: _single_section_tree())
+
+    valid = json.dumps({"chunks": [{"text": "a chunk"}]})
+
+    class _ScriptedClient:
+        def __init__(self):
+            self._responses = ["{not json", valid]
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            response = self._responses[self.call_count]
+            self.call_count += 1
+            return response
+
+    client = _ScriptedClient()
+    records = chunk_mod.run_chunk(source, client=client, envelopes_dir=envelopes_dir)
+
+    assert records
+    assert client.call_count == 2
+
+
+def test_run_chunk_raises_chunk_parse_error_on_persistently_malformed_json(monkeypatch, tmp_path):
+    import axial.chunk as chunk_mod
+
+    source, envelopes_dir = _one_section_setup(tmp_path, chunk_mod)
+    monkeypatch.setattr(chunk_mod, "extract", lambda path: _single_section_tree())
+
+    class _AlwaysBrokenClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return "{not json"
+
+    client = _AlwaysBrokenClient()
+
+    with pytest.raises(chunk_mod.ChunkParseError):
+        chunk_mod.run_chunk(source, client=client, envelopes_dir=envelopes_dir)
+
+    assert client.call_count == 3

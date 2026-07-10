@@ -403,3 +403,64 @@ def test_run_envelope_writes_a_file_that_round_trips_the_locked_fields(monkeypat
         "stated_argument",
     ):
         assert field in on_disk
+
+
+# --- run_envelope: bounded re-ask on complete-but-unparseable JSON (#76) ---
+
+
+def test_run_envelope_succeeds_when_first_completion_is_malformed_json(monkeypatch, tmp_path):
+    """A complete-but-syntactically-broken completion (e.g. a missing comma)
+    must not abort the pass: `run_envelope` re-asks and succeeds on the next
+    completion."""
+    import axial.envelope as envelope_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+    envelopes_dir = tmp_path / "envelopes"
+
+    monkeypatch.setattr(envelope_mod, "extract", lambda path: _tree_with_sections())
+
+    valid = StubLLMClient._CANNED_RESPONSE
+
+    class _ScriptedClient:
+        def __init__(self):
+            self._responses = ['{"thesis": "broken"', valid]
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            response = self._responses[self.call_count]
+            self.call_count += 1
+            return response
+
+    client = _ScriptedClient()
+    envelope = envelope_mod.run_envelope(source, client=client, envelopes_dir=envelopes_dir)
+
+    assert client.call_count == 2
+    assert envelope["thesis"]
+
+
+def test_run_envelope_raises_envelope_parse_error_on_persistently_malformed_json(
+    monkeypatch, tmp_path
+):
+    import axial.envelope as envelope_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+    envelopes_dir = tmp_path / "envelopes"
+
+    monkeypatch.setattr(envelope_mod, "extract", lambda path: _tree_with_sections())
+
+    class _AlwaysBrokenClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return '{"thesis": "still broken"'
+
+    client = _AlwaysBrokenClient()
+
+    with pytest.raises(envelope_mod.EnvelopeParseError):
+        envelope_mod.run_envelope(source, client=client, envelopes_dir=envelopes_dir)
+
+    assert client.call_count == 3

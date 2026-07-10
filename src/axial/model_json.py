@@ -55,6 +55,55 @@ def _snippet(raw: str) -> str:
     return f"{raw[:_SNIPPET_LIMIT]!r} (truncated, total length {len(raw)})"
 
 
+def complete_json(
+    client: Any, prompt: str, pass_name: str | None = None, *, attempts: int = 3
+) -> str:
+    """Call `client.complete(prompt, pass_name=pass_name)` and validate the
+    result parses as JSON via `parse_model_json`, re-asking -- a fresh
+    completion of the same prompt, no sleep in between -- up to `attempts`
+    total when the response is complete-but-unparseable (issue #76: a
+    genuinely malformed completion, e.g. a missing comma mid-response, that
+    no transport-level retry in llm.py catches, since it arrives as a
+    well-formed HTTP 200 with `finish_reason == "stop"`). The failure is
+    stochastic, not rate-related, so no backoff is needed between re-asks
+    (unlike llm.py's transport retries).
+
+    Returns the RAW response string, not the parsed value, once it verifies
+    parseable -- deliberately: several call sites (e.g. tag.py) parse one
+    raw response with multiple different per-axis parsers, so handing back
+    only a parsed value would force them to either re-serialize it or
+    duplicate this helper's parsing. Returning the validated raw string
+    lets every call site keep its own exact parsing flow unchanged;
+    `parse_model_json` is used here purely as the validity gate, and its
+    parsed result is discarded once confirmed.
+
+    On persistent failure, the final attempt's `ModelJsonError` (carrying
+    the raw-response snippet) propagates unchanged, so callers keep
+    wrapping it into their own typed parse error exactly as before.
+    Transport-level errors from `client.complete()` itself (`LLMError`,
+    `httpx.HTTPError`) are never caught here -- they propagate immediately
+    on the first occurrence, exactly as today.
+
+    `attempts < 1` is a caller bug, not a retry outcome: it raises
+    `ValueError` immediately, before any completion is requested.
+    """
+    if attempts < 1:
+        raise ValueError(f"attempts must be >= 1, got {attempts}")
+    last_error: ModelJsonError | None = None
+    for _ in range(attempts):
+        raw = client.complete(prompt, pass_name=pass_name)
+        try:
+            parse_model_json(raw)
+        except ModelJsonError as exc:
+            last_error = exc
+            continue
+        return raw
+    assert (
+        last_error is not None
+    )  # attempts >= 1, so the loop always sets this before falling through
+    raise last_error
+
+
 def parse_model_json(raw: str) -> Any:
     """Parse `raw` as JSON, first stripping a single markdown fence
     wrapping the whole response if present (opening ``` with an optional

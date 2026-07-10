@@ -1110,6 +1110,66 @@ def test_run_tag_raises_a_hard_error_for_an_undeclared_claim_type_subtag(monkeyp
     assert "not-a-real-subtag" in message
 
 
+def test_run_tag_succeeds_when_first_completion_is_malformed_json(monkeypatch, tmp_path):
+    import axial.tag as tag_mod
+
+    domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
+    monkeypatch.setattr(
+        tag_mod,
+        "run_chunk",
+        lambda *args, **kwargs: [
+            {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"}
+        ],
+    )
+
+    valid = json.dumps({"role_in_argument": "role:claim"})
+
+    class _ScriptedClient:
+        def __init__(self):
+            self._responses = ["not json at all", valid]
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            response = self._responses[self.call_count]
+            self.call_count += 1
+            return response
+
+    client = _ScriptedClient()
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert len(records) == 1
+    assert records[0]["role_in_argument"] == "role:claim"
+    assert client.call_count == 2
+
+
+def test_run_tag_raises_tag_parse_error_on_persistently_malformed_json(monkeypatch, tmp_path):
+    import axial.tag as tag_mod
+
+    domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
+    monkeypatch.setattr(
+        tag_mod,
+        "run_chunk",
+        lambda *args, **kwargs: [
+            {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"}
+        ],
+    )
+
+    class _AlwaysBrokenClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return "not json at all"
+
+    client = _AlwaysBrokenClient()
+
+    with pytest.raises(tag_mod.TagParseError):
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert client.call_count == 3
+
+
 def test_default_domain_dir_returns_configured_path_when_present(tmp_path):
     """`_default_domain_dir` reads `paths.domain_dir` from `config/
     pipeline.yaml` (mirrors `axial.envelope._default_envelopes_dir`'s own
