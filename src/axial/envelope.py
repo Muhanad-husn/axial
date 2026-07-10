@@ -192,6 +192,18 @@ def validate_envelope_fields(data: dict[str, Any]) -> None:
         raise EnvelopeValidationError(f"envelope field 'toc' must be a non-empty list, got {toc!r}")
 
 
+def reject_degenerate_envelope(raw: str) -> None:
+    """Validator passed to `complete_json` for the envelope pass (issue #80):
+    re-runs the existing `parse_response` + `validate_envelope_fields` on
+    `raw` -- the SAME checks behind `EnvelopeValidationError`, never
+    duplicated -- so a valid-JSON-but-degenerate response (e.g. `toc: []`)
+    is a re-askable failure within `complete_json`'s bounded budget instead
+    of an instant abort. After the last attempt, `validate_envelope_fields`'s
+    own `EnvelopeValidationError` propagates unchanged, exactly as before
+    this validator existed."""
+    validate_envelope_fields(parse_response(raw))
+
+
 def _fallback_title(path: Path) -> str:
     """Best-effort title derived from the filename when the model response
     doesn't supply one -- no dedicated metadata-extraction pass exists yet."""
@@ -256,7 +268,7 @@ def run_envelope(
     try:
         if client is None:
             client = get_client(config_path=config_path)
-        raw_response = complete_json(client, prompt)
+        raw_response = complete_json(client, prompt, validate=reject_degenerate_envelope)
     except (LLMError, httpx.HTTPError) as exc:
         raise LLMFailedError(exc) from exc
     except ModelJsonError as exc:

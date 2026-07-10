@@ -423,6 +423,53 @@ def compose_multi_axis_tag_prompt(
     )
 
 
+def _reject_blank_tag(value: Any, field: str) -> None:
+    """Raise `TagParseError`, naming `field`, when `value` is an empty or
+    whitespace-only string -- the same species of response noise as broken
+    JSON (#76) or `secondary: []` (#58), never a candidate tag on its own.
+    Any non-blank value (including a genuine out-of-vocabulary string) is
+    left untouched here: schema-vocabulary validation is `validate_tag`'s
+    job alone, entirely separate from this degeneracy check (issue #80)."""
+    if isinstance(value, str) and not value.strip():
+        raise TagParseError(f"{field} tag value is empty/whitespace-only: {value!r}")
+
+
+def reject_degenerate_tag_values(raw: str, axes_to_tag: list[str], schema: Schema) -> None:
+    """Validator passed to `complete_json` for the tag pass (issue #80):
+    re-parses `raw` with the exact same per-axis parsers `run_tag` itself
+    uses (`parse_tag_response` / `parse_multi_value_tag_response`), but only
+    to reject an empty/whitespace-only tag string -- primary, each secondary
+    entry, each subtag, or a single-cardinality axis's value -- as a
+    re-askable `TagParseError` naming the offending field. Runs BEFORE
+    `run_tag`'s own parse+validate flow, inside `complete_json`'s bounded
+    re-ask budget, so a degenerate response never reaches `run_tag`'s own
+    parsing at all; a non-degenerate response is parsed again there (cheap,
+    and keeps this validator fully decoupled from `run_tag`'s bookkeeping).
+
+    Deliberately never calls `validate_tag`/`validate_multi_value_tag`: a
+    genuine non-empty out-of-vocabulary tag must stay immediately fatal
+    (`TagNotInSchemaError`, the P0-6 schema-gap signal), never smoothed over
+    by a re-ask here."""
+    for axis_name in axes_to_tag:
+        axis = schema.axes[axis_name]
+        if axis.cardinality in MULTI_VALUE_CARDINALITIES:
+            parsed = parse_multi_value_tag_response(raw, axis)
+            _reject_blank_tag(parsed["primary"], f"{axis_name}.primary")
+            secondary = parsed.get("secondary")
+            secondary_values = (
+                secondary
+                if isinstance(secondary, list)
+                else ([secondary] if secondary is not None else [])
+            )
+            for index, value in enumerate(secondary_values):
+                _reject_blank_tag(value, f"{axis_name}.secondary[{index}]")
+            for index, value in enumerate(parsed.get("subtags") or []):
+                _reject_blank_tag(value, f"{axis_name}.subtags[{index}]")
+        else:
+            value = parse_tag_response(raw, axis_name)
+            _reject_blank_tag(value, axis_name)
+
+
 def parse_tag_response(raw: str, axis_name: str) -> str:
     """Parse the model's raw tagging response into a single axis value.
 
@@ -814,7 +861,12 @@ def run_tag(
         )
 
         try:
-            raw_response = complete_json(client, prompt, pass_name=TAG_PASS_NAME)
+            raw_response = complete_json(
+                client,
+                prompt,
+                pass_name=TAG_PASS_NAME,
+                validate=lambda raw: reject_degenerate_tag_values(raw, axes_to_tag, schema),
+            )
         except (LLMError, httpx.HTTPError) as exc:
             raise LLMFailedError(exc) from exc
         except ModelJsonError as exc:
