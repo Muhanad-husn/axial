@@ -595,13 +595,59 @@ def parse_tag_response(raw: str, axis_name: str) -> str:
     return value
 
 
-def validate_tag(schema: Schema, axis_name: str, value: Any) -> None:
+def _normalize_axis_prefixed_value(axis_name: str, value: Any, vocabulary: set[str]) -> Any:
+    """Normalize a string `value` of the form `"<axis_name>:<suffix>"` to
+    its bare `<suffix>` -- but ONLY when the raw value is NOT already a
+    member of `vocabulary` and the stripped suffix IS (issue #96: the live
+    model recurringly echoes the axis's own name as a prefix, e.g.
+    `field:ideology` for the `field` axis's `ideology` value).
+
+    Deliberately narrow, so this never smooths over a genuine schema gap or
+    reaches into an axis whose vocabulary is ITSELF prefix-shaped:
+
+      - a value already in `vocabulary` (e.g. `empirical_scope`'s own
+        `"scope:general"`, or `role_in_argument`'s own `"role:setup"`) is
+        returned untouched -- the first condition never even fires;
+      - a value prefixed with anything other than exactly `"<axis_name>:"`
+        (e.g. `"scope:general"` under the `field` axis) is returned
+        untouched;
+      - a value whose stripped suffix is ALSO not in `vocabulary` (e.g.
+        `"field:ethnicity"`) is returned untouched, so it still fails
+        validation and still raises `TagNotInSchemaError` naming the
+        original, unnormalized value;
+      - a non-string value is returned untouched (only strings can carry a
+        `"prefix:"` shape at all).
+    """
+    if not isinstance(value, str) or value in vocabulary:
+        return value
+    prefix = f"{axis_name}:"
+    if value.startswith(prefix):
+        suffix = value[len(prefix) :]
+        if suffix in vocabulary:
+            return suffix
+    return value
+
+
+def validate_tag(schema: Schema, axis_name: str, value: Any) -> Any:
     """Validate that `value` exists in the loaded schema's `axis_name` tag
     set; raises `TagNotInSchemaError` (naming the axis + offending tag) if
-    not (PRD §7.1, P0-6)."""
+    not (PRD §7.1, P0-6).
+
+    Before that check, normalizes `value` per `_normalize_axis_prefixed_
+    value` (issue #96): a value of the form `"<axis_name>:<suffix>"` whose
+    raw form is out-of-vocabulary but whose stripped suffix IS in-vocabulary
+    is rewritten to that suffix first, so e.g. `field.primary ==
+    "field:ideology"` validates (and is returned) as `"ideology"`. Returns
+    the value to use going forward -- the normalized form when normalization
+    applied, otherwise `value` unchanged -- so every caller must use the
+    return value rather than assuming the passed-in `value` survives
+    verbatim."""
     axis = schema.axes.get(axis_name)
+    if axis is not None:
+        value = _normalize_axis_prefixed_value(axis_name, value, axis.tag_ids)
     if axis is None or value not in axis.tag_ids:
         raise TagNotInSchemaError(axis_name, value)
+    return value
 
 
 def _axis_declares_subtags(axis: Axis) -> bool:
@@ -701,21 +747,33 @@ def validate_multi_value_tag(schema: Schema, axis_name: str, parsed: dict[str, A
     schema: `primary` and every `secondary`/`subtags` entry must exist in
     the schema (`TagNotInSchemaError`, naming axis + offending tag), with
     subtags checked against that specific primary's OWN declared subtags
-    (`_declared_subtags`), not the axis's full subtag universe."""
-    validate_tag(schema, axis_name, parsed["primary"])
+    (`_declared_subtags`), not the axis's full subtag universe.
+
+    Normalizes `primary`, each `secondary` entry, and each `subtags` entry
+    in place on `parsed` (issue #96, mirroring `validate_tag`'s own
+    normalization): an axis-name-prefixed value that is out-of-vocabulary
+    raw but in-vocabulary once the `"<axis_name>:"` prefix is stripped is
+    rewritten before validation, so callers reading `parsed` afterward (both
+    `run_tag`'s own record assembly and `axial.artifacts`, which reuses this
+    validator for its own `field` classification) see the normalized value,
+    never the raw prefixed one."""
+    parsed["primary"] = validate_tag(schema, axis_name, parsed["primary"])
 
     secondary = parsed.get("secondary")
-    secondary_values = (
-        secondary if isinstance(secondary, list) else ([secondary] if secondary is not None else [])
-    )
-    for value in secondary_values:
-        validate_tag(schema, axis_name, value)
+    if isinstance(secondary, list):
+        parsed["secondary"] = [validate_tag(schema, axis_name, value) for value in secondary]
+    elif secondary is not None:
+        parsed["secondary"] = validate_tag(schema, axis_name, secondary)
 
     if "subtags" in parsed:
         declared = _declared_subtags(schema.axes[axis_name], parsed["primary"])
+        normalized_subtags = []
         for subtag in parsed["subtags"]:
-            if subtag not in declared:
+            normalized = _normalize_axis_prefixed_value(axis_name, subtag, declared)
+            if normalized not in declared:
                 raise TagNotInSchemaError(axis_name, subtag)
+            normalized_subtags.append(normalized)
+        parsed["subtags"] = normalized_subtags
 
 
 def _axis_extras(axis: Axis) -> dict[str, Any]:
@@ -959,7 +1017,7 @@ def run_tag(
                 multi_value_axes[axis_name] = parsed
             else:
                 value = parse_tag_response(raw_response, axis_name)
-                validate_tag(schema, axis_name, value)
+                value = validate_tag(schema, axis_name, value)
                 values[axis_name] = value
                 # Country is parsed immediately after empirical_scope,
                 # before any later axis is parsed, so a missing/empty
