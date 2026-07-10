@@ -287,6 +287,71 @@ def test_complete_json_returns_raw_after_one_valid_completion_with_validate_pass
     assert calls == [valid]
 
 
+# --- invalid-escape repair (issue #100) --------------------------------------
+
+
+def test_parse_model_json_repairs_an_invalid_python_style_apostrophe_escape():
+    from axial.model_json import parse_model_json
+
+    raw = '{"text": "ra\\\'is"}'  # literal bytes: ra BACKSLASH ' is
+
+    assert parse_model_json(raw) == {"text": "ra'is"}
+
+
+def test_parse_model_json_repairs_an_invalid_escape_of_an_arbitrary_letter():
+    from axial.model_json import parse_model_json
+
+    raw = '{"text": "a\\qb"}'  # literal bytes: a BACKSLASH q b
+
+    assert parse_model_json(raw) == {"text": "aqb"}
+
+
+def test_parse_model_json_leaves_an_escaped_backslash_followed_by_apostrophe_untouched():
+    """`\\\\'` is TWO tokens -- a legal escaped backslash, then a literal
+    apostrophe -- not an invalid `\\'` pair. The scanner must consume the
+    escape pair first, left to right, so it never misreads the apostrophe as
+    part of the backslash's escape."""
+    from axial.model_json import parse_model_json
+
+    raw = '{"text": "ra\\\\\'is"}'  # literal bytes: ra BACKSLASH BACKSLASH ' is
+
+    assert parse_model_json(raw) == {"text": "ra\\'is"}
+
+
+def test_parse_model_json_leaves_u_escapes_untouched():
+    from axial.model_json import parse_model_json
+
+    raw = '{"text": "caf\\u00e9"}'
+
+    assert parse_model_json(raw) == {"text": "café"}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"a": 1},
+        {"text": 'quote " backslash \\ newline \n tab \t and café'},
+        {"chunks": [{"text": "one"}, {"text": "two"}]},
+        {"nested": {"list": [1, 2, {"k": "v\\ended"}]}},
+    ],
+)
+def test_parse_model_json_is_a_no_op_on_already_valid_json(payload):
+    from axial.model_json import parse_model_json
+
+    raw = json.dumps(payload, ensure_ascii=False)
+
+    assert parse_model_json(raw) == payload
+
+
+def test_parse_model_json_still_raises_on_truncated_json_with_an_invalid_escape():
+    from axial.model_json import ModelJsonError, parse_model_json
+
+    raw = '{"text": "ra\\\'is starts here but the object never clos'
+
+    with pytest.raises(ModelJsonError):
+        parse_model_json(raw)
+
+
 def test_complete_json_passes_pass_name_through_to_every_completion():
     from axial.model_json import complete_json
 
