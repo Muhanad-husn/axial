@@ -143,3 +143,90 @@ def test_parse_model_json_still_raises_on_genuinely_broken_json_with_snippet():
     # itself, and confirm the decode error is still surfaced.
     assert repr(raw) in str(exc_info.value)
     assert "Unterminated string" in str(exc_info.value)
+
+
+# --- complete_json: bounded re-ask on complete-but-unparseable JSON (#76) ---
+
+
+class _ScriptedClient:
+    """Stub `LLMClient` whose `.complete()` returns a scripted sequence of
+    responses, one per call, mirroring `_CapturingClient`/`_Client` fakes
+    used across the pass-level test modules (test_chunk.py, test_tag.py,
+    etc.)."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.call_count = 0
+
+    def complete(self, prompt, pass_name=None):
+        response = self._responses[self.call_count]
+        self.call_count += 1
+        return response
+
+
+def test_complete_json_returns_raw_text_after_one_valid_completion():
+    from axial.model_json import complete_json
+
+    valid = json.dumps({"a": 1})
+    client = _ScriptedClient([valid])
+
+    raw = complete_json(client, "prompt")
+
+    assert raw == valid
+    assert client.call_count == 1
+
+
+def test_complete_json_reasks_once_on_malformed_then_succeeds():
+    from axial.model_json import complete_json
+
+    valid = json.dumps({"a": 1})
+    client = _ScriptedClient(["not json at all", valid])
+
+    raw = complete_json(client, "prompt")
+
+    assert raw == valid
+    assert client.call_count == 2
+
+
+def test_complete_json_raises_model_json_error_with_snippet_after_all_attempts():
+    from axial.model_json import ModelJsonError, complete_json
+
+    garbage = "still not json"
+    client = _ScriptedClient([garbage, garbage, garbage, garbage])
+
+    with pytest.raises(ModelJsonError) as exc_info:
+        complete_json(client, "prompt")
+
+    assert client.call_count == 3
+    assert garbage in str(exc_info.value)
+
+
+def test_complete_json_rejects_attempts_less_than_one_without_calling_the_client():
+    from axial.model_json import complete_json
+
+    client = _ScriptedClient([])
+
+    with pytest.raises(ValueError):
+        complete_json(client, "prompt", attempts=0)
+
+    assert client.call_count == 0
+
+
+def test_complete_json_passes_pass_name_through_to_every_completion():
+    from axial.model_json import complete_json
+
+    valid = json.dumps({"a": 1})
+    client = _ScriptedClient(["not json", valid])
+
+    calls = []
+    original_complete = client.complete
+
+    def _tracking_complete(prompt, pass_name=None):
+        calls.append(pass_name)
+        return original_complete(prompt, pass_name=pass_name)
+
+    client.complete = _tracking_complete
+
+    complete_json(client, "prompt", pass_name="chunk")
+
+    assert calls == ["chunk", "chunk"]

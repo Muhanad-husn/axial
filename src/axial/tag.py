@@ -67,7 +67,7 @@ from axial.llm import (
     LLMError,
     get_client,
 )
-from axial.model_json import ModelJsonError, parse_model_json
+from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.schema import Axis, Schema, SchemaError, load_schema
 
 DEFAULT_DOMAIN_DIR = Path("config/domains/syria")
@@ -647,9 +647,11 @@ def run_tag(
         )
 
         try:
-            raw_response = client.complete(prompt, pass_name=TAG_PASS_NAME)
+            raw_response = complete_json(client, prompt, pass_name=TAG_PASS_NAME)
         except (LLMError, httpx.HTTPError) as exc:
             raise LLMFailedError(exc) from exc
+        except ModelJsonError as exc:
+            raise TagParseError(f"model response was not valid JSON: {exc}") from exc
 
         # Shared, data-driven cardinality dispatch (issue #29 slice 03): each
         # axis is parsed/validated by its own schema-declared `cardinality`,

@@ -469,3 +469,64 @@ def test_run_artifacts_missing_source_file_raises_missing_source_error(tmp_path)
 
     with pytest.raises(MissingSourceError):
         run_artifacts(missing, client=StubLLMClient())
+
+
+# --- run_artifacts: bounded re-ask on complete-but-unparseable JSON (#76) ---
+
+
+def test_run_artifacts_succeeds_when_first_completion_is_malformed_json(monkeypatch, tmp_path):
+    import axial.artifacts as artifacts_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(artifacts_mod, "extract", lambda path: _tree_with_one_artifact())
+    monkeypatch.setattr(artifacts_mod, "load_schema", lambda domain_dir: _SCHEMA)
+    monkeypatch.setattr(artifacts_mod, "load_codebook", lambda domain_dir: _CODEBOOK)
+
+    valid = json.dumps({"artifact_role": "discard"})
+
+    class _ScriptedClient:
+        def __init__(self):
+            self._responses = ["not json at all", valid]
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            response = self._responses[self.call_count]
+            self.call_count += 1
+            return response
+
+    client = _ScriptedClient()
+    records = artifacts_mod.run_artifacts(source, client=client)
+
+    assert len(records) == 1
+    assert records[0]["artifact_role"] == "discard"
+    assert client.call_count == 2
+
+
+def test_run_artifacts_raises_artifact_parse_error_on_persistently_malformed_json(
+    monkeypatch, tmp_path
+):
+    import axial.artifacts as artifacts_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(artifacts_mod, "extract", lambda path: _tree_with_one_artifact())
+    monkeypatch.setattr(artifacts_mod, "load_schema", lambda domain_dir: _SCHEMA)
+    monkeypatch.setattr(artifacts_mod, "load_codebook", lambda domain_dir: _CODEBOOK)
+
+    class _AlwaysBrokenClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return "not json at all"
+
+    client = _AlwaysBrokenClient()
+
+    with pytest.raises(artifacts_mod.ArtifactParseError):
+        artifacts_mod.run_artifacts(source, client=client)
+
+    assert client.call_count == 3

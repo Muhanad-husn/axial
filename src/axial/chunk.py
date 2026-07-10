@@ -48,7 +48,7 @@ from axial.llm import (
     LLMError,
     get_client,
 )
-from axial.model_json import ModelJsonError, parse_model_json
+from axial.model_json import ModelJsonError, complete_json, parse_model_json
 
 _CHUNK_PROMPT_TEMPLATE = """\
 You are deciding argumentative chunk boundaries for the TARGET SECTION below, \
@@ -307,9 +307,11 @@ def run_chunk(
         prompt = compose_chunk_prompt(section, prev_section, next_section, envelope)
 
         try:
-            raw_response = client.complete(prompt, pass_name=CHUNK_PASS_NAME)
+            raw_response = complete_json(client, prompt, pass_name=CHUNK_PASS_NAME)
         except (LLMError, httpx.HTTPError) as exc:
             raise LLMFailedError(exc) from exc
+        except ModelJsonError as exc:
+            raise ChunkParseError(f"model response was not valid JSON: {exc}") from exc
 
         chunks = parse_response(raw_response)
         section_order = section.get("order", "")

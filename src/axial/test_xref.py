@@ -289,3 +289,64 @@ def test_run_xref_wraps_artifacts_errors(monkeypatch, tmp_path):
 
     with pytest.raises(xref_mod.ArtifactsFailedError):
         xref_mod.run_xref(source, client=StubLLMClient())
+
+
+# --- run_xref: bounded re-ask on complete-but-unparseable JSON (#76) -------
+
+
+def _one_chunk_record():
+    return [{"chunk_id": "paper_1_intro_001", "section": "Introduction", "text": "chunk one text"}]
+
+
+def test_run_xref_succeeds_when_first_completion_is_malformed_json(monkeypatch, tmp_path):
+    import axial.xref as xref_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(xref_mod, "run_chunk", lambda path, **kwargs: _one_chunk_record())
+    monkeypatch.setattr(xref_mod, "run_artifacts", lambda path, **kwargs: _artifact_records())
+
+    valid = json.dumps({"referenced_artifact_ids": ["paper_art_1"]})
+
+    class _ScriptedClient:
+        def __init__(self):
+            self._responses = ["not json at all", valid]
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            response = self._responses[self.call_count]
+            self.call_count += 1
+            return response
+
+    client = _ScriptedClient()
+    pairs = xref_mod.run_xref(source, client=client)
+
+    assert len(pairs) == 1
+    assert pairs[0]["artifact_id"] == "paper_art_1"
+    assert client.call_count == 2
+
+
+def test_run_xref_raises_xref_parse_error_on_persistently_malformed_json(monkeypatch, tmp_path):
+    import axial.xref as xref_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(xref_mod, "run_chunk", lambda path, **kwargs: _one_chunk_record())
+    monkeypatch.setattr(xref_mod, "run_artifacts", lambda path, **kwargs: _artifact_records())
+
+    class _AlwaysBrokenClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return "not json at all"
+
+    client = _AlwaysBrokenClient()
+
+    with pytest.raises(xref_mod.XrefParseError):
+        xref_mod.run_xref(source, client=client)
+
+    assert client.call_count == 3
