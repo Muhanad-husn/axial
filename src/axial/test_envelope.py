@@ -463,4 +463,81 @@ def test_run_envelope_raises_envelope_parse_error_on_persistently_malformed_json
     with pytest.raises(envelope_mod.EnvelopeParseError):
         envelope_mod.run_envelope(source, client=client, envelopes_dir=envelopes_dir)
 
+
+# --- run_envelope: bounded re-ask on a degenerate-but-valid envelope (#80) --
+
+
+def test_run_envelope_reasks_and_succeeds_when_toc_is_first_empty(monkeypatch, tmp_path):
+    """A valid-JSON response with an empty `toc` list (response noise, the
+    same species as broken JSON) must not immediately raise
+    `EnvelopeValidationError` -- it re-asks within complete_json's bounded
+    budget and succeeds on a clean second response."""
+    import axial.envelope as envelope_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+    envelopes_dir = tmp_path / "envelopes"
+
+    monkeypatch.setattr(envelope_mod, "extract", lambda path: _tree_with_sections())
+
+    degenerate = json.dumps(
+        {
+            "thesis": "a thesis",
+            "toc": [],
+            "scope": "a scope",
+            "stated_argument": "an argument",
+        }
+    )
+    clean = StubLLMClient._CANNED_RESPONSE
+
+    class _ScriptedClient:
+        def __init__(self):
+            self._responses = [degenerate, clean]
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            response = self._responses[self.call_count]
+            self.call_count += 1
+            return response
+
+    client = _ScriptedClient()
+    envelope = envelope_mod.run_envelope(source, client=client, envelopes_dir=envelopes_dir)
+
+    assert client.call_count == 2
+    assert envelope["toc"]
+
+
+def test_run_envelope_raises_envelope_validation_error_on_persistently_empty_toc(
+    monkeypatch, tmp_path
+):
+    import axial.envelope as envelope_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+    envelopes_dir = tmp_path / "envelopes"
+
+    monkeypatch.setattr(envelope_mod, "extract", lambda path: _tree_with_sections())
+
+    degenerate = json.dumps(
+        {
+            "thesis": "a thesis",
+            "toc": [],
+            "scope": "a scope",
+            "stated_argument": "an argument",
+        }
+    )
+
+    class _AlwaysDegenerateClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return degenerate
+
+    client = _AlwaysDegenerateClient()
+
+    with pytest.raises(envelope_mod.EnvelopeValidationError):
+        envelope_mod.run_envelope(source, client=client, envelopes_dir=envelopes_dir)
+
     assert client.call_count == 3

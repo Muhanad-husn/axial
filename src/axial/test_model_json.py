@@ -212,6 +212,81 @@ def test_complete_json_rejects_attempts_less_than_one_without_calling_the_client
     assert client.call_count == 0
 
 
+# --- complete_json: optional `validate` callback (issue #80) ---------------
+
+
+def test_complete_json_reasks_once_when_validate_rejects_then_accepts():
+    from axial.model_json import complete_json
+
+    degenerate = json.dumps({"a": ""})
+    clean = json.dumps({"a": 1})
+    client = _ScriptedClient([degenerate, clean])
+
+    def validate(raw):
+        data = json.loads(raw)
+        if data.get("a") == "":
+            raise ValueError("degenerate 'a'")
+
+    raw = complete_json(client, "prompt", validate=validate)
+
+    assert raw == clean
+    assert client.call_count == 2
+
+
+def test_complete_json_raises_validators_exception_after_all_attempts():
+    from axial.model_json import complete_json
+
+    degenerate = json.dumps({"a": ""})
+    client = _ScriptedClient([degenerate, degenerate, degenerate, degenerate])
+
+    class _Degenerate(ValueError):
+        pass
+
+    def validate(raw):
+        raise _Degenerate("always degenerate")
+
+    with pytest.raises(_Degenerate):
+        complete_json(client, "prompt", validate=validate)
+
+    assert client.call_count == 3
+
+
+def test_complete_json_never_calls_validate_when_json_itself_is_invalid():
+    from axial.model_json import ModelJsonError, complete_json
+
+    garbage = "not json at all"
+    client = _ScriptedClient([garbage, garbage, garbage])
+
+    calls = []
+
+    def validate(raw):
+        calls.append(raw)
+
+    with pytest.raises(ModelJsonError):
+        complete_json(client, "prompt", validate=validate)
+
+    assert client.call_count == 3
+    assert calls == []
+
+
+def test_complete_json_returns_raw_after_one_valid_completion_with_validate_passing():
+    from axial.model_json import complete_json
+
+    valid = json.dumps({"a": 1})
+    client = _ScriptedClient([valid])
+
+    calls = []
+
+    def validate(raw):
+        calls.append(raw)
+
+    raw = complete_json(client, "prompt", validate=validate)
+
+    assert raw == valid
+    assert client.call_count == 1
+    assert calls == [valid]
+
+
 def test_complete_json_passes_pass_name_through_to_every_completion():
     from axial.model_json import complete_json
 

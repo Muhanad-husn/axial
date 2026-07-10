@@ -1183,6 +1183,197 @@ def test_run_tag_raises_tag_parse_error_on_persistently_malformed_json(monkeypat
     assert client.call_count == 3
 
 
+# --- run_tag: degenerate (empty-string) tag values re-ask, not fatal (#80) --
+
+
+def test_run_tag_reasks_and_succeeds_when_primary_axis_value_is_first_empty_string(
+    monkeypatch, tmp_path
+):
+    """A single-cardinality axis's value coming back as `''` (valid JSON,
+    degenerate content) must not immediately raise `TagNotInSchemaError` --
+    it re-asks within complete_json's bounded budget and succeeds on a clean
+    second response."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
+    monkeypatch.setattr(
+        tag_mod,
+        "run_chunk",
+        lambda *args, **kwargs: [
+            {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"}
+        ],
+    )
+
+    degenerate = json.dumps({"role_in_argument": ""})
+    clean = json.dumps({"role_in_argument": "role:claim"})
+
+    class _ScriptedClient:
+        def __init__(self):
+            self._responses = [degenerate, clean]
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            response = self._responses[self.call_count]
+            self.call_count += 1
+            return response
+
+    client = _ScriptedClient()
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert len(records) == 1
+    assert records[0]["role_in_argument"] == "role:claim"
+    assert client.call_count == 2
+
+
+def test_run_tag_raises_tag_parse_error_on_persistently_empty_string_primary(monkeypatch, tmp_path):
+    import axial.tag as tag_mod
+
+    domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
+    monkeypatch.setattr(
+        tag_mod,
+        "run_chunk",
+        lambda *args, **kwargs: [
+            {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"}
+        ],
+    )
+
+    class _AlwaysEmptyClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return json.dumps({"role_in_argument": ""})
+
+    client = _AlwaysEmptyClient()
+
+    with pytest.raises(tag_mod.TagParseError):
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert client.call_count == 3
+
+
+def test_run_tag_reasks_and_succeeds_when_secondary_entry_is_first_empty_string(
+    monkeypatch, tmp_path
+):
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    degenerate = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": {"primary": "state", "secondary": [""]},
+            "claim_type": {"primary": "state-formation", "subtags": []},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+    clean = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": {"primary": "state", "secondary": ["ideology"]},
+            "claim_type": {"primary": "state-formation", "subtags": []},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+    class _ScriptedClient:
+        def __init__(self):
+            self._responses = [degenerate, clean]
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            response = self._responses[self.call_count]
+            self.call_count += 1
+            return response
+
+    client = _ScriptedClient()
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert len(records) == 1
+    assert records[0]["field"] == {"primary": "state", "secondary": ["ideology"]}
+    assert client.call_count == 2
+
+
+def test_run_tag_reasks_and_succeeds_when_subtag_is_first_empty_string(monkeypatch, tmp_path):
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    degenerate = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": {"primary": "state", "secondary": []},
+            "claim_type": {"primary": "state-formation", "subtags": [""]},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+    clean = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": {"primary": "state", "secondary": []},
+            "claim_type": {
+                "primary": "state-formation",
+                "subtags": ["formation:bellicist"],
+            },
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+    class _ScriptedClient:
+        def __init__(self):
+            self._responses = [degenerate, clean]
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            response = self._responses[self.call_count]
+            self.call_count += 1
+            return response
+
+    client = _ScriptedClient()
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert len(records) == 1
+    assert records[0]["claim_type"]["subtags"] == ["formation:bellicist"]
+    assert client.call_count == 2
+
+
+def test_run_tag_out_of_vocab_non_empty_tag_is_immediately_fatal_with_no_reask(
+    monkeypatch, tmp_path
+):
+    """A genuine non-empty out-of-vocabulary tag must NEVER be treated as
+    degenerate -- it stays immediately fatal (`TagNotInSchemaError`), with
+    exactly one client call, never re-asked (issue #80: the P0-6 schema-gap
+    signal is untouched by the degenerate-response re-ask)."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
+    monkeypatch.setattr(
+        tag_mod,
+        "run_chunk",
+        lambda *args, **kwargs: [
+            {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"}
+        ],
+    )
+
+    class _CountingClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return json.dumps({"role_in_argument": "role:not-a-real-tag"})
+
+    client = _CountingClient()
+
+    with pytest.raises(tag_mod.TagNotInSchemaError):
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert client.call_count == 1
+
+
 def test_default_domain_dir_returns_configured_path_when_present(tmp_path):
     """`_default_domain_dir` reads `paths.domain_dir` from `config/
     pipeline.yaml` (mirrors `axial.envelope._default_envelopes_dir`'s own

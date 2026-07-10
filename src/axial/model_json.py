@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, Callable
 
 # A single fence wrapping the entire response: optional leading whitespace,
 # an opening ``` optionally followed by a language tag (e.g. "json") to
@@ -56,7 +56,12 @@ def _snippet(raw: str) -> str:
 
 
 def complete_json(
-    client: Any, prompt: str, pass_name: str | None = None, *, attempts: int = 3
+    client: Any,
+    prompt: str,
+    pass_name: str | None = None,
+    *,
+    attempts: int = 3,
+    validate: Callable[[str], None] | None = None,
 ) -> str:
     """Call `client.complete(prompt, pass_name=pass_name)` and validate the
     result parses as JSON via `parse_model_json`, re-asking -- a fresh
@@ -68,18 +73,36 @@ def complete_json(
     stochastic, not rate-related, so no backoff is needed between re-asks
     (unlike llm.py's transport retries).
 
-    Returns the RAW response string, not the parsed value, once it verifies
-    parseable -- deliberately: several call sites (e.g. tag.py) parse one
-    raw response with multiple different per-axis parsers, so handing back
-    only a parsed value would force them to either re-serialize it or
-    duplicate this helper's parsing. Returning the validated raw string
-    lets every call site keep its own exact parsing flow unchanged;
-    `parse_model_json` is used here purely as the validity gate, and its
-    parsed result is discarded once confirmed.
+    `validate`, when given, is called with the raw response string AFTER
+    `parse_model_json` has already confirmed it parses -- it never runs on a
+    response that fails JSON parsing, that case is already re-asked on its
+    own. It exists for cheap, caller-defined degeneracy checks on otherwise
+    valid JSON whose *content* is response noise, not a real answer -- e.g.
+    an empty-string tag value or an empty `toc` list (issue #80): valid
+    JSON, degenerate content, the same species as broken JSON (#76) or
+    `secondary: []` (#58), and deserving the same bounded re-ask rather than
+    an instant abort. If `validate` RAISES (any exception), that attempt
+    counts as failed exactly like an unparseable response, and the loop
+    re-asks within the same bounded budget. `validate` must NEVER be used
+    for a genuine schema-vocabulary miss (e.g. an out-of-list tag) -- that
+    is the P0-6 schema-gap signal and must stay immediately fatal, not
+    smoothed over by a re-ask; callers keep that check in their own
+    post-`complete_json` parse/validate flow, entirely outside `validate`.
 
-    On persistent failure, the final attempt's `ModelJsonError` (carrying
-    the raw-response snippet) propagates unchanged, so callers keep
-    wrapping it into their own typed parse error exactly as before.
+    Returns the RAW response string, not the parsed value, once it verifies
+    parseable (and, when `validate` is given, non-degenerate) -- deliberately:
+    several call sites (e.g. tag.py) parse one raw response with multiple
+    different per-axis parsers, so handing back only a parsed value would
+    force them to either re-serialize it or duplicate this helper's parsing.
+    Returning the validated raw string lets every call site keep its own
+    exact parsing flow unchanged; `parse_model_json` is used here purely as
+    the validity gate, and its parsed result is discarded once confirmed.
+
+    On persistent failure, the final attempt's exception -- `ModelJsonError`
+    (carrying the raw-response snippet) when the JSON itself never parsed,
+    or `validate`'s own exception, UNCHANGED, when JSON parsed but
+    `validate` kept rejecting it -- propagates exactly as raised, so callers
+    keep wrapping/handling it into their own typed error exactly as before.
     Transport-level errors from `client.complete()` itself (`LLMError`,
     `httpx.HTTPError`) are never caught here -- they propagate immediately
     on the first occurrence, exactly as today.
@@ -89,7 +112,7 @@ def complete_json(
     """
     if attempts < 1:
         raise ValueError(f"attempts must be >= 1, got {attempts}")
-    last_error: ModelJsonError | None = None
+    last_error: Exception | None = None
     for _ in range(attempts):
         raw = client.complete(prompt, pass_name=pass_name)
         try:
@@ -97,6 +120,12 @@ def complete_json(
         except ModelJsonError as exc:
             last_error = exc
             continue
+        if validate is not None:
+            try:
+                validate(raw)
+            except Exception as exc:  # noqa: BLE001 -- caller's own check, any exception re-asks
+                last_error = exc
+                continue
         return raw
     assert (
         last_error is not None
