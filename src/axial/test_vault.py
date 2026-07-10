@@ -711,6 +711,42 @@ def test_run_vault_write_backlink_pass_rerun_does_not_duplicate(monkeypatch, tmp
     assert artifact_frontmatter["cited_by"] == [_RECORD["chunk_id"]]
 
 
+def test_run_vault_write_wraps_tag_error_raised_inside_run_xref_into_vault_error(
+    monkeypatch, tmp_path
+):
+    """Live-failure regression (issue #90): the wimmer traceback showed
+    `TagNotInSchemaError` escaping raw all the way through
+    `run_vault_write -> run_xref -> run_artifacts` -- distinct from
+    `test_run_vault_write_wraps_tag_not_in_schema_error_into_vault_error`
+    above, which only covers `run_vault_write`'s own DIRECT `run_artifacts`
+    call (for artifact notes), not the SEPARATE `run_artifacts` reference
+    `axial.xref.run_xref` uses internally (for xref pairs) -- the exact
+    module/call site the live failure died inside. `run_vault_write`'s own
+    `run_artifacts` call is left succeeding here so execution actually
+    reaches the xref pass."""
+    import axial.vault as vault_mod
+    import axial.xref as xref_mod
+    from axial.tag import TagNotInSchemaError
+
+    source_path, envelopes_dir = _arrange_stored_envelope(tmp_path)
+    vault_dir = tmp_path / "vault"
+
+    monkeypatch.setattr(vault_mod, "run_tag", lambda *a, **k: [_RECORD])
+    monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [_ARTIFACT_RECORD])
+    # `run_xref` itself is left real (not monkeypatched on vault_mod) so this
+    # test exercises the actual composition -- only its OWN internal
+    # collaborators (xref_mod's run_chunk/run_artifacts) are stubbed.
+    monkeypatch.setattr(xref_mod, "run_chunk", lambda *a, **k: [])
+
+    def _raise_tag_error(*a, **k):
+        raise TagNotInSchemaError("field", "")
+
+    monkeypatch.setattr(xref_mod, "run_artifacts", _raise_tag_error)
+
+    with pytest.raises(vault_mod.VaultError):
+        vault_mod.run_vault_write(source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir)
+
+
 def test_run_vault_write_wraps_xref_error_into_vault_error(monkeypatch, tmp_path):
     import axial.vault as vault_mod
     from axial.xref import XrefError

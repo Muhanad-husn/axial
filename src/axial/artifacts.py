@@ -146,6 +146,57 @@ class ArtifactParseError(ArtifactsError):
 # unchanged.
 
 
+def _reject_blank_artifact_value(value: Any, field: str) -> None:
+    """Raise `ArtifactParseError`, naming `field`, when `value` is an empty
+    or whitespace-only string -- the same species of response noise as
+    broken JSON, never a candidate tag on its own (issue #90, mirroring
+    `axial.tag._reject_blank_tag` from issue #80). Any non-blank value
+    (including a genuine out-of-vocabulary string) is left untouched here:
+    schema-vocabulary validation is `validate_artifact_role`/
+    `validate_multi_value_tag`'s job alone, entirely separate from this
+    degeneracy check."""
+    if isinstance(value, str) and not value.strip():
+        raise ArtifactParseError(f"{field} tag value is empty/whitespace-only: {value!r}")
+
+
+def reject_degenerate_artifact_values(raw: str, schema: Schema) -> None:
+    """Validator passed to `complete_json` for the artifacts pass (issue
+    #90, mirroring `axial.tag.reject_degenerate_tag_values` from issue #85/
+    #80): re-parses `raw` with the exact same parsers `run_artifacts` itself
+    uses (`parse_artifact_role` / `parse_multi_value_tag_response`), but
+    only to reject an empty/whitespace-only value -- the `artifact_role`
+    string itself, or the `field` axis's primary/each secondary entry when
+    the loaded schema declares a `field` axis -- as a re-askable
+    `ArtifactParseError`. Runs BEFORE `run_artifacts`'s own parse+validate
+    flow, inside `complete_json`'s bounded re-ask budget, so a degenerate
+    response (e.g. `field.primary == ""`) never reaches
+    `validate_artifact_role`/`validate_multi_value_tag` -- and hence never
+    raises a raw, unwrapped `TagNotInSchemaError` for tag `''` -- at all; a
+    non-degenerate response is parsed again there (cheap, and keeps this
+    validator fully decoupled from `run_artifacts`'s bookkeeping).
+
+    Deliberately never calls `validate_artifact_role`/
+    `validate_multi_value_tag`: a genuine non-empty out-of-vocabulary value
+    must stay immediately fatal (`TagNotInSchemaError`, the P0-6
+    schema-gap signal), never smoothed over by a re-ask here."""
+    # `parse_artifact_role` already rejects a missing/non-string/blank role
+    # as `ArtifactParseError` on its own -- reused verbatim, not duplicated.
+    parse_artifact_role(raw)
+
+    field_axis = schema.axes.get(FIELD_AXIS)
+    if field_axis is not None:
+        parsed = parse_multi_value_tag_response(raw, field_axis)
+        _reject_blank_artifact_value(parsed["primary"], f"{FIELD_AXIS}.primary")
+        secondary = parsed.get("secondary")
+        secondary_values = (
+            secondary
+            if isinstance(secondary, list)
+            else ([secondary] if secondary is not None else [])
+        )
+        for index, value in enumerate(secondary_values):
+            _reject_blank_artifact_value(value, f"{FIELD_AXIS}.secondary[{index}]")
+
+
 def _collect_descendant_artifacts(node: dict, section: str) -> list[tuple[dict, str]]:
     """Recurse into `node`'s descendants, pairing every `type == 'artifact'`
     node found with `section` (the enclosing top-level section's own
@@ -301,7 +352,12 @@ def run_artifacts(
         prompt = compose_artifact_prompt(section, codebook)
 
         try:
-            raw_response = complete_json(client, prompt, pass_name=ARTIFACTS_PASS_NAME)
+            raw_response = complete_json(
+                client,
+                prompt,
+                pass_name=ARTIFACTS_PASS_NAME,
+                validate=lambda raw: reject_degenerate_artifact_values(raw, schema),
+            )
         except (LLMError, httpx.HTTPError) as exc:
             raise LLMFailedError(exc) from exc
         except ModelJsonError as exc:

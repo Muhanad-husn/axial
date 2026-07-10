@@ -38,6 +38,7 @@ from axial.llm import (
     XREF_PASS_NAME,
     get_client,
 )
+from axial.tag import TagError
 
 _XREF_PROMPT_TEMPLATE = """\
 You are deciding which, if any, of the source's known artifacts (tables or \
@@ -81,9 +82,15 @@ class ChunkingFailedError(XrefError):
 
 class ArtifactsFailedError(XrefError):
     """Raised when the underlying artifact-classification pass
-    (`run_artifacts`) fails."""
+    (`run_artifacts`) fails -- either `axial.artifacts.ArtifactsError`
+    (e.g. a missing schema/codebook) or `axial.tag.TagError` (e.g.
+    `TagNotInSchemaError` for an out-of-schema `artifact_role`/`field`
+    value, reused by `axial.artifacts`; a `TagError`, not an
+    `ArtifactsError`, so it must be caught here too -- issue #90, mirrors
+    `axial.vault.ArtifactClassificationFailedError`'s existing catch of both
+    for its own direct `run_artifacts` call)."""
 
-    def __init__(self, cause: ArtifactsError):
+    def __init__(self, cause: ArtifactsError | TagError):
         self.cause = cause
         super().__init__(str(cause))
 
@@ -198,7 +205,7 @@ def run_xref(
         artifact_records = run_artifacts(
             path, client=client, domain_dir=domain_dir, config_path=config_path
         )
-    except ArtifactsError as exc:
+    except (ArtifactsError, TagError) as exc:
         raise ArtifactsFailedError(exc) from exc
 
     known_artifact_ids = {record["artifact_id"] for record in artifact_records}
