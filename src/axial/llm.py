@@ -450,6 +450,14 @@ _REQUEST_TIMEOUT = httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=15.0
 # within the same budget, with a final-attempt failure naming the reason. A
 # missing/null `finish_reason` is accepted as success: some providers omit
 # it, and absence must not be punished.
+#
+# Issue #86 extends the same budget once more to an HTTP 200 whose *body*
+# isn't valid JSON at all (a truncated stream or a proxy error page):
+# `response.json()` otherwise raises a raw `json.JSONDecodeError`, outside
+# the `LLMError`/`httpx` families every caller catches, breaking this
+# module's "every error is an LLMError" promise. Retried like any other
+# transient failure; a final-attempt failure raises `OpenRouterError` naming
+# the decode error plus a truncated body snippet for diagnosability.
 _MAX_ATTEMPTS = 3
 _RETRY_BACKOFF_SECONDS = (0.5, 2.0)
 
@@ -517,7 +525,16 @@ class OpenRouterClient:
                 continue
 
             response.raise_for_status()
-            data = response.json()
+            try:
+                data = response.json()
+            except (json.JSONDecodeError, ValueError) as exc:
+                if is_last_attempt:
+                    snippet = repr(response.text[:300])
+                    raise OpenRouterError(
+                        f"malformed API response body: {exc}; body snippet: {snippet}"
+                    ) from exc
+                _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
+                continue
             try:
                 choice = data["choices"][0]
                 content = choice["message"]["content"]
