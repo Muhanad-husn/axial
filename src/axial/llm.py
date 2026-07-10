@@ -387,10 +387,18 @@ _REQUEST_TIMEOUT = httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=15.0
 _MAX_ATTEMPTS = 3
 _RETRY_BACKOFF_SECONDS = (0.5, 2.0)
 
-# Explicit, generous `max_tokens` sent with every request (issue #69):
-# chunking responses echo whole section text back, and a conservative
-# provider default can truncate that long before this budget is reached.
-_MAX_COMPLETION_TOKENS = 16384
+# Explicit, generous `max_tokens` sent with every request (issue #69, raised
+# in #74): chunking responses echo whole section text back, and a
+# conservative provider default can truncate that long before this budget is
+# reached. Measured on the gold corpus: real sections reach ~175KB of text,
+# and echoing one back needs ~44k output tokens -- well over the original
+# 16384. The `deepseek/deepseek-v4-flash` provider ceiling is 65,536
+# (`top_provider.max_completion_tokens` via the OpenRouter models API);
+# 60000 leaves headroom under that cap. Sections whose echoed chunking
+# response would exceed even this budget are a distinct, out-of-scope
+# problem (P1-1, deterministic long-section splitting) -- the #70 typed
+# truncation error remains the loud, correct failure for that case.
+_MAX_COMPLETION_TOKENS = 60000
 
 # Module-level indirection so tests can patch out the actual sleep (e.g.
 # `monkeypatch.setattr(llm, "_sleep", lambda seconds: None)`) instead of
