@@ -166,6 +166,43 @@ def test_run_chunk_reuses_checkpoint_with_zero_llm_calls(monkeypatch, tmp_path):
     assert second_client.call_count == 0
 
 
+def test_run_chunk_treats_a_legacy_checkpoint_with_no_section_order_as_complete(
+    monkeypatch, tmp_path
+):
+    """Regression guard (issue #104 fix 1): a checkpoint written by the OLD
+    (pre-#104) all-or-nothing `write_chunk_checkpoint` -- atomically, once,
+    only after the whole pass already succeeded -- carries no `section_order`
+    field on any record. `done_section_orders` would otherwise come out
+    empty, making every section look unfinished: the pass would re-chunk
+    everything AND append duplicate records on top of the legacy lines,
+    corrupting the checkpoint and poisoning every already-ingested source's
+    next requeue. A legacy (no `section_order` anywhere) checkpoint must
+    instead be treated as complete and returned verbatim, with zero LLM
+    calls -- exactly like the old short-circuit."""
+    import axial.chunk as chunk_mod
+    from axial.llm import ExplodingLLMClient
+
+    source, envelopes_dir, source_id = _arrange_chunk_source(tmp_path, monkeypatch)
+    chunks_dir = tmp_path / "chunks"
+    checkpoint = chunks_dir / f"{source_id}.jsonl"
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+
+    legacy_records = [
+        {"chunk_id": "paper-xyz_1_intro_001", "section": "Introduction", "text": "one"},
+        {"chunk_id": "paper-xyz_2_conclusion_001", "section": "Conclusion", "text": "two"},
+    ]
+    checkpoint.write_text("".join(json.dumps(r) + "\n" for r in legacy_records), encoding="utf-8")
+
+    records = chunk_mod.run_chunk(
+        source,
+        client=ExplodingLLMClient(),
+        envelopes_dir=envelopes_dir,
+        chunks_dir=chunks_dir,
+    )
+
+    assert records == legacy_records
+
+
 # --- seam 3: tag-pass checkpoint --------------------------------------------
 
 
@@ -275,13 +312,14 @@ def test_run_tag_resume_tags_only_missing_chunks_in_stable_order(monkeypatch, tm
 
 # --- hardening: torn checkpoint lines survive a hard process kill ----------
 #
-# A hard kill (OOM kill, Stop-Process) mid-`append_tag_checkpoint` can leave
-# the file's last line partially flushed -- a torn final line. Bare
-# `json.loads` on that line would raise on every subsequent load, permanently
-# poisoning that source's resume (strictly worse than no checkpoint at all).
-# `write_chunk_checkpoint` is a single-shot write of the whole file, so a kill
-# mid-write is hardened differently: temp-file-then-`os.replace`, so no
-# partial file is ever visible under the final name.
+# A hard kill (OOM kill, Stop-Process) mid-`append_tag_checkpoint`/
+# `append_chunk_checkpoint` can leave the file's last line partially flushed
+# -- a torn final line. Bare `json.loads` on that line would raise on every
+# subsequent load, permanently poisoning that source's resume (strictly
+# worse than no checkpoint at all). Both checkpoints share the same
+# append/heal machinery (`axial.checkpoint`), so both tolerate it the same
+# way: the torn tail is dropped and the record simply reappears in the
+# "not yet checkpointed" gap on the next run.
 
 
 def test_load_tag_checkpoint_drops_torn_final_line_and_resume_retags_it(monkeypatch, tmp_path):
@@ -342,42 +380,3 @@ def test_load_tag_checkpoint_raises_naming_path_and_line_for_a_non_final_torn_li
     message = str(exc_info.value)
     assert str(checkpoint) in message
     assert "2" in message  # 1-indexed line number of the torn (non-final) line
-
-
-def test_write_chunk_checkpoint_writes_via_temp_file_then_atomic_replace(tmp_path, monkeypatch):
-    import os as _os
-    from pathlib import Path as _Path
-
-    import axial.chunk as chunk_mod
-
-    final_path = tmp_path / "chunks" / "src.jsonl"
-    records = [{"chunk_id": "a"}, {"chunk_id": "b"}]
-
-    calls = []
-    real_replace = _os.replace
-
-    def _spy_replace(src, dst):
-        # At the moment of the atomic swap, the temp file must already hold
-        # the full content and the final path must not exist yet -- proof
-        # the whole write happened off to the side, never visible partially
-        # under the final name.
-        assert _Path(src).exists()
-        assert not final_path.exists()
-        calls.append((_Path(src), _Path(dst)))
-        real_replace(src, dst)
-
-    monkeypatch.setattr(chunk_mod.os, "replace", _spy_replace)
-
-    chunk_mod.write_chunk_checkpoint(records, final_path)
-
-    assert len(calls) == 1
-    tmp_src, dst = calls[0]
-    assert dst == final_path
-    assert tmp_src.parent == final_path.parent
-    assert tmp_src != final_path
-    assert final_path.is_file()
-    # The temp file must not linger after a successful replace.
-    assert not tmp_src.exists()
-    assert [
-        json.loads(line) for line in final_path.read_text(encoding="utf-8").splitlines()
-    ] == records

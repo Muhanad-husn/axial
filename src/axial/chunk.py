@@ -28,9 +28,7 @@ to stdout only; vault persistence is slice 06.
 from __future__ import annotations
 
 import json
-import os
 import re
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -83,34 +81,6 @@ def chunks_checkpoint_path(source_id: str, chunks_dir: Path = CHUNKS_DIR) -> Pat
     chunk record per line), keyed by the content-hashed source_id so an edited
     file (a new source_id) never reuses stale chunks (issue #81 point 1)."""
     return chunks_dir / f"{source_id}.jsonl"
-
-
-def write_chunk_checkpoint(records: list[dict[str, Any]], path: Path) -> None:
-    """Persist a source's chunk records to `path`, one JSON record per line,
-    creating parent directories as needed (issue #81 point 1). Written once,
-    after the chunking pass produces the records.
-
-    Hardening (issue #81): written atomically -- the full content goes to a
-    temp file in the same directory first, then swapped onto `path` via
-    `os.replace` (an atomic rename on both POSIX and Windows) -- so a hard
-    process kill (OOM kill, Stop-Process) mid-write can never leave a
-    partial/torn file visible under the final name. Unlike the tag
-    checkpoint's append-and-tolerate-a-torn-tail strategy, this file is
-    written once as a whole and is load-bearing for chunk_ids (a torn one
-    would corrupt every downstream chunk_id lookup), so "never partially
-    visible" is the simpler, correct guarantee here rather than "tolerate and
-    heal"."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            for record in records:
-                handle.write(json.dumps(record) + "\n")
-        os.replace(tmp_path, path)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def append_chunk_checkpoint(path: Path, record: dict[str, Any]) -> None:
@@ -433,6 +403,16 @@ def run_chunk(
     done_section_orders: set[str] = set()
     if checkpoint_path is not None and checkpoint_path.exists():
         checkpointed_records = load_chunk_checkpoint(checkpoint_path)
+        if checkpointed_records and not any("section_order" in r for r in checkpointed_records):
+            # Legacy (pre-#104) checkpoint: written once, atomically, only
+            # after the whole pass succeeded (the old, now-removed
+            # write_chunk_checkpoint) -- none of its records carry
+            # section_order, so treat it as complete, exactly like the old
+            # short-circuit, zero LLM calls. Without this, an old-format
+            # checkpoint's empty done_section_orders would make every
+            # section look unfinished, re-chunking the whole source AND
+            # appending duplicate records on top of the legacy lines.
+            return checkpointed_records
         done_section_orders = {
             record["section_order"] for record in checkpointed_records if "section_order" in record
         }
