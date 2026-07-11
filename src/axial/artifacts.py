@@ -55,6 +55,7 @@ from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.schema import Schema, SchemaError, load_schema
 from axial.tag import (
     TagNotInSchemaError,
+    apply_correction_reask,
     parse_multi_value_tag_response,
     validate_multi_value_tag,
 )
@@ -377,7 +378,34 @@ def validate_artifact_role(role: str, schema: Schema) -> None:
     replaced, which took `(role, axis_name)`."""
     axis = schema.axes.get(_ARTIFACT_ROLE_AXIS)
     if axis is None or role not in axis.tag_ids:
-        raise TagNotInSchemaError(_ARTIFACT_ROLE_AXIS, role)
+        raise TagNotInSchemaError(
+            _ARTIFACT_ROLE_AXIS, role, vocabulary=(axis.tag_ids if axis is not None else None)
+        )
+
+
+def _classify_artifact_response(raw: str, schema: Schema) -> tuple[str, dict[str, Any] | None]:
+    """Parse+validate one raw artifacts-pass response into its `artifact_role`
+    and (when the schema declares a `field` axis) its `field` value, reusing
+    `axial.tag`'s shared primary+secondary parser/validator for `field`.
+    Raises `TagNotInSchemaError` on any schema-vocabulary miss (the signal
+    `apply_correction_reask` catches for its single bounded re-ask, issue
+    #102), and `ArtifactParseError` on a malformed response as before.
+    Factored out of `run_artifacts`'s per-node body so the identical
+    classification runs on both the original answer and the correction
+    re-ask's answer."""
+    role = parse_artifact_role(raw)
+    validate_artifact_role(role, schema)
+
+    field_value: dict[str, Any] | None = None
+    field_axis = schema.axes.get(FIELD_AXIS)
+    if field_axis is not None:
+        parsed_field = parse_multi_value_tag_response(raw, field_axis)
+        validate_multi_value_tag(schema, FIELD_AXIS, parsed_field)
+        field_value = {
+            "primary": parsed_field["primary"],
+            "secondary": parsed_field["secondary"],
+        }
+    return role, field_value
 
 
 def run_artifacts(
@@ -477,23 +505,23 @@ def run_artifacts(
         except ModelJsonError as exc:
             raise ArtifactParseError(f"model response was not valid JSON: {exc}") from exc
 
-        role = parse_artifact_role(raw_response)
-        validate_artifact_role(role, schema)
-
-        # `field` classification (issue #32 slice 02): reuses `axial.tag`'s
-        # shared primary+secondary parser/validator, never a reinvented
-        # field parser here. Only tagged when the loaded schema actually
-        # declares a `field` axis -- a minimal domain lacking one (e.g. an
-        # inner unit test's fixture schema) is not a hard error.
-        field_value: dict[str, Any] | None = None
-        field_axis = schema.axes.get(FIELD_AXIS)
-        if field_axis is not None:
-            parsed_field = parse_multi_value_tag_response(raw_response, field_axis)
-            validate_multi_value_tag(schema, FIELD_AXIS, parsed_field)
-            field_value = {
-                "primary": parsed_field["primary"],
-                "secondary": parsed_field["secondary"],
-            }
+        # An out-of-vocabulary artifact_role or field value triggers exactly
+        # ONE bounded correction re-ask (issue #102, P0-6), identical to the
+        # tag pass: the model is shown the failing position's controlled
+        # vocabulary and must return a valid value or an explicit NONE;
+        # still-out-of-vocab after that single re-ask propagates
+        # `TagNotInSchemaError` as the hard error. `_classify_artifact_response`
+        # runs the exact same role/field parse+validate on either answer.
+        try:
+            role, field_value = apply_correction_reask(
+                client,
+                ARTIFACTS_PASS_NAME,
+                raw_response,
+                prompt,
+                lambda raw: _classify_artifact_response(raw, schema),
+            )
+        except (LLMError, httpx.HTTPError) as exc:
+            raise LLMFailedError(exc) from exc
 
         record = build_artifact_record(source_id, node, section, role, field_value)
         # Persist this artifact's classified record before moving to the

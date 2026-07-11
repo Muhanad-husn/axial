@@ -297,12 +297,28 @@ class TagCardinalityError(TagError):
 
 class TagNotInSchemaError(TagError):
     """Raised when a tag value the model returned does not exist in the
-    loaded schema's axis vocabulary (PRD §7.1, P0-6: "A tag not in the
-    schema is a hard error, not a silent pass")."""
+    loaded schema's axis vocabulary (PRD §7.1, P0-6).
 
-    def __init__(self, axis_name: str, tag: Any):
+    Carries the controlled `vocabulary` legal for the FAILING POSITION and an
+    optional human-readable `position` label (issue #102): a subtag failure's
+    legal set is that specific primary's own declared subtags, NOT the axis's
+    primary vocabulary, so the bounded correction re-ask can show the model
+    the right options to correct against. Both are optional so every existing
+    raise site (and the locked error message) is unchanged when they are
+    omitted."""
+
+    def __init__(
+        self,
+        axis_name: str,
+        tag: Any,
+        *,
+        vocabulary: set[str] | None = None,
+        position: str | None = None,
+    ):
         self.axis_name = axis_name
         self.tag = tag
+        self.vocabulary = vocabulary
+        self.position = position
         super().__init__(f"tag {tag!r} is not in the schema's {axis_name!r} axis")
 
 
@@ -619,7 +635,9 @@ def validate_tag(schema: Schema, axis_name: str, value: Any) -> Any:
     if axis is not None:
         value = _normalize_axis_prefixed_value(axis_name, value, axis.tag_ids)
     if axis is None or value not in axis.tag_ids:
-        raise TagNotInSchemaError(axis_name, value)
+        raise TagNotInSchemaError(
+            axis_name, value, vocabulary=(axis.tag_ids if axis is not None else None)
+        )
     return value
 
 
@@ -744,7 +762,12 @@ def validate_multi_value_tag(schema: Schema, axis_name: str, parsed: dict[str, A
         for subtag in parsed["subtags"]:
             normalized = _normalize_axis_prefixed_value(axis_name, subtag, declared)
             if normalized not in declared:
-                raise TagNotInSchemaError(axis_name, subtag)
+                raise TagNotInSchemaError(
+                    axis_name,
+                    subtag,
+                    vocabulary=declared,
+                    position=f"as a subtag of the primary {parsed['primary']!r}",
+                )
             normalized_subtags.append(normalized)
         parsed["subtags"] = normalized_subtags
 
@@ -846,6 +869,116 @@ def build_tagged_record(
     for axis_name, axis_value in (multi_value_axes or {}).items():
         record[axis_name] = axis_value
     return record
+
+
+# Appended to a pass's own base prompt to form the P0-6 bounded correction
+# re-ask (issue #102). Shows the invalid value, the controlled vocabulary
+# legal for the FAILING POSITION (a subtag failure shows that primary's own
+# declared subtags, not the axis's primary vocabulary), and the instruction to
+# return a valid value or the literal NONE. Deliberately avoids the chunk-pass
+# and xref-pass prompt markers so a recorded run still counts it as a
+# tag-pass-family call, not a chunk/xref one.
+_CORRECTION_REASK_NOTICE = """\
+
+CORRECTION REQUIRED. Your previous answer used {invalid!r} for the {axis!r} \
+axis{position}, but that value is NOT in its controlled vocabulary. Choose one \
+value strictly from this controlled vocabulary:
+
+{vocabulary}
+
+Reply with the FULL JSON object again -- every key exactly as instructed \
+above -- replacing only the invalid value with a valid one drawn from that \
+vocabulary, or the single word NONE if, and only if, none of them applies.
+"""
+
+
+def compose_correction_prompt(base_prompt: str, exc: TagNotInSchemaError) -> str:
+    """Build the bounded correction re-ask prompt (issue #102): the pass's own
+    `base_prompt` plus a correction notice naming the invalid value, the
+    failing position, and the controlled vocabulary legal there (from
+    `exc.vocabulary`, populated at every schema-vocabulary raise site). The
+    model must return a valid value or an explicit NONE -- the code never
+    guesses or normalizes the value itself."""
+    if exc.vocabulary:
+        vocab_text = "\n".join(f"- {value}" for value in sorted(exc.vocabulary))
+    else:
+        vocab_text = "(that axis's controlled vocabulary, as listed above)"
+    position = f" {exc.position}" if exc.position else ""
+    notice = _CORRECTION_REASK_NOTICE.format(
+        invalid=exc.tag,
+        axis=exc.axis_name,
+        position=position,
+        vocabulary=vocab_text,
+    )
+    return base_prompt + notice
+
+
+def apply_correction_reask(
+    client: LLMClient,
+    pass_name: str,
+    raw_response: str,
+    base_prompt: str,
+    validate: Any,
+) -> Any:
+    """Run `validate(raw_response)`; on an out-of-vocabulary `TagNotInSchemaError`
+    issue EXACTLY ONE bounded correction re-ask and re-validate that one
+    correction (issue #102, PRD §7.1 / P0-6).
+
+    `validate(raw)` parses+validates a raw tag/artifact response, raising
+    `TagNotInSchemaError` on a schema-vocabulary miss and returning its own
+    parsed result otherwise. The correction re-ask is a SINGLE
+    `client.complete(correction_prompt, pass_name=pass_name)` call -- distinct
+    from `complete_json`'s JSON/degeneracy re-ask budget -- whose prompt shows
+    the failing position's controlled vocabulary and asks for a valid value or
+    an explicit NONE. If the correction is still out-of-vocabulary (a literal
+    NONE is in no axis's vocabulary, so it fails re-validation the same way),
+    the re-validation's `TagNotInSchemaError` propagates unchanged: the P0-6
+    hard error, never a silent pass and never a code-side guess. The corrected
+    value can only ever come from the model's own re-ask response, re-checked
+    through the identical vocabulary validation.
+
+    Only `TagNotInSchemaError` triggers the re-ask; any other error `validate`
+    raises (parse/cardinality/missing-country) propagates unchanged, exactly
+    as before this layer existed. Transport errors from `client.complete` are
+    not caught here -- the caller wraps them into its own typed LLM error."""
+    try:
+        return validate(raw_response)
+    except TagNotInSchemaError as exc:
+        correction_prompt = compose_correction_prompt(base_prompt, exc)
+        corrected_raw = client.complete(correction_prompt, pass_name=pass_name)
+        return validate(corrected_raw)
+
+
+def _parse_and_validate_tags(
+    raw_response: str, axes_to_tag: list[str], schema: Schema
+) -> tuple[dict[str, str], dict[str, dict[str, Any]], str | None]:
+    """Parse+validate every tagged axis from one raw tag-pass response,
+    dispatched on each axis's schema-declared cardinality (never its name).
+    Returns `(single_axis_values, multi_value_axes, country)`. Raises
+    `TagNotInSchemaError` on any schema-vocabulary miss (the signal
+    `apply_correction_reask` catches for its single bounded re-ask), and the
+    same parse/cardinality/missing-country errors as before for other
+    malformations. Factored out of `run_tag`'s per-chunk body (issue #102) so
+    the identical parse+validate can run on both the original answer and the
+    bounded correction re-ask's answer."""
+    values: dict[str, str] = {}
+    multi_value_axes: dict[str, dict[str, Any]] = {}
+    country: str | None = None
+    for axis_name in axes_to_tag:
+        axis = schema.axes[axis_name]
+        if axis.cardinality in MULTI_VALUE_CARDINALITIES:
+            parsed = parse_multi_value_tag_response(raw_response, axis)
+            validate_multi_value_tag(schema, axis_name, parsed)
+            parsed.update(_axis_extras(axis))
+            multi_value_axes[axis_name] = parsed
+        else:
+            value = parse_tag_response(raw_response, axis_name)
+            value = validate_tag(schema, axis_name, value)
+            values[axis_name] = value
+            if axis_name == EMPIRICAL_SCOPE_AXIS and value == COUNTRY_CASE_SCOPE_VALUE:
+                country = parse_country_response(raw_response, axis_name)
+                log_country_not_in_list(schema, country)
+    return values, multi_value_axes, country
 
 
 def run_tag(
@@ -976,32 +1109,24 @@ def run_tag(
 
         # Shared, data-driven cardinality dispatch (issue #29 slice 03): each
         # axis is parsed/validated by its own schema-declared `cardinality`,
-        # never by its name -- adding another axis of an already-handled
-        # cardinality is a schema/codebook change, not a code change.
-        values: dict[str, str] = {}
-        multi_value_axes: dict[str, dict[str, Any]] = {}
-        country: str | None = None
-        for axis_name in axes_to_tag:
-            axis = schema.axes[axis_name]
-            if axis.cardinality in MULTI_VALUE_CARDINALITIES:
-                parsed = parse_multi_value_tag_response(raw_response, axis)
-                validate_multi_value_tag(schema, axis_name, parsed)
-                parsed.update(_axis_extras(axis))
-                multi_value_axes[axis_name] = parsed
-            else:
-                value = parse_tag_response(raw_response, axis_name)
-                value = validate_tag(schema, axis_name, value)
-                values[axis_name] = value
-                # Country is parsed immediately after empirical_scope,
-                # before any later axis is parsed, so a missing/empty
-                # country is reported even when a malformed response omits
-                # later axes entirely (Appendix C/G; predates and is
-                # independent of the shared primary+secondary validator
-                # above). An out-of-list value is never fatal (spec-drift
-                # #77): it is accepted verbatim and merely logged.
-                if axis_name == EMPIRICAL_SCOPE_AXIS and value == COUNTRY_CASE_SCOPE_VALUE:
-                    country = parse_country_response(raw_response, axis_name)
-                    log_country_not_in_list(schema, country)
+        # never by its name. An out-of-vocabulary value triggers exactly ONE
+        # bounded correction re-ask (issue #102, P0-6): the model is shown the
+        # failing position's controlled vocabulary and must return a valid
+        # value or an explicit NONE; still-out-of-vocab after that single
+        # re-ask propagates `TagNotInSchemaError` as the hard error. Country /
+        # parse / cardinality errors propagate unchanged (never re-asked
+        # here). `client` is already resolved above, so the correction re-ask
+        # reuses it; any transport failure it raises wraps to `LLMFailedError`.
+        try:
+            values, multi_value_axes, country = apply_correction_reask(
+                client,
+                TAG_PASS_NAME,
+                raw_response,
+                prompt,
+                lambda raw: _parse_and_validate_tags(raw, axes_to_tag, schema),
+            )
+        except (LLMError, httpx.HTTPError) as exc:
+            raise LLMFailedError(exc) from exc
 
         record = build_tagged_record(
             chunk_record,

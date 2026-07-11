@@ -683,12 +683,15 @@ def test_run_artifacts_reasks_then_succeeds_on_a_blank_artifact_role(monkeypatch
     assert client.call_count == 2
 
 
-def test_run_artifacts_out_of_vocab_field_primary_stays_immediately_fatal_one_call(
+def test_run_artifacts_out_of_vocab_field_primary_hard_errors_after_one_bounded_reask(
     monkeypatch, tmp_path
 ):
-    """A genuine (non-empty) out-of-vocabulary `field.primary` must NEVER be
-    smoothed over by the degeneracy re-ask -- it stays immediately fatal
-    (P0-6), exactly one LLM call."""
+    """A genuine (non-empty) out-of-vocabulary `field.primary` is NEVER
+    smoothed over by the degeneracy re-ask -- but issue #102 (P0-6
+    refinement) grants it EXACTLY ONE bounded correction re-ask, identical to
+    the tag pass, before the hard error. A model that stays out-of-vocab on
+    the correction re-ask still raises `TagNotInSchemaError`, and the re-ask
+    fired exactly once (two LLM calls), never looping further."""
     import axial.artifacts as artifacts_mod
 
     source = tmp_path / "paper.pdf"
@@ -713,7 +716,7 @@ def test_run_artifacts_out_of_vocab_field_primary_stays_immediately_fatal_one_ca
     with pytest.raises(artifacts_mod.TagNotInSchemaError):
         artifacts_mod.run_artifacts(source, client=client)
 
-    assert client.call_count == 1
+    assert client.call_count == 2
 
 
 # --- issue #98: per-artifact checkpoint/resume -------------------------------
