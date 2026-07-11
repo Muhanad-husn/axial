@@ -624,6 +624,64 @@ def test_parse_multi_value_tag_response_rejects_a_bare_scalar_value():
         )
 
 
+def test_parse_multi_value_tag_response_coerces_bare_string_to_primary_for_optional_secondary_axis():
+    """Issue #105: a bare string for a `primary_plus_optional_secondary`
+    axis (e.g. `{"theory_school": "bellicist"}`) is coerced to
+    `{"primary": "bellicist"}` before the shape check, rather than rejected
+    as a shape error."""
+    from axial.tag import parse_multi_value_tag_response
+
+    raw = json.dumps({"theory_school": "bellicist"})
+
+    parsed = parse_multi_value_tag_response(
+        raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["theory_school"]
+    )
+
+    assert parsed == {"primary": "bellicist", "secondary": None}
+
+
+def test_parse_multi_value_tag_response_still_rejects_a_bare_scalar_for_primary_plus_secondary_axis():
+    """Issue #105 scope guard: the bare-string coercion is limited to
+    `primary_plus_optional_secondary` axes -- a bare string for a
+    `primary_plus_secondary` axis (e.g. `field`, which always requires a
+    `secondary` list) is still a genuine shape error, never coerced."""
+    from axial.tag import TagParseError, parse_multi_value_tag_response
+
+    with pytest.raises(TagParseError):
+        parse_multi_value_tag_response(
+            json.dumps({"field": "state"}), _SCHEMA_WITH_MULTI_VALUE_AXES.axes["field"]
+        )
+
+
+def test_parse_multi_value_tag_response_bare_string_coercion_feeds_vocab_validation():
+    """Issue #105: coercion runs BEFORE vocabulary validation, never
+    bypasses it -- an in-vocab bare string validates cleanly with that value
+    as `primary`, while an out-of-vocab bare string is coerced to shape but
+    still raises `TagNotInSchemaError` (which drives the existing #102
+    correction re-ask upstream in `run_tag`, not tested here)."""
+    from axial.tag import (
+        TagNotInSchemaError,
+        parse_multi_value_tag_response,
+        validate_multi_value_tag,
+    )
+
+    axis = _SCHEMA_WITH_MULTI_VALUE_AXES.axes["theory_school"]
+
+    in_vocab_parsed = parse_multi_value_tag_response(
+        json.dumps({"theory_school": "bellicist"}), axis
+    )
+    validate_multi_value_tag(_SCHEMA_WITH_MULTI_VALUE_AXES, "theory_school", in_vocab_parsed)
+    assert in_vocab_parsed["primary"] == "bellicist"
+
+    out_of_vocab_parsed = parse_multi_value_tag_response(
+        json.dumps({"theory_school": "not-a-real-theory-school"}), axis
+    )
+    with pytest.raises(TagNotInSchemaError):
+        validate_multi_value_tag(
+            _SCHEMA_WITH_MULTI_VALUE_AXES, "theory_school", out_of_vocab_parsed
+        )
+
+
 def test_validate_multi_value_tag_accepts_a_fully_in_schema_value():
     from axial.tag import validate_multi_value_tag
 

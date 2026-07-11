@@ -692,6 +692,17 @@ def parse_multi_value_tag_response(raw: str, axis: Axis) -> dict[str, Any]:
         raise TagParseError(f"expected a top-level {axis_name!r} key, got: {keys}")
 
     axis_value = data[axis_name]
+    if isinstance(axis_value, str) and axis.cardinality == "primary_plus_optional_secondary":
+        # Issue #105: a bare, unambiguous string for a
+        # primary_plus_optional_secondary axis is a known model dialect for
+        # "just the primary, no secondary" -- coerce it to the object shape
+        # BEFORE the shape check below, so it flows through the same
+        # vocabulary validation as every other value (an out-of-vocab bare
+        # string still fails vocabulary validation downstream, and still
+        # triggers the #102 correction re-ask -- coercion never bypasses
+        # that check, it only fixes the shape ahead of it).
+        axis_value = {"primary": axis_value}
+
     if not isinstance(axis_value, dict) or "primary" not in axis_value:
         raise TagParseError(
             f"expected {axis_name!r} value to be an object with a 'primary' "
