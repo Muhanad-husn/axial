@@ -1676,13 +1676,17 @@ def test_run_tag_reasks_and_succeeds_when_subtag_is_first_empty_string(monkeypat
     assert client.call_count == 2
 
 
-def test_run_tag_out_of_vocab_non_empty_tag_is_immediately_fatal_with_no_reask(
+def test_run_tag_out_of_vocab_non_empty_tag_hard_errors_after_one_bounded_reask(
     monkeypatch, tmp_path
 ):
-    """A genuine non-empty out-of-vocabulary tag must NEVER be treated as
-    degenerate -- it stays immediately fatal (`TagNotInSchemaError`), with
-    exactly one client call, never re-asked (issue #80: the P0-6 schema-gap
-    signal is untouched by the degenerate-response re-ask)."""
+    """A genuine non-empty out-of-vocabulary tag is NEVER treated as
+    degenerate -- but issue #102 (P0-6 refinement) grants it EXACTLY ONE
+    bounded correction re-ask (showing the axis's controlled vocabulary)
+    before the hard error. A model that stays out-of-vocab on the correction
+    re-ask still raises `TagNotInSchemaError`, and the re-ask fired exactly
+    once (two client calls: one original ask + one bounded correction), never
+    looping further -- distinct from `complete_json`'s 3-attempt JSON/
+    degeneracy budget."""
     import axial.tag as tag_mod
 
     domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
@@ -1707,7 +1711,7 @@ def test_run_tag_out_of_vocab_non_empty_tag_is_immediately_fatal_with_no_reask(
     with pytest.raises(tag_mod.TagNotInSchemaError):
         tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
-    assert client.call_count == 1
+    assert client.call_count == 2
 
 
 # --- run_tag: widened single-axis object dialects (issue #88) ---------------
@@ -1848,6 +1852,207 @@ def test_run_tag_reasks_and_succeeds_when_value_key_extracted_value_is_first_emp
     assert len(records) == 1
     assert records[0]["role_in_argument"] == "role:claim"
     assert client.call_count == 2
+
+
+# --- run_tag: bounded correction re-ask on out-of-vocab tags (issue #102) ---
+
+
+class _ScriptedTagClient:
+    """A tag-pass client that returns each scripted response in turn, then
+    repeats the last one for any further call, counting every call."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.call_count = 0
+
+    def complete(self, prompt, pass_name=None):
+        response = self._responses[min(self.call_count, len(self._responses) - 1)]
+        self.call_count += 1
+        return response
+
+
+def test_run_tag_out_of_vocab_primary_corrects_on_bounded_reask(monkeypatch, tmp_path):
+    """An out-of-vocab claim_type primary on the first answer, corrected to a
+    genuinely in-vocab primary on the single bounded re-ask, tags the chunk
+    with the CORRECTED value and succeeds -- exactly two client calls (issue
+    #102)."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    bad = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": {"primary": "state", "secondary": []},
+            "claim_type": {"primary": "not-a-real-claim-type", "subtags": []},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+    good = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": {"primary": "state", "secondary": []},
+            "claim_type": {"primary": "state-autonomy", "subtags": []},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+    client = _ScriptedTagClient([bad, good])
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert len(records) == 1
+    assert records[0]["claim_type"]["primary"] == "state-autonomy"
+    assert client.call_count == 2
+
+
+def test_run_tag_out_of_vocab_subtag_corrects_on_bounded_reask(monkeypatch, tmp_path):
+    """An out-of-vocab claim_type subtag on the first answer, corrected to a
+    genuinely declared subtag on the single bounded re-ask, tags the chunk
+    with the CORRECTED subtag -- never the original bad one (issue #102)."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    bad = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": {"primary": "state", "secondary": []},
+            "claim_type": {"primary": "state-formation", "subtags": ["sub:bogus"]},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+    good = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": {"primary": "state", "secondary": []},
+            "claim_type": {"primary": "state-formation", "subtags": ["formation:bellicist"]},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+    client = _ScriptedTagClient([bad, good])
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert len(records) == 1
+    assert records[0]["claim_type"]["subtags"] == ["formation:bellicist"]
+    assert client.call_count == 2
+
+
+def test_run_tag_persistent_out_of_vocab_hard_errors_after_exactly_one_reask(monkeypatch, tmp_path):
+    """A subtag out-of-vocab on BOTH the original ask and the bounded
+    correction re-ask still raises `TagNotInSchemaError` (the P0-6 hard
+    error), and the re-ask fired exactly once -- two calls total, never a
+    third (issue #102's 'single bounded re-ask')."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    bad = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": {"primary": "state", "secondary": []},
+            "claim_type": {"primary": "state-formation", "subtags": ["sub:bogus"]},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+    client = _ScriptedTagClient([bad])
+
+    with pytest.raises(tag_mod.TagNotInSchemaError) as exc_info:
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert "claim_type" in str(exc_info.value)
+    assert "sub:bogus" in str(exc_info.value)
+    assert client.call_count == 2
+
+
+def test_run_tag_correction_reask_that_returns_none_hard_errors(monkeypatch, tmp_path):
+    """A correction re-ask whose answer replaces the invalid value with the
+    literal `NONE` is a hard error (issue #102 / P0-6: the model must return a
+    valid value or NONE, and NONE means the genuine schema gap stands) -- NONE
+    is in no axis's vocabulary, so re-validation raises `TagNotInSchemaError`
+    after the single bounded re-ask."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    bad = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": {"primary": "state", "secondary": []},
+            "claim_type": {"primary": "state-formation", "subtags": ["sub:bogus"]},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+    none_answer = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": {"primary": "state", "secondary": []},
+            "claim_type": {"primary": "state-formation", "subtags": ["NONE"]},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+    client = _ScriptedTagClient([bad, none_answer])
+
+    with pytest.raises(tag_mod.TagNotInSchemaError):
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert client.call_count == 2
+
+
+def test_run_tag_in_vocab_first_answer_never_triggers_a_correction_reask(monkeypatch, tmp_path):
+    """An already-in-vocab first answer tags immediately, with exactly one
+    client call -- the correction path never fires (issue #102: the happy
+    path pays no extra cost)."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    _one_chunk_run_chunk(monkeypatch, tag_mod)
+
+    good = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": {"primary": "state", "secondary": []},
+            "claim_type": {"primary": "state-formation", "subtags": ["formation:bellicist"]},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+    client = _ScriptedTagClient([good])
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert len(records) == 1
+    assert client.call_count == 1
+
+
+def test_compose_correction_prompt_shows_the_failing_positions_vocabulary():
+    """The bounded correction re-ask prompt names the invalid value, the axis,
+    and lists the controlled vocabulary legal for the failing position (issue
+    #102) -- for a subtag failure, that primary's own declared subtags, not
+    the axis's primary vocabulary."""
+    from axial.tag import TagNotInSchemaError, compose_correction_prompt
+
+    exc = TagNotInSchemaError(
+        "claim_type",
+        "sub:bogus",
+        vocabulary={"formation:bellicist", "formation:colonial-import"},
+        position="as a subtag of the primary 'state-formation'",
+    )
+
+    prompt = compose_correction_prompt("BASE PROMPT BODY", exc)
+
+    assert "BASE PROMPT BODY" in prompt
+    assert "sub:bogus" in prompt
+    assert "claim_type" in prompt
+    assert "formation:bellicist" in prompt
+    assert "formation:colonial-import" in prompt
+    assert "NONE" in prompt
+    assert "state-formation" in prompt
 
 
 def test_default_domain_dir_returns_configured_path_when_present(tmp_path):

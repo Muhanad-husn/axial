@@ -258,6 +258,114 @@ def test_record_client_response_matches_stub_for_the_artifacts_pass_name(tmp_pat
     )
 
 
+# --- tag-pass response sequence seam (issue #102) ---------------------------
+
+
+def _reset_tag_counter():
+    import axial.llm as llm_mod
+
+    llm_mod._tag_pass_call_count = 0
+
+
+def test_tag_response_sequence_cycles_by_the_shared_tag_pass_counter(monkeypatch):
+    """`AXIAL_STUB_TAG_RESPONSE_SEQUENCE` (issue #102): the Nth tag-pass call
+    returns `sequence[(N - 1) % len(sequence)]`, cycling -- driven by the same
+    per-process counter that drives AXIAL_STUB_TAG_FAIL_AT, and firing for
+    every tag-pass-family call."""
+    from axial.llm import STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, TAG_PASS_NAME, StubLLMClient
+
+    _reset_tag_counter()
+    monkeypatch.setenv(STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, json.dumps(["first", "second"]))
+    client = StubLLMClient()
+
+    assert client.complete("p", pass_name=TAG_PASS_NAME) == "first"
+    assert client.complete("p", pass_name=TAG_PASS_NAME) == "second"
+    assert client.complete("p", pass_name=TAG_PASS_NAME) == "first"
+    assert client.complete("p", pass_name=TAG_PASS_NAME) == "second"
+
+
+def test_tag_response_sequence_takes_priority_over_the_single_override(monkeypatch):
+    from axial.llm import (
+        STUB_TAG_RESPONSE_ENV_VAR,
+        STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR,
+        TAG_PASS_NAME,
+        StubLLMClient,
+    )
+
+    _reset_tag_counter()
+    monkeypatch.setenv(STUB_TAG_RESPONSE_ENV_VAR, "single-override")
+    monkeypatch.setenv(STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, json.dumps(["seq-only"]))
+    client = StubLLMClient()
+
+    assert client.complete("p", pass_name=TAG_PASS_NAME) == "seq-only"
+
+
+def test_tag_response_empty_sequence_falls_through_to_the_single_override(monkeypatch):
+    from axial.llm import (
+        STUB_TAG_RESPONSE_ENV_VAR,
+        STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR,
+        TAG_PASS_NAME,
+        StubLLMClient,
+    )
+
+    _reset_tag_counter()
+    monkeypatch.setenv(STUB_TAG_RESPONSE_ENV_VAR, "single-override")
+    monkeypatch.setenv(STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, json.dumps([]))
+    client = StubLLMClient()
+
+    assert client.complete("p", pass_name=TAG_PASS_NAME) == "single-override"
+
+
+def test_tag_response_sequence_only_affects_the_tag_pass(monkeypatch):
+    from axial.llm import (
+        CHUNK_PASS_NAME,
+        STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR,
+        StubLLMClient,
+    )
+
+    _reset_tag_counter()
+    monkeypatch.setenv(STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, json.dumps(["tag-seq"]))
+    client = StubLLMClient()
+
+    parsed = json.loads(client.complete("p", pass_name=CHUNK_PASS_NAME))
+    assert "chunks" in parsed
+
+
+def test_tag_response_sequence_is_honored_by_the_record_client(monkeypatch, tmp_path):
+    from axial.llm import STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, TAG_PASS_NAME, RecordLLMClient
+
+    _reset_tag_counter()
+    monkeypatch.setenv(STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, json.dumps(["a", "b"]))
+    client = RecordLLMClient(tmp_path / "rec.jsonl")
+
+    assert client.complete("p", pass_name=TAG_PASS_NAME) == "a"
+    assert client.complete("p", pass_name=TAG_PASS_NAME) == "b"
+
+
+def test_tag_response_sequence_shares_the_counter_with_fail_at(monkeypatch):
+    """The sequence dispatch uses the SAME per-process counter FAIL_AT
+    advances, so an injected failure still lands on the Nth tag call while the
+    sequence indexing stays 1-indexed by that counter."""
+    from axial.llm import (
+        LLMError,
+        STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR,
+        TAG_PASS_NAME,
+        StubLLMClient,
+    )
+
+    _reset_tag_counter()
+    monkeypatch.setenv(STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, json.dumps(["x", "y", "z"]))
+    monkeypatch.setenv("AXIAL_STUB_TAG_FAIL_AT", "2")
+    client = StubLLMClient()
+
+    assert client.complete("p", pass_name=TAG_PASS_NAME) == "x"
+    with pytest.raises(LLMError):
+        client.complete("p", pass_name=TAG_PASS_NAME)
+    # The counter still advanced past the failed 2nd call, so the 3rd call
+    # returns the 3rd element.
+    assert client.complete("p", pass_name=TAG_PASS_NAME) == "z"
+
+
 def test_stub_client_dispatch_is_by_pass_name_not_prompt_content():
     """The chunk-vs-envelope canned-response dispatch must be driven by the
     out-of-band `pass_name` argument, never by scanning prompt text -- so an

@@ -129,6 +129,24 @@ STUB_CHUNK_RESPONSE_ENV_VAR = "AXIAL_STUB_CHUNK_RESPONSE"
 # needs (issue #81).
 STUB_TAG_FAIL_AT_ENV_VAR = "AXIAL_STUB_TAG_FAIL_AT"
 
+# Issue #102 test/CI-only seam: a JSON-encoded array of raw tag-pass response
+# strings, each in exactly the shape `AXIAL_STUB_TAG_RESPONSE` already accepts
+# (a complete raw tag-pass response body). When set to a NON-EMPTY JSON array,
+# it takes priority over `AXIAL_STUB_TAG_RESPONSE` for the tag-pass-family
+# canned-response dispatch (both `stub` and `record`, since `record` delegates
+# to the same dispatch). The SAME per-process, 1-indexed counter that already
+# drives `AXIAL_STUB_TAG_FAIL_AT` (`_tag_pass_call_count`) selects which
+# element answers the Nth such call -- `sequence[(N - 1) % len(sequence)]`,
+# cycling once the array is exhausted (a 2-element sequence alternates
+# forever). Read fresh (JSON-decoded) from the environment on every call, like
+# every other seam here. Fires for EVERY tag-pass-family call -- an original
+# per-chunk ask AND a P0-6 bounded correction re-ask alike -- so a test can
+# drive "chunk N's first answer is X, its correction answer is Y" end-to-end
+# without needing to know the correction re-ask's own prompt wording. An
+# unset/empty value or an empty JSON array falls through to
+# `AXIAL_STUB_TAG_RESPONSE` (today's behavior).
+STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_TAG_RESPONSE_SEQUENCE"
+
 # Issue #98 test/CI-only fault-injection seam: exactly `STUB_TAG_FAIL_AT_ENV_VAR`
 # above, mirrored for the artifacts pass instead of the tag pass. When set to
 # a positive, 1-indexed base-10 integer N, the Nth artifacts-pass call
@@ -355,6 +373,15 @@ def _canned_response_for(pass_name: str | None) -> str:
         return StubLLMClient._CANNED_CHUNK_RESPONSE
     if pass_name == TAG_PASS_NAME:
         _maybe_fail_tag_call()
+        # Issue #102: a JSON array of raw responses, indexed by the same
+        # per-process tag-pass counter `_maybe_fail_tag_call` just advanced,
+        # takes priority over the single-string override so a test can script
+        # "first answer bad, correction answer good" across calls.
+        sequence_raw = os.environ.get(STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, "")
+        if sequence_raw:
+            sequence = json.loads(sequence_raw)
+            if sequence:
+                return sequence[(_tag_pass_call_count - 1) % len(sequence)]
         override = os.environ.get(STUB_TAG_RESPONSE_ENV_VAR, "")
         if override:
             return override
