@@ -126,7 +126,7 @@ The domain schema (`config/domains/syria/schema.yaml`) declares the axes and the
 
 Loader contract:
 - The loader reads the schema and codebook and exposes: the axis list, each axis's cardinality (single vs. primary+secondary vs. one-value), each tag's status flag, and each tag's definition/examples.
-- **Every tag applied by the tagger must exist in the loaded schema.** A tag not in the schema is a hard error, not a silent pass.
+- **Every tag applied by the tagger must exist in the loaded schema.** A tag absent from the schema triggers a bounded correction re-ask: the tagger is shown that axis's controlled vocabulary and must return a valid value or an explicit `NONE`. A tag still absent from the schema after that single bounded re-ask is a hard error — never a silent pass, and never a code-side guess or normalization of the value. Only the model self-corrects; the code never rewrites an out-of-vocabulary value into a valid one.
 - The schema carries a `version` field; every note written records the schema version it was tagged under, so a later schema change is detectable per note.
 - Swapping domains = pointing the loader at a different `domains/<name>/` directory. No code path branches on country.
 
@@ -183,7 +183,7 @@ One JSON per source in `data/trees/`, keyed by `source_id` (the same determinist
 **P0-6 Schema-driven tagging.**
 - [ ] Tagger loads all axes/tags from the domain schema; no tag is hardcoded.
 - [ ] Field = one primary + ≥0 secondary. Empirical-scope = exactly one value. Claim-type = one primary + optional secondary.
-- [ ] Any tag produced that is absent from the schema raises a hard error.
+- [ ] A tag absent from the schema triggers a bounded correction re-ask showing that axis's controlled vocabulary; a tag still absent after that bounded re-ask raises a hard error (never a silent pass, never a code-side guess/normalization).
 - [ ] Each note records the schema `version` it was tagged under.
 
 **P0-7 Cross-reference pass.**
