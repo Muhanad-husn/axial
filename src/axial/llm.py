@@ -113,6 +113,21 @@ STUB_TAG_RESPONSE_ENV_VAR = "AXIAL_STUB_TAG_RESPONSE"
 # artifacts, xref, or envelope canned responses.
 STUB_CHUNK_RESPONSE_ENV_VAR = "AXIAL_STUB_CHUNK_RESPONSE"
 
+# Issue #104 test/CI-only seam: mirrors STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR
+# above, exactly, for the chunk pass instead of the tag pass. A JSON-encoded
+# array of raw chunk-pass response strings, each in exactly the shape
+# STUB_CHUNK_RESPONSE_ENV_VAR already accepts. When set to a NON-EMPTY JSON
+# array, it takes priority over STUB_CHUNK_RESPONSE_ENV_VAR for the
+# chunk-pass canned-response dispatch (both `stub` and `record`, since
+# `record` delegates to the same dispatch). A FRESH, dedicated per-process,
+# 1-indexed counter (`_chunk_pass_call_count`) -- never shared with the
+# tag-pass counter -- selects which element answers the Nth such call:
+# `sequence[(N - 1) % len(sequence)]`, cycling once the array is exhausted.
+# Read fresh (JSON-decoded) from the environment on every call. An unset/
+# empty value or an empty JSON array falls through to
+# STUB_CHUNK_RESPONSE_ENV_VAR (today's behavior).
+STUB_CHUNK_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_CHUNK_RESPONSE_SEQUENCE"
+
 # Issue #81 test/CI-only fault-injection seam: when set to a positive,
 # 1-indexed base-10 integer N, the Nth tag-pass call (pass_name ==
 # TAG_PASS_NAME) any stub/record client makes IN THE CURRENT PROCESS raises
@@ -231,6 +246,13 @@ STUB_XREF_TARGET_ENV_VAR = "AXIAL_STUB_XREF_TARGET"
 # (which delegate to the same `_canned_response_for` dispatch) and reset
 # naturally to zero at the start of every fresh `axial` subprocess.
 _tag_pass_call_count = 0
+
+# Per-process, 1-indexed counter of chunk-pass canned-response dispatches,
+# driving the AXIAL_STUB_CHUNK_RESPONSE_SEQUENCE seam (issue #104). A fresh,
+# dedicated counter -- NEVER shared with `_tag_pass_call_count` -- mirroring
+# that counter's own module-global, per-process, reset-on-fresh-subprocess
+# semantics exactly, but scoped to the chunk pass only.
+_chunk_pass_call_count = 0
 
 # Per-process, 1-indexed counter of artifacts-pass canned-response
 # dispatches, driving the AXIAL_STUB_ARTIFACT_FAIL_AT fault-injection seam
@@ -367,6 +389,17 @@ def _canned_response_for(pass_name: str | None) -> str:
     `RecordLLMClient` so `record` is indistinguishable from `stub` for the
     same call."""
     if pass_name == CHUNK_PASS_NAME:
+        global _chunk_pass_call_count
+        _chunk_pass_call_count += 1
+        # Issue #104: a JSON array of raw responses, indexed by the fresh
+        # per-process chunk-pass counter just advanced, takes priority over
+        # the single-string override so a test can script "this call is
+        # malformed, the next one is valid" across a run.
+        sequence_raw = os.environ.get(STUB_CHUNK_RESPONSE_SEQUENCE_ENV_VAR, "")
+        if sequence_raw:
+            sequence = json.loads(sequence_raw)
+            if sequence:
+                return sequence[(_chunk_pass_call_count - 1) % len(sequence)]
         override = os.environ.get(STUB_CHUNK_RESPONSE_ENV_VAR, "")
         if override:
             return override
