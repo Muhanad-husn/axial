@@ -191,12 +191,23 @@ CHUNK_PROMPT_MARKER = "argumentative chunk boundaries"
 # `axial.model_json.parse_model_json` to raise `ModelJsonError`.
 _MALFORMED_CHUNK_RESPONSE = "{this is not valid json at all, no closing brace"
 
-# A well-formed, non-empty chunk response -- structurally identical to
-# `axial.llm.StubLLMClient._CANNED_CHUNK_RESPONSE`'s own shape, reproduced
-# here as independent test data (never imported from src) so this test never
-# depends on that internal constant's exact wording.
+# A well-formed chunk response carrying exactly 2 chunk-text objects --
+# matching `axial.llm.StubLLMClient._CANNED_CHUNK_RESPONSE`'s own COUNT (2
+# entries), reproduced here as independent test data (never imported from
+# src, and never matching its exact wording) so that a section's chunk_ids
+# under this injected response (`..._001`, `..._002`, positional) line up
+# with the CONTROL run's own chunk_ids (which also come from
+# `_CANNED_CHUNK_RESPONSE`'s 2 entries, via the plain `stub` provider) --
+# required for the id-SET equality assertions in tests 1 and 3, which
+# compare an injected-sequence run's checkpoint against that control's
+# expected_ids verbatim.
 _VALID_CHUNK_RESPONSE = json.dumps(
-    {"chunks": [{"text": "Injected-sequence stub chunk: a claim and its support."}]}
+    {
+        "chunks": [
+            {"text": "Injected-sequence stub chunk one: a claim and its immediate support."},
+            {"text": "Injected-sequence stub chunk two: a second argumentative unit."},
+        ]
+    }
 )
 
 # A long run of consecutive malformed entries -- long enough that, prefixed
@@ -500,11 +511,14 @@ def _arrange_ground_truth(tmp_path_factory, tag: str) -> tuple[list[dict], list[
     derive this fixture's real chunk records (module docstring, seam
     decision 5). Returns (expected_records_in_order, section_labels_in_order).
     NOTE: the number of RECORDS is not the number of chunk-pass LLM CALLS --
-    each stub/injected chunk response here yields >=1 chunk per call (see
-    `_VALID_CHUNK_RESPONSE`'s own single-chunk shape vs.
-    `axial.llm.StubLLMClient._CANNED_CHUNK_RESPONSE`'s two-chunk shape used
-    by the stub-provider control run) -- call counts in this test file are
-    always asserted per SECTION, via `_section_labels_in_order`, never per
+    each chunk-pass call yields one call regardless of how many chunk-text
+    objects its response carries (`_VALID_CHUNK_RESPONSE` and
+    `axial.llm.StubLLMClient._CANNED_CHUNK_RESPONSE`, used by the
+    stub-provider control run, both carry exactly 2 chunk-text objects per
+    call -- deliberately matched so a section's positional chunk_ids
+    (`..._001`, `..._002`) line up between an injected-sequence run and the
+    control's own expected_ids) -- call counts in this test file are always
+    asserted per SECTION, via `_section_labels_in_order`, never per
     record."""
     control_root = _build_isolated_root(tmp_path_factory.mktemp(f"chunk_resilience_{tag}"))
     _arrange_stored_envelope(control_root, THESIS_PAPER_PDF)
