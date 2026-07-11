@@ -28,15 +28,17 @@ to stdout only; vault persistence is slice 06.
 from __future__ import annotations
 
 import json
-import os
 import re
-import tempfile
 from pathlib import Path
 from typing import Any
 
 import httpx
 import yaml
 
+from axial.checkpoint import (
+    append_checkpoint_record,
+    load_checkpoint_records,
+)
 from axial.envelope import (
     MissingSourceError as _EnvelopeMissingSourceError,
     compute_source_id,
@@ -81,44 +83,30 @@ def chunks_checkpoint_path(source_id: str, chunks_dir: Path = CHUNKS_DIR) -> Pat
     return chunks_dir / f"{source_id}.jsonl"
 
 
-def write_chunk_checkpoint(records: list[dict[str, Any]], path: Path) -> None:
-    """Persist a source's chunk records to `path`, one JSON record per line,
-    creating parent directories as needed (issue #81 point 1). Written once,
-    after the chunking pass produces the records.
-
-    Hardening (issue #81): written atomically -- the full content goes to a
-    temp file in the same directory first, then swapped onto `path` via
-    `os.replace` (an atomic rename on both POSIX and Windows) -- so a hard
-    process kill (OOM kill, Stop-Process) mid-write can never leave a
-    partial/torn file visible under the final name. Unlike the tag
-    checkpoint's append-and-tolerate-a-torn-tail strategy, this file is
-    written once as a whole and is load-bearing for chunk_ids (a torn one
-    would corrupt every downstream chunk_id lookup), so "never partially
-    visible" is the simpler, correct guarantee here rather than "tolerate and
-    heal"."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            for record in records:
-                handle.write(json.dumps(record) + "\n")
-        os.replace(tmp_path, path)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
+def append_chunk_checkpoint(path: Path, record: dict[str, Any]) -> None:
+    """Append one chunk record to `path` AS IT IS PRODUCED (issue #104): heal
+    any torn tail left by an earlier hard kill, then append the JSON line,
+    flushed before returning. Creates parent directories as needed. Reuses
+    `axial.checkpoint.append_checkpoint_record` -- the same primitive
+    `axial.tag.append_tag_checkpoint` builds on -- so chunk and tag
+    checkpoints stay consistent (atomic/append-safe, crash-tolerant)."""
+    append_checkpoint_record(path, record)
 
 
 def load_chunk_checkpoint(path: Path) -> list[dict[str, Any]]:
-    """Load chunk records from a chunk-pass checkpoint file (the inverse of
-    `write_chunk_checkpoint`), skipping blank lines."""
-    records: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        records.append(json.loads(line))
-    return records
+    """Load chunk records already persisted to a chunk-pass checkpoint file
+    (the inverse of `append_chunk_checkpoint`), skipping blank lines. Returns
+    an empty list when the file does not exist yet.
+
+    Hardening (issue #104, mirroring `axial.tag.load_tag_checkpoint`): a torn
+    FINAL line (a hard kill mid-append) is healed (dropped) rather than
+    poisoning the resume -- its records simply reappear in the "not yet
+    checkpointed" gap and are re-produced on the resume run. A torn line
+    that is NOT the last one raises `ChunkCheckpointCorruptError`, naming the
+    checkpoint path and the offending 1-indexed line number. Reuses the same
+    shared `axial.checkpoint.load_checkpoint_records` primitive
+    `axial.tag.load_tag_checkpoint` builds on."""
+    return load_checkpoint_records(path, ChunkCheckpointCorruptError)
 
 
 _CHUNK_PROMPT_TEMPLATE = """\
@@ -193,6 +181,23 @@ class LLMFailedError(ChunkError):
 class ChunkParseError(ChunkError):
     """Raised when the model's chunking response is not parseable into a
     non-empty array of chunk-text objects."""
+
+
+class ChunkCheckpointCorruptError(ChunkError):
+    """Raised by `load_chunk_checkpoint` when a NON-final line of a chunk
+    checkpoint file is not valid JSON (issue #104, mirroring
+    `axial.tag.TagCheckpointCorruptError`). A torn FINAL line is healed
+    (dropped) instead -- see `load_chunk_checkpoint`'s docstring; a torn line
+    anywhere else is genuine corruption unrelated to a hard-kill mid-append,
+    so it still raises loudly."""
+
+    def __init__(self, path: Path, line_no: int, cause: json.JSONDecodeError):
+        self.path = path
+        self.line_no = line_no
+        self.cause = cause
+        super().__init__(
+            f"corrupt chunk checkpoint {path}: line {line_no} is not valid JSON: {cause}"
+        )
 
 
 _SLUG_MAX_LEN = 80
@@ -319,14 +324,18 @@ def build_chunk_records(
     source_id: str, section_order: str, section_label: str, chunks: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Assemble chunk records carrying a stable, deterministic `chunk_id`
-    (`<source_id>_<section order>_<section slug>_<NNN>`) and `section` (the
-    section's own verbatim heading), per PRD §8 P0-4.
+    (`<source_id>_<section order>_<section slug>_<NNN>`), `section` (the
+    section's own verbatim heading), and `section_order` (the section node's
+    own verbatim `order` field, e.g. "1", "2" -- issue #104: the per-section
+    checkpoint's own provenance, letting a resume tell which sections are
+    already durably persisted without re-deriving it by parsing chunk_id),
+    per PRD §8 P0-4.
 
-    `section_order` (the section node's own `order` field, e.g. "1", "2") is
-    folded into the id specifically so that two distinct top-level sections
-    sharing the same heading text (extract.py opens a fresh section node per
-    heading occurrence, unnested) never collide on chunk_id -- the heading
-    slug alone is not unique across a real multi-chapter source.
+    `section_order` is also folded into chunk_id specifically so that two
+    distinct top-level sections sharing the same heading text (extract.py
+    opens a fresh section node per heading occurrence, unnested) never
+    collide on chunk_id -- the heading slug alone is not unique across a
+    real multi-chapter source.
     """
     slug = _slugify(section_label)
     order_key = section_order.replace(".", "-") if section_order else "0"
@@ -336,6 +345,7 @@ def build_chunk_records(
             {
                 "chunk_id": f"{source_id}_{order_key}_{slug}_{index:03d}",
                 "section": section_label,
+                "section_order": section_order,
                 "text": chunk["text"],
             }
         )
@@ -357,18 +367,28 @@ def run_chunk(
     the isolated section) to decide chunk boundaries. A section with no
     chunkable prose yields zero chunks without an LLM call or an error.
 
-    Chunk-pass checkpoint (issue #81 point 1): OPT-IN, active only when a
-    `chunks_dir` is supplied (the `axial vault write` composition threads one
-    in; standalone `axial chunk` passes none and so behaves exactly as before,
-    recomputing every run -- the reuse feature is deliberately scoped to vault
-    write, not the standalone pass whose own contract re-runs each time). When
-    active: once the source's chunk records are produced they are persisted to
-    `<chunks_dir>/<source_id>.jsonl` (one record per line); a later run that
-    finds this file reuses it verbatim and makes NO chunking LLM call
-    (mirroring the envelope pass's "no recompute" reuse). Keyed by the
-    content-hashed source_id, so an edited file gets a fresh id and never
-    reuses stale chunks -- the reuse-once check runs before any envelope read
-    or extraction, so a hit short-circuits the whole pass with zero work.
+    Chunk-pass checkpoint (issue #81 point 1, made per-section-incremental by
+    issue #104): OPT-IN, active only when a `chunks_dir` is supplied (the
+    `axial vault write` composition threads one in; standalone `axial chunk`
+    passes none and so behaves exactly as before, recomputing every run --
+    the reuse feature is deliberately scoped to vault write, not the
+    standalone pass whose own contract re-runs each time). When active: each
+    section's chunk records are appended to `<chunks_dir>/<source_id>.jsonl`
+    (one record per line) as soon as that section completes -- write+flush
+    per section, mirroring `axial.tag.run_tag`'s per-chunk checkpoint -- so a
+    mid-pass hard failure at section N leaves sections 0..N-1's records
+    durably persisted instead of losing them (issue #104's primary fix: the
+    prior all-or-nothing `write_chunk_checkpoint(...)` call after the whole
+    loop lost every already-produced record on a mid-pass failure). On a
+    later run, a section whose `section_order` already appears in the
+    checkpoint is skipped entirely -- no LLM call -- and only the remaining
+    sections are processed, their records appended and combined with the
+    checkpointed ones in the chunker's own section order. When every
+    chunkable section is already checkpointed, the checkpointed records are
+    returned verbatim with zero chunking LLM calls (mirroring the envelope
+    pass's "no recompute" reuse) -- extraction/envelope-read still run (they
+    are needed to know which sections exist), but both are already cheap,
+    cache-backed reads with no LLM cost of their own.
     """
     path = Path(source_path)
     try:
@@ -379,8 +399,23 @@ def run_chunk(
     checkpoint_path = (
         chunks_checkpoint_path(source_id, chunks_dir) if chunks_dir is not None else None
     )
+    checkpointed_records: list[dict[str, Any]] = []
+    done_section_orders: set[str] = set()
     if checkpoint_path is not None and checkpoint_path.exists():
-        return load_chunk_checkpoint(checkpoint_path)
+        checkpointed_records = load_chunk_checkpoint(checkpoint_path)
+        if checkpointed_records and not any("section_order" in r for r in checkpointed_records):
+            # Legacy (pre-#104) checkpoint: written once, atomically, only
+            # after the whole pass succeeded (the old, now-removed
+            # write_chunk_checkpoint) -- none of its records carry
+            # section_order, so treat it as complete, exactly like the old
+            # short-circuit, zero LLM calls. Without this, an old-format
+            # checkpoint's empty done_section_orders would make every
+            # section look unfinished, re-chunking the whole source AND
+            # appending duplicate records on top of the legacy lines.
+            return checkpointed_records
+        done_section_orders = {
+            record["section_order"] for record in checkpointed_records if "section_order" in record
+        }
 
     if envelopes_dir is None:
         envelopes_dir = _default_envelopes_dir(config_path)
@@ -397,11 +432,15 @@ def run_chunk(
 
     sections = _section_nodes(tree)
 
-    all_records: list[dict[str, Any]] = []
+    all_records: list[dict[str, Any]] = list(checkpointed_records)
     for index, section in enumerate(sections):
         body_lines = _section_body_lines(section)
         if not body_lines:
             continue  # no chunkable prose in this section -- zero chunks, no LLM call
+
+        section_order = section.get("order", "")
+        if checkpoint_path is not None and section_order in done_section_orders:
+            continue  # already checkpointed by an earlier run -- no LLM call
 
         if client is None:
             try:
@@ -423,9 +462,15 @@ def run_chunk(
             raise ChunkParseError(f"model response was not valid JSON: {exc}") from exc
 
         chunks = parse_response(raw_response)
-        section_order = section.get("order", "")
-        all_records.extend(build_chunk_records(source_id, section_order, section_label, chunks))
+        section_records = build_chunk_records(source_id, section_order, section_label, chunks)
 
-    if checkpoint_path is not None:
-        write_chunk_checkpoint(all_records, checkpoint_path)
+        # Persist this section's records before moving to the next section
+        # (write+flush per section), so a failure on a later section leaves
+        # every already-completed section durably checkpointed (issue #104's
+        # primary fix).
+        if checkpoint_path is not None:
+            for record in section_records:
+                append_chunk_checkpoint(checkpoint_path, record)
+        all_records.extend(section_records)
+
     return all_records
