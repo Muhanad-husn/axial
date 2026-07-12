@@ -83,6 +83,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import tomllib
 from pathlib import Path
@@ -563,6 +564,27 @@ def _maybe_fail_tag_call() -> None:
 # stay tight -- only the read side needs to be generous.
 _REQUEST_TIMEOUT = httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=15.0)
 
+# Issue #108: `_REQUEST_TIMEOUT.read` above only bounds a single httpx *read*
+# -- a slow-drip stall (or a provider/proxy that emits keep-alive bytes more
+# often than every 180s) resets that per-read timer forever, so a stalled
+# attempt can hang indefinitely at 0% CPU and the `_MAX_ATTEMPTS` retry
+# budget below never gets a chance to fire. `_REQUEST_DEADLINE_SECONDS` is a
+# hard, per-attempt WALL-CLOCK ceiling enforced independently of httpx (via a
+# watchdog thread in `OpenRouterClient._post_with_deadline`): once it
+# elapses, the attempt self-aborts and is treated as a transient failure,
+# exactly like an `httpx.ReadTimeout`, and retried within the existing
+# budget. Set well above `_REQUEST_TIMEOUT.read` (180s) so a legitimately
+# slow-but-progressing real completion is never penalized by this ceiling.
+_REQUEST_DEADLINE_SECONDS = 300.0
+
+
+class _RequestDeadlineExceeded(Exception):
+    """Raised internally (issue #108) when a single `complete()` attempt's
+    blocking HTTP call outlives `request_deadline_seconds`. Caught inside
+    `OpenRouterClient.complete()`'s retry loop and treated as a transient
+    failure -- never surfaced to callers directly."""
+
+
 # Bounded retry (issue #60): a single transient failure -- a read timeout,
 # HTTP 429, or a 5xx -- must not abort a multi-hour ingestion run. 3 total
 # attempts, short exponential backoff between them. Any other failure (a
@@ -630,18 +652,36 @@ class OpenRouterClient:
         model: str,
         base_url: str = DEFAULT_OPENROUTER_BASE_URL,
         transport: httpx.BaseTransport | None = None,
+        request_deadline_seconds: float = _REQUEST_DEADLINE_SECONDS,
     ) -> None:
         self._api_key = api_key
         self._model = model
+        self._request_deadline_seconds = request_deadline_seconds
         self._client = httpx.Client(
             base_url=base_url, transport=transport, timeout=_REQUEST_TIMEOUT
         )
 
-    def complete(self, prompt: str, pass_name: str | None = None) -> str:
-        for attempt in range(1, _MAX_ATTEMPTS + 1):
-            is_last_attempt = attempt == _MAX_ATTEMPTS
+    def _post_with_deadline(self, prompt: str) -> httpx.Response:
+        """Run the blocking `httpx` POST on a daemon watchdog thread and
+        enforce `self._request_deadline_seconds` as a hard wall-clock
+        ceiling, independent of httpx's own (per-*read*, not per-call)
+        timeout (issue #108).
+
+        If the deadline elapses, raises `_RequestDeadlineExceeded` and
+        abandons the watchdog thread rather than joining it -- a genuine
+        slow-drip stall (no exception, no partial byte, ever) never returns
+        control on its own, so waiting for it to finish would defeat the
+        whole point of the ceiling. The thread is a daemon, so an abandoned,
+        permanently-blocked attempt can never keep the process alive; each
+        retry attempt starts a brand-new thread and a brand-new request, so
+        an abandoned attempt can never corrupt a later one.
+        """
+        outcome: dict[str, Any] = {}
+        done = threading.Event()
+
+        def _run() -> None:
             try:
-                response = self._client.post(
+                outcome["response"] = self._client.post(
                     "/chat/completions",
                     headers={"Authorization": f"Bearer {self._api_key}"},
                     json={
@@ -650,9 +690,38 @@ class OpenRouterClient:
                         "max_tokens": _MAX_COMPLETION_TOKENS,
                     },
                 )
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the caller's thread below
+                outcome["error"] = exc
+            finally:
+                done.set()
+
+        watchdog = threading.Thread(target=_run, daemon=True)
+        watchdog.start()
+        if not done.wait(timeout=self._request_deadline_seconds):
+            raise _RequestDeadlineExceeded(
+                f"attempt exceeded the {self._request_deadline_seconds}s wall-clock "
+                "request deadline (issue #108)"
+            )
+        if "error" in outcome:
+            raise outcome["error"]
+        return outcome["response"]
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            is_last_attempt = attempt == _MAX_ATTEMPTS
+            try:
+                response = self._post_with_deadline(prompt)
             except httpx.TransportError:
                 if is_last_attempt:
                     raise
+                _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
+                continue
+            except _RequestDeadlineExceeded as exc:
+                if is_last_attempt:
+                    raise OpenRouterError(
+                        f"request wall-clock deadline of {self._request_deadline_seconds}s "
+                        f"exceeded on attempt {attempt}/{_MAX_ATTEMPTS} (issue #108)"
+                    ) from exc
                 _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
                 continue
 
