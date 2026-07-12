@@ -10,6 +10,13 @@ from axial.chunk import ChunkError, run_chunk
 from axial.codebook import CodebookError, load_codebook
 from axial.envelope import EnvelopeError, run_envelope
 from axial.extract import ExtractError, extract
+from axial.gold import (
+    DEFAULT_MAX_SIZE,
+    DEFAULT_MIN_SIZE,
+    DEFAULT_SEED,
+    GoldError,
+    run_gold_sample,
+)
 from axial.intake import IntakeError, intake
 from axial.schema import SchemaError, load_schema
 from axial.tag import DEFAULT_DOMAIN_DIR, TagError, run_tag
@@ -110,6 +117,35 @@ def build_parser() -> argparse.ArgumentParser:
             "path to a domain directory containing schema.yaml and codebook.yaml "
             f"(default: {DEFAULT_DOMAIN_DIR})"
         ),
+    )
+
+    gold_parser = subparsers.add_parser("gold", help="gold-set (Academic labeling) operations")
+    gold_subparsers = gold_parser.add_subparsers(dest="gold_command")
+
+    gold_sample_parser = gold_subparsers.add_parser(
+        "sample",
+        help=(
+            "select a stratified set of tagged prose chunks from the vault and "
+            "write one chunk record per selection to data/gold/chunks/"
+        ),
+    )
+    gold_sample_parser.add_argument(
+        "--min-size",
+        type=int,
+        default=DEFAULT_MIN_SIZE,
+        help=f"target lower bound of the sample band (default: {DEFAULT_MIN_SIZE})",
+    )
+    gold_sample_parser.add_argument(
+        "--max-size",
+        type=int,
+        default=DEFAULT_MAX_SIZE,
+        help=f"target upper bound of the sample band (default: {DEFAULT_MAX_SIZE})",
+    )
+    gold_sample_parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_SEED,
+        help=f"seed for deterministic selection (default: {DEFAULT_SEED})",
     )
 
     vault_parser = subparsers.add_parser("vault", help="vault operations")
@@ -244,6 +280,17 @@ def _xref(source_path: str, domain: str) -> int:
     return 0
 
 
+def _gold_sample(min_size: int, max_size: int, seed: int) -> int:
+    try:
+        written = run_gold_sample(min_size=min_size, max_size=max_size, seed=seed)
+    except GoldError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps([str(path) for path in written]))
+    return 0
+
+
 def _vault_write(source_path: str) -> int:
     try:
         written = run_vault_write(source_path)
@@ -289,6 +336,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "xref":
         return _xref(args.source_path, args.domain)
+
+    if args.command == "gold" and args.gold_command == "sample":
+        return _gold_sample(args.min_size, args.max_size, args.seed)
 
     if args.command == "vault" and args.vault_command == "write":
         return _vault_write(args.source_path)
