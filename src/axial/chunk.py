@@ -225,6 +225,49 @@ def _slugify(label: str) -> str:
     return slug or "section"
 
 
+# Clear non-content back-matter / boilerplate section titles that must never
+# be chunked or written as vault notes (issue #113). Conservative + exact:
+# only unambiguous titles match after normalization; endnotes ("Notes"),
+# appendix, preface, and anything ambiguous are KEPT. OCR-mangled titles
+# (e.g. tilly's index came through as the garbled section "lad ex") won't
+# match here -- that residual is backstopped by the xref input guard (#111).
+_BACK_MATTER_TITLES = frozenset(
+    {
+        "index",
+        "general index",
+        "subject index",
+        "name index",
+        "author index",
+        "index of names",
+        "bibliography",
+        "select bibliography",
+        "references",
+        "reference list",
+        "works cited",
+        "cited works",
+        "table of contents",
+        "contents",
+        "copyright",
+        "list of figures",
+        "list of tables",
+        "list of illustrations",
+        "list of maps",
+        "list of abbreviations",
+    }
+)
+
+
+def _is_back_matter(title: str) -> bool:
+    """True if `title` is a clear non-content back-matter/boilerplate section
+    (issue #113): an exact match, after normalization (lowercase, whitespace
+    collapsed, surrounding punctuation stripped), against `_BACK_MATTER_TITLES`.
+    Conservative by design -- a title that is merely similar (an appendix, an
+    endnotes section, a chapter) is KEPT, since a false keep is cheap while a
+    false drop loses real content."""
+    normalized = re.sub(r"\s+", " ", title.lower()).strip(" .:-–—")
+    return normalized in _BACK_MATTER_TITLES
+
+
 def _section_nodes(tree: dict) -> list[dict]:
     """Top-level nodes that represent a section: opened by a heading, so
     they carry both a verbatim `text` and a `children` list. These are the
@@ -430,7 +473,15 @@ def run_chunk(
     except ExtractError as exc:
         raise ExtractionFailedError(exc) from exc
 
-    sections = _section_nodes(tree)
+    # Drop clear back-matter sections (bibliography/index/references/contents/
+    # copyright/lists) before the loop, so they are never chunked, never sent
+    # to the LLM (not even as a neighbour's context), and never written as
+    # notes (issue #113). Filtering up front -- rather than skipping inside the
+    # loop -- also keeps a dropped section out of the prev/next neighbour
+    # context of the sections that are kept. Chunk ids are keyed by each
+    # section's own `order` field, not its position, so kept sections'
+    # checkpoint keys are unchanged.
+    sections = [node for node in _section_nodes(tree) if not _is_back_matter(node.get("text", ""))]
 
     all_records: list[dict[str, Any]] = list(checkpointed_records)
     for index, section in enumerate(sections):
