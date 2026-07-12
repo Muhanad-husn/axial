@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 
 import axial.xref as xref_module
-from axial.envelope import compute_source_id
 from axial.llm import XREF_PASS_NAME
 
 ARTIFACT_ID = "art-1"
