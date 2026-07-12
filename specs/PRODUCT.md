@@ -195,7 +195,7 @@ One JSON per source in `data/trees/`, keyed by `source_id` (the same determinist
 - [ ] Notes carry valid three-level frontmatter and backlinks.
 
 **P0-9 Gold-set generation & label sheet.**
-- [ ] Emits ~100–120 chunks from ~20–28 sources, stratified across field × source-type (book/paper) × scope.
+- [ ] Emits ~100–120 chunks from ~20–28 sources. Balancing strata are field × empirical_scope × role_in_argument: the sample includes ≥1 chunk for each represented value of each of these three axes. source-type (book/paper), claim_type, and theory_school are not balancing strata; they ride along descriptively on whatever is drawn, and each source-type present in the corpus contributes ≥1 chunk. Non-substantive back-matter (endnotes, references/bibliography, index, appendix, front-matter) is excluded from the sampling frame; the sampler draws only from substantive prose.
 - [ ] Produces `label_sheet.xlsx` with one row per chunk, one column per axis, codebook-sourced dropdowns.
 
 **P0-10 Eval harness.**
@@ -224,7 +224,7 @@ One JSON per source in `data/trees/`, keyed by `source_id` (the same determinist
 
 The gold set is the measurement instrument, so its construction is specified, not left to build-time judgment.
 
-- **Size & stratification:** ~100–120 chunks from ~20–28 sources, ~4–6 chunks each, stratified so every field, both source types (book/paper), and each scope value get at least a few instances.
+- **Size & stratification:** ~100–120 chunks from ~20–28 sources, ~4–6 chunks each. Balancing strata are field × empirical_scope × role_in_argument: every represented value of each of these three axes gets at least one chunk. source-type (book/paper), claim_type, and theory_school are not balancing strata; they are represented descriptively on whatever is drawn, and each source-type present in the corpus contributes at least one chunk. Non-substantive back-matter (endnotes, references/bibliography, index, appendix, front-matter) is excluded from the sampling frame; the sampler draws only from substantive prose.
 - **Hybrid labeling** (bounds the Academic's effort where our guesses are reliable, gets clean signal where they are not):
   - **Blind** (Academic labels from scratch): `claim-type`, `theory-school`.
   - **Pre-labeled** (pipeline proposes, Academic corrects): `field`, `empirical-scope`.
