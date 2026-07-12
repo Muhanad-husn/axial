@@ -13,15 +13,24 @@ import json
 import pytest
 import yaml
 
+from openpyxl import load_workbook
+
 from axial.gold import (
+    AXIS_COLUMNS,
+    SHEET_COLUMNS,
     EmptyFrameError,
+    MissingChunksError,
+    _axis_vocabularies,
     _is_back_matter,
+    build_workbook,
     load_source_types,
     parse_note,
     run_gold_sample,
+    run_gold_sheet,
     select_chunks,
     source_id_of,
 )
+from axial.tag import DEFAULT_DOMAIN_DIR
 
 
 def _record(chunk_id, field, scope, role, source=None):
@@ -244,3 +253,105 @@ class TestRunGoldSample:
                 "claim_type",
                 "theory_school",
             }
+
+
+def _gold_record(chunk_id, field, scope, claim, theory):
+    return {
+        "chunk_id": chunk_id,
+        "source": source_id_of(chunk_id),
+        "section": "Body",
+        "chunk_text": f"text {chunk_id}",
+        "field": field,
+        "empirical_scope": scope,
+        "role_in_argument": "role:claim",
+        "claim_type": claim,
+        "theory_school": theory,
+    }
+
+
+class TestAxisVocabularies:
+    def test_loads_codebook_vocab(self):
+        vocab = _axis_vocabularies(DEFAULT_DOMAIN_DIR)
+        assert set(vocab) == set(AXIS_COLUMNS)
+        assert set(vocab["field"]) == {"state", "violence", "ideology"}
+        assert "scope:country-case" in vocab["empirical_scope"]
+        # long vocabularies (the reason for a helper sheet, not inline lists)
+        assert len(vocab["claim_type"]) > 10
+        assert len(vocab["theory_school"]) > 10
+        # sorted for determinism
+        assert vocab["claim_type"] == sorted(vocab["claim_type"])
+
+
+class TestBuildWorkbook:
+    def _vocab(self):
+        return {
+            "field": ["ideology", "state", "violence"],
+            "empirical_scope": ["scope:country-case", "scope:general"],
+            "claim_type": ["a-claim", "b-claim"],
+            "theory_school": ["a-school", "b-school"],
+        }
+
+    def _records(self):
+        return [
+            _gold_record("s-1_1_a_001", "state", "scope:general", "a-claim", "a-school"),
+            _gold_record("s-1_2_b_001", "violence", "scope:country-case", "b-claim", "b-school"),
+        ]
+
+    def test_header_and_row_count(self):
+        wb = build_workbook(self._records(), self._vocab())
+        ws = wb.worksheets[0]
+        header = [ws.cell(row=1, column=i + 1).value for i in range(len(SHEET_COLUMNS))]
+        assert header == list(SHEET_COLUMNS)
+        assert ws.max_row == 3  # header + 2 rows
+
+    def test_prefilled_and_blind_cells(self):
+        records = self._records()
+        wb = build_workbook(records, self._vocab())
+        ws = wb.worksheets[0]
+        idx = {name: i + 1 for i, name in enumerate(SHEET_COLUMNS)}
+        # row 2 corresponds to the first (chunk_id-sorted) record
+        assert ws.cell(row=2, column=idx["field"]).value == "state"
+        assert ws.cell(row=2, column=idx["empirical_scope"]).value == "scope:general"
+        assert ws.cell(row=2, column=idx["claim_type"]).value in (None, "")
+        assert ws.cell(row=2, column=idx["theory_school"]).value in (None, "")
+        assert ws.cell(row=2, column=idx["notes"]).value in (None, "")
+
+    def test_axis_dropdowns_reference_vocab(self):
+        wb = build_workbook(self._records(), self._vocab())
+        ws = wb.worksheets[0]
+        idx = {name: i + 1 for i, name in enumerate(SHEET_COLUMNS)}
+        for axis in AXIS_COLUMNS:
+            from openpyxl.utils import get_column_letter
+
+            coord = f"{get_column_letter(idx[axis])}2"
+            dv = next((v for v in ws.data_validations.dataValidation if coord in v.sqref), None)
+            assert dv is not None, f"no dropdown on axis column {axis}"
+            assert dv.type == "list"
+            # formula1 points at the hidden vocab sheet's column range
+            assert "vocab!" in (dv.formula1 or "")
+
+
+class TestRunGoldSheet:
+    def _seed_chunks(self, tmp_path, records):
+        chunks = tmp_path / "gold" / "chunks"
+        chunks.mkdir(parents=True)
+        for r in records:
+            (chunks / f"{r['chunk_id']}.json").write_text(json.dumps(r), encoding="utf-8")
+        return tmp_path / "gold"
+
+    def test_missing_chunks_raises(self, tmp_path):
+        (tmp_path / "gold" / "chunks").mkdir(parents=True)
+        with pytest.raises(MissingChunksError):
+            run_gold_sheet(gold_dir=tmp_path / "gold", domain_dir=DEFAULT_DOMAIN_DIR)
+
+    def test_writes_and_overwrites_in_place(self, tmp_path):
+        records = [
+            _gold_record("s-1_1_a_001", "state", "scope:general", "state-formation", "bellicist"),
+        ]
+        gold = self._seed_chunks(tmp_path, records)
+        path = run_gold_sheet(gold_dir=gold, domain_dir=DEFAULT_DOMAIN_DIR)
+        assert path.is_file()
+        first_rows = load_workbook(path).worksheets[0].max_row
+        # re-run overwrites in place, same row count
+        run_gold_sheet(gold_dir=gold, domain_dir=DEFAULT_DOMAIN_DIR)
+        assert load_workbook(path).worksheets[0].max_row == first_rows == 2

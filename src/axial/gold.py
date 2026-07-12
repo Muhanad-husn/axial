@@ -36,12 +36,42 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.datavalidation import DataValidation
 
 from axial.chunk import _BACK_MATTER_TITLES
+from axial.codebook import CodebookError, load_codebook
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
+from axial.tag import DEFAULT_DOMAIN_DIR
 from axial.vault import _default_vault_dir
 
 GOLD_DIR = Path("data/gold")
+
+# Appendix I's label-sheet columns, in order. `role_in_argument` is a
+# balancing stratum but NOT a sheet column (Appendix I names none); `notes`
+# ships empty.
+SHEET_COLUMNS = (
+    "chunk_id",
+    "source",
+    "section",
+    "chunk_text",
+    "field",
+    "empirical_scope",
+    "claim_type",
+    "theory_school",
+    "notes",
+)
+
+# Columns pre-filled from each chunk's own tags (the tagger's guess).
+PRELABELED_COLUMNS = ("field", "empirical_scope")
+
+# The four axis columns carrying dropdown validation, in a fixed order; the
+# blind pair (claim_type, theory_school) get dropdowns but arrive empty.
+AXIS_COLUMNS = ("field", "empirical_scope", "claim_type", "theory_school")
+
+LABEL_SHEET_NAME = "label_sheet"
+VOCAB_SHEET_NAME = "vocab"
 
 DEFAULT_MIN_SIZE = 100
 DEFAULT_MAX_SIZE = 120
@@ -100,6 +130,26 @@ _GOLD_EXTRA_BACK_MATTER = frozenset(
 
 class GoldError(Exception):
     """Base class for all gold-set sampling errors."""
+
+
+class MissingChunksError(GoldError):
+    """Raised when no sampled chunk records exist to render into a sheet --
+    `axial gold sample` must run first."""
+
+    def __init__(self, chunks_dir: Path):
+        self.chunks_dir = chunks_dir
+        super().__init__(
+            f"no sampled chunk records found under {chunks_dir}; run `axial gold sample` first"
+        )
+
+
+class CodebookLoadError(GoldError):
+    """Raised when the domain codebook (the dropdown vocabulary source) cannot
+    be loaded, so the CLI renders a clean `error: ...` instead of a traceback."""
+
+    def __init__(self, cause: CodebookError):
+        self.cause = cause
+        super().__init__(str(cause))
 
 
 class EmptyFrameError(GoldError):
@@ -363,3 +413,104 @@ def run_gold_sample(
         written.append(path)
 
     return sorted(written)
+
+
+def _load_gold_records(chunks_dir: Path) -> list[dict[str, Any]]:
+    """Read every sampled chunk record under `chunks_dir`, sorted by chunk_id
+    for a stable row order."""
+    records = []
+    for path in sorted(chunks_dir.glob("*.json")):
+        records.append(json.loads(path.read_text(encoding="utf-8")))
+    records.sort(key=lambda r: r.get("chunk_id", ""))
+    return records
+
+
+def _axis_vocabularies(domain_dir: str | Path) -> dict[str, list[str]]:
+    """Load the codebook and return the sorted controlled vocabulary for each
+    of the four axis columns -- the dropdown option lists."""
+    try:
+        codebook = load_codebook(domain_dir)
+    except CodebookError as exc:
+        raise CodebookLoadError(exc) from exc
+    return {axis: sorted(codebook.axes.get(axis, {})) for axis in AXIS_COLUMNS}
+
+
+def _write_vocab_sheet(workbook: Workbook, vocabularies: dict[str, list[str]]) -> dict[str, str]:
+    """Write each axis's vocabulary into its own column on a hidden helper
+    sheet and return, per axis, the absolute range reference the dropdowns
+    point at. A helper sheet (rather than an inline list) is required because
+    claim_type/theory_school vocabularies exceed Excel's ~255-char inline
+    data-validation limit."""
+    sheet = workbook.create_sheet(VOCAB_SHEET_NAME)
+    sheet.sheet_state = "hidden"
+
+    ranges: dict[str, str] = {}
+    for index, axis in enumerate(AXIS_COLUMNS, start=1):
+        letter = get_column_letter(index)
+        sheet.cell(row=1, column=index, value=axis)
+        values = vocabularies[axis]
+        for offset, value in enumerate(values, start=2):
+            sheet.cell(row=offset, column=index, value=value)
+        last_row = 1 + len(values)
+        ranges[axis] = f"{VOCAB_SHEET_NAME}!${letter}$2:${letter}${last_row}"
+    return ranges
+
+
+def build_workbook(records: list[dict[str, Any]], vocabularies: dict[str, list[str]]) -> Workbook:
+    """Build the label-sheet workbook: the Appendix-I header row, one row per
+    sampled chunk (provenance + pre-filled field/empirical_scope, blind
+    claim_type/theory_school/notes), and a codebook-sourced dropdown on each
+    of the four axis columns."""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = LABEL_SHEET_NAME
+
+    for col, name in enumerate(SHEET_COLUMNS, start=1):
+        sheet.cell(row=1, column=col, value=name)
+
+    for row_index, record in enumerate(records, start=2):
+        for col, name in enumerate(SHEET_COLUMNS, start=1):
+            if name in AXIS_COLUMNS and name not in PRELABELED_COLUMNS:
+                continue  # blind columns arrive empty for the Academic
+            if name == "notes":
+                continue  # ships empty
+            sheet.cell(row=row_index, column=col, value=record.get(name))
+
+    ranges = _write_vocab_sheet(workbook, vocabularies)
+    last_data_row = 1 + len(records)
+    for col, name in enumerate(SHEET_COLUMNS, start=1):
+        if name not in AXIS_COLUMNS:
+            continue
+        validation = DataValidation(type="list", formula1=ranges[name], allow_blank=True)
+        sheet.add_data_validation(validation)
+        letter = get_column_letter(col)
+        validation.add(f"{letter}2:{letter}{last_data_row}")
+
+    return workbook
+
+
+def run_gold_sheet(
+    gold_dir: Path | None = None,
+    domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+) -> Path:
+    """Render the sampled gold set under `<gold_dir>/chunks/` into
+    `<gold_dir>/label_sheet.xlsx` (Appendix I), overwriting any prior sheet in
+    place. Returns the written path. Raises `MissingChunksError` when no
+    sampled records exist and `CodebookLoadError` when the dropdown vocabulary
+    cannot be loaded. Offline -- no LLM call."""
+    if gold_dir is None:
+        gold_dir = _default_gold_dir(config_path)
+
+    chunks_dir = gold_dir / "chunks"
+    records = _load_gold_records(chunks_dir) if chunks_dir.is_dir() else []
+    if not records:
+        raise MissingChunksError(chunks_dir)
+
+    vocabularies = _axis_vocabularies(domain_dir)
+    workbook = build_workbook(records, vocabularies)
+
+    gold_dir.mkdir(parents=True, exist_ok=True)
+    sheet_path = gold_dir / "label_sheet.xlsx"
+    workbook.save(sheet_path)
+    return sheet_path

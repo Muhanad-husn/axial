@@ -16,6 +16,7 @@ from axial.gold import (
     DEFAULT_SEED,
     GoldError,
     run_gold_sample,
+    run_gold_sheet,
 )
 from axial.intake import IntakeError, intake
 from axial.schema import SchemaError, load_schema
@@ -146,6 +147,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_SEED,
         help=f"seed for deterministic selection (default: {DEFAULT_SEED})",
+    )
+
+    gold_subparsers.add_parser(
+        "sheet",
+        help=(
+            "render the sampled chunk records under data/gold/chunks/ into "
+            "data/gold/label_sheet.xlsx with codebook dropdowns"
+        ),
     )
 
     vault_parser = subparsers.add_parser("vault", help="vault operations")
@@ -291,6 +300,17 @@ def _gold_sample(min_size: int, max_size: int, seed: int) -> int:
     return 0
 
 
+def _gold_sheet() -> int:
+    try:
+        path = run_gold_sheet()
+    except GoldError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(str(path)))
+    return 0
+
+
 def _vault_write(source_path: str) -> int:
     try:
         written = run_vault_write(source_path)
@@ -339,6 +359,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "gold" and args.gold_command == "sample":
         return _gold_sample(args.min_size, args.max_size, args.seed)
+
+    if args.command == "gold" and args.gold_command == "sheet":
+        return _gold_sheet()
 
     if args.command == "vault" and args.vault_command == "write":
         return _vault_write(args.source_path)
