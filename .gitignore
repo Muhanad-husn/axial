@@ -13,8 +13,12 @@ build/
 PR_BODY.md
 PR_BODY.generated.md
 .tdd-branch-cleanup.log
-data/envelopes/
-data/trees/
-data/chunks/
-data/tags/
-data/artifacts/
+# --- COPYRIGHT: never commit source books or any book-derived content ---
+# The source PDFs and every ingested artefact (vault notes, extraction trees,
+# envelopes, chunk/tag/artifact/xref records, run logs) contain VERBATIM
+# copyrighted text. The whole of data/ is ignored so book text can never be
+# swept in by `git add -A`. If a gold LABEL SHEET that is safe to commit is
+# ever produced (chunk_ids + human labels ONLY, never full chunk_text), it
+# must be un-ignored by its specific path below, e.g.:
+#   !data/gold/labels.csv
+data/
