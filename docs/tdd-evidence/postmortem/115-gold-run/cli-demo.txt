@@ -1,0 +1,101 @@
+$ uv run python docs/postmortem/gold-run-2026-07/parse_run.py <data/gold log dir>
+total attempt blocks: 119  sources: 22
+
+## Per-source attempt table
+
+| source | attempts | vault OK | vault FAIL | unterminated | total h | best notes | fatal error classes |
+|---|---|---|---|---|---|---|---|
+| beshara-origins-of-syrian-nationhood | 4 | 1 | 3 | 0 | 15.5 | 1474 | other, tag_vocabx2 |
+| mann-sources-of-social-power-v3 | 8 | 4 | 4 | 0 | 14.2 | 958 | invalid_json, other, tag_vocab |
+| hall-schroeder-anatomy-of-power | 9 | 3 | 5 | 1 | 13.3 | 834 | content_filter, tag_vocabx2 |
+| ayubi-over-stating-the-arab-state | 5 | 1 | 4 | 0 | 13.0 | 988 | invalid_jsonx3, tag_vocab |
+| mann-sources-of-social-power-v4 | 8 | 0 | 8 | 0 | 12.3 | 0 | content_filter, invalid_jsonx2, other, transport |
+| mena-decentralization-local-governance | 7 | 4 | 2 | 1 | 11.1 | 905 | other |
+| kalyvas-logic-of-violence-in-civil-war | 8 | 1 | 7 | 0 | 10.7 | 809 | invalid_jsonx2 |
+| martin-social-structures | 4 | 1 | 3 | 0 | 10.7 | 775 | invalid_json, tag_vocab, truncation_length |
+| bayat-revolution-without-revolutionaries | 6 | 5 | 1 | 0 | 9.2 | 529 | other |
+| zaum-sovereignty-paradox | 5 | 1 | 4 | 0 | 8.7 | 718 | otherx2, tag_vocab |
+| malesevic-sociology-of-war-and-violence | 6 | 4 | 2 | 0 | 8.5 | 464 | other |
+| wimmer-waves-of-war | 7 | 1 | 6 | 0 | 8.3 | 665 | invalid_json, tag_vocabx4 |
+| heydemann-war-institutions-social-change-me | 2 | 1 | 1 | 0 | 8.3 | 604 | other |
+| malesevic-nation-states-and-nationalisms | 4 | 1 | 3 | 0 | 7.6 | 641 | tag_vocabx3 |
+| tilly-from-mobilization-to-revolution | 9 | 4 | 4 | 1 | 7.2 | 823 | envelope_validation |
+| malesevic-haugaard-gellner-social-thought | 7 | 5 | 2 | 0 | 5.9 | 459 | - |
+| jackson-quasi-states | 4 | 1 | 3 | 0 | 5.1 | 446 | tag_vocab |
+| smith-ethno-symbolism-and-nationalism | 4 | 1 | 3 | 0 | 4.2 | 453 | tag_vocabx3 |
+| caspersen-unrecognized-states | 3 | 1 | 2 | 0 | 3.5 | 295 | tag_vocab |
+| syria-state-legitimacy-and-capacity | 2 | 1 | 1 | 0 | 2.0 | 97 | - |
+| mann-sources-of-social-power-v2 | 6 | 5 | 1 | 0 | 1.9 | 148 | - |
+| agamben-state-of-exception | 1 | 1 | 0 | 0 | 0.9 | 63 | - |
+
+## Fatal error class histogram (run-wide)
+
+| class | fatal events |
+|---|---|
+| tag_vocab | 20 |
+| invalid_json | 10 |
+| other | 9 |
+| content_filter | 2 |
+| transport | 1 |
+| truncation_length | 1 |
+| envelope_validation | 1 |
+
+## All fatal error lines (worker, source-start ts, message)
+
+- `ayubi-over-stating-the-arab-state` [w1 @ 2026-07-09T21:22:55+02:00]: model response was not valid JSON: Unterminated string starting at: line 4 column 15 (char 36)
+- `ayubi-over-stating-the-arab-state` [w4 @ 2026-07-10T02:17:42+02:00]: model response was not valid JSON: Expecting ',' delimiter: line 1 column 8952 (char 8951)
+- `ayubi-over-stating-the-arab-state` [w4 @ 2026-07-10T20:53:02+02:00]: model response was not valid JSON: Invalid \escape: line 19 column 48 (char 5689); raw response was: '{\n  "chunks": [\n    {\n      "text": "The use of the word ra\'k and its vernacular renderings (e.g. rayycs) to describe the president in various Arab countries connotes both deference and affection. The term I\'ilat-ra\'k) in this form is due to Pierre Mire1 [1982: 242fl-J. Dawlat al-amn is the proper t' (truncated, total length 7508)
+- `ayubi-over-stating-the-arab-state` [w5 @ 2026-07-11T00:13:58+02:00]: tag 'ideology-as-practice' is not in the schema's 'field' axis
+- `bayat-revolution-without-revolutionaries` [w1 @ 2026-07-10T02:44:15+02:00]: expected 'empirical_scope' value to be a string, got an object without a string 'primary': {'scope:country-case': 'scope:country-case', 'country': 'Iran'}
+- `beshara-origins-of-syrian-nationhood` [w1 @ 2026-07-09T23:46:24+02:00]: country 'Libya' is not in the schema's country_list
+- `beshara-origins-of-syrian-nationhood` [w4 @ 2026-07-11T00:16:03+02:00]: tag 'sub:modernist' is not in the schema's 'claim_type' axis
+- `beshara-origins-of-syrian-nationhood` [w5 @ 2026-07-11T06:53:42+02:00]: expected 'theory_school' value to be an object with a 'primary' key, got str: 'discursive'
+- `caspersen-unrecognized-states` [w2 @ 2026-07-10T09:43:49+02:00]: tag 'legitimacy-and-recognition' is not in the schema's 'claim_type' axis
+- `hall-schroeder-anatomy-of-power` [w2 @ 2026-07-10T00:01:52+02:00]: tag '' is not in the schema's 'claim_type' axis
+- `hall-schroeder-anatomy-of-power` [w4 @ 2026-07-11T04:57:55+02:00]: tag 'liberal' is not in the schema's 'theory_school' axis
+- `hall-schroeder-anatomy-of-power` [w4 @ 2026-07-11T16:28:55+02:00]: completion truncated: finish_reason='content_filter'
+- `heydemann-war-institutions-social-change-me` [w3 @ 2026-07-10T02:42:19+02:00]: expected 'empirical_scope' value to be a string, got an object without a string 'primary': {'value': 'scope:country-case', 'country': 'Syria'}
+- `jackson-quasi-states` [w5 @ 2026-07-10T16:14:02+02:00]: tag '' is not in the schema's 'field' axis
+- `kalyvas-logic-of-violence-in-civil-war` [w3 @ 2026-07-09T21:22:55+02:00]: model response was not valid JSON: Expecting value: line 1 column 1 (char 0)
+- `kalyvas-logic-of-violence-in-civil-war` [w4 @ 2026-07-10T00:00:46+02:00]: model response was not valid JSON: Invalid control character at: line 1 column 4311 (char 4310)
+- `malesevic-nation-states-and-nationalisms` [w3 @ 2026-07-10T00:34:42+02:00]: country 'Chile' is not in the schema's country_list
+- `malesevic-nation-states-and-nationalisms` [w4 @ 2026-07-10T22:18:58+02:00]: tag 'ideology:as-practice' is not in the schema's 'field' axis
+- `malesevic-nation-states-and-nationalisms` [w5 @ 2026-07-11T06:29:09+02:00]: tag 'colonial-postcolonial' is not in the schema's 'claim_type' axis
+- `malesevic-sociology-of-war-and-violence` [w2 @ 2026-07-10T03:16:22+02:00]: expected 'claim_type'.secondary, when present, to be a single string, got list: ['legitimating-narratives', 'mobilization-and-recruitment']
+- `mann-sources-of-social-power-v3` [w2 @ 2026-07-09T21:22:55+02:00]: model response was not valid JSON: Expecting value: line 1 column 1 (char 0)
+- `mann-sources-of-social-power-v3` [w4 @ 2026-07-10T03:55:08+02:00]: tag '' is not in the schema's 'claim_type' axis
+- `mann-sources-of-social-power-v3` [w6 @ 2026-07-12T00:36:30+02:00]: completion truncated: finish_reason='error'
+- `mann-sources-of-social-power-v4` [w1 @ 2026-07-09T23:06:07+02:00]: no stored envelope found at data\envelopes\mann-sources-of-social-power-v4-cb090c9e6c17.json; run `axial envelope` on the source first
+- `mann-sources-of-social-power-v4` [w4 @ 2026-07-10T02:42:00+02:00]: [WinError 10054] An existing connection was forcibly closed by the remote host
+- `mann-sources-of-social-power-v4` [w4 @ 2026-07-11T09:05:09+02:00]: model response was not valid JSON: Expecting ',' delimiter: line 28 column 250 (char 16543); raw response was: '{\n  "chunks": [\n    {\n      "text": "For the United States East Asia was strategically second only to Europe, since it was adjacent to the two major communist states, and there were active communist and leftist nationalist movements all around. It also contained a very large population and tremendou' (truncated, total length 35310)
+- `mann-sources-of-social-power-v4` [w7 @ 2026-07-12T09:21:53+02:00]: model response was not valid JSON: Expecting ',' delimiter: line 4 column 9840 (char 9861); raw response was: '{\n  "chunks": [\n    {\n      "text": "## Bibliography\\nAaronson,  Susan 2001 Taking Trade  to the  Streets: The  Lost  History  of  Public  Efforts to Shape Globalization. Ann  Arbor: University of  Michigan Press.\\n1996 Trade and the American Dream: A Social History of  Postwar Trade Policy. Lexingt' (truncated, total length 107117)
+- `mann-sources-of-social-power-v4` [w7 @ 2026-07-12T16:49:16+02:00]: completion truncated: finish_reason='content_filter'
+- `martin-social-structures` [w3 @ 2026-07-09T22:54:38+02:00]: model response was not valid JSON: Expecting value: line 1 column 1 (char 0)
+- `martin-social-structures` [w4 @ 2026-07-10T01:44:29+02:00]: completion truncated: finish_reason='length'
+- `martin-social-structures` [w4 @ 2026-07-10T12:52:03+02:00]: tag '' is not in the schema's 'field' axis
+- `mena-decentralization-local-governance` [w2 @ 2026-07-10T05:25:05+02:00]: expected 'empirical_scope' value to be a string, got an object without a string 'primary': {'value': 'scope:country-case', 'country': 'Syria'}
+- `smith-ethno-symbolism-and-nationalism` [w1 @ 2026-07-10T15:10:16+02:00]: tag 'field:state' is not in the schema's 'field' axis
+- `smith-ethno-symbolism-and-nationalism` [w5 @ 2026-07-10T18:17:33+02:00]: tag 'field:ideology' is not in the schema's 'field' axis
+- `smith-ethno-symbolism-and-nationalism` [w5 @ 2026-07-10T20:50:16+02:00]: tag 'identitiy-and-group-formation' is not in the schema's 'claim_type' axis
+- `tilly-from-mobilization-to-revolution` [w4 @ 2026-07-10T03:34:32+02:00]: envelope field 'toc' must be a non-empty list, got []
+- `wimmer-waves-of-war` [w3 @ 2026-07-09T23:53:52+02:00]: model response was not valid JSON: Expecting value: line 1 column 1 (char 0)
+- `wimmer-waves-of-war` [w5 @ 2026-07-10T13:35:41+02:00]: tag 'frame work-illustration' is not in the schema's 'artifact_role' axis
+- `wimmer-waves-of-war` [w5 @ 2026-07-10T15:49:56+02:00]: tag '' is not in the schema's 'field' axis
+- `wimmer-waves-of-war` [w5 @ 2026-07-10T16:23:43+02:00]: tag '' is not in the schema's 'field' axis
+- `wimmer-waves-of-war` [w5 @ 2026-07-10T17:44:00+02:00]: tag 'ethnicity' is not in the schema's 'field' axis
+- `zaum-sovereignty-paradox` [w1 @ 2026-07-10T05:09:44+02:00]: expected 'empirical_scope' value to be a string, got an object without a string 'primary': {'value': 'scope:country-case', 'country': 'East Timor'}
+- `zaum-sovereignty-paradox` [w5 @ 2026-07-10T13:03:37+02:00]: empirical_scope 'scope:country-case' requires a 'country' value, but none was provided
+- `zaum-sovereignty-paradox` [w5 @ 2026-07-10T16:16:53+02:00]: tag '' is not in the schema's 'field' axis
+
+## Unterminated blocks (source attempt started, no END line � kill/hang)
+
+- `tilly-from-mobilization-to-revolution` [w4 @ 2026-07-11T17:04:58+02:00]
+- `mena-decentralization-local-governance` [w7 @ 2026-07-12T22:50:56+02:00]
+- `hall-schroeder-anatomy-of-power` [w8 @ 2026-07-12T18:29:06+02:00]
+
+## Wasted-work summary
+
+- total logged compute: 182.0 h across 119 attempts / 22 sources
+- sources landing first-try: 1/22
+- extra attempts beyond the first for eventually-OK sources: 90
+exit code: 0
