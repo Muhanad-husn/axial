@@ -14,7 +14,7 @@ cover every input property that produced a failure class.
 | mann-sources-of-social-power-v4 | 123 MB, ~1010 chunks; 0/8 attempts landed; 12.3 h burned; hit 5 distinct failure classes (missing envelope, transport reset, invalid JSON ×2 incl. a 107 KB bibliography response, content_filter) | the biggest OCR'd scan; giant back-matter; per-chunk risk compounding over a long book; moderation on violence-dense prose |
 | tilly-from-mobilization-to-revolution | 23.9 MB 1978-era scan; 9 attempts; empty-`toc` envelope failure; one silent hang (no END line) | oldest/worst OCR; scan-quality TOC; stall behavior |
 | kalyvas-logic-of-violence-in-civil-war | 8 attempts, 7 failed; 10.7 h; invalid JSON ×2 | the most violence-dense prose end-to-end (moderation hazard density) |
-| ayubi-over-stating-the-arab-state | 5 attempts; 13.0 h; invalid JSON ×3, all on transliterated Arabic (`ra'k`, `I'ilat-ra'k` — escape sequences breaking the model's JSON) | non-English fragments / transliteration breaking structured output |
+| ayubi-over-stating-the-arab-state | 5 attempts; 13.0 h; invalid JSON ×3, all on transliterated Arabic terms whose apostrophes became invalid string escapes, breaking the model's JSON | non-English fragments / transliteration breaking structured output |
 | hall-schroeder-anatomy-of-power | 9 attempts; 13.3 h; the one recovered content_filter hit; an uncaught empty-tag crash; one silent hang | moderation survivor case; tag-vocabulary drift; 23 MB scan |
 
 Together the five cover: giant scans, worst OCR, back-matter blobs, non-English

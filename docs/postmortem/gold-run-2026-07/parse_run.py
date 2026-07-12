@@ -43,6 +43,18 @@ def classify(line: str) -> str:
     return "other"
 
 
+# Some error lines embed a snippet of the model's raw response, which is
+# verbatim copyrighted source text. Strip that body from anything this tool
+# prints so its output can never reproduce book text into a committed file.
+_RAW_RESPONSE_RE = re.compile(r"raw response was: .*", re.S)
+
+
+def redact(line: str) -> str:
+    return _RAW_RESPONSE_RE.sub(
+        "raw response was: [redacted — verbatim copyrighted source text]", line
+    )
+
+
 attempts = []  # dicts: worker, src, ts, statuses..., notes, secs, errors[]
 for logfile in sorted(LOGDIR.glob("ingest.w*.log")):
     worker = logfile.stem.split(".")[-1]
@@ -84,7 +96,7 @@ for logfile in sorted(LOGDIR.glob("ingest.w*.log")):
             cur = None
             continue
         if cur is not None and line.startswith("error:"):
-            cur["errors"].append(line[len("error:") :].strip())
+            cur["errors"].append(redact(line[len("error:") :].strip()))
     if cur is not None:
         cur["unterminated"] = True
         attempts.append(cur)
