@@ -78,7 +78,7 @@ from axial.envelope import (
 from axial.chunk import _default_chunks_dir
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
 from axial.tag import TagError, _default_tags_dir, run_tag
-from axial.xref import XrefError, run_xref
+from axial.xref import XrefError, _default_xref_dir, run_xref, xref_checkpoint_path
 
 # Source-level fields reused verbatim from the envelope (PRD §7.2), excluding
 # `fields`, a schema-driven axis tag deferred to phase-3 tagging.
@@ -335,6 +335,7 @@ def run_vault_write(
     chunks_dir: Path | None = None,
     tags_dir: Path | None = None,
     artifacts_dir: Path | None = None,
+    xref_dir: Path | None = None,
 ) -> list[Path]:
     """Run vault write on `source_path`: read the stored envelope (never
     recomputing it), run the tagging pass internally via `axial.tag.run_tag`
@@ -383,6 +384,8 @@ def run_vault_write(
         tags_dir = _default_tags_dir(config_path)
     if artifacts_dir is None:
         artifacts_dir = _default_artifacts_dir(config_path)
+    if xref_dir is None:
+        xref_dir = _default_xref_dir(config_path)
 
     try:
         records = run_tag(
@@ -422,6 +425,7 @@ def run_vault_write(
             config_path=config_path,
             chunks_dir=chunks_dir,
             artifacts_dir=artifacts_dir,
+            xref_dir=xref_dir,
         )
     except XrefError as exc:
         raise XrefFailedError(exc) from exc
@@ -443,4 +447,12 @@ def run_vault_write(
         )
         for record in artifact_records
     ]
+
+    # The xref checkpoint (issue #110) is a failure-recovery journal, not a
+    # cross-run cache: now that this vault-write invocation has fully
+    # completed (xref detected AND every note materialized), clear it so an
+    # independent later run recomputes xref fresh. A run that failed before
+    # reaching here leaves the checkpoint in place, so its resume is cheap.
+    xref_checkpoint_path(source_id, xref_dir).unlink(missing_ok=True)
+
     return prose_paths + artifact_paths

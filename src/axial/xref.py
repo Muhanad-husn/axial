@@ -15,10 +15,13 @@ notes' frontmatter is slice 02.
 
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
 from typing import Any
 
 import httpx
+import yaml
 
 from axial.artifacts import (
     ArtifactsError,
@@ -30,6 +33,7 @@ from axial.envelope import (
     MissingSourceError as _EnvelopeMissingSourceError,
     compute_source_id,
 )
+from axial.checkpoint import append_checkpoint_record, load_checkpoint_records
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.llm import (
     DEFAULT_PIPELINE_CONFIG_PATH,
@@ -39,6 +43,16 @@ from axial.llm import (
     get_client,
 )
 from axial.tag import TagError
+
+# Default xref-pass checkpoint directory, mirroring `axial.artifacts.ARTIFACTS_DIR`
+# / `axial.tag.TAGS_DIR` exactly (issue #110).
+XREF_DIR = Path("data/xref")
+
+# Input-guard thresholds for non-prose back-matter (issue #111): an OCR'd
+# index/bibliography becomes one very large, mostly-non-alphabetic chunk with
+# zero cross-reference value that stalls the LLM. Heuristics, not hard rules.
+_XREF_MAX_CHUNK_CHARS = 30000
+_XREF_MAX_NON_ALPHA_RATIO = 0.4
 
 _XREF_PROMPT_TEMPLATE = """\
 You are deciding which, if any, of the source's known artifacts (tables or \
@@ -110,6 +124,59 @@ class XrefParseError(XrefError):
     referenced artifact_id strings."""
 
 
+class XrefCheckpointCorruptError(XrefError):
+    """Raised when an xref-pass checkpoint file has a torn NON-final line --
+    genuine corruption unrelated to a hard kill mid-append (a torn final line
+    is healed silently). Mirrors `axial.artifacts.ArtifactCheckpointCorruptError`
+    exactly (issue #110)."""
+
+    def __init__(self, path: Path, line_no: int, cause: json.JSONDecodeError):
+        self.path = path
+        self.line_no = line_no
+        self.cause = cause
+        super().__init__(
+            f"corrupt xref checkpoint {path}: line {line_no} is not valid JSON: {cause}"
+        )
+
+
+def _default_xref_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
+    """Resolve the xref-checkpoint directory, mirroring
+    `axial.artifacts._default_artifacts_dir` exactly: honor
+    `config/pipeline.yaml`'s `paths.xref_dir` when declared, else fall back to
+    the module-level `XREF_DIR` default (`data/xref`). An absent file/key
+    falls back to `XREF_DIR`."""
+    if not config_path.is_file():
+        return XREF_DIR
+    with config_path.open("r", encoding="utf-8") as handle:
+        document = yaml.safe_load(handle) or {}
+    paths_config = document.get("paths", {}) or {}
+    configured = paths_config.get("xref_dir")
+    return Path(configured) if configured else XREF_DIR
+
+
+def xref_checkpoint_path(source_id: str, xref_dir: Path = XREF_DIR) -> Path:
+    """The resume path for `source_id`'s xref-pass checkpoint (one JSON line
+    per processed chunk, appended as each chunk's referenced ids are parsed),
+    keyed by the content-hashed source_id -- mirrors
+    `axial.artifacts.artifacts_checkpoint_path` exactly (issue #110)."""
+    return xref_dir / f"{source_id}.jsonl"
+
+
+def _non_prose_skip_reason(chunk_text: str) -> str | None:
+    """Return a human-readable reason to skip `chunk_text` from the xref pass
+    as non-prose back-matter (issue #111), or None to process it normally. An
+    OCR'd index/bibliography becomes one very large, mostly-non-alphabetic
+    chunk with zero cross-reference value that stalls the LLM."""
+    char_count = len(chunk_text)
+    if char_count > _XREF_MAX_CHUNK_CHARS:
+        return f"exceeds size limit ({char_count} chars > {_XREF_MAX_CHUNK_CHARS})"
+    if char_count:
+        non_alpha_ratio = sum(1 for c in chunk_text if not c.isalpha()) / char_count
+        if non_alpha_ratio > _XREF_MAX_NON_ALPHA_RATIO:
+            return f"high non-alpha ratio ({non_alpha_ratio:.1%})"
+    return None
+
+
 def compose_xref_prompt(chunk_text: str, artifact_ids: list[str]) -> str:
     """Compose the xref-detection prompt from the chunk's own text and the
     source's real, known artifact ids -- never a hardcoded list."""
@@ -169,6 +236,7 @@ def run_xref(
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     chunks_dir: Path | None = None,
     artifacts_dir: Path | None = None,
+    xref_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Run the cross-reference-detection pass on `source_path`.
 
@@ -184,10 +252,18 @@ def run_xref(
     artifacts-pass checkpoint `axial.vault.run_vault_write`'s own direct
     `run_artifacts` call just wrote/reused, instead of reclassifying every
     artifact a second time. Standalone `axial xref` passes none, unchanged.
+
+    `xref_dir` (issue #110), when supplied, turns on per-chunk checkpoint/
+    resume: each processed chunk's referenced ids are appended to
+    `<xref_dir>/<source_id>.jsonl` as they are parsed, and a later call for
+    the same source skips any chunk already checkpointed (by `chunk_id`) --
+    reusing its stored result without ever re-calling the LLM for it, so a
+    mid-pass stall costs one LLM call on the resume, not the whole source.
+    Standalone `axial xref` passes none, unchanged.
     """
     path = Path(source_path)
     try:
-        compute_source_id(path)
+        source_id = compute_source_id(path)
     except _EnvelopeMissingSourceError as exc:
         raise MissingSourceError(exc) from exc
 
@@ -222,9 +298,43 @@ def run_xref(
     known_artifact_ids = {record["artifact_id"] for record in artifact_records}
     artifact_id_list = sorted(known_artifact_ids)
 
+    # Per-chunk checkpoint/resume (issue #110), opt-in via `xref_dir`,
+    # mirroring the tag/artifacts passes: load already-processed chunks so a
+    # resumed run reuses each verbatim and never re-calls the LLM for it.
+    checkpoint_path: Path | None = None
+    already_xrefed: dict[str, list[str]] = {}
+    if xref_dir is not None:
+        checkpoint_path = xref_checkpoint_path(source_id, xref_dir)
+        already_xrefed = {
+            record["chunk_id"]: record.get("referenced_artifact_ids", [])
+            for record in load_checkpoint_records(checkpoint_path, XrefCheckpointCorruptError)
+        }
+
     pairs: list[dict[str, Any]] = []
     for chunk in chunk_records:
-        prompt = compose_xref_prompt(chunk["text"], artifact_id_list)
+        chunk_id = chunk["chunk_id"]
+
+        # Resume: a chunk already checkpointed by an earlier run is reused
+        # verbatim and never re-sent to the model (issue #110). Its stored
+        # referenced ids are re-filtered against the current known-artifact
+        # set, exactly as a fresh call would be.
+        checkpointed = already_xrefed.get(chunk_id)
+        if checkpointed is not None:
+            pairs.extend(build_xref_pairs(chunk_id, checkpointed, known_artifact_ids))
+            continue
+
+        chunk_text = chunk["text"]
+
+        # Input guard (issue #111): skip non-prose back-matter (a huge OCR'd
+        # index/bibliography) -- no LLM call, no pairs, no checkpoint. The
+        # skip is a deterministic function of the text, so it re-applies on
+        # every resume without ever stalling the model.
+        skip_reason = _non_prose_skip_reason(chunk_text)
+        if skip_reason is not None:
+            print(f"xref: skipping chunk {chunk_id}: {skip_reason}", file=sys.stderr)
+            continue
+
+        prompt = compose_xref_prompt(chunk_text, artifact_id_list)
 
         try:
             raw_response = complete_json(client, prompt, pass_name=XREF_PASS_NAME)
@@ -234,6 +344,15 @@ def run_xref(
             raise XrefParseError(f"model response was not valid JSON: {exc}") from exc
 
         referenced_ids = parse_referenced_artifact_ids(raw_response)
-        pairs.extend(build_xref_pairs(chunk["chunk_id"], referenced_ids, known_artifact_ids))
+
+        # Persist this chunk's referenced ids before moving on (write+flush
+        # per chunk), so a failure on a later chunk leaves every processed
+        # chunk durably checkpointed for the resume run (issue #110).
+        if checkpoint_path is not None:
+            append_checkpoint_record(
+                checkpoint_path,
+                {"chunk_id": chunk_id, "referenced_artifact_ids": referenced_ids},
+            )
+        pairs.extend(build_xref_pairs(chunk_id, referenced_ids, known_artifact_ids))
 
     return pairs
