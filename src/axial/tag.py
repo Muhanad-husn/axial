@@ -77,6 +77,7 @@ from axial.llm import (
     get_client,
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
+from axial.nonprose_guard import non_prose_skip_reason
 from axial.schema import Axis, Schema, SchemaError, load_schema
 
 DEFAULT_DOMAIN_DIR = Path("config/domains/syria")
@@ -1088,6 +1089,21 @@ def run_tag(
         checkpointed = already_tagged.get(chunk_record["chunk_id"])
         if checkpointed is not None:
             tagged_records.append(checkpointed)
+            continue
+
+        # Input guard (issue #132, mirroring xref's #111 / chunk's #118
+        # guard, now via the shared `axial.nonprose_guard` helper): skip a
+        # chunk whose own text is non-prose back-matter (a huge OCR'd
+        # index/bibliography) -- no LLM call, no tagged record, no
+        # checkpoint write for this chunk. The skip is a deterministic
+        # function of the chunk's text, so it re-applies on every resume
+        # without ever reaching the model.
+        skip_reason = non_prose_skip_reason(chunk_record["text"])
+        if skip_reason is not None:
+            print(
+                f"tag: skipping chunk {chunk_record['chunk_id']}: {skip_reason}",
+                file=sys.stderr,
+            )
             continue
 
         if client is None:

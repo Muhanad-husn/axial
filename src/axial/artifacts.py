@@ -31,6 +31,7 @@ pair rather than reinventing a field parser here.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,7 @@ from axial.llm import (
     get_client,
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
+from axial.nonprose_guard import non_prose_skip_reason
 from axial.schema import Schema, SchemaError, load_schema
 from axial.tag import (
     TagNotInSchemaError,
@@ -483,6 +485,21 @@ def run_artifacts(
         checkpointed = already_classified.get(artifact_id)
         if checkpointed is not None:
             records.append(checkpointed)
+            continue
+
+        # Input guard (issue #132, mirroring xref's #111 / chunk's #118
+        # guard, now via the shared `axial.nonprose_guard` helper): skip an
+        # artifact node whose own extracted `text` is non-prose/OCR-garbled
+        # back-matter -- no LLM call, no classified record, no checkpoint
+        # write for this artifact. `node["text"]` is the one per-iteration
+        # textual payload `axial.extract._leaf_node` populates on any node
+        # (prose or artifact) that exposes one, so it is the artifacts
+        # pass's own analogue of the tag/chunk/xref passes' chunk text. The
+        # skip is a deterministic function of that text, so it re-applies on
+        # every resume without ever reaching the model.
+        skip_reason = non_prose_skip_reason(node.get("text", ""))
+        if skip_reason is not None:
+            print(f"artifacts: skipping artifact {artifact_id}: {skip_reason}", file=sys.stderr)
             continue
 
         if client is None:

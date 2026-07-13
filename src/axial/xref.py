@@ -42,15 +42,18 @@ from axial.llm import (
     XREF_PASS_NAME,
     get_client,
 )
+from axial.nonprose_guard import non_prose_skip_reason
 from axial.tag import TagError
 
 # Default xref-pass checkpoint directory, mirroring `axial.artifacts.ARTIFACTS_DIR`
 # / `axial.tag.TAGS_DIR` exactly (issue #110).
 XREF_DIR = Path("data/xref")
 
-# Input-guard thresholds for non-prose back-matter (issue #111): an OCR'd
-# index/bibliography becomes one very large, mostly-non-alphabetic chunk with
-# zero cross-reference value that stalls the LLM. Heuristics, not hard rules.
+# Input-guard thresholds for non-prose back-matter (issue #111, lifted into
+# `axial.nonprose_guard` by issue #132): an OCR'd index/bibliography becomes
+# one very large, mostly-non-alphabetic chunk with zero cross-reference value
+# that stalls the LLM. Heuristics, not hard rules. Kept as module-level
+# aliases here so external references to these exact names keep working.
 _XREF_MAX_CHUNK_CHARS = 30000
 _XREF_MAX_NON_ALPHA_RATIO = 0.4
 
@@ -166,15 +169,17 @@ def _non_prose_skip_reason(chunk_text: str) -> str | None:
     """Return a human-readable reason to skip `chunk_text` from the xref pass
     as non-prose back-matter (issue #111), or None to process it normally. An
     OCR'd index/bibliography becomes one very large, mostly-non-alphabetic
-    chunk with zero cross-reference value that stalls the LLM."""
-    char_count = len(chunk_text)
-    if char_count > _XREF_MAX_CHUNK_CHARS:
-        return f"exceeds size limit ({char_count} chars > {_XREF_MAX_CHUNK_CHARS})"
-    if char_count:
-        non_alpha_ratio = sum(1 for c in chunk_text if not c.isalpha()) / char_count
-        if non_alpha_ratio > _XREF_MAX_NON_ALPHA_RATIO:
-            return f"high non-alpha ratio ({non_alpha_ratio:.1%})"
-    return None
+    chunk with zero cross-reference value that stalls the LLM.
+
+    Delegates to the shared `axial.nonprose_guard.non_prose_skip_reason`
+    (issue #132), passing this module's own threshold names through
+    explicitly so behavior is unchanged even if the shared defaults ever
+    diverge from xref's own."""
+    return non_prose_skip_reason(
+        chunk_text,
+        max_chars=_XREF_MAX_CHUNK_CHARS,
+        max_non_alpha_ratio=_XREF_MAX_NON_ALPHA_RATIO,
+    )
 
 
 def compose_xref_prompt(chunk_text: str, artifact_ids: list[str]) -> str:
