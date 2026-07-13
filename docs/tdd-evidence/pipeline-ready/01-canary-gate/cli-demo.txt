@@ -1,0 +1,21 @@
+### 1. axial pipeline-ready --help
+usage: axial pipeline-ready [-h] --manifest MANIFEST
+
+options:
+  -h, --help           show this help message and exit
+  --manifest MANIFEST  path to a TOML manifest of canaries
+
+### 2. axial pipeline-ready --manifest config/canary-manifest.toml
+# (source files absent from gitignored data/sources/ -> each canary degrades
+#  to its own FAIL row and the table still prints; exit code is non-zero.)
+source_id	verdict	completed	quarantine_fraction	quarantine_budget	duration_sec	time_envelope_sec	reason
+mann-sources-of-social-power-v4	FAIL	False	0.0000	0.0200	0.000	66000.0	unexpected error evaluating canary: missing or unreadable source file: data\sources\mann-sources-of-social-power-v4.pdf
+tilly-from-mobilization-to-revolution	FAIL	False	0.0000	0.0200	0.000	54000.0	unexpected error evaluating canary: missing or unreadable source file: data\sources\tilly-from-mobilization-to-revolution.pdf
+hall-schroeder-anatomy-of-power	FAIL	False	0.0000	0.0200	0.000	72000.0	unexpected error evaluating canary: missing or unreadable source file: data\sources\hall-schroeder-anatomy-of-power.pdf
+vignal-war-torn	FAIL	False	0.0000	0.0200	0.000	86400.0	unexpected error evaluating canary: missing or unreadable source file: data\sources\vignal-war-torn.pdf
+batatu-syrias-peasantry	FAIL	False	0.0000	0.0200	0.000	86400.0	unexpected error evaluating canary: missing or unreadable source file: data\sources\batatu-syrias-peasantry.pdf
+exit=1
+
+### 3. malformed manifest (single [canary] table) -> clean 'error:' line, not a traceback (reviewer finding 2)
+error: cannot read manifest C:\Users\mou97\AppData\Local\Temp\claude\D--axial\84ea0178-2039-459c-bb1b-f31c8ae597bf\scratchpad\bad-manifest.toml: expected `canary` to be an array of tables (`[[canary]]`), got dict: {'source_id': 'x', 'source_path': 'data/sources/x.pdf', 'time_envelope_sec': 100, 'quarantine_budget': 0.02} -- did you write a single `[canary]` table instead?
+exit=1
