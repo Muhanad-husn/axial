@@ -1,0 +1,49 @@
+$ axial gold sheet
+"data\\gold\\label_sheet.xlsx"
+
+$ axial gold deliver
+"data\\gold\\delivery\\2026-07-13"
+exit: 0
+
+$ find data/gold/delivery -type f
+data/gold/delivery/2026-07-13/label_sheet.xlsx
+data/gold/delivery/2026-07-13/manifest.json
+data/gold/delivery/2026-07-13/README-for-academic.md
+
+$ cat data/gold/delivery/*/manifest.json
+{
+  "axes": [
+    "field",
+    "empirical_scope",
+    "claim_type",
+    "theory_school"
+  ],
+  "blind_axes": [
+    "claim_type",
+    "theory_school"
+  ],
+  "chunk_count": 2,
+  "columns": [
+    "chunk_id",
+    "source",
+    "section",
+    "chunk_text",
+    "field",
+    "empirical_scope",
+    "claim_type",
+    "theory_school",
+    "notes"
+  ],
+  "delivered": "2026-07-13",
+  "prelabeled_axes": [
+    "field",
+    "empirical_scope"
+  ],
+  "return_to": "data/gold/labels/",
+  "sheet": "label_sheet.xlsx"
+}
+
+--- missing-sheet guard ---
+$ axial gold deliver   # no sheet present
+error: no label sheet to deliver at data\gold\label_sheet.xlsx; run `axial gold sheet` first
+exit: 1
