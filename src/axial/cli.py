@@ -20,6 +20,7 @@ from axial.gold import (
     run_gold_sample,
     run_gold_sheet,
 )
+from axial.ingest import run_ingest
 from axial.intake import IntakeError, intake
 from axial.schema import SchemaError, load_schema
 from axial.tag import DEFAULT_DOMAIN_DIR, TagError, run_tag
@@ -189,6 +190,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     vault_write_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
+
+    ingest_parser = subparsers.add_parser(
+        "ingest",
+        help=(
+            "run vault-write over every source path listed in a line-delimited "
+            "worklist file, skipping sources already recorded as vault_status=OK "
+            "in data/gold/ingest.results.tsv"
+        ),
+    )
+    ingest_parser.add_argument(
+        "worklist_path", help="path to a line-delimited worklist file of source paths"
+    )
 
     return parser
 
@@ -364,6 +377,10 @@ def _vault_write(source_path: str) -> int:
     return 0
 
 
+def _ingest(worklist_path: str) -> int:
+    return run_ingest(worklist_path)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -413,6 +430,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "vault" and args.vault_command == "write":
         return _vault_write(args.source_path)
+
+    if args.command == "ingest":
+        return _ingest(args.worklist_path)
 
     parser.print_help()
     return 0
