@@ -181,6 +181,20 @@ def run_ingest(
             source_id = compute_source_id(source_path)
         except _EnvelopeMissingSourceError as exc:
             print(f"error: {exc}", file=sys.stderr)
+            row = {
+                "source_path": str(source_path),
+                "source_id": "",
+                "vault_status": FAIL_STATUS,
+                "notes_count": "0",
+                "duration_sec": "0.0",
+                "exit_code": "1",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            try:
+                _append_result_row(results_path, row)
+            except ResultsFileError as append_exc:
+                print(f"error: {append_exc}", file=sys.stderr)
+                return 1
             continue
 
         if source_id in completed_source_ids:

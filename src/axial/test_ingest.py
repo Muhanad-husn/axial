@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import axial.ingest as ingest_mod
+from axial.envelope import MissingSourceError
 from axial.ingest import (
     RESULTS_COLUMNS,
     WorklistError,
@@ -215,6 +216,45 @@ def test_run_ingest_records_fail_row_and_continues_to_next_source(tmp_path, monk
     assert by_id["bad-id"]["vault_status"] == "FAIL"
     assert by_id["bad-id"]["exit_code"] == "1"
     assert by_id["good-id"]["vault_status"] == "OK"
+
+
+# --- run_ingest: unresolvable source path (not silently dropped) -------------
+
+
+def test_run_ingest_records_fail_row_for_unresolvable_source_and_continues(tmp_path, monkeypatch):
+    worklist = tmp_path / "worklist.txt"
+    worklist.write_text("/fake/missing.pdf\n/fake/good.pdf\n", encoding="utf-8")
+
+    results_path = tmp_path / "results.tsv"
+
+    def _compute_source_id(path):
+        if Path(path) == Path("/fake/missing.pdf"):
+            raise MissingSourceError(Path(path))
+        return "good-id"
+
+    monkeypatch.setattr(ingest_mod, "compute_source_id", _compute_source_id)
+    monkeypatch.setattr(ingest_mod, "run_vault_write", lambda source_path, **kwargs: [Path("a.md")])
+
+    exit_code = run_ingest(worklist, results_path=results_path)
+
+    assert exit_code == 0
+    with results_path.open("r", newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    assert len(rows) == 2
+
+    missing_row = next(
+        row
+        for row in rows
+        if row["source_path"] == "/fake/missing.pdf"
+        or row["source_path"] == str(Path("/fake/missing.pdf"))
+    )
+    assert missing_row["vault_status"] == "FAIL"
+    assert missing_row["source_id"] == ""
+    assert missing_row["notes_count"] == "0"
+    assert missing_row["exit_code"] == "1"
+
+    good_row = next(row for row in rows if row["source_id"] == "good-id")
+    assert good_row["vault_status"] == "OK"
 
 
 # --- run_ingest: fatal errors --------------------------------------------------
