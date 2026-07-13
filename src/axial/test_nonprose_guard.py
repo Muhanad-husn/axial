@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from axial.nonprose_guard import MAX_CHARS, MAX_NON_ALPHA_RATIO, non_prose_skip_reason
+from axial.nonprose_guard import MAX_CHARS, non_prose_skip_reason
 
 
 def test_normal_prose_is_not_skipped():
