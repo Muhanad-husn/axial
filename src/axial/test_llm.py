@@ -1228,3 +1228,44 @@ def test_missing_production_tier_model_key_raises_directly_from_resolve_model():
 
     with pytest.raises(LLMConfigError):
         _resolve_model(secrets={"llm_tier": "production_low"}, llm_config={})
+
+
+# --- content_fallback_model wiring from secrets.toml (issue #116) ---------
+
+
+def test_build_openrouter_client_wires_content_fallback_model_from_secrets(monkeypatch, tmp_path):
+    """`_build_openrouter_client` must read `content_fallback_model` from the
+    `[openrouter]` secrets table and pass it through to the constructed
+    `OpenRouterClient`, so a `content_filter` refusal in production actually
+    reroutes (issue #116)."""
+    from axial.llm import SECRETS_PATH_ENV_VAR, _build_openrouter_client
+
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text(
+        '[openrouter]\napi_key = "sk-fixture"\nbuilding_model = "primary/model"\n'
+        'content_fallback_model = "fallback/model"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(SECRETS_PATH_ENV_VAR, str(secrets_path))
+
+    client = _build_openrouter_client({})
+
+    assert client._content_fallback_model == "fallback/model"
+
+
+def test_build_openrouter_client_defaults_content_fallback_model_to_none(monkeypatch, tmp_path):
+    """An absent `content_fallback_model` key in secrets.toml must yield
+    `None` -- no fallback configured, unchanged behavior for anyone who
+    hasn't set it up (issue #116)."""
+    from axial.llm import SECRETS_PATH_ENV_VAR, _build_openrouter_client
+
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text(
+        '[openrouter]\napi_key = "sk-fixture"\nbuilding_model = "primary/model"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(SECRETS_PATH_ENV_VAR, str(secrets_path))
+
+    client = _build_openrouter_client({})
+
+    assert client._content_fallback_model is None
