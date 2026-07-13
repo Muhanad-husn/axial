@@ -1,0 +1,17 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0 -- D:\axial\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 2 items
+
+tests/test_chunk_input_guard.py::test_oversized_section_is_skipped_never_sent_to_llm_as_target PASSED
+tests/test_chunk_input_guard.py::test_source_of_only_oversized_section_completes_with_zero_chunks chunk: skipping section Scanned Materials: exceeds size limit (35100 chars > 30000)
+PASSED
+
+=================================== PASSES ====================================
+=========================== short test summary info ===========================
+PASSED tests/test_chunk_input_guard.py::test_oversized_section_is_skipped_never_sent_to_llm_as_target
+PASSED tests/test_chunk_input_guard.py::test_source_of_only_oversized_section_completes_with_zero_chunks
+============================== 2 passed in 0.76s ==============================
