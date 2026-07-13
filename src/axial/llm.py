@@ -81,8 +81,10 @@ it into their own typed error hierarchy instead of letting a bare
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import sys
 import threading
 import time
 import tomllib
@@ -652,6 +654,36 @@ _MAX_COMPLETION_TOKENS = 60000
 # waiting out the real backoff.
 _sleep = time.sleep
 
+# Number of leading characters of a refused prompt carried verbatim in a
+# content_filter reroute's log line (issue #117), alongside the hash below.
+# Not meant to reconstruct the prompt -- just enough to eyeball-match it
+# against a known chunk while triaging moderation exposure.
+_PROMPT_PREFIX_LEN = 80
+
+
+def _log_retry(
+    pass_name: str | None, attempt: int, trigger: str, *, prompt: str | None = None
+) -> None:
+    """Emit exactly one structured stderr line for a non-final retried (or
+    content_filter-rerouted) `OpenRouterClient.complete()` attempt (issue
+    #117). Today these events are silent: a chunk that fails twice then
+    succeeds leaves no trace, so moderation exposure and transient-failure
+    rates are only ever a lower bound. Bare `print(..., file=sys.stderr)` --
+    this repo has no logging framework (see `src/axial/xref.py:334`).
+
+    Carries the pass name, the attempt number and the total attempt budget
+    (`_MAX_ATTEMPTS`), and a machine-readable trigger token (an HTTP status,
+    an exception class name, or a `finish_reason` value). When `prompt` is
+    given (the content_filter reroute path only), also carries a stable
+    hash of the refused prompt plus a text prefix, so a fallback model can
+    later be validated against real refused chunks.
+    """
+    line = f"llm_retry pass={pass_name} attempt={attempt}/{_MAX_ATTEMPTS} trigger={trigger}"
+    if prompt is not None:
+        prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        line += f" prompt_hash={prompt_hash} prompt_prefix={prompt[:_PROMPT_PREFIX_LEN]!r}"
+    print(line, file=sys.stderr)
+
 
 class OpenRouterClient:
     """Thin HTTP client for OpenRouter's chat-completions endpoint.
@@ -739,9 +771,10 @@ class OpenRouterClient:
             is_last_attempt = attempt == _MAX_ATTEMPTS
             try:
                 response = self._post_with_deadline(prompt)
-            except httpx.TransportError:
+            except httpx.TransportError as exc:
                 if is_last_attempt:
                     raise
+                _log_retry(pass_name, attempt, type(exc).__name__)
                 _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
                 continue
             except _RequestDeadlineExceeded as exc:
@@ -750,10 +783,12 @@ class OpenRouterClient:
                         f"request wall-clock deadline of {self._request_deadline_seconds}s "
                         f"exceeded on attempt {attempt}/{_MAX_ATTEMPTS} (issue #108)"
                     ) from exc
+                _log_retry(pass_name, attempt, type(exc).__name__)
                 _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
                 continue
 
             if not is_last_attempt and (response.status_code == 429 or response.status_code >= 500):
+                _log_retry(pass_name, attempt, str(response.status_code))
                 _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
                 continue
 
@@ -766,6 +801,7 @@ class OpenRouterClient:
                     raise OpenRouterError(
                         f"malformed API response body: {exc}; body snippet: {snippet}"
                     ) from exc
+                _log_retry(pass_name, attempt, type(exc).__name__)
                 _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
                 continue
             try:
@@ -786,6 +822,12 @@ class OpenRouterClient:
             finish_reason = choice.get("finish_reason")
 
             if finish_reason == "content_filter":
+                # Not itself part of the retry budget (the primary is never
+                # retried on a moderation refusal), but it IS a non-final
+                # event the caller never sees without logging (issue #117):
+                # log it here, carrying the refused prompt's identity, then
+                # hand off to the fallback.
+                _log_retry(pass_name, attempt, "content_filter", prompt=prompt)
                 return self._reroute_content_filter(prompt)
 
             is_empty = content is None or not content.strip()
@@ -806,6 +848,13 @@ class OpenRouterClient:
                             f"transient provider fault: finish_reason={finish_reason!r}"
                         )
                     raise OpenRouterError("empty completion from provider")
+                if is_truncated:
+                    trigger = "length"
+                elif is_transient_fault:
+                    trigger = str(finish_reason)
+                else:
+                    trigger = "empty_completion"
+                _log_retry(pass_name, attempt, trigger)
                 _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
                 continue
 

@@ -1409,3 +1409,98 @@ def test_content_filter_fallback_error_finish_reason_raises_openrouter_error(mon
 
     with pytest.raises(OpenRouterError, match="error"):
         client.complete("prompt text")
+
+
+# --- issue #117: retry-logging paths not covered by the outer acceptance
+# suite (which only exercises the 503/finish_reason="error"/content_filter
+# triggers) -- a transport-error trigger, a 429 trigger, and a malformed-JSON
+# trigger, each proving the pass_name is threaded through and the trigger
+# token is recognizable.
+
+
+def test_retry_log_line_names_transport_error_class_and_pass_name(monkeypatch, capsys):
+    """A retried `httpx.TransportError` (e.g. a `ReadTimeout`) logs one
+    stderr line naming the pass_name and the exception's class name as the
+    trigger token."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise httpx.ReadTimeout("timed out", request=request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    result = client.complete("hello world", pass_name="envelope")
+
+    assert result == "model reply"
+    stderr = capsys.readouterr().err
+    lines = [line for line in stderr.splitlines() if line.strip()]
+    assert len(lines) == 1
+    assert "envelope" in lines[0]
+    assert "ReadTimeout" in lines[0]
+
+
+def test_retry_log_line_names_429_status_and_pass_name(monkeypatch, capsys):
+    """A retried HTTP 429 logs one stderr line naming the pass_name and
+    "429" as the trigger token."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(429, json={"error": "rate limited"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    result = client.complete("hello world", pass_name="xref")
+
+    assert result == "model reply"
+    stderr = capsys.readouterr().err
+    lines = [line for line in stderr.splitlines() if line.strip()]
+    assert len(lines) == 1
+    assert "xref" in lines[0]
+    assert "429" in lines[0]
+
+
+def test_retry_log_line_names_malformed_json_trigger(monkeypatch, capsys):
+    """A retried malformed-JSON body logs one stderr line naming the
+    pass_name and the decode error's class name as the trigger token."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(200, text="not valid json{{{")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    result = client.complete("hello world", pass_name="artifacts")
+
+    assert result == "model reply"
+    stderr = capsys.readouterr().err
+    lines = [line for line in stderr.splitlines() if line.strip()]
+    assert len(lines) == 1
+    assert "artifacts" in lines[0]
+    assert "JSONDecodeError" in lines[0]
