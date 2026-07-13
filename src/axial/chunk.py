@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -305,6 +306,32 @@ def _section_text(node: dict) -> str:
     return f"## {heading}\n{body}" if body else f"## {heading}"
 
 
+# Input-guard thresholds for non-prose section bodies (issue #118, mirroring
+# axial.xref's #111 guard, xref.py:54-55): an OCR'd index/bibliography-shaped
+# section becomes one very large, mostly-non-alphabetic block with no
+# argumentative structure that can stall the LLM. Heuristics, not hard rules.
+# Duplicated here rather than imported from axial.xref because axial.xref
+# already imports from axial.chunk (run_chunk, ChunkError) -- importing the
+# guard back from xref would create an import cycle. Issue #132 will lift
+# this and xref's copy into one shared helper.
+_CHUNK_MAX_SECTION_CHARS = 30000
+_CHUNK_MAX_NON_ALPHA_RATIO = 0.4
+
+
+def _non_prose_skip_reason(text: str) -> str | None:
+    """Return a human-readable reason to skip `text` from the chunk pass as
+    non-prose back-matter (issue #118, mirroring xref.py's `_non_prose_skip_reason`,
+    #111), or None to process it normally."""
+    char_count = len(text)
+    if char_count > _CHUNK_MAX_SECTION_CHARS:
+        return f"exceeds size limit ({char_count} chars > {_CHUNK_MAX_SECTION_CHARS})"
+    if char_count:
+        non_alpha_ratio = sum(1 for c in text if not c.isalpha()) / char_count
+        if non_alpha_ratio > _CHUNK_MAX_NON_ALPHA_RATIO:
+            return f"high non-alpha ratio ({non_alpha_ratio:.1%})"
+    return None
+
+
 def compose_chunk_prompt(
     target: dict, prev_section: dict | None, next_section: dict | None, envelope: dict[str, Any]
 ) -> str:
@@ -493,13 +520,28 @@ def run_chunk(
         if checkpoint_path is not None and section_order in done_section_orders:
             continue  # already checkpointed by an earlier run -- no LLM call
 
+        section_label = section.get("text", "")
+
+        # Input guard (issue #118, mirroring xref.py's #111 guard): skip a
+        # section whose own body is non-prose back-matter (a huge OCR'd
+        # index/bibliography) -- no LLM call, no chunk records, no checkpoint
+        # write for this section. The skip is a deterministic function of the
+        # section's text, so it re-applies on every resume without ever
+        # reaching the model. This only skips the section's own turn as the
+        # chunking target -- it may still appear as neighbour context in an
+        # adjacent section's prompt (PRD §5 stage 4 / §8 P0-4), unrelated to
+        # issue #113's separate back-matter title filter above.
+        skip_reason = _non_prose_skip_reason("\n".join(body_lines))
+        if skip_reason is not None:
+            print(f"chunk: skipping section {section_label}: {skip_reason}", file=sys.stderr)
+            continue
+
         if client is None:
             try:
                 client = get_client(config_path=config_path)
             except LLMError as exc:
                 raise LLMFailedError(exc) from exc
 
-        section_label = section.get("text", "")
         prev_section = sections[index - 1] if index > 0 else None
         next_section = sections[index + 1] if index < len(sections) - 1 else None
 
