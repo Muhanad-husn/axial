@@ -1008,15 +1008,18 @@ class TaggedRecords(list):
 
 # Content-caused failure classes this pass quarantines a single chunk for
 # instead of aborting the whole source (issue #120): a `ContentRefusedError`
-# survives the #116 fallback reroute (content_filter), a `TagNotInSchemaError`
-# survives the #102 correction re-ask (out_of_vocab), or a `ModelJsonError`
+# survives the #116 fallback reroute (content_filter), or a `ModelJsonError`
 # survives `complete_json`'s bounded retry budget (malformed_json). Each is a
 # content-shaped failure -- retrying the identical prompt against the same
 # model cannot change the outcome -- unlike a transient `OpenRouterError`/
 # `httpx.HTTPError`, which must keep propagating unchanged (never quarantined,
 # see `run_tag`'s per-chunk loop and the locked outer test).
+#
+# A persisting `TagNotInSchemaError` (out-of-vocab, after the #102 correction
+# re-ask already ran) is DELIBERATELY NOT included here (founder ruling,
+# descoped from #120): it stays the P0-6 hard error, source-fatal, exactly as
+# before this issue -- see tests/test_tag_axis_prefix.py / test_tag_vocab_reask.py.
 QUARANTINE_REASON_CONTENT_FILTER = "content_filter"
-QUARANTINE_REASON_OUT_OF_VOCAB = "out_of_vocab"
 QUARANTINE_REASON_MALFORMED_JSON = "malformed_json"
 
 
@@ -1242,18 +1245,6 @@ def run_tag(
                 prompt,
                 lambda raw: _parse_and_validate_tags(raw, axes_to_tag, schema),
             )
-        except TagNotInSchemaError:
-            # Out-of-vocabulary value that PERSISTED after the #102 bounded
-            # correction re-ask already ran (issue #120): content-shaped, not
-            # transient, so this specific chunk is quarantined rather than
-            # aborting the whole source (checkpoint-scoped, see the
-            # `ContentRefusedError` clause above -- with no checkpoint, this
-            # keeps today's hard-error contract and simply re-raises).
-            if checkpoint_path is None:
-                raise
-            _quarantine_chunk(chunk_record, QUARANTINE_REASON_OUT_OF_VOCAB, checkpoint_path)
-            quarantine_count += 1
-            continue
         except (LLMError, httpx.HTTPError) as exc:
             raise LLMFailedError(exc) from exc
 
