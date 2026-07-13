@@ -27,6 +27,7 @@ re-run never accumulates stale records.
 
 from __future__ import annotations
 
+import datetime
 import json
 import random
 import re
@@ -36,7 +37,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
@@ -65,6 +66,13 @@ SHEET_COLUMNS = (
 
 # Columns pre-filled from each chunk's own tags (the tagger's guess).
 PRELABELED_COLUMNS = ("field", "empirical_scope")
+
+# Columns the Academic labels from scratch (arrive empty, §9 hybrid labeling).
+BLIND_COLUMNS = ("claim_type", "theory_school")
+
+# Where the Academic returns the filled sheet (spec directory contract,
+# PRODUCT.md §7.5 / repo layout).
+LABELS_RETURN_DIR = "data/gold/labels/"
 
 # The four axis columns carrying dropdown validation, in a fixed order; the
 # blind pair (claim_type, theory_school) get dropdowns but arrive empty.
@@ -141,6 +149,15 @@ class MissingChunksError(GoldError):
         super().__init__(
             f"no sampled chunk records found under {chunks_dir}; run `axial gold sample` first"
         )
+
+
+class MissingSheetError(GoldError):
+    """Raised when `run_gold_deliver` finds no generated label sheet to
+    package -- `axial gold sheet` must run first."""
+
+    def __init__(self, sheet_path: Path):
+        self.sheet_path = sheet_path
+        super().__init__(f"no label sheet to deliver at {sheet_path}; run `axial gold sheet` first")
 
 
 class CodebookLoadError(GoldError):
@@ -514,3 +531,97 @@ def run_gold_sheet(
     sheet_path = gold_dir / "label_sheet.xlsx"
     workbook.save(sheet_path)
     return sheet_path
+
+
+def _sheet_chunk_count(sheet_path: Path) -> int:
+    """Number of labelable data rows in the sheet (its rows minus the header)."""
+    worksheet = load_workbook(sheet_path, read_only=True).worksheets[0]
+    return max(worksheet.max_row - 1, 0)
+
+
+def _academic_readme(chunk_count: int) -> str:
+    """The Academic-facing labeling instructions shipped in the bundle (§9
+    hybrid labeling). Names every axis and the return location so the human
+    reviewer needs nothing but this folder."""
+    return f"""# Gold label sheet -- for the Academic
+
+This bundle is the gold-corpus labeling task for the Axial tagging eval. It
+holds **{chunk_count} sampled chunks**, one per row in `label_sheet.xlsx`.
+Your labels become the answer key the pipeline's tagging is scored against.
+
+## What to fill in
+
+Each row is one chunk of source prose (`chunk_text`), with its provenance
+(`chunk_id`, `source`, `section`). Label the four axis columns using the
+in-cell **dropdowns** only -- do not free-type a value.
+
+- **Blind** (label from scratch, the cell arrives empty):
+  - `claim_type`
+  - `theory_school`
+- **Pre-labeled** (the pipeline's guess is filled in; correct it where wrong,
+  leave it where right):
+  - `field`
+  - `empirical_scope`
+
+Leave the provenance columns untouched. `notes` is optional free text for any
+chunk you want to flag.
+
+## How to return it
+
+Save the filled sheet and place it under `{LABELS_RETURN_DIR}` in the repo.
+The same sheet, once returned, is read directly as the scoring answer key --
+there is no other form to fill.
+
+See `manifest.json` in this folder for the machine-readable summary.
+"""
+
+
+def run_gold_deliver(
+    gold_dir: Path | None = None,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    stamp: str | None = None,
+) -> Path:
+    """Package the generated `<gold_dir>/label_sheet.xlsx` into a dated,
+    self-contained handoff bundle for the Academic under
+    `<gold_dir>/delivery/<stamp>/`: a byte-identical copy of the sheet, a
+    human-facing `README-for-academic.md`, and a machine-readable
+    `manifest.json`. Returns the delivery directory. Raises
+    `MissingSheetError` when the sheet has not been generated yet (run
+    `axial gold sheet` first). The delivery folder is cleared before writing,
+    so a re-run never leaves stale files. Local and offline -- no network, no
+    Drive. `stamp` defaults to today's date (`YYYY-MM-DD`)."""
+    if gold_dir is None:
+        gold_dir = _default_gold_dir(config_path)
+    if stamp is None:
+        stamp = datetime.date.today().isoformat()
+
+    sheet_path = gold_dir / "label_sheet.xlsx"
+    if not sheet_path.is_file():
+        raise MissingSheetError(sheet_path)
+
+    chunk_count = _sheet_chunk_count(sheet_path)
+
+    delivery_dir = gold_dir / "delivery" / stamp
+    _clear_dir(delivery_dir)
+
+    shutil.copyfile(sheet_path, delivery_dir / "label_sheet.xlsx")
+
+    manifest = {
+        "sheet": "label_sheet.xlsx",
+        "delivered": stamp,
+        "chunk_count": chunk_count,
+        "columns": list(SHEET_COLUMNS),
+        "axes": list(AXIS_COLUMNS),
+        "blind_axes": list(BLIND_COLUMNS),
+        "prelabeled_axes": list(PRELABELED_COLUMNS),
+        "return_to": LABELS_RETURN_DIR,
+    }
+    (delivery_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    (delivery_dir / "README-for-academic.md").write_text(
+        _academic_readme(chunk_count), encoding="utf-8"
+    )
+
+    return delivery_dir
