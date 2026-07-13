@@ -480,6 +480,21 @@ class OpenRouterError(LLMError):
     """Raised when the OpenRouter API returns an error or malformed response."""
 
 
+class ContentRefusedError(LLMError):
+    """Raised when a completion is refused by content moderation
+    (`finish_reason == "content_filter"`) and the refusal survives the
+    fallback reroute (issue #116): either the configured
+    `content_fallback_model` ALSO refused with `content_filter`, or no
+    fallback is configured at all (there is then no way to recover a
+    refusal by retrying). Unlike `OpenRouterError`, a moderation refusal is
+    never transient -- blind-retrying the same prompt against the same
+    model cannot change a moderation decision -- so this is a distinct type
+    a caller can catch specifically to quarantine just the offending chunk
+    instead of failing the whole source (2 fatal `content_filter` events in
+    the 2026-07 gold run motivated this; see
+    docs/postmortem/gold-run-2026-07/model-tier-decision.md)."""
+
+
 class StubInjectedTagFailureError(LLMError):
     """Raised by the shared stub/record canned-response dispatch when the
     `AXIAL_STUB_TAG_FAIL_AT` seam fires on the Nth tag-pass call (issue #81).
@@ -653,15 +668,21 @@ class OpenRouterClient:
         base_url: str = DEFAULT_OPENROUTER_BASE_URL,
         transport: httpx.BaseTransport | None = None,
         request_deadline_seconds: float = _REQUEST_DEADLINE_SECONDS,
+        content_fallback_model: str | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._request_deadline_seconds = request_deadline_seconds
+        # Issue #116: the model a `content_filter` refusal reroutes a single
+        # completion to. Optional (defaults to `None`, no fallback) so every
+        # pre-#116 caller/test that builds `OpenRouterClient` without this
+        # kwarg keeps working unchanged.
+        self._content_fallback_model = content_fallback_model
         self._client = httpx.Client(
             base_url=base_url, transport=transport, timeout=_REQUEST_TIMEOUT
         )
 
-    def _post_with_deadline(self, prompt: str) -> httpx.Response:
+    def _post_with_deadline(self, prompt: str, model: str | None = None) -> httpx.Response:
         """Run the blocking `httpx` POST on a daemon watchdog thread and
         enforce `self._request_deadline_seconds` as a hard wall-clock
         ceiling, independent of httpx's own (per-*read*, not per-call)
@@ -675,7 +696,14 @@ class OpenRouterClient:
         permanently-blocked attempt can never keep the process alive; each
         retry attempt starts a brand-new thread and a brand-new request, so
         an abandoned attempt can never corrupt a later one.
+
+        `model` (issue #116) overrides `self._model` for this one call --
+        the seam `complete()` uses to reroute a `content_filter` refusal to
+        `self._content_fallback_model` without duplicating the watchdog
+        machinery. Defaults to `self._model`, unchanged for every other
+        caller.
         """
+        target_model = self._model if model is None else model
         outcome: dict[str, Any] = {}
         done = threading.Event()
 
@@ -685,7 +713,7 @@ class OpenRouterClient:
                     "/chat/completions",
                     headers={"Authorization": f"Bearer {self._api_key}"},
                     json={
-                        "model": self._model,
+                        "model": target_model,
                         "messages": [{"role": "user", "content": prompt}],
                         "max_tokens": _MAX_COMPLETION_TOKENS,
                     },
@@ -747,17 +775,35 @@ class OpenRouterClient:
                 raise OpenRouterError(f"unexpected OpenRouter response shape: {data!r}") from exc
 
             # A missing/null finish_reason is accepted as success -- some
-            # providers omit it -- only a present-and-not-"stop" value (e.g.
-            # "length") signals a truncated completion (issue #69).
+            # providers omit it. A present, non-"stop" value is split three
+            # ways (issue #116): "length" is a truncated completion, retried
+            # same prompt/same model (issue #69, unchanged); "content_filter"
+            # is a moderation refusal, NEVER retried same-model -- rerouted
+            # to the fallback instead (see `_reroute_content_filter`);
+            # "error" (and any other non-"stop" value) is treated as a
+            # transient provider fault, retried same model exactly like an
+            # empty completion or a transport error.
             finish_reason = choice.get("finish_reason")
-            is_empty = content is None or not content.strip()
-            is_truncated = finish_reason is not None and finish_reason != "stop"
 
-            if is_empty or is_truncated:
+            if finish_reason == "content_filter":
+                return self._reroute_content_filter(prompt)
+
+            is_empty = content is None or not content.strip()
+            is_truncated = finish_reason == "length"
+            is_transient_fault = finish_reason is not None and finish_reason not in (
+                "stop",
+                "length",
+            )
+
+            if is_empty or is_truncated or is_transient_fault:
                 if is_last_attempt:
                     if is_truncated:
                         raise OpenRouterError(
                             f"completion truncated: finish_reason={finish_reason!r}"
+                        )
+                    if is_transient_fault:
+                        raise OpenRouterError(
+                            f"transient provider fault: finish_reason={finish_reason!r}"
                         )
                     raise OpenRouterError("empty completion from provider")
                 _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
@@ -766,6 +812,90 @@ class OpenRouterClient:
             return content
 
         raise AssertionError("unreachable: the retry loop always returns or raises")
+
+    def _reroute_content_filter(self, prompt: str) -> str:
+        """Handle a `content_filter` refusal from the primary model (issue
+        #116). Blind-retrying the exact same prompt against the exact same
+        model cannot change a moderation decision, so the primary is never
+        retried for this finish_reason. Instead, issue exactly one
+        completion attempt against `self._content_fallback_model` (still
+        protected by the same wall-clock deadline as any other attempt via
+        `_post_with_deadline`). If that attempt returns `stop`, its content
+        is the result. If it ALSO returns `content_filter` -- or no fallback
+        is configured at all, since there is then no way to recover a
+        refusal -- raise `ContentRefusedError` so the caller can quarantine
+        just this chunk instead of failing the whole source.
+        """
+        if self._content_fallback_model is None:
+            raise ContentRefusedError(
+                "primary model refused with finish_reason='content_filter' and no "
+                "content_fallback_model is configured to reroute to (issue #116)"
+            )
+        try:
+            response = self._post_with_deadline(prompt, model=self._content_fallback_model)
+        except httpx.TransportError as exc:
+            raise OpenRouterError(
+                f"content_fallback_model {self._content_fallback_model!r} request failed: {exc}"
+            ) from exc
+        except _RequestDeadlineExceeded as exc:
+            raise OpenRouterError(
+                f"content_fallback_model {self._content_fallback_model!r} request "
+                f"exceeded the {self._request_deadline_seconds}s wall-clock deadline "
+                "(issue #108)"
+            ) from exc
+        response.raise_for_status()
+        try:
+            data = response.json()
+        except (json.JSONDecodeError, ValueError) as exc:
+            snippet = repr(response.text[:300])
+            raise OpenRouterError(
+                f"malformed content_fallback_model API response body: {exc}; "
+                f"body snippet: {snippet}"
+            ) from exc
+        try:
+            choice = data["choices"][0]
+            content = choice["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise OpenRouterError(
+                f"unexpected content_fallback_model OpenRouter response shape: {data!r}"
+            ) from exc
+        finish_reason = choice.get("finish_reason")
+        if finish_reason == "content_filter":
+            raise ContentRefusedError(
+                "both the primary model and content_fallback_model "
+                f"{self._content_fallback_model!r} refused with "
+                "finish_reason='content_filter' (issue #116)"
+            )
+
+        # The fallback gets exactly one completion attempt -- no retry
+        # budget here (per the ratified #116 decision) -- so every other
+        # non-"stop" outcome is a terminal failure, not something to retry.
+        # Validate it the same way the primary retry loop does, minus the
+        # retry: empty content, a truncated ("length") answer, or any other
+        # non-"stop" finish_reason ("error", etc.) must raise instead of
+        # silently returning `None`/a fragment as if it were a success.
+        is_empty = content is None or not content.strip()
+        is_truncated = finish_reason == "length"
+        is_transient_fault = finish_reason is not None and finish_reason not in (
+            "stop",
+            "length",
+        )
+        if is_truncated:
+            raise OpenRouterError(
+                f"content_fallback_model {self._content_fallback_model!r} completion "
+                f"truncated: finish_reason={finish_reason!r} (issue #116)"
+            )
+        if is_transient_fault:
+            raise OpenRouterError(
+                f"content_fallback_model {self._content_fallback_model!r} returned "
+                f"finish_reason={finish_reason!r} (issue #116)"
+            )
+        if is_empty:
+            raise OpenRouterError(
+                "content_filter reroute: fallback model returned an empty completion "
+                f"({self._content_fallback_model!r}, issue #116)"
+            )
+        return content
 
 
 def _forced_provider() -> str | None:
@@ -876,7 +1006,16 @@ def _build_openrouter_client(llm_config: dict[str, Any]) -> OpenRouterClient:
     base_url = llm_config.get("base_url", DEFAULT_OPENROUTER_BASE_URL)
     api_key = _resolve_api_key(secrets)
     model = _resolve_model(secrets, llm_config)
-    return OpenRouterClient(api_key=api_key, model=model, base_url=base_url)
+    # Issue #116: the model a `content_filter` refusal reroutes to. An
+    # absent key (the common case today) yields `None` -- no fallback
+    # configured, unchanged behavior for anyone who hasn't set it up.
+    content_fallback_model = secrets.get("content_fallback_model")
+    return OpenRouterClient(
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        content_fallback_model=content_fallback_model,
+    )
 
 
 def get_client(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> LLMClient:
