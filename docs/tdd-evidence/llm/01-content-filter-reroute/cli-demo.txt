@@ -1,0 +1,57 @@
+### Acceptance test — the three finish_reason paths (content_filter reroute slice #116)
+### Boundary: OpenRouterClient.complete() driven through httpx.MockTransport
+
+============================= test session starts =============================
+platform win32 -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0 -- D:\axial\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 87 items / 61 deselected / 26 selected
+
+tests/test_llm_content_filter_reroute.py::test_length_finish_reason_retries_same_prompt_against_same_model_and_succeeds PASSED [  3%]
+tests/test_llm_content_filter_reroute.py::test_length_finish_reason_exhausts_retry_budget_and_raises_truncation_error PASSED [  7%]
+tests/test_llm_content_filter_reroute.py::test_content_filter_reroutes_single_completion_to_fallback_model PASSED [ 11%]
+tests/test_llm_content_filter_reroute.py::test_content_filter_from_fallback_raises_content_refused_error PASSED [ 15%]
+tests/test_llm_content_filter_reroute.py::test_error_finish_reason_is_backoff_retried_like_a_transient_fault PASSED [ 19%]
+tests/test_llm_content_filter_reroute.py::test_error_finish_reason_exhausts_retry_budget_and_raises_transient_error PASSED [ 23%]
+tests/test_llm_content_filter_reroute.py::test_openrouter_client_still_builds_without_content_fallback_model_kwarg PASSED [ 26%]
+src/axial/test_llm.py::test_stub_injected_artifact_failure_error_is_an_llm_error PASSED [ 30%]
+src/axial/test_llm.py::test_get_client_record_without_record_path_raises_llm_config_error PASSED [ 34%]
+src/axial/test_llm.py::test_missing_api_key_raises_llm_config_error PASSED [ 38%]
+src/axial/test_llm.py::test_unknown_provider_raises_llm_config_error PASSED [ 42%]
+src/axial/test_llm.py::test_llm_config_error_is_an_llm_error PASSED      [ 46%]
+src/axial/test_llm.py::test_openrouter_error_is_an_llm_error PASSED      [ 50%]
+src/axial/test_llm.py::test_openrouter_client_raises_a_typed_error_on_malformed_response PASSED [ 53%]
+src/axial/test_llm.py::test_openrouter_client_raises_on_http_error_status PASSED [ 57%]
+src/axial/test_llm.py::test_openrouter_client_retries_a_read_error_then_succeeds PASSED [ 61%]
+src/axial/test_llm.py::test_openrouter_client_gives_up_after_max_attempts_on_a_persistent_read_error PASSED [ 65%]
+src/axial/test_llm.py::test_malformed_secrets_toml_raises_llm_config_error PASSED [ 69%]
+src/axial/test_llm.py::test_malformed_secrets_toml_error_names_the_offending_path PASSED [ 73%]
+src/axial/test_llm.py::test_missing_production_tier_model_key_raises_llm_config_error PASSED [ 76%]
+src/axial/test_llm.py::test_build_openrouter_client_wires_content_fallback_model_from_secrets PASSED [ 80%]
+src/axial/test_llm.py::test_build_openrouter_client_defaults_content_fallback_model_to_none PASSED [ 84%]
+src/axial/test_llm.py::test_content_filter_without_fallback_configured_raises_content_refused_error PASSED [ 88%]
+src/axial/test_llm.py::test_content_filter_fallback_empty_completion_raises_openrouter_error PASSED [ 92%]
+src/axial/test_llm.py::test_content_filter_fallback_truncated_completion_raises_openrouter_error PASSED [ 96%]
+src/axial/test_llm.py::test_content_filter_fallback_error_finish_reason_raises_openrouter_error PASSED [100%]
+
+====================== 26 passed, 61 deselected in 1.12s ======================
+
+### CLI smoke — changed llm module imports cleanly through the axial entry point
+usage: axial [-h] [--version]
+             {schema,intake,extract,envelope,chunk,tag,artifacts,xref,gold,eval,vault} ...
+
+positional arguments:
+  {schema,intake,extract,envelope,chunk,tag,artifacts,xref,gold,eval,vault}
+    schema              domain schema operations
+    intake              validate a source file and probe it for a real text
+                        layer
+    extract             run structural extraction, emitting a hierarchical
+                        JSON tree
+    envelope            run the structural-envelope pass, writing
+                        data/envelopes/<source_id>.json
+    chunk               run the argumentative-chunking pass, emitting prose
+                        chunk records to stdout
+    tag                 run the tagging pass, emitting tagged chunk records to
+[axial --help exit=0]
