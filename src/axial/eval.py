@@ -17,6 +17,16 @@ Report contract (locked by tests/test_eval.py, DEC-1):
       "disagreements": [{"chunk_id", "axis", "tagger", "academic"}, ...]
     }
 
+Two report sections are additive, not locked by the outer test but required
+by the plan (plans/eval/01-score-gold-set.md:68,74) and stage-2 review of
+#135:
+
+    {
+      ...,
+      "addition_candidates": [{"chunk_id", "axis", "value"}, ...],
+      "unmatched": {"sheet_only": [chunk_id, ...], "chunks_only": [chunk_id, ...]}
+    }
+
 Design choices (not locked by the outer test, made here):
   - `per_axis_agreement` denominator: only chunks carrying a non-empty
     Academic label on that axis; an empty Academic cell excludes the
@@ -30,11 +40,34 @@ Design choices (not locked by the outer test, made here):
     spec text ("applied by neither the tagger nor the Academic").
   - `disagreements` are sorted by `chunk_id` then by the axis's position in
     `gold.AXIS_COLUMNS`, for a stable, deterministic row order.
+  - `addition_candidates` (plan :74, "tag coverage" addition half): when a
+    non-empty Academic value on an axis does not match the tagger's value
+    AND is not a member of that axis's schema vocabulary, it is reported
+    here instead of in `disagreements` -- the plan's "not a plain mismatch"
+    call. The tagger only ever emits controlled-vocabulary values (schema-
+    validated upstream in the tag pass), so an out-of-vocab value can only
+    originate from the Academic side; there is nothing to gain from also
+    double-reporting it as an ordinary mismatch. Same sort order as
+    `disagreements`. Per-axis agreement math is unaffected either way -- a
+    non-empty Academic cell still counts in that axis's denominator as a
+    non-match regardless of which list it lands in.
+  - `unmatched` (plan :68, join-miss surfacing): `sheet_only` is every
+    chunk_id present on the returned sheet with no matching tagger chunk
+    record (e.g. the sheet was returned against an earlier, since-rewritten
+    `axial gold sample` run); `chunks_only` is every tagger chunk record
+    with no row on the returned sheet at all. Both sorted for determinism.
+    A non-empty `unmatched` is not fatal -- exit code stays 0, since a
+    partial join still gives a partial, useful report -- but `run_eval`
+    also prints a stderr warning naming the counts/a sample of ids so an
+    operator running `axial eval` cannot silently miss a stale join
+    (mirrors the codebase's anti-silent-failure stderr-warning convention,
+    e.g. `gold.log_country_not_in_list`, `extract._log_fallback`).
 """
 
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -121,6 +154,9 @@ def _build_report(
     agreement_denoms = {axis: 0 for axis in AXIS_COLUMNS}
     tag_counts: dict[str, dict[str, int]] = {axis: {} for axis in AXIS_COLUMNS}
     disagreements: list[dict[str, Any]] = []
+    addition_candidates: list[dict[str, Any]] = []
+
+    tagger_chunk_ids = {record.get("chunk_id") for record in tagger_records}
 
     for record in tagger_records:
         chunk_id = record.get("chunk_id")
@@ -138,6 +174,12 @@ def _build_report(
             agreement_denoms[axis] += 1
             if tagger_value == academic_value:
                 agreement_counts[axis] += 1
+            elif academic_value not in vocabularies.get(axis, []):
+                # Out-of-vocab Academic value: an addition candidate, not a
+                # plain mismatch (plan :74) -- see module docstring.
+                addition_candidates.append(
+                    {"chunk_id": chunk_id, "axis": axis, "value": academic_value}
+                )
             else:
                 disagreements.append(
                     {
@@ -159,13 +201,56 @@ def _build_report(
     }
 
     disagreements.sort(key=lambda row: (row["chunk_id"], AXIS_COLUMNS.index(row["axis"])))
+    addition_candidates.sort(key=lambda row: (row["chunk_id"], AXIS_COLUMNS.index(row["axis"])))
+
+    sheet_only = sorted(
+        chunk_id for chunk_id in academic_by_chunk if chunk_id not in tagger_chunk_ids
+    )
+    chunks_only = sorted(
+        chunk_id for chunk_id in tagger_chunk_ids if chunk_id not in academic_by_chunk
+    )
 
     return {
         "per_axis_agreement": per_axis_agreement,
         "tag_counts": tag_counts,
         "never_applied": never_applied,
         "disagreements": disagreements,
+        "addition_candidates": addition_candidates,
+        "unmatched": {"sheet_only": sheet_only, "chunks_only": chunks_only},
     }
+
+
+def _sample_ids(ids: list[str], limit: int = 5) -> str:
+    """Format a bounded, human-readable sample of ids for a stderr warning
+    (the full list can be long; the count already conveys the scale)."""
+    sample = ", ".join(ids[:limit])
+    if len(ids) > limit:
+        sample += f", ... (+{len(ids) - limit} more)"
+    return sample
+
+
+def _warn_unmatched(unmatched: dict[str, list[str]]) -> None:
+    """Print a stderr warning naming a two-directional join miss between the
+    returned sheet and the tagger's own chunk records. Non-fatal by design
+    -- `run_eval` still writes a (partial) report and returns exit 0 -- but
+    silent here would hide a stale-sheet-vs-rewritten-chunks join (`gold
+    run_gold_sample` clears+rewrites `data/gold/chunks/` on every run)."""
+    sheet_only = unmatched.get("sheet_only") or []
+    chunks_only = unmatched.get("chunks_only") or []
+    if sheet_only:
+        print(
+            f"warning: {len(sheet_only)} chunk_id(s) on the returned sheet "
+            f"have no matching record under data/gold/chunks/ (the sheet may "
+            f"be stale against a since-rewritten sample): {_sample_ids(sheet_only)}",
+            file=sys.stderr,
+        )
+    if chunks_only:
+        print(
+            f"warning: {len(chunks_only)} sampled chunk record(s) under "
+            f"data/gold/chunks/ have no row on the returned sheet: "
+            f"{_sample_ids(chunks_only)}",
+            file=sys.stderr,
+        )
 
 
 def run_eval(
@@ -200,6 +285,7 @@ def run_eval(
     vocabularies = _axis_vocabularies(domain_dir)
 
     report = _build_report(tagger_records, academic_by_chunk, vocabularies)
+    _warn_unmatched(report["unmatched"])
 
     labels_dir.mkdir(parents=True, exist_ok=True)
     report_path = labels_dir / "eval_report.json"

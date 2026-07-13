@@ -26,6 +26,7 @@ from axial.eval import (
     _build_report,
     _load_academic_labels,
     _normalize_cell,
+    _warn_unmatched,
     run_eval,
 )
 from axial.gold import AXIS_COLUMNS, SHEET_COLUMNS, build_workbook
@@ -117,7 +118,11 @@ class TestBuildReport:
                 "theory_school": "bellicist",
             },
         }
+        # `field`'s mismatched Academic value ("violence") must be in-vocab
+        # here so this test exercises a plain disagreement, not the
+        # out-of-vocab addition-candidate path (covered separately below).
         vocabularies = {axis: [] for axis in AXIS_COLUMNS}
+        vocabularies["field"] = ["state", "violence"]
 
         report = _build_report(tagger_records, academic, vocabularies)
 
@@ -149,7 +154,11 @@ class TestBuildReport:
                 "theory_school": "bellicist",
             },
         }
+        # Both mismatched axes' Academic values must be in-vocab so this
+        # test exercises plain disagreements, not addition candidates.
         vocabularies = {axis: [] for axis in AXIS_COLUMNS}
+        vocabularies["field"] = ["state", "violence"]
+        vocabularies["claim_type"] = ["state-formation", "state-capacity"]
 
         report = _build_report(tagger_records, academic, vocabularies)
         rows = [(row["chunk_id"], row["axis"]) for row in report["disagreements"]]
@@ -218,6 +227,130 @@ class TestBuildReport:
 
         assert report["disagreements"] == []
         assert all(fraction == 0.0 for fraction in report["per_axis_agreement"].values())
+        # The join miss itself must be surfaced, not silently absorbed.
+        assert report["unmatched"]["chunks_only"] == ["c1"]
+        assert report["unmatched"]["sheet_only"] == []
+
+    def test_unmatched_names_sheet_rows_with_no_chunk_record(self):
+        # A returned-sheet chunk_id with no matching tagger record at all
+        # (e.g. the sheet answers a since-rewritten sample) -- the other
+        # join-miss direction from the test above.
+        tagger_records = [_record("c1")]
+        academic = {
+            "c1": {
+                "field": "state",
+                "empirical_scope": "scope:general",
+                "claim_type": "state-formation",
+                "theory_school": "bellicist",
+            },
+            "stale-c9": {
+                "field": "state",
+                "empirical_scope": "scope:general",
+                "claim_type": "state-formation",
+                "theory_school": "bellicist",
+            },
+        }
+        vocabularies = {axis: [] for axis in AXIS_COLUMNS}
+
+        report = _build_report(tagger_records, academic, vocabularies)
+
+        assert report["unmatched"]["sheet_only"] == ["stale-c9"]
+        assert report["unmatched"]["chunks_only"] == []
+
+    def test_unmatched_both_directions_sorted(self):
+        tagger_records = [_record("only-in-chunks-b"), _record("only-in-chunks-a")]
+        academic = {
+            "only-in-sheet-b": {
+                "field": "state",
+                "empirical_scope": None,
+                "claim_type": None,
+                "theory_school": None,
+            },
+            "only-in-sheet-a": {
+                "field": "state",
+                "empirical_scope": None,
+                "claim_type": None,
+                "theory_school": None,
+            },
+        }
+        vocabularies = {axis: [] for axis in AXIS_COLUMNS}
+
+        report = _build_report(tagger_records, academic, vocabularies)
+
+        assert report["unmatched"]["sheet_only"] == ["only-in-sheet-a", "only-in-sheet-b"]
+        assert report["unmatched"]["chunks_only"] == ["only-in-chunks-a", "only-in-chunks-b"]
+
+    def test_out_of_vocab_academic_value_is_an_addition_candidate_not_a_disagreement(self):
+        tagger_records = [_record("c1", field="state")]
+        academic = {
+            "c1": {
+                "field": "unrecognized-new-field",  # outside the vocabulary below
+                "empirical_scope": None,
+                "claim_type": None,
+                "theory_school": None,
+            },
+        }
+        vocabularies = {axis: [] for axis in AXIS_COLUMNS}
+        vocabularies["field"] = ["state", "violence"]
+
+        report = _build_report(tagger_records, academic, vocabularies)
+
+        assert report["addition_candidates"] == [
+            {"chunk_id": "c1", "axis": "field", "value": "unrecognized-new-field"}
+        ]
+        # Not double-reported as a plain mismatch (plan's "not a plain
+        # mismatch" -- see module docstring).
+        assert report["disagreements"] == []
+        # Agreement math is unaffected: still a non-match in the denominator.
+        assert report["per_axis_agreement"]["field"] == 0.0
+
+    def test_in_vocab_mismatch_stays_a_plain_disagreement_not_addition_candidate(self):
+        tagger_records = [_record("c1", field="state")]
+        academic = {
+            "c1": {
+                "field": "violence",  # in-vocab mismatch
+                "empirical_scope": None,
+                "claim_type": None,
+                "theory_school": None,
+            },
+        }
+        vocabularies = {axis: [] for axis in AXIS_COLUMNS}
+        vocabularies["field"] = ["state", "violence"]
+
+        report = _build_report(tagger_records, academic, vocabularies)
+
+        assert report["disagreements"] == [
+            {"chunk_id": "c1", "axis": "field", "tagger": "state", "academic": "violence"}
+        ]
+        assert report["addition_candidates"] == []
+
+
+class TestWarnUnmatched:
+    def test_no_warning_when_both_lists_empty(self, capsys):
+        _warn_unmatched({"sheet_only": [], "chunks_only": []})
+        captured = capsys.readouterr()
+        assert captured.err == ""
+
+    def test_warns_on_sheet_only(self, capsys):
+        _warn_unmatched({"sheet_only": ["stale-c9"], "chunks_only": []})
+        captured = capsys.readouterr()
+        assert captured.out == "", "the warning must go to stderr, not stdout"
+        assert "stale-c9" in captured.err
+        assert "1" in captured.err
+
+    def test_warns_on_chunks_only(self, capsys):
+        _warn_unmatched({"sheet_only": [], "chunks_only": ["c1", "c2"]})
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "c1" in captured.err
+        assert "c2" in captured.err
+        assert "2" in captured.err
+
+    def test_warns_on_both_directions_independently(self, capsys):
+        _warn_unmatched({"sheet_only": ["stale-c9"], "chunks_only": ["c1"]})
+        captured = capsys.readouterr()
+        assert "stale-c9" in captured.err
+        assert "c1" in captured.err
 
 
 class TestLoadAcademicLabels:
