@@ -22,6 +22,7 @@ from axial.gold import (
 )
 from axial.ingest import run_ingest
 from axial.intake import IntakeError, intake
+from axial.pipeline_ready import PipelineReadyError, run_pipeline_ready
 from axial.schema import SchemaError, load_schema
 from axial.tag import DEFAULT_DOMAIN_DIR, TagError, run_tag
 from axial.validate import cross_validate
@@ -203,6 +204,19 @@ def build_parser() -> argparse.ArgumentParser:
         "worklist_path", help="path to a line-delimited worklist file of source paths"
     )
 
+    pipeline_ready_parser = subparsers.add_parser(
+        "pipeline-ready",
+        help=(
+            "ingest every canary named in a TOML manifest and evaluate it "
+            "against the 'pipeline ready' bar (single-attempt completion, "
+            "quarantine budget, time envelope), printing a per-canary "
+            "PASS/FAIL table"
+        ),
+    )
+    pipeline_ready_parser.add_argument(
+        "--manifest", required=True, help="path to a TOML manifest of canaries"
+    )
+
     return parser
 
 
@@ -381,6 +395,17 @@ def _ingest(worklist_path: str) -> int:
     return run_ingest(worklist_path)
 
 
+def _pipeline_ready(manifest_path: str) -> int:
+    try:
+        table_text, exit_code = run_pipeline_ready(manifest_path)
+    except PipelineReadyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(table_text)
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -433,6 +458,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "ingest":
         return _ingest(args.worklist_path)
+
+    if args.command == "pipeline-ready":
+        return _pipeline_ready(args.manifest)
 
     parser.print_help()
     return 0
