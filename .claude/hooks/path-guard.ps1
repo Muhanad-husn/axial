@@ -25,24 +25,29 @@ if (-not $Role) { exit 0 }
 $filePath = "$($j.tool_input.file_path)"
 if (-not $filePath) { exit 0 }
 
-# Resolve the worktree from the tool's cwd, not the session-fixed
-# CLAUDE_PROJECT_DIR -- that stays bound to the launch checkout and mis-scopes
-# role path rules for git-worktree sessions. Normalize to the git root of cwd.
-$opDir = "$($j.cwd)"
-if (-not $opDir) { $opDir = $env:CLAUDE_PROJECT_DIR }
-if (-not $opDir) { $opDir = Split-Path (Split-Path $PSScriptRoot) }
-$projectDir = (& git -C $opDir rev-parse --show-toplevel 2>$null)
-if (-not $projectDir) { $projectDir = $opDir }
-
-# Normalize to a project-relative forward-slash path. Require a trailing
-# separator on the root so a sibling worktree sharing a name prefix
-# (D:\axial-xref vs D:\axial) is not mistaken for being inside the project.
+# Resolve the project root from the TARGET FILE'S own git worktree, not the tool
+# call's cwd. A role subagent fanned out from the main session reports its
+# launch-checkout cwd (e.g. D:\axial) on Edit|Write even when the file it targets
+# lives in a sibling worktree (e.g. D:\axial-guard); a cwd-based root then mis-scoped
+# the role rule and blocked the legitimate write. The file's own path unambiguously
+# identifies the worktree it belongs to, and the role boundary (tests/ vs src/ vs
+# specs/) is a shape rule *within* that worktree -- so resolve from the file. Walk up
+# to the nearest existing ancestor first, since the file (or its immediate parent
+# dir) may not exist yet.
 $full = [System.IO.Path]::GetFullPath($filePath)
+$probe = Split-Path -Parent $full
+while ($probe -and -not (Test-Path -LiteralPath $probe)) { $probe = Split-Path -Parent $probe }
+if (-not $probe) { Block "cannot resolve a directory for the target path ($filePath)." }
+# git errors on a non-repo dir; under ErrorActionPreference=Stop that surfaces as a
+# terminating NativeCommandError, so catch it and treat "no root" as a clean block.
+$projectDir = $null
+try { $projectDir = (& git -C $probe rev-parse --show-toplevel 2>$null) } catch { $projectDir = $null }
+if (-not $projectDir) { Block "target is not inside a git worktree ($filePath)." }
+
+# Normalize to a project-relative forward-slash path. $full is under $projectDir by
+# construction (the root is the git toplevel of one of $full's ancestors), so a
+# length-based substring yields the project-relative path regardless of separator case.
 $rootTrim = [System.IO.Path]::GetFullPath($projectDir).TrimEnd('\', '/')
-$sep = [System.IO.Path]::DirectorySeparatorChar
-if ($full -ne $rootTrim -and -not $full.StartsWith($rootTrim + $sep, [System.StringComparison]::OrdinalIgnoreCase)) {
-    Block "this role may not write outside the project ($filePath)."
-}
 $rel = $full.Substring($rootTrim.Length).TrimStart('\', '/').Replace('\', '/')
 
 switch ($Role) {
