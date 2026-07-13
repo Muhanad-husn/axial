@@ -55,6 +55,7 @@ from axial.llm import (
     get_client,
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
+from axial.nonprose_guard import non_prose_skip_reason
 
 CHUNKS_DIR = Path("data/chunks")
 
@@ -307,13 +308,11 @@ def _section_text(node: dict) -> str:
 
 
 # Input-guard thresholds for non-prose section bodies (issue #118, mirroring
-# axial.xref's #111 guard, xref.py:54-55): an OCR'd index/bibliography-shaped
-# section becomes one very large, mostly-non-alphabetic block with no
-# argumentative structure that can stall the LLM. Heuristics, not hard rules.
-# Duplicated here rather than imported from axial.xref because axial.xref
-# already imports from axial.chunk (run_chunk, ChunkError) -- importing the
-# guard back from xref would create an import cycle. Issue #132 will lift
-# this and xref's copy into one shared helper.
+# axial.xref's #111 guard; lifted into `axial.nonprose_guard` by issue #132):
+# an OCR'd index/bibliography-shaped section becomes one very large,
+# mostly-non-alphabetic block with no argumentative structure that can stall
+# the LLM. Heuristics, not hard rules. Kept as module-level aliases here so
+# external references to these exact names keep working.
 _CHUNK_MAX_SECTION_CHARS = 30000
 _CHUNK_MAX_NON_ALPHA_RATIO = 0.4
 
@@ -321,15 +320,17 @@ _CHUNK_MAX_NON_ALPHA_RATIO = 0.4
 def _non_prose_skip_reason(text: str) -> str | None:
     """Return a human-readable reason to skip `text` from the chunk pass as
     non-prose back-matter (issue #118, mirroring xref.py's `_non_prose_skip_reason`,
-    #111), or None to process it normally."""
-    char_count = len(text)
-    if char_count > _CHUNK_MAX_SECTION_CHARS:
-        return f"exceeds size limit ({char_count} chars > {_CHUNK_MAX_SECTION_CHARS})"
-    if char_count:
-        non_alpha_ratio = sum(1 for c in text if not c.isalpha()) / char_count
-        if non_alpha_ratio > _CHUNK_MAX_NON_ALPHA_RATIO:
-            return f"high non-alpha ratio ({non_alpha_ratio:.1%})"
-    return None
+    #111), or None to process it normally.
+
+    Delegates to the shared `axial.nonprose_guard.non_prose_skip_reason`
+    (issue #132), passing this module's own threshold names through
+    explicitly so behavior is unchanged even if the shared defaults ever
+    diverge from chunk's own."""
+    return non_prose_skip_reason(
+        text,
+        max_chars=_CHUNK_MAX_SECTION_CHARS,
+        max_non_alpha_ratio=_CHUNK_MAX_NON_ALPHA_RATIO,
+    )
 
 
 def compose_chunk_prompt(
