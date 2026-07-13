@@ -72,6 +72,7 @@ from axial.codebook import Codebook, CodebookError, load_codebook
 from axial.llm import (
     DEFAULT_PIPELINE_CONFIG_PATH,
     TAG_PASS_NAME,
+    ContentRefusedError,
     LLMClient,
     LLMError,
     get_client,
@@ -993,6 +994,51 @@ def _parse_and_validate_tags(
     return values, multi_value_axes, country
 
 
+class TaggedRecords(list):
+    """A `list` of tagged records that also surfaces `quarantine_count`
+    (issue #120): a plain `list` subclass so every existing call site
+    (`list(result)`, iteration, `json.dumps(records)`) keeps working
+    unchanged, while `run_tag`'s caller can additionally read
+    `result.quarantine_count` for how many chunks this run quarantined."""
+
+    def __init__(self, records: list[dict[str, Any]], quarantine_count: int = 0):
+        super().__init__(records)
+        self.quarantine_count = quarantine_count
+
+
+# Content-caused failure classes this pass quarantines a single chunk for
+# instead of aborting the whole source (issue #120): a `ContentRefusedError`
+# survives the #116 fallback reroute (content_filter), or a `ModelJsonError`
+# survives `complete_json`'s bounded retry budget (malformed_json). Each is a
+# content-shaped failure -- retrying the identical prompt against the same
+# model cannot change the outcome -- unlike a transient `OpenRouterError`/
+# `httpx.HTTPError`, which must keep propagating unchanged (never quarantined,
+# see `run_tag`'s per-chunk loop and the locked outer test).
+#
+# A persisting `TagNotInSchemaError` (out-of-vocab, after the #102 correction
+# re-ask already ran) is DELIBERATELY NOT included here (founder ruling,
+# descoped from #120): it stays the P0-6 hard error, source-fatal, exactly as
+# before this issue -- see tests/test_tag_axis_prefix.py / test_tag_vocab_reask.py.
+QUARANTINE_REASON_CONTENT_FILTER = "content_filter"
+QUARANTINE_REASON_MALFORMED_JSON = "malformed_json"
+
+
+def _quarantine_chunk(
+    chunk_record: dict[str, Any], reason: str, checkpoint_path: Path | None
+) -> None:
+    """Log and checkpoint chunk_record's quarantine (issue #120): a stderr
+    line naming the chunk and reason, then -- when a checkpoint is active --
+    a `{"chunk_id": ..., "quarantine_reason": ...}` record appended via the
+    same write+flush-per-record path ordinary tagged records use
+    (`append_tag_checkpoint`), so a resume run recognizes and skips it
+    (`run_tag`'s checkpoint-load split below) without ever re-calling the
+    model."""
+    chunk_id = chunk_record["chunk_id"]
+    print(f"tag: quarantining chunk {chunk_id}: {reason}", file=sys.stderr)
+    if checkpoint_path is not None:
+        append_tag_checkpoint(checkpoint_path, {"chunk_id": chunk_id, "quarantine_reason": reason})
+
+
 def run_tag(
     source_path: str | Path,
     client: LLMClient | None = None,
@@ -1001,7 +1047,7 @@ def run_tag(
     domain_dir: str | Path | None = None,
     tags_dir: Path | None = None,
     chunks_dir: Path | None = None,
-) -> list[dict[str, Any]]:
+) -> TaggedRecords:
     """Run the tagging pass on `source_path`.
 
     Runs the argumentative-chunking pass internally (never reimplemented),
@@ -1068,12 +1114,20 @@ def run_tag(
     # caller that supplies `tags_dir`) has on disk.
     checkpoint_path: Path | None = None
     already_tagged: dict[str, dict[str, Any]] = {}
+    already_quarantined: dict[str, str] = {}
     if tags_dir is not None:
         source_id = compute_source_id(Path(source_path))
         checkpoint_path = tags_checkpoint_path(source_id, tags_dir)
-        already_tagged = {
-            record["chunk_id"]: record for record in load_tag_checkpoint(checkpoint_path)
-        }
+        for record in load_tag_checkpoint(checkpoint_path):
+            # A checkpoint record carrying `quarantine_reason` (issue #120)
+            # is NOT an ordinary tagged record -- split it into its own
+            # skip-set so a resume run recognizes and skips it (no LLM call,
+            # no re-quarantine) instead of treating it as cached tag output.
+            reason = record.get("quarantine_reason")
+            if reason is not None:
+                already_quarantined[record["chunk_id"]] = reason
+            else:
+                already_tagged[record["chunk_id"]] = record
 
     # Only tag axes the loaded schema actually declares (TAGGED_AXES'
     # comment above): a minimal domain missing empirical_scope is tagged on
@@ -1081,7 +1135,20 @@ def run_tag(
     axes_to_tag = [axis_name for axis_name in TAGGED_AXES if axis_name in schema.axes]
 
     tagged_records: list[dict[str, Any]] = []
+    quarantine_count = 0
     for chunk_record in chunk_records:
+        # Resume: a chunk already quarantined by an earlier run (issue #120)
+        # is skipped outright -- no LLM call, no re-quarantine, and it never
+        # becomes a tagged record.
+        quarantine_reason = already_quarantined.get(chunk_record["chunk_id"])
+        if quarantine_reason is not None:
+            print(
+                f"tag: skipping quarantined chunk {chunk_record['chunk_id']} "
+                f"(reason: {quarantine_reason})",
+                file=sys.stderr,
+            )
+            continue
+
         # Resume: a chunk already checkpointed by an earlier run is reused
         # verbatim and never re-sent to the model -- records recombine in the
         # chunker's stable order (issue #81 point 2), so note writing is
@@ -1129,10 +1196,36 @@ def run_tag(
                 pass_name=TAG_PASS_NAME,
                 validate=lambda raw: reject_degenerate_tag_values(raw, axes_to_tag, schema),
             )
+        except ContentRefusedError as exc:
+            # Content-caused, never transient (issue #120): a moderation
+            # refusal surviving the #116 fallback reroute cannot be fixed by
+            # retrying the identical prompt against the same model -- caught
+            # narrowly here (before the broader LLMError clause below, since
+            # `ContentRefusedError` subclasses it) so only this specific class
+            # is quarantined; every other `LLMError`/`httpx.HTTPError` still
+            # propagates exactly as today. Quarantine is scoped to when the
+            # checkpoint is active (`tags_dir` supplied) -- mirroring every
+            # other checkpoint-only behavior in this pass (issue #81's own
+            # "opt-in" docstring above): a standalone `axial tag` run with no
+            # checkpoint has nowhere to durably record the quarantine, so it
+            # keeps today's hard-error contract unchanged.
+            if checkpoint_path is None:
+                raise LLMFailedError(exc) from exc
+            _quarantine_chunk(chunk_record, QUARANTINE_REASON_CONTENT_FILTER, checkpoint_path)
+            quarantine_count += 1
+            continue
         except (LLMError, httpx.HTTPError) as exc:
             raise LLMFailedError(exc) from exc
         except ModelJsonError as exc:
-            raise TagParseError(f"model response was not valid JSON: {exc}") from exc
+            # Malformed JSON that persisted through `complete_json`'s entire
+            # bounded retry budget (issue #120) -- content-shaped, not
+            # transient, so this specific chunk is quarantined rather than
+            # aborting the whole source (checkpoint-scoped, see above).
+            if checkpoint_path is None:
+                raise TagParseError(f"model response was not valid JSON: {exc}") from exc
+            _quarantine_chunk(chunk_record, QUARANTINE_REASON_MALFORMED_JSON, checkpoint_path)
+            quarantine_count += 1
+            continue
 
         # Shared, data-driven cardinality dispatch (issue #29 slice 03): each
         # axis is parsed/validated by its own schema-declared `cardinality`,
@@ -1170,4 +1263,4 @@ def run_tag(
             append_tag_checkpoint(checkpoint_path, record)
         tagged_records.append(record)
 
-    return tagged_records
+    return TaggedRecords(tagged_records, quarantine_count)
