@@ -15,6 +15,7 @@ from axial.gold import (
     DEFAULT_MIN_SIZE,
     DEFAULT_SEED,
     GoldError,
+    run_gold_deliver,
     run_gold_sample,
     run_gold_sheet,
 )
@@ -154,6 +155,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "render the sampled chunk records under data/gold/chunks/ into "
             "data/gold/label_sheet.xlsx with codebook dropdowns"
+        ),
+    )
+
+    gold_subparsers.add_parser(
+        "deliver",
+        help=(
+            "package data/gold/label_sheet.xlsx into a dated handoff bundle "
+            "under data/gold/delivery/<date>/ for the Academic (sheet copy, "
+            "README, and manifest.json)"
         ),
     )
 
@@ -311,6 +321,17 @@ def _gold_sheet() -> int:
     return 0
 
 
+def _gold_deliver() -> int:
+    try:
+        delivery_dir = run_gold_deliver()
+    except GoldError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(str(delivery_dir)))
+    return 0
+
+
 def _vault_write(source_path: str) -> int:
     try:
         written = run_vault_write(source_path)
@@ -362,6 +383,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "gold" and args.gold_command == "sheet":
         return _gold_sheet()
+
+    if args.command == "gold" and args.gold_command == "deliver":
+        return _gold_deliver()
 
     if args.command == "vault" and args.vault_command == "write":
         return _vault_write(args.source_path)
