@@ -1,0 +1,68 @@
+# Pipeline-ready canary manifest (issue #121; postmortem
+# docs/postmortem/gold-run-2026-07/canary-set.md).
+#
+# The representative canary set for the `axial pipeline-ready` gate. Composed
+# to test GENERALIZATION, not just regression: three known-hard "seen" sources
+# that cost the 2026-07 gold run the most (giant OCR scan, worst-OCR/silent-
+# hang, moderation + empty-tag + hang), plus two genuinely HELD-OUT sources the
+# pipeline has never processed, so a green gate means the pipeline is robust,
+# not merely patched to the inputs it already saw.
+#
+# Per-canary contract:
+#   source_id          - display label only (the gate recomputes the real id
+#                        from the file via envelope.compute_source_id).
+#   source_path        - on-disk location the gate ingests. These point into
+#                        the gitignored data/sources/ tree; place the source
+#                        files there before running the LIVE gate. The files
+#                        are copyright and are NOT committed.
+#   time_envelope_sec  - bounded-wall-clock ceiling (criterion 3). Seen sources:
+#                        the run's measured hours x1.5. Held-out sources: a
+#                        coarse 24h ceiling, to be calibrated after first run.
+#   quarantine_budget  - max quarantined-chunk fraction (criterion 2), flat
+#                        0.02 (<2%) per canary-set.md.
+#
+# The old proving input (Ungor's paramilitarism paper) is demoted to smoke-test
+# duty and is deliberately NOT a canary here.
+
+[[canary]]
+# Seen: 123 MB OCR scan, ~1010 chunks; never landed in the run (8 failures,
+# 5 classes); the 5.5h content_filter death. Measured ~12.3h.
+source_id = "mann-sources-of-social-power-v4"
+source_path = "data/sources/mann-sources-of-social-power-v4.pdf"
+time_envelope_sec = 66000
+quarantine_budget = 0.02
+
+[[canary]]
+# Seen: 1978 scan, worst OCR; empty-toc envelope failure; silent-hang/stall
+# behavior (the biggest babysitting cost of the run). Duration unrecorded;
+# ~15h size-estimate ceiling.
+source_id = "tilly-from-mobilization-to-revolution"
+source_path = "data/sources/tilly-from-mobilization-to-revolution.pdf"
+time_envelope_sec = 54000
+quarantine_budget = 0.02
+
+[[canary]]
+# Seen: moderation survivor (content_filter near-miss) + empty-tag crash +
+# silent hang + 23 MB scan. Measured ~13.3h.
+source_id = "hall-schroeder-anatomy-of-power"
+source_path = "data/sources/hall-schroeder-anatomy-of-power.pdf"
+time_envelope_sec = 72000
+quarantine_budget = 0.02
+
+[[canary]]
+# Held-out (unseen): contemporary Syria war/destruction -> reintroduces the
+# violence-density axis as a fresh, never-processed input. Coarse 24h ceiling
+# pending first-run calibration.
+source_id = "vignal-war-torn"
+source_path = "data/sources/vignal-war-torn.pdf"
+time_envelope_sec = 86400
+quarantine_budget = 0.02
+
+[[canary]]
+# Held-out (unseen): Syrian agrarian politics -> reintroduces the Arabic
+# transliteration / non-English-fragment axis as a fresh input. Coarse 24h
+# ceiling pending first-run calibration.
+source_id = "batatu-syrias-peasantry"
+source_path = "data/sources/batatu-syrias-peasantry.pdf"
+time_envelope_sec = 86400
+quarantine_budget = 0.02
