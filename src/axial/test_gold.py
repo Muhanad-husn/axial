@@ -22,6 +22,7 @@ from axial.gold import (
     MissingChunksError,
     _axis_vocabularies,
     _is_back_matter,
+    _is_substantive,
     build_workbook,
     load_source_types,
     parse_note,
@@ -65,6 +66,17 @@ class TestIsBackMatter:
             "Appendix II: Coding Rules",
             "Annex 1",
             "Table of Contents",
+            # issue #131 false-negative 1: endnote titles carrying a page range.
+            "Notes to Pages 85-93",
+            "NOTES TO PAGES 85-93",
+            "Note to Page 12",
+            "notes to pages 1-400",
+            # issue #131 false-negative 2: roman-numeral-prefixed
+            # references/bibliography subsections.
+            "V. Articles and Periodicals",
+            "I. Books",
+            "II. References",
+            "iv. bibliography",
         ],
     )
     def test_excluded(self, section):
@@ -79,10 +91,85 @@ class TestIsBackMatter:
             "Comparative Cases",
             "Conclusion",
             "Findings and Analysis",
+            # roman-numeral prefixes on ordinary chapter titles must survive --
+            # the guard is a references-family match, not a bare roman-prefix
+            # strip applied indiscriminately.
+            "I. The Origins of the State",
+            "V. Comparative Cases in West Africa",
         ],
     )
     def test_kept(self, section):
         assert _is_back_matter(section) is False
+
+
+class TestIsSubstantive:
+    def test_real_prose_kept(self):
+        prose = (
+            "The colonial administration's approach to direct taxation "
+            "fundamentally reshaped local power structures across the region "
+            "over the following decades, gradually eroding autonomous "
+            "legitimacy in favor of a bureaucratized, extractive relationship."
+        )
+        assert _is_substantive(prose) is True
+
+    def test_bare_citation_excluded(self):
+        # Synthetic stand-in (invented citation, never source text -- copyright).
+        assert _is_substantive("Roe, Invented Book, pp. 10-14.") is False
+
+    def test_short_citation_excluded(self):
+        # Synthetic stand-in (invented citation, never source text -- copyright).
+        assert _is_substantive("12  Roe, A Fictional Study, p. 88.") is False
+
+    def test_ocr_garbage_excluded(self):
+        # Synthetic OCR-garble stand-in (never source text -- copyright).
+        assert _is_substantive("XZQ7t KKtempc;, ZZ QWRTo QQ FALSE") is False
+
+    def test_empty_excluded(self):
+        assert _is_substantive("") is False
+        assert _is_substantive(None) is False
+
+    def test_short_non_prose_excluded(self):
+        assert _is_substantive("a" * 10) is False
+
+    def test_long_multi_citation_excluded(self):
+        # Synthetic stand-in, >=60 chars: exercises the density/word-shape
+        # branches specifically (this clears the length floor AND the 0.6
+        # alpha-ratio floor -- measures ~0.63, comfortably above -- so it
+        # would incorrectly pass under the old, effectively-inert alpha
+        # branch alone; issue #131 reviewer finding). The clean-word-token
+        # fraction (~0.50, well below the 0.7 floor) is what excludes it:
+        # most tokens are short citation shorthand ("pp.", "J.", "A.") or
+        # digit-bearing page ranges ("12-14;"), not plausible word tokens.
+        junk = "Roe, J., Invented Study, pp. 12-14; Doe, A., Fictional Work, pp. 88-91."
+        assert len(junk) >= 60
+        assert _is_substantive(junk) is False
+
+    def test_long_ocr_case_garble_excluded(self):
+        # Synthetic OCR-garble stand-in, >=60 chars, case/letter substitution
+        # shape (never source text -- copyright). This is almost entirely
+        # letters (alpha ratio ~0.94) so it clears the alpha-ratio bar and
+        # would leak through the old alpha-density branch, which the
+        # word-shape check (clean-word-token fraction) catches instead.
+        junk = "XZQ7t KKtempc;, ZZ QWRTo QQ FALSEo NATIOnAL GHAROo AND PRIESTSc; XYZc DEFtt"
+        assert len(junk) >= 60
+        assert _is_substantive(junk) is False
+
+    def test_long_real_style_prose_kept(self):
+        # A second, independently longer (>=60 chars) real-prose-style
+        # fixture confirming the tightened guard does not over-exclude
+        # ordinary academic argument, including inline parenthetical
+        # citations (a stress case for the word-shape check).
+        prose = (
+            "The state-formation literature (e.g. Tilly's classic account, and "
+            "Migdal's follow-up) treats war-making and state-making as "
+            "co-constitutive, self-reinforcing processes; critics counter that "
+            "this bellicist model under-specifies the causal mechanism in "
+            "non-European cases, especially where post-colonial elites' "
+            "bureaucracies were externally imposed rather than endogenously "
+            "bargained-for."
+        )
+        assert len(prose) >= 60
+        assert _is_substantive(prose) is True
 
 
 class TestSourceIdOf:
@@ -200,7 +287,10 @@ class TestRunGoldSample:
             note = {
                 "chunk_id": cid,
                 "section": section,
-                "chunk_text": f"text {cid}",
+                "chunk_text": (
+                    f"This is substantive prose for chunk {cid}, long enough and "
+                    f"alphabetic enough to clear the minimum-substance guard."
+                ),
                 "role_in_argument": role,
                 "field": {"primary": field},
                 "claim_type": {"primary": "state-formation"},

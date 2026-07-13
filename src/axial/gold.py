@@ -202,15 +202,155 @@ def _normalize_title(title: str) -> str:
     return re.sub(r"\s+", " ", (title or "").lower()).strip(" .:-–—")
 
 
+_ROMAN_NUMERAL_PREFIX = re.compile(r"^[ivxlcdm]+\.?\s+")
+
+# References-family words: when a title's leading roman-numeral ordinal is
+# stripped (e.g. "V. Articles and Periodicals" -> "articles and periodicals"),
+# the remainder is back-matter only if it names a references/bibliography
+# subsection. Deliberately narrow -- an ordinary chapter title that happens to
+# start with a roman numeral ("I. The Origins of the State") must NOT match.
+_ROMAN_PREFIXED_BACK_MATTER_WORDS = (
+    "bibliography",
+    "references",
+    "articles and periodicals",
+    "books",
+    "books and articles",
+    "primary sources",
+    "secondary sources",
+    "unpublished sources",
+    "archival sources",
+    "newspapers and periodicals",
+)
+
+
 def _is_back_matter(section: str) -> bool:
     """True if `section` is non-substantive front/back-matter that must be
-    excluded from the gold sampling frame (#53). Reuses the chunk-pass
+    excluded from the gold sampling frame (#53, #131). Reuses the chunk-pass
     vocabulary (`_BACK_MATTER_TITLES`) and broadens it with the gold-frame
-    extras plus an `appendix`/`annex` prefix match (`Appendix A`, `Annex I`)."""
+    extras plus:
+      - an `appendix`/`annex` prefix match (`Appendix A`, `Annex I`);
+      - a `notes to page(s) ...` / `note to page ...` prefix match (endnote
+        sections titled with a page range, issue #131 false-negative 1);
+      - a roman-numeral-ordinal-prefixed references/bibliography subsection
+        (`V. Articles and Periodicals`, issue #131 false-negative 2) -- the
+        ordinal is stripped and the remainder checked against a narrow
+        references-family vocabulary, so an ordinary chapter title that
+        merely starts with a roman numeral is never dropped."""
     normalized = _normalize_title(section)
     if normalized in _BACK_MATTER_TITLES or normalized in _GOLD_EXTRA_BACK_MATTER:
         return True
-    return normalized.startswith("appendix") or normalized.startswith("annex")
+    if normalized.startswith("appendix") or normalized.startswith("annex"):
+        return True
+    if normalized.startswith("notes to page") or normalized.startswith("note to page"):
+        return True
+    stripped = _ROMAN_NUMERAL_PREFIX.sub("", normalized, count=1)
+    if stripped != normalized and stripped in _ROMAN_PREFIXED_BACK_MATTER_WORDS:
+        return True
+    return False
+
+
+# Minimum-substance guard (#131): a candidate prose chunk's body must clear a
+# length floor, an alphabetic-density floor AND a word-shape floor to be
+# labelable argument. Thresholds are deliberately generous (a false EXCLUDE
+# loses real content from the frame, which is worse than a rare false INCLUDE
+# the Academic can just skip). Measured on the gold-test fixtures (real
+# 250-480 char argument prose vs. synthetic >=60-char junk, invented text
+# only -- copyright):
+#   - length < 60 chars: a full citation ("Roe, Invented Book, pp. 10-14.")
+#     or a short endnote reads far under this; the substantive fixtures used
+#     across the gold tests run 250+ chars. This alone is NOT sufficient: a
+#     longer multi-citation footnote string ("Roe, J., Invented Study, pp.
+#     12-14; Doe, A., Fictional Work, pp. 88-91.", 71 chars) clears it and
+#     must be caught by the checks below (this was the reviewer finding:
+#     the original alpha-ratio floor alone was effectively inert against
+#     this shape, which measures ~0.63 alpha ratio -- comfortably above the
+#     0.6 floor).
+#   - alphabetic ratio < 0.6 among non-space characters: still a useful
+#     floor for punctuation/digit-dominated fragments, but on its own it
+#     does NOT reliably separate realistic citation junk (~0.63-0.74) or
+#     OCR/case-substitution garble ("XZQ7t KKtempc;, ZZ QWRTo QQ FALSEo
+#     ...", ~0.94 -- almost entirely letters) from real argument prose
+#     (~0.90-0.99), which is why a second, independent signal is required.
+#   - clean-word-token fraction < 0.7: the fraction of whitespace-split
+#     tokens that, once outer punctuation is stripped, are a plausible
+#     English word or hyphenated/possessive compound of length >= 3
+#     ("state-backed", "Tilly's") with internally case-consistent parts
+#     (all-lower, all-upper, or Title case). The length-3 floor matters: it
+#     keeps short citation shorthand ("pp.", single-letter initials "J.",
+#     "A.") from inflating the score. Real argument prose measures
+#     ~0.85-0.93 here (citation-heavy academic prose with parentheticals
+#     still clears ~0.85); the seeded chunk-id-bearing placeholder text used
+#     by the other gold-sample tests measures ~0.80-0.82 (kept, comfortable
+#     margin above the 0.7 floor). Multi-citation junk measures ~0.50-0.64;
+#     OCR/case-noise tokens like "GHAROo" or "MlNlSTRYo0F" fail outright,
+#     measuring ~0.08 on synthetic garble fixtures.
+_MIN_SUBSTANCE_CHARS = 60
+_MIN_ALPHA_RATIO = 0.6
+_MIN_CLEAN_WORD_FRACTION = 0.7
+
+# A token shorter than this (after stripping edge punctuation and internal
+# hyphens/apostrophes) never counts as a clean word -- it excludes citation
+# shorthand ("pp.", "n.") and bare initials ("J.", "A.") from inflating the
+# clean-word fraction on citation-shaped junk.
+_MIN_CLEAN_WORD_LEN = 3
+
+# Punctuation stripped from a token's edges before it is judged word-shaped
+# (mirrors the punctuation a citation/footnote commonly wraps a word in).
+_TOKEN_EDGE_PUNCT = '.,;:()[]{}"“”‘’—–'
+
+
+def _is_clean_word_token(token: str) -> bool:
+    """True if `token` looks like a plausible English word or a
+    hyphenated/possessive compound of them, once its outer punctuation is
+    stripped: at least `_MIN_CLEAN_WORD_LEN` letters, and each
+    hyphen/apostrophe-delimited part pure letters and internally
+    case-consistent (all-lower, all-upper, or Title case) -- this is what
+    catches OCR case-substitution noise ("GHAROo", "PRIESTSc") that a pure
+    alphabetic-ratio check misses, since such tokens are still almost
+    entirely letters. The length floor is what keeps citation shorthand
+    ("pp.", "J.", "A.") from counting as a clean word."""
+    stripped = token.strip(_TOKEN_EDGE_PUNCT)
+    if not stripped:
+        return False
+    parts = re.split(r"[-']", stripped)
+    if any(not part for part in parts):
+        return False
+    if not all(
+        part.isalpha() and (part.islower() or part.isupper() or part.istitle()) for part in parts
+    ):
+        return False
+    return len(stripped.replace("-", "").replace("'", "")) >= _MIN_CLEAN_WORD_LEN
+
+
+def _clean_word_fraction(text: str) -> float:
+    """Fraction of `text`'s whitespace-split tokens that are clean word
+    tokens (see `_is_clean_word_token`); 0.0 for an empty/whitespace-only
+    text."""
+    tokens = text.split()
+    if not tokens:
+        return 0.0
+    clean = sum(1 for token in tokens if _is_clean_word_token(token))
+    return clean / len(tokens)
+
+
+def _is_substantive(chunk_text: str | None) -> bool:
+    """True if `chunk_text` clears the length floor, the alphabetic-density
+    floor AND the word-shape floor -- i.e. is long enough and prose-like
+    enough (not a citation/footnote fragment, not OCR/case-substitution
+    garble) to be a labelable argument chunk. See the minimum-substance
+    guard comment above for the measured thresholds."""
+    if not chunk_text:
+        return False
+    text = chunk_text.strip()
+    if len(text) < _MIN_SUBSTANCE_CHARS:
+        return False
+    non_space = [ch for ch in text if not ch.isspace()]
+    if not non_space:
+        return False
+    alpha_ratio = sum(1 for ch in non_space if ch.isalpha()) / len(non_space)
+    if alpha_ratio < _MIN_ALPHA_RATIO:
+        return False
+    return _clean_word_fraction(text) >= _MIN_CLEAN_WORD_FRACTION
 
 
 def source_id_of(chunk_id: str) -> str:
@@ -274,12 +414,15 @@ def parse_note(path: Path) -> dict[str, Any] | None:
 
 
 def _read_frame(prose_dir: Path) -> list[dict[str, Any]]:
-    """Read every prose note under `prose_dir`, drop back-matter, and return
-    the substantive records sorted by chunk_id (a stable base order)."""
+    """Read every prose note under `prose_dir`, drop back-matter (by title)
+    and non-substantive fragments (by body, #131), and return the
+    substantive records sorted by chunk_id (a stable base order)."""
     records = []
     for path in sorted(prose_dir.glob("*.md")):
         record = parse_note(path)
         if record is None or _is_back_matter(record["section"]):
+            continue
+        if not _is_substantive(record["chunk_text"]):
             continue
         records.append(record)
     records.sort(key=lambda r: r["chunk_id"])
