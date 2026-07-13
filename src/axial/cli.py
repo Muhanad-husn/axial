@@ -9,6 +9,7 @@ from axial.artifacts import ArtifactsError, run_artifacts
 from axial.chunk import ChunkError, run_chunk
 from axial.codebook import CodebookError, load_codebook
 from axial.envelope import EnvelopeError, run_envelope
+from axial.eval import EvalError, run_eval
 from axial.extract import ExtractError, extract
 from axial.gold import (
     DEFAULT_MAX_SIZE,
@@ -164,6 +165,15 @@ def build_parser() -> argparse.ArgumentParser:
             "package data/gold/label_sheet.xlsx into a dated handoff bundle "
             "under data/gold/delivery/<date>/ for the Academic (sheet copy, "
             "README, and manifest.json)"
+        ),
+    )
+
+    subparsers.add_parser(
+        "eval",
+        help=(
+            "score the Academic's returned label_sheet.xlsx under "
+            "data/gold/labels/ against the tagger's own chunk records, "
+            "writing data/gold/labels/eval_report.json"
         ),
     )
 
@@ -332,6 +342,17 @@ def _gold_deliver() -> int:
     return 0
 
 
+def _eval() -> int:
+    try:
+        path = run_eval()
+    except (EvalError, GoldError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(str(path)))
+    return 0
+
+
 def _vault_write(source_path: str) -> int:
     try:
         written = run_vault_write(source_path)
@@ -386,6 +407,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "gold" and args.gold_command == "deliver":
         return _gold_deliver()
+
+    if args.command == "eval":
+        return _eval()
 
     if args.command == "vault" and args.vault_command == "write":
         return _vault_write(args.source_path)
