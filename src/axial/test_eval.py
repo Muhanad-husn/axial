@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 
 import pytest
-from openpyxl import Workbook
 
 from axial.eval import (
     EvalError,
@@ -70,7 +69,6 @@ class TestMissingReturnedSheetError:
         assert issubclass(MissingReturnedSheetError, EvalError)
 
     def test_message_names_labels_dir(self, tmp_path):
-        from pathlib import Path
 
         sheet_path = tmp_path / "data" / "gold" / "labels" / "label_sheet.xlsx"
         error = MissingReturnedSheetError(sheet_path)
