@@ -1,0 +1,124 @@
+### 1. Happy path: axial eval on a synthetic gold set (3 chunks, mixed agreement)
+$ ls data/gold/chunks/ && ls data/gold/labels/
+demo-src_1_intro_001.json
+demo-src_2_body_001.json
+demo-src_3_body_002.json
+label_sheet.xlsx
+
+$ uv run axial eval
+"data\\gold\\labels\\eval_report.json"
+exit=0
+
+### The scoring report it wrote:
+$ cat data/gold/labels/eval_report.json
+{
+  "addition_candidates": [
+    {
+      "axis": "field",
+      "chunk_id": "demo-src_3_body_002",
+      "value": "a-field-not-in-the-schema"
+    }
+  ],
+  "disagreements": [
+    {
+      "academic": "civilian-targeting",
+      "axis": "claim_type",
+      "chunk_id": "demo-src_2_body_001",
+      "tagger": "comparative-method"
+    }
+  ],
+  "never_applied": {
+    "claim_type": [
+      "identity-and-group-formation",
+      "ideology-as-practice",
+      "ideology-as-system",
+      "legitimacy-and-legitimation",
+      "legitimating-narratives",
+      "mobilization-and-recruitment",
+      "nationalism-theory",
+      "normative-political-theory",
+      "power-typology",
+      "religion-and-politics",
+      "revolution-and-contention",
+      "sovereignty-and-recognition",
+      "state-autonomy",
+      "state-capacity",
+      "state-formation",
+      "state-society-relations",
+      "statehood-gradations",
+      "violence-actors",
+      "violence-logic",
+      "war-and-state"
+    ],
+    "empirical_scope": [
+      "scope:country-case",
+      "scope:general",
+      "scope:regional",
+      "scope:sub-national"
+    ],
+    "field": [
+      "violence"
+    ],
+    "theory_school": [
+      "biological-evolutionary",
+      "civilizing-decline",
+      "colonial-postcolonial",
+      "constructivist",
+      "constructivist-anti-essentialist",
+      "criminological",
+      "cultural-ideational",
+      "discursive",
+      "external-statebuilding",
+      "historical-sociological",
+      "institutionalist-state-centered",
+      "interpretive-constructivist",
+      "marxist-critical-pol-econ",
+      "marxist-political-economy",
+      "materialist",
+      "micro-sociological",
+      "modernization-developmental",
+      "neo-bellicist",
+      "neo-marxist",
+      "opportunity-feasibility",
+      "postcolonial-decolonial",
+      "state-centered-organizational",
+      "state-in-society",
+      "structural-violence",
+      "structuralist",
+      "subject-centered",
+      "systematic"
+    ]
+  },
+  "per_axis_agreement": {
+    "claim_type": 0.6666666666666666,
+    "empirical_scope": 1.0,
+    "field": 0.6666666666666666,
+    "theory_school": 1.0
+  },
+  "tag_counts": {
+    "claim_type": {
+      "civilian-targeting": 5,
+      "comparative-method": 1
+    },
+    "empirical_scope": {
+      "scope:comparative": 6
+    },
+    "field": {
+      "a-field-not-in-the-schema": 1,
+      "ideology": 4,
+      "state": 1
+    },
+    "theory_school": {
+      "bellicist": 5
+    }
+  },
+  "unmatched": {
+    "chunks_only": [],
+    "sheet_only": []
+  }
+}
+
+### 2. Error path: no returned sheet present -> non-zero exit, clear message, no report
+$ rm data/gold/labels/label_sheet.xlsx && uv run axial eval
+error: no returned label sheet found at data\gold\labels\label_sheet.xlsx; place the Academic's filled label_sheet.xlsx under data/gold/labels/ and re-run `axial eval`
+exit=1
