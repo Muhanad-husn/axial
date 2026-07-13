@@ -112,6 +112,7 @@ axial/
     gold/
       chunks/                  # sampled gold chunks
       label_sheet.xlsx         # one row per chunk, one column per axis
+      delivery/                # dated Academic handoff bundles (sheet copy + README + manifest)
       labels/                  # returned Academic labels + scoring outputs
   tests/
 ```
@@ -150,6 +151,20 @@ One JSON per source in `data/trees/`, keyed by `source_id` (the same determinist
 ### 7.5 Gold-set label sheet
 
 `data/gold/label_sheet.xlsx`: **one row per chunk, one column per axis.** Columns: `chunk_id`, `source`, `section`, `chunk_text`, then one column per axis with **dropdown validation sourced from the codebook**. Hybrid labeling per §9. The same sheet, once returned, is the machine-readable answer key for scoring — no transformation step between labeling and eval.
+
+### 7.6 Gold-set delivery bundle
+
+Once §7.5 has produced the sheet, `axial gold deliver` packages it into a self-contained handoff bundle for the Academic. Delivery is deliberately **local and offline**: no Drive, no email, no network. The bundle is a reviewable folder on disk.
+
+- **Output folder:** `data/gold/delivery/<YYYY-MM-DD>/`, where the stamp is today's date in ISO form. The stamp is also the folder name.
+- **Contents:** exactly three files, nothing else.
+  - `label_sheet.xlsx` — a byte-identical copy of the generated `data/gold/label_sheet.xlsx`.
+  - `README-for-academic.md` — human labeling instructions. Names the four axis columns (`field`, `empirical_scope`, `claim_type`, `theory_school`), states the blind vs. pre-labeled split per §9, and tells the Academic to return the filled sheet under `data/gold/labels/`.
+  - `manifest.json` — machine-readable summary carrying: `sheet` (`"label_sheet.xlsx"`); `delivered` (the `YYYY-MM-DD` stamp, equal to the folder name); `chunk_count` (the number of labelable rows, the sheet's rows minus the header); `columns` (the label-sheet columns of Appendix I); `axes` (`["field", "empirical_scope", "claim_type", "theory_school"]`); `blind_axes` (`["claim_type", "theory_school"]`); `prelabeled_axes` (`["field", "empirical_scope"]`); and `return_to` (the labels inbox, `data/gold/labels/`).
+- **Idempotent per day:** re-running `axial gold deliver` overwrites the same dated folder in place, leaving no stale files — the folder holds exactly the three handoff files after any run.
+- **Missing-sheet error:** running `axial gold deliver` with no generated sheet fails with a non-zero exit and a clear message telling the operator to run `axial gold sheet` first. No delivery folder is created in that case.
+
+The bundle bridges build step 4 (emit the sheet) and step 5 (the Academic labeling pause) in §11: it is the offline handoff between them.
 
 ---
 
@@ -197,6 +212,7 @@ One JSON per source in `data/trees/`, keyed by `source_id` (the same determinist
 **P0-9 Gold-set generation & label sheet.**
 - [ ] Emits ~100–120 chunks from ~20–28 sources. Balancing strata are field × empirical_scope × role_in_argument: the sample includes ≥1 chunk for each represented value of each of these three axes. source-type (book/paper), claim_type, and theory_school are not balancing strata; they ride along descriptively on whatever is drawn, and each source-type present in the corpus contributes ≥1 chunk. Non-substantive back-matter (endnotes, references/bibliography, index, appendix, front-matter) is excluded from the sampling frame; the sampler draws only from substantive prose.
 - [ ] Produces `label_sheet.xlsx` with one row per chunk, one column per axis, codebook-sourced dropdowns.
+- [ ] `axial gold deliver` packages the emitted sheet into `data/gold/delivery/<YYYY-MM-DD>/` holding exactly three files — a byte-identical `label_sheet.xlsx`, `README-for-academic.md`, and `manifest.json` (§7.6). Re-running overwrites the same dated folder with no stale files. With no generated sheet it exits non-zero telling the operator to run `axial gold sheet` first and creates no delivery folder. Local and offline: no Drive, no network.
 
 **P0-10 Eval harness.**
 - [ ] Reads returned labels + tagger output, computes per-axis agreement.
@@ -256,6 +272,7 @@ The config/data seam is the pause point. Because the tagger reads the codebook f
 2. **Minimal ingestion** — intake → docling(+fallback) → envelope → chunking → vault write, on the **placeholder** Syria codebook (Appendices A–G). *No Academic dependency.*
 3. **Tagging + artifact routing + cross-reference.**
 4. **Gold-set generation** — run 2–3 on ~20–28 sampled sources; emit the label sheet. *Produces the Academic deliverable.*
+   - **4b. Delivery bundle** — `axial gold deliver` packages the emitted sheet into a dated, offline handoff folder (§7.6): the sheet copy, `README-for-academic.md`, and `manifest.json`. This is the concrete bridge across the pause seam — step 4 produces the sheet, delivery hands it off offline, step 5 is the Academic filling it.
 5. **⏸ ACADEMIC LABELING** — Academic fills the sheet (hybrid, §9). *Pause here, or continue building 6–7 on placeholder labels.*
 6. **Eval harness** — score, decide contested/candidate tags.
 7. **Schema revision + second batch** — revise the schema from eval findings, re-run, compare. Only then consider the full ~120-source corpus (out of scope for v0).
