@@ -5,7 +5,7 @@
 - **GitHub issue:** #135
 - **Branch:** feat/eval/01-score-gold-set
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ in review — PR #136 (awaiting founder approval)
 - **Walking skeleton?** yes (introduces the `axial eval` subcommand + the `eval.py` module)
 
 ## Goal — the minimum testable behaviour
@@ -98,3 +98,4 @@ And   re-running is deterministic and makes no LLM call
 ## Status / progress log
 
 - 2026-07-13 planned. Single slice per founder decision (agreement + coverage + disagreements share one join and one report).
+- 2026-07-13 built: red outer test `a193ebc` → green impl `ddee573` → reviewer findings fixed `350cc0b` → PR **#136** into main. Full suite 655 passed; two-stage review passed (2 stage-2 findings fixed, re-review clean). Awaiting founder approval to merge.
