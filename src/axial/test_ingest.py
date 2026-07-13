@@ -10,7 +10,6 @@ import pytest
 import axial.ingest as ingest_mod
 from axial.ingest import (
     RESULTS_COLUMNS,
-    ResultsFileError,
     WorklistError,
     _append_result_row,
     _load_completed_source_ids,
