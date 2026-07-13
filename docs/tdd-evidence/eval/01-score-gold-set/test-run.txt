@@ -1,0 +1,37 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0 -- D:\axial\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 27 items
+
+tests/test_eval.py::test_eval_scores_returned_labels_against_tagger_output PASSED [  3%]
+tests/test_eval.py::test_eval_without_returned_sheet_fails_clearly PASSED [  7%]
+src/axial/test_eval.py::TestNormalizeCell::test_none_is_none PASSED      [ 11%]
+src/axial/test_eval.py::TestNormalizeCell::test_empty_string_is_none PASSED [ 14%]
+src/axial/test_eval.py::TestNormalizeCell::test_whitespace_only_is_none PASSED [ 18%]
+src/axial/test_eval.py::TestNormalizeCell::test_value_is_stripped PASSED [ 22%]
+src/axial/test_eval.py::TestNormalizeCell::test_non_string_value_is_stringified PASSED [ 25%]
+src/axial/test_eval.py::TestMissingReturnedSheetError::test_is_eval_error PASSED [ 29%]
+src/axial/test_eval.py::TestMissingReturnedSheetError::test_message_names_labels_dir PASSED [ 33%]
+src/axial/test_eval.py::TestBuildReport::test_agreement_excludes_empty_academic_cells PASSED [ 37%]
+src/axial/test_eval.py::TestBuildReport::test_disagreement_rows_and_no_false_positives PASSED [ 40%]
+src/axial/test_eval.py::TestBuildReport::test_disagreements_sorted_by_chunk_then_axis_order PASSED [ 44%]
+src/axial/test_eval.py::TestBuildReport::test_tag_counts_combine_both_sides PASSED [ 48%]
+src/axial/test_eval.py::TestBuildReport::test_never_applied_names_zero_combined_count_tags PASSED [ 51%]
+src/axial/test_eval.py::TestBuildReport::test_chunk_absent_from_sheet_treated_as_all_axes_unanswered PASSED [ 55%]
+src/axial/test_eval.py::TestBuildReport::test_unmatched_names_sheet_rows_with_no_chunk_record PASSED [ 59%]
+src/axial/test_eval.py::TestBuildReport::test_unmatched_both_directions_sorted PASSED [ 62%]
+src/axial/test_eval.py::TestBuildReport::test_out_of_vocab_academic_value_is_an_addition_candidate_not_a_disagreement PASSED [ 66%]
+src/axial/test_eval.py::TestBuildReport::test_in_vocab_mismatch_stays_a_plain_disagreement_not_addition_candidate PASSED [ 70%]
+src/axial/test_eval.py::TestWarnUnmatched::test_no_warning_when_both_lists_empty PASSED [ 74%]
+src/axial/test_eval.py::TestWarnUnmatched::test_warns_on_sheet_only PASSED [ 77%]
+src/axial/test_eval.py::TestWarnUnmatched::test_warns_on_chunks_only PASSED [ 81%]
+src/axial/test_eval.py::TestWarnUnmatched::test_warns_on_both_directions_independently PASSED [ 85%]
+src/axial/test_eval.py::TestLoadAcademicLabels::test_reads_values_and_blank_cells PASSED [ 88%]
+src/axial/test_eval.py::TestRunEval::test_missing_chunks_raises PASSED   [ 92%]
+src/axial/test_eval.py::TestRunEval::test_missing_returned_sheet_raises_and_writes_no_report PASSED [ 96%]
+src/axial/test_eval.py::TestRunEval::test_end_to_end_writes_deterministic_report PASSED [100%]
+
+============================= 27 passed in 4.64s ==============================
