@@ -2,32 +2,40 @@
 shipped via #81; cleanup-on-success dropped by founder decision -- this test
 covers quarantine ONLY).
 
-Locked behavioral contract (DEC-1) -- do not edit once committed red.
+Locked behavioral contract (DEC-1) -- do not edit without founder-adjudicated
+authorization. REVISED per a founder ruling: `out_of_vocab` (an out-of-
+vocabulary tag value persisting after the #102 correction re-ask,
+`TagNotInSchemaError`) is DESCOPED from quarantine -- it remains a hard
+error per P0-6 (#96/#102): a schema-coverage signal that must halt the
+source, not be silently skipped. Quarantine now covers exactly two classes:
+`content_filter` (`ContentRefusedError`) and `malformed_json`
+(`ModelJsonError` persisting after `complete_json`'s bounded retries).
 
 Today, one content-caused failure on any chunk in the tag pass aborts the
 WHOLE source (mann-v4 died at tag ~858/1010 to a single refused chunk,
 losing 5.5h -- 69% of the 2026-07 run's hours went to failed attempts for
 this class of reason, see docs/postmortem/gold-run-2026-07/README.md). This
-test locks the fix: a chunk whose failure is CONTENT-CAUSED is skipped,
-logged, and recorded, and the source CONTINUES; a TRANSIENT failure keeps
-today's retry/backoff path completely unchanged (never quarantined).
+test locks the fix: a chunk whose failure is CONTENT-CAUSED (content_filter
+or malformed_json) is skipped, logged, and recorded, and the source
+CONTINUES; a TRANSIENT failure keeps today's retry/backoff path completely
+unchanged (never quarantined); an out-of-vocabulary tag value (P0-6) keeps
+its existing hard-error contract unchanged too (never quarantined).
 
 Scenario 1 -- content-caused failure -> quarantined, source completes
 -----------------------------------------------------------------------
 Given  a source with several chunks, one of which (neither first nor last)
        is "poisoned": every LLM call `axial.tag.run_tag` makes for it fails
        with a content-caused failure class -- `ContentRefusedError`
-       (content_filter surviving the #116 fallback reroute), an
-       out-of-vocabulary tag value that persists after the #102 correction
-       re-ask (`TagNotInSchemaError`), or malformed JSON that persists after
-       `complete_json`'s bounded retry budget (`ModelJsonError`)
+       (content_filter surviving the #116 fallback reroute), or malformed
+       JSON that persists after `complete_json`'s bounded retry budget
+       (`ModelJsonError`)
 When   `run_tag` is called once, with `tags_dir` supplied (checkpoint
        active)
 Then   `run_tag` COMPLETES (does not raise) -- the source is not aborted
 And    the poisoned chunk produces NO tagged record in the returned result
 And    a stderr line `tag: quarantining chunk <chunk_id>: <reason>` is
        logged, `<reason>` being exactly one of `content_filter`,
-       `out_of_vocab`, `malformed_json`
+       `malformed_json`
 And    the tag checkpoint (`<tags_dir>/<source_id>.jsonl`) carries a
        `{"chunk_id": ..., "quarantine_reason": ...}` record for the
        poisoned chunk
@@ -61,16 +69,15 @@ And    a stderr line `tag: skipping quarantined chunk <chunk_id> (reason:
 And    that chunk is absent from the returned tagged records; every other
        chunk is processed (and tagged) normally
 
-See GitHub issue #120 for the source of truth. As of this commit,
-`axial.tag.run_tag`'s per-chunk loop (~line 1094, the loop body starting
-just after the #132 non-prose guard) has NO quarantine handling at all: any
-of `ContentRefusedError`, a persisting `TagNotInSchemaError`, or a
-persisting `ModelJsonError` propagates straight out of `run_tag`, aborting
-the whole source -- exactly the bug this issue closes. This test is
-expected to fail red for exactly that reason (an uncaught exception
-propagating out of `run_tag`, or a plain `AssertionError` demonstrating a
-resume-time quarantine record being treated as an ordinary cached tagged
-record) -- never an import error, never a fixture/collection failure.
+See GitHub issue #120 for the source of truth, and the founder ruling above
+for the `out_of_vocab` descope. `axial.tag.run_tag`'s per-chunk loop
+(~line 1094, the loop body starting just after the #132 non-prose guard)
+already quarantines `ContentRefusedError` and a persisting `ModelJsonError`
+(shipped implementation, this commit); a persisting `TagNotInSchemaError`
+(out-of-vocab) is intentionally left OUT of scope here and continues to
+propagate straight out of `run_tag` as the P0-6 hard error, unchanged --
+that is covered by the existing P0-6 tests (test_tag_axis_prefix.py /
+test_tag_vocab_reask.py), not this file.
 
 Seam decision 1 -- bypassing docling/network via a monkeypatched upstream
 pass, exactly mirroring tests/test_xref_checkpoint.py's Seam decision 1
@@ -116,13 +123,12 @@ typed `LLMError` subclass, never a bare `Exception`), since that is
 precisely how a real `OpenRouterClient` surfaces both a surviving
 content_filter refusal (`ContentRefusedError`, after its own internal #116
 fallback reroute already failed) and a transient transport failure
-(`OpenRouterError`) to any caller. `out_of_vocab` and `malformed_json`,
-by contrast, are content-shaped failures -- an out-of-schema tag value, or
-non-JSON text -- so they are injected as the RAW COMPLETION TEXT the fake
-client returns (`run_tag`'s own parsing/validation is what turns that text
-into `TagNotInSchemaError` / `ModelJsonError` today), never as a raised
-exception, since a real model failing those ways does not raise from the
-transport layer at all.
+(`OpenRouterError`) to any caller. `malformed_json`, by contrast, is a
+content-shaped failure -- non-JSON text -- so it is injected as the RAW
+COMPLETION TEXT the fake client returns (`run_tag`'s own parsing is what
+turns that text into `ModelJsonError` today), never as a raised exception,
+since a real model failing this way does not raise from the transport layer
+at all.
 
 Test hygiene: every path this test touches (`tags_dir`, the synthetic
 source file) lives under pytest's own `tmp_path`, outside this repo
@@ -178,12 +184,12 @@ def _chunk_records() -> list[dict[str, str]]:
     ]
 
 
-def _valid_tag_response_json(role_in_argument: str = "role:setup") -> str:
+def _valid_tag_response_json() -> str:
     """A raw completion string, valid against the REAL syria schema for
     every axis `run_tag` tags (role_in_argument, empirical_scope, field,
     claim_type, theory_school) -- see config/domains/syria/schema.yaml."""
     payload = {
-        "role_in_argument": role_in_argument,
+        "role_in_argument": "role:setup",
         "empirical_scope": "scope:general",
         "field": {"primary": "state", "secondary": []},
         "claim_type": {"primary": "state-formation", "secondary": None},
@@ -208,10 +214,6 @@ class _QuarantineTestClient:
         failed (mirroring `ContentRefusedError`'s own docstring).
       - "transient": raises `OpenRouterError` (a plain, non-content
         `LLMError`) on every call for the poisoned chunk.
-      - "out_of_vocab": returns a structurally valid completion whose
-        `role_in_argument` value is NOT in the schema's vocabulary, on
-        every call (including the #102 correction re-ask) -- so the
-        out-of-vocabulary value PERSISTS.
       - "malformed_json": returns non-JSON text on every call, so
         `complete_json`'s bounded retry budget is exhausted.
 
@@ -247,8 +249,6 @@ class _QuarantineTestClient:
                     "simulated transient transport error, e.g. rate limit "
                     "(issue #120 quarantine test) -- NOT content-caused"
                 )
-            if self.failure_mode == "out_of_vocab":
-                return _valid_tag_response_json(role_in_argument="role:not-a-real-role")
             if self.failure_mode == "malformed_json":
                 return _MALFORMED_JSON_RESPONSE
             raise AssertionError(f"unknown failure_mode {self.failure_mode!r}")
@@ -286,7 +286,6 @@ def _make_source(tmp_path: Path, name: str) -> Path:
     "failure_mode, expected_reason, expected_calls_for_poisoned_chunk",
     [
         ("content_filter", "content_filter", 1),
-        ("out_of_vocab", "out_of_vocab", 2),  # initial ask + one #102 correction re-ask
         ("malformed_json", "malformed_json", 3),  # complete_json's default retry budget
     ],
 )
@@ -338,8 +337,8 @@ def test_content_caused_failure_is_quarantined_and_source_completes(
         f"vs expected {[c['chunk_id'] for c in survivors]}"
     )
 
-    # --- the model was actually attempted (and, for out_of_vocab/malformed_json,
-    # retried through its full existing bounded budget) before quarantining --
+    # --- the model was actually attempted (and, for malformed_json, retried
+    # through its full existing bounded budget) before quarantining --
     # quarantine must never short-circuit today's retry/re-ask behavior. ---
     assert client.calls_by_chunk_text.get(poisoned_text, 0) == expected_calls_for_poisoned_chunk, (
         f"expected the poisoned chunk to receive exactly "
