@@ -39,7 +39,6 @@ lookups.
 
 from __future__ import annotations
 
-import sys
 import time
 import tomllib
 from dataclasses import dataclass
@@ -48,7 +47,7 @@ from typing import Any
 
 from axial.envelope import compute_source_id
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
-from axial.tag import _default_tags_dir, load_tag_checkpoint, tags_checkpoint_path
+from axial.tag import TagError, _default_tags_dir, load_tag_checkpoint, tags_checkpoint_path
 from axial.vault import VaultError, run_vault_write
 
 PASS_VERDICT = "PASS"
@@ -122,8 +121,11 @@ class CanaryResult:
 
 def load_manifest(manifest_path: str | Path) -> list[Canary]:
     """Load `[[canary]]` entries from a TOML manifest (module docstring).
-    Raises `ManifestError` if the file is missing, is not valid TOML, or an
-    entry is missing a required field -- never a bare traceback."""
+    Raises `ManifestError` if the file is missing, is not valid TOML, carries
+    a `canary` value that is not an array of tables (e.g. a single `[canary]`
+    table instead of `[[canary]]`), or an entry is missing a required field
+    or carries a wrong-typed value (e.g. `time_envelope_sec = "nope"`) --
+    never a bare traceback (reviewer finding 2, issue #121)."""
     path = Path(manifest_path)
     if not path.is_file():
         raise ManifestError(path, "file not found")
@@ -135,8 +137,18 @@ def load_manifest(manifest_path: str | Path) -> list[Canary]:
         raise ManifestError(path, exc) from exc
 
     entries = document.get("canary", [])
+    if not isinstance(entries, list):
+        raise ManifestError(
+            path,
+            "expected `canary` to be an array of tables (`[[canary]]`), got "
+            f"{type(entries).__name__}: {entries!r} -- did you write a single "
+            "`[canary]` table instead?",
+        )
+
     canaries: list[Canary] = []
     for entry in entries:
+        if not isinstance(entry, dict):
+            raise ManifestError(path, f"expected each canary entry to be a table, got {entry!r}")
         try:
             canaries.append(
                 Canary(
@@ -146,8 +158,8 @@ def load_manifest(manifest_path: str | Path) -> list[Canary]:
                     quarantine_budget=float(entry["quarantine_budget"]),
                 )
             )
-        except KeyError as exc:
-            raise ManifestError(path, f"canary entry missing required field {exc}") from exc
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ManifestError(path, f"invalid canary entry ({exc}): {entry!r}") from exc
 
     return canaries
 
@@ -191,7 +203,18 @@ def evaluate_canary(
         reasons.append(f"source-fatal error (no single-attempt completion): {exc}")
     duration_sec = time.monotonic() - start
 
-    total_chunks, quarantine_count = _count_chunks(tags_dir, source_id)
+    # A corrupt/unreadable tag checkpoint (e.g. a torn tail from a hard kill
+    # mid-write -- the exact incident that motivated this gate, issue #121
+    # reviewer finding 1) must fail THIS canary's row, not abort the whole
+    # gate run: the quarantine fraction can't be verified, so this canary
+    # fails safe rather than crashing with a bare traceback.
+    try:
+        total_chunks, quarantine_count = _count_chunks(tags_dir, source_id)
+    except TagError as exc:
+        total_chunks, quarantine_count = 0, 0
+        reasons.append(
+            f"corrupt or unreadable tag checkpoint (cannot verify quarantine budget): {exc}"
+        )
 
     result = CanaryResult(
         canary=canary,
@@ -239,6 +262,34 @@ def render_table(results: list[CanaryResult]) -> str:
     return "\n".join(lines)
 
 
+def _unexpected_failure_result(canary: Canary, exc: Exception) -> CanaryResult:
+    """Build a FAIL row for a canary whose evaluation raised something
+    `evaluate_canary`'s own try/except blocks don't cover (e.g. a missing
+    source file). Reviewer finding 1, issue #121: one canary's unexpected
+    crash must never prevent every other canary in the manifest from being
+    evaluated and reported -- the gate must degrade to a FAIL row, never a
+    bare traceback that drops the whole run's table."""
+    try:
+        source_id = compute_source_id(canary.source_path)
+    except Exception:
+        # Even `compute_source_id` itself can fail here (e.g. the source file
+        # is missing) -- fall back to the manifest's own declared source_id
+        # (a display label, module docstring) so this canary still gets a
+        # row in the table instead of being silently dropped.
+        source_id = canary.source_id
+
+    return CanaryResult(
+        canary=canary,
+        source_id=source_id,
+        verdict=FAIL_VERDICT,
+        completed=False,
+        quarantine_count=0,
+        total_chunks=0,
+        duration_sec=0.0,
+        reasons=[f"unexpected error evaluating canary: {exc}"],
+    )
+
+
 def run_pipeline_ready(
     manifest_path: str | Path,
     client: LLMClient | None = None,
@@ -246,12 +297,21 @@ def run_pipeline_ready(
 ) -> tuple[str, int]:
     """Load the manifest, ingest and evaluate every canary in it, and return
     `(table_text, exit_code)`: exit code 0 iff every canary's verdict is
-    PASS, non-zero if any FAIL (module docstring)."""
+    PASS, non-zero if any FAIL (module docstring). Each canary's evaluation
+    is isolated (reviewer finding 1, issue #121): an unexpected exception
+    evaluating one canary is recorded as that canary's own FAIL row, never
+    allowed to abort evaluation of the rest or crash the whole gate run
+    without printing a table at all -- the same "unattended, no operator
+    intervention" bar this command itself checks for.
+    """
     canaries = load_manifest(manifest_path)
 
-    results = [
-        evaluate_canary(canary, client=client, config_path=config_path) for canary in canaries
-    ]
+    results: list[CanaryResult] = []
+    for canary in canaries:
+        try:
+            results.append(evaluate_canary(canary, client=client, config_path=config_path))
+        except Exception as exc:
+            results.append(_unexpected_failure_result(canary, exc))
 
     table_text = render_table(results)
     exit_code = 0 if all(result.verdict == PASS_VERDICT for result in results) else 1
