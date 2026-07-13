@@ -866,6 +866,35 @@ class OpenRouterClient:
                 f"{self._content_fallback_model!r} refused with "
                 "finish_reason='content_filter' (issue #116)"
             )
+
+        # The fallback gets exactly one completion attempt -- no retry
+        # budget here (per the ratified #116 decision) -- so every other
+        # non-"stop" outcome is a terminal failure, not something to retry.
+        # Validate it the same way the primary retry loop does, minus the
+        # retry: empty content, a truncated ("length") answer, or any other
+        # non-"stop" finish_reason ("error", etc.) must raise instead of
+        # silently returning `None`/a fragment as if it were a success.
+        is_empty = content is None or not content.strip()
+        is_truncated = finish_reason == "length"
+        is_transient_fault = finish_reason is not None and finish_reason not in (
+            "stop",
+            "length",
+        )
+        if is_truncated:
+            raise OpenRouterError(
+                f"content_fallback_model {self._content_fallback_model!r} completion "
+                f"truncated: finish_reason={finish_reason!r} (issue #116)"
+            )
+        if is_transient_fault:
+            raise OpenRouterError(
+                f"content_fallback_model {self._content_fallback_model!r} returned "
+                f"finish_reason={finish_reason!r} (issue #116)"
+            )
+        if is_empty:
+            raise OpenRouterError(
+                "content_filter reroute: fallback model returned an empty completion "
+                f"({self._content_fallback_model!r}, issue #116)"
+            )
         return content
 
 

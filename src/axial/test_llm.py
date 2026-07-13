@@ -1269,3 +1269,143 @@ def test_build_openrouter_client_defaults_content_fallback_model_to_none(monkeyp
     client = _build_openrouter_client({})
 
     assert client._content_fallback_model is None
+
+
+# --- _reroute_content_filter fallback validation (issue #116 review) ------
+#
+# The outer contract (tests/test_llm_content_filter_reroute.py) locks the
+# reroute-vs-retry behavior and the "both refuse" ContentRefusedError path.
+# These inner tests cover the review-flagged gaps underneath it: no fallback
+# configured at all, and the fallback's single completion coming back
+# empty/truncated/errored instead of a clean "stop" -- every one of those
+# must raise a typed LLMError, never silently return None or a fragment.
+
+
+def _content_filter_response() -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={"choices": [{"message": {"content": None}, "finish_reason": "content_filter"}]},
+    )
+
+
+def test_content_filter_without_fallback_configured_raises_content_refused_error(monkeypatch):
+    """A `content_filter` refusal with no `content_fallback_model` configured
+    must raise `ContentRefusedError` directly -- no blind retry against the
+    primary model, and no request to a fallback that doesn't exist (issue
+    #116 review finding 2)."""
+    import axial.llm as llm_module
+    from axial.llm import ContentRefusedError, OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return _content_filter_response()
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(
+        api_key="test-key",
+        model="primary/model",
+        transport=transport,
+        content_fallback_model=None,
+    )
+
+    with pytest.raises(ContentRefusedError):
+        client.complete("prompt text")
+
+    assert call_count == 1, "no fallback configured must not retry the primary model"
+
+
+def test_content_filter_fallback_empty_completion_raises_openrouter_error(monkeypatch):
+    """If the fallback model's single completion returns `finish_reason:
+    'stop'` but empty/None content, `_reroute_content_filter` must raise
+    `OpenRouterError`, never return `None` from a `-> str` function (issue
+    #116 review finding 1)."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient, OpenRouterError
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        model = json.loads(request.content)["model"]
+        if model == "primary/model":
+            return _content_filter_response()
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": ""}, "finish_reason": "stop"}]}
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(
+        api_key="test-key",
+        model="primary/model",
+        transport=transport,
+        content_fallback_model="fallback/model",
+    )
+
+    with pytest.raises(OpenRouterError, match="empty"):
+        client.complete("prompt text")
+
+
+def test_content_filter_fallback_truncated_completion_raises_openrouter_error(monkeypatch):
+    """If the fallback model's single completion is truncated
+    (`finish_reason: 'length'`), that must raise `OpenRouterError` naming the
+    truncation -- there is no retry budget on the fallback to recover it
+    (issue #116 review finding 1)."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient, OpenRouterError
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        model = json.loads(request.content)["model"]
+        if model == "primary/model":
+            return _content_filter_response()
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": '{"partial": "cut'}, "finish_reason": "length"}]
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(
+        api_key="test-key",
+        model="primary/model",
+        transport=transport,
+        content_fallback_model="fallback/model",
+    )
+
+    with pytest.raises(OpenRouterError, match="length"):
+        client.complete("prompt text")
+
+
+def test_content_filter_fallback_error_finish_reason_raises_openrouter_error(monkeypatch):
+    """If the fallback model's single completion comes back with a
+    non-'stop', non-'content_filter', non-'length' `finish_reason` (e.g.
+    `'error'`), that must raise `OpenRouterError` naming the reason -- not be
+    silently returned as a success (issue #116 review finding 1)."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient, OpenRouterError
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        model = json.loads(request.content)["model"]
+        if model == "primary/model":
+            return _content_filter_response()
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "oops"}, "finish_reason": "error"}]}
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(
+        api_key="test-key",
+        model="primary/model",
+        transport=transport,
+        content_fallback_model="fallback/model",
+    )
+
+    with pytest.raises(OpenRouterError, match="error"):
+        client.complete("prompt text")
