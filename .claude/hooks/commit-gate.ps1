@@ -19,13 +19,30 @@ if ($cmd -notmatch 'git\s+(\S+\s+)*commit') { exit 0 }
 # as "on main" because the launch checkout happened to be on main). Normalize to
 # the git root of that cwd so the branch guard and pytest run against the tree
 # being committed.
-$opDir = "$($j.cwd)"
+# A worktree commit is issued as `cd <worktree> && git commit ...`. This PreToolUse
+# hook inspects the tool call's declared cwd ($j.cwd) BEFORE the command body runs, so
+# the in-command `cd` is not yet in effect; and for a subagent $j.cwd is unreliable
+# across calls -- often pinned to the launch checkout (main), which misattributes the
+# commit and blocks it as "on main" (or runs the wrong tree's suite). So when the
+# command explicitly cds into a directory first, honor that as the commit's real
+# working directory; otherwise fall back to $j.cwd, then the session project dir.
+$opDir = $null
+if ($cmd -match '^\s*cd\s+(?:"([^"]+)"|([^\s&|;]+))\s*&&') {
+    $opDir = if ($matches[1]) { $matches[1] } else { $matches[2] }
+}
+if (-not $opDir) { $opDir = "$($j.cwd)" }
 if (-not $opDir) { $opDir = $env:CLAUDE_PROJECT_DIR }
 if (-not $opDir) { $opDir = Split-Path (Split-Path $PSScriptRoot) }
-$projectDir = (& git -C $opDir rev-parse --show-toplevel 2>$null)
+# The `cd` target (and sometimes $j.cwd) is an MSYS/Git-Bash path (/d/axial-ops) that
+# PowerShell's git -C cannot consume; normalize it to Windows form (d:/axial-ops).
+if ($opDir -match '^/([A-Za-z])(/.*)?$') { $opDir = "$($matches[1]):$(if ($matches[2]) { $matches[2] } else { '/' })" }
+# git throws a terminating NativeCommandError on a bad dir under ErrorActionPreference=Stop; catch so resolution fails gracefully.
+$projectDir = $null
+try { $projectDir = (& git -C $opDir rev-parse --show-toplevel 2>$null) } catch { $projectDir = $null }
 if (-not $projectDir) { $projectDir = $opDir }
 
-$branch = (& git -C $projectDir rev-parse --abbrev-ref HEAD 2>$null)
+$branch = $null
+try { $branch = (& git -C $projectDir rev-parse --abbrev-ref HEAD 2>$null) } catch { $branch = $null }
 if ($branch -eq 'main') {
     [Console]::Error.WriteLine("BLOCKED: no direct commits on main. Work on a branch; merge via PR after founder approval.")
     exit 2
