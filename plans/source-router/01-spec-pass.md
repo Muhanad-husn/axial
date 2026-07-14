@@ -5,7 +5,7 @@
 - **GitHub issue:** #166
 - **Branch:** spec/source-router/01-spec-pass (spec window)
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ✅ merged (PR #170)
 - **Walking skeleton?** no — this is the spec precondition, not an implementation slice
 
 ## Goal — the minimum change
