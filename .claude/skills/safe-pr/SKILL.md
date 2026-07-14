@@ -33,7 +33,10 @@ Bundled resources:
 
 1. **The slice is green.** This is proven by the single full-suite run in
    Procedure step 1 (`uv run pytest -q > test-run.txt 2>&1`) — its exit code and
-   pass summary are the gate, not a separate re-run here. Never open a PR on red.
+   pass summary are the gate, not a separate re-run here. This is the one and only
+   local full-suite run per PR: the inner red-green loop runs only the src units
+   and the current subproject's acceptance tier, so the whole `tests/` suite is
+   first exercised end-to-end right here. Never open a PR on red.
 2. **The outer acceptance test is the one the test-author committed red** —
    `git log --follow tests/<file>` must show no edits after the red commit. If it
    was modified, stop and report; that is a contract violation.
