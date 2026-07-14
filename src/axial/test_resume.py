@@ -9,12 +9,10 @@ from the outside:
      each chunk is tagged, its already-present chunk_ids skipped on resume,
      records recombined in stable chunk order.
 
-The chunk-pass checkpoint/resume this file's seam 2 used to cover belonged
-to the now-deleted `run_chunk` (issue #17 slice 05); it was removed along
-with that mechanism (issue #154 slice 04). The surviving chunk stage
-(`run_chunk_embedding`) has no comparable per-section resume -- it overwrites
-its on-disk artifact fresh on every call (see its own docstring); the
-tag-pass fixtures below now stub `axial.tag.read_chunks` in its place.
+There is no chunk-pass checkpoint/resume to cover here: the chunk stage
+(`run_chunk_embedding`) overwrites its on-disk artifact fresh on every call
+(see its own docstring) and has no per-section resume, so the tag-pass
+fixtures below stub `axial.tag.read_chunks` in its place.
 """
 
 from __future__ import annotations

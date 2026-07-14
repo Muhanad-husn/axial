@@ -16,10 +16,6 @@ themselves. It raises `MissingChunkArtifactError` when the artifact does not
 exist yet, telling the operator to run `axial chunk` first -- no downstream
 pass ever recomputes chunk boundaries (PRD §8 P0-4b).
 
-The retired LLM-echo chunker (`run_chunk`, issue #17 slice 05: one LLM call
-per section against the stored envelope) is REMOVED as of slice 04 -- it is
-no longer reachable from this module at all.
-
 Source routing (issue #167, PRD §7.8): `run_chunk_embedding` no longer decides
 prose/non-prose by node `type` alone. Each block in a kept section's body is
 classified by its docling `label` via the shared `axial.router.route_for`

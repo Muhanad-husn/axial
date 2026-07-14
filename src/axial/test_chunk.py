@@ -1,9 +1,7 @@
 """Inner unit tests for the axial chunk module: section selection and the
 `build_chunk_records`/`_slugify` provenance helpers shared by the surviving
 embedding-based chunk stage (issue #151, see test_chunk_embedding.py for its
-own dedicated unit tests). The retired LLM-echo chunker's tests (`run_chunk`,
-`compose_chunk_prompt`, `parse_response`) were deleted in issue #154 slice 04
-along with the mechanism itself.
+own dedicated unit tests).
 """
 
 from __future__ import annotations
