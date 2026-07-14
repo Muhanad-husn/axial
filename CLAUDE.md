@@ -99,6 +99,14 @@ Two rules are hooks with exit-code enforcement, not advice:
    exactly that commit, with founder approval, the orchestrator creates the flag
    file `.claude/allow-red-commit` and removes it immediately after.
 
+   **Docs-only exception.** A commit whose every file is documentation (`.md`,
+   `.txt`, `.rst`, or anything under `plans/` or `docs/`) is low-risk and needs no
+   review ceremony: the gate lets it land on `main` directly, no branch and no PR
+   required. The moment a commit touches code — `src/`, tests, hooks, or `.claude/`
+   config — the main-block reapplies and the change goes on a branch and merges via
+   PR after founder approval. The check fails safe: any non-docs file in the set
+   sends the whole commit down the branch-and-suite path.
+
 If a gate fires, the answer is to fix the cause, never to bypass the hook.
 
 ## Model tiering
