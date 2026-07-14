@@ -43,6 +43,7 @@ import os
 import re
 import statistics
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -83,6 +84,20 @@ def chunks_checkpoint_path(source_id: str, chunks_dir: Path = CHUNKS_DIR) -> Pat
     chunk record per line), keyed by the content-hashed source_id so an edited
     file (a new source_id) never reuses stale chunks (issue #81 point 1)."""
     return chunks_dir / f"{source_id}.jsonl"
+
+
+def chunks_skips_sidecar_path(source_id: str, chunks_dir: Path = CHUNKS_DIR) -> Path:
+    """The companion sidecar path for `source_id`'s garbage-skip log
+    (issue #153, founder-approved Option A), alongside its chunk checkpoint
+    (`chunks_checkpoint_path`): one JSON object per line, exactly
+    `{"section", "section_order", "reason"}`. `run_chunk_embedding` rewrites
+    this cleanly on every call -- created only when there is >= 1 skip,
+    removed when a rerun has none -- mirroring the main JSONL's own
+    overwrite-cleanly contract so a rerun on the same source bytes stays
+    idempotent. `axial chunk examine` (a separate, later, read-only
+    invocation) reads it to report sections skipped as garbage without
+    re-deriving the guard."""
+    return chunks_dir / f"{source_id}.skips.jsonl"
 
 
 def load_chunk_checkpoint(path: Path) -> list[dict[str, Any]]:
@@ -140,6 +155,24 @@ class MissingChunkArtifactError(ChunkError):
         self.path = path
         super().__init__(
             f"no chunk artifact found at {path}; run `axial chunk` on the source first"
+        )
+
+
+class ChunkArtifactCorruptError(ChunkError):
+    """Raised by `examine_chunks` (issue #153) when a line of a chunk
+    artifact -- the main `<source_id>.jsonl` or its `<source_id>.skips.jsonl`
+    sidecar -- is not valid JSON. Modeled on `ChunkCheckpointCorruptError`,
+    but unconditional (examine is a diagnostic read, not a resumable
+    checkpoint, so there is no "torn final line" healing case to special-case
+    here): any malformed line raises loudly, carrying the offending file's
+    path and its 1-indexed line number so the operator can go fix it."""
+
+    def __init__(self, path: Path, line_no: int, cause: json.JSONDecodeError):
+        self.path = path
+        self.line_no = line_no
+        self.cause = cause
+        super().__init__(
+            f"corrupt chunk artifact {path}: line {line_no} is not valid JSON: {cause}"
         )
 
 
@@ -323,6 +356,27 @@ def build_chunk_records(
 CHUNK_MIN = 1000
 CHUNK_MAX = 3000
 
+# Per-source sentence-embedding cache (issue #152): cwd-relative, gitignored
+# (the blanket `data/` ignore in .gitignore already covers it -- no separate
+# entry needed), mirroring `CHUNKS_DIR`/`axial.extract.TREES_DIR`'s own
+# convention exactly. Referenced as a module GLOBAL (never captured as a
+# function default) by `_default_chunk_cache_dir` below specifically so it
+# can be monkeypatched in tests exactly like `CHUNKS_DIR`/`TAGS_DIR` (see
+# src/axial/conftest.py's autouse isolation fixture) -- a function default
+# value bound at def-time would not pick up a later monkeypatch.
+CHUNK_CACHE_DIR = Path("data/chunk_cache")
+
+
+def _default_chunk_cache_dir() -> Path:
+    """The cwd-relative default embedding-cache directory. No
+    `config/pipeline.yaml` override exists for this path (unlike
+    `_default_chunks_dir`/`_default_envelopes_dir`) -- not part of this
+    slice's contract (plan: "data/chunk_cache/", a plain cwd-relative
+    default). Reads the module-level `CHUNK_CACHE_DIR` global at CALL time
+    (see that constant's own docstring for why)."""
+    return CHUNK_CACHE_DIR
+
+
 # Env-var seam selecting the embedder, mirroring `axial.llm`'s
 # `AXIAL_LLM_PROVIDER` convention exactly (see that module's docstring).
 # `AXIAL_EMBEDDER=stub` selects the deterministic, offline, no-network stub
@@ -347,7 +401,18 @@ class MissingTreeError(ChunkError):
 class Embedder(Protocol):
     """A single-method sentence-embedding interface, mirroring
     `axial.llm.LLMClient`'s single-method `complete` shape. Every embedder
-    this module can select implements `encode`."""
+    this module can select implements `encode`.
+
+    `model_id` (issue #152) identifies the concrete embedding model an
+    instance represents -- the per-source embedding cache's key is a
+    function of `(source_id, embedder.model_id)` (see `_CachingEmbedder`
+    below), read off the injected embedder itself rather than passed
+    separately, since the embedder instance IS the thing whose identity
+    determines what "the embedding model" is (mirroring how `axial.llm`
+    client selection already works: config/provider picks the object;
+    nothing separately re-declares its identity to callers)."""
+
+    model_id: str
 
     def encode(self, texts: list[str]) -> list[list[float]]:
         """Return one fixed-length numeric vector per input text, in order."""
@@ -388,10 +453,19 @@ class HashingEmbedder:
     can be swapped in behind a distinct `AXIAL_EMBEDDER` value later,
     lazy-imported exactly like `axial.extract`'s docling/unstructured
     imports, without touching any caller of `get_embedder`.
+
+    `model_id` (issue #152, the embedding-cache seam): defaults to a stable
+    value reflecting `dim` (`"hashing-v1-<dim>"`), so two `HashingEmbedder()`
+    instances at the same dim (the common case -- `get_embedder` never
+    varies it) always agree on a cache key, while an explicit override lets
+    a caller simulate "a different embedding model" without changing the
+    hashing algorithm itself (e.g. this module's own cache-invalidation
+    tests).
     """
 
-    def __init__(self, dim: int = _HASHING_EMBEDDER_DIM) -> None:
+    def __init__(self, dim: int = _HASHING_EMBEDDER_DIM, model_id: str | None = None) -> None:
         self._dim = dim
+        self.model_id = model_id if model_id is not None else f"hashing-v1-{dim}"
 
     def encode(self, texts: list[str]) -> list[list[float]]:
         return [self._encode_one(text) for text in texts]
@@ -651,11 +725,200 @@ def _garbage_section_skip_reason(
     return None
 
 
+_CACHE_KEY_SAFE_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def _safe_cache_key_component(value: str) -> str:
+    """Make `value` (a source_id or an embedding-model id, either of which
+    may contain characters that are awkward in a filename) safe to fold into
+    an on-disk cache filename, by replacing every run of
+    not-obviously-filesystem-safe characters with a single underscore.
+
+    Two DIFFERENT raw values CAN sanitize to the same safe string (e.g.
+    `"model_1"` and `"model!1"` both collapse to `"model_1"`) -- a
+    filename collision is therefore possible, most plausibly on `model_id`
+    (`compute_source_id` always appends a 12-hex-char suffix to `source_id`,
+    which makes a `source_id`-side collision implausible in practice, but
+    this function offers no formal guarantee either way). A collision here
+    is harmless, not corrupting: `_CachingEmbedder` persists the RAW
+    `source_id`/`model_id` inside the cache file itself and checks them
+    against the current run's values on load, so a filename shared by two
+    distinct `(source_id, model_id)` pairs degrades to a cold cache (an
+    extra re-embed) rather than ever serving one pair's vectors to the
+    other (see `_CachingEmbedder._load_cache_file`)."""
+    return _CACHE_KEY_SAFE_RE.sub("_", value)
+
+
+class _CachingEmbedder:
+    """Wraps another `Embedder`, memoizing sentence -> vector lookups on
+    disk so a source's sentence embeddings are computed AT MOST ONCE across
+    every run of the chunk stage against it (issue #152, PRD §5 stage 4 /
+    §7.7's "cheap band sweeps" acceptance criterion -- memory
+    [[chunk-experiment-caching]]).
+
+    Cache key: `(source_id, embedder.model_id)`, both folded into the
+    on-disk filename `<chunk_cache_dir>/<source_id>__<model_id>.json` (each
+    component sanitized by `_safe_cache_key_component`). Reading the model
+    id off the WRAPPED embedder itself (rather than a separately-passed
+    argument) is deliberate -- see `Embedder.model_id`'s docstring. Keying
+    on `source_id` (a content hash, `axial.envelope.compute_source_id`)
+    rather than a filename/path means an edited source (different bytes,
+    same filename) never collides with its own prior cache entry, and two
+    different sources never collide with each other's, even if they happen
+    to share a filename stem (issue #152's "edited source" acceptance
+    clause). A different `model_id` for the SAME source_id resolves to a
+    DIFFERENT file entirely, so swapping embedding models always misses and
+    re-embeds -- no stale cross-model vectors are ever read back.
+
+    Memoization granularity: per SENTENCE TEXT, not per `encode` call or per
+    section. `run_chunk_embedding`'s critical path calls `embedder.encode`
+    at two distinct sites -- the primary per-section embed in
+    `_chunk_section_text`, and the MAX-side re-embed of an over-band
+    subgroup's sentences inside `_split_group_to_max` -- but a given
+    sentence's embedding is the same VALUE regardless of which call site
+    asks for it. Keying by the sentence's own text (rather than, say, a
+    (section, position) coordinate) means the MAX-side re-embed of a subset
+    of sentences already embedded in the primary pass is a guaranteed cache
+    hit, and a later run at a DIFFERENT `[chunk_min, chunk_max]` band --
+    which regroups the very same sentences into different-shaped subgroups,
+    changing WHICH sentences reach `_split_group_to_max` and in what
+    combinations -- still hits, because the cache was never keyed on
+    grouping/position in the first place. This is what makes a band-sweep
+    re-run's `encode` call count drop to exactly zero (issue #152's central
+    assertion), not merely lower.
+
+    Purely a performance layer -- see `encode`'s docstring for why this
+    changes nothing about chunk OUTPUT. Loads its on-disk cache file (if
+    any) once, at construction; call `flush()` to persist newly-computed
+    entries back to disk (idempotent -- a no-op when nothing new was
+    computed since the last flush), so a later process/run (not just a
+    later call within the same process) reuses it.
+
+    On-disk file shape (issue #152 review finding 1): `{"source_id": ...,
+    "model_id": ..., "vectors": {text: vector}}` -- the raw (unsanitized)
+    `source_id`/`model_id` are persisted INSIDE the file, not just encoded
+    into its filename. `_load_cache_file` checks both against the current
+    run's values before trusting the file's vectors at all, so a filename
+    collision from `_safe_cache_key_component` (two distinct raw
+    `(source_id, model_id)` pairs sanitizing to the same filename -- see
+    that function's docstring) can never serve one pair's vectors to the
+    other: a mismatch degrades to a cold cache instead. Loading also fails
+    SOFT on any read/parse problem (a torn write from a hard kill mid-flush,
+    a hand-edited file, wrong JSON shape) -- see `_load_cache_file`'s
+    docstring -- mirroring this module's own `load_chunk_checkpoint`
+    heal-on-corruption convention (issue #104): the cache is a pure
+    performance layer, so it must never be able to abort a run.
+    """
+
+    def __init__(self, inner: Embedder, source_id: str, cache_dir: Path) -> None:
+        self._inner = inner
+        self.model_id = inner.model_id
+        self._source_id = source_id
+        self._path = cache_dir / (
+            f"{_safe_cache_key_component(source_id)}"
+            f"__{_safe_cache_key_component(inner.model_id)}.json"
+        )
+        self._vectors: dict[str, list[float]] = {}
+        if self._path.is_file():
+            self._vectors = self._load_cache_file()
+        self._dirty = False
+
+    def _load_cache_file(self) -> dict[str, list[float]]:
+        """Read `self._path` and return its cached vectors, or `{}` (cold)
+        if the file cannot be trusted -- either because it is unreadable
+        malformed JSON (`json.JSONDecodeError`), the wrong shape (e.g. a
+        list instead of an object -- `TypeError`), missing the expected
+        keys (`KeyError`), unreadable at the OS level such as a torn write
+        still mid-replace (`OSError`), or its own recorded
+        `source_id`/`model_id` does not match this instance's (`ValueError`
+        -- the finding-1 integrity check: a filename collision must never
+        let this run read another `(source_id, model_id)` pair's vectors).
+        Any of these prints a one-line warning to stderr (mirroring this
+        module's own `print(..., file=sys.stderr)` convention for skips)
+        and treats the cache as empty -- construction never raises, and the
+        caller simply re-embeds everything, exactly as on a genuinely cold
+        cache."""
+        try:
+            payload = json.loads(self._path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise TypeError(f"expected a JSON object, got {type(payload).__name__}")
+            if payload["source_id"] != self._source_id or payload["model_id"] != self.model_id:
+                raise ValueError(
+                    "cache file's recorded source_id/model_id does not match this run "
+                    "(filename collision -- see _safe_cache_key_component)"
+                )
+            vectors = payload["vectors"]
+            if not isinstance(vectors, dict):
+                raise TypeError(
+                    f"expected 'vectors' to be a JSON object, got {type(vectors).__name__}"
+                )
+            return vectors
+        except (json.JSONDecodeError, TypeError, KeyError, ValueError, OSError) as exc:
+            print(
+                f"chunk: ignoring unreadable embedding cache {self._path}: {exc}",
+                file=sys.stderr,
+            )
+            return {}
+
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        """Return one vector per text, in order -- IDENTICAL to what
+        `inner.encode` would return for the same text, since a cache hit
+        returns exactly the vector `inner.encode` produced (and persisted)
+        the first time that same text was seen. A text already in the cache
+        never reaches `inner.encode` at all; only genuinely new texts are
+        batched into a single call to `inner.encode` (preserving that
+        method's own "one call, many texts" batching contract for whatever
+        texts remain uncached), and their results are memoized before
+        returning."""
+        results: list[list[float] | None] = [self._vectors.get(text) for text in texts]
+        miss_indices = [index for index, vector in enumerate(results) if vector is None]
+        if miss_indices:
+            miss_texts = [texts[index] for index in miss_indices]
+            miss_vectors = self._inner.encode(miss_texts)
+            for index, text, vector in zip(miss_indices, miss_texts, miss_vectors):
+                results[index] = vector
+                self._vectors[text] = vector
+            self._dirty = True
+        return results  # type: ignore[return-value]  -- every None slot was just filled above
+
+    def flush(self) -> None:
+        """Persist any newly-computed vectors to `self._path`, along with
+        this run's raw `source_id`/`model_id` (see the class docstring's
+        "On-disk file shape" -- the finding-1 integrity check `_load_cache_file`
+        relies on), creating parent directories as needed. A no-op when
+        nothing changed since the last flush (a fully warm run, or a flush
+        called twice in a row).
+
+        Atomic (issue #152 review finding 2): writes to a sibling temp file
+        first, then `os.replace`s it over `self._path` -- `os.replace` is a
+        single filesystem rename, so a reader (including a later
+        `_CachingEmbedder` construction) always sees either the complete
+        prior file or the complete new one, never a torn partial write, even
+        if this process is hard-killed mid-flush. `flush()` runs after every
+        section in `run_chunk_embedding`, so this matters in practice, not
+        just in theory."""
+        if not self._dirty:
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "source_id": self._source_id,
+            "model_id": self.model_id,
+            "vectors": self._vectors,
+        }
+        tmp_path = self._path.with_name(self._path.name + ".tmp")
+        tmp_path.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(tmp_path, self._path)
+        self._dirty = False
+
+
 def run_chunk_embedding(
     source_path: str | Path,
     embedder: Embedder | None = None,
     chunks_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    chunk_min: int = CHUNK_MIN,
+    chunk_max: int = CHUNK_MAX,
+    chunk_cache_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Run the embedding-based chunk stage on `source_path` (issue #151,
     PRD §5 stage 4 / §7.7 / §8 P0-4): read the persisted structural tree
@@ -668,9 +931,33 @@ def run_chunk_embedding(
     defaults to `get_embedder()` (an `AXIAL_EMBEDDER`-selected, offline
     embedder), never an `LLMClient`.
 
+    `chunk_min`/`chunk_max` (issue #152) override the band guard's default
+    `[CHUNK_MIN, CHUNK_MAX]`, threaded straight through to
+    `_chunk_section_text`. This is what makes a band SWEEP possible at all:
+    re-running with a different band on the same source reshapes the split
+    from the SAME underlying sentence embeddings (see below), it does not
+    change what "the embeddings" are.
+
+    Embedding cache (issue #152, PRD §5 stage 4 / §7.7's "cheap band
+    sweeps"): the injected/resolved `embedder` is wrapped in a
+    `_CachingEmbedder` (see its docstring for the full design -- key,
+    on-disk location, why per-sentence memoization makes every re-embed
+    site free on a warm run) BEFORE it reaches `_chunk_section_text` /
+    `_split_group_to_max`, so this method's own callers never see the
+    wrapping and every downstream `encode` call is transparently
+    cache-backed. `chunk_cache_dir` overrides the cwd-relative default
+    (`data/chunk_cache/`, `_default_chunk_cache_dir`), mirroring
+    `chunks_dir`'s own override seam. The cache is flushed to disk after
+    every section (not just once at the end), so a mid-pass failure still
+    leaves already-computed embeddings durably cached for the next attempt
+    -- cheap since a flush after an all-cache-hit section is a no-op (see
+    `_CachingEmbedder.flush`).
+
     Overwrites `<source_id>.jsonl` cleanly on every call (idempotent on the
     same source bytes -- deterministic tree read + deterministic embedder +
-    deterministic band guard yields byte-identical output on a re-run).
+    deterministic band guard yields byte-identical output on a re-run,
+    whether or not the embedding cache was warm: the cache is a pure
+    performance layer, never changing chunk output).
 
     Raises `MissingSourceError` if `source_path` doesn't exist, or
     `MissingTreeError` if no persisted tree exists yet for its source_id --
@@ -691,12 +978,19 @@ def run_chunk_embedding(
     if embedder is None:
         embedder = get_embedder(config_path)
 
+    if chunk_cache_dir is None:
+        chunk_cache_dir = _default_chunk_cache_dir()
+    embedder = _CachingEmbedder(embedder, source_id, chunk_cache_dir)
+
     if chunks_dir is None:
         chunks_dir = _default_chunks_dir(config_path)
     out_path = chunks_checkpoint_path(source_id, chunks_dir)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     sections = [node for node in _section_nodes(tree) if not _is_back_matter(node.get("text", ""))]
+
+    skips_path = chunks_skips_sidecar_path(source_id, chunks_dir)
+    skip_records: list[dict[str, Any]] = []
 
     all_records: list[dict[str, Any]] = []
     with out_path.open("w", encoding="utf-8") as handle:
@@ -712,9 +1006,16 @@ def run_chunk_embedding(
             skip_reason = _garbage_section_skip_reason(body_text)
             if skip_reason is not None:
                 print(f"chunk: skipping section {section_label!r}: {skip_reason}", file=sys.stderr)
+                skip_records.append(
+                    {
+                        "section": section_label,
+                        "section_order": section_order,
+                        "reason": skip_reason,
+                    }
+                )
                 continue
 
-            chunk_texts = _chunk_section_text(body_text, embedder)
+            chunk_texts = _chunk_section_text(body_text, embedder, chunk_min, chunk_max)
             section_records = build_chunk_records(
                 source_id,
                 section_order,
@@ -724,6 +1025,234 @@ def run_chunk_embedding(
             for record in section_records:
                 handle.write(json.dumps(record) + "\n")
             handle.flush()
+            embedder.flush()
             all_records.extend(section_records)
 
+    embedder.flush()
+    if skip_records:
+        with skips_path.open("w", encoding="utf-8") as handle:
+            for record in skip_records:
+                handle.write(json.dumps(record) + "\n")
+    elif skips_path.exists():
+        # A rerun on the same source bytes with zero skips this time must
+        # not leave a stale sidecar from an earlier run (idempotency).
+        skips_path.unlink()
+
     return all_records
+
+
+# --- `axial chunk examine` (issue #153, PRD §7.7 / §8 P0-4b) ---------------
+#
+# Read-only inspection over the on-disk chunk artifact(s) produced by
+# `run_chunk_embedding` above: total/per-source counts, the size
+# distribution, boundary sanity, and garbage-skip reporting (from the
+# `.skips.jsonl` sidecar). Pure file I/O + arithmetic -- constructs no
+# embedder and no LLM client, so it costs zero LLM/embedding spend and can
+# run any time after a chunk run exists.
+
+EXAMINE_SAMPLE_SIZE = 5
+
+
+@dataclass
+class ExamineSkip:
+    """One garbage-skipped section, read verbatim from a source's
+    `.skips.jsonl` sidecar (see `chunks_skips_sidecar_path`)."""
+
+    source_id: str
+    section: str
+    section_order: str
+    reason: str
+
+
+@dataclass
+class ExamineSample:
+    """One sampled chunk text, shown with its own identifying fields so an
+    eyeball sample can be traced back to its record (PRD §7.7)."""
+
+    source_id: str
+    chunk_id: str
+    section: str
+    text: str
+
+
+@dataclass
+class ExamineStats:
+    """Aggregate chunk-quality stats over every chunk artifact under a
+    chunks dir (`examine_chunks`'s return value), formatted for display by
+    `format_examine_report`."""
+
+    total: int
+    per_source: dict[str, int] = field(default_factory=dict)
+    min_size: float = 0
+    max_size: float = 0
+    mean_size: float = 0
+    median_size: float = 0
+    above_max: int = 0
+    below_min: int = 0
+    split_sections: int = 0
+    skips: list[ExamineSkip] = field(default_factory=list)
+    samples: list[ExamineSample] = field(default_factory=list)
+
+
+def examine_chunks(
+    chunks_dir: Path,
+    chunk_min: int = CHUNK_MIN,
+    chunk_max: int = CHUNK_MAX,
+    sample_size: int = EXAMINE_SAMPLE_SIZE,
+) -> ExamineStats:
+    """Read every `<source_id>.jsonl` chunk artifact under `chunks_dir`
+    (excluding `*.skips.jsonl` sidecars -- those are read separately, per
+    source, for garbage-skip reporting) and aggregate the stats `axial
+    chunk examine` reports: total + per-source counts, the size
+    distribution (min/max/mean/median over `text` lengths), boundary
+    sanity (chunks above `chunk_max`, chunks below `chunk_min`, sections
+    split into multiple chunks -- grouped by (source_id, section_order)),
+    sections skipped as garbage with their reasons, and a chunk-text
+    sample. Pure read: never opens any chunks-dir file for writing.
+    Returns all-zero/empty stats when `chunks_dir` has no chunk artifacts
+    (including when it does not exist at all).
+
+    Raises `ChunkArtifactCorruptError` if any line of a main `.jsonl`
+    artifact or a `.skips.jsonl` sidecar is not valid JSON -- examine is a
+    diagnostic tool, so corruption is surfaced loudly rather than silently
+    skipped (mirroring `load_chunk_checkpoint`'s non-final-line behavior)."""
+    per_source: dict[str, int] = {}
+    sizes: list[int] = []
+    above_max = 0
+    below_min = 0
+    section_counts: dict[tuple[str, str], int] = {}
+    skips: list[ExamineSkip] = []
+    samples: list[ExamineSample] = []
+
+    if chunks_dir.is_dir():
+        jsonl_paths = sorted(
+            p for p in chunks_dir.glob("*.jsonl") if not p.name.endswith(".skips.jsonl")
+        )
+    else:
+        jsonl_paths = []
+
+    for path in jsonl_paths:
+        source_id = path.stem
+        count = 0
+        with path.open("r", encoding="utf-8") as handle:
+            for line_no, line in enumerate(handle, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ChunkArtifactCorruptError(path, line_no, exc) from exc
+                count += 1
+                text = record.get("text", "")
+                size = len(text)
+                sizes.append(size)
+                if size > chunk_max:
+                    above_max += 1
+                if size < chunk_min:
+                    below_min += 1
+                section_order = str(record.get("section_order", ""))
+                key = (source_id, section_order)
+                section_counts[key] = section_counts.get(key, 0) + 1
+                if len(samples) < sample_size:
+                    samples.append(
+                        ExamineSample(
+                            source_id=source_id,
+                            chunk_id=str(record.get("chunk_id", "")),
+                            section=str(record.get("section", "")),
+                            text=text,
+                        )
+                    )
+        per_source[source_id] = count
+
+        skips_path = chunks_skips_sidecar_path(source_id, chunks_dir)
+        if skips_path.is_file():
+            with skips_path.open("r", encoding="utf-8") as handle:
+                for line_no, line in enumerate(handle, start=1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        skip_record = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        raise ChunkArtifactCorruptError(skips_path, line_no, exc) from exc
+                    skips.append(
+                        ExamineSkip(
+                            source_id=source_id,
+                            section=str(skip_record.get("section", "")),
+                            section_order=str(skip_record.get("section_order", "")),
+                            reason=str(skip_record.get("reason", "")),
+                        )
+                    )
+
+    total = len(sizes)
+    split_sections = sum(1 for group_count in section_counts.values() if group_count > 1)
+
+    if sizes:
+        min_size: float = min(sizes)
+        max_size: float = max(sizes)
+        mean_size = statistics.mean(sizes)
+        median_size = statistics.median(sizes)
+    else:
+        min_size = max_size = mean_size = median_size = 0
+
+    return ExamineStats(
+        total=total,
+        per_source=per_source,
+        min_size=min_size,
+        max_size=max_size,
+        mean_size=mean_size,
+        median_size=median_size,
+        above_max=above_max,
+        below_min=below_min,
+        split_sections=split_sections,
+        skips=skips,
+        samples=samples,
+    )
+
+
+def format_examine_report(
+    stats: ExamineStats, chunk_min: int = CHUNK_MIN, chunk_max: int = CHUNK_MAX
+) -> str:
+    """Render `ExamineStats` into a human-readable report (PRD §7.7).
+    Format/wording is left to the implementer (mirroring `run_chunk_
+    embedding`'s stderr skip messages) -- only that every listed number is
+    present, matches the fixture, and appears near its own label."""
+    lines: list[str] = []
+
+    lines.append(
+        f"chunk examine: {stats.total} total chunk(s) across {len(stats.per_source)} source(s)"
+    )
+    for source_id in sorted(stats.per_source):
+        lines.append(f"  {source_id}: {stats.per_source[source_id]} chunk(s)")
+
+    lines.append("")
+    lines.append(
+        "size distribution (chars): "
+        f"min={stats.min_size} max={stats.max_size} "
+        f"mean={float(stats.mean_size):.1f} median={float(stats.median_size):.1f}"
+    )
+
+    lines.append("")
+    lines.append(
+        f"boundary sanity: {stats.above_max} chunk(s) above max (CHUNK_MAX={chunk_max}), "
+        f"{stats.below_min} chunk(s) below min (CHUNK_MIN={chunk_min}), "
+        f"{stats.split_sections} section(s) split into multiple chunks"
+    )
+
+    lines.append("")
+    lines.append(f"sections skipped as garbage: {len(stats.skips)}")
+    for skip in stats.skips:
+        lines.append(
+            f"  [{skip.source_id}] {skip.section!r} (order {skip.section_order}): {skip.reason}"
+        )
+
+    lines.append("")
+    lines.append("chunk-text sample:")
+    if not stats.samples:
+        lines.append("  (no chunks to sample)")
+    for sample in stats.samples:
+        preview = sample.text if len(sample.text) <= 200 else sample.text[:200] + "..."
+        lines.append(f"  [{sample.source_id}] {sample.chunk_id} {sample.section!r}: {preview}")
+
+    return "\n".join(lines)

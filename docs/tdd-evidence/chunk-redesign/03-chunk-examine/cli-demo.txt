@@ -1,0 +1,17 @@
+chunk examine: 6 total chunk(s) across 2 source(s)
+  alpha: 4 chunk(s)
+  beta: 2 chunk(s)
+
+size distribution (chars): min=203 max=339 mean=300.0 median=318.5
+
+boundary sanity: 0 chunk(s) above max (CHUNK_MAX=3000), 6 chunk(s) below min (CHUNK_MIN=1000), 1 section(s) split into multiple chunks
+
+sections skipped as garbage: 1
+  [beta] 'Index' (order 9): high non-alpha ratio (68.2%)
+
+chunk-text sample:
+  [alpha] alpha_1_introduction_001 'Introduction': This study examines how institutional trust shapes collective action across three post-industrial democracies. We situate the argument against the backdrop of declining party membership and the rise o...
+  [alpha] alpha_2_method_001 'Method': We draw on a panel of survey waves fielded between the two elections, matched to administrative turnout records at the municipal level. The matching procedure follows the nearest-neighbour design, wit...
+  [alpha] alpha_2_method_002 'Method': Our primary outcome is participation in non-electoral collective action, coded from an eleven-item battery. We validate the scale against behavioural traces where available. Robustness to alternative ...
+  [alpha] alpha_2_method_003 'Method': Estimation proceeds in two stages. First we recover municipality fixed effects; second we interact trust with the mobilization context. Standard errors are clustered at the municipality level througho...
+  [beta] beta_1_overview_001 'Overview': The second case reframes the debate around the timing of reform rather than its content. Where earlier work treated the sequence as incidental, we make it the object of explanation, and show that the ...
