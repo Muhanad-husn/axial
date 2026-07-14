@@ -1,0 +1,41 @@
+# #138 content-filter fallback probe manifest (one-command run).
+#
+# A SCRATCH subset of config/canary-manifest.toml: only the three
+# moderation-hazard sources — the content_filter trio from the 2026-07 gold
+# run (canary-set.md). Purpose is to exercise the issue #116 content_filter
+# reroute against a live content_fallback_model (deepseek-v4-pro, set in
+# secrets.toml per the 2026-07-13 founder decision) and verify the fallback
+# model does not itself moderate scholarly violence prose
+# (model-tier-decision.md, "unverified until tested").
+#
+# Run (after placing the three source files in gitignored data/sources/):
+#   axial pipeline-ready --manifest config/probe-138-content-filter.toml
+#
+# This is NOT the pipeline-ready gate; it is the focused fallback probe. The
+# authoritative representative set stays config/canary-manifest.toml. Source
+# files are copyright and are never committed; confirm exact filenames at
+# placement time.
+
+[[canary]]
+# content_filter death of the run: 123 MB OCR scan, ~1010 chunks; the 5.5h
+# moderation refusal. Measured ~12.3h -> x1.5 envelope.
+source_id = "mann-sources-of-social-power-v4"
+source_path = "data/sources/mann-sources-of-social-power-v4.pdf"
+time_envelope_sec = 66000
+quarantine_budget = 0.02
+
+[[canary]]
+# The most violence-dense prose end-to-end (highest moderation-hazard
+# density): 8 attempts, 7 failed; measured ~10.7h -> x1.5 envelope.
+source_id = "kalyvas-logic-of-violence-in-civil-war"
+source_path = "data/sources/kalyvas-logic-of-violence-in-civil-war.pdf"
+time_envelope_sec = 58000
+quarantine_budget = 0.02
+
+[[canary]]
+# Moderation survivor: the one recovered content_filter hit of the run;
+# 23 MB scan. Measured ~13.3h -> x1.5 envelope.
+source_id = "hall-schroeder-anatomy-of-power"
+source_path = "data/sources/hall-schroeder-anatomy-of-power.pdf"
+time_envelope_sec = 72000
+quarantine_budget = 0.02

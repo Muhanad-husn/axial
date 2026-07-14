@@ -748,6 +748,15 @@ class OpenRouterClient:
                         "model": target_model,
                         "messages": [{"role": "user", "content": prompt}],
                         "max_tokens": _MAX_COMPLETION_TOKENS,
+                        # Issue #147: the production_low model started being
+                        # served as a reasoning model. The added reasoning
+                        # phase pushed large chunk-echo calls (max_tokens
+                        # =60000) past the 300s wall-clock request deadline.
+                        # Disable reasoning on every request -- both the
+                        # primary model and the content_fallback_model
+                        # reroute share this one call site via the `model`
+                        # override above, so this single field covers both.
+                        "reasoning": {"enabled": False},
                     },
                 )
             except BaseException as exc:  # noqa: BLE001 - re-raised on the caller's thread below
