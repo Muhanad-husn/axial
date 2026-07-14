@@ -1,0 +1,5 @@
+route_for("PageNumber") = apparatus (APPARATUS='apparatus')
+apparatus_reason("PageNumber") = 'apparatus: page number'
+canonical_label("FigureCaption") = 'caption'
+canonical_label("caption") = 'caption'
+route_for("FigureCaption") = artifact
