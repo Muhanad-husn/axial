@@ -83,13 +83,20 @@ Seam decision 1 -- bypassing docling/network via a monkeypatched upstream
 pass, exactly mirroring tests/test_xref_checkpoint.py's Seam decision 1
 -----------------------------------------------------------------------
 `run_tag` normally builds its chunk records via its own internal call to
-`axial.chunk.run_chunk` (imported directly into `axial.tag`'s module
-namespace: `from axial.chunk import ChunkError, run_chunk`). This test never
-drives a real PDF through docling; it monkeypatches `axial.tag.run_chunk`
-in place with a fake returning a fixed, synthetic chunk-record set
-regardless of what `run_tag` passes it. `run_tag`'s own per-chunk loop --
-the actual subject of this issue -- is never bypassed; only its upstream
-chunk data source is.
+`axial.chunk.read_chunks` (imported directly into `axial.tag`'s module
+namespace: `from axial.chunk import ChunkError, read_chunks`). This test
+never drives a real PDF through docling; it monkeypatches
+`axial.tag.read_chunks` in place with a fake returning a fixed, synthetic
+chunk-record set regardless of what `run_tag` passes it. `run_tag`'s own
+per-chunk loop -- the actual subject of this issue -- is never bypassed;
+only its upstream chunk data source is.
+
+Migration note (issue #154, slice 04): `axial.chunk.run_chunk` (the
+retired LLM-echo chunker) is deleted; `axial.tag.run_tag` now reads chunk
+records via `axial.chunk.read_chunks` instead. This test repoints its
+monkeypatch from `tag_module.run_chunk` to `tag_module.read_chunks`
+(signature `read_chunks(source_id, **kwargs)`) accordingly -- every
+assertion below is unchanged.
 
 Seam decision 2 -- identifying "which chunk is this LLM call for" through
 the chunk's own text embedded in the prompt, exactly mirroring
@@ -297,7 +304,7 @@ def test_content_caused_failure_is_quarantined_and_source_completes(
     poisoned_text = poisoned_chunk["text"]
     survivors = [c for i, c in enumerate(chunk_records) if i != POISONED_INDEX]
 
-    monkeypatch.setattr(tag_module, "run_chunk", lambda path, **kwargs: chunk_records)
+    monkeypatch.setattr(tag_module, "read_chunks", lambda source_id, **kwargs: chunk_records)
 
     source_path = _make_source(tmp_path, f"poisoned_source_{failure_mode}.txt")
     source_id = compute_source_id(source_path)
@@ -412,7 +419,7 @@ def test_transient_failure_is_not_quarantined_and_still_propagates(tmp_path, mon
     poisoned_chunk = chunk_records[POISONED_INDEX]
     poisoned_text = poisoned_chunk["text"]
 
-    monkeypatch.setattr(tag_module, "run_chunk", lambda path, **kwargs: chunk_records)
+    monkeypatch.setattr(tag_module, "read_chunks", lambda source_id, **kwargs: chunk_records)
 
     source_path = _make_source(tmp_path, "transient_source.txt")
     source_id = compute_source_id(source_path)
@@ -461,7 +468,7 @@ def test_resume_skips_already_quarantined_chunk(tmp_path, monkeypatch, capsys):
     quarantined_text = quarantined_chunk["text"]
     others = [c for i, c in enumerate(chunk_records) if i != POISONED_INDEX]
 
-    monkeypatch.setattr(tag_module, "run_chunk", lambda path, **kwargs: chunk_records)
+    monkeypatch.setattr(tag_module, "read_chunks", lambda source_id, **kwargs: chunk_records)
 
     source_path = _make_source(tmp_path, "resume_source.txt")
     source_id = compute_source_id(source_path)

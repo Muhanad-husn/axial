@@ -44,22 +44,30 @@ error, a fixture-arrangement error, or a call-signature mismatch -- only on
 the guard-behavior assertions below.
 
 Seam decision 1 -- bypassing chunk.py/docling entirely via monkeypatched
-`axial.tag.run_chunk` / `axial.artifacts.extract`, calling `run_tag` /
+`axial.tag.read_chunks` / `axial.artifacts.extract`, calling `run_tag` /
 `run_artifacts` directly
 -----------------------------------------------------------------------
 Mirrors tests/test_xref_input_guard.py's seam decision (which monkeypatches
-`axial.xref.run_chunk`/`run_artifacts` to supply synthetic records with no
-docling/network) and tests/test_chunk_input_guard.py's seam decision 1
-(which monkeypatches `axial.chunk.extract` to supply a synthetic extraction
-tree). `axial.tag.run_tag` imports `run_chunk` directly into its own module
-namespace, so monkeypatching the module attribute `axial.tag.run_chunk`
-redirects every call to a fake returning hand-built, synthetic chunk
-records -- deliberately bypassing chunk.py's OWN guard (#118) entirely, so
-this test isolates the TAG pass's own guard, never chunk.py's (already
-locked green). Likewise `axial.artifacts.run_artifacts` imports `extract`
-directly, so monkeypatching `axial.artifacts.extract` supplies a synthetic
-extraction tree with no docling/network, isolating the ARTIFACTS pass's own
-guard.
+`axial.xref.read_chunks`/`run_artifacts` to supply synthetic records with no
+docling/network) and tests/test_chunk_backmatter_filter.py's seam decision
+1 (which monkeypatches `axial.chunk.tree_path`/`load_persisted_tree` to
+supply a synthetic extraction tree). `axial.tag.run_tag` imports
+`read_chunks` directly into its own module namespace, so monkeypatching
+the module attribute `axial.tag.read_chunks` redirects every call to a
+fake returning hand-built, synthetic chunk records -- deliberately
+bypassing chunk.py's own guard (`_garbage_section_skip_reason`, issue
+#151) entirely, so this test isolates the TAG pass's own guard, never
+chunk.py's (already locked green). Likewise `axial.artifacts.run_artifacts`
+imports `extract` directly, so monkeypatching `axial.artifacts.extract`
+supplies a synthetic extraction tree with no docling/network, isolating
+the ARTIFACTS pass's own guard.
+
+Migration note (issue #154, slice 04): `axial.chunk.run_chunk` (the
+retired LLM-echo chunker) is deleted; `axial.tag.run_tag` now reads chunk
+records via `axial.chunk.read_chunks` instead. This test repoints its
+monkeypatch from `tag_module.run_chunk` to `tag_module.read_chunks`
+(signature `read_chunks(source_id, **kwargs)`) accordingly -- every
+assertion below is unchanged.
 
 Seam decision 2 -- the artifacts pass's guarded input is the artifact
 node's own `text` field
@@ -154,8 +162,8 @@ assert (sum(1 for c in GUARDED_TEXT if not c.isalpha()) / len(GUARDED_TEXT)) > 0
 # --- tag pass -----------------------------------------------------------
 
 
-def _fake_run_chunk(chunk_records):
-    def fake(path, **kwargs):
+def _fake_read_chunks(chunk_records):
+    def fake(source_id, **kwargs):
         return chunk_records
 
     return fake
@@ -188,7 +196,7 @@ def test_tag_pass_skips_oversized_non_prose_chunk_never_sent_to_llm(tmp_path, mo
         {"chunk_id": "index-822", "section": "Back Matter", "text": GUARDED_TEXT},
         {"chunk_id": "prose-b", "section": "Conclusion", "text": PROSE_TEXT_B},
     ]
-    monkeypatch.setattr(tag_module, "run_chunk", _fake_run_chunk(chunk_records))
+    monkeypatch.setattr(tag_module, "read_chunks", _fake_read_chunks(chunk_records))
 
     source_path = tmp_path / "tag_guard_source.txt"
     source_path.write_text("tag guard test source", encoding="utf-8")
@@ -239,7 +247,7 @@ def test_tag_pass_source_of_only_guarded_chunk_completes_with_zero_records(
     raising -- mirrors tests/test_xref_input_guard.py's equivalent edge
     case."""
     chunk_records = [{"chunk_id": "index-only", "section": "Back Matter", "text": GUARDED_TEXT}]
-    monkeypatch.setattr(tag_module, "run_chunk", _fake_run_chunk(chunk_records))
+    monkeypatch.setattr(tag_module, "read_chunks", _fake_read_chunks(chunk_records))
 
     source_path = tmp_path / "tag_guard_only_source.txt"
     source_path.write_text("only back-matter", encoding="utf-8")

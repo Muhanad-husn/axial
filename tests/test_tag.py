@@ -360,9 +360,8 @@ from pathlib import Path
 
 import pytest
 
-from axial.chunk import run_chunk
+from axial.chunk import HashingEmbedder, read_chunks, run_chunk_embedding
 from axial.envelope import compute_source_id
-from axial.llm import StubLLMClient
 from axial.schema import load_schema
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -525,7 +524,15 @@ def _arrange_stored_envelope() -> Path:
     """Pre-place the real tree fixture, then run `axial envelope` with the
     stub provider so a stored envelope exists on disk before tagging, and
     return its path. Asserts the arrange step itself succeeded and produced
-    exactly one new envelope file."""
+    exactly one new envelope file.
+
+    Also writes the real, on-disk chunk artifact for this fixture (issue
+    #154 slice 04: `axial tag` no longer computes chunks itself -- it reads
+    `data/chunks/<source_id>.jsonl` via `axial.chunk.read_chunks`, PRD §7.7,
+    and fails clearly if that artifact is absent). `run_chunk_embedding`
+    (the stub/offline `HashingEmbedder`) writes it into the SAME cwd-relative
+    `data/chunks/` the `axial tag` subprocess below reads from (both resolve
+    against REPO_ROOT, matching `_run_axial`'s own fixed `cwd=REPO_ROOT`)."""
     _place_tree_fixture(THESIS_PAPER_PDF, THESIS_PAPER_TREE_FIXTURE)
     before_files = _existing_envelope_files()
 
@@ -543,6 +550,9 @@ def _arrange_stored_envelope() -> Path:
         f"{ENVELOPES_DIR} after `axial envelope`, got {len(new_files)}: "
         f"{sorted(new_files)}\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
+
+    run_chunk_embedding(THESIS_PAPER_PDF, embedder=HashingEmbedder())
+
     return next(iter(new_files))
 
 
@@ -551,20 +561,19 @@ def test_tag_emits_one_schema_valid_versioned_record_per_chunk(clean_envelopes):
 
     # --- independently obtain the chunk_id set the chunking pass produces
     # for this fixture, to check against below without hardcoding a count.
-    # Migrated off a subprocess call to the standalone `axial chunk` CLI
-    # (issue #151 slice 01): that CLI verb now runs the NEW embedding-based
-    # chunk mechanism and no longer emits chunk records on stdout at all.
-    # The OLD mechanism `axial tag` itself still calls in-process
-    # (`axial.chunk.run_chunk`) ships unchanged until issue #154 retires
-    # it, so calling it here in-process too (stub client, same stored
-    # envelope, same cwd -- REPO_ROOT, matching `_run_axial`'s own fixed
-    # `cwd=REPO_ROOT`) keeps this ground truth identical to what `axial
-    # tag`'s own internal call already produces. ---
-    chunk_records = run_chunk(THESIS_PAPER_PDF, client=StubLLMClient())
+    # Issue #154 slice 04: `axial tag` no longer computes chunks itself --
+    # it reads the same on-disk chunk artifact (`axial.chunk.read_chunks`,
+    # PRD §7.7) that `_arrange_stored_envelope` above already wrote via
+    # `run_chunk_embedding`. Reading it back here (rather than recomputing)
+    # is the ground truth for "what `axial tag`'s own internal read_chunks
+    # call will see" -- both resolve the same cwd-relative `data/chunks/`
+    # path (REPO_ROOT). ---
+    source_id = compute_source_id(THESIS_PAPER_PDF)
+    chunk_records = read_chunks(source_id)
     expected_chunk_ids = [r.get("chunk_id") for r in chunk_records]
     assert expected_chunk_ids and all(expected_chunk_ids), (
-        f"arrange step failed: expected `run_chunk` to emit chunk records "
-        f"each carrying a non-empty chunk_id, got: {chunk_records!r}"
+        f"arrange step failed: expected the on-disk chunk artifact to carry "
+        f"chunk records each with a non-empty chunk_id, got: {chunk_records!r}"
     )
 
     # --- load the schema at test time: never hardcode the role_in_argument

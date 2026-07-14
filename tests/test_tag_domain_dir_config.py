@@ -116,6 +116,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from axial.chunk import HashingEmbedder, run_chunk_embedding
 from axial.cli import build_parser
 from axial.envelope import compute_source_id, run_envelope
 from axial.llm import StubLLMClient
@@ -175,6 +176,22 @@ def _arrange_stored_envelope(envelopes_dir: Path, client: StubLLMClient, config_
     return envelope
 
 
+def _arrange_chunk_artifact(chunks_dir: Path, config_path: Path) -> None:
+    """Write the real, on-disk chunk artifact for the fixture IN-PROCESS
+    (`axial.chunk.run_chunk_embedding`, the stub/offline `HashingEmbedder`)
+    at `chunks_dir` (issue #154 slice 04: `axial tag` no longer computes
+    chunks itself -- it reads `<chunks_dir>/<source_id>.jsonl` via
+    `axial.chunk.read_chunks`, and no longer accepts an `envelopes_dir`
+    parameter at all). Requires `_place_tree_fixture`/`_arrange_stored_
+    envelope` to have already placed the persisted tree this reads."""
+    run_chunk_embedding(
+        THESIS_PAPER_PDF,
+        embedder=HashingEmbedder(),
+        chunks_dir=chunks_dir,
+        config_path=config_path,
+    )
+
+
 def _write_pipeline_config(config_path: Path, paths: dict[str, str]) -> None:
     """Write a minimal `config/pipeline.yaml`-shaped file at `config_path`
     with the given `paths:` block (no `llm:` block needed -- every call
@@ -224,11 +241,13 @@ def test_tag_resolves_domain_dir_from_pipeline_config_when_no_override(tmp_path)
     )
 
     envelopes_dir = tmp_path / "envelopes"
+    chunks_dir = tmp_path / "chunks"
     config_path = tmp_path / "pipeline.yaml"
     _write_pipeline_config(config_path, {"domain_dir": str(ALT_DOMAIN_DIR)})
 
     client = StubLLMClient()
     _arrange_stored_envelope(envelopes_dir, client, config_path)
+    _arrange_chunk_artifact(chunks_dir, config_path)
 
     # --- the acceptance criterion itself: no `domain_dir` override given,
     # so resolution must come from config_path's paths.domain_dir (seam
@@ -236,7 +255,7 @@ def test_tag_resolves_domain_dir_from_pipeline_config_when_no_override(tmp_path)
     records = run_tag(
         THESIS_PAPER_PDF,
         client=client,
-        envelopes_dir=envelopes_dir,
+        chunks_dir=chunks_dir,
         config_path=config_path,
     )
 
@@ -274,6 +293,7 @@ def test_tag_falls_back_to_syria_domain_when_pipeline_config_declares_no_domain_
     syria_schema = load_schema(str(SYRIA_DOMAIN_DIR))
 
     envelopes_dir = tmp_path / "envelopes"
+    chunks_dir = tmp_path / "chunks"
     config_path = tmp_path / "pipeline.yaml"
     _write_pipeline_config(
         config_path,
@@ -282,11 +302,12 @@ def test_tag_falls_back_to_syria_domain_when_pipeline_config_declares_no_domain_
 
     client = StubLLMClient()
     _arrange_stored_envelope(envelopes_dir, client, config_path)
+    _arrange_chunk_artifact(chunks_dir, config_path)
 
     records = run_tag(
         THESIS_PAPER_PDF,
         client=client,
-        envelopes_dir=envelopes_dir,
+        chunks_dir=chunks_dir,
         config_path=config_path,
     )
 
@@ -347,6 +368,13 @@ def test_tag_cli_end_to_end_falls_back_to_syria_with_real_pipeline_config(clean_
         f"stderr: {envelope_result.stderr!r}"
     )
 
+    # issue #154 slice 04: `axial tag` no longer computes chunks itself --
+    # it reads `data/chunks/<source_id>.jsonl` (via `axial.chunk.
+    # read_chunks`) and fails clearly if absent. Write it here, in-process,
+    # into the SAME cwd-relative `data/chunks/` the `axial tag` subprocess
+    # below (cwd=REPO_ROOT) reads from.
+    run_chunk_embedding(THESIS_PAPER_PDF, embedder=HashingEmbedder())
+
     result = subprocess.run(
         ["uv", "run", "axial", "tag", str(THESIS_PAPER_PDF)],
         cwd=REPO_ROOT,
@@ -396,6 +424,7 @@ def test_tag_explicit_domain_override_wins_over_configured_domain_dir(tmp_path):
     )
 
     envelopes_dir = tmp_path / "envelopes"
+    chunks_dir = tmp_path / "chunks"
     config_path = tmp_path / "pipeline.yaml"
     # config points at the FIXTURE domain -- the override below must still
     # win over this.
@@ -403,11 +432,12 @@ def test_tag_explicit_domain_override_wins_over_configured_domain_dir(tmp_path):
 
     client = StubLLMClient()
     _arrange_stored_envelope(envelopes_dir, client, config_path)
+    _arrange_chunk_artifact(chunks_dir, config_path)
 
     records = run_tag(
         THESIS_PAPER_PDF,
         client=client,
-        envelopes_dir=envelopes_dir,
+        chunks_dir=chunks_dir,
         config_path=config_path,
         domain_dir=str(SYRIA_DOMAIN_DIR),
     )
