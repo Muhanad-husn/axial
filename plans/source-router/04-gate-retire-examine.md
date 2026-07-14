@@ -5,7 +5,7 @@
 - **GitHub issue:** #169
 - **Branch:** feat/source-router/04-gate-retire-examine
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ⏳ PR open — https://github.com/Muhanad-husn/axial/pull/174 (awaiting founder approval)
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
