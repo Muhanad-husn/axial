@@ -1,6 +1,8 @@
-"""Source router (issue #167, PRD §7.8 / §5 step 2b / §8 P0-4): the single,
-shared classification that maps a docling structural `label` (§7.4) to
-exactly one of three routes -- `PROSE`, `ARTIFACT`, `APPARATUS` -- so that no
+"""Source router (issue #167, PRD §7.8 / §5 step 2b / §8 P0-4; issue #172):
+the single, shared classification that maps a structural `label` -- either
+docling's own token (§7.4) or, on the Unstructured fallback extraction path
+(P0-2), `unstructured`'s PascalCase `element.category` spelling -- to exactly
+one of three routes -- `PROSE`, `ARTIFACT`, `APPARATUS` -- so that no
 downstream pass (chunk, artifact, tag, cross-reference) re-derives the
 prose/non-prose decision for itself (§7.8 "one shared classification"). The
 router reads the persisted tree only; it triggers no re-extraction and calls
@@ -17,6 +19,16 @@ no model.
   enclosing section is back-matter. **Dropped:** not chunked, not
   artifact-noted; each drop is recorded with a reason (§7.8 "single source of
   skip truth").
+
+**Label normalization (issue #172).** `route_for` and `apparatus_reason`
+first resolve `label` to a canonical docling token via a shared alias table
+(`_canonical_token`) before consulting the mapping above. Docling's own
+tokens resolve to themselves; Unstructured's disjoint `element.category`
+spellings (e.g. `Header`, `Table`, `ListItem`) resolve to the docling token
+they mean (`page_header`, `table`, `list_item`), so both extraction paths
+share the one classification. A label that is neither a docling token nor a
+known Unstructured alias passes through unchanged and falls through to the
+fail-open rule below -- the alias table is not a catch-all.
 
 **Unknown label fails open to prose.** A block whose `label` is absent,
 empty, or not in the mapping routes to prose, never silently dropped (§7.8) --
@@ -49,6 +61,41 @@ _PROSE_LABELS = frozenset({"text", "section_header", "title"})
 _ARTIFACT_LABELS = frozenset({"table", "picture", "caption"})
 _APPARATUS_LABELS = frozenset({"document_index", "footnote", "page_header", "page_footer"})
 
+# Issue #172: normalized-key alias table resolving BOTH docling's own tokens
+# (mapped to themselves) and the Unstructured fallback extractor's disjoint
+# `element.category` spellings to the one canonical docling token §7.8's
+# route mapping above is written in terms of. The lookup key is the raw
+# label casefolded with separators (`-`, ` `) collapsed to `_` (see
+# `_canonical_token`), so `"Header"`, `"header"`, and `"Page-Header"` all
+# normalize before this table is consulted. Single source: every downstream
+# route/reason decision runs on the resolved token, never on the raw label.
+_LABEL_ALIASES = {
+    # docling's own tokens, identity-mapped so this table is the one place
+    # normalization happens for both extraction paths.
+    "text": "text",
+    "section_header": "section_header",
+    "title": "title",
+    "table": "table",
+    "picture": "picture",
+    "caption": "caption",
+    "document_index": "document_index",
+    "footnote": "footnote",
+    "page_header": "page_header",
+    "page_footer": "page_footer",
+    "list_item": "list_item",
+    # Unstructured `element.category` aliases (verified in-sandbox against
+    # the installed `unstructured` package).
+    "header": "page_header",
+    "footer": "page_footer",
+    "tablechunk": "table",
+    "image": "picture",
+    "figure": "picture",
+    "figurecaption": "caption",
+    "listitem": "list_item",
+    "narrativetext": "text",
+    "uncategorizedtext": "text",
+}
+
 # Route-specific, human-readable reasons for the router-owned skip sidecar
 # (§7.8 "each drop is recorded with a reason"; issue #167 plan's own worked
 # examples). `list_item` here names the back-matter-list_item apparatus case
@@ -62,21 +109,43 @@ _APPARATUS_REASONS = {
 }
 
 
-def route_for(label: str | None, *, in_back_matter_section: bool = False) -> str:
-    """The single shared classification (§7.8): map a docling structural
-    `label` to `PROSE` / `ARTIFACT` / `APPARATUS`.
+def _canonical_token(label: str | None) -> str:
+    """Resolve a raw `label` (docling token or Unstructured `element.category`
+    spelling) to the one canonical docling token `route_for`/`apparatus_reason`
+    both classify on (issue #172). Shared by both so they can't drift.
 
-    `label` is normalized by stripping surrounding whitespace only -- docling
-    labels are already lowercase, stable tokens (see `extract.py`'s
-    `_leaf_node`), so no further normalization is warranted. An absent, empty,
-    or unrecognized label fails open to `PROSE` (§7.8's hard requirement:
-    never silently drop on an unknown label).
+    Strips surrounding whitespace, then -- if that leaves anything -- looks
+    up a casefolded, separator-normalized key (`-`/` ` -> `_`) in
+    `_LABEL_ALIASES`. A label that isn't a known docling token or
+    Unstructured alias passes through unchanged (stripped only): it won't
+    match any route set below, so it still falls open to `PROSE` (§7.8) --
+    this table is a normalization step, never a catch-all.
+    """
+    stripped = (label or "").strip()
+    if not stripped:
+        return ""
+    key = stripped.casefold().replace("-", "_").replace(" ", "_")
+    return _LABEL_ALIASES.get(key, stripped)
+
+
+def route_for(label: str | None, *, in_back_matter_section: bool = False) -> str:
+    """The single shared classification (§7.8): map a structural `label` --
+    docling's own token or, on the Unstructured fallback path, its aliased
+    `element.category` spelling (issue #172) -- to `PROSE` / `ARTIFACT` /
+    `APPARATUS`.
+
+    `label` is first resolved to a canonical docling token via
+    `_canonical_token` (docling tokens pass through unchanged; Unstructured
+    spellings normalize to the docling token they mean), and the route
+    mapping below runs on that resolved token. An absent, empty, or
+    genuinely unrecognized label fails open to `PROSE` (§7.8's hard
+    requirement: never silently drop on an unknown label).
 
     `list_item` is prose by default; it resolves to apparatus only when
     `in_back_matter_section` is true, per §7.8's own worked example. The
     caller supplies that context -- see `iter_routed_blocks`.
     """
-    normalized = (label or "").strip()
+    normalized = _canonical_token(label)
     if not normalized:
         return PROSE
     if normalized == "list_item":
@@ -94,12 +163,14 @@ def apparatus_reason(label: str | None) -> str:
     """The route-specific reason string for an apparatus-routed `label`
     (§7.8 "each drop is recorded with a reason"). Only meaningful for a label
     that `route_for` actually resolves to `APPARATUS`; callers should only
-    call this once they already know the route. Falls back to a generic
+    call this once they already know the route. Shares `_canonical_token`
+    with `route_for` (issue #172) so an aliased Unstructured label (e.g.
+    `Header`) still resolves to its docling reason. Falls back to a generic
     (still non-empty) reason for any apparatus label this module doesn't yet
     have a bespoke phrase for, so a future apparatus label addition never
     regresses to an empty reason string.
     """
-    normalized = (label or "").strip()
+    normalized = _canonical_token(label)
     return _APPARATUS_REASONS.get(normalized, f"apparatus: {normalized or 'unknown label'}")
 
 
