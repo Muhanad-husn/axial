@@ -110,13 +110,16 @@ concurrently-written `data/` tree a live ingestion run also uses.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import subprocess
 from pathlib import Path
 
+from axial.chunk import run_chunk
 from axial.envelope import compute_source_id
+from axial.llm import StubLLMClient
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "envelope"
@@ -217,12 +220,27 @@ def _run_axial(
     )
 
 
+@contextlib.contextmanager
+def _chdir(path: Path):
+    """Temporarily change the process cwd to `path` (issue #151 slice 01
+    migration -- see `_arrange_expected_chunk_records` below): the OLD
+    `axial.chunk.run_chunk` mechanism calls `axial.extract.extract`
+    internally, which resolves its persisted-tree cache directory
+    (`axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
+    override parameter. Calling `run_chunk` in-process instead of shelling
+    out to `axial chunk` (whose CLI verb now runs the NEW embedding-based
+    mechanism as of issue #151) needs this to reproduce the exact
+    resolution the old subprocess's own `cwd=` argument achieved."""
+    previous = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
 def _run_envelope(provider: str, *args: str, cwd: Path) -> subprocess.CompletedProcess:
     return _run_axial(["envelope", *args], provider, cwd=cwd)
-
-
-def _run_chunk(provider: str, *args: str, cwd: Path) -> subprocess.CompletedProcess:
-    return _run_axial(["chunk", *args], provider, cwd=cwd)
 
 
 def _run_vault_write(provider: str, *args: str, cwd: Path) -> subprocess.CompletedProcess:
@@ -285,68 +303,24 @@ def _arrange_stored_envelope(root: Path, source_path: Path, tree: dict) -> Path:
     return next(iter(new_files))
 
 
-def _parse_chunk_records(stdout: str) -> list[dict]:
-    """Parse chunk records from `axial chunk`'s stdout (reused verbatim from
-    tests/test_vault_write.py's helper of the same name)."""
-    stripped = stdout.strip()
-
-    try:
-        data = json.loads(stripped)
-    except json.JSONDecodeError:
-        data = None
-
-    if data is not None:
-        if isinstance(data, dict):
-            assert "chunks" in data, (
-                f"expected a top-level 'chunks' key when chunk stdout is a "
-                f"JSON object, got keys: {sorted(data.keys())}; stdout: {stdout!r}"
-            )
-            records = data["chunks"]
-        else:
-            records = data
-        assert isinstance(records, list), (
-            f"expected chunk records to be a JSON array (bare, or under a "
-            f"'chunks' key), got {type(records).__name__}: {records!r}"
-        )
-        return records
-
-    records = []
-    for line in stripped.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            records.append(json.loads(line))
-        except json.JSONDecodeError as exc:
-            raise AssertionError(
-                f"expected chunk stdout to be either one parseable JSON "
-                f"document (a bare array, or an object with a top-level "
-                f"'chunks' array) or newline-delimited JSON (one chunk "
-                f"record object per line); line {line!r} failed to parse "
-                f"({exc}). Full stdout: {stdout!r}"
-            ) from None
-    assert records, (
-        f"expected at least one parseable chunk record in stdout, got none. stdout: {stdout!r}"
-    )
-    return records
-
-
 def _arrange_expected_chunk_records(root: Path, source_path: Path) -> list[dict]:
-    """Independently run `axial chunk` (stub) to obtain the real chunk
-    records for `source_path`, used as the expected set `vault write` must
-    match filename-for-filename (see module docstring, seam decision 3).
-    Requires a stored envelope to already exist."""
-    result = _run_chunk("stub", str(source_path), cwd=root)
-    _assert_not_argparse_fallback(result, "chunk")
-    assert result.returncode == 0, (
-        f"arrange step failed: expected exit code 0 for `axial chunk` on "
-        f"{source_path} with the stub LLM provider, got {result.returncode}\n"
-        f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
-    )
-    records = _parse_chunk_records(result.stdout)
+    """Independently call the OLD `axial.chunk.run_chunk` mechanism
+    IN-PROCESS (stub client) to obtain the real chunk records for
+    `source_path`, used as the expected set `vault write` must match
+    filename-for-filename (see module docstring, seam decision 3). Requires
+    a stored envelope to already exist.
+
+    Migrated off a subprocess call to the standalone `axial chunk` CLI
+    (issue #151 slice 01): that CLI verb now runs the NEW embedding-based
+    chunk mechanism and no longer emits chunk records on stdout at all. The
+    OLD mechanism `axial vault write` itself still calls in-process
+    (`axial.chunk.run_chunk`) ships unchanged until issue #154 retires it,
+    so calling it here in-process too keeps this ground truth identical to
+    what that unchanged call site actually produces."""
+    with _chdir(root):
+        records = run_chunk(source_path, client=StubLLMClient(), envelopes_dir=_envelopes_dir(root))
     assert len(records) >= 1, (
-        f"arrange step failed: expected at least one chunk record from "
-        f"`axial chunk`, got {len(records)}; stdout: {result.stdout!r}"
+        f"arrange step failed: expected at least one chunk record from run_chunk, got {len(records)}"
     )
     for record in records:
         assert isinstance(record.get("chunk_id"), str) and record["chunk_id"].strip(), (

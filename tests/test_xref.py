@@ -183,7 +183,9 @@ from pathlib import Path
 
 import pytest
 
+from axial.chunk import run_chunk
 from axial.envelope import compute_source_id
+from axial.llm import StubLLMClient
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "extract"
@@ -288,10 +290,6 @@ def _parse_json_records(stdout: str, wrapper_key: str, noun: str) -> list[dict]:
     return records
 
 
-def _parse_chunk_records(stdout: str) -> list[dict]:
-    return _parse_json_records(stdout, "chunks", "chunk")
-
-
 def _parse_artifact_records(stdout: str) -> list[dict]:
     return _parse_json_records(stdout, "artifacts", "artifact")
 
@@ -341,21 +339,22 @@ def _arrange_stored_envelope() -> None:
 
 
 def _arrange_known_chunk_ids() -> set[str]:
-    """Run `axial chunk` (already green, per tests/test_chunk.py) to
-    discover the exact set of real chunk_ids this fixture yields -- see
-    module docstring, seam decision 3."""
-    result = _run_axial("chunk", str(PROSE_AND_TABLE_PDF))
-    _assert_not_argparse_fallback(result, "chunk")
-    assert result.returncode == 0, (
-        f"arrange step failed: expected exit code 0 for `axial chunk` on "
-        f"the fixture with the stub LLM provider and a stored envelope "
-        f"present, got {result.returncode}\n"
-        f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
-    )
-    records = _parse_chunk_records(result.stdout)
+    """Independently call the OLD `axial.chunk.run_chunk` mechanism
+    IN-PROCESS (stub client) to discover the exact set of real chunk_ids
+    this fixture yields -- see module docstring, seam decision 3.
+
+    Migrated off a subprocess call to the standalone `axial chunk` CLI
+    (issue #151 slice 01): that CLI verb now runs the NEW embedding-based
+    chunk mechanism and no longer emits chunk records on stdout at all. The
+    OLD mechanism `axial xref` itself still calls in-process
+    (`axial.chunk.run_chunk`) ships unchanged until issue #154 retires it,
+    so calling it here in-process too (cwd already REPO_ROOT, matching
+    `_run_axial`'s own fixed `cwd=REPO_ROOT`) keeps this ground truth
+    identical to what that unchanged call site actually produces."""
+    records = run_chunk(PROSE_AND_TABLE_PDF, client=StubLLMClient())
     chunk_ids = {r.get("chunk_id") for r in records}
     assert chunk_ids and all(isinstance(cid, str) and cid for cid in chunk_ids), (
-        f"arrange step failed: expected `axial chunk` to yield at least one "
+        f"arrange step failed: expected run_chunk to yield at least one "
         f"chunk record with a non-empty chunk_id, got records: {records!r}"
     )
     return chunk_ids

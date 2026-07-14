@@ -177,6 +177,7 @@ its own output moved.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -184,7 +185,9 @@ from pathlib import Path
 
 import yaml
 
+from axial.chunk import run_chunk
 from axial.envelope import compute_source_id
+from axial.llm import StubLLMClient
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "extract"
@@ -260,12 +263,27 @@ def _run_axial(
     )
 
 
+@contextlib.contextmanager
+def _chdir(path: Path):
+    """Temporarily change the process cwd to `path` (issue #151 slice 01
+    migration -- see `_arrange_expected_chunk_records` below): the OLD
+    `axial.chunk.run_chunk` mechanism calls `axial.extract.extract`
+    internally, which resolves its persisted-tree cache directory
+    (`axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
+    override parameter. Calling `run_chunk` in-process instead of shelling
+    out to `axial chunk` (whose CLI verb now runs the NEW embedding-based
+    mechanism as of issue #151) needs this to reproduce the exact
+    resolution the old subprocess's own `cwd=` argument achieved."""
+    previous = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
 def _run_envelope(provider: str, *args: str, cwd: Path) -> subprocess.CompletedProcess:
     return _run_axial(["envelope", *args], provider, cwd=cwd)
-
-
-def _run_chunk(provider: str, *args: str, cwd: Path) -> subprocess.CompletedProcess:
-    return _run_axial(["chunk", *args], provider, cwd=cwd)
 
 
 def _run_artifacts(
@@ -382,20 +400,24 @@ def _parse_json_records(stdout: str, *, array_key: str, kind: str) -> list[dict]
 
 
 def _arrange_expected_chunk_records(root: Path) -> list[dict]:
-    """Independently run `axial chunk` (stub) to obtain the real chunk
-    records for the fixture -- the expected prose set `vault write` must
-    reproduce (see module docstring, seam decision 1)."""
-    result = _run_chunk("stub", str(PROSE_AND_TABLE_PDF), cwd=root)
-    _assert_not_argparse_fallback(result, "chunk")
-    assert result.returncode == 0, (
-        f"arrange step failed: expected exit code 0 for `axial chunk` on "
-        f"the fixture with the stub LLM provider, got {result.returncode}\n"
-        f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
-    )
-    records = _parse_json_records(result.stdout, array_key="chunks", kind="chunk")
+    """Independently call the OLD `axial.chunk.run_chunk` mechanism
+    IN-PROCESS (stub client) to obtain the real chunk records for the
+    fixture -- the expected prose set `vault write` must reproduce (see
+    module docstring, seam decision 1).
+
+    Migrated off a subprocess call to the standalone `axial chunk` CLI
+    (issue #151 slice 01): that CLI verb now runs the NEW embedding-based
+    chunk mechanism and no longer emits chunk records on stdout at all. The
+    OLD mechanism `axial vault write` itself still calls in-process
+    (`axial.chunk.run_chunk`) ships unchanged until issue #154 retires it,
+    so calling it here in-process too keeps this ground truth identical to
+    what that unchanged call site actually produces."""
+    with _chdir(root):
+        records = run_chunk(
+            PROSE_AND_TABLE_PDF, client=StubLLMClient(), envelopes_dir=_envelopes_dir(root)
+        )
     assert len(records) >= 1, (
-        f"arrange step failed: expected at least one chunk record from "
-        f"`axial chunk`, got {len(records)}; stdout: {result.stdout!r}"
+        f"arrange step failed: expected at least one chunk record from run_chunk, got {len(records)}"
     )
     for record in records:
         assert isinstance(record.get("chunk_id"), str) and record["chunk_id"].strip(), (
