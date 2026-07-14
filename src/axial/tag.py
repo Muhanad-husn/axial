@@ -5,16 +5,19 @@ single cardinality) plus `field`, `claim_type`, and `theory_school` (issue
 whose vocabulary is loaded from the domain schema, never hardcoded (PRD §5
 stage 6, §7.1).
 
-This pass runs the argumentative-chunking pass internally
-(`axial.chunk.run_chunk`) rather than reimplementing it: chunk_id/section
-provenance is computed exactly once, in chunk.py. For each resulting prose
-chunk, `run_tag` composes one codebook-driven prompt (`axial.codebook.
-load_codebook`) covering every axis it will assign, makes one LLM call with
-a dedicated `pass_name="tag"` (`axial.llm.TAG_PASS_NAME`), parses the
-model's single response into each axis's value(s), and validates every
-value against the loaded schema (`axial.schema.load_schema`): any value
-absent from its axis's tag set is a hard error, never a silent pass (PRD
-§7.1, P0-6).
+This pass reads its chunk records from the on-disk chunk artifact
+(`axial.chunk.read_chunks`, PRD §7.7) rather than computing chunks itself
+(issue #154, slice 04 of the chunk-redesign subproject): chunk_id/section
+provenance is computed exactly once, by `axial chunk` (see chunk.py), and
+this pass never (re)derives chunk boundaries -- `read_chunks` raises a clear
+error telling the operator to run `axial chunk` first when no artifact
+exists yet. For each resulting prose chunk, `run_tag` composes one
+codebook-driven prompt (`axial.codebook.load_codebook`) covering every axis
+it will assign, makes one LLM call with a dedicated `pass_name="tag"`
+(`axial.llm.TAG_PASS_NAME`), parses the model's single response into each
+axis's value(s), and validates every value against the loaded schema
+(`axial.schema.load_schema`): any value absent from its axis's tag set is a
+hard error, never a silent pass (PRD §7.1, P0-6).
 
 How each axis is parsed/validated is dispatched on the loaded schema's own
 `Axis.cardinality` -- never on the axis's name -- so adding another axis of
@@ -61,13 +64,16 @@ import httpx
 
 import yaml
 
-from axial.chunk import ChunkError, run_chunk
+from axial.chunk import ChunkError, MissingSourceError as _ChunkMissingSourceError, read_chunks
 from axial.checkpoint import (
     append_checkpoint_record,
     heal_torn_checkpoint_tail as _shared_heal_torn_checkpoint_tail,
     load_checkpoint_records,
 )
-from axial.envelope import compute_source_id
+from axial.envelope import (
+    MissingSourceError as _EnvelopeMissingSourceError,
+    compute_source_id,
+)
 from axial.codebook import Codebook, CodebookError, load_codebook
 from axial.llm import (
     DEFAULT_PIPELINE_CONFIG_PATH,
@@ -260,9 +266,12 @@ class CodebookLoadFailedError(TagError):
 
 
 class ChunkingFailedError(TagError):
-    """Raised when the internal argumentative-chunking pass fails -- the tag
-    pass never reimplements chunking, so any chunk.py error is wrapped and
-    surfaced here instead."""
+    """Raised when reading the on-disk chunk artifact fails -- e.g. no
+    source file, or no chunk artifact yet (`axial.chunk.
+    MissingChunkArtifactError`, telling the operator to run `axial chunk`
+    first). The tag pass never (re)computes chunk boundaries itself, so any
+    `axial.chunk.ChunkError` from `read_chunks` is wrapped and surfaced here
+    instead."""
 
     def __init__(self, cause: ChunkError):
         self.cause = cause
@@ -1042,7 +1051,6 @@ def _quarantine_chunk(
 def run_tag(
     source_path: str | Path,
     client: LLMClient | None = None,
-    envelopes_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     domain_dir: str | Path | None = None,
     tags_dir: Path | None = None,
@@ -1050,18 +1058,19 @@ def run_tag(
 ) -> TaggedRecords:
     """Run the tagging pass on `source_path`.
 
-    Runs the argumentative-chunking pass internally (never reimplemented),
-    then for each resulting prose chunk makes one LLM call
-    (`pass_name=TAG_PASS_NAME`) to assign every axis the loaded schema
-    declares among `TAGGED_AXES`, validating each result against the loaded
-    domain schema. Each axis is parsed/validated by its own schema-declared
-    `cardinality` (`single` vs. one of `MULTI_VALUE_CARDINALITIES`), never
-    by axis name -- see the module docstring. When `empirical_scope`
-    resolves to `"scope:country-case"`, the same response's `country` is
-    also required (non-empty, or `CountryCaseMissingCountryError`); a value
-    outside the schema's `country_list` (Appendix C/G) is accepted verbatim
-    and logged to stderr as a candidate addition, never fatal (spec-drift
-    #77). A source whose chunking yields zero chunks yields zero tagged
+    Reads its chunk records from the on-disk chunk artifact
+    (`axial.chunk.read_chunks`, never recomputed -- issue #154), then for
+    each resulting prose chunk makes one LLM call (`pass_name=TAG_PASS_NAME`)
+    to assign every axis the loaded schema declares among `TAGGED_AXES`,
+    validating each result against the loaded domain schema. Each axis is
+    parsed/validated by its own schema-declared `cardinality` (`single` vs.
+    one of `MULTI_VALUE_CARDINALITIES`), never by axis name -- see the
+    module docstring. When `empirical_scope` resolves to
+    `"scope:country-case"`, the same response's `country` is also required
+    (non-empty, or `CountryCaseMissingCountryError`); a value outside the
+    schema's `country_list` (Appendix C/G) is accepted verbatim and logged
+    to stderr as a candidate addition, never fatal (spec-drift #77). A
+    source whose chunk artifact holds zero chunks yields zero tagged
     records without ever calling the LLM for the tag pass.
 
     `domain_dir`, when omitted, is resolved from `config_path`'s
@@ -1080,8 +1089,8 @@ def run_tag(
     and checkpointed + fresh records recombine in the chunker's stable order.
     A mid-tag failure therefore leaves every already-tagged chunk on disk, so
     the retry resumes instead of restarting. `chunks_dir`, when supplied, is
-    threaded through to the internal `run_chunk` so the chunk-pass checkpoint
-    is reused on the same terms (no chunking LLM call on a resumed run).
+    where `read_chunks` looks for the on-disk chunk artifact (defaults to the
+    same `data/chunks/` resolution `axial chunk` itself writes to).
     """
     if domain_dir is None:
         domain_dir = _default_domain_dir(config_path)
@@ -1097,26 +1106,22 @@ def run_tag(
         raise CodebookLoadFailedError(exc) from exc
 
     try:
-        chunk_records = run_chunk(
-            source_path,
-            client=client,
-            envelopes_dir=envelopes_dir,
-            config_path=config_path,
-            chunks_dir=chunks_dir,
-        )
+        source_id = compute_source_id(Path(source_path))
+    except _EnvelopeMissingSourceError as exc:
+        raise ChunkingFailedError(_ChunkMissingSourceError(exc)) from exc
+
+    try:
+        chunk_records = read_chunks(source_id, chunks_dir=chunks_dir, config_path=config_path)
     except ChunkError as exc:
         raise ChunkingFailedError(exc) from exc
 
     # Tag-pass checkpoint/resume (issue #81 point 2/3), opt-in via `tags_dir`.
-    # The checkpoint is keyed by the content-hashed source_id -- the same one
-    # `run_chunk` (which already validated the file exists, above) derives --
-    # read here from the source path, which every `axial vault write` (the only
-    # caller that supplies `tags_dir`) has on disk.
+    # The checkpoint is keyed by the content-hashed source_id -- already
+    # computed above to read the chunk artifact.
     checkpoint_path: Path | None = None
     already_tagged: dict[str, dict[str, Any]] = {}
     already_quarantined: dict[str, str] = {}
     if tags_dir is not None:
-        source_id = compute_source_id(Path(source_path))
         checkpoint_path = tags_checkpoint_path(source_id, tags_dir)
         for record in load_tag_checkpoint(checkpoint_path):
             # A checkpoint record carrying `quarantine_reason` (issue #120)

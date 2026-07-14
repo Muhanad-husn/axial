@@ -6,14 +6,15 @@ plans/minimal-ingestion/06-vault-write.md, plans/tag/04-tag-vault-frontmatter.md
 and plans/artifacts/02-artifact-pool-write.md).
 
 This pass runs the tagging pass itself, internally, via `axial.tag.run_tag`
--- exactly as `axial tag` does, which itself runs the argumentative-chunking
-pass internally -- so chunk_id/section/chunk_text provenance and every axis
-tag are computed exactly once, in tag.py (never reimplemented here). This
+-- exactly as `axial tag` does, which itself reads chunk records from the
+on-disk chunk artifact (`axial.chunk.read_chunks`, never recomputed -- issue
+#154) -- so chunk_id/section/chunk_text provenance and every axis tag are
+computed exactly once, in tag.py (never reimplemented here). This
 pass also reuses `axial.envelope.compute_source_id`/`envelope_path`/
 `_default_envelopes_dir` to locate and read the source's stored envelope
 (never recomputing it, PRD §10 "no recompute"). If no stored envelope
-exists yet, this pass raises a typed error telling the caller to run `axial
-envelope` first, mirroring `axial.chunk`'s `MissingEnvelopeError`.
+exists yet, this pass raises its own typed `MissingEnvelopeError` telling
+the caller to run `axial envelope` first.
 
 Each chunk is written to its own note at `<vault_dir>/prose/<chunk_id>.md`,
 opening with a `---`-delimited YAML frontmatter block (PyYAML `safe_dump`)
@@ -27,8 +28,9 @@ containing the chunk text.
 
 The artifact pool (`<vault_dir>/artifacts/`) is a separate surface (issue
 #32 slice 02): this pass also runs the artifact-classification pass
-internally via `axial.artifacts.run_artifacts` -- exactly as it runs
-`run_chunk` for prose -- and writes one note per classified artifact to
+internally via `axial.artifacts.run_artifacts` -- exactly as it reads the
+on-disk chunk artifact for prose -- and writes one note per classified
+artifact to
 `<vault_dir>/artifacts/<artifact_id>.md`, carrying `artifact_id`,
 `artifact_role`, `field`, and source/section provenance in its frontmatter,
 plus a `retrievable` boolean that is `False` only for the `discard` role
@@ -391,7 +393,6 @@ def run_vault_write(
         records = run_tag(
             path,
             client=client,
-            envelopes_dir=envelopes_dir,
             config_path=config_path,
             tags_dir=tags_dir,
             chunks_dir=chunks_dir,
@@ -421,7 +422,6 @@ def run_vault_write(
             path,
             client=client,
             domain_dir=domain_dir,
-            envelopes_dir=envelopes_dir,
             config_path=config_path,
             chunks_dir=chunks_dir,
             artifacts_dir=artifacts_dir,

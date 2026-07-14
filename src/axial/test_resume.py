@@ -1,15 +1,20 @@
 """Inner unit tests for per-chunk checkpoint/resume (issue #81).
 
-Covers the three seams the outer acceptance test (tests/test_vault_resume.py)
-pins from the outside:
+Covers the seams the outer acceptance test (tests/test_vault_resume.py) pins
+from the outside:
 
   1. `AXIAL_STUB_TAG_FAIL_AT` -- the per-process, 1-indexed tag-pass
      fault-injection counter in `axial.llm`.
-  2. The chunk-pass checkpoint (`data/chunks/<source_id>.jsonl`): written
-     once after chunking, reused with zero chunking LLM calls on a later run.
-  3. The tag-pass checkpoint (`data/tags/<source_id>.jsonl`): appended as
+  2. The tag-pass checkpoint (`data/tags/<source_id>.jsonl`): appended as
      each chunk is tagged, its already-present chunk_ids skipped on resume,
      records recombined in stable chunk order.
+
+The chunk-pass checkpoint/resume this file's seam 2 used to cover belonged
+to the now-deleted `run_chunk` (issue #17 slice 05); it was removed along
+with that mechanism (issue #154 slice 04). The surviving chunk stage
+(`run_chunk_embedding`) has no comparable per-section resume -- it overwrites
+its on-disk artifact fresh on every call (see its own docstring); the
+tag-pass fixtures below now stub `axial.tag.read_chunks` in its place.
 """
 
 from __future__ import annotations
@@ -19,35 +24,6 @@ import json
 import pytest
 
 from axial.llm import CHUNK_PASS_NAME, TAG_PASS_NAME, StubLLMClient
-
-
-def _tree_with_sections() -> dict:
-    return {
-        "children": [
-            {
-                "type": "prose",
-                "order": "1",
-                "text": "Introduction",
-                "children": [{"type": "prose", "order": "1.1", "text": "Intro body sentence."}],
-            },
-            {
-                "type": "prose",
-                "order": "2",
-                "text": "Conclusion",
-                "children": [
-                    {"type": "prose", "order": "2.1", "text": "Conclusion body sentence."}
-                ],
-            },
-        ]
-    }
-
-
-_ENVELOPE = {
-    "source_id": "paper-abc123",
-    "thesis": "Envelope thesis text.",
-    "scope": "Envelope scope text.",
-    "stated_argument": "Envelope stated_argument text.",
-}
 
 
 # --- seam 1: AXIAL_STUB_TAG_FAIL_AT -----------------------------------------
@@ -112,98 +88,7 @@ def test_tag_fail_at_is_honored_by_record_client(monkeypatch, tmp_path):
         client.complete("p", pass_name=TAG_PASS_NAME)
 
 
-# --- seam 2: chunk-pass checkpoint ------------------------------------------
-
-
-def _arrange_chunk_source(tmp_path, monkeypatch):
-    import axial.chunk as chunk_mod
-
-    source = tmp_path / "paper.pdf"
-    source.write_bytes(b"chunk checkpoint bytes")
-    envelopes_dir = tmp_path / "envelopes"
-    envelopes_dir.mkdir()
-    source_id = chunk_mod.compute_source_id(source)
-    env_path = chunk_mod.envelope_path(source_id, envelopes_dir)
-    env_path.write_text(json.dumps(_ENVELOPE), encoding="utf-8")
-    monkeypatch.setattr(chunk_mod, "extract", lambda path: _tree_with_sections())
-    return source, envelopes_dir, source_id
-
-
-def test_run_chunk_writes_a_source_keyed_checkpoint(monkeypatch, tmp_path):
-    import axial.chunk as chunk_mod
-
-    source, envelopes_dir, source_id = _arrange_chunk_source(tmp_path, monkeypatch)
-    chunks_dir = tmp_path / "chunks"
-
-    records = chunk_mod.run_chunk(
-        source, client=StubLLMClient(), envelopes_dir=envelopes_dir, chunks_dir=chunks_dir
-    )
-
-    checkpoint = chunks_dir / f"{source_id}.jsonl"
-    assert checkpoint.is_file()
-    lines = [
-        json.loads(line) for line in checkpoint.read_text(encoding="utf-8").splitlines() if line
-    ]
-    assert [r["chunk_id"] for r in lines] == [r["chunk_id"] for r in records]
-
-
-def test_run_chunk_reuses_checkpoint_with_zero_llm_calls(monkeypatch, tmp_path):
-    import axial.chunk as chunk_mod
-
-    source, envelopes_dir, _ = _arrange_chunk_source(tmp_path, monkeypatch)
-    chunks_dir = tmp_path / "chunks"
-
-    first = chunk_mod.run_chunk(
-        source, client=StubLLMClient(), envelopes_dir=envelopes_dir, chunks_dir=chunks_dir
-    )
-
-    second_client = StubLLMClient()
-    second = chunk_mod.run_chunk(
-        source, client=second_client, envelopes_dir=envelopes_dir, chunks_dir=chunks_dir
-    )
-
-    assert second == first
-    assert second_client.call_count == 0
-
-
-def test_run_chunk_treats_a_legacy_checkpoint_with_no_section_order_as_complete(
-    monkeypatch, tmp_path
-):
-    """Regression guard (issue #104 fix 1): a checkpoint written by the OLD
-    (pre-#104) all-or-nothing `write_chunk_checkpoint` -- atomically, once,
-    only after the whole pass already succeeded -- carries no `section_order`
-    field on any record. `done_section_orders` would otherwise come out
-    empty, making every section look unfinished: the pass would re-chunk
-    everything AND append duplicate records on top of the legacy lines,
-    corrupting the checkpoint and poisoning every already-ingested source's
-    next requeue. A legacy (no `section_order` anywhere) checkpoint must
-    instead be treated as complete and returned verbatim, with zero LLM
-    calls -- exactly like the old short-circuit."""
-    import axial.chunk as chunk_mod
-    from axial.llm import ExplodingLLMClient
-
-    source, envelopes_dir, source_id = _arrange_chunk_source(tmp_path, monkeypatch)
-    chunks_dir = tmp_path / "chunks"
-    checkpoint = chunks_dir / f"{source_id}.jsonl"
-    checkpoint.parent.mkdir(parents=True, exist_ok=True)
-
-    legacy_records = [
-        {"chunk_id": "paper-xyz_1_intro_001", "section": "Introduction", "text": "one"},
-        {"chunk_id": "paper-xyz_2_conclusion_001", "section": "Conclusion", "text": "two"},
-    ]
-    checkpoint.write_text("".join(json.dumps(r) + "\n" for r in legacy_records), encoding="utf-8")
-
-    records = chunk_mod.run_chunk(
-        source,
-        client=ExplodingLLMClient(),
-        envelopes_dir=envelopes_dir,
-        chunks_dir=chunks_dir,
-    )
-
-    assert records == legacy_records
-
-
-# --- seam 3: tag-pass checkpoint --------------------------------------------
+# --- seam 2: tag-pass checkpoint --------------------------------------------
 
 
 def _write_minimal_domain(tmp_path):
@@ -237,7 +122,7 @@ def _arrange_tag_source(tmp_path, monkeypatch):
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"tag checkpoint bytes")
     domain_dir = _write_minimal_domain(tmp_path)
-    monkeypatch.setattr(tag_mod, "run_chunk", lambda *a, **k: list(_CHUNK_RECORDS))
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *a, **k: list(_CHUNK_RECORDS))
     source_id = tag_mod.compute_source_id(source)
     return source, domain_dir, source_id
 
