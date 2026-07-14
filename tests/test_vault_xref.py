@@ -152,9 +152,8 @@ from pathlib import Path
 
 import yaml
 
-from axial.chunk import run_chunk
+from axial.chunk import HashingEmbedder, run_chunk_embedding
 from axial.envelope import compute_source_id
-from axial.llm import StubLLMClient
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "extract"
@@ -221,15 +220,13 @@ def _run_axial(
 
 @contextlib.contextmanager
 def _chdir(path: Path):
-    """Temporarily change the process cwd to `path` (issue #151 slice 01
-    migration -- see `_arrange_known_chunk_ids` below): the OLD
-    `axial.chunk.run_chunk` mechanism calls `axial.extract.extract`
-    internally, which resolves its persisted-tree cache directory
-    (`axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
-    override parameter. Calling `run_chunk` in-process instead of shelling
-    out to `axial chunk` (whose CLI verb now runs the NEW embedding-based
-    mechanism as of issue #151) needs this to reproduce the exact
-    resolution the old subprocess's own `cwd=` argument achieved."""
+    """Temporarily change the process cwd to `path` -- see
+    `_arrange_known_chunk_ids` below: `run_chunk_embedding` resolves its
+    persisted-tree read (`axial.extract.tree_path`, via `axial.extract.
+    TREES_DIR`) as a plain, cwd-relative path with no override parameter
+    (only its OWN write target, `chunks_dir`, is overridable). Calling it
+    in-process instead of shelling out to `axial chunk` needs this to
+    reproduce the exact resolution a `cwd=`-scoped subprocess would get."""
     previous = Path.cwd()
     os.chdir(path)
     try:
@@ -334,23 +331,24 @@ def _parse_json_records(stdout: str, *, array_key: str, kind: str) -> list[dict]
 
 
 def _arrange_known_chunk_ids(root: Path) -> set[str]:
-    """Independently call the OLD `axial.chunk.run_chunk` mechanism
-    IN-PROCESS (stub client) to discover the exact set of real chunk_ids
-    this fixture yields -- see module docstring, seam decision 3.
+    """Write the real, on-disk chunk artifact for this fixture IN-PROCESS
+    (`axial.chunk.run_chunk_embedding`, the stub/offline `HashingEmbedder`)
+    and return the exact set of chunk_ids it produced -- see module
+    docstring, seam decision 3.
 
-    Migrated off a subprocess call to the standalone `axial chunk` CLI
-    (issue #151 slice 01): that CLI verb now runs the NEW embedding-based
-    chunk mechanism and no longer emits chunk records on stdout at all. The
-    OLD mechanism `axial vault write` itself still calls in-process
-    (`axial.chunk.run_chunk`) ships unchanged until issue #154 retires it,
-    so calling it here in-process too keeps this ground truth identical to
-    what that unchanged call site actually produces."""
+    Issue #154 slice 04: `axial vault write` no longer computes chunks
+    itself -- it reads `data/chunks/<source_id>.jsonl` via
+    `axial.chunk.read_chunks` (PRD §7.7) instead. So this arrange step now
+    IS the thing that writes that artifact, at the exact `<root>/data/chunks/`
+    path the `axial vault write` subprocess below (run with `cwd=root`)
+    reads from."""
     with _chdir(root):
-        records = run_chunk(PROSE_AND_TABLE_PDF, client=StubLLMClient())
+        records = run_chunk_embedding(PROSE_AND_TABLE_PDF, embedder=HashingEmbedder())
     chunk_ids = {r.get("chunk_id") for r in records}
     assert chunk_ids and all(isinstance(cid, str) and cid for cid in chunk_ids), (
-        f"arrange step failed: expected run_chunk to yield at least one "
-        f"chunk record with a non-empty chunk_id, got records: {records!r}"
+        f"arrange step failed: expected run_chunk_embedding to write at "
+        f"least one chunk record with a non-empty chunk_id, got records: "
+        f"{records!r}"
     )
     return chunk_ids
 
