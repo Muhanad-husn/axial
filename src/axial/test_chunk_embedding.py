@@ -12,6 +12,7 @@ must avoid the real cwd-relative data/ directories).
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 
@@ -264,10 +265,103 @@ def test_get_embedder_stub_selection_returns_an_embedder(monkeypatch):
     assert embedder.encode(["hello world"])
 
 
-def test_get_embedder_unset_env_var_still_returns_a_usable_embedder(monkeypatch):
+def test_get_embedder_unset_env_var_selects_the_real_embedder_without_encoding(monkeypatch):
+    """Issue #159: unset AXIAL_EMBEDDER now selects the real
+    (fastembed-backed) production default, not the offline stub. This suite
+    tier (`-m "not slow"`) must never construct-and-encode that real model
+    (it would download/run the ONNX model) -- so this test only asserts
+    SELECTION (the returned embedder is a usable, real, non-hashing
+    embedder identified by its model_id), never calling `.encode()`. The
+    actual-encode contract for the real model lives in
+    tests/chunk/test_chunk_real_embedder.py's `@pytest.mark.slow` test."""
     monkeypatch.delenv(EMBEDDER_ENV_VAR, raising=False)
     embedder = get_embedder()
-    assert embedder.encode(["hello world"])
+    assert hasattr(embedder, "encode")
+    assert isinstance(embedder, chunk_mod.FastEmbedEmbedder)
+    assert not isinstance(embedder, HashingEmbedder)
+    assert "bge-small-en-v1.5" in embedder.model_id
+
+
+# --- FastEmbedEmbedder (issue #159): the real production-default model ------
+
+
+def test_fastembed_embedder_model_id_identifies_the_real_model_offline():
+    """Constructing FastEmbedEmbedder and reading model_id must never import
+    fastembed -- mirrors the outer acceptance test's lazy-import assertion,
+    scoped to the class directly rather than through get_embedder()."""
+    if "fastembed" in sys.modules:
+        pytest.skip(
+            "fastembed already imported earlier in this test process -- "
+            "cannot meaningfully prove lazy-import behavior in that state"
+        )
+
+    embedder = chunk_mod.FastEmbedEmbedder()
+
+    assert "bge-small-en-v1.5" in embedder.model_id
+    assert "fastembed" not in sys.modules
+
+
+def test_fastembed_embedder_lazy_loads_the_model_only_on_first_encode(monkeypatch):
+    """The private `_get_model` accessor is called (and its result cached)
+    only when `encode` actually runs -- not at construction."""
+    embedder = chunk_mod.FastEmbedEmbedder()
+    assert embedder._model is None
+
+    calls = []
+
+    class _FakeModel:
+        def embed(self, texts):
+            calls.append(list(texts))
+            return iter([[0.1, 0.2, 0.3] for _ in texts])
+
+    fake_model = _FakeModel()
+    monkeypatch.setattr(embedder, "_get_model", lambda: fake_model)
+
+    vectors = embedder.encode(["one", "two"])
+
+    assert calls == [["one", "two"]]
+    assert vectors == [[0.1, 0.2, 0.3], [0.1, 0.2, 0.3]]
+
+
+def test_fastembed_embedder_encode_preserves_input_order_and_shape(monkeypatch):
+    """`encode` returns one vector per input text, in the SAME order, each
+    converted to a plain list[float] (fastembed yields numpy arrays)."""
+    embedder = chunk_mod.FastEmbedEmbedder()
+
+    class _FakeVector:
+        """Stands in for a numpy row: iterable of numpy scalar-likes."""
+
+        def __init__(self, values):
+            self._values = values
+
+        def __iter__(self):
+            return iter(self._values)
+
+    class _FakeModel:
+        def embed(self, texts):
+            return (_FakeVector([len(text), 0.0]) for text in texts)
+
+    monkeypatch.setattr(embedder, "_get_model", lambda: _FakeModel())
+
+    vectors = embedder.encode(["a", "bb", "ccc"])
+
+    assert vectors == [[1.0, 0.0], [2.0, 0.0], [3.0, 0.0]]
+    assert all(isinstance(component, float) for vector in vectors for component in vector)
+
+
+@pytest.mark.slow
+def test_fastembed_embedder_real_encode_returns_384_dim_vectors():
+    """End-to-end proof against the real model (network/model-download
+    required on a cold cache) -- excluded from the fast/CI tier, mirroring
+    tests/chunk/test_chunk_real_embedder.py's own @slow test."""
+    embedder = chunk_mod.FastEmbedEmbedder()
+
+    vectors = embedder.encode(["Some sentence.", "Another sentence."])
+
+    assert len(vectors) == 2
+    for vector in vectors:
+        assert len(vector) == 384
+        assert any(component != 0.0 for component in vector)
 
 
 # --- run_chunk_embedding: end-to-end against a monkeypatched tree -----------

@@ -496,18 +496,16 @@ class HashingEmbedder:
     exactly the "consecutive-distance series" signal the breakpoint detector
     below needs -- without any ML model, model download, or network call.
 
-    In-slice decision (issue #151, 80/20 rationale): this is the SAME
+    In-slice decision (issue #151, 80/20 rationale, superseded on the
+    default path by issue #159 below): originally this was the SAME
     implementation behind both `AXIAL_EMBEDDER=stub` and the unset/default
-    path (see `get_embedder` below). No real sentence-embedding model
-    dependency (e.g. `sentence-transformers`) is pulled into this slice --
-    the repo has none today (per this module's own docstring history), and
-    adding one is disproportionate to a slice whose acceptance criterion is
-    "a deterministic, offline split that respects the band", not embedding
-    quality (that is the slice-03 examine/tuning loop's job). The `Embedder`
-    protocol and `get_embedder` seam are deliberately clean so a real model
-    can be swapped in behind a distinct `AXIAL_EMBEDDER` value later,
-    lazy-imported exactly like `axial.extract`'s docling/unstructured
-    imports, without touching any caller of `get_embedder`.
+    path, since no real sentence-embedding model dependency was worth
+    pulling in for a slice whose acceptance criterion was "a deterministic,
+    offline split that respects the band", not embedding quality. As of
+    issue #159, the unset/default path selects a real model
+    (`FastEmbedEmbedder`, below) instead -- this class now backs ONLY the
+    explicit `AXIAL_EMBEDDER=stub` pytest/CI seam, deterministic and
+    offline exactly as before.
 
     `model_id` (issue #152, the embedding-cache seam): defaults to a stable
     value reflecting `dim` (`"hashing-v1-<dim>"`), so two `HashingEmbedder()`
@@ -536,21 +534,78 @@ class HashingEmbedder:
         return vector
 
 
+# The real production-default embedding model (issue #159, PRD §5 stage 4):
+# `fastembed`'s ONNX-backed (no torch) port of BAAI's bge-small-en-v1.5,
+# 384-dim. `FastEmbedEmbedder.model_id` (below) is `"fastembed:" +` this
+# name -- it CONTAINS the model family name as a substring (the outer
+# acceptance test's `REAL_MODEL_ID_MARKER` check,
+# tests/chunk/test_chunk_real_embedder.py) while staying distinct from the
+# raw fastembed model name.
+_FASTEMBED_MODEL_NAME = "BAAI/bge-small-en-v1.5"
+
+
+class FastEmbedEmbedder:
+    """The real sentence-embedding model wired as the production default
+    (issue #159, PRD §5 stage 4): `fastembed`'s ONNX-backed (no torch) port
+    of `BAAI/bge-small-en-v1.5` (384-dim).
+
+    Lazy-loaded (mirroring `axial.extract._build_converter`'s "Local import:
+    defers docling's (torch-backed) load until a conversion is actually
+    requested" convention): `__init__` only records the model name and sets
+    `model_id` -- it never imports `fastembed` or loads/downloads the ONNX
+    model. The model itself is constructed on FIRST `encode` via
+    `_get_model`, a private lazy accessor that caches the loaded model on
+    the instance, so a second `encode` call on the same instance never
+    re-loads it. This is what keeps merely SELECTING this embedder (`
+    get_embedder()`, reading `.model_id`) fully offline -- see the outer
+    acceptance test's "does not import fastembed" assertion.
+    """
+
+    def __init__(self, model_name: str = _FASTEMBED_MODEL_NAME) -> None:
+        self._model_name = model_name
+        self.model_id = f"fastembed:{model_name}"
+        self._model = None
+
+    def _get_model(self):
+        """Private lazy accessor: import and construct fastembed's
+        `TextEmbedding` only on first call, caching the result on the
+        instance. Mirrors `axial.extract`'s lazy docling/Unstructured
+        accessors exactly -- the import lives inside this method, not at
+        module scope, so `fastembed` never lands in `sys.modules` until an
+        `encode` call actually needs it."""
+        if self._model is None:
+            # Local import: defers fastembed's (ONNX model download/load)
+            # cost until an encode actually runs.
+            from fastembed import TextEmbedding
+
+            self._model = TextEmbedding(model_name=self._model_name)
+        return self._model
+
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        """Return one 384-dim vector per input text, in order. fastembed's
+        `.embed()` yields a generator of numpy arrays -- materialized here
+        and converted to plain `list[float]` (`[float(x) for x in vector]`)
+        so callers of this method never need to know about numpy, matching
+        `Embedder.encode`'s protocol exactly."""
+        model = self._get_model()
+        return [[float(component) for component in vector] for vector in model.embed(texts)]
+
+
 def get_embedder(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Embedder:
     """Select the configured `Embedder`, mirroring `axial.llm.get_client`'s
     `AXIAL_LLM_PROVIDER` seam exactly: `AXIAL_EMBEDDER=stub` explicitly
-    selects the deterministic offline stub; unset or any other value falls
-    back to this module's own default. Both currently resolve to the same
-    `HashingEmbedder` (see its docstring for why) -- the seam exists so a
-    future real embedding model can be selected without changing any caller.
-    `config_path` is accepted (unused today) to mirror `get_client`'s
-    signature for future config-driven provider selection.
+    selects the deterministic, offline `HashingEmbedder` (the pytest/CI
+    seam); unset or any other value selects the real production default
+    (issue #159), `FastEmbedEmbedder` -- lazy-imported/loaded only on first
+    `encode`, so selecting it here never triggers a model download (see that
+    class's docstring). `config_path` is accepted (unused today) to mirror
+    `get_client`'s signature for future config-driven provider selection.
     """
     del config_path  # unused today -- kept for signature parity with get_client
     provider = os.environ.get(EMBEDDER_ENV_VAR, "")
     if provider == "stub":
         return HashingEmbedder()
-    return HashingEmbedder()
+    return FastEmbedEmbedder()
 
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
