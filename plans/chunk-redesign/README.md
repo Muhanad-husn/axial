@@ -27,9 +27,13 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 | 03 | [chunk-examine](03-chunk-examine.md) | `axial chunk examine` reports counts, size distribution, and boundary sanity off the JSONL — **zero LLM, zero embedding-model calls** | 01 | M | ☐ todo | [#153](https://github.com/Muhanad-husn/axial/issues/153) | — |
 | 04 | [pipeline-rewire](04-pipeline-rewire.md) | `tag`/`artifacts`/`xref`/`vault` consume `data/chunks/<source_id>.jsonl`; the LLM-echo chunker is removed; #147 reasoning-disable kept for the remaining LLM passes | 01 | L | ☐ todo | [#154](https://github.com/Muhanad-husn/axial/issues/154) | — |
 | 05 | [gold-eval-migration](05-gold-eval-migration.md) | `gold` sampling and the `eval` harness read the on-disk chunk artifact instead of re-deriving chunks in-process | 04 | M | ☐ todo | [#155](https://github.com/Muhanad-husn/axial/issues/155) | — |
+| 06 | [recursive-mechanism](06-recursive-mechanism.md) | a second, **selectable** LLM-free/embedder-free recursive/structural splitter (`\n\n`→`\n`→sentence→char) behind `_chunk_section_text`, writing the identical §7.7 artifact — for the `examine` head-to-head; embedding stays the default | 01, 03, 04 | M | ☐ todo | [#165](https://github.com/Muhanad-husn/axial/issues/165) | — |
 
 Slices 02 and 03 are independent of each other and can run in parallel once 01 lands.
-04 waits on 01; 05 waits on 04.
+04 waits on 01; 05 waits on 04. 06 is an added, out-of-band slice (charter #148): it
+sequences after 04 (single disk-consumption path) and 03 (the examine surface it
+A/Bs through), and reuses slice 01's band machinery; the embedding mechanism stays
+the default.
 
 ## Out of scope (whole feature)
 
