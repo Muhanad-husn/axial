@@ -85,12 +85,18 @@ Repeat 4–9 until enough code exists for the outer test to pass.
 11. **Outer refactor** with the whole suite green: cross-module duplication,
     leaky abstractions, names. Re-run the fast unit suite (`uv run pytest src/ -q`)
     after each change; if a refactor touches behaviour the acceptance layer
-    covers, also re-run that specific acceptance test. The full end-to-end suite
-    runs once, at step 12 — not on every refactor edit.
-12. **Full green check + commit.** `uv run pytest -q` (everything) green, then
-    commit in small green-only commits, Conventional style:
-    `feat(<feature-slug>): <goal> [slice NN]`. The commit-gate hook enforces
-    green — if it blocks you, fix the cause, never bypass.
+    covers, also re-run that specific acceptance test. The subproject's acceptance
+    tier runs at step 12; the full end-to-end suite runs once per PR at `safe-pr`,
+    not on every refactor edit.
+12. **Slice-close green check + commit.** Run the slice's tier — the fast unit
+    suite plus the **current subproject's** acceptance contracts, addressed by one
+    `tests/` path: `uv run pytest src -q -m "not slow"` and
+    `uv run pytest tests/<subproject> -q -m "not slow"` (e.g. `tests/ingestion`) —
+    green, then commit in small green-only commits, Conventional style:
+    `feat(<feature-slug>): <goal> [slice NN]`. The commit-gate hook enforces green
+    on the src-only tier — if it blocks you, fix the cause, never bypass. The
+    **full** `tests/` suite is not run in the inner loop: it runs exactly once per
+    PR, at `safe-pr` locally and as the CI required check.
 13. **Capture evidence for `safe-pr`:** redirect the passing outer-test run and a
     real endpoint invocation to transcript files (see `safe-pr`). This stack is
     non-web: transcripts are the evidence; Playwright applies only if a web slice
@@ -105,7 +111,9 @@ Repeat 4–9 until enough code exists for the outer test to pass.
 - No production code without a failing test you watched fail first.
 - The bar is green before and after every refactoring; never refactor on red.
 - No new behaviour during a refactor.
-- **Done = the outer acceptance test is green** and the full suite passes.
+- **Done = the outer acceptance test is green**, the current subproject's
+  acceptance tier passes at slice close, and the full suite passes once per PR at
+  `safe-pr`/CI.
 - When stuck or surprised by red: shrink the step and run the tests more.
 
 ## Hand-off

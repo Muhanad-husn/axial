@@ -50,7 +50,10 @@ session that otherwise runs mostly inside subagents.
 
 6. **Implement (implementer).** Dispatch the **implementer** subagent with the
    `red-green-refactor` skill: inner unit cycles (tests co-located under `src/`)
-   until the outer test is green, full suite green, green-only commits. If it
+   until the outer test is green and the current subproject's acceptance tier
+   (`uv run pytest tests/<subproject> -q -m "not slow"`) is green, green-only
+   commits. The full suite is not run in the inner loop — it runs once per PR at
+   `safe-pr` (step 9) and in CI. If it
    reports the contract looks wrong: file a `spec-drift` issue, label this issue
    `blocked`, and stop for founder adjudication.
 
