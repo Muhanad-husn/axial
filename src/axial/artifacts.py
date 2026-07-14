@@ -358,7 +358,13 @@ def _attach_captions(blocks: list[tuple[dict, str]]) -> list[dict[str, Any]]:
     all -- never crashes and is never silently lost: it becomes its own
     standalone entry (fallback), so this pass still classifies it (rather
     than chunking it or dropping it), and a later caption can attach to that
-    standalone entry in turn."""
+    standalone entry in turn.
+
+    A SECOND caption attaching to an entry that already carries one is
+    NEVER an overwrite (that would silently drop the first caption's text,
+    violating this slice's own "caption text is never lost" invariant):
+    its text is appended, newline-joined, onto the entry's existing
+    caption -- both survive."""
     entries: list[dict[str, Any]] = []
     last_entry: dict[str, Any] | None = None
     for node, section in blocks:
@@ -367,8 +373,16 @@ def _attach_captions(blocks: list[tuple[dict, str]]) -> list[dict[str, Any]]:
             if last_entry is None:
                 # Orphan caption: no prior artifact to attach to -- emit as
                 # its own standalone entry rather than lose or crash on it.
+                # Its own text is already this entry's primary content (the
+                # entry's own `node`), so `caption` (attached-caption text)
+                # stays None here -- it is set only when a FURTHER caption
+                # attaches to this now-standalone entry (see below).
                 last_entry = {"node": node, "section": section, "caption": None}
                 entries.append(last_entry)
+            elif last_entry["caption"]:
+                # Never overwrite an already-attached caption -- append so
+                # both texts survive.
+                last_entry["caption"] = f"{last_entry['caption']}\n{caption_text}"
             else:
                 last_entry["caption"] = caption_text
             continue

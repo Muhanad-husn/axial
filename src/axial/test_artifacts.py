@@ -396,7 +396,13 @@ def test_attach_captions_orphan_caption_with_no_preceding_artifact_becomes_stand
     assert entries[0]["caption"] is None
 
 
-def test_attach_captions_a_second_caption_attaches_to_the_orphan_entry_in_turn():
+def test_attach_captions_a_third_caption_never_overwrites_an_already_attached_second():
+    """Regression for a caption-overwrite data-loss bug: once an entry
+    already carries one attached caption's text (here, the orphan-turned-
+    standalone entry's FIRST attached caption, "Second caption."), a THIRD
+    caption block attaching to that same entry must never silently
+    overwrite it -- the slice's own "caption text is never lost" invariant.
+    Both attached captions must survive, concatenated."""
     from axial.artifacts import _attach_captions
 
     orphan_caption = {
@@ -411,11 +417,20 @@ def test_attach_captions_a_second_caption_attaches_to_the_orphan_entry_in_turn()
         "label": "caption",
         "text": "Second caption.",
     }
+    third_caption = {
+        "type": "prose",
+        "order": "1.3",
+        "label": "caption",
+        "text": "Third caption.",
+    }
 
-    entries = _attach_captions([(orphan_caption, "Findings"), (second_caption, "Findings")])
+    entries = _attach_captions(
+        [(orphan_caption, "Findings"), (second_caption, "Findings"), (third_caption, "Findings")]
+    )
 
     assert len(entries) == 1
-    assert entries[0]["caption"] == "Second caption."
+    assert "Second caption." in entries[0]["caption"]
+    assert "Third caption." in entries[0]["caption"]
 
 
 def test_run_artifacts_attaches_caption_to_figure_and_excludes_apparatus(monkeypatch, tmp_path):

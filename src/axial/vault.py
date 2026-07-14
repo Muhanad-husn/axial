@@ -35,7 +35,10 @@ artifact to
 `artifact_role`, `field`, and source/section provenance in its frontmatter,
 plus a `retrievable` boolean that is `False` only for the `discard` role
 (PRD §8 P0-5: "discard-tagged artifacts are retained in the pool but
-flagged non-retrievable"). Any error from the internal artifacts pass
+flagged non-retrievable"), and (issue #168) `caption` when the artifact
+record carries one attached (omitted entirely when it does not, so a
+pre-#168 artifact note stays byte-for-byte unchanged). Any error from the
+internal artifacts pass
 (`axial.artifacts.ArtifactsError` or `axial.tag.TagError`, e.g. an
 out-of-schema `artifact_role`/`field` value) is wrapped into a
 `VaultError` subclass here too, so the CLI never renders a bare traceback.
@@ -272,10 +275,21 @@ def build_artifact_frontmatter(
     role (PRD §8 P0-5) -- every other in-schema role is retrievable.
     `cited_by` (issue #34 slice 02) is the list of chunk_ids the
     cross-reference pass detected citing this artifact -- always a list,
-    `[]` when none, never a dangling absent/null field."""
+    `[]` when none, never a dangling absent/null field. `caption` (issue
+    #168) is included only when the record itself carries one -- see below."""
     frontmatter = {field: record.get(field) for field in ARTIFACT_FRONTMATTER_FIELDS}
     frontmatter["retrievable"] = record["artifact_role"] != DISCARD_ROLE
     frontmatter["cited_by"] = list(cited_by) if cited_by else []
+    # `caption` (issue #168): the text of a caption block attached to this
+    # artifact by `axial.artifacts.run_artifacts`/`_attach_captions`, when
+    # present -- omitted entirely (never `caption: null`) when this artifact
+    # has no attached caption, mirroring `axial.artifacts.build_artifact_record`'s
+    # own conditional-`caption`-inclusion pattern, so a pre-#168 artifact
+    # record (no `caption` key at all) still produces a byte-for-byte
+    # unchanged frontmatter.
+    caption = record.get("caption")
+    if caption:
+        frontmatter["caption"] = caption
     return frontmatter
 
 

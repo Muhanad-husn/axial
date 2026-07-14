@@ -294,6 +294,30 @@ def test_build_artifact_frontmatter_retrievable_false_for_discard_role():
     assert frontmatter["retrievable"] is False
 
 
+def test_build_artifact_frontmatter_carries_caption_when_the_record_has_one():
+    """Issue #168: a caption attached to its figure/table by
+    `axial.artifacts.run_artifacts` must reach the persisted artifact note's
+    own frontmatter, not be dropped at the vault-write boundary."""
+    from axial.vault import build_artifact_frontmatter
+
+    record = {**_ARTIFACT_RECORD, "caption": "A caption describing the figure."}
+    frontmatter = build_artifact_frontmatter(record)
+
+    assert frontmatter["caption"] == "A caption describing the figure."
+
+
+def test_build_artifact_frontmatter_omits_caption_key_when_the_record_has_none():
+    """Pre-#168 artifact records (no `caption` key at all) must produce a
+    byte-for-byte unchanged frontmatter -- never a `caption: null` key that
+    didn't exist before."""
+    from axial.vault import build_artifact_frontmatter
+
+    assert "caption" not in _ARTIFACT_RECORD
+    frontmatter = build_artifact_frontmatter(_ARTIFACT_RECORD)
+
+    assert "caption" not in frontmatter
+
+
 def test_write_artifact_note_writes_under_artifacts_dir_named_by_artifact_id(tmp_path):
     from axial.vault import write_artifact_note
 
@@ -614,6 +638,29 @@ def test_write_artifact_note_writes_given_cited_by_into_frontmatter(tmp_path):
 
     frontmatter, _ = _split_frontmatter_like_outer_test(note_path.read_text(encoding="utf-8"))
     assert frontmatter["cited_by"] == ["chunk-1"]
+
+
+def test_write_artifact_note_persists_caption_when_the_record_has_one(tmp_path):
+    """Issue #168: the persisted artifact note (the real §5 stage-5 output)
+    must carry an attached caption's text, not silently drop it."""
+    from axial.vault import write_artifact_note
+
+    vault_dir = tmp_path / "vault"
+    record = {**_ARTIFACT_RECORD, "caption": "A caption describing the figure."}
+    note_path = write_artifact_note(record, vault_dir)
+
+    frontmatter, _ = _split_frontmatter_like_outer_test(note_path.read_text(encoding="utf-8"))
+    assert frontmatter["caption"] == "A caption describing the figure."
+
+
+def test_write_artifact_note_omits_caption_key_when_the_record_has_none(tmp_path):
+    from axial.vault import write_artifact_note
+
+    vault_dir = tmp_path / "vault"
+    note_path = write_artifact_note(_ARTIFACT_RECORD, vault_dir)
+
+    frontmatter, _ = _split_frontmatter_like_outer_test(note_path.read_text(encoding="utf-8"))
+    assert "caption" not in frontmatter
 
 
 def test_run_vault_write_backlink_pass_writes_bidirectional_frontmatter(monkeypatch, tmp_path):
