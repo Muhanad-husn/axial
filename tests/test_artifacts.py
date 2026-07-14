@@ -175,6 +175,13 @@ import re
 import subprocess
 from pathlib import Path
 
+import axial.artifacts as artifacts_module
+import axial.chunk as chunk_module
+from axial.chunk import HashingEmbedder, run_chunk_embedding
+from axial.envelope import compute_source_id
+from axial.llm import ARTIFACTS_PASS_NAME
+from axial.schema import load_schema
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "extract"
 DEFAULT_DOMAIN_DIR = REPO_ROOT / "config" / "domains" / "syria"
@@ -430,4 +437,341 @@ def test_artifacts_hard_errors_on_a_role_absent_from_the_schema():
         f"expected the error message to name the axis ('artifact_role') or "
         f"reference the schema, not just the bare bad value, got stderr: "
         f"{result.stderr!r}"
+    )
+
+
+# ===========================================================================
+# Outer acceptance test for issue #168 (source-router slice 03:
+# artifact-caption-routing).
+#
+# Locked behavioral contract (DEC-1) -- do not edit once committed red.
+#
+# Spec: plans/source-router/03-artifact-caption-routing.md; PRD §7.8 (source
+# router), §5 stage 5 / §7.2 (artifact notes). The artifact pass collects
+# artifact-routed blocks (table/picture become vault artifact notes as
+# today); a `caption` block attaches to its figure/table -- its text rides
+# on that artifact's own record rather than being lost or chunked.
+# Apparatus-routed blocks (document_index, footnote) are never picked up as
+# artifacts.
+#
+# Acceptance criterion (issue #168 plan)
+# ---------------------------------------------------------------------
+# Given a persisted tree with a captioned figure, a table, a
+#       table-of-contents (document_index), and an endnotes (footnote)
+#       section
+# When  the operator runs `axial artifacts` on the source
+# Then  the figure and the table each become one vault artifact note
+# And   the figure's artifact note carries its caption text (attached, not
+#       lost)
+# And   no artifact note is produced for the document_index or footnote
+#       blocks
+# And   the caption is absent from data/chunks/<source_id>.jsonl
+#       (established in slice 02, still true)
+#
+# As of this commit, `_artifact_nodes_with_section` scans raw
+# `type == "artifact"` nodes only; a `caption` node is `type == "prose"`
+# (label `"caption"`) and is therefore INVISIBLE to that scan -- its text
+# never reaches the figure's record at all. This test is expected to fail
+# red on exactly that: the figure's artifact record carries no trace of its
+# caption's own sentinel text. It must not fail on an import error, a
+# fixture-arrangement error, or a call-signature mismatch.
+#
+# Seam decision 1 -- bypassing docling entirely via a monkeypatched
+# `axial.artifacts.extract`, calling `run_artifacts` directly
+# ---------------------------------------------------------------------
+# Mirrors tests/test_tag_artifacts_input_guard.py's own artifacts-pass seam
+# (issue #132) exactly: `run_artifacts` imports `extract` directly into its
+# own module namespace, so monkeypatching `axial.artifacts.extract` redirects
+# every call to a fake returning a hand-built, synthetic extraction tree --
+# no real PDF, no docling, no network. This is a deliberately LIGHTER-weight
+# harness than this file's other (subprocess + real-PDF-fixture) tests
+# above, chosen because this slice's whole point is the tree-node
+# collection/attachment logic inside `run_artifacts` itself, not CLI wiring
+# or a real docling conversion (which #30/#32's own tests already cover).
+#
+# Seam decision 2 -- a counting LLM client answering deterministically valid
+# ---------------------------------------------------------------------
+# Mirrors tests/test_tag_artifacts_input_guard.py's `_ArtifactsCountingClient`
+# exactly: a fake client returning a well-formed, schema-valid classification
+# from the REAL loaded domain (config/domains/syria) every time. Since the
+# response is always valid, no bounded correction re-ask ever fires, so a
+# call count of "one call per genuine artifact node (table + picture)" is a
+# direct, implementation-agnostic proof that the caption -- never itself a
+# classified artifact, only attached metadata -- is not separately sent to
+# the model.
+#
+# Seam decision 3 -- the caption-attachment assertion stays agnostic to the
+# exact field name the implementer chooses
+# ---------------------------------------------------------------------
+# Neither the plan nor the PRD names an exact field for "the caption text
+# riding on the figure's record" (the plan explicitly leaves this to the
+# implementer). This test therefore does not hardcode a new field name (e.g.
+# "caption") -- it asserts the OBSERVABLE behavior the acceptance criterion
+# actually requires: the caption's own distinctive sentinel text appears
+# SOMEWHERE among the figure record's own string values (recursively, since
+# an implementer might nest it under a dict/list), while the same sentinel
+# text is absent from the table's record (the caption is adjacent to the
+# figure only, in this fixture, so it must not "leak" onto an unrelated
+# artifact).
+#
+# Seam decision 4 -- the chunk-absence clause reuses slice 02's own patch
+# seam directly, on the SAME synthetic tree
+# ---------------------------------------------------------------------
+# tests/test_source_router.py's own `_patch_tree` helper (issue #167)
+# monkeypatches `axial.chunk.tree_path`/`axial.chunk.load_persisted_tree` to
+# feed `run_chunk_embedding` a synthetic tree with no docling/network. This
+# test reuses that exact mechanism (inlined here, not imported cross-file,
+# to keep this file's own contract self-contained) against the SAME tree
+# fixture used for `run_artifacts` above, to lock the Gherkin's final
+# "still true" clause without inventing a second fixture or a heavier
+# integration. This part of the assertion is expected to already hold today
+# (slice 02 is merged) -- it is included as a regression lock, not as this
+# test's primary source of redness (see the caption-attachment assertion
+# above for that).
+#
+# Test hygiene: every path this test touches (the synthetic source file,
+# chunks_dir) lives under pytest's own tmp_path, outside this repo entirely
+# -- nothing here reads or writes any real data/ directory (both `extract`
+# and `tree_path`/`load_persisted_tree` are monkeypatched out entirely), and
+# no real LLM/network/docling call is ever made.
+# ===========================================================================
+
+_ARTIFACT_ROUTING_DOMAIN_DIR = REPO_ROOT / "config" / "domains" / "syria"
+
+_ROUTING_PROSE_BODY = (
+    "Ordinary prose sentinel discussing the excavation's overall stratigraphic "
+    "sequence across the three seasons of fieldwork in careful detail."
+)
+_ROUTING_TABLE_BODY = (
+    "Table sentinel: quarterly summary of measured artifact counts across "
+    "the three excavation trenches, tallied by depth and material type."
+)
+_ROUTING_FIGURE_BODY = "Figure node placeholder text (docling picture item)."
+_ROUTING_CAPTION_BODY = (
+    "Caption sentinel: aerial photograph of the northern excavation trench "
+    "taken during the spring survey season by the site photographer."
+)
+_ROUTING_TOC_BODY = (
+    "Table-of-contents sentinel entry: Chapter One .. 1, Chapter Two .. 40, "
+    "Appendix .. 88, listing every part of the report in reading order."
+)
+_ROUTING_FOOTNOTE_BODY = (
+    "Footnote sentinel: see supplementary note four for the full derivation "
+    "of the radiocarbon calibration used throughout this report."
+)
+
+
+def _build_caption_routing_tree() -> dict:
+    """A tree with, in one prose section: ordinary prose, a table, a
+    captioned figure (caption immediately follows the figure -- the natural
+    reading-order adjacency), and a document_index (TOC) block; and, in a
+    second section, a footnote (endnotes) block -- mirroring the Gherkin's
+    "captioned figure, a table, a table-of-contents, and an endnotes
+    section" verbatim."""
+    return {
+        "children": [
+            {
+                "type": "prose",
+                "order": "1",
+                "text": "Findings",
+                "label": "section_header",
+                "children": [
+                    {
+                        "type": "prose",
+                        "order": "1.1",
+                        "label": "text",
+                        "text": _ROUTING_PROSE_BODY,
+                    },
+                    {
+                        "type": "artifact",
+                        "order": "1.2",
+                        "label": "table",
+                        "text": _ROUTING_TABLE_BODY,
+                    },
+                    {
+                        "type": "artifact",
+                        "order": "1.3",
+                        "label": "picture",
+                        "text": _ROUTING_FIGURE_BODY,
+                    },
+                    {
+                        "type": "prose",
+                        "order": "1.4",
+                        "label": "caption",
+                        "text": _ROUTING_CAPTION_BODY,
+                    },
+                    {
+                        "type": "prose",
+                        "order": "1.5",
+                        "label": "document_index",
+                        "text": _ROUTING_TOC_BODY,
+                    },
+                ],
+            },
+            {
+                "type": "prose",
+                "order": "2",
+                "text": "Endnotes",
+                "label": "section_header",
+                "children": [
+                    {
+                        "type": "prose",
+                        "order": "2.1",
+                        "label": "footnote",
+                        "text": _ROUTING_FOOTNOTE_BODY,
+                    },
+                ],
+            },
+        ]
+    }
+
+
+def _stub_artifact_payload() -> str:
+    """A complete, schema-valid artifacts-pass response, built from the REAL
+    loaded schema's own vocabulary at test time -- never a hardcoded tag id
+    (mirrors tests/test_tag_artifacts_input_guard.py's own
+    `_valid_artifact_payload`)."""
+    schema = load_schema(_ARTIFACT_ROUTING_DOMAIN_DIR)
+    role = next(iter(schema.axes["artifact_role"].tag_ids))
+    field_primary = next(iter(schema.axes["field"].tag_ids))
+    return json.dumps({"artifact_role": role, "field": {"primary": field_primary, "secondary": []}})
+
+
+class _RoutingCountingClient:
+    """Fake LLMClient: counts every artifacts-pass call made, always
+    answering with a well-formed, schema-valid classification (see module
+    docstring above, seam decision 2)."""
+
+    def __init__(self, payload: str):
+        self.prompts: list[str] = []
+        self._payload = payload
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        assert pass_name == ARTIFACTS_PASS_NAME, (
+            f"expected pass_name={ARTIFACTS_PASS_NAME!r}, got {pass_name!r}"
+        )
+        self.prompts.append(prompt)
+        return self._payload
+
+    @property
+    def call_count(self) -> int:
+        return len(self.prompts)
+
+
+def _record_contains_text(value: object, text: str) -> bool:
+    """Recursively scan `value` (a JSON-shaped artifact record: nested
+    dicts/lists/strings) for `text` appearing as a substring of any string
+    it contains -- deliberately field-name-agnostic (see module docstring
+    above, seam decision 3): the implementer is free to choose whatever key
+    carries the attached caption text."""
+    if isinstance(value, str):
+        return text in value
+    if isinstance(value, dict):
+        return any(_record_contains_text(v, text) for v in value.values())
+    if isinstance(value, list):
+        return any(_record_contains_text(v, text) for v in value)
+    return False
+
+
+def test_captioned_figure_and_table_become_artifact_notes_apparatus_excluded(tmp_path, monkeypatch):
+    tree = _build_caption_routing_tree()
+    monkeypatch.setattr(artifacts_module, "extract", lambda path: tree)
+
+    source_path = tmp_path / "artifact_caption_routing_source.txt"
+    source_path.write_text("issue 168 artifact caption routing test source", encoding="utf-8")
+    source_id = compute_source_id(source_path)
+
+    payload = _stub_artifact_payload()
+    client = _RoutingCountingClient(payload)
+
+    records = artifacts_module.run_artifacts(
+        source_path, client=client, domain_dir=_ARTIFACT_ROUTING_DOMAIN_DIR
+    )
+
+    assert isinstance(records, list), (
+        f"expected run_artifacts to return a list, got {type(records).__name__}: {records!r}"
+    )
+
+    table_artifact_id = f"{source_id}_art_1.2"
+    figure_artifact_id = f"{source_id}_art_1.3"
+
+    # --- exactly one artifact note per figure/table; the TOC and footnote
+    # blocks never become artifact notes at all ------------------------------
+    assert len(records) == 2, (
+        f"expected exactly one artifact note for the table and one for the "
+        f"figure (two total) -- the document_index and footnote blocks must "
+        f"never become artifact notes, and the caption must attach to the "
+        f"figure rather than becoming a THIRD, standalone artifact note -- "
+        f"got {len(records)} records: {records!r}"
+    )
+
+    ids_seen = {r.get("artifact_id") for r in records}
+    assert ids_seen == {table_artifact_id, figure_artifact_id}, (
+        f"expected artifact_ids {{{table_artifact_id!r}, {figure_artifact_id!r}}} "
+        f"(table + figure only), got {sorted(ids_seen)!r}. Full records: {records!r}"
+    )
+
+    table_record = next(r for r in records if r.get("artifact_id") == table_artifact_id)
+    figure_record = next(r for r in records if r.get("artifact_id") == figure_artifact_id)
+
+    # --- the figure's artifact note carries its caption text (attached,
+    # not lost) -- the genuinely NEW behavior this slice delivers, and this
+    # test's primary source of redness today -----------------------------
+    assert _record_contains_text(figure_record, _ROUTING_CAPTION_BODY), (
+        f"expected the figure's own artifact record to carry its caption's "
+        f"text SOMEWHERE among its own string values (PRD/plan: 'the "
+        f"caption attached, not lost') -- today `_artifact_nodes_with_section` "
+        f"only scans raw type=='artifact' nodes, and a caption is "
+        f"type=='prose' (label=='caption'), so it is invisible to that scan "
+        f"and its text never reaches the figure's record at all. Figure "
+        f"record: {figure_record!r}"
+    )
+
+    # --- the caption must not leak onto the UNRELATED table's record too
+    # (it is adjacent to the figure only, in this fixture) ------------------
+    assert not _record_contains_text(table_record, _ROUTING_CAPTION_BODY), (
+        f"expected the caption's text to attach to the FIGURE only (it is "
+        f"adjacent to the figure, not the table, in this fixture), but "
+        f"found it on the table's own record too: {table_record!r}"
+    )
+
+    # --- no artifact note for the document_index or footnote blocks --------
+    for record in records:
+        assert not _record_contains_text(record, _ROUTING_TOC_BODY), (
+            f"expected the document_index (TOC) block's own text to never "
+            f"appear on any artifact record (it is apparatus, never "
+            f"artifact-noted), but found it on: {record!r}"
+        )
+        assert not _record_contains_text(record, _ROUTING_FOOTNOTE_BODY), (
+            f"expected the footnote (endnotes) block's own text to never "
+            f"appear on any artifact record (it is apparatus, never "
+            f"artifact-noted), but found it on: {record!r}"
+        )
+
+    # --- the caption is never itself sent to the model as a distinct
+    # artifact to classify (it attaches as metadata, it is not classified
+    # on its own) -- exactly one LLM call per genuine artifact node
+    # (table + picture) -------------------------------------------------
+    assert client.call_count == 2, (
+        f"expected exactly 2 LLM calls (one for the table, one for the "
+        f"figure) -- the caption is attached metadata, never itself a "
+        f"separately classified artifact -- got {client.call_count}"
+    )
+
+    # --- the caption is absent from data/chunks/<source_id>.jsonl
+    # (established in slice 02, still true) ------------------------------
+    tree_file = tmp_path / "tree.json"
+    tree_file.write_text(json.dumps(tree), encoding="utf-8")
+    monkeypatch.setattr(chunk_module, "tree_path", lambda source_id: tree_file)
+    monkeypatch.setattr(chunk_module, "load_persisted_tree", lambda path: tree)
+
+    chunks_dir = tmp_path / "chunks"
+    chunk_records = run_chunk_embedding(
+        source_path, embedder=HashingEmbedder(), chunks_dir=chunks_dir
+    )
+
+    leaked_caption = [r for r in chunk_records if _ROUTING_CAPTION_BODY in r.get("text", "")]
+    assert not leaked_caption, (
+        f"expected the caption to remain absent from the emitted chunks "
+        f"(slice 02's own invariant, still true): found it in {leaked_caption!r}"
     )

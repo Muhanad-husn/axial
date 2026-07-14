@@ -240,6 +240,225 @@ def test_build_artifact_record_carries_field_when_given():
     assert record["field"] == field
 
 
+def test_build_artifact_record_omits_caption_key_when_none_given():
+    from axial.artifacts import build_artifact_record
+
+    record = build_artifact_record(
+        source_id="paper-abc123",
+        node={"type": "artifact", "order": "1.2"},
+        section="Introduction",
+        role="case-study",
+    )
+
+    assert "caption" not in record
+
+
+def test_build_artifact_record_carries_caption_when_given():
+    from axial.artifacts import build_artifact_record
+
+    record = build_artifact_record(
+        source_id="paper-abc123",
+        node={"type": "artifact", "order": "1.2"},
+        section="Introduction",
+        role="case-study",
+        caption="A caption describing the figure.",
+    )
+
+    assert record["caption"] == "A caption describing the figure."
+
+
+# --- issue #168: router-routed artifact collection + caption attachment -----
+
+
+def _tree_with_caption_table_and_apparatus() -> dict:
+    """One section with a table, a picture, an immediately-following caption,
+    and a document_index (TOC) block; a second, back-matter-titled section
+    with a footnote block. Mirrors tests/test_artifacts.py's own outer
+    fixture (issue #168) at a smaller scale for inner-unit coverage."""
+    return {
+        "children": [
+            {
+                "type": "prose",
+                "order": "1",
+                "text": "Findings",
+                "children": [
+                    {"type": "artifact", "order": "1.1", "label": "table", "text": "Table body."},
+                    {
+                        "type": "artifact",
+                        "order": "1.2",
+                        "label": "picture",
+                        "text": "Figure body.",
+                    },
+                    {
+                        "type": "prose",
+                        "order": "1.3",
+                        "label": "caption",
+                        "text": "Caption body.",
+                    },
+                    {
+                        "type": "prose",
+                        "order": "1.4",
+                        "label": "document_index",
+                        "text": "TOC body.",
+                    },
+                ],
+            },
+            {
+                "type": "prose",
+                "order": "2",
+                "text": "Endnotes",
+                "children": [
+                    {
+                        "type": "prose",
+                        "order": "2.1",
+                        "label": "footnote",
+                        "text": "Footnote body.",
+                    },
+                ],
+            },
+        ]
+    }
+
+
+def test_routed_artifact_blocks_includes_caption_and_excludes_apparatus():
+    from axial.artifacts import _routed_artifact_blocks
+
+    tree = _tree_with_caption_table_and_apparatus()
+    blocks = _routed_artifact_blocks(tree)
+
+    orders = [node["order"] for node, _section in blocks]
+    assert orders == ["1.1", "1.2", "1.3"]
+    assert all(section == "Findings" for _node, section in blocks)
+
+
+def test_routed_artifact_blocks_still_collects_type_artifact_regardless_of_label():
+    """Back-compat carve-out (issue #168): a genuine `type == 'artifact'`
+    node (extract.py's own docling TableItem/PictureItem classification) is
+    always collected even when its `label` isn't one of the router's own
+    artifact labels -- guards a real artifact from vanishing on an
+    unrecognized-label edge case (see e.g.
+    tests/test_tag_artifacts_input_guard.py's `label: 'figure'` fixture)."""
+    from axial.artifacts import _routed_artifact_blocks
+
+    tree = {
+        "children": [
+            {
+                "type": "prose",
+                "order": "1",
+                "text": "Findings",
+                "children": [
+                    {
+                        "type": "artifact",
+                        "order": "1.1",
+                        "label": "figure",
+                        "text": "Odd-label artifact.",
+                    },
+                ],
+            }
+        ]
+    }
+
+    blocks = _routed_artifact_blocks(tree)
+
+    assert [node["order"] for node, _section in blocks] == ["1.1"]
+
+
+def test_attach_captions_moves_caption_text_onto_the_preceding_artifact():
+    from axial.artifacts import _attach_captions, _routed_artifact_blocks
+
+    tree = _tree_with_caption_table_and_apparatus()
+    blocks = _routed_artifact_blocks(tree)
+
+    entries = _attach_captions(blocks)
+
+    assert [entry["node"]["order"] for entry in entries] == ["1.1", "1.2"]
+    assert entries[0]["caption"] is None
+    assert entries[1]["caption"] == "Caption body."
+
+
+def test_attach_captions_orphan_caption_with_no_preceding_artifact_becomes_standalone():
+    """Fallback (issue #168 plan): a caption with no resolvable prior
+    artifact never crashes and is never silently dropped -- it becomes its
+    own standalone entry."""
+    from axial.artifacts import _attach_captions
+
+    orphan_caption = {
+        "type": "prose",
+        "order": "1.1",
+        "label": "caption",
+        "text": "Orphan caption.",
+    }
+
+    entries = _attach_captions([(orphan_caption, "Findings")])
+
+    assert len(entries) == 1
+    assert entries[0]["node"] is orphan_caption
+    assert entries[0]["caption"] is None
+
+
+def test_attach_captions_a_third_caption_never_overwrites_an_already_attached_second():
+    """Regression for a caption-overwrite data-loss bug: once an entry
+    already carries one attached caption's text (here, the orphan-turned-
+    standalone entry's FIRST attached caption, "Second caption."), a THIRD
+    caption block attaching to that same entry must never silently
+    overwrite it -- the slice's own "caption text is never lost" invariant.
+    Both attached captions must survive, concatenated."""
+    from axial.artifacts import _attach_captions
+
+    orphan_caption = {
+        "type": "prose",
+        "order": "1.1",
+        "label": "caption",
+        "text": "Orphan caption.",
+    }
+    second_caption = {
+        "type": "prose",
+        "order": "1.2",
+        "label": "caption",
+        "text": "Second caption.",
+    }
+    third_caption = {
+        "type": "prose",
+        "order": "1.3",
+        "label": "caption",
+        "text": "Third caption.",
+    }
+
+    entries = _attach_captions(
+        [(orphan_caption, "Findings"), (second_caption, "Findings"), (third_caption, "Findings")]
+    )
+
+    assert len(entries) == 1
+    assert "Second caption." in entries[0]["caption"]
+    assert "Third caption." in entries[0]["caption"]
+
+
+def test_run_artifacts_attaches_caption_to_figure_and_excludes_apparatus(monkeypatch, tmp_path):
+    import axial.artifacts as artifacts_mod
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+
+    monkeypatch.setattr(
+        artifacts_mod, "extract", lambda path: _tree_with_caption_table_and_apparatus()
+    )
+    monkeypatch.setattr(artifacts_mod, "load_schema", lambda domain_dir: _SCHEMA)
+    monkeypatch.setattr(artifacts_mod, "load_codebook", lambda domain_dir: _CODEBOOK)
+
+    class _StaticClient:
+        def complete(self, prompt, pass_name=None):
+            return json.dumps({"artifact_role": "case-study"})
+
+    records = artifacts_mod.run_artifacts(source, client=_StaticClient())
+
+    assert len(records) == 2
+    table_record = next(r for r in records if r["artifact_id"].endswith("_art_1.1"))
+    figure_record = next(r for r in records if r["artifact_id"].endswith("_art_1.2"))
+
+    assert "caption" not in table_record
+    assert figure_record["caption"] == "Caption body."
+
+
 # --- prompt composition ------------------------------------------------------
 
 

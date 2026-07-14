@@ -1,0 +1,44 @@
+### Boundary: the 'axial artifacts' CLI surface is wired ###
+$ uv run axial artifacts --help
+usage: axial artifacts [-h] [--domain DOMAIN] source_path
+
+positional arguments:
+  source_path      path to a .pdf or .docx source file
+
+options:
+  -h, --help       show this help message and exit
+  --domain DOMAIN  path to a domain directory containing schema.yaml and
+                   codebook.yaml (default: config\domains\syria)
+
+### Slice-03 acceptance + attachment behavior, driven end-to-end through run_artifacts (stub LLM, fabricated tree) ###
+$ uv run pytest tests/test_artifacts.py::test_captioned_figure_and_table_become_artifact_notes_apparatus_excluded 'src/axial/test_artifacts.py -k caption or attach or routed_artifact' -v
+rootdir: D:\axial
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 1 item
+
+tests/test_artifacts.py::test_captioned_figure_and_table_become_artifact_notes_apparatus_excluded PASSED [100%]
+
+============================== 1 passed in 1.52s ==============================
+============================= test session starts =============================
+platform win32 -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0 -- D:\axial\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 99 items / 87 deselected / 12 selected
+
+src/axial/test_artifacts.py::test_build_artifact_record_omits_caption_key_when_none_given PASSED [  8%]
+src/axial/test_artifacts.py::test_build_artifact_record_carries_caption_when_given PASSED [ 16%]
+src/axial/test_artifacts.py::test_routed_artifact_blocks_includes_caption_and_excludes_apparatus PASSED [ 25%]
+src/axial/test_artifacts.py::test_routed_artifact_blocks_still_collects_type_artifact_regardless_of_label PASSED [ 33%]
+src/axial/test_artifacts.py::test_attach_captions_moves_caption_text_onto_the_preceding_artifact PASSED [ 41%]
+src/axial/test_artifacts.py::test_attach_captions_orphan_caption_with_no_preceding_artifact_becomes_standalone PASSED [ 50%]
+src/axial/test_artifacts.py::test_attach_captions_a_third_caption_never_overwrites_an_already_attached_second PASSED [ 58%]
+src/axial/test_artifacts.py::test_run_artifacts_attaches_caption_to_figure_and_excludes_apparatus PASSED [ 66%]
+src/axial/test_vault.py::test_build_artifact_frontmatter_carries_caption_when_the_record_has_one PASSED [ 75%]
+src/axial/test_vault.py::test_build_artifact_frontmatter_omits_caption_key_when_the_record_has_none PASSED [ 83%]
+src/axial/test_vault.py::test_write_artifact_note_persists_caption_when_the_record_has_one PASSED [ 91%]
+src/axial/test_vault.py::test_write_artifact_note_omits_caption_key_when_the_record_has_none PASSED [100%]
+
+====================== 12 passed, 87 deselected in 1.18s ======================

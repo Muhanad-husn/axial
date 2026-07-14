@@ -5,19 +5,24 @@ stage 5, §7.2, §8 P0-5).
 
 Unlike the envelope/chunk passes, this pass never reads or writes a stored
 envelope -- it walks the extraction tree directly (via `extract`), collects
-`type == "artifact"` nodes, and pairs each with its ENCLOSING top-level
-section's own verbatim heading `text` for section provenance, exactly as
-`axial.chunk`'s `_section_nodes` does for prose. A source with zero artifact
-nodes yields zero records with zero LLM calls and no error.
+every block the shared source router (issue #167/#168, `axial.router`)
+routes to ARTIFACT (table, picture, caption), and pairs each with its
+ENCLOSING top-level section's own verbatim heading `text` for section
+provenance, exactly as `axial.chunk`'s `_routed_section_body` does for
+prose/apparatus. A `caption` block is never itself classified as a
+standalone artifact -- its text attaches to the nearest preceding table/
+picture in reading order (see `_attach_captions`), riding on that
+artifact's own record rather than being lost or chunked. A source with zero
+artifact-routed blocks yields zero records with zero LLM calls and no error.
 
 Artifact records carry a stable, deterministic `artifact_id`
 (`<source_id>_art_<order>`, using the node's own dotted `order` value
 VERBATIM -- unlike `chunk.py`'s chunk_id, dots are never dash-replaced, since
 this module's contract locks the dotted-digits shape directly) plus
-`artifact_role`, `field`, `source_id`, and `section` (PRD §7.2). This slice
-(issue #30 slice 01) emits artifact records to stdout only; routing to
-`data/vault/artifacts/` is issue #32 slice 02, which also added `field`
-classification here.
+`artifact_role`, `field`, `source_id`, `section`, and (when a caption
+attached) `caption` (PRD §7.2, issue #168). This slice (issue #30 slice 01)
+emits artifact records to stdout only; routing to `data/vault/artifacts/` is
+issue #32 slice 02, which also added `field` classification here.
 
 A role returned by the model that is absent from the schema's `artifact_role`
 axis is a hard error (PRD §8 P0-5/P0-6): `TagNotInSchemaError` is reused
@@ -44,6 +49,7 @@ from axial.envelope import (
     MissingSourceError as _EnvelopeMissingSourceError,
     compute_source_id,
 )
+from axial.chunk import _is_back_matter
 from axial.extract import ExtractError, extract
 from axial.llm import (
     ARTIFACTS_PASS_NAME,
@@ -54,6 +60,7 @@ from axial.llm import (
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.nonprose_guard import non_prose_skip_reason
+from axial.router import ARTIFACT, route_for
 from axial.schema import Schema, SchemaError, load_schema
 from axial.tag import (
     TagNotInSchemaError,
@@ -271,33 +278,117 @@ def reject_degenerate_artifact_values(raw: str, schema: Schema) -> None:
             _reject_blank_artifact_value(value, f"{FIELD_AXIS}.secondary[{index}]")
 
 
-def _collect_descendant_artifacts(node: dict, section: str) -> list[tuple[dict, str]]:
-    """Recurse into `node`'s descendants, pairing every `type == 'artifact'`
-    node found with `section` (the enclosing top-level section's own
-    verbatim heading)."""
+def _routed_artifact_blocks(tree: dict) -> list[tuple[dict, str]]:
+    """Collect every ARTIFACT-routed block (table, picture, caption) in the
+    extraction tree, in reading order, each paired with its enclosing
+    top-level section's own verbatim heading text (issue #168, PRD §7.8) --
+    the same section-scoped recursive walk `axial.chunk._routed_section_body`
+    uses, classifying each node via the shared `axial.router.route_for`, but
+    for the artifact pass's own collection rather than chunking.
+
+    Deliberately does NOT reuse `axial.router.iter_routed_blocks` directly:
+    that helper only yields a node carrying non-empty `text` (the right gate
+    for chunk.py, which has nothing to chunk otherwise), but a real docling
+    `TableItem` routinely carries an EMPTY `text` (its content lives in table
+    cells, not a `text` attribute -- confirmed against
+    tests/fixtures/extract/prose_and_table_tree.json's own table node) and
+    must still be collected as an artifact. This walk mirrors
+    `iter_routed_blocks`'s recursive shape exactly, just without that
+    text-presence gate.
+
+    A node whose extraction `type` is already `'artifact'` (docling's own
+    `TableItem`/`PictureItem` classification, see `extract.py`'s `_classify`)
+    is ALWAYS included here regardless of its own `label` -- a back-compat
+    carve-out so a genuine artifact never silently vanishes on an
+    unrecognized-label edge case; every other block (in particular a
+    caption, `type == 'prose'`, `label == 'caption'`) routes purely by the
+    shared router's label mapping. Apparatus-routed blocks (`document_index`,
+    `footnote`, page heads/feet, a back-matter `list_item`) are never
+    collected.
+
+    A top-level node with no heading/children (content preceding any
+    heading) carries no section label (`""`); its own ARTIFACT-routed
+    descendants (including itself) are paired with that empty string rather
+    than dropped, mirroring the previous `type == 'artifact'`-only scan's
+    behavior for this edge case."""
     pairs: list[tuple[dict, str]] = []
-    for child in node.get("children", []):
-        if child.get("type") == "artifact":
-            pairs.append((child, section))
-        pairs.extend(_collect_descendant_artifacts(child, section))
+
+    def _walk(node: dict, section: str, in_back_matter_section: bool) -> None:
+        route = route_for(node.get("label"), in_back_matter_section=in_back_matter_section)
+        if route == ARTIFACT or node.get("type") == "artifact":
+            pairs.append((node, section))
+        for child in node.get("children", []):
+            _walk(child, section, in_back_matter_section)
+
+    for child in tree.get("children", []):
+        if "children" in child and child.get("text"):
+            section = child["text"]
+            in_back_matter_section = _is_back_matter(section)
+            for grandchild in child.get("children", []):
+                _walk(grandchild, section, in_back_matter_section)
+        else:
+            _walk(child, "", False)
     return pairs
 
 
 def _artifact_nodes_with_section(tree: dict) -> list[tuple[dict, str]]:
-    """Collect every `type == 'artifact'` node in the extraction tree, each
-    paired with its enclosing top-level section's own verbatim heading text
-    (mirroring `axial.chunk`'s `_section_nodes` idea). A top-level node with
-    no heading/children (content preceding any heading) carries no section
-    label; if it is itself an artifact, it is paired with an empty string
-    rather than dropped."""
-    pairs: list[tuple[dict, str]] = []
-    for child in tree.get("children", []):
-        if "children" in child and child.get("text"):
-            section = child["text"]
-            pairs.extend(_collect_descendant_artifacts(child, section))
-        elif child.get("type") == "artifact":
-            pairs.append((child, ""))
-    return pairs
+    """Genuine artifact nodes only (table/picture) -- excludes caption
+    blocks, which attach to their artifact instead of standing alone (see
+    `_attach_captions`). A thin filter over `_routed_artifact_blocks`, kept
+    as its own function since existing unit tests target it by name."""
+    return [
+        (node, section)
+        for node, section in _routed_artifact_blocks(tree)
+        if node.get("label") != "caption"
+    ]
+
+
+def _attach_captions(blocks: list[tuple[dict, str]]) -> list[dict[str, Any]]:
+    """Pair each genuine artifact (table/picture) with its reading-order-
+    adjacent caption's text, if any (issue #168 plan: "a caption attaches to
+    the nearest figure/table in reading order"). `blocks` is
+    `_routed_artifact_blocks`'s own output (ARTIFACT-routed nodes in document
+    order, table/picture and caption alike). Returns one entry per artifact
+    record to build: `{"node": ..., "section": ..., "caption": <text> |
+    None}` -- a caption block never becomes its own entry when it can attach
+    to a preceding one.
+
+    Simple reading-order rule (80/20): a caption attaches to the last entry
+    produced so far. An ORPHAN caption -- reached before any entry exists at
+    all -- never crashes and is never silently lost: it becomes its own
+    standalone entry (fallback), so this pass still classifies it (rather
+    than chunking it or dropping it), and a later caption can attach to that
+    standalone entry in turn.
+
+    A SECOND caption attaching to an entry that already carries one is
+    NEVER an overwrite (that would silently drop the first caption's text,
+    violating this slice's own "caption text is never lost" invariant):
+    its text is appended, newline-joined, onto the entry's existing
+    caption -- both survive."""
+    entries: list[dict[str, Any]] = []
+    last_entry: dict[str, Any] | None = None
+    for node, section in blocks:
+        if node.get("label") == "caption":
+            caption_text = node.get("text", "")
+            if last_entry is None:
+                # Orphan caption: no prior artifact to attach to -- emit as
+                # its own standalone entry rather than lose or crash on it.
+                # Its own text is already this entry's primary content (the
+                # entry's own `node`), so `caption` (attached-caption text)
+                # stays None here -- it is set only when a FURTHER caption
+                # attaches to this now-standalone entry (see below).
+                last_entry = {"node": node, "section": section, "caption": None}
+                entries.append(last_entry)
+            elif last_entry["caption"]:
+                # Never overwrite an already-attached caption -- append so
+                # both texts survive.
+                last_entry["caption"] = f"{last_entry['caption']}\n{caption_text}"
+            else:
+                last_entry["caption"] = caption_text
+            continue
+        last_entry = {"node": node, "section": section, "caption": None}
+        entries.append(last_entry)
+    return entries
 
 
 def artifact_id_for_node(source_id: str, node: dict) -> str:
@@ -315,13 +406,21 @@ def build_artifact_record(
     section: str,
     role: str,
     field: dict[str, Any] | None = None,
+    caption: str | None = None,
 ) -> dict[str, Any]:
     """Assemble the locked artifact record shape: `artifact_id`
     (`<source_id>_art_<order>`, keeping the node's dotted `order` verbatim),
     `artifact_role`, `source_id`, `section`, plus `field` (issue #32 slice
     02's `{"primary": ..., "secondary": [...]}` mapping) when given -- a
     schema lacking a `field` axis (e.g. a minimal test fixture domain) omits
-    the key entirely rather than emitting `field: null`."""
+    the key entirely rather than emitting `field: null`.
+
+    `caption` (issue #168): the text of the caption block attached to this
+    artifact via `_attach_captions`, when the tree carries one immediately
+    adjacent -- omitted entirely (never `caption: null`/`""`) when this
+    artifact has no attached caption, mirroring `field`'s own conditional
+    inclusion, so every pre-#168 caller/test keeps the record shape it
+    already asserts."""
     record: dict[str, Any] = {
         "artifact_id": artifact_id_for_node(source_id, node),
         "artifact_role": role,
@@ -330,6 +429,8 @@ def build_artifact_record(
     }
     if field is not None:
         record["field"] = field
+    if caption:
+        record["caption"] = caption
     return record
 
 
@@ -419,12 +520,16 @@ def run_artifacts(
 ) -> list[dict[str, Any]]:
     """Run the artifact-classification pass on `source_path`.
 
-    Walks the extraction tree for `type == 'artifact'` nodes; a source with
-    none yields zero records with zero LLM calls and no error. For each
-    artifact node found, calls the LLM once (`pass_name="artifacts"`) with a
-    prompt composed from the domain codebook's `artifact_role` entries, then
-    validates the returned role against the domain schema's `artifact_role`
-    axis -- an out-of-schema role is a hard error.
+    Walks the extraction tree for every ARTIFACT-routed block (table,
+    picture, caption -- see `_routed_artifact_blocks`), attaches each
+    caption's text to its nearest preceding table/picture (`_attach_captions`,
+    issue #168); a source with no genuine artifact yields zero records with
+    zero LLM calls and no error. For each artifact found, calls the LLM once
+    (`pass_name="artifacts"`) with a prompt composed from the domain
+    codebook's `artifact_role` entries, then validates the returned role
+    against the domain schema's `artifact_role` axis -- an out-of-schema role
+    is a hard error. A caption is never itself sent to the model as a
+    distinct artifact to classify.
 
     Artifacts-pass checkpoint/resume (issue #98, mirroring `axial.tag.run_tag`'s
     `tags_dir` seam): OPT-IN, active only when `artifacts_dir` is supplied
@@ -452,8 +557,8 @@ def run_artifacts(
     except ExtractError as exc:
         raise ExtractionFailedError(exc) from exc
 
-    pairs = _artifact_nodes_with_section(tree)
-    if not pairs:
+    entries = _attach_captions(_routed_artifact_blocks(tree))
+    if not entries:
         return []
 
     try:
@@ -476,7 +581,10 @@ def run_artifacts(
         }
 
     records: list[dict[str, Any]] = []
-    for node, section in pairs:
+    for entry in entries:
+        node = entry["node"]
+        section = entry["section"]
+        caption = entry["caption"]
         # Resume: an artifact already checkpointed by an earlier run is
         # reused verbatim and never re-sent to the model -- records
         # recombine in the tree's stable node order (issue #98, mirroring
@@ -540,7 +648,7 @@ def run_artifacts(
         except (LLMError, httpx.HTTPError) as exc:
             raise LLMFailedError(exc) from exc
 
-        record = build_artifact_record(source_id, node, section, role, field_value)
+        record = build_artifact_record(source_id, node, section, role, field_value, caption)
         # Persist this artifact's classified record before moving to the
         # next one (write+flush per artifact), so a failure on a later
         # artifact leaves every already-classified one durably checkpointed
