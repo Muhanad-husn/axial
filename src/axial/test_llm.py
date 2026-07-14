@@ -1073,6 +1073,66 @@ def test_openrouter_client_request_body_carries_max_tokens():
     assert body["max_tokens"] == _MAX_COMPLETION_TOKENS
 
 
+def test_openrouter_client_request_body_disables_reasoning():
+    """The request body must disable reasoning: the production_low model
+    started being served as a reasoning model, and the added reasoning
+    phase pushed large chunk-echo calls past the 300s wall-clock request
+    deadline (issue #147)."""
+    from axial.llm import OpenRouterClient
+
+    captured_requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    client.complete("hello world")
+
+    body = json.loads(captured_requests[0].content)
+    assert body["reasoning"] == {"enabled": False}
+
+
+def test_openrouter_client_content_fallback_request_body_disables_reasoning(monkeypatch):
+    """The content_fallback_model reroute (issue #116) must also disable
+    reasoning: it shares the same `_post_with_deadline` call site, but this
+    guards against the fallback path ever growing a separate body
+    construction that regresses issue #147."""
+    from axial.llm import OpenRouterClient
+
+    captured_requests = []
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        captured_requests.append(request)
+        if call_count == 1:
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": ""}, "finish_reason": "content_filter"}]},
+            )
+        return httpx.Response(200, json={"choices": [{"message": {"content": "fallback reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(
+        api_key="test-key",
+        model="test-model",
+        transport=transport,
+        content_fallback_model="fallback/model",
+    )
+
+    result = client.complete("hello world")
+
+    assert result == "fallback reply"
+    assert call_count == 2
+    fallback_body = json.loads(captured_requests[1].content)
+    assert fallback_body["model"] == "fallback/model"
+    assert fallback_body["reasoning"] == {"enabled": False}
+
+
 def test_openrouter_client_does_not_double_retry_empty_and_truncated_in_one_attempt(monkeypatch):
     """A response that is BOTH empty and non-`"stop"` must only consume one
     retry per attempt (share the same transient-this-attempt path), so the
