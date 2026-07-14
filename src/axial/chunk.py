@@ -987,12 +987,19 @@ def _safe_cache_key_component(value: str) -> str:
     may contain characters that are awkward in a filename) safe to fold into
     an on-disk cache filename, by replacing every run of
     not-obviously-filesystem-safe characters with a single underscore.
-    Collisions between two DIFFERENT raw values that happen to sanitize to
-    the same safe string are not a concern here: the cache is a pure
-    performance layer (see `_CachingEmbedder`'s docstring) -- a false-shared
-    cache FILE would at worst force an extra re-embed (the file's per-text
-    keys still disambiguate correctly, since the actual dict lookup below is
-    never done through this sanitized string), never corrupt output."""
+
+    Two DIFFERENT raw values CAN sanitize to the same safe string (e.g.
+    `"model_1"` and `"model!1"` both collapse to `"model_1"`) -- a
+    filename collision is therefore possible, most plausibly on `model_id`
+    (`compute_source_id` always appends a 12-hex-char suffix to `source_id`,
+    which makes a `source_id`-side collision implausible in practice, but
+    this function offers no formal guarantee either way). A collision here
+    is harmless, not corrupting: `_CachingEmbedder` persists the RAW
+    `source_id`/`model_id` inside the cache file itself and checks them
+    against the current run's values on load, so a filename shared by two
+    distinct `(source_id, model_id)` pairs degrades to a cold cache (an
+    extra re-embed) rather than ever serving one pair's vectors to the
+    other (see `_CachingEmbedder._load_cache_file`)."""
     return _CACHE_KEY_SAFE_RE.sub("_", value)
 
 
@@ -1040,19 +1047,72 @@ class _CachingEmbedder:
     entries back to disk (idempotent -- a no-op when nothing new was
     computed since the last flush), so a later process/run (not just a
     later call within the same process) reuses it.
+
+    On-disk file shape (issue #152 review finding 1): `{"source_id": ...,
+    "model_id": ..., "vectors": {text: vector}}` -- the raw (unsanitized)
+    `source_id`/`model_id` are persisted INSIDE the file, not just encoded
+    into its filename. `_load_cache_file` checks both against the current
+    run's values before trusting the file's vectors at all, so a filename
+    collision from `_safe_cache_key_component` (two distinct raw
+    `(source_id, model_id)` pairs sanitizing to the same filename -- see
+    that function's docstring) can never serve one pair's vectors to the
+    other: a mismatch degrades to a cold cache instead. Loading also fails
+    SOFT on any read/parse problem (a torn write from a hard kill mid-flush,
+    a hand-edited file, wrong JSON shape) -- see `_load_cache_file`'s
+    docstring -- mirroring this module's own `load_chunk_checkpoint`
+    heal-on-corruption convention (issue #104): the cache is a pure
+    performance layer, so it must never be able to abort a run.
     """
 
     def __init__(self, inner: Embedder, source_id: str, cache_dir: Path) -> None:
         self._inner = inner
         self.model_id = inner.model_id
+        self._source_id = source_id
         self._path = cache_dir / (
             f"{_safe_cache_key_component(source_id)}"
             f"__{_safe_cache_key_component(inner.model_id)}.json"
         )
         self._vectors: dict[str, list[float]] = {}
         if self._path.is_file():
-            self._vectors = json.loads(self._path.read_text(encoding="utf-8"))
+            self._vectors = self._load_cache_file()
         self._dirty = False
+
+    def _load_cache_file(self) -> dict[str, list[float]]:
+        """Read `self._path` and return its cached vectors, or `{}` (cold)
+        if the file cannot be trusted -- either because it is unreadable
+        malformed JSON (`json.JSONDecodeError`), the wrong shape (e.g. a
+        list instead of an object -- `TypeError`), missing the expected
+        keys (`KeyError`), unreadable at the OS level such as a torn write
+        still mid-replace (`OSError`), or its own recorded
+        `source_id`/`model_id` does not match this instance's (`ValueError`
+        -- the finding-1 integrity check: a filename collision must never
+        let this run read another `(source_id, model_id)` pair's vectors).
+        Any of these prints a one-line warning to stderr (mirroring this
+        module's own `print(..., file=sys.stderr)` convention for skips)
+        and treats the cache as empty -- construction never raises, and the
+        caller simply re-embeds everything, exactly as on a genuinely cold
+        cache."""
+        try:
+            payload = json.loads(self._path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise TypeError(f"expected a JSON object, got {type(payload).__name__}")
+            if payload["source_id"] != self._source_id or payload["model_id"] != self.model_id:
+                raise ValueError(
+                    "cache file's recorded source_id/model_id does not match this run "
+                    "(filename collision -- see _safe_cache_key_component)"
+                )
+            vectors = payload["vectors"]
+            if not isinstance(vectors, dict):
+                raise TypeError(
+                    f"expected 'vectors' to be a JSON object, got {type(vectors).__name__}"
+                )
+            return vectors
+        except (json.JSONDecodeError, TypeError, KeyError, ValueError, OSError) as exc:
+            print(
+                f"chunk: ignoring unreadable embedding cache {self._path}: {exc}",
+                file=sys.stderr,
+            )
+            return {}
 
     def encode(self, texts: list[str]) -> list[list[float]]:
         """Return one vector per text, in order -- IDENTICAL to what
@@ -1076,13 +1136,32 @@ class _CachingEmbedder:
         return results  # type: ignore[return-value]  -- every None slot was just filled above
 
     def flush(self) -> None:
-        """Persist any newly-computed vectors to `self._path`, creating
-        parent directories as needed. A no-op when nothing changed since the
-        last flush (a fully warm run, or a flush called twice in a row)."""
+        """Persist any newly-computed vectors to `self._path`, along with
+        this run's raw `source_id`/`model_id` (see the class docstring's
+        "On-disk file shape" -- the finding-1 integrity check `_load_cache_file`
+        relies on), creating parent directories as needed. A no-op when
+        nothing changed since the last flush (a fully warm run, or a flush
+        called twice in a row).
+
+        Atomic (issue #152 review finding 2): writes to a sibling temp file
+        first, then `os.replace`s it over `self._path` -- `os.replace` is a
+        single filesystem rename, so a reader (including a later
+        `_CachingEmbedder` construction) always sees either the complete
+        prior file or the complete new one, never a torn partial write, even
+        if this process is hard-killed mid-flush. `flush()` runs after every
+        section in `run_chunk_embedding`, so this matters in practice, not
+        just in theory."""
         if not self._dirty:
             return
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self._vectors), encoding="utf-8")
+        payload = {
+            "source_id": self._source_id,
+            "model_id": self.model_id,
+            "vectors": self._vectors,
+        }
+        tmp_path = self._path.with_name(self._path.name + ".tmp")
+        tmp_path.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(tmp_path, self._path)
         self._dirty = False
 
 
