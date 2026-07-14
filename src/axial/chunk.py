@@ -70,7 +70,7 @@ from axial.envelope import (
 )
 from axial.extract import load_persisted_tree, tree_path
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
-from axial.nonprose_guard import MAX_NON_ALPHA_RATIO
+from axial.nonprose_guard import MAX_NON_ALPHA_RATIO, garble_only_skip_reason
 from axial.router import APPARATUS, PROSE, apparatus_reason, iter_routed_blocks
 
 CHUNKS_DIR = Path("data/chunks")
@@ -760,17 +760,14 @@ def _garbage_section_skip_reason(
     """The non-alpha arm ONLY of the shared `axial.nonprose_guard` heuristic
     (PRD §5 stage 4 / §7.7 / §8 P0-4: "size never triggers a skip" for the
     embedding chunk stage -- an oversized but legitimate section is SPLIT,
-    never skipped). Deliberately does not reuse
-    `axial.nonprose_guard.non_prose_skip_reason` directly, since that
+    never skipped). Delegates to `axial.nonprose_guard.garble_only_skip_reason`
+    (issue #169, source-router slice 04, which lifted this stage's own
+    "non-alpha arm ONLY" precedent into the shared module so `axial.chunk`,
+    `axial.tag`, and `axial.xref` share one definition instead of three
+    copies) rather than `non_prose_skip_reason` directly, since that
     function's size arm would skip on size too; this stage's own MAX-side
     band guard (`_split_group_to_max`) is what handles size instead."""
-    char_count = len(text)
-    if not char_count:
-        return None
-    non_alpha_ratio = sum(1 for c in text if not c.isalpha()) / char_count
-    if non_alpha_ratio > max_non_alpha_ratio:
-        return f"high non-alpha ratio ({non_alpha_ratio:.1%})"
-    return None
+    return garble_only_skip_reason(text, max_non_alpha_ratio=max_non_alpha_ratio)
 
 
 _CACHE_KEY_SAFE_RE = re.compile(r"[^A-Za-z0-9_.-]+")

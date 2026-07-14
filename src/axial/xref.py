@@ -43,19 +43,20 @@ from axial.llm import (
     XREF_PASS_NAME,
     get_client,
 )
-from axial.nonprose_guard import non_prose_skip_reason
+from axial.nonprose_guard import garble_only_skip_reason
 from axial.tag import TagError
 
 # Default xref-pass checkpoint directory, mirroring `axial.artifacts.ARTIFACTS_DIR`
 # / `axial.tag.TAGS_DIR` exactly (issue #110).
 XREF_DIR = Path("data/xref")
 
-# Input-guard thresholds for non-prose back-matter (issue #111, lifted into
-# `axial.nonprose_guard` by issue #132): an OCR'd index/bibliography becomes
-# one very large, mostly-non-alphabetic chunk with zero cross-reference value
-# that stalls the LLM. Heuristics, not hard rules. Kept as module-level
-# aliases here so external references to these exact names keep working.
-_XREF_MAX_CHUNK_CHARS = 30000
+# Input-guard threshold for genuinely garbled prose (issue #111, lifted into
+# `axial.nonprose_guard` by issue #132). Demoted from primary gate to
+# garble-only backstop by issue #169 (source-router slice 04): the chunk
+# artifact this pass reads is now prose-only and size-bounded by the router
+# + chunk band (source-router slices 02-03), so only the non-alpha ratio arm
+# remains -- size never skips a chunk here. Kept as a module-level alias so
+# external references to this exact name keep working.
 _XREF_MAX_NON_ALPHA_RATIO = 0.4
 
 _XREF_PROMPT_TEMPLATE = """\
@@ -171,17 +172,20 @@ def xref_checkpoint_path(source_id: str, xref_dir: Path = XREF_DIR) -> Path:
 
 def _non_prose_skip_reason(chunk_text: str) -> str | None:
     """Return a human-readable reason to skip `chunk_text` from the xref pass
-    as non-prose back-matter (issue #111), or None to process it normally. An
-    OCR'd index/bibliography becomes one very large, mostly-non-alphabetic
-    chunk with zero cross-reference value that stalls the LLM.
+    as genuinely garbled prose, or None to process it normally (issue #111;
+    demoted from primary prose/non-prose gate to garble-only backstop by
+    issue #169, source-router slice 04). An OCR'd index/bibliography that
+    slips type classification becomes one mostly-non-alphabetic chunk with
+    zero cross-reference value that would otherwise stall the LLM.
 
-    Delegates to the shared `axial.nonprose_guard.non_prose_skip_reason`
-    (issue #132), passing this module's own threshold names through
-    explicitly so behavior is unchanged even if the shared defaults ever
-    diverge from xref's own."""
-    return non_prose_skip_reason(
+    Delegates to the shared `axial.nonprose_guard.garble_only_skip_reason`
+    (the non-alpha arm ONLY -- size never skips a chunk here, since the
+    chunk artifact this pass reads is prose-only and size-bounded by the
+    router + chunk band), passing this module's own threshold name through
+    explicitly so behavior is unchanged even if the shared default ever
+    diverges from xref's own."""
+    return garble_only_skip_reason(
         chunk_text,
-        max_chars=_XREF_MAX_CHUNK_CHARS,
         max_non_alpha_ratio=_XREF_MAX_NON_ALPHA_RATIO,
     )
 

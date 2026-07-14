@@ -19,8 +19,19 @@ Note (issue #154, slice 04 of the chunk-redesign subproject): the embedding
 chunk stage's own size arm (`axial.chunk._garbage_section_skip_reason`) never
 reused this module's size arm to begin with (an oversized section is SPLIT,
 not skipped -- see that function's docstring); this module's guard remains
-live for `axial.xref`/`axial.tag`/`axial.artifacts`, which still skip
-oversized/OCR-garbled chunks before an LLM call.
+live for `axial.artifacts`, which still skips oversized/OCR-garbled artifact
+text before an LLM call.
+
+Note (issue #169, source-router slice 04): the chunk artifact `axial.tag`
+and `axial.xref` now read is prose-only and size-bounded by the router +
+chunk band (source-router slices 02-03), so `non_prose_skip_reason`'s SIZE
+arm is no longer a legitimate gate for either pass -- a large chunk reaching
+tag/xref is legitimate prose, not back-matter. Both passes now call
+`garble_only_skip_reason` (below) instead: the SAME non-alpha arm only,
+demoting the guard from primary gate to a deliberate, logged backstop for
+prose that is genuinely garbled (slips type classification) rather than
+merely long. `non_prose_skip_reason` itself is unchanged and stays live for
+`axial.artifacts` (see above).
 
 Import topology: this is a LEAF module. It must never import from
 `axial.xref`, `axial.chunk`, `axial.tag`, or `axial.artifacts` -- all four
@@ -57,4 +68,26 @@ def non_prose_skip_reason(
         non_alpha_ratio = sum(1 for c in text if not c.isalpha()) / char_count
         if non_alpha_ratio > max_non_alpha_ratio:
             return f"high non-alpha ratio ({non_alpha_ratio:.1%})"
+    return None
+
+
+def garble_only_skip_reason(
+    text: str,
+    max_non_alpha_ratio: float = MAX_NON_ALPHA_RATIO,
+) -> str | None:
+    """The non-alpha arm ONLY of `non_prose_skip_reason` -- never the size
+    arm (issue #169, source-router slice 04). A backstop for genuinely
+    garbled prose that slips type classification, not a primary prose/
+    non-prose gate: a chunk this large simply reflects the router + chunk
+    band (source-router slices 02-03), not back-matter, so size alone must
+    never skip it. Mirrors `axial.chunk._garbage_section_skip_reason`'s own
+    "non-alpha arm ONLY" precedent (issue #154 slice 04), now lifted here so
+    `axial.chunk`, `axial.tag`, and `axial.xref` share one definition of the
+    garble-only backstop instead of three copies."""
+    char_count = len(text)
+    if not char_count:
+        return None
+    non_alpha_ratio = sum(1 for c in text if not c.isalpha()) / char_count
+    if non_alpha_ratio > max_non_alpha_ratio:
+        return f"high non-alpha ratio ({non_alpha_ratio:.1%})"
     return None
