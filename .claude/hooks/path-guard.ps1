@@ -5,6 +5,7 @@
 #   spec-author  -> may write ONLY under specs/
 #   test-author  -> may write ONLY under tests/
 #   implementer  -> may write anywhere EXCEPT tests/ and specs/
+#   fixer        -> may write anywhere EXCEPT tests/ and specs/ (fix lane, same scope)
 #
 # Two wirings, one script (DEC-18): role frontmatter passes the role name
 # explicitly; the global settings.json wiring passes no arg and the role is taken
@@ -60,6 +61,10 @@ switch ($Role) {
     'implementer' {
         if ($rel -match '^tests/') { Block "implementer may not touch tests/ - the outer contract is locked (DEC-1) (tried: $rel)." }
         if ($rel -match '^specs/') { Block "implementer may not touch specs/ - raise a spec-drift issue instead (tried: $rel)." }
+    }
+    'fixer' {
+        if ($rel -match '^tests/') { Block "fixer may not touch tests/ - regression tests come from the test-author (tried: $rel)." }
+        if ($rel -match '^specs/') { Block "fixer may not touch specs/ - feature-scale work belongs in a slice via /sprint-start (tried: $rel)." }
     }
     default {
         # Not one of the three path-ruled roles (orchestrator, triage, reviewer,
