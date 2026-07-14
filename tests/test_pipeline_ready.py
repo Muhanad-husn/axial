@@ -175,11 +175,13 @@ directory is ever read, moved, or written by this test.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
 from pathlib import Path
 
+from axial.chunk import HashingEmbedder, run_chunk_embedding
 from axial.envelope import compute_source_id
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -310,12 +312,33 @@ def _place_tree_fixture(source_path: Path, root: Path) -> Path:
     return tree_path
 
 
+@contextlib.contextmanager
+def _chdir(path: Path):
+    """Temporarily change the process cwd to `path`: `run_chunk_embedding`
+    resolves its persisted-tree read (`axial.extract.tree_path`, via
+    `axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
+    override parameter. Calling it in-process needs this to reproduce the
+    exact resolution a `cwd=`-scoped subprocess would get."""
+    previous = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
 def _arrange_stored_envelope(source_path: Path, root: Path) -> None:
     """Pre-place the tree fixture, then run `axial envelope` with the stub
     provider so a stored envelope exists on disk before `pipeline-ready`
     runs (mirrors tests/test_ingest.py's helper of the same name). Asserts
     the arrange step itself succeeded and produced exactly one new envelope
-    file."""
+    file.
+
+    Also writes the real, on-disk chunk artifact for `source_path` (issue
+    #154 slice 04: `pipeline-ready`'s own internal single-attempt ingest
+    call composes `axial.vault.run_vault_write`, which no longer computes
+    chunks itself -- it reads `data/chunks/<source_id>.jsonl` via
+    `axial.chunk.read_chunks`, a required precondition)."""
     _place_tree_fixture(source_path, root)
     before_files = _existing_envelope_files(root)
 
@@ -334,6 +357,9 @@ def _arrange_stored_envelope(source_path: Path, root: Path) -> None:
         f"got {len(new_files)}: {sorted(new_files)}\n"
         f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
+
+    with _chdir(root):
+        run_chunk_embedding(source_path, embedder=HashingEmbedder())
 
 
 def _toml_escape(value: str) -> str:

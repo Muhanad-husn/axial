@@ -148,11 +148,13 @@ entirely, never touching the real `data/` tree, torn down automatically.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
 from pathlib import Path
 
+from axial.chunk import HashingEmbedder, run_chunk_embedding
 from axial.envelope import compute_source_id
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -272,11 +274,33 @@ def _existing_envelope_files(root: Path) -> set[Path]:
     return set(envelopes_dir.glob("*.json"))
 
 
+@contextlib.contextmanager
+def _chdir(path: Path):
+    """Temporarily change the process cwd to `path`: `run_chunk_embedding`
+    resolves its persisted-tree read (`axial.extract.tree_path`, via
+    `axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
+    override parameter. Calling it in-process needs this to reproduce the
+    exact resolution a `cwd=`-scoped subprocess would get."""
+    previous = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
 def _arrange_stored_envelope(root: Path, source_path: Path) -> Path:
     """Pre-place the real tree fixture, then run `axial envelope` with the
     stub provider so a stored envelope exists on disk before vault write.
     Returns the new envelope's path. Asserts the arrange step itself
-    succeeded."""
+    succeeded.
+
+    Also writes the real, on-disk chunk artifact for `source_path` (issue
+    #154 slice 04: `axial vault write` no longer computes chunks itself --
+    it reads `data/chunks/<source_id>.jsonl` via `axial.chunk.read_chunks`,
+    a required precondition regardless of whether this test's own subject
+    -- the artifacts-pass checkpoint -- is otherwise unaffected by the
+    chunk redesign)."""
     _place_tree_fixture(source_path, root)
     before_files = _existing_envelope_files(root)
 
@@ -294,6 +318,10 @@ def _arrange_stored_envelope(root: Path, source_path: Path) -> Path:
         f"{_envelopes_dir(root)} after `axial envelope`, got {len(new_files)}: "
         f"{sorted(new_files)}\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
+
+    with _chdir(root):
+        run_chunk_embedding(source_path, embedder=HashingEmbedder())
+
     return next(iter(new_files))
 
 

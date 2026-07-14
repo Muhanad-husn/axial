@@ -110,12 +110,19 @@ call must produce. This is safe for the same reason the sibling tests'
 identical derivation is safe: the standalone `axial chunk`/`axial artifacts`
 CLI commands and `run_vault_write`'s own internal calls to the same passes
 consume the same stored envelope/tree with the same stub provider, so they
-must agree. (Verified directly: neither standalone CLI command persists
-any on-disk checkpoint -- src/axial/cli.py's `cmd_chunk`/`cmd_artifacts`
-call `run_chunk(source_path)`/`run_artifacts(source_path, ...)` with no
-`chunks_dir`/checkpoint argument, and both passes' checkpoint behavior is
-opt-in only when such a directory is explicitly supplied -- so these arrange
-calls have no side effect `axial ingest`'s own later run could observe.)
+must agree.
+
+Migration note (issue #154, slice 04): as of this slice, deriving the
+expected chunk_id set is no longer a side-effect-free observation --
+`axial.chunk.run_chunk_embedding` (the sole chunking mechanism now) WRITES
+the real, on-disk chunk artifact (`data/chunks/<source_id>.jsonl`) as its
+whole point, and `axial ingest`'s own internal `axial.vault.run_vault_write`
+call no longer chunks at all -- it only ever READS that same artifact (via
+`axial.chunk.read_chunks`), and fails clearly if it is absent. So this
+arrange step is now a REQUIRED precondition for the two fresh sources
+`axial ingest` must actually process, not merely an inert observation (the
+already-ingested source's artifact is written too, harmlessly, since it is
+skipped by the results-file guard regardless).
 
 Seam decision 4 -- the skip guard is checked two ways, one lenient and one
 strict
@@ -180,9 +187,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from axial.chunk import run_chunk
+from axial.chunk import HashingEmbedder, run_chunk_embedding
 from axial.envelope import compute_source_id
-from axial.llm import StubLLMClient
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -255,15 +261,14 @@ def _results_path(root: Path) -> Path:
 
 @contextlib.contextmanager
 def _chdir(path: Path):
-    """Temporarily change the process cwd to `path` (issue #151 slice 01
-    migration -- see `_expected_chunk_ids` below): the OLD
-    `axial.chunk.run_chunk` mechanism calls `axial.extract.extract`
-    internally, which resolves its persisted-tree cache directory
-    (`axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
-    override parameter. Calling `run_chunk` in-process instead of shelling
-    out to `axial chunk` (whose CLI verb now runs the NEW embedding-based
-    mechanism as of issue #151) needs this to reproduce the exact
-    resolution the old subprocess's own `cwd=` argument achieved."""
+    """Temporarily change the process cwd to `path` -- see
+    `_expected_chunk_ids` below: `run_chunk_embedding` resolves its
+    persisted-tree read (`axial.extract.tree_path`, via
+    `axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
+    override parameter (only its OWN write target, `chunks_dir`, is
+    overridable). Calling it in-process instead of shelling out to `axial
+    chunk` needs this to reproduce the exact resolution a `cwd=`-scoped
+    subprocess would get."""
     previous = Path.cwd()
     os.chdir(path)
     try:
@@ -403,21 +408,24 @@ def _parse_json_records(stdout: str, *, array_key: str, kind: str) -> list[dict]
 
 
 def _expected_chunk_ids(source_pdf: Path, root: Path) -> set[str]:
-    """Independently call the OLD `axial.chunk.run_chunk` mechanism
-    IN-PROCESS (stub client) to obtain the real chunk_id set for
-    `source_pdf` (module docstring, seam decision 3). Requires a stored
-    envelope (and tree fixture) to already exist for this source.
+    """Write the real, on-disk chunk artifact for `source_pdf` IN-PROCESS
+    (`axial.chunk.run_chunk_embedding`, the stub/offline `HashingEmbedder`)
+    and return the chunk_id set it produced (module docstring, seam
+    decision 3). Requires a stored envelope (and tree fixture) to already
+    exist for this source.
 
-    Migrated off a subprocess call to the standalone `axial chunk` CLI
-    (issue #151 slice 01): that CLI verb now runs the NEW embedding-based
-    chunk mechanism and no longer emits chunk records on stdout at all. The
-    OLD mechanism this arrange step needs (`axial.chunk.run_chunk`) still
-    ships unchanged until issue #154 retires it, and `axial ingest`'s own
-    internal `axial.vault.run_vault_write` call still uses it in-process --
-    so calling it here in-process too keeps this ground truth identical to
-    what that unchanged call site actually produces."""
+    Issue #154 slice 04: `axial ingest`'s own internal
+    `axial.vault.run_vault_write` call no longer chunks internally at all
+    -- it only ever READS `data/chunks/<source_id>.jsonl` (via
+    `axial.chunk.read_chunks`). So for the two FRESH sources this test
+    expects `axial ingest` to actually process, this arrange step is also
+    what makes that possible: it must write each fresh source's own chunk
+    artifact before `axial ingest` ever runs (the already-ingested source's
+    artifact is written too, harmlessly, since it is skipped by the
+    results-file guard regardless of whether a chunk artifact exists for
+    it)."""
     with _chdir(root):
-        records = run_chunk(source_pdf, client=StubLLMClient(), envelopes_dir=_envelopes_dir(root))
+        records = run_chunk_embedding(source_pdf, embedder=HashingEmbedder())
     ids = {
         record["chunk_id"]
         for record in records
