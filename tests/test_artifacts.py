@@ -775,3 +775,186 @@ def test_captioned_figure_and_table_become_artifact_notes_apparatus_excluded(tmp
         f"expected the caption to remain absent from the emitted chunks "
         f"(slice 02's own invariant, still true): found it in {leaked_caption!r}"
     )
+
+
+# ===========================================================================
+# Regression test for issue #172 follow-up (PR #180 fix-lane): a fallback-
+# path 'FigureCaption' block must attach to its preceding artifact
+#
+# Locked behavioral contract (DEC-1) -- do not edit once committed red.
+#
+# Spec: `specs/PRODUCT.md` §7.8 / §7.2 (a caption attaches to the nearest
+# preceding table/picture; its text rides on that artifact's own record
+# rather than being lost, chunked, or classified as its own standalone
+# artifact). On the docling extraction path a caption block's `label` is
+# the lowercase `"caption"` token, and `axial.artifacts._artifact_nodes_
+# with_section`/`_attach_captions` correctly recognize it (issue #168,
+# proven by `test_captioned_figure_and_table_become_artifact_notes_
+# apparatus_excluded` above). On the Unstructured FALLBACK extraction path
+# (P0-2), the same semantic block instead carries the raw Unstructured
+# `element.category` spelling `"FigureCaption"` as its `label`. `axial.
+# router.route_for` already normalizes `"FigureCaption"` to ARTIFACT (issue
+# #172's alias table maps `"figurecaption"` -> `"caption"`), so the block IS
+# collected by `_routed_artifact_blocks` -- but `_artifact_nodes_with_
+# section` (`node.get("label") != "caption"`) and `_attach_captions`
+# (`node.get("label") == "caption"`) both compare the RAW label literally,
+# never through the router's own canonical-token normalization, so a
+# `"FigureCaption"` node is treated as a genuine standalone artifact instead
+# of an attaching caption: it is sent to the model as its own artifact and
+# produces its own artifact record, and its text never reaches the
+# preceding figure's record at all. This test pins the fallback-path
+# behavior the fix must deliver (attach, not stand alone) while a sibling
+# test locks that the existing docling lowercase-'caption' path keeps
+# working identically -- so the fix can't regress the primary path while
+# fixing the fallback one.
+#
+# Seam decision -- reuses this file's own `_build_caption_routing_tree`-
+# style monkeypatched-`extract` seam and the module-level `_stub_artifact_
+# payload`/`_RoutingCountingClient` helpers directly, on a smaller
+# purpose-built two-node tree (one picture, one immediately-following
+# caption block) -- the minimal fixture that isolates the attach/no-attach
+# behavior without the TOC/footnote apparatus noise the larger #168 fixture
+# above already covers.
+# ===========================================================================
+
+_ATTACH_FIGURE_BODY = (
+    "Attach-regression figure sentinel: cross-section diagram of the "
+    "eastern trench wall showing the three distinct stratigraphic layers."
+)
+_ATTACH_CAPTION_BODY = (
+    "Attach-regression caption sentinel: cross-section diagram annotated "
+    "with layer boundaries, drawn by the site surveyor after the final dig."
+)
+
+
+def _build_single_captioned_figure_tree(caption_label: str) -> dict:
+    """A minimal tree: one section holding one picture immediately followed
+    by one caption block carrying `caption_label` as its own `label` --
+    isolates the attach/no-attach behavior for exactly that label spelling,
+    independent of any TOC/footnote apparatus noise."""
+    return {
+        "children": [
+            {
+                "type": "prose",
+                "order": "1",
+                "text": "Findings",
+                "label": "section_header",
+                "children": [
+                    {
+                        "type": "artifact",
+                        "order": "1.1",
+                        "label": "picture",
+                        "text": _ATTACH_FIGURE_BODY,
+                    },
+                    {
+                        "type": "prose",
+                        "order": "1.2",
+                        "label": caption_label,
+                        "text": _ATTACH_CAPTION_BODY,
+                    },
+                ],
+            },
+        ]
+    }
+
+
+def _run_single_captioned_figure_case(tmp_path, monkeypatch, caption_label: str):
+    """Shared arrange+act for the attach-regression cases below: builds a
+    single-picture-plus-caption tree with `caption_label`, runs
+    `run_artifacts` against it via the monkeypatched-`extract` seam, and
+    returns `(records, client, source_id)` for the caller's own
+    label-specific assertions."""
+    tree = _build_single_captioned_figure_tree(caption_label)
+    monkeypatch.setattr(artifacts_module, "extract", lambda path: tree)
+
+    source_path = tmp_path / f"attach_regression_source_{caption_label}.txt"
+    source_path.write_text(
+        f"issue #172 follow-up attach-regression source ({caption_label})",
+        encoding="utf-8",
+    )
+    source_id = compute_source_id(source_path)
+
+    payload = _stub_artifact_payload()
+    client = _RoutingCountingClient(payload)
+
+    records = artifacts_module.run_artifacts(
+        source_path, client=client, domain_dir=_ARTIFACT_ROUTING_DOMAIN_DIR
+    )
+    return records, client, source_id
+
+
+def test_fallback_figurecaption_label_attaches_to_preceding_figure(tmp_path, monkeypatch):
+    """The FALLBACK-path spelling ('FigureCaption', raw Unstructured
+    element.category) must attach to its preceding figure exactly like the
+    docling lowercase 'caption' spelling does -- not become its own
+    standalone artifact record. Expected to FAIL today: two records (the
+    figure PLUS a standalone 'FigureCaption' artifact) and two LLM calls,
+    because `_artifact_nodes_with_section`/`_attach_captions` compare the
+    raw label literally against `"caption"` rather than through the
+    router's own normalization."""
+    records, client, source_id = _run_single_captioned_figure_case(
+        tmp_path, monkeypatch, "FigureCaption"
+    )
+
+    figure_artifact_id = f"{source_id}_art_1.1"
+
+    assert len(records) == 1, (
+        f"expected exactly ONE artifact record (the figure, with the "
+        f"'FigureCaption' block's text attached) -- not a second, standalone "
+        f"artifact record for the caption block itself -- got {len(records)} "
+        f"records: {records!r}"
+    )
+
+    figure_record = records[0]
+    assert figure_record.get("artifact_id") == figure_artifact_id, (
+        f"expected the sole artifact record to be the figure "
+        f"({figure_artifact_id!r}), got {figure_record.get('artifact_id')!r} "
+        f"-- full record: {figure_record!r}"
+    )
+
+    assert _record_contains_text(figure_record, _ATTACH_CAPTION_BODY), (
+        f"expected the figure's own artifact record to carry the "
+        f"'FigureCaption' block's text SOMEWHERE among its own string "
+        f"values (attached, not lost, not standalone) -- got: "
+        f"{figure_record!r}"
+    )
+
+    assert client.call_count == 1, (
+        f"expected exactly ONE artifacts-pass LLM call (the figure only) -- "
+        f"the 'FigureCaption' block must never be sent to the model as its "
+        f"own distinct artifact to classify -- got {client.call_count} calls"
+    )
+
+
+def test_docling_lowercase_caption_label_still_attaches_to_preceding_figure(tmp_path, monkeypatch):
+    """Regression guard: the existing docling lowercase 'caption' spelling
+    must keep attaching identically -- this sibling case must stay GREEN
+    both before and after the fallback-label fix above, proving the fix
+    cannot regress the primary path while it corrects the fallback one."""
+    records, client, source_id = _run_single_captioned_figure_case(tmp_path, monkeypatch, "caption")
+
+    figure_artifact_id = f"{source_id}_art_1.1"
+
+    assert len(records) == 1, (
+        f"expected exactly ONE artifact record (the figure, with the "
+        f"lowercase 'caption' block's text attached), got {len(records)} "
+        f"records: {records!r}"
+    )
+
+    figure_record = records[0]
+    assert figure_record.get("artifact_id") == figure_artifact_id, (
+        f"expected the sole artifact record to be the figure "
+        f"({figure_artifact_id!r}), got {figure_record.get('artifact_id')!r} "
+        f"-- full record: {figure_record!r}"
+    )
+
+    assert _record_contains_text(figure_record, _ATTACH_CAPTION_BODY), (
+        f"expected the figure's own artifact record to carry the lowercase "
+        f"'caption' block's text SOMEWHERE among its own string values, "
+        f"got: {figure_record!r}"
+    )
+
+    assert client.call_count == 1, (
+        f"expected exactly ONE artifacts-pass LLM call (the figure only), "
+        f"got {client.call_count} calls"
+    )
