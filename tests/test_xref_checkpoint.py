@@ -43,21 +43,28 @@ Seam decision 1 -- bypassing docling/network entirely via monkeypatched
 upstream passes, not real chunking/artifact-classification
 -----------------------------------------------------------------------
 `run_xref` normally builds its chunk/artifact records via its own internal
-calls to `axial.chunk.run_chunk` / `axial.artifacts.run_artifacts` (both
+calls to `axial.chunk.read_chunks` / `axial.artifacts.run_artifacts` (both
 imported directly into `axial.xref`'s module namespace: `from axial.chunk
-import ChunkError, run_chunk` / `from axial.artifacts import ... ,
+import ChunkError, read_chunks` / `from axial.artifacts import ... ,
 run_artifacts`). This test never drives a real PDF through docling (too slow,
 and out of bounds for an isolated single-file test run per this issue's
-constraints); instead it monkeypatches `axial.xref.run_chunk` and
+constraints); instead it monkeypatches `axial.xref.read_chunks` and
 `axial.xref.run_artifacts` directly, in place, with fakes that return a
 fixed, synthetic 15-chunk / zero-artifact record set regardless of what
-`run_xref` passes them. Because Python looks up `run_chunk`/`run_artifacts`
+`run_xref` passes them. Because Python looks up `read_chunks`/`run_artifacts`
 as plain module-global names at call time, monkeypatching the module
 attribute redirects every call `run_xref` makes internally -- proven prior
 art for this exact technique lives in
 tests/test_llm_wallclock_timeout.py's `monkeypatch.setattr(llm_module,
 "_sleep", ...)`. `run_xref`'s own per-chunk LOOP -- the actual subject of
 issue #110 -- is never bypassed; only its two upstream data sources are.
+
+Migration note (issue #154, slice 04): `axial.chunk.run_chunk` (the
+retired LLM-echo chunker) is deleted; `axial.xref.run_xref` now reads
+chunk records via `axial.chunk.read_chunks` instead. This test repoints
+its monkeypatch from `xref_module.run_chunk` to `xref_module.read_chunks`
+(signature `read_chunks(source_id, **kwargs)`) accordingly -- every
+assertion below is unchanged.
 
 Seam decision 2 -- identifying "which chunk is this LLM call for" through an
 already-real observable: the chunk's own text embedded in the prompt
@@ -196,7 +203,7 @@ def test_xref_checkpoints_each_chunk_and_resume_skips_llm_calls_for_completed_ch
     ]
     all_chunk_ids = {record["chunk_id"] for record in chunk_records}
 
-    def fake_run_chunk(path, **kwargs):
+    def fake_read_chunks(source_id, **kwargs):
         return chunk_records
 
     def fake_run_artifacts(path, **kwargs):
@@ -205,7 +212,7 @@ def test_xref_checkpoints_each_chunk_and_resume_skips_llm_calls_for_completed_ch
         # artifact set's size.
         return []
 
-    monkeypatch.setattr(xref_module, "run_chunk", fake_run_chunk)
+    monkeypatch.setattr(xref_module, "read_chunks", fake_read_chunks)
     monkeypatch.setattr(xref_module, "run_artifacts", fake_run_artifacts)
 
     source_path = tmp_path / "many_chunks_source.txt"

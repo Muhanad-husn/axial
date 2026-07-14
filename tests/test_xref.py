@@ -183,9 +183,8 @@ from pathlib import Path
 
 import pytest
 
-from axial.chunk import run_chunk
+from axial.chunk import HashingEmbedder, run_chunk_embedding
 from axial.envelope import compute_source_id
-from axial.llm import StubLLMClient
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "extract"
@@ -339,23 +338,25 @@ def _arrange_stored_envelope() -> None:
 
 
 def _arrange_known_chunk_ids() -> set[str]:
-    """Independently call the OLD `axial.chunk.run_chunk` mechanism
-    IN-PROCESS (stub client) to discover the exact set of real chunk_ids
-    this fixture yields -- see module docstring, seam decision 3.
+    """Write the real, on-disk chunk artifact for this fixture IN-PROCESS
+    (`axial.chunk.run_chunk_embedding`, the stub/offline `HashingEmbedder`)
+    and return the exact set of chunk_ids it produced -- see module
+    docstring, seam decision 3.
 
-    Migrated off a subprocess call to the standalone `axial chunk` CLI
-    (issue #151 slice 01): that CLI verb now runs the NEW embedding-based
-    chunk mechanism and no longer emits chunk records on stdout at all. The
-    OLD mechanism `axial xref` itself still calls in-process
-    (`axial.chunk.run_chunk`) ships unchanged until issue #154 retires it,
-    so calling it here in-process too (cwd already REPO_ROOT, matching
-    `_run_axial`'s own fixed `cwd=REPO_ROOT`) keeps this ground truth
-    identical to what that unchanged call site actually produces."""
-    records = run_chunk(PROSE_AND_TABLE_PDF, client=StubLLMClient())
+    Issue #154 slice 04: `axial xref` no longer computes chunks itself --
+    it reads `data/chunks/<source_id>.jsonl` via `axial.chunk.read_chunks`
+    (PRD §7.7) instead. So this arrange step now IS the thing that writes
+    that artifact (cwd already REPO_ROOT, matching `_run_axial`'s own fixed
+    `cwd=REPO_ROOT`, so the default `data/chunks/` resolution the CLI
+    subprocess reads from and the one this in-process call writes to are the
+    exact same path) -- the returned chunk_id set is simultaneously "the
+    fixture's real chunk_ids" (seam decision 3) and "what `axial xref` will
+    actually read" (seam decision 4)."""
+    records = run_chunk_embedding(PROSE_AND_TABLE_PDF, embedder=HashingEmbedder())
     chunk_ids = {r.get("chunk_id") for r in records}
     assert chunk_ids and all(isinstance(cid, str) and cid for cid in chunk_ids), (
-        f"arrange step failed: expected run_chunk to yield at least one "
-        f"chunk record with a non-empty chunk_id, got records: {records!r}"
+        f"arrange step failed: expected run_chunk_embedding to write at least "
+        f"one chunk record with a non-empty chunk_id, got records: {records!r}"
     )
     return chunk_ids
 
@@ -449,10 +450,11 @@ def test_xref_detects_pairs_filters_dangling_links_and_handles_the_empty_case(
         artifact_id = pair.get("artifact_id")
         assert chunk_id in known_chunk_ids, (
             f"expected every emitted pair's chunk_id to be drawn from this "
-            f"fixture's real chunk_id set (produced by `axial chunk` via "
-            f"the same run_chunk the xref pass consumes, per the slice "
-            f"plan's INVEST 'Independent' bullet -- see module docstring, "
-            f"seam decision 4), got chunk_id={chunk_id!r} which is not "
+            f"fixture's real chunk_id set (the same on-disk chunk artifact "
+            f"read via axial.chunk.read_chunks the xref pass itself "
+            f"consumes, per the slice plan's INVEST 'Independent' bullet -- "
+            f"see module docstring, seam decision 4), got "
+            f"chunk_id={chunk_id!r} which is not "
             f"among the known chunk_ids {sorted(known_chunk_ids)}; full "
             f"pair: {pair!r}"
         )
