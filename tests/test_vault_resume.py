@@ -175,9 +175,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from axial.chunk import run_chunk
+from axial.chunk import HashingEmbedder, run_chunk_embedding
 from axial.envelope import compute_source_id
-from axial.llm import StubLLMClient
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "envelope"
@@ -271,15 +270,14 @@ def _run_axial(
 
 @contextlib.contextmanager
 def _chdir(path: Path):
-    """Temporarily change the process cwd to `path` (issue #151 slice 01
-    migration -- see `_arrange_expected_chunk_records` below): the OLD
-    `axial.chunk.run_chunk` mechanism calls `axial.extract.extract`
-    internally, which resolves its persisted-tree cache directory
-    (`axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
-    override parameter. Calling `run_chunk` in-process instead of shelling
-    out to `axial chunk` (whose CLI verb now runs the NEW embedding-based
-    mechanism as of issue #151) needs this to reproduce the exact
-    resolution the old subprocess's own `cwd=` argument achieved."""
+    """Temporarily change the process cwd to `path` -- see
+    `_arrange_chunk_artifact`/`_arrange_expected_chunk_records` below:
+    `run_chunk_embedding` resolves its persisted-tree read
+    (`axial.extract.tree_path`, via `axial.extract.TREES_DIR`) as a plain,
+    cwd-relative path with no override parameter (only its OWN write
+    target, `chunks_dir`, is overridable). Calling it in-process instead of
+    shelling out to `axial chunk` needs this to reproduce the exact
+    resolution a `cwd=`-scoped subprocess would get."""
     previous = Path.cwd()
     os.chdir(path)
     try:
@@ -358,31 +356,38 @@ def _arrange_stored_envelope(root: Path, source_path: Path) -> Path:
     return next(iter(new_files))
 
 
-def _arrange_expected_chunk_records(control_root: Path, source_path: Path) -> list[dict]:
-    """Independently call the OLD `axial.chunk.run_chunk` mechanism
-    IN-PROCESS (stub client) in a dedicated CONTROL root (never the root
-    under test -- see module docstring, seam decision 5) to obtain the
-    real, deterministic chunk_id/section order for `source_path`, used as
-    ground truth. Requires a stored envelope for `source_path` to already
-    exist in `control_root`.
+def _arrange_chunk_artifact(root: Path, source_path: Path) -> list[dict]:
+    """Write the real, on-disk chunk artifact for `source_path` IN-PROCESS
+    (`axial.chunk.run_chunk_embedding`, the stub/offline `HashingEmbedder`)
+    at `<root>/data/chunks/<source_id>.jsonl`, and return the records it
+    produced.
 
-    Migrated off a subprocess call to the standalone `axial chunk` CLI
-    (issue #151 slice 01): that CLI verb now runs the NEW embedding-based
-    chunk mechanism and no longer emits chunk records on stdout at all. The
-    OLD mechanism `axial vault write` itself still calls in-process
-    (`axial.chunk.run_chunk`) ships unchanged until issue #154 retires it,
-    so calling it here in-process too keeps this ground truth identical to
-    what that unchanged call site actually produces."""
-    with _chdir(control_root):
-        records = run_chunk(
-            source_path, client=StubLLMClient(), envelopes_dir=_envelopes_dir(control_root)
-        )
+    Issue #154 slice 04: `axial vault write` no longer chunks internally at
+    all -- chunking is LLM-free (embedding-based) and lives entirely
+    upstream, in the separate, required `axial chunk` step; `axial vault
+    write` only ever READS the already-persisted artifact (via
+    `axial.tag.run_tag`'s/`axial.xref.run_xref`'s own `axial.chunk.
+    read_chunks` calls) and fails clearly if it is absent (locked by
+    tests/test_pipeline_rewire.py). So every arrange step below that needs
+    a chunk artifact on disk before running `axial vault write` must write
+    it explicitly first -- this helper is that arrange step, for either the
+    control root or the root under test."""
+    with _chdir(root):
+        records = run_chunk_embedding(source_path, embedder=HashingEmbedder())
     for record in records:
         assert isinstance(record.get("chunk_id"), str) and record["chunk_id"].strip(), (
             f"arrange step failed: expected every chunk record to carry a "
             f"non-empty 'chunk_id', got {record!r}"
         )
     return records
+
+
+def _arrange_expected_chunk_records(control_root: Path, source_path: Path) -> list[dict]:
+    """Write the on-disk chunk artifact in a dedicated CONTROL root (never
+    the root under test -- see module docstring, seam decision 5) and
+    return the real, deterministic chunk_id/section order for
+    `source_path`, used as ground truth."""
+    return _arrange_chunk_artifact(control_root, source_path)
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -495,6 +500,13 @@ def test_vault_write_resumes_from_tag_checkpoint_after_partial_failure(
 
     # --- Run 1: the interrupted run, in the isolated root under test ---
     _arrange_stored_envelope(root, THESIS_PAPER_PDF)
+    # Issue #154 slice 04: `axial vault write` no longer chunks internally
+    # -- the on-disk chunk artifact is a required precondition it only ever
+    # reads (tests/test_pipeline_rewire.py locks the "missing artifact
+    # fails clearly" contract), so it must be arranged here, once, up
+    # front, exactly as the control root's own ground truth was above.
+    _arrange_chunk_artifact(root, THESIS_PAPER_PDF)
+    chunks_checkpoint_bytes_before_failure = _chunks_checkpoint_path(root, source_id).read_bytes()
 
     failing_result = _run_vault_write(
         "stub",
@@ -516,14 +528,24 @@ def test_vault_write_resumes_from_tag_checkpoint_after_partial_failure(
         f"stdout: {failing_result.stdout!r}"
     )
 
-    # Contract point 1: the chunk-pass checkpoint is written regardless of
-    # the tag pass's own outcome.
+    # Contract point 1, reframed for issue #154 slice 04: the chunk artifact
+    # is no longer written BY the chunking pass as part of `axial vault
+    # write`'s own resumable pipeline -- chunking is LLM-free and lives
+    # entirely upstream (the arrange step above already wrote it). What
+    # remains of this contract point is that a downstream tag-pass failure
+    # must never delete or corrupt that pre-existing, read-only dependency
+    # -- it is left byte-for-byte untouched, independent of the tag pass's
+    # own outcome.
     chunks_checkpoint = _chunks_checkpoint_path(root, source_id)
     assert chunks_checkpoint.exists(), (
-        f"expected {chunks_checkpoint} to exist after `axial vault write` "
-        f"ran (even though the tag pass failed partway) -- issue #81 point "
-        f"1: chunk records persist 'after the chunking pass produces a "
-        f"source's chunk records', independent of the tag pass's outcome"
+        f"expected {chunks_checkpoint} to still exist after `axial vault "
+        f"write` ran (even though the tag pass failed partway) -- it is a "
+        f"read-only precondition `axial vault write` never deletes"
+    )
+    assert chunks_checkpoint.read_bytes() == chunks_checkpoint_bytes_before_failure, (
+        f"expected {chunks_checkpoint} to be byte-for-byte unchanged by a "
+        f"downstream tag-pass failure (issue #154 slice 04: `axial vault "
+        f"write` only ever reads this artifact, never rewrites it)"
     )
     persisted_chunk_ids = _checkpoint_chunk_ids(chunks_checkpoint)
     assert set(persisted_chunk_ids) == set(expected_chunk_ids_in_order), (
@@ -569,9 +591,12 @@ def test_vault_write_resumes_from_tag_checkpoint_after_partial_failure(
     assert chunk_calls == 0, (
         f"expected the healthy rerun to make NO chunking LLM calls at all "
         f"(issue #81's Gherkin: 'the rerun makes no chunking LLM calls' -- "
-        f"the chunk-pass checkpoint from run 1 must be reused verbatim), "
-        f"got {chunk_calls} prompt(s) matching the chunk pass's own prompt "
-        f"template ({CHUNK_PROMPT_MARKER!r}) in {record_path}"
+        f"issue #154 slice 04 makes this unconditional: `axial vault write` "
+        f"never chunks internally at all, resumed or not, so this also "
+        f"regression-guards against ever reintroducing a chunk-pass LLM "
+        f"call on this path), got {chunk_calls} prompt(s) matching the "
+        f"chunk pass's own prompt template ({CHUNK_PROMPT_MARKER!r}) in "
+        f"{record_path}"
     )
 
     tag_calls = _count_marker_occurrences(record_path, TAG_PROMPT_MARKER)
@@ -624,7 +649,21 @@ def test_vault_write_source_id_change_ignores_prior_checkpoints(
     """The Gherkin's third clause: a source_id change (an edited/renamed
     file, per module docstring seam decision 4) must ignore all prior
     checkpoints -- neither reusing them for the new source_id nor mutating
-    the original source_id's own checkpoint files."""
+    the original source_id's own checkpoint files.
+
+    Issue #154 slice 04 note: the on-disk chunk artifact is now
+    source_id-keyed exactly like every other checkpoint here
+    (`data/chunks/<source_id>.jsonl`, read via `axial.chunk.read_chunks`),
+    but `axial vault write` no longer WRITES it itself -- it is a required,
+    read-only precondition arranged by a separate `axial chunk` step. So
+    the CHUNK dimension of "a source_id change ignores all prior
+    checkpoints" is proven differently than the (still-real) TAG dimension:
+    an edited copy with no chunk artifact of its own must fail clearly
+    (never silently fall back to the original source_id's artifact), and
+    only once its OWN artifact is arranged does `axial vault write` succeed
+    -- at which point it must still make zero chunking LLM calls (chunking
+    is LLM-free, full stop) while making real tag-pass calls for its own,
+    not-previously-tagged chunks."""
     root = isolated_vault_root
 
     original_id = compute_source_id(THESIS_PAPER_PDF)
@@ -632,6 +671,7 @@ def test_vault_write_source_id_change_ignores_prior_checkpoints(
     # --- A complete, healthy run for the ORIGINAL source establishes its
     # checkpoints. ---
     _arrange_stored_envelope(root, THESIS_PAPER_PDF)
+    _arrange_chunk_artifact(root, THESIS_PAPER_PDF)
     original_result = _run_vault_write("stub", str(THESIS_PAPER_PDF), cwd=root)
     _assert_not_argparse_fallback(original_result, "vault write")
     assert original_result.returncode == 0, (
@@ -668,6 +708,34 @@ def test_vault_write_source_id_change_ignores_prior_checkpoints(
 
     _arrange_stored_envelope(root, edited_path)
 
+    # --- CHUNK dimension: without its OWN chunk artifact, the edited copy
+    # must fail clearly -- never silently fall back to reading the original
+    # source_id's artifact (issue #154 slice 04, tests/test_pipeline_rewire.py's
+    # locked "missing artifact" contract, applied here as the chunk-side
+    # proof of "a source_id change ignores all prior checkpoints"). ---
+    missing_artifact_result = _run_vault_write("stub", str(edited_path), cwd=root)
+    _assert_not_argparse_fallback(missing_artifact_result, "vault write")
+    assert missing_artifact_result.returncode != 0, (
+        f"expected `axial vault write` on the edited copy (a new "
+        f"source_id, {edited_id!r}) to fail before its own chunk artifact "
+        f"exists -- a source_id change must ignore all prior checkpoints "
+        f"(issue #81's Gherkin), never silently fall back to the original "
+        f"source_id {original_id!r}'s chunk artifact, got exit code 0\n"
+        f"stdout: {missing_artifact_result.stdout!r}\n"
+        f"stderr: {missing_artifact_result.stderr!r}"
+    )
+    missing_artifact_combined = (
+        missing_artifact_result.stdout + missing_artifact_result.stderr
+    ).lower()
+    assert "axial chunk" in missing_artifact_combined, (
+        f"expected the edited copy's missing-chunk-artifact error to tell "
+        f"the operator to run `axial chunk` first, got combined output "
+        f"that does not mention it:\nstdout: {missing_artifact_result.stdout!r}\n"
+        f"stderr: {missing_artifact_result.stderr!r}"
+    )
+
+    _arrange_chunk_artifact(root, edited_path)
+
     record_path = root.parent / f"{root.name}_edited_record.jsonl"
     edited_result = _run_vault_write(
         "record",
@@ -678,18 +746,17 @@ def test_vault_write_source_id_change_ignores_prior_checkpoints(
     _assert_not_argparse_fallback(edited_result, "vault write")
     assert edited_result.returncode == 0, (
         f"expected exit code 0 for `axial vault write` on the edited "
-        f"(different source_id) copy, got {edited_result.returncode}\n"
-        f"stdout: {edited_result.stdout!r}\nstderr: {edited_result.stderr!r}"
+        f"(different source_id) copy once its own chunk artifact is "
+        f"arranged, got {edited_result.returncode}\nstdout: "
+        f"{edited_result.stdout!r}\nstderr: {edited_result.stderr!r}"
     )
 
     chunk_calls = _count_marker_occurrences(record_path, CHUNK_PROMPT_MARKER)
-    assert chunk_calls > 0, (
-        f"expected `axial vault write` on the edited copy (a new "
-        f"source_id, {edited_id!r}) to make real chunking LLM calls -- a "
-        f"source_id change must ignore all prior checkpoints (issue #81's "
-        f"Gherkin), not silently reuse the original source_id "
-        f"{original_id!r}'s chunk checkpoint -- got {chunk_calls} chunk-"
-        f"pass call(s) in {record_path}"
+    assert chunk_calls == 0, (
+        f"expected `axial vault write` to make zero chunking LLM calls "
+        f"regardless of source_id (issue #154 slice 04: chunking is "
+        f"LLM-free and `axial vault write` never chunks internally at "
+        f"all), got {chunk_calls} chunk-pass call(s) in {record_path}"
     )
     tag_calls = _count_marker_occurrences(record_path, TAG_PROMPT_MARKER)
     assert tag_calls > 0, (

@@ -117,9 +117,8 @@ import re
 import subprocess
 from pathlib import Path
 
-from axial.chunk import run_chunk
+from axial.chunk import HashingEmbedder, run_chunk_embedding
 from axial.envelope import compute_source_id
-from axial.llm import StubLLMClient
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "envelope"
@@ -222,15 +221,14 @@ def _run_axial(
 
 @contextlib.contextmanager
 def _chdir(path: Path):
-    """Temporarily change the process cwd to `path` (issue #151 slice 01
-    migration -- see `_arrange_expected_chunk_records` below): the OLD
-    `axial.chunk.run_chunk` mechanism calls `axial.extract.extract`
-    internally, which resolves its persisted-tree cache directory
-    (`axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
-    override parameter. Calling `run_chunk` in-process instead of shelling
-    out to `axial chunk` (whose CLI verb now runs the NEW embedding-based
-    mechanism as of issue #151) needs this to reproduce the exact
-    resolution the old subprocess's own `cwd=` argument achieved."""
+    """Temporarily change the process cwd to `path` -- see
+    `_arrange_expected_chunk_records` below: `run_chunk_embedding` resolves
+    its persisted-tree read (`axial.extract.tree_path`, via
+    `axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
+    override parameter (only its OWN write target, `chunks_dir`, is
+    overridable). Calling it in-process instead of shelling out to `axial
+    chunk` needs this to reproduce the exact resolution a `cwd=`-scoped
+    subprocess would get."""
     previous = Path.cwd()
     os.chdir(path)
     try:
@@ -304,23 +302,23 @@ def _arrange_stored_envelope(root: Path, source_path: Path, tree: dict) -> Path:
 
 
 def _arrange_expected_chunk_records(root: Path, source_path: Path) -> list[dict]:
-    """Independently call the OLD `axial.chunk.run_chunk` mechanism
-    IN-PROCESS (stub client) to obtain the real chunk records for
-    `source_path`, used as the expected set `vault write` must match
-    filename-for-filename (see module docstring, seam decision 3). Requires
-    a stored envelope to already exist.
+    """Write the real, on-disk chunk artifact for `source_path` IN-PROCESS
+    (`axial.chunk.run_chunk_embedding`, the stub/offline `HashingEmbedder`)
+    and return the records it produced, used as the expected set `vault
+    write` must match filename-for-filename (see module docstring, seam
+    decision 3).
 
-    Migrated off a subprocess call to the standalone `axial chunk` CLI
-    (issue #151 slice 01): that CLI verb now runs the NEW embedding-based
-    chunk mechanism and no longer emits chunk records on stdout at all. The
-    OLD mechanism `axial vault write` itself still calls in-process
-    (`axial.chunk.run_chunk`) ships unchanged until issue #154 retires it,
-    so calling it here in-process too keeps this ground truth identical to
-    what that unchanged call site actually produces."""
+    Issue #154 slice 04: `axial vault write` no longer computes chunks
+    itself -- it reads `data/chunks/<source_id>.jsonl` via
+    `axial.chunk.read_chunks` (PRD §7.7) instead. So this arrange step now
+    IS the thing that writes that artifact, at the exact `<root>/data/chunks/`
+    path the `axial vault write` subprocess below (run with `cwd=root`)
+    reads from."""
     with _chdir(root):
-        records = run_chunk(source_path, client=StubLLMClient(), envelopes_dir=_envelopes_dir(root))
+        records = run_chunk_embedding(source_path, embedder=HashingEmbedder())
     assert len(records) >= 1, (
-        f"arrange step failed: expected at least one chunk record from run_chunk, got {len(records)}"
+        f"arrange step failed: expected at least one chunk record from "
+        f"run_chunk_embedding, got {len(records)}"
     )
     for record in records:
         assert isinstance(record.get("chunk_id"), str) and record["chunk_id"].strip(), (
@@ -346,6 +344,7 @@ def test_vault_write_bounds_note_filenames_for_long_section_slug(isolated_vault_
     long_heading_source.write_bytes(THESIS_PAPER_PDF.read_bytes())
 
     _arrange_stored_envelope(root, long_heading_source, LONG_HEADING_TREE)
+    _arrange_expected_chunk_records(root, long_heading_source)
 
     result = _run_vault_write("stub", str(long_heading_source), cwd=root)
     _assert_not_argparse_fallback(result, "vault write")

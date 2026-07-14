@@ -120,6 +120,7 @@ written by this test.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -127,6 +128,7 @@ from pathlib import Path
 
 import yaml
 
+from axial.chunk import HashingEmbedder, run_chunk_embedding
 from axial.envelope import compute_source_id
 from axial.schema import load_schema
 
@@ -217,6 +219,21 @@ def _existing_envelope_files(root: Path) -> set[Path]:
     return set(envelopes_dir.glob("*.json"))
 
 
+@contextlib.contextmanager
+def _chdir(path: Path):
+    """Temporarily change the process cwd to `path`: `run_chunk_embedding`
+    resolves its persisted-tree read (`axial.extract.tree_path`, via
+    `axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
+    override parameter. Calling it in-process needs this to reproduce the
+    exact resolution a `cwd=`-scoped subprocess would get."""
+    previous = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
 def _place_tree_fixture(source_pdf: Path, tree_fixture_path: Path, root: Path) -> Path:
     """Pre-place the committed REAL tree fixture at
     <root>/data/trees/<source_id>.json so `axial.extract.extract` reuses it
@@ -233,7 +250,14 @@ def _arrange_stored_envelope(root: Path) -> Path:
     stub provider so a stored envelope exists on disk before vault write.
     Asserts the arrange step itself succeeded and produced exactly one new
     envelope file. (Mirrors tests/test_vault_write.py's helper of the same
-    name.)"""
+    name.)
+
+    Also writes the real, on-disk chunk artifact for this fixture (issue
+    #154 slice 04: `axial vault write` no longer computes chunks itself --
+    it reads `data/chunks/<source_id>.jsonl` via `axial.chunk.read_chunks`,
+    and every test in this file drives `axial vault write` through this one
+    shared arrange step, so the artifact is written here, once, for all of
+    them)."""
     _place_tree_fixture(THESIS_PAPER_PDF, THESIS_PAPER_TREE_FIXTURE, root)
     before_files = _existing_envelope_files(root)
 
@@ -251,6 +275,10 @@ def _arrange_stored_envelope(root: Path) -> Path:
         f"{_envelopes_dir(root)} after `axial envelope`, got {len(new_files)}: "
         f"{sorted(new_files)}\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
+
+    with _chdir(root):
+        run_chunk_embedding(THESIS_PAPER_PDF, embedder=HashingEmbedder())
+
     return next(iter(new_files))
 
 

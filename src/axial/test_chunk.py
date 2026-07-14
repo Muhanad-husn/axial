@@ -1,14 +1,16 @@
-"""Inner unit tests for the axial chunk module (issue #17 slice 05 --
-argumentative chunking)."""
+"""Inner unit tests for the axial chunk module: section selection and the
+`build_chunk_records`/`_slugify` provenance helpers shared by the surviving
+embedding-based chunk stage (issue #151, see test_chunk_embedding.py for its
+own dedicated unit tests). The retired LLM-echo chunker's tests (`run_chunk`,
+`compose_chunk_prompt`, `parse_response`) were deleted in issue #154 slice 04
+along with the mechanism itself.
+"""
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
-
-from axial.llm import CHUNK_PASS_NAME, StubLLMClient
 
 
 def _tree_with_sections(*, middle_body: bool = True) -> dict:
@@ -42,56 +44,7 @@ def _tree_with_sections(*, middle_body: bool = True) -> dict:
     }
 
 
-_ENVELOPE = {
-    "source_id": "paper-abc123",
-    "thesis": "Envelope thesis text.",
-    "scope": "Envelope scope text.",
-    "stated_argument": "Envelope stated_argument text.",
-}
-
-
 # --- context assembly -------------------------------------------------------
-
-
-def test_compose_chunk_prompt_contains_target_envelope_and_both_neighbours():
-    from axial.chunk import compose_chunk_prompt
-
-    tree = _tree_with_sections()
-    intro, middle, conclusion = tree["children"]
-
-    prompt = compose_chunk_prompt(middle, intro, conclusion, _ENVELOPE)
-
-    assert "Middle body sentence." in prompt
-    assert "Intro body sentence." in prompt
-    assert "Conclusion body sentence." in prompt
-    assert _ENVELOPE["stated_argument"] in prompt
-
-
-def test_compose_chunk_prompt_never_leaks_the_internal_pass_dispatch_marker():
-    """The chunk prompt is what a real model (OpenRouter) sees verbatim, so
-    it must never carry an internal test-dispatch marker -- pass identity is
-    threaded out-of-band via `pass_name` on `.complete()`, not embedded in
-    prompt text."""
-    from axial.chunk import compose_chunk_prompt
-
-    tree = _tree_with_sections()
-    intro, middle, conclusion = tree["children"]
-
-    prompt = compose_chunk_prompt(middle, intro, conclusion, _ENVELOPE)
-
-    assert "AXIAL_CHUNK_PASS_V1" not in prompt
-
-
-def test_compose_chunk_prompt_with_no_neighbours_still_contains_target_and_envelope():
-    from axial.chunk import compose_chunk_prompt
-
-    tree = _tree_with_sections()
-    intro = tree["children"][0]
-
-    prompt = compose_chunk_prompt(intro, None, None, _ENVELOPE)
-
-    assert "Intro body sentence." in prompt
-    assert _ENVELOPE["stated_argument"] in prompt
 
 
 def test_section_nodes_selects_only_top_level_headed_sections():
@@ -102,110 +55,6 @@ def test_section_nodes_selects_only_top_level_headed_sections():
     sections = _section_nodes(tree)
 
     assert [s["text"] for s in sections] == ["Introduction", "Comparative Cases", "Conclusion"]
-
-
-# --- response parsing --------------------------------------------------------
-
-
-def test_parse_response_accepts_an_object_with_a_chunks_array():
-    from axial.chunk import parse_response
-
-    raw = json.dumps({"chunks": [{"text": "a"}, {"text": "b"}]})
-
-    chunks = parse_response(raw)
-
-    assert chunks == [{"text": "a"}, {"text": "b"}]
-
-
-def test_parse_response_accepts_a_bare_array():
-    from axial.chunk import parse_response
-
-    raw = json.dumps([{"text": "a"}])
-
-    chunks = parse_response(raw)
-
-    assert chunks == [{"text": "a"}]
-
-
-def test_parse_response_rejects_invalid_json():
-    from axial.chunk import ChunkParseError, parse_response
-
-    with pytest.raises(ChunkParseError):
-        parse_response("not json at all")
-
-
-def test_parse_response_accepts_a_markdown_fenced_response():
-    """issue #72: deepseek-v4-flash sometimes wraps its JSON answer in a
-    markdown fence despite the prompt's "no fences" instruction."""
-    from axial.chunk import parse_response
-
-    raw = f"```json\n{json.dumps({'chunks': [{'text': 'a'}]})}\n```"
-
-    assert parse_response(raw) == [{"text": "a"}]
-
-
-def test_parse_response_rejects_prose_with_a_snippet_in_the_message():
-    """issue #72: parse errors must quote the raw response so failures are
-    diagnosable from worker logs."""
-    from axial.chunk import ChunkParseError, parse_response
-
-    raw = "I cannot chunk this section."
-
-    with pytest.raises(ChunkParseError) as exc_info:
-        parse_response(raw)
-
-    assert raw in str(exc_info.value)
-
-
-def test_parse_response_rejects_missing_chunks_key():
-    from axial.chunk import ChunkParseError, parse_response
-
-    with pytest.raises(ChunkParseError):
-        parse_response(json.dumps({"nope": []}))
-
-
-def test_parse_response_rejects_a_chunk_without_text():
-    from axial.chunk import ChunkParseError, parse_response
-
-    with pytest.raises(ChunkParseError):
-        parse_response(json.dumps({"chunks": [{"no_text": "a"}]}))
-
-
-def test_parse_response_normalizes_bare_string_chunks_in_chunks_array():
-    from axial.chunk import parse_response
-
-    raw = json.dumps({"chunks": ["a", "b"]})
-
-    chunks = parse_response(raw)
-
-    assert chunks == [{"text": "a"}, {"text": "b"}]
-
-
-def test_parse_response_normalizes_bare_string_chunks_in_bare_array():
-    from axial.chunk import parse_response
-
-    raw = json.dumps(["a", "b"])
-
-    chunks = parse_response(raw)
-
-    assert chunks == [{"text": "a"}, {"text": "b"}]
-
-
-def test_parse_response_normalizes_mixed_string_and_object_chunks():
-    from axial.chunk import parse_response
-
-    raw = json.dumps({"chunks": [{"text": "a", "extra": "kept"}, "b"]})
-
-    chunks = parse_response(raw)
-
-    assert chunks == [{"text": "a", "extra": "kept"}, {"text": "b"}]
-
-
-def test_parse_response_rejects_a_chunk_that_is_neither_string_nor_object():
-    from axial.chunk import ChunkParseError, parse_response
-
-    with pytest.raises(ChunkParseError):
-        parse_response(json.dumps({"chunks": [42]}))
 
 
 # --- chunk_id / section provenance -------------------------------------------
@@ -304,263 +153,64 @@ def test_slugify_all_symbol_heading_still_falls_back_to_section():
     assert _slugify("!!! ??? ***") == "section"
 
 
-# --- run_chunk: envelope-required, no-recompute, neighbour context ----------
+# --- read_chunks: the on-disk artifact reader (issue #154, PRD §7.7) --------
 
 
-def test_run_chunk_missing_envelope_raises_clear_error(monkeypatch, tmp_path):
-    import axial.chunk as chunk_mod
+def test_read_chunks_returns_records_in_file_order(tmp_path):
+    from axial.chunk import read_chunks
 
-    source = tmp_path / "paper.pdf"
-    source.write_bytes(b"fake pdf bytes")
-
-    monkeypatch.setattr(chunk_mod, "extract", lambda path: _tree_with_sections())
-
-    with pytest.raises(chunk_mod.MissingEnvelopeError) as exc_info:
-        chunk_mod.run_chunk(source, client=StubLLMClient(), envelopes_dir=tmp_path / "envelopes")
-
-    assert "envelope" in str(exc_info.value)
-
-
-def test_run_chunk_missing_source_file_raises_missing_source_error(tmp_path):
-    from axial.chunk import MissingSourceError, run_chunk
-
-    missing = tmp_path / "does_not_exist.pdf"
-
-    with pytest.raises(MissingSourceError):
-        run_chunk(missing, client=StubLLMClient(), envelopes_dir=tmp_path / "envelopes")
-
-
-def test_run_chunk_never_calls_llm_for_a_section_with_no_prose(monkeypatch, tmp_path):
-    """A section with no chunkable prose yields zero chunks without error and
-    without ever invoking the LLM client for that section."""
-    import axial.chunk as chunk_mod
-
-    source = tmp_path / "paper.pdf"
-    source.write_bytes(b"fake pdf bytes")
-    envelopes_dir = tmp_path / "envelopes"
-    envelopes_dir.mkdir()
-
-    source_id = chunk_mod.compute_source_id(source)
-    env_path = chunk_mod.envelope_path(source_id, envelopes_dir)
-    env_path.write_text(json.dumps(_ENVELOPE), encoding="utf-8")
-
-    empty_middle_tree = _tree_with_sections(middle_body=False)
-    monkeypatch.setattr(chunk_mod, "extract", lambda path: empty_middle_tree)
-
-    stub_client = StubLLMClient()
-    records = chunk_mod.run_chunk(source, client=stub_client, envelopes_dir=envelopes_dir)
-
-    sections_seen = {r["section"] for r in records}
-    assert "Comparative Cases" not in sections_seen
-    # Only Introduction and Conclusion have chunkable prose -> exactly 2 calls.
-    assert stub_client.call_count == 2
-
-
-def test_run_chunk_never_rewrites_the_stored_envelope(monkeypatch, tmp_path):
-    import axial.chunk as chunk_mod
-
-    source = tmp_path / "paper.pdf"
-    source.write_bytes(b"fake pdf bytes")
-    envelopes_dir = tmp_path / "envelopes"
-    envelopes_dir.mkdir()
-
-    source_id = chunk_mod.compute_source_id(source)
-    env_path = chunk_mod.envelope_path(source_id, envelopes_dir)
-    env_path.write_text(json.dumps(_ENVELOPE), encoding="utf-8")
-    before = env_path.read_bytes()
-
-    monkeypatch.setattr(chunk_mod, "extract", lambda path: _tree_with_sections())
-
-    chunk_mod.run_chunk(source, client=StubLLMClient(), envelopes_dir=envelopes_dir)
-
-    assert env_path.read_bytes() == before
-
-
-def test_run_chunk_produces_chunk_ids_stable_across_repeat_runs(monkeypatch, tmp_path):
-    import axial.chunk as chunk_mod
-
-    source = tmp_path / "paper.pdf"
-    source.write_bytes(b"fake pdf bytes")
-    envelopes_dir = tmp_path / "envelopes"
-    envelopes_dir.mkdir()
-
-    source_id = chunk_mod.compute_source_id(source)
-    env_path = chunk_mod.envelope_path(source_id, envelopes_dir)
-    env_path.write_text(json.dumps(_ENVELOPE), encoding="utf-8")
-
-    monkeypatch.setattr(chunk_mod, "extract", lambda path: _tree_with_sections())
-
-    first = chunk_mod.run_chunk(source, client=StubLLMClient(), envelopes_dir=envelopes_dir)
-    second = chunk_mod.run_chunk(source, client=StubLLMClient(), envelopes_dir=envelopes_dir)
-
-    assert {r["chunk_id"] for r in first} == {r["chunk_id"] for r in second}
-
-
-def test_run_chunk_calls_the_client_with_the_chunk_pass_name(monkeypatch, tmp_path):
-    """The chunk pass must identify itself out-of-band via `pass_name`
-    (never embedded in the prompt text) so stub/record dispatch correctly
-    without leaking an internal marker into a real model's prompt."""
-    import axial.chunk as chunk_mod
-
-    source = tmp_path / "paper.pdf"
-    source.write_bytes(b"fake pdf bytes")
-    envelopes_dir = tmp_path / "envelopes"
-    envelopes_dir.mkdir()
-
-    source_id = chunk_mod.compute_source_id(source)
-    env_path = chunk_mod.envelope_path(source_id, envelopes_dir)
-    env_path.write_text(json.dumps(_ENVELOPE), encoding="utf-8")
-
-    monkeypatch.setattr(chunk_mod, "extract", lambda path: _tree_with_sections())
-
-    calls = []
-
-    class _CapturingClient:
-        def complete(self, prompt, pass_name=None):
-            calls.append(pass_name)
-            return json.dumps({"chunks": [{"text": "a"}]})
-
-    chunk_mod.run_chunk(source, client=_CapturingClient(), envelopes_dir=envelopes_dir)
-
-    assert calls and all(name == CHUNK_PASS_NAME for name in calls)
-
-
-def test_run_chunk_gives_distinct_chunk_ids_for_sections_sharing_a_heading(monkeypatch, tmp_path):
-    import axial.chunk as chunk_mod
-
-    source = tmp_path / "paper.pdf"
-    source.write_bytes(b"fake pdf bytes")
-    envelopes_dir = tmp_path / "envelopes"
-    envelopes_dir.mkdir()
-
-    source_id = chunk_mod.compute_source_id(source)
-    env_path = chunk_mod.envelope_path(source_id, envelopes_dir)
-    env_path.write_text(json.dumps(_ENVELOPE), encoding="utf-8")
-
-    duplicate_heading_tree = {
-        "children": [
-            {
-                "type": "prose",
-                "order": "1",
-                "text": "Introduction",
-                "children": [{"type": "prose", "order": "1.1", "text": "Chapter one intro."}],
-            },
-            {
-                "type": "prose",
-                "order": "2",
-                "text": "Introduction",
-                "children": [{"type": "prose", "order": "2.1", "text": "Chapter two intro."}],
-            },
-        ]
-    }
-    monkeypatch.setattr(chunk_mod, "extract", lambda path: duplicate_heading_tree)
-
-    records = chunk_mod.run_chunk(source, client=StubLLMClient(), envelopes_dir=envelopes_dir)
-
-    chunk_ids = [r["chunk_id"] for r in records]
-    assert len(chunk_ids) == len(set(chunk_ids)), (
-        f"expected no chunk_id collisions across sections sharing a heading, got: {chunk_ids}"
+    chunks_dir = tmp_path / "chunks"
+    chunks_dir.mkdir()
+    records = [
+        {
+            "chunk_id": "paper_1_intro_001",
+            "section": "Introduction",
+            "section_order": "1",
+            "text": "a",
+        },
+        {
+            "chunk_id": "paper_1_intro_002",
+            "section": "Introduction",
+            "section_order": "1",
+            "text": "b",
+        },
+        {
+            "chunk_id": "paper_2_concl_001",
+            "section": "Conclusion",
+            "section_order": "2",
+            "text": "c",
+        },
+    ]
+    (chunks_dir / "paper.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8"
     )
-    assert all(r["section"] == "Introduction" for r in records)
+
+    result = read_chunks("paper", chunks_dir=chunks_dir)
+
+    assert result == records
 
 
-def test_run_chunk_wraps_extraction_failures(monkeypatch, tmp_path):
-    import axial.chunk as chunk_mod
-    from axial.extract import ConversionError
+def test_read_chunks_raises_missing_chunk_artifact_error_when_absent(tmp_path):
+    from axial.chunk import MissingChunkArtifactError, read_chunks
 
-    source = tmp_path / "paper.pdf"
-    source.write_bytes(b"fake pdf bytes")
-    envelopes_dir = tmp_path / "envelopes"
-    envelopes_dir.mkdir()
+    chunks_dir = tmp_path / "chunks"
 
-    source_id = chunk_mod.compute_source_id(source)
-    env_path = chunk_mod.envelope_path(source_id, envelopes_dir)
-    env_path.write_text(json.dumps(_ENVELOPE), encoding="utf-8")
+    with pytest.raises(MissingChunkArtifactError) as exc_info:
+        read_chunks("does-not-exist", chunks_dir=chunks_dir)
 
-    def _boom(path):
-        raise ConversionError(Path(path), "simulated failure")
-
-    monkeypatch.setattr(chunk_mod, "extract", _boom)
-
-    with pytest.raises(chunk_mod.ExtractionFailedError):
-        chunk_mod.run_chunk(source, client=StubLLMClient(), envelopes_dir=envelopes_dir)
+    assert "axial chunk" in str(exc_info.value)
 
 
-# --- run_chunk: bounded re-ask on complete-but-unparseable JSON (#76) ------
-
-
-def _one_section_setup(tmp_path, chunk_mod):
-    source = tmp_path / "paper.pdf"
-    source.write_bytes(b"fake pdf bytes")
-    envelopes_dir = tmp_path / "envelopes"
-    envelopes_dir.mkdir()
-
-    source_id = chunk_mod.compute_source_id(source)
-    env_path = chunk_mod.envelope_path(source_id, envelopes_dir)
-    env_path.write_text(json.dumps(_ENVELOPE), encoding="utf-8")
-
-    return source, envelopes_dir
-
-
-def _single_section_tree() -> dict:
-    """Exactly one prose section with chunkable body text, so a test can
-    make deterministic assertions about the number of LLM calls (unlike
-    `_tree_with_sections()`, which yields chunkable prose in all three
-    sections by default)."""
-    return {
-        "children": [
-            {
-                "type": "prose",
-                "order": "1",
-                "text": "Introduction",
-                "children": [{"type": "prose", "order": "1.1", "text": "Intro body sentence."}],
-            }
-        ]
-    }
-
-
-def test_run_chunk_succeeds_when_first_completion_is_malformed_json(monkeypatch, tmp_path):
+def test_read_chunks_resolves_the_same_path_run_chunk_embedding_writes_to(monkeypatch, tmp_path):
+    """Reader and writer must agree byte-for-byte on where the artifact
+    lives -- both resolve via `_default_chunks_dir`/`chunks_checkpoint_path`
+    (module docstring)."""
     import axial.chunk as chunk_mod
 
-    source, envelopes_dir = _one_section_setup(tmp_path, chunk_mod)
-    monkeypatch.setattr(chunk_mod, "extract", lambda path: _single_section_tree())
+    chunks_dir = tmp_path / "chunks"
+    monkeypatch.setattr(chunk_mod, "CHUNKS_DIR", chunks_dir)
 
-    valid = json.dumps({"chunks": [{"text": "a chunk"}]})
+    with pytest.raises(chunk_mod.MissingChunkArtifactError) as exc_info:
+        chunk_mod.read_chunks("paper-abc123")
 
-    class _ScriptedClient:
-        def __init__(self):
-            self._responses = ["{not json", valid]
-            self.call_count = 0
-
-        def complete(self, prompt, pass_name=None):
-            response = self._responses[self.call_count]
-            self.call_count += 1
-            return response
-
-    client = _ScriptedClient()
-    records = chunk_mod.run_chunk(source, client=client, envelopes_dir=envelopes_dir)
-
-    assert records
-    assert client.call_count == 2
-
-
-def test_run_chunk_raises_chunk_parse_error_on_persistently_malformed_json(monkeypatch, tmp_path):
-    import axial.chunk as chunk_mod
-
-    source, envelopes_dir = _one_section_setup(tmp_path, chunk_mod)
-    monkeypatch.setattr(chunk_mod, "extract", lambda path: _single_section_tree())
-
-    class _AlwaysBrokenClient:
-        def __init__(self):
-            self.call_count = 0
-
-        def complete(self, prompt, pass_name=None):
-            self.call_count += 1
-            return "{not json"
-
-    client = _AlwaysBrokenClient()
-
-    with pytest.raises(chunk_mod.ChunkParseError):
-        chunk_mod.run_chunk(source, client=client, envelopes_dir=envelopes_dir)
-
-    assert client.call_count == 3
+    assert exc_info.value.path == chunk_mod.chunks_checkpoint_path("paper-abc123", chunks_dir)

@@ -8,103 +8,94 @@ Given a source whose extraction tree has, among its top-level sections: a
       "BIBLIOGRAPHY" and a spacing-variant " Bibliography "), a normal prose
       chapter section, and three explicitly KEPT boundary sections ("Notes",
       "Appendix", "Preface") -- every one of these sections carries
-      real-looking, non-empty body text, so under todays code EVERY one of
-      them produces chunk records and an LLM call
-When  axial.chunk.run_chunk is called on that source
+      real-looking, non-empty body text, so a filter-less pass would produce
+      chunk records for every one of them
+When  `axial.chunk.run_chunk_embedding` is called on that source
 Then  the back-matter sections (all three Bibliography spellings) produce
-      ZERO chunk records, and the LLM is NEVER called with any prompt
-      containing their body text at all (not as a chunking target, not as
-      neighbour context) -- they are skipped before any chunk record or LLM
-      call is produced
+      ZERO chunk records, and none of their own body text ever appears
+      inside any OTHER section's emitted chunk text either -- they are
+      dropped before chunking ever runs on them, not merely filtered from
+      the final output
 And   the normal prose chapter sections still produce chunk record(s)
 And   each of the three explicitly-kept boundary sections ("Notes",
       "Appendix", "Preface") still produces chunk record(s) -- this locks
       the scope so a future, over-eager change cannot silently start
       dropping these too
 
-See GitHub issue #113: run_chunks per-section loop
-(src/axial/chunk.py, _section_nodes/the for index, section in
-enumerate(sections) loop) has NO title filter at all today -- every
-top-level section node with non-empty body text is chunked, including
-bibliographies/indexes/etc., which then become vault notes and pollute the
-corpus. The fix (built by the implementer, not this test) adds a
-deterministic title filter, applied before any chunk record or LLM call is
-produced, for a normalized title matching: Index, Bibliography,
+See GitHub issue #113 for the original report and fix: a deterministic
+title filter (`axial.chunk._is_back_matter`), applied before any section is
+chunked, for a normalized title matching: Index, Bibliography,
 References / Works Cited, Table of Contents / Contents, Copyright, List of
 Figures / List of Tables / List of Illustrations. Sections that must be kept
-(explicitly NOT dropped) per the issue: Endnotes / Notes, Appendix, Preface,
-and normal prose chapters.
+(explicitly NOT dropped): Endnotes / Notes, Appendix, Preface, and normal
+prose chapters.
 
-As of this commit run_chunk has no such filter, so this test is expected
-to fail red for exactly that reason: the back-matter sections chunk
-records / LLM calls currently exist rather than being absent. It must not
-fail on an import error, a fixture-arrangement error, or a call-signature
-mismatch -- only on the actual zero back-matter records/calls assertions
-below.
+Migration note (issue #154, slice 04 of the chunk-redesign subproject)
+-----------------------------------------------------------------------
+This test originally drove the retired LLM-echo chunker
+(`axial.chunk.run_chunk`, one text-generating LLM call per section) via a
+fake `LLMClient` that counted which sections' body text reached a prompt.
+`run_chunk` and every one of its LLM-facing seams (`compose_chunk_prompt`,
+`parse_response`, the chunk-pass prompt template) are deleted as of this
+slice; the sole chunking mechanism is now the embedding-based, LLM-free
+`run_chunk_embedding` (issue #151). `_is_back_matter`'s own title-matching
+logic is UNCHANGED by that rewrite (same normalized-title set, same KEEP
+list) but had no dedicated coverage anywhere in the new mechanism's own
+test suite (verified: neither `tests/test_chunk.py` -- slice 01's own
+locked outer test, whose fixture carries no back-matter section at all --
+nor `src/axial/test_chunk_embedding.py` exercises `_is_back_matter`
+directly). This migration is not a mechanical rename: it re-proves the same
+behavioral contract (drop before chunking, never a post-hoc filter) against
+the actual mechanism that ships today, closing that coverage gap.
 
 Seam decision 1 -- bypassing docling/network entirely via a monkeypatched
-axial.chunk.extract, calling run_chunk directly
+axial.chunk.tree_path/load_persisted_tree, calling run_chunk_embedding
+directly
 -----------------------------------------------------------------------
-Mirrors tests/test_xref_checkpoint.pys seam exactly (see that files module
-docstring, seam decision 1): axial.chunk.run_chunk imports extract directly
-into its own module namespace (from axial.extract import ExtractError,
-extract), so monkeypatching the module attribute axial.chunk.extract
-redirects every call run_chunk makes internally to a fake that returns a
-hand-built, synthetic extraction tree -- no real PDF, no docling, no
-network. run_chunks own per-section loop and title-filtering logic (the
+Mirrors `src/axial/test_chunk_embedding.py`'s own `_patch_tree` helper:
+`run_chunk_embedding` reads the persisted structural tree via
+`axial.chunk.tree_path`/`axial.chunk.load_persisted_tree` (imported
+directly into `axial.chunk`'s own module namespace), so monkeypatching
+those two module attributes redirects the read to a hand-built, synthetic
+extraction tree -- no real PDF, no docling, no network.
+`run_chunk_embedding`'s own per-section loop and back-matter filter (the
 actual subject of issue #113) is never bypassed; only its upstream
-structural-extraction dependency is.
+structural-extraction dependency is. `run_chunk_embedding` needs no stored
+envelope at all (issue #151: the embedding chunk stage never reads one),
+so unlike this file's pre-migration version, no envelope arrange step is
+needed here.
 
-run_chunk also requires a stored envelope on disk before it will do
-anything (MissingEnvelopeError otherwise) -- this test writes one directly
-to a tmp_path-scoped envelopes_dir passed explicitly to run_chunk, so no
-axial envelope pass (and no LLM call for it) is needed to arrange it.
-
-Seam decision 2 -- a fake LLM client that counts calls by section body
-marker, never a real network/model call
+Seam decision 2 -- proving "dropped before chunking", not merely "absent
+from output": body-text markers checked against EVERY emitted chunk's text
 -----------------------------------------------------------------------
-Each synthetic section below is given distinct, greppable body text (no
-sections text is a substring of anothers). The fake client
-(_MarkerCountingClient) implements the plain duck-typed LLMClient protocol
-(complete(prompt, pass_name=None) -> str) and, on every call, records which
-of the known markers appear anywhere in the prompt it receives (target
-section text AND any neighbour context alike -- issue #113s skipped
-before any chunk record or LLM call is produced is read strictly here: a
-dropped sections own text must never reach ANY prompt, not just never be
-the chunking target of its own prompt). It always returns a single
-well-formed chunk-response JSON string, so any section that IS still
-processed completes normally without needing a real model.
+There is no LLM call left to intercept (the whole point of the redesign),
+so the old `_MarkerCountingClient`'s "the LLM was never called with this
+text" proof has no direct analogue. The equivalent, still-meaningful proof
+in the new mechanism is structural: each synthetic section below is given
+distinct, greppable body text (no section's text is a substring of
+another's), and this test asserts a dropped section's own marker text never
+appears as a substring of ANY emitted chunk's `text` field -- not just that
+no chunk record carries the dropped section's own `section` label. An
+implementation that filtered records post-hoc after already merging a
+back-matter section's body into an adjacent section's own chunk text (e.g.
+a body-concatenation bug) would pass the weaker "no record labeled
+Bibliography" check but fail this stronger one.
 
-Seam decision 3 -- why body-text markers, not just checking record.get(
-section)
------------------------------------------------------------------------
-The section field on returned chunk records is one direct, load-bearing
-proof (a dropped section must produce zero records under that verbatim
-heading, in any of its three tested spellings). The marker-count check is a
-second, independent proof of the same contract at the LLM-call boundary
-itself (an implementation that filtered records post-hoc, after already
-paying for an LLM call on the dropped sections text, would pass the first
-check but fail this second one) -- together they pin skipped before any
-chunk record OR LLM call is produced literally, not just filtered from
-the final output.
-
-Test hygiene: every path this test touches (envelopes_dir, the synthetic
-source file) lives under pytests own tmp_path, outside this repo
-entirely -- nothing here reads or writes any real data/ directory, and no
-real LLM/network/docling call is ever made.
+Test hygiene: every path this test touches (the synthetic source file,
+`chunks_dir`) lives under pytest's own `tmp_path`, outside this repo
+entirely -- nothing here reads or writes any real `data/` directory, and no
+real LLM/network/docling call is ever made (the embedding chunk stage makes
+none, full stop).
 """
 
 from __future__ import annotations
 
-import json
-
 import axial.chunk as chunk_module
-from axial.envelope import compute_source_id
-from axial.llm import CHUNK_PASS_NAME
+from axial.chunk import HashingEmbedder, run_chunk_embedding
 
 _PREFACE_BODY = (
-    "Preface sentinel: this reflection states the authors aims before the "
-    "main argument of the book begins, and explains the projects origins."
+    "Preface sentinel: this reflection states the author's aims before the "
+    "main argument of the book begins, and explains the project's origins."
 )
 _CHAPTER_THREE_BODY = (
     "Chapter three prose sentinel: a claim about material scarcity during "
@@ -133,7 +124,7 @@ _BIBLIOGRAPHY_SPACED_BODY = (
 )
 _CHAPTER_FOUR_BODY = (
     "Chapter four prose sentinel: the argument concludes by tying the "
-    "earlier material-scarcity claim to the campaigns eventual outcome."
+    "earlier material-scarcity claim to the campaign's eventual outcome."
 )
 
 _SECTION_SPECS = [
@@ -157,33 +148,24 @@ def _build_synthetic_tree():
     for index, (heading, _kind, body) in enumerate(_SECTION_SPECS, start=1):
         children.append(
             {
-                "type": "section",
+                "type": "prose",
                 "order": str(index),
                 "text": heading,
                 "children": [{"type": "prose", "order": f"{index}.1", "text": body}],
             }
         )
-    return {"type": "root", "order": "0", "children": children}
+    return {"children": children}
 
 
-_VALID_CHUNK_RESPONSE = json.dumps({"chunks": [{"text": "a synthetic stub chunk of prose"}]})
+def _patch_tree(monkeypatch, tmp_path, tree: dict) -> None:
+    """Mirrors `src/axial/test_chunk_embedding.py`'s own `_patch_tree`
+    helper (see module docstring, seam decision 1)."""
+    import json as _json
 
-
-class _MarkerCountingClient:
-    def __init__(self, markers):
-        self._markers = markers
-        self.marker_call_counts = {marker: 0 for marker in markers}
-        self.total_calls = 0
-
-    def complete(self, prompt, pass_name=None):
-        assert pass_name == CHUNK_PASS_NAME, (
-            f"expected pass_name={CHUNK_PASS_NAME!r}, got {pass_name!r}"
-        )
-        self.total_calls += 1
-        for marker in self._markers:
-            if marker in prompt:
-                self.marker_call_counts[marker] += 1
-        return _VALID_CHUNK_RESPONSE
+    tree_file = tmp_path / "tree.json"
+    tree_file.write_text(_json.dumps(tree), encoding="utf-8")
+    monkeypatch.setattr(chunk_module, "tree_path", lambda source_id: tree_file)
+    monkeypatch.setattr(chunk_module, "load_persisted_tree", lambda path: tree)
 
 
 def test_backmatter_sections_are_dropped_before_chunking(tmp_path, monkeypatch):
@@ -192,42 +174,17 @@ def test_backmatter_sections_are_dropped_before_chunking(tmp_path, monkeypatch):
         "synthetic multi-section source for issue #113 back-matter filter test",
         encoding="utf-8",
     )
-    source_id = compute_source_id(source_path)
 
-    envelopes_dir = tmp_path / "envelopes"
-    envelopes_dir.mkdir()
-    envelope = {
-        "source_id": source_id,
-        "author": "Synthetic Author",
-        "title": "Synthetic Source With Back-Matter",
-        "date": "2026",
-        "thesis": "Material scarcity shaped the campaigns course and outcome.",
-        "toc": [label for label, _kind, _body in _SECTION_SPECS],
-        "scope": "A synthetic single-source fixture for issue #113.",
-        "stated_argument": "Material scarcity, not doctrine, decided the campaign.",
-    }
-    (envelopes_dir / f"{source_id}.json").write_text(
-        json.dumps(envelope), encoding="utf-8"
-    )
+    _patch_tree(monkeypatch, tmp_path, _build_synthetic_tree())
 
-    synthetic_tree = _build_synthetic_tree()
-
-    def fake_extract(path):
-        return synthetic_tree
-
-    monkeypatch.setattr(chunk_module, "extract", fake_extract)
-
-    fake_client = _MarkerCountingClient(markers=_DROP_BODIES + _KEEP_BODIES)
-
-    records = chunk_module.run_chunk(
-        source_path,
-        client=fake_client,
-        envelopes_dir=envelopes_dir,
+    records = run_chunk_embedding(
+        source_path, embedder=HashingEmbedder(), chunks_dir=tmp_path / "chunks"
     )
 
     assert isinstance(records, list), (
-        f"expected run_chunk to return a list, got {type(records).__name__}: {records!r}"
+        f"expected run_chunk_embedding to return a list, got {type(records).__name__}: {records!r}"
     )
+    assert records, "expected at least one chunk record from the kept sections, got none"
 
     dropped_sections_seen = {
         record.get("section")
@@ -241,13 +198,16 @@ def test_backmatter_sections_are_dropped_before_chunking(tmp_path, monkeypatch):
         f"{sorted(dropped_sections_seen)!r}. Full records: {records!r}"
     )
 
+    # Stronger proof (seam decision 2): a dropped section's own body text
+    # never leaks into ANY emitted chunk's text, not merely "no record
+    # labeled Bibliography".
     for body in _DROP_BODIES:
-        count = fake_client.marker_call_counts[body]
-        assert count == 0, (
-            f"expected the LLM to NEVER be called with a prompt containing "
-            f"a dropped back-matter sections own body text (issue #113), "
-            f"but its marker appeared in {count} call(s). Marker (start): "
-            f"{body[:80]!r}."
+        leaked = [r for r in records if body in r.get("text", "")]
+        assert not leaked, (
+            f"expected a dropped back-matter section's own body text to "
+            f"never appear inside any emitted chunk's text (issue #113: "
+            f"dropped before chunking, not filtered post-hoc), but it "
+            f"leaked into: {leaked!r}. Marker (start): {body[:80]!r}"
         )
 
     prose_sections_seen = {
@@ -273,17 +233,17 @@ def test_backmatter_sections_are_dropped_before_chunking(tmp_path, monkeypatch):
     )
 
     for body in _KEEP_BODIES:
-        count = fake_client.marker_call_counts[body]
-        assert count >= 1, (
-            f"expected a kept sections own body text to appear in at least "
-            f"one chunking prompt, got {count} occurrence(s). Marker "
-            f"(start): {body[:80]!r}"
+        matching = [r for r in records if body in r.get("text", "")]
+        assert matching, (
+            f"expected a kept section's own body text to appear in at "
+            f"least one emitted chunk's text, got none. Marker (start): "
+            f"{body[:80]!r}"
         )
 
     for record in records:
         section = record.get("section")
         assert section in _KEEP_LABELS, (
-            f"expected every chunk records section to be one of this "
-            f"fixtures KEEP labels {sorted(_KEEP_LABELS)!r}, got {section!r} "
+            f"expected every chunk record's section to be one of this "
+            f"fixture's KEEP labels {sorted(_KEEP_LABELS)!r}, got {section!r} "
             f"(full record: {record!r})"
         )

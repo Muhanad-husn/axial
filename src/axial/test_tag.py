@@ -991,9 +991,10 @@ def test_run_tag_zero_chunks_yields_zero_tagged_records_without_a_tag_llm_call(
     import axial.tag as tag_mod
 
     domain_dir = _write_minimal_domain(tmp_path)
-    monkeypatch.setattr(tag_mod, "run_chunk", lambda *args, **kwargs: [])
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: [])
 
     stub_client = StubLLMClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=stub_client, domain_dir=domain_dir)
 
     assert records == []
@@ -1008,9 +1009,10 @@ def test_run_tag_produces_one_record_per_chunk_with_role_and_schema_version(monk
         {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"},
         {"chunk_id": "src_1_intro_002", "section": "Introduction", "text": "chunk two"},
     ]
-    monkeypatch.setattr(tag_mod, "run_chunk", lambda *args, **kwargs: chunk_records)
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
 
     stub_client = StubLLMClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=stub_client, domain_dir=domain_dir)
 
     assert len(records) == 2
@@ -1029,7 +1031,7 @@ def test_run_tag_calls_the_client_with_the_tag_pass_name(monkeypatch, tmp_path):
     domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
     monkeypatch.setattr(
         tag_mod,
-        "run_chunk",
+        "read_chunks",
         lambda *args, **kwargs: [
             {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"}
         ],
@@ -1042,6 +1044,7 @@ def test_run_tag_calls_the_client_with_the_tag_pass_name(monkeypatch, tmp_path):
             calls.append(pass_name)
             return json.dumps({"role_in_argument": "role:claim"})
 
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     tag_mod.run_tag(tmp_path / "paper.pdf", client=_CapturingClient(), domain_dir=domain_dir)
 
     assert calls == [TAG_PASS_NAME]
@@ -1053,7 +1056,7 @@ def test_run_tag_raises_a_hard_error_for_an_out_of_schema_tag(monkeypatch, tmp_p
     domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
     monkeypatch.setattr(
         tag_mod,
-        "run_chunk",
+        "read_chunks",
         lambda *args, **kwargs: [
             {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"}
         ],
@@ -1064,6 +1067,7 @@ def test_run_tag_raises_a_hard_error_for_an_out_of_schema_tag(monkeypatch, tmp_p
             return json.dumps({"role_in_argument": "role:not-a-real-tag"})
 
     with pytest.raises(tag_mod.TagNotInSchemaError):
+        (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
         tag_mod.run_tag(tmp_path / "paper.pdf", client=_OutOfSchemaClient(), domain_dir=domain_dir)
 
 
@@ -1106,10 +1110,10 @@ def _write_domain_with_empirical_scope(
     return domain_dir
 
 
-def _one_chunk_run_chunk(monkeypatch, tag_mod):
+def _one_chunk_read_chunks(monkeypatch, tag_mod):
     monkeypatch.setattr(
         tag_mod,
-        "run_chunk",
+        "read_chunks",
         lambda *args, **kwargs: [
             {"chunk_id": "c1", "section": "Introduction", "text": "chunk one"}
         ],
@@ -1120,7 +1124,7 @@ def test_run_tag_country_case_record_carries_empirical_scope_and_country(monkeyp
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     class _Client:
         def complete(self, prompt, pass_name=None):
@@ -1132,6 +1136,7 @@ def test_run_tag_country_case_record_carries_empirical_scope_and_country(monkeyp
                 }
             )
 
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
 
     assert len(records) == 1
@@ -1144,7 +1149,7 @@ def test_run_tag_non_country_case_record_carries_no_country(monkeypatch, tmp_pat
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     class _Client:
         def complete(self, prompt, pass_name=None):
@@ -1152,6 +1157,7 @@ def test_run_tag_non_country_case_record_carries_no_country(monkeypatch, tmp_pat
                 {"role_in_argument": "role:claim", "empirical_scope": "scope:general"}
             )
 
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
 
     assert records[0]["empirical_scope"] == "scope:general"
@@ -1162,7 +1168,7 @@ def test_run_tag_country_case_missing_country_raises_hard_error(monkeypatch, tmp
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     class _Client:
         def complete(self, prompt, pass_name=None):
@@ -1171,6 +1177,7 @@ def test_run_tag_country_case_missing_country_raises_hard_error(monkeypatch, tmp
             )
 
     with pytest.raises(tag_mod.CountryCaseMissingCountryError):
+        (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
         tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
 
 
@@ -1183,7 +1190,7 @@ def test_run_tag_country_case_out_of_list_country_is_accepted_and_logged(
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     class _Client:
         def complete(self, prompt, pass_name=None):
@@ -1195,6 +1202,7 @@ def test_run_tag_country_case_out_of_list_country_is_accepted_and_logged(
                 }
             )
 
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
 
     assert records[0]["country"] == "Atlantis"
@@ -1212,7 +1220,7 @@ def test_run_tag_country_case_missing_country_then_clean_reasks_and_succeeds(mon
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     missing_country = json.dumps(
         {"role_in_argument": "role:claim", "empirical_scope": "scope:country-case"}
@@ -1236,6 +1244,7 @@ def test_run_tag_country_case_missing_country_then_clean_reasks_and_succeeds(mon
             return response
 
     client = _ScriptedClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert len(records) == 1
@@ -1253,7 +1262,7 @@ def test_run_tag_country_case_persistent_missing_country_raises_after_three_atte
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     class _CountingClient:
         def __init__(self):
@@ -1268,6 +1277,7 @@ def test_run_tag_country_case_persistent_missing_country_raises_after_three_atte
     client = _CountingClient()
 
     with pytest.raises(tag_mod.CountryCaseMissingCountryError):
+        (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
         tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert client.call_count == 3
@@ -1279,7 +1289,7 @@ def test_run_tag_country_case_country_present_makes_exactly_one_call(monkeypatch
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     class _CountingClient:
         def __init__(self):
@@ -1296,6 +1306,7 @@ def test_run_tag_country_case_country_present_makes_exactly_one_call(monkeypatch
             )
 
     client = _CountingClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert records[0]["country"] == "Syria"
@@ -1310,7 +1321,7 @@ def test_run_tag_non_country_case_scope_with_no_country_is_unaffected(monkeypatc
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     class _CountingClient:
         def __init__(self):
@@ -1323,6 +1334,7 @@ def test_run_tag_non_country_case_scope_with_no_country_is_unaffected(monkeypatc
             )
 
     client = _CountingClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert records[0]["empirical_scope"] == "scope:general"
@@ -1336,7 +1348,7 @@ def test_run_tag_makes_exactly_one_llm_call_per_chunk_even_with_two_tagged_axes(
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     calls = []
 
@@ -1347,6 +1359,7 @@ def test_run_tag_makes_exactly_one_llm_call_per_chunk_even_with_two_tagged_axes(
                 {"role_in_argument": "role:claim", "empirical_scope": "scope:general"}
             )
 
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
 
     assert calls == [TAG_PASS_NAME]
@@ -1360,9 +1373,10 @@ def test_run_tag_regresses_role_in_argument_when_empirical_scope_axis_absent(mon
     import axial.tag as tag_mod
 
     domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     stub_client = StubLLMClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=stub_client, domain_dir=domain_dir)
 
     assert len(records) == 1
@@ -1432,7 +1446,7 @@ def test_run_tag_assigns_field_claim_type_theory_school_in_the_appendix_h_shape(
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_multi_value_axes(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     class _Client:
         def complete(self, prompt, pass_name=None):
@@ -1448,6 +1462,7 @@ def test_run_tag_assigns_field_claim_type_theory_school_in_the_appendix_h_shape(
                 }
             )
 
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
 
     assert len(records) == 1
@@ -1471,7 +1486,7 @@ def test_run_tag_raises_a_hard_error_for_an_out_of_schema_field_primary(monkeypa
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_multi_value_axes(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     class _Client:
         def complete(self, prompt, pass_name=None):
@@ -1485,6 +1500,7 @@ def test_run_tag_raises_a_hard_error_for_an_out_of_schema_field_primary(monkeypa
             )
 
     with pytest.raises(tag_mod.TagNotInSchemaError) as exc_info:
+        (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
         tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
 
     message = str(exc_info.value)
@@ -1496,7 +1512,7 @@ def test_run_tag_raises_a_hard_error_for_an_undeclared_claim_type_subtag(monkeyp
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_multi_value_axes(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     class _Client:
         def complete(self, prompt, pass_name=None):
@@ -1510,6 +1526,7 @@ def test_run_tag_raises_a_hard_error_for_an_undeclared_claim_type_subtag(monkeyp
             )
 
     with pytest.raises(tag_mod.TagNotInSchemaError) as exc_info:
+        (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
         tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
 
     message = str(exc_info.value)
@@ -1523,7 +1540,7 @@ def test_run_tag_succeeds_when_first_completion_is_malformed_json(monkeypatch, t
     domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
     monkeypatch.setattr(
         tag_mod,
-        "run_chunk",
+        "read_chunks",
         lambda *args, **kwargs: [
             {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"}
         ],
@@ -1542,6 +1559,7 @@ def test_run_tag_succeeds_when_first_completion_is_malformed_json(monkeypatch, t
             return response
 
     client = _ScriptedClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert len(records) == 1
@@ -1555,7 +1573,7 @@ def test_run_tag_raises_tag_parse_error_on_persistently_malformed_json(monkeypat
     domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
     monkeypatch.setattr(
         tag_mod,
-        "run_chunk",
+        "read_chunks",
         lambda *args, **kwargs: [
             {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"}
         ],
@@ -1572,6 +1590,7 @@ def test_run_tag_raises_tag_parse_error_on_persistently_malformed_json(monkeypat
     client = _AlwaysBrokenClient()
 
     with pytest.raises(tag_mod.TagParseError):
+        (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
         tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert client.call_count == 3
@@ -1592,7 +1611,7 @@ def test_run_tag_reasks_and_succeeds_when_primary_axis_value_is_first_empty_stri
     domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
     monkeypatch.setattr(
         tag_mod,
-        "run_chunk",
+        "read_chunks",
         lambda *args, **kwargs: [
             {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"}
         ],
@@ -1612,6 +1631,7 @@ def test_run_tag_reasks_and_succeeds_when_primary_axis_value_is_first_empty_stri
             return response
 
     client = _ScriptedClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert len(records) == 1
@@ -1625,7 +1645,7 @@ def test_run_tag_raises_tag_parse_error_on_persistently_empty_string_primary(mon
     domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
     monkeypatch.setattr(
         tag_mod,
-        "run_chunk",
+        "read_chunks",
         lambda *args, **kwargs: [
             {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"}
         ],
@@ -1642,6 +1662,7 @@ def test_run_tag_raises_tag_parse_error_on_persistently_empty_string_primary(mon
     client = _AlwaysEmptyClient()
 
     with pytest.raises(tag_mod.TagParseError):
+        (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
         tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert client.call_count == 3
@@ -1653,7 +1674,7 @@ def test_run_tag_reasks_and_succeeds_when_secondary_entry_is_first_empty_string(
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_multi_value_axes(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     degenerate = json.dumps(
         {
@@ -1683,6 +1704,7 @@ def test_run_tag_reasks_and_succeeds_when_secondary_entry_is_first_empty_string(
             return response
 
     client = _ScriptedClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert len(records) == 1
@@ -1694,7 +1716,7 @@ def test_run_tag_reasks_and_succeeds_when_subtag_is_first_empty_string(monkeypat
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_multi_value_axes(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     degenerate = json.dumps(
         {
@@ -1727,6 +1749,7 @@ def test_run_tag_reasks_and_succeeds_when_subtag_is_first_empty_string(monkeypat
             return response
 
     client = _ScriptedClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert len(records) == 1
@@ -1750,7 +1773,7 @@ def test_run_tag_out_of_vocab_non_empty_tag_hard_errors_after_one_bounded_reask(
     domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
     monkeypatch.setattr(
         tag_mod,
-        "run_chunk",
+        "read_chunks",
         lambda *args, **kwargs: [
             {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"}
         ],
@@ -1767,6 +1790,7 @@ def test_run_tag_out_of_vocab_non_empty_tag_hard_errors_after_one_bounded_reask(
     client = _CountingClient()
 
     with pytest.raises(tag_mod.TagNotInSchemaError):
+        (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
         tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert client.call_count == 2
@@ -1783,7 +1807,7 @@ def test_run_tag_zaum_payload_carries_scope_and_country_with_zero_reasks(monkeyp
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path, country_list=("East Timor",))
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     class _CountingClient:
         def __init__(self):
@@ -1799,6 +1823,7 @@ def test_run_tag_zaum_payload_carries_scope_and_country_with_zero_reasks(monkeyp
             )
 
     client = _CountingClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert len(records) == 1
@@ -1815,7 +1840,7 @@ def test_run_tag_value_as_key_dialect_carries_scope_and_country_with_zero_reasks
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     class _CountingClient:
         def __init__(self):
@@ -1834,6 +1859,7 @@ def test_run_tag_value_as_key_dialect_carries_scope_and_country_with_zero_reasks
             )
 
     client = _CountingClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert len(records) == 1
@@ -1851,7 +1877,7 @@ def test_run_tag_two_candidate_object_dialect_still_errors(monkeypatch, tmp_path
     domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
     monkeypatch.setattr(
         tag_mod,
-        "run_chunk",
+        "read_chunks",
         lambda *args, **kwargs: [
             {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"}
         ],
@@ -1868,6 +1894,7 @@ def test_run_tag_two_candidate_object_dialect_still_errors(monkeypatch, tmp_path
     client = _AlwaysAmbiguousClient()
 
     with pytest.raises(tag_mod.TagParseError):
+        (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
         tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert client.call_count == 3
@@ -1885,7 +1912,7 @@ def test_run_tag_reasks_and_succeeds_when_value_key_extracted_value_is_first_emp
     domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
     monkeypatch.setattr(
         tag_mod,
-        "run_chunk",
+        "read_chunks",
         lambda *args, **kwargs: [
             {"chunk_id": "src_1_intro_001", "section": "Introduction", "text": "chunk one"}
         ],
@@ -1905,6 +1932,7 @@ def test_run_tag_reasks_and_succeeds_when_value_key_extracted_value_is_first_emp
             return response
 
     client = _ScriptedClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert len(records) == 1
@@ -1937,7 +1965,7 @@ def test_run_tag_out_of_vocab_primary_corrects_on_bounded_reask(monkeypatch, tmp
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_multi_value_axes(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     bad = json.dumps(
         {
@@ -1957,6 +1985,7 @@ def test_run_tag_out_of_vocab_primary_corrects_on_bounded_reask(monkeypatch, tmp
     )
 
     client = _ScriptedTagClient([bad, good])
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert len(records) == 1
@@ -1971,7 +2000,7 @@ def test_run_tag_out_of_vocab_subtag_corrects_on_bounded_reask(monkeypatch, tmp_
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_multi_value_axes(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     bad = json.dumps(
         {
@@ -1991,6 +2020,7 @@ def test_run_tag_out_of_vocab_subtag_corrects_on_bounded_reask(monkeypatch, tmp_
     )
 
     client = _ScriptedTagClient([bad, good])
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert len(records) == 1
@@ -2006,7 +2036,7 @@ def test_run_tag_persistent_out_of_vocab_hard_errors_after_exactly_one_reask(mon
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_multi_value_axes(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     bad = json.dumps(
         {
@@ -2020,6 +2050,7 @@ def test_run_tag_persistent_out_of_vocab_hard_errors_after_exactly_one_reask(mon
     client = _ScriptedTagClient([bad])
 
     with pytest.raises(tag_mod.TagNotInSchemaError) as exc_info:
+        (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
         tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert "claim_type" in str(exc_info.value)
@@ -2036,7 +2067,7 @@ def test_run_tag_correction_reask_that_returns_none_hard_errors(monkeypatch, tmp
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_multi_value_axes(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     bad = json.dumps(
         {
@@ -2058,6 +2089,7 @@ def test_run_tag_correction_reask_that_returns_none_hard_errors(monkeypatch, tmp
     client = _ScriptedTagClient([bad, none_answer])
 
     with pytest.raises(tag_mod.TagNotInSchemaError):
+        (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
         tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert client.call_count == 2
@@ -2070,7 +2102,7 @@ def test_run_tag_in_vocab_first_answer_never_triggers_a_correction_reask(monkeyp
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_multi_value_axes(tmp_path)
-    _one_chunk_run_chunk(monkeypatch, tag_mod)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     good = json.dumps(
         {
@@ -2082,6 +2114,7 @@ def test_run_tag_in_vocab_first_answer_never_triggers_a_correction_reask(monkeyp
     )
 
     client = _ScriptedTagClient([good])
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert len(records) == 1

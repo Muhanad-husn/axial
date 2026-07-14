@@ -193,9 +193,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from axial.chunk import run_chunk
+from axial.chunk import HashingEmbedder, read_chunks, run_chunk_embedding
 from axial.envelope import compute_source_id
-from axial.llm import StubLLMClient
 from axial.schema import Schema, load_schema
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -288,15 +287,14 @@ def _run_axial(
 
 @contextlib.contextmanager
 def _chdir(path: Path):
-    """Temporarily change the process cwd to `path` (issue #151 slice 01
-    migration -- see `_arrange_expected_chunk_count` below): the OLD
-    `axial.chunk.run_chunk` mechanism calls `axial.extract.extract`
-    internally, which resolves its persisted-tree cache directory
-    (`axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
-    override parameter. Calling `run_chunk` in-process instead of shelling
-    out to `axial chunk` (whose CLI verb now runs the NEW embedding-based
-    mechanism as of issue #151) needs this to reproduce the exact
-    resolution the old subprocess's own `cwd=` argument achieved."""
+    """Temporarily change the process cwd to `path` -- see
+    `_arrange_stored_envelope` below: `run_chunk_embedding` resolves its
+    persisted-tree read (`axial.extract.tree_path`, via
+    `axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
+    override parameter (only its OWN write target, `chunks_dir`, is
+    overridable). Calling it in-process instead of shelling out to `axial
+    chunk` needs this to reproduce the exact resolution a `cwd=`-scoped
+    subprocess would get."""
     previous = Path.cwd()
     os.chdir(path)
     try:
@@ -352,7 +350,14 @@ def _arrange_stored_envelope(root: Path) -> Path:
     stub provider so a stored envelope exists on disk before vault write.
     Asserts the arrange step itself succeeded and produced exactly one new
     envelope file. (Mirrors tests/test_vault_write.py's helper of the same
-    name.)"""
+    name.)
+
+    Also writes the real, on-disk chunk artifact for this fixture (issue
+    #154 slice 04: `axial vault write` no longer computes chunks itself --
+    it reads `data/chunks/<source_id>.jsonl` via `axial.chunk.read_chunks`,
+    and every test in this file drives `axial vault write` through this one
+    shared arrange step, so the artifact is written here, once, for all of
+    them)."""
     _place_tree_fixture(THESIS_PAPER_PDF, THESIS_PAPER_TREE_FIXTURE, root)
     before_files = _existing_envelope_files(root)
 
@@ -370,29 +375,24 @@ def _arrange_stored_envelope(root: Path) -> Path:
         f"{_envelopes_dir(root)} after `axial envelope`, got {len(new_files)}: "
         f"{sorted(new_files)}\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
+
+    with _chdir(root):
+        run_chunk_embedding(THESIS_PAPER_PDF, embedder=HashingEmbedder())
+
     return next(iter(new_files))
 
 
 def _arrange_expected_chunk_count(root: Path) -> int:
-    """Independently call the OLD `axial.chunk.run_chunk` mechanism
-    IN-PROCESS (stub client) to obtain the real number of chunks this
-    fixture produces, used as ground truth for the tag-pass-family
-    call-count assertion in the re-ask scenario -- never a hardcoded chunk
-    count. Requires a stored envelope to already exist.
-
-    Migrated off a subprocess call to the standalone `axial chunk` CLI
-    (issue #151 slice 01): that CLI verb now runs the NEW embedding-based
-    chunk mechanism and no longer emits chunk records on stdout at all. The
-    OLD mechanism `axial vault write` itself still calls in-process
-    (`axial.chunk.run_chunk`) ships unchanged until issue #154 retires it,
-    so calling it here in-process too keeps this ground truth identical to
-    what that unchanged call site actually produces."""
+    """Read the on-disk chunk artifact `_arrange_stored_envelope` already
+    wrote and return the number of chunk records this fixture produces,
+    used as ground truth for the tag-pass-family call-count assertion in
+    the re-ask scenario -- never a hardcoded chunk count."""
+    source_id = compute_source_id(THESIS_PAPER_PDF)
     with _chdir(root):
-        records = run_chunk(
-            THESIS_PAPER_PDF, client=StubLLMClient(), envelopes_dir=_envelopes_dir(root)
-        )
+        records = read_chunks(source_id)
     assert len(records) >= 1, (
-        f"arrange step failed: expected at least one chunk record from run_chunk, got {len(records)}"
+        f"arrange step failed: expected at least one chunk record in the "
+        f"on-disk chunk artifact, got {len(records)}"
     )
     return len(records)
 

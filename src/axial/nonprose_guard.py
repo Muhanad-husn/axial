@@ -11,9 +11,16 @@ non-alphabetic character ratio exceeds `MAX_NON_ALPHA_RATIO`.
 
 First written for `axial.xref` (issue #111), then duplicated verbatim into
 `axial.chunk` (issue #118) to avoid an import cycle (`axial.xref` already
-imports `axial.chunk.run_chunk`). This module is the single source of truth
+imports from `axial.chunk`). This module is the single source of truth
 those two copies collapse into, plus the two new call sites (`axial.tag`,
 `axial.artifacts`) issue #132 adds.
+
+Note (issue #154, slice 04 of the chunk-redesign subproject): the embedding
+chunk stage's own size arm (`axial.chunk._garbage_section_skip_reason`) never
+reused this module's size arm to begin with (an oversized section is SPLIT,
+not skipped -- see that function's docstring); this module's guard remains
+live for `axial.xref`/`axial.tag`/`axial.artifacts`, which still skip
+oversized/OCR-garbled chunks before an LLM call.
 
 Import topology: this is a LEAF module. It must never import from
 `axial.xref`, `axial.chunk`, `axial.tag`, or `axial.artifacts` -- all four

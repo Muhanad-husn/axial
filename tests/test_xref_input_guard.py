@@ -7,10 +7,17 @@ The guard skips such chunks BEFORE the LLM call: no call, no pairs, no
 checkpoint, and the pass completes normally on the remaining prose.
 
 Same seams as tests/test_xref_checkpoint.py (issue #110): monkeypatch
-`axial.xref.run_chunk` / `run_artifacts` to supply synthetic records without
-docling/network, and a fake counting client identified by the chunk text it
-sees in the prompt -- so "the guard never called the LLM for the index
-chunk" is asserted directly through the call counts.
+`axial.xref.read_chunks` / `run_artifacts` to supply synthetic records
+without docling/network, and a fake counting client identified by the
+chunk text it sees in the prompt -- so "the guard never called the LLM for
+the index chunk" is asserted directly through the call counts.
+
+Migration note (issue #154, slice 04): `axial.xref.run_xref` no longer
+computes chunks itself via `axial.chunk.run_chunk` (deleted) -- it reads
+the on-disk chunk artifact via `axial.chunk.read_chunks` (imported
+directly into `axial.xref`'s own module namespace as `read_chunks`). This
+test repoints its monkeypatch from `xref_module.run_chunk` to
+`xref_module.read_chunks` accordingly; every assertion below is unchanged.
 """
 
 from __future__ import annotations
@@ -32,13 +39,13 @@ INDEX_TEXT = "Abbasid, 12, 45, 78; Cairo, 3, 9, 210; " * 900
 
 
 def _make_env(monkeypatch, chunk_records):
-    def fake_run_chunk(path, **kwargs):
+    def fake_read_chunks(source_id, **kwargs):
         return chunk_records
 
     def fake_run_artifacts(path, **kwargs):
         return [{"artifact_id": ARTIFACT_ID}]
 
-    monkeypatch.setattr(xref_module, "run_chunk", fake_run_chunk)
+    monkeypatch.setattr(xref_module, "read_chunks", fake_read_chunks)
     monkeypatch.setattr(xref_module, "run_artifacts", fake_run_artifacts)
 
 

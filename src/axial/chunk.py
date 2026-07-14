@@ -1,33 +1,31 @@
-"""Chunking: two mechanisms coexist in this module during the chunk-redesign
-transition (charter #148).
+"""Chunking (charter #148): `run_chunk_embedding` (issue #151, PRD §5 stage 4
+/ §7.7 / §8 P0-4) is the sole chunking mechanism. For each prose section, it
+finds chunk boundaries by embedding the section's sentences and splitting at
+semantic-similarity troughs (gradient thresholding), then a deterministic
+two-sided band guard `[CHUNK_MIN, CHUNK_MAX]` wraps those breakpoints. It
+reads ONLY the persisted structural tree (`data/trees/<source_id>.json`, via
+`axial.extract`) -- no envelope, no text-generating LLM call anywhere in this
+path. It writes records to `data/chunks/<source_id>.jsonl` (PRD §7.7) -- the
+CLI `chunk` subcommand's mechanism (see `src/axial/cli.py`).
 
-`run_chunk` (retired mechanism, issue #17 slice 05): for each prose section,
-one LLM call decides chunk boundaries with the stored envelope plus the
-section's surrounding sections in context -- never the isolated section. It
-reads `data/envelopes/<source_id>.json` (written once by `axial envelope`)
-and raises a typed error if no stored envelope exists yet. KEPT ALONGSIDE the
-new mechanism below (not deleted, not rewired) because `tag.py`/`xref.py`/
-`vault.py` still import and call it directly until slice 04 rewires them onto
-the new on-disk artifact (issue #151's slice plan, "Out of scope").
+`read_chunks` (issue #154, slice 04 of the chunk-redesign subproject) is the
+downstream-facing reader for that same on-disk artifact: `tag.py`, `xref.py`,
+and (through them) `vault.py` read chunk records from
+`data/chunks/<source_id>.jsonl` via `read_chunks` instead of computing chunks
+themselves. It raises `MissingChunkArtifactError` when the artifact does not
+exist yet, telling the operator to run `axial chunk` first -- no downstream
+pass ever recomputes chunk boundaries (PRD §8 P0-4b).
 
-`run_chunk_embedding` (new mechanism, issue #151, PRD §5 stage 4 / §7.7 /
-§8 P0-4): for each prose section, finds chunk boundaries by embedding the
-section's sentences and splitting at semantic-similarity troughs (gradient
-thresholding), then a deterministic two-sided band guard `[CHUNK_MIN,
-CHUNK_MAX]` wraps those breakpoints. Reads ONLY the persisted structural tree
-(`data/trees/<source_id>.json`, via `axial.extract`) -- no envelope, no
-text-generating LLM call anywhere in this path. Writes records to
-`data/chunks/<source_id>.jsonl` (PRD §7.7) -- this is now the CLI `chunk`
-subcommand's mechanism (see `src/axial/cli.py`); the retired mechanism above
-is reachable only by importing `run_chunk` directly.
+The retired LLM-echo chunker (`run_chunk`, issue #17 slice 05: one LLM call
+per section against the stored envelope) is REMOVED as of slice 04 -- it is
+no longer reachable from this module at all.
 
-Both mechanisms share `chunk_id`/`section`/`section_order`/`text` record
-shape and the `build_chunk_records` helper: a stable, deterministic
-`chunk_id` (`<source_id>_<section order>_<section slug>_<NNN>`, derived from
-the source_id, the section node's already-unique `order` field, the
-section's own verbatim heading, and the chunk's position within that section
--- no randomness, no timestamps) and `section` (the section's verbatim
-heading text). The `order` component is required for uniqueness:
+`build_chunk_records` is the shared record-assembly helper: a stable,
+deterministic `chunk_id` (`<source_id>_<section order>_<section slug>_<NNN>`,
+derived from the source_id, the section node's already-unique `order` field,
+the section's own verbatim heading, and the chunk's position within that
+section -- no randomness, no timestamps) and `section` (the section's
+verbatim heading text). The `order` component is required for uniqueness:
 `extract.py`'s tree-builder opens a new top-level section node for every
 heading in reading order without nesting, so a real source can have multiple
 top-level sections sharing the same heading text (e.g. repeated
@@ -49,29 +47,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-import httpx
 import yaml
 
-from axial.checkpoint import (
-    append_checkpoint_record,
-    load_checkpoint_records,
-)
+from axial.checkpoint import load_checkpoint_records
 from axial.envelope import (
     MissingSourceError as _EnvelopeMissingSourceError,
     compute_source_id,
-    envelope_path,
-    _default_envelopes_dir,
 )
-from axial.extract import ExtractError, extract, load_persisted_tree, tree_path
-from axial.llm import (
-    CHUNK_PASS_NAME,
-    DEFAULT_PIPELINE_CONFIG_PATH,
-    LLMClient,
-    LLMError,
-    get_client,
-)
-from axial.model_json import ModelJsonError, complete_json, parse_model_json
-from axial.nonprose_guard import MAX_NON_ALPHA_RATIO, non_prose_skip_reason
+from axial.extract import load_persisted_tree, tree_path
+from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
+from axial.nonprose_guard import MAX_NON_ALPHA_RATIO
 
 CHUNKS_DIR = Path("data/chunks")
 
@@ -115,57 +100,20 @@ def chunks_skips_sidecar_path(source_id: str, chunks_dir: Path = CHUNKS_DIR) -> 
     return chunks_dir / f"{source_id}.skips.jsonl"
 
 
-def append_chunk_checkpoint(path: Path, record: dict[str, Any]) -> None:
-    """Append one chunk record to `path` AS IT IS PRODUCED (issue #104): heal
-    any torn tail left by an earlier hard kill, then append the JSON line,
-    flushed before returning. Creates parent directories as needed. Reuses
-    `axial.checkpoint.append_checkpoint_record` -- the same primitive
-    `axial.tag.append_tag_checkpoint` builds on -- so chunk and tag
-    checkpoints stay consistent (atomic/append-safe, crash-tolerant)."""
-    append_checkpoint_record(path, record)
-
-
 def load_chunk_checkpoint(path: Path) -> list[dict[str, Any]]:
-    """Load chunk records already persisted to a chunk-pass checkpoint file
-    (the inverse of `append_chunk_checkpoint`), skipping blank lines. Returns
-    an empty list when the file does not exist yet.
+    """Load chunk records already persisted to `path` (`run_chunk_embedding`'s
+    own on-disk artifact, or -- historically -- the retired chunk-pass
+    checkpoint), skipping blank lines. Returns an empty list when the file
+    does not exist yet. The underlying read for `read_chunks` (below).
 
     Hardening (issue #104, mirroring `axial.tag.load_tag_checkpoint`): a torn
-    FINAL line (a hard kill mid-append) is healed (dropped) rather than
-    poisoning the resume -- its records simply reappear in the "not yet
-    checkpointed" gap and are re-produced on the resume run. A torn line
-    that is NOT the last one raises `ChunkCheckpointCorruptError`, naming the
-    checkpoint path and the offending 1-indexed line number. Reuses the same
-    shared `axial.checkpoint.load_checkpoint_records` primitive
+    FINAL line (a hard kill mid-write) is healed (dropped) rather than
+    poisoning the read. A torn line that is NOT the last one raises
+    `ChunkCheckpointCorruptError`, naming the path and the offending
+    1-indexed line number. Reuses the same shared
+    `axial.checkpoint.load_checkpoint_records` primitive
     `axial.tag.load_tag_checkpoint` builds on."""
     return load_checkpoint_records(path, ChunkCheckpointCorruptError)
-
-
-_CHUNK_PROMPT_TEMPLATE = """\
-You are deciding argumentative chunk boundaries for the TARGET SECTION below, \
-given this source's structural envelope and its surrounding sections for \
-context. Chunks should reflect argumentative units (a claim and its \
-support), not fixed sizes. Respond with ONLY a JSON object (no prose, no \
-markdown fences) with exactly one key, "chunks": a non-empty JSON array of \
-objects, each with a "text" key holding one argumentative chunk of prose \
-taken from the TARGET SECTION only -- never from the surrounding sections, \
-which are given only for context, not to be chunked themselves.
-
-Envelope:
-- stated_argument: {stated_argument}
-- thesis: {thesis}
-- scope: {scope}
-
-Surrounding sections (context only -- do not chunk these):
-
-{neighbours}
-
-Target section (chunk this one):
-
-{target}
-"""
-
-_NO_NEIGHBOURS_PLACEHOLDER = "(none)"
 
 
 class ChunkError(Exception):
@@ -178,41 +126,6 @@ class MissingSourceError(ChunkError):
     def __init__(self, cause: _EnvelopeMissingSourceError):
         self.cause = cause
         super().__init__(str(cause))
-
-
-class MissingEnvelopeError(ChunkError):
-    """Raised when no stored envelope exists yet for the source (PRD §7.3,
-    "produced once in stage 3; consumed by stages 4 and 6") -- the chunk
-    pass never recomputes one; the caller must run `axial envelope` first."""
-
-    def __init__(self, path: Path):
-        self.path = path
-        super().__init__(
-            f"no stored envelope found at {path}; run `axial envelope` on the source first"
-        )
-
-
-class ExtractionFailedError(ChunkError):
-    """Raised when the underlying structural extraction pass fails."""
-
-    def __init__(self, cause: ExtractError):
-        self.cause = cause
-        super().__init__(str(cause))
-
-
-class LLMFailedError(ChunkError):
-    """Raised when the LLM client -- selection/config or the completion call
-    itself -- fails, so the CLI renders a clean `error: ...` instead of a
-    bare traceback."""
-
-    def __init__(self, cause: LLMError | httpx.HTTPError):
-        self.cause = cause
-        super().__init__(str(cause))
-
-
-class ChunkParseError(ChunkError):
-    """Raised when the model's chunking response is not parseable into a
-    non-empty array of chunk-text objects."""
 
 
 class ChunkCheckpointCorruptError(ChunkError):
@@ -232,6 +145,19 @@ class ChunkCheckpointCorruptError(ChunkError):
         )
 
 
+class MissingChunkArtifactError(ChunkError):
+    """Raised by `read_chunks` when no on-disk chunk artifact exists yet for
+    the source (PRD §7.7, §8 P0-4b): downstream passes (`tag`, `xref`, and
+    `vault write` through them) never recompute chunk boundaries themselves
+    -- the caller must run `axial chunk` first."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        super().__init__(
+            f"no chunk artifact found at {path}; run `axial chunk` on the source first"
+        )
+
+
 class ChunkArtifactCorruptError(ChunkError):
     """Raised by `examine_chunks` (issue #153) when a line of a chunk
     artifact -- the main `<source_id>.jsonl` or its `<source_id>.skips.jsonl`
@@ -248,6 +174,31 @@ class ChunkArtifactCorruptError(ChunkError):
         super().__init__(
             f"corrupt chunk artifact {path}: line {line_no} is not valid JSON: {cause}"
         )
+
+
+def read_chunks(
+    source_id: str,
+    *,
+    chunks_dir: Path | None = None,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+) -> list[dict[str, Any]]:
+    """Read the on-disk chunk artifact (PRD §7.7) `source_id` already has at
+    `data/chunks/<source_id>.jsonl`, written by `axial chunk`
+    (`run_chunk_embedding`). Resolves the path with the SAME helpers the
+    writer uses (`_default_chunks_dir` / `chunks_checkpoint_path`), so reader
+    and writer always agree on where the artifact lives. Returns the chunk
+    records in file (section-then-position) order -- the order
+    `run_chunk_embedding` wrote them in.
+
+    Raises `MissingChunkArtifactError` if the artifact does not exist yet:
+    this is a pure reader, never a recompute path (issue #154, PRD §8
+    P0-4b) -- no downstream pass ever (re)derives chunk boundaries itself."""
+    if chunks_dir is None:
+        chunks_dir = _default_chunks_dir(config_path)
+    path = chunks_checkpoint_path(source_id, chunks_dir)
+    if not path.exists():
+        raise MissingChunkArtifactError(path)
+    return load_chunk_checkpoint(path)
 
 
 _SLUG_MAX_LEN = 80
@@ -348,97 +299,6 @@ def _section_body_lines(node: dict) -> list[str]:
     return [line for child in node.get("children", []) for line in _prose_text_lines(child)]
 
 
-def _section_text(node: dict) -> str:
-    """A section's heading plus body, formatted for inclusion in a prompt."""
-    heading = node.get("text", "")
-    body = "\n".join(_section_body_lines(node))
-    return f"## {heading}\n{body}" if body else f"## {heading}"
-
-
-# Input-guard thresholds for non-prose section bodies (issue #118, mirroring
-# axial.xref's #111 guard; lifted into `axial.nonprose_guard` by issue #132):
-# an OCR'd index/bibliography-shaped section becomes one very large,
-# mostly-non-alphabetic block with no argumentative structure that can stall
-# the LLM. Heuristics, not hard rules. Kept as module-level aliases here so
-# external references to these exact names keep working.
-_CHUNK_MAX_SECTION_CHARS = 30000
-_CHUNK_MAX_NON_ALPHA_RATIO = 0.4
-
-
-def _non_prose_skip_reason(text: str) -> str | None:
-    """Return a human-readable reason to skip `text` from the chunk pass as
-    non-prose back-matter (issue #118, mirroring xref.py's `_non_prose_skip_reason`,
-    #111), or None to process it normally.
-
-    Delegates to the shared `axial.nonprose_guard.non_prose_skip_reason`
-    (issue #132), passing this module's own threshold names through
-    explicitly so behavior is unchanged even if the shared defaults ever
-    diverge from chunk's own."""
-    return non_prose_skip_reason(
-        text,
-        max_chars=_CHUNK_MAX_SECTION_CHARS,
-        max_non_alpha_ratio=_CHUNK_MAX_NON_ALPHA_RATIO,
-    )
-
-
-def compose_chunk_prompt(
-    target: dict, prev_section: dict | None, next_section: dict | None, envelope: dict[str, Any]
-) -> str:
-    """Compose the chunking prompt for `target` from the target section's own
-    text, its neighbouring sections' actual text (never just an envelope
-    paraphrase), and the stored envelope's contents -- never the isolated
-    section (PRD §5 stage 4, §8 P0-4)."""
-    neighbour_texts = []
-    if prev_section is not None:
-        neighbour_texts.append(_section_text(prev_section))
-    if next_section is not None:
-        neighbour_texts.append(_section_text(next_section))
-    neighbours = "\n\n".join(neighbour_texts) if neighbour_texts else _NO_NEIGHBOURS_PLACEHOLDER
-
-    return _CHUNK_PROMPT_TEMPLATE.format(
-        stated_argument=envelope.get("stated_argument", ""),
-        thesis=envelope.get("thesis", ""),
-        scope=envelope.get("scope", ""),
-        neighbours=neighbours,
-        target=_section_text(target),
-    )
-
-
-def parse_response(raw: str) -> list[dict[str, Any]]:
-    """Parse the model's raw chunking response into a list of chunk-text
-    objects (each with at least a "text" key). Accepts a top-level object
-    with a "chunks" array, or a bare top-level array. Array entries that are
-    bare strings are normalized to {"text": <string>} before validation."""
-    try:
-        data = parse_model_json(raw)
-    except ModelJsonError as exc:
-        raise ChunkParseError(f"model response was not valid JSON: {exc}") from exc
-
-    if isinstance(data, dict):
-        if "chunks" not in data:
-            raise ChunkParseError(
-                f"expected a top-level 'chunks' key, got keys: {sorted(data.keys())}"
-            )
-        chunks = data["chunks"]
-    else:
-        chunks = data
-
-    if not isinstance(chunks, list):
-        raise ChunkParseError(
-            f"expected chunk data to be a JSON array, got {type(chunks).__name__}: {chunks!r}"
-        )
-
-    normalized = [{"text": chunk} if isinstance(chunk, str) else chunk for chunk in chunks]
-
-    for chunk in normalized:
-        if not isinstance(chunk, dict) or not isinstance(chunk.get("text"), str):
-            raise ChunkParseError(
-                f"expected each chunk to be an object with a string 'text' key, got {chunk!r}"
-            )
-
-    return normalized
-
-
 def build_chunk_records(
     source_id: str, section_order: str, section_label: str, chunks: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -469,153 +329,6 @@ def build_chunk_records(
             }
         )
     return records
-
-
-def run_chunk(
-    source_path: str | Path,
-    client: LLMClient | None = None,
-    envelopes_dir: Path | None = None,
-    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
-    chunks_dir: Path | None = None,
-) -> list[dict[str, Any]]:
-    """Run the argumentative-chunking pass on `source_path`.
-
-    Reads the stored envelope from `data/envelopes/<source_id>.json` (never
-    recomputes it -- PRD §10), then for each prose section in the extraction
-    tree, calls the LLM with the envelope plus the section's neighbours (not
-    the isolated section) to decide chunk boundaries. A section with no
-    chunkable prose yields zero chunks without an LLM call or an error.
-
-    Chunk-pass checkpoint (issue #81 point 1, made per-section-incremental by
-    issue #104): OPT-IN, active only when a `chunks_dir` is supplied (the
-    `axial vault write` composition threads one in; standalone `axial chunk`
-    passes none and so behaves exactly as before, recomputing every run --
-    the reuse feature is deliberately scoped to vault write, not the
-    standalone pass whose own contract re-runs each time). When active: each
-    section's chunk records are appended to `<chunks_dir>/<source_id>.jsonl`
-    (one record per line) as soon as that section completes -- write+flush
-    per section, mirroring `axial.tag.run_tag`'s per-chunk checkpoint -- so a
-    mid-pass hard failure at section N leaves sections 0..N-1's records
-    durably persisted instead of losing them (issue #104's primary fix: the
-    prior all-or-nothing `write_chunk_checkpoint(...)` call after the whole
-    loop lost every already-produced record on a mid-pass failure). On a
-    later run, a section whose `section_order` already appears in the
-    checkpoint is skipped entirely -- no LLM call -- and only the remaining
-    sections are processed, their records appended and combined with the
-    checkpointed ones in the chunker's own section order. When every
-    chunkable section is already checkpointed, the checkpointed records are
-    returned verbatim with zero chunking LLM calls (mirroring the envelope
-    pass's "no recompute" reuse) -- extraction/envelope-read still run (they
-    are needed to know which sections exist), but both are already cheap,
-    cache-backed reads with no LLM cost of their own.
-    """
-    path = Path(source_path)
-    try:
-        source_id = compute_source_id(path)
-    except _EnvelopeMissingSourceError as exc:
-        raise MissingSourceError(exc) from exc
-
-    checkpoint_path = (
-        chunks_checkpoint_path(source_id, chunks_dir) if chunks_dir is not None else None
-    )
-    checkpointed_records: list[dict[str, Any]] = []
-    done_section_orders: set[str] = set()
-    if checkpoint_path is not None and checkpoint_path.exists():
-        checkpointed_records = load_chunk_checkpoint(checkpoint_path)
-        if checkpointed_records and not any("section_order" in r for r in checkpointed_records):
-            # Legacy (pre-#104) checkpoint: written once, atomically, only
-            # after the whole pass succeeded (the old, now-removed
-            # write_chunk_checkpoint) -- none of its records carry
-            # section_order, so treat it as complete, exactly like the old
-            # short-circuit, zero LLM calls. Without this, an old-format
-            # checkpoint's empty done_section_orders would make every
-            # section look unfinished, re-chunking the whole source AND
-            # appending duplicate records on top of the legacy lines.
-            return checkpointed_records
-        done_section_orders = {
-            record["section_order"] for record in checkpointed_records if "section_order" in record
-        }
-
-    if envelopes_dir is None:
-        envelopes_dir = _default_envelopes_dir(config_path)
-
-    env_path = envelope_path(source_id, envelopes_dir)
-    if not env_path.exists():
-        raise MissingEnvelopeError(env_path)
-    envelope = json.loads(env_path.read_text(encoding="utf-8"))
-
-    try:
-        tree = extract(path)
-    except ExtractError as exc:
-        raise ExtractionFailedError(exc) from exc
-
-    # Drop clear back-matter sections (bibliography/index/references/contents/
-    # copyright/lists) before the loop, so they are never chunked, never sent
-    # to the LLM (not even as a neighbour's context), and never written as
-    # notes (issue #113). Filtering up front -- rather than skipping inside the
-    # loop -- also keeps a dropped section out of the prev/next neighbour
-    # context of the sections that are kept. Chunk ids are keyed by each
-    # section's own `order` field, not its position, so kept sections'
-    # checkpoint keys are unchanged.
-    sections = [node for node in _section_nodes(tree) if not _is_back_matter(node.get("text", ""))]
-
-    all_records: list[dict[str, Any]] = list(checkpointed_records)
-    for index, section in enumerate(sections):
-        body_lines = _section_body_lines(section)
-        if not body_lines:
-            continue  # no chunkable prose in this section -- zero chunks, no LLM call
-
-        section_order = section.get("order", "")
-        if checkpoint_path is not None and section_order in done_section_orders:
-            continue  # already checkpointed by an earlier run -- no LLM call
-
-        section_label = section.get("text", "")
-
-        # Input guard (issue #118, mirroring xref.py's #111 guard): skip a
-        # section whose own body is non-prose back-matter (a huge OCR'd
-        # index/bibliography) -- no LLM call, no chunk records, no checkpoint
-        # write for this section. The skip is a deterministic function of the
-        # section's text, so it re-applies on every resume without ever
-        # reaching the model. This only skips the section's own turn as the
-        # chunking target -- it may still appear as neighbour context in an
-        # adjacent section's prompt (PRD §5 stage 4 / §8 P0-4), unrelated to
-        # issue #113's separate back-matter title filter above.
-        skip_reason = _non_prose_skip_reason("\n".join(body_lines))
-        if skip_reason is not None:
-            print(f"chunk: skipping section {section_label}: {skip_reason}", file=sys.stderr)
-            continue
-
-        if client is None:
-            try:
-                client = get_client(config_path=config_path)
-            except LLMError as exc:
-                raise LLMFailedError(exc) from exc
-
-        prev_section = sections[index - 1] if index > 0 else None
-        next_section = sections[index + 1] if index < len(sections) - 1 else None
-
-        prompt = compose_chunk_prompt(section, prev_section, next_section, envelope)
-
-        try:
-            raw_response = complete_json(client, prompt, pass_name=CHUNK_PASS_NAME)
-        except (LLMError, httpx.HTTPError) as exc:
-            raise LLMFailedError(exc) from exc
-        except ModelJsonError as exc:
-            raise ChunkParseError(f"model response was not valid JSON: {exc}") from exc
-
-        chunks = parse_response(raw_response)
-        section_records = build_chunk_records(source_id, section_order, section_label, chunks)
-
-        # Persist this section's records before moving to the next section
-        # (write+flush per section), so a failure on a later section leaves
-        # every already-completed section durably checkpointed (issue #104's
-        # primary fix).
-        if checkpoint_path is not None:
-            for record in section_records:
-                append_chunk_checkpoint(checkpoint_path, record)
-        all_records.extend(section_records)
-
-    return all_records
 
 
 # =============================================================================

@@ -380,8 +380,8 @@ def _write_stored_envelope(envelopes_dir: Path, source_path: Path) -> None:
 
 def test_run_vault_write_composes_the_tagger_not_the_chunker_directly(monkeypatch, tmp_path):
     """`run_vault_write` must run one thread from source to tagged prose
-    notes -- via `axial.tag.run_tag` (which itself runs the chunker
-    internally) -- rather than calling `axial.chunk.run_chunk` directly."""
+    notes -- via `axial.tag.run_tag` (which itself reads the on-disk chunk
+    artifact) -- rather than reading chunk records itself directly."""
     import axial.vault as vault_mod
 
     source_path = tmp_path / "source.pdf"
@@ -395,11 +395,11 @@ def test_run_vault_write_composes_the_tagger_not_the_chunker_directly(monkeypatc
         calls.append(kwargs)
         return tagged_records
 
-    def _fail_run_chunk(*args, **kwargs):
-        raise AssertionError("run_vault_write must not call run_chunk directly")
+    def _fail_read_chunks(*args, **kwargs):
+        raise AssertionError("run_vault_write must not call read_chunks directly")
 
     monkeypatch.setattr(vault_mod, "run_tag", _fake_run_tag)
-    monkeypatch.setattr(vault_mod, "run_chunk", _fail_run_chunk, raising=False)
+    monkeypatch.setattr(vault_mod, "read_chunks", _fail_read_chunks, raising=False)
     # issue #32 slice 02: run_vault_write now also runs the artifact pass;
     # stub it to [] so this prose-composition test stays hermetic (no real
     # docling on the fake PDF) and still asserts exactly one prose note.
@@ -467,9 +467,10 @@ def test_run_vault_write_writes_both_prose_and_artifact_notes(monkeypatch, tmp_p
     source_path, envelopes_dir = _arrange_stored_envelope(tmp_path)
     vault_dir = tmp_path / "vault"
 
-    # run_vault_write now composes run_tag (not run_chunk) for the prose half
-    # (slice 04) plus run_artifacts for the artifact half (issue #32 slice 02)
-    # plus run_xref for the backlink half (issue #34 slice 02).
+    # run_vault_write now composes run_tag (which reads the on-disk chunk
+    # artifact, not a chunker call -- slice 04) for the prose half plus
+    # run_artifacts for the artifact half (issue #32 slice 02) plus run_xref
+    # for the backlink half (issue #34 slice 02).
     monkeypatch.setattr(vault_mod, "run_tag", lambda *a, **k: [_RECORD])
     monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [_ARTIFACT_RECORD])
     monkeypatch.setattr(vault_mod, "run_xref", lambda *a, **k: [])
@@ -735,8 +736,8 @@ def test_run_vault_write_wraps_tag_error_raised_inside_run_xref_into_vault_error
     monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [_ARTIFACT_RECORD])
     # `run_xref` itself is left real (not monkeypatched on vault_mod) so this
     # test exercises the actual composition -- only its OWN internal
-    # collaborators (xref_mod's run_chunk/run_artifacts) are stubbed.
-    monkeypatch.setattr(xref_mod, "run_chunk", lambda *a, **k: [])
+    # collaborators (xref_mod's read_chunks/run_artifacts) are stubbed.
+    monkeypatch.setattr(xref_mod, "read_chunks", lambda *a, **k: [])
 
     def _raise_tag_error(*a, **k):
         raise TagNotInSchemaError("field", "")

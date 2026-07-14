@@ -3,14 +3,15 @@ which (if any) of the source's real artifacts (tables or figures) the
 chunk's prose text references (e.g. "as Table 3 shows") (PRD §5 stage 7,
 §7.2, §8 P0-7).
 
-This pass never invents a second chunk-id or artifact-id scheme: it reuses
-`axial.chunk.run_chunk` for the chunk records and `axial.artifacts.run_artifacts`
-for the source's real artifact records, so the pairs it emits are usable as a
-graph over the system's real, addressable chunk/artifact records. A
-referenced artifact_id absent from the source's real artifact set produces no
-pair -- a dangling link is filtered, not emitted (PRD §8 P0-7). This slice
-emits xref pairs to stdout only; writing bidirectional backlinks into vault
-notes' frontmatter is slice 02.
+This pass never invents a second chunk-id or artifact-id scheme: it reads
+chunk records from the on-disk chunk artifact (`axial.chunk.read_chunks`,
+PRD §7.7 -- never (re)computed here, issue #154) and reuses
+`axial.artifacts.run_artifacts` for the source's real artifact records, so
+the pairs it emits are usable as a graph over the system's real, addressable
+chunk/artifact records. A referenced artifact_id absent from the source's
+real artifact set produces no pair -- a dangling link is filtered, not
+emitted (PRD §8 P0-7). This slice emits xref pairs to stdout only; writing
+bidirectional backlinks into vault notes' frontmatter is slice 02.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from axial.artifacts import (
     DEFAULT_DOMAIN_DIR,
     run_artifacts,
 )
-from axial.chunk import ChunkError, run_chunk
+from axial.chunk import ChunkError, read_chunks
 from axial.envelope import (
     MissingSourceError as _EnvelopeMissingSourceError,
     compute_source_id,
@@ -90,7 +91,10 @@ class MissingSourceError(XrefError):
 
 
 class ChunkingFailedError(XrefError):
-    """Raised when the underlying chunking pass (`run_chunk`) fails."""
+    """Raised when reading the on-disk chunk artifact (`read_chunks`) fails
+    -- e.g. no chunk artifact yet (`axial.chunk.MissingChunkArtifactError`,
+    telling the operator to run `axial chunk` first). This pass never
+    (re)computes chunk boundaries itself."""
 
     def __init__(self, cause: ChunkError):
         self.cause = cause
@@ -237,7 +241,6 @@ def run_xref(
     source_path: str | Path,
     client: LLMClient | None = None,
     domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
-    envelopes_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     chunks_dir: Path | None = None,
     artifacts_dir: Path | None = None,
@@ -245,12 +248,14 @@ def run_xref(
 ) -> list[dict[str, Any]]:
     """Run the cross-reference-detection pass on `source_path`.
 
-    Reuses `run_chunk` for chunk records and `run_artifacts` for the
-    source's real artifact records (never a parallel id scheme for either).
-    For each chunk, calls the LLM once (`pass_name="xref"`) with the chunk
-    text and the source's known artifact ids, then filters the parsed
-    referenced ids against the real artifact-id set before emitting pairs --
-    a referenced id absent from that set (a dangling link) yields no pair.
+    Reads chunk records from the on-disk chunk artifact
+    (`axial.chunk.read_chunks`, never (re)computed here -- issue #154) and
+    reuses `run_artifacts` for the source's real artifact records (never a
+    parallel id scheme for either). For each chunk, calls the LLM once
+    (`pass_name="xref"`) with the chunk text and the source's known artifact
+    ids, then filters the parsed referenced ids against the real artifact-id
+    set before emitting pairs -- a referenced id absent from that set (a
+    dangling link) yields no pair.
 
     `artifacts_dir` (issue #98), when supplied, is threaded straight through
     to this pass's own internal `run_artifacts` call, so it reuses the SAME
@@ -279,13 +284,7 @@ def run_xref(
             raise LLMFailedError(exc) from exc
 
     try:
-        chunk_records = run_chunk(
-            path,
-            client=client,
-            envelopes_dir=envelopes_dir,
-            config_path=config_path,
-            chunks_dir=chunks_dir,
-        )
+        chunk_records = read_chunks(source_id, chunks_dir=chunks_dir, config_path=config_path)
     except ChunkError as exc:
         raise ChunkingFailedError(exc) from exc
 

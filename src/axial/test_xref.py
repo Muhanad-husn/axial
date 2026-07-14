@@ -148,7 +148,7 @@ def test_build_xref_pairs_returns_empty_for_no_references():
     assert pairs == []
 
 
-# --- run_xref: end-to-end with monkeypatched run_chunk/run_artifacts -------
+# --- run_xref: end-to-end with monkeypatched read_chunks/run_artifacts -----
 
 
 def _chunk_records():
@@ -192,7 +192,7 @@ def test_run_xref_happy_path_pairs_every_chunk_with_the_real_artifact(monkeypatc
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
 
-    monkeypatch.setattr(xref_mod, "run_chunk", lambda path, **kwargs: _chunk_records())
+    monkeypatch.setattr(xref_mod, "read_chunks", lambda path, **kwargs: _chunk_records())
     monkeypatch.setattr(xref_mod, "run_artifacts", lambda path, **kwargs: _artifact_records())
 
     client = _TargetedClient("paper_art_1")
@@ -210,7 +210,7 @@ def test_run_xref_dangling_reference_yields_no_pairs(monkeypatch, tmp_path):
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
 
-    monkeypatch.setattr(xref_mod, "run_chunk", lambda path, **kwargs: _chunk_records())
+    monkeypatch.setattr(xref_mod, "read_chunks", lambda path, **kwargs: _chunk_records())
     monkeypatch.setattr(xref_mod, "run_artifacts", lambda path, **kwargs: _artifact_records())
 
     client = _TargetedClient("paper_art_999")
@@ -225,7 +225,7 @@ def test_run_xref_empty_case_yields_no_pairs_without_error(monkeypatch, tmp_path
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
 
-    monkeypatch.setattr(xref_mod, "run_chunk", lambda path, **kwargs: _chunk_records())
+    monkeypatch.setattr(xref_mod, "read_chunks", lambda path, **kwargs: _chunk_records())
     monkeypatch.setattr(xref_mod, "run_artifacts", lambda path, **kwargs: _artifact_records())
 
     client = _EmptyClient()
@@ -240,7 +240,7 @@ def test_run_xref_zero_chunks_yields_zero_pairs_and_no_llm_call(monkeypatch, tmp
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
 
-    monkeypatch.setattr(xref_mod, "run_chunk", lambda path, **kwargs: [])
+    monkeypatch.setattr(xref_mod, "read_chunks", lambda path, **kwargs: [])
     monkeypatch.setattr(xref_mod, "run_artifacts", lambda path, **kwargs: _artifact_records())
 
     stub_client = StubLLMClient()
@@ -265,10 +265,10 @@ def test_run_xref_wraps_chunk_errors(monkeypatch, tmp_path):
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
 
-    def _raise_chunk_error(path, **kwargs):
+    def _raise_chunk_error(source_id, **kwargs):
         raise ChunkError("boom")
 
-    monkeypatch.setattr(xref_mod, "run_chunk", _raise_chunk_error)
+    monkeypatch.setattr(xref_mod, "read_chunks", _raise_chunk_error)
 
     with pytest.raises(xref_mod.ChunkingFailedError):
         xref_mod.run_xref(source, client=StubLLMClient())
@@ -280,7 +280,7 @@ def test_run_xref_wraps_artifacts_errors(monkeypatch, tmp_path):
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
 
-    monkeypatch.setattr(xref_mod, "run_chunk", lambda path, **kwargs: _chunk_records())
+    monkeypatch.setattr(xref_mod, "read_chunks", lambda path, **kwargs: _chunk_records())
 
     def _raise_artifacts_error(path, **kwargs):
         raise ArtifactsError("boom")
@@ -305,7 +305,7 @@ def test_run_xref_wraps_tag_errors_from_run_artifacts(monkeypatch, tmp_path):
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
 
-    monkeypatch.setattr(xref_mod, "run_chunk", lambda path, **kwargs: _chunk_records())
+    monkeypatch.setattr(xref_mod, "read_chunks", lambda path, **kwargs: _chunk_records())
 
     def _raise_tag_error(path, **kwargs):
         raise TagNotInSchemaError("field", "")
@@ -329,7 +329,7 @@ def test_run_xref_succeeds_when_first_completion_is_malformed_json(monkeypatch, 
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
 
-    monkeypatch.setattr(xref_mod, "run_chunk", lambda path, **kwargs: _one_chunk_record())
+    monkeypatch.setattr(xref_mod, "read_chunks", lambda path, **kwargs: _one_chunk_record())
     monkeypatch.setattr(xref_mod, "run_artifacts", lambda path, **kwargs: _artifact_records())
 
     valid = json.dumps({"referenced_artifact_ids": ["paper_art_1"]})
@@ -358,7 +358,7 @@ def test_run_xref_raises_xref_parse_error_on_persistently_malformed_json(monkeyp
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
 
-    monkeypatch.setattr(xref_mod, "run_chunk", lambda path, **kwargs: _one_chunk_record())
+    monkeypatch.setattr(xref_mod, "read_chunks", lambda path, **kwargs: _one_chunk_record())
     monkeypatch.setattr(xref_mod, "run_artifacts", lambda path, **kwargs: _artifact_records())
 
     class _AlwaysBrokenClient:
