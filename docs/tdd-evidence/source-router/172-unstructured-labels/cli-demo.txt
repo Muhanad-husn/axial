@@ -1,0 +1,22 @@
+Issue #172 — Unstructured fallback element.category strings through axial.router.route_for:
+
+  route_for('Header'                ) -> apparatus  OK
+  route_for('Footer'                ) -> apparatus  OK
+  route_for('Footnote'              ) -> apparatus  OK
+  route_for('Table'                 ) -> artifact   OK
+  route_for('TableChunk'            ) -> artifact   OK
+  route_for('Image'                 ) -> artifact   OK
+  route_for('FigureCaption'         ) -> artifact   OK
+  route_for('NarrativeText'         ) -> prose      OK
+  route_for('Title'                 ) -> prose      OK
+  route_for('UncategorizedText'     ) -> prose      OK
+  route_for('SomeUnknownGibberish'  ) -> prose      OK
+  route_for(''                      ) -> prose      OK
+
+  ListItem in back-matter : apparatus
+  ListItem in body        : prose
+
+  apparatus_reason("Header")   -> apparatus: running head
+  apparatus_reason("Footnote") -> apparatus: endnotes
+
+  Docling tokens unchanged: page_header -> apparatus | table -> artifact | text -> prose

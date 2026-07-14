@@ -122,7 +122,7 @@ import axial.xref as xref_module
 from axial.chunk import HashingEmbedder, run_chunk_embedding
 from axial.envelope import compute_source_id
 from axial.llm import TAG_PASS_NAME, XREF_PASS_NAME, StubLLMClient
-from axial.router import apparatus_reason
+from axial.router import APPARATUS, ARTIFACT, PROSE, apparatus_reason, route_for
 
 # --- distinct, greppable sentinel body text for every block ----------------
 # No sentinel's text is a substring of any other's -- so a leak of ANY block
@@ -703,4 +703,195 @@ def test_chunk_examine_reports_router_apparatus_drops_as_single_source_of_skip_t
     assert _FOOTNOTE_REASON in report, (
         f"expected the formatted examine report to surface the footnote "
         f"drop reason {_FOOTNOTE_REASON!r}, got:\n{report}"
+    )
+
+
+# =============================================================================
+# Outer acceptance test for issue #172 (source-router: unstructured labels)
+# =============================================================================
+#
+# Locked behavioral contract (DEC-1) -- do not edit once committed red. This
+# section is ADDED below the existing slice-02/#167 and slice-04/#169
+# contracts above (both untouched); it does not alter a single line of
+# either.
+#
+# Spec: `specs/PRODUCT.md` §7.8 (routing decisions / source router). §7.8's
+# label -> route mapping is written in terms of "docling structural `label`"
+# (§7.4) -- the PROSE/ARTIFACT/APPARATUS routes and the fail-open-to-PROSE
+# rule for an unknown label are the CONTRACT, independent of which
+# extraction path (docling vs. the Unstructured fallback, per P0-2 "On
+# docling failure/degenerate output for a source, Unstructured runs as
+# fallback for that source") produced the block. §7.8's own "one shared
+# classification ... no downstream pass re-derives the prose/non-prose
+# decision" promise only holds if `route_for` actually classifies BOTH
+# extraction paths' label spellings into the SAME three routes -- if one
+# path's spellings silently fail open, the router has quietly stopped being
+# the single source of truth for that path's output.
+#
+# The red lever
+# ---------------------------------------------------------------------------
+# `src/axial/extract.py`'s `_unstructured_leaf_node` stores
+# `element.category` VERBATIM as the node `label` (`node["label"] =
+# str(category)`) -- unlike docling's own leaf-node builder, which always
+# emits one of a fixed set of lowercase, snake_case tokens (`text`, `table`,
+# `picture`, `caption`, `document_index`, `footnote`, `page_header`,
+# `page_footer`, `list_item`, `section_header`, `title`). The `unstructured`
+# library's own `Element.category` values are PascalCase and entirely
+# disjoint from docling's tokens -- confirmed in-sandbox against the
+# installed `unstructured` package (see e.g. `unstructured.documents.
+# elements`): `'Header'`, `'Footer'`, `'Footnote'`, `'Table'`,
+# `'TableChunk'`, `'Image'`, `'FigureCaption'`, `'ListItem'`, `'Title'`,
+# `'NarrativeText'`, `'UncategorizedText'`, among others.
+#
+# Today `route_for` recognizes only docling's lowercase tokens (see its own
+# `_PROSE_LABELS` / `_ARTIFACT_LABELS` / `_APPARATUS_LABELS` frozensets in
+# `src/axial/router.py`), so e.g. `route_for("Header") != "page_header"`,
+# `route_for("Footer") != "page_footer"`, `route_for("Footnote") !=
+# "footnote"` -- every one of these Unstructured-fallback apparatus
+# spellings falls through every branch and fails open to PROSE. The same is
+# true for the Unstructured artifact spellings (`"Table"`, `"TableChunk"`,
+# `"Image"`, `"FigureCaption"`) -- they fail open to PROSE instead of
+# routing to ARTIFACT. This is the exact leak §7.8's router exists to stop:
+# a running head, endnote, table, or figure caption extracted via the
+# Unstructured fallback path would be silently chunked as ordinary prose
+# (apparatus) or would bypass the artifact pass entirely (artifact),
+# invisibly, for any source whose docling extraction failed or was
+# degenerate. This test pins the BEHAVIOR the fix must deliver: `route_for`
+# must classify both extraction paths' label spellings into the same three
+# routes, while leaving docling's own tokens and the true fail-open-on-
+# genuinely-unknown-label rule (§7.8) unchanged.
+#
+# Seam decision -- direct, unit-level calls to `route_for`, not a full
+# chunk-pipeline test
+# ---------------------------------------------------------------------------
+# `route_for` is a pure, stateless classification function of (label,
+# in_back_matter_section) -> route; it neither reads a tree nor calls a
+# model. Driving it directly is the most direct way to pin the classification
+# contract itself -- a full synthetic-tree-through-`run_chunk_embedding` test
+# (mirroring `test_source_router_classifies_blocks_by_label_before_chunking`
+# above) would add real pipeline machinery (a synthetic tree, monkeypatched
+# `tree_path`/`load_persisted_tree`, on-disk chunk/skip artifacts) without
+# adding any classification signal beyond what a direct `route_for` call
+# already proves -- the slice-02 test above already exercises the docling
+# labels end-to-end through that same pipeline, so this test does not need
+# to repeat that machinery for a second label vocabulary. Every assertion
+# below names the exact input label and expected route in its failure
+# message, so a failure here always points straight at the missing
+# normalization/alias, never at an unrelated pipeline seam.
+
+
+def test_router_normalizes_unstructured_fallback_category_labels():
+    """§7.8 + issue #172: `route_for` must classify Unstructured's own
+    fallback `element.category` spellings (verbatim node `label`s produced by
+    `extract._unstructured_leaf_node`) into the SAME three routes as
+    docling's lowercase tokens -- the "one shared classification" §7.8
+    promises must hold for both extraction paths, not just docling's."""
+
+    # --- Unstructured apparatus categories must route to APPARATUS, not
+    # PROSE (today's fail-open bug: none of these match docling's own
+    # `page_header`/`page_footer`/`footnote` tokens) ------------------------
+    assert route_for("Header") == APPARATUS, (
+        "Unstructured's 'Header' category (a running head, aliasing "
+        "docling's 'page_header') must route to APPARATUS, not fail open "
+        f"to PROSE; got {route_for('Header')!r}"
+    )
+    assert route_for("Footer") == APPARATUS, (
+        "Unstructured's 'Footer' category (a running head, aliasing "
+        "docling's 'page_footer') must route to APPARATUS, not fail open "
+        f"to PROSE; got {route_for('Footer')!r}"
+    )
+    assert route_for("Footnote") == APPARATUS, (
+        "Unstructured's 'Footnote' category (endnotes/footnotes, aliasing "
+        "docling's 'footnote') must route to APPARATUS, not fail open to "
+        f"PROSE; got {route_for('Footnote')!r}"
+    )
+
+    # --- Unstructured artifact categories must route to ARTIFACT, not
+    # PROSE ------------------------------------------------------------------
+    assert route_for("Table") == ARTIFACT, (
+        "Unstructured's 'Table' category (aliasing docling's 'table') must "
+        f"route to ARTIFACT, not fail open to PROSE; got {route_for('Table')!r}"
+    )
+    assert route_for("TableChunk") == ARTIFACT, (
+        "Unstructured's 'TableChunk' category (Unstructured splits large "
+        "tables into TableChunk elements; still aliases docling's 'table') "
+        f"must route to ARTIFACT, not fail open to PROSE; got "
+        f"{route_for('TableChunk')!r}"
+    )
+    assert route_for("Image") == ARTIFACT, (
+        "Unstructured's 'Image' category (aliasing docling's 'picture') "
+        f"must route to ARTIFACT, not fail open to PROSE; got "
+        f"{route_for('Image')!r}"
+    )
+    assert route_for("FigureCaption") == ARTIFACT, (
+        "Unstructured's 'FigureCaption' category (aliasing docling's "
+        "'caption') must route to ARTIFACT, not fail open to PROSE; got "
+        f"{route_for('FigureCaption')!r}"
+    )
+
+    # --- Unstructured prose categories must still route to PROSE (no
+    # over-normalization into a false apparatus/artifact hit) ---------------
+    assert route_for("NarrativeText") == PROSE, (
+        "Unstructured's 'NarrativeText' category is ordinary prose and "
+        f"must route to PROSE; got {route_for('NarrativeText')!r}"
+    )
+    assert route_for("Title") == PROSE, (
+        "Unstructured's 'Title' category is ordinary prose (aliasing "
+        f"docling's own 'title') and must route to PROSE; got "
+        f"{route_for('Title')!r}"
+    )
+    assert route_for("UncategorizedText") == PROSE, (
+        "Unstructured's 'UncategorizedText' category is ordinary prose and "
+        f"must route to PROSE; got {route_for('UncategorizedText')!r}"
+    )
+
+    # --- 'ListItem' must still honor the in_back_matter_section rule
+    # (§7.8: list_item is prose by default, apparatus only in back matter) --
+    # this proves the alias is a normalization to docling's own 'list_item'
+    # token, not a hardcoded route, since the SAME label must resolve two
+    # different ways depending on context.
+    assert route_for("ListItem", in_back_matter_section=True) == APPARATUS, (
+        "Unstructured's 'ListItem' category, in a back-matter section "
+        "(aliasing docling's 'list_item'), must route to APPARATUS per "
+        f"§7.8's back-matter list_item rule; got "
+        f"{route_for('ListItem', in_back_matter_section=True)!r}"
+    )
+    assert route_for("ListItem", in_back_matter_section=False) == PROSE, (
+        "Unstructured's 'ListItem' category, NOT in a back-matter section, "
+        "must route to PROSE (in-body lists are prose by default per "
+        f"§7.8); got {route_for('ListItem', in_back_matter_section=False)!r}"
+    )
+
+    # --- §7.8's fail-open safety rule must be PRESERVED for labels that are
+    # genuinely unknown to BOTH vocabularies -- normalization must not widen
+    # the mapping into a catch-all that silently drops on uncertainty -------
+    assert route_for("SomeUnknownGibberishCategory") == PROSE, (
+        "a genuinely unrecognized label (neither a docling token nor a "
+        "known Unstructured category) must still fail open to PROSE per "
+        f"§7.8; got {route_for('SomeUnknownGibberishCategory')!r}"
+    )
+    assert route_for("") == PROSE, (
+        f"an empty label must fail open to PROSE per §7.8; got {route_for('')!r}"
+    )
+    assert route_for(None) == PROSE, (
+        f"a None label must fail open to PROSE per §7.8; got {route_for(None)!r}"
+    )
+
+    # --- Regression guard: docling's own lowercase tokens must be
+    # completely unchanged by normalization ----------------------------------
+    assert route_for("page_header") == APPARATUS, (
+        "docling's own 'page_header' token must still route to APPARATUS "
+        f"after normalization; got {route_for('page_header')!r}"
+    )
+    assert route_for("table") == ARTIFACT, (
+        "docling's own 'table' token must still route to ARTIFACT after "
+        f"normalization; got {route_for('table')!r}"
+    )
+    assert route_for("text") == PROSE, (
+        "docling's own 'text' token must still route to PROSE after "
+        f"normalization; got {route_for('text')!r}"
+    )
+    assert route_for("document_index") == APPARATUS, (
+        "docling's own 'document_index' token must still route to "
+        f"APPARATUS after normalization; got {route_for('document_index')!r}"
     )
