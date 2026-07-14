@@ -71,3 +71,12 @@ And   the command makes zero LLM calls and zero embedding-model calls, and does 
   examine can report "sections skipped-as-garbage with reasons" without re-running the guard.
   If slice 01 does not persist skip reasons, examine reports what it can from the JSONL and
   the gap is flagged back for a slice-01 follow-up.
+- **Boundary check for a possible future prior.** When eyeballing the boundary sample,
+  specifically check whether cuts fall *across* the envelope's TOC/section skeleton
+  (`data/envelopes/`, §7.3). The new chunker is deliberately envelope-blind — boundaries come
+  from embedding troughs + the size band only (§7.3, P0-4: the chunk stage consumes no
+  envelope). If examine shows cuts routinely crossing the author's stated structure, that is
+  the trigger to raise a `spec-drift` issue for **envelope-as-boundary-prior** (let the TOC
+  skeleton act as hard boundary priors, embedding deciding only *within* a stated section).
+  That would be its own future slice gated on founder adjudication — not a change to this
+  read-only examine command.
