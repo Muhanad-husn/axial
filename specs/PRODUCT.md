@@ -26,7 +26,7 @@ This PRD covers **Phase A (ingestion) and the gold-corpus / evaluation loop only
 
 ## 2. Goals
 
-1. **Structure-aware ingestion.** Produce Obsidian notes whose chunk boundaries follow the source's argument, using full structural context (thesis, table of contents, surrounding sections) rather than isolated-section splitting.
+1. **Structure-aware ingestion.** Produce Obsidian notes whose chunk boundaries follow the source's argument — found by semantic, embedding-based boundary detection over each section's prose — rather than arbitrary fixed-size or page-break splitting. Every chunk is bounded by construction, so no single unit blows a request deadline or token budget downstream.
 2. **Multi-axis tagging from a swappable schema.** Tag every prose chunk and artifact against a versioned domain schema loaded at runtime — never hardcoded — so the same pipeline runs on a new country by editing the schema.
 3. **Measured tagging reliability.** Generate a stratified gold corpus of ~100–120 human-labeled chunks and score the automated tagger against it, per axis, producing an agreement number that decides which contested tags survive.
 4. **Separation of prose and artifacts.** Route non-text artifacts (tables, figures, block quotes, typologies) to a distinct retrievable pool, pre-tagged for role, with bidirectional links back to citing prose.
@@ -65,8 +65,8 @@ Seven stages, each a discrete, independently testable module. Every stage reads 
 
 1. **Intake.** Accept PDF or DOCX. Verify a real text layer exists; reject scanned / no-text-layer files with a clear, logged message. No OCR path. Output: validated source + source metadata stub.
 2. **Structural extraction.** Run docling to produce a hierarchical tree that separates prose sections from non-text artifacts. If docling fails or produces degenerate output on a source, fall back to Unstructured for that source. This tree is produced once per source, persisted, and reused by every later stage for that source (not re-extracted). Output: structural tree (persisted).
-3. **Structural-envelope pass.** One API call per source extracts the author's stated thesis, table of contents, scope, and stated argument from intro/abstract/conclusion. This "envelope" is produced once and reused by every later stage for that source. Output: envelope (JSON).
-4. **Argumentative chunking.** For each prose section, an API call decides chunk boundaries *with the envelope plus surrounding sections in context* — never the isolated section. Chunks reflect argumentative units (a claim and its support), not fixed sizes. Output: prose chunks.
+3. **Structural-envelope pass.** One API call per source extracts the author's stated thesis, table of contents, scope, and stated argument from intro/abstract/conclusion. This "envelope" is produced once and reused by the tagging stage (stage 6) for that source; the chunk stage does not consume it. Output: envelope (JSON).
+4. **Semantic chunking (embedding-based, LLM-independent).** For each prose section, the chunk stage finds boundaries by embedding the section's sentences and splitting at similarity troughs. There is **no text-generating LLM call in the chunk critical path**; the stage adds a sentence-embedding model and dependency the repo does not have today (nothing currently imports a sentence-embedding library or calls `encode`). Every chunk is **bounded by construction into a two-sided size band** `[min, max]`: semantic breakpoints alone bound size in neither direction, so a deterministic guard pass wraps the breakpoint detection and enforces the band around it. Below `min`, adjacent chunks are merged forward (preventing small-chunk proliferation from noisy embeddings, headers, and list items); above `max`, a chunk is recursively split at its next-best internal boundary (this is what guarantees no unit blows a request deadline or token budget — the whole point of the redesign). A section too large for one request — today up to ~143k characters — is therefore *split* into multiple in-band chunks rather than echoed whole through an API, dissolving the "monster section" problem at its source rather than band-aiding it. Semantic breakpoints remain the **primary** boundary signal; the guard only enforces the band around them. The band is anchored on what the vault stores and works downstream today (~1–3k characters per chunk). Boundaries still track argumentative shifts (a boundary falls where the prose changes topic), not fixed sizes. The stage reads the persisted structural tree only (it needs no envelope — nothing in embedding + guard-band chunking consumes one); its meaningful guarantee is that no generative LLM call sits in the chunk critical path, which subsumes any "no recompute" claim. It writes the chunk records to disk (§7.7) **before any downstream LLM spend**, so chunk quality is inspectable — the examine step, §7.7 — with zero inference cost. A garbage section (high non-alphabetic ratio, e.g. an OCR'd index) is skipped by a deliberate, logged rule; a legitimate long section is split, never skipped, so no real prose is silently dropped. Output: on-disk prose chunks (§7.7), consumed by every later stage.
 5. **Artifact classification & routing.** Each non-text artifact receives a role tag from the artifact-role taxonomy and is routed to a separate artifact pool with metadata. A lightweight model suffices — this is feature-based routing, not deep reasoning. Output: tagged artifacts in the artifact pool.
 6. **Tagging.** Each prose chunk is tagged on the axes the schema declares (claim-type, field, empirical-scope, and the candidate theory-school axis), plus a role-in-argument tag and three-level metadata. Output: fully tagged chunks.
 7. **Cross-reference pass.** Detect prose→artifact references ("as Table 3 shows") and write bidirectional links into both sides' frontmatter. Then write everything to the Obsidian vault. Output: vault notes (prose pool + artifact pool) with backlinks.
@@ -95,7 +95,7 @@ axial/
     intake/                    # format + text-layer validation
     extract/                   # docling wrapper; unstructured fallback
     envelope/                  # source-level structural-envelope pass
-    chunk/                     # argumentative chunking
+    chunk/                     # embedding-based semantic chunking + examine
     artifacts/                 # artifact classification + routing
     tag/                       # axis tagging
     xref/                      # prose<->artifact cross-reference pass
@@ -106,6 +106,7 @@ axial/
   data/
     trees/                     # one JSON per source (persisted structural tree)
     envelopes/                 # one JSON per source
+    chunks/                    # one JSONL per source (persisted chunk artifact, §7.7)
     vault/
       prose/                   # prose-pool notes (.md with frontmatter)
       artifacts/               # artifact-pool notes (.md with frontmatter)
@@ -142,7 +143,7 @@ Artifact notes carry: `artifact_role`, `fields`, source/section provenance, and 
 
 ### 7.3 Structural envelope
 
-One JSON per source in `data/envelopes/`: `{source_id, author, title, date, thesis, toc[], scope, stated_argument}`. Produced once in stage 3; consumed by stages 4 and 6, and reusable by downstream phases outside this PRD.
+One JSON per source in `data/envelopes/`: `{source_id, author, title, date, thesis, toc[], scope, stated_argument}`. Produced once in stage 3; consumed by stage 6 (tagging) — the chunk stage does not consume it — and reusable by downstream phases outside this PRD.
 
 ### 7.4 Structural tree
 
@@ -166,6 +167,20 @@ Once §7.5 has produced the sheet, `axial gold deliver` packages it into a self-
 
 The bundle bridges build step 4 (emit the sheet) and step 5 (the Academic labeling pause) in §11: it is the offline handoff between them.
 
+### 7.7 On-disk chunk artifact
+
+The chunk stage (§5 stage 4) writes its prose chunks to disk as a cheap, inspectable artifact **before any LLM is called on them** — one JSONL file per source in `data/chunks/`, named `<source_id>.jsonl` and keyed by the same deterministic `source_id` used for the tree and envelope (`axial.envelope.compute_source_id`). One JSON object per line, one line per chunk, in section-then-position order. This artifact is the chunk stage's hand-off: tagging, artifact routing, cross-reference, and the vault writer all consume `data/chunks/<source_id>.jsonl`, and the gold-sampling and eval flows are updated to read it too (rather than re-deriving chunks in-process).
+
+Each chunk record carries at least:
+- `chunk_id` — a stable, deterministic id of the form `<source_id>_<section order>_<section slug>_<NNN>`: no randomness, no timestamps, identical across re-runs on the same source bytes. This is the established `chunk_id` scheme; the redesign preserves it unchanged. The `section order` component keeps two distinct sections that share a heading from colliding.
+- `section` — the section's own verbatim heading text (section-level provenance).
+- `section_order` — the section node's `order` from the persisted structural tree (§7.4), which disambiguates repeated headings and lets a resume tell which sections are already persisted.
+- `text` — the chunk's prose, a unit bounded into the two-sided size band `[min, max]` of §5 stage 4: **every record's `text` falls within the band** — no record exceeds `max` (so no single chunk can blow a request deadline or token budget downstream) and, save for the last chunk of a section or a section shorter than `min` in total, no record falls below `min` (adjacent below-`min` chunks are merged forward). Chunk size is measurable directly off this artifact, so the band is a testable property. The band is anchored on today's working chunk size (~1–3k characters).
+
+Additional fields may be added (e.g. a character count) but the four above are the invariant contract. A section skipped by the garbage-section rule (high non-alphabetic ratio) contributes no chunk records; the skip and its reason are logged, so a reader can always distinguish a deliberate skip from a silent loss. Size never triggers a skip: a large but legitimate section is split into multiple in-band records, never dropped. An edited source (which yields a new content-hashed `source_id`) never reuses another source's stale artifact.
+
+**Inspection (examine).** `axial chunk examine` reads the on-disk chunk artifact and reports chunk-quality stats with **zero LLM and zero embedding-model calls**: total and per-source chunk counts; the chunk-size distribution (min / max / mean / median), from which the two-sided band is verifiable before any LLM spend; a boundary-sanity summary — the count of chunks above `max` and the count below `min` (both expected to be zero under the band, modulo the section-tail exception), the count of sections split into multiple chunks, and the count of sections skipped as garbage with their reasons; and an eyeball sample of chunk texts showing where boundaries fall. It runs entirely off the JSONL artifact, calls no inference or embedding model, and never mutates the artifact.
+
 ---
 
 ## 8. Requirements
@@ -184,11 +199,19 @@ The bundle bridges build step 4 (emit the sheet) and step 5 (the Academic labeli
 
 **P0-3 Structural-envelope pass.**
 - [ ] One envelope JSON per source containing thesis, TOC, scope, stated argument.
-- [ ] The envelope is written once and read by chunking and tagging (not recomputed).
+- [ ] The envelope is written once and read by tagging (not recomputed).
 
-**P0-4 Argumentative chunking with context.**
-- [ ] The chunking call receives the envelope + surrounding sections, not the isolated section.
-- [ ] Output chunks carry stable `chunk_id`s and preserve section provenance.
+**P0-4 Semantic chunking (embedding-based, LLM-independent).**
+- [ ] Chunk boundaries are found by embedding the section's units (sentences) and splitting at semantic-similarity troughs, which remain the primary boundary signal; no text-generating LLM call is in the chunk critical path. (Adds a sentence-embedding dependency the repo lacks today.)
+- [ ] Every emitted chunk falls within a two-sided target size band `[min, max]`, enforced by a deterministic guard pass wrapped around the semantic breakpoints — an observable property, since chunk sizes are measurable off the on-disk artifact (§7.7). MAX side: any chunk above `max` is recursively split at its next-best internal boundary, so no single unit can blow a request deadline or token budget, and a section larger than `max` (today up to ~143k chars) is split into multiple in-band chunks — never emitted whole, never skipped for size. MIN side: adjacent chunks below `min` are merged forward, preventing small-chunk proliferation (the section tail, or a whole section shorter than `min`, may remain below `min`).
+- [ ] A garbage section (high non-alphabetic ratio, e.g. an OCR'd index) is skipped by a deliberate, logged rule; a legitimate long section is split, not skipped — no legitimate prose is silently dropped.
+- [ ] Output chunks carry stable `chunk_id`s and preserve section provenance (verbatim section heading + section order).
+- [ ] Chunk records are written to the on-disk artifact (§7.7) before any downstream LLM call, and are inspectable without LLM spend.
+- [ ] The chunk stage reads the persisted structural tree only (it consumes no envelope) and makes no generative LLM call.
+
+**P0-4b Chunk examine (inspection without LLM spend).**
+- [ ] `axial chunk examine` reports chunk-quality stats from the on-disk artifact — total/per-source counts, size distribution (verifying the two-sided band), and boundary sanity (chunks above `max`, chunks below `min`, sections split, sections skipped-as-garbage with reasons) — making zero LLM and zero embedding-model calls.
+- [ ] Downstream tag, artifact, cross-reference, and vault stages consume the on-disk chunk artifact (§7.7).
 
 **P0-5 Artifact classification & routing.**
 - [ ] Each non-text artifact receives exactly one `artifact_role` from the taxonomy (Appendix D).
@@ -223,7 +246,7 @@ The bundle bridges build step 4 (emit the sheet) and step 5 (the Academic labeli
 
 ### Nice-to-Have (P1)
 
-- **P1-1** Long-section handling: sections beyond a token threshold chunked across multiple calls with a coherence strategy (overlap window or recursive summary).
+- **P1-1** ~~Long-section handling: sections beyond a token threshold chunked across multiple calls with a coherence strategy (overlap window or recursive summary).~~ **SUPERSEDED by the P0-4 semantic-chunking redesign.** Deterministic long-section splitting was a band-aid on the LLM-echo chunker; the embedding-based chunker bounds every unit by construction, dissolving the monster-section problem at its source. No longer live scope.
 - **P1-2** Cohen's / Krippendorff's κ in addition to raw agreement, per axis.
 - **P1-3** Ingestion log capturing per-source judgment calls (fallbacks used, ambiguous tags).
 - **P1-4** Batch/resume: re-running skips already-processed sources.
@@ -258,7 +281,7 @@ The gold set is the measurement instrument, so its construction is specified, no
 **Acceptance thresholds (starting hypotheses, tunable — see Open Questions):**
 - A tag "survives" v0 if it is applied on ≥2 gold chunks *and* reaches ≥0.6 agreement on those chunks.
 - Intake correctness: 100% of scanned/no-text-layer test files rejected, zero silent pass-through.
-- Envelope reuse: chunking and tagging read the stored envelope (verified: no recompute).
+- Envelope reuse: tagging reads the stored envelope (verified: no recompute).
 
 **Lagging (post-v0):** reduction in re-ingestion churn on the full corpus; stability of the vocabulary across a second batch.
 
@@ -281,7 +304,7 @@ The config/data seam is the pause point. Because the tagger reads the codebook f
 
 ## 12. Tech stack, dependencies & parked items
 
-**Stack:** Python. **Parsing:** docling (baseline), Unstructured (fallback). **Inference:** API-based via OpenRouter and NVIDIA developer APIs; model-per-pass choice deferred (envelope and chunking want stronger reasoning; artifact routing wants a cheap model). **Source:** Google Drive shared "Books" folder (`parentId` + `pageToken`). **Output:** Obsidian vault (markdown + YAML frontmatter).
+**Stack:** Python. **Parsing:** docling (baseline), Unstructured (fallback). **Inference:** API-based via OpenRouter and NVIDIA developer APIs; model-per-pass choice deferred (the envelope pass wants stronger reasoning; artifact routing wants a cheap model). **Embeddings:** the chunk stage (§5 stage 4, §7.7) adds a sentence-embedding model to find semantic boundaries — a new dependency the repo does not have today, and *not* a text-generating inference pass; model selection is left to implementation. **Source:** Google Drive shared "Books" folder (`parentId` + `pageToken`). **Output:** Obsidian vault (markdown + YAML frontmatter).
 
 **Parked (not built here):** the 26 Academic research questions become the Phase B brief backlog; keep them on file, do not action them in Phase A.
 
@@ -294,7 +317,7 @@ Genuinely unresolved; everything else in this document is settled.
 - **[data]** Codebook config format detail — confirm YAML (assumed) vs. JSON, and the exact loader interface. *Non-blocking; YAML assumed for the build.*
 - **[data/academic]** Theory-school as its own axis vs. claim-type sub-tags vs. Phase-C-only scaffolding. *Deferred to the eval (§10).*
 - **[data]** Agreement metric + survival threshold: raw agreement vs. κ, and the exact cutoff. *Starting hypothesis in §10; tune after first gold set.*
-- **[engineering]** Long-section chunking coherence across multiple calls (overlap window vs. recursive summary). *P1-1.*
+- **[engineering]** ~~Long-section chunking coherence across multiple calls (overlap window vs. recursive summary). *P1-1.*~~ *Resolved: obviated by the P0-4 semantic-chunking redesign, which bounds every chunk by construction — no multi-call long-section strategy is needed. No longer open.*
 - **[engineering]** Post-run schema-change handling: grandfather existing notes vs. reprocess. *P2-3; deferred until the first schema change is needed.*
 
 ---
