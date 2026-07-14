@@ -1,0 +1,26 @@
+$ AXIAL_EMBEDDER=stub axial chunk source.txt
+chunk: wrote 2 record(s) for source.txt
+
+$ cat data/chunks/source-dadcb393a982.jsonl   # emitted chunks (prose only)
+{"chunk_id": "source-dadcb393a982_1_chapter-one_001", "section": "Chapter One", "section_order": "1", "text": "The harvest failed twice in three years, forcing the council to ration bread across the whole province through a long and difficult winter that tested every household. First, secure the perimeter; second, count the remaining stores; third, notify the neighboring garrison at once before the roads become impassable."}
+{"chunk_id": "source-dadcb393a982_3_chapter-two_001", "section": "Chapter Two", "section_order": "3", "text": "Negotiations stalled for weeks over the disputed river crossing until a neutral envoy finally proposed a workable compromise that both sides could accept."}
+
+$ cat data/chunks/source-dadcb393a982.skips.jsonl   # router-owned apparatus drops
+{"section": "Front Matter", "section_order": "2.1", "reason": "apparatus: table of contents"}
+{"section": "Chapter Two", "section_order": "3.2", "reason": "apparatus: endnotes"}
+
+$ axial chunk examine
+chunk examine: 2 total chunk(s) across 1 source(s)
+  source-dadcb393a982: 2 chunk(s)
+
+size distribution (chars): min=154 max=315 mean=234.5 median=234.5
+
+boundary sanity: 0 chunk(s) above max (CHUNK_MAX=3000), 2 chunk(s) below min (CHUNK_MIN=1000), 0 section(s) split into multiple chunks
+
+sections skipped as garbage: 2
+  [source-dadcb393a982] 'Front Matter' (order 2.1): apparatus: table of contents
+  [source-dadcb393a982] 'Chapter Two' (order 3.2): apparatus: endnotes
+
+chunk-text sample:
+  [source-dadcb393a982] source-dadcb393a982_1_chapter-one_001 'Chapter One': The harvest failed twice in three years, forcing the council to ration bread across the whole province through a long and difficult winter that tested every household. First, secure the perimeter; sec...
+  [source-dadcb393a982] source-dadcb393a982_3_chapter-two_001 'Chapter Two': Negotiations stalled for weeks over the disputed river crossing until a neutral envoy finally proposed a workable compromise that both sides could accept.

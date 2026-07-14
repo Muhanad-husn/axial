@@ -20,6 +20,20 @@ The retired LLM-echo chunker (`run_chunk`, issue #17 slice 05: one LLM call
 per section against the stored envelope) is REMOVED as of slice 04 -- it is
 no longer reachable from this module at all.
 
+Source routing (issue #167, PRD §7.8): `run_chunk_embedding` no longer decides
+prose/non-prose by node `type` alone. Each block in a kept section's body is
+classified by its docling `label` via the shared `axial.router.route_for`
+(through `_routed_section_body`'s `iter_routed_blocks` walk) into exactly one
+of `prose` / `artifact` / `apparatus`. Only prose-routed text is chunked;
+artifact-routed blocks (`table`, `picture`, `caption`) are excluded from
+chunking but NOT recorded as a drop (they belong to the not-yet-built
+artifact pass, slice 03); apparatus-routed blocks (`document_index`,
+`footnote`, `page_header`/`page_footer`, a back-matter `list_item`) are
+dropped and recorded to the `<source_id>.skips.jsonl` sidecar with a
+route-specific reason, alongside the pre-existing garble backstop
+(`_garbage_section_skip_reason`) -- the router-owned skip sidecar is now the
+single source of skip truth (§7.8), not garbage-only.
+
 `build_chunk_records` is the shared record-assembly helper: a stable,
 deterministic `chunk_id` (`<source_id>_<section order>_<section slug>_<NNN>`,
 derived from the source_id, the section node's already-unique `order` field,
@@ -57,6 +71,7 @@ from axial.envelope import (
 from axial.extract import load_persisted_tree, tree_path
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.nonprose_guard import MAX_NON_ALPHA_RATIO
+from axial.router import APPARATUS, PROSE, apparatus_reason, iter_routed_blocks
 
 CHUNKS_DIR = Path("data/chunks")
 
@@ -87,12 +102,13 @@ def chunks_checkpoint_path(source_id: str, chunks_dir: Path = CHUNKS_DIR) -> Pat
 
 
 def chunks_skips_sidecar_path(source_id: str, chunks_dir: Path = CHUNKS_DIR) -> Path:
-    """The companion sidecar path for `source_id`'s garbage-skip log
-    (issue #153, founder-approved Option A), alongside its chunk checkpoint
-    (`chunks_checkpoint_path`): one JSON object per line, exactly
-    `{"section", "section_order", "reason"}`. `run_chunk_embedding` rewrites
-    this cleanly on every call -- created only when there is >= 1 skip,
-    removed when a rerun has none -- mirroring the main JSONL's own
+    """The companion sidecar path for `source_id`'s router-owned skip log
+    (issue #153's garble backstop, generalized by issue #167/PRD §7.8 to also
+    carry apparatus drops -- the single source of skip truth), alongside its
+    chunk checkpoint (`chunks_checkpoint_path`): one JSON object per line,
+    exactly `{"section", "section_order", "reason"}`. `run_chunk_embedding`
+    rewrites this cleanly on every call -- created only when there is >= 1
+    skip, removed when a rerun has none -- mirroring the main JSONL's own
     overwrite-cleanly contract so a rerun on the same source bytes stays
     idempotent. `axial chunk examine` (a separate, later, read-only
     invocation) reads it to report sections skipped as garbage without
@@ -280,23 +296,55 @@ def _section_nodes(tree: dict) -> list[dict]:
     ]
 
 
-def _prose_text_lines(node: dict) -> list[str]:
-    """Collect a node's own text plus all descendants' text, in order --
-    prose nodes only (never artifact nodes like tables/pictures), since this
-    pass produces prose chunks (PRD §5 stage 4, "Output: prose chunks")."""
-    lines = []
-    if node.get("type") == "prose":
-        text = node.get("text")
-        if text:
-            lines.append(text)
-    for child in node.get("children", []):
-        lines.extend(_prose_text_lines(child))
-    return lines
+def _routed_section_body(section: dict) -> tuple[list[str], list[dict[str, Any]]]:
+    """Route every block in `section`'s body (its `children`, excluding the
+    section's own heading) through the shared source router (issue #167, PRD
+    §7.8) via `axial.router.iter_routed_blocks`, and split the result into
+    `(prose_lines, apparatus_drops)`:
 
+    - `prose_lines` -- ordered text of every prose-routed block (`text`,
+      `section_header`, `title`, an in-body `list_item`), chunked as today.
+    - `apparatus_drops` -- one router-owned skip record
+      (`chunks_skips_sidecar_path`'s `{"section", "section_order", "reason"}`
+      shape) per apparatus-routed block (`document_index`, `footnote`,
+      `page_header`/`page_footer`, or a back-matter `list_item`): dropped,
+      never chunked, each with a route-specific reason
+      (`axial.router.apparatus_reason`).
 
-def _section_body_lines(node: dict) -> list[str]:
-    """A section node's body text lines (excluding its own heading)."""
-    return [line for child in node.get("children", []) for line in _prose_text_lines(child)]
+    Artifact-routed blocks (`table`, `picture`, `caption`) contribute to
+    NEITHER list -- excluded from chunking, but not a "drop" (§7.8: they are
+    routed to the not-yet-built artifact pass, slice 03, not lost).
+
+    `in_back_matter_section` (the router's own `list_item` rule, §7.8) is
+    derived here from THIS section's own heading via `_is_back_matter` --
+    the same title-based check `run_chunk_embedding` already uses to filter
+    whole back-matter sections before this function ever sees them, so it is
+    always `False` in the wiring below today; it stays correct in isolation
+    (and for any future caller that stops pre-filtering whole sections) since
+    it is derived independently, right here, from this section's own text.
+    """
+    section_label = section.get("text", "")
+    section_order = section.get("order", "")
+    in_back_matter_section = _is_back_matter(section_label)
+
+    prose_lines: list[str] = []
+    apparatus_drops: list[dict[str, Any]] = []
+    for child in section.get("children", []):
+        for node, route in iter_routed_blocks(child, in_back_matter_section=in_back_matter_section):
+            if route == PROSE:
+                text = node.get("text")
+                if text:
+                    prose_lines.append(text)
+            elif route == APPARATUS:
+                apparatus_drops.append(
+                    {
+                        "section": section_label,
+                        "section_order": node.get("order", section_order),
+                        "reason": apparatus_reason(node.get("label")),
+                    }
+                )
+            # route == ARTIFACT: excluded from chunking, not a drop (§7.8).
+    return prose_lines, apparatus_drops
 
 
 def build_chunk_records(
@@ -924,7 +972,9 @@ def run_chunk_embedding(
     PRD §5 stage 4 / §7.7 / §8 P0-4): read the persisted structural tree
     (`data/trees/<source_id>.json`, never re-running docling/Unstructured --
     `axial.extract.load_persisted_tree`), and for each prose section not
-    skipped as garbage, split its body into bounded chunks (see
+    skipped as garbage, split its ROUTED body (issue #167, PRD §7.8 --
+    `_routed_section_body`: prose-labeled blocks only, apparatus dropped and
+    logged, artifact excluded) into bounded chunks (see
     `_chunk_section_text`) and write every record to
     `data/chunks/<source_id>.jsonl` in section-then-position order (PRD
     §7.7). No text-generating LLM call anywhere in this path -- `embedder`
@@ -995,7 +1045,8 @@ def run_chunk_embedding(
     all_records: list[dict[str, Any]] = []
     with out_path.open("w", encoding="utf-8") as handle:
         for section in sections:
-            body_lines = _section_body_lines(section)
+            body_lines, apparatus_drops = _routed_section_body(section)
+            skip_records.extend(apparatus_drops)
             if not body_lines:
                 continue  # no chunkable prose in this section -- zero records
 
