@@ -5,7 +5,7 @@
 - **GitHub issue:** #167
 - **Branch:** feat/source-router/02-router-core
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ✅ merged (PR #171) — with a carried concern: the back-matter `list_item` → apparatus rule is unreachable in the wired chunk stage (the whole-section `_is_back_matter` filter, backed by the locked #113 outer test, subsumes it). Reconciling the two is a founder/spec decision; candidate for slice 04 or a spec-mode pass. See issue #167.
 - **Walking skeleton?** yes — introduces `router.py` and wires its first consumer (chunk) end-to-end
 
 ## Goal — the minimum testable behaviour
