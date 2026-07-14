@@ -108,9 +108,9 @@ def iter_routed_blocks(
 ) -> Iterator[tuple[dict, str]]:
     """Walk `node` and its descendants (inclusive of `node` itself), yielding
     `(leaf_node, route)` for every node carrying non-empty `text` -- the
-    per-block routing a section-body tree walk needs (mirrors
-    `axial.chunk._prose_text_lines`'s own recursive shape, but yields a route
-    per block instead of collecting prose text unconditionally).
+    per-block routing a section-body tree walk needs (the same per-leaf
+    recursive shape `axial.chunk._routed_section_body` walks, but yielding a
+    route per block instead of collecting prose text unconditionally).
 
     `in_back_matter_section` is the ONE piece of enclosing-section context
     the router needs (§7.8's `list_item` rule) and is threaded unchanged to
