@@ -10,17 +10,12 @@ tree, and the zero-embedding/zero-LLM cost proof at the unit level.
 
 from __future__ import annotations
 
-import json
-
-import pytest
-
 import axial.chunk as chunk_mod
 from axial.chunk import (
     CHUNK_MAX,
     CHUNK_MECHANISM_ENV_VAR,
     CHUNK_MECHANISM_RECURSIVE,
     CHUNK_MIN,
-    EMBEDDER_ENV_VAR,
     HashingEmbedder,
     _enforce_max_recursive,
     _recursive_section_chunks,
