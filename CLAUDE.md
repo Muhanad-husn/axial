@@ -39,6 +39,7 @@ record; there are no session notes or handoff documents.
 | Test author | Writes the outer acceptance test under `tests/`, committed red | Writes outside `tests/` |
 | Implementer | Greens slices via inner unit red→green→refactor cycles | Touches `tests/` outer contracts or `specs/`; merges |
 | Reviewer | Two-stage review: spec compliance first, then code quality | Writes anything (read-only by construction) |
+| Fixer | Greens bugs and small changes off the pipeline via `/fix`; writes `src/` only | Touches `tests/` or `specs/`; handles feature-scale work; merges |
 
 Role boundaries are enforced by each subagent's locked tool set and by path-guard
 hooks, not by trust. A role that needs something outside its boundary asks the
@@ -55,6 +56,23 @@ spec drift: stop and raise the issue, never adjust the contract to fit the code.
 
 A green outer test plus a reviewer pass earns a PR. It never earns a merge; merges
 wait for the founder.
+
+## The fix lane
+
+Not every change deserves the full loop. A bug fix, a refactor, a rename, a config or
+dependency tweak, a copy change — work too small to warrant a slice — goes through
+`/fix` and the **fixer** role instead. The fix lane **skips the ceremony** (no spec,
+no outer acceptance test, no two-stage review) but **keeps every gate**: the commit
+gate, spec-freeze, the merge block, and branch protection all still bind, and the
+change still lands as a PR the founder approves.
+
+The founder-invoked `/fix` classifies the work into one of three buckets:
+*non-behavioral* (the fixer alone; the existing suite is the oracle), *behavioral bug*
+(a stripped loop — the test-author commits one regression test red, the fixer greens
+it), or *feature-scale*, which is **not** fix-lane work and bounces back to
+`/sprint-start`. That last bucket, plus the fixer's own BLOCKED-on-scope-creep report,
+is what keeps the fast lane from quietly becoming the default. When in doubt, it is a
+slice, not a fix.
 
 ## Spec discipline
 
@@ -80,6 +98,14 @@ Two rules are hooks with exit-code enforcement, not advice:
    test itself, committed by the test author before implementation starts: for
    exactly that commit, with founder approval, the orchestrator creates the flag
    file `.claude/allow-red-commit` and removes it immediately after.
+
+   **Docs-only exception.** A commit whose every file is documentation (`.md`,
+   `.txt`, `.rst`, or anything under `plans/` or `docs/`) is low-risk and needs no
+   review ceremony: the gate lets it land on `main` directly, no branch and no PR
+   required. The moment a commit touches code — `src/`, tests, hooks, or `.claude/`
+   config — the main-block reapplies and the change goes on a branch and merges via
+   PR after founder approval. The check fails safe: any non-docs file in the set
+   sends the whole commit down the branch-and-suite path.
 
 If a gate fires, the answer is to fix the cause, never to bypass the hook.
 
