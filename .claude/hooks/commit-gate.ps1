@@ -1,6 +1,7 @@
 # Tests-green-before-commit gate (DEC-3) + no-direct-commits-on-main. Global
 # PreToolUse hook on Bash. Reads tool input as JSON on stdin; acts only when the
-# command contains a git commit. Exits 2 (block) on a red suite or a commit on main.
+# command contains a git commit. Runs the src/ suite then ruff (mirrors CI); exits
+# 2 (block) on a red suite, a lint failure, or a commit on main.
 #
 # Escape hatch for DEC-1's one intended red commit (the outer acceptance test,
 # committed red by the test-author): if the flag file .claude/allow-red-commit
@@ -11,7 +12,7 @@ $ErrorActionPreference = 'Stop'
 
 try { $j = [Console]::In.ReadToEnd() | ConvertFrom-Json } catch { exit 0 }
 $cmd = "$($j.tool_input.command)"
-if ($cmd -notmatch 'git\s+(\S+\s+)*commit') { exit 0 }
+if ($cmd -notmatch '\bgit\s+((-C|-c)\s+\S+\s+|-\S+\s+)*commit(?![-\w])') { exit 0 }
 
 # Resolve the worktree this commit actually targets from the tool's cwd, not the
 # session-fixed CLAUDE_PROJECT_DIR -- that stays bound to the launch checkout and
@@ -90,11 +91,20 @@ if ($docsOnly) {
 # This keeps "no commit on a red suite" as a real, fast signal without re-running
 # the full end-to-end pipeline on every commit.
 Push-Location $projectDir
-try { & uv run pytest src -q -m "not slow" -n auto 2>&1 | Out-Null; $green = ($LASTEXITCODE -eq 0) }
+try {
+    & uv run pytest src -q -m "not slow" -n auto 2>&1 | Out-Null; $green = ($LASTEXITCODE -eq 0)
+    $lintOk = $true
+    if ($green) { & uv run ruff check . 2>&1 | Out-Null; $lintOk = ($LASTEXITCODE -eq 0) }
+}
 finally { Pop-Location }
 
 if (-not $green) {
     [Console]::Error.WriteLine("BLOCKED: test suite is red. Get to green before committing (or, for the one intended red commit of an outer acceptance test, ask the orchestrator to set .claude/allow-red-commit with founder approval).")
+    exit 2
+}
+
+if (-not $lintOk) {
+    [Console]::Error.WriteLine("BLOCKED: ruff lint failed. Run 'uv run ruff check .' (or 'uv run ruff check --fix .') and fix before committing.")
     exit 2
 }
 

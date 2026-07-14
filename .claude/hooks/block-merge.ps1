@@ -38,7 +38,7 @@ if ($tool -like 'mcp__*') {
 if ($tool -eq 'Bash') {
     if (-not $isSubagent) { exit 0 }
     $cmd = "$($j.tool_input.command)"
-    if ($cmd -match 'git\s+(\S+\s+)*merge')            { Block "subagents never run git merge." }
+    if ($cmd -match '\bgit\s+((-C|-c)\s+\S+\s+|-\S+\s+)*merge(?![-\w])')            { Block "subagents never run git merge." }
     if ($cmd -match 'gh\s+pr\s+merge')                 { Block "subagents never merge PRs." }
     if ($cmd -match 'gh\s+api\s+\S*merge')             { Block "subagents never merge via the API." }
     if ($cmd -match 'git\s+branch\s+(-d|-D|--delete)') { Block "subagents never delete branches; cleanup runs on founder approval." }
