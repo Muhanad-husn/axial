@@ -610,6 +610,27 @@ def run_chunk(
 CHUNK_MIN = 1000
 CHUNK_MAX = 3000
 
+# Per-source sentence-embedding cache (issue #152): cwd-relative, gitignored
+# (the blanket `data/` ignore in .gitignore already covers it -- no separate
+# entry needed), mirroring `CHUNKS_DIR`/`axial.extract.TREES_DIR`'s own
+# convention exactly. Referenced as a module GLOBAL (never captured as a
+# function default) by `_default_chunk_cache_dir` below specifically so it
+# can be monkeypatched in tests exactly like `CHUNKS_DIR`/`TAGS_DIR` (see
+# src/axial/conftest.py's autouse isolation fixture) -- a function default
+# value bound at def-time would not pick up a later monkeypatch.
+CHUNK_CACHE_DIR = Path("data/chunk_cache")
+
+
+def _default_chunk_cache_dir() -> Path:
+    """The cwd-relative default embedding-cache directory. No
+    `config/pipeline.yaml` override exists for this path (unlike
+    `_default_chunks_dir`/`_default_envelopes_dir`) -- not part of this
+    slice's contract (plan: "data/chunk_cache/", a plain cwd-relative
+    default). Reads the module-level `CHUNK_CACHE_DIR` global at CALL time
+    (see that constant's own docstring for why)."""
+    return CHUNK_CACHE_DIR
+
+
 # Env-var seam selecting the embedder, mirroring `axial.llm`'s
 # `AXIAL_LLM_PROVIDER` convention exactly (see that module's docstring).
 # `AXIAL_EMBEDDER=stub` selects the deterministic, offline, no-network stub
@@ -634,7 +655,18 @@ class MissingTreeError(ChunkError):
 class Embedder(Protocol):
     """A single-method sentence-embedding interface, mirroring
     `axial.llm.LLMClient`'s single-method `complete` shape. Every embedder
-    this module can select implements `encode`."""
+    this module can select implements `encode`.
+
+    `model_id` (issue #152) identifies the concrete embedding model an
+    instance represents -- the per-source embedding cache's key is a
+    function of `(source_id, embedder.model_id)` (see `_CachingEmbedder`
+    below), read off the injected embedder itself rather than passed
+    separately, since the embedder instance IS the thing whose identity
+    determines what "the embedding model" is (mirroring how `axial.llm`
+    client selection already works: config/provider picks the object;
+    nothing separately re-declares its identity to callers)."""
+
+    model_id: str
 
     def encode(self, texts: list[str]) -> list[list[float]]:
         """Return one fixed-length numeric vector per input text, in order."""
@@ -675,10 +707,19 @@ class HashingEmbedder:
     can be swapped in behind a distinct `AXIAL_EMBEDDER` value later,
     lazy-imported exactly like `axial.extract`'s docling/unstructured
     imports, without touching any caller of `get_embedder`.
+
+    `model_id` (issue #152, the embedding-cache seam): defaults to a stable
+    value reflecting `dim` (`"hashing-v1-<dim>"`), so two `HashingEmbedder()`
+    instances at the same dim (the common case -- `get_embedder` never
+    varies it) always agree on a cache key, while an explicit override lets
+    a caller simulate "a different embedding model" without changing the
+    hashing algorithm itself (e.g. this module's own cache-invalidation
+    tests).
     """
 
-    def __init__(self, dim: int = _HASHING_EMBEDDER_DIM) -> None:
+    def __init__(self, dim: int = _HASHING_EMBEDDER_DIM, model_id: str | None = None) -> None:
         self._dim = dim
+        self.model_id = model_id if model_id is not None else f"hashing-v1-{dim}"
 
     def encode(self, texts: list[str]) -> list[list[float]]:
         return [self._encode_one(text) for text in texts]
@@ -938,11 +979,121 @@ def _garbage_section_skip_reason(
     return None
 
 
+_CACHE_KEY_SAFE_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def _safe_cache_key_component(value: str) -> str:
+    """Make `value` (a source_id or an embedding-model id, either of which
+    may contain characters that are awkward in a filename) safe to fold into
+    an on-disk cache filename, by replacing every run of
+    not-obviously-filesystem-safe characters with a single underscore.
+    Collisions between two DIFFERENT raw values that happen to sanitize to
+    the same safe string are not a concern here: the cache is a pure
+    performance layer (see `_CachingEmbedder`'s docstring) -- a false-shared
+    cache FILE would at worst force an extra re-embed (the file's per-text
+    keys still disambiguate correctly, since the actual dict lookup below is
+    never done through this sanitized string), never corrupt output."""
+    return _CACHE_KEY_SAFE_RE.sub("_", value)
+
+
+class _CachingEmbedder:
+    """Wraps another `Embedder`, memoizing sentence -> vector lookups on
+    disk so a source's sentence embeddings are computed AT MOST ONCE across
+    every run of the chunk stage against it (issue #152, PRD §5 stage 4 /
+    §7.7's "cheap band sweeps" acceptance criterion -- memory
+    [[chunk-experiment-caching]]).
+
+    Cache key: `(source_id, embedder.model_id)`, both folded into the
+    on-disk filename `<chunk_cache_dir>/<source_id>__<model_id>.json` (each
+    component sanitized by `_safe_cache_key_component`). Reading the model
+    id off the WRAPPED embedder itself (rather than a separately-passed
+    argument) is deliberate -- see `Embedder.model_id`'s docstring. Keying
+    on `source_id` (a content hash, `axial.envelope.compute_source_id`)
+    rather than a filename/path means an edited source (different bytes,
+    same filename) never collides with its own prior cache entry, and two
+    different sources never collide with each other's, even if they happen
+    to share a filename stem (issue #152's "edited source" acceptance
+    clause). A different `model_id` for the SAME source_id resolves to a
+    DIFFERENT file entirely, so swapping embedding models always misses and
+    re-embeds -- no stale cross-model vectors are ever read back.
+
+    Memoization granularity: per SENTENCE TEXT, not per `encode` call or per
+    section. `run_chunk_embedding`'s critical path calls `embedder.encode`
+    at two distinct sites -- the primary per-section embed in
+    `_chunk_section_text`, and the MAX-side re-embed of an over-band
+    subgroup's sentences inside `_split_group_to_max` -- but a given
+    sentence's embedding is the same VALUE regardless of which call site
+    asks for it. Keying by the sentence's own text (rather than, say, a
+    (section, position) coordinate) means the MAX-side re-embed of a subset
+    of sentences already embedded in the primary pass is a guaranteed cache
+    hit, and a later run at a DIFFERENT `[chunk_min, chunk_max]` band --
+    which regroups the very same sentences into different-shaped subgroups,
+    changing WHICH sentences reach `_split_group_to_max` and in what
+    combinations -- still hits, because the cache was never keyed on
+    grouping/position in the first place. This is what makes a band-sweep
+    re-run's `encode` call count drop to exactly zero (issue #152's central
+    assertion), not merely lower.
+
+    Purely a performance layer -- see `encode`'s docstring for why this
+    changes nothing about chunk OUTPUT. Loads its on-disk cache file (if
+    any) once, at construction; call `flush()` to persist newly-computed
+    entries back to disk (idempotent -- a no-op when nothing new was
+    computed since the last flush), so a later process/run (not just a
+    later call within the same process) reuses it.
+    """
+
+    def __init__(self, inner: Embedder, source_id: str, cache_dir: Path) -> None:
+        self._inner = inner
+        self.model_id = inner.model_id
+        self._path = cache_dir / (
+            f"{_safe_cache_key_component(source_id)}"
+            f"__{_safe_cache_key_component(inner.model_id)}.json"
+        )
+        self._vectors: dict[str, list[float]] = {}
+        if self._path.is_file():
+            self._vectors = json.loads(self._path.read_text(encoding="utf-8"))
+        self._dirty = False
+
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        """Return one vector per text, in order -- IDENTICAL to what
+        `inner.encode` would return for the same text, since a cache hit
+        returns exactly the vector `inner.encode` produced (and persisted)
+        the first time that same text was seen. A text already in the cache
+        never reaches `inner.encode` at all; only genuinely new texts are
+        batched into a single call to `inner.encode` (preserving that
+        method's own "one call, many texts" batching contract for whatever
+        texts remain uncached), and their results are memoized before
+        returning."""
+        results: list[list[float] | None] = [self._vectors.get(text) for text in texts]
+        miss_indices = [index for index, vector in enumerate(results) if vector is None]
+        if miss_indices:
+            miss_texts = [texts[index] for index in miss_indices]
+            miss_vectors = self._inner.encode(miss_texts)
+            for index, text, vector in zip(miss_indices, miss_texts, miss_vectors):
+                results[index] = vector
+                self._vectors[text] = vector
+            self._dirty = True
+        return results  # type: ignore[return-value]  -- every None slot was just filled above
+
+    def flush(self) -> None:
+        """Persist any newly-computed vectors to `self._path`, creating
+        parent directories as needed. A no-op when nothing changed since the
+        last flush (a fully warm run, or a flush called twice in a row)."""
+        if not self._dirty:
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(json.dumps(self._vectors), encoding="utf-8")
+        self._dirty = False
+
+
 def run_chunk_embedding(
     source_path: str | Path,
     embedder: Embedder | None = None,
     chunks_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    chunk_min: int = CHUNK_MIN,
+    chunk_max: int = CHUNK_MAX,
+    chunk_cache_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Run the embedding-based chunk stage on `source_path` (issue #151,
     PRD §5 stage 4 / §7.7 / §8 P0-4): read the persisted structural tree
@@ -955,9 +1106,33 @@ def run_chunk_embedding(
     defaults to `get_embedder()` (an `AXIAL_EMBEDDER`-selected, offline
     embedder), never an `LLMClient`.
 
+    `chunk_min`/`chunk_max` (issue #152) override the band guard's default
+    `[CHUNK_MIN, CHUNK_MAX]`, threaded straight through to
+    `_chunk_section_text`. This is what makes a band SWEEP possible at all:
+    re-running with a different band on the same source reshapes the split
+    from the SAME underlying sentence embeddings (see below), it does not
+    change what "the embeddings" are.
+
+    Embedding cache (issue #152, PRD §5 stage 4 / §7.7's "cheap band
+    sweeps"): the injected/resolved `embedder` is wrapped in a
+    `_CachingEmbedder` (see its docstring for the full design -- key,
+    on-disk location, why per-sentence memoization makes every re-embed
+    site free on a warm run) BEFORE it reaches `_chunk_section_text` /
+    `_split_group_to_max`, so this method's own callers never see the
+    wrapping and every downstream `encode` call is transparently
+    cache-backed. `chunk_cache_dir` overrides the cwd-relative default
+    (`data/chunk_cache/`, `_default_chunk_cache_dir`), mirroring
+    `chunks_dir`'s own override seam. The cache is flushed to disk after
+    every section (not just once at the end), so a mid-pass failure still
+    leaves already-computed embeddings durably cached for the next attempt
+    -- cheap since a flush after an all-cache-hit section is a no-op (see
+    `_CachingEmbedder.flush`).
+
     Overwrites `<source_id>.jsonl` cleanly on every call (idempotent on the
     same source bytes -- deterministic tree read + deterministic embedder +
-    deterministic band guard yields byte-identical output on a re-run).
+    deterministic band guard yields byte-identical output on a re-run,
+    whether or not the embedding cache was warm: the cache is a pure
+    performance layer, never changing chunk output).
 
     Raises `MissingSourceError` if `source_path` doesn't exist, or
     `MissingTreeError` if no persisted tree exists yet for its source_id --
@@ -977,6 +1152,10 @@ def run_chunk_embedding(
 
     if embedder is None:
         embedder = get_embedder(config_path)
+
+    if chunk_cache_dir is None:
+        chunk_cache_dir = _default_chunk_cache_dir()
+    embedder = _CachingEmbedder(embedder, source_id, chunk_cache_dir)
 
     if chunks_dir is None:
         chunks_dir = _default_chunks_dir(config_path)
@@ -1001,7 +1180,7 @@ def run_chunk_embedding(
                 print(f"chunk: skipping section {section_label!r}: {skip_reason}", file=sys.stderr)
                 continue
 
-            chunk_texts = _chunk_section_text(body_text, embedder)
+            chunk_texts = _chunk_section_text(body_text, embedder, chunk_min, chunk_max)
             section_records = build_chunk_records(
                 source_id,
                 section_order,
@@ -1011,6 +1190,8 @@ def run_chunk_embedding(
             for record in section_records:
                 handle.write(json.dumps(record) + "\n")
             handle.flush()
+            embedder.flush()
             all_records.extend(section_records)
 
+    embedder.flush()
     return all_records
