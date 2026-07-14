@@ -59,7 +59,9 @@ APPARATUS = "apparatus"
 # (see `route_for`), not on a fixed label lookup.
 _PROSE_LABELS = frozenset({"text", "section_header", "title"})
 _ARTIFACT_LABELS = frozenset({"table", "picture", "caption"})
-_APPARATUS_LABELS = frozenset({"document_index", "footnote", "page_header", "page_footer"})
+_APPARATUS_LABELS = frozenset(
+    {"document_index", "footnote", "page_header", "page_footer", "page_number"}
+)
 
 # Issue #172: normalized-key alias table resolving BOTH docling's own tokens
 # (mapped to themselves) and the Unstructured fallback extractor's disjoint
@@ -94,6 +96,7 @@ _LABEL_ALIASES = {
     "listitem": "list_item",
     "narrativetext": "text",
     "uncategorizedtext": "text",
+    "pagenumber": "page_number",
 }
 
 # Route-specific, human-readable reasons for the router-owned skip sidecar
@@ -105,6 +108,7 @@ _APPARATUS_REASONS = {
     "footnote": "apparatus: endnotes",
     "page_header": "apparatus: running head",
     "page_footer": "apparatus: running head",
+    "page_number": "apparatus: page number",
     "list_item": "apparatus: back-matter list item",
 }
 
@@ -126,6 +130,17 @@ def _canonical_token(label: str | None) -> str:
         return ""
     key = stripped.casefold().replace("-", "_").replace(" ", "_")
     return _LABEL_ALIASES.get(key, stripped)
+
+
+def canonical_label(label: str | None) -> str:
+    """Public wrapper over `_canonical_token` (issue #172): resolve a raw
+    `label` -- docling token or Unstructured `element.category` spelling --
+    to the one canonical docling token this module classifies on. Exposed so
+    a caller that needs to compare against a specific canonical token (e.g.
+    `axial.artifacts`'s caption test) shares this module's normalization
+    rather than re-deriving it or reaching into the private `_canonical_token`.
+    """
+    return _canonical_token(label)
 
 
 def route_for(label: str | None, *, in_back_matter_section: bool = False) -> str:

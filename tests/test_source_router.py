@@ -895,3 +895,46 @@ def test_router_normalizes_unstructured_fallback_category_labels():
         "docling's own 'document_index' token must still route to "
         f"APPARATUS after normalization; got {route_for('document_index')!r}"
     )
+
+
+# =============================================================================
+# Regression test for issue #172 follow-up (PR #180 fix-lane): Unstructured
+# fallback's 'PageNumber' category
+# =============================================================================
+#
+# Locked behavioral contract (DEC-1) -- do not edit once committed red.
+#
+# Spec: `specs/PRODUCT.md` §7.8. `unstructured`'s `Element.category` also
+# emits `'PageNumber'` for a standalone page-number element (confirmed
+# in-sandbox against the installed `unstructured` package, alongside the
+# `'Header'`/`'Footer'` categories issue #172 already aliased) -- a running
+# head / page number, the same species of apparatus §7.8 already drops for
+# `page_header`/`page_footer`. `_LABEL_ALIASES` has no `"pagenumber"` entry
+# today, so `_canonical_token("PageNumber")` returns the raw label
+# unchanged, which matches none of `_ARTIFACT_LABELS`/`_APPARATUS_LABELS`,
+# and `route_for` falls open to PROSE -- the exact "one shared
+# classification" leak issue #172 exists to close, missed for this one
+# Unstructured spelling. A page number silently chunked as ordinary prose is
+# a real, visible defect (stray page numbers polluting chunk text), not a
+# theoretical gap.
+
+
+def test_router_normalizes_unstructured_page_number_category_to_apparatus():
+    """Unstructured's 'PageNumber' category (a page number, the same species
+    of running-head apparatus as 'Header'/'Footer') must route to APPARATUS
+    with a non-empty, page-number-naming reason -- not fail open to PROSE."""
+    assert route_for("PageNumber") == APPARATUS, (
+        "Unstructured's 'PageNumber' category (a page number, dropped per "
+        "§7.8 alongside running heads) must route to APPARATUS, not fail "
+        f"open to PROSE; got {route_for('PageNumber')!r}"
+    )
+
+    reason = apparatus_reason("PageNumber")
+    assert isinstance(reason, str) and reason.strip(), (
+        f"expected apparatus_reason('PageNumber') to be a non-empty string "
+        f"naming why the block was dropped, got {reason!r}"
+    )
+    assert "page" in reason.lower(), (
+        f"expected apparatus_reason('PageNumber') to name a page number "
+        f"(e.g. contain 'page'), got {reason!r}"
+    )

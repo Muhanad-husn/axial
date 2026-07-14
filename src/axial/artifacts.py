@@ -60,7 +60,7 @@ from axial.llm import (
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.nonprose_guard import non_prose_skip_reason
-from axial.router import ARTIFACT, route_for
+from axial.router import ARTIFACT, canonical_label, route_for
 from axial.schema import Schema, SchemaError, load_schema
 from axial.tag import (
     TagNotInSchemaError,
@@ -339,7 +339,7 @@ def _artifact_nodes_with_section(tree: dict) -> list[tuple[dict, str]]:
     return [
         (node, section)
         for node, section in _routed_artifact_blocks(tree)
-        if node.get("label") != "caption"
+        if canonical_label(node.get("label")) != "caption"
     ]
 
 
@@ -368,7 +368,7 @@ def _attach_captions(blocks: list[tuple[dict, str]]) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     last_entry: dict[str, Any] | None = None
     for node, section in blocks:
-        if node.get("label") == "caption":
+        if canonical_label(node.get("label")) == "caption":
             caption_text = node.get("text", "")
             if last_entry is None:
                 # Orphan caption: no prior artifact to attach to -- emit as
