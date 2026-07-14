@@ -31,8 +31,9 @@ Bundled resources:
 
 ## Preconditions (verify, don't assume)
 
-1. **The slice is green.** Re-run the full suite (`uv run pytest -q`) and confirm.
-   Never open a PR on red.
+1. **The slice is green.** This is proven by the single full-suite run in
+   Procedure step 1 (`uv run pytest -q > test-run.txt 2>&1`) — its exit code and
+   pass summary are the gate, not a separate re-run here. Never open a PR on red.
 2. **The outer acceptance test is the one the test-author committed red** —
    `git log --follow tests/<file>` must show no edits after the red commit. If it
    was modified, stop and report; that is a contract violation.
@@ -45,7 +46,12 @@ Bundled resources:
 
 1. **Produce the evidence by actually running the tests.** Capture two
    transcripts to files, run from the slice's project directory:
-   - the test run: `uv run pytest -q > test-run.txt 2>&1`
+   - the test run: `uv run pytest -q > test-run.txt 2>&1` — this is the single
+     full-suite run and the green gate for Precondition 1. Because output is
+     redirected to the file, the terminal shows nothing on its own: explicitly
+     confirm the exit code is 0 and/or check the pass summary line in
+     `test-run.txt` before proceeding. Stop and report on red — never open a PR
+     on red.
    - a real invocation through the boundary (CLI stdout + exit code, or the
      pipeline entry point on a real sample): e.g.
      `uv run axial <args> > cli-demo.txt 2>&1`
