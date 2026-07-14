@@ -1,0 +1,33 @@
+### axial chunk — recursive mechanism (AXIAL_CHUNK_MECHANISM=recursive)
+$ AXIAL_CHUNK_MECHANISM=recursive uv run axial chunk tests/fixtures/envelope/thesis_paper.pdf
+chunk: wrote 13 record(s) for thesis_paper.pdf
+exit=0
+
+### the §7.7 artifact it wrote (first 2 records, keys + text length)
+$ head -n 2 data/chunks/thesis_paper-82bcba3c2d51.jsonl | python -m json.tool per line
+['chunk_id', 'section', 'section_order', 'text'] len(text)= 329 thesis_paper-82bcba3c2d51_1_overview_001
+['chunk_id', 'section', 'section_order', 'text'] len(text)= 1087 thesis_paper-82bcba3c2d51_2_continuous-field-notes_001
+
+total records:
+13
+
+### axial chunk examine — reads the recursive artifact through the same stats surface
+$ uv run axial chunk examine
+chunk examine: 13 total chunk(s) across 1 source(s)
+  thesis_paper-82bcba3c2d51: 13 chunk(s)
+
+size distribution (chars): min=329 max=1087 mean=949.5 median=1080.0
+
+boundary sanity: 0 chunk(s) above max (CHUNK_MAX=3000), 2 chunk(s) below min (CHUNK_MIN=1000), 1 section(s) split into multiple chunks
+
+sections skipped as garbage: 0
+
+chunk-text sample:
+  [thesis_paper-82bcba3c2d51] thesis_paper-82bcba3c2d51_1_overview_001 'Overview': Field teams conducted a short survey of provincial administration following the ceasefire, focused on service delivery and local governance capacity.
+
+This section summarizes the survey's scope and me...
+  [thesis_paper-82bcba3c2d51] thesis_paper-82bcba3c2d51_2_continuous-field-notes_001 'Continuous Field Notes': The regional administration reorganized its provincial offices after the ceasefire. Local councils began coordinating water distribution across contested districts. Field teams recorded shifting patte...
+  [thesis_paper-82bcba3c2d51] thesis_paper-82bcba3c2d51_2_continuous-field-notes_002 'Continuous Field Notes': Provincial budgets for reconstruction were revised twice during the survey period. Interviews with municipal officials described uneven access to basic services. Displacement figures varied considerab...
+  [thesis_paper-82bcba3c2d51] thesis_paper-82bcba3c2d51_2_continuous-field-notes_003 'Continuous Field Notes': Local markets reopened gradually as security conditions improved through the spring. Aid coordination meetings shifted from the capital to regional hubs over time. Survey respondents cited road access...
+  [thesis_paper-82bcba3c2d51] thesis_paper-82bcba3c2d51_2_continuous-field-notes_004 'Continuous Field Notes': Cross-border trade resumed unevenly, concentrated around a small number of crossings. The regional administration reorganized its provincial offices after the ceasefire. Local councils began coordinat...
+exit=0
