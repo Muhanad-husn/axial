@@ -11,12 +11,8 @@ from __future__ import annotations
 import json
 
 from axial.chunk import (
-    CHUNK_MAX,
-    CHUNK_MIN,
     HashingEmbedder,
     ExamineStats,
-    build_chunk_records,
-    chunks_checkpoint_path,
     chunks_skips_sidecar_path,
     examine_chunks,
     format_examine_report,
