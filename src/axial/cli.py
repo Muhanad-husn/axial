@@ -8,11 +8,14 @@ from pathlib import Path
 import axial
 from axial.artifacts import ArtifactsError, run_artifacts
 from axial.chunk import (
+    CHUNK_MECHANISM_RECURSIVE,
     ChunkError,
     _default_chunks_dir,
     examine_chunks,
     format_examine_report,
+    get_chunk_mechanism,
     run_chunk_embedding,
+    run_chunk_recursive,
 )
 from axial.codebook import CodebookError, load_codebook
 from axial.envelope import EnvelopeError, run_envelope
@@ -306,8 +309,16 @@ def _envelope(source_path: str) -> int:
 
 
 def _chunk(source_path: str) -> int:
+    """Dispatch on the chunk-mechanism selector (`AXIAL_CHUNK_MECHANISM`,
+    issue #165 slice 06, mirroring `get_embedder`'s own `AXIAL_EMBEDDER`
+    seam): `recursive` runs the deterministic, zero-embedding
+    `run_chunk_recursive`; unset or any other value runs today's
+    embedding-based default, `run_chunk_embedding`, unchanged."""
     try:
-        records = run_chunk_embedding(source_path)
+        if get_chunk_mechanism() == CHUNK_MECHANISM_RECURSIVE:
+            records = run_chunk_recursive(source_path)
+        else:
+            records = run_chunk_embedding(source_path)
     except ChunkError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

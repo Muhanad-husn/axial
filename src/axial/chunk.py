@@ -1,12 +1,23 @@
 """Chunking (charter #148): `run_chunk_embedding` (issue #151, PRD §5 stage 4
-/ §7.7 / §8 P0-4) is the sole chunking mechanism. For each prose section, it
-finds chunk boundaries by embedding the section's sentences and splitting at
-semantic-similarity troughs (gradient thresholding), then a deterministic
+/ §7.7 / §8 P0-4) is the default chunking mechanism. For each prose section,
+it finds chunk boundaries by embedding the section's sentences and splitting
+at semantic-similarity troughs (gradient thresholding), then a deterministic
 two-sided band guard `[CHUNK_MIN, CHUNK_MAX]` wraps those breakpoints. It
 reads ONLY the persisted structural tree (`data/trees/<source_id>.json`, via
 `axial.extract`) -- no envelope, no text-generating LLM call anywhere in this
 path. It writes records to `data/chunks/<source_id>.jsonl` (PRD §7.7) -- the
 CLI `chunk` subcommand's mechanism (see `src/axial/cli.py`).
+
+`run_chunk_recursive` (issue #165, slice 06) is a second,
+operator-selectable mechanism: deterministic recursive descent over a
+separator hierarchy (paragraph -> line -> sentence -> raw char), with ZERO
+embedding-model calls. Selected via `AXIAL_CHUNK_MECHANISM=recursive`
+(`get_chunk_mechanism`, mirroring `get_embedder`'s `AXIAL_EMBEDDER` seam);
+unset or any other value keeps `run_chunk_embedding` as the default,
+byte-identical to before this mechanism existed. Both mechanisms share the
+identical §7.7 artifact shape (`build_chunk_records`) and the identical
+per-section routing/writing orchestrator (`_write_chunk_sections`) -- only
+the section-body join and the splitter itself differ per mechanism.
 
 `read_chunks` (issue #154, slice 04 of the chunk-redesign subproject) is the
 downstream-facing reader for that same on-disk artifact: `tag.py`, `xref.py`,
@@ -59,7 +70,7 @@ import statistics
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 import yaml
 
@@ -956,6 +967,112 @@ class _CachingEmbedder:
         self._dirty = False
 
 
+def _resolve_chunk_inputs(source_path: str | Path) -> tuple[str, dict]:
+    """Shared first step for BOTH chunk mechanisms (issue #165, slice 06):
+    compute `source_id` and load its persisted structural tree, raising the
+    SAME errors either mechanism must raise before doing any per-mechanism
+    work (`MissingSourceError` / `MissingTreeError`). Neither mechanism runs
+    extraction itself -- both read only the persisted tree
+    (`axial.extract.load_persisted_tree`)."""
+    path = Path(source_path)
+    try:
+        source_id = compute_source_id(path)
+    except _EnvelopeMissingSourceError as exc:
+        raise MissingSourceError(exc) from exc
+
+    tp = tree_path(source_id)
+    if not tp.exists():
+        raise MissingTreeError(tp)
+    tree = load_persisted_tree(tp)
+    return source_id, tree
+
+
+def _write_chunk_sections(
+    source_id: str,
+    tree: dict,
+    join_body: Callable[[list[str]], str],
+    split_section: Callable[[str], list[str]],
+    chunks_dir: Path | None = None,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    on_section_done: Callable[[], None] | None = None,
+) -> list[dict[str, Any]]:
+    """The shared per-section routing/writing orchestrator both chunk
+    mechanisms share (issue #165, slice 06): walk the tree's top-level
+    sections (skipping back-matter), route each section's body through the
+    shared source router (`_routed_section_body`, issue #167/PRD §7.8),
+    join the routed prose lines with `join_body` (the ONE thing that
+    differs per mechanism -- see `run_chunk_embedding`'s `"\n".join` vs.
+    `run_chunk_recursive`'s `"\n\n".join`), skip a garbage section exactly
+    as before, split the joined body with `split_section` (the mechanism's
+    own splitter), assemble records via the shared `build_chunk_records`
+    (identical `chunk_id` scheme / field set / section-then-position order
+    for both mechanisms, PRD §7.7), and write them plus the `.skips.jsonl`
+    sidecar exactly as `run_chunk_embedding` always has. `on_section_done`
+    (used by the embedding mechanism to flush its embedding cache after
+    every section, and after the loop) is optional -- the recursive
+    mechanism has no such cache and passes `None`."""
+    if chunks_dir is None:
+        chunks_dir = _default_chunks_dir(config_path)
+    out_path = chunks_checkpoint_path(source_id, chunks_dir)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    sections = [node for node in _section_nodes(tree) if not _is_back_matter(node.get("text", ""))]
+
+    skips_path = chunks_skips_sidecar_path(source_id, chunks_dir)
+    skip_records: list[dict[str, Any]] = []
+
+    all_records: list[dict[str, Any]] = []
+    with out_path.open("w", encoding="utf-8") as handle:
+        for section in sections:
+            body_lines, apparatus_drops = _routed_section_body(section)
+            skip_records.extend(apparatus_drops)
+            if not body_lines:
+                continue  # no chunkable prose in this section -- zero records
+
+            section_label = section.get("text", "")
+            section_order = section.get("order", "")
+            body_text = join_body(body_lines)
+
+            skip_reason = _garbage_section_skip_reason(body_text)
+            if skip_reason is not None:
+                print(f"chunk: skipping section {section_label!r}: {skip_reason}", file=sys.stderr)
+                skip_records.append(
+                    {
+                        "section": section_label,
+                        "section_order": section_order,
+                        "reason": skip_reason,
+                    }
+                )
+                continue
+
+            chunk_texts = split_section(body_text)
+            section_records = build_chunk_records(
+                source_id,
+                section_order,
+                section_label,
+                [{"text": chunk_text} for chunk_text in chunk_texts],
+            )
+            for record in section_records:
+                handle.write(json.dumps(record) + "\n")
+            handle.flush()
+            if on_section_done is not None:
+                on_section_done()
+            all_records.extend(section_records)
+
+    if on_section_done is not None:
+        on_section_done()
+    if skip_records:
+        with skips_path.open("w", encoding="utf-8") as handle:
+            for record in skip_records:
+                handle.write(json.dumps(record) + "\n")
+    elif skips_path.exists():
+        # A rerun on the same source bytes with zero skips this time must
+        # not leave a stale sidecar from an earlier run (idempotency).
+        skips_path.unlink()
+
+    return all_records
+
+
 def run_chunk_embedding(
     source_path: str | Path,
     embedder: Embedder | None = None,
@@ -1010,17 +1127,16 @@ def run_chunk_embedding(
     `MissingTreeError` if no persisted tree exists yet for its source_id --
     this stage never runs extraction itself; the caller must run
     `axial extract` first.
-    """
-    path = Path(source_path)
-    try:
-        source_id = compute_source_id(path)
-    except _EnvelopeMissingSourceError as exc:
-        raise MissingSourceError(exc) from exc
 
-    tp = tree_path(source_id)
-    if not tp.exists():
-        raise MissingTreeError(tp)
-    tree = load_persisted_tree(tp)
+    Section routing/writing (walking sections, joining routed body lines
+    with a single `\n`, skipping garbage, assembling + writing records and
+    the skips sidecar) is delegated to the shared `_write_chunk_sections`
+    orchestrator, which `run_chunk_recursive` (issue #165, slice 06) also
+    calls with its own `\n\n`-join and its own zero-embedding splitter --
+    this function's own observable behavior/output is unchanged by that
+    refactor.
+    """
+    source_id, tree = _resolve_chunk_inputs(source_path)
 
     if embedder is None:
         embedder = get_embedder(config_path)
@@ -1029,64 +1145,218 @@ def run_chunk_embedding(
         chunk_cache_dir = _default_chunk_cache_dir()
     embedder = _CachingEmbedder(embedder, source_id, chunk_cache_dir)
 
-    if chunks_dir is None:
-        chunks_dir = _default_chunks_dir(config_path)
-    out_path = chunks_checkpoint_path(source_id, chunks_dir)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    def _join_body(body_lines: list[str]) -> str:
+        return "\n".join(body_lines)
 
-    sections = [node for node in _section_nodes(tree) if not _is_back_matter(node.get("text", ""))]
+    def _split_section(body_text: str) -> list[str]:
+        return _chunk_section_text(body_text, embedder, chunk_min, chunk_max)
 
-    skips_path = chunks_skips_sidecar_path(source_id, chunks_dir)
-    skip_records: list[dict[str, Any]] = []
+    return _write_chunk_sections(
+        source_id,
+        tree,
+        _join_body,
+        _split_section,
+        chunks_dir=chunks_dir,
+        config_path=config_path,
+        on_section_done=embedder.flush,
+    )
 
-    all_records: list[dict[str, Any]] = []
-    with out_path.open("w", encoding="utf-8") as handle:
-        for section in sections:
-            body_lines, apparatus_drops = _routed_section_body(section)
-            skip_records.extend(apparatus_drops)
-            if not body_lines:
-                continue  # no chunkable prose in this section -- zero records
 
-            section_label = section.get("text", "")
-            section_order = section.get("order", "")
-            body_text = "\n".join(body_lines)
+# =============================================================================
+# Recursive/structural chunk stage (issue #165, slice 06 of the
+# chunk-redesign subproject, PRD §5 stage 4 / §7.7 / §8 P0-4)
+# =============================================================================
+#
+# A second, operator-selectable chunk mechanism: deterministic recursive
+# descent over a separator hierarchy -- paragraph (`\n\n`) -> line (`\n`) ->
+# sentence (`segment_sentences`) -> raw char (`_hard_split_by_chars`) -- with
+# ZERO embedding-model or text-generating LLM calls anywhere in this path.
+# Selected by `AXIAL_CHUNK_MECHANISM=recursive` (`get_chunk_mechanism`,
+# mirroring `get_embedder`'s `AXIAL_EMBEDDER` seam exactly); unset or any
+# other value keeps today's embedding-based default (`run_chunk_embedding`)
+# untouched. Shares the identical §7.7 artifact (`build_chunk_records`) and
+# the identical per-section routing/writing orchestrator
+# (`_write_chunk_sections`) with the embedding mechanism -- only the
+# section-body join (`\n\n` here, vs. embedding's `\n`) and the splitter
+# itself differ.
 
-            skip_reason = _garbage_section_skip_reason(body_text)
-            if skip_reason is not None:
-                print(f"chunk: skipping section {section_label!r}: {skip_reason}", file=sys.stderr)
-                skip_records.append(
-                    {
-                        "section": section_label,
-                        "section_order": section_order,
-                        "reason": skip_reason,
-                    }
-                )
-                continue
+CHUNK_MECHANISM_ENV_VAR = "AXIAL_CHUNK_MECHANISM"
+CHUNK_MECHANISM_RECURSIVE = "recursive"
 
-            chunk_texts = _chunk_section_text(body_text, embedder, chunk_min, chunk_max)
-            section_records = build_chunk_records(
-                source_id,
-                section_order,
-                section_label,
-                [{"text": chunk_text} for chunk_text in chunk_texts],
-            )
-            for record in section_records:
-                handle.write(json.dumps(record) + "\n")
-            handle.flush()
-            embedder.flush()
-            all_records.extend(section_records)
 
-    embedder.flush()
-    if skip_records:
-        with skips_path.open("w", encoding="utf-8") as handle:
-            for record in skip_records:
-                handle.write(json.dumps(record) + "\n")
-    elif skips_path.exists():
-        # A rerun on the same source bytes with zero skips this time must
-        # not leave a stale sidecar from an earlier run (idempotency).
-        skips_path.unlink()
+def get_chunk_mechanism(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> str:
+    """Select the chunk MECHANISM (not the embedding model -- see
+    `get_embedder` for that separate seam), mirroring `get_embedder`'s
+    `AXIAL_EMBEDDER` convention exactly:
+    `AXIAL_CHUNK_MECHANISM=recursive` (`CHUNK_MECHANISM_RECURSIVE`) selects
+    the deterministic recursive/structural splitter (`run_chunk_recursive`);
+    unset, empty, or any other value keeps this module's own default (the
+    embedding-based `run_chunk_embedding`) untouched. Returns the raw env
+    var value (never itself validates against `CHUNK_MECHANISM_RECURSIVE`
+    -- callers compare it, mirroring `get_embedder`'s own `provider ==
+    "stub"` comparison). `config_path` is accepted (unused today) purely
+    for signature parity with `get_embedder`/`get_client`, in case a future
+    config-driven mechanism selection is added."""
+    del config_path  # unused today -- kept for signature parity
+    return os.environ.get(CHUNK_MECHANISM_ENV_VAR, "")
 
-    return all_records
+
+def _split_level_paragraph(text: str) -> list[str]:
+    """Level 0 of the recursive separator hierarchy: split on a blank-line
+    paragraph break (`\n\n`, one per docling prose block once
+    `run_chunk_recursive` joins them -- see this module's own docstring/the
+    slice plan's pre-flight decision)."""
+    return [piece.strip() for piece in text.split("\n\n") if piece.strip()]
+
+
+def _split_level_line(text: str) -> list[str]:
+    """Level 1 of the recursive separator hierarchy: split on a bare line
+    break (`\n`) -- what a paragraph-level split falls through to when a
+    piece has no `\n\n` inside it but does have internal line breaks."""
+    return [piece.strip() for piece in text.split("\n") if piece.strip()]
+
+
+# The separator hierarchy's first two levels (paragraph, line); the third
+# level (sentence) reuses `segment_sentences` directly -- no wrapper needed,
+# its signature already matches (`str -> list[str]`). The fourth and last
+# level (char) is the unconditional base case in `_recursive_split_text`
+# below, not tried via this list (`_hard_split_by_chars` also needs
+# `chunk_max`, a different signature).
+_RECURSIVE_SEPARATOR_LEVELS: tuple[Callable[[str], list[str]], ...] = (
+    _split_level_paragraph,
+    _split_level_line,
+    segment_sentences,
+)
+
+
+def _recursive_split_text(text: str, chunk_max: int, level: int = 0) -> list[str]:
+    """Deterministic recursive/structural split (plan 06, issue #165): try
+    the separator hierarchy paragraph (`\n\n`) -> line (`\n`) -> sentence in
+    order (`_RECURSIVE_SEPARATOR_LEVELS`); a piece that is still over
+    `chunk_max` after a level's split falls through to the NEXT level for
+    just that piece (never restarting from the top for the whole text). A
+    level whose split does not actually divide the text (zero or one
+    resulting piece -- the separator was not found) is skipped, falling
+    straight through to the next level on the SAME text. When every level
+    is exhausted (no sentence-ending punctuation found either -- a run-on
+    with no internal structure at all), falls back to a raw character split
+    (`_hard_split_by_chars`), the unconditional base case. Guarantees every
+    returned piece's length <= `chunk_max`, with NO exception -- the same
+    unconditional MAX-side guarantee `_split_group_to_max` gives the
+    embedding path, by a different (zero-embedding) mechanism. Empty/blank
+    input yields an empty list, mirroring `segment_sentences`."""
+    stripped = text.strip()
+    if not stripped:
+        return []
+    if len(stripped) <= chunk_max:
+        return [stripped]
+
+    if level < len(_RECURSIVE_SEPARATOR_LEVELS):
+        pieces = _RECURSIVE_SEPARATOR_LEVELS[level](stripped)
+        if len(pieces) > 1:
+            result: list[str] = []
+            for piece in pieces:
+                result.extend(_recursive_split_text(piece, chunk_max, level + 1))
+            return result
+        # This level's separator was not found (or found nothing to split
+        # on) -- fall through to the next level on the SAME text.
+        return _recursive_split_text(stripped, chunk_max, level + 1)
+
+    # Deepest level: no sentence boundary either -- raw char split is the
+    # unconditional last resort so the MAX-side guarantee never has an
+    # exception.
+    return _hard_split_by_chars(stripped, chunk_max)
+
+
+def _enforce_max_recursive(groups: list[list[str]], chunk_max: int) -> list[list[str]]:
+    """The recursive mechanism's own MAX-side safety net, run again AFTER
+    `_enforce_min`'s forward merge (mirroring `run_chunk_embedding`'s own
+    "enforce max, then min, then max again" order exactly -- see
+    `_chunk_section_text`'s docstring for why a MIN-side merge can itself
+    push a group back over `chunk_max`). Re-joins any over-band merged
+    group's pieces and re-runs `_recursive_split_text` on the joined text --
+    zero embedding calls, unlike `_split_group_to_max`'s re-embed."""
+    result: list[list[str]] = []
+    for group in groups:
+        joined = " ".join(group)
+        if len(joined) <= chunk_max:
+            result.append(group)
+        else:
+            result.extend([piece] for piece in _recursive_split_text(joined, chunk_max))
+    return result
+
+
+def _recursive_section_chunks(
+    text: str, chunk_min: int = CHUNK_MIN, chunk_max: int = CHUNK_MAX
+) -> list[str]:
+    """Chunk one prose section's body text via the recursive/structural
+    mechanism (issue #165, slice 06): split on the separator hierarchy for
+    the unconditional MAX-side guarantee (`_recursive_split_text`), then
+    reuse the SAME `_enforce_min` coalesce the embedding path uses for the
+    MIN side (plan 06: "same two-sided band, different cut") -- treating
+    each split piece as a singleton group, exactly as the embedding path
+    treats each sentence -- then re-run the MAX-side split as a safety net
+    (`_enforce_max_recursive`) since a MIN-side merge can itself push a
+    group over `chunk_max`. Zero embedding/LLM calls anywhere in this
+    function."""
+    pieces = _recursive_split_text(text, chunk_max)
+    if not pieces:
+        return []
+
+    groups: list[list[str]] = [[piece] for piece in pieces]
+    groups = _enforce_min(groups, chunk_min)
+    groups = _enforce_max_recursive(groups, chunk_max)
+
+    return [" ".join(group) for group in groups]
+
+
+def run_chunk_recursive(
+    source_path: str | Path,
+    chunks_dir: Path | None = None,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    chunk_min: int = CHUNK_MIN,
+    chunk_max: int = CHUNK_MAX,
+) -> list[dict[str, Any]]:
+    """Run the recursive/structural chunk stage on `source_path` (issue
+    #165, slice 06): the SAME persisted-tree read and per-section
+    routing/writing orchestrator `run_chunk_embedding` uses
+    (`_resolve_chunk_inputs` / `_write_chunk_sections`), but joining each
+    section's routed body lines with `\n\n` (so a real docling paragraph
+    break exists for the hierarchy's top level to find, rather than
+    embedding's single `\n`) and splitting via `_recursive_section_chunks`'s
+    deterministic separator hierarchy instead of sentence embeddings.
+
+    Constructs NO `Embedder` (never calls `get_embedder`, never wraps one in
+    `_CachingEmbedder`), makes NO `encode` call, and touches no embedding
+    cache on disk (`data/chunk_cache/`) -- zero embedding-model cost by
+    construction, not merely by avoiding use of one already built. Also
+    makes no text-generating LLM call -- this whole module never has.
+
+    Writes the identical §7.7 artifact shape (`build_chunk_records`'s
+    `chunk_id` scheme, field set, section-then-position order) to the same
+    `data/chunks/<source_id>.jsonl` path, so `axial chunk examine` and every
+    other downstream consumer of `read_chunks` works on it unchanged.
+
+    Raises `MissingSourceError` / `MissingTreeError` exactly as
+    `run_chunk_embedding` does -- this mechanism never runs extraction
+    itself either.
+    """
+    source_id, tree = _resolve_chunk_inputs(source_path)
+
+    def _join_body(body_lines: list[str]) -> str:
+        return "\n\n".join(body_lines)
+
+    def _split_section(body_text: str) -> list[str]:
+        return _recursive_section_chunks(body_text, chunk_min, chunk_max)
+
+    return _write_chunk_sections(
+        source_id,
+        tree,
+        _join_body,
+        _split_section,
+        chunks_dir=chunks_dir,
+        config_path=config_path,
+    )
 
 
 # --- `axial chunk examine` (issue #153, PRD §7.7 / §8 P0-4b) ---------------
