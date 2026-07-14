@@ -1,0 +1,34 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- D:\axial-02-cache\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial-02-cache
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 24 items
+
+tests/test_chunk_cache.py::test_cold_run_populates_cache_and_warm_rerun_same_key_makes_zero_calls PASSED [  4%]
+tests/test_chunk_cache.py::test_band_change_reuses_cached_embeddings_and_reshapes_matching_from_scratch_run PASSED [  8%]
+tests/test_chunk_cache.py::test_model_id_change_forces_reembed PASSED    [ 12%]
+tests/test_chunk_cache.py::test_edited_source_never_reuses_another_sources_cache PASSED [ 16%]
+src/axial/test_chunk_cache_unit.py::test_hashing_embedder_default_model_id_reflects_dim PASSED [ 20%]
+src/axial/test_chunk_cache_unit.py::test_hashing_embedder_explicit_model_id_is_honored PASSED [ 25%]
+src/axial/test_chunk_cache_unit.py::test_default_chunk_cache_dir_reads_the_module_global PASSED [ 29%]
+src/axial/test_chunk_cache_unit.py::test_default_chunk_cache_dir_falls_back_to_module_constant PASSED [ 33%]
+src/axial/test_chunk_cache_unit.py::test_safe_cache_key_component_sanitizes_unsafe_characters PASSED [ 37%]
+src/axial/test_chunk_cache_unit.py::test_caching_embedder_cache_key_is_source_id_plus_model_id PASSED [ 41%]
+src/axial/test_chunk_cache_unit.py::test_caching_embedder_two_sources_never_collide PASSED [ 45%]
+src/axial/test_chunk_cache_unit.py::test_caching_embedder_cold_write_then_warm_read_skips_inner_encode PASSED [ 50%]
+src/axial/test_chunk_cache_unit.py::test_caching_embedder_flush_is_a_noop_when_nothing_changed PASSED [ 54%]
+src/axial/test_chunk_cache_unit.py::test_caching_embedder_partial_hit_only_calls_inner_for_misses PASSED [ 58%]
+src/axial/test_chunk_cache_unit.py::test_caching_embedder_different_model_id_is_a_cache_miss PASSED [ 62%]
+src/axial/test_chunk_cache_unit.py::test_safe_cache_key_component_can_collide_across_distinct_model_ids PASSED [ 66%]
+src/axial/test_chunk_cache_unit.py::test_caching_embedder_colliding_model_ids_never_commingle_vectors PASSED [ 70%]
+src/axial/test_chunk_cache_unit.py::test_caching_embedder_truncated_json_file_does_not_raise_and_recomputes PASSED [ 75%]
+src/axial/test_chunk_cache_unit.py::test_caching_embedder_wrong_shape_json_file_does_not_raise_and_recomputes PASSED [ 79%]
+src/axial/test_chunk_cache_unit.py::test_caching_embedder_flush_after_healing_corrupt_file_produces_a_readable_file PASSED [ 83%]
+src/axial/test_chunk_cache_unit.py::test_run_chunk_embedding_survives_a_corrupt_cache_file PASSED [ 87%]
+src/axial/test_chunk_cache_unit.py::test_run_chunk_embedding_band_change_reuses_cache_and_reshapes PASSED [ 91%]
+src/axial/test_chunk_cache_unit.py::test_run_chunk_embedding_missing_source_still_raises_before_touching_cache PASSED [ 95%]
+src/axial/test_chunk_cache_unit.py::test_run_chunk_embedding_missing_tree_still_raises PASSED [100%]
+
+============================= 24 passed in 2.52s ==============================
