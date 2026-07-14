@@ -1,0 +1,29 @@
+### Slice 04 demo: downstream passes consume the on-disk chunk artifact (issue #154)
+
+$ source_id for tests/fixtures/extract/prose_and_table.pdf  ->  prose_and_table-8bf9b6c2a681
+
+===================================================================
+STEP 1 — run `axial tag` with NO chunk artifact on disk yet.
+Expect: non-zero exit + a clear message to run `axial chunk` first
+        (no silent re-derivation).
+===================================================================
+error: no chunk artifact found at data\chunks\prose_and_table-8bf9b6c2a681.jsonl; run `axial chunk` on the source first
+[exit code: 1]
+
+===================================================================
+STEP 2 — produce the artifact. (Persisted tree pre-placed, as a prior
+         `axial extract` would leave it; `axial chunk` is LLM-free.)
+===================================================================
+(placed persisted tree at data/trees/prose_and_table-8bf9b6c2a681.json)
+chunk: wrote 2 record(s) for prose_and_table.pdf
+[exit code: 0]
+--> artifact on disk:
+prose_and_table-8bf9b6c2a681.jsonl
+
+===================================================================
+STEP 3 — re-run `axial tag`. Now it READS data/chunks/prose_and_table-8bf9b6c2a681.jsonl
+         (makes no chunk-boundary LLM call) and tags those records.
+===================================================================
+tag: 2 record(s) tagged from the on-disk artifact
+first chunk_id: prose_and_table-8bf9b6c2a681_1_introduction_001
+[exit code: 0]
