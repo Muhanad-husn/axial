@@ -45,6 +45,7 @@ import os
 import re
 import statistics
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -98,6 +99,20 @@ def chunks_checkpoint_path(source_id: str, chunks_dir: Path = CHUNKS_DIR) -> Pat
     chunk record per line), keyed by the content-hashed source_id so an edited
     file (a new source_id) never reuses stale chunks (issue #81 point 1)."""
     return chunks_dir / f"{source_id}.jsonl"
+
+
+def chunks_skips_sidecar_path(source_id: str, chunks_dir: Path = CHUNKS_DIR) -> Path:
+    """The companion sidecar path for `source_id`'s garbage-skip log
+    (issue #153, founder-approved Option A), alongside its chunk checkpoint
+    (`chunks_checkpoint_path`): one JSON object per line, exactly
+    `{"section", "section_order", "reason"}`. `run_chunk_embedding` rewrites
+    this cleanly on every call -- created only when there is >= 1 skip,
+    removed when a rerun has none -- mirroring the main JSONL's own
+    overwrite-cleanly contract so a rerun on the same source bytes stays
+    idempotent. `axial chunk examine` (a separate, later, read-only
+    invocation) reads it to report sections skipped as garbage without
+    re-deriving the guard."""
+    return chunks_dir / f"{source_id}.skips.jsonl"
 
 
 def append_chunk_checkpoint(path: Path, record: dict[str, Any]) -> None:
@@ -985,6 +1000,9 @@ def run_chunk_embedding(
 
     sections = [node for node in _section_nodes(tree) if not _is_back_matter(node.get("text", ""))]
 
+    skips_path = chunks_skips_sidecar_path(source_id, chunks_dir)
+    skip_records: list[dict[str, Any]] = []
+
     all_records: list[dict[str, Any]] = []
     with out_path.open("w", encoding="utf-8") as handle:
         for section in sections:
@@ -999,6 +1017,13 @@ def run_chunk_embedding(
             skip_reason = _garbage_section_skip_reason(body_text)
             if skip_reason is not None:
                 print(f"chunk: skipping section {section_label!r}: {skip_reason}", file=sys.stderr)
+                skip_records.append(
+                    {
+                        "section": section_label,
+                        "section_order": section_order,
+                        "reason": skip_reason,
+                    }
+                )
                 continue
 
             chunk_texts = _chunk_section_text(body_text, embedder)
@@ -1013,4 +1038,219 @@ def run_chunk_embedding(
             handle.flush()
             all_records.extend(section_records)
 
+    if skip_records:
+        with skips_path.open("w", encoding="utf-8") as handle:
+            for record in skip_records:
+                handle.write(json.dumps(record) + "\n")
+    elif skips_path.exists():
+        # A rerun on the same source bytes with zero skips this time must
+        # not leave a stale sidecar from an earlier run (idempotency).
+        skips_path.unlink()
+
     return all_records
+
+
+# --- `axial chunk examine` (issue #153, PRD §7.7 / §8 P0-4b) ---------------
+#
+# Read-only inspection over the on-disk chunk artifact(s) produced by
+# `run_chunk_embedding` above: total/per-source counts, the size
+# distribution, boundary sanity, and garbage-skip reporting (from the
+# `.skips.jsonl` sidecar). Pure file I/O + arithmetic -- constructs no
+# embedder and no LLM client, so it costs zero LLM/embedding spend and can
+# run any time after a chunk run exists.
+
+EXAMINE_SAMPLE_SIZE = 5
+
+
+@dataclass
+class ExamineSkip:
+    """One garbage-skipped section, read verbatim from a source's
+    `.skips.jsonl` sidecar (see `chunks_skips_sidecar_path`)."""
+
+    source_id: str
+    section: str
+    section_order: str
+    reason: str
+
+
+@dataclass
+class ExamineSample:
+    """One sampled chunk text, shown with its own identifying fields so an
+    eyeball sample can be traced back to its record (PRD §7.7)."""
+
+    source_id: str
+    chunk_id: str
+    section: str
+    text: str
+
+
+@dataclass
+class ExamineStats:
+    """Aggregate chunk-quality stats over every chunk artifact under a
+    chunks dir (`examine_chunks`'s return value), formatted for display by
+    `format_examine_report`."""
+
+    total: int
+    per_source: dict[str, int] = field(default_factory=dict)
+    min_size: float = 0
+    max_size: float = 0
+    mean_size: float = 0
+    median_size: float = 0
+    above_max: int = 0
+    below_min: int = 0
+    split_sections: int = 0
+    skips: list[ExamineSkip] = field(default_factory=list)
+    samples: list[ExamineSample] = field(default_factory=list)
+
+
+def examine_chunks(
+    chunks_dir: Path,
+    chunk_min: int = CHUNK_MIN,
+    chunk_max: int = CHUNK_MAX,
+    sample_size: int = EXAMINE_SAMPLE_SIZE,
+) -> ExamineStats:
+    """Read every `<source_id>.jsonl` chunk artifact under `chunks_dir`
+    (excluding `*.skips.jsonl` sidecars -- those are read separately, per
+    source, for garbage-skip reporting) and aggregate the stats `axial
+    chunk examine` reports: total + per-source counts, the size
+    distribution (min/max/mean/median over `text` lengths), boundary
+    sanity (chunks above `chunk_max`, chunks below `chunk_min`, sections
+    split into multiple chunks -- grouped by (source_id, section_order)),
+    sections skipped as garbage with their reasons, and a chunk-text
+    sample. Pure read: never opens any chunks-dir file for writing.
+    Returns all-zero/empty stats when `chunks_dir` has no chunk artifacts
+    (including when it does not exist at all)."""
+    per_source: dict[str, int] = {}
+    sizes: list[int] = []
+    above_max = 0
+    below_min = 0
+    section_counts: dict[tuple[str, str], int] = {}
+    skips: list[ExamineSkip] = []
+    samples: list[ExamineSample] = []
+
+    if chunks_dir.is_dir():
+        jsonl_paths = sorted(
+            p for p in chunks_dir.glob("*.jsonl") if not p.name.endswith(".skips.jsonl")
+        )
+    else:
+        jsonl_paths = []
+
+    for path in jsonl_paths:
+        source_id = path.stem
+        count = 0
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                record = json.loads(line)
+                count += 1
+                text = record.get("text", "")
+                size = len(text)
+                sizes.append(size)
+                if size > chunk_max:
+                    above_max += 1
+                if size < chunk_min:
+                    below_min += 1
+                section_order = str(record.get("section_order", ""))
+                key = (source_id, section_order)
+                section_counts[key] = section_counts.get(key, 0) + 1
+                if len(samples) < sample_size:
+                    samples.append(
+                        ExamineSample(
+                            source_id=source_id,
+                            chunk_id=str(record.get("chunk_id", "")),
+                            section=str(record.get("section", "")),
+                            text=text,
+                        )
+                    )
+        per_source[source_id] = count
+
+        skips_path = chunks_skips_sidecar_path(source_id, chunks_dir)
+        if skips_path.is_file():
+            with skips_path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    skip_record = json.loads(line)
+                    skips.append(
+                        ExamineSkip(
+                            source_id=source_id,
+                            section=str(skip_record.get("section", "")),
+                            section_order=str(skip_record.get("section_order", "")),
+                            reason=str(skip_record.get("reason", "")),
+                        )
+                    )
+
+    total = len(sizes)
+    split_sections = sum(1 for group_count in section_counts.values() if group_count > 1)
+
+    if sizes:
+        min_size: float = min(sizes)
+        max_size: float = max(sizes)
+        mean_size = statistics.mean(sizes)
+        median_size = statistics.median(sizes)
+    else:
+        min_size = max_size = mean_size = median_size = 0
+
+    return ExamineStats(
+        total=total,
+        per_source=per_source,
+        min_size=min_size,
+        max_size=max_size,
+        mean_size=mean_size,
+        median_size=median_size,
+        above_max=above_max,
+        below_min=below_min,
+        split_sections=split_sections,
+        skips=skips,
+        samples=samples,
+    )
+
+
+def format_examine_report(
+    stats: ExamineStats, chunk_min: int = CHUNK_MIN, chunk_max: int = CHUNK_MAX
+) -> str:
+    """Render `ExamineStats` into a human-readable report (PRD §7.7).
+    Format/wording is left to the implementer (mirroring `run_chunk_
+    embedding`'s stderr skip messages) -- only that every listed number is
+    present, matches the fixture, and appears near its own label."""
+    lines: list[str] = []
+
+    lines.append(
+        f"chunk examine: {stats.total} total chunk(s) across {len(stats.per_source)} source(s)"
+    )
+    for source_id in sorted(stats.per_source):
+        lines.append(f"  {source_id}: {stats.per_source[source_id]} chunk(s)")
+
+    lines.append("")
+    lines.append(
+        "size distribution (chars): "
+        f"min={stats.min_size} max={stats.max_size} "
+        f"mean={float(stats.mean_size):.1f} median={float(stats.median_size):.1f}"
+    )
+
+    lines.append("")
+    lines.append(
+        f"boundary sanity: {stats.above_max} chunk(s) above max (CHUNK_MAX={chunk_max}), "
+        f"{stats.below_min} chunk(s) below min (CHUNK_MIN={chunk_min}), "
+        f"{stats.split_sections} section(s) split into multiple chunks"
+    )
+
+    lines.append("")
+    lines.append(f"sections skipped as garbage: {len(stats.skips)}")
+    for skip in stats.skips:
+        lines.append(
+            f"  [{skip.source_id}] {skip.section!r} (order {skip.section_order}): {skip.reason}"
+        )
+
+    lines.append("")
+    lines.append("chunk-text sample:")
+    if not stats.samples:
+        lines.append("  (no chunks to sample)")
+    for sample in stats.samples:
+        preview = sample.text if len(sample.text) <= 200 else sample.text[:200] + "..."
+        lines.append(f"  [{sample.source_id}] {sample.chunk_id} {sample.section!r}: {preview}")
+
+    return "\n".join(lines)

@@ -7,7 +7,13 @@ from pathlib import Path
 
 import axial
 from axial.artifacts import ArtifactsError, run_artifacts
-from axial.chunk import ChunkError, run_chunk_embedding
+from axial.chunk import (
+    ChunkError,
+    _default_chunks_dir,
+    examine_chunks,
+    format_examine_report,
+    run_chunk_embedding,
+)
 from axial.codebook import CodebookError, load_codebook
 from axial.envelope import EnvelopeError, run_envelope
 from axial.eval import EvalError, run_eval
@@ -76,10 +82,19 @@ def build_parser() -> argparse.ArgumentParser:
         "chunk",
         help=(
             "run the embedding-based chunk stage, writing bounded prose chunk "
-            "records to data/chunks/<source_id>.jsonl (LLM-free)"
+            "records to data/chunks/<source_id>.jsonl (LLM-free); "
+            "'examine' is a reserved source_path value that instead reports "
+            "chunk-quality stats over data/chunks/ (zero LLM/embedding calls)"
         ),
     )
-    chunk_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
+    chunk_parser.add_argument(
+        "source_path",
+        help=(
+            "path to a .pdf or .docx source file, OR the literal value "
+            "'examine' to report chunk-quality stats over data/chunks/ "
+            "instead of running the chunk stage"
+        ),
+    )
 
     tag_parser = subparsers.add_parser(
         "tag",
@@ -301,6 +316,18 @@ def _chunk(source_path: str) -> int:
     return 0
 
 
+def _chunk_examine() -> int:
+    """`axial chunk examine` (issue #153): read-only inspection over the
+    on-disk chunk artifact(s) under `data/chunks/` -- zero LLM/embedding
+    calls, zero mutation. Resolves the chunks dir via the same seam the
+    producer uses (`_default_chunks_dir`) so it honors `config/pipeline.
+    yaml`'s `paths.chunks_dir` when declared."""
+    chunks_dir = _default_chunks_dir()
+    stats = examine_chunks(chunks_dir)
+    print(format_examine_report(stats))
+    return 0
+
+
 def _tag(source_path: str, domain_dir: str) -> int:
     try:
         records = run_tag(source_path, domain_dir=domain_dir)
@@ -432,6 +459,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "envelope":
         return _envelope(args.source_path)
+
+    if args.command == "chunk" and args.source_path == "examine":
+        return _chunk_examine()
 
     if args.command == "chunk":
         return _chunk(args.source_path)
