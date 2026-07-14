@@ -1,0 +1,18 @@
+### DEMO: axial chunk (embedding-based, LLM-free) ###
+# Source: tests/fixtures/envelope/thesis_paper.pdf (synthetic test fixture)
+# Tree staged at data/trees/$SID.json; provider forced to 'explode' to prove zero LLM calls.
+
+$ AXIAL_LLM_PROVIDER=explode uv run axial chunk tests/fixtures/envelope/thesis_paper.pdf
+chunk: wrote 3 record(s) for thesis_paper.pdf
+exit_code=${PIPESTATUS:-0}
+
+### Resulting artifact: data/chunks/thesis_paper-82bcba3c2d51.jsonl (this fixture only) ###
+file: data/chunks/thesis_paper-82bcba3c2d51.jsonl
+record_count: 3
+--- per-record: keys + text length (text body elided; synthetic fixture) ---
+{'chunk_id': 'thesis_paper-82bcba3c2d51_1_introduction_001', 'section': 'Introduction', 'section_order': '1', 'text_len': 325}
+{'chunk_id': 'thesis_paper-82bcba3c2d51_2_comparative-cases_001', 'section': 'Comparative Cases', 'section_order': '2', 'text_len': 203}
+{'chunk_id': 'thesis_paper-82bcba3c2d51_3_conclusion_001', 'section': 'Conclusion', 'section_order': '3', 'text_len': 171}
+--- band check: CHUNK_MIN..CHUNK_MAX ---
+CHUNK_MIN=1000 CHUNK_MAX=3000
+all texts <= CHUNK_MAX: True
