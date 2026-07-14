@@ -1,0 +1,10 @@
+### Boundary demo 1: get_embedder() selection through the package boundary
+$ AXIAL_EMBEDDER unset (production default) and AXIAL_EMBEDDER=stub
+unset  ->  FastEmbedEmbedder | model_id = fastembed:BAAI/bge-small-en-v1.5 | is HashingEmbedder: False
+stub   ->  HashingEmbedder | model_id = hashing-v1-256 | is HashingEmbedder: True
+fastembed imported by selection: False
+
+### Boundary demo 2: real fastembed encode end-to-end (@slow tier — network/model load)
+$ uv run pytest tests/chunk/test_chunk_real_embedder.py src/axial/test_chunk_embedding.py -q -m slow
+..                                                                       [100%]
+2 passed, 41 deselected in 1.51s
