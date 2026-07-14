@@ -1,294 +1,316 @@
-"""Outer acceptance test for issue #17, slice 05 (argumentative chunking).
+"""Outer acceptance test for issue #151, slice 01 of the chunk-redesign
+subproject (charter #148): the embedding-based chunk stage.
 
 Locked behavioral contract (DEC-1) -- do not edit once committed red.
 
-Given an extracted fixture source with a stored envelope and the stub LLM
-      provider
-When  the user runs `axial chunk <fixture>`
-Then  it exits 0 and emits prose chunks each with a stable chunk_id and its
-      section provenance
-And   the chunking call received the stored envelope plus the section's
-      neighbours (not the isolated section)
-And   the stored envelope is read from disk, not recomputed
+Given a fixture source whose persisted tree has (a) a normal prose section,
+      (b) a legitimate section far larger than `max`, and (c) a high-non-alpha
+      "garbage" section
+When  the user runs `axial chunk <fixture>` with a deterministic stub embedder
+Then  it exits 0 and writes data/chunks/<source_id>.jsonl with one JSON
+      object per line
+And   every record's `text` length is <= `max`, and >= `min` except a
+      section's last chunk or a whole section shorter than `min`
+And   each record carries chunk_id (`<source_id>_<section order>_<slug>_<NNN>`),
+      section (verbatim heading), section_order (the tree node order), and text
+And   the oversized legitimate section is split into multiple in-band records
+      (never dropped)
+And   the garbage section contributes no records and the skip + reason are
+      logged
+And   no text-generating LLM call is made during the run (chunk critical path
+      is LLM-free)
 
-See specs/PRODUCT.md §5 stage 4 ("Argumentative chunking. For each prose
-section, an API call decides chunk boundaries with the envelope plus
-surrounding sections in context -- never the isolated section. Chunks
-reflect argumentative units (a claim and its support), not fixed sizes.
-Output: prose chunks."), §8 P0-4 ("The chunking call receives the envelope +
-surrounding sections, not the isolated section." / "Output chunks carry
-stable chunk_ids and preserve section provenance."), §7.3 (the envelope
-contract: `{source_id, author, title, date, thesis, toc[], scope,
-stated_argument}`, "Produced once in stage 3; consumed by stages 4 and 6"),
-and §10 ("Envelope reuse: chunking and tagging read the stored envelope
-(verified: no recompute).") for the source of truth.
+This REPLACES the old LLM-echo outer test (issue #17 slice 05): the P0-4
+rewrite (#150) retires that contract wholesale -- the chunk stage no longer
+reads a stored envelope, no longer calls a text-generating LLM at all, and no
+longer emits records to stdout. See specs/PRODUCT.md §5 stage 4 ("Semantic
+chunking (embedding-based, LLM-independent)."), §7.7 ("On-disk chunk
+artifact"), and §8 P0-4 for the source of truth. See
+plans/chunk-redesign/01-chunk-stage.md for the slice plan this test encodes.
 
-Fixture reuse: tests/fixtures/envelope/thesis_paper.pdf (see
-tests/test_envelope.py and its _generate.py) has three top-level sections in
-this exact order -- Introduction, Comparative Cases, Conclusion. "Comparative
-Cases" is the only section with a neighbour on BOTH sides, so this test
-targets it: proving both-sided "surrounding sections" (plural, per the
-Gherkin) requires a section with two real neighbours, and no new fixture is
-needed since this one already has that shape. Its text is reproduced here
-(see _generate.py) only to pick disambiguating markers below -- never to
-assert the LLM said anything about it (that would lock stub wording into the
-contract, exactly what tests/test_envelope.py's seam decision 3 warns
-against).
-
-Seam decision 1 -- provider values, and resolving the shared-stub collision
+Seam decision 1 -- the embedder injection seam: `AXIAL_EMBEDDER=stub`
 -----------------------------------------------------------------------
-tests/test_envelope.py already locks two `AXIAL_LLM_PROVIDER` values: `stub`
-(canned, no network) and `explode` (poison; raises if `.complete()` is ever
-called). This test reuses `stub` for the arrange step (`axial envelope`,
-unchanged) and locks its extension, plus one new value, for the chunk pass:
+Nothing in the repo today imports a sentence-embedding library (verified by
+grep); this slice adds one, plus an injectable embedder so tests never hit
+the network or download a real model. Mirroring the established
+`AXIAL_LLM_PROVIDER` env-var convention (src/axial/llm.py's
+`PROVIDER_ENV_VAR`), this test locks a new, analogous seam: the env var
+`AXIAL_EMBEDDER`, set to `"stub"` for a deterministic, offline, no-network
+embedder. This test does not dictate the stub's internal embedding function
+(e.g. a hash-based vector) -- only that selecting it makes `axial chunk` run
+end-to-end with zero network access and a reproducible split. The
+implementer must wire this env var; an unset/absent `AXIAL_EMBEDDER` is not
+exercised by this test and is left to the implementer's own default.
 
-    AXIAL_LLM_PROVIDER=stub    -> Today, StubLLMClient._CANNED_RESPONSE is a
-                                    single hardcoded ENVELOPE-shaped JSON
-                                    (thesis/toc/scope/stated_argument). The
-                                    chunk pass calls `client.complete()` with
-                                    a CHUNKING prompt and needs a CHUNK-shaped
-                                    response back to parse into chunk records.
-                                    This test does not dictate the dispatch
-                                    mechanism (e.g. inspecting the prompt for
-                                    a pass-specific marker, or threading a
-                                    response-kind through the client) -- it
-                                    only requires, behaviorally, that
-                                    `axial envelope ...` and `axial chunk ...`
-                                    BOTH work correctly end-to-end against
-                                    the very same `AXIAL_LLM_PROVIDER=stub`
-                                    selection, in separate process runs. That
-                                    is impossible with today's single
-                                    hardcoded envelope-only canned response,
-                                    so implementing it is this test's whole
-                                    point: it is the collision this test
-                                    forces the implementer to resolve, not an
-                                    assumption this test papers over.
-
-    AXIAL_LLM_PROVIDER=record  -> NEW. Behaves exactly like `stub` for
-                                    `.complete()`'s return value (i.e. it
-                                    must reuse/delegate to whatever
-                                    canned-response logic `stub` ends up
-                                    using, so its replies are indistinguishable
-                                    from `stub`'s for the same prompt), with
-                                    exactly one side effect added: every
-                                    prompt received by `.complete()` is
-                                    appended, JSON-encoded on its own line
-                                    (`json.dumps(prompt) + "\\n"`), to the
-                                    file named by the new env var
-                                    `AXIAL_LLM_RECORD_PATH` (creating parent
-                                    directories as needed), before returning.
-                                    Selecting `record` without
-                                    `AXIAL_LLM_RECORD_PATH` set is not
-                                    exercised by this test (left to the
-                                    implementer). This is the seam that makes
-                                    the assembled chunk prompt(s) observable
-                                    black-box from a subprocess test --
-                                    mirroring slice-04's provider-as-seam
-                                    pattern (there, `explode` proves the
-                                    ABSENCE of a call; here, `record` proves
-                                    the PRESENCE and CONTENT of calls).
-                                    Reusing `stub`'s response logic (rather
-                                    than inventing a second, independent
-                                    canned chunk-response contract) sidesteps
-                                    having to predict, from the test side,
-                                    the LLM-facing raw response shape the
-                                    implementer's own parser will expect --
-                                    this test only needs the calls to
-                                    complete successfully so every section
-                                    gets a chance to be recorded, not to
-                                    dictate that shape itself.
-
-Seam decision 2 -- observing "envelope + neighbours, not the isolated
-section" black-box
+Seam decision 2 -- zero-LLM-call proof: reuse the `explode` poison provider
 -----------------------------------------------------------------------
-A subprocess-based outer test cannot see an in-process prompt. Using the
-`record` provider above, this test locates the one recorded prompt that
-targets the "Comparative Cases" section (identified by a sentence that
-appears ONLY in that section's own text -- see _TARGET_SECTION_MARKER below)
-and asserts that SAME prompt also contains:
+This slice's whole point (PRD §5 stage 4, "no text-generating LLM call in
+the chunk critical path") is directly testable with the SAME poison-provider
+trick tests/test_envelope.py already locked: this test runs `axial chunk`
+with `AXIAL_LLM_PROVIDER=explode` (src/axial/llm.py's `ExplodingLLMClient`,
+which raises only when `.complete()` is actually invoked -- selecting it is
+always safe). If the chunk critical path ever calls a text-generating LLM
+for any reason -- even indirectly, e.g. an accidental envelope read/rebuild,
+or an embedding call routed through the generative client by mistake -- the
+process crashes and this test's exit-code-0 assertion fails. A clean exit 0
+under `explode` is therefore a direct behavioral proof of "LLM-free chunk
+critical path", not an inference from the absence of a log line.
 
-  (a) a clause from the Introduction section's own text that the stored
-      envelope's fields do NOT restate (_INTRO_NEIGHBOUR_MARKER) -- proving
-      the previous neighbour's actual text, not just an envelope paraphrase,
-      was forwarded;
-  (b) a clause from the Conclusion section's own text that the stored
-      envelope's fields do NOT restate (_CONCLUSION_NEIGHBOUR_MARKER) --
-      same proof for the next neighbour;
-  (c) the stored envelope's own `stated_argument` value, read back from the
-      envelope JSON on disk at test time (never hardcoded here -- see seam
-      decision 3) -- proving the envelope itself, not just neighbouring
-      prose, reached the same call.
-
-Because (a), (b), and (c) can only ALL be true simultaneously if the
-assembled prompt combined the target section, both its neighbours, and the
-envelope, this is a hard behavioral proof of "envelope + neighbours, not the
-isolated section" (PRD §5 stage 4 / §8 P0-4), not a scrape of an incidental
-log line.
-
-Disambiguation matters here because this fixture's body text and the stub's
-canned envelope fields are deliberately close paraphrases of each other (see
-tests/fixtures/envelope/_generate.py's docstring). The markers below are
-chosen so their presence in the prompt cannot be explained away as "the
-envelope again" or "the target section again":
-  - _INTRO_NEIGHBOUR_MARKER and _CONCLUSION_NEIGHBOUR_MARKER are the exact
-    clauses of Introduction/Conclusion that the stub's canned envelope
-    response (see StubLLMClient._CANNED_RESPONSE in src/axial/llm.py) never
-    restates at all, or restates with different case/punctuation at the
-    exact position that would make a literal-substring match succeed by
-    coincidence (verified by inspection against that constant when this test
-    was authored).
-  - the envelope's `stated_argument` is checked as an exact-case substring;
-    Conclusion's own paraphrase of it differs in leading case and trailing
-    punctuation at precisely that point, so a literal match can only be
-    explained by the envelope field being forwarded, not by Conclusion (a
-    neighbour) supplying the same words independently.
-
-Seam decision 3 -- observing "the stored envelope is read from disk, not
-recomputed" black-box
+Seam decision 3 -- band constants imported from the implementation, not
+hardcoded here
 -----------------------------------------------------------------------
-Unlike the envelope pass (tests/test_envelope.py), the chunk pass itself
-makes an LLM call (to decide chunk boundaries), so slice-04's `explode`
-poison-provider trick does not transfer wholesale -- configuring `explode`
-here would only prove the chunking call itself never happened, not that the
-envelope specifically was reused rather than rebuilt. Instead this test
-proves "read, not recomputed" two ways:
-  (a) the envelope's own `stated_argument` field value (read from the
-      envelope JSON file on disk, never hardcoded) appears inside the
-      chunking prompt -- proving it was read (seam decision 2(c) above);
-  (b) `data/envelopes/<source_id>.json` is byte-for-byte identical before and
-      after the `axial chunk` run that consumed it (captured and compared
-      exactly as tests/test_envelope.py compares first_bytes/second_bytes)
-      -- proving the chunk pass never rewrote/regenerated it.
+The slice plan leaves `[min, max]`'s exact values to the implementer
+("sensible starting points, documented in the module, not asserted as
+final"). This test therefore imports the band's own constants from
+`axial.chunk` -- `CHUNK_MIN` and `CHUNK_MAX` (character counts, matching
+§7.7's "`text` length") -- and asserts the *property* (every record's `text`
+length falls in `[CHUNK_MIN, CHUNK_MAX]`, modulo the documented exceptions)
+rather than a magic number. The implementer must export both names at
+module level from `axial.chunk`. This import happens at module top level, so
+if the new chunk module (or its band constants) does not exist yet, this
+whole test file fails to collect -- a loud, correct-reason red, not a
+same-file typo: it means the seam this test depends on has not been built.
+The oversized "legitimate" fixture section is sized as `CHUNK_MAX * 5`
+characters of generated prose (see `_build_oversized_section_text` below),
+so it must require a split regardless of the exact `CHUNK_MAX` value the
+implementer picks.
 
-This test deliberately does NOT assert a "no envelope on disk" error path
-(e.g. running `axial chunk` before `axial envelope`); that is left as an
-inner unit test for the implementer, per the slice plan's inner-loop list,
-to keep this outer test focused on the acceptance criterion itself.
-
-Seam decision 4 -- chunk record shape locked by this test
+Seam decision 4 -- the fixture tree, and why "size never triggers a skip"
+matters here
 -----------------------------------------------------------------------
-Neither the PRD nor the slice plan names an exact stdout envelope shape or
-an exact field name for "section provenance" beyond intent, so this test
-locks the minimum needed to make the acceptance criterion executable:
-  - stdout must contain one or more chunk record JSON objects, either as
-    (i) a single JSON document that is a bare top-level array, (ii) a single
-    JSON document that is an object with a top-level "chunks" array, or
-    (iii) newline-delimited JSON (one chunk record object per line). This
-    test's parsing helper accepts any of the three, since none is dictated
-    by the source of truth and picking exactly one here would over-commit
-    the contract to an accidental implementation choice.
-  - each chunk record carries "chunk_id" (a non-empty string, unique within
-    a single run, and stable/deterministic across repeat runs on the same
-    input -- proven behaviorally: two consecutive stub runs over the same
-    fixture must yield the identical set of chunk_id values) and "section"
-    (the section's own verbatim heading text -- one of "Introduction",
-    "Comparative Cases", "Conclusion" for this fixture). This test locks the
-    field name `section` for "section provenance" since a name must be
-    chosen to write an executable contract, and "section" is the smallest,
-    least implementation-committal name that satisfies the plan bullet
-    ("chunk records preserve the section's verbatim label").
-  - this test deliberately does NOT assert exact chunk text/count/boundaries
-    (which stub content and boundary heuristics produce), only the shape and
-    stability of chunk_id + section -- mirroring tests/test_envelope.py's
-    refusal to lock exact canned stub wording into the contract.
+The stage reads a *persisted* structural tree only (PRD §5 stage 4: "The
+stage reads the persisted structural tree only"), not a PDF through docling.
+This test builds that tree by hand, matching the locked node shape
+(src/axial/extract.py's `_build_tree`/`tree_path`/`persist_tree`: a root
+`{"children": [...]}`, where each top-level section node carries `type`,
+`order`, `text` (the verbatim heading), and `children`; each child prose leaf
+carries `type == "prose"` and `text`), and pre-places it at
+`data/trees/<source_id>.json` for a small, real, committed fixture PDF (the
+existing `tests/fixtures/envelope/thesis_paper.pdf`, reused here purely as a
+byte source to compute a real `source_id` -- see
+`axial.envelope.compute_source_id` -- never for its own tree shape, which
+this test overwrites entirely). Because `axial.extract.extract`'s
+persisted-tree cache is checked BEFORE docling ever runs (verified by
+reading src/axial/extract.py), placing the fixture tree at the exact
+computed `source_id` path makes `axial chunk` consume this fabricated tree
+verbatim, offline, without a real docling conversion.
 
-Test hygiene: any envelope file this test creates under data/envelopes/ is
-removed in fixture teardown (mirrors tests/test_envelope.py's
-clean_envelopes). The recorded-prompt file lives under pytest's `tmp_path`,
-so it is never written into the repo and needs no manual cleanup.
+The fabricated tree carries exactly three top-level sections:
+  1. "Overview" -- ordinary prose, unremarkable size.
+  2. "Field Survey Findings" -- legitimate prose, but built to
+     `CHUNK_MAX * 5` characters, deliberately far larger than any plausible
+     `max`. PRD §8 P0-4 and §7.7 both state, without qualification, that
+     size alone never triggers a skip for a legitimate section -- only a
+     deliberate split. This is the crux fact this slice exists to fix (the
+     old, retired LLM-echo mechanism could not safely handle a section this
+     large at all): this test asserts the oversized section yields MULTIPLE
+     records, none exceeding `CHUNK_MAX`, proving the split actually
+     happened rather than the section being silently dropped or truncated.
+  3. "Numeric Annex" -- a high-non-alphabetic "garbage" section (a synthetic
+     stand-in for an OCR'd index/page-number listing: near-entirely digits,
+     commas, and semicolons, well under `_ALPHA-heavy` territory). Chosen to
+     be a heading that does NOT appear in axial.chunk's/xref's existing
+     back-matter title exclusion list (`_BACK_MATTER_TITLES`, e.g. "index",
+     "bibliography") -- that is an unrelated, orthogonal mechanism (issue
+     #113) this test must not accidentally exercise instead of the
+     non-alpha-ratio guard this slice's Gherkin actually names. This section
+     is kept deliberately modest in size (a few thousand characters) so its
+     skip can only be explained by its non-alphabetic content, never by
+     size -- keeping the "size never skips; only non-alpha ratio does"
+     distinction unambiguous.
 
-Arrange-mechanism change (issue #45, tree-cache) -- no behavioral assertion
-changed
+Seam decision 5 -- cross-test isolation
 -----------------------------------------------------------------------
-This test's PURPOSE is the chunking pass's own behavior -- it CONSUMES the
-stored envelope (built from the structural tree) and this fixture's chunk
-records, never asserting anything about extraction/tree shape itself (that
-is tests/test_extract.py's contract). The arrange step's `axial envelope`
-call internally calls `axial.extract.extract`, which -- per the now-locked
-tree-persist contract (tests/test_tree_persist.py, PRD §7.4) -- reuses a
-persisted tree verbatim at data/trees/<source_id>.json instead of re-running
-docling. So `_arrange_stored_envelope` below now pre-places the committed
-REAL tree fixture (tests/fixtures/envelope/thesis_paper_tree.json -- exactly
-`axial extract`'s own output for this fixture, see that directory's
-_generate.py for the regeneration recipe) before calling `axial envelope`,
-exactly as it would look after a real extraction, only without paying for
-one. Every existing assertion is unchanged. data/trees/ isolation is handled
-by the shared, content-snapshot-based
-`_isolate_persisted_tree_and_envelope_state` autouse fixture in
-tests/conftest.py.
+This test runs the CLI from the real repo root (`REPO_ROOT`, matching every
+other subprocess-based outer test in this suite) so `data/trees/` and
+`data/chunks/` resolve to the real, cwd-relative default paths
+(`axial.extract.TREES_DIR`, `axial.chunk.CHUNKS_DIR`) exactly as they would
+in production -- consistent with how the retired test_chunk.py and
+test_envelope.py already isolate `data/trees/`/`data/envelopes/`. Both
+`data/trees/` and `data/chunks/` are protected by the autouse
+`_isolate_persisted_tree_and_envelope_state` fixture in tests/conftest.py
+(extended by this same issue to snapshot/restore `*.jsonl` files too, not
+just `*.json`), so the fabricated tree this test places and the chunk
+artifact `axial chunk` writes are both restored/removed after the test,
+never leaking into a later test that computes the same `source_id`.
+
+Assumptions this test locks as the contract the implementer must meet
+(not dictated verbatim by the PRD/plan, but required to make this an
+executable test)
+-----------------------------------------------------------------------
+  - `axial chunk <source_path>` still takes a source *file* path (unchanged
+    CLI shape) but its behavior changes: exit 0 with NOTHING required on
+    stdout, and the JSONL artifact written to
+    `data/chunks/<source_id>.jsonl` is the actual contract surface (PRD
+    §7.7). This test does not assert stdout is empty (a summary/log line
+    there is fine) -- only that the on-disk artifact is correct.
+  - `chunk_id`'s slug component is some lowercase, hyphen/alnum "slug" of
+    the section heading -- this test does not lock the exact slugify
+    algorithm (already established elsewhere, e.g. `axial.chunk._slugify` in
+    the old module), only the overall `<source_id>_<order>_<slug>_<NNN>`
+    shape via a permissive regex, per §7.7's own template.
+  - Within one section, `NNN` is a zero-padded, 1-based, strictly
+    increasing position counter (matching §7.7's own `chunk_id` template and
+    the pre-existing, unchanged convention in the old module) -- this test
+    asserts monotonic increase, not that positions start at a specific
+    literal value beyond 1.
+  - The chunk artifact's records appear in section-then-position order
+    (PRD §7.7, "one line per chunk, in section-then-position order") --
+    this test asserts section 1's records all precede section 2's in the
+    file (section 3 contributes none).
+  - The garbage-section skip is logged to stderr, naming the section's own
+    heading -- this test asserts the heading text and a skip-indicating
+    word appear in stderr, without locking an exact log message string
+    (only the module's own docstring/implementation should own that
+    wording).
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from axial.chunk import CHUNK_MAX, CHUNK_MIN
 from axial.envelope import compute_source_id
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "envelope"
-ENVELOPES_DIR = REPO_ROOT / "data" / "envelopes"
 TREES_DIR = REPO_ROOT / "data" / "trees"
+CHUNKS_DIR = REPO_ROOT / "data" / "chunks"
 
-THESIS_PAPER_PDF = FIXTURES_DIR / "thesis_paper.pdf"
-THESIS_PAPER_TREE_FIXTURE = FIXTURES_DIR / "thesis_paper_tree.json"
+# Reused purely as a byte source to compute a real, deterministic source_id
+# (axial.envelope.compute_source_id hashes the file's own bytes) -- never for
+# its own tree shape, which this test overwrites entirely with a fabricated
+# tree built to this slice's own three-section spec (see module docstring,
+# seam decision 4).
+FIXTURE_PDF = FIXTURES_DIR / "thesis_paper.pdf"
 
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
-RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
+EMBEDDER_ENV_VAR = "AXIAL_EMBEDDER"
 
-KNOWN_SECTION_LABELS = {"Introduction", "Comparative Cases", "Conclusion"}
+NORMAL_SECTION_HEADING = "Overview"
+OVERSIZED_SECTION_HEADING = "Field Survey Findings"
+GARBAGE_SECTION_HEADING = "Numeric Annex"
 
-# Sentence that appears ONLY in the "Comparative Cases" section's own body
-# text (see tests/fixtures/envelope/_generate.py) -- identifies which
-# recorded prompt targeted that section.
-_TARGET_SECTION_MARKER = "is not itself part of the envelope this fixture exercises"
+KNOWN_SECTION_ORDERS = {
+    NORMAL_SECTION_HEADING: "1",
+    OVERSIZED_SECTION_HEADING: "2",
+    GARBAGE_SECTION_HEADING: "3",
+}
 
-# Clause from Introduction's own text that the stub's canned envelope
-# response never restates (StubLLMClient._CANNED_RESPONSE's "thesis" field
-# stops at "...coercive force alone." and never mentions "the remainder of
-# the paper..."). Its presence in a chunk prompt can only be explained by the
-# Introduction section (the previous neighbour) itself being forwarded.
-_INTRO_NEIGHBOUR_MARKER = (
-    "The remainder of the paper develops this thesis across a survey of comparative cases."
-)
-
-# Clause from Conclusion's own text that the stub's canned envelope response
-# never restates (StubLLMClient._CANNED_RESPONSE's "stated_argument" field
-# stops at "...coercive capacity alone." and never mentions "restating the
-# paper's stated thesis..."). Its presence in a chunk prompt can only be
-# explained by the Conclusion section (the next neighbour) itself being
-# forwarded.
-_CONCLUSION_NEIGHBOUR_MARKER = "restating the paper's stated thesis in light of the cases surveyed"
-
-# argparse's fallback error for an as-yet-nonexistent subcommand, e.g.
-# "axial: error: argument command: invalid choice: 'chunk' (choose from
-# 'schema', 'intake', 'extract', 'envelope')". Any of these substrings in the
-# combined output means the target subcommand's logic was never actually
-# exercised -- the process failed before real behavior ran. Reject that
-# generic failure mode explicitly so this test can only pass once real
-# `chunk` behavior exists.
+# argparse's fallback error for an as-yet-nonexistent subcommand/argument --
+# any of these substrings in the combined output means the target
+# subcommand's real logic was never actually exercised (mirrors the retired
+# test_chunk.py's identical guard).
 ARGPARSE_FALLBACK_MARKERS = (
     "invalid choice",
     "unrecognized arguments",
 )
 
+# A handful of distinct filler sentences, cycled to build the oversized
+# "legitimate" section up to CHUNK_MAX * 5 characters (seam decision 3).
+# Ordinary, low-non-alpha-ratio English prose -- must never itself qualify as
+# "garbage" content.
+_FILLER_SENTENCES = [
+    "The regional administration reorganized its provincial offices after the ceasefire.",
+    "Local councils began coordinating water distribution across contested districts.",
+    "Field teams recorded shifting patterns of return migration along the northern corridor.",
+    "Provincial budgets for reconstruction were revised twice during the survey period.",
+    "Interviews with municipal officials described uneven access to basic services.",
+    "Displacement figures varied considerably between the eastern and western sub-districts.",
+    "Local markets reopened gradually as security conditions improved through the spring.",
+    "Aid coordination meetings shifted from the capital to regional hubs over time.",
+    "Survey respondents cited road access as the most persistent obstacle to recovery.",
+    "Cross-border trade resumed unevenly, concentrated around a small number of crossings.",
+]
 
-def _run_axial(
-    command: str,
-    provider: str,
-    *args: str,
-    extra_env: dict[str, str] | None = None,
-) -> subprocess.CompletedProcess:
+
+def _build_oversized_section_text(min_chars: int) -> str:
+    """Generate ordinary, legitimate prose at least `min_chars` characters
+    long by cycling `_FILLER_SENTENCES`."""
+    sentences: list[str] = []
+    total = 0
+    index = 0
+    while total < min_chars:
+        sentence = _FILLER_SENTENCES[index % len(_FILLER_SENTENCES)]
+        sentences.append(sentence)
+        total += len(sentence) + 1
+        index += 1
+    return " ".join(sentences)
+
+
+def _build_garbage_section_text() -> str:
+    """A synthetic, high-non-alphabetic "garbage" section: a page-number-style
+    listing (digits, commas, semicolons), the shape PRD §5 stage 4 names as
+    the motivating example ("e.g. an OCR'd index"). Kept modest in size (well
+    under the oversized section above) so its skip can only be explained by
+    its non-alphabetic content, never by size."""
+    entries = [f"{n * 3}, {n * 3 + 1}-{n * 3 + 2}" for n in range(1, 400)]
+    return "; ".join(entries)
+
+
+def _leaf(order: str, text: str) -> dict:
+    return {"type": "prose", "order": order, "text": text}
+
+
+def _section(order: str, heading: str, body_texts: list[str]) -> dict:
+    return {
+        "type": "prose",
+        "order": order,
+        "text": heading,
+        "label": "section_header",
+        "children": [_leaf(f"{order}.{i + 1}", body) for i, body in enumerate(body_texts)],
+    }
+
+
+def _build_fixture_tree(oversized_text: str, garbage_text: str) -> dict:
+    """The fabricated persisted-tree fixture: three top-level sections
+    matching this slice's acceptance criterion (normal / oversized-legitimate
+    / garbage) -- see module docstring, seam decision 4."""
+    return {
+        "children": [
+            _section(
+                "1",
+                NORMAL_SECTION_HEADING,
+                [
+                    "Field teams conducted a short survey of provincial administration "
+                    "following the ceasefire, focused on service delivery and local "
+                    "governance capacity.",
+                    "This section summarizes the survey's scope and method before the "
+                    "detailed findings that follow.",
+                ],
+            ),
+            _section("2", OVERSIZED_SECTION_HEADING, [oversized_text]),
+            _section("3", GARBAGE_SECTION_HEADING, [garbage_text]),
+        ]
+    }
+
+
+def _place_fixture_tree(source_id: str) -> Path:
+    """Write the fabricated tree fixture to data/trees/<source_id>.json, so
+    `axial chunk` (via `axial.extract.extract`'s persisted-tree cache) reads
+    it verbatim instead of running docling."""
+    oversized_text = _build_oversized_section_text(CHUNK_MAX * 5)
+    garbage_text = _build_garbage_section_text()
+    tree = _build_fixture_tree(oversized_text, garbage_text)
+
+    tree_path = TREES_DIR / f"{source_id}.json"
+    tree_path.parent.mkdir(parents=True, exist_ok=True)
+    tree_path.write_text(json.dumps(tree), encoding="utf-8")
+    return tree_path
+
+
+def _run_chunk(source_path: Path) -> subprocess.CompletedProcess:
     env = dict(os.environ)
-    env[PROVIDER_ENV_VAR] = provider
-    if extra_env:
-        env.update(extra_env)
+    env[PROVIDER_ENV_VAR] = "explode"  # poison: any text-gen LLM call crashes the run
+    env[EMBEDDER_ENV_VAR] = "stub"  # deterministic, offline, no network/model download
     return subprocess.run(
-        ["uv", "run", "axial", command, *args],
+        ["uv", "run", "axial", "chunk", str(source_path)],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -296,62 +318,20 @@ def _run_axial(
     )
 
 
-def _run_envelope(provider: str, *args: str) -> subprocess.CompletedProcess:
-    return _run_axial("envelope", provider, *args)
-
-
-def _run_chunk(
-    provider: str, *args: str, extra_env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess:
-    return _run_axial("chunk", provider, *args, extra_env=extra_env)
-
-
-def _assert_not_argparse_fallback(result: subprocess.CompletedProcess, command: str) -> None:
+def _assert_not_argparse_fallback(result: subprocess.CompletedProcess) -> None:
     combined = result.stdout + result.stderr
     for marker in ARGPARSE_FALLBACK_MARKERS:
         assert marker not in combined, (
-            f"expected a real `{command}` behavior path, not an argparse "
-            f"fallback (found {marker!r}) -- this means the `{command}` "
-            f"subcommand does not exist yet or was never reached:\n"
-            f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+            f"expected a real `chunk` behavior path, not an argparse fallback "
+            f"(found {marker!r}) -- this means the `chunk` subcommand's real "
+            f"logic was never reached:\nstdout: {result.stdout!r}\n"
+            f"stderr: {result.stderr!r}"
         )
 
 
-def _existing_envelope_files() -> set[Path]:
-    if not ENVELOPES_DIR.exists():
-        return set()
-    return set(ENVELOPES_DIR.glob("*.json"))
-
-
-def _parse_chunk_records(stdout: str) -> list[dict]:
-    """Parse chunk records from `axial chunk`'s stdout, tolerating any of
-    the three stdout shapes this test locks (see module docstring, seam
-    decision 4): a bare JSON array, a JSON object with a "chunks" array, or
-    newline-delimited JSON (one record per line)."""
-    stripped = stdout.strip()
-
-    try:
-        data = json.loads(stripped)
-    except json.JSONDecodeError:
-        data = None
-
-    if data is not None:
-        if isinstance(data, dict):
-            assert "chunks" in data, (
-                f"expected a top-level 'chunks' key when chunk stdout is a "
-                f"JSON object, got keys: {sorted(data.keys())}; stdout: {stdout!r}"
-            )
-            records = data["chunks"]
-        else:
-            records = data
-        assert isinstance(records, list), (
-            f"expected chunk records to be a JSON array (bare, or under a "
-            f"'chunks' key), got {type(records).__name__}: {records!r}"
-        )
-        return records
-
+def _read_jsonl(path: Path) -> list[dict]:
     records = []
-    for line in stripped.splitlines():
+    for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         line = line.strip()
         if not line:
             continue
@@ -359,234 +339,221 @@ def _parse_chunk_records(stdout: str) -> list[dict]:
             records.append(json.loads(line))
         except json.JSONDecodeError as exc:
             raise AssertionError(
-                f"expected chunk stdout to be either one parseable JSON "
-                f"document (a bare array, or an object with a top-level "
-                f"'chunks' array) or newline-delimited JSON (one chunk "
-                f"record object per line); line {line!r} failed to parse "
-                f"({exc}). Full stdout: {stdout!r}"
+                f"expected {path} to be one JSON object per line (PRD §7.7), "
+                f"but line {line_no} failed to parse ({exc}): {line!r}"
             ) from None
-    assert records, (
-        f"expected at least one parseable chunk record in stdout, got none. stdout: {stdout!r}"
-    )
     return records
 
 
+# Matches only the "<slug>_<NNN>" tail of a chunk_id -- NOT the whole
+# chunk_id jointly with source_id/order. source_id itself is a
+# `<filename-stem>-<hex-digest>` string (axial.envelope.compute_source_id)
+# that can itself contain underscores and hyphens, so a single regex trying
+# to jointly carve source_id/order/slug/NNN out of the full chunk_id string
+# would be ambiguous by construction. Since this test already knows the
+# real source_id (computed the same way the implementation must) and the
+# fixture's own section_order values, chunk_id's prefix
+# (`<source_id>_<section_order>_`) is checked with a plain `str.startswith`
+# instead, and only the remaining `<slug>_<NNN>` tail is parsed with this
+# regex, which is unambiguous (NNN is always exactly 3 digits anchored at
+# the end).
+_SLUG_NNN_RE = re.compile(r"^(?P<slug>[a-z0-9-]+)_(?P<nnn>\d{3})$")
+
+
 @pytest.fixture
-def clean_envelopes():
-    """Snapshot data/envelopes/*.json before the test and delete any file
-    the test caused to appear, so runs stay idempotent and the repo is
-    never polluted by a real e2e-run artifact."""
-    before = _existing_envelope_files()
-    yield
-    after = _existing_envelope_files()
-    for created in after - before:
-        created.unlink()
+def chunk_fixture_source():
+    """Compute this fixture's source_id, pre-place the fabricated tree, and
+    clean up both the tree and the chunk artifact afterward (belt-and-braces
+    on top of tests/conftest.py's autouse directory-snapshot isolation)."""
+    source_id = compute_source_id(FIXTURE_PDF)
+    tree_path = _place_fixture_tree(source_id)
+    chunk_path = CHUNKS_DIR / f"{source_id}.jsonl"
+
+    yield source_id, chunk_path
+
+    tree_path.unlink(missing_ok=True)
+    chunk_path.unlink(missing_ok=True)
 
 
-def _place_tree_fixture(source_pdf: Path, tree_fixture_path: Path) -> Path:
-    """Pre-place the committed REAL tree fixture at
-    data/trees/<source_id>.json (source_id via
-    axial.envelope.compute_source_id) so `axial.extract.extract` reuses it
-    verbatim instead of running docling (see module docstring, "Arrange-
-    mechanism change"). Returns the tree path."""
-    source_id = compute_source_id(source_pdf)
-    tree_path = TREES_DIR / f"{source_id}.json"
-    tree_path.parent.mkdir(parents=True, exist_ok=True)
-    tree_path.write_bytes(tree_fixture_path.read_bytes())
-    return tree_path
-
-
-def _arrange_stored_envelope() -> Path:
-    """Pre-place the real tree fixture, then run `axial envelope` with the
-    stub provider so a stored envelope exists on disk before chunking, and
-    return its path. Asserts the arrange step itself succeeded and produced
-    exactly one new envelope file."""
-    _place_tree_fixture(THESIS_PAPER_PDF, THESIS_PAPER_TREE_FIXTURE)
-    before_files = _existing_envelope_files()
-
-    result = _run_envelope("stub", str(THESIS_PAPER_PDF))
-    _assert_not_argparse_fallback(result, "envelope")
-    assert result.returncode == 0, (
-        f"arrange step failed: expected exit code 0 for `axial envelope` on "
-        f"the fixture with the stub LLM provider, got {result.returncode}\n"
-        f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
-    )
-
-    new_files = _existing_envelope_files() - before_files
-    assert len(new_files) == 1, (
-        f"arrange step failed: expected exactly one new file under "
-        f"{ENVELOPES_DIR} after `axial envelope`, got {len(new_files)}: "
-        f"{sorted(new_files)}\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
-    )
-    return next(iter(new_files))
-
-
-def test_chunk_emits_stable_chunk_ids_with_section_provenance(clean_envelopes):
-    envelope_path = _arrange_stored_envelope()
-    envelope_bytes_before = envelope_path.read_bytes()
-
-    # --- first run: stub provider ---
-    first = _run_chunk("stub", str(THESIS_PAPER_PDF))
-    _assert_not_argparse_fallback(first, "chunk")
-    assert first.returncode == 0, (
-        f"expected exit code 0 for `axial chunk` on a fixture source with a "
-        f"stored envelope and the stub LLM provider configured, got "
-        f"{first.returncode}\nstdout: {first.stdout!r}\nstderr: {first.stderr!r}"
-    )
-
-    first_records = _parse_chunk_records(first.stdout)
-    assert len(first_records) >= 1, (
-        f"expected at least one prose chunk record on stdout, got "
-        f"{len(first_records)}; stdout: {first.stdout!r}"
-    )
-
-    first_chunk_ids: set[str] = set()
-    for record in first_records:
-        assert isinstance(record, dict), (
-            f"expected each chunk record to be a JSON object, got "
-            f"{type(record).__name__}: {record!r}"
-        )
-
-        chunk_id = record.get("chunk_id")
-        assert isinstance(chunk_id, str) and chunk_id.strip(), (
-            f"expected chunk record to carry a non-empty string 'chunk_id' "
-            f"(PRD §8 P0-4, 'stable chunk_ids'), got {chunk_id!r} "
-            f"(full record: {record!r})"
-        )
-        assert chunk_id not in first_chunk_ids, (
-            f"expected chunk_ids to be unique within a single run, got a duplicate: {chunk_id!r}"
-        )
-        first_chunk_ids.add(chunk_id)
-
-        section = record.get("section")
-        assert section in KNOWN_SECTION_LABELS, (
-            f"expected chunk record to carry a 'section' field naming one of "
-            f"this fixture's verbatim section headings {sorted(KNOWN_SECTION_LABELS)} "
-            f"(PRD §8 P0-4, 'preserve section provenance'), got {section!r} "
-            f"(full record: {record!r})"
-        )
-
-    # --- second run: same fixture, same stub provider -- chunk_ids must be stable ---
-    second = _run_chunk("stub", str(THESIS_PAPER_PDF))
-    _assert_not_argparse_fallback(second, "chunk")
-    assert second.returncode == 0, (
-        f"expected exit code 0 on a repeat `axial chunk` run over the same "
-        f"fixture, got {second.returncode}\n"
-        f"stdout: {second.stdout!r}\nstderr: {second.stderr!r}"
-    )
-
-    second_records = _parse_chunk_records(second.stdout)
-    second_chunk_ids = {r.get("chunk_id") for r in second_records}
-
-    assert second_chunk_ids == first_chunk_ids, (
-        f"expected stable/deterministic chunk_ids across repeat runs on the "
-        f"same input (PRD §8 P0-4, 'stable chunk_ids'), got "
-        f"{sorted(first_chunk_ids)} on the first run and "
-        f"{sorted(second_chunk_ids)} on the second run"
-    )
-
-    # --- the stored envelope itself must be untouched by chunking ---
-    assert envelope_path.read_bytes() == envelope_bytes_before, (
-        f"expected {envelope_path} to be unchanged after `axial chunk` runs "
-        f"(the envelope must be read, not recomputed/rewritten -- PRD §10 "
-        f"'no recompute'; see also "
-        f"test_chunk_call_receives_envelope_and_neighbouring_sections_not_isolated_section)"
-    )
-
-
-def test_chunk_call_receives_envelope_and_neighbouring_sections_not_isolated_section(
-    clean_envelopes, tmp_path
+def test_chunk_writes_bounded_jsonl_artifact_with_provenance_and_no_llm_call(
+    chunk_fixture_source,
 ):
-    envelope_path = _arrange_stored_envelope()
-    envelope_bytes_before = envelope_path.read_bytes()
-    envelope = json.loads(envelope_bytes_before)
+    source_id, chunk_path = chunk_fixture_source
 
-    stated_argument = envelope.get("stated_argument")
-    assert isinstance(stated_argument, str) and stated_argument.strip(), (
-        f"arrange step failed: expected the stored envelope to carry a "
-        f"non-empty 'stated_argument' field, got {stated_argument!r} "
-        f"(full envelope: {envelope!r})"
-    )
+    result = _run_chunk(FIXTURE_PDF)
+    _assert_not_argparse_fallback(result)
 
-    record_path = tmp_path / "chunk_prompts.jsonl"
-
-    result = _run_chunk(
-        "record",
-        str(THESIS_PAPER_PDF),
-        extra_env={RECORD_PATH_ENV_VAR: str(record_path)},
-    )
-    _assert_not_argparse_fallback(result, "chunk")
+    # --- exit 0, with AXIAL_LLM_PROVIDER=explode: proves the chunk critical
+    # path made zero text-generating LLM calls (seam decision 2). ---
     assert result.returncode == 0, (
-        f"expected exit code 0 for `axial chunk` with "
-        f"AXIAL_LLM_PROVIDER=record configured -- this provider must behave "
-        f"exactly like `stub` for response purposes (see this test module's "
-        f"docstring, seam decision 1), so a nonzero exit here means either "
-        f"the `record` provider was not implemented or it does not delegate "
-        f"to the same response logic `stub` uses, got {result.returncode}\n"
+        f"expected exit code 0 for `axial chunk` against a fixture tree with "
+        f"the stub embedder and the poison `explode` LLM provider configured "
+        f"-- a nonzero exit here most likely means either the chunk critical "
+        f"path called a text-generating LLM (PRD §5 stage 4, 'no "
+        f"text-generating LLM call in the chunk critical path') or the "
+        f"AXIAL_EMBEDDER=stub seam does not exist yet.\n"
         f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
 
-    assert record_path.exists(), (
-        f"expected `AXIAL_LLM_PROVIDER=record` (with "
-        f"{RECORD_PATH_ENV_VAR}={str(record_path)!r}) to write each "
-        f"received chunking prompt to that file (this test's locked seam -- "
-        f"see module docstring seam decision 1); the file was never created, "
-        f"meaning either the `record` provider does not exist yet or it "
-        f"never honored {RECORD_PATH_ENV_VAR}"
+    # --- the on-disk artifact exists at the deterministic, source_id-keyed
+    # path (PRD §7.7). ---
+    assert chunk_path.exists(), (
+        f"expected `axial chunk` to write {chunk_path} (PRD §7.7, "
+        f"'<source_id>.jsonl'), but it does not exist.\n"
+        f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
 
-    recorded_prompts: list[str] = []
-    for line in record_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        recorded_prompts.append(json.loads(line))
+    records = _read_jsonl(chunk_path)
+    assert records, f"expected at least one chunk record in {chunk_path}, got none"
 
-    assert recorded_prompts, (
-        f"expected at least one recorded chunking prompt at {record_path}, "
-        f"got none -- the chunking pass never called the LLM client with "
-        f"AXIAL_LLM_PROVIDER=record configured"
+    # --- group records by section, preserving file order, and check that
+    # section-then-position order holds (PRD §7.7). ---
+    seen_section_orders_in_order: list[str] = []
+    by_section: dict[str, list[dict]] = {}
+    seen_chunk_ids: set[str] = set()
+
+    for record in records:
+        assert isinstance(record, dict), (
+            f"expected each chunk record to be a JSON object, got {record!r}"
+        )
+
+        for field in ("chunk_id", "section", "section_order", "text"):
+            assert field in record, (
+                f"expected every chunk record to carry {field!r} (PRD §7.7's "
+                f"invariant contract), missing from record: {record!r}"
+            )
+
+        chunk_id = record["chunk_id"]
+        section = record["section"]
+        section_order = record["section_order"]
+        text = record["text"]
+
+        assert isinstance(chunk_id, str) and chunk_id, (
+            f"expected a non-empty string chunk_id, got {chunk_id!r}"
+        )
+        assert chunk_id not in seen_chunk_ids, (
+            f"expected chunk_ids to be unique, got a duplicate: {chunk_id!r}"
+        )
+        seen_chunk_ids.add(chunk_id)
+
+        assert section in KNOWN_SECTION_ORDERS, (
+            f"expected 'section' to be one of this fixture's verbatim "
+            f"headings {sorted(KNOWN_SECTION_ORDERS)}, got {section!r} "
+            f"(record: {record!r})"
+        )
+        assert section_order == KNOWN_SECTION_ORDERS[section], (
+            f"expected 'section_order' to be the tree node's own order "
+            f"{KNOWN_SECTION_ORDERS[section]!r} for section {section!r}, "
+            f"got {section_order!r} (record: {record!r})"
+        )
+
+        expected_prefix = f"{source_id}_{section_order}_"
+        assert chunk_id.startswith(expected_prefix), (
+            f"expected chunk_id to start with <source_id>_<section_order>_ "
+            f"= {expected_prefix!r} (PRD §7.7), got {chunk_id!r}"
+        )
+        tail_match = _SLUG_NNN_RE.match(chunk_id[len(expected_prefix) :])
+        assert tail_match is not None, (
+            f"expected chunk_id's tail (after {expected_prefix!r}) to match "
+            f"<slug>_<NNN> (PRD §7.7's "
+            f"<source_id>_<section order>_<slug>_<NNN> template), got "
+            f"{chunk_id!r}"
+        )
+
+        assert isinstance(text, str) and text, (
+            f"expected non-empty string 'text', got {text!r} (record: {record!r})"
+        )
+        assert len(text) <= CHUNK_MAX, (
+            f"expected every record's text length <= CHUNK_MAX ({CHUNK_MAX}) "
+            f"with NO exception (PRD §7.7/§8 P0-4, MAX side never exceeded), "
+            f"got {len(text)} chars for chunk_id {chunk_id!r} in section "
+            f"{section!r}"
+        )
+
+        if section_order not in seen_section_orders_in_order:
+            seen_section_orders_in_order.append(section_order)
+        by_section.setdefault(section_order, []).append(record)
+
+    # --- section-then-position order: every record of an earlier section
+    # precedes every record of a later section in the file (PRD §7.7). ---
+    assert seen_section_orders_in_order == sorted(seen_section_orders_in_order), (
+        f"expected chunk records in section-then-position order (PRD §7.7), "
+        f"but section_order values first appeared in file order "
+        f"{seen_section_orders_in_order}, which is not sorted"
     )
 
-    target_prompts = [p for p in recorded_prompts if _TARGET_SECTION_MARKER in p]
-    assert target_prompts, (
-        f"expected at least one recorded chunking prompt to contain the "
-        f"'Comparative Cases' section's own text (marker: "
-        f"{_TARGET_SECTION_MARKER!r}), proving that section was ever sent "
-        f"to the chunking call at all; got {len(recorded_prompts)} recorded "
-        f"prompt(s), none matching. Recorded prompts (truncated each): "
-        f"{[p[:500] for p in recorded_prompts]!r}"
+    # --- MIN-side band property, with the two documented exceptions: the
+    # last chunk of a section, or a whole section shorter than CHUNK_MIN. ---
+    for section_order, section_records in by_section.items():
+        total_section_chars = sum(len(r["text"]) for r in section_records)
+        for position, record in enumerate(section_records):
+            is_last_in_section = position == len(section_records) - 1
+            whole_section_short = total_section_chars < CHUNK_MIN
+            if is_last_in_section or whole_section_short:
+                continue
+            assert len(record["text"]) >= CHUNK_MIN, (
+                f"expected every non-last chunk of a section (in a section "
+                f"whose total text is not itself shorter than CHUNK_MIN) to "
+                f"have text length >= CHUNK_MIN ({CHUNK_MIN}) -- PRD §7.7/§8 "
+                f"P0-4, MIN side merges adjacent below-min chunks forward -- "
+                f"got {len(record['text'])} chars for chunk_id "
+                f"{record['chunk_id']!r} (position {position} of "
+                f"{len(section_records)} in section_order {section_order!r})"
+            )
+
+        # --- NNN is a zero-padded, 1-based, strictly increasing position
+        # counter within the section (matches PRD §7.7's own chunk_id
+        # template). ---
+        section_prefix = f"{source_id}_{section_order}_"
+        nnns = [
+            int(_SLUG_NNN_RE.match(r["chunk_id"][len(section_prefix) :]).group("nnn"))
+            for r in section_records
+        ]
+        assert nnns == list(range(1, len(nnns) + 1)), (
+            f"expected chunk_id's NNN component to be a 1-based, strictly "
+            f"increasing position counter within section_order "
+            f"{section_order!r}, got {nnns}"
+        )
+
+    # --- the oversized legitimate section was SPLIT, never dropped (PRD
+    # §5 stage 4, §8 P0-4: 'a section larger than max ... is split into
+    # multiple in-band chunks -- never emitted whole, never skipped for
+    # size'). ---
+    oversized_order = KNOWN_SECTION_ORDERS[OVERSIZED_SECTION_HEADING]
+    oversized_records = by_section.get(oversized_order, [])
+    assert len(oversized_records) >= 2, (
+        f"expected the oversized legitimate section ({OVERSIZED_SECTION_HEADING!r}, "
+        f"built to CHUNK_MAX * 5 = {CHUNK_MAX * 5} characters) to be split "
+        f"into multiple in-band chunk records, got {len(oversized_records)} "
+        f"-- PRD §5 stage 4/§8 P0-4 require a section this large to be split, "
+        f"never emitted whole and never dropped for size"
     )
 
-    matched = next(
-        (
-            prompt
-            for prompt in target_prompts
-            if _INTRO_NEIGHBOUR_MARKER in prompt
-            and _CONCLUSION_NEIGHBOUR_MARKER in prompt
-            and stated_argument in prompt
-        ),
-        None,
-    )
-    assert matched is not None, (
-        f"expected the recorded chunking prompt for the 'Comparative Cases' "
-        f"section (identified by marker {_TARGET_SECTION_MARKER!r}) to also "
-        f"contain: the Introduction neighbour's own text (marker "
-        f"{_INTRO_NEIGHBOUR_MARKER!r}), the Conclusion neighbour's own text "
-        f"(marker {_CONCLUSION_NEIGHBOUR_MARKER!r}), and the stored "
-        f"envelope's stated_argument field ({stated_argument!r}) -- proving "
-        f"the chunking call received the envelope plus the section's "
-        f"neighbours, not the isolated section (PRD §5 stage 4, §8 P0-4). "
-        f"Found {len(target_prompts)} prompt(s) mentioning 'Comparative "
-        f"Cases' but none contained all three. First such prompt "
-        f"(truncated): {target_prompts[0][:2000]!r}"
+    # --- the garbage section contributed NO records (PRD §5 stage 4, §8
+    # P0-4: skipped, not split, not emitted). ---
+    garbage_order = KNOWN_SECTION_ORDERS[GARBAGE_SECTION_HEADING]
+    garbage_records = by_section.get(garbage_order, [])
+    assert garbage_records == [], (
+        f"expected the high-non-alphabetic 'garbage' section "
+        f"({GARBAGE_SECTION_HEADING!r}) to contribute zero chunk records "
+        f"(PRD §5 stage 4, 'skipped by a deliberate, logged rule'), got "
+        f"{len(garbage_records)}: {garbage_records!r}"
     )
 
-    # "read from disk, not recomputed": the envelope file itself must be
-    # byte-for-byte unchanged after the chunk run that consumed it.
-    assert envelope_path.read_bytes() == envelope_bytes_before, (
-        f"expected {envelope_path} to be byte-for-byte unchanged after "
-        f"`axial chunk` ran (the envelope must be read, not "
-        f"recomputed/rewritten -- PRD §10 'no recompute'), but its contents "
-        f"differ"
+    # --- the garbage-section skip + its reason are logged (PRD §7.7,
+    # 'the skip and its reason are logged, so a reader can always
+    # distinguish a deliberate skip from a silent loss'). Only the heading
+    # + a skip-indicating word are locked here; the exact wording is left to
+    # the implementer (see module docstring, "Assumptions"). ---
+    combined_output = (result.stdout + result.stderr).lower()
+    assert GARBAGE_SECTION_HEADING.lower() in combined_output, (
+        f"expected the garbage section's own heading ({GARBAGE_SECTION_HEADING!r}) "
+        f"to appear in the run's logged output, naming which section was "
+        f"skipped and why (PRD §7.7).\nstdout: {result.stdout!r}\n"
+        f"stderr: {result.stderr!r}"
+    )
+    assert "skip" in combined_output, (
+        f"expected the run's logged output to indicate a skip occurred for "
+        f"the garbage section (PRD §7.7, 'the skip and its reason are "
+        f"logged').\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )

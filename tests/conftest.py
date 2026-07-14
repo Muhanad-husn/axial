@@ -1,7 +1,8 @@
 """Shared pytest fixtures for tests/ (test-author owned; see CLAUDE.md).
 
 Cross-test isolation for the persisted-state directories acceptance tests
-write into: data/trees/ and data/envelopes/ (issue #45, tree-cache).
+write into: data/trees/, data/envelopes/, and data/chunks/ (issue #45,
+tree-cache; issue #151, chunk-stage artifact).
 
 Why this exists
 -----------------------------------------------------------------------
@@ -26,9 +27,9 @@ subsequent test that reuses the same fixture (observed: a clean-`data/`
 got zero chunks back because it unknowingly reused test_tree_persist.py's
 leftover sentinel tree for prose_and_table.pdf).
 
-This fixture closes that gap generically, for both directories, for every
-acceptance test in this suite: it snapshots each protected directory's files
-byte-for-byte before the test runs, and after the test:
+This fixture closes that gap generically, for every protected directory, for
+every acceptance test in this suite: it snapshots each protected directory's
+files byte-for-byte before the test runs, and after the test:
   - restores any pre-existing file whose content changed (byte-for-byte, not
     just "put a file back") to its original bytes;
   - deletes any file that did not exist before the test.
@@ -48,29 +49,50 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Directories acceptance tests persist source-keyed JSON into, shared across
-# tests via deterministic source_id filenames (PRD §7.3 / §7.4).
+# Directories acceptance tests persist source-keyed JSON/JSONL into, shared
+# across tests via deterministic source_id filenames (PRD §7.3 / §7.4 / §7.7).
+# data/chunks/ holds the chunk stage's on-disk artifact (issue #151,
+# <source_id>.jsonl -- newline-delimited JSON, not a single *.json document
+# like the tree/envelope caches), so it needs the same shared-fixture
+# cross-test hygiene as data/trees/ and data/envelopes/: the chunk-stage
+# outer test (tests/test_chunk.py) pre-places a tree fixture under a
+# real/committed source's source_id and writes real chunk output next to it,
+# and could otherwise leak a stale data/chunks/<source_id>.jsonl into any
+# later test that computes the same source_id.
 _PROTECTED_DIRS = (
     REPO_ROOT / "data" / "trees",
     REPO_ROOT / "data" / "envelopes",
+    REPO_ROOT / "data" / "chunks",
 )
+
+# Extensions snapshotted/restored per protected directory: *.json for the
+# tree/envelope caches (single-document JSON), *.jsonl for the chunk
+# artifact (newline-delimited JSON, PRD §7.7).
+_SNAPSHOT_GLOBS = ("*.json", "*.jsonl")
 
 
 def _snapshot(directory: Path) -> dict[Path, bytes]:
-    """Map every *.json file directly under `directory` to its current
-    bytes. Returns an empty mapping if the directory doesn't exist yet."""
+    """Map every *.json/*.jsonl file directly under `directory` to its
+    current bytes. Returns an empty mapping if the directory doesn't exist
+    yet."""
     if not directory.exists():
         return {}
-    return {path: path.read_bytes() for path in directory.glob("*.json") if path.is_file()}
+    snapshot: dict[Path, bytes] = {}
+    for glob_pattern in _SNAPSHOT_GLOBS:
+        for path in directory.glob(glob_pattern):
+            if path.is_file():
+                snapshot[path] = path.read_bytes()
+    return snapshot
 
 
 @pytest.fixture(autouse=True)
 def _isolate_persisted_tree_and_envelope_state():
-    """Snapshot data/trees/*.json and data/envelopes/*.json content before
-    every test in this suite and restore it exactly afterward: a pre-existing
-    file's original bytes are restored even if the test overwrote its
-    content in place, and any file the test newly created is removed. See
-    module docstring for the pollution this closes."""
+    """Snapshot data/trees/*.json, data/envelopes/*.json, and
+    data/chunks/*.jsonl content before every test in this suite and restore
+    it exactly afterward: a pre-existing file's original bytes are restored
+    even if the test overwrote its content in place, and any file the test
+    newly created is removed. See module docstring for the pollution this
+    closes."""
     before = {directory: _snapshot(directory) for directory in _PROTECTED_DIRS}
 
     yield

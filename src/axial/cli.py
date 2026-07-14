@@ -3,10 +3,11 @@
 import argparse
 import json
 import sys
+from pathlib import Path
 
 import axial
 from axial.artifacts import ArtifactsError, run_artifacts
-from axial.chunk import ChunkError, run_chunk
+from axial.chunk import ChunkError, run_chunk_embedding
 from axial.codebook import CodebookError, load_codebook
 from axial.envelope import EnvelopeError, run_envelope
 from axial.eval import EvalError, run_eval
@@ -73,7 +74,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     chunk_parser = subparsers.add_parser(
         "chunk",
-        help="run the argumentative-chunking pass, emitting prose chunk records to stdout",
+        help=(
+            "run the embedding-based chunk stage, writing bounded prose chunk "
+            "records to data/chunks/<source_id>.jsonl (LLM-free)"
+        ),
     )
     chunk_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
 
@@ -288,12 +292,12 @@ def _envelope(source_path: str) -> int:
 
 def _chunk(source_path: str) -> int:
     try:
-        records = run_chunk(source_path)
+        records = run_chunk_embedding(source_path)
     except ChunkError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    print(json.dumps(records))
+    print(f"chunk: wrote {len(records)} record(s) for {Path(source_path).name}")
     return 0
 
 

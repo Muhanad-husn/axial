@@ -360,7 +360,9 @@ from pathlib import Path
 
 import pytest
 
+from axial.chunk import run_chunk
 from axial.envelope import compute_source_id
+from axial.llm import StubLLMClient
 from axial.schema import load_schema
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -414,10 +416,6 @@ def _run_axial(
 
 def _run_envelope(provider: str, *args: str) -> subprocess.CompletedProcess:
     return _run_axial("envelope", provider, *args)
-
-
-def _run_chunk(provider: str, *args: str) -> subprocess.CompletedProcess:
-    return _run_axial("chunk", provider, *args)
 
 
 def _run_tag(
@@ -494,10 +492,6 @@ def _parse_records(stdout: str, container_keys: tuple[str, ...]) -> list[dict]:
     return records
 
 
-def _parse_chunk_records(stdout: str) -> list[dict]:
-    return _parse_records(stdout, ("chunks",))
-
-
 def _parse_tag_records(stdout: str) -> list[dict]:
     return _parse_records(stdout, ("records", "tags", "chunks"))
 
@@ -556,18 +550,20 @@ def test_tag_emits_one_schema_valid_versioned_record_per_chunk(clean_envelopes):
     envelope_path = _arrange_stored_envelope()
 
     # --- independently obtain the chunk_id set the chunking pass produces
-    # for this fixture, to check against below without hardcoding a count ---
-    chunk_result = _run_chunk("stub", str(THESIS_PAPER_PDF))
-    _assert_not_argparse_fallback(chunk_result, "chunk")
-    assert chunk_result.returncode == 0, (
-        f"arrange step failed: expected exit code 0 for `axial chunk` on the "
-        f"fixture with the stub LLM provider, got {chunk_result.returncode}\n"
-        f"stdout: {chunk_result.stdout!r}\nstderr: {chunk_result.stderr!r}"
-    )
-    chunk_records = _parse_chunk_records(chunk_result.stdout)
+    # for this fixture, to check against below without hardcoding a count.
+    # Migrated off a subprocess call to the standalone `axial chunk` CLI
+    # (issue #151 slice 01): that CLI verb now runs the NEW embedding-based
+    # chunk mechanism and no longer emits chunk records on stdout at all.
+    # The OLD mechanism `axial tag` itself still calls in-process
+    # (`axial.chunk.run_chunk`) ships unchanged until issue #154 retires
+    # it, so calling it here in-process too (stub client, same stored
+    # envelope, same cwd -- REPO_ROOT, matching `_run_axial`'s own fixed
+    # `cwd=REPO_ROOT`) keeps this ground truth identical to what `axial
+    # tag`'s own internal call already produces. ---
+    chunk_records = run_chunk(THESIS_PAPER_PDF, client=StubLLMClient())
     expected_chunk_ids = [r.get("chunk_id") for r in chunk_records]
     assert expected_chunk_ids and all(expected_chunk_ids), (
-        f"arrange step failed: expected `axial chunk` to emit chunk records "
+        f"arrange step failed: expected `run_chunk` to emit chunk records "
         f"each carrying a non-empty chunk_id, got: {chunk_records!r}"
     )
 
