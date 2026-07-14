@@ -5,7 +5,7 @@
 - **GitHub issue:** #153
 - **Branch:** feat/chunk-redesign/03-chunk-examine
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ PR open — https://github.com/Muhanad-husn/axial/pull/161 (awaiting founder approval)
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
