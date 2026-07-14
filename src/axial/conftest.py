@@ -17,6 +17,16 @@ real `run_chunk`/`run_tag` is isolated with no per-test edits. It only
 affects in-process tests; the acceptance tests under tests/ spawn `axial` as
 a subprocess with cwd set to their own isolated staging root and are
 unaffected.
+
+`CHUNK_CACHE_DIR` (issue #152, `axial.chunk`'s per-source embedding cache)
+is redirected the same way, for the same reason: any in-process test that
+calls `run_chunk_embedding` without an explicit `chunk_cache_dir` would
+otherwise write real, cwd-relative `data/chunk_cache/` cache files during
+the test suite, and (worse) a fixture whose content-hashed source_id
+happens to repeat across tests would silently read back another test's
+cached embeddings, making its `encode`-call-count assertions order- and
+run-dependent -- the exact same failure mode `CHUNKS_DIR`/`TAGS_DIR`'s
+isolation above already guards against.
 """
 
 from __future__ import annotations
@@ -32,3 +42,4 @@ def _isolate_checkpoint_dirs(tmp_path_factory, monkeypatch):
     base = tmp_path_factory.mktemp("checkpoints")
     monkeypatch.setattr(_chunk_mod, "CHUNKS_DIR", base / "chunks")
     monkeypatch.setattr(_tag_mod, "TAGS_DIR", base / "tags")
+    monkeypatch.setattr(_chunk_mod, "CHUNK_CACHE_DIR", base / "chunk_cache")

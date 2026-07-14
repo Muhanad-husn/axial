@@ -1,8 +1,9 @@
 """Shared pytest fixtures for tests/ (test-author owned; see CLAUDE.md).
 
 Cross-test isolation for the persisted-state directories acceptance tests
-write into: data/trees/, data/envelopes/, and data/chunks/ (issue #45,
-tree-cache; issue #151, chunk-stage artifact).
+write into: data/trees/, data/envelopes/, data/chunks/, and
+data/chunk_cache/ (issue #45, tree-cache; issue #151, chunk-stage artifact;
+issue #152, chunk embedding cache).
 
 Why this exists
 -----------------------------------------------------------------------
@@ -58,16 +59,27 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # outer test (tests/test_chunk.py) pre-places a tree fixture under a
 # real/committed source's source_id and writes real chunk output next to it,
 # and could otherwise leak a stale data/chunks/<source_id>.jsonl into any
-# later test that computes the same source_id.
+# later test that computes the same source_id. data/chunk_cache/ holds the
+# slice-02 embedding cache (issue #152, axial.chunk.run_chunk_embedding,
+# <source_id>__<model_id>.json) and needs the exact same cross-test
+# snapshot/restore hygiene: tests/test_chunk.py's outer test shells out to
+# `axial chunk` with cwd set to this real repo root (not an isolated staging
+# root), so it writes a real data/chunk_cache/<source_id>__<model_id>.json
+# artifact into the working tree, which could otherwise leak into any later
+# test that computes the same source_id/model_id pair.
 _PROTECTED_DIRS = (
     REPO_ROOT / "data" / "trees",
     REPO_ROOT / "data" / "envelopes",
     REPO_ROOT / "data" / "chunks",
+    REPO_ROOT / "data" / "chunk_cache",
 )
 
 # Extensions snapshotted/restored per protected directory: *.json for the
-# tree/envelope caches (single-document JSON), *.jsonl for the chunk
-# artifact (newline-delimited JSON, PRD §7.7).
+# tree/envelope caches (single-document JSON) and the chunk_cache embedding
+# cache (also single-document JSON, just double-underscore-keyed by
+# <source_id>__<model_id> rather than <source_id> alone -- still matched by
+# this same glob), *.jsonl for the chunk artifact (newline-delimited JSON,
+# PRD §7.7).
 _SNAPSHOT_GLOBS = ("*.json", "*.jsonl")
 
 
@@ -87,12 +99,12 @@ def _snapshot(directory: Path) -> dict[Path, bytes]:
 
 @pytest.fixture(autouse=True)
 def _isolate_persisted_tree_and_envelope_state():
-    """Snapshot data/trees/*.json, data/envelopes/*.json, and
-    data/chunks/*.jsonl content before every test in this suite and restore
-    it exactly afterward: a pre-existing file's original bytes are restored
-    even if the test overwrote its content in place, and any file the test
-    newly created is removed. See module docstring for the pollution this
-    closes."""
+    """Snapshot data/trees/*.json, data/envelopes/*.json, data/chunks/*.jsonl,
+    and data/chunk_cache/*.json content before every test in this suite and
+    restore it exactly afterward: a pre-existing file's original bytes are
+    restored even if the test overwrote its content in place, and any file
+    the test newly created is removed. See module docstring for the
+    pollution this closes."""
     before = {directory: _snapshot(directory) for directory in _PROTECTED_DIRS}
 
     yield

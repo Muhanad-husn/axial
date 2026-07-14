@@ -5,7 +5,7 @@
 - **GitHub issue:** #152
 - **Branch:** feat/chunk-redesign/02-embedding-cache
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☐ PR prepared — https://github.com/Muhanad-husn/axial/pull/162 (awaiting founder approval)
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
