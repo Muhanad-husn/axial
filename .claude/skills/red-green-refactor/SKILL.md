@@ -49,7 +49,8 @@ to a GitHub issue) **and** a red outer acceptance test in `tests/` for this slic
 2. **Cut the branch** from an up-to-date `main`:
    `feat/<feature-slug>/<NN>-<slice-slug>`. Never develop on `main` (the
    commit-gate hook blocks commits there anyway).
-3. **Watch the outer test fail** (`uv run pytest tests/ -q`). Confirm it fails
+3. **Watch the outer test fail** (`uv run pytest tests/<file>::<test> -q`, this
+   slice's outer test node only). Confirm it fails
    *because the feature is absent*, with a readable diagnostic. It is your
    progress meter; it stays red until the slice is done. **If the outer test
    looks wrong — testing the wrong thing, tautological, contradicting the spec —
@@ -82,7 +83,10 @@ Repeat 4–9 until enough code exists for the outer test to pass.
 10. **Re-run the outer test.** Still red → back to the inner loop. Green → the
     slice's behaviour is demonstrably complete.
 11. **Outer refactor** with the whole suite green: cross-module duplication,
-    leaky abstractions, names. Re-run the full suite after each change.
+    leaky abstractions, names. Re-run the fast unit suite (`uv run pytest src/ -q`)
+    after each change; if a refactor touches behaviour the acceptance layer
+    covers, also re-run that specific acceptance test. The full end-to-end suite
+    runs once, at step 12 — not on every refactor edit.
 12. **Full green check + commit.** `uv run pytest -q` (everything) green, then
     commit in small green-only commits, Conventional style:
     `feat(<feature-slug>): <goal> [slice NN]`. The commit-gate hook enforces
