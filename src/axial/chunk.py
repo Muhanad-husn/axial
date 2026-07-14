@@ -1073,49 +1073,62 @@ def _write_chunk_sections(
     skip_records: list[dict[str, Any]] = []
 
     all_records: list[dict[str, Any]] = []
-    with out_path.open("w", encoding="utf-8") as handle:
-        for section in sections:
-            body_lines, apparatus_drops = _routed_section_body(section)
-            skip_records.extend(apparatus_drops)
-            if not body_lines:
-                continue  # no chunkable prose in this section -- zero records
+    out_lines: list[str] = []
+    for section in sections:
+        body_lines, apparatus_drops = _routed_section_body(section)
+        skip_records.extend(apparatus_drops)
+        if not body_lines:
+            continue  # no chunkable prose in this section -- zero records
 
-            section_label = section.get("text", "")
-            section_order = section.get("order", "")
-            body_text = join_body(body_lines)
+        section_label = section.get("text", "")
+        section_order = section.get("order", "")
+        body_text = join_body(body_lines)
 
-            skip_reason = _garbage_section_skip_reason(body_text)
-            if skip_reason is not None:
-                print(f"chunk: skipping section {section_label!r}: {skip_reason}", file=sys.stderr)
-                skip_records.append(
-                    {
-                        "section": section_label,
-                        "section_order": section_order,
-                        "reason": skip_reason,
-                    }
-                )
-                continue
-
-            chunk_texts = split_section(body_text)
-            section_records = build_chunk_records(
-                source_id,
-                section_order,
-                section_label,
-                [{"text": chunk_text} for chunk_text in chunk_texts],
+        skip_reason = _garbage_section_skip_reason(body_text)
+        if skip_reason is not None:
+            print(f"chunk: skipping section {section_label!r}: {skip_reason}", file=sys.stderr)
+            skip_records.append(
+                {
+                    "section": section_label,
+                    "section_order": section_order,
+                    "reason": skip_reason,
+                }
             )
-            for record in section_records:
-                handle.write(json.dumps(record) + "\n")
-            handle.flush()
-            if on_section_done is not None:
-                on_section_done()
-            all_records.extend(section_records)
+            continue
+
+        chunk_texts = split_section(body_text)
+        section_records = build_chunk_records(
+            source_id,
+            section_order,
+            section_label,
+            [{"text": chunk_text} for chunk_text in chunk_texts],
+        )
+        for record in section_records:
+            out_lines.append(json.dumps(record) + "\n")
+        if on_section_done is not None:
+            on_section_done()
+        all_records.extend(section_records)
 
     if on_section_done is not None:
         on_section_done()
+
+    # Atomic (issue #185): accumulate the full artifact in memory, write it
+    # to a sibling temp file, then `os.replace` it over `out_path` ONCE --
+    # same convention as `_CachingEmbedder.flush`. `open("w")` on `out_path`
+    # directly would truncate the prior complete artifact at the start of
+    # the run, so a hard kill mid-run left a torn file already in place of
+    # the good one; `os.replace` is a single filesystem rename, so a reader
+    # always sees either the complete prior file or the complete new one.
+    out_tmp_path = out_path.with_name(out_path.name + ".tmp")
+    out_tmp_path.write_text("".join(out_lines), encoding="utf-8")
+    os.replace(out_tmp_path, out_path)
+
     if skip_records:
-        with skips_path.open("w", encoding="utf-8") as handle:
-            for record in skip_records:
-                handle.write(json.dumps(record) + "\n")
+        skips_tmp_path = skips_path.with_name(skips_path.name + ".tmp")
+        skips_tmp_path.write_text(
+            "".join(json.dumps(record) + "\n" for record in skip_records), encoding="utf-8"
+        )
+        os.replace(skips_tmp_path, skips_path)
     elif skips_path.exists():
         # A rerun on the same source bytes with zero skips this time must
         # not leave a stale sidecar from an earlier run (idempotency).
