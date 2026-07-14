@@ -433,6 +433,51 @@ def test_run_chunk_embedding_oversized_section_is_split_never_dropped(monkeypatc
     assert all(len(r["text"]) <= CHUNK_MAX for r in records)
 
 
+def test_run_chunk_embedding_respects_chunk_min_via_the_default_band(monkeypatch, tmp_path):
+    """End-to-end MIN-side counterpart to the MAX-side test above: a section
+    built from many short, choppy sentences (prone to small breakpoint
+    groups) must still come out of `run_chunk_embedding` -- using the
+    module's own default `CHUNK_MIN`, not a test-local override -- with
+    every non-last record at or above `CHUNK_MIN` (the MIN-side band guard's
+    forward-merge doing its job end-to-end, not just at the `_enforce_min`
+    unit level)."""
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+    short_sentences = [
+        "Aid arrived.",
+        "Roads reopened.",
+        "Markets stirred.",
+        "Officials met.",
+        "Records were kept.",
+        "Water flowed again.",
+    ]
+    sentences = []
+    total = 0
+    i = 0
+    while total < CHUNK_MIN * 4:
+        s = short_sentences[i % len(short_sentences)]
+        sentences.append(s)
+        total += len(s) + 1
+        i += 1
+    text = " ".join(sentences)
+
+    tree = _tree_with_sections({"Overview": [text]})
+    _patch_tree(monkeypatch, tmp_path, tree)
+
+    records = run_chunk_embedding(
+        source, embedder=HashingEmbedder(), chunks_dir=tmp_path / "chunks"
+    )
+
+    assert len(records) >= 2, (
+        "expected multiple chunks so the MIN-side exception (last chunk only) is meaningful"
+    )
+    for record in records[:-1]:
+        assert len(record["text"]) >= CHUNK_MIN, (
+            f"expected every non-last record to meet CHUNK_MIN ({CHUNK_MIN}) via "
+            f"the default band, got {len(record['text'])} chars: {record!r}"
+        )
+
+
 def test_run_chunk_embedding_section_then_position_order(monkeypatch, tmp_path):
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")

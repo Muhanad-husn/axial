@@ -830,7 +830,18 @@ def _split_group_to_max(group: list[str], embedder: Embedder, chunk_max: int) ->
     split (`_hard_split_by_chars`). This guarantees no returned group's
     joined text ever exceeds `chunk_max`, with NO exception -- unlike the
     MIN side, this invariant is unconditional (PRD §7.7/§8 P0-4: "no record
-    exceeds max ... with NO exception")."""
+    exceeds max ... with NO exception").
+
+    Tie-break (bug found via an end-to-end MIN-side test, issue #151): when
+    several adjacent-sentence gaps tie for the max distance -- routine with
+    repetitive/cyclic prose, or any embedder coarse enough to produce exact
+    ties -- always taking the FIRST tied index degenerates into peeling off
+    one sentence at a time from the front on every recursive call, producing
+    many tiny fragments instead of a balanced split. Among tied maxima, pick
+    the one closest to the group's own midpoint instead, so a tie-heavy
+    group still bisects roughly in half each recursive step (an unambiguous
+    single maximum is unaffected -- this only changes behavior under a tie).
+    """
     if _group_char_len(group) <= chunk_max:
         return [group]
     if len(group) == 1:
@@ -838,7 +849,12 @@ def _split_group_to_max(group: list[str], embedder: Embedder, chunk_max: int) ->
 
     vectors = embedder.encode(group)
     distances = consecutive_distances(vectors)
-    split_at = max(range(len(distances)), key=lambda index: distances[index])
+    best = max(distances)
+    midpoint = (len(distances) - 1) / 2
+    split_at = min(
+        (index for index, distance in enumerate(distances) if distance == best),
+        key=lambda index: abs(index - midpoint),
+    )
     left, right = group[: split_at + 1], group[split_at + 1 :]
     return _split_group_to_max(left, embedder, chunk_max) + _split_group_to_max(
         right, embedder, chunk_max
