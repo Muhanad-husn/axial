@@ -5,7 +5,7 @@
 - **GitHub issue:** #165
 - **Branch:** feat/chunk-redesign/06-recursive-mechanism
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ⏳ PR open — [#181](https://github.com/Muhanad-husn/axial/pull/181)
 - **Walking skeleton?** no — adds a second mechanism behind an existing seam; the
   stage, artifact, and `examine` surface already exist (slices 01/03)
 
