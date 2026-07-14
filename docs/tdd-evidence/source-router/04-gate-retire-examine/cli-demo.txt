@@ -1,0 +1,31 @@
+=== Boundary invocation: source-router slice-04 integration tests ===
+These drive the REAL run_tag / run_xref / examine_chunks code paths over on-disk
+chunk artifacts + a real router skip sidecar (stub LLM, no network).
+
+$ uv run pytest tests/test_source_router.py -v
+============================= test session starts =============================
+platform win32 -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0 -- D:\axial\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 4 items
+
+tests/test_source_router.py::test_source_router_classifies_blocks_by_label_before_chunking PASSED [ 25%]
+tests/test_source_router.py::test_tag_pass_no_longer_pre_skips_large_legit_chunk_but_backstop_still_catches_garble PASSED [ 50%]
+tests/test_source_router.py::test_xref_pass_no_longer_pre_skips_large_legit_chunk_but_backstop_still_catches_garble PASSED [ 75%]
+tests/test_source_router.py::test_chunk_examine_reports_router_apparatus_drops_as_single_source_of_skip_truth PASSED [100%]
+
+============================== 4 passed in 3.59s ==============================
+
+=== CLI surface: axial chunk examine (reads the router-owned skip record; zero LLM) ===
+$ uv run axial chunk examine --help
+usage: axial chunk [-h] source_path
+
+positional arguments:
+  source_path  path to a .pdf or .docx source file, OR the literal value
+               'examine' to report chunk-quality stats over data/chunks/
+               instead of running the chunk stage
+
+options:
+  -h, --help   show this help message and exit

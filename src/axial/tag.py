@@ -84,7 +84,7 @@ from axial.llm import (
     get_client,
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
-from axial.nonprose_guard import non_prose_skip_reason
+from axial.nonprose_guard import garble_only_skip_reason
 from axial.schema import Axis, Schema, SchemaError, load_schema
 
 DEFAULT_DOMAIN_DIR = Path("config/domains/syria")
@@ -1163,14 +1163,17 @@ def run_tag(
             tagged_records.append(checkpointed)
             continue
 
-        # Input guard (issue #132, mirroring xref's #111 / chunk's #118
-        # guard, now via the shared `axial.nonprose_guard` helper): skip a
-        # chunk whose own text is non-prose back-matter (a huge OCR'd
-        # index/bibliography) -- no LLM call, no tagged record, no
-        # checkpoint write for this chunk. The skip is a deterministic
-        # function of the chunk's text, so it re-applies on every resume
-        # without ever reaching the model.
-        skip_reason = non_prose_skip_reason(chunk_record["text"])
+        # Input guard (issue #169, source-router slice 04: demoted from
+        # primary gate to garble-only backstop). The chunk artifact this
+        # pass reads is now prose-only and size-bounded by the router +
+        # chunk band (source-router slices 02-03), so a large chunk here is
+        # legitimate prose, not back-matter -- size must never skip it. Only
+        # the non-alpha arm remains, catching prose genuinely garbled enough
+        # to have slipped type classification: no LLM call, no tagged
+        # record, no checkpoint write for this chunk. The skip is a
+        # deterministic function of the chunk's text, so it re-applies on
+        # every resume without ever reaching the model.
+        skip_reason = garble_only_skip_reason(chunk_record["text"])
         if skip_reason is not None:
             print(
                 f"tag: skipping chunk {chunk_record['chunk_id']}: {skip_reason}",
