@@ -323,7 +323,12 @@ def _chunk_examine() -> int:
     producer uses (`_default_chunks_dir`) so it honors `config/pipeline.
     yaml`'s `paths.chunks_dir` when declared."""
     chunks_dir = _default_chunks_dir()
-    stats = examine_chunks(chunks_dir)
+    try:
+        stats = examine_chunks(chunks_dir)
+    except ChunkError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
     print(format_examine_report(stats))
     return 0
 

@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from axial.chunk import (
+    ChunkArtifactCorruptError,
     HashingEmbedder,
     ExamineStats,
     chunks_skips_sidecar_path,
@@ -177,6 +180,64 @@ def test_examine_chunks_excludes_skips_sidecar_from_counts(tmp_path):
 
     assert stats.total == 1
     assert stats.per_source == {"src-a": 1}
+
+
+def test_examine_chunks_malformed_main_jsonl_line_raises_named_error(tmp_path):
+    chunks_dir = tmp_path / "data" / "chunks"
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+    path = chunks_dir / "src-a.jsonl"
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps(_record("a1", "Intro", "1", "x" * 1200)) + "\n")
+        handle.write("{not valid json\n")
+
+    with pytest.raises(ChunkArtifactCorruptError) as excinfo:
+        examine_chunks(chunks_dir)
+
+    assert excinfo.value.path == path
+    assert excinfo.value.line_no == 2
+    assert str(path) in str(excinfo.value)
+    assert "line 2" in str(excinfo.value)
+
+
+def test_examine_chunks_malformed_skips_sidecar_line_raises_named_error(tmp_path):
+    chunks_dir = tmp_path / "data" / "chunks"
+    _write_jsonl(chunks_dir / "src-a.jsonl", [_record("a1", "Intro", "1", "x" * 1200)])
+    sidecar_path = chunks_dir / "src-a.skips.jsonl"
+    with sidecar_path.open("w", encoding="utf-8") as handle:
+        handle.write("not json at all\n")
+
+    with pytest.raises(ChunkArtifactCorruptError) as excinfo:
+        examine_chunks(chunks_dir)
+
+    assert excinfo.value.path == sidecar_path
+    assert excinfo.value.line_no == 1
+    assert str(sidecar_path) in str(excinfo.value)
+
+
+def test_chunk_examine_cli_reports_clean_error_on_corrupt_artifact(capsys):
+    """Mirrors `_chunk`/`_envelope`'s own convention: a domain `ChunkError`
+    is caught at the CLI boundary and rendered as a clean `error: ...`
+    line, never a raw traceback. Writes into `axial.chunk.CHUNKS_DIR`
+    itself (already redirected to a fresh per-test temp dir by this
+    package's autouse `_isolate_checkpoint_dirs` fixture, see conftest.py)
+    -- the same seam `_default_chunks_dir`/`_chunk_examine` resolve
+    through, so no cwd juggling is needed here."""
+    import axial.chunk as chunk_mod
+
+    chunks_dir = chunk_mod.CHUNKS_DIR
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+    with (chunks_dir / "src-a.jsonl").open("w", encoding="utf-8") as handle:
+        handle.write("{broken\n")
+
+    from axial.cli import main
+
+    exit_code = main(["chunk", "examine"])
+
+    assert exit_code != 0
+    err = capsys.readouterr().err
+    assert err.startswith("error: ")
+    assert "src-a.jsonl" in err
+    assert "line 1" in err
 
 
 def test_examine_chunks_size_distribution(tmp_path):

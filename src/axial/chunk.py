@@ -232,6 +232,24 @@ class ChunkCheckpointCorruptError(ChunkError):
         )
 
 
+class ChunkArtifactCorruptError(ChunkError):
+    """Raised by `examine_chunks` (issue #153) when a line of a chunk
+    artifact -- the main `<source_id>.jsonl` or its `<source_id>.skips.jsonl`
+    sidecar -- is not valid JSON. Modeled on `ChunkCheckpointCorruptError`,
+    but unconditional (examine is a diagnostic read, not a resumable
+    checkpoint, so there is no "torn final line" healing case to special-case
+    here): any malformed line raises loudly, carrying the offending file's
+    path and its 1-indexed line number so the operator can go fix it."""
+
+    def __init__(self, path: Path, line_no: int, cause: json.JSONDecodeError):
+        self.path = path
+        self.line_no = line_no
+        self.cause = cause
+        super().__init__(
+            f"corrupt chunk artifact {path}: line {line_no} is not valid JSON: {cause}"
+        )
+
+
 _SLUG_MAX_LEN = 80
 
 
@@ -1119,7 +1137,12 @@ def examine_chunks(
     sections skipped as garbage with their reasons, and a chunk-text
     sample. Pure read: never opens any chunks-dir file for writing.
     Returns all-zero/empty stats when `chunks_dir` has no chunk artifacts
-    (including when it does not exist at all)."""
+    (including when it does not exist at all).
+
+    Raises `ChunkArtifactCorruptError` if any line of a main `.jsonl`
+    artifact or a `.skips.jsonl` sidecar is not valid JSON -- examine is a
+    diagnostic tool, so corruption is surfaced loudly rather than silently
+    skipped (mirroring `load_chunk_checkpoint`'s non-final-line behavior)."""
     per_source: dict[str, int] = {}
     sizes: list[int] = []
     above_max = 0
@@ -1139,11 +1162,14 @@ def examine_chunks(
         source_id = path.stem
         count = 0
         with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
+            for line_no, line in enumerate(handle, start=1):
                 line = line.strip()
                 if not line:
                     continue
-                record = json.loads(line)
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ChunkArtifactCorruptError(path, line_no, exc) from exc
                 count += 1
                 text = record.get("text", "")
                 size = len(text)
@@ -1169,11 +1195,14 @@ def examine_chunks(
         skips_path = chunks_skips_sidecar_path(source_id, chunks_dir)
         if skips_path.is_file():
             with skips_path.open("r", encoding="utf-8") as handle:
-                for line in handle:
+                for line_no, line in enumerate(handle, start=1):
                     line = line.strip()
                     if not line:
                         continue
-                    skip_record = json.loads(line)
+                    try:
+                        skip_record = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        raise ChunkArtifactCorruptError(skips_path, line_no, exc) from exc
                     skips.append(
                         ExamineSkip(
                             source_id=source_id,
