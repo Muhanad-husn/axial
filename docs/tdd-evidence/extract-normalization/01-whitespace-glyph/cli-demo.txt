@@ -1,0 +1,9 @@
+BEFORE 1.1: 'the exam\xadple  region  ¯  of  the  Alawı  /asper  H4242  community'
+AFTER  1.1: 'the example region of the Alawi ʿ community'
+
+BEFORE 1.2: 'choose and/or ; see /reliefweb and page /p111 ; price · café ∑'
+AFTER  1.2: 'choose and/or; see /reliefweb and page /p111; price · café ∑'
+
+shape/label/type/order preserved on every node: True
+clean artifact caption unchanged (out-of-scope middle-dot kept): True
+EXIT 0 - normalizer ran through the axial.extract boundary

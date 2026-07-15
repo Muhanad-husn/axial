@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
+import unicodedata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable
 
@@ -196,6 +198,132 @@ def _build_tree(
         current_section["children"].append(leaf_node(item, order))
 
     return root
+
+
+# --- Post-extract text normalization (PRD §7.4, issue #188 Slice A) --------
+#
+# A deterministic, model-free pass that repairs decoding defects in a block's
+# `text` before the tree is persisted. Organized as independent transforms,
+# each a no-op when its target defect is absent, so a clean-font source
+# passes through materially unchanged. Shared by both extraction paths
+# (docling's `normalize()` and the Unstructured `_normalize_unstructured()`
+# fallback) via `normalize_tree_text`, invoked once in `extract()` just
+# before `persist_tree`.
+
+_SOFT_HYPHEN = "­"
+
+# Curated allowlist (never a blanket `/word` strip -- §7.4 safety principle):
+# leaked glyph names mapped to their intended character.
+_GLYPH_NAME_MAP = {
+    "/asper": "ʿ",  # ayn
+    "/lenis": "ʾ",  # hamza
+}
+_GLYPH_NAME_PATTERN = re.compile(
+    "|".join(re.escape(name) + r"(?![\w-])" for name in _GLYPH_NAME_MAP), flags=re.IGNORECASE
+)
+# Font-internal glyph codes (e.g. `H1234`, `Q12`) that leak into text with no
+# recoverable meaning: dropped outright.
+_FONT_INTERNAL_CODE_PATTERN = re.compile(r"\bH\d{3,4}\b|\bQ\d{2}\b")
+
+_DOTLESS_I = "ı"  # ı
+
+_SPACE_BEFORE_PUNCT_PATTERN = re.compile(r"[ \t]+([,.;:!?])")
+_WHITESPACE_RUN_PATTERN = re.compile(r"\s+")
+
+# Private-Use-Area offset glyphs (§7.4): a font leaks a glyph at
+# `U+F700 + real_codepoint`; recoverable when the offset lands on a usable
+# printable character, dropped otherwise.
+_PUA_OFFSET_BASE = 0xF700
+_PUA_OFFSET_RANGE = range(0xF700, 0xF900)
+
+
+def _strip_soft_hyphens(text: str) -> str:
+    """Tier 1: strip soft-hyphens (U+00AD). No-op when absent."""
+    return text.replace(_SOFT_HYPHEN, "")
+
+
+def _remove_detached_sk_marks(text: str) -> str:
+    """Tier 2: drop detached combining marks (Unicode category Sk -- a
+    macron, acute, diaeresis, or cedilla left stranded by decoding, with
+    nothing adjacent to reattach to). No-op when absent."""
+    if not any(unicodedata.category(ch) == "Sk" for ch in text):
+        return text
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Sk")
+
+
+def _decode_pua_offset_glyphs(text: str) -> str:
+    """Tier 2: decode recoverable Private-Use-Area offset glyphs via
+    `chr(c - 0xF700)`; drop unrecoverable ones. No-op when absent."""
+    if not any(ord(ch) in _PUA_OFFSET_RANGE for ch in text):
+        return text
+    out = []
+    for ch in text:
+        code = ord(ch)
+        if code not in _PUA_OFFSET_RANGE:
+            out.append(ch)
+            continue
+        candidate = chr(code - _PUA_OFFSET_BASE)
+        if candidate.isprintable():
+            out.append(candidate)
+        # else: unrecoverable -- drop the glyph entirely.
+    return "".join(out)
+
+
+def _repair_glyph_names(text: str) -> str:
+    """Tier 2: curated allowlist of leaked glyph names (`/asper` -> ayn,
+    `/lenis` -> hamza) and font-internal codes (`H####`/`Q##`, dropped).
+    Matches ONLY these specific curated names/patterns -- never a blanket
+    `/word` strip -- so legitimate slash-words (`and/or`,
+    `threat/opportunity`, `/reliefweb`, `/p111`) survive verbatim."""
+    text = _GLYPH_NAME_PATTERN.sub(lambda m: _GLYPH_NAME_MAP[m.group(0).lower()], text)
+    text = _FONT_INTERNAL_CODE_PATTERN.sub("", text)
+    return text
+
+
+def _normalize_dotless_i(text: str) -> str:
+    """Tier 2: normalize dotless-i (U+0131) to ASCII 'i'. No-op when absent."""
+    return text.replace(_DOTLESS_I, "i")
+
+
+def _collapse_whitespace(text: str) -> str:
+    """Tier 1: collapse runs of whitespace to a single space and remove
+    space-before-punctuation. Run last so it also cleans up any residual
+    double-space left behind by a Tier 2 drop (e.g. a removed font-internal
+    code). No-op when the text is already clean."""
+    text = _WHITESPACE_RUN_PATTERN.sub(" ", text)
+    text = _SPACE_BEFORE_PUNCT_PATTERN.sub(r"\1", text)
+    return text
+
+
+def normalize_text(text: str) -> str:
+    """Compose the Tier 1 (whitespace) + Tier 2 (glyph) transforms into a
+    single normalizer over one block's `text`. Each transform is
+    independent and a no-op when its target defect is absent, so a
+    clean-font string passes through materially unchanged (§7.4)."""
+    text = _strip_soft_hyphens(text)
+    text = _decode_pua_offset_glyphs(text)
+    text = _remove_detached_sk_marks(text)
+    text = _repair_glyph_names(text)
+    text = _normalize_dotless_i(text)
+    text = _collapse_whitespace(text)
+    return text
+
+
+def normalize_tree_text(tree: dict) -> dict:
+    """Walk a `_build_tree`-shaped tree dict, normalizing every node's
+    `text` value in place (§7.4 P0-2b). Every other field (`type`, `order`,
+    `label`, the `children` nesting) is preserved exactly -- only `text` is
+    eligible to change. Pure function: no I/O, no docling/Unstructured
+    dependency, so it's directly unit-testable against synthetic trees."""
+
+    def _walk(node: dict) -> None:
+        if "text" in node:
+            node["text"] = normalize_text(node["text"])
+        for child in node.get("children", []):
+            _walk(child)
+
+    _walk(tree)
+    return tree
 
 
 def _build_converter() -> DocumentConverter:
@@ -384,18 +512,20 @@ def extract(path: str | Path) -> dict:
     try:
         document = _convert_with_seam(source.path)
     except Exception as exc:  # docling can raise a variety of internal errors
-        tree = _fallback(source.path, f"docling raised an exception: {exc}")
+        tree = normalize_tree_text(_fallback(source.path, f"docling raised an exception: {exc}"))
         if not forced:
             persist_tree(tree, out_path)
         return tree
 
     if is_degenerate(document):
-        tree = _fallback(source.path, "docling returned degenerate (empty/structureless) output")
+        tree = normalize_tree_text(
+            _fallback(source.path, "docling returned degenerate (empty/structureless) output")
+        )
         if not forced:
             persist_tree(tree, out_path)
         return tree
 
-    tree = normalize(document)
+    tree = normalize_tree_text(normalize(document))
     if not forced:
         persist_tree(tree, out_path)
     return tree
