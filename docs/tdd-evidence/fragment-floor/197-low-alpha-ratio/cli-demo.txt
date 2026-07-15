@@ -1,0 +1,39 @@
+=== BEFORE (post-#193 corpus: zero-alpha gone, low-alpha crumbs remain) ===
+    chunks with 0 < alpha-ratio < 0.45: 10
+      ratio=0.33 | 'Berman 1996: 78 ).'
+      ratio=0.12 | '∗ p < 0.'
+      ratio=0.08 | '10; ∗∗ p < 0.'
+      ratio=0.07 | '05; ∗∗∗ p < 0.'
+      ratio=0.12 | '∗ p < 0.'
+      ratio=0.08 | '10; ∗∗ p < 0.'
+
+=== Re-chunk all 6 sources with the #197 floor (cached trees, no docling) ===
+chunk: wrote 757 record(s) for batatu-syrias-peasantry.pdf
+chunk: wrote 771 record(s) for hall-schroeder-anatomy-of-power.pdf
+chunk: wrote 1209 record(s) for kalyvas-logic-of-violence-in-civil-war.pdf
+chunk: wrote 897 record(s) for mann-sources-of-social-power-v4.pdf
+chunk: wrote 566 record(s) for tilly-from-mobilization-to-revolution.pdf
+chunk: wrote 419 record(s) for vignal-war-torn.pdf
+
+=== AFTER (same corpus, re-chunked with alpha-ratio < 0.45 floor) ===
+    chunks with 0 < alpha-ratio < 0.45: 0
+
+=== axial chunk examine — corpus totals ===
+chunk examine: 4619 total chunk(s) across 6 source(s)
+  batatu-syrias-peasantry-598624067df3: 757 chunk(s)
+  hall-schroeder-anatomy-of-power-449559bfe4dc: 771 chunk(s)
+  kalyvas-logic-of-violence-in-civil-war-0b5817b2642e: 1209 chunk(s)
+  mann-sources-of-social-power-v4-1b7e828e0199: 897 chunk(s)
+  tilly-from-mobilization-to-revolution-f908c910464c: 566 chunk(s)
+  vignal-war-torn-c7005c2bf8ef: 419 chunk(s)
+
+size distribution (chars): min=13 max=3000 mean=1304.9 median=1279.0
+
+boundary sanity: 0 chunk(s) above max (CHUNK_MAX=3000), 820 chunk(s) below min (CHUNK_MIN=1000), 531 section(s) split into multiple chunks
+
+
+=== low-alpha fragment-floor skip records now recorded ===
+         7  fragment floor: blank-page notice
+        17  fragment floor: low alphabetic content
+
+DEMO_EXIT=0
