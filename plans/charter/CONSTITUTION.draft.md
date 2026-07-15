@@ -206,6 +206,41 @@ the way a red suite blocks a commit.
 - The precise (a)/(b)/(c) seam-marking representation in output (frontmatter? inline
   spans? a separate provenance block?).
 
+## 7A. Phase-B commitments surfaced (2026-07-15 country/scope chat)
+
+Recorded here so they reach `specs/CHARTER.md` (behavioural) and `specs/PRODUCT.md`
+§12 (parked-scope) in the next spec-mode pass — `specs/` is frozen, so this draft is
+the interim home. The spec-author distributes: behavioural commitments → this charter;
+architectural/scope notes → PRODUCT §12. All four are concrete Phase-B expressions of
+C2–C5 already stated above.
+
+1. **Case-as-anchor, not fence (retrieval).** A case named in a brief scopes the
+   *anchor*, never a hard filter. Retrieval runs the anchor case **and** a
+   mechanism-driven reach (`claim_type` / `theory_school` / semantic) across all cases,
+   then synthesis relates them. A hard per-polity filter would suppress the very
+   cross-case comparanda synthesis needs. *(Expresses C2/C4.)*
+
+2. **Surface unrequested, corpus-grounded analogues.** The tool proactively surfaces
+   relevant parallels the brief did not name (a Syria brief reaching an ex-Yugoslavia
+   analogue). This is the layer-(b) inference — the knowledge-production payoff over a
+   librarian. **Hard bound:** the analogue must be grounded in *ingested* chunks; C1
+   forbids reaching it from parametric memory, so comparative reach is only as wide as
+   ingested cross-case coverage. *(Expresses C2(b)/C4, bounded by C1.)*
+
+3. **Per-polity coverage map, disclosed.** The tool maintains and discloses its
+   per-polity corpus coverage, and uses it to bound/refuse ("Rwanda coverage is thin")
+   and to calibrate confidence. Depends on the many-valued polities-touched capture
+   decided in Phase A (#194). *(Feeds C3 and C5.)*
+
+4. **Canonical normalization at retrieval, not only at write.** The polity
+   alias/canonical map must apply at query time too, so aliases and historical names
+   co-retrieve with their canonical referent. *(Architectural note for PRODUCT §12 /
+   §11 step 7.)*
+
+Dependency: 1–4 assume the Phase-A polity-capture decisions in issue #194 (loose
+free-text, polity-not-country, many-valued mention facet). Retrieval and synthesis
+themselves stay out of scope until Phase B.
+
 ## 8. Handoff note to the spec-author
 
 This is a durable draft, not a ratified spec. Your pass: (1) confirm the charter sits
