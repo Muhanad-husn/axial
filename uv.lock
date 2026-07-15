@@ -102,6 +102,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "filelock" },
     { name = "pytest" },
     { name = "pytest-xdist" },
     { name = "ruff" },
@@ -122,6 +123,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "filelock", specifier = ">=3" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-xdist", specifier = ">=3" },
     { name = "ruff", specifier = ">=0.6" },
