@@ -475,11 +475,21 @@ def _garbage_section_skip_reason(
 
 _BLANK_PAGE_NOTICE_NORMALIZED = "this page intentionally left blank"
 
+# Low-alpha threshold (character counts, matching PRD §7.7/§7.8's "text
+# length"): a sensible STARTING POINT proven via `axial chunk examine`
+# (§7.8's own "framed like the size band's min/max, not a magic number") --
+# NOT a proven-final value, mirroring CHUNK_MIN/CHUNK_MAX above. The
+# measured corpus gap sits between junk crumbs (ratio <= 0.33) and genuine
+# short prose (ratio >= 0.60), so 0.45 sits mid-gap with roughly a 0.12
+# margin either side.
+LOW_ALPHA_RATIO_THRESHOLD = 0.45
+
 
 def _fragment_floor_reason(text: str) -> str | None:
-    """Post-split fragment floor (issue #193, PRD §7.8 "Post-split fragment
-    floor (#193)"): classify one emitted candidate chunk as unambiguous
-    non-content boilerplate, or `None` when it must be kept.
+    """Post-split fragment floor (issue #193, generalized in #197; PRD §7.8
+    "Post-split fragment floor (#193, generalized in #197)"): classify one
+    emitted candidate chunk as unambiguous non-content boilerplate, or
+    `None` when it must be kept.
 
     Runs AFTER the section splitter and the band guard, on individual
     emitted chunks (not at the section level, unlike
@@ -490,16 +500,23 @@ def _fragment_floor_reason(text: str) -> str | None:
     Drops exactly two unambiguous shapes, in order:
     - a **blank-page notice**: `text`, lowercased and whitespace-collapsed
       (`re.sub(r"\\s+", " ", text).strip().lower()`), equals
-      `"this page intentionally left blank"` exactly.
-    - a **no-alphabetic-content fragment**: `text` contains zero alphabetic
-      characters (`not any(c.isalpha() for c in text)`) -- only digits,
-      punctuation, whitespace, or symbols (e.g. `"6"`, `"200..."`, `"13)."`).
+      `"this page intentionally left blank"` exactly. Checked FIRST: a
+      blank-page notice is alpha-heavy (a high ratio), so it must be caught
+      here, before the ratio test below ever runs.
+    - a **low-alpha fragment**: `text`'s **alphabetic ratio** -- the count
+      of alphabetic characters (`str.isalpha()`, which also counts
+      non-ASCII letters -- correct and intended here) divided by the total
+      character count -- is below `LOW_ALPHA_RATIO_THRESHOLD` (currently
+      0.45). This generalizes #193's zero-alphabetic-content rule, which is
+      simply the ratio-0 special case of this same test (e.g. `"6"`,
+      `"200..."`, `"13)."` all still drop).
 
     Protection invariant (first-class, not a side effect, §7.8 "Genuine
-    short prose is protected"): any chunk containing an alphabetic word is
-    KEPT (`None`) -- length alone never triggers a drop. An empty string
-    also returns `None` (nothing to drop; the splitter never emits blank
-    pieces in practice, but this keeps the helper total and safe)."""
+    short prose is protected"): any chunk at or above the low-alpha
+    threshold is KEPT (`None`) -- length alone never triggers a drop. An
+    empty string also returns `None` (nothing to drop, and avoids a
+    division by zero; the splitter never emits blank pieces in practice,
+    but this keeps the helper total and safe)."""
     if not text:
         return None
 
@@ -507,8 +524,10 @@ def _fragment_floor_reason(text: str) -> str | None:
     if normalized == _BLANK_PAGE_NOTICE_NORMALIZED:
         return "fragment floor: blank-page notice"
 
-    if not any(c.isalpha() for c in text):
-        return "fragment floor: no alphabetic content"
+    alpha = sum(1 for c in text if c.isalpha())
+    ratio = alpha / len(text)
+    if ratio < LOW_ALPHA_RATIO_THRESHOLD:
+        return "fragment floor: low alphabetic content"
 
     return None
 
@@ -586,12 +605,13 @@ def _write_chunk_sections(
 
         chunk_texts = split_section(body_text)
 
-        # Post-split fragment floor (issue #193, PRD §7.8): drop any
-        # candidate that is unambiguous non-content boilerplate (a
-        # blank-page notice or a zero-alphabetic-content fragment) before it
-        # ever reaches the on-disk artifact, recording each drop to the
+        # Post-split fragment floor (issue #193, generalized in #197; PRD
+        # §7.8): drop any candidate that is unambiguous non-content
+        # boilerplate (a blank-page notice or a low-alpha fragment
+        # (alphabetic ratio below the 0.45 threshold)) before it ever
+        # reaches the on-disk artifact, recording each drop to the
         # router-owned skip sidecar. Length alone never triggers a drop --
-        # any chunk carrying an alphabetic word survives.
+        # any chunk with alphabetic ratio >= the threshold survives.
         kept_chunk_texts: list[str] = []
         for chunk_text in chunk_texts:
             fragment_floor_reason = _fragment_floor_reason(chunk_text)

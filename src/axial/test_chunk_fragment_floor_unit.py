@@ -1,16 +1,23 @@
-"""Inner unit tests for the post-split fragment floor (issue #193, PRD §7.8
-"Post-split fragment floor (#193)" / "Genuine short prose is protected
-(#193)"). Complements tests/chunk/test_chunk_fragment_floor.py (the LOCKED
-outer acceptance test) with unit-level coverage of the pure classification
-helper `_fragment_floor_reason` and its wiring into `_write_chunk_sections`
-via `run_chunk_recursive`.
+"""Inner unit tests for the post-split fragment floor (issue #193,
+generalized in #197; PRD §7.8 "Post-split fragment floor (#193, generalized
+in #197)" / "Genuine short prose is protected (#193)"). Complements
+tests/chunk/test_chunk_fragment_floor.py and
+tests/chunk/test_chunk_low_alpha_floor.py (the LOCKED outer acceptance
+tests) with unit-level coverage of the pure classification helper
+`_fragment_floor_reason` and its wiring into `_write_chunk_sections` via
+`run_chunk_recursive`.
 """
 
 from __future__ import annotations
 
 import json
 
-from axial.chunk import _fragment_floor_reason, chunks_skips_sidecar_path, run_chunk_recursive
+from axial.chunk import (
+    LOW_ALPHA_RATIO_THRESHOLD,
+    _fragment_floor_reason,
+    chunks_skips_sidecar_path,
+    run_chunk_recursive,
+)
 from axial.envelope import compute_source_id
 
 from .conftest import patch_tree, tree_with_sections
@@ -53,11 +60,67 @@ def test_fragment_floor_drops_ellipsized_number():
     assert _fragment_floor_reason("200...") is not None
 
 
+# --- `_fragment_floor_reason`: low-alpha-ratio band (0 < ratio < 0.45, #197) -
+
+
+def test_fragment_floor_drops_bare_citation_crumb_in_new_low_alpha_band():
+    """`"Berman 1996: 78 )."` has alphabetic ratio 6/18 ~= 0.33 -- nonzero,
+    so #193's old zero-alpha-only rule would NOT have caught it, but it
+    still sits below the 0.45 threshold and must drop under #197's
+    generalized ratio test."""
+    text = "Berman 1996: 78 )."
+    ratio = sum(1 for c in text if c.isalpha()) / len(text)
+    assert 0 < ratio < LOW_ALPHA_RATIO_THRESHOLD
+    reason = _fragment_floor_reason(text)
+    assert reason is not None
+    assert "alphabetic" in reason.lower()
+
+
+def test_fragment_floor_reason_distinct_from_apparatus_and_garble_families():
+    """The low-alpha reason must stay distinct from the pre-existing
+    apparatus (`"apparatus: ..."`) and garble-backstop (`"high non-alpha
+    ratio (...)"`) reason families (§7.8)."""
+    reason = _fragment_floor_reason("Berman 1996: 78 ).")
+    assert reason is not None
+    assert not reason.startswith("apparatus:")
+    assert not reason.startswith("high non-alpha ratio")
+
+
+def test_fragment_floor_boundary_just_below_threshold_drops():
+    """A ratio just under the threshold must still drop."""
+    # 8 alpha chars out of 18 total = 0.4444... < 0.45.
+    text = "abcdefgh__________"[:18]
+    ratio = sum(1 for c in text if c.isalpha()) / len(text)
+    assert ratio < LOW_ALPHA_RATIO_THRESHOLD
+    assert _fragment_floor_reason(text) is not None
+
+
+def test_fragment_floor_boundary_at_threshold_is_kept():
+    """A ratio exactly at the threshold must be kept -- the drop condition
+    is strictly `< LOW_ALPHA_RATIO_THRESHOLD`, never `<=`."""
+    # 9 alpha chars out of 20 total = 0.45 exactly.
+    text = "abcdefghi" + "_" * 11
+    assert len(text) == 20
+    ratio = sum(1 for c in text if c.isalpha()) / len(text)
+    assert ratio == LOW_ALPHA_RATIO_THRESHOLD
+    assert _fragment_floor_reason(text) is None
+
+
 # --- protection invariant: any alphabetic word survives, length never drops -
 
 
 def test_fragment_floor_keeps_genuine_short_sentence():
     assert _fragment_floor_reason("They consist essentially of three elements.") is None
+
+
+def test_fragment_floor_keeps_protected_sentence_above_low_alpha_threshold():
+    """`"Yet, the U.S."` has alphabetic ratio 8/13 ~= 0.6154 -- above the
+    0.45 threshold -- and must survive verbatim, however short (PRD §7.8's
+    own protected worked example)."""
+    text = "Yet, the U.S."
+    ratio = sum(1 for c in text if c.isalpha()) / len(text)
+    assert ratio >= LOW_ALPHA_RATIO_THRESHOLD
+    assert _fragment_floor_reason(text) is None
 
 
 def test_fragment_floor_keeps_single_short_word():
