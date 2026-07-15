@@ -127,58 +127,60 @@ autouse fixture in tests/conftest.py.
 
 ---------------------------------------------------------------------------
 Slice 02 (issue #28, plans/tag/02-scope-and-country.md) -- empirical_scope
-axis + the scope:country-case `country` extra field
+axis + the scope:country-case `polity` extra field (renamed from `country`
+per issue #194 slice 05, ratified in specs/PRODUCT.md Appendix C/G/H)
 ---------------------------------------------------------------------------
 
 Given an extracted fixture source with a stored envelope and chunks,
       AXIAL_LLM_PROVIDER=stub returning empirical_scope=scope:country-case
-      with country=Syria
+      with polity=Syria
 When  the user runs `axial tag <fixture>`
 Then  each record carries exactly one `empirical_scope` value drawn from
       the schema
-And   a `scope:country-case` record carries a non-empty `country` value
-And   a country-case with a missing or empty country exits non-zero with a
+And   a `scope:country-case` record carries a non-empty `polity` value
+And   a country-case with a missing or empty polity exits non-zero with a
       clear error
-And   a country-case whose country is outside the schema's country_list
-      still succeeds, carries that country verbatim, and is logged as a
+And   a country-case whose polity is outside the schema's polity_examples
+      still succeeds, carries that polity verbatim, and is logged as a
       candidate addition
 
 See specs/PRODUCT.md Appendix C (empirical-scope axis, single-cardinality,
-with `scope:country-case`'s `country` extra field, model-supplied free
+with `scope:country-case`'s `polity` extra field, model-supplied free
 text) and §7.1 ("a tag not in the schema is a hard error, not a silent
-pass" -- note `country` is explicitly carved out of this rule per the
+pass" -- note `polity` is explicitly carved out of this rule per the
 Contract change below; the rule still governs every other axis).
 
 Contract change (spec-drift #77, adjudicated 2026-07-10)
 -----------------------------------------------------------------------
-Issue #77: the placeholder Appendix G `country_list` (5 corpus countries)
-hard-errored real comparative sources (`country 'Chile'`, `country
-'Libya'`), aborting multi-hour tag passes. Founder adjudication (option b):
-v0 accepts any non-empty `country` string; a missing/empty value is still
-the hard error it always was, but an out-of-list value is no longer fatal
--- it is accepted, carried verbatim on the record, and logged (stderr) as
-a candidate addition. The controlled list returns as an enforced
-validation layer only at the post-eval schema revision (PRD §11 step 7).
-This changes the *validation* behavior only: the happy-path Given clause
-below (stub default response, country=Syria, in-list) is unaffected, since
-in-list behavior is unchanged.
+Issue #77: the placeholder Appendix G `country_list` (5 corpus countries,
+since renamed `polity_examples` per issue #194 slice 05) hard-errored real
+comparative sources (`country 'Chile'`, `country 'Libya'`), aborting
+multi-hour tag passes. Founder adjudication (option b): v0 accepts any
+non-empty `polity` string; a missing/empty value is still the hard error
+it always was, but an out-of-list value is no longer fatal -- it is
+accepted, carried verbatim on the record, and logged (stderr) as a
+candidate addition. The controlled list returns as an enforced validation
+layer only at the post-eval schema revision (PRD §11 step 7). This changes
+the *validation* behavior only: the happy-path Given clause below (stub
+default response, polity=Syria, in-list) is unaffected, since in-list
+behavior is unchanged.
 
 Seam decision 5 -- default stub tag response now carries empirical_scope +
-country, agreed with the implementer as the fixed seam for this slice
+polity, agreed with the implementer as the fixed seam for this slice
 -----------------------------------------------------------------------
 The Gherkin's Given clause locks the stub's DEFAULT tag-shaped canned
 response (see src/axial/llm.py's `_CANNED_TAG_RESPONSE`, dispatched by
 `pass_name=TAG_PASS_NAME` exactly as slice 01's seam decision 1 describes)
-to include `empirical_scope: "scope:country-case"` and `country: "Syria"`
+to include `empirical_scope: "scope:country-case"` and `polity: "Syria"`
 alongside slice 01's `role_in_argument: "role:claim"`. That means a plain
 `axial tag <fixture>` run under `AXIAL_LLM_PROVIDER=stub` -- no special env
 -- is sufficient to exercise the happy path end-to-end, mirroring how
 slice 01 needed no special env either. This test does not hardcode "Syria"
 into any assertion (see seam decision 6); it only relies on the Given
 clause's stub behavior to *produce* a country-case record to check against
-the schema-loaded country_list.
+the schema-loaded polity_examples.
 
-To drive the remaining hard-error scenario (missing country) and the
+To drive the remaining hard-error scenario (missing polity) and the
 out-of-list acceptance-and-logging scenario end to end via subprocess
 without a second stub client shape, the fixed seam agreed with the
 implementer is the env var `AXIAL_STUB_TAG_RESPONSE`: when set, the stub's
@@ -188,17 +190,17 @@ pipeline receives -- without this test asserting anything about how the
 override is implemented internally, only that the env var name and shape
 are honored end-to-end.
 
-Seam decision 6 -- empirical_scope vocabulary and country_list loaded at
-test time, never hardcoded (mirrors slice 01's seam decision 2)
+Seam decision 6 -- empirical_scope vocabulary and polity_examples loaded
+at test time, never hardcoded (mirrors slice 01's seam decision 2)
 -----------------------------------------------------------------------
 Exactly as slice 01 refused to hardcode `role_in_argument` vocabulary, this
 test never hardcodes `"scope:country-case"`, any other scope value, or any
-country name as a *correctness* assertion. It calls `load_schema` at test
+polity name as a *correctness* assertion. It calls `load_schema` at test
 time and asserts every record's `empirical_scope` is a member of
 `schema.axes["empirical_scope"].tag_ids`. For a country-case record it
-asserts `country` is a non-empty string (Contract change above:
-membership in `schema.country_list` is no longer a correctness
-requirement on the happy path, since the stub's default `country: "Syria"`
+asserts `polity` is a non-empty string (Contract change above:
+membership in `schema.polity_examples` is no longer a correctness
+requirement on the happy path, since the stub's default `polity: "Syria"`
 happens to be in-list but need not be). The one place a literal value is
 compared is in the hard-error/acceptance scenarios' fabricated
 `AXIAL_STUB_TAG_RESPONSE` payloads themselves (test *input*, not a
@@ -221,22 +223,22 @@ Seam decision 8 -- error/acceptance scenarios assert exit-code and
 message quality, not exact wording
 -----------------------------------------------------------------------
 Mirroring this file's existing `_assert_not_argparse_fallback` discipline,
-the missing-country hard-error test asserts: (a) a non-zero exit code, (b)
+the missing-polity hard-error test asserts: (a) a non-zero exit code, (b)
 the combined output carries none of `ARGPARSE_FALLBACK_MARKERS` (so a
 generic argparse failure -- e.g. a malformed CLI invocation -- cannot
-masquerade as the real country-validation error path), and (c) non-empty
+masquerade as the real polity-validation error path), and (c) non-empty
 stderr. No assertion pins the exact wording of the error message beyond
 that.
 
 Contract change (spec-drift #77, adjudicated 2026-07-10): the former
 out-of-list hard-error test is replaced by an acceptance-and-logging test.
 It asserts (a) exit code 0, (b) no `ARGPARSE_FALLBACK_MARKERS`, (c) the
-tagged record carries the out-of-list country verbatim, and (d) stderr
-names the offending value AND contains the substring `"country_list"` --
-this is deliberately specific (not just "non-empty stderr") because no
+tagged record carries the out-of-list polity verbatim, and (d) stderr
+names the offending value AND contains the substring `"polity_examples"`
+-- this is deliberately specific (not just "non-empty stderr") because no
 such diagnostic channel exists yet; this test fixes it as the seam the
-implementer builds to: a stderr line naming the out-of-list country and
-the string `country_list`, mirroring `axial.extract`'s existing
+implementer builds to: a stderr line naming the out-of-list polity and
+the string `polity_examples`, mirroring `axial.extract`'s existing
 `_log_fallback` convention (non-fatal diagnostics go to stderr, stdout
 stays pure JSON). No assertion pins the exact wording beyond those two
 substrings.
@@ -652,17 +654,17 @@ def test_tag_emits_one_schema_valid_versioned_record_per_chunk(clean_envelopes):
     )
 
 
-def test_tag_assigns_single_in_schema_empirical_scope_and_country(clean_envelopes):
-    """Slice 02 happy path (issue #28). Given the stub's default tag-pass
-    response carries empirical_scope=scope:country-case with country=Syria
-    (seam decision 5, the Gherkin's Given clause), a plain `axial tag
-    <fixture>` run must emit records that each carry exactly one
-    empirical_scope value drawn from the schema, and -- for a
-    scope:country-case record -- a non-empty country value (Contract
-    change, spec-drift #77: membership in the schema's country_list is no
-    longer required for correctness; see the dedicated out-of-list
-    acceptance test below for that boundary). Also checks slice 01's
-    role_in_argument is not regressed."""
+def test_tag_assigns_single_in_schema_empirical_scope_and_polity(clean_envelopes):
+    """Slice 02 happy path (issue #28), migrated to the polity contract
+    (issue #194 slice 05). Given the stub's default tag-pass response
+    carries empirical_scope=scope:country-case with polity=Syria (seam
+    decision 5, the Gherkin's Given clause), a plain `axial tag <fixture>`
+    run must emit records that each carry exactly one empirical_scope value
+    drawn from the schema, and -- for a scope:country-case record -- a
+    non-empty polity value (Contract change, spec-drift #77: membership in
+    the schema's polity_examples is no longer required for correctness; see
+    the dedicated out-of-list acceptance test below for that boundary).
+    Also checks slice 01's role_in_argument is not regressed."""
     _arrange_stored_envelope()
 
     # --- load the schema at test time: never hardcode the empirical_scope
@@ -710,24 +712,24 @@ def test_tag_assigns_single_in_schema_empirical_scope_and_country(clean_envelope
             f"loaded schema'), got {scope!r} (full record: {record!r})"
         )
 
-        # --- a scope:country-case record carries a non-empty country value
-        # (Contract change, spec-drift #77: this happy path's country
+        # --- a scope:country-case record carries a non-empty polity value
+        # (Contract change, spec-drift #77: this happy path's polity
         # happens to be in-list, but membership is no longer part of the
         # correctness contract -- see the dedicated out-of-list acceptance
         # test below) ---
         if scope == "scope:country-case":
             country_case_seen = True
-            country = record.get("country")
-            assert isinstance(country, str) and country.strip(), (
+            polity = record.get("polity")
+            assert isinstance(polity, str) and polity.strip(), (
                 f"expected a scope:country-case tagged record to carry a "
-                f"non-empty string 'country' (Appendix C/G, Gherkin: 'a "
-                f"scope:country-case record carries a non-empty country "
-                f"value'), got {country!r} (full record: {record!r})"
+                f"non-empty string 'polity' (Appendix C/G, Gherkin: 'a "
+                f"scope:country-case record carries a non-empty polity "
+                f"value'), got {polity!r} (full record: {record!r})"
             )
         else:
-            assert "country" not in record or not record.get("country"), (
+            assert "polity" not in record or not record.get("polity"), (
                 f"expected a non-country-case tagged record to carry no "
-                f"'country' field, got {record.get('country')!r} in a "
+                f"'polity' field, got {record.get('polity')!r} in a "
                 f"{scope!r}-scoped record (full record: {record!r})"
             )
 
@@ -744,7 +746,7 @@ def test_tag_assigns_single_in_schema_empirical_scope_and_country(clean_envelope
     # --- the Given clause locks the stub's default tag response to
     # scope:country-case/Syria, so at least one record must have exercised
     # the country-case branch above; otherwise this test would silently
-    # never check the country assertions at all ---
+    # never check the polity assertions at all ---
     assert country_case_seen, (
         f"expected at least one tagged record with empirical_scope == "
         f"'scope:country-case' given the stub's default tag-pass response "
@@ -752,10 +754,11 @@ def test_tag_assigns_single_in_schema_empirical_scope_and_country(clean_envelope
     )
 
 
-def test_tag_country_case_missing_country_errors_out(clean_envelopes):
-    """Slice 02 error path (issue #28). A scope:country-case tag response
-    with no `country` key at all is a hard error: `axial tag` must exit
-    non-zero with a clear error, not silently pass or crash generically."""
+def test_tag_country_case_missing_polity_errors_out(clean_envelopes):
+    """Slice 02 error path (issue #28), migrated to the polity contract
+    (issue #194 slice 05). A scope:country-case tag response with no
+    `polity` key at all is a hard error: `axial tag` must exit non-zero
+    with a clear error, not silently pass or crash generically."""
     _arrange_stored_envelope()
 
     malformed_response = json.dumps(
@@ -775,15 +778,15 @@ def test_tag_country_case_missing_country_errors_out(clean_envelopes):
     assert tag_result.returncode != 0, (
         f"expected a non-zero exit code for `axial tag` when the tag-pass "
         f"response declares empirical_scope=scope:country-case with no "
-        f"'country' key at all (PRD Appendix C/G, Gherkin: 'a country-case "
-        f"with a missing ... country exits non-zero with a clear error'), "
+        f"'polity' key at all (PRD Appendix C/G, Gherkin: 'a country-case "
+        f"with a missing ... polity exits non-zero with a clear error'), "
         f"got exit code 0\nstdout: {tag_result.stdout!r}\n"
         f"stderr: {tag_result.stderr!r}"
     )
 
     assert tag_result.stderr.strip(), (
         f"expected `axial tag` to report a clear, non-empty error on "
-        f"stderr for a missing-country country-case record (the CLI's "
+        f"stderr for a missing-polity country-case record (the CLI's "
         f"error convention is `error: ...`, per slice 01's hard-error "
         f"handling), got empty stderr\nstdout: {tag_result.stdout!r}\n"
         f"stderr: {tag_result.stderr!r}"
@@ -791,52 +794,55 @@ def test_tag_country_case_missing_country_errors_out(clean_envelopes):
     combined = tag_result.stdout + tag_result.stderr
     for marker in ARGPARSE_FALLBACK_MARKERS:
         assert marker not in combined, (
-            f"expected a real country-validation error path, not a generic "
+            f"expected a real polity-validation error path, not a generic "
             f"argparse fallback (found {marker!r}) masquerading as the "
-            f"missing-country error\nstdout: {tag_result.stdout!r}\n"
+            f"missing-polity error\nstdout: {tag_result.stdout!r}\n"
             f"stderr: {tag_result.stderr!r}"
         )
 
 
-# --- Contract change (spec-drift #77, adjudicated 2026-07-10) -------------
-# The placeholder Appendix G country_list (5 corpus countries) hard-errored
-# real comparative sources mid-run (`country 'Chile'`, `country 'Libya'`,
-# both confirmed casualties during gold-corpus ingestion). Founder
-# adjudication (issue #77, option b): v0 accepts any non-empty `country`
-# string; an out-of-list value is no longer fatal. It is:
+# --- Contract change (spec-drift #77, adjudicated 2026-07-10; field
+# renamed country->polity for issue #194 slice 05, ratified in
+# specs/PRODUCT.md Appendix C/G/H) -------------------------------------
+# The placeholder Appendix G polity_examples (5 corpus countries) hard-
+# errored real comparative sources mid-run (`country 'Chile'`, `country
+# 'Libya'`, both confirmed casualties during gold-corpus ingestion).
+# Founder adjudication (issue #77, option b): v0 accepts any non-empty
+# `polity` string; an out-of-list value is no longer fatal. It is:
 #   (a) accepted -- `axial tag` exits 0,
 #   (b) carried verbatim on the tagged record (never rejected, substituted,
 #       or silently coerced to an in-list value), and
 #   (c) logged as a candidate addition -- a non-fatal diagnostic on stderr
 #       (stdout stays pure JSON, mirroring `axial.extract`'s existing
-#       `_log_fallback` convention) naming both the offending country value
-#       and the string "country_list", so the log line is unambiguous
+#       `_log_fallback` convention) naming both the offending polity value
+#       and the string "polity_examples", so the log line is unambiguous
 #       about what the value fell outside of. This test fixes that stderr
 #       shape as the seam the implementer builds to; it does not pin exact
 #       wording beyond those two substrings.
-# A missing/empty country is UNCHANGED -- still the hard error asserted by
-# `test_tag_country_case_missing_country_errors_out` above.
+# A missing/empty polity is UNCHANGED -- still the hard error asserted by
+# `test_tag_country_case_missing_polity_errors_out` above.
 # ---------------------------------------------------------------------------
-def test_tag_country_case_out_of_list_country_is_accepted_and_logged(clean_envelopes):
-    """Slice 02, contract change (spec-drift #77, adjudicated 2026-07-10).
-    A scope:country-case tag response whose `country` value is not a member
-    of the schema's country_list is no longer a hard error: `axial tag`
-    must exit 0, carry that country verbatim on the tagged record, and log
+def test_tag_country_case_out_of_list_polity_is_accepted_and_logged(clean_envelopes):
+    """Slice 02, contract change (spec-drift #77, adjudicated 2026-07-10),
+    migrated to the polity contract (issue #194 slice 05). A
+    scope:country-case tag response whose `polity` value is not a member
+    of the schema's polity_examples is no longer a hard error: `axial tag`
+    must exit 0, carry that polity verbatim on the tagged record, and log
     it on stderr as a candidate addition (naming the value and the string
-    'country_list')."""
+    'polity_examples')."""
     _arrange_stored_envelope()
 
     offending_country = "Chile"
     schema = load_schema(str(DOMAIN_DIR))
-    assert offending_country not in schema.country_list, (
+    assert offending_country not in schema.polity_examples, (
         f"test setup invariant broken: {offending_country!r} must not "
-        f"already be a member of the schema's country_list "
-        f"{schema.country_list!r}, or this test would not actually be "
+        f"already be a member of the schema's polity_examples "
+        f"{schema.polity_examples!r}, or this test would not actually be "
         f"exercising the out-of-list acceptance path"
     )
 
     # --- arrange completeness: the tag loop validates every axis in the
-    # response, not just empirical_scope/country (§7.1) -- under the OLD
+    # response, not just empirical_scope/polity (§7.1) -- under the OLD
     # contract the out-of-list raise fired before the loop reached the
     # other axes, masking this gap; now that out-of-list is non-fatal, the
     # loop correctly continues and needs a complete, in-schema payload for
@@ -846,7 +852,7 @@ def test_tag_country_case_out_of_list_country_is_accepted_and_logged(clean_envel
         {
             "role_in_argument": "role:claim",
             "empirical_scope": "scope:country-case",
-            "country": offending_country,
+            "polity": offending_country,
             "field": {"primary": "state", "secondary": ["ideology"]},
             "claim_type": {"primary": "state-formation", "subtags": ["formation:bellicist"]},
             "theory_school": {"primary": "bellicist", "status": "candidate"},
@@ -862,9 +868,9 @@ def test_tag_country_case_out_of_list_country_is_accepted_and_logged(clean_envel
 
     assert tag_result.returncode == 0, (
         f"expected exit code 0 for `axial tag` when the tag-pass response "
-        f"declares country={offending_country!r}, which is not a member of "
-        f"the schema's country_list -- adjudicated spec-drift #77: an "
-        f"out-of-list country is accepted, never fatal, in v0 -- got exit "
+        f"declares polity={offending_country!r}, which is not a member of "
+        f"the schema's polity_examples -- adjudicated spec-drift #77: an "
+        f"out-of-list polity is accepted, never fatal, in v0 -- got exit "
         f"code {tag_result.returncode}\nstdout: {tag_result.stdout!r}\n"
         f"stderr: {tag_result.stderr!r}"
     )
@@ -881,26 +887,26 @@ def test_tag_country_case_out_of_list_country_is_accepted_and_logged(clean_envel
         f"this test's fabricated response, got none among: {tag_records!r}"
     )
     for record in country_case_records:
-        assert record.get("country") == offending_country, (
-            f"expected the out-of-list country {offending_country!r} to be "
+        assert record.get("polity") == offending_country, (
+            f"expected the out-of-list polity {offending_country!r} to be "
             f"carried verbatim on the tagged record (adjudicated spec-drift "
             f"#77: out-of-list values are accepted as-is, never rejected or "
-            f"substituted), got {record.get('country')!r} (full record: "
+            f"substituted), got {record.get('polity')!r} (full record: "
             f"{record!r})"
         )
 
     # --- the out-of-list value must still be surfaced as a non-fatal
     # diagnostic, on stderr (stdout stays pure JSON), naming both the
-    # offending country and the country_list it fell outside of ---
+    # offending polity and the polity_examples it fell outside of ---
     assert offending_country in tag_result.stderr, (
-        f"expected `axial tag`'s stderr to name the out-of-list country "
+        f"expected `axial tag`'s stderr to name the out-of-list polity "
         f"value {offending_country!r} as a candidate addition (adjudicated "
         f"spec-drift #77: out-of-list values are 'logged as candidate "
         f"additions'), got stderr: {tag_result.stderr!r}"
     )
-    assert "country_list" in tag_result.stderr, (
+    assert "polity_examples" in tag_result.stderr, (
         f"expected `axial tag`'s stderr diagnostic for the out-of-list "
-        f"country to name the schema's country_list (so the log line is "
+        f"polity to name the schema's polity_examples (so the log line is "
         f"unambiguous about what the value fell outside of), got stderr: "
         f"{tag_result.stderr!r}"
     )

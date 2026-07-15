@@ -61,7 +61,7 @@ Design choices (not locked by the outer test, made here):
     also prints a stderr warning naming the counts/a sample of ids so an
     operator running `axial eval` cannot silently miss a stale join
     (mirrors the codebase's anti-silent-failure stderr-warning convention,
-    e.g. `gold.log_country_not_in_list`, `extract._log_fallback`).
+    e.g. `gold.log_polity_not_in_list`, `extract._log_fallback`).
 """
 
 from __future__ import annotations

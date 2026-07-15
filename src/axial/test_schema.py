@@ -302,3 +302,103 @@ def test_tag_ids_raises_typed_error_for_claim_type_entry_missing_id(tmp_path):
         load_schema(tmp_path)
 
     assert exc_info.value.axis_name == "claim_type"
+
+
+# --- polity_examples (issue #194 slice 05, Appendix G rename from
+# country_list) ---------------------------------------------------------
+
+
+def test_schema_exposes_polity_examples_loaded_from_the_renamed_key(tmp_path):
+    _write_schema(
+        tmp_path,
+        """
+        version: 0.1
+        axes:
+          field:
+            applies_to: [prose]
+            cardinality: single
+            values: [state]
+        polity_examples: [Syria, Turkey, Lebanon]
+        """,
+    )
+
+    schema = load_schema(tmp_path)
+
+    assert schema.polity_examples == ["Syria", "Turkey", "Lebanon"]
+
+
+def test_schema_polity_examples_defaults_to_empty_list_when_absent(tmp_path):
+    _write_schema(
+        tmp_path,
+        """
+        version: 0.1
+        axes:
+          field:
+            applies_to: [prose]
+            cardinality: single
+            values: [state]
+        """,
+    )
+
+    schema = load_schema(tmp_path)
+
+    assert schema.polity_examples == []
+
+
+# --- "many" cardinality / free-text axis (issue #194 slice 05, Appendix
+# C/G's polities_touched: cardinality: many, values: free_text) ----------
+
+
+def test_many_cardinality_with_free_text_values_is_accepted(tmp_path):
+    _write_schema(
+        tmp_path,
+        """
+        version: 0.1
+        axes:
+          polities_touched:
+            applies_to: [prose]
+            cardinality: many
+            values: free_text
+        """,
+    )
+
+    schema = load_schema(tmp_path)
+
+    axis = schema.axes["polities_touched"]
+    assert axis.cardinality == "many"
+
+
+def test_many_cardinality_free_text_axis_has_zero_value_count(tmp_path):
+    _write_schema(
+        tmp_path,
+        """
+        version: 0.1
+        axes:
+          polities_touched:
+            applies_to: [prose]
+            cardinality: many
+            values: free_text
+        """,
+    )
+
+    schema = load_schema(tmp_path)
+
+    assert schema.axes["polities_touched"].value_count == 0
+
+
+def test_many_cardinality_free_text_axis_has_empty_tag_ids(tmp_path):
+    _write_schema(
+        tmp_path,
+        """
+        version: 0.1
+        axes:
+          polities_touched:
+            applies_to: [prose]
+            cardinality: many
+            values: free_text
+        """,
+    )
+
+    schema = load_schema(tmp_path)
+
+    assert schema.axes["polities_touched"].tag_ids == set()

@@ -100,7 +100,7 @@ RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
 # Slice 02 (issue #28) test/CI-only seam: when set to a non-empty value,
 # the stub/record clients' tag-pass response becomes this raw string
 # verbatim instead of the default canned tag response, letting a test drive
-# a malformed tag payload (e.g. a missing/out-of-list country) end-to-end
+# a malformed tag payload (e.g. a missing/out-of-list polity) end-to-end
 # via subprocess without inventing a second stub client shape. Read at call
 # time (not import time) so a test can set/unset it per-subprocess-env.
 # Never affects the chunk or envelope canned responses.
@@ -318,19 +318,21 @@ class StubLLMClient:
     # `pass_name=TAG_PASS_NAME`, never by prompt content). Every value must
     # be a real member of the Syria v0 domain schema's respective axis
     # (config/domains/syria/schema.yaml) -- role:claim in role_in_argument,
-    # scope:country-case in empirical_scope, Syria in country_list, and (issue
-    # #29 slice 03) state/ideology in field, state-formation (+ its own
-    # declared formation:bellicist subtag) in claim_type, bellicist in
+    # scope:country-case in empirical_scope, Syria in polity_examples, and
+    # (issue #29 slice 03) state/ideology in field, state-formation (+ its
+    # own declared formation:bellicist subtag) in claim_type, bellicist in
     # theory_school -- so the stub-driven end-to-end path validates cleanly
     # against the loaded schema (PRD §7.1) and exercises the scope:country-
-    # case/country branch by default (tests/test_tag.py slice 02 seam
+    # case/polity branch by default (tests/test_tag.py slice 02 seam
     # decision 5) plus every primary+secondary axis's nested shape (slice 03
-    # seam decision 9).
+    # seam decision 9). `polities_touched` (issue #194 slice 05) is a real,
+    # free-text many-valued list -- no vocabulary to validate against.
     _CANNED_TAG_RESPONSE = json.dumps(
         {
             "role_in_argument": "role:claim",
             "empirical_scope": "scope:country-case",
-            "country": "Syria",
+            "polity": "Syria",
+            "polities_touched": ["Syria"],
             "field": {"primary": "state", "secondary": ["ideology"]},
             "claim_type": {"primary": "state-formation", "subtags": ["formation:bellicist"]},
             "theory_school": {"primary": "bellicist", "status": "candidate"},

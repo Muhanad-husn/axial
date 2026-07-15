@@ -382,7 +382,7 @@ def _split_frontmatter(text: str) -> dict[str, Any] | None:
 def _scalar(value: Any, key: str) -> Any:
     """Extract the representative scalar of an axis frontmatter value: the
     tagger nests `field`/`claim_type`/`theory_school` as `{primary, ...}` and
-    `empirical_scope` as `{value, country?}`; `role_in_argument` is already a
+    `empirical_scope` as `{value, polity?}`; `role_in_argument` is already a
     flat scalar. A value that is already a scalar is returned as-is."""
     if isinstance(value, dict):
         return value.get(key)

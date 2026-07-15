@@ -112,7 +112,17 @@ axes:
       - scope:country-case
       - scope:sub-national
     extra_fields:
-      scope:country-case: { country: free_text }   # required non-empty; see Appendix C
+      scope:country-case: { polity: free_text }   # required non-empty; see Appendix C
+
+  # Appendix C ("Polities-touched facet") / Appendix G -- a separate,
+  # many-valued free-text facet, NOT part of empirical_scope: every polity
+  # the chunk substantively engages ("engaged, not name-dropped"). No
+  # controlled vocabulary -- `values: free_text` is a bare scalar, not a
+  # list/dict of tag entries.
+  polities_touched:
+    applies_to: [prose]
+    cardinality: many
+    values: free_text
 
   # Appendix E -- Theory-school axis [CANDIDATE]. Grouped controlled
   # vocabulary preserved by group (State / Violence / Ideology) since the
@@ -183,4 +193,4 @@ axes:
 # Appendix G -- known-corpus reference for logging/aliasing in v0, not a
 # validation gate; becomes enforced vocabulary at the post-eval schema
 # revision (PRD §11 step 7).
-country_list: [Syria, Turkey, Lebanon, Iraq, Rwanda]
+polity_examples: [Syria, Turkey, Lebanon, Iraq, Rwanda]
