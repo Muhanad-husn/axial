@@ -360,7 +360,7 @@ from pathlib import Path
 
 import pytest
 
-from axial.chunk import HashingEmbedder, read_chunks, run_chunk_embedding
+from axial.chunk import read_chunks, run_chunk_recursive
 from axial.envelope import compute_source_id
 from axial.schema import load_schema
 
@@ -529,8 +529,8 @@ def _arrange_stored_envelope() -> Path:
     Also writes the real, on-disk chunk artifact for this fixture (issue
     #154 slice 04: `axial tag` no longer computes chunks itself -- it reads
     `data/chunks/<source_id>.jsonl` via `axial.chunk.read_chunks`, PRD §7.7,
-    and fails clearly if that artifact is absent). `run_chunk_embedding`
-    (the stub/offline `HashingEmbedder`) writes it into the SAME cwd-relative
+    and fails clearly if that artifact is absent). `run_chunk_recursive`
+    (`run_chunk_recursive`) writes it into the SAME cwd-relative
     `data/chunks/` the `axial tag` subprocess below reads from (both resolve
     against REPO_ROOT, matching `_run_axial`'s own fixed `cwd=REPO_ROOT`)."""
     _place_tree_fixture(THESIS_PAPER_PDF, THESIS_PAPER_TREE_FIXTURE)
@@ -551,7 +551,7 @@ def _arrange_stored_envelope() -> Path:
         f"{sorted(new_files)}\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
 
-    run_chunk_embedding(THESIS_PAPER_PDF, embedder=HashingEmbedder())
+    run_chunk_recursive(THESIS_PAPER_PDF)
 
     return next(iter(new_files))
 
@@ -564,7 +564,7 @@ def test_tag_emits_one_schema_valid_versioned_record_per_chunk(clean_envelopes):
     # Issue #154 slice 04: `axial tag` no longer computes chunks itself --
     # it reads the same on-disk chunk artifact (`axial.chunk.read_chunks`,
     # PRD §7.7) that `_arrange_stored_envelope` above already wrote via
-    # `run_chunk_embedding`. Reading it back here (rather than recomputing)
+    # `run_chunk_recursive`. Reading it back here (rather than recomputing)
     # is the ground truth for "what `axial tag`'s own internal read_chunks
     # call will see" -- both resolve the same cwd-relative `data/chunks/`
     # path (REPO_ROOT). ---

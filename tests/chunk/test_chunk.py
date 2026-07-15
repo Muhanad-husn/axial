@@ -1,14 +1,13 @@
 """Outer acceptance test for issue #151, slice 01 of the chunk-redesign
-subproject (charter #148): the embedding-based chunk stage.
+subproject (charter #148): the chunk stage's disk-first artifact contract.
 
 Locked behavioral contract (DEC-1) -- do not edit once committed red.
 
 Given a fixture source whose persisted tree has (a) a normal prose section,
       (b) a legitimate section far larger than `max`, and (c) a high-non-alpha
       "garbage" section
-When  the user runs `axial chunk <fixture>` with a deterministic stub embedder
-Then  it exits 0 and writes data/chunks/<source_id>.jsonl with one JSON
-      object per line
+When  `axial.chunk.run_chunk_recursive` runs against the fixture
+Then  it writes data/chunks/<source_id>.jsonl with one JSON object per line
 And   every record's `text` length is <= `max`, and >= `min` except a
       section's last chunk or a whole section shorter than `min`
 And   each record carries chunk_id (`<source_id>_<section order>_<slug>_<NNN>`),
@@ -17,63 +16,75 @@ And   the oversized legitimate section is split into multiple in-band records
       (never dropped)
 And   the garbage section contributes no records and the skip + reason are
       logged
-And   no text-generating LLM call is made during the run (chunk critical path
-      is LLM-free)
+And   no text-generating LLM call is made during the run, and no embedder is
+      ever constructed (chunk critical path is LLM-free and, as of issue
+      #191, embedding-model-free)
 
-This REPLACES the old LLM-echo outer test (issue #17 slice 05): the P0-4
-rewrite (#150) retires that contract wholesale -- the chunk stage no longer
-reads a stored envelope, no longer calls a text-generating LLM at all, and no
-longer emits records to stdout. See specs/PRODUCT.md §5 stage 4 ("Semantic
-chunking (embedding-based, LLM-independent)."), §7.7 ("On-disk chunk
-artifact"), and §8 P0-4 for the source of truth. See
-plans/chunk-redesign/01-chunk-stage.md for the slice plan this test encodes.
+See specs/PRODUCT.md §5 stage 4, §7.7 ("On-disk chunk artifact"), and §8
+P0-4 for the source of truth. See plans/chunk-redesign/01-chunk-stage.md for
+the slice plan this test originally encoded.
 
-Seam decision 1 -- the embedder injection seam: `AXIAL_EMBEDDER=stub`
+Migration note (issue #191, spec-drift, founder-adjudicated)
 -----------------------------------------------------------------------
-Nothing in the repo today imports a sentence-embedding library (verified by
-grep); this slice adds one, plus an injectable embedder so tests never hit
-the network or download a real model. Mirroring the established
-`AXIAL_LLM_PROVIDER` env-var convention (src/axial/llm.py's
-`PROVIDER_ENV_VAR`), this test locks a new, analogous seam: the env var
-`AXIAL_EMBEDDER`, set to `"stub"` for a deterministic, offline, no-network
-embedder. This test does not dictate the stub's internal embedding function
-(e.g. a hash-based vector) -- only that selecting it makes `axial chunk` run
-end-to-end with zero network access and a reproducible split. The
-implementer must wire this env var; an unset/absent `AXIAL_EMBEDDER` is not
-exercised by this test and is left to the implementer's own default.
+This test originally drove the embedding-based `run_chunk_embedding`
+(issue #151) via the CLI subprocess, with `AXIAL_EMBEDDER=stub` selecting a
+deterministic, offline stub embedder. Issue #191 retires the embedding-based
+mechanism entirely: recursive/structural (`run_chunk_recursive`) is now the
+SOLE chunk mechanism, founder-adjudicated after a head-to-head over six real
+sources (~100x cheaper, quality a wash). This test is migrated to drive
+`run_chunk_recursive` directly instead -- the band guard, provenance-field
+contract, oversized-section-split guarantee, and garbage-section-skip
+guarantee this test locks are ALL mechanism-agnostic (unchanged by either
+rewrite, per `axial.chunk`'s own module docstring: both mechanisms share the
+identical §7.7 artifact shape and the identical per-section routing/writing
+orchestrator, `_write_chunk_sections` -- only the section-body join and the
+splitter itself ever differed).
 
-Seam decision 2 -- zero-LLM-call proof: reuse the `explode` poison provider
+Seam decision 1 -- calling `run_chunk_recursive` directly, not through the
+CLI/embedder seam
 -----------------------------------------------------------------------
-This slice's whole point (PRD §5 stage 4, "no text-generating LLM call in
-the chunk critical path") is directly testable with the SAME poison-provider
-trick tests/test_envelope.py already locked: this test runs `axial chunk`
-with `AXIAL_LLM_PROVIDER=explode` (src/axial/llm.py's `ExplodingLLMClient`,
-which raises only when `.complete()` is actually invoked -- selecting it is
-always safe). If the chunk critical path ever calls a text-generating LLM
-for any reason -- even indirectly, e.g. an accidental envelope read/rebuild,
-or an embedding call routed through the generative client by mistake -- the
-process crashes and this test's exit-code-0 assertion fails. A clean exit 0
-under `explode` is therefore a direct behavioral proof of "LLM-free chunk
-critical path", not an inference from the absence of a log line.
+As of this commit, `src/axial/cli.py`'s `chunk` subcommand still dispatches
+on `get_chunk_mechanism()` (unset -> the soon-to-be-retired embedding
+default), since the implementer has not yet removed that seam -- this test
+author commit only retires the TESTS, leaving `src/` untouched so the suite
+never lands red (see CLAUDE.md's behavior-first loop). Driving this test
+through the bare CLI today would therefore still exercise the embedding
+default, which -- with no `AXIAL_EMBEDDER=stub` override -- selects the
+REAL production embedding model (issue #159's `FastEmbedEmbedder`), pulling
+in a model download over the network on first `encode`: exactly the kind of
+slow, non-offline dependency an acceptance test must never have. Calling
+`axial.chunk.run_chunk_recursive` directly sidesteps that dispatch and any
+embedder selection entirely, proving the recursive mechanism's own
+band/provenance/skip contract regardless of what the CLI happens to be
+wired to today or after the implementer's own follow-up commit flips
+`_chunk` to call it unconditionally.
+
+Seam decision 2 -- zero-LLM / zero-embedding-model proof: poison the
+construction seams directly, in-process
+-----------------------------------------------------------------------
+`run_chunk_recursive` never imports or references an embedder or a
+text-generating LLM client at all (verified by reading `src/axial/chunk.py`)
+-- the "LLM-free, embedding-model-free" contract holds by construction for
+this mechanism. This test still poisons `axial.chunk.get_embedder` /
+`axial.chunk.HashingEmbedder.encode` / `axial.chunk.get_client` (all
+`raising=False`, since the embedder symbols are slated for removal by the
+implementer's own follow-up commit -- a monkeypatch on an absent attribute
+with `raising=False` degrades to a harmless no-op, never an error) as a
+defense-in-depth regression check while the embedding apparatus still
+exists in this module: if a future change ever accidentally reached one of
+these seams, this test fails loudly, right now.
 
 Seam decision 3 -- band constants imported from the implementation, not
 hardcoded here
 -----------------------------------------------------------------------
-The slice plan leaves `[min, max]`'s exact values to the implementer
-("sensible starting points, documented in the module, not asserted as
-final"). This test therefore imports the band's own constants from
-`axial.chunk` -- `CHUNK_MIN` and `CHUNK_MAX` (character counts, matching
-§7.7's "`text` length") -- and asserts the *property* (every record's `text`
-length falls in `[CHUNK_MIN, CHUNK_MAX]`, modulo the documented exceptions)
-rather than a magic number. The implementer must export both names at
-module level from `axial.chunk`. This import happens at module top level, so
-if the new chunk module (or its band constants) does not exist yet, this
-whole test file fails to collect -- a loud, correct-reason red, not a
-same-file typo: it means the seam this test depends on has not been built.
-The oversized "legitimate" fixture section is sized as `CHUNK_MAX * 5`
-characters of generated prose (see `_build_oversized_section_text` below),
-so it must require a split regardless of the exact `CHUNK_MAX` value the
-implementer picks.
+This test imports the band's own constants from `axial.chunk` -- `CHUNK_MIN`
+and `CHUNK_MAX` (character counts, matching §7.7's "`text` length") -- and
+asserts the *property* (every record's `text` length falls in
+`[CHUNK_MIN, CHUNK_MAX]`, modulo the documented exceptions) rather than a
+magic number. The oversized "legitimate" fixture section is sized as
+`CHUNK_MAX * 5` characters of generated prose (see
+`_build_oversized_section_text` below), so it must require a split
+regardless of the exact `CHUNK_MAX` value.
 
 Seam decision 4 -- the fixture tree, and why "size never triggers a skip"
 matters here
@@ -85,15 +96,16 @@ This test builds that tree by hand, matching the locked node shape
 `{"children": [...]}`, where each top-level section node carries `type`,
 `order`, `text` (the verbatim heading), and `children`; each child prose leaf
 carries `type == "prose"` and `text`), and pre-places it at
-`data/trees/<source_id>.json` for a small, real, committed fixture PDF (the
-existing `tests/fixtures/envelope/thesis_paper.pdf`, reused here purely as a
-byte source to compute a real `source_id` -- see
-`axial.envelope.compute_source_id` -- never for its own tree shape, which
-this test overwrites entirely). Because `axial.extract.extract`'s
-persisted-tree cache is checked BEFORE docling ever runs (verified by
-reading src/axial/extract.py), placing the fixture tree at the exact
-computed `source_id` path makes `axial chunk` consume this fabricated tree
-verbatim, offline, without a real docling conversion.
+`data/trees/<source_id>.json` (under an isolated `tmp_path` cwd -- seam
+decision 6) for a small, real, committed fixture PDF (the existing
+`tests/fixtures/envelope/thesis_paper.pdf`, reused here purely as a byte
+source to compute a real `source_id` -- see `axial.envelope.compute_source_id`
+-- never for its own tree shape, which this test overwrites entirely).
+Because `axial.extract.extract`'s persisted-tree cache is checked BEFORE
+docling ever runs (verified by reading src/axial/extract.py), placing the
+fixture tree at the exact computed `source_id` path makes `run_chunk_recursive`
+consume this fabricated tree verbatim, offline, without a real docling
+conversion.
 
 The fabricated tree carries exactly three top-level sections:
   1. "Overview" -- ordinary prose, unremarkable size.
@@ -101,11 +113,10 @@ The fabricated tree carries exactly three top-level sections:
      `CHUNK_MAX * 5` characters, deliberately far larger than any plausible
      `max`. PRD §8 P0-4 and §7.7 both state, without qualification, that
      size alone never triggers a skip for a legitimate section -- only a
-     deliberate split. This is the crux fact this slice exists to fix (the
-     old, retired LLM-echo mechanism could not safely handle a section this
-     large at all): this test asserts the oversized section yields MULTIPLE
-     records, none exceeding `CHUNK_MAX`, proving the split actually
-     happened rather than the section being silently dropped or truncated.
+     deliberate split. This test asserts the oversized section yields
+     MULTIPLE records, none exceeding `CHUNK_MAX`, proving the split
+     actually happened rather than the section being silently dropped or
+     truncated.
   3. "Numeric Annex" -- a high-non-alphabetic "garbage" section (a synthetic
      stand-in for an OCR'd index/page-number listing: near-entirely digits,
      commas, and semicolons, well under `_ALPHA-heavy` territory). Chosen to
@@ -119,69 +130,62 @@ The fabricated tree carries exactly three top-level sections:
      size -- keeping the "size never skips; only non-alpha ratio does"
      distinction unambiguous.
 
-Seam decision 5 -- cross-test isolation
+Seam decision 5 -- garbage-skip logging captured via `capsys`, not
+subprocess stdout/stderr
 -----------------------------------------------------------------------
-This test runs the CLI from the real repo root (`REPO_ROOT`, matching every
-other subprocess-based outer test in this suite) so `data/trees/` and
-`data/chunks/` resolve to the real, cwd-relative default paths
-(`axial.extract.TREES_DIR`, `axial.chunk.CHUNKS_DIR`) exactly as they would
-in production -- consistent with how the retired test_chunk.py and
-test_envelope.py already isolate `data/trees/`/`data/envelopes/`. Both
-`data/trees/` and `data/chunks/` are protected by the autouse
-`_isolate_persisted_tree_and_envelope_state` fixture in tests/conftest.py
-(extended by this same issue to snapshot/restore `*.jsonl` files too, not
-just `*.json`), so the fabricated tree this test places and the chunk
-artifact `axial chunk` writes are both restored/removed after the test,
-never leaking into a later test that computes the same `source_id`.
+`run_chunk_recursive` logs the garbage-section skip via a plain
+`print(..., file=sys.stderr)` call (`src/axial/chunk.py`'s
+`_write_chunk_sections`) regardless of whether it is invoked in-process or
+through a subprocess -- calling it directly and capturing output with
+pytest's `capsys` fixture observes the exact same log line a subprocess
+would have captured on its own stderr.
+
+Seam decision 6 -- isolation via an isolated tmp cwd, not the real repo root
+-----------------------------------------------------------------------
+Because this test poisons module-level attributes (`axial.chunk.get_embedder`
+etc.) via `monkeypatch`, it must run in-process (mirroring
+tests/chunk/test_chunk_recursive.py's identical reasoning): it runs from a
+freshly created, empty `tmp_path` cwd instead of shelling out to the CLI
+against the real repo root. `axial.extract.TREES_DIR` / `axial.chunk.
+CHUNKS_DIR` both resolve as plain, cwd-relative paths, so
+`monkeypatch.chdir(tmp_path)` makes `data/trees/` and `data/chunks/` resolve
+under the isolated tmp root, never touching the real repo's `data/` tree at
+all (no reliance on tests/conftest.py's autouse snapshot/restore fixture is
+needed here).
 
 Assumptions this test locks as the contract the implementer must meet
 (not dictated verbatim by the PRD/plan, but required to make this an
 executable test)
 -----------------------------------------------------------------------
-  - `axial chunk <source_path>` still takes a source *file* path (unchanged
-    CLI shape) but its behavior changes: exit 0 with NOTHING required on
-    stdout, and the JSONL artifact written to
-    `data/chunks/<source_id>.jsonl` is the actual contract surface (PRD
-    §7.7). This test does not assert stdout is empty (a summary/log line
-    there is fine) -- only that the on-disk artifact is correct.
   - `chunk_id`'s slug component is some lowercase, hyphen/alnum "slug" of
     the section heading -- this test does not lock the exact slugify
-    algorithm (already established elsewhere, e.g. `axial.chunk._slugify` in
-    the old module), only the overall `<source_id>_<order>_<slug>_<NNN>`
-    shape via a permissive regex, per §7.7's own template.
+    algorithm, only the overall `<source_id>_<order>_<slug>_<NNN>` shape via
+    a permissive regex, per §7.7's own template.
   - Within one section, `NNN` is a zero-padded, 1-based, strictly
-    increasing position counter (matching §7.7's own `chunk_id` template and
-    the pre-existing, unchanged convention in the old module) -- this test
-    asserts monotonic increase, not that positions start at a specific
-    literal value beyond 1.
+    increasing position counter (matching §7.7's own `chunk_id` template) --
+    this test asserts monotonic increase, not that positions start at a
+    specific literal value beyond 1.
   - The chunk artifact's records appear in section-then-position order
-    (PRD §7.7, "one line per chunk, in section-then-position order") --
-    this test asserts section 1's records all precede section 2's in the
-    file (section 3 contributes none).
+    (PRD §7.7) -- this test asserts section 1's records all precede section
+    2's in the file (section 3 contributes none).
   - The garbage-section skip is logged to stderr, naming the section's own
     heading -- this test asserts the heading text and a skip-indicating
-    word appear in stderr, without locking an exact log message string
-    (only the module's own docstring/implementation should own that
-    wording).
+    word appear in stderr, without locking an exact log message string.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
 
-from axial.chunk import CHUNK_MAX, CHUNK_MIN
+from axial.chunk import CHUNK_MAX, CHUNK_MIN, run_chunk_recursive
 from axial.envelope import compute_source_id
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "envelope"
-TREES_DIR = REPO_ROOT / "data" / "trees"
-CHUNKS_DIR = REPO_ROOT / "data" / "chunks"
 
 # Reused purely as a byte source to compute a real, deterministic source_id
 # (axial.envelope.compute_source_id hashes the file's own bytes) -- never for
@@ -189,9 +193,6 @@ CHUNKS_DIR = REPO_ROOT / "data" / "chunks"
 # tree built to this slice's own three-section spec (see module docstring,
 # seam decision 4).
 FIXTURE_PDF = FIXTURES_DIR / "thesis_paper.pdf"
-
-PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
-EMBEDDER_ENV_VAR = "AXIAL_EMBEDDER"
 
 NORMAL_SECTION_HEADING = "Overview"
 OVERSIZED_SECTION_HEADING = "Field Survey Findings"
@@ -202,15 +203,6 @@ KNOWN_SECTION_ORDERS = {
     OVERSIZED_SECTION_HEADING: "2",
     GARBAGE_SECTION_HEADING: "3",
 }
-
-# argparse's fallback error for an as-yet-nonexistent subcommand/argument --
-# any of these substrings in the combined output means the target
-# subcommand's real logic was never actually exercised (mirrors the retired
-# test_chunk.py's identical guard).
-ARGPARSE_FALLBACK_MARKERS = (
-    "invalid choice",
-    "unrecognized arguments",
-)
 
 # A handful of distinct filler sentences, cycled to build the oversized
 # "legitimate" section up to CHUNK_MAX * 5 characters (seam decision 3).
@@ -291,42 +283,18 @@ def _build_fixture_tree(oversized_text: str, garbage_text: str) -> dict:
     }
 
 
-def _place_fixture_tree(source_id: str) -> Path:
-    """Write the fabricated tree fixture to data/trees/<source_id>.json, so
-    `axial chunk` (via `axial.extract.extract`'s persisted-tree cache) reads
-    it verbatim instead of running docling."""
+def _place_fixture_tree(root: Path, source_id: str) -> Path:
+    """Write the fabricated tree fixture to <root>/data/trees/<source_id>.json,
+    so `run_chunk_recursive` (via `axial.extract.extract`'s persisted-tree
+    cache) reads it verbatim instead of running docling."""
     oversized_text = _build_oversized_section_text(CHUNK_MAX * 5)
     garbage_text = _build_garbage_section_text()
     tree = _build_fixture_tree(oversized_text, garbage_text)
 
-    tree_path = TREES_DIR / f"{source_id}.json"
+    tree_path = root / "data" / "trees" / f"{source_id}.json"
     tree_path.parent.mkdir(parents=True, exist_ok=True)
     tree_path.write_text(json.dumps(tree), encoding="utf-8")
     return tree_path
-
-
-def _run_chunk(source_path: Path) -> subprocess.CompletedProcess:
-    env = dict(os.environ)
-    env[PROVIDER_ENV_VAR] = "explode"  # poison: any text-gen LLM call crashes the run
-    env[EMBEDDER_ENV_VAR] = "stub"  # deterministic, offline, no network/model download
-    return subprocess.run(
-        ["uv", "run", "axial", "chunk", str(source_path)],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-
-
-def _assert_not_argparse_fallback(result: subprocess.CompletedProcess) -> None:
-    combined = result.stdout + result.stderr
-    for marker in ARGPARSE_FALLBACK_MARKERS:
-        assert marker not in combined, (
-            f"expected a real `chunk` behavior path, not an argparse fallback "
-            f"(found {marker!r}) -- this means the `chunk` subcommand's real "
-            f"logic was never reached:\nstdout: {result.stdout!r}\n"
-            f"stderr: {result.stderr!r}"
-        )
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -360,50 +328,64 @@ def _read_jsonl(path: Path) -> list[dict]:
 _SLUG_NNN_RE = re.compile(r"^(?P<slug>[a-z0-9-]+)_(?P<nnn>\d{3})$")
 
 
+def _poison_embedding_and_llm_seams(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Defense-in-depth poison of every construction/use seam an embedder or
+    LLM client could be reached through (module docstring, seam decision 2):
+    the FIRST one reached raises `AssertionError`. All three are set with
+    `raising=False` since the embedder symbols are slated for removal by a
+    follow-up (non-test-author) commit -- a monkeypatch on an absent
+    attribute with `raising=False` degrades to a harmless no-op rather than
+    an error."""
+
+    def _poison(*_args, **_kwargs):
+        raise AssertionError(
+            "the chunk critical path must construct NO embedder and make NO "
+            "embedding-model `encode` calls, and NO text-generating LLM "
+            "call -- this seam was reached during a `run_chunk_recursive` run"
+        )
+
+    monkeypatch.setattr("axial.chunk.get_embedder", _poison, raising=False)
+    monkeypatch.setattr("axial.chunk.HashingEmbedder.encode", _poison, raising=False)
+    monkeypatch.setattr("axial.chunk.get_client", _poison, raising=False)
+
+
 @pytest.fixture
-def chunk_fixture_source():
-    """Compute this fixture's source_id, pre-place the fabricated tree, and
-    clean up both the tree and the chunk artifact afterward (belt-and-braces
-    on top of tests/conftest.py's autouse directory-snapshot isolation)."""
+def chunk_fixture_source(tmp_path, monkeypatch):
+    """Compute this fixture's source_id, chdir into an isolated tmp root, and
+    pre-place the fabricated tree there (module docstring, seam decision 6)."""
+    monkeypatch.chdir(tmp_path)
     source_id = compute_source_id(FIXTURE_PDF)
-    tree_path = _place_fixture_tree(source_id)
-    chunk_path = CHUNKS_DIR / f"{source_id}.jsonl"
-
-    yield source_id, chunk_path
-
-    tree_path.unlink(missing_ok=True)
-    chunk_path.unlink(missing_ok=True)
+    _place_fixture_tree(tmp_path, source_id)
+    chunk_path = tmp_path / "data" / "chunks" / f"{source_id}.jsonl"
+    return source_id, chunk_path
 
 
 def test_chunk_writes_bounded_jsonl_artifact_with_provenance_and_no_llm_call(
-    chunk_fixture_source,
+    chunk_fixture_source, monkeypatch, capsys
 ):
     source_id, chunk_path = chunk_fixture_source
+    _poison_embedding_and_llm_seams(monkeypatch)
 
-    result = _run_chunk(FIXTURE_PDF)
-    _assert_not_argparse_fallback(result)
-
-    # --- exit 0, with AXIAL_LLM_PROVIDER=explode: proves the chunk critical
-    # path made zero text-generating LLM calls (seam decision 2). ---
-    assert result.returncode == 0, (
-        f"expected exit code 0 for `axial chunk` against a fixture tree with "
-        f"the stub embedder and the poison `explode` LLM provider configured "
-        f"-- a nonzero exit here most likely means either the chunk critical "
-        f"path called a text-generating LLM (PRD §5 stage 4, 'no "
-        f"text-generating LLM call in the chunk critical path') or the "
-        f"AXIAL_EMBEDDER=stub seam does not exist yet.\n"
-        f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
-    )
+    # --- run the recursive mechanism directly (module docstring, seam
+    # decision 1). With the embedder/LLM-client construction seams poisoned,
+    # a clean return here is a direct proof of "LLM-free, embedding-free
+    # chunk critical path" (module docstring, seam decision 2), not an
+    # inference from the absence of a log line. ---
+    records = run_chunk_recursive(FIXTURE_PDF)
+    captured = capsys.readouterr()
 
     # --- the on-disk artifact exists at the deterministic, source_id-keyed
     # path (PRD §7.7). ---
     assert chunk_path.exists(), (
-        f"expected `axial chunk` to write {chunk_path} (PRD §7.7, "
+        f"expected `run_chunk_recursive` to write {chunk_path} (PRD §7.7, "
         f"'<source_id>.jsonl'), but it does not exist.\n"
-        f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+        f"stdout: {captured.out!r}\nstderr: {captured.err!r}"
     )
 
-    records = _read_jsonl(chunk_path)
+    on_disk_records = _read_jsonl(chunk_path)
+    assert on_disk_records == records, (
+        "expected the returned records to match the on-disk artifact exactly"
+    )
     assert records, f"expected at least one chunk record in {chunk_path}, got none"
 
     # --- group records by section, preserving file order, and check that
@@ -503,7 +485,7 @@ def test_chunk_writes_bounded_jsonl_artifact_with_provenance_and_no_llm_call(
 
         # --- NNN is a zero-padded, 1-based, strictly increasing position
         # counter within the section (matches PRD §7.7's own chunk_id
-        # template). ---
+        # template and the pre-existing, unchanged convention). ---
         section_prefix = f"{source_id}_{section_order}_"
         nnns = [
             int(_SLUG_NNN_RE.match(r["chunk_id"][len(section_prefix) :]).group("nnn"))
@@ -545,15 +527,15 @@ def test_chunk_writes_bounded_jsonl_artifact_with_provenance_and_no_llm_call(
     # distinguish a deliberate skip from a silent loss'). Only the heading
     # + a skip-indicating word are locked here; the exact wording is left to
     # the implementer (see module docstring, "Assumptions"). ---
-    combined_output = (result.stdout + result.stderr).lower()
+    combined_output = (captured.out + captured.err).lower()
     assert GARBAGE_SECTION_HEADING.lower() in combined_output, (
         f"expected the garbage section's own heading ({GARBAGE_SECTION_HEADING!r}) "
         f"to appear in the run's logged output, naming which section was "
-        f"skipped and why (PRD §7.7).\nstdout: {result.stdout!r}\n"
-        f"stderr: {result.stderr!r}"
+        f"skipped and why (PRD §7.7).\nstdout: {captured.out!r}\n"
+        f"stderr: {captured.err!r}"
     )
     assert "skip" in combined_output, (
         f"expected the run's logged output to indicate a skip occurred for "
         f"the garbage section (PRD §7.7, 'the skip and its reason are "
-        f"logged').\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+        f"logged').\nstdout: {captured.out!r}\nstderr: {captured.err!r}"
     )

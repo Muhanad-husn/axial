@@ -128,7 +128,7 @@ from pathlib import Path
 
 import yaml
 
-from axial.chunk import HashingEmbedder, run_chunk_embedding
+from axial.chunk import run_chunk_recursive
 from axial.envelope import compute_source_id
 from axial.schema import load_schema
 
@@ -221,7 +221,7 @@ def _existing_envelope_files(root: Path) -> set[Path]:
 
 @contextlib.contextmanager
 def _chdir(path: Path):
-    """Temporarily change the process cwd to `path`: `run_chunk_embedding`
+    """Temporarily change the process cwd to `path`: `run_chunk_recursive`
     resolves its persisted-tree read (`axial.extract.tree_path`, via
     `axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
     override parameter. Calling it in-process needs this to reproduce the
@@ -277,7 +277,7 @@ def _arrange_stored_envelope(root: Path) -> Path:
     )
 
     with _chdir(root):
-        run_chunk_embedding(THESIS_PAPER_PDF, embedder=HashingEmbedder())
+        run_chunk_recursive(THESIS_PAPER_PDF)
 
     return next(iter(new_files))
 

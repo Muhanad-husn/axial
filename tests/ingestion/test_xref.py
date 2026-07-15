@@ -183,7 +183,7 @@ from pathlib import Path
 
 import pytest
 
-from axial.chunk import HashingEmbedder, run_chunk_embedding
+from axial.chunk import run_chunk_recursive
 from axial.envelope import compute_source_id
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -339,7 +339,7 @@ def _arrange_stored_envelope() -> None:
 
 def _arrange_known_chunk_ids() -> set[str]:
     """Write the real, on-disk chunk artifact for this fixture IN-PROCESS
-    (`axial.chunk.run_chunk_embedding`, the stub/offline `HashingEmbedder`)
+    (`axial.chunk.run_chunk_recursive`, the sole chunking mechanism)
     and return the exact set of chunk_ids it produced -- see module
     docstring, seam decision 3.
 
@@ -352,10 +352,10 @@ def _arrange_known_chunk_ids() -> set[str]:
     exact same path) -- the returned chunk_id set is simultaneously "the
     fixture's real chunk_ids" (seam decision 3) and "what `axial xref` will
     actually read" (seam decision 4)."""
-    records = run_chunk_embedding(PROSE_AND_TABLE_PDF, embedder=HashingEmbedder())
+    records = run_chunk_recursive(PROSE_AND_TABLE_PDF)
     chunk_ids = {r.get("chunk_id") for r in records}
     assert chunk_ids and all(isinstance(cid, str) and cid for cid in chunk_ids), (
-        f"arrange step failed: expected run_chunk_embedding to write at least "
+        f"arrange step failed: expected run_chunk_recursive to write at least "
         f"one chunk record with a non-empty chunk_id, got records: {records!r}"
     )
     return chunk_ids
