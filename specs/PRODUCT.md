@@ -51,7 +51,7 @@ Each is excluded deliberately; documenting them prevents scope creep and protect
 
 **Mechanism-general, domain-portable-by-schema, single-operator.**
 
-The pipeline stages carry no country-specific logic. Every piece of domain content — the field set, the claim-type vocabulary, the empirical-scope country list, the theory-school taxonomy, the artifact-role taxonomy, and the codebook definitions — is one **versioned domain schema** loaded at runtime. Porting to another country means extending or versioning that schema (adjusting tags, the country list, the examples); the pipeline code is untouched.
+The pipeline stages carry no country-specific logic. Every piece of domain content — the field set, the claim-type vocabulary, the empirical-scope polity examples, the theory-school taxonomy, the artifact-role taxonomy, and the codebook definitions — is one **versioned domain schema** loaded at runtime. Porting to another country means extending or versioning that schema (adjusting tags, the polity examples, the codebook examples); the pipeline code is untouched.
 
 This principle is load-bearing for two reasons. It makes the pause/placeholder seam free: because the tagger reads its vocabulary from the schema file, the build proceeds on a placeholder schema and the Academic's validated labels simply replace it. And it de-risks the two live vocabulary questions — folding in the candidate theory-school axis, or covering a second country, is a schema edit that the eval harness then scores against whatever axes the schema declares.
 
@@ -69,7 +69,7 @@ Seven stages, each a discrete, independently testable module, with a **source-ro
 3. **Structural-envelope pass.** One API call per source extracts the author's stated thesis, table of contents, scope, and stated argument from intro/abstract/conclusion. This "envelope" is produced once and reused by the tagging stage (stage 6) for that source; the chunk stage does not consume it. Output: envelope (JSON).
 4. **Chunking (recursive/structural, deterministic, LLM-independent).** For each prose section, the chunk stage finds boundaries with a **recursive/structural splitter** (#165, #191) — the sole chunk mechanism. It splits along the prose's own separator hierarchy — paragraph (`\n\n`) → line (`\n`) → sentence → character — descending to the next-finer separator only when a piece still exceeds the size band. The mechanism is deterministic and model-free: it calls **no embedding model and no text-generating LLM**. (The earlier embedding-based semantic mechanism was retired per #191 after a head-to-head over six real sources; recursive/structural is now the only mechanism, so the whole embedding apparatus leaves the chunk path.) Every chunk is **bounded by construction into a two-sided size band** `[min, max]`: the raw breakpoints bound size in neither direction on their own, so a deterministic guard pass wraps boundary detection and enforces the band around it. Below `min`, adjacent chunks are merged forward (preventing small-chunk proliferation from short paragraphs, headers, and list items); above `max`, a chunk is split at its next-best internal boundary (this is what guarantees no unit blows a request deadline or token budget). A section too large for one request — today up to ~143k characters — is therefore *split* into multiple in-band chunks rather than echoed whole through an API, dissolving the "monster section" problem at its source rather than band-aiding it. The detected breakpoints remain the **primary** boundary signal; the guard only enforces the band around them. The band is anchored on what the vault stores and works downstream today (~1–3k characters per chunk). Boundaries still track argumentative shifts (a boundary falls where the prose changes topic), not fixed sizes. The stage reads the **prose-routed** blocks of the persisted structural tree only — apparatus and artifact blocks are removed upstream by the source router (§7.8, step 2b), so they never enter the chunk path — and it needs no envelope (nothing in the chunking mechanism consumes one); its meaningful guarantee is that no generative LLM call sits in the chunk critical path, which subsumes any "no recompute" claim. It writes the chunk records to disk (§7.7) **before any downstream LLM spend**, so chunk quality is inspectable — the examine step, §7.7 — with zero inference cost. Type-detectable non-prose (TOC, index, endnotes, running heads) is dropped by the router by structural `label`, not by this stage; a residual size/garble rule (high non-alphabetic ratio) survives only as a **backstop** for garbled prose that slips type classification, and its skips are recorded in the same router-owned skip record (§7.8). That backstop runs at the *section* level, so a narrow **post-split fragment floor** (§7.8, #193, generalized in #197) runs after the splitter to drop any emitted chunk that is unambiguous non-content boilerplate — a blank-page notice or a low-alpha fragment whose alphabetic ratio is below the low-alpha threshold (currently 0.45) — recording each drop with its reason; a chunk whose alphabetic ratio is at or above the threshold is kept, so genuine section-tail sentences survive. A legitimate long section is split, never skipped, so no real prose is silently dropped. Output: on-disk prose chunks (§7.7), consumed by every later stage.
 5. **Artifact classification & routing.** This pass is the **sole home** of tables, figures, and captions; it receives exactly the artifact-routed blocks from the source router (§7.8, step 2b) — never raw docling output and never apparatus. Each artifact receives a role tag from the artifact-role taxonomy and is routed to a separate artifact pool with metadata (`artifact_role`, provenance, `cited_by`); a caption attaches to its figure or table. A lightweight model suffices — this is feature-based routing, not deep reasoning. Output: tagged artifacts in the artifact pool.
-6. **Tagging.** Each prose chunk is tagged on the axes the schema declares (claim-type, field, empirical-scope, and the candidate theory-school axis), plus a role-in-argument tag and three-level metadata. Output: fully tagged chunks.
+6. **Tagging.** Each prose chunk is tagged on the axes the schema declares (claim-type, field, empirical-scope, and the candidate theory-school axis), plus a role-in-argument tag, the many-valued `polities_touched` facet (Appendix C, G), and three-level metadata. Empirical-scope aboutness stays single-valued (its `scope:country-case` value carries a free-text `polity`); `polities_touched` separately captures every polity the chunk substantively engages. Output: fully tagged chunks.
 7. **Cross-reference pass.** Detect prose→artifact references ("as Table 3 shows") and write bidirectional links into both sides' frontmatter. Then write everything to the Obsidian vault. Output: vault notes (prose pool + artifact pool) with backlinks.
 
 The gold-corpus and eval loop wrap around stages 4–6: sampled chunks are emitted into a label sheet, labeled, and scored (see §9–§10).
@@ -88,7 +88,7 @@ axial/
     pipeline.yaml              # providers, model-per-pass, paths, batch sizes
     domains/
       syria/
-        schema.yaml            # fields, axes, country list, versioning (Appendix G)
+        schema.yaml            # fields, axes, polity examples, versioning (Appendix G)
         codebook.yaml          # tag -> definition -> +/- example (labeling instrument)
   src/axial/
     __init__.py
@@ -138,7 +138,7 @@ Loader contract:
 Every prose note carries three metadata levels (example in Appendix H):
 - **Source-level:** author, title, date, `fields` (primary + secondary), author's stated thesis, scope. Reused from the envelope.
 - **Section-level:** the author's own section/chapter labels, kept verbatim as the source's self-description.
-- **Chunk-level:** claim-type tag(s), empirical-scope value (+ `country` where applicable), theory-school tag(s) `[candidate]`, `role_in_argument`, and `artifact_refs`.
+- **Chunk-level:** claim-type tag(s), empirical-scope value (+ `polity` where applicable), the `polities_touched` list, theory-school tag(s) `[candidate]`, `role_in_argument`, and `artifact_refs`.
 
 Artifact notes carry: `artifact_role`, `fields`, source/section provenance, and `cited_by` back-references to prose chunks.
 
@@ -421,10 +421,12 @@ Cardinality: exactly one value.
 - `scope:general` **[FIRM]** — theory with no specific empirical case (Mann on autonomy; Brubaker on groupness).
 - `scope:comparative` **[FIRM]** — explicit cross-case comparison (Skocpol on France/Russia/China).
 - `scope:regional` **[FIRM]** — a region without single-country focus (MENA, post-Soviet, post-colonial Africa).
-- `scope:country-case` **[FIRM]** — a specific country; carries an additional `country` field. Most of the Syria literature (Hinnebusch, Akdedian). The model supplies `country` as free text: a non-empty string is required — a missing or empty value stays the hard error it is today — but the value is not validated against a fixed list. Values outside the schema's `country_list` are accepted and logged as candidate additions, never fatal in v0. The controlled list plus its aliasing layer returns as enforced vocabulary only at the post-eval schema revision (§11 step 7).
+- `scope:country-case` **[FIRM]** — a specific polity; carries an additional `polity` field. Most of the Syria literature (Hinnebusch, Akdedian). The model supplies `polity` as free text: a non-empty string is required — a missing or empty value stays the hard error it is today — but the value is not validated against a fixed list. The schema's `polity_examples` are illustrations, not a closed menu: the tagger is instructed to name the true polity faithfully even when it is absent from the examples, historical, defunct, or supra-national (an empire, a mandate, a former union). Emitting a value outside the examples is the intended behaviour, not disobedience — consistent with the #77 free-text reality — and such values are accepted and logged as candidate additions, never fatal in v0. The field is named `polity`, not `country`, deliberately: a `country` field is a category error for an empire, a mandate, or a supra-national referent, whereas `polity` makes a non-nation-state referent a legal, honest value. A deterministic offline canonical normalization map (aliases plus historical polities folded to canonical referents), built from the run's collected verbatims, is applied downstream — no second LLM pass; non-fatal in v0, it returns as enforced vocabulary at the post-eval schema revision (§11 step 7).
 - `scope:sub-national` **[TENTATIVE]** — a city, sub-region, single rebel group, or institution. Rule of thumb: if the claim generalizes to the country, tag `country-case`; if it is about the sub-national unit's distinctiveness, tag `sub-national`.
 
 Rationale for the axis: a brief like "does Mann's infrastructural power apply to post-2011 Syria" must retrieve `capacity:infrastructural × scope:general` (Mann) and `capacity:infrastructural × scope:country-case:Syria` (Hinnebusch, Akdedian) *separately*, then synthesize. Without scope, both fall in one undifferentiated bucket.
+
+**Polities-touched facet (prose chunks).** Separate from the empirical-scope axis, which stays single-cardinality aboutness. `polities_touched` is a many-valued list of every polity the chunk *substantively engages*, each a free-text value under the same faithful-naming and downstream-normalization rules as `polity` above. The bar is "engaged, not name-dropped": a polity earns a place only where the chunk reasons about it, compares it, or draws evidence from it — an incidental mention in passing does not qualify. A `scope:country-case` chunk names its case polity here too; a `scope:comparative` chunk lists all the cases it weighs. This facet feeds the Phase-B per-polity coverage map and cross-case filter-recall, which the single-valued scope axis cannot serve.
 
 ## Appendix D — Artifact-role axis (artifacts)
 
@@ -474,7 +476,11 @@ axes:
     cardinality: single
     values: [scope:general, scope:comparative, scope:regional, scope:country-case, scope:sub-national]
     extra_fields:
-      scope:country-case: { country: free_text }   # required non-empty; see Appendix C
+      scope:country-case: { polity: free_text }   # required non-empty; see Appendix C
+  polities_touched:                                # separate facet, NOT part of empirical_scope
+    applies_to: [prose]
+    cardinality: many
+    values: free_text   # every polity the chunk substantively engages ("engaged, not name-dropped"); see Appendix C
   theory_school:
     applies_to: [prose]
     cardinality: primary_plus_optional_secondary
@@ -488,7 +494,7 @@ axes:
     applies_to: [prose]
     cardinality: single
     values: [role:setup, role:claim, role:evidence, role:counter-position, role:synthesis, role:methodological, role:digression]
-country_list: [Syria, Turkey, Lebanon, Iraq, Rwanda]   # known-corpus reference for logging/aliasing in v0, not a validation gate; becomes enforced vocabulary at §11 step 7
+polity_examples: [Syria, Turkey, Lebanon, Iraq, Rwanda]   # known-corpus reference for logging/aliasing in v0, not a validation gate; becomes enforced vocabulary at §11 step 7
 ```
 
 `codebook.yaml` mirrors this, adding `definition`, `positive_example`, `negative_example` per tag (the Appendix B–F text is the source for those).
@@ -508,7 +514,8 @@ section: "Chapter 3 — The Ba'athist State"
 schema_version: 0.1
 claim_type: { primary: state-capacity, secondary: state-society-relations, subtags: [capacity:infrastructural] }
 field: { primary: state, secondary: [ideology] }
-empirical_scope: { value: scope:country-case, country: Syria }
+empirical_scope: { value: scope:country-case, polity: Syria }
+polities_touched: [Syria, Iraq]
 theory_school: { primary: institutionalist-state-centered, status: candidate }
 role_in_argument: role:claim
 artifact_refs: [hinnebusch2001_tbl_02]
