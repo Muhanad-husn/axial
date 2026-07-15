@@ -5,7 +5,7 @@
 - **GitHub issue:** #194
 - **Branch:** feat/tag/05-polity-capture
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ merged (PR #199, merge commit 6863e58, 2026-07-16)
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -98,3 +98,4 @@ And   `axial vault write` round-trips both `empirical_scope.polity` and the `pol
 ## Status / progress log
 
 - 2026-07-15 planned (orchestrator); founder ratified one slice / one PR for items 1–3.
+- 2026-07-16 shipped: red outer test (401458b) → impl (4404236) → two sibling-test migrations (60e15ce, b85db1b). Reviewer stage-1 pass; two stage-2 findings migrated. src 716 / acceptance tier 123 green (isolated worktree); CI green. Merged via PR #199 (6863e58); local branch cleaned. Item 4 (offline normalization map) deferred.
