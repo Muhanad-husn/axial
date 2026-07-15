@@ -43,36 +43,36 @@ splitter itself ever differed).
 Seam decision 1 -- calling `run_chunk_recursive` directly, not through the
 CLI/embedder seam
 -----------------------------------------------------------------------
-As of this commit, `src/axial/cli.py`'s `chunk` subcommand still dispatches
-on `get_chunk_mechanism()` (unset -> the soon-to-be-retired embedding
-default), since the implementer has not yet removed that seam -- this test
-author commit only retires the TESTS, leaving `src/` untouched so the suite
-never lands red (see CLAUDE.md's behavior-first loop). Driving this test
-through the bare CLI today would therefore still exercise the embedding
-default, which -- with no `AXIAL_EMBEDDER=stub` override -- selects the
-REAL production embedding model (issue #159's `FastEmbedEmbedder`), pulling
-in a model download over the network on first `encode`: exactly the kind of
-slow, non-offline dependency an acceptance test must never have. Calling
-`axial.chunk.run_chunk_recursive` directly sidesteps that dispatch and any
-embedder selection entirely, proving the recursive mechanism's own
-band/provenance/skip contract regardless of what the CLI happens to be
-wired to today or after the implementer's own follow-up commit flips
-`_chunk` to call it unconditionally.
+This test author commit was originally written (and first turned green)
+while `src/axial/cli.py`'s `chunk` subcommand still dispatched on
+`get_chunk_mechanism()` (unset -> the then-not-yet-retired embedding
+default) -- driving this test through the bare CLI at that point would have
+exercised the embedding default, which -- with no `AXIAL_EMBEDDER=stub`
+override -- selects the REAL production embedding model (issue #159's
+`FastEmbedEmbedder`), pulling in a model download over the network on first
+`encode`: exactly the kind of slow, non-offline dependency an acceptance
+test must never have. Calling `axial.chunk.run_chunk_recursive` directly
+sidesteps that dispatch and any embedder selection entirely, proving the
+recursive mechanism's own band/provenance/skip contract regardless of what
+the CLI is wired to -- which is exactly what lets this same test stay
+correct, unmodified, now that the implementer has removed the embedding
+apparatus and `get_chunk_mechanism` seam outright (issue #191):
+`run_chunk_recursive` is unaffected either way.
 
 Seam decision 2 -- zero-LLM / zero-embedding-model proof: poison the
-construction seams directly, in-process
+remaining construction seam directly, in-process
 -----------------------------------------------------------------------
 `run_chunk_recursive` never imports or references an embedder or a
 text-generating LLM client at all (verified by reading `src/axial/chunk.py`)
 -- the "LLM-free, embedding-model-free" contract holds by construction for
-this mechanism. This test still poisons `axial.chunk.get_embedder` /
-`axial.chunk.HashingEmbedder.encode` / `axial.chunk.get_client` (all
-`raising=False`, since the embedder symbols are slated for removal by the
-implementer's own follow-up commit -- a monkeypatch on an absent attribute
-with `raising=False` degrades to a harmless no-op, never an error) as a
-defense-in-depth regression check while the embedding apparatus still
-exists in this module: if a future change ever accidentally reached one of
-these seams, this test fails loudly, right now.
+this mechanism: issue #191 removed the `Embedder` protocol, `HashingEmbedder`,
+`FastEmbedEmbedder`, and `get_embedder` from `axial.chunk` outright, so there
+is no embedder construction seam left to poison at all. This test still
+poisons `axial.chunk.get_client` (`raising=False`, a genuine no-op today
+since `axial.chunk` never imports it -- kept defensively in case a future
+refactor introduces one) as a regression check on the LLM-client half of
+this contract: if a future change ever accidentally reached that seam, this
+test fails loudly.
 
 Seam decision 3 -- band constants imported from the implementation, not
 hardcoded here
@@ -142,8 +142,8 @@ would have captured on its own stderr.
 
 Seam decision 6 -- isolation via an isolated tmp cwd, not the real repo root
 -----------------------------------------------------------------------
-Because this test poisons module-level attributes (`axial.chunk.get_embedder`
-etc.) via `monkeypatch`, it must run in-process (mirroring
+Because this test poisons a module-level attribute (`axial.chunk.get_client`)
+via `monkeypatch`, it must run in-process (mirroring
 tests/chunk/test_chunk_recursive.py's identical reasoning): it runs from a
 freshly created, empty `tmp_path` cwd instead of shelling out to the CLI
 against the real repo root. `axial.extract.TREES_DIR` / `axial.chunk.
@@ -329,23 +329,27 @@ _SLUG_NNN_RE = re.compile(r"^(?P<slug>[a-z0-9-]+)_(?P<nnn>\d{3})$")
 
 
 def _poison_embedding_and_llm_seams(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Defense-in-depth poison of every construction/use seam an embedder or
-    LLM client could be reached through (module docstring, seam decision 2):
-    the FIRST one reached raises `AssertionError`. All three are set with
-    `raising=False` since the embedder symbols are slated for removal by a
-    follow-up (non-test-author) commit -- a monkeypatch on an absent
-    attribute with `raising=False` degrades to a harmless no-op rather than
-    an error."""
+    """Defense-in-depth poison of the one remaining construction/use seam a
+    text-generating LLM client could be reached through (module docstring,
+    seam decision 2): `axial.chunk.get_client` raises `AssertionError` if
+    ever called. `raising=False` here is a genuine no-op today (the chunk
+    module never imports `get_client` at all) -- kept defensively in case a
+    future refactor introduces one.
+
+    The embedder side of this proof (`axial.chunk.get_embedder` /
+    `HashingEmbedder.encode`) no longer applies: issue #191 removed the
+    `Embedder` protocol, `HashingEmbedder`, `FastEmbedEmbedder`, and
+    `get_embedder` from `axial.chunk` entirely, so there is no embedder
+    construction seam left to poison -- the recursive/structural mechanism
+    constructs no embedder by construction (it never imports the concept),
+    not merely by avoiding use of one already built."""
 
     def _poison(*_args, **_kwargs):
         raise AssertionError(
-            "the chunk critical path must construct NO embedder and make NO "
-            "embedding-model `encode` calls, and NO text-generating LLM "
-            "call -- this seam was reached during a `run_chunk_recursive` run"
+            "the chunk critical path must make NO text-generating LLM call "
+            "-- this seam was reached during a `run_chunk_recursive` run"
         )
 
-    monkeypatch.setattr("axial.chunk.get_embedder", _poison, raising=False)
-    monkeypatch.setattr("axial.chunk.HashingEmbedder.encode", _poison, raising=False)
     monkeypatch.setattr("axial.chunk.get_client", _poison, raising=False)
 
 

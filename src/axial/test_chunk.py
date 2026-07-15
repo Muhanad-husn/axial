@@ -1,7 +1,7 @@
 """Inner unit tests for the axial chunk module: section selection and the
-`build_chunk_records`/`_slugify` provenance helpers shared by the surviving
-embedding-based chunk stage (issue #151, see test_chunk_embedding.py for its
-own dedicated unit tests).
+`build_chunk_records`/`_slugify` provenance helpers shared by the recursive/
+structural chunk stage (the sole mechanism as of issue #191; see
+test_chunk_recursive_unit.py for its own dedicated unit tests).
 """
 
 from __future__ import annotations
@@ -199,7 +199,7 @@ def test_read_chunks_raises_missing_chunk_artifact_error_when_absent(tmp_path):
     assert "axial chunk" in str(exc_info.value)
 
 
-def test_read_chunks_resolves_the_same_path_run_chunk_embedding_writes_to(monkeypatch, tmp_path):
+def test_read_chunks_resolves_the_same_path_run_chunk_recursive_writes_to(monkeypatch, tmp_path):
     """Reader and writer must agree byte-for-byte on where the artifact
     lives -- both resolve via `_default_chunks_dir`/`chunks_checkpoint_path`
     (module docstring)."""

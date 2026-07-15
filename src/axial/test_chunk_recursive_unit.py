@@ -1,49 +1,24 @@
 """Inner unit tests for the recursive/structural chunk mechanism (issue
-#165, slice 06 of the chunk-redesign subproject). Complements
-tests/test_chunk_recursive.py (the LOCKED outer acceptance test) with
-unit-level coverage of the pieces it only proves end-to-end: the
-`AXIAL_CHUNK_MECHANISM` selector, the separator-hierarchy splitter's
-fall-through behavior at each level, the two-sided band guard reused/adapted
-for this mechanism, `run_chunk_recursive` end-to-end against a monkeypatched
-tree, and the zero-embedding/zero-LLM cost proof at the unit level.
+#165, slice 06 of the chunk-redesign subproject; the SOLE chunk mechanism as
+of issue #191). Complements tests/test_chunk_recursive.py (the LOCKED outer
+acceptance test) with unit-level coverage of the pieces it only proves
+end-to-end: the separator-hierarchy splitter's fall-through behavior at each
+level, the two-sided band guard, and `run_chunk_recursive` end-to-end
+against a monkeypatched tree.
 """
 
 from __future__ import annotations
 
-import axial.chunk as chunk_mod
 from axial.chunk import (
     CHUNK_MAX,
-    CHUNK_MECHANISM_ENV_VAR,
-    CHUNK_MECHANISM_RECURSIVE,
     CHUNK_MIN,
-    HashingEmbedder,
     _enforce_max_recursive,
     _recursive_section_chunks,
     _recursive_split_text,
-    get_chunk_mechanism,
-    run_chunk_embedding,
     run_chunk_recursive,
 )
 
-from .test_chunk_embedding import _patch_tree, _tree_with_sections
-
-# --- selector -----------------------------------------------------------
-
-
-def test_get_chunk_mechanism_recursive_value_selects_recursive(monkeypatch):
-    monkeypatch.setenv(CHUNK_MECHANISM_ENV_VAR, "recursive")
-    assert get_chunk_mechanism() == CHUNK_MECHANISM_RECURSIVE
-
-
-def test_get_chunk_mechanism_unset_falls_back_to_default(monkeypatch):
-    monkeypatch.delenv(CHUNK_MECHANISM_ENV_VAR, raising=False)
-    assert get_chunk_mechanism() != CHUNK_MECHANISM_RECURSIVE
-
-
-def test_get_chunk_mechanism_other_value_falls_back_to_default(monkeypatch):
-    monkeypatch.setenv(CHUNK_MECHANISM_ENV_VAR, "something-else")
-    assert get_chunk_mechanism() != CHUNK_MECHANISM_RECURSIVE
-
+from .conftest import patch_tree, tree_with_sections
 
 # --- separator hierarchy: fall-through behavior --------------------------
 
@@ -169,14 +144,13 @@ def test_run_chunk_recursive_min_side_merge_never_crosses_a_section_boundary(mon
     into the next section's own chunk."""
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
-    tree = _tree_with_sections(
+    tree = tree_with_sections(
         {
             "Overview": ["A short overview paragraph, well under the band minimum."],
             "Details": ["A short details paragraph, also well under the band minimum."],
         }
     )
-    _patch_tree(monkeypatch, tmp_path, tree)
-    monkeypatch.setenv(CHUNK_MECHANISM_ENV_VAR, CHUNK_MECHANISM_RECURSIVE)
+    patch_tree(monkeypatch, tmp_path, tree)
 
     records = run_chunk_recursive(
         source, chunks_dir=tmp_path / "chunks", chunk_min=10_000, chunk_max=CHUNK_MAX
@@ -197,10 +171,10 @@ def test_run_chunk_recursive_min_side_merge_never_crosses_a_section_boundary(mon
 def test_run_chunk_recursive_writes_jsonl_with_stable_chunk_ids(monkeypatch, tmp_path):
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
-    tree = _tree_with_sections(
+    tree = tree_with_sections(
         {"Introduction": ["Intro sentence one.\n\nIntro sentence two.\n\nIntro sentence three."]}
     )
-    _patch_tree(monkeypatch, tmp_path, tree)
+    patch_tree(monkeypatch, tmp_path, tree)
     chunks_dir = tmp_path / "chunks"
 
     first = run_chunk_recursive(source, chunks_dir=chunks_dir)
@@ -216,13 +190,13 @@ def test_run_chunk_recursive_writes_jsonl_with_stable_chunk_ids(monkeypatch, tmp
 def test_run_chunk_recursive_section_then_position_order(monkeypatch, tmp_path):
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
-    tree = _tree_with_sections(
+    tree = tree_with_sections(
         {
             "Overview": ["First section body sentence one.\n\nFirst section body sentence two."],
             "Details": ["Second section body sentence one.\n\nSecond section body sentence two."],
         }
     )
-    _patch_tree(monkeypatch, tmp_path, tree)
+    patch_tree(monkeypatch, tmp_path, tree)
 
     records = run_chunk_recursive(source, chunks_dir=tmp_path / "chunks")
 
@@ -230,65 +204,15 @@ def test_run_chunk_recursive_section_then_position_order(monkeypatch, tmp_path):
     assert orders == sorted(orders)
 
 
-# --- zero-cost: no embedder, no cache, no LLM -------------------------------
-
-
-def test_run_chunk_recursive_constructs_no_embedder(monkeypatch, tmp_path):
-    """`run_chunk_recursive` never even calls `get_embedder`, let alone
-    constructs a `_CachingEmbedder` or reads `data/chunk_cache/`."""
-
-    def _explode(*_args, **_kwargs):
-        raise AssertionError("get_embedder must never be called on the recursive path")
-
-    monkeypatch.setattr(chunk_mod, "get_embedder", _explode)
-    monkeypatch.setattr(chunk_mod.HashingEmbedder, "encode", _explode)
-
-    source = tmp_path / "paper.pdf"
-    source.write_bytes(b"fake pdf bytes")
-    tree = _tree_with_sections({"Overview": ["Some ordinary prose body text about the survey."]})
-    _patch_tree(monkeypatch, tmp_path, tree)
-
-    records = run_chunk_recursive(source, chunks_dir=tmp_path / "chunks")
-    assert records
+# --- zero-cost: no LLM -------------------------------------------------------
 
 
 def test_run_chunk_recursive_never_needs_an_llm_client(monkeypatch, tmp_path):
     monkeypatch.setenv("AXIAL_LLM_PROVIDER", "explode")
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
-    tree = _tree_with_sections({"Overview": ["A short section with a few words of body text."]})
-    _patch_tree(monkeypatch, tmp_path, tree)
+    tree = tree_with_sections({"Overview": ["A short section with a few words of body text."]})
+    patch_tree(monkeypatch, tmp_path, tree)
 
     records = run_chunk_recursive(source, chunks_dir=tmp_path / "chunks")
-    assert records
-
-
-def test_run_chunk_recursive_touches_no_chunk_cache_dir(monkeypatch, tmp_path):
-    source = tmp_path / "paper.pdf"
-    source.write_bytes(b"fake pdf bytes")
-    tree = _tree_with_sections({"Overview": ["Some ordinary prose body text about the survey."]})
-    _patch_tree(monkeypatch, tmp_path, tree)
-    cache_dir = tmp_path / "data" / "chunk_cache"
-    monkeypatch.setattr(chunk_mod, "CHUNK_CACHE_DIR", cache_dir)
-
-    run_chunk_recursive(source, chunks_dir=tmp_path / "chunks")
-
-    assert not cache_dir.exists()
-
-
-# --- default (unset selector) path is unaffected ----------------------------
-
-
-def test_run_chunk_embedding_still_the_default_when_mechanism_unset(monkeypatch, tmp_path):
-    monkeypatch.delenv(CHUNK_MECHANISM_ENV_VAR, raising=False)
-    assert get_chunk_mechanism() != CHUNK_MECHANISM_RECURSIVE
-
-    source = tmp_path / "paper.pdf"
-    source.write_bytes(b"fake pdf bytes")
-    tree = _tree_with_sections({"Overview": ["Some ordinary prose body text about the survey."]})
-    _patch_tree(monkeypatch, tmp_path, tree)
-
-    records = run_chunk_embedding(
-        source, embedder=HashingEmbedder(), chunks_dir=tmp_path / "chunks"
-    )
     assert records
