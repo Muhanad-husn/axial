@@ -1,23 +1,13 @@
-"""Chunking (charter #148): `run_chunk_embedding` (issue #151, PRD §5 stage 4
-/ §7.7 / §8 P0-4) is the default chunking mechanism. For each prose section,
-it finds chunk boundaries by embedding the section's sentences and splitting
-at semantic-similarity troughs (gradient thresholding), then a deterministic
-two-sided band guard `[CHUNK_MIN, CHUNK_MAX]` wraps those breakpoints. It
-reads ONLY the persisted structural tree (`data/trees/<source_id>.json`, via
-`axial.extract`) -- no envelope, no text-generating LLM call anywhere in this
-path. It writes records to `data/chunks/<source_id>.jsonl` (PRD §7.7) -- the
-CLI `chunk` subcommand's mechanism (see `src/axial/cli.py`).
-
-`run_chunk_recursive` (issue #165, slice 06) is a second,
-operator-selectable mechanism: deterministic recursive descent over a
+"""Chunking (charter #148): `run_chunk_recursive` (issue #165, slice 06;
+retired the embedding mechanism and became the SOLE chunking mechanism as of
+issue #191, spec-drift #191) is deterministic recursive descent over a
 separator hierarchy (paragraph -> line -> sentence -> raw char), with ZERO
-embedding-model calls. Selected via `AXIAL_CHUNK_MECHANISM=recursive`
-(`get_chunk_mechanism`, mirroring `get_embedder`'s `AXIAL_EMBEDDER` seam);
-unset or any other value keeps `run_chunk_embedding` as the default,
-byte-identical to before this mechanism existed. Both mechanisms share the
-identical §7.7 artifact shape (`build_chunk_records`) and the identical
-per-section routing/writing orchestrator (`_write_chunk_sections`) -- only
-the section-body join and the splitter itself differ per mechanism.
+embedding-model or text-generating LLM calls anywhere in this path. A
+deterministic two-sided band guard `[CHUNK_MIN, CHUNK_MAX]` wraps the
+separator-hierarchy split. It reads ONLY the persisted structural tree
+(`data/trees/<source_id>.json`, via `axial.extract`) -- no envelope. It
+writes records to `data/chunks/<source_id>.jsonl` (PRD §7.7) -- the CLI
+`chunk` subcommand's mechanism (see `src/axial/cli.py`).
 
 `read_chunks` (issue #154, slice 04 of the chunk-redesign subproject) is the
 downstream-facing reader for that same on-disk artifact: `tag.py`, `xref.py`,
@@ -27,8 +17,8 @@ themselves. It raises `MissingChunkArtifactError` when the artifact does not
 exist yet, telling the operator to run `axial chunk` first -- no downstream
 pass ever recomputes chunk boundaries (PRD §8 P0-4b).
 
-Source routing (issue #167, PRD §7.8): `run_chunk_embedding` no longer decides
-prose/non-prose by node `type` alone. Each block in a kept section's body is
+Source routing (issue #167, PRD §7.8): `run_chunk_recursive` decides
+prose/non-prose not by node `type` alone. Each block in a kept section's body is
 classified by its docling `label` via the shared `axial.router.route_for`
 (through `_routed_section_body`'s `iter_routed_blocks` walk) into exactly one
 of `prose` / `artifact` / `apparatus`. Only prose-routed text is chunked;
@@ -57,16 +47,14 @@ construction.
 
 from __future__ import annotations
 
-import hashlib
 import json
-import math
 import os
 import re
 import statistics
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable
 
 import yaml
 
@@ -113,7 +101,7 @@ def chunks_skips_sidecar_path(source_id: str, chunks_dir: Path = CHUNKS_DIR) -> 
     (issue #153's garble backstop, generalized by issue #167/PRD §7.8 to also
     carry apparatus drops -- the single source of skip truth), alongside its
     chunk checkpoint (`chunks_checkpoint_path`): one JSON object per line,
-    exactly `{"section", "section_order", "reason"}`. `run_chunk_embedding`
+    exactly `{"section", "section_order", "reason"}`. `run_chunk_recursive`
     rewrites this cleanly on every call -- created only when there is >= 1
     skip, removed when a rerun has none -- mirroring the main JSONL's own
     overwrite-cleanly contract so a rerun on the same source bytes stays
@@ -124,7 +112,7 @@ def chunks_skips_sidecar_path(source_id: str, chunks_dir: Path = CHUNKS_DIR) -> 
 
 
 def load_chunk_checkpoint(path: Path) -> list[dict[str, Any]]:
-    """Load chunk records already persisted to `path` (`run_chunk_embedding`'s
+    """Load chunk records already persisted to `path` (`run_chunk_recursive`'s
     own on-disk artifact, or -- historically -- the retired chunk-pass
     checkpoint), skipping blank lines. Returns an empty list when the file
     does not exist yet. The underlying read for `read_chunks` (below).
@@ -207,11 +195,11 @@ def read_chunks(
 ) -> list[dict[str, Any]]:
     """Read the on-disk chunk artifact (PRD §7.7) `source_id` already has at
     `data/chunks/<source_id>.jsonl`, written by `axial chunk`
-    (`run_chunk_embedding`). Resolves the path with the SAME helpers the
+    (`run_chunk_recursive`). Resolves the path with the SAME helpers the
     writer uses (`_default_chunks_dir` / `chunks_checkpoint_path`), so reader
     and writer always agree on where the artifact lives. Returns the chunk
     records in file (section-then-position) order -- the order
-    `run_chunk_embedding` wrote them in.
+    `run_chunk_recursive` wrote them in.
 
     Raises `MissingChunkArtifactError` if the artifact does not exist yet:
     this is a pure reader, never a recompute path (issue #154, PRD §8
@@ -324,7 +312,7 @@ def _routed_section_body(section: dict) -> tuple[list[str], list[dict[str, Any]]
 
     `in_back_matter_section` (the router's own `list_item` rule, §7.8) is
     derived here from THIS section's own heading via `_is_back_matter` --
-    the same title-based check `run_chunk_embedding` already uses to filter
+    the same title-based check `run_chunk_recursive` already uses to filter
     whole back-matter sections before this function ever sees them, so it is
     always `False` in the wiring below today; it stays correct in isolation
     (and for any future caller that stops pre-filtering whole sections) since
@@ -387,20 +375,8 @@ def build_chunk_records(
 
 
 # =============================================================================
-# Embedding-based chunk stage (issue #151, PRD §5 stage 4 / §7.7 / §8 P0-4)
+# Band constants + shared errors (PRD §5 stage 4 / §7.7 / §8 P0-4)
 # =============================================================================
-#
-# For each prose section: segment its body into sentences, embed the
-# sentences with an injectable `Embedder`, build a consecutive-distance
-# series, and split at semantic-similarity troughs using gradient
-# thresholding (founder preference over percentile thresholding -- try
-# gradient first). A deterministic two-sided band guard then wraps those
-# breakpoints: MAX side recursively splits any chunk over `CHUNK_MAX` at its
-# next-best internal boundary (never emits a section whole, never skips for
-# size); MIN side merges adjacent below-`CHUNK_MIN` chunks forward, within a
-# section only. No text-generating LLM call anywhere in this path -- the
-# stage reads only the persisted structural tree (`axial.extract`), never an
-# envelope.
 
 # Band constants (character counts, matching PRD §7.7's "text length"):
 # sensible STARTING POINTS anchored on PRD §7.7's "what the vault stores and
@@ -411,39 +387,11 @@ def build_chunk_records(
 CHUNK_MIN = 1000
 CHUNK_MAX = 3000
 
-# Per-source sentence-embedding cache (issue #152): cwd-relative, gitignored
-# (the blanket `data/` ignore in .gitignore already covers it -- no separate
-# entry needed), mirroring `CHUNKS_DIR`/`axial.extract.TREES_DIR`'s own
-# convention exactly. Referenced as a module GLOBAL (never captured as a
-# function default) by `_default_chunk_cache_dir` below specifically so it
-# can be monkeypatched in tests exactly like `CHUNKS_DIR`/`TAGS_DIR` (see
-# src/axial/conftest.py's autouse isolation fixture) -- a function default
-# value bound at def-time would not pick up a later monkeypatch.
-CHUNK_CACHE_DIR = Path("data/chunk_cache")
-
-
-def _default_chunk_cache_dir() -> Path:
-    """The cwd-relative default embedding-cache directory. No
-    `config/pipeline.yaml` override exists for this path (unlike
-    `_default_chunks_dir`/`_default_envelopes_dir`) -- not part of this
-    slice's contract (plan: "data/chunk_cache/", a plain cwd-relative
-    default). Reads the module-level `CHUNK_CACHE_DIR` global at CALL time
-    (see that constant's own docstring for why)."""
-    return CHUNK_CACHE_DIR
-
-
-# Env-var seam selecting the embedder, mirroring `axial.llm`'s
-# `AXIAL_LLM_PROVIDER` convention exactly (see that module's docstring).
-# `AXIAL_EMBEDDER=stub` selects the deterministic, offline, no-network stub
-# embedder (test/CI seam) explicitly; unset or any other value falls back to
-# this module's own default (see `get_embedder` / `HashingEmbedder` below).
-EMBEDDER_ENV_VAR = "AXIAL_EMBEDDER"
-
 
 class MissingTreeError(ChunkError):
     """Raised when no persisted structural tree exists yet for the source
     (PRD §5 stage 4, "the stage reads the persisted structural tree only") --
-    the embedding chunk stage never runs docling/Unstructured itself; the
+    this chunk stage never runs docling/Unstructured itself; the
     caller must run `axial extract` first."""
 
     def __init__(self, path: Path):
@@ -451,161 +399,6 @@ class MissingTreeError(ChunkError):
         super().__init__(
             f"no persisted tree found at {path}; run `axial extract` on the source first"
         )
-
-
-class Embedder(Protocol):
-    """A single-method sentence-embedding interface, mirroring
-    `axial.llm.LLMClient`'s single-method `complete` shape. Every embedder
-    this module can select implements `encode`.
-
-    `model_id` (issue #152) identifies the concrete embedding model an
-    instance represents -- the per-source embedding cache's key is a
-    function of `(source_id, embedder.model_id)` (see `_CachingEmbedder`
-    below), read off the injected embedder itself rather than passed
-    separately, since the embedder instance IS the thing whose identity
-    determines what "the embedding model" is (mirroring how `axial.llm`
-    client selection already works: config/provider picks the object;
-    nothing separately re-declares its identity to callers)."""
-
-    model_id: str
-
-    def encode(self, texts: list[str]) -> list[list[float]]:
-        """Return one fixed-length numeric vector per input text, in order."""
-        ...
-
-
-_HASHING_EMBEDDER_DIM = 256
-
-
-def _tokenize(text: str) -> list[str]:
-    """A simple, deterministic word tokenizer: lowercase runs of
-    alphanumeric characters. No stemming/stopwords -- kept intentionally
-    simple (see `HashingEmbedder`'s docstring for the 80/20 rationale)."""
-    return re.findall(r"[a-z0-9]+", text.lower())
-
-
-class HashingEmbedder:
-    """Deterministic, offline, dependency-free embedder: a hashing-trick
-    bag-of-words vectorizer. Each input text is tokenized into lowercase
-    word tokens; each token is hashed (SHA-256, stable across processes and
-    Python versions -- unlike Python's own salted `hash()`) into one of
-    `dim` buckets and that bucket's count is incremented; the resulting
-    count vector is L2-normalized. Cosine similarity between two such
-    vectors then approximates lexical/topical overlap: two sentences sharing
-    vocabulary land closer together than two sentences that don't, which is
-    exactly the "consecutive-distance series" signal the breakpoint detector
-    below needs -- without any ML model, model download, or network call.
-
-    In-slice decision (issue #151, 80/20 rationale, superseded on the
-    default path by issue #159 below): originally this was the SAME
-    implementation behind both `AXIAL_EMBEDDER=stub` and the unset/default
-    path, since no real sentence-embedding model dependency was worth
-    pulling in for a slice whose acceptance criterion was "a deterministic,
-    offline split that respects the band", not embedding quality. As of
-    issue #159, the unset/default path selects a real model
-    (`FastEmbedEmbedder`, below) instead -- this class now backs ONLY the
-    explicit `AXIAL_EMBEDDER=stub` pytest/CI seam, deterministic and
-    offline exactly as before.
-
-    `model_id` (issue #152, the embedding-cache seam): defaults to a stable
-    value reflecting `dim` (`"hashing-v1-<dim>"`), so two `HashingEmbedder()`
-    instances at the same dim (the common case -- `get_embedder` never
-    varies it) always agree on a cache key, while an explicit override lets
-    a caller simulate "a different embedding model" without changing the
-    hashing algorithm itself (e.g. this module's own cache-invalidation
-    tests).
-    """
-
-    def __init__(self, dim: int = _HASHING_EMBEDDER_DIM, model_id: str | None = None) -> None:
-        self._dim = dim
-        self.model_id = model_id if model_id is not None else f"hashing-v1-{dim}"
-
-    def encode(self, texts: list[str]) -> list[list[float]]:
-        return [self._encode_one(text) for text in texts]
-
-    def _encode_one(self, text: str) -> list[float]:
-        vector = [0.0] * self._dim
-        for token in _tokenize(text):
-            index = int(hashlib.sha256(token.encode("utf-8")).hexdigest(), 16) % self._dim
-            vector[index] += 1.0
-        norm = math.sqrt(sum(component * component for component in vector))
-        if norm > 0:
-            vector = [component / norm for component in vector]
-        return vector
-
-
-# The real production-default embedding model (issue #159, PRD §5 stage 4):
-# `fastembed`'s ONNX-backed (no torch) port of BAAI's bge-small-en-v1.5,
-# 384-dim. `FastEmbedEmbedder.model_id` (below) is `"fastembed:" +` this
-# name -- it CONTAINS the model family name as a substring (the outer
-# acceptance test's `REAL_MODEL_ID_MARKER` check,
-# tests/chunk/test_chunk_real_embedder.py) while staying distinct from the
-# raw fastembed model name.
-_FASTEMBED_MODEL_NAME = "BAAI/bge-small-en-v1.5"
-
-
-class FastEmbedEmbedder:
-    """The real sentence-embedding model wired as the production default
-    (issue #159, PRD §5 stage 4): `fastembed`'s ONNX-backed (no torch) port
-    of `BAAI/bge-small-en-v1.5` (384-dim).
-
-    Lazy-loaded (mirroring `axial.extract._build_converter`'s "Local import:
-    defers docling's (torch-backed) load until a conversion is actually
-    requested" convention): `__init__` only records the model name and sets
-    `model_id` -- it never imports `fastembed` or loads/downloads the ONNX
-    model. The model itself is constructed on FIRST `encode` via
-    `_get_model`, a private lazy accessor that caches the loaded model on
-    the instance, so a second `encode` call on the same instance never
-    re-loads it. This is what keeps merely SELECTING this embedder (`
-    get_embedder()`, reading `.model_id`) fully offline -- see the outer
-    acceptance test's "does not import fastembed" assertion.
-    """
-
-    def __init__(self, model_name: str = _FASTEMBED_MODEL_NAME) -> None:
-        self._model_name = model_name
-        self.model_id = f"fastembed:{model_name}"
-        self._model = None
-
-    def _get_model(self):
-        """Private lazy accessor: import and construct fastembed's
-        `TextEmbedding` only on first call, caching the result on the
-        instance. Mirrors `axial.extract`'s lazy docling/Unstructured
-        accessors exactly -- the import lives inside this method, not at
-        module scope, so `fastembed` never lands in `sys.modules` until an
-        `encode` call actually needs it."""
-        if self._model is None:
-            # Local import: defers fastembed's (ONNX model download/load)
-            # cost until an encode actually runs.
-            from fastembed import TextEmbedding
-
-            self._model = TextEmbedding(model_name=self._model_name)
-        return self._model
-
-    def encode(self, texts: list[str]) -> list[list[float]]:
-        """Return one 384-dim vector per input text, in order. fastembed's
-        `.embed()` yields a generator of numpy arrays -- materialized here
-        and converted to plain `list[float]` (`[float(x) for x in vector]`)
-        so callers of this method never need to know about numpy, matching
-        `Embedder.encode`'s protocol exactly."""
-        model = self._get_model()
-        return [[float(component) for component in vector] for vector in model.embed(texts)]
-
-
-def get_embedder(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Embedder:
-    """Select the configured `Embedder`, mirroring `axial.llm.get_client`'s
-    `AXIAL_LLM_PROVIDER` seam exactly: `AXIAL_EMBEDDER=stub` explicitly
-    selects the deterministic, offline `HashingEmbedder` (the pytest/CI
-    seam); unset or any other value selects the real production default
-    (issue #159), `FastEmbedEmbedder` -- lazy-imported/loaded only on first
-    `encode`, so selecting it here never triggers a model download (see that
-    class's docstring). `config_path` is accepted (unused today) to mirror
-    `get_client`'s signature for future config-driven provider selection.
-    """
-    del config_path  # unused today -- kept for signature parity with get_client
-    provider = os.environ.get(EMBEDDER_ENV_VAR, "")
-    if provider == "stub":
-        return HashingEmbedder()
-    return FastEmbedEmbedder()
 
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
@@ -630,77 +423,6 @@ def segment_sentences(text: str) -> list[str]:
     return [piece.strip() for piece in _SENTENCE_SPLIT_RE.split(stripped) if piece.strip()]
 
 
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(y * y for y in b))
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot / (norm_a * norm_b)
-
-
-def consecutive_distances(vectors: list[list[float]]) -> list[float]:
-    """The consecutive-distance series (PRD §5 stage 4): one cosine distance
-    (`1 - cosine_similarity`) per adjacent pair of embedded sentence
-    vectors. `distances[i]` is the distance between `vectors[i]` and
-    `vectors[i + 1]` -- a high value means sentence i and i+1 diverge in
-    topic; a low value means they're similar."""
-    return [1.0 - _cosine_similarity(vectors[i], vectors[i + 1]) for i in range(len(vectors) - 1)]
-
-
-# Gradient-threshold sensitivity: a breakpoint fires where the distance
-# series' own discrete derivative (gradient) spikes more than this many
-# standard deviations above its mean -- i.e. a SHARP, LOCAL rise in
-# dissimilarity (a genuine topic shift), not a shallow, gradual drift across
-# the whole series. Founder preference (per the slice plan): gradient
-# thresholding, not percentile thresholding -- tried first here. A sensible
-# starting point, not a tuned value (see CHUNK_MIN/CHUNK_MAX's docstring --
-# tuning is the slice-03 examine loop's job).
-GRADIENT_THRESHOLD_SIGMA = 1.0
-
-
-def gradient_breakpoints(
-    distances: list[float], threshold_sigma: float = GRADIENT_THRESHOLD_SIGMA
-) -> list[int]:
-    """Gradient-threshold breakpoint detection over a consecutive-distance
-    series (see `consecutive_distances`). Computes the discrete derivative
-    (gradient) of `distances` -- `gradients[j] = distances[j+1] -
-    distances[j]` -- and flags a breakpoint at `distances` index `j + 1`
-    wherever `gradients[j]` rises more than `threshold_sigma` standard
-    deviations above the gradient series' own mean AND is itself positive
-    (a rise, not a fall). Returned indices are 0-based positions into
-    `distances` (equivalently, into the gaps between sentences): index `d`
-    means "cut between sentence `d` and sentence `d + 1`".
-
-    Needs at least 2 distances (3 sentences) to have a derivative to compare
-    against at all; shorter input yields no breakpoints -- nothing to
-    contrast a single distance's gradient against.
-    """
-    if len(distances) < 2:
-        return []
-    gradients = [distances[i] - distances[i - 1] for i in range(1, len(distances))]
-    mean = statistics.mean(gradients)
-    stdev = statistics.pstdev(gradients)
-    cutoff = mean + threshold_sigma * stdev
-    breakpoints = [
-        index + 1 for index, gradient in enumerate(gradients) if gradient > cutoff and gradient > 0
-    ]
-    return breakpoints
-
-
-def _group_by_breakpoints(sentences: list[str], breakpoints: list[int]) -> list[list[str]]:
-    """Partition `sentences` into consecutive groups at the given
-    `breakpoints` (0-based `consecutive_distances` indices -- see
-    `gradient_breakpoints`'s docstring for exactly what each index means)."""
-    groups: list[list[str]] = []
-    start = 0
-    for cut_after in sorted(set(breakpoints)):
-        groups.append(sentences[start : cut_after + 1])
-        start = cut_after + 1
-    groups.append(sentences[start:])
-    return [group for group in groups if group]
-
-
 def _group_char_len(group: list[str]) -> int:
     return len(" ".join(group))
 
@@ -714,55 +436,6 @@ def _hard_split_by_chars(text: str, chunk_max: int) -> list[str]:
     if not text:
         return []
     return [text[i : i + chunk_max] for i in range(0, len(text), chunk_max)]
-
-
-def _split_group_to_max(group: list[str], embedder: Embedder, chunk_max: int) -> list[list[str]]:
-    """MAX-side band guard (PRD §5 stage 4 / §8 P0-4): if `group`'s joined
-    text already fits within `chunk_max`, return it unchanged. Otherwise
-    recursively split it at its OWN next-best internal boundary -- the
-    highest-distance adjacent-sentence gap within just this group,
-    re-embedding only this group's sentences to find it -- and recurse on
-    each half. A single-sentence group that alone exceeds `chunk_max` (no
-    internal sentence boundary to split at) falls back to a raw character
-    split (`_hard_split_by_chars`). This guarantees no returned group's
-    joined text ever exceeds `chunk_max`, with NO exception -- unlike the
-    MIN side, this invariant is unconditional (PRD §7.7/§8 P0-4: "no record
-    exceeds max ... with NO exception").
-
-    Tie-break (bug found via an end-to-end MIN-side test, issue #151): when
-    several adjacent-sentence gaps tie for the max distance -- routine with
-    repetitive/cyclic prose, or any embedder coarse enough to produce exact
-    ties -- always taking the FIRST tied index degenerates into peeling off
-    one sentence at a time from the front on every recursive call, producing
-    many tiny fragments instead of a balanced split. Among tied maxima, pick
-    the one closest to the group's own midpoint instead, so a tie-heavy
-    group still bisects roughly in half each recursive step (an unambiguous
-    single maximum is unaffected -- this only changes behavior under a tie).
-    """
-    if _group_char_len(group) <= chunk_max:
-        return [group]
-    if len(group) == 1:
-        return [[piece] for piece in _hard_split_by_chars(group[0], chunk_max)]
-
-    vectors = embedder.encode(group)
-    distances = consecutive_distances(vectors)
-    best = max(distances)
-    midpoint = (len(distances) - 1) / 2
-    split_at = min(
-        (index for index, distance in enumerate(distances) if distance == best),
-        key=lambda index: abs(index - midpoint),
-    )
-    left, right = group[: split_at + 1], group[split_at + 1 :]
-    return _split_group_to_max(left, embedder, chunk_max) + _split_group_to_max(
-        right, embedder, chunk_max
-    )
-
-
-def _enforce_max(groups: list[list[str]], embedder: Embedder, chunk_max: int) -> list[list[str]]:
-    result: list[list[str]] = []
-    for group in groups:
-        result.extend(_split_group_to_max(group, embedder, chunk_max))
-    return result
 
 
 def _enforce_min(groups: list[list[str]], chunk_min: int) -> list[list[str]]:
@@ -784,246 +457,27 @@ def _enforce_min(groups: list[list[str]], chunk_min: int) -> list[list[str]]:
     return merged
 
 
-def _chunk_section_text(
-    text: str,
-    embedder: Embedder,
-    chunk_min: int = CHUNK_MIN,
-    chunk_max: int = CHUNK_MAX,
-) -> list[str]:
-    """Chunk one prose section's body text: segment into sentences, embed
-    and find gradient breakpoints (the primary boundary signal), then wrap
-    the two-sided band guard around them -- MAX side first (splits anything
-    over-band), MIN side second (merges anything under-band forward), then
-    MAX side again as a safety net (a MIN-side merge can itself push a
-    group over `chunk_max`; re-splitting after merging keeps the
-    unconditional MAX guarantee intact)."""
-    sentences = segment_sentences(text)
-    if not sentences:
-        return []
-
-    if len(sentences) == 1:
-        groups: list[list[str]] = [sentences]
-    else:
-        vectors = embedder.encode(sentences)
-        distances = consecutive_distances(vectors)
-        breakpoints = gradient_breakpoints(distances)
-        groups = _group_by_breakpoints(sentences, breakpoints)
-
-    groups = _enforce_max(groups, embedder, chunk_max)
-    groups = _enforce_min(groups, chunk_min)
-    groups = _enforce_max(groups, embedder, chunk_max)
-
-    return [" ".join(group) for group in groups]
-
-
 def _garbage_section_skip_reason(
     text: str, max_non_alpha_ratio: float = MAX_NON_ALPHA_RATIO
 ) -> str | None:
     """The non-alpha arm ONLY of the shared `axial.nonprose_guard` heuristic
-    (PRD §5 stage 4 / §7.7 / §8 P0-4: "size never triggers a skip" for the
-    embedding chunk stage -- an oversized but legitimate section is SPLIT,
-    never skipped). Delegates to `axial.nonprose_guard.garble_only_skip_reason`
+    (PRD §5 stage 4 / §7.7 / §8 P0-4: "size never triggers a skip" for this
+    chunk stage -- an oversized but legitimate section is SPLIT, never
+    skipped). Delegates to `axial.nonprose_guard.garble_only_skip_reason`
     (issue #169, source-router slice 04, which lifted this stage's own
     "non-alpha arm ONLY" precedent into the shared module so `axial.chunk`,
     `axial.tag`, and `axial.xref` share one definition instead of three
     copies) rather than `non_prose_skip_reason` directly, since that
     function's size arm would skip on size too; this stage's own MAX-side
-    band guard (`_split_group_to_max`) is what handles size instead."""
+    band guard (`_recursive_split_text`) is what handles size instead."""
     return garble_only_skip_reason(text, max_non_alpha_ratio=max_non_alpha_ratio)
 
 
-_CACHE_KEY_SAFE_RE = re.compile(r"[^A-Za-z0-9_.-]+")
-
-
-def _safe_cache_key_component(value: str) -> str:
-    """Make `value` (a source_id or an embedding-model id, either of which
-    may contain characters that are awkward in a filename) safe to fold into
-    an on-disk cache filename, by replacing every run of
-    not-obviously-filesystem-safe characters with a single underscore.
-
-    Two DIFFERENT raw values CAN sanitize to the same safe string (e.g.
-    `"model_1"` and `"model!1"` both collapse to `"model_1"`) -- a
-    filename collision is therefore possible, most plausibly on `model_id`
-    (`compute_source_id` always appends a 12-hex-char suffix to `source_id`,
-    which makes a `source_id`-side collision implausible in practice, but
-    this function offers no formal guarantee either way). A collision here
-    is harmless, not corrupting: `_CachingEmbedder` persists the RAW
-    `source_id`/`model_id` inside the cache file itself and checks them
-    against the current run's values on load, so a filename shared by two
-    distinct `(source_id, model_id)` pairs degrades to a cold cache (an
-    extra re-embed) rather than ever serving one pair's vectors to the
-    other (see `_CachingEmbedder._load_cache_file`)."""
-    return _CACHE_KEY_SAFE_RE.sub("_", value)
-
-
-class _CachingEmbedder:
-    """Wraps another `Embedder`, memoizing sentence -> vector lookups on
-    disk so a source's sentence embeddings are computed AT MOST ONCE across
-    every run of the chunk stage against it (issue #152, PRD §5 stage 4 /
-    §7.7's "cheap band sweeps" acceptance criterion -- memory
-    [[chunk-experiment-caching]]).
-
-    Cache key: `(source_id, embedder.model_id)`, both folded into the
-    on-disk filename `<chunk_cache_dir>/<source_id>__<model_id>.json` (each
-    component sanitized by `_safe_cache_key_component`). Reading the model
-    id off the WRAPPED embedder itself (rather than a separately-passed
-    argument) is deliberate -- see `Embedder.model_id`'s docstring. Keying
-    on `source_id` (a content hash, `axial.envelope.compute_source_id`)
-    rather than a filename/path means an edited source (different bytes,
-    same filename) never collides with its own prior cache entry, and two
-    different sources never collide with each other's, even if they happen
-    to share a filename stem (issue #152's "edited source" acceptance
-    clause). A different `model_id` for the SAME source_id resolves to a
-    DIFFERENT file entirely, so swapping embedding models always misses and
-    re-embeds -- no stale cross-model vectors are ever read back.
-
-    Memoization granularity: per SENTENCE TEXT, not per `encode` call or per
-    section. `run_chunk_embedding`'s critical path calls `embedder.encode`
-    at two distinct sites -- the primary per-section embed in
-    `_chunk_section_text`, and the MAX-side re-embed of an over-band
-    subgroup's sentences inside `_split_group_to_max` -- but a given
-    sentence's embedding is the same VALUE regardless of which call site
-    asks for it. Keying by the sentence's own text (rather than, say, a
-    (section, position) coordinate) means the MAX-side re-embed of a subset
-    of sentences already embedded in the primary pass is a guaranteed cache
-    hit, and a later run at a DIFFERENT `[chunk_min, chunk_max]` band --
-    which regroups the very same sentences into different-shaped subgroups,
-    changing WHICH sentences reach `_split_group_to_max` and in what
-    combinations -- still hits, because the cache was never keyed on
-    grouping/position in the first place. This is what makes a band-sweep
-    re-run's `encode` call count drop to exactly zero (issue #152's central
-    assertion), not merely lower.
-
-    Purely a performance layer -- see `encode`'s docstring for why this
-    changes nothing about chunk OUTPUT. Loads its on-disk cache file (if
-    any) once, at construction; call `flush()` to persist newly-computed
-    entries back to disk (idempotent -- a no-op when nothing new was
-    computed since the last flush), so a later process/run (not just a
-    later call within the same process) reuses it.
-
-    On-disk file shape (issue #152 review finding 1): `{"source_id": ...,
-    "model_id": ..., "vectors": {text: vector}}` -- the raw (unsanitized)
-    `source_id`/`model_id` are persisted INSIDE the file, not just encoded
-    into its filename. `_load_cache_file` checks both against the current
-    run's values before trusting the file's vectors at all, so a filename
-    collision from `_safe_cache_key_component` (two distinct raw
-    `(source_id, model_id)` pairs sanitizing to the same filename -- see
-    that function's docstring) can never serve one pair's vectors to the
-    other: a mismatch degrades to a cold cache instead. Loading also fails
-    SOFT on any read/parse problem (a torn write from a hard kill mid-flush,
-    a hand-edited file, wrong JSON shape) -- see `_load_cache_file`'s
-    docstring -- mirroring this module's own `load_chunk_checkpoint`
-    heal-on-corruption convention (issue #104): the cache is a pure
-    performance layer, so it must never be able to abort a run.
-    """
-
-    def __init__(self, inner: Embedder, source_id: str, cache_dir: Path) -> None:
-        self._inner = inner
-        self.model_id = inner.model_id
-        self._source_id = source_id
-        self._path = cache_dir / (
-            f"{_safe_cache_key_component(source_id)}"
-            f"__{_safe_cache_key_component(inner.model_id)}.json"
-        )
-        self._vectors: dict[str, list[float]] = {}
-        if self._path.is_file():
-            self._vectors = self._load_cache_file()
-        self._dirty = False
-
-    def _load_cache_file(self) -> dict[str, list[float]]:
-        """Read `self._path` and return its cached vectors, or `{}` (cold)
-        if the file cannot be trusted -- either because it is unreadable
-        malformed JSON (`json.JSONDecodeError`), the wrong shape (e.g. a
-        list instead of an object -- `TypeError`), missing the expected
-        keys (`KeyError`), unreadable at the OS level such as a torn write
-        still mid-replace (`OSError`), or its own recorded
-        `source_id`/`model_id` does not match this instance's (`ValueError`
-        -- the finding-1 integrity check: a filename collision must never
-        let this run read another `(source_id, model_id)` pair's vectors).
-        Any of these prints a one-line warning to stderr (mirroring this
-        module's own `print(..., file=sys.stderr)` convention for skips)
-        and treats the cache as empty -- construction never raises, and the
-        caller simply re-embeds everything, exactly as on a genuinely cold
-        cache."""
-        try:
-            payload = json.loads(self._path.read_text(encoding="utf-8"))
-            if not isinstance(payload, dict):
-                raise TypeError(f"expected a JSON object, got {type(payload).__name__}")
-            if payload["source_id"] != self._source_id or payload["model_id"] != self.model_id:
-                raise ValueError(
-                    "cache file's recorded source_id/model_id does not match this run "
-                    "(filename collision -- see _safe_cache_key_component)"
-                )
-            vectors = payload["vectors"]
-            if not isinstance(vectors, dict):
-                raise TypeError(
-                    f"expected 'vectors' to be a JSON object, got {type(vectors).__name__}"
-                )
-            return vectors
-        except (json.JSONDecodeError, TypeError, KeyError, ValueError, OSError) as exc:
-            print(
-                f"chunk: ignoring unreadable embedding cache {self._path}: {exc}",
-                file=sys.stderr,
-            )
-            return {}
-
-    def encode(self, texts: list[str]) -> list[list[float]]:
-        """Return one vector per text, in order -- IDENTICAL to what
-        `inner.encode` would return for the same text, since a cache hit
-        returns exactly the vector `inner.encode` produced (and persisted)
-        the first time that same text was seen. A text already in the cache
-        never reaches `inner.encode` at all; only genuinely new texts are
-        batched into a single call to `inner.encode` (preserving that
-        method's own "one call, many texts" batching contract for whatever
-        texts remain uncached), and their results are memoized before
-        returning."""
-        results: list[list[float] | None] = [self._vectors.get(text) for text in texts]
-        miss_indices = [index for index, vector in enumerate(results) if vector is None]
-        if miss_indices:
-            miss_texts = [texts[index] for index in miss_indices]
-            miss_vectors = self._inner.encode(miss_texts)
-            for index, text, vector in zip(miss_indices, miss_texts, miss_vectors):
-                results[index] = vector
-                self._vectors[text] = vector
-            self._dirty = True
-        return results  # type: ignore[return-value]  -- every None slot was just filled above
-
-    def flush(self) -> None:
-        """Persist any newly-computed vectors to `self._path`, along with
-        this run's raw `source_id`/`model_id` (see the class docstring's
-        "On-disk file shape" -- the finding-1 integrity check `_load_cache_file`
-        relies on), creating parent directories as needed. A no-op when
-        nothing changed since the last flush (a fully warm run, or a flush
-        called twice in a row).
-
-        Atomic (issue #152 review finding 2): writes to a sibling temp file
-        first, then `os.replace`s it over `self._path` -- `os.replace` is a
-        single filesystem rename, so a reader (including a later
-        `_CachingEmbedder` construction) always sees either the complete
-        prior file or the complete new one, never a torn partial write, even
-        if this process is hard-killed mid-flush. `flush()` runs after every
-        section in `run_chunk_embedding`, so this matters in practice, not
-        just in theory."""
-        if not self._dirty:
-            return
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "source_id": self._source_id,
-            "model_id": self.model_id,
-            "vectors": self._vectors,
-        }
-        tmp_path = self._path.with_name(self._path.name + ".tmp")
-        tmp_path.write_text(json.dumps(payload), encoding="utf-8")
-        os.replace(tmp_path, self._path)
-        self._dirty = False
-
-
 def _resolve_chunk_inputs(source_path: str | Path) -> tuple[str, dict]:
-    """Shared first step for BOTH chunk mechanisms (issue #165, slice 06):
-    compute `source_id` and load its persisted structural tree, raising the
-    SAME errors either mechanism must raise before doing any per-mechanism
-    work (`MissingSourceError` / `MissingTreeError`). Neither mechanism runs
-    extraction itself -- both read only the persisted tree
+    """Shared first step for the chunk stage (issue #165, slice 06):
+    compute `source_id` and load its persisted structural tree, raising
+    `MissingSourceError` / `MissingTreeError` before any chunking work.
+    Never runs extraction itself -- reads only the persisted tree
     (`axial.extract.load_persisted_tree`)."""
     path = Path(source_path)
     try:
@@ -1045,23 +499,17 @@ def _write_chunk_sections(
     split_section: Callable[[str], list[str]],
     chunks_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
-    on_section_done: Callable[[], None] | None = None,
 ) -> list[dict[str, Any]]:
-    """The shared per-section routing/writing orchestrator both chunk
-    mechanisms share (issue #165, slice 06): walk the tree's top-level
-    sections (skipping back-matter), route each section's body through the
-    shared source router (`_routed_section_body`, issue #167/PRD §7.8),
-    join the routed prose lines with `join_body` (the ONE thing that
-    differs per mechanism -- see `run_chunk_embedding`'s `"\n".join` vs.
-    `run_chunk_recursive`'s `"\n\n".join`), skip a garbage section exactly
-    as before, split the joined body with `split_section` (the mechanism's
-    own splitter), assemble records via the shared `build_chunk_records`
-    (identical `chunk_id` scheme / field set / section-then-position order
-    for both mechanisms, PRD §7.7), and write them plus the `.skips.jsonl`
-    sidecar exactly as `run_chunk_embedding` always has. `on_section_done`
-    (used by the embedding mechanism to flush its embedding cache after
-    every section, and after the loop) is optional -- the recursive
-    mechanism has no such cache and passes `None`."""
+    """The per-section routing/writing orchestrator the chunk stage uses
+    (issue #165, slice 06): walk the tree's top-level sections (skipping
+    back-matter), route each section's body through the shared source
+    router (`_routed_section_body`, issue #167/PRD §7.8), join the routed
+    prose lines with `join_body` (`run_chunk_recursive`'s `"\n\n".join`),
+    skip a garbage section exactly as before, split the joined body with
+    `split_section` (the recursive/structural splitter), assemble records
+    via the shared `build_chunk_records` (`chunk_id` scheme / field set /
+    section-then-position order, PRD §7.7), and write them plus the
+    `.skips.jsonl` sidecar."""
     if chunks_dir is None:
         chunks_dir = _default_chunks_dir(config_path)
     out_path = chunks_checkpoint_path(source_id, chunks_dir)
@@ -1105,20 +553,15 @@ def _write_chunk_sections(
         )
         for record in section_records:
             out_lines.append(json.dumps(record) + "\n")
-        if on_section_done is not None:
-            on_section_done()
         all_records.extend(section_records)
 
-    if on_section_done is not None:
-        on_section_done()
-
     # Atomic (issue #185): accumulate the full artifact in memory, write it
-    # to a sibling temp file, then `os.replace` it over `out_path` ONCE --
-    # same convention as `_CachingEmbedder.flush`. `open("w")` on `out_path`
-    # directly would truncate the prior complete artifact at the start of
-    # the run, so a hard kill mid-run left a torn file already in place of
-    # the good one; `os.replace` is a single filesystem rename, so a reader
-    # always sees either the complete prior file or the complete new one.
+    # to a sibling temp file, then `os.replace` it over `out_path` ONCE.
+    # `open("w")` on `out_path` directly would truncate the prior complete
+    # artifact at the start of the run, so a hard kill mid-run left a torn
+    # file already in place of the good one; `os.replace` is a single
+    # filesystem rename, so a reader always sees either the complete prior
+    # file or the complete new one.
     out_tmp_path = out_path.with_name(out_path.name + ".tmp")
     out_tmp_path.write_text("".join(out_lines), encoding="utf-8")
     os.replace(out_tmp_path, out_path)
@@ -1137,132 +580,18 @@ def _write_chunk_sections(
     return all_records
 
 
-def run_chunk_embedding(
-    source_path: str | Path,
-    embedder: Embedder | None = None,
-    chunks_dir: Path | None = None,
-    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
-    chunk_min: int = CHUNK_MIN,
-    chunk_max: int = CHUNK_MAX,
-    chunk_cache_dir: Path | None = None,
-) -> list[dict[str, Any]]:
-    """Run the embedding-based chunk stage on `source_path` (issue #151,
-    PRD §5 stage 4 / §7.7 / §8 P0-4): read the persisted structural tree
-    (`data/trees/<source_id>.json`, never re-running docling/Unstructured --
-    `axial.extract.load_persisted_tree`), and for each prose section not
-    skipped as garbage, split its ROUTED body (issue #167, PRD §7.8 --
-    `_routed_section_body`: prose-labeled blocks only, apparatus dropped and
-    logged, artifact excluded) into bounded chunks (see
-    `_chunk_section_text`) and write every record to
-    `data/chunks/<source_id>.jsonl` in section-then-position order (PRD
-    §7.7). No text-generating LLM call anywhere in this path -- `embedder`
-    defaults to `get_embedder()` (an `AXIAL_EMBEDDER`-selected, offline
-    embedder), never an `LLMClient`.
-
-    `chunk_min`/`chunk_max` (issue #152) override the band guard's default
-    `[CHUNK_MIN, CHUNK_MAX]`, threaded straight through to
-    `_chunk_section_text`. This is what makes a band SWEEP possible at all:
-    re-running with a different band on the same source reshapes the split
-    from the SAME underlying sentence embeddings (see below), it does not
-    change what "the embeddings" are.
-
-    Embedding cache (issue #152, PRD §5 stage 4 / §7.7's "cheap band
-    sweeps"): the injected/resolved `embedder` is wrapped in a
-    `_CachingEmbedder` (see its docstring for the full design -- key,
-    on-disk location, why per-sentence memoization makes every re-embed
-    site free on a warm run) BEFORE it reaches `_chunk_section_text` /
-    `_split_group_to_max`, so this method's own callers never see the
-    wrapping and every downstream `encode` call is transparently
-    cache-backed. `chunk_cache_dir` overrides the cwd-relative default
-    (`data/chunk_cache/`, `_default_chunk_cache_dir`), mirroring
-    `chunks_dir`'s own override seam. The cache is flushed to disk after
-    every section (not just once at the end), so a mid-pass failure still
-    leaves already-computed embeddings durably cached for the next attempt
-    -- cheap since a flush after an all-cache-hit section is a no-op (see
-    `_CachingEmbedder.flush`).
-
-    Overwrites `<source_id>.jsonl` cleanly on every call (idempotent on the
-    same source bytes -- deterministic tree read + deterministic embedder +
-    deterministic band guard yields byte-identical output on a re-run,
-    whether or not the embedding cache was warm: the cache is a pure
-    performance layer, never changing chunk output).
-
-    Raises `MissingSourceError` if `source_path` doesn't exist, or
-    `MissingTreeError` if no persisted tree exists yet for its source_id --
-    this stage never runs extraction itself; the caller must run
-    `axial extract` first.
-
-    Section routing/writing (walking sections, joining routed body lines
-    with a single `\n`, skipping garbage, assembling + writing records and
-    the skips sidecar) is delegated to the shared `_write_chunk_sections`
-    orchestrator, which `run_chunk_recursive` (issue #165, slice 06) also
-    calls with its own `\n\n`-join and its own zero-embedding splitter --
-    this function's own observable behavior/output is unchanged by that
-    refactor.
-    """
-    source_id, tree = _resolve_chunk_inputs(source_path)
-
-    if embedder is None:
-        embedder = get_embedder(config_path)
-
-    if chunk_cache_dir is None:
-        chunk_cache_dir = _default_chunk_cache_dir()
-    embedder = _CachingEmbedder(embedder, source_id, chunk_cache_dir)
-
-    def _join_body(body_lines: list[str]) -> str:
-        return "\n".join(body_lines)
-
-    def _split_section(body_text: str) -> list[str]:
-        return _chunk_section_text(body_text, embedder, chunk_min, chunk_max)
-
-    return _write_chunk_sections(
-        source_id,
-        tree,
-        _join_body,
-        _split_section,
-        chunks_dir=chunks_dir,
-        config_path=config_path,
-        on_section_done=embedder.flush,
-    )
-
-
 # =============================================================================
 # Recursive/structural chunk stage (issue #165, slice 06 of the
-# chunk-redesign subproject, PRD §5 stage 4 / §7.7 / §8 P0-4)
+# chunk-redesign subproject; the SOLE chunk mechanism as of issue #191, PRD
+# §5 stage 4 / §7.7 / §8 P0-4)
 # =============================================================================
 #
-# A second, operator-selectable chunk mechanism: deterministic recursive
-# descent over a separator hierarchy -- paragraph (`\n\n`) -> line (`\n`) ->
-# sentence (`segment_sentences`) -> raw char (`_hard_split_by_chars`) -- with
-# ZERO embedding-model or text-generating LLM calls anywhere in this path.
-# Selected by `AXIAL_CHUNK_MECHANISM=recursive` (`get_chunk_mechanism`,
-# mirroring `get_embedder`'s `AXIAL_EMBEDDER` seam exactly); unset or any
-# other value keeps today's embedding-based default (`run_chunk_embedding`)
-# untouched. Shares the identical §7.7 artifact (`build_chunk_records`) and
-# the identical per-section routing/writing orchestrator
-# (`_write_chunk_sections`) with the embedding mechanism -- only the
-# section-body join (`\n\n` here, vs. embedding's `\n`) and the splitter
-# itself differ.
-
-CHUNK_MECHANISM_ENV_VAR = "AXIAL_CHUNK_MECHANISM"
-CHUNK_MECHANISM_RECURSIVE = "recursive"
-
-
-def get_chunk_mechanism(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> str:
-    """Select the chunk MECHANISM (not the embedding model -- see
-    `get_embedder` for that separate seam), mirroring `get_embedder`'s
-    `AXIAL_EMBEDDER` convention exactly:
-    `AXIAL_CHUNK_MECHANISM=recursive` (`CHUNK_MECHANISM_RECURSIVE`) selects
-    the deterministic recursive/structural splitter (`run_chunk_recursive`);
-    unset, empty, or any other value keeps this module's own default (the
-    embedding-based `run_chunk_embedding`) untouched. Returns the raw env
-    var value (never itself validates against `CHUNK_MECHANISM_RECURSIVE`
-    -- callers compare it, mirroring `get_embedder`'s own `provider ==
-    "stub"` comparison). `config_path` is accepted (unused today) purely
-    for signature parity with `get_embedder`/`get_client`, in case a future
-    config-driven mechanism selection is added."""
-    del config_path  # unused today -- kept for signature parity
-    return os.environ.get(CHUNK_MECHANISM_ENV_VAR, "")
+# Deterministic recursive descent over a separator hierarchy -- paragraph
+# (`\n\n`) -> line (`\n`) -> sentence (`segment_sentences`) -> raw char
+# (`_hard_split_by_chars`) -- with ZERO embedding-model or text-generating
+# LLM calls anywhere in this path. Writes the §7.7 artifact
+# (`build_chunk_records`) via the shared per-section routing/writing
+# orchestrator (`_write_chunk_sections`).
 
 
 def _split_level_paragraph(text: str) -> list[str]:
@@ -1305,9 +634,7 @@ def _recursive_split_text(text: str, chunk_max: int, level: int = 0) -> list[str
     is exhausted (no sentence-ending punctuation found either -- a run-on
     with no internal structure at all), falls back to a raw character split
     (`_hard_split_by_chars`), the unconditional base case. Guarantees every
-    returned piece's length <= `chunk_max`, with NO exception -- the same
-    unconditional MAX-side guarantee `_split_group_to_max` gives the
-    embedding path, by a different (zero-embedding) mechanism. Empty/blank
+    returned piece's length <= `chunk_max`, with NO exception. Empty/blank
     input yields an empty list, mirroring `segment_sentences`."""
     stripped = text.strip()
     if not stripped:
@@ -1333,13 +660,11 @@ def _recursive_split_text(text: str, chunk_max: int, level: int = 0) -> list[str
 
 
 def _enforce_max_recursive(groups: list[list[str]], chunk_max: int) -> list[list[str]]:
-    """The recursive mechanism's own MAX-side safety net, run again AFTER
-    `_enforce_min`'s forward merge (mirroring `run_chunk_embedding`'s own
-    "enforce max, then min, then max again" order exactly -- see
-    `_chunk_section_text`'s docstring for why a MIN-side merge can itself
-    push a group back over `chunk_max`). Re-joins any over-band merged
-    group's pieces and re-runs `_recursive_split_text` on the joined text --
-    zero embedding calls, unlike `_split_group_to_max`'s re-embed."""
+    """The MAX-side safety net, run again AFTER `_enforce_min`'s forward
+    merge ("enforce max, then min, then max again" -- a MIN-side merge can
+    itself push a group back over `chunk_max`). Re-joins any over-band
+    merged group's pieces and re-runs `_recursive_split_text` on the joined
+    text -- zero embedding calls."""
     result: list[list[str]] = []
     for group in groups:
         joined = " ".join(group)
@@ -1356,13 +681,11 @@ def _recursive_section_chunks(
     """Chunk one prose section's body text via the recursive/structural
     mechanism (issue #165, slice 06): split on the separator hierarchy for
     the unconditional MAX-side guarantee (`_recursive_split_text`), then
-    reuse the SAME `_enforce_min` coalesce the embedding path uses for the
-    MIN side (plan 06: "same two-sided band, different cut") -- treating
-    each split piece as a singleton group, exactly as the embedding path
-    treats each sentence -- then re-run the MAX-side split as a safety net
-    (`_enforce_max_recursive`) since a MIN-side merge can itself push a
-    group over `chunk_max`. Zero embedding/LLM calls anywhere in this
-    function."""
+    coalesce below-`chunk_min` pieces forward with `_enforce_min` --
+    treating each split piece as a singleton group -- then re-run the
+    MAX-side split as a safety net (`_enforce_max_recursive`) since a
+    MIN-side merge can itself push a group over `chunk_max`. Zero
+    embedding/LLM calls anywhere in this function."""
     pieces = _recursive_split_text(text, chunk_max)
     if not pieces:
         return []
@@ -1382,28 +705,25 @@ def run_chunk_recursive(
     chunk_max: int = CHUNK_MAX,
 ) -> list[dict[str, Any]]:
     """Run the recursive/structural chunk stage on `source_path` (issue
-    #165, slice 06): the SAME persisted-tree read and per-section
-    routing/writing orchestrator `run_chunk_embedding` uses
-    (`_resolve_chunk_inputs` / `_write_chunk_sections`), but joining each
-    section's routed body lines with `\n\n` (so a real docling paragraph
-    break exists for the hierarchy's top level to find, rather than
-    embedding's single `\n`) and splitting via `_recursive_section_chunks`'s
-    deterministic separator hierarchy instead of sentence embeddings.
+    #165, slice 06; the SOLE chunk mechanism as of issue #191): read the
+    persisted structural tree via the shared per-section routing/writing
+    orchestrator (`_resolve_chunk_inputs` / `_write_chunk_sections`),
+    joining each section's routed body lines with `\n\n` (so a real docling
+    paragraph break exists for the hierarchy's top level to find) and
+    splitting via `_recursive_section_chunks`'s deterministic separator
+    hierarchy.
 
-    Constructs NO `Embedder` (never calls `get_embedder`, never wraps one in
-    `_CachingEmbedder`), makes NO `encode` call, and touches no embedding
-    cache on disk (`data/chunk_cache/`) -- zero embedding-model cost by
-    construction, not merely by avoiding use of one already built. Also
-    makes no text-generating LLM call -- this whole module never has.
+    Constructs no embedding model, makes no `encode` call, and touches no
+    embedding cache on disk -- zero embedding-model cost by construction.
+    Also makes no text-generating LLM call -- this whole module never has.
 
-    Writes the identical §7.7 artifact shape (`build_chunk_records`'s
-    `chunk_id` scheme, field set, section-then-position order) to the same
-    `data/chunks/<source_id>.jsonl` path, so `axial chunk examine` and every
+    Writes the §7.7 artifact shape (`build_chunk_records`'s `chunk_id`
+    scheme, field set, section-then-position order) to
+    `data/chunks/<source_id>.jsonl`, so `axial chunk examine` and every
     other downstream consumer of `read_chunks` works on it unchanged.
 
-    Raises `MissingSourceError` / `MissingTreeError` exactly as
-    `run_chunk_embedding` does -- this mechanism never runs extraction
-    itself either.
+    Raises `MissingSourceError` / `MissingTreeError` -- this mechanism
+    never runs extraction itself.
     """
     source_id, tree = _resolve_chunk_inputs(source_path)
 
@@ -1426,7 +746,7 @@ def run_chunk_recursive(
 # --- `axial chunk examine` (issue #153, PRD §7.7 / §8 P0-4b) ---------------
 #
 # Read-only inspection over the on-disk chunk artifact(s) produced by
-# `run_chunk_embedding` above: total/per-source counts, the size
+# `run_chunk_recursive` above: total/per-source counts, the size
 # distribution, boundary sanity, and garbage-skip reporting (from the
 # `.skips.jsonl` sidecar). Pure file I/O + arithmetic -- constructs no
 # embedder and no LLM client, so it costs zero LLM/embedding spend and can

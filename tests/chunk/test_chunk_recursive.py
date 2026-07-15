@@ -1,23 +1,18 @@
 """Outer acceptance test for issue #165, slice 06 of the chunk-redesign
-subproject (charter #148): a second, operator-selectable chunk mechanism --
-deterministic recursive/structural splitting on a separator hierarchy
-(paragraph `\n\n` -> line `\n` -> sentence -> char) -- living behind the
-existing `_chunk_section_text` seam and chosen by a new env-var selector that
-mirrors `axial.chunk`'s own `AXIAL_EMBEDDER` / `get_embedder` seam.
+subproject (charter #148): deterministic recursive/structural splitting on a
+separator hierarchy (paragraph `\n\n` -> line `\n` -> sentence -> char).
 
 Locked behavioral contract (DEC-1) -- do not edit once committed red.
 
 Given a source with a known paragraph structure -- some sections with clear
       `\n\n` breaks, and one section that is a single wall of text with no
       `\n\n`
-When  the operator selects the recursive mechanism and runs `axial chunk`
+When  `axial.chunk.run_chunk_recursive` runs against it
 Then  it writes data/chunks/<source_id>.jsonl with the §7.7 fields and stable
       chunk_ids, every chunk <= max and (modulo the section-tail exception)
       >= min, splitting the wall-of-text section by falling through
       `\n\n` -> `\n` -> sentence -> char
 And   it makes zero LLM calls and zero embedding-model calls
-And   with the mechanism unset, `axial chunk` still runs the embedding-based
-      default
 And   `axial chunk examine` reports on the recursive artifact through the
       same stats surface
 
@@ -26,84 +21,94 @@ the shared chunk artifact and band guard, and
 plans/chunk-redesign/06-recursive-mechanism.md (this slice's own plan) for
 the recursive-mechanism contract this test encodes.
 
-Seam decision 1 -- the selector: `AXIAL_CHUNK_MECHANISM=recursive`
+Migration note (issue #191, spec-drift, founder-adjudicated)
 -----------------------------------------------------------------------
-Per the slice plan's own "Decisions to make in this slice" section, this is
-an env var mirroring `axial.chunk.EMBEDDER_ENV_VAR` (`AXIAL_EMBEDDER`)
-exactly: `AXIAL_CHUNK_MECHANISM=recursive` selects the recursive mechanism;
-unset, empty, or any other value falls back to today's embedding-based
-default (byte-identical -- the plan is explicit the default must not change).
-This test locks the exact env-var NAME and the exact selecting VALUE as the
-contract -- neither is left to the implementer's discretion, since without a
-fixed name/value there is no way for an operator (or this test) to ever
-select the mechanism at all.
+Slice 06 originally shipped recursive/structural as a SECOND,
+operator-selectable mechanism behind an env-var seam
+(`AXIAL_CHUNK_MECHANISM=recursive`, mirroring `axial.chunk`'s own
+`AXIAL_EMBEDDER` / `get_embedder` seam), with the embedding-based mechanism
+remaining the unset/default. Issue #191 escalated from "flip the default"
+to full removal: the founder adjudicated recursive/structural as the SOLE
+chunk mechanism after a head-to-head over six real sources (~100x cheaper,
+quality a wash) -- the embedding apparatus and the `AXIAL_CHUNK_MECHANISM`
+selector seam are retired outright. This test is migrated accordingly:
+there is no longer a selector to set (recursive is not "selected", it is
+the only mechanism), and the third Gherkin clause this file used to lock
+("with the mechanism unset, `axial chunk` still runs the embedding-based
+default") is retired along with the mechanism it named -- that behavior no
+longer exists to test. Band guard, section-tail behavior, disk-first
+artifact shape, and examine parity are unchanged and still locked here.
 
-Seam decision 2 -- zero-embedding/zero-LLM proof: poison the construction
-seams directly, in-process
+Seam decision 1 -- calling `run_chunk_recursive` directly, not through the
+CLI's mechanism dispatch
 -----------------------------------------------------------------------
-No poison ("explode"-style) embedder seam like `axial.llm`'s
-`AXIAL_LLM_PROVIDER=explode` exists for embedders. Mirroring
-tests/test_chunk_examine.py's `test_chunk_examine_constructs_no_embedder_or_
-llm_client` (the same proof already used to lock "examine costs nothing"),
-this test invokes `axial.cli.main(["chunk", ...])` IN-PROCESS (not a
-subprocess -- a subprocess couldn't observe a monkeypatch) with
-`axial.chunk.get_embedder`, `axial.chunk.HashingEmbedder.encode`, and
-`axial.chunk.get_client` (defensively, `raising=False`, in case a future
-refactor imports it there) all monkeypatched to raise `AssertionError` the
-instant any is called. This is belt-and-braced with the SAME poison-provider
-trick tests/test_chunk.py's slice-01 outer test already locked
-(`AXIAL_LLM_PROVIDER=explode`, `axial.llm.ExplodingLLMClient`, which raises
-only when `.complete()` is actually invoked): if the recursive path ever
-constructs/uses an embedder, or ever reaches a text-generating LLM call for
-any reason, the run raises/crashes and this test's exit-code-0 assertion
-fails. Today (before this slice exists), `AXIAL_CHUNK_MECHANISM` is not
-recognized by the module at all, so `axial chunk` silently falls back to the
-embedding-based default -- which DOES call `HashingEmbedder.encode` -- so
-this test is expected to fail LOUDLY via the poisoned `encode`/`get_embedder`
-seam (an `AssertionError` propagating out of `axial.cli.main`, since it is
-not a `ChunkError` the CLI handler catches), not via a fixture/import error.
-That is the correct-reason red this slice must turn green.
+This test author commit was originally written (and first turned green)
+while `src/axial/cli.py`'s `chunk` subcommand still dispatched on
+`get_chunk_mechanism()` (unset -> the then-not-yet-retired embedding
+default) -- so going through the bare CLI would have exercised the
+embedding-based default (which calls a real sentence-embedding model unless
+`AXIAL_EMBEDDER=stub` is set), not the recursive mechanism this test is
+about. Calling `axial.chunk.run_chunk_recursive` directly sidesteps that
+dispatch entirely, proving the recursive mechanism's own contract
+regardless of what the CLI's default is wired to -- which is exactly what
+lets this same test stay correct, unmodified, now that the implementer has
+removed the embedding apparatus and `get_chunk_mechanism` seam outright
+(issue #191): `run_chunk_recursive` is unaffected either way.
+
+Seam decision 2 -- zero-embedding/zero-LLM proof: poison the remaining
+construction seam directly, in-process
+-----------------------------------------------------------------------
+`run_chunk_recursive` never imports or references an embedder or an LLM
+client at all (verified by reading `src/axial/chunk.py`) -- the "zero
+embedding-model / zero LLM calls" contract holds by construction: issue
+#191 removed the `Embedder` protocol, `HashingEmbedder`, `FastEmbedEmbedder`,
+and `get_embedder` from `axial.chunk` outright, so there is no embedder
+construction seam left to poison at all. This test still poisons
+`axial.chunk.get_client` (`raising=False`, a genuine no-op today since
+`axial.chunk` never imports it -- kept defensively in case a future
+refactor introduces one) as a regression check on the LLM-client half of
+this contract: if a future change to `run_chunk_recursive` or
+`_write_chunk_sections` ever accidentally reached that seam, this test
+fails loudly.
 
 Seam decision 3 -- the fixture tree, and why the wall-of-text section is
 built from a SINGLE leaf child
 -----------------------------------------------------------------------
 The recursive stage reads a persisted structural tree only (mirroring
-tests/test_chunk.py's own seam decision 4): this test fabricates one by hand
-and pre-places it at `data/trees/<source_id>.json` for the same committed
-fixture PDF `tests/fixtures/envelope/thesis_paper.pdf` already reused as a
-byte source elsewhere in this suite (never for its own tree shape).
+tests/chunk/test_chunk.py's own seam decision 4): this test fabricates one
+by hand and pre-places it at `data/trees/<source_id>.json` for the same
+committed fixture PDF `tests/fixtures/envelope/thesis_paper.pdf` already
+reused as a byte source elsewhere in this suite (never for its own tree
+shape).
 
-The plan's own pre-flight decision notes that exactly how a section's body
-gets a literal `\n\n` to split on depends on which join the implementer picks
-for the recursive path (today's embedding path joins body lines with a
-single `\n`; the plan's likely choice is `\n\n` per docling block). This test
-does not lock that join choice. Instead, the "wall of text" section is built
-from EXACTLY ONE leaf child carrying one continuous string with NO `\n`
-characters anywhere inside it (not even a single line break) -- so no matter
-what separator the implementer's join uses to combine multiple blocks, this
-section is not multiple blocks, and no separator is ever inserted into it.
-This guarantees the section's assembled body text truly contains no `\n\n`
-(and no `\n` at all) regardless of the join decision, so a paragraph-level
-(or even line-level) split cannot fire on it by construction -- the ONLY way
-this section can still yield multiple in-band chunks is if the recursive
-splitter actually fell through to the sentence or char level, which is
-exactly what this test's Gherkin requires it to prove. The section is sized
-to `CHUNK_MAX * 4` characters of ordinary, real-sentence prose (periods
-present, so a sentence-level fallback can succeed without needing to fall
-all the way to a raw char split) -- comfortably forcing at least one MAX-side
-split regardless of the implementer's exact `CHUNK_MAX` value.
+`run_chunk_recursive` joins a section's routed body lines with `\n\n` (one
+real docling paragraph break per block) -- but this test does not lock that
+join choice as its own contract. Instead, the "wall of text" section is
+built from EXACTLY ONE leaf child carrying one continuous string with NO
+`\n` characters anywhere inside it (not even a single line break) -- so no
+matter what separator a join uses to combine multiple blocks, this section
+is not multiple blocks, and no separator is ever inserted into it. This
+guarantees the section's assembled body text truly contains no `\n\n` (and
+no `\n` at all), so a paragraph-level (or even line-level) split cannot
+fire on it by construction -- the ONLY way this section can still yield
+multiple in-band chunks is if the recursive splitter actually fell through
+to the sentence or char level, which is exactly what this test's Gherkin
+requires it to prove. The section is sized to `CHUNK_MAX * 4` characters of
+ordinary, real-sentence prose (periods present, so a sentence-level
+fallback can succeed without needing to fall all the way to a raw char
+split) -- comfortably forcing at least one MAX-side split regardless of the
+implementer's exact `CHUNK_MAX` value.
 
 The "Overview" section, by contrast, is built from several SEPARATE leaf
 children (distinct paragraphs) -- giving the tree a section with genuine
-inter-block structure for the join step to insert its own separator between,
-satisfying the Gherkin's "some sections with clear `\n\n` breaks" clause,
-without this test dictating the exact separator character used.
+inter-block structure for the join step to insert its own separator
+between, satisfying the Gherkin's "some sections with clear `\n\n` breaks"
+clause, without this test dictating the exact separator character used.
 
 Seam decision 4 -- isolation via an isolated tmp cwd, not the real repo root
 -----------------------------------------------------------------------
-Because this test poisons module-level attributes (`axial.chunk.get_embedder`
-etc.) via `monkeypatch`, it must run in-process, so (mirroring
-tests/test_chunk_cache.py's identical reasoning) it runs from a freshly
+Because this test poisons a module-level attribute (`axial.chunk.get_client`)
+via `monkeypatch`, it must run in-process, so it runs from a freshly
 created, empty `tmp_path` cwd instead of shelling out to the CLI against the
 real repo root: `axial.extract.TREES_DIR` / `axial.chunk.CHUNKS_DIR` both
 resolve as plain, cwd-relative paths, so `monkeypatch.chdir(tmp_path)` makes
@@ -113,11 +118,11 @@ tests/conftest.py's autouse snapshot/restore fixture is needed here).
 
 Seam decision 5 -- band constants and chunk_id shape imported, not hardcoded
 -----------------------------------------------------------------------
-Mirroring tests/test_chunk.py's seam decision 3, this test imports
+Mirroring tests/chunk/test_chunk.py's seam decision 3, this test imports
 `CHUNK_MIN`/`CHUNK_MAX` from `axial.chunk` rather than hardcoding the band,
 and asserts the chunk_id *shape* (`<source_id>_<section order>_<slug>_<NNN>`)
-via the same permissive tail regex tests/test_chunk.py already locked, not an
-exact slugify algorithm.
+via the same permissive tail regex tests/chunk/test_chunk.py already locked,
+not an exact slugify algorithm.
 
 Out of scope for this file (left to inner unit tests per the slice plan)
 -----------------------------------------------------------------------
@@ -125,10 +130,7 @@ This test does not assert exactly which hierarchy level (paragraph vs. line
 vs. sentence vs. char) fired for any given fixture section -- only that the
 wall-of-text section (which by construction cannot split at the paragraph or
 line level) still yields multiple in-band chunks, proving SOME fall-through
-occurred. It also does not assert byte-identity of the default (unset
-selector) embedding path's output against a pre-slice baseline (an inner-test
-concern per the plan) -- only that the default path still runs at all,
-producing the artifact, when the selector is unset.
+occurred.
 """
 
 from __future__ import annotations
@@ -139,17 +141,11 @@ from pathlib import Path
 
 import pytest
 
-from axial.chunk import CHUNK_MAX, CHUNK_MIN
+from axial.chunk import CHUNK_MAX, CHUNK_MIN, run_chunk_recursive
 from axial.envelope import compute_source_id
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURE_PDF = REPO_ROOT / "tests" / "fixtures" / "envelope" / "thesis_paper.pdf"
-
-# The exact selector contract this slice must implement (seam decision 1).
-MECHANISM_ENV_VAR = "AXIAL_CHUNK_MECHANISM"
-MECHANISM_RECURSIVE_VALUE = "recursive"
-
-LLM_PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 
 NORMAL_SECTION_HEADING = "Overview"
 WALL_OF_TEXT_HEADING = "Continuous Field Notes"
@@ -160,8 +156,8 @@ KNOWN_SECTION_ORDERS = {
 }
 
 # Matches only the "<slug>_<NNN>" tail of a chunk_id, mirroring
-# tests/test_chunk.py's own regex exactly (see that file's comment for why a
-# single regex over the WHOLE chunk_id would be ambiguous).
+# tests/chunk/test_chunk.py's own regex exactly (see that file's comment for
+# why a single regex over the WHOLE chunk_id would be ambiguous).
 _SLUG_NNN_RE = re.compile(r"^(?P<slug>[a-z0-9-]+)_(?P<nnn>\d{3})$")
 
 # Several DISTINCT paragraphs (no internal newlines each) giving the
@@ -172,8 +168,7 @@ _OVERVIEW_PARAGRAPHS = [
     "governance capacity.",
     "This section summarizes the survey's scope and method before the "
     "detailed findings that follow.",
-    "Respondents were drawn from municipal offices across three "
-    "neighboring districts.",
+    "Respondents were drawn from municipal offices across three neighboring districts.",
 ]
 
 # Ordinary, real-sentence filler prose (periods present) with NO newlines
@@ -239,9 +234,9 @@ def _build_fixture_tree() -> dict:
 
 def _place_fixture_tree(root: Path, source_id: str) -> Path:
     """Write the fabricated tree fixture to <root>/data/trees/<source_id>.json
-    (axial.extract.TREES_DIR's own cwd-relative default), so `axial chunk`
-    (via its persisted-tree cache) reads it verbatim instead of running
-    docling."""
+    (axial.extract.TREES_DIR's own cwd-relative default), so
+    `run_chunk_recursive` (via its persisted-tree cache) reads it verbatim
+    instead of running docling."""
     tree = _build_fixture_tree()
     tree_path = root / "data" / "trees" / f"{source_id}.json"
     tree_path.parent.mkdir(parents=True, exist_ok=True)
@@ -266,22 +261,28 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 
 def _poison_embedding_and_llm_seams(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Poison every construction/use seam an embedder or LLM client could be
-    reached through (seam decision 2): the FIRST one reached raises
-    `AssertionError` naming this slice's own zero-cost contract."""
+    """Defense-in-depth poison of the one remaining construction/use seam a
+    text-generating LLM client could be reached through (seam decision 2):
+    `axial.chunk.get_client` raises `AssertionError` if ever called.
+    `raising=False` here is a genuine no-op today (the chunk module never
+    imports `get_client` at all) -- kept defensively in case a future
+    refactor introduces one.
+
+    The embedder side of this proof (`axial.chunk.get_embedder` /
+    `HashingEmbedder.encode`) no longer applies: issue #191 removed the
+    `Embedder` protocol, `HashingEmbedder`, `FastEmbedEmbedder`, and
+    `get_embedder` from `axial.chunk` entirely, so there is no embedder
+    construction seam left to poison -- the recursive/structural mechanism
+    constructs no embedder by construction (it never imports the concept),
+    not merely by avoiding use of one already built."""
 
     def _poison(*_args, **_kwargs):
         raise AssertionError(
-            "the recursive chunk mechanism must construct NO embedder and "
-            "make NO embedding-model `encode` calls, and NO text-generating "
-            "LLM call (plan 06: 'Zero LLM and zero embedding-model calls on "
-            "the recursive path -- the embedder and its cache are never "
-            "constructed when this mechanism is selected') -- this seam was "
-            "reached during a recursive-mechanism `axial chunk` run"
+            "the recursive chunk mechanism must make NO text-generating "
+            "LLM call -- this seam was reached during a "
+            "`run_chunk_recursive` run"
         )
 
-    monkeypatch.setattr("axial.chunk.get_embedder", _poison, raising=False)
-    monkeypatch.setattr("axial.chunk.HashingEmbedder.encode", _poison, raising=False)
     monkeypatch.setattr("axial.chunk.get_client", _poison, raising=False)
 
 
@@ -293,36 +294,20 @@ def test_recursive_mechanism_writes_bounded_artifact_with_zero_model_calls_and_e
     source_id = compute_source_id(FIXTURE_PDF)
     _place_fixture_tree(tmp_path, source_id)
 
-    monkeypatch.setenv(MECHANISM_ENV_VAR, MECHANISM_RECURSIVE_VALUE)
-    monkeypatch.setenv(LLM_PROVIDER_ENV_VAR, "explode")  # poison: any text-gen LLM call crashes
     _poison_embedding_and_llm_seams(monkeypatch)
 
-    from axial.cli import main
-
-    exit_code = main(["chunk", str(FIXTURE_PDF)])
-    captured = capsys.readouterr()
-
-    assert exit_code == 0, (
-        f"expected exit code 0 for `axial chunk` with "
-        f"{MECHANISM_ENV_VAR}={MECHANISM_RECURSIVE_VALUE!r} against a fixture "
-        f"tree, with AXIAL_LLM_PROVIDER=explode and the embedder/LLM-client "
-        f"construction seams poisoned to raise if ever called -- a nonzero "
-        f"exit (or an uncaught exception) here most likely means the "
-        f"recursive mechanism does not exist yet, so the run fell back to "
-        f"the embedding-based default and called the poisoned embedder, or "
-        f"made a real LLM call (plan 06's whole point: the recursive path "
-        f"must never construct an embedder or call an LLM at all).\n"
-        f"stdout: {captured.out!r}\nstderr: {captured.err!r}"
-    )
+    records = run_chunk_recursive(FIXTURE_PDF)
 
     chunk_path = tmp_path / "data" / "chunks" / f"{source_id}.jsonl"
     assert chunk_path.exists(), (
-        f"expected `axial chunk` (recursive mechanism) to write {chunk_path} "
-        f"(PRD §7.7, '<source_id>.jsonl'), but it does not exist.\n"
-        f"stdout: {captured.out!r}\nstderr: {captured.err!r}"
+        f"expected `run_chunk_recursive` to write {chunk_path} "
+        f"(PRD §7.7, '<source_id>.jsonl'), but it does not exist."
     )
 
-    records = _read_jsonl(chunk_path)
+    on_disk_records = _read_jsonl(chunk_path)
+    assert on_disk_records == records, (
+        "expected the returned records to match the on-disk artifact exactly"
+    )
     assert records, f"expected at least one chunk record in {chunk_path}, got none"
 
     seen_chunk_ids: set[str] = set()
@@ -330,7 +315,9 @@ def test_recursive_mechanism_writes_bounded_artifact_with_zero_model_calls_and_e
     seen_section_orders_in_order: list[str] = []
 
     for record in records:
-        assert isinstance(record, dict), f"expected each chunk record to be a JSON object, got {record!r}"
+        assert isinstance(record, dict), (
+            f"expected each chunk record to be a JSON object, got {record!r}"
+        )
 
         for field in ("chunk_id", "section", "section_order", "text"):
             assert field in record, (
@@ -344,8 +331,12 @@ def test_recursive_mechanism_writes_bounded_artifact_with_zero_model_calls_and_e
         section_order = record["section_order"]
         text = record["text"]
 
-        assert isinstance(chunk_id, str) and chunk_id, f"expected a non-empty string chunk_id, got {chunk_id!r}"
-        assert chunk_id not in seen_chunk_ids, f"expected chunk_ids to be unique, got a duplicate: {chunk_id!r}"
+        assert isinstance(chunk_id, str) and chunk_id, (
+            f"expected a non-empty string chunk_id, got {chunk_id!r}"
+        )
+        assert chunk_id not in seen_chunk_ids, (
+            f"expected chunk_ids to be unique, got a duplicate: {chunk_id!r}"
+        )
         seen_chunk_ids.add(chunk_id)
 
         assert section in KNOWN_SECTION_ORDERS, (
@@ -371,20 +362,21 @@ def test_recursive_mechanism_writes_bounded_artifact_with_zero_model_calls_and_e
             f"<slug>_<NNN>, got {chunk_id!r}"
         )
 
-        assert isinstance(text, str) and text, f"expected non-empty string 'text', got {text!r} (record: {record!r})"
+        assert isinstance(text, str) and text, (
+            f"expected non-empty string 'text', got {text!r} (record: {record!r})"
+        )
         assert len(text) <= CHUNK_MAX, (
             f"expected every record's text length <= CHUNK_MAX ({CHUNK_MAX}) "
-            f"with NO exception (recursive descent's MAX-side guarantee, "
-            f"same as the embedding path's), got {len(text)} chars for "
-            f"chunk_id {chunk_id!r} in section {section!r}"
+            f"with NO exception (recursive descent's MAX-side guarantee), "
+            f"got {len(text)} chars for chunk_id {chunk_id!r} in section "
+            f"{section!r}"
         )
 
         if section_order not in seen_section_orders_in_order:
             seen_section_orders_in_order.append(section_order)
         by_section.setdefault(section_order, []).append(record)
 
-    # --- section-then-position order (PRD §7.7), same invariant as the
-    # embedding path. ---
+    # --- section-then-position order (PRD §7.7). ---
     assert seen_section_orders_in_order == sorted(seen_section_orders_in_order), (
         f"expected chunk records in section-then-position order (PRD §7.7), "
         f"but section_order values first appeared in file order "
@@ -392,8 +384,7 @@ def test_recursive_mechanism_writes_bounded_artifact_with_zero_model_calls_and_e
     )
 
     # --- MIN-side band property, with the documented section-tail /
-    # whole-section-short exception (same reused `_enforce_min` contract as
-    # the embedding path -- plan 06: "same two-sided band, different cut"). ---
+    # whole-section-short exception. ---
     for section_order, section_records in by_section.items():
         total_section_chars = sum(len(r["text"]) for r in section_records)
         for position, record in enumerate(section_records):
@@ -421,14 +412,17 @@ def test_recursive_mechanism_writes_bounded_artifact_with_zero_model_calls_and_e
         f"single continuous run of CHUNK_MAX * 4 = {CHUNK_MAX * 4} characters "
         f"with NO newline anywhere in it) to be split into multiple in-band "
         f"chunk records by falling through the separator hierarchy "
-        f"(paragraph -> line -> sentence -> char, plan 06), got "
-        f"{len(wall_records)} -- a single record here would mean the section "
-        f"was emitted whole (or the recursive mechanism does not exist)"
+        f"(paragraph -> line -> sentence -> char), got {len(wall_records)} -- "
+        f"a single record here would mean the section was emitted whole"
     )
 
-    # --- examine parity (plan 06's fourth Gherkin clause): `axial chunk
-    # examine` reports on this recursive artifact through the SAME stats
-    # surface (`examine_chunks`/`format_examine_report`), with no error. ---
+    # --- examine parity: `axial chunk examine` reports on this recursive
+    # artifact through the SAME stats surface (`examine_chunks`/
+    # `format_examine_report`), with no error. This goes through the real
+    # CLI -- `examine` never touches an embedder or LLM client, so it is
+    # unaffected by which chunk mechanism produced the artifact it reads. ---
+    from axial.cli import main
+
     examine_exit_code = main(["chunk", "examine"])
     examine_captured = capsys.readouterr()
 
@@ -444,46 +438,10 @@ def test_recursive_mechanism_writes_bounded_artifact_with_zero_model_calls_and_e
     assert str(expected_total) in examine_captured.out, (
         f"expected `axial chunk examine`'s report to include this recursive "
         f"artifact's own total chunk count ({expected_total}), reported via "
-        f"the same `examine_chunks`/`format_examine_report` surface the "
-        f"embedding path already uses.\nstdout: {examine_captured.out!r}"
+        f"the same `examine_chunks`/`format_examine_report` surface.\n"
+        f"stdout: {examine_captured.out!r}"
     )
     assert source_id in examine_captured.out, (
         f"expected the recursive artifact's own source_id ({source_id!r}) to "
         f"be named in the examine report.\nstdout: {examine_captured.out!r}"
-    )
-
-
-def test_default_mechanism_unset_still_runs_embedding_based_chunk(tmp_path, monkeypatch):
-    """Plan 06's third Gherkin clause: with the selector unset, `axial chunk`
-    still runs the embedding-based default (byte-identity against a
-    pre-slice baseline is an inner-test concern -- this is the lighter,
-    outer-level "it still runs at all" assertion). No embedder/LLM seam is
-    poisoned here -- the default path legitimately calls the embedder."""
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv(MECHANISM_ENV_VAR, raising=False)
-
-    source_id = compute_source_id(FIXTURE_PDF)
-    _place_fixture_tree(tmp_path, source_id)
-
-    from axial.cli import main
-
-    exit_code = main(["chunk", str(FIXTURE_PDF)])
-
-    assert exit_code == 0, (
-        f"expected exit code 0 for `axial chunk` with "
-        f"{MECHANISM_ENV_VAR} unset (the default, embedding-based mechanism, "
-        f"unchanged by this slice), got {exit_code}"
-    )
-
-    chunk_path = tmp_path / "data" / "chunks" / f"{source_id}.jsonl"
-    assert chunk_path.exists(), (
-        f"expected the default (unset-selector) `axial chunk` run to still "
-        f"write {chunk_path}, exactly as before this slice"
-    )
-
-    records = _read_jsonl(chunk_path)
-    assert records, (
-        "expected the default (unset-selector) embedding-based mechanism to "
-        "still produce at least one chunk record, unchanged by this slice "
-        "adding a second, opt-in mechanism"
     )

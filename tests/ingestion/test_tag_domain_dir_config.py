@@ -116,7 +116,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from axial.chunk import HashingEmbedder, run_chunk_embedding
+from axial.chunk import run_chunk_recursive
 from axial.cli import build_parser
 from axial.envelope import compute_source_id, run_envelope
 from axial.llm import StubLLMClient
@@ -178,15 +178,14 @@ def _arrange_stored_envelope(envelopes_dir: Path, client: StubLLMClient, config_
 
 def _arrange_chunk_artifact(chunks_dir: Path, config_path: Path) -> None:
     """Write the real, on-disk chunk artifact for the fixture IN-PROCESS
-    (`axial.chunk.run_chunk_embedding`, the stub/offline `HashingEmbedder`)
+    (`axial.chunk.run_chunk_recursive`, the sole chunking mechanism)
     at `chunks_dir` (issue #154 slice 04: `axial tag` no longer computes
     chunks itself -- it reads `<chunks_dir>/<source_id>.jsonl` via
     `axial.chunk.read_chunks`, and no longer accepts an `envelopes_dir`
     parameter at all). Requires `_place_tree_fixture`/`_arrange_stored_
     envelope` to have already placed the persisted tree this reads."""
-    run_chunk_embedding(
+    run_chunk_recursive(
         THESIS_PAPER_PDF,
-        embedder=HashingEmbedder(),
         chunks_dir=chunks_dir,
         config_path=config_path,
     )
@@ -373,7 +372,7 @@ def test_tag_cli_end_to_end_falls_back_to_syria_with_real_pipeline_config(clean_
     # read_chunks`) and fails clearly if absent. Write it here, in-process,
     # into the SAME cwd-relative `data/chunks/` the `axial tag` subprocess
     # below (cwd=REPO_ROOT) reads from.
-    run_chunk_embedding(THESIS_PAPER_PDF, embedder=HashingEmbedder())
+    run_chunk_recursive(THESIS_PAPER_PDF)
 
     result = subprocess.run(
         ["uv", "run", "axial", "tag", str(THESIS_PAPER_PDF)],

@@ -211,7 +211,7 @@ from pathlib import Path
 
 import yaml
 
-from axial.chunk import HashingEmbedder, run_chunk_embedding
+from axial.chunk import run_chunk_recursive
 from axial.envelope import compute_source_id
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -289,7 +289,7 @@ def _run_axial(
 @contextlib.contextmanager
 def _chdir(path: Path):
     """Temporarily change the process cwd to `path` -- see
-    `_arrange_expected_chunk_records` below: `run_chunk_embedding` resolves
+    `_arrange_expected_chunk_records` below: `run_chunk_recursive` resolves
     its persisted-tree read (`axial.extract.tree_path`, via
     `axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
     override parameter (only its OWN write target, `chunks_dir`, is
@@ -371,7 +371,7 @@ def _arrange_stored_envelope(root: Path) -> Path:
 
 def _arrange_expected_chunk_records(root: Path) -> list[dict]:
     """Write the real, on-disk chunk artifact for this fixture IN-PROCESS
-    (`axial.chunk.run_chunk_embedding`, the stub/offline `HashingEmbedder`)
+    (`axial.chunk.run_chunk_recursive`, the sole chunking mechanism)
     and return the records it produced, used as the expected set `vault
     write` must match one-for-one (see module docstring, seam decision 2).
 
@@ -382,10 +382,10 @@ def _arrange_expected_chunk_records(root: Path) -> list[dict]:
     path the `axial vault write` subprocess below (run with `cwd=root`)
     reads from."""
     with _chdir(root):
-        records = run_chunk_embedding(THESIS_PAPER_PDF, embedder=HashingEmbedder())
+        records = run_chunk_recursive(THESIS_PAPER_PDF)
     assert len(records) >= 1, (
         f"arrange step failed: expected at least one chunk record from "
-        f"run_chunk_embedding, got {len(records)}"
+        f"run_chunk_recursive, got {len(records)}"
     )
     for record in records:
         assert isinstance(record.get("chunk_id"), str) and record["chunk_id"].strip(), (

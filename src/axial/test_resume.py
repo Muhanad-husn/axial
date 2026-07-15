@@ -10,7 +10,7 @@ from the outside:
      records recombined in stable chunk order.
 
 There is no chunk-pass checkpoint/resume to cover here: the chunk stage
-(`run_chunk_embedding`) overwrites its on-disk artifact fresh on every call
+(`run_chunk_recursive`) overwrites its on-disk artifact fresh on every call
 (see its own docstring) and has no per-section resume, so the tag-pass
 fixtures below stub `axial.tag.read_chunks` in its place.
 """

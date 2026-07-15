@@ -152,7 +152,7 @@ from pathlib import Path
 
 import yaml
 
-from axial.chunk import HashingEmbedder, run_chunk_embedding
+from axial.chunk import run_chunk_recursive
 from axial.envelope import compute_source_id
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -221,7 +221,7 @@ def _run_axial(
 @contextlib.contextmanager
 def _chdir(path: Path):
     """Temporarily change the process cwd to `path` -- see
-    `_arrange_known_chunk_ids` below: `run_chunk_embedding` resolves its
+    `_arrange_known_chunk_ids` below: `run_chunk_recursive` resolves its
     persisted-tree read (`axial.extract.tree_path`, via `axial.extract.
     TREES_DIR`) as a plain, cwd-relative path with no override parameter
     (only its OWN write target, `chunks_dir`, is overridable). Calling it
@@ -332,7 +332,7 @@ def _parse_json_records(stdout: str, *, array_key: str, kind: str) -> list[dict]
 
 def _arrange_known_chunk_ids(root: Path) -> set[str]:
     """Write the real, on-disk chunk artifact for this fixture IN-PROCESS
-    (`axial.chunk.run_chunk_embedding`, the stub/offline `HashingEmbedder`)
+    (`axial.chunk.run_chunk_recursive`, the sole chunking mechanism)
     and return the exact set of chunk_ids it produced -- see module
     docstring, seam decision 3.
 
@@ -343,10 +343,10 @@ def _arrange_known_chunk_ids(root: Path) -> set[str]:
     path the `axial vault write` subprocess below (run with `cwd=root`)
     reads from."""
     with _chdir(root):
-        records = run_chunk_embedding(PROSE_AND_TABLE_PDF, embedder=HashingEmbedder())
+        records = run_chunk_recursive(PROSE_AND_TABLE_PDF)
     chunk_ids = {r.get("chunk_id") for r in records}
     assert chunk_ids and all(isinstance(cid, str) and cid for cid in chunk_ids), (
-        f"arrange step failed: expected run_chunk_embedding to write at "
+        f"arrange step failed: expected run_chunk_recursive to write at "
         f"least one chunk record with a non-empty chunk_id, got records: "
         f"{records!r}"
     )

@@ -175,7 +175,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from axial.chunk import HashingEmbedder, run_chunk_embedding
+from axial.chunk import run_chunk_recursive
 from axial.envelope import compute_source_id
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -272,7 +272,7 @@ def _run_axial(
 def _chdir(path: Path):
     """Temporarily change the process cwd to `path` -- see
     `_arrange_chunk_artifact`/`_arrange_expected_chunk_records` below:
-    `run_chunk_embedding` resolves its persisted-tree read
+    `run_chunk_recursive` resolves its persisted-tree read
     (`axial.extract.tree_path`, via `axial.extract.TREES_DIR`) as a plain,
     cwd-relative path with no override parameter (only its OWN write
     target, `chunks_dir`, is overridable). Calling it in-process instead of
@@ -358,7 +358,7 @@ def _arrange_stored_envelope(root: Path, source_path: Path) -> Path:
 
 def _arrange_chunk_artifact(root: Path, source_path: Path) -> list[dict]:
     """Write the real, on-disk chunk artifact for `source_path` IN-PROCESS
-    (`axial.chunk.run_chunk_embedding`, the stub/offline `HashingEmbedder`)
+    (`axial.chunk.run_chunk_recursive`, the sole chunking mechanism)
     at `<root>/data/chunks/<source_id>.jsonl`, and return the records it
     produced.
 
@@ -373,7 +373,7 @@ def _arrange_chunk_artifact(root: Path, source_path: Path) -> list[dict]:
     it explicitly first -- this helper is that arrange step, for either the
     control root or the root under test."""
     with _chdir(root):
-        records = run_chunk_embedding(source_path, embedder=HashingEmbedder())
+        records = run_chunk_recursive(source_path)
     for record in records:
         assert isinstance(record.get("chunk_id"), str) and record["chunk_id"].strip(), (
             f"arrange step failed: expected every chunk record to carry a "

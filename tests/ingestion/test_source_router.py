@@ -64,11 +64,11 @@ locks): it must keep holding as the router lands, whichever of the two
 existing/new mechanisms is doing the dropping.
 
 Seam decision 1 -- bypassing docling/network entirely via a monkeypatched
-axial.chunk.tree_path/load_persisted_tree, calling run_chunk_embedding
+axial.chunk.tree_path/load_persisted_tree, calling run_chunk_recursive
 directly
 ---------------------------------------------------------------------------
 Mirrors `tests/test_chunk_backmatter_filter.py`'s own `_patch_tree` helper
-exactly: `run_chunk_embedding` reads the persisted structural tree via
+exactly: `run_chunk_recursive` reads the persisted structural tree via
 `axial.chunk.tree_path`/`axial.chunk.load_persisted_tree` (imported directly
 into `axial.chunk`'s own module namespace), so monkeypatching those two
 module attributes redirects the read to a hand-built, synthetic extraction
@@ -119,7 +119,7 @@ import json
 import axial.chunk as chunk_module
 import axial.tag as tag_module
 import axial.xref as xref_module
-from axial.chunk import HashingEmbedder, run_chunk_embedding
+from axial.chunk import run_chunk_recursive
 from axial.envelope import compute_source_id
 from axial.llm import TAG_PASS_NAME, XREF_PASS_NAME, StubLLMClient
 from axial.router import APPARATUS, ARTIFACT, PROSE, apparatus_reason, route_for
@@ -277,10 +277,10 @@ def test_source_router_classifies_blocks_by_label_before_chunking(tmp_path, monk
     _patch_tree(monkeypatch, tmp_path, _build_synthetic_tree())
 
     chunks_dir = tmp_path / "chunks"
-    records = run_chunk_embedding(source_path, embedder=HashingEmbedder(), chunks_dir=chunks_dir)
+    records = run_chunk_recursive(source_path, chunks_dir=chunks_dir)
 
     assert isinstance(records, list), (
-        f"expected run_chunk_embedding to return a list, got {type(records).__name__}: {records!r}"
+        f"expected run_chunk_recursive to return a list, got {type(records).__name__}: {records!r}"
     )
     assert records, "expected at least one chunk record from the kept prose, got none"
 
@@ -496,7 +496,7 @@ def _write_router_skip_sidecar(chunks_dir, source_id: str) -> None:
     drops the router (slice 02) would have produced for a source with a
     table-of-contents (`document_index`) block and an endnotes (`footnote`)
     block -- the exact `{"section", "section_order", "reason"}` shape
-    `axial.chunk._routed_section_body`/`run_chunk_embedding` already write,
+    `axial.chunk._routed_section_body`/`run_chunk_recursive` already write,
     with the SAME reason text the real `axial.router.apparatus_reason`
     produces (never a hand-invented reason string)."""
     skips_path = chunk_module.chunks_skips_sidecar_path(source_id, chunks_dir)
@@ -767,7 +767,7 @@ def test_chunk_examine_reports_router_apparatus_drops_as_single_source_of_skip_t
 # `route_for` is a pure, stateless classification function of (label,
 # in_back_matter_section) -> route; it neither reads a tree nor calls a
 # model. Driving it directly is the most direct way to pin the classification
-# contract itself -- a full synthetic-tree-through-`run_chunk_embedding` test
+# contract itself -- a full synthetic-tree-through-`run_chunk_recursive` test
 # (mirroring `test_source_router_classifies_blocks_by_label_before_chunking`
 # above) would add real pipeline machinery (a synthetic tree, monkeypatched
 # `tree_path`/`load_persisted_tree`, on-disk chunk/skip artifacts) without

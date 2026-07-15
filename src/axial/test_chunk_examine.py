@@ -1,8 +1,8 @@
 """Inner unit tests for issue #153 (`axial chunk examine`), slice 03 of the
 chunk-redesign subproject. Complements tests/test_chunk_examine.py (the
 LOCKED outer acceptance test) with unit-level coverage of the two pieces it
-exercises only end-to-end: the garbage-skip sidecar `run_chunk_embedding`
-now persists (founder-approved Option A), and the pure `examine_chunks` /
+exercises only end-to-end: the garbage-skip sidecar `run_chunk_recursive`
+persists (founder-approved Option A), and the pure `examine_chunks` /
 `format_examine_report` functions `axial chunk examine` is built on.
 """
 
@@ -14,33 +14,32 @@ import pytest
 
 from axial.chunk import (
     ChunkArtifactCorruptError,
-    HashingEmbedder,
     ExamineStats,
     chunks_skips_sidecar_path,
     examine_chunks,
     format_examine_report,
-    run_chunk_embedding,
+    run_chunk_recursive,
 )
 
-from .test_chunk_embedding import _patch_tree, _tree_with_sections
+from .conftest import patch_tree, tree_with_sections
 
-# --- run_chunk_embedding: the skips sidecar ---------------------------------
+# --- run_chunk_recursive: the skips sidecar ---------------------------------
 
 
-def test_run_chunk_embedding_writes_skips_sidecar_for_garbage_section(monkeypatch, tmp_path):
+def test_run_chunk_recursive_writes_skips_sidecar_for_garbage_section(monkeypatch, tmp_path):
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
     garbage = "; ".join(f"{n}, {n + 1}-{n + 2}" for n in range(1, 400))
-    tree = _tree_with_sections(
+    tree = tree_with_sections(
         {
             "Overview": ["Ordinary prose about the survey and its findings."],
             "Numeric Annex": [garbage],
         }
     )
-    _patch_tree(monkeypatch, tmp_path, tree)
+    patch_tree(monkeypatch, tmp_path, tree)
     chunks_dir = tmp_path / "chunks"
 
-    run_chunk_embedding(source, embedder=HashingEmbedder(), chunks_dir=chunks_dir)
+    run_chunk_recursive(source, chunks_dir=chunks_dir)
 
     from axial.envelope import compute_source_id
 
@@ -56,14 +55,14 @@ def test_run_chunk_embedding_writes_skips_sidecar_for_garbage_section(monkeypatc
     assert "non-alpha" in record["reason"]
 
 
-def test_run_chunk_embedding_no_skips_writes_no_sidecar(monkeypatch, tmp_path):
+def test_run_chunk_recursive_no_skips_writes_no_sidecar(monkeypatch, tmp_path):
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
-    tree = _tree_with_sections({"Overview": ["Ordinary prose about the survey and its findings."]})
-    _patch_tree(monkeypatch, tmp_path, tree)
+    tree = tree_with_sections({"Overview": ["Ordinary prose about the survey and its findings."]})
+    patch_tree(monkeypatch, tmp_path, tree)
     chunks_dir = tmp_path / "chunks"
 
-    run_chunk_embedding(source, embedder=HashingEmbedder(), chunks_dir=chunks_dir)
+    run_chunk_recursive(source, chunks_dir=chunks_dir)
 
     from axial.envelope import compute_source_id
 
@@ -72,7 +71,7 @@ def test_run_chunk_embedding_no_skips_writes_no_sidecar(monkeypatch, tmp_path):
     assert not sidecar_path.exists()
 
 
-def test_run_chunk_embedding_rerun_removes_stale_sidecar(monkeypatch, tmp_path):
+def test_run_chunk_recursive_rerun_removes_stale_sidecar(monkeypatch, tmp_path):
     """A source that had a garbage skip on one run must not carry a stale
     sidecar forward if a later rerun (e.g. after the guard changes, or the
     section itself changes) has zero skips -- the sidecar mirrors the main
@@ -80,16 +79,16 @@ def test_run_chunk_embedding_rerun_removes_stale_sidecar(monkeypatch, tmp_path):
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
     garbage = "; ".join(f"{n}, {n + 1}-{n + 2}" for n in range(1, 400))
-    tree_with_garbage = _tree_with_sections(
+    tree_with_garbage = tree_with_sections(
         {
             "Overview": ["Ordinary prose about the survey and its findings."],
             "Numeric Annex": [garbage],
         }
     )
-    _patch_tree(monkeypatch, tmp_path, tree_with_garbage)
+    patch_tree(monkeypatch, tmp_path, tree_with_garbage)
     chunks_dir = tmp_path / "chunks"
 
-    run_chunk_embedding(source, embedder=HashingEmbedder(), chunks_dir=chunks_dir)
+    run_chunk_recursive(source, chunks_dir=chunks_dir)
 
     from axial.envelope import compute_source_id
 
@@ -97,31 +96,31 @@ def test_run_chunk_embedding_rerun_removes_stale_sidecar(monkeypatch, tmp_path):
     sidecar_path = chunks_skips_sidecar_path(source_id, chunks_dir)
     assert sidecar_path.is_file()
 
-    clean_tree = _tree_with_sections(
+    clean_tree = tree_with_sections(
         {"Overview": ["Ordinary prose about the survey and its findings."]}
     )
-    _patch_tree(monkeypatch, tmp_path, clean_tree)
+    patch_tree(monkeypatch, tmp_path, clean_tree)
 
-    run_chunk_embedding(source, embedder=HashingEmbedder(), chunks_dir=chunks_dir)
+    run_chunk_recursive(source, chunks_dir=chunks_dir)
 
     assert not sidecar_path.exists()
 
 
-def test_run_chunk_embedding_rerun_with_skips_overwrites_sidecar_cleanly(monkeypatch, tmp_path):
+def test_run_chunk_recursive_rerun_with_skips_overwrites_sidecar_cleanly(monkeypatch, tmp_path):
     source = tmp_path / "paper.pdf"
     source.write_bytes(b"fake pdf bytes")
     garbage = "; ".join(f"{n}, {n + 1}-{n + 2}" for n in range(1, 400))
-    tree = _tree_with_sections(
+    tree = tree_with_sections(
         {
             "Overview": ["Ordinary prose about the survey and its findings."],
             "Numeric Annex": [garbage],
         }
     )
-    _patch_tree(monkeypatch, tmp_path, tree)
+    patch_tree(monkeypatch, tmp_path, tree)
     chunks_dir = tmp_path / "chunks"
 
-    run_chunk_embedding(source, embedder=HashingEmbedder(), chunks_dir=chunks_dir)
-    run_chunk_embedding(source, embedder=HashingEmbedder(), chunks_dir=chunks_dir)
+    run_chunk_recursive(source, chunks_dir=chunks_dir)
+    run_chunk_recursive(source, chunks_dir=chunks_dir)
 
     from axial.envelope import compute_source_id
 

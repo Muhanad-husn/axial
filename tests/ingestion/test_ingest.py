@@ -114,7 +114,7 @@ must agree.
 
 Migration note (issue #154, slice 04): as of this slice, deriving the
 expected chunk_id set is no longer a side-effect-free observation --
-`axial.chunk.run_chunk_embedding` (the sole chunking mechanism now) WRITES
+`axial.chunk.run_chunk_recursive` (the sole chunking mechanism now) WRITES
 the real, on-disk chunk artifact (`data/chunks/<source_id>.jsonl`) as its
 whole point, and `axial ingest`'s own internal `axial.vault.run_vault_write`
 call no longer chunks at all -- it only ever READS that same artifact (via
@@ -187,7 +187,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from axial.chunk import HashingEmbedder, run_chunk_embedding
+from axial.chunk import run_chunk_recursive
 from axial.envelope import compute_source_id
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -262,7 +262,7 @@ def _results_path(root: Path) -> Path:
 @contextlib.contextmanager
 def _chdir(path: Path):
     """Temporarily change the process cwd to `path` -- see
-    `_expected_chunk_ids` below: `run_chunk_embedding` resolves its
+    `_expected_chunk_ids` below: `run_chunk_recursive` resolves its
     persisted-tree read (`axial.extract.tree_path`, via
     `axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
     override parameter (only its OWN write target, `chunks_dir`, is
@@ -409,7 +409,7 @@ def _parse_json_records(stdout: str, *, array_key: str, kind: str) -> list[dict]
 
 def _expected_chunk_ids(source_pdf: Path, root: Path) -> set[str]:
     """Write the real, on-disk chunk artifact for `source_pdf` IN-PROCESS
-    (`axial.chunk.run_chunk_embedding`, the stub/offline `HashingEmbedder`)
+    (`axial.chunk.run_chunk_recursive`, the sole chunking mechanism)
     and return the chunk_id set it produced (module docstring, seam
     decision 3). Requires a stored envelope (and tree fixture) to already
     exist for this source.
@@ -425,7 +425,7 @@ def _expected_chunk_ids(source_pdf: Path, root: Path) -> set[str]:
     results-file guard regardless of whether a chunk artifact exists for
     it)."""
     with _chdir(root):
-        records = run_chunk_embedding(source_pdf, embedder=HashingEmbedder())
+        records = run_chunk_recursive(source_pdf)
     ids = {
         record["chunk_id"]
         for record in records

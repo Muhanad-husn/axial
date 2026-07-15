@@ -193,7 +193,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from axial.chunk import HashingEmbedder, read_chunks, run_chunk_embedding
+from axial.chunk import read_chunks, run_chunk_recursive
 from axial.envelope import compute_source_id
 from axial.schema import Schema, load_schema
 
@@ -288,7 +288,7 @@ def _run_axial(
 @contextlib.contextmanager
 def _chdir(path: Path):
     """Temporarily change the process cwd to `path` -- see
-    `_arrange_stored_envelope` below: `run_chunk_embedding` resolves its
+    `_arrange_stored_envelope` below: `run_chunk_recursive` resolves its
     persisted-tree read (`axial.extract.tree_path`, via
     `axial.extract.TREES_DIR`) as a plain, cwd-relative path with no
     override parameter (only its OWN write target, `chunks_dir`, is
@@ -377,7 +377,7 @@ def _arrange_stored_envelope(root: Path) -> Path:
     )
 
     with _chdir(root):
-        run_chunk_embedding(THESIS_PAPER_PDF, embedder=HashingEmbedder())
+        run_chunk_recursive(THESIS_PAPER_PDF)
 
     return next(iter(new_files))
 

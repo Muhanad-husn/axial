@@ -177,7 +177,7 @@ from pathlib import Path
 
 import axial.artifacts as artifacts_module
 import axial.chunk as chunk_module
-from axial.chunk import HashingEmbedder, run_chunk_embedding
+from axial.chunk import run_chunk_recursive
 from axial.envelope import compute_source_id
 from axial.llm import ARTIFACTS_PASS_NAME
 from axial.schema import load_schema
@@ -519,7 +519,7 @@ def test_artifacts_hard_errors_on_a_role_absent_from_the_schema():
 # ---------------------------------------------------------------------
 # tests/test_source_router.py's own `_patch_tree` helper (issue #167)
 # monkeypatches `axial.chunk.tree_path`/`axial.chunk.load_persisted_tree` to
-# feed `run_chunk_embedding` a synthetic tree with no docling/network. This
+# feed `run_chunk_recursive` a synthetic tree with no docling/network. This
 # test reuses that exact mechanism (inlined here, not imported cross-file,
 # to keep this file's own contract self-contained) against the SAME tree
 # fixture used for `run_artifacts` above, to lock the Gherkin's final
@@ -766,9 +766,7 @@ def test_captioned_figure_and_table_become_artifact_notes_apparatus_excluded(tmp
     monkeypatch.setattr(chunk_module, "load_persisted_tree", lambda path: tree)
 
     chunks_dir = tmp_path / "chunks"
-    chunk_records = run_chunk_embedding(
-        source_path, embedder=HashingEmbedder(), chunks_dir=chunks_dir
-    )
+    chunk_records = run_chunk_recursive(source_path, chunks_dir=chunks_dir)
 
     leaked_caption = [r for r in chunk_records if _ROUTING_CAPTION_BODY in r.get("text", "")]
     assert not leaked_caption, (

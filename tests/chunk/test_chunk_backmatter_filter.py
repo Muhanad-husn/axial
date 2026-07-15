@@ -10,7 +10,7 @@ Given a source whose extraction tree has, among its top-level sections: a
       "Appendix", "Preface") -- every one of these sections carries
       real-looking, non-empty body text, so a filter-less pass would produce
       chunk records for every one of them
-When  `axial.chunk.run_chunk_embedding` is called on that source
+When  `axial.chunk.run_chunk_recursive` is called on that source
 Then  the back-matter sections (all three Bibliography spellings) produce
       ZERO chunk records, and none of their own body text ever appears
       inside any OTHER section's emitted chunk text either -- they are
@@ -30,40 +30,36 @@ Figures / List of Tables / List of Illustrations. Sections that must be kept
 (explicitly NOT dropped): Endnotes / Notes, Appendix, Preface, and normal
 prose chapters.
 
-Migration note (issue #154, slice 04 of the chunk-redesign subproject)
+Migration note (issue #154, slice 04; re-migrated for issue #191, the
+retirement of the embedding-based mechanism)
 -----------------------------------------------------------------------
 This test originally drove the retired LLM-echo chunker
 (`axial.chunk.run_chunk`, one text-generating LLM call per section) via a
-fake `LLMClient` that counted which sections' body text reached a prompt.
-`run_chunk` and every one of its LLM-facing seams (`compose_chunk_prompt`,
-`parse_response`, the chunk-pass prompt template) are deleted as of this
-slice; the sole chunking mechanism is now the embedding-based, LLM-free
-`run_chunk_embedding` (issue #151). `_is_back_matter`'s own title-matching
-logic is UNCHANGED by that rewrite (same normalized-title set, same KEEP
-list) but had no dedicated coverage anywhere in the new mechanism's own
-test suite (verified: neither `tests/test_chunk.py` -- slice 01's own
-locked outer test, whose fixture carries no back-matter section at all --
-nor `src/axial/test_chunk_embedding.py` exercises `_is_back_matter`
-directly). This migration is not a mechanical rename: it re-proves the same
-behavioral contract (drop before chunking, never a post-hoc filter) against
-the actual mechanism that ships today, closing that coverage gap.
+fake `LLMClient` that counted which sections' body text reached a prompt,
+then (issue #154) was migrated to drive the embedding-based
+`run_chunk_embedding`. Issue #191 (spec-drift, founder-adjudicated) retires
+the embedding mechanism entirely: recursive/structural
+(`axial.chunk.run_chunk_recursive`) is now the SOLE chunking mechanism.
+`_is_back_matter`'s own title-matching logic is UNCHANGED by either
+rewrite (same normalized-title set, same KEEP list) -- it is shared,
+unconditionally, by every mechanism `_write_chunk_sections` has ever
+driven. This migration re-proves the same behavioral contract (drop before
+chunking, never a post-hoc filter) against the mechanism that ships today.
 
 Seam decision 1 -- bypassing docling/network entirely via a monkeypatched
-axial.chunk.tree_path/load_persisted_tree, calling run_chunk_embedding
+axial.chunk.tree_path/load_persisted_tree, calling run_chunk_recursive
 directly
 -----------------------------------------------------------------------
-Mirrors `src/axial/test_chunk_embedding.py`'s own `_patch_tree` helper:
-`run_chunk_embedding` reads the persisted structural tree via
+`run_chunk_recursive` reads the persisted structural tree via
 `axial.chunk.tree_path`/`axial.chunk.load_persisted_tree` (imported
 directly into `axial.chunk`'s own module namespace), so monkeypatching
 those two module attributes redirects the read to a hand-built, synthetic
 extraction tree -- no real PDF, no docling, no network.
-`run_chunk_embedding`'s own per-section loop and back-matter filter (the
+`run_chunk_recursive`'s own per-section loop and back-matter filter (the
 actual subject of issue #113) is never bypassed; only its upstream
-structural-extraction dependency is. `run_chunk_embedding` needs no stored
-envelope at all (issue #151: the embedding chunk stage never reads one),
-so unlike this file's pre-migration version, no envelope arrange step is
-needed here.
+structural-extraction dependency is. `run_chunk_recursive` needs no stored
+envelope at all, and constructs no embedder, so unlike this file's
+pre-migration version, no envelope arrange step is needed here.
 
 Seam decision 2 -- proving "dropped before chunking", not merely "absent
 from output": body-text markers checked against EVERY emitted chunk's text
@@ -91,7 +87,7 @@ none, full stop).
 from __future__ import annotations
 
 import axial.chunk as chunk_module
-from axial.chunk import HashingEmbedder, run_chunk_embedding
+from axial.chunk import run_chunk_recursive
 
 _PREFACE_BODY = (
     "Preface sentinel: this reflection states the author's aims before the "
@@ -177,12 +173,10 @@ def test_backmatter_sections_are_dropped_before_chunking(tmp_path, monkeypatch):
 
     _patch_tree(monkeypatch, tmp_path, _build_synthetic_tree())
 
-    records = run_chunk_embedding(
-        source_path, embedder=HashingEmbedder(), chunks_dir=tmp_path / "chunks"
-    )
+    records = run_chunk_recursive(source_path, chunks_dir=tmp_path / "chunks")
 
     assert isinstance(records, list), (
-        f"expected run_chunk_embedding to return a list, got {type(records).__name__}: {records!r}"
+        f"expected run_chunk_recursive to return a list, got {type(records).__name__}: {records!r}"
     )
     assert records, "expected at least one chunk record from the kept sections, got none"
 

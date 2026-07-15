@@ -59,25 +59,18 @@ the on-disk artifact shape `examine` reads).
 
 Seam decision 3 -- proving zero LLM / zero embedding-model calls
 -----------------------------------------------------------------------
-Two complementary, independent proofs, since no poison ("explode"-style)
-embedder seam exists in the repo yet (only the LLM client has one,
-`AXIAL_LLM_PROVIDER=explode` / `axial.llm.ExplodingLLMClient`):
-
-  1. The main subprocess test below runs with `AXIAL_LLM_PROVIDER=explode`
-     (mirroring tests/test_chunk.py's seam decision 2 exactly): if `examine`
-     ever called a text-generating LLM for any reason, the process would
-     crash and the exit-code-0 assertion would fail. No `AXIAL_EMBEDDER` is
-     set either, so the plain default embedder path (whatever it resolves
-     to) is exercised too -- `examine` must succeed regardless.
-  2. `test_chunk_examine_constructs_no_embedder_or_llm_client` below invokes
-     `axial.cli.main(["chunk", "examine"])` IN-PROCESS (not a subprocess) and
-     monkeypatches `axial.chunk.get_embedder`, `axial.chunk.get_client`, and
-     `axial.chunk.HashingEmbedder.encode` to raise `AssertionError` the
-     instant any of them is called. This is a direct, unambiguous proof at
-     the construction/use seam itself, not an inference from the absence of
-     a log line or network call -- it fails loudly if `examine` ever
-     constructs or uses an embedder or an LLM client, regardless of whether
-     that would otherwise succeed offline.
+The main subprocess test below runs with `AXIAL_LLM_PROVIDER=explode`
+(mirroring tests/test_chunk.py's seam decision 2 exactly): if `examine`
+ever called a text-generating LLM for any reason, the process would crash
+and the exit-code-0 assertion would fail. `examine` (`examine_chunks` /
+`format_examine_report`) is pure file I/O + arithmetic over the on-disk
+chunk artifact -- it never invokes any chunking mechanism at all (issue
+#191 retired the embedding-based mechanism and its `Embedder`/`get_embedder`
+seam entirely; recursive/structural is now the sole mechanism, and
+`examine` doesn't invoke that one either), so there is no separate
+construction-seam-level embedder proof to make any more -- the "zero
+embedding-model calls" half of this contract now holds by construction,
+not by a monkeypatched poison.
 
 Seam decision 4 -- the fixture's exact, hand-computed size distribution
 -----------------------------------------------------------------------
@@ -509,44 +502,4 @@ def test_chunk_examine_reports_fixture_stats_with_zero_mutation(examine_fixture_
         f"expected the set of files under data/chunks/ to be unchanged by "
         f"`axial chunk examine` (no new file written, none removed), got "
         f"{after_listing!r} vs. original {before_listing!r}"
-    )
-
-
-def test_chunk_examine_constructs_no_embedder_or_llm_client(tmp_path, monkeypatch):
-    """Direct, construction-seam-level proof of the zero-inference guarantee
-    (module docstring, seam decision 3, proof 2): `examine` must never
-    construct or use an embedder or an LLM client. A minimal one-record
-    fixture is enough here -- this test's only job is the zero-inference
-    contract, not the stats reported by the other test above."""
-
-    def _poison(*_args, **_kwargs):
-        raise AssertionError(
-            "axial chunk examine must construct NO embedder and NO LLM "
-            "client (PRD §7.7/§8 P0-4b: 'zero LLM and zero embedding-model "
-            "calls') -- this seam was called during an `examine` run"
-        )
-
-    monkeypatch.setattr("axial.chunk.get_embedder", _poison, raising=False)
-    monkeypatch.setattr("axial.chunk.get_client", _poison, raising=False)
-    monkeypatch.setattr("axial.chunk.HashingEmbedder.encode", _poison, raising=False)
-
-    chunks_dir = tmp_path / "data" / "chunks"
-    _write_jsonl(
-        chunks_dir / "source-solo.jsonl",
-        [_record("source-solo_1_intro_001", "Intro", "1", _chunk_text("MARKER-SOLO", 1200))],
-    )
-
-    monkeypatch.chdir(tmp_path)
-
-    from axial.cli import main
-
-    exit_code = main(["chunk", "examine"])
-
-    assert exit_code == 0, (
-        f"expected `axial chunk examine` (invoked in-process, with "
-        f"axial.chunk.get_embedder/get_client/HashingEmbedder.encode all "
-        f"poisoned to raise if called) to exit 0 -- a nonzero exit here "
-        f"means either the `examine` subcommand does not exist yet, or it "
-        f"failed for some other reason before ever reaching one of the "
-        f"poisoned construction/use seams; got {exit_code}"
     )
