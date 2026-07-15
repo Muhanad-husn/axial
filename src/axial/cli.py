@@ -319,6 +319,32 @@ def _chunk(source_path: str) -> int:
     return 0
 
 
+def _print_encoding_safe(text: str) -> None:
+    """Print `text` to stdout without crashing when stdout's codec (e.g.
+    Windows' default `cp1252`) cannot represent one of its characters.
+    Reconfigures stdout to UTF-8 where supported; falls back to writing
+    backslash-escaped bytes through the raw buffer so the report is still
+    emitted (never dropped) if reconfigure isn't available. Content/wording
+    is untouched -- only the emission path changes."""
+    stdout = sys.stdout
+    reconfigure = getattr(stdout, "reconfigure", None)
+    if callable(reconfigure):
+        try:
+            reconfigure(encoding="utf-8")
+            print(text)
+            return
+        except (ValueError, OSError):
+            pass
+
+    buffer = getattr(stdout, "buffer", None)
+    if buffer is not None:
+        buffer.write(text.encode("utf-8", errors="backslashreplace"))
+        buffer.write(b"\n")
+        buffer.flush()
+    else:
+        print(text.encode("ascii", errors="backslashreplace").decode("ascii"))
+
+
 def _chunk_examine() -> int:
     """`axial chunk examine` (issue #153): read-only inspection over the
     on-disk chunk artifact(s) under `data/chunks/` -- zero LLM/embedding
@@ -332,7 +358,7 @@ def _chunk_examine() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    print(format_examine_report(stats))
+    _print_encoding_safe(format_examine_report(stats))
     return 0
 
 

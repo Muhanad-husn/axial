@@ -1,0 +1,32 @@
+$ PYTHONIOENCODING=cp1252 uv run axial chunk examine
+# stdout forced to the Windows-default cp1252 codec -- the exact condition that
+# previously raised UnicodeEncodeError at cli.py:335 when the report contained a
+# non-Latin glyph. With the fix the report renders in full and the command exits 0.
+#
+# NOTE: source-derived lines (per-section skip listing, chunk-text sample previews)
+# are REDACTED below -- they contain verbatim text from copyrighted source books,
+# which must never enter the repo. The machine-structural lines that prove the fix
+# are kept verbatim.
+
+chunk examine: 4643 total chunk(s) across 6 source(s)
+  batatu-syrias-peasantry-598624067df3: 764 chunk(s)
+  hall-schroeder-anatomy-of-power-449559bfe4dc: 773 chunk(s)
+  kalyvas-logic-of-violence-in-civil-war-0b5817b2642e: 1222 chunk(s)
+  mann-sources-of-social-power-v4-1b7e828e0199: 898 chunk(s)
+  tilly-from-mobilization-to-revolution-f908c910464c: 567 chunk(s)
+  vignal-war-torn-c7005c2bf8ef: 419 chunk(s)
+
+size distribution (chars): min=1 max=3000 mean=1298.3 median=1277.0
+
+boundary sanity: 0 chunk(s) above max (CHUNK_MAX=3000), 844 chunk(s) below min (CHUNK_MIN=1000), 531 section(s) split into multiple chunks
+
+sections skipped as garbage: 519
+  [... 519 per-section entries REDACTED: source-derived section/heading titles ...]
+
+chunk-text sample:
+  [... sample previews REDACTED: verbatim source prose. These previews include
+      non-Latin glyphs such as U+02BF (the transliteration mark rendered in names
+      like "Ba<U+02BF>th"), which is exactly the code point that previously crashed
+      cp1252 emission at cli.py:335. Under this run it renders without raising. ...]
+
+exit=0
