@@ -248,7 +248,7 @@ class TestParseNote:
             "field": {"primary": "state", "secondary": ["violence"]},
             "claim_type": {"primary": "state-formation", "secondary": None, "subtags": []},
             "theory_school": {"primary": "bellicist", "status": "candidate"},
-            "empirical_scope": {"value": "scope:country-case", "country": "Syria"},
+            "empirical_scope": {"value": "scope:country-case", "polity": "Syria"},
         }
         path = tmp_path / f"{cid}.md"
         block = yaml.safe_dump(note, sort_keys=False, allow_unicode=True)

@@ -16,10 +16,16 @@ from typing import Any
 import yaml
 
 # Cardinality vocabulary the loader recognises (PRD §7.1 / Appendices A-F).
+# "many" (Appendix G's `polities_touched`) is a many-valued FREE-TEXT axis:
+# it has no controlled vocabulary at all (`values: free_text`, a bare scalar
+# rather than a list/dict of tag entries), so `_flatten_value_count`/
+# `_flatten_tag_ids` special-case it to `0`/`set()` below rather than
+# iterating a string.
 KNOWN_CARDINALITIES = {
     "single",
     "primary_plus_secondary",
     "primary_plus_optional_secondary",
+    "many",
 }
 
 
@@ -102,11 +108,16 @@ def _flatten_value_count(axis_name: str, raw_values: Any, raw_groups: Any) -> in
     """Count an axis's controlled-vocabulary entries regardless of shape.
 
     Handles: a flat list of scalars (e.g. field), a list of {id, ...} tag
-    objects (e.g. claim_type), or a mapping of group-name -> list of values
-    (e.g. theory_school's grouped vocabulary).
+    objects (e.g. claim_type), a mapping of group-name -> list of values
+    (e.g. theory_school's grouped vocabulary), or a bare scalar `values:
+    free_text` (e.g. `polities_touched`, `cardinality: many`) -- a free-text
+    axis has no controlled vocabulary at all, so it counts as `0`, never the
+    length of the string itself.
     """
     if raw_groups is not None:
         return sum(len(group_values) for group_values in raw_groups.values())
+    if isinstance(raw_values, str):
+        return 0
     if raw_values is not None:
         return len(raw_values)
     raise MissingValuesOrGroupsError(axis_name)
@@ -118,10 +129,14 @@ def _flatten_tag_ids(axis_name: str, raw_values: Any, raw_groups: Any) -> set[st
     Mirrors `_flatten_value_count`'s shape-handling: a flat list of scalars
     (e.g. field) yields the scalars themselves; a list of {id, ...} tag
     objects (e.g. claim_type) yields each `id`; a mapping of group-name ->
-    list of values (e.g. theory_school) yields the flattened leaf values.
+    list of values (e.g. theory_school) yields the flattened leaf values; a
+    bare scalar `values: free_text` (e.g. `polities_touched`) yields an empty
+    set -- a free-text axis has no controlled vocabulary to validate against.
     """
     if raw_groups is not None:
         return {value for group_values in raw_groups.values() for value in group_values}
+    if isinstance(raw_values, str):
+        return set()
     if raw_values is not None:
         tag_ids: set[str] = set()
         for value in raw_values:
@@ -149,7 +164,7 @@ class Axis:
 class Schema:
     version: str
     axes: dict[str, Axis]
-    country_list: list[str] = field(default_factory=list)
+    polity_examples: list[str] = field(default_factory=list)
 
 
 def load_schema(domain_dir: str | Path) -> Schema:
@@ -192,5 +207,5 @@ def load_schema(domain_dir: str | Path) -> Schema:
     return Schema(
         version=str(raw["version"]),
         axes=axes,
-        country_list=raw.get("country_list", []),
+        polity_examples=raw.get("polity_examples", []),
     )

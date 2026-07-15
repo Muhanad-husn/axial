@@ -22,9 +22,9 @@ carrying `chunk_id`, `section`, `chunk_text`, a `source_meta` mapping
 (`author`, `title`, `date`, `thesis`, `scope`) reused verbatim from the
 envelope, and the chunk-level axis block (`schema_version`,
 `role_in_argument`, `field`, `claim_type`, `theory_school`,
-`empirical_scope`) carried through from the tagged record and reshaped to
-match Appendix H's nesting (PRD §7.2), followed by a readable body
-containing the chunk text.
+`empirical_scope`, `polities_touched`) carried through from the tagged
+record and reshaped to match Appendix H's nesting (PRD §7.2), followed by a
+readable body containing the chunk text.
 
 The artifact pool (`<vault_dir>/artifacts/`) is a separate surface (issue
 #32 slice 02): this pass also runs the artifact-classification pass
@@ -189,11 +189,14 @@ def build_frontmatter(
     reused verbatim from the envelope, plus the chunk-level axis block --
     `schema_version`, `role_in_argument` (flat scalar), `field`/`claim_type`/
     `theory_school` (nested, carried through as the tagger produced them),
-    and `empirical_scope` reshaped from the tagger's flat scalar + separate
-    top-level `country` into Appendix H's nested `{value, country}` mapping
-    (issue #31 slice 04). `artifact_refs` (issue #34 slice 02) is the list of
-    artifact_ids the cross-reference pass detected this chunk citing --
-    always a list, `[]` when none, never a dangling absent/null field."""
+    `empirical_scope` reshaped from the tagger's flat scalar + separate
+    top-level `polity` into Appendix H's nested `{value, polity}` mapping
+    (issue #31 slice 04, renamed from `country` by issue #194 slice 05), and
+    `polities_touched` (issue #194 slice 05) carried through verbatim as the
+    tagger's own list, when present. `artifact_refs` (issue #34 slice 02) is
+    the list of artifact_ids the cross-reference pass detected this chunk
+    citing -- always a list, `[]` when none, never a dangling absent/null
+    field."""
     frontmatter: dict[str, Any] = {
         "chunk_id": record["chunk_id"],
         "section": record["section"],
@@ -209,9 +212,12 @@ def build_frontmatter(
 
     if "empirical_scope" in record:
         empirical_scope: dict[str, Any] = {"value": record["empirical_scope"]}
-        if record.get("country") is not None:
-            empirical_scope["country"] = record["country"]
+        if record.get("polity") is not None:
+            empirical_scope["polity"] = record["polity"]
         frontmatter["empirical_scope"] = empirical_scope
+
+    if "polities_touched" in record:
+        frontmatter["polities_touched"] = list(record["polities_touched"])
 
     frontmatter["artifact_refs"] = list(artifact_refs) if artifact_refs else []
 

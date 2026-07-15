@@ -28,9 +28,9 @@ code change (PRD §4):
   - `cardinality == "single"` (`role_in_argument`, `empirical_scope`):
     `parse_tag_response` / `validate_tag`, exactly as slices 01/02 built
     them. When `empirical_scope` resolves to `"scope:country-case"`, the
-    same response must also carry a non-empty `country` (Appendix C/G) --
+    same response must also carry a non-empty `polity` (Appendix C/G) --
     missing or empty is a hard error, but a value outside the schema's
-    `country_list` is accepted verbatim and logged to stderr as a
+    `polity_examples` is accepted verbatim and logged to stderr as a
     candidate addition, never fatal (spec-drift #77).
   - `cardinality in {"primary_plus_secondary", "primary_plus_optional_
     secondary"}` (`field`, `claim_type`, `theory_school`):
@@ -42,12 +42,19 @@ code change (PRD §4):
     axis-level `status` flag (e.g. theory_school's `candidate`), when the
     schema declares one, is always taken from the schema itself
     (`_axis_extras`), never trusted from the model's response.
+  - `cardinality == "many"` (`polities_touched`, issue #194 slice 05,
+    Appendix C/G): `parse_many_valued_tag_response` parses a JSON list of
+    free-text strings -- no vocabulary check applies (`values: free_text`
+    has no controlled vocabulary), so this cardinality never raises
+    `TagNotInSchemaError`. An absent key is `[]` (a chunk may substantively
+    engage no polity).
 
 Any tag value absent from its axis's schema vocabulary is a hard error
 naming the axis and the offending tag (`TagNotInSchemaError`, reused
-unchanged for every cardinality). Each emitted record carries the chunk's
-provenance (chunk_id, section, chunk_text) plus the `schema_version` it was
-tagged under, so a later schema change is detectable per note.
+unchanged for every vocabulary-checked cardinality). Each emitted record
+carries the chunk's provenance (chunk_id, section, chunk_text) plus the
+`schema_version` it was tagged under, so a later schema change is
+detectable per note.
 
 A source whose chunking yields zero chunks yields zero tagged records
 without ever calling the LLM for the tag pass.
@@ -174,6 +181,7 @@ def load_tag_checkpoint(path: Path) -> list[dict[str, Any]]:
 
 ROLE_IN_ARGUMENT_AXIS = "role_in_argument"
 EMPIRICAL_SCOPE_AXIS = "empirical_scope"
+POLITIES_TOUCHED_AXIS = "polities_touched"
 FIELD_AXIS = "field"
 CLAIM_TYPE_AXIS = "claim_type"
 THEORY_SCHOOL_AXIS = "theory_school"
@@ -186,6 +194,7 @@ THEORY_SCHOOL_AXIS = "theory_school"
 TAGGED_AXES = (
     ROLE_IN_ARGUMENT_AXIS,
     EMPIRICAL_SCOPE_AXIS,
+    POLITIES_TOUCHED_AXIS,
     FIELD_AXIS,
     CLAIM_TYPE_AXIS,
     THEORY_SCHOOL_AXIS,
@@ -198,8 +207,14 @@ TAGGED_AXES = (
 # branched on by axis name.
 MULTI_VALUE_CARDINALITIES = {"primary_plus_secondary", "primary_plus_optional_secondary"}
 
-# Appendix C/G: the one empirical_scope value that carries a `country` extra
-# field, drawn from the schema's `country_list` (Appendix G).
+# The many-valued free-text cardinality (Appendix C/G, issue #194 slice 05):
+# `polities_touched` today, but dispatched on `Axis.cardinality == "many"`,
+# never on the axis's name -- see `parse_many_valued_tag_response`.
+MANY_VALUED_CARDINALITY = "many"
+
+# Appendix C/G: the one empirical_scope value that carries a `polity` extra
+# field, drawn from the schema's `polity_examples` (Appendix G) -- examples,
+# not a closed menu (spec-drift #77 / issue #194 slice 05).
 COUNTRY_CASE_SCOPE_VALUE = "scope:country-case"
 
 _TAG_PROMPT_TEMPLATE = """\
@@ -229,20 +244,45 @@ secondary tags) or `{{"primary": <tag id>, "secondary": <tag id or \
 omitted>}}` (at most one optional secondary tag) -- see each axis's own \
 instructions below for which. Where an axis's own tags declare subtags, \
 also include a `"subtags"` list of any that apply, each one of that \
-specific primary tag's own declared subtags. If the empirical_scope value \
-you choose is "{country_case_scope}", also include a "country" key whose \
-value is exactly one country from the country list below.
+specific primary tag's own declared subtags. A many-valued free-text axis's \
+value is a JSON list of strings (empty list `[]` when none apply) -- see \
+its own instructions below.
+
+If the empirical_scope value you choose is "{country_case_scope}", also \
+include a "polity" key whose value is the specific polity this chunk is \
+about, named faithfully as free text -- NOT restricted to a closed menu. \
+The polity examples below are illustrations, not an exhaustive list: name \
+the true polity even when it is absent from the examples, historical, \
+defunct, or supra-national (an empire, a mandate, a former union). \
+Emitting a value outside the examples is expected and correct, never a \
+mistake to avoid.
 
 {axis_sections}
 
-Country list (only required when empirical_scope is "{country_case_scope}"):
+Polity examples (illustrative only, not a closed menu -- only required \
+when empirical_scope is "{country_case_scope}"):
 
-{country_list}
+{polity_examples}
 
 Chunk:
 
 {chunk_text}
 """
+
+# Prompt text for a many-valued free-text axis (currently only
+# `polities_touched`), read from the axis's own schema-declared cardinality
+# (`"many"`) rather than its name -- so a future second `many`-cardinality
+# axis would render identically, never a name-specific branch.
+_MANY_VALUED_AXIS_SECTION_TEMPLATE = """\
+Axis {axis_name!r} (cardinality: many, free text, no closed vocabulary) -- \
+a many-valued list of every polity this CHUNK substantively *engages*: the \
+chunk reasons about it, compares it, or draws evidence from it -- an \
+incidental mention in passing does not qualify ("engaged, not \
+name-dropped"). Name each polity faithfully, under the same rules as the \
+"polity" field above -- historical, defunct, or supra-national referents \
+are legitimate and expected when that is what the chunk actually engages. \
+An empty list `[]` is a valid answer when the chunk substantively engages \
+no polity."""
 
 
 class TagError(Exception):
@@ -333,15 +373,14 @@ class TagNotInSchemaError(TagError):
         super().__init__(f"tag {tag!r} is not in the schema's {axis_name!r} axis")
 
 
-class CountryCaseMissingCountryError(TagError):
+class CountryCaseMissingPolityError(TagError):
     """Raised when empirical_scope == 'scope:country-case' but the tag
-    response carries no (or an empty) 'country' value (PRD Appendix C/G:
-    'a country-case with a missing ... country exits non-zero with a clear
-    error')."""
+    response carries no (or an empty) 'polity' value (PRD Appendix C/G:
+    'a missing or empty value stays the hard error it is today')."""
 
     def __init__(self):
         super().__init__(
-            "empirical_scope 'scope:country-case' requires a 'country' value, but none was provided"
+            "empirical_scope 'scope:country-case' requires a 'polity' value, but none was provided"
         )
 
 
@@ -399,26 +438,33 @@ def compose_multi_axis_tag_prompt(
     axis_names: list[str],
     codebook: Codebook,
     schema: Schema,
-    country_list: list[str] | None = None,
+    polity_examples: list[str] | None = None,
 ) -> str:
     """Compose a single tagging prompt covering every axis in `axis_names`,
     so one LLM call (`pass_name=TAG_PASS_NAME`) can assign all of them at
     once instead of one call per axis (issue #28 slice 02). Each axis's
     section names its own `schema`-declared cardinality (single vs.
-    primary+secondary, issue #29 slice 03) so the model knows which shape
-    to answer in -- read from the schema, never branched on the axis's
-    name. Also surfaces `country_list` so the model knows what to choose
-    from when it assigns `empirical_scope: "scope:country-case"`."""
-    sections = [
-        f"Axis {axis_name!r} (cardinality: {schema.axes[axis_name].cardinality}) "
-        f"vocabulary:\n\n{_tag_descriptions(axis_name, codebook)}"
-        for axis_name in axis_names
-    ]
+    primary+secondary vs. many, issues #29 slice 03 / #194 slice 05) so the
+    model knows which shape to answer in -- read from the schema, never
+    branched on the axis's name. Also surfaces `polity_examples` (Appendix
+    C/G: illustrations, not a closed menu) so the model knows what a
+    faithfully-named polity looks like when it assigns `empirical_scope:
+    "scope:country-case"`."""
+    sections = []
+    for axis_name in axis_names:
+        axis = schema.axes[axis_name]
+        if axis.cardinality == "many":
+            sections.append(_MANY_VALUED_AXIS_SECTION_TEMPLATE.format(axis_name=axis_name))
+        else:
+            sections.append(
+                f"Axis {axis_name!r} (cardinality: {axis.cardinality}) "
+                f"vocabulary:\n\n{_tag_descriptions(axis_name, codebook)}"
+            )
     return _MULTI_AXIS_TAG_PROMPT_TEMPLATE.format(
         axis_names=list(axis_names),
         country_case_scope=COUNTRY_CASE_SCOPE_VALUE,
         axis_sections="\n\n".join(sections),
-        country_list=", ".join(country_list or []),
+        polity_examples=", ".join(polity_examples or []),
         chunk_text=chunk_text,
     )
 
@@ -447,15 +493,20 @@ def reject_degenerate_tag_values(raw: str, axes_to_tag: list[str], schema: Schem
     and keeps this validator fully decoupled from `run_tag`'s bookkeeping).
 
     When a single-cardinality axis's value resolves to
-    `COUNTRY_CASE_SCOPE_VALUE`, also runs `parse_country_response` -- the
-    exact parser `run_tag` itself later uses for the country extra -- so a
-    country-case response missing/blank `country` is the same re-askable
+    `COUNTRY_CASE_SCOPE_VALUE`, also runs `parse_polity_response` -- the
+    exact parser `run_tag` itself later uses for the polity extra -- so a
+    country-case response missing/blank `polity` is the same re-askable
     degeneracy as a blank tag, rather than surfacing only after this
     validator returns, outside `complete_json`'s re-ask budget (issue #92).
     A transient omission gets the bounded re-ask; PERSISTENT absence still
-    surfaces `CountryCaseMissingCountryError` unchanged once re-asks are
+    surfaces `CountryCaseMissingPolityError` unchanged once re-asks are
     exhausted, since `complete_json` propagates the final attempt's
     exception unchanged -- preserving the #77-adjudicated hard error.
+
+    A many-valued free-text axis (`cardinality == "many"`, e.g.
+    `polities_touched`, issue #194 slice 05) is parsed via `parse_many_
+    valued_tag_response` and each entry checked the same blank-string way
+    -- but never against a vocabulary, since a free-text axis has none.
 
     Deliberately never calls `validate_tag`/`validate_multi_value_tag`: a
     genuine non-empty out-of-vocabulary tag must stay immediately fatal
@@ -476,11 +527,14 @@ def reject_degenerate_tag_values(raw: str, axes_to_tag: list[str], schema: Schem
                 _reject_blank_tag(value, f"{axis_name}.secondary[{index}]")
             for index, value in enumerate(parsed.get("subtags") or []):
                 _reject_blank_tag(value, f"{axis_name}.subtags[{index}]")
+        elif axis.cardinality == MANY_VALUED_CARDINALITY:
+            for index, value in enumerate(parse_many_valued_tag_response(raw, axis_name)):
+                _reject_blank_tag(value, f"{axis_name}[{index}]")
         else:
             value = parse_tag_response(raw, axis_name)
             _reject_blank_tag(value, axis_name)
             if value == COUNTRY_CASE_SCOPE_VALUE:
-                parse_country_response(raw, axis_name)
+                parse_polity_response(raw, axis_name)
 
 
 # Keys ignored when hunting for the lone remaining candidate entry in an
@@ -488,14 +542,14 @@ def reject_degenerate_tag_values(raw: str, axes_to_tag: list[str], schema: Schem
 # a country-case empirical_scope response may carry alongside its value,
 # plus the primary+secondary shape's own `secondary`/`subtags` (issue #88
 # point 3).
-_AUXILIARY_TAG_OBJECT_KEYS = frozenset({"country", "secondary", "subtags"})
+_AUXILIARY_TAG_OBJECT_KEYS = frozenset({"polity", "secondary", "subtags"})
 
 
 def _value_echo_entry(raw_value: dict[str, Any]) -> str | None:
     """After excluding `_AUXILIARY_TAG_OBJECT_KEYS`, return the lone
     remaining entry's value when exactly one such entry ECHOES its own key as
     its string value (`{X: X}`) -- the observed "value-as-key" dialect (e.g.
-    `{'scope:country-case': 'scope:country-case', 'country': ...}`, issue
+    `{'scope:country-case': 'scope:country-case', 'polity': ...}`, issue
     #88 point 3): the model echoes the tag id back as both key and value
     instead of naming it under `'primary'` or `'value'`. Deliberately
     narrower than "any lone string entry": a lone entry whose key and value
@@ -529,11 +583,11 @@ def parse_tag_response(raw: str, axis_name: str) -> str:
       1. a string `'primary'` (issue #62's original shape, from the shared
          multi-axis prompt's primary+secondary object dialect);
       2. else a string `'value'` (issue #88 point 2: `{'value':
-         'scope:country-case', 'country': ...}`);
-      3. else, after excluding auxiliary keys (`'country'`, `'secondary'`,
+         'scope:country-case', 'polity': ...}`);
+      3. else, after excluding auxiliary keys (`'polity'`, `'secondary'`,
          `'subtags'`), exactly ONE remaining entry whose string value ECHOES
          its own key (`{X: X}`) (issue #88 point 3, the "value-as-key"
-         dialect: `{'scope:country-case': 'scope:country-case', 'country':
+         dialect: `{'scope:country-case': 'scope:country-case', 'polity':
          ...}`) -- narrower than "any lone string entry" on purpose: a lone
          entry whose key and value differ (e.g. free-form `{'reasoning':
          'some prose'}`) is never a candidate, since that would let real
@@ -545,7 +599,7 @@ def parse_tag_response(raw: str, axis_name: str) -> str:
     Whichever path resolves the value, a non-empty `secondary` (list or
     scalar) still raises `TagCardinalityError`, since a second value
     asserted on a single axis must never be silently dropped; unrelated
-    extra keys (e.g. a nested `country`) are otherwise ignored here.
+    extra keys (e.g. a nested `polity`) are otherwise ignored here.
     """
     try:
         data = parse_model_json(raw)
@@ -794,6 +848,49 @@ def validate_multi_value_tag(schema: Schema, axis_name: str, parsed: dict[str, A
         parsed["subtags"] = normalized_subtags
 
 
+def parse_many_valued_tag_response(raw: str, axis_name: str) -> list[str]:
+    """Parse the model's raw tagging response for one many-valued free-text
+    axis (`Axis.cardinality == "many"`, e.g. `polities_touched`, issue #194
+    slice 05 / Appendix C/G): a JSON list of strings under `axis_name`.
+
+    No vocabulary validation applies here -- a free-text axis (`values:
+    free_text`) has no controlled vocabulary to check membership against,
+    unlike every other tagged axis this pass parses.
+
+    An ABSENT `axis_name` key is treated as `[]` rather than a parse error
+    (the spec's own "empty is allowed" rule: a chunk may substantively
+    engage no polity at all) -- but a PRESENT key that is not a list, or a
+    list containing a non-string entry, is a genuine shape error
+    (`TagParseError`), the same species of malformation every other parser
+    in this module raises on."""
+    try:
+        data = parse_model_json(raw)
+    except ModelJsonError as exc:
+        raise TagParseError(f"model response was not valid JSON: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise TagParseError(
+            f"expected a top-level JSON object, got {type(data).__name__}: {data!r}"
+        )
+
+    if axis_name not in data:
+        return []
+
+    values = data[axis_name]
+    if not isinstance(values, list):
+        raise TagParseError(
+            f"expected {axis_name!r} value to be a list of strings, got "
+            f"{type(values).__name__}: {values!r}"
+        )
+    for value in values:
+        if not isinstance(value, str):
+            raise TagParseError(
+                f"expected every {axis_name!r} entry to be a string, got "
+                f"{type(value).__name__}: {value!r} (full list: {values!r})"
+            )
+    return values
+
+
 def _axis_extras(axis: Axis) -> dict[str, Any]:
     """Axis-level extra metadata attached to every record's per-axis
     object -- currently only `theory_school`'s schema-declared `status`
@@ -806,16 +903,17 @@ def _axis_extras(axis: Axis) -> dict[str, Any]:
     return extras
 
 
-def parse_country_response(raw: str, axis_name: str | None = None) -> str:
-    """Parse the model's raw tagging response for its `country` extra field
+def parse_polity_response(raw: str, axis_name: str | None = None) -> str:
+    """Parse the model's raw tagging response for its `polity` extra field
     (Appendix C/G, required when `empirical_scope == "scope:country-case"`).
-    A missing or empty `country` key is a hard error (`CountryCaseMissing
-    CountryError`), not a silent pass. When the top-level `country` is
-    absent/empty and `axis_name` is given, also accepts `country` nested
+    A missing or empty `polity` key is a hard error
+    (`CountryCaseMissingPolityError`), not a silent pass. When the
+    top-level `polity` is
+    absent/empty and `axis_name` is given, also accepts `polity` nested
     inside `data[axis_name]` (e.g. `{"empirical_scope": {"primary": ...,
-    "country": ...}}`), since deepseek-v4-flash sometimes answers
+    "polity": ...}}`), since deepseek-v4-flash sometimes answers
     `empirical_scope` in the object dialect the shared prompt shows for
-    primary+secondary axes and nests `country` there instead of as a
+    primary+secondary axes and nests `polity` there instead of as a
     top-level sibling key (issue #62); the caller (`run_tag`) passes the
     scope axis's own name, so this parser never hardcodes it."""
     try:
@@ -823,36 +921,36 @@ def parse_country_response(raw: str, axis_name: str | None = None) -> str:
     except ModelJsonError as exc:
         raise TagParseError(f"model response was not valid JSON: {exc}") from exc
 
-    country: Any = data.get("country") if isinstance(data, dict) else None
+    polity: Any = data.get("polity") if isinstance(data, dict) else None
 
-    if not country and axis_name is not None and isinstance(data, dict):
+    if not polity and axis_name is not None and isinstance(data, dict):
         axis_value = data.get(axis_name)
         if isinstance(axis_value, dict):
-            country = axis_value.get("country")
+            polity = axis_value.get("polity")
 
-    if not country:
-        raise CountryCaseMissingCountryError()
+    if not polity:
+        raise CountryCaseMissingPolityError()
 
-    if not isinstance(country, str):
+    if not isinstance(polity, str):
         raise TagParseError(
-            f"expected 'country' value to be a string, got {type(country).__name__}: {country!r}"
+            f"expected 'polity' value to be a string, got {type(polity).__name__}: {polity!r}"
         )
-    return country
+    return polity
 
 
-def log_country_not_in_list(schema: Schema, country: str) -> None:
-    """Log a non-fatal diagnostic to stderr when `country` is not a member
-    of the loaded schema's `country_list` (Appendix G).
+def log_polity_not_in_list(schema: Schema, polity: str) -> None:
+    """Log a non-fatal diagnostic to stderr when `polity` is not a member
+    of the loaded schema's `polity_examples` (Appendix G).
 
-    Spec-drift #77 (adjudicated 2026-07-10): a controlled country list is no
-    longer enforced in v0 -- any non-empty `country` is accepted verbatim --
+    Spec-drift #77 (adjudicated 2026-07-10): a controlled polity list is no
+    longer enforced in v0 -- any non-empty `polity` is accepted verbatim --
     but an out-of-list value is surfaced as a candidate addition for later
     review, never raised. Mirrors `axial.extract`'s `_log_fallback`
     convention: stderr only, stdout stays pure JSON.
     """
-    if country not in schema.country_list:
+    if polity not in schema.polity_examples:
         print(
-            f"country {country!r} is not in the schema's country_list; "
+            f"polity {polity!r} is not in the schema's polity_examples; "
             f"logging as a candidate addition",
             file=sys.stderr,
         )
@@ -863,20 +961,25 @@ def build_tagged_record(
     role_in_argument: str,
     schema_version: str,
     empirical_scope: str | None = None,
-    country: str | None = None,
+    polity: str | None = None,
     multi_value_axes: dict[str, dict[str, Any]] | None = None,
+    many_valued_axes: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """Assemble a tagged record carrying the chunk's provenance (chunk_id,
     section, chunk_text) plus the role_in_argument value and the schema
     version it was tagged under (PRD §7.1). When `empirical_scope` is given
-    it is added too (issue #28 slice 02); when `country` is also given (only
+    it is added too (issue #28 slice 02); when `polity` is also given (only
     meaningful for a `scope:country-case` record) it is added as well. A
-    non-country-case record must not carry a `country` field at all.
+    non-country-case record must not carry a `polity` field at all.
     `multi_value_axes` (issue #29 slice 03) maps each primary+secondary
     axis name to its already-parsed-and-validated nested object
     (`{"primary": ..., "secondary": ..., ...}`), added under that same axis
     name -- one key per axis the schema declared and the pass tagged, no
-    per-axis branching here either."""
+    per-axis branching here either. `many_valued_axes` (issue #194 slice
+    05) maps each many-valued free-text axis name (currently only
+    `polities_touched`) to its already-parsed list of strings, added under
+    that same axis name the same way -- always the list the parser
+    produced (possibly `[]`), never omitted when the axis was tagged."""
     record: dict[str, Any] = {
         "chunk_id": chunk_record["chunk_id"],
         "section": chunk_record["section"],
@@ -886,10 +989,12 @@ def build_tagged_record(
     }
     if empirical_scope is not None:
         record["empirical_scope"] = empirical_scope
-    if country is not None:
-        record["country"] = country
+    if polity is not None:
+        record["polity"] = polity
     for axis_name, axis_value in (multi_value_axes or {}).items():
         record[axis_name] = axis_value
+    for axis_name, axis_values in (many_valued_axes or {}).items():
+        record[axis_name] = axis_values
     return record
 
 
@@ -960,7 +1065,7 @@ def apply_correction_reask(
     through the identical vocabulary validation.
 
     Only `TagNotInSchemaError` triggers the re-ask; any other error `validate`
-    raises (parse/cardinality/missing-country) propagates unchanged, exactly
+    raises (parse/cardinality/missing-polity) propagates unchanged, exactly
     as before this layer existed. Transport errors from `client.complete` are
     not caught here -- the caller wraps them into its own typed LLM error."""
     try:
@@ -973,19 +1078,23 @@ def apply_correction_reask(
 
 def _parse_and_validate_tags(
     raw_response: str, axes_to_tag: list[str], schema: Schema
-) -> tuple[dict[str, str], dict[str, dict[str, Any]], str | None]:
+) -> tuple[dict[str, str], dict[str, dict[str, Any]], dict[str, list[str]], str | None]:
     """Parse+validate every tagged axis from one raw tag-pass response,
     dispatched on each axis's schema-declared cardinality (never its name).
-    Returns `(single_axis_values, multi_value_axes, country)`. Raises
-    `TagNotInSchemaError` on any schema-vocabulary miss (the signal
-    `apply_correction_reask` catches for its single bounded re-ask), and the
-    same parse/cardinality/missing-country errors as before for other
-    malformations. Factored out of `run_tag`'s per-chunk body (issue #102) so
-    the identical parse+validate can run on both the original answer and the
-    bounded correction re-ask's answer."""
+    Returns `(single_axis_values, multi_value_axes, many_valued_axes,
+    polity)`. Raises `TagNotInSchemaError` on any schema-vocabulary miss
+    (the signal `apply_correction_reask` catches for its single bounded
+    re-ask), and the same parse/cardinality/missing-polity errors as before
+    for other malformations -- a many-valued free-text axis (`cardinality
+    == "many"`, issue #194 slice 05) never raises `TagNotInSchemaError`,
+    since it has no vocabulary to validate against. Factored out of
+    `run_tag`'s per-chunk body (issue #102) so the identical parse+validate
+    can run on both the original answer and the bounded correction re-ask's
+    answer."""
     values: dict[str, str] = {}
     multi_value_axes: dict[str, dict[str, Any]] = {}
-    country: str | None = None
+    many_valued_axes: dict[str, list[str]] = {}
+    polity: str | None = None
     for axis_name in axes_to_tag:
         axis = schema.axes[axis_name]
         if axis.cardinality in MULTI_VALUE_CARDINALITIES:
@@ -993,14 +1102,16 @@ def _parse_and_validate_tags(
             validate_multi_value_tag(schema, axis_name, parsed)
             parsed.update(_axis_extras(axis))
             multi_value_axes[axis_name] = parsed
+        elif axis.cardinality == MANY_VALUED_CARDINALITY:
+            many_valued_axes[axis_name] = parse_many_valued_tag_response(raw_response, axis_name)
         else:
             value = parse_tag_response(raw_response, axis_name)
             value = validate_tag(schema, axis_name, value)
             values[axis_name] = value
             if axis_name == EMPIRICAL_SCOPE_AXIS and value == COUNTRY_CASE_SCOPE_VALUE:
-                country = parse_country_response(raw_response, axis_name)
-                log_country_not_in_list(schema, country)
-    return values, multi_value_axes, country
+                polity = parse_polity_response(raw_response, axis_name)
+                log_polity_not_in_list(schema, polity)
+    return values, multi_value_axes, many_valued_axes, polity
 
 
 class TaggedRecords(list):
@@ -1066,9 +1177,9 @@ def run_tag(
     parsed/validated by its own schema-declared `cardinality` (`single` vs.
     one of `MULTI_VALUE_CARDINALITIES`), never by axis name -- see the
     module docstring. When `empirical_scope` resolves to
-    `"scope:country-case"`, the same response's `country` is also required
-    (non-empty, or `CountryCaseMissingCountryError`); a value outside the
-    schema's `country_list` (Appendix C/G) is accepted verbatim and logged
+    `"scope:country-case"`, the same response's `polity` is also required
+    (non-empty, or `CountryCaseMissingPolityError`); a value outside the
+    schema's `polity_examples` (Appendix C/G) is accepted verbatim and logged
     to stderr as a candidate addition, never fatal (spec-drift #77). A
     source whose chunk artifact holds zero chunks yields zero tagged
     records without ever calling the LLM for the tag pass.
@@ -1194,7 +1305,7 @@ def run_tag(
             axes_to_tag,
             codebook,
             schema,
-            country_list=schema.country_list,
+            polity_examples=schema.polity_examples,
         )
 
         try:
@@ -1241,12 +1352,12 @@ def run_tag(
         # bounded correction re-ask (issue #102, P0-6): the model is shown the
         # failing position's controlled vocabulary and must return a valid
         # value or an explicit NONE; still-out-of-vocab after that single
-        # re-ask propagates `TagNotInSchemaError` as the hard error. Country /
+        # re-ask propagates `TagNotInSchemaError` as the hard error. Polity /
         # parse / cardinality errors propagate unchanged (never re-asked
         # here). `client` is already resolved above, so the correction re-ask
         # reuses it; any transport failure it raises wraps to `LLMFailedError`.
         try:
-            values, multi_value_axes, country = apply_correction_reask(
+            values, multi_value_axes, many_valued_axes, polity = apply_correction_reask(
                 client,
                 TAG_PASS_NAME,
                 raw_response,
@@ -1261,8 +1372,9 @@ def run_tag(
             values[ROLE_IN_ARGUMENT_AXIS],
             schema.version,
             empirical_scope=values.get(EMPIRICAL_SCOPE_AXIS),
-            country=country,
+            polity=polity,
             multi_value_axes=multi_value_axes,
+            many_valued_axes=many_valued_axes,
         )
         # Persist this chunk's tagged record before moving to the next one
         # (write+flush per chunk), so a failure on a later chunk leaves every

@@ -1,6 +1,6 @@
 """Inner unit tests for the axial tag module (issue #27 slice 01 -- tag
 spine: role_in_argument, schema-driven, hard-error, versioned; issue #28
-slice 02 -- empirical_scope axis + the scope:country-case country extra
+slice 02 -- empirical_scope axis + the scope:country-case polity extra
 field; issue #29 slice 03 -- field/claim_type/theory_school, the shared
 primary+secondary cardinality validator)."""
 
@@ -41,7 +41,7 @@ _SCHEMA = Schema(
     },
 )
 
-_SCHEMA_WITH_COUNTRY = Schema(
+_SCHEMA_WITH_POLITY = Schema(
     version="0.1",
     axes={
         "empirical_scope": Axis(
@@ -52,7 +52,21 @@ _SCHEMA_WITH_COUNTRY = Schema(
             tag_ids={"scope:country-case", "scope:general"},
         ),
     },
-    country_list=["Syria", "Turkey"],
+    polity_examples=["Syria", "Turkey"],
+)
+
+_SCHEMA_WITH_POLITIES_TOUCHED = Schema(
+    version="0.1",
+    axes={
+        "polities_touched": Axis(
+            name="polities_touched",
+            applies_to=["prose"],
+            cardinality="many",
+            value_count=0,
+            tag_ids=set(),
+            raw={"cardinality": "many", "values": "free_text"},
+        ),
+    },
 )
 
 _SCHEMA_WITH_MULTI_VALUE_AXES = Schema(
@@ -160,6 +174,73 @@ def test_compose_tag_prompt_never_leaks_an_internal_dispatch_marker():
     assert "AXIAL_TAG_PASS_V1" not in prompt
 
 
+# --- compose_multi_axis_tag_prompt: polity examples-not-menu framing +
+# polities_touched facet description (issue #194 slice 05) --------------
+
+
+def test_compose_multi_axis_tag_prompt_surfaces_polity_examples():
+    from axial.tag import compose_multi_axis_tag_prompt
+
+    prompt = compose_multi_axis_tag_prompt(
+        "Some chunk text.",
+        ["role_in_argument"],
+        _CODEBOOK,
+        _SCHEMA,
+        polity_examples=["Syria", "Turkey"],
+    )
+
+    assert "Syria" in prompt
+    assert "Turkey" in prompt
+
+
+def test_compose_multi_axis_tag_prompt_frames_polity_examples_as_not_a_closed_menu():
+    """Item 1 of issue #194 slice 05: the polity list is examples, not a
+    closed menu -- the tagger is instructed to name the true polity
+    faithfully even when absent, historical, defunct, or supra-national."""
+    from axial.tag import compose_multi_axis_tag_prompt
+
+    prompt = compose_multi_axis_tag_prompt(
+        "Some chunk text.",
+        ["role_in_argument"],
+        _CODEBOOK,
+        _SCHEMA,
+        polity_examples=["Syria", "Turkey"],
+    )
+
+    assert "not a closed menu" in prompt
+    assert "polity" in prompt
+    assert "historical" in prompt
+    assert "supra-national" in prompt
+
+
+def test_compose_multi_axis_tag_prompt_still_accepts_zero_polity_examples():
+    from axial.tag import compose_multi_axis_tag_prompt
+
+    prompt = compose_multi_axis_tag_prompt(
+        "Some chunk text.", ["role_in_argument"], _CODEBOOK, _SCHEMA, polity_examples=None
+    )
+
+    assert "Some chunk text." in prompt
+
+
+def test_compose_multi_axis_tag_prompt_describes_polities_touched_as_many_valued_free_text():
+    """The `polities_touched` axis (cardinality: many) gets a free-text
+    facet description -- "engaged, not name-dropped" -- rather than a
+    vocabulary listing, dispatched on its cardinality, never its name."""
+    from axial.tag import compose_multi_axis_tag_prompt
+
+    prompt = compose_multi_axis_tag_prompt(
+        "Some chunk text.",
+        ["polities_touched"],
+        _CODEBOOK,
+        _SCHEMA_WITH_POLITIES_TOUCHED,
+    )
+
+    assert "polities_touched" in prompt
+    assert "engaged" in prompt
+    assert "name-dropped" in prompt
+
+
 # --- response parsing ------------------------------------------------------
 
 
@@ -255,7 +336,7 @@ def test_parse_tag_response_rejects_a_single_element_list_of_a_dict_as_a_tag_err
 def test_parse_tag_response_accepts_an_object_shaped_value_using_its_primary():
     from axial.tag import parse_tag_response
 
-    raw = json.dumps({"empirical_scope": {"primary": "scope:country-case", "country": "Syria"}})
+    raw = json.dumps({"empirical_scope": {"primary": "scope:country-case", "polity": "Syria"}})
 
     value = parse_tag_response(raw, "empirical_scope")
 
@@ -315,11 +396,11 @@ def test_parse_tag_response_rejects_an_object_shaped_value_without_a_string_prim
 
 
 def test_parse_tag_response_accepts_an_object_shaped_value_using_its_value_key():
-    """`{'value': <str>, 'country': ...}` -- deepseek-v4-flash's modal dialect
+    """`{'value': <str>, 'polity': ...}` -- deepseek-v4-flash's modal dialect
     for scope:country-case chunks (issue #88 point 2)."""
     from axial.tag import parse_tag_response
 
-    raw = json.dumps({"empirical_scope": {"value": "scope:country-case", "country": "Syria"}})
+    raw = json.dumps({"empirical_scope": {"value": "scope:country-case", "polity": "Syria"}})
 
     value = parse_tag_response(raw, "empirical_scope")
 
@@ -327,13 +408,13 @@ def test_parse_tag_response_accepts_an_object_shaped_value_using_its_value_key()
 
 
 def test_parse_tag_response_accepts_the_value_as_key_dialect():
-    """`{'scope:country-case': 'scope:country-case', 'country': ...}` -- the
+    """`{'scope:country-case': 'scope:country-case', 'polity': ...}` -- the
     other modal dialect (issue #88 point 3): exactly one remaining entry
-    (after excluding 'country'/'secondary'/'subtags') with a string value."""
+    (after excluding 'polity'/'secondary'/'subtags') with a string value."""
     from axial.tag import parse_tag_response
 
     raw = json.dumps(
-        {"empirical_scope": {"scope:country-case": "scope:country-case", "country": "Syria"}}
+        {"empirical_scope": {"scope:country-case": "scope:country-case", "polity": "Syria"}}
     )
 
     value = parse_tag_response(raw, "empirical_scope")
@@ -368,7 +449,7 @@ def test_parse_tag_response_value_key_wins_over_a_bare_single_candidate_entry():
 def test_parse_tag_response_rejects_an_object_with_only_auxiliary_keys_and_no_candidate():
     from axial.tag import TagParseError, parse_tag_response
 
-    raw = json.dumps({"empirical_scope": {"country": "Syria", "secondary": []}})
+    raw = json.dumps({"empirical_scope": {"polity": "Syria", "secondary": []}})
 
     with pytest.raises(TagParseError):
         parse_tag_response(raw, "empirical_scope")
@@ -782,114 +863,114 @@ def test_axis_extras_is_empty_when_the_axis_declares_no_status():
     assert extras == {}
 
 
-# --- country-case extra field (issue #28 slice 02) --------------------------
+# --- polity-case extra field (issue #28 slice 02) --------------------------
 
 
-def test_parse_country_response_returns_the_country():
-    from axial.tag import parse_country_response
+def test_parse_polity_response_returns_the_polity():
+    from axial.tag import parse_polity_response
 
-    raw = json.dumps({"empirical_scope": "scope:country-case", "country": "Syria"})
+    raw = json.dumps({"empirical_scope": "scope:country-case", "polity": "Syria"})
 
-    assert parse_country_response(raw) == "Syria"
+    assert parse_polity_response(raw) == "Syria"
 
 
-def test_parse_country_response_rejects_a_missing_country_key():
-    from axial.tag import CountryCaseMissingCountryError, parse_country_response
+def test_parse_polity_response_rejects_a_missing_polity_key():
+    from axial.tag import CountryCaseMissingPolityError, parse_polity_response
 
     raw = json.dumps({"empirical_scope": "scope:country-case"})
 
-    with pytest.raises(CountryCaseMissingCountryError):
-        parse_country_response(raw)
+    with pytest.raises(CountryCaseMissingPolityError):
+        parse_polity_response(raw)
 
 
-def test_parse_country_response_rejects_an_empty_country_value():
-    from axial.tag import CountryCaseMissingCountryError, parse_country_response
+def test_parse_polity_response_rejects_an_empty_polity_value():
+    from axial.tag import CountryCaseMissingPolityError, parse_polity_response
 
-    raw = json.dumps({"empirical_scope": "scope:country-case", "country": ""})
+    raw = json.dumps({"empirical_scope": "scope:country-case", "polity": ""})
 
-    with pytest.raises(CountryCaseMissingCountryError):
-        parse_country_response(raw)
-
-
-def test_parse_country_response_accepts_a_nested_country_when_top_level_absent():
-    from axial.tag import parse_country_response
-
-    raw = json.dumps({"empirical_scope": {"primary": "scope:country-case", "country": "Syria"}})
-
-    assert parse_country_response(raw, "empirical_scope") == "Syria"
+    with pytest.raises(CountryCaseMissingPolityError):
+        parse_polity_response(raw)
 
 
-def test_parse_country_response_prefers_the_top_level_country_over_a_nested_one():
-    from axial.tag import parse_country_response
+def test_parse_polity_response_accepts_a_nested_polity_when_top_level_absent():
+    from axial.tag import parse_polity_response
+
+    raw = json.dumps({"empirical_scope": {"primary": "scope:country-case", "polity": "Syria"}})
+
+    assert parse_polity_response(raw, "empirical_scope") == "Syria"
+
+
+def test_parse_polity_response_prefers_the_top_level_polity_over_a_nested_one():
+    from axial.tag import parse_polity_response
 
     raw = json.dumps(
         {
-            "empirical_scope": {"primary": "scope:country-case", "country": "Iraq"},
-            "country": "Syria",
+            "empirical_scope": {"primary": "scope:country-case", "polity": "Iraq"},
+            "polity": "Syria",
         }
     )
 
-    assert parse_country_response(raw, "empirical_scope") == "Syria"
+    assert parse_polity_response(raw, "empirical_scope") == "Syria"
 
 
-def test_parse_country_response_rejects_missing_country_in_both_places():
-    from axial.tag import CountryCaseMissingCountryError, parse_country_response
+def test_parse_polity_response_rejects_missing_polity_in_both_places():
+    from axial.tag import CountryCaseMissingPolityError, parse_polity_response
 
     raw = json.dumps({"empirical_scope": {"primary": "scope:country-case"}})
 
-    with pytest.raises(CountryCaseMissingCountryError):
-        parse_country_response(raw, "empirical_scope")
+    with pytest.raises(CountryCaseMissingPolityError):
+        parse_polity_response(raw, "empirical_scope")
 
 
-def test_parse_country_response_rejects_a_non_string_nested_country():
-    from axial.tag import TagParseError, parse_country_response
+def test_parse_polity_response_rejects_a_non_string_nested_polity():
+    from axial.tag import TagParseError, parse_polity_response
 
-    raw = json.dumps({"empirical_scope": {"primary": "scope:country-case", "country": 7}})
+    raw = json.dumps({"empirical_scope": {"primary": "scope:country-case", "polity": 7}})
 
     with pytest.raises(TagParseError):
-        parse_country_response(raw, "empirical_scope")
+        parse_polity_response(raw, "empirical_scope")
 
 
-def test_parse_country_response_accepts_a_nested_country_with_the_value_key_dialect():
-    """`parse_country_response` reads `data[axis_name]['country']` regardless
-    of how the axis's own value was extracted -- confirms the nested-country
+def test_parse_polity_response_accepts_a_nested_polity_with_the_value_key_dialect():
+    """`parse_polity_response` reads `data[axis_name]['polity']` regardless
+    of how the axis's own value was extracted -- confirms the nested-polity
     fallback composes with the 'value' key dialect (issue #88)."""
-    from axial.tag import parse_country_response
+    from axial.tag import parse_polity_response
 
-    raw = json.dumps({"empirical_scope": {"value": "scope:country-case", "country": "Syria"}})
+    raw = json.dumps({"empirical_scope": {"value": "scope:country-case", "polity": "Syria"}})
 
-    assert parse_country_response(raw, "empirical_scope") == "Syria"
+    assert parse_polity_response(raw, "empirical_scope") == "Syria"
 
 
-def test_parse_country_response_accepts_a_nested_country_with_the_value_as_key_dialect():
+def test_parse_polity_response_accepts_a_nested_polity_with_the_value_as_key_dialect():
     """Same, for the value-as-key dialect (issue #88)."""
-    from axial.tag import parse_country_response
+    from axial.tag import parse_polity_response
 
     raw = json.dumps(
-        {"empirical_scope": {"scope:country-case": "scope:country-case", "country": "Syria"}}
+        {"empirical_scope": {"scope:country-case": "scope:country-case", "polity": "Syria"}}
     )
 
-    assert parse_country_response(raw, "empirical_scope") == "Syria"
+    assert parse_polity_response(raw, "empirical_scope") == "Syria"
 
 
-def test_log_country_not_in_list_is_silent_for_an_in_list_value(capsys):
-    from axial.tag import log_country_not_in_list
+def test_log_polity_not_in_list_is_silent_for_an_in_list_value(capsys):
+    from axial.tag import log_polity_not_in_list
 
-    log_country_not_in_list(_SCHEMA_WITH_COUNTRY, "Syria")  # does not raise
+    log_polity_not_in_list(_SCHEMA_WITH_POLITY, "Syria")  # does not raise
 
     captured = capsys.readouterr()
     assert captured.err == ""
 
 
-def test_log_country_not_in_list_logs_an_out_of_list_value_to_stderr(capsys):
-    from axial.tag import log_country_not_in_list
+def test_log_polity_not_in_list_logs_an_out_of_list_value_to_stderr(capsys):
+    from axial.tag import log_polity_not_in_list
 
-    log_country_not_in_list(_SCHEMA_WITH_COUNTRY, "Atlantis")  # does not raise
+    log_polity_not_in_list(_SCHEMA_WITH_POLITY, "Atlantis")  # does not raise
 
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "Atlantis" in captured.err
-    assert "country_list" in captured.err
+    assert "polity_examples" in captured.err
 
 
 # --- record assembly ---------------------------------------------------------
@@ -908,10 +989,10 @@ def test_build_tagged_record_carries_provenance_and_schema_version():
     assert record["role_in_argument"] == "role:claim"
     assert record["schema_version"] == "0.1"
     assert "empirical_scope" not in record
-    assert "country" not in record
+    assert "polity" not in record
 
 
-def test_build_tagged_record_carries_empirical_scope_and_country_when_given():
+def test_build_tagged_record_carries_empirical_scope_and_polity_when_given():
     from axial.tag import build_tagged_record
 
     chunk_record = {"chunk_id": "id1", "section": "Introduction", "text": "x"}
@@ -921,14 +1002,14 @@ def test_build_tagged_record_carries_empirical_scope_and_country_when_given():
         "role:claim",
         "0.1",
         empirical_scope="scope:country-case",
-        country="Syria",
+        polity="Syria",
     )
 
     assert record["empirical_scope"] == "scope:country-case"
-    assert record["country"] == "Syria"
+    assert record["polity"] == "Syria"
 
 
-def test_build_tagged_record_omits_country_when_not_given():
+def test_build_tagged_record_omits_polity_when_not_given():
     from axial.tag import build_tagged_record
 
     chunk_record = {"chunk_id": "id1", "section": "Introduction", "text": "x"}
@@ -936,7 +1017,7 @@ def test_build_tagged_record_omits_country_when_not_given():
     record = build_tagged_record(chunk_record, "role:claim", "0.1", empirical_scope="scope:general")
 
     assert record["empirical_scope"] == "scope:general"
-    assert "country" not in record
+    assert "polity" not in record
 
 
 def test_build_tagged_record_adds_one_key_per_multi_value_axis():
@@ -957,6 +1038,100 @@ def test_build_tagged_record_adds_one_key_per_multi_value_axis():
     assert record["field"] == {"primary": "state", "secondary": []}
     assert record["claim_type"] == {"primary": "state-formation", "secondary": None, "subtags": []}
     assert "theory_school" not in record
+
+
+def test_build_tagged_record_adds_one_key_per_many_valued_axis():
+    from axial.tag import build_tagged_record
+
+    chunk_record = {"chunk_id": "id1", "section": "Introduction", "text": "x"}
+
+    record = build_tagged_record(
+        chunk_record,
+        "role:claim",
+        "0.1",
+        many_valued_axes={"polities_touched": ["Syria", "Iraq"]},
+    )
+
+    assert record["polities_touched"] == ["Syria", "Iraq"]
+
+
+def test_build_tagged_record_omits_many_valued_axis_when_not_given():
+    from axial.tag import build_tagged_record
+
+    chunk_record = {"chunk_id": "id1", "section": "Introduction", "text": "x"}
+
+    record = build_tagged_record(chunk_record, "role:claim", "0.1")
+
+    assert "polities_touched" not in record
+
+
+# --- polities_touched: many-valued free-text axis parsing (issue #194
+# slice 05, Appendix C/G) -----------------------------------------------
+
+
+def test_parse_many_valued_tag_response_returns_the_given_list():
+    from axial.tag import parse_many_valued_tag_response
+
+    raw = json.dumps({"polities_touched": ["Syria", "Iraq"]})
+
+    assert parse_many_valued_tag_response(raw, "polities_touched") == ["Syria", "Iraq"]
+
+
+def test_parse_many_valued_tag_response_returns_empty_list_when_key_absent():
+    """An absent key is `[]`, not a parse error -- a chunk may substantively
+    engage no polity at all (Appendix C's own "empty is allowed" rule)."""
+    from axial.tag import parse_many_valued_tag_response
+
+    raw = json.dumps({"role_in_argument": "role:claim"})
+
+    assert parse_many_valued_tag_response(raw, "polities_touched") == []
+
+
+def test_parse_many_valued_tag_response_accepts_an_explicit_empty_list():
+    from axial.tag import parse_many_valued_tag_response
+
+    raw = json.dumps({"polities_touched": []})
+
+    assert parse_many_valued_tag_response(raw, "polities_touched") == []
+
+
+def test_parse_many_valued_tag_response_rejects_invalid_json():
+    from axial.tag import TagParseError, parse_many_valued_tag_response
+
+    with pytest.raises(TagParseError):
+        parse_many_valued_tag_response("not json at all", "polities_touched")
+
+
+def test_parse_many_valued_tag_response_rejects_a_non_list_value():
+    from axial.tag import TagParseError, parse_many_valued_tag_response
+
+    raw = json.dumps({"polities_touched": "Syria"})
+
+    with pytest.raises(TagParseError):
+        parse_many_valued_tag_response(raw, "polities_touched")
+
+
+def test_parse_many_valued_tag_response_rejects_a_non_string_entry():
+    from axial.tag import TagParseError, parse_many_valued_tag_response
+
+    raw = json.dumps({"polities_touched": ["Syria", 7]})
+
+    with pytest.raises(TagParseError):
+        parse_many_valued_tag_response(raw, "polities_touched")
+
+
+def test_parse_many_valued_tag_response_never_applies_a_vocabulary_check():
+    """No `TagNotInSchemaError` -- or any error at all -- for a value that
+    would be out-of-vocabulary on a closed-set axis: `polities_touched` has
+    no controlled vocabulary (`values: free_text`)."""
+    from axial.tag import parse_many_valued_tag_response
+
+    raw = json.dumps({"polities_touched": ["Ottoman Empire", "Atlantis"]})
+
+    assert parse_many_valued_tag_response(raw, "polities_touched") == [
+        "Ottoman Empire",
+        "Atlantis",
+    ]
 
 
 # --- run_tag: zero chunks, happy path, hard error ----------------------------
@@ -1071,18 +1246,18 @@ def test_run_tag_raises_a_hard_error_for_an_out_of_schema_tag(monkeypatch, tmp_p
         tag_mod.run_tag(tmp_path / "paper.pdf", client=_OutOfSchemaClient(), domain_dir=domain_dir)
 
 
-# --- run_tag: empirical_scope + country-case extra field (issue #28 slice 02) --
+# --- run_tag: empirical_scope + polity-case extra field (issue #28 slice 02) --
 
 
 def _write_domain_with_empirical_scope(
-    tmp_path, country_list: tuple[str, ...] = ("Syria", "Turkey")
+    tmp_path, polity_examples: tuple[str, ...] = ("Syria", "Turkey")
 ):
     """Write a minimal schema.yaml + codebook.yaml covering both
-    role_in_argument and empirical_scope (with a country_list), for
-    `run_tag` country-case unit tests."""
+    role_in_argument and empirical_scope (with a polity_examples), for
+    `run_tag` polity-case unit tests."""
     domain_dir = tmp_path / "domain"
     domain_dir.mkdir()
-    countries_block = ", ".join(country_list)
+    polities_block = ", ".join(polity_examples)
     (domain_dir / "schema.yaml").write_text(
         "version: 0.1\n"
         "axes:\n"
@@ -1094,7 +1269,7 @@ def _write_domain_with_empirical_scope(
         "    applies_to: [prose]\n"
         "    cardinality: single\n"
         "    values: [scope:country-case, scope:general]\n"
-        f"country_list: [{countries_block}]\n",
+        f"polity_examples: [{polities_block}]\n",
         encoding="utf-8",
     )
     (domain_dir / "codebook.yaml").write_text(
@@ -1120,7 +1295,7 @@ def _one_chunk_read_chunks(monkeypatch, tag_mod):
     )
 
 
-def test_run_tag_country_case_record_carries_empirical_scope_and_country(monkeypatch, tmp_path):
+def test_run_tag_polity_case_record_carries_empirical_scope_and_polity(monkeypatch, tmp_path):
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
@@ -1132,7 +1307,7 @@ def test_run_tag_country_case_record_carries_empirical_scope_and_country(monkeyp
                 {
                     "role_in_argument": "role:claim",
                     "empirical_scope": "scope:country-case",
-                    "country": "Syria",
+                    "polity": "Syria",
                 }
             )
 
@@ -1142,10 +1317,10 @@ def test_run_tag_country_case_record_carries_empirical_scope_and_country(monkeyp
     assert len(records) == 1
     assert records[0]["role_in_argument"] == "role:claim"
     assert records[0]["empirical_scope"] == "scope:country-case"
-    assert records[0]["country"] == "Syria"
+    assert records[0]["polity"] == "Syria"
 
 
-def test_run_tag_non_country_case_record_carries_no_country(monkeypatch, tmp_path):
+def test_run_tag_non_polity_case_record_carries_no_polity(monkeypatch, tmp_path):
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
@@ -1161,10 +1336,10 @@ def test_run_tag_non_country_case_record_carries_no_country(monkeypatch, tmp_pat
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
 
     assert records[0]["empirical_scope"] == "scope:general"
-    assert "country" not in records[0]
+    assert "polity" not in records[0]
 
 
-def test_run_tag_country_case_missing_country_raises_hard_error(monkeypatch, tmp_path):
+def test_run_tag_polity_case_missing_polity_raises_hard_error(monkeypatch, tmp_path):
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
@@ -1176,17 +1351,17 @@ def test_run_tag_country_case_missing_country_raises_hard_error(monkeypatch, tmp
                 {"role_in_argument": "role:claim", "empirical_scope": "scope:country-case"}
             )
 
-    with pytest.raises(tag_mod.CountryCaseMissingCountryError):
+    with pytest.raises(tag_mod.CountryCaseMissingPolityError):
         (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
         tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
 
 
-def test_run_tag_country_case_out_of_list_country_is_accepted_and_logged(
+def test_run_tag_polity_case_out_of_list_polity_is_accepted_and_logged(
     monkeypatch, tmp_path, capsys
 ):
-    """Spec-drift #77 (adjudicated 2026-07-10): an out-of-list country is
+    """Spec-drift #77 (adjudicated 2026-07-10): an out-of-list polity is
     no longer fatal -- it is accepted verbatim on the record and logged to
-    stderr as a candidate addition, naming the value and 'country_list'."""
+    stderr as a candidate addition, naming the value and 'polity_examples'."""
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
@@ -1198,22 +1373,22 @@ def test_run_tag_country_case_out_of_list_country_is_accepted_and_logged(
                 {
                     "role_in_argument": "role:claim",
                     "empirical_scope": "scope:country-case",
-                    "country": "Atlantis",
+                    "polity": "Atlantis",
                 }
             )
 
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
 
-    assert records[0]["country"] == "Atlantis"
+    assert records[0]["polity"] == "Atlantis"
 
     captured = capsys.readouterr()
     assert "Atlantis" in captured.err
-    assert "country_list" in captured.err
+    assert "polity_examples" in captured.err
 
 
-def test_run_tag_country_case_missing_country_then_clean_reasks_and_succeeds(monkeypatch, tmp_path):
-    """A country-case response missing `country` is degenerate model noise
+def test_run_tag_polity_case_missing_polity_then_clean_reasks_and_succeeds(monkeypatch, tmp_path):
+    """A polity-case response missing `polity` is degenerate model noise
     (issue #92), the same species as a blank tag (#85/#80): it re-asks
     within `complete_json`'s bounded budget rather than dying fatally, and a
     clean follow-up response succeeds after exactly one re-ask."""
@@ -1222,20 +1397,20 @@ def test_run_tag_country_case_missing_country_then_clean_reasks_and_succeeds(mon
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
     _one_chunk_read_chunks(monkeypatch, tag_mod)
 
-    missing_country = json.dumps(
+    missing_polity = json.dumps(
         {"role_in_argument": "role:claim", "empirical_scope": "scope:country-case"}
     )
     clean = json.dumps(
         {
             "role_in_argument": "role:claim",
             "empirical_scope": "scope:country-case",
-            "country": "Syria",
+            "polity": "Syria",
         }
     )
 
     class _ScriptedClient:
         def __init__(self):
-            self._responses = [missing_country, clean]
+            self._responses = [missing_polity, clean]
             self.call_count = 0
 
         def complete(self, prompt, pass_name=None):
@@ -1249,16 +1424,16 @@ def test_run_tag_country_case_missing_country_then_clean_reasks_and_succeeds(mon
 
     assert len(records) == 1
     assert records[0]["empirical_scope"] == "scope:country-case"
-    assert records[0]["country"] == "Syria"
+    assert records[0]["polity"] == "Syria"
     assert client.call_count == 2
 
 
-def test_run_tag_country_case_persistent_missing_country_raises_after_three_attempts(
+def test_run_tag_polity_case_persistent_missing_polity_raises_after_three_attempts(
     monkeypatch, tmp_path
 ):
-    """PERSISTENT country absence (#77 adjudication) stays a hard error: once
+    """PERSISTENT polity absence (#77 adjudication) stays a hard error: once
     `complete_json`'s bounded re-ask budget (3 attempts) is exhausted, the
-    final attempt's `CountryCaseMissingCountryError` propagates unchanged."""
+    final attempt's `CountryCaseMissingPolityError` propagates unchanged."""
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_empirical_scope(tmp_path)
@@ -1276,15 +1451,15 @@ def test_run_tag_country_case_persistent_missing_country_raises_after_three_atte
 
     client = _CountingClient()
 
-    with pytest.raises(tag_mod.CountryCaseMissingCountryError):
+    with pytest.raises(tag_mod.CountryCaseMissingPolityError):
         (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
         tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert client.call_count == 3
 
 
-def test_run_tag_country_case_country_present_makes_exactly_one_call(monkeypatch, tmp_path):
-    """A country-case response WITH a non-empty country never re-asks -- the
+def test_run_tag_polity_case_polity_present_makes_exactly_one_call(monkeypatch, tmp_path):
+    """A polity-case response WITH a non-empty polity never re-asks -- the
     new validator check is a no-op on the already-valid, common case."""
     import axial.tag as tag_mod
 
@@ -1301,7 +1476,7 @@ def test_run_tag_country_case_country_present_makes_exactly_one_call(monkeypatch
                 {
                     "role_in_argument": "role:claim",
                     "empirical_scope": "scope:country-case",
-                    "country": "Syria",
+                    "polity": "Syria",
                 }
             )
 
@@ -1309,13 +1484,13 @@ def test_run_tag_country_case_country_present_makes_exactly_one_call(monkeypatch
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
-    assert records[0]["country"] == "Syria"
+    assert records[0]["polity"] == "Syria"
     assert client.call_count == 1
 
 
-def test_run_tag_non_country_case_scope_with_no_country_is_unaffected(monkeypatch, tmp_path):
-    """A non-country-case `empirical_scope` (e.g. `scope:general`) never
-    requires `country` at all -- the new check is scoped strictly to
+def test_run_tag_non_polity_case_scope_with_no_polity_is_unaffected(monkeypatch, tmp_path):
+    """A non-polity-case `empirical_scope` (e.g. `scope:general`) never
+    requires `polity` at all -- the new check is scoped strictly to
     `scope:country-case` and never fires for any other scope value, so this
     still makes exactly one call."""
     import axial.tag as tag_mod
@@ -1338,7 +1513,7 @@ def test_run_tag_non_country_case_scope_with_no_country_is_unaffected(monkeypatc
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
 
     assert records[0]["empirical_scope"] == "scope:general"
-    assert "country" not in records[0]
+    assert "polity" not in records[0]
     assert client.call_count == 1
 
 
@@ -1368,7 +1543,7 @@ def test_run_tag_makes_exactly_one_llm_call_per_chunk_even_with_two_tagged_axes(
 def test_run_tag_regresses_role_in_argument_when_empirical_scope_axis_absent(monkeypatch, tmp_path):
     """A domain that doesn't declare empirical_scope (e.g. slice 01's
     minimal fixture domain) must still tag role_in_argument alone, with no
-    empirical_scope/country keys added and no error for the axis the schema
+    empirical_scope/polity keys added and no error for the axis the schema
     doesn't define."""
     import axial.tag as tag_mod
 
@@ -1382,7 +1557,7 @@ def test_run_tag_regresses_role_in_argument_when_empirical_scope_axis_absent(mon
     assert len(records) == 1
     assert records[0]["role_in_argument"] == "role:claim"
     assert "empirical_scope" not in records[0]
-    assert "country" not in records[0]
+    assert "polity" not in records[0]
 
 
 # --- run_tag: field/claim_type/theory_school (issue #29 slice 03) -----------
@@ -1596,6 +1771,129 @@ def test_run_tag_raises_tag_parse_error_on_persistently_malformed_json(monkeypat
     assert client.call_count == 3
 
 
+# --- run_tag: polities_touched, a many-valued free-text axis (issue #194
+# slice 05, Appendix C/G) -----------------------------------------------
+
+
+def test_polities_touched_axis_is_a_tagged_axis():
+    from axial.tag import POLITIES_TOUCHED_AXIS, TAGGED_AXES
+
+    assert POLITIES_TOUCHED_AXIS == "polities_touched"
+    assert POLITIES_TOUCHED_AXIS in TAGGED_AXES
+
+
+def _write_domain_with_polities_touched(tmp_path):
+    """Write a minimal schema.yaml + codebook.yaml covering role_in_argument
+    plus the many-valued free-text `polities_touched` axis (Appendix G:
+    `cardinality: many`, `values: free_text`), for `run_tag` polities_touched
+    unit tests."""
+    domain_dir = tmp_path / "domain"
+    domain_dir.mkdir()
+    (domain_dir / "schema.yaml").write_text(
+        "version: 0.1\n"
+        "axes:\n"
+        "  role_in_argument:\n"
+        "    applies_to: [prose]\n"
+        "    cardinality: single\n"
+        "    values: [role:claim]\n"
+        "  polities_touched:\n"
+        "    applies_to: [prose]\n"
+        "    cardinality: many\n"
+        "    values: free_text\n",
+        encoding="utf-8",
+    )
+    (domain_dir / "codebook.yaml").write_text(
+        "axes:\n"
+        "  role_in_argument:\n"
+        "    role:claim: {definition: d, positive_example: p, negative_example: n}\n",
+        encoding="utf-8",
+    )
+    return domain_dir
+
+
+def test_run_tag_carries_polities_touched_list_verbatim(monkeypatch, tmp_path):
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_polities_touched(tmp_path)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
+
+    class _Client:
+        def complete(self, prompt, pass_name=None):
+            return json.dumps(
+                {"role_in_argument": "role:claim", "polities_touched": ["Syria", "Iraq"]}
+            )
+
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+
+    assert len(records) == 1
+    assert records[0]["polities_touched"] == ["Syria", "Iraq"]
+
+
+def test_run_tag_polities_touched_defaults_to_empty_list_when_key_absent(monkeypatch, tmp_path):
+    """Appendix C: "empty is allowed" -- a chunk that substantively engages
+    no polity gets `[]`, never a missing key or a hard error."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_polities_touched(tmp_path)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
+
+    class _Client:
+        def complete(self, prompt, pass_name=None):
+            return json.dumps({"role_in_argument": "role:claim"})
+
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+
+    assert records[0]["polities_touched"] == []
+
+
+def test_run_tag_polities_touched_never_applies_a_vocabulary_check(monkeypatch, tmp_path):
+    """A `polities_touched` entry outside any known example list is accepted
+    verbatim with zero re-asks -- no `TagNotInSchemaError`, since the axis
+    is free text with no controlled vocabulary at all."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_polities_touched(tmp_path)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
+
+    class _CountingClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return json.dumps(
+                {"role_in_argument": "role:claim", "polities_touched": ["Ottoman Empire"]}
+            )
+
+    client = _CountingClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert records[0]["polities_touched"] == ["Ottoman Empire"]
+    assert client.call_count == 1
+
+
+def test_run_tag_regresses_role_in_argument_when_polities_touched_axis_absent(
+    monkeypatch, tmp_path
+):
+    """A domain that doesn't declare polities_touched must still tag
+    role_in_argument alone, with no polities_touched key added and no error
+    for the axis the schema doesn't define."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
+
+    stub_client = StubLLMClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=stub_client, domain_dir=domain_dir)
+
+    assert len(records) == 1
+    assert "polities_touched" not in records[0]
+
+
 # --- run_tag: degenerate (empty-string) tag values re-ask, not fatal (#80) --
 
 
@@ -1757,6 +2055,40 @@ def test_run_tag_reasks_and_succeeds_when_subtag_is_first_empty_string(monkeypat
     assert client.call_count == 2
 
 
+def test_run_tag_reasks_and_succeeds_when_polities_touched_entry_is_first_empty_string(
+    monkeypatch, tmp_path
+):
+    """A blank `polities_touched` entry is the same species of degenerate
+    response noise as a blank primary/secondary/subtag (#80) -- it re-asks
+    within `complete_json`'s bounded budget rather than failing outright,
+    even though the axis itself has no vocabulary to validate against."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_polities_touched(tmp_path)
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
+
+    degenerate = json.dumps({"role_in_argument": "role:claim", "polities_touched": [""]})
+    clean = json.dumps({"role_in_argument": "role:claim", "polities_touched": ["Syria"]})
+
+    class _ScriptedClient:
+        def __init__(self):
+            self._responses = [degenerate, clean]
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            response = self._responses[self.call_count]
+            self.call_count += 1
+            return response
+
+    client = _ScriptedClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+
+    assert len(records) == 1
+    assert records[0]["polities_touched"] == ["Syria"]
+    assert client.call_count == 2
+
+
 def test_run_tag_out_of_vocab_non_empty_tag_hard_errors_after_one_bounded_reask(
     monkeypatch, tmp_path
 ):
@@ -1799,14 +2131,14 @@ def test_run_tag_out_of_vocab_non_empty_tag_hard_errors_after_one_bounded_reask(
 # --- run_tag: widened single-axis object dialects (issue #88) ---------------
 
 
-def test_run_tag_zaum_payload_carries_scope_and_country_with_zero_reasks(monkeypatch, tmp_path):
+def test_run_tag_zaum_payload_carries_scope_and_polity_with_zero_reasks(monkeypatch, tmp_path):
     """The exact zaum payload that killed a 5h36m run (issue #88): the model
-    answers empirical_scope in the `{'value': ..., 'country': ...}` dialect.
+    answers empirical_scope in the `{'value': ..., 'polity': ...}` dialect.
     Must parse cleanly on the first response -- zero re-asks needed -- and
-    the record carries both empirical_scope and country."""
+    the record carries both empirical_scope and polity."""
     import axial.tag as tag_mod
 
-    domain_dir = _write_domain_with_empirical_scope(tmp_path, country_list=("East Timor",))
+    domain_dir = _write_domain_with_empirical_scope(tmp_path, polity_examples=("East Timor",))
     _one_chunk_read_chunks(monkeypatch, tag_mod)
 
     class _CountingClient:
@@ -1818,7 +2150,7 @@ def test_run_tag_zaum_payload_carries_scope_and_country_with_zero_reasks(monkeyp
             return json.dumps(
                 {
                     "role_in_argument": "role:claim",
-                    "empirical_scope": {"value": "scope:country-case", "country": "East Timor"},
+                    "empirical_scope": {"value": "scope:country-case", "polity": "East Timor"},
                 }
             )
 
@@ -1828,11 +2160,11 @@ def test_run_tag_zaum_payload_carries_scope_and_country_with_zero_reasks(monkeyp
 
     assert len(records) == 1
     assert records[0]["empirical_scope"] == "scope:country-case"
-    assert records[0]["country"] == "East Timor"
+    assert records[0]["polity"] == "East Timor"
     assert client.call_count == 1
 
 
-def test_run_tag_value_as_key_dialect_carries_scope_and_country_with_zero_reasks(
+def test_run_tag_value_as_key_dialect_carries_scope_and_polity_with_zero_reasks(
     monkeypatch, tmp_path
 ):
     """The other modal dialect (issue #88 point 3): the axis value's dict has
@@ -1853,7 +2185,7 @@ def test_run_tag_value_as_key_dialect_carries_scope_and_country_with_zero_reasks
                     "role_in_argument": "role:claim",
                     "empirical_scope": {
                         "scope:country-case": "scope:country-case",
-                        "country": "Syria",
+                        "polity": "Syria",
                     },
                 }
             )
@@ -1864,7 +2196,7 @@ def test_run_tag_value_as_key_dialect_carries_scope_and_country_with_zero_reasks
 
     assert len(records) == 1
     assert records[0]["empirical_scope"] == "scope:country-case"
-    assert records[0]["country"] == "Syria"
+    assert records[0]["polity"] == "Syria"
     assert client.call_count == 1
 
 

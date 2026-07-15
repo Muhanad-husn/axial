@@ -26,7 +26,8 @@ _RECORD = {
     "role_in_argument": "role:claim",
     "schema_version": "1.0.0",
     "empirical_scope": "scope:country-case",
-    "country": "Syria",
+    "polity": "Syria",
+    "polities_touched": ["Syria", "Iraq"],
     "field": {"primary": "field:political-science", "secondary": ["field:history"]},
     "claim_type": {
         "primary": "claim:causal",
@@ -36,11 +37,11 @@ _RECORD = {
     "theory_school": {"primary": "school:realism", "secondary": None, "status": "candidate"},
 }
 
-_NON_COUNTRY_RECORD = {
+_NON_POLITY_RECORD = {
     **_RECORD,
     "empirical_scope": "scope:national",
 }
-del _NON_COUNTRY_RECORD["country"]
+del _NON_POLITY_RECORD["polity"]
 
 # issue #32 slice 02 -- artifact record shape (mirrors
 # `axial.artifacts.build_artifact_record`'s output).
@@ -126,24 +127,51 @@ def test_build_frontmatter_theory_school_carries_primary_and_status():
     assert frontmatter["theory_school"]["status"] == _RECORD["theory_school"]["status"]
 
 
-def test_build_frontmatter_empirical_scope_nests_value_and_country():
+def test_build_frontmatter_empirical_scope_nests_value_and_polity():
     from axial.vault import build_frontmatter
 
     frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
 
     assert frontmatter["empirical_scope"] == {
         "value": _RECORD["empirical_scope"],
-        "country": _RECORD["country"],
+        "polity": _RECORD["polity"],
     }
 
 
-def test_build_frontmatter_empirical_scope_omits_country_when_record_has_none():
+def test_build_frontmatter_empirical_scope_never_carries_a_legacy_country_key():
     from axial.vault import build_frontmatter
 
-    frontmatter = build_frontmatter(_NON_COUNTRY_RECORD, _ENVELOPE)
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
 
-    assert frontmatter["empirical_scope"] == {"value": _NON_COUNTRY_RECORD["empirical_scope"]}
     assert "country" not in frontmatter["empirical_scope"]
+
+
+def test_build_frontmatter_empirical_scope_omits_polity_when_record_has_none():
+    from axial.vault import build_frontmatter
+
+    frontmatter = build_frontmatter(_NON_POLITY_RECORD, _ENVELOPE)
+
+    assert frontmatter["empirical_scope"] == {"value": _NON_POLITY_RECORD["empirical_scope"]}
+    assert "polity" not in frontmatter["empirical_scope"]
+
+
+def test_build_frontmatter_carries_polities_touched_list_verbatim():
+    from axial.vault import build_frontmatter
+
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+
+    assert frontmatter["polities_touched"] == _RECORD["polities_touched"]
+
+
+def test_build_frontmatter_omits_polities_touched_when_record_has_none():
+    from axial.vault import build_frontmatter
+
+    record = dict(_RECORD)
+    del record["polities_touched"]
+
+    frontmatter = build_frontmatter(record, _ENVELOPE)
+
+    assert "polities_touched" not in frontmatter
 
 
 # --- note rendering -----------------------------------------------------------
