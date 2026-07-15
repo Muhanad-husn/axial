@@ -605,12 +605,13 @@ def _write_chunk_sections(
 
         chunk_texts = split_section(body_text)
 
-        # Post-split fragment floor (issue #193, PRD §7.8): drop any
-        # candidate that is unambiguous non-content boilerplate (a
-        # blank-page notice or a zero-alphabetic-content fragment) before it
-        # ever reaches the on-disk artifact, recording each drop to the
+        # Post-split fragment floor (issue #193, generalized in #197; PRD
+        # §7.8): drop any candidate that is unambiguous non-content
+        # boilerplate (a blank-page notice or a low-alpha fragment
+        # (alphabetic ratio below the 0.45 threshold)) before it ever
+        # reaches the on-disk artifact, recording each drop to the
         # router-owned skip sidecar. Length alone never triggers a drop --
-        # any chunk carrying an alphabetic word survives.
+        # any chunk with alphabetic ratio >= the threshold survives.
         kept_chunk_texts: list[str] = []
         for chunk_text in chunk_texts:
             fragment_floor_reason = _fragment_floor_reason(chunk_text)
