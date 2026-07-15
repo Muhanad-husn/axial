@@ -43,12 +43,74 @@ paths -- can leak state to another test that happens to share a source_id.
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+# ---------------------------------------------------------------------------
+# Parallel (pytest-xdist) safety for the shared on-disk state.
+# ---------------------------------------------------------------------------
+#
+# The acceptance tests under these directories persist source-keyed artifacts
+# into the shared, cwd-relative data/ dirs (data/trees, data/envelopes,
+# data/chunks, data/chunk_cache) using DETERMINISTIC source_ids -- two tests
+# exercising the same committed fixture land on the exact same path (see the
+# _isolate_persisted_tree_and_envelope_state docstring below). That
+# snapshot/restore fixture keeps it hygienic SERIALLY, but under `-n auto` two
+# xdist workers touch the same path concurrently and clobber each other (~9-10
+# spurious failures). src resolves every data dir as a plain cwd-relative path
+# with no env/flag override -- and these tests shell the CLI out with
+# `cwd=REPO_ROOT` -- so tests/ alone has no per-worker cwd/redirect seam, and
+# xdist's own `loadgroup` scheduling does not honor a dynamically-added
+# `xdist_group` marker (verified). The reliable, scheduling-agnostic fix is a
+# cross-process mutex: a test that touches the shared state takes an exclusive
+# inter-process file lock for the whole snapshot -> run -> restore window, so
+# no two state-touching tests ever run concurrently across workers (their
+# snapshot/restore hygiene is only correct serially). Non-state tests never
+# take the lock and still parallelize freely. On a serial run (`-n0`) the lock
+# is uncontended -- acquired and released instantly per test.
+#
+# The directory set is a deliberate over-approximation of "writes shared data/
+# state": grouping an extra dir only costs a little parallelism, while missing
+# a state-writer would let the flakiness back in.
+_SHARED_STATE_TEST_DIRS = ("chunk", "ingestion", "gold", "eval")
+
+# One lock file per checkout (keyed on REPO_ROOT so parallel sessions on
+# different worktrees never cross-lock), placed in the OS temp dir -- never
+# under data/, so the snapshot/restore below leaves it untouched.
+_STATE_LOCK_PATH = (
+    Path(tempfile.gettempdir())
+    / f"axial-pytest-shared-state-{hashlib.sha256(str(REPO_ROOT).encode()).hexdigest()[:16]}.lock"
+)
+
+try:  # filelock is a dev dependency (pyproject [dependency-groups].dev)
+    from filelock import FileLock
+
+    _shared_state_lock = FileLock(str(_STATE_LOCK_PATH))
+except ImportError:  # pragma: no cover - degrade to old (serially-safe) behavior
+    _shared_state_lock = None
+
+
+def _touches_shared_state(nodeid: str) -> bool:
+    """True if this test writes the shared cwd-relative data/ dirs and so must
+    not run concurrently with another such test across xdist workers."""
+    return nodeid.startswith(tuple(f"tests/{directory}/" for directory in _SHARED_STATE_TEST_DIRS))
+
+
+def _shared_state_guard(nodeid: str):
+    """The inter-process mutex for a shared-state test, or a no-op context for
+    any other test (and if filelock is unavailable)."""
+    if _shared_state_lock is not None and _touches_shared_state(nodeid):
+        return _shared_state_lock
+    return contextlib.nullcontext()
+
 
 # Directories acceptance tests persist source-keyed JSON/JSONL into, shared
 # across tests via deterministic source_id filenames (PRD §7.3 / §7.4 / §7.7).
@@ -98,32 +160,39 @@ def _snapshot(directory: Path) -> dict[Path, bytes]:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_persisted_tree_and_envelope_state():
+def _isolate_persisted_tree_and_envelope_state(request):
     """Snapshot data/trees/*.json, data/envelopes/*.json, data/chunks/*.jsonl,
     and data/chunk_cache/*.json content before every test in this suite and
     restore it exactly afterward: a pre-existing file's original bytes are
     restored even if the test overwrote its content in place, and any file
     the test newly created is removed. See module docstring for the
-    pollution this closes."""
-    before = {directory: _snapshot(directory) for directory in _PROTECTED_DIRS}
+    pollution this closes.
 
-    yield
+    For a shared-state test, the entire snapshot -> run -> restore window is
+    held under an inter-process file lock (see `_shared_state_guard`) so it
+    never overlaps another such test on a different xdist worker -- the
+    snapshot/restore logic below is only correct when it runs serially against
+    the shared data/ dirs."""
+    with _shared_state_guard(request.node.nodeid):
+        before = {directory: _snapshot(directory) for directory in _PROTECTED_DIRS}
 
-    for directory in _PROTECTED_DIRS:
-        before_snapshot = before[directory]
-        after_snapshot = _snapshot(directory)
+        yield
 
-        # Pre-existing files: restore original bytes if changed (or if the
-        # test deleted the file outright).
-        for path, original_bytes in before_snapshot.items():
-            if after_snapshot.get(path) != original_bytes:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(original_bytes)
+        for directory in _PROTECTED_DIRS:
+            before_snapshot = before[directory]
+            after_snapshot = _snapshot(directory)
 
-        # Files the test newly created: remove them.
-        for path in after_snapshot:
-            if path not in before_snapshot:
-                path.unlink(missing_ok=True)
+            # Pre-existing files: restore original bytes if changed (or if the
+            # test deleted the file outright).
+            for path, original_bytes in before_snapshot.items():
+                if after_snapshot.get(path) != original_bytes:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(original_bytes)
+
+            # Files the test newly created: remove them.
+            for path in after_snapshot:
+                if path not in before_snapshot:
+                    path.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
