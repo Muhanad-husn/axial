@@ -88,6 +88,19 @@ def test_repair_glyph_names_never_strips_legitimate_slash_words():
     assert _repair_glyph_names(raw) == raw
 
 
+def test_repair_glyph_names_does_not_match_a_longer_token_as_a_prefix():
+    # Regression (reviewer finding #1, issue #188 Slice A): the allowlist must
+    # anchor on a trailing word boundary so `/asper`/`/lenis` never match as a
+    # prefix of a longer word -- only as the whole leaked token.
+    assert _repair_glyph_names("a rumor of /aspersion cast") == "a rumor of /aspersion cast"
+    assert _repair_glyph_names("a /lenis-ness quality") == "a /lenis-ness quality"
+    # The bare leaked tokens (mid-string and end-of-string) still map.
+    assert _repair_glyph_names("region /asper called") == "region ʿ called"
+    assert _repair_glyph_names("term /lenis meaning") == "term ʾ meaning"
+    assert _repair_glyph_names("trailing /asper") == "trailing ʿ"
+    assert _repair_glyph_names("trailing /lenis") == "trailing ʾ"
+
+
 def test_normalize_dotless_i_maps_to_ascii_i():
     assert _normalize_dotless_i("Alawı") == "Alawi"
 
@@ -106,6 +119,17 @@ def test_normalize_text_cleans_up_after_a_dropped_font_code_leaves_no_gap():
 def test_normalize_text_leaves_out_of_scope_characters_untouched():
     raw = "price · item café total ∑ ± √"
     assert normalize_text(raw) == raw
+
+
+def test_normalize_text_repairs_a_pua_glyph_that_decodes_to_an_sk_character():
+    # Regression (reviewer finding #2, issue #188 Slice A): PUA decoding must
+    # run before Sk-mark removal, so a PUA glyph whose decoded value is itself
+    # an Sk-category character (e.g. an acute accent) gets caught by the Sk
+    # pass on the second traversal, not left leaking through unrepaired.
+    acute = chr(0xB4)
+    assert unicodedata.category(acute) == "Sk"
+    pua_acute = chr(0xF700 + 0xB4)
+    assert normalize_text(f"wo{pua_acute}rd") == "word"
 
 
 # --- normalize_tree_text: tree-walk preserves shape -------------------------

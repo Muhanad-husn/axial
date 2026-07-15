@@ -219,7 +219,7 @@ _GLYPH_NAME_MAP = {
     "/lenis": "ʾ",  # hamza
 }
 _GLYPH_NAME_PATTERN = re.compile(
-    "|".join(re.escape(name) for name in _GLYPH_NAME_MAP), flags=re.IGNORECASE
+    "|".join(re.escape(name) + r"(?![\w-])" for name in _GLYPH_NAME_MAP), flags=re.IGNORECASE
 )
 # Font-internal glyph codes (e.g. `H1234`, `Q12`) that leak into text with no
 # recoverable meaning: dropped outright.
@@ -301,8 +301,8 @@ def normalize_text(text: str) -> str:
     independent and a no-op when its target defect is absent, so a
     clean-font string passes through materially unchanged (§7.4)."""
     text = _strip_soft_hyphens(text)
-    text = _remove_detached_sk_marks(text)
     text = _decode_pua_offset_glyphs(text)
+    text = _remove_detached_sk_marks(text)
     text = _repair_glyph_names(text)
     text = _normalize_dotless_i(text)
     text = _collapse_whitespace(text)
