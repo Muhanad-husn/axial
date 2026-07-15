@@ -473,6 +473,46 @@ def _garbage_section_skip_reason(
     return garble_only_skip_reason(text, max_non_alpha_ratio=max_non_alpha_ratio)
 
 
+_BLANK_PAGE_NOTICE_NORMALIZED = "this page intentionally left blank"
+
+
+def _fragment_floor_reason(text: str) -> str | None:
+    """Post-split fragment floor (issue #193, PRD §7.8 "Post-split fragment
+    floor (#193)"): classify one emitted candidate chunk as unambiguous
+    non-content boilerplate, or `None` when it must be kept.
+
+    Runs AFTER the section splitter and the band guard, on individual
+    emitted chunks (not at the section level, unlike
+    `_garbage_section_skip_reason`) -- the leaking crumbs this floor targets
+    are section *tails* whose parent section is legitimate prose, so a
+    section-level filter never sees them (§7.8's own root-cause note).
+
+    Drops exactly two unambiguous shapes, in order:
+    - a **blank-page notice**: `text`, lowercased and whitespace-collapsed
+      (`re.sub(r"\\s+", " ", text).strip().lower()`), equals
+      `"this page intentionally left blank"` exactly.
+    - a **no-alphabetic-content fragment**: `text` contains zero alphabetic
+      characters (`not any(c.isalpha() for c in text)`) -- only digits,
+      punctuation, whitespace, or symbols (e.g. `"6"`, `"200..."`, `"13)."`).
+
+    Protection invariant (first-class, not a side effect, §7.8 "Genuine
+    short prose is protected"): any chunk containing an alphabetic word is
+    KEPT (`None`) -- length alone never triggers a drop. An empty string
+    also returns `None` (nothing to drop; the splitter never emits blank
+    pieces in practice, but this keeps the helper total and safe)."""
+    if not text:
+        return None
+
+    normalized = re.sub(r"\s+", " ", text).strip().lower()
+    if normalized == _BLANK_PAGE_NOTICE_NORMALIZED:
+        return "fragment floor: blank-page notice"
+
+    if not any(c.isalpha() for c in text):
+        return "fragment floor: no alphabetic content"
+
+    return None
+
+
 def _resolve_chunk_inputs(source_path: str | Path) -> tuple[str, dict]:
     """Shared first step for the chunk stage (issue #165, slice 06):
     compute `source_id` and load its persisted structural tree, raising
@@ -545,11 +585,32 @@ def _write_chunk_sections(
             continue
 
         chunk_texts = split_section(body_text)
+
+        # Post-split fragment floor (issue #193, PRD §7.8): drop any
+        # candidate that is unambiguous non-content boilerplate (a
+        # blank-page notice or a zero-alphabetic-content fragment) before it
+        # ever reaches the on-disk artifact, recording each drop to the
+        # router-owned skip sidecar. Length alone never triggers a drop --
+        # any chunk carrying an alphabetic word survives.
+        kept_chunk_texts: list[str] = []
+        for chunk_text in chunk_texts:
+            fragment_floor_reason = _fragment_floor_reason(chunk_text)
+            if fragment_floor_reason is not None:
+                skip_records.append(
+                    {
+                        "section": section_label,
+                        "section_order": section_order,
+                        "reason": fragment_floor_reason,
+                    }
+                )
+                continue
+            kept_chunk_texts.append(chunk_text)
+
         section_records = build_chunk_records(
             source_id,
             section_order,
             section_label,
-            [{"text": chunk_text} for chunk_text in chunk_texts],
+            [{"text": chunk_text} for chunk_text in kept_chunk_texts],
         )
         for record in section_records:
             out_lines.append(json.dumps(record) + "\n")
