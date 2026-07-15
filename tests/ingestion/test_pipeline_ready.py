@@ -209,7 +209,7 @@ FLAT_QUARANTINE_BUDGET = 0.02
 # StubLLMClient._CANNED_TAG_RESPONSE already uses.
 _VALID_TAG_PAYLOAD = (
     '{"role_in_argument": "role:claim", "empirical_scope": "scope:country-case", '
-    '"country": "Syria", "field": {"primary": "state", "secondary": ["ideology"]}, '
+    '"polity": "Syria", "field": {"primary": "state", "secondary": ["ideology"]}, '
     '"claim_type": {"primary": "state-formation", "subtags": ["formation:bellicist"]}, '
     '"theory_school": {"primary": "bellicist", "status": "candidate"}}'
 )
@@ -221,7 +221,7 @@ _MALFORMED_JSON_PAYLOAD = "this is not JSON at all, sorry {"
 # mirroring tests/test_tag_vocab_reask.py's own OUT_OF_VOCAB_SUBTAG pattern.
 _OUT_OF_VOCAB_TAG_PAYLOAD = (
     '{"role_in_argument": "role:claim", "empirical_scope": "scope:country-case", '
-    '"country": "Syria", "field": {"primary": "state", "secondary": ["ideology"]}, '
+    '"polity": "Syria", "field": {"primary": "state", "secondary": ["ideology"]}, '
     '"claim_type": {"primary": "state-formation", "subtags": ["formation:NOT-A-REAL-SUBTAG"]}, '
     '"theory_school": {"primary": "bellicist", "status": "candidate"}}'
 )

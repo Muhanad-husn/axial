@@ -13,10 +13,19 @@ And   the phase-2 source-level (`source_meta`) and section-level metadata
 And   re-running is idempotent (no duplicate or conflicting frontmatter)
 
 See specs/PRODUCT.md §7.2 (three-level metadata: "Chunk-level: claim-type
-tag(s), empirical-scope value (+ `country` where applicable), theory-school
-tag(s) `[candidate]`, `role_in_argument`, and `artifact_refs`.") and
-Appendix H (example prose-chunk frontmatter). Plan:
-plans/tag/04-tag-vault-frontmatter.md.
+tag(s), empirical-scope value (+ `polity` where applicable), the
+`polities_touched` list, theory-school tag(s) `[candidate]`,
+`role_in_argument`, and `artifact_refs`.") and Appendix H (example
+prose-chunk frontmatter, `empirical_scope: { value: scope:country-case,
+polity: Syria }`). Plan: plans/tag/04-tag-vault-frontmatter.md.
+
+Note (issue #194 slice 05): the tagger's extra field for a
+`scope:country-case` chunk was renamed `country` -> `polity` (and
+`country_list` -> `polity_examples`) after this test was originally
+locked; a separate new `polities_touched` many-valued facet was added
+alongside it. This migration follows that ratified rename faithfully -- it
+does not change what the test asserts, only which field name it reads it
+from, restoring coverage the rename had silently made dead.
 
 Fixture reuse: exactly tests/test_vault_write.py's fixture
 (tests/fixtures/envelope/thesis_paper.pdf + its committed real tree fixture
@@ -33,7 +42,7 @@ runs `axial tag <fixture>` (stub, same fixture, same default domain
 `config/domains/syria` that `axial vault write` uses internally per the slice
 plan) to obtain the real tagged records the pipeline produces, and treats
 those as the expected axis values `vault write`'s frontmatter must carry.
-This test never hardcodes a tag id, a schema version string, or a country
+This test never hardcodes a tag id, a schema version string, or a polity
 name -- if the domain schema or the stub's canned tag response ever changes,
 this test's expectations move with it, because both `axial tag` and `axial
 vault write` read the same schema/stub at test time.
@@ -42,16 +51,17 @@ Seam decision 2 -- the empirical_scope reshaping
 -----------------------------------------------------------------------
 `axial tag`'s own record shape (src/axial/tag.py's `build_tagged_record`)
 emits `empirical_scope` as a FLAT scalar string plus a SEPARATE top-level
-`country` field. Appendix H nests both under one `empirical_scope` mapping:
-`empirical_scope: { value: scope:country-case, country: Syria }`. This is
-the one genuine reshaping the vault-write pass must perform (per the slice's
-brief: "the tagger emits `empirical_scope` as a FLAT string plus a SEPARATE
-top-level `country`, but Appendix H nests them"). This test locks the
-Appendix-H nested shape: `frontmatter["empirical_scope"]` is a mapping
-carrying `value` (equal to the tagged record's own `empirical_scope` string)
-and, when the tagged record itself carries a non-null `country` (as the
-stub's canned tag response always does for this fixture), a `country` key
-equal to that same value.
+`polity` field (renamed from `country` by issue #194 slice 05). Appendix H
+nests both under one `empirical_scope` mapping: `empirical_scope: { value:
+scope:country-case, polity: Syria }`. This is the one genuine reshaping the
+vault-write pass must perform (per the slice's brief: "the tagger emits
+`empirical_scope` as a FLAT string plus a SEPARATE top-level `polity`, but
+Appendix H nests them"). This test locks the Appendix-H nested shape:
+`frontmatter["empirical_scope"]` is a mapping carrying `value` (equal to
+the tagged record's own `empirical_scope` string) and, when the tagged
+record itself carries a non-null `polity` (as the stub's canned tag
+response always does for this fixture), a `polity` key equal to that same
+value -- and never a legacy `country` key.
 
 Seam decision 3 -- claim_type and field: lock the tagger's own nested shape
 verbatim, which already matches Appendix H's illustrated keys
@@ -587,14 +597,15 @@ def _assert_axis_block_matches_appendix_h(
         f"got {theory_school.get('status')!r}"
     )
 
-    # empirical_scope: the one genuine reshape -- nested {value, country}
+    # empirical_scope: the one genuine reshape -- nested {value, polity}
     # (seam decision 2), values sourced from the tagger's own flat
-    # empirical_scope + separate top-level country.
+    # empirical_scope + separate top-level polity (renamed from country by
+    # issue #194 slice 05).
     empirical_scope = frontmatter.get("empirical_scope")
     assert isinstance(empirical_scope, dict), (
         f"expected {note_path}'s frontmatter 'empirical_scope' to be a "
-        f"mapping nesting 'value' (+ 'country' where applicable) (Appendix "
-        f"H: 'empirical_scope: {{ value: scope:country-case, country: "
+        f"mapping nesting 'value' (+ 'polity' where applicable) (Appendix "
+        f"H: 'empirical_scope: {{ value: scope:country-case, polity: "
         f"Syria }}'), got {empirical_scope!r}"
     )
     assert empirical_scope.get("value") == expected.get("empirical_scope"), (
@@ -602,15 +613,20 @@ def _assert_axis_block_matches_appendix_h(
         f"equal the tagged record's own flat empirical_scope value "
         f"{expected.get('empirical_scope')!r}, got {empirical_scope.get('value')!r}"
     )
-    expected_country = expected.get("country")
-    if expected_country is not None:
-        assert empirical_scope.get("country") == expected_country, (
-            f"expected {note_path}'s frontmatter 'empirical_scope.country' "
-            f"to equal the tagged record's own top-level country value "
-            f"{expected_country!r} (Appendix C/G: scope:country-case carries "
-            f"an additional country field), got "
-            f"{empirical_scope.get('country')!r}"
+    expected_polity = expected.get("polity")
+    if expected_polity is not None:
+        assert empirical_scope.get("polity") == expected_polity, (
+            f"expected {note_path}'s frontmatter 'empirical_scope.polity' "
+            f"to equal the tagged record's own top-level polity value "
+            f"{expected_polity!r} (Appendix C/G: scope:country-case carries "
+            f"an additional polity field), got "
+            f"{empirical_scope.get('polity')!r}"
         )
+    assert "country" not in empirical_scope, (
+        f"expected {note_path}'s frontmatter 'empirical_scope' to never "
+        f"carry a legacy 'country' key (renamed to 'polity' by issue #194 "
+        f"slice 05), got {empirical_scope!r}"
+    )
 
 
 def test_vault_write_persists_axis_frontmatter_matching_appendix_h(isolated_vault_root):
