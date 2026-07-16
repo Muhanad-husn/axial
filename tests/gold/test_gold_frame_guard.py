@@ -181,11 +181,36 @@ JUNK_OCR_GARBAGE = dict(
     role="role:synthesis",
 )
 
+# (e) an endnote section titled with a leading page-number token before the
+# word "Notes" ("154 Notes") -- issue #134 gap 1. `_is_back_matter` only
+# recognizes the bare word "notes" and the "notes to page(s) ..." prefix
+# form; a page-number-then-"Notes" title (no "to page(s)" phrasing) slips
+# through both checks and is not roman-numeral-prefixed either, so it
+# currently leaks into the gold sampling frame. The body is deliberately
+# prose-shaped (an invented explanatory-endnote paragraph, well clear of the
+# minimum-substance floor -- issue #131) so this fixture is excluded, if at
+# all, ONLY by the back-matter TITLE check under test, not by the separate
+# substance guard.
+JUNK_ENDNOTE_PAGE_PREFIX = dict(
+    chunk_id="fabricated-endnote-pageprefix-source-eeeeeeeeeeee_9_154-notes_001",
+    section="154 Notes",
+    chunk_text=(
+        "This explanatory endnote elaborates on the invented archival "
+        "collection referenced in the chapter, noting its uncertain "
+        "provenance and the debate among later scholars regarding its "
+        "authenticity."
+    ),
+    field="violence",
+    scope="scope:comparative",
+    role="role:evidence",
+)
+
 JUNK_SPECS = [
     JUNK_ENDNOTE_PAGE_RANGE,
     JUNK_ROMAN_BIBLIOGRAPHY,
     JUNK_INBODY_BARE_CITATION,
     JUNK_OCR_GARBAGE,
+    JUNK_ENDNOTE_PAGE_PREFIX,
 ]
 
 # ---------------------------------------------------------------------------
@@ -410,6 +435,18 @@ def test_gold_sample_excludes_back_matter_and_fragment_junk(isolated_vault_root)
         f"gold sampling frame by a minimum-substance guard (issue #131), but "
         f"chunk {JUNK_OCR_GARBAGE['chunk_id']!r} was selected with "
         f"chunk_text {selected_bodies.get(JUNK_OCR_GARBAGE['chunk_id'])!r}"
+    )
+
+    # (e) endnote section carrying a leading page-number token before the
+    # word "Notes" ("154 Notes") -- issue #134 gap 1: neither the bare
+    # "notes" vocabulary match nor the "notes to page(s) ..." prefix check
+    # in `_is_back_matter` recognizes this title shape.
+    assert JUNK_ENDNOTE_PAGE_PREFIX["chunk_id"] not in selected_ids, (
+        f"expected the endnote section {JUNK_ENDNOTE_PAGE_PREFIX['section']!r} "
+        f"(a page-number-prefixed 'Notes' title, issue #134 gap 1) to be "
+        f"excluded from the gold sampling frame, but chunk "
+        f"{JUNK_ENDNOTE_PAGE_PREFIX['chunk_id']!r} was selected with section "
+        f"{selected_sections.get(JUNK_ENDNOTE_PAGE_PREFIX['chunk_id'])!r}"
     )
 
     # No junk chunk_id leaks through under any circumstance (belt-and-braces
