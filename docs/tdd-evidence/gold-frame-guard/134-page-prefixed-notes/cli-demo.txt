@@ -1,0 +1,13 @@
+$ axial gold — page-prefixed back-matter title predicate (issue #134 gap 1)
+# demonstrating axial.gold._is_back_matter through the fix, no corpus/tree touch
+  _is_back_matter('154 Notes'               ) -> True
+  _is_back_matter('12 Bibliography'         ) -> True
+  _is_back_matter('Notes'                   ) -> True
+  _is_back_matter('NOTES TO PAGES 85-93'    ) -> True
+  _is_back_matter('1984 Reforms'            ) -> False
+  _is_back_matter('Chapter 3'               ) -> False
+  _is_back_matter('7 Introduction'          ) -> False
+
+$ uv run pytest tests/gold/test_gold_frame_guard.py -q  (targeted regression)
+.                                                                        [100%]
+1 passed in 1.64s
