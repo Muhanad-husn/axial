@@ -204,6 +204,14 @@ def _normalize_title(title: str) -> str:
 
 _ROMAN_NUMERAL_PREFIX = re.compile(r"^[ivxlcdm]+\.?\s+")
 
+# A leading, purely-numeric page-number token ("154 Notes", "12 Bibliography")
+# -- issue #134 gap 1. Stripped before the vocabulary check so page-stamped
+# back-matter titles match the same way their bare form does; deliberately
+# narrow (digits only, no letters) so an ordinary title that merely starts
+# with a year or number ("1984 Reforms") is untouched once its remainder
+# fails the vocabulary check.
+_PAGE_NUMBER_PREFIX = re.compile(r"^\d+\s+")
+
 # References-family words: when a title's leading roman-numeral ordinal is
 # stripped (e.g. "V. Articles and Periodicals" -> "articles and periodicals"),
 # the remainder is back-matter only if it names a references/bibliography
@@ -235,7 +243,12 @@ def _is_back_matter(section: str) -> bool:
         (`V. Articles and Periodicals`, issue #131 false-negative 2) -- the
         ordinal is stripped and the remainder checked against a narrow
         references-family vocabulary, so an ordinary chapter title that
-        merely starts with a roman numeral is never dropped."""
+        merely starts with a roman numeral is never dropped;
+      - a leading page-number token before an otherwise-recognized
+        back-matter title (`154 Notes`, issue #134 gap 1) -- the numeric
+        token is stripped and the remainder re-run through this same
+        function, so a title that merely starts with a number but isn't
+        otherwise back-matter (`1984 Reforms`) is never dropped."""
     normalized = _normalize_title(section)
     if normalized in _BACK_MATTER_TITLES or normalized in _GOLD_EXTRA_BACK_MATTER:
         return True
@@ -245,6 +258,9 @@ def _is_back_matter(section: str) -> bool:
         return True
     stripped = _ROMAN_NUMERAL_PREFIX.sub("", normalized, count=1)
     if stripped != normalized and stripped in _ROMAN_PREFIXED_BACK_MATTER_WORDS:
+        return True
+    page_stripped = _PAGE_NUMBER_PREFIX.sub("", normalized, count=1)
+    if page_stripped != normalized and _is_back_matter(page_stripped):
         return True
     return False
 
