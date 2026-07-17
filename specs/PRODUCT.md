@@ -2,9 +2,11 @@
 
 **Project:** Axial · **Version:** 1.0 · **Status:** Ready to build · **Owner:** Operator (single-operator system)
 
+**Inherits.** This PRD is the Phase-A phase spec under [`specs/CHARTER.md`](CHARTER.md), the product-wide behavioural constitution; its P0 criteria are the substrate-layer instance of the charter's five principles.
+
 **On the name.** *Axial* names the mechanism and the tradition in one word: the system tags every chunk along multiple **axes** (field, claim-type, empirical-scope, artifact-role, theory-school), and *axial coding* is the grounded-theory move — native to this corpus through Malešević — of relating categories to one another along dimensions. The Python package is `axial`.
 
-**Self-sufficiency note.** This document is the *complete* build specification. It references no external file. Everything required to scaffold and build the pipeline — architecture, pipeline stages, config contracts, the full v0 tag set, and acceptance criteria — is contained here, including appendices. Claude Code should be able to start from this file alone. Where a decision is genuinely unresolved, it is listed under **Open Questions** (§12); everything else is settled and should be built as written.
+**Self-sufficiency note.** This document is the *complete* build specification for Phase A. Everything required to scaffold and build the pipeline — architecture, pipeline stages, config contracts, the full v0 tag set, acceptance criteria, and appendices — is contained here, and Claude Code should be able to start the build from this file alone. Its single parent is the behavioural constitution in [`specs/CHARTER.md`](CHARTER.md), which governs *why* the pipeline is built as it is; beyond that one charter it references no external file. Where a decision is genuinely unresolved, it is listed under **Open Questions** (§12); everything else is settled and should be built as written.
 
 ---
 
