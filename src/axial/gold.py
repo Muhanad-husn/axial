@@ -132,7 +132,22 @@ _GOLD_EXTRA_BACK_MATTER = frozenset(
         "back matter",
         "title page",
         "half title",
+        "contributors",
     }
+)
+
+# Vocabulary-specific suffix words (#204): a title where a qualifier PRECEDES
+# a bare back-matter vocab term ("Selected Bibliography", "General Secondary
+# Sources") is still back-matter even though it fails the exact/prefix rules
+# above. Deliberately narrow -- these two terms are specific enough that an
+# `endswith` match never catches an ordinary chapter title ("1984 Reforms"
+# does not end in either), and matching on the suffix alone (rather than
+# requiring the page/roman-numeral prefix to be stripped first) already
+# covers the page-number-prefixed case ("3 General Secondary Sources") since
+# a leading digit token cannot affect a suffix comparison.
+_BACK_MATTER_SUFFIX_WORDS = (
+    "bibliography",
+    "secondary sources",
 )
 
 
@@ -248,7 +263,13 @@ def _is_back_matter(section: str) -> bool:
         back-matter title (`154 Notes`, issue #134 gap 1) -- the numeric
         token is stripped and the remainder re-run through this same
         function, so a title that merely starts with a number but isn't
-        otherwise back-matter (`1984 Reforms`) is never dropped."""
+        otherwise back-matter (`1984 Reforms`) is never dropped;
+      - a qualifier preceding a bare references/bibliography vocab term
+        (`Selected Bibliography`, `3 General Secondary Sources`, issue #204)
+        -- the normalized title's SUFFIX is checked against a narrow
+        references-family word list, so ordinary chapter titles are
+        untouched while page-prefixed or qualified bibliography/secondary-
+        sources sections are still caught."""
     normalized = _normalize_title(section)
     if normalized in _BACK_MATTER_TITLES or normalized in _GOLD_EXTRA_BACK_MATTER:
         return True
@@ -258,6 +279,8 @@ def _is_back_matter(section: str) -> bool:
         return True
     stripped = _ROMAN_NUMERAL_PREFIX.sub("", normalized, count=1)
     if stripped != normalized and stripped in _ROMAN_PREFIXED_BACK_MATTER_WORDS:
+        return True
+    if any(normalized.endswith(word) for word in _BACK_MATTER_SUFFIX_WORDS):
         return True
     page_stripped = _PAGE_NUMBER_PREFIX.sub("", normalized, count=1)
     if page_stripped != normalized and _is_back_matter(page_stripped):
