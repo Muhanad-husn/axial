@@ -1,0 +1,34 @@
+### axial polity report  (demo vault: Britain, UK, Scotland, USSR, 'Syria and Lebanon', Freedonia x2)
+$ axial polity report   # stdout = JSON, stderr = operator notification
+--- stdout ---
+exit=0
+{"mapped": [{"verbatim": "Britain", "canonical": "United Kingdom"}, {"verbatim": "Scotland", "canonical": "Scotland"}, {"verbatim": "UK", "canonical": "United Kingdom"}, {"verbatim": "USSR", "canonical": "Soviet Union"}], "candidates": [{"verbatim": "Freedonia", "count": 2, "notes": ["demo-src_006_body_001", "demo-src_007_body_001"]}], "leaks": [{"verbatim": "Syria and Lebanon", "parts": ["Syria", "Lebanon"]}], "candidate_count": 1}
+--- stderr (operator notification) ---
+1 candidate(s) unresolved:
+  - Freedonia (count=2)
+1 leak(s) flagged (never folded):
+  - Syria and Lebanon -> Syria, Lebanon
+
+### axial polity build  (deterministic seed harvest of distinct verbatims)
+$ axial polity build | head -40
+version: 1
+nodes:
+- canonical: Britain
+  kind: modern
+  aliases: []
+- canonical: Freedonia
+  kind: modern
+  aliases: []
+- canonical: Scotland
+  kind: modern
+  aliases: []
+- canonical: Syria and Lebanon
+  kind: modern
+  aliases: []
+- canonical: UK
+  kind: modern
+  aliases: []
+- canonical: USSR
+  kind: modern
+  aliases: []
+exit=0
