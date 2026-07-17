@@ -22,7 +22,13 @@ import httpx
 import yaml
 
 from axial.extract import ExtractError, extract
-from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient, LLMError, get_client
+from axial.llm import (
+    DEFAULT_PIPELINE_CONFIG_PATH,
+    ENVELOPE_PASS_NAME,
+    LLMClient,
+    LLMError,
+    get_client,
+)
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
 
 ENVELOPES_DIR = Path("data/envelopes")
@@ -268,7 +274,9 @@ def run_envelope(
     try:
         if client is None:
             client = get_client(config_path=config_path)
-        raw_response = complete_json(client, prompt, validate=reject_degenerate_envelope)
+        raw_response = complete_json(
+            client, prompt, pass_name=ENVELOPE_PASS_NAME, validate=reject_degenerate_envelope
+        )
     except (LLMError, httpx.HTTPError) as exc:
         raise LLMFailedError(exc) from exc
     except ModelJsonError as exc:

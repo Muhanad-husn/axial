@@ -9,7 +9,17 @@ from __future__ import annotations
 
 import pytest
 
-from axial.router import APPARATUS, ARTIFACT, PROSE, apparatus_reason, iter_routed_blocks, route_for
+from axial.router import (
+    APPARATUS,
+    ARTIFACT,
+    CONTENT_APPARATUS_CITATION_THRESHOLD,
+    CONTENT_APPARATUS_REASON,
+    PROSE,
+    apparatus_reason,
+    is_content_apparatus_candidate,
+    iter_routed_blocks,
+    route_for,
+)
 
 # --- route_for: the fixed label -> route mapping (§7.8) --------------------
 
@@ -133,3 +143,49 @@ def test_iter_routed_blocks_threads_in_back_matter_section_to_every_descendant()
         (parent, PROSE),  # section_header itself is always prose
         (child, APPARATUS),  # list_item, but enclosing section is back-matter
     ]
+
+
+# --- content-apparatus pre-filter (issue #207, §7.8) -------------------------
+
+
+def test_is_content_apparatus_candidate_flags_dense_citation_run():
+    names = [
+        ("Alpha", "K"),
+        ("Beta", "L"),
+        ("Gamma", "R"),
+        ("Delta", "S"),
+        ("Epsilon", "T"),
+    ]
+    assert len(names) >= CONTENT_APPARATUS_CITATION_THRESHOLD
+    text = " ".join(
+        f"{surname}, {initial}. (2001) Some Volume, Press, pp. 1-2." for surname, initial in names
+    )
+    assert is_content_apparatus_candidate(text)
+
+
+def test_is_content_apparatus_candidate_never_fires_on_a_single_passing_citation():
+    text = (
+        "This chapter's argument builds directly on Omicron, F. (2015), whose "
+        "account of frontier administration remains influential, but the present "
+        "analysis reframes the causal mechanism entirely around local fiscal "
+        "capacity instead of external enforcement."
+    )
+    assert not is_content_apparatus_candidate(text)
+
+
+def test_is_content_apparatus_candidate_never_fires_on_ordinary_prose_with_no_citations():
+    text = "The provincial council debated the reconstruction budget for three sessions."
+    assert not is_content_apparatus_candidate(text)
+
+
+def test_is_content_apparatus_candidate_false_for_empty_text():
+    assert not is_content_apparatus_candidate("")
+
+
+def test_content_apparatus_reason_is_distinct_from_every_label_driven_reason():
+    label_driven_reasons = {
+        apparatus_reason(label)
+        for label in ("document_index", "footnote", "page_header", "page_footer", "list_item")
+    }
+    assert CONTENT_APPARATUS_REASON not in label_driven_reasons
+    assert isinstance(CONTENT_APPARATUS_REASON, str) and CONTENT_APPARATUS_REASON.strip()

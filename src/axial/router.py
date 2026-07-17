@@ -44,10 +44,23 @@ via `axial.chunk._is_back_matter` on the section's own heading) and pass the
 answer in; the router itself never inspects the tree structure to find an
 "enclosing section" -- that is the tree-walk caller's job (see
 `iter_routed_blocks` below).
+
+**Content-detected apparatus (issue #207, §7.8).** The label mapping above
+only catches apparatus docling itself labels as apparatus. A reference
+list/bibliography/endnote run mis-sectioned under an ordinary body heading
+(e.g. "Chapter Two") is labelled `text` and routes to prose by the mapping
+alone -- only its content reveals it. `is_content_apparatus_candidate` is
+the cheap, deterministic pre-filter for that residual case: a dense run of
+inverted-author-name citations past `CONTENT_APPARATUS_CITATION_THRESHOLD`.
+Only a flagged candidate is ever sent to a bounded per-block model
+classification call (owned by `axial.chunk`, which holds the `client=...`
+DI seam); an unflagged block never incurs model spend. A confirmed
+apparatus classification is recorded with the distinct `CONTENT_APPARATUS_REASON`.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 
 PROSE = "prose"
@@ -187,6 +200,60 @@ def apparatus_reason(label: str | None) -> str:
     """
     normalized = _canonical_token(label)
     return _APPARATUS_REASONS.get(normalized, f"apparatus: {normalized or 'unknown label'}")
+
+
+# =============================================================================
+# Content-detected apparatus (issue #207, §7.8 "Content-detected apparatus
+# (the residual reference-list case)" / "Model-backed classification of
+# flagged candidates"): a block the label mapping above routes to PROSE may
+# still be a reference list / bibliography / endnote run mis-sectioned under
+# an ordinary body heading (docling labels it "text"), so only the block's
+# CONTENT reveals it as apparatus -- heading/title matching cannot catch it.
+# This is a TWO-STAGE arm so clean prose never incurs model spend: a cheap
+# deterministic pre-filter (`is_content_apparatus_candidate`, below) flags a
+# candidate; only a flagged candidate is ever sent to the bounded per-block
+# model classification call (that call itself lives in `axial.chunk`, which
+# owns the `client=...` DI seam mirroring `axial.tag.run_tag`'s own).
+# =============================================================================
+
+# An inverted-author-name citation entry, e.g. "Omicron, F." or "Alpha, K.":
+# a capitalized surname, a comma, then a capitalized initial/given-name
+# token. Deliberately narrow -- not a general "any comma" heuristic -- so an
+# ordinary sentence containing a comma never matches by accident.
+_INVERTED_AUTHOR_NAME_RE = re.compile(r"[A-Z][a-z]+,\s+[A-Z]")
+
+# Tunable starting point (framed like `axial.chunk.CHUNK_MIN` /
+# `LOW_ALPHA_RATIO_THRESHOLD` -- a named constant with a comment, not a magic
+# literal -- proven-able later via `axial chunk examine`): the minimum
+# number of inverted-author-name matches a block's text must carry before
+# the content arm flags it as a candidate. Chosen conservatively so a block
+# that merely cites a source once or twice in passing (the ordinary-prose
+# case §7.8 requires this arm never fire on) stays well under the
+# threshold, while a real reference list -- which recurs far more densely --
+# clears it easily.
+CONTENT_APPARATUS_CITATION_THRESHOLD = 5
+
+# The content-apparatus drop reason (§7.8: "its reason recorded ... with a
+# distinct content-apparatus reason"), recorded to the router-owned skip
+# sidecar -- deliberately different from every label-driven reason in
+# `_APPARATUS_REASONS` above.
+CONTENT_APPARATUS_REASON = "apparatus: content-detected citation list"
+
+
+def is_content_apparatus_candidate(text: str) -> bool:
+    """The cheap, deterministic pre-filter (§7.8): True when `text` carries
+    at least `CONTENT_APPARATUS_CITATION_THRESHOLD` inverted-author-name
+    citation entries -- a dense run of bibliographic citations, styled like
+    a reference list. Conservative by construction: ordinary analytical
+    prose that cites a source once or twice in passing never reaches the
+    threshold and is never flagged. Only a block this pre-filter flags is
+    ever sent to the bounded model classification call (§7.8's
+    "Model-backed classification of flagged candidates") -- every unflagged
+    block routes exactly as its `label` already dictates, at zero model
+    spend."""
+    if not text:
+        return False
+    return len(_INVERTED_AUTHOR_NAME_RE.findall(text)) >= CONTENT_APPARATUS_CITATION_THRESHOLD
 
 
 def iter_routed_blocks(

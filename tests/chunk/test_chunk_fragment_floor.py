@@ -20,7 +20,12 @@ Given three sections, each built from TWO genuine, distinct, in-band prose
         - "Conclusion" -- tail is a genuine SHORT prose sentence, verbatim
                           from PRD §7.8's own worked example:
                           "They consist essentially of three elements." --
-                          this one is NOT boilerplate and must be KEPT.
+                          this one is NOT boilerplate and its TEXT must be
+                          KEPT (see #210: kept means the text survives, not
+                          that it survives as its own standalone record --
+                          below CHUNK_MIN with a same-section predecessor,
+                          it merges BACKWARD into that predecessor,
+                          CONCLUSION_PARA_2, per §8 P0-4).
       Each section's own body is dominated by real, unambiguous prose (two
       ~2000-char paragraphs each): the section-level garble backstop
       (`_garbage_section_skip_reason`, a non-alphabetic-ratio check over the
@@ -30,11 +35,16 @@ When  `axial.chunk.run_chunk_recursive` runs against this source
 Then  no chunk written to `data/chunks/<source_id>.jsonl` equals the
       blank-page notice (after lowercasing + whitespace collapse)
 And   no chunk written to that artifact has zero alphabetic characters
-And   the genuine short prose sentence ("They consist essentially of three
-      elements.") IS present verbatim in the artifact -- protected, because
-      it carries a real word; length alone never triggers a drop
-And   every one of the six genuine long prose paragraphs is present
-      verbatim in the artifact, unsplit and unmerged (no over-drop)
+And   the genuine short prose sentence's TEXT ("They consist essentially of
+      three elements.") survives in the artifact -- protected, because it
+      carries a real word; length alone never triggers a drop. It survives
+      as a substring of the merged chunk it was folded backward into
+      (§8 P0-4 predecessor-merge, reconciled with §7.8 "genuine short prose
+      is protected" in #210 spec-drift), not as its own standalone record.
+And   every one of the six genuine long prose paragraphs' content is
+      present in the artifact (no over-drop): five verbatim and unsplit;
+      CONCLUSION_PARA_2 as a substring of the chunk it absorbed the
+      protected tail into (see above)
 And   the router-owned skip sidecar (`<source_id>.skips.jsonl`) carries one
       skip record for the "Findings" section's dropped blank-page tail and
       one for the "Discussion" section's dropped zero-alphabetic tail, each
@@ -65,19 +75,32 @@ one of those sections wholesale).
 Three sections rather than one section carrying two adjacent junk tails is
 a deliberate fixture choice, not laziness: `axial.chunk._enforce_min` (the
 MIN-side band guard) merges any below-`CHUNK_MIN` chunk FORWARD into
-whatever immediately follows it, unconditionally, regardless of that next
-piece's own size. Two below-min junk pieces placed back-to-back in one
-section would merge into a single combined chunk before this floor ever
-sees two separate candidates -- and a real paragraph placed between two junk
-pieces gets absorbed into the first (already-merged) junk chunk rather than
-staying an isolated peer. The only piece in a section that is GUARANTEED
-never to merge into anything else is the section's OWN LAST piece (nothing
+whatever immediately follows it, within its forward pass, regardless of
+that next piece's own size. Two below-min junk pieces placed back-to-back
+in one section would merge into a single combined chunk before this floor
+ever sees two separate candidates -- and a real paragraph placed between
+two junk pieces gets absorbed into the first (already-merged) junk chunk
+rather than staying an isolated peer. The section's own LAST piece is the
+only one the forward pass can leave below `CHUNK_MIN` on its own (nothing
 follows it to merge into) -- which is also exactly the real-world shape
-(#193's own root-cause note: "the leaking crumbs are section tails"). Three
-sections, each with its own single trailing tail, is therefore the minimal
-fixture that puts one isolated candidate junk chunk of each targeted shape
-in front of the floor, without an unrelated merge behavior confounding
-which piece the floor actually had to evaluate.
+(#193's own root-cause note: "the leaking crumbs are section tails"). Since
+#207/#210, `_enforce_min` then prefers merging that trailing piece BACKWARD
+into its same-section predecessor (within `CHUNK_MAX`) -- UNLESS the
+trailing piece is itself fragment-floor material (`_fragment_floor_reason`
+is not `None`), in which case the backward merge is deliberately skipped so
+this floor can still evaluate and drop it as an isolated candidate. That is
+exactly why "Findings" and "Discussion" below stay isolated for the floor:
+their trailing tails ARE fragment-floor material, so the backward merge
+never fires for them. "Conclusion"'s trailing tail, by contrast, is
+genuine short prose -- not fragment-floor material -- so it now merges
+backward into CONCLUSION_PARA_2 rather than surviving the floor as its own
+standalone record; its TEXT still survives, verbatim, as a substring of
+that merged chunk (§7.8 "genuine short prose is protected", reconciled with
+the §8 P0-4 predecessor-merge in #210). Three sections, each with its own
+single trailing tail, is therefore still the minimal fixture that puts one
+isolated candidate junk chunk of each targeted junk shape in front of the
+floor, without an unrelated merge behavior confounding which piece the
+floor actually had to evaluate.
 
 Seam decision -- band constants imported, not hardcoded
 -----------------------------------------------------------------------
@@ -117,11 +140,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURE_PDF = REPO_ROOT / "tests" / "fixtures" / "envelope" / "thesis_paper.pdf"
 
 # Midpoint of the current band: comfortably >= CHUNK_MIN (so a paragraph
-# never itself gets merged forward into its neighbor) and comfortably <
-# CHUNK_MAX (so a paragraph is never itself split further). Two of these
-# together, plus a short tail, safely exceed CHUNK_MAX, forcing the
-# recursive splitter to actually divide each section rather than emit it
-# as one whole chunk.
+# never itself gets merged forward into its neighbor -- it may still
+# receive a backward merge FROM a below-CHUNK_MIN tail that follows it,
+# per #207/#210's predecessor-merge; see CONCLUSION_PARA_2 below) and
+# comfortably < CHUNK_MAX (so a paragraph is never itself split further).
+# Two of these together, plus a short tail, safely exceed CHUNK_MAX,
+# forcing the recursive splitter to actually divide each section rather
+# than emit it as one whole chunk.
 _PARAGRAPH_TARGET_CHARS = (CHUNK_MIN + CHUNK_MAX) // 2
 
 _BLANK_PAGE_NOTICE_NORMALIZED = "this page intentionally left blank"
@@ -344,24 +369,48 @@ def test_post_split_fragment_floor_drops_blank_page_and_zero_alpha_tails_but_kee
         f"{zero_alpha_survivors!r}. Full records: {records!r}"
     )
 
-    # --- 3. the genuine short prose sentence IS present -- protection
+    # --- 3. the genuine short prose sentence's TEXT survives -- protection
     # invariant: length alone must never trigger a drop. This is what stops
-    # a naive min-length "fix" from passing this test. ---
-    assert _PROTECTED_SHORT_SENTENCE in all_texts, (
+    # a naive min-length "fix" from passing this test. Per #210 spec-drift
+    # (reconciling #207's MIN-side predecessor-merge with #193's "genuine
+    # short prose is protected"), "protected" means the TEXT is never
+    # dropped -- not that it survives as its own standalone record: below
+    # CHUNK_MIN with a same-section predecessor (CONCLUSION_PARA_2), it
+    # merges BACKWARD into that predecessor (§8 P0-4), so it is checked here
+    # as a substring of whatever chunk it ended up in, not as a list member
+    # in its own right. ---
+    assert any(_PROTECTED_SHORT_SENTENCE in text for text in all_texts), (
         f"expected the genuine short prose sentence {_PROTECTED_SHORT_SENTENCE!r} "
-        f"(PRD §7.8's own 'genuine short prose is protected' example) to survive in "
-        f"the on-disk artifact -- a short chunk carrying a real word must always be "
-        f"kept, never dropped for its length alone. Full records: {records!r}"
+        f"(PRD §7.8's own 'genuine short prose is protected' example) to survive as a "
+        f"substring of some emitted chunk -- a short chunk carrying a real word must "
+        f"always have its text kept, never dropped for its length alone, even though "
+        f"it now merges backward into its same-section predecessor (#210 / §8 P0-4) "
+        f"instead of staying its own standalone record. Full records: {records!r}"
     )
 
-    # --- 4. every genuine long prose paragraph survives, unsplit and
-    # unmerged (no over-drop). ---
-    for paragraph in _ALL_GENUINE_PARAGRAPHS:
+    # --- 4. every genuine long prose paragraph's content survives (no
+    # over-drop). Five of the six are emitted verbatim, unsplit and
+    # unmerged, because nothing below CHUNK_MIN follows them into a backward
+    # merge. CONCLUSION_PARA_2 is the one exception: it is the Conclusion
+    # section's predecessor paragraph, and the section's protected
+    # short-prose tail (below CHUNK_MIN, not fragment-floor material) merges
+    # BACKWARD into it (#210 / §8 P0-4) rather than staying its own
+    # standalone record, so CONCLUSION_PARA_2's own emitted chunk is
+    # `CONCLUSION_PARA_2 + " " + tail`, checked here as a substring. ---
+    _paragraphs_expected_verbatim = [p for p in _ALL_GENUINE_PARAGRAPHS if p != CONCLUSION_PARA_2]
+    for paragraph in _paragraphs_expected_verbatim:
         assert paragraph in all_texts, (
             f"expected this genuine long prose paragraph to survive verbatim in the "
             f"on-disk artifact (no over-drop), but it is missing. Paragraph start: "
             f"{paragraph[:80]!r}. Full records: {records!r}"
         )
+    assert any(CONCLUSION_PARA_2 in text for text in all_texts), (
+        f"expected CONCLUSION_PARA_2's content to survive as part of some emitted "
+        f"chunk (no over-drop) -- it is the Conclusion section's predecessor "
+        f"paragraph, so the protected short-prose tail now merges backward into it "
+        f"(#210 / §8 P0-4), but even that merged text is missing. Paragraph start: "
+        f"{CONCLUSION_PARA_2[:80]!r}. Full records: {records!r}"
+    )
 
     # --- 5. the router-owned skip sidecar records each fragment-floor drop
     # with its own reason, distinct from the pre-existing apparatus reasons
