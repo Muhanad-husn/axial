@@ -30,6 +30,7 @@ from axial.llm import (
     get_client,
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
+from axial.router import PROSE, iter_routed_blocks
 
 ENVELOPES_DIR = Path("data/envelopes")
 
@@ -176,31 +177,30 @@ def select_envelope_nodes(tree: dict) -> list[dict]:
     return [child for child in tree.get("children", []) if _is_envelope_heading(child)]
 
 
-def _node_text_lines(node: dict) -> list[str]:
-    """Collect a node's own text plus all descendants' text, in order."""
-    lines = []
-    text = node.get("text")
-    if text:
-        lines.append(text)
-    for child in node.get("children", []):
-        lines.extend(_node_text_lines(child))
-    return lines
-
-
 def _matched_section_blocks(tree: dict) -> list[str]:
     """Build one text block per matched intro/abstract/conclusion node: the
-    section's own direct text plus its children's, not its children's alone
-    (PRD §7.3, "full text of the selected sections"). The node's own text is
-    always the `## heading` line itself (`heading = node.get("text", "")`),
-    so it is not also repeated as the first body line -- only descendants'
-    text is appended below the heading, avoiding a verbatim duplicate line
-    without dropping any content (the own text still appears once, in the
-    heading)."""
+    section's own heading plus its PROSE-routed descendants' text (§7.8: the
+    shared source router, `axial.router.route_for`, is the single
+    prose/non-prose classification -- this function never re-derives it).
+    Descendant blocks the router routes to ARTIFACT (e.g. `table`, `caption`)
+    or APPARATUS (e.g. `document_index`, `footnote`, running heads) are
+    dropped before they reach the §7.3 evidence floor or the prompt, exactly
+    like `_head_of_tree_lines` below (issue #216). `in_back_matter_section`
+    is always False here: a matched intro/abstract/conclusion section is
+    front/body matter by construction, never back-matter, so an in-section
+    `list_item` is legitimately prose. The node's own text is always the
+    `## heading` line itself (`heading = node.get("text", "")`), so it is not
+    also repeated as the first body line -- only descendants' PROSE text is
+    appended below the heading, avoiding a verbatim duplicate line without
+    dropping any content (the own text still appears once, in the heading)."""
     blocks = []
     for node in select_envelope_nodes(tree):
         heading = node.get("text", "")
         body_lines = [
-            line for child in node.get("children", []) for line in _node_text_lines(child)
+            leaf.get("text")
+            for child in node.get("children", [])
+            for leaf, route in iter_routed_blocks(child, in_back_matter_section=False)
+            if route == PROSE
         ]
         block = f"## {heading}"
         if body_lines:
@@ -229,49 +229,51 @@ def _truncate_at_boundary(text: str, limit: int) -> str:
 
 def _head_of_tree_lines(tree: dict, max_chars: int = _HEAD_OF_TREE_SLICE_CHARS) -> list[str]:
     """Walk the tree in stable pre-order (root -> children, depth-first --
-    the document's own reading order per `axial.extract._build_tree`),
-    collecting every node's own text, stopping once the length of the
-    *joined* slice (i.e. `"\\n".join(lines)`, exactly what `compose_prompt`
-    assembles) would reach `max_chars`. Each candidate line's cost includes
-    the `"\\n"` separator that joins it to the previous line, so the
-    accounting matches what actually lands in the prompt -- not merely the
-    sum of the nodes' own text lengths. A single node whose own text would
-    overrun the remaining budget is truncated (at a word boundary where
-    possible, #201 finding 2) rather than appended whole. Together this
-    means the length of `"\\n".join(_head_of_tree_lines(tree))` never
-    exceeds `max_chars`, regardless of node count or fragmentation -- a
-    large source (e.g. one huge un-split paragraph) can't blow the bound via
-    a single node, and neither can a tree of thousands of tiny text nodes
-    blow it via unaccounted-for join separators (#201 follow-up finding).
-    Deterministic: the same tree always yields the same slice (PRD §7.3,
-    "a bounded prefix of the source's own prose, taken in tree order")."""
+    the document's own reading order per `axial.extract._build_tree`) via the
+    shared source router (`axial.router.iter_routed_blocks`, §7.8), keeping
+    only PROSE-routed blocks -- a `document_index` (TOC), `table`, `caption`,
+    `footnote`, or `page_header`/`page_footer` block routes to ARTIFACT/
+    APPARATUS and is skipped, never diluting the "substantive" head-of-tree
+    slice with non-prose front matter (issue #216). `in_back_matter_section`
+    is always False: the head-of-tree region is by definition the START of
+    the source, never back-matter, so an in-body `list_item` is legitimately
+    prose. Collection stops once the length of the *joined* slice (i.e.
+    `"\\n".join(lines)`, exactly what `compose_prompt` assembles) would reach
+    `max_chars`. Each candidate line's cost includes the `"\\n"` separator
+    that joins it to the previous line, so the accounting matches what
+    actually lands in the prompt -- not merely the sum of the nodes' own text
+    lengths. A single node whose own text would overrun the remaining budget
+    is truncated (at a word boundary where possible, #201 finding 2) rather
+    than appended whole. Together this means the length of
+    `"\\n".join(_head_of_tree_lines(tree))` never exceeds `max_chars`,
+    regardless of node count or fragmentation -- a large source (e.g. one
+    huge un-split paragraph) can't blow the bound via a single node, and
+    neither can a tree of thousands of tiny text nodes blow it via
+    unaccounted-for join separators (#201 follow-up finding). Deterministic:
+    the same tree always yields the same slice (PRD §7.3, "a bounded prefix
+    of the source's own prose, taken in tree order")."""
     lines: list[str] = []
     total = 0
 
-    def _walk(node: dict) -> bool:
-        nonlocal total
-        text = node.get("text")
-        if text:
-            separator_cost = 1 if lines else 0
-            remaining = max_chars - total - separator_cost
-            if remaining <= 0:
-                return True
-            if len(text) > remaining:
-                truncated = _truncate_at_boundary(text, remaining)
-                if truncated:
-                    lines.append(truncated)
-                    total += separator_cost + len(truncated)
-                return True
-            lines.append(text)
-            total += separator_cost + len(text)
-            if total >= max_chars:
-                return True
-        for child in node.get("children", []):
-            if _walk(child):
-                return True
-        return False
+    for leaf, route in iter_routed_blocks(tree, in_back_matter_section=False):
+        if route != PROSE:
+            continue
+        text = leaf.get("text")
+        separator_cost = 1 if lines else 0
+        remaining = max_chars - total - separator_cost
+        if remaining <= 0:
+            break
+        if len(text) > remaining:
+            truncated = _truncate_at_boundary(text, remaining)
+            if truncated:
+                lines.append(truncated)
+                total += separator_cost + len(truncated)
+            break
+        lines.append(text)
+        total += separator_cost + len(text)
+        if total >= max_chars:
+            break
 
-    _walk(tree)
     return lines
 
 
