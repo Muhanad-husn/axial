@@ -7,9 +7,11 @@ __pycache__/
 .venv/
 dist/
 build/
-.claude/spec-mode
-.claude/allow-red-commit
-.claude/settings.local.json
+# Agentic engineering workflow harness — kept private (developed toward a
+# future plugin). Untracked but present on disk so the local workflow keeps
+# running. The full workflow handbook lives in CLAUDE.local.md (also ignored).
+.claude/
+CLAUDE.local.md
 PR_BODY.md
 PR_BODY.generated.md
 .tdd-branch-cleanup.log

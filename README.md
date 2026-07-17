@@ -110,14 +110,11 @@ holds the decision log.
 
 ## How this repository is built
 
-Axial is developed as a working **agentic engineering org**. Tool-locked role subagents
-(triage, spec author, test author, implementer, reviewer, fixer) do the building; two
-deterministic hook gates hold the line — **subagents never merge**, and **no commit
-lands on a red test suite**. A single human founder holds architecture and approval
-authority; the orchestrator (main session) merges only on explicit founder approval.
-Every change lands behavior-first: a locked outer acceptance test committed red, inner
-red→green→refactor cycles beneath it, a two-stage review, then a PR that waits for the
-founder. See [`CLAUDE.md`](CLAUDE.md) for the full handbook.
+Axial is built with a behavior-first, test-driven workflow: every change lands behind a
+locked acceptance test, is reviewed, and merges via pull request only on explicit human
+approval — no change lands on a red test suite. Development is AI-assisted with
+[Claude Code](https://claude.com/claude-code), with a single human holding architecture
+and approval authority.
 
 ## Quick start
 
