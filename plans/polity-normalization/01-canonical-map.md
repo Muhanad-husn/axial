@@ -5,7 +5,7 @@
 - **GitHub issue:** #205
 - **Branch:** feat/polity-normalization/205-canonical-map
 - **Project directory:** .
-- **Status:** ☐ in progress
+- **Status:** ☑ PR prepared (PR #217), awaiting founder approval
 - **Walking skeleton?** no (extends the tag/vault pipeline; #194/PR #199 shipped the `polity` seam)
 
 ## Goal — the minimum testable behaviour
@@ -142,3 +142,8 @@ And   `axial polity build` over the staged vault emits a deterministic seed tree
 
 - 2026-07-17 planned (orchestrator); founder ratified one slice / one PR for the full
   deliverable. Spec contract (Appendix C, §11 step 7) already aligned via #206/PR #209.
+- 2026-07-17 shipped to PR #217: red outer test (4c94eb5) → impl (c0907fa) → reviewer
+  fix (97173bb: build-seed normalization dedup + Soviet Union kind) → evidence (92251cb).
+  Green: outer 4/4, units 23/23, full suite 918 (`-m "not slow"`). Reviewer two-stage pass
+  (Stage 1 clean; one Stage-2 finding fixed). Shipped a curated 878-node
+  `polity_canonical.yaml` seeded from the real ~931-verbatim run. Awaiting founder approval.
