@@ -82,6 +82,11 @@ LABELS_RETURN_DIR = "data/gold/labels/"
 # blind pair (claim_type, theory_school) get dropdowns but arrive empty.
 AXIS_COLUMNS = ("field", "empirical_scope", "claim_type", "theory_school")
 
+# The pre-labeled, correctable free-text column(s) -- same "pre-filled,
+# correct by typing" mode as PRELABELED_COLUMNS, but carrying no dropdown
+# (not a codebook axis). Currently just `polities_touched`.
+PRELABELED_FREETEXT_COLUMNS = ("polities_touched",)
+
 LABEL_SHEET_NAME = "label_sheet"
 VOCAB_SHEET_NAME = "vocab"
 
@@ -809,6 +814,7 @@ def run_gold_deliver(
         "axes": list(AXIS_COLUMNS),
         "blind_axes": list(BLIND_COLUMNS),
         "prelabeled_axes": list(PRELABELED_COLUMNS),
+        "prelabeled_freetext": list(PRELABELED_FREETEXT_COLUMNS),
         "return_to": LABELS_RETURN_DIR,
     }
     (delivery_dir / "manifest.json").write_text(

@@ -241,6 +241,11 @@ def test_gold_deliver_packages_sheet_for_academic(isolated_vault_root):
         f"expected manifest prelabeled_axes={EXPECTED_PRELABELED}, got "
         f"{manifest.get('prelabeled_axes')!r}"
     )
+    assert manifest["prelabeled_freetext"] == ["polities_touched"], (
+        f"expected manifest prelabeled_freetext=['polities_touched'] to flag "
+        f"the pre-filled, non-axis context column, got "
+        f"{manifest.get('prelabeled_freetext')!r}"
+    )
     assert manifest["sheet"] == "label_sheet.xlsx", (
         f"expected manifest sheet='label_sheet.xlsx', got {manifest.get('sheet')!r}"
     )
@@ -263,6 +268,10 @@ def test_gold_deliver_packages_sheet_for_academic(isolated_vault_root):
         assert axis in readme, f"expected the README to name the {axis!r} axis, but it does not"
     assert "labels" in readme, (
         "expected the README to tell the Academic where to return the sheet (data/gold/labels/)"
+    )
+    assert "polities_touched" in readme, (
+        "expected the README to mention the pre-filled polities_touched context "
+        "column so the Academic knows it is not a blind labeling axis"
     )
 
 
