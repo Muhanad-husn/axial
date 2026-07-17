@@ -1,0 +1,24 @@
+=== axial envelope: router-filtered head-of-tree slice (#216) ===
+--- source: tests/fixtures/envelope/router_prose_filter_paper.pdf (topic-titled; widens to head-of-tree) ---
+source_id=router_prose_filter_paper-ad4cf8d21258
+(pre-placed tree so no docling run is paid; CLI reads the persisted tree)
+
+{"author": null, "date": null, "scope": "Comparative, drawing on cases from the post-conflict statebuilding literature.", "source_id": "router_prose_filter_paper-ad4cf8d21258", "stated_argument": "Infrastructural power better explains durable post-conflict order than coercive capacity alone.", "thesis": "State capacity in post-conflict settings depends more on infrastructural reach than on coercive force alone.", "title": "Router Prose Filter Paper", "toc": ["Introduction", "Comparative Cases", "Conclusion"]}
+exit code: 0
+
+--- recorded prompt: PROSE signal marker present? ---
+  matches: 1
+--- recorded prompt: NON-PROSE (document_index/TOC) poison marker present? ---
+  matches (expect 0 — filtered by §7.8 router): 0
+
+--- head-of-tree evidence block actually sent (from recorded prompt) ---
+## Source text (head-of-tree excerpt)
+Border Enforcement Regimes
+The opening survey proceeds under the Draubourne-4 escrow directive, a framework negotiated among the border tribunals described below to standardize evidentiary intake before any enforcement action begins.
+Analysts have not previously connected the Draubourne-4 escrow directive to the tribunal's broader mandate.
+Fiscal Extraction Networks
+Provincial tax farmers under this regime remit collected revenue not to a central treasury but to a rotating escrow held by the same tribunal described above, a practice with no analogue in classical fiscal sociology.
+Digital Surveillance Architecture
+Automated toll gates log vehicle transpon
+
+(cleaned up placed tree + envelope; data/ is gitignored)
