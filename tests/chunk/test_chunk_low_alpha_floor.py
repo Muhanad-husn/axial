@@ -41,10 +41,17 @@ prove no regression:
     example, now just the ratio-0 special case of the generalized rule)
   - a genuine short sentence at ratio >= 0.45 -- PRD §7.8's own protected
     worked example, `"Yet, the U.S."` (alphabetic ratio 8/13 = 0.6154) --
-    must survive verbatim, however short. This is the protection invariant
-    that blocks a naive "just lower the length floor" non-fix from passing:
-    a test that only checked "the citation crumb is gone" would also be
-    satisfied by a broken implementation that dropped every short chunk
+    must have its TEXT survive, however short. Per #210 spec-drift
+    (reconciling #207's MIN-side predecessor-merge with #193's "genuine
+    short prose is protected"), "protected" means the text is never
+    dropped -- not that it survives as its own standalone record: below
+    CHUNK_MIN with a same-section predecessor (PROTECTED_PARA_2), it now
+    merges BACKWARD into that predecessor (§8 P0-4), so this test checks
+    for it as a substring of the merged chunk, not verbatim as a record of
+    its own. This is still the protection invariant that blocks a naive
+    "just lower the length floor" non-fix from passing: a test that only
+    checked "the citation crumb is gone" would also be satisfied by a
+    broken implementation that dropped every short chunk's text
     regardless of content.
 
 Fixture design and root-cause note
@@ -69,13 +76,27 @@ Four sections, each with a single trailing tail (not fewer, and not two
 junk shapes crammed into one section), for the same reason #193's test used
 three: `axial.chunk._enforce_min` (the MIN-side band guard) merges any
 below-`CHUNK_MIN` chunk FORWARD into whatever immediately follows it,
-unconditionally. The only piece in a section GUARANTEED never to merge into
-anything else is the section's own LAST piece (nothing follows it to merge
-into) -- which is also the real-world shape (the leaking crumbs are section
-tails). Four sections, each with its own single trailing tail, is therefore
-the minimal fixture that puts one isolated candidate junk (or protected)
-chunk of each targeted shape in front of the floor, without an unrelated
-merge behavior confounding which piece the floor actually had to evaluate:
+within its forward pass. The section's own last piece is the only one the
+forward pass can leave below `CHUNK_MIN` on its own (nothing follows it to
+merge into) -- which is also the real-world shape (the leaking crumbs are
+section tails). Since #207/#210, `_enforce_min` then prefers merging that
+trailing piece BACKWARD into its same-section predecessor (within
+`CHUNK_MAX`) -- UNLESS the trailing piece is itself fragment-floor material
+(`_fragment_floor_reason` is not `None`), in which case the backward merge
+is deliberately skipped so this floor can still evaluate and drop it as an
+isolated candidate. That is exactly why "Citation", "Significance", and
+"Blank" below stay isolated for the floor: their trailing tails ARE
+fragment-floor material, so the backward merge never fires for them.
+"Protected"'s trailing tail, by contrast, is genuine short prose -- not
+fragment-floor material -- so it now merges backward into
+PROTECTED_PARA_2 rather than surviving the floor as its own standalone
+record; its TEXT still survives, verbatim, as a substring of that merged
+chunk (§7.8 "genuine short prose is protected", reconciled with the §8
+P0-4 predecessor-merge in #210). Four sections, each with its own single
+trailing tail, is therefore still the minimal fixture that puts one
+isolated candidate junk (or protected) chunk of each targeted shape in
+front of the floor, without an unrelated merge behavior confounding which
+piece the floor actually had to evaluate:
   - "Citation"       -- tail is the bare-citation crumb (ratio 0.33, NEW
                          band) -- must drop
   - "Significance"   -- tail is the significance-star crumb (ratio 0.125,
@@ -83,7 +104,9 @@ merge behavior confounding which piece the floor actually had to evaluate:
   - "Blank"          -- tail is the ratio-0 crumb (regression check on
                          #193's original rule) -- must still drop
   - "Protected"      -- tail is the genuine short sentence (ratio 0.6154)
-                         -- must survive, proving no over-drop
+                         -- its text must survive (merged backward into
+                         PROTECTED_PARA_2, #210 / §8 P0-4), proving no
+                         over-drop
 
 Seam decisions (band constants imported, isolated tmp cwd) mirror
 tests/chunk/test_chunk_fragment_floor.py's own seam decisions 4 and 5 --
@@ -108,11 +131,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURE_PDF = REPO_ROOT / "tests" / "fixtures" / "envelope" / "thesis_paper.pdf"
 
 # Midpoint of the current band: comfortably >= CHUNK_MIN (so a paragraph
-# never itself gets merged forward into its neighbor) and comfortably <
-# CHUNK_MAX (so a paragraph is never itself split further). Two of these
-# together, plus a short tail, safely exceed CHUNK_MAX, forcing the
-# recursive splitter to actually divide each section rather than emit it
-# as one whole chunk.
+# never itself gets merged forward into its neighbor -- it may still
+# receive a backward merge FROM a below-CHUNK_MIN tail that follows it,
+# per #207/#210's predecessor-merge; see PROTECTED_PARA_2 below) and
+# comfortably < CHUNK_MAX (so a paragraph is never itself split further).
+# Two of these together, plus a short tail, safely exceed CHUNK_MAX,
+# forcing the recursive splitter to actually divide each section rather
+# than emit it as one whole chunk.
 _PARAGRAPH_TARGET_CHARS = (CHUNK_MIN + CHUNK_MAX) // 2
 
 # --- The low-alpha threshold contract (PRD §7.8/§8): ratio < 0.45 drops,
@@ -428,25 +453,50 @@ def test_post_split_fragment_floor_drops_low_alpha_ratio_but_keeps_protected_pro
         f"dropped -- no regression of #193. Full records: {records!r}"
     )
 
-    # --- 2. the genuine short prose sentence (ratio >= 0.45) IS present
-    # verbatim -- the protection invariant. This is what stops a naive "drop "
-    # everything short" non-fix from passing this test. ---
-    assert _PROTECTED_SHORT_SENTENCE in all_texts, (
+    # --- 2. the genuine short prose sentence's TEXT (ratio >= 0.45)
+    # survives -- the protection invariant. This is what stops a naive
+    # "drop everything short" non-fix from passing this test. Per #210
+    # spec-drift (reconciling #207's MIN-side predecessor-merge with
+    # #193/#197's "genuine short prose is protected"), "protected" means
+    # the TEXT is never dropped -- not that it survives as its own
+    # standalone record: below CHUNK_MIN with a same-section predecessor
+    # (PROTECTED_PARA_2), it merges BACKWARD into that predecessor (§8
+    # P0-4), so it is checked here as a substring of whatever chunk it
+    # ended up in. ---
+    assert any(_PROTECTED_SHORT_SENTENCE in text for text in all_texts), (
         f"expected the genuine short prose sentence {_PROTECTED_SHORT_SENTENCE!r} "
         f"(alphabetic ratio {_PROTECTED_SENTENCE_RATIO:.4f}, PRD §7.8's own protected "
-        f"worked example) to survive in the on-disk artifact -- a chunk at or above "
-        f"the low-alpha threshold must always be kept, however short. "
+        f"worked example) to survive as a substring of some emitted chunk -- a chunk "
+        f"at or above the low-alpha threshold must always have its text kept, "
+        f"however short, even though it now merges backward into its same-section "
+        f"predecessor (#210 / §8 P0-4) instead of staying its own standalone record. "
         f"Full records: {records!r}"
     )
 
-    # --- 3. every genuine long prose paragraph survives, unsplit and
-    # unmerged (no over-drop). ---
-    for paragraph in _ALL_GENUINE_PARAGRAPHS:
+    # --- 3. every genuine long prose paragraph's content survives (no
+    # over-drop). Seven of the eight are emitted verbatim, unsplit and
+    # unmerged, because nothing below CHUNK_MIN follows them into a
+    # backward merge. PROTECTED_PARA_2 is the one exception: it is the
+    # Protected section's predecessor paragraph, and the section's
+    # protected short-prose tail (below CHUNK_MIN, not fragment-floor
+    # material) merges BACKWARD into it (#210 / §8 P0-4) rather than
+    # staying its own standalone record, so PROTECTED_PARA_2's own emitted
+    # chunk is `PROTECTED_PARA_2 + " " + tail`, checked here as a
+    # substring. ---
+    _paragraphs_expected_verbatim = [p for p in _ALL_GENUINE_PARAGRAPHS if p != PROTECTED_PARA_2]
+    for paragraph in _paragraphs_expected_verbatim:
         assert paragraph in all_texts, (
             f"expected this genuine long prose paragraph to survive verbatim in the "
             f"on-disk artifact (no over-drop), but it is missing. Paragraph start: "
             f"{paragraph[:80]!r}. Full records: {records!r}"
         )
+    assert any(PROTECTED_PARA_2 in text for text in all_texts), (
+        f"expected PROTECTED_PARA_2's content to survive as part of some emitted "
+        f"chunk (no over-drop) -- it is the Protected section's predecessor "
+        f"paragraph, so the protected short-prose tail now merges backward into it "
+        f"(#210 / §8 P0-4), but even that merged text is missing. Paragraph start: "
+        f"{PROTECTED_PARA_2[:80]!r}. Full records: {records!r}"
+    )
 
     # --- 4. the router-owned skip sidecar records each low-alpha drop with
     # its own fragment-floor reason, distinct from the pre-existing
