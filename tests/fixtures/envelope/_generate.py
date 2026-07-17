@@ -71,6 +71,37 @@ topic_titled_paper.pdf or to the extraction/normalization logic with:
 Verify determinism the same way as thesis_paper_tree.json above, substituting
 topic_titled_paper.pdf/topic_titled_paper_tree.json for the thesis_paper
 names.
+
+Companion fixture -- router_prose_filter_paper.pdf / router_prose_filter_paper_tree.json
+(issue #216, envelope head-of-tree router filtering)
+-----------------------------------------------------------------------
+Unlike the two fixtures above, `router_prose_filter_paper_tree.json` is
+HAND-AUTHORED, not a committed real docling extraction -- it is not
+regenerated from `router_prose_filter_paper.pdf` via `axial extract`, and a
+fresh extraction of that PDF is NOT expected to reproduce it byte-for-byte
+(docling's own choice of `label` for a reportlab-rendered "Table of
+Contents" paragraph is not something this fixture controls or needs to).
+`tests/ingestion/test_envelope_router_prose_filter.py` pre-places this tree
+directly at `data/trees/<source_id>.json`, so docling never runs against
+this PDF in the test; the PDF exists only so `axial.intake.intake` (a real
+text-layer probe) passes and `axial.envelope.compute_source_id` has real
+file bytes to hash. `make_router_prose_filter_paper_pdf` below renders
+prose that loosely mirrors the hand-authored tree's own text for a human
+skimming the fixture, but the two are independent artifacts.
+
+The tree's top-level headings ("Border Enforcement Regimes", "Fiscal
+Extraction Networks", "Digital Surveillance Architecture") are topic-titled,
+exactly like topic_titled_paper_tree.json, so `select_envelope_nodes`
+matches nothing and the envelope pass widens to a head-of-tree slice (the
+same #201 precondition). Ahead of the first section, at the head of the
+tree, sits one `document_index` node (a TOC block) carrying a distinctive
+"Quillfeather-19 index locus" marker; the first section's own prose carries
+a distinct "Draubourne-4 escrow directive" marker. §7.8's router classifies
+`document_index` as APPARATUS and `text`/`section_header` as PROSE -- see
+that test module's docstring for the full two-direction proof this fixture
+exercises (issue #216: today's head-of-tree walk collects every node's text
+regardless of `label`, so the APPARATUS marker leaks into the prompt
+alongside the genuine PROSE marker).
 """
 
 from pathlib import Path
@@ -221,9 +252,85 @@ def make_topic_titled_paper_pdf(path: Path) -> None:
     doc.build(story)
 
 
+def make_router_prose_filter_paper_pdf(path: Path) -> None:
+    """A born-digital PDF whose text loosely mirrors the HAND-AUTHORED
+    router_prose_filter_paper_tree.json (issue #216; see module docstring,
+    "Companion fixture -- router_prose_filter_paper.pdf"). This PDF is never
+    actually extracted by docling in the test suite -- the hand-authored
+    tree is pre-placed at data/trees/<source_id>.json instead -- so this
+    function exists only to give the fixture a real, valid, text-bearing PDF
+    for intake's text-layer probe to accept."""
+    doc = SimpleDocTemplate(
+        str(path),
+        pagesize=letter,
+        leftMargin=1 * inch,
+        rightMargin=1 * inch,
+        topMargin=1 * inch,
+        bottomMargin=1 * inch,
+    )
+
+    story = []
+
+    story.append(Paragraph("Table of Contents", styles["Heading2"]))
+    story.append(
+        Paragraph(
+            "I. Border Enforcement Regimes; II. Fiscal Extraction Networks; "
+            "III. Digital Surveillance Architecture -- filed under the "
+            "Quillfeather-19 index locus.",
+            styles["BodyText"],
+        )
+    )
+    story.append(Spacer(1, 0.25 * inch))
+
+    story.append(Paragraph("Border Enforcement Regimes", styles["Heading1"]))
+    story.append(
+        Paragraph(
+            "The opening survey proceeds under the Draubourne-4 escrow "
+            "directive, a framework negotiated among the border tribunals "
+            "described below to standardize evidentiary intake before any "
+            "enforcement action begins.",
+            styles["BodyText"],
+        )
+    )
+    story.append(
+        Paragraph(
+            "Analysts have not previously connected the Draubourne-4 "
+            "escrow directive to the tribunal's broader mandate.",
+            styles["BodyText"],
+        )
+    )
+    story.append(Spacer(1, 0.25 * inch))
+
+    story.append(Paragraph("Fiscal Extraction Networks", styles["Heading1"]))
+    story.append(
+        Paragraph(
+            "Provincial tax farmers under this regime remit collected "
+            "revenue not to a central treasury but to a rotating escrow "
+            "held by the same tribunal described above, a practice with "
+            "no analogue in classical fiscal sociology.",
+            styles["BodyText"],
+        )
+    )
+    story.append(Spacer(1, 0.25 * inch))
+
+    story.append(Paragraph("Digital Surveillance Architecture", styles["Heading1"]))
+    story.append(
+        Paragraph(
+            "Automated toll gates log vehicle transponders into a "
+            "distributed ledger maintained jointly by the tribunal and a "
+            "regional customs union, closing the loop between enforcement "
+            "and extraction.",
+            styles["BodyText"],
+        )
+    )
+
+    doc.build(story)
+
+
 def main() -> None:
     make_thesis_paper_pdf(FIXTURES_DIR / "thesis_paper.pdf")
     make_topic_titled_paper_pdf(FIXTURES_DIR / "topic_titled_paper.pdf")
+    make_router_prose_filter_paper_pdf(FIXTURES_DIR / "router_prose_filter_paper.pdf")
     print("Generated fixtures in", FIXTURES_DIR)
 
 
