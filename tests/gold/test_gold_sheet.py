@@ -8,8 +8,12 @@ When  the user runs `axial gold sheet`
 Then  data/gold/label_sheet.xlsx exists with one header row and one row per
       sampled chunk
 And   the columns are chunk_id, source, section, chunk_text, field,
-      empirical_scope, claim_type, theory_school, notes in that order
+      empirical_scope, polities_touched, claim_type, theory_school, notes in
+      that order
 And   the field and empirical_scope cells are pre-filled from each chunk's tags
+And   the polities_touched cell is pre-filled from the chunk's tagged
+      polities_touched list, "; "-joined, and carries NO dropdown validation
+      (it is a context column, not a labeling axis)
 And   the claim_type and theory_school cells are empty (blind)
 And   the field, empirical_scope, claim_type and theory_school columns carry
       dropdown validation whose options are the codebook's vocabulary for
@@ -25,7 +29,8 @@ Arrange -- seed the sampled records directly
 Slice 02 consumes slice 01's chunk records. This test seeds a handful of
 records directly under `<root>/data/gold/chunks/` in the exact flat shape
 `axial gold sample` writes (chunk_id, source, section, chunk_text, field,
-empirical_scope, role_in_argument, claim_type, theory_school -- axis values
+empirical_scope, polities_touched, role_in_argument, claim_type,
+theory_school -- axis values
 as representative scalars), rather than running the sampler, so slice 02 is
 tested independently of slice 01's selection logic. No LLM, no network.
 
@@ -69,18 +74,25 @@ EXPECTED_COLUMNS = [
     "chunk_text",
     "field",
     "empirical_scope",
+    "polities_touched",
     "claim_type",
     "theory_school",
     "notes",
 ]
 
-# 1-indexed column numbers of the four axis columns (for dropdown checks).
+# 1-indexed column numbers of the four DROPDOWN axis columns (for dropdown
+# checks). `polities_touched` (column 7) is deliberately excluded: it is a
+# pre-filled context column, not one of the four labeling axes, and must
+# carry no dropdown (Appendix I).
 AXIS_COLUMNS = {
     "field": 5,
     "empirical_scope": 6,
-    "claim_type": 7,
-    "theory_school": 8,
+    "claim_type": 8,
+    "theory_school": 9,
 }
+
+# 1-indexed column number of the polities_touched context column.
+POLITIES_TOUCHED_COLUMN = 7
 
 # Seeded sampled records (slice 01's flat output shape).
 SEEDED_RECORDS = [
@@ -91,6 +103,7 @@ SEEDED_RECORDS = [
         "chunk_text": "First substantive prose chunk.",
         "field": "state",
         "empirical_scope": "scope:general",
+        "polities_touched": ["Syria", "Iraq"],
         "role_in_argument": "role:setup",
         "claim_type": "state-formation",
         "theory_school": "bellicist",
@@ -102,6 +115,7 @@ SEEDED_RECORDS = [
         "chunk_text": "Second substantive prose chunk.",
         "field": "violence",
         "empirical_scope": "scope:country-case",
+        "polities_touched": ["Lebanon"],
         "role_in_argument": "role:claim",
         "claim_type": "civilian-targeting",
         "theory_school": "micro-sociological",
@@ -113,6 +127,7 @@ SEEDED_RECORDS = [
         "chunk_text": "Third substantive prose chunk.",
         "field": "ideology",
         "empirical_scope": "scope:comparative",
+        "polities_touched": [],
         "role_in_argument": "role:evidence",
         "claim_type": "ideology-as-system",
         "theory_school": "discursive",
@@ -273,6 +288,20 @@ def test_gold_sheet_renders_label_sheet(isolated_vault_root):
             f"chunk's tag {record['empirical_scope']!r}, got "
             f"{row['empirical_scope']!r}"
         )
+        # polities_touched: pre-filled context column, "; "-joined from the
+        # chunk's tagged polities list -- not an axis, never blind.
+        expected_polities = "; ".join(record.get("polities_touched") or [])
+        if expected_polities:
+            assert row["polities_touched"] == expected_polities, (
+                f"expected the polities_touched cell to be the chunk's tagged "
+                f"polities joined with '; ' ({expected_polities!r}), got "
+                f"{row['polities_touched']!r}"
+            )
+        else:
+            assert row["polities_touched"] in (None, ""), (
+                f"expected an empty polities_touched cell for a chunk with no "
+                f"tagged polities, got {row['polities_touched']!r}"
+            )
         # Blind columns empty for the Academic.
         assert row["claim_type"] in (None, ""), (
             f"expected the claim_type cell to be blind (empty), got {row['claim_type']!r}"
@@ -302,6 +331,20 @@ def test_gold_sheet_renders_label_sheet(isolated_vault_root):
             f"vocabulary for that axis ({sorted(expected_vocab)}), got "
             f"{sorted(options)}"
         )
+
+    # polities_touched is a context column, not an axis: header present, but
+    # no dropdown/data-validation on its data cells.
+    header_at_7 = ws.cell(row=1, column=POLITIES_TOUCHED_COLUMN).value
+    assert header_at_7 == "polities_touched", (
+        f"expected column {POLITIES_TOUCHED_COLUMN} to be the polities_touched "
+        f"header, got {header_at_7!r}"
+    )
+    polities_dv = _validation_for_column(wb, ws, POLITIES_TOUCHED_COLUMN)
+    assert polities_dv is None, (
+        f"expected the polities_touched column (column {POLITIES_TOUCHED_COLUMN}) "
+        f"to carry NO dropdown/data-validation -- it is a pre-filled context "
+        f"column, not one of the four labeling axes -- but found {polities_dv!r}"
+    )
 
 
 def test_gold_sheet_overwrites_in_place(isolated_vault_root):

@@ -51,7 +51,9 @@ GOLD_DIR = Path("data/gold")
 
 # Appendix I's label-sheet columns, in order. `role_in_argument` is a
 # balancing stratum but NOT a sheet column (Appendix I names none); `notes`
-# ships empty.
+# ships empty. `polities_touched` is a plain pre-filled context column (the
+# tagger's already-tagged facet, shipped as-tagged) -- not an axis, no
+# dropdown.
 SHEET_COLUMNS = (
     "chunk_id",
     "source",
@@ -59,6 +61,7 @@ SHEET_COLUMNS = (
     "chunk_text",
     "field",
     "empirical_scope",
+    "polities_touched",
     "claim_type",
     "theory_school",
     "notes",
@@ -98,6 +101,7 @@ RECORD_FIELDS = (
     "chunk_text",
     "field",
     "empirical_scope",
+    "polities_touched",
     "role_in_argument",
     "claim_type",
     "theory_school",
@@ -446,6 +450,7 @@ def parse_note(path: Path) -> dict[str, Any] | None:
         "chunk_text": frontmatter.get("chunk_text", ""),
         "field": _scalar(frontmatter.get("field"), "primary"),
         "empirical_scope": _scalar(frontmatter.get("empirical_scope"), "value"),
+        "polities_touched": frontmatter.get("polities_touched", []) or [],
         "role_in_argument": frontmatter.get("role_in_argument"),
         "claim_type": _scalar(frontmatter.get("claim_type"), "primary"),
         "theory_school": _scalar(frontmatter.get("theory_school"), "primary"),
@@ -657,9 +662,9 @@ def _write_vocab_sheet(workbook: Workbook, vocabularies: dict[str, list[str]]) -
 
 def build_workbook(records: list[dict[str, Any]], vocabularies: dict[str, list[str]]) -> Workbook:
     """Build the label-sheet workbook: the Appendix-I header row, one row per
-    sampled chunk (provenance + pre-filled field/empirical_scope, blind
-    claim_type/theory_school/notes), and a codebook-sourced dropdown on each
-    of the four axis columns."""
+    sampled chunk (provenance + pre-filled field/empirical_scope/
+    polities_touched, blind claim_type/theory_school/notes), and a
+    codebook-sourced dropdown on each of the four axis columns."""
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = LABEL_SHEET_NAME
@@ -673,6 +678,9 @@ def build_workbook(records: list[dict[str, Any]], vocabularies: dict[str, list[s
                 continue  # blind columns arrive empty for the Academic
             if name == "notes":
                 continue  # ships empty
+            if name == "polities_touched":
+                sheet.cell(row=row_index, column=col, value="; ".join(record.get(name) or []))
+                continue
             sheet.cell(row=row_index, column=col, value=record.get(name))
 
     ranges = _write_vocab_sheet(workbook, vocabularies)
