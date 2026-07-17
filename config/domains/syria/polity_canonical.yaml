@@ -1,0 +1,2709 @@
+# Syria domain: offline canonical polity normalization map (issue #205).
+#
+# A versioned, human-editable, LIVING map -- append new nodes/aliases as
+# the corpus grows. Never a closed gate: an unmapped polity verbatim
+# always passes through the tagging pipeline unchanged and is only ever
+# logged as a candidate by `axial polity report` (see
+# src/axial/polity_canonical.py, specs/PRODUCT.md Appendix C, Sec 11
+# step 7).
+#
+# Shape: a list of `nodes`, each with:
+#   canonical  -- the referent's canonical name
+#   kind       -- modern | historical | supra-national
+#   aliases    -- verbatims that fold to this node (exact, normalized
+#                 match only -- casefold + collapse/trim whitespace,
+#                 never fuzzy)
+#   children   -- optional nested sub-polities (a real parent-child
+#                 relation, e.g. Scotland/England/Northern Ireland under
+#                 the United Kingdom) -- a child's own alias resolves to
+#                 the CHILD, never blanket-merged into its parent.
+#
+# Seeded 2026-07-17 from `axial polity build` over the real vault
+# (data/vault/prose, ~16,949 notes at seed time), folding the obvious
+# clusters (UK cluster, Soviet Union/USSR, East Timor/Timor-Leste,
+# spelling variants) and tagging clearly defunct/ancient polities
+# historical.
+#
+# Deliberately conservative: bracket-qualified contextual variants
+# ("Syria (Ottoman Empire)", "Bosnia and Herzegovina (BiH)", etc.) and
+# ad-hoc multi-country mentions are left OUT of this tree on purpose so
+# `axial polity report`'s leak/candidate detection surfaces them for a
+# human to fold or flag by hand, rather than this seed silently
+# guessing.
+version: 1
+nodes:
+- canonical: ASEAN countries
+  kind: modern
+  aliases: []
+- canonical: Abbasid Caliphate
+  kind: historical
+  aliases: []
+- canonical: Abbasid Empire
+  kind: historical
+  aliases: []
+- canonical: Abkhazia
+  kind: modern
+  aliases: []
+- canonical: Abkhazia (disputed)
+  kind: modern
+  aliases: []
+- canonical: Abu Dhabi
+  kind: modern
+  aliases: []
+- canonical: Abyssinia
+  kind: modern
+  aliases: []
+- canonical: Aceh
+  kind: modern
+  aliases: []
+- canonical: Achaemenid Empire
+  kind: historical
+  aliases: []
+- canonical: Aden
+  kind: modern
+  aliases: []
+- canonical: Aegean states
+  kind: modern
+  aliases: []
+- canonical: Aegina
+  kind: historical
+  aliases: []
+- canonical: Afghanistan
+  kind: modern
+  aliases: []
+- canonical: Africa
+  kind: modern
+  aliases: []
+- canonical: African countries
+  kind: modern
+  aliases: []
+- canonical: African states
+  kind: modern
+  aliases: []
+- canonical: Ajara
+  kind: modern
+  aliases: []
+- canonical: Ajman
+  kind: modern
+  aliases: []
+- canonical: Akkad
+  kind: historical
+  aliases: []
+- canonical: Akkadian Empire
+  kind: historical
+  aliases: []
+- canonical: Akron
+  kind: modern
+  aliases: []
+- canonical: Alaouites
+  kind: modern
+  aliases: []
+- canonical: Albania
+  kind: modern
+  aliases: []
+- canonical: Aleppo
+  kind: modern
+  aliases: []
+- canonical: Alexandretta
+  kind: modern
+  aliases: []
+- canonical: Algeria
+  kind: modern
+  aliases: []
+- canonical: Allahabad
+  kind: modern
+  aliases: []
+- canonical: Allied powers
+  kind: modern
+  aliases: []
+- canonical: Almopia (part of the Ottoman Empire, later Greece)
+  kind: modern
+  aliases: []
+- canonical: Alsace
+  kind: modern
+  aliases: []
+- canonical: America
+  kind: modern
+  aliases: []
+- canonical: American Samoa
+  kind: modern
+  aliases: []
+- canonical: American colonies
+  kind: modern
+  aliases: []
+- canonical: Amsterdam
+  kind: modern
+  aliases: []
+- canonical: Anatolia
+  kind: modern
+  aliases: []
+- canonical: Ancient Athens
+  kind: historical
+  aliases: []
+- canonical: Ancient Egypt
+  kind: historical
+  aliases:
+  - ancient Egypt
+- canonical: Ancient Greece
+  kind: historical
+  aliases: []
+- canonical: Andalusia
+  kind: modern
+  aliases: []
+- canonical: Andean countries
+  kind: modern
+  aliases: []
+- canonical: Andorra
+  kind: modern
+  aliases: []
+- canonical: Anglophone countries
+  kind: modern
+  aliases: []
+- canonical: Angola
+  kind: modern
+  aliases: []
+- canonical: Ankara
+  kind: modern
+  aliases: []
+- canonical: Arab Caliphate
+  kind: historical
+  aliases: []
+- canonical: Arab East
+  kind: modern
+  aliases: []
+- canonical: Arab Gulf States
+  kind: modern
+  aliases: []
+- canonical: Arab Kingdom of Syria (Faysal's administration)
+  kind: modern
+  aliases: []
+- canonical: Arab League (or Arab states collectively)
+  kind: modern
+  aliases: []
+- canonical: Arab Maghrib
+  kind: modern
+  aliases: []
+- canonical: Arab State
+  kind: modern
+  aliases:
+  - Arab state
+- canonical: Arab State (Faysal's domain)
+  kind: modern
+  aliases: []
+- canonical: Arab World
+  kind: modern
+  aliases:
+  - Arab world
+- canonical: Arab allies
+  kind: modern
+  aliases: []
+- canonical: Arab countries
+  kind: modern
+  aliases: []
+- canonical: Arab countries (Arab East)
+  kind: modern
+  aliases: []
+- canonical: Arab nation
+  kind: modern
+  aliases: []
+- canonical: Arab neighbors
+  kind: modern
+  aliases: []
+- canonical: Arab oil states
+  kind: modern
+  aliases: []
+- canonical: Arab oil-producing Gulf states
+  kind: modern
+  aliases: []
+- canonical: Arab states
+  kind: modern
+  aliases: []
+- canonical: Arab states (general)
+  kind: modern
+  aliases: []
+- canonical: Arab territories under imperial control
+  kind: modern
+  aliases: []
+- canonical: Arab world (pan-Arab region)
+  kind: modern
+  aliases: []
+- canonical: Arab world (post-Ottoman Mandatory system)
+  kind: modern
+  aliases: []
+- canonical: Arabia
+  kind: modern
+  aliases: []
+- canonical: Arabia (Hashemite-led Arab revolt)
+  kind: modern
+  aliases: []
+- canonical: Arabia (pre-Islamic/Hijaz/Mecca)
+  kind: modern
+  aliases: []
+- canonical: Arabian Gulf
+  kind: modern
+  aliases: []
+- canonical: Arabian Peninsula
+  kind: modern
+  aliases:
+  - Arabian peninsula
+- canonical: Arabian countries
+  kind: modern
+  aliases: []
+- canonical: Arabian interior
+  kind: modern
+  aliases: []
+- canonical: Aram
+  kind: historical
+  aliases: []
+- canonical: Arameans
+  kind: historical
+  aliases: []
+- canonical: Argentina
+  kind: modern
+  aliases: []
+- canonical: Argolid
+  kind: historical
+  aliases: []
+- canonical: Armenia
+  kind: modern
+  aliases: []
+- canonical: Armenia (and de facto states Nagorno-Karabakh, Abkhazia)
+  kind: modern
+  aliases: []
+- canonical: Aryan India
+  kind: modern
+  aliases: []
+- canonical: Ashanti
+  kind: historical
+  aliases: []
+- canonical: Ashanti Empire
+  kind: historical
+  aliases: []
+- canonical: Asia
+  kind: modern
+  aliases: []
+- canonical: Asia Minor
+  kind: modern
+  aliases: []
+- canonical: Asia Minor polis
+  kind: historical
+  aliases: []
+- canonical: Asir
+  kind: modern
+  aliases: []
+- canonical: Assyria
+  kind: historical
+  aliases: []
+- canonical: Assyrian Empire
+  kind: historical
+  aliases: []
+- canonical: Assyrians
+  kind: historical
+  aliases: []
+- canonical: Athens
+  kind: modern
+  aliases: []
+- canonical: Australia
+  kind: modern
+  aliases: []
+- canonical: Austria
+  kind: modern
+  aliases: []
+- canonical: Austria (Vienna)
+  kind: modern
+  aliases: []
+- canonical: Austria-Hungary
+  kind: historical
+  aliases: []
+- canonical: Austrian Empire
+  kind: historical
+  aliases: []
+- canonical: Austro-Hungarian Empire
+  kind: historical
+  aliases: []
+- canonical: Austro-Hungary
+  kind: historical
+  aliases: []
+- canonical: Ayyubids
+  kind: historical
+  aliases: []
+- canonical: Azerbaijan
+  kind: modern
+  aliases: []
+- canonical: Aztec Empire
+  kind: historical
+  aliases: []
+- canonical: Babylon
+  kind: historical
+  aliases: []
+- canonical: Babylonia
+  kind: historical
+  aliases: []
+- canonical: Babylonians
+  kind: historical
+  aliases: []
+- canonical: Baghdad
+  kind: modern
+  aliases: []
+- canonical: Bahrain
+  kind: modern
+  aliases: []
+- canonical: Bahrein
+  kind: modern
+  aliases: []
+- canonical: Balkan states
+  kind: modern
+  aliases: []
+- canonical: Balkans
+  kind: modern
+  aliases: []
+- canonical: Baltic Republics
+  kind: modern
+  aliases:
+  - Baltic republics
+- canonical: Baltic States
+  kind: modern
+  aliases:
+  - Baltic states
+- canonical: Baltics
+  kind: modern
+  aliases: []
+- canonical: Bangladesh
+  kind: modern
+  aliases: []
+- canonical: Barbados
+  kind: modern
+  aliases: []
+- canonical: Baroda
+  kind: modern
+  aliases: []
+- canonical: Basque Country
+  kind: modern
+  aliases:
+  - Basque country
+- canonical: Bavaria
+  kind: historical
+  aliases: []
+- canonical: Beirut
+  kind: modern
+  aliases: []
+- canonical: Beirut (Ottoman Empire)
+  kind: modern
+  aliases: []
+- canonical: Belarus
+  kind: modern
+  aliases: []
+- canonical: Belarus (Belorussia)
+  kind: modern
+  aliases: []
+- canonical: Belfast
+  kind: modern
+  aliases: []
+- canonical: Belgian Congo
+  kind: historical
+  aliases: []
+- canonical: Belgian Empire
+  kind: historical
+  aliases:
+  - Belgian empire
+- canonical: Belgium
+  kind: modern
+  aliases: []
+- canonical: Belgrade
+  kind: modern
+  aliases: []
+- canonical: Belize
+  kind: modern
+  aliases: []
+- canonical: Belorussia
+  kind: modern
+  aliases: []
+- canonical: Bermuda
+  kind: modern
+  aliases: []
+- canonical: BiH
+  kind: modern
+  aliases: []
+- canonical: Biafra
+  kind: modern
+  aliases: []
+- canonical: Bilad al-Sham
+  kind: modern
+  aliases: []
+- canonical: Bithynia
+  kind: historical
+  aliases: []
+- canonical: Boer Republics
+  kind: modern
+  aliases: []
+- canonical: Bolivia
+  kind: modern
+  aliases: []
+- canonical: Bosnia
+  kind: modern
+  aliases: []
+- canonical: Bosnia (Sarajevo)
+  kind: modern
+  aliases: []
+- canonical: Bosnia and Herzegovina
+  kind: modern
+  aliases:
+  - Bosnia and Hercegovina
+  - Bosnia-Herzegovina
+- canonical: Bosnia and Herzegovina (BiH)
+  kind: modern
+  aliases: []
+- canonical: Bosnia and Herzegovina (BiH), Kosovo
+  kind: modern
+  aliases: []
+- canonical: Bosnia and Herzegovina (Sarajevo)
+  kind: modern
+  aliases: []
+- canonical: Bosnia and Herzegovina (former Yugoslavia)
+  kind: modern
+  aliases: []
+- canonical: Botswana
+  kind: modern
+  aliases: []
+- canonical: Bougainville
+  kind: modern
+  aliases: []
+- canonical: Brazil
+  kind: modern
+  aliases: []
+- canonical: British Empire
+  kind: historical
+  aliases: []
+- canonical: British Guiana
+  kind: modern
+  aliases: []
+- canonical: British India
+  kind: modern
+  aliases: []
+- canonical: British Isles
+  kind: modern
+  aliases: []
+- canonical: British Malaya
+  kind: modern
+  aliases: []
+- canonical: British Mandate Palestine
+  kind: modern
+  aliases: []
+- canonical: British Mandate of Palestine
+  kind: modern
+  aliases: []
+- canonical: British Togoland
+  kind: modern
+  aliases: []
+- canonical: British West Indies
+  kind: modern
+  aliases: []
+- canonical: British colonies in North America
+  kind: modern
+  aliases: []
+- canonical: British colonies in the West Indies
+  kind: modern
+  aliases: []
+- canonical: British state
+  kind: modern
+  aliases: []
+- canonical: British-controlled New York
+  kind: modern
+  aliases: []
+- canonical: Brittany
+  kind: modern
+  aliases: []
+- canonical: Buganda (Uganda)
+  kind: modern
+  aliases: []
+- canonical: Bulgaria
+  kind: modern
+  aliases: []
+- canonical: Burgundy
+  kind: historical
+  aliases: []
+- canonical: Burkina Faso
+  kind: modern
+  aliases: []
+- canonical: Burma
+  kind: modern
+  aliases: []
+- canonical: Burundi
+  kind: modern
+  aliases: []
+- canonical: Buwaihids
+  kind: historical
+  aliases: []
+- canonical: Buwayhids in Iraq
+  kind: historical
+  aliases: []
+- canonical: Byzantine Empire
+  kind: historical
+  aliases: []
+- canonical: Byzantium
+  kind: historical
+  aliases: []
+- canonical: CIS countries
+  kind: modern
+  aliases: []
+- canonical: Cairo
+  kind: modern
+  aliases: []
+- canonical: California
+  kind: modern
+  aliases: []
+- canonical: Cambodia
+  kind: modern
+  aliases: []
+- canonical: Cameroon
+  kind: modern
+  aliases: []
+- canonical: Canada
+  kind: modern
+  aliases: []
+- canonical: Carthage
+  kind: historical
+  aliases: []
+- canonical: Carthaginian Empire
+  kind: historical
+  aliases: []
+- canonical: Carthaginian rule in Spain, Sardinia, Sicily, and finally North Africa
+  kind: historical
+  aliases: []
+- canonical: Castile
+  kind: modern
+  aliases: []
+- canonical: Catalonia
+  kind: modern
+  aliases: []
+- canonical: Caucasus
+  kind: modern
+  aliases: []
+- canonical: Cayman Islands
+  kind: modern
+  aliases: []
+- canonical: Central African Republic
+  kind: modern
+  aliases: []
+- canonical: Central America
+  kind: modern
+  aliases: []
+- canonical: Central American Republic
+  kind: modern
+  aliases: []
+- canonical: Central Asian khanates
+  kind: historical
+  aliases: []
+- canonical: Central Europe
+  kind: modern
+  aliases: []
+- canonical: Central Powers
+  kind: modern
+  aliases: []
+- canonical: Ceylon
+  kind: modern
+  aliases: []
+- canonical: Ceylon (Sri Lanka)
+  kind: modern
+  aliases: []
+- canonical: Chad
+  kind: modern
+  aliases: []
+- canonical: Chaldea
+  kind: historical
+  aliases: []
+- canonical: Channel Islands
+  kind: modern
+  aliases: []
+- canonical: Chechnya
+  kind: modern
+  aliases: []
+- canonical: Chechnya (Republic of Ichkeria)
+  kind: modern
+  aliases: []
+- canonical: Chile
+  kind: modern
+  aliases: []
+- canonical: China
+  kind: modern
+  aliases: []
+- canonical: China (Mughal India)
+  kind: modern
+  aliases: []
+- canonical: China (Republic of China/KMT period)
+  kind: modern
+  aliases: []
+- canonical: China (Republic of China/KMT-era)
+  kind: modern
+  aliases: []
+- canonical: China (Tianlu village)?
+  kind: modern
+  aliases: []
+- canonical: Chinese Empire
+  kind: historical
+  aliases: []
+- canonical: Chios
+  kind: modern
+  aliases: []
+- canonical: Chou
+  kind: historical
+  aliases: []
+- canonical: Christian Europe
+  kind: modern
+  aliases: []
+- canonical: Cilicia
+  kind: modern
+  aliases: []
+- canonical: Classical Greece
+  kind: historical
+  aliases: []
+- canonical: Club of Paris
+  kind: modern
+  aliases: []
+- canonical: Coele-Syria
+  kind: modern
+  aliases: []
+- canonical: Colombia
+  kind: modern
+  aliases: []
+- canonical: Colonial India
+  kind: modern
+  aliases: []
+- canonical: Commonwealth
+  kind: modern
+  aliases: []
+- canonical: Confederate States
+  kind: historical
+  aliases: []
+- canonical: Confederate States of America
+  kind: historical
+  aliases: []
+- canonical: Congo
+  kind: modern
+  aliases: []
+- canonical: Congo Free State
+  kind: historical
+  aliases: []
+- canonical: Congo-Brazzaville
+  kind: modern
+  aliases: []
+- canonical: Continental Europe
+  kind: modern
+  aliases:
+  - continental Europe
+- canonical: Cook Islands
+  kind: modern
+  aliases: []
+- canonical: Corinth
+  kind: historical
+  aliases: []
+- canonical: Cornwall
+  kind: modern
+  aliases: []
+- canonical: Costa Rica
+  kind: modern
+  aliases: []
+- canonical: Council of Europe
+  kind: modern
+  aliases: []
+- canonical: Crete
+  kind: modern
+  aliases: []
+- canonical: Croatia
+  kind: modern
+  aliases: []
+- canonical: Croatia (Krajina)
+  kind: modern
+  aliases: []
+- canonical: Croatia (RSK)
+  kind: modern
+  aliases: []
+- canonical: Crusader states
+  kind: historical
+  aliases: []
+- canonical: Cuba
+  kind: modern
+  aliases: []
+- canonical: Cyprus
+  kind: modern
+  aliases: []
+- canonical: Czech Republic
+  kind: modern
+  aliases: []
+- canonical: Czech lands
+  kind: modern
+  aliases: []
+- canonical: Czechia
+  kind: modern
+  aliases: []
+- canonical: Czechoslovakia
+  kind: historical
+  aliases: []
+- canonical: Côte d'Ivoire
+  kind: modern
+  aliases: []
+- canonical: Dahomey
+  kind: modern
+  aliases: []
+- canonical: Damascus
+  kind: modern
+  aliases: []
+- canonical: Danzig
+  kind: modern
+  aliases: []
+- canonical: Darfur
+  kind: modern
+  aliases: []
+- canonical: Democratic Republic of Congo
+  kind: modern
+  aliases: []
+- canonical: Democratic Republic of the Congo
+  kind: modern
+  aliases: []
+- canonical: Democratic Republic of the Congo (formerly Belgian Congo)
+  kind: modern
+  aliases: []
+- canonical: Denmark
+  kind: modern
+  aliases: []
+- canonical: Dominican Republic
+  kind: modern
+  aliases: []
+- canonical: Dubai
+  kind: modern
+  aliases: []
+- canonical: Duchy of Burgundy
+  kind: historical
+  aliases: []
+- canonical: Dutch East Indies
+  kind: modern
+  aliases: []
+- canonical: Dutch Empire
+  kind: historical
+  aliases: []
+- canonical: Dutch Republic
+  kind: historical
+  aliases: []
+- canonical: EU
+  kind: modern
+  aliases: []
+- canonical: East Africa
+  kind: modern
+  aliases: []
+- canonical: East Asia
+  kind: modern
+  aliases: []
+- canonical: East Asian Little Tigers
+  kind: modern
+  aliases: []
+- canonical: East Central Europe
+  kind: modern
+  aliases: []
+- canonical: East Germany
+  kind: historical
+  aliases: []
+- canonical: East Timor (Timor-Leste)
+  kind: modern
+  aliases: []
+- canonical: East and Southeast Asia
+  kind: modern
+  aliases: []
+- canonical: Eastern Europe
+  kind: modern
+  aliases: []
+- canonical: Eastern Roman Empire
+  kind: historical
+  aliases: []
+- canonical: Ebla
+  kind: historical
+  aliases: []
+- canonical: Ecuador
+  kind: modern
+  aliases: []
+- canonical: Egypt
+  kind: modern
+  aliases: []
+- canonical: El Salvador
+  kind: modern
+  aliases: []
+- canonical: Elam
+  kind: historical
+  aliases: []
+- canonical: England and Wales
+  kind: modern
+  aliases: []
+- canonical: Entente
+  kind: modern
+  aliases: []
+- canonical: Eritrea
+  kind: modern
+  aliases: []
+- canonical: Estonia
+  kind: modern
+  aliases: []
+- canonical: Ethiopia
+  kind: modern
+  aliases: []
+- canonical: Ethiopian Empire
+  kind: historical
+  aliases: []
+- canonical: Etruria
+  kind: historical
+  aliases: []
+- canonical: Etruscans
+  kind: historical
+  aliases: []
+- canonical: Eurasia
+  kind: modern
+  aliases: []
+- canonical: Europe
+  kind: modern
+  aliases: []
+- canonical: European Economic Community (EEC)
+  kind: modern
+  aliases: []
+- canonical: European Jewry
+  kind: modern
+  aliases: []
+- canonical: European Union
+  kind: modern
+  aliases: []
+- canonical: European Union (EU)
+  kind: modern
+  aliases: []
+- canonical: European countries
+  kind: modern
+  aliases: []
+- canonical: European imperial powers
+  kind: modern
+  aliases: []
+- canonical: European states
+  kind: modern
+  aliases: []
+- canonical: FRY (Serbia and Montenegro)
+  kind: modern
+  aliases: []
+- canonical: Falklands War
+  kind: modern
+  aliases: []
+- canonical: Faroe Islands
+  kind: modern
+  aliases: []
+- canonical: Fatimids in Egypt
+  kind: modern
+  aliases: []
+- canonical: Federal Republic of Yugoslavia
+  kind: historical
+  aliases: []
+- canonical: Federation of Bosnia and Hercegovina
+  kind: modern
+  aliases: []
+- canonical: Federation of Bosnia and Herzegovina
+  kind: modern
+  aliases: []
+- canonical: Federation of Bosnia and Herzegovina (FBiH)
+  kind: modern
+  aliases: []
+- canonical: Fertile Crescent
+  kind: modern
+  aliases: []
+- canonical: Finland
+  kind: modern
+  aliases: []
+- canonical: Flanders
+  kind: modern
+  aliases: []
+- canonical: Flemish towns
+  kind: modern
+  aliases: []
+- canonical: Florence
+  kind: modern
+  aliases: []
+- canonical: Former Yugoslavia
+  kind: historical
+  aliases:
+  - ex-Yougoslavie
+  - former Yugoslavia
+- canonical: France
+  kind: modern
+  aliases: []
+- canonical: France (Kingdom of France)
+  kind: modern
+  aliases: []
+- canonical: France (Napoleonic Empire)
+  kind: modern
+  aliases: []
+- canonical: France (Vendée)
+  kind: modern
+  aliases: []
+- canonical: France (mandate power)
+  kind: modern
+  aliases: []
+- canonical: Franks
+  kind: historical
+  aliases: []
+- canonical: Free City of Danzig
+  kind: historical
+  aliases: []
+- canonical: Free France
+  kind: historical
+  aliases: []
+- canonical: French Cameroon
+  kind: modern
+  aliases: []
+- canonical: French Empire
+  kind: historical
+  aliases: []
+- canonical: French Indochina
+  kind: modern
+  aliases: []
+- canonical: French Mandate for Syria
+  kind: modern
+  aliases: []
+- canonical: French Mandate for Syria and the Lebanon
+  kind: modern
+  aliases: []
+- canonical: French Mandate of Lebanon
+  kind: modern
+  aliases: []
+- canonical: French Mandate of Syria
+  kind: modern
+  aliases: []
+- canonical: French Syria and Lebanon
+  kind: modern
+  aliases: []
+- canonical: French West Africa
+  kind: modern
+  aliases: []
+- canonical: French mandate Syria
+  kind: modern
+  aliases: []
+- canonical: French-Canadians
+  kind: modern
+  aliases: []
+- canonical: GCC countries
+  kind: modern
+  aliases: []
+- canonical: Gagauzia
+  kind: modern
+  aliases: []
+- canonical: Gaugazia
+  kind: modern
+  aliases: []
+- canonical: Gaul
+  kind: modern
+  aliases: []
+- canonical: Gaza
+  kind: modern
+  aliases: []
+- canonical: Gaza Strip
+  kind: modern
+  aliases: []
+- canonical: Geographic Syria
+  kind: modern
+  aliases: []
+- canonical: Georgia
+  kind: modern
+  aliases: []
+- canonical: German Empire
+  kind: historical
+  aliases: []
+- canonical: German-occupied Soviet Union
+  kind: modern
+  aliases: []
+- canonical: German-occupied Soviet territories
+  kind: modern
+  aliases: []
+- canonical: Germans
+  kind: modern
+  aliases: []
+- canonical: Germany
+  kind: modern
+  aliases: []
+- canonical: Germany (GDR and FRG)
+  kind: modern
+  aliases: []
+- canonical: Ghana
+  kind: modern
+  aliases: []
+- canonical: Gibraltar
+  kind: modern
+  aliases: []
+- canonical: Goa
+  kind: modern
+  aliases: []
+- canonical: Gold Coast
+  kind: modern
+  aliases: []
+- canonical: Gold Coast (Ghana)
+  kind: modern
+  aliases: []
+- canonical: Goths
+  kind: historical
+  aliases: []
+- canonical: Gran Colombia
+  kind: modern
+  aliases: []
+- canonical: Granada
+  kind: modern
+  aliases: []
+- canonical: Greater Lebanon
+  kind: modern
+  aliases: []
+- canonical: Greater Syria
+  kind: modern
+  aliases: []
+- canonical: Greater Syria (Ottoman Empire)
+  kind: modern
+  aliases: []
+- canonical: Greater Syria (Ottoman Empire, later attempts at independence)
+  kind: modern
+  aliases: []
+- canonical: Greater Syria (Syria and Lebanon)
+  kind: modern
+  aliases: []
+- canonical: Greater Syria (geographical Syria)
+  kind: modern
+  aliases: []
+- canonical: Greater Syria (historical Syria, including Palestine)
+  kind: modern
+  aliases: []
+- canonical: Greater Syria (historical region encompassing modern Syria, Lebanon, Palestine,
+    Jordan, and Alexandretta)
+  kind: modern
+  aliases: []
+- canonical: Greater Syria/Ottoman Empire
+  kind: modern
+  aliases: []
+- canonical: Greece
+  kind: modern
+  aliases: []
+- canonical: Greece (Argolid)
+  kind: modern
+  aliases: []
+- canonical: Greece (under Axis occupation)
+  kind: modern
+  aliases: []
+- canonical: Greek city-states
+  kind: historical
+  aliases: []
+- canonical: Greek city-states of Asia Minor
+  kind: historical
+  aliases: []
+- canonical: Greek polis (mainland Greece)
+  kind: historical
+  aliases: []
+- canonical: Grenada
+  kind: modern
+  aliases: []
+- canonical: Guam
+  kind: modern
+  aliases: []
+- canonical: Guatemala
+  kind: modern
+  aliases: []
+- canonical: Guinea
+  kind: modern
+  aliases: []
+- canonical: Guinea Bissau
+  kind: modern
+  aliases: []
+- canonical: Guinea-Bissau
+  kind: modern
+  aliases: []
+- canonical: Gulf
+  kind: modern
+  aliases: []
+- canonical: Gulf Arab states
+  kind: modern
+  aliases: []
+- canonical: Gulf Cooperation Council
+  kind: modern
+  aliases: []
+- canonical: Gulf Cooperation Council (GCC)
+  kind: modern
+  aliases: []
+- canonical: Gulf Cooperation Council countries
+  kind: modern
+  aliases: []
+- canonical: Gulf countries
+  kind: modern
+  aliases: []
+- canonical: Gulf oil countries
+  kind: modern
+  aliases: []
+- canonical: Gulf states
+  kind: modern
+  aliases: []
+- canonical: Guyana
+  kind: modern
+  aliases: []
+- canonical: Habsburg Empire
+  kind: historical
+  aliases: []
+- canonical: Habsburg Spain
+  kind: historical
+  aliases: []
+- canonical: Haiti
+  kind: modern
+  aliases: []
+- canonical: Halep
+  kind: modern
+  aliases: []
+- canonical: Hanoverian England (Great Britain)
+  kind: modern
+  aliases: []
+- canonical: Hashemite Arab Kingdom
+  kind: historical
+  aliases: []
+- canonical: Hashemite Kingdom of Hejaz
+  kind: historical
+  aliases: []
+- canonical: Hashemite Kingdom of Hejaz / Arab Revolt territories
+  kind: historical
+  aliases: []
+- canonical: Hashemite Kingdom of Syria
+  kind: historical
+  aliases: []
+- canonical: Hashemites
+  kind: historical
+  aliases: []
+- canonical: Hawaii
+  kind: modern
+  aliases: []
+- canonical: Hawran
+  kind: modern
+  aliases: []
+- canonical: Hejaz / Arab territories (Ottoman Empire)
+  kind: modern
+  aliases: []
+- canonical: Hijaz
+  kind: historical
+  aliases:
+  - Al-Hijaz
+  - Hedjaz
+  - Hejaz
+- canonical: Hijaz (Ottoman Empire)
+  kind: modern
+  aliases: []
+- canonical: Hittites
+  kind: historical
+  aliases: []
+- canonical: Holland
+  kind: modern
+  aliases: []
+- canonical: Holy Roman Empire
+  kind: historical
+  aliases: []
+- canonical: Honduras
+  kind: modern
+  aliases: []
+- canonical: Hong Kong
+  kind: modern
+  aliases: []
+- canonical: Host countries (PLO)
+  kind: modern
+  aliases: []
+- canonical: Hungary
+  kind: modern
+  aliases: []
+- canonical: Hurrians
+  kind: historical
+  aliases: []
+- canonical: Hyksos
+  kind: historical
+  aliases: []
+- canonical: Hüdavendigar
+  kind: modern
+  aliases: []
+- canonical: Iberia
+  kind: modern
+  aliases: []
+- canonical: Idumea
+  kind: modern
+  aliases: []
+- canonical: Imperial China
+  kind: modern
+  aliases: []
+- canonical: Imperial Russia
+  kind: modern
+  aliases: []
+- canonical: Inca Empire
+  kind: historical
+  aliases: []
+- canonical: Independent State of Croatia
+  kind: historical
+  aliases: []
+- canonical: India
+  kind: modern
+  aliases: []
+- canonical: India (Mughal Empire)
+  kind: modern
+  aliases: []
+- canonical: Indian subcontinent
+  kind: modern
+  aliases: []
+- canonical: Indochina
+  kind: modern
+  aliases: []
+- canonical: Indochina (Vietnam)
+  kind: modern
+  aliases: []
+- canonical: Indonesia
+  kind: modern
+  aliases: []
+- canonical: Indus Valley
+  kind: modern
+  aliases: []
+- canonical: Indus Valley Civilization
+  kind: modern
+  aliases:
+  - Indus Valley civilization
+- canonical: International Criminal Tribunal for the former Yugoslavia
+  kind: modern
+  aliases: []
+- canonical: International Monetary Fund
+  kind: modern
+  aliases: []
+- canonical: Iran
+  kind: modern
+  aliases: []
+- canonical: Iranian state
+  kind: modern
+  aliases: []
+- canonical: Iraq
+  kind: modern
+  aliases: []
+- canonical: Iraqi Kurdistan
+  kind: modern
+  aliases: []
+- canonical: Ireland
+  kind: modern
+  aliases: []
+- canonical: Islamic Caliphate
+  kind: historical
+  aliases: []
+- canonical: Islamic Conference Organization
+  kind: modern
+  aliases: []
+- canonical: Islamic Empire
+  kind: historical
+  aliases: []
+- canonical: Islamic lands
+  kind: modern
+  aliases: []
+- canonical: Isle of Man
+  kind: modern
+  aliases: []
+- canonical: Israel
+  kind: modern
+  aliases: []
+- canonical: Istanbul
+  kind: modern
+  aliases: []
+- canonical: Italy
+  kind: modern
+  aliases: []
+- canonical: Italy/Calabria
+  kind: modern
+  aliases: []
+- canonical: Ivory Coast
+  kind: modern
+  aliases: []
+- canonical: Jabal Druze
+  kind: modern
+  aliases: []
+- canonical: Japan
+  kind: modern
+  aliases: []
+- canonical: Japanese Empire
+  kind: modern
+  aliases: []
+- canonical: Jerusalem
+  kind: modern
+  aliases: []
+- canonical: Jews
+  kind: modern
+  aliases: []
+- canonical: Jordan
+  kind: modern
+  aliases: []
+- canonical: Karabakh
+  kind: modern
+  aliases: []
+- canonical: Kashmir
+  kind: modern
+  aliases: []
+- canonical: Kassite Babylonia
+  kind: historical
+  aliases: []
+- canonical: Kassites
+  kind: historical
+  aliases: []
+- canonical: Katanga
+  kind: modern
+  aliases: []
+- canonical: Kazakhstan
+  kind: modern
+  aliases: []
+- canonical: Kenya
+  kind: modern
+  aliases: []
+- canonical: Kingdom of Egypt
+  kind: historical
+  aliases: []
+- canonical: Kingdom of Saudi Arabia
+  kind: modern
+  aliases: []
+- canonical: Kingdom of the Hedjaz
+  kind: historical
+  aliases: []
+- canonical: Korea
+  kind: modern
+  aliases: []
+- canonical: Korea (Japanese protectorate/colonial Korea)
+  kind: modern
+  aliases: []
+- canonical: Korea (colonial period)
+  kind: modern
+  aliases: []
+- canonical: Kosovo
+  kind: modern
+  aliases: []
+- canonical: Kosovo (under UNMIK administration)
+  kind: modern
+  aliases: []
+- canonical: Krajina
+  kind: modern
+  aliases: []
+- canonical: Kurdistan
+  kind: modern
+  aliases: []
+- canonical: Kurdistan Region
+  kind: modern
+  aliases: []
+- canonical: Kurdistan Region of Iraq
+  kind: modern
+  aliases: []
+- canonical: Kurdistan Regional Government
+  kind: modern
+  aliases: []
+- canonical: Kurds
+  kind: modern
+  aliases: []
+- canonical: Kuwait
+  kind: modern
+  aliases: []
+- canonical: Kyoto
+  kind: modern
+  aliases: []
+- canonical: Kyrgyzstan
+  kind: modern
+  aliases: []
+- canonical: Lagash
+  kind: modern
+  aliases: []
+- canonical: Languedoc
+  kind: modern
+  aliases: []
+- canonical: Laos
+  kind: modern
+  aliases: []
+- canonical: Latin America
+  kind: modern
+  aliases: []
+- canonical: Latin American countries
+  kind: modern
+  aliases: []
+- canonical: Latin American polities
+  kind: modern
+  aliases: []
+- canonical: Latin American republics
+  kind: modern
+  aliases: []
+- canonical: Latin Christendom
+  kind: modern
+  aliases: []
+- canonical: Latvia
+  kind: modern
+  aliases: []
+- canonical: League of Nations
+  kind: modern
+  aliases: []
+- canonical: League of Nations (interwar Europe)
+  kind: modern
+  aliases: []
+- canonical: Lebanon
+  kind: modern
+  aliases: []
+- canonical: Lebanon (Beirut, Ottoman Syria)
+  kind: modern
+  aliases: []
+- canonical: Lebanon (French Mandate)
+  kind: modern
+  aliases: []
+- canonical: Lebanon (Mount Lebanon / Beirut, Ottoman Syria)
+  kind: modern
+  aliases: []
+- canonical: Lebanon (Mount Lebanon)
+  kind: modern
+  aliases: []
+- canonical: Lebanon (Ottoman Empire)
+  kind: modern
+  aliases: []
+- canonical: Lebanon (historical Greater Syria)
+  kind: modern
+  aliases: []
+- canonical: Lebanon (under French Mandate)
+  kind: modern
+  aliases: []
+- canonical: Lebanon/Ottoman Syria
+  kind: modern
+  aliases: []
+- canonical: Lebanon/Syria (historical Greater Syria)
+  kind: modern
+  aliases: []
+- canonical: Levant
+  kind: modern
+  aliases: []
+- canonical: Levant (French mandate)
+  kind: modern
+  aliases: []
+- canonical: Liberia
+  kind: modern
+  aliases: []
+- canonical: Libya
+  kind: modern
+  aliases: []
+- canonical: Lithuania
+  kind: modern
+  aliases: []
+- canonical: Livland
+  kind: modern
+  aliases: []
+- canonical: Lucca
+  kind: modern
+  aliases: []
+- canonical: Luxembourg
+  kind: modern
+  aliases: []
+- canonical: Lydia
+  kind: modern
+  aliases: []
+- canonical: MESC
+  kind: modern
+  aliases: []
+- canonical: Macedon
+  kind: historical
+  aliases: []
+- canonical: Macedonia
+  kind: modern
+  aliases: []
+- canonical: Macedonia (region)
+  kind: modern
+  aliases: []
+- canonical: Macedonian Empire
+  kind: historical
+  aliases: []
+- canonical: Macedonian kingdom
+  kind: historical
+  aliases: []
+- canonical: Madagascar
+  kind: modern
+  aliases: []
+- canonical: Maghrib
+  kind: modern
+  aliases: []
+- canonical: Mahdist Empire
+  kind: historical
+  aliases: []
+- canonical: Malaya
+  kind: modern
+  aliases: []
+- canonical: Malaysia
+  kind: modern
+  aliases: []
+- canonical: Mali
+  kind: modern
+  aliases: []
+- canonical: Malta
+  kind: modern
+  aliases: []
+- canonical: Mamluk Sultanate
+  kind: historical
+  aliases: []
+- canonical: Mamluks
+  kind: historical
+  aliases: []
+- canonical: Managua
+  kind: modern
+  aliases: []
+- canonical: Manchukuo
+  kind: historical
+  aliases: []
+- canonical: Manchuria
+  kind: modern
+  aliases: []
+- canonical: Maratha State
+  kind: modern
+  aliases: []
+- canonical: Mashriq
+  kind: modern
+  aliases: []
+- canonical: Mauritania
+  kind: modern
+  aliases: []
+- canonical: Maya
+  kind: modern
+  aliases: []
+- canonical: Mecca
+  kind: modern
+  aliases: []
+- canonical: Medes
+  kind: historical
+  aliases: []
+- canonical: Media
+  kind: historical
+  aliases: []
+- canonical: Mercosur countries
+  kind: modern
+  aliases: []
+- canonical: Mesoamerica
+  kind: modern
+  aliases: []
+- canonical: Mesoamerica Aztec
+  kind: modern
+  aliases: []
+- canonical: Mesopotamia
+  kind: modern
+  aliases: []
+- canonical: Mexico
+  kind: modern
+  aliases: []
+- canonical: Middle East
+  kind: modern
+  aliases: []
+- canonical: Middle East (broadly)
+  kind: modern
+  aliases: []
+- canonical: Middle East (general)
+  kind: modern
+  aliases: []
+- canonical: Middle East Arab States
+  kind: modern
+  aliases: []
+- canonical: Middle East and North Africa
+  kind: modern
+  aliases: []
+- canonical: Minoan Crete
+  kind: historical
+  aliases: []
+- canonical: Missouri
+  kind: modern
+  aliases: []
+- canonical: Mitanni
+  kind: historical
+  aliases: []
+- canonical: Moldova
+  kind: modern
+  aliases: []
+- canonical: Monaco
+  kind: modern
+  aliases: []
+- canonical: Mongolia
+  kind: modern
+  aliases: []
+- canonical: Montenegro
+  kind: modern
+  aliases: []
+- canonical: Morocco
+  kind: modern
+  aliases: []
+- canonical: Mount Lebanon
+  kind: modern
+  aliases: []
+- canonical: Mozambique
+  kind: modern
+  aliases: []
+- canonical: Mughal Empire
+  kind: historical
+  aliases:
+  - Mogul Empire
+- canonical: Muscat
+  kind: modern
+  aliases: []
+- canonical: Muslim countries
+  kind: modern
+  aliases: []
+- canonical: Myanmar
+  kind: modern
+  aliases: []
+- canonical: Mycenae
+  kind: historical
+  aliases: []
+- canonical: NATO
+  kind: modern
+  aliases: []
+- canonical: Nagorno Karabakh Republic
+  kind: modern
+  aliases: []
+- canonical: Nagorno-Karabakh
+  kind: modern
+  aliases:
+  - Nagorno Karabakh
+- canonical: Nagorno-Karabakh (NKR)
+  kind: modern
+  aliases: []
+- canonical: Nagorno-Karabakh (again)
+  kind: modern
+  aliases: []
+- canonical: Nagorno-Karabakh Republic
+  kind: modern
+  aliases: []
+- canonical: Najd
+  kind: modern
+  aliases: []
+- canonical: Nakhichevan
+  kind: modern
+  aliases: []
+- canonical: Namibia
+  kind: modern
+  aliases: []
+- canonical: Naples
+  kind: modern
+  aliases: []
+- canonical: Natal
+  kind: modern
+  aliases: []
+- canonical: Nationalist China
+  kind: modern
+  aliases: []
+- canonical: Nauru
+  kind: modern
+  aliases: []
+- canonical: Nazi Germany
+  kind: historical
+  aliases: []
+- canonical: Nazi-occupied Poland
+  kind: modern
+  aliases: []
+- canonical: Nazi-occupied Ukraine
+  kind: modern
+  aliases: []
+- canonical: Near East
+  kind: modern
+  aliases: []
+- canonical: Near Eastern states
+  kind: modern
+  aliases: []
+- canonical: Nejd
+  kind: modern
+  aliases: []
+- canonical: Nepal
+  kind: modern
+  aliases: []
+- canonical: Netherlands
+  kind: modern
+  aliases: []
+- canonical: New England
+  kind: modern
+  aliases: []
+- canonical: New York City
+  kind: modern
+  aliases: []
+- canonical: New Zealand
+  kind: modern
+  aliases: []
+- canonical: Nicaragua
+  kind: modern
+  aliases: []
+- canonical: Nigeria
+  kind: modern
+  aliases: []
+- canonical: Non-Aligned Movement
+  kind: modern
+  aliases: []
+- canonical: Nordic countries
+  kind: modern
+  aliases: []
+- canonical: Normandy
+  kind: modern
+  aliases: []
+- canonical: North Africa
+  kind: modern
+  aliases: []
+- canonical: North America
+  kind: modern
+  aliases: []
+- canonical: North Carolina
+  kind: modern
+  aliases: []
+- canonical: North Carolina (United States)
+  kind: modern
+  aliases: []
+- canonical: North China
+  kind: modern
+  aliases: []
+- canonical: North Korea
+  kind: modern
+  aliases: []
+- canonical: North Yemen
+  kind: modern
+  aliases: []
+- canonical: Northern Cyprus
+  kind: modern
+  aliases: []
+- canonical: Northern Territories
+  kind: modern
+  aliases: []
+- canonical: Norway
+  kind: modern
+  aliases: []
+- canonical: Nottingham
+  kind: modern
+  aliases: []
+- canonical: OAU
+  kind: modern
+  aliases: []
+- canonical: OECD
+  kind: modern
+  aliases: []
+- canonical: Occupied Palestinian Territories
+  kind: modern
+  aliases: []
+- canonical: Oman
+  kind: modern
+  aliases: []
+- canonical: Order of Malta
+  kind: modern
+  aliases: []
+- canonical: Organization of African Unity
+  kind: modern
+  aliases: []
+- canonical: Organization of African Unity (OAU)
+  kind: modern
+  aliases: []
+- canonical: Ottoman Empire
+  kind: historical
+  aliases:
+  - Ottoman empire
+- canonical: Ottoman Empire (Arab provinces)
+  kind: modern
+  aliases: []
+- canonical: Ottoman Empire (Damascus Eyalet)
+  kind: modern
+  aliases: []
+- canonical: Ottoman Empire (Greater Syria)
+  kind: modern
+  aliases: []
+- canonical: Ottoman Empire (Greater Syria, Beirut)
+  kind: modern
+  aliases: []
+- canonical: Ottoman Empire (Jabal al-Druze, Syria)
+  kind: modern
+  aliases: []
+- canonical: Ottoman Empire (Syria region)
+  kind: modern
+  aliases: []
+- canonical: Ottoman Empire (Syria)
+  kind: modern
+  aliases: []
+- canonical: Ottoman Empire (Transjordan)
+  kind: modern
+  aliases: []
+- canonical: Ottoman Empire / Syria (Jabal Druze)
+  kind: modern
+  aliases: []
+- canonical: Ottoman Empire / Syria / Egypt (historical context of Rashid Rida's activism)
+  kind: modern
+  aliases: []
+- canonical: Ottoman Empire / post-Ottoman Levant (Anatolia, Syria)
+  kind: modern
+  aliases: []
+- canonical: Ottoman Syria
+  kind: modern
+  aliases: []
+- canonical: Ottoman Transjordan
+  kind: modern
+  aliases: []
+- canonical: Ottoman Turkey
+  kind: modern
+  aliases: []
+- canonical: PLO
+  kind: modern
+  aliases: []
+- canonical: PLO (Palestine Liberation Organization)
+  kind: modern
+  aliases: []
+- canonical: Pakistan
+  kind: modern
+  aliases: []
+- canonical: Palestine
+  kind: modern
+  aliases: []
+- canonical: Palestine (British Mandate)
+  kind: modern
+  aliases: []
+- canonical: Palestine (PLO)
+  kind: modern
+  aliases: []
+- canonical: Palestine (West Bank and Gaza Strip)
+  kind: modern
+  aliases: []
+- canonical: Palestine (historical Palestine, including areas of Israel, West Bank, and Gaza)
+  kind: modern
+  aliases: []
+- canonical: Palestine (historical region and Palestinian national movement)
+  kind: modern
+  aliases: []
+- canonical: Palestine Authority
+  kind: modern
+  aliases: []
+- canonical: Palestine Liberation Organization
+  kind: modern
+  aliases: []
+- canonical: Palestine Liberation Organization (PLO)
+  kind: modern
+  aliases: []
+- canonical: Palestine Liberation Organization (PLO)/Palestine
+  kind: modern
+  aliases: []
+- canonical: Palestinian Authority
+  kind: modern
+  aliases: []
+- canonical: Palestinian Gaza
+  kind: modern
+  aliases: []
+- canonical: Palestinian Liberation Organization
+  kind: modern
+  aliases: []
+- canonical: Palestinian Liberation Organization (PLO)
+  kind: modern
+  aliases: []
+- canonical: Palestinians
+  kind: modern
+  aliases: []
+- canonical: Panama
+  kind: modern
+  aliases: []
+- canonical: Papal State
+  kind: historical
+  aliases: []
+- canonical: Papua New Guinea
+  kind: modern
+  aliases: []
+- canonical: Paraguay
+  kind: modern
+  aliases: []
+- canonical: Parthia
+  kind: historical
+  aliases: []
+- canonical: Parthian Empire
+  kind: historical
+  aliases: []
+- canonical: Pavia
+  kind: modern
+  aliases: []
+- canonical: Peloponnese
+  kind: historical
+  aliases: []
+- canonical: People's Democratic Republic of Yemen
+  kind: modern
+  aliases: []
+- canonical: People's Republic of China
+  kind: modern
+  aliases: []
+- canonical: Pergamum
+  kind: historical
+  aliases: []
+- canonical: Persia
+  kind: modern
+  aliases: []
+- canonical: Persian Empire
+  kind: historical
+  aliases:
+  - Persian empire
+- canonical: Persians
+  kind: historical
+  aliases: []
+- canonical: Peru
+  kind: modern
+  aliases: []
+- canonical: Philippines
+  kind: modern
+  aliases: []
+- canonical: Phoenicia
+  kind: historical
+  aliases: []
+- canonical: Phrygia
+  kind: historical
+  aliases: []
+- canonical: Poland
+  kind: modern
+  aliases: []
+- canonical: Poland (occupied)
+  kind: modern
+  aliases: []
+- canonical: Portugal
+  kind: modern
+  aliases: []
+- canonical: Portuguese Africa
+  kind: modern
+  aliases: []
+- canonical: Pridnestrovie
+  kind: modern
+  aliases: []
+- canonical: Prussia
+  kind: historical
+  aliases: []
+- canonical: Prussia/Germany
+  kind: modern
+  aliases: []
+- canonical: Ptolemaic Egypt
+  kind: historical
+  aliases: []
+- canonical: Puerto Rico
+  kind: modern
+  aliases: []
+- canonical: Puntland
+  kind: modern
+  aliases: []
+- canonical: Qatar
+  kind: modern
+  aliases: []
+- canonical: Qawasim clan
+  kind: modern
+  aliases: []
+- canonical: Quebec
+  kind: modern
+  aliases: []
+- canonical: Ras al-Khaimah
+  kind: modern
+  aliases: []
+- canonical: Renaissance France
+  kind: modern
+  aliases: []
+- canonical: Republic of Biafra
+  kind: modern
+  aliases: []
+- canonical: Republic of Korea
+  kind: modern
+  aliases: []
+- canonical: Republic of Macedonia
+  kind: modern
+  aliases: []
+- canonical: Republic of Serbian Krajina (RSK)
+  kind: modern
+  aliases: []
+- canonical: Republic of Srpska Krajina
+  kind: modern
+  aliases: []
+- canonical: Republic of Vietnam
+  kind: historical
+  aliases: []
+- canonical: Republic of Vietnam (South Vietnam)
+  kind: historical
+  aliases: []
+- canonical: Republica Srpska Krajina
+  kind: modern
+  aliases: []
+- canonical: Republika Srpska
+  kind: modern
+  aliases: []
+- canonical: Republika Srpska (Bosnia)
+  kind: modern
+  aliases: []
+- canonical: Republika Srpska (RS)
+  kind: modern
+  aliases: []
+- canonical: Republika Srpska Krajina
+  kind: modern
+  aliases: []
+- canonical: Republika Srpska Krajina (Croatian Krajina)
+  kind: modern
+  aliases: []
+- canonical: Rhodesia
+  kind: modern
+  aliases: []
+- canonical: Rhodesia (Zimbabwe)
+  kind: modern
+  aliases: []
+- canonical: Rhodesia/Zimbabwe
+  kind: modern
+  aliases: []
+- canonical: Roman Empire
+  kind: historical
+  aliases: []
+- canonical: Roman Republic
+  kind: historical
+  aliases: []
+- canonical: Roman Republic / Roman Empire
+  kind: historical
+  aliases: []
+- canonical: Roman Republic/Empire
+  kind: historical
+  aliases: []
+- canonical: Roman Syria
+  kind: modern
+  aliases: []
+- canonical: Romania
+  kind: modern
+  aliases: []
+- canonical: Romanov Empire
+  kind: historical
+  aliases: []
+- canonical: Rome
+  kind: historical
+  aliases: []
+- canonical: Rome (Roman Empire)
+  kind: modern
+  aliases: []
+- canonical: Rome (Roman Republic)
+  kind: modern
+  aliases: []
+- canonical: Rumania
+  kind: modern
+  aliases: []
+- canonical: Russia
+  kind: modern
+  aliases: []
+- canonical: Russia (Soviet Union under German occupation)
+  kind: modern
+  aliases: []
+- canonical: Russian Empire
+  kind: modern
+  aliases: []
+- canonical: Russian Federation
+  kind: modern
+  aliases: []
+- canonical: Russian Turkestan
+  kind: modern
+  aliases: []
+- canonical: Rwanda
+  kind: modern
+  aliases: []
+- canonical: Saar
+  kind: modern
+  aliases: []
+- canonical: Saar basin
+  kind: modern
+  aliases: []
+- canonical: Safavid Empire
+  kind: historical
+  aliases: []
+- canonical: Safavid Iran
+  kind: historical
+  aliases: []
+- canonical: Salonica
+  kind: modern
+  aliases: []
+- canonical: San Marino
+  kind: modern
+  aliases: []
+- canonical: Sanjak of Alexandretta
+  kind: modern
+  aliases: []
+- canonical: Sarajevo
+  kind: modern
+  aliases: []
+- canonical: Sassanid Empire
+  kind: historical
+  aliases: []
+- canonical: Saudi Arabia
+  kind: modern
+  aliases: []
+- canonical: Saxony
+  kind: historical
+  aliases: []
+- canonical: Scandinavia
+  kind: modern
+  aliases: []
+- canonical: Scandinavian countries
+  kind: modern
+  aliases: []
+- canonical: Scythians
+  kind: historical
+  aliases: []
+- canonical: Seljuks
+  kind: historical
+  aliases: []
+- canonical: Senegal
+  kind: modern
+  aliases: []
+- canonical: Serbia
+  kind: modern
+  aliases: []
+- canonical: Serbia (Belgrade)
+  kind: modern
+  aliases: []
+- canonical: Serbia (Yugoslavia)
+  kind: modern
+  aliases: []
+- canonical: Serbia (including RSK)
+  kind: modern
+  aliases: []
+- canonical: Serbia and Montenegro
+  kind: modern
+  aliases: []
+- canonical: Serbian Krajina
+  kind: modern
+  aliases: []
+- canonical: Seychelles
+  kind: modern
+  aliases: []
+- canonical: Shang
+  kind: modern
+  aliases: []
+- canonical: Sharjah
+  kind: modern
+  aliases: []
+- canonical: Siam
+  kind: modern
+  aliases: []
+- canonical: Sicily
+  kind: modern
+  aliases: []
+- canonical: Siena
+  kind: modern
+  aliases: []
+- canonical: Sierra Leone
+  kind: modern
+  aliases: []
+- canonical: Sinai
+  kind: modern
+  aliases: []
+- canonical: Singapore
+  kind: modern
+  aliases: []
+- canonical: Slovakia
+  kind: modern
+  aliases: []
+- canonical: Slovenia
+  kind: modern
+  aliases: []
+- canonical: Socialist Federal Republic of Yugoslavia
+  kind: historical
+  aliases: []
+- canonical: Sokoto Caliphate
+  kind: historical
+  aliases: []
+- canonical: Sokoto Empire
+  kind: historical
+  aliases: []
+- canonical: Somalia
+  kind: modern
+  aliases: []
+- canonical: Somaliland
+  kind: modern
+  aliases: []
+- canonical: Songhai
+  kind: historical
+  aliases: []
+- canonical: South Africa
+  kind: modern
+  aliases: []
+- canonical: South America
+  kind: modern
+  aliases: []
+- canonical: South Asia
+  kind: modern
+  aliases: []
+- canonical: South Carolina
+  kind: modern
+  aliases: []
+- canonical: South Caucasus
+  kind: modern
+  aliases: []
+- canonical: South Korea
+  kind: modern
+  aliases: []
+- canonical: South Lebanon
+  kind: modern
+  aliases: []
+- canonical: South Ossetia
+  kind: modern
+  aliases: []
+- canonical: South Sudan
+  kind: modern
+  aliases: []
+- canonical: South Vietnam
+  kind: modern
+  aliases: []
+- canonical: South West Africa
+  kind: modern
+  aliases: []
+- canonical: South Yemen
+  kind: modern
+  aliases: []
+- canonical: South and Central America
+  kind: modern
+  aliases: []
+- canonical: Southeast Asia
+  kind: modern
+  aliases: []
+- canonical: Southern Africa
+  kind: modern
+  aliases: []
+- canonical: Southern Europe
+  kind: modern
+  aliases: []
+- canonical: Southern Syria
+  kind: modern
+  aliases: []
+- canonical: Soviet Russia
+  kind: modern
+  aliases: []
+- canonical: Soviet Union
+  kind: modern
+  aliases:
+  - USSR
+- canonical: Soviet Union (German-occupied)
+  kind: modern
+  aliases: []
+- canonical: Soviet bloc
+  kind: modern
+  aliases: []
+- canonical: Spain
+  kind: modern
+  aliases: []
+- canonical: Spanish Empire
+  kind: modern
+  aliases: []
+- canonical: Sparta
+  kind: historical
+  aliases: []
+- canonical: Sri Lanka
+  kind: modern
+  aliases: []
+- canonical: Sri Lanka (Tamil Eelam)
+  kind: modern
+  aliases: []
+- canonical: Sub-Saharan Africa
+  kind: modern
+  aliases:
+  - sub-Saharan Africa
+- canonical: Sudan
+  kind: modern
+  aliases: []
+- canonical: Sumer
+  kind: historical
+  aliases: []
+- canonical: Sumerian city-states
+  kind: historical
+  aliases: []
+- canonical: Sweden
+  kind: modern
+  aliases: []
+- canonical: Swiss Confederacy
+  kind: modern
+  aliases: []
+- canonical: Swiss Kantons
+  kind: modern
+  aliases: []
+- canonical: Switzerland
+  kind: modern
+  aliases: []
+- canonical: Syria
+  kind: modern
+  aliases: []
+- canonical: Syria (Bilad al-Sham)
+  kind: modern
+  aliases: []
+- canonical: Syria (Damascus)
+  kind: modern
+  aliases: []
+- canonical: Syria (Damascus, under French Mandate)
+  kind: modern
+  aliases: []
+- canonical: Syria (Faysali Syria)
+  kind: modern
+  aliases: []
+- canonical: Syria (French Mandate of Syria)
+  kind: modern
+  aliases: []
+- canonical: Syria (French Mandate)
+  kind: modern
+  aliases: []
+- canonical: Syria (Lebanon/Ottoman Empire)
+  kind: modern
+  aliases: []
+- canonical: Syria (Ottoman Empire)
+  kind: modern
+  aliases: []
+- canonical: Syria (Ottoman Syria / Bilad al-Sham)
+  kind: modern
+  aliases: []
+- canonical: Syria (al-Sham / Ottoman Syria)
+  kind: modern
+  aliases: []
+- canonical: Syria (al-Sham)
+  kind: modern
+  aliases: []
+- canonical: Syria (historical region including Mount Lebanon)
+  kind: modern
+  aliases: []
+- canonical: Syria (historical region, Bilad al-Sham)
+  kind: modern
+  aliases: []
+- canonical: Syria (under Faysal's Hashemite rule)
+  kind: modern
+  aliases: []
+- canonical: Syrian Lands
+  kind: modern
+  aliases:
+  - Syrian lands
+- canonical: Taiwan
+  kind: modern
+  aliases: []
+- canonical: Tajikistan
+  kind: modern
+  aliases: []
+- canonical: Tamil Eelam
+  kind: modern
+  aliases: []
+- canonical: Tanzania
+  kind: modern
+  aliases: []
+- canonical: Tehran
+  kind: modern
+  aliases: []
+- canonical: Tennessee
+  kind: modern
+  aliases: []
+- canonical: Thailand
+  kind: modern
+  aliases: []
+- canonical: The Gambia
+  kind: modern
+  aliases: []
+- canonical: Thebes
+  kind: historical
+  aliases: []
+- canonical: Thrace
+  kind: modern
+  aliases: []
+- canonical: Tibet
+  kind: modern
+  aliases: []
+- canonical: Tikopia
+  kind: modern
+  aliases: []
+- canonical: Timor-Leste
+  kind: modern
+  aliases:
+  - East Timor
+  - Timor Leste
+- canonical: Togo
+  kind: modern
+  aliases: []
+- canonical: Togoland
+  kind: modern
+  aliases: []
+- canonical: Trans Jordan
+  kind: modern
+  aliases: []
+- canonical: Transjordan
+  kind: modern
+  aliases: []
+- canonical: Transnistria
+  kind: modern
+  aliases: []
+- canonical: Trinidad and Tobago
+  kind: modern
+  aliases: []
+- canonical: Trucial States
+  kind: historical
+  aliases:
+  - Trucial States (historical)
+- canonical: Tunis
+  kind: modern
+  aliases: []
+- canonical: Tunisia
+  kind: modern
+  aliases: []
+- canonical: Turkey
+  kind: modern
+  aliases: []
+- canonical: Turkey (Alexandretta)
+  kind: modern
+  aliases: []
+- canonical: Turkish Republic of Northern Cyprus
+  kind: modern
+  aliases: []
+- canonical: Turkiye
+  kind: modern
+  aliases: []
+- canonical: Turkmenistan
+  kind: modern
+  aliases: []
+- canonical: UAE
+  kind: modern
+  aliases: []
+- canonical: UN
+  kind: modern
+  aliases: []
+- canonical: UNMIK
+  kind: modern
+  aliases: []
+- canonical: UNMISET
+  kind: modern
+  aliases: []
+- canonical: UNTAET
+  kind: modern
+  aliases: []
+- canonical: US
+  kind: modern
+  aliases: []
+- canonical: USA
+  kind: modern
+  aliases: []
+- canonical: Uganda
+  kind: modern
+  aliases: []
+- canonical: Ukraine
+  kind: modern
+  aliases: []
+- canonical: Umayyads in Andalusia
+  kind: modern
+  aliases: []
+- canonical: Umm al-Qaiwain
+  kind: modern
+  aliases: []
+- canonical: United Arab Emirates
+  kind: modern
+  aliases: []
+- canonical: United Arab Republic
+  kind: historical
+  aliases: []
+- canonical: United Kingdom
+  kind: modern
+  aliases:
+  - Britain
+  - Great Britain
+  - UK
+  children:
+  - canonical: England
+    kind: modern
+    aliases: []
+  - canonical: Northern Ireland
+    kind: modern
+    aliases: []
+  - canonical: Scotland
+    kind: modern
+    aliases: []
+- canonical: United Kingdom (Northern Ireland)
+  kind: modern
+  aliases: []
+- canonical: United Kingdom (Scotland)
+  kind: modern
+  aliases: []
+- canonical: United Nations
+  kind: modern
+  aliases: []
+- canonical: United Provinces
+  kind: modern
+  aliases: []
+- canonical: United States
+  kind: modern
+  aliases: []
+- canonical: United States (American colonies)
+  kind: modern
+  aliases: []
+- canonical: United States (Confederacy and Union)
+  kind: modern
+  aliases: []
+- canonical: United States (Confederacy)
+  kind: modern
+  aliases: []
+- canonical: United States (Confederate States of America)
+  kind: modern
+  aliases: []
+- canonical: United States (Union)
+  kind: modern
+  aliases: []
+- canonical: United States of America
+  kind: modern
+  aliases: []
+- canonical: Ur
+  kind: historical
+  aliases: []
+- canonical: Uruguay
+  kind: modern
+  aliases: []
+- canonical: Uzbekistan
+  kind: modern
+  aliases: []
+- canonical: Vatican
+  kind: modern
+  aliases: []
+- canonical: Vatican City
+  kind: modern
+  aliases: []
+- canonical: Venezuela
+  kind: modern
+  aliases: []
+- canonical: Vichy France
+  kind: historical
+  aliases: []
+- canonical: Viet Cong
+  kind: modern
+  aliases: []
+- canonical: Vietcong
+  kind: modern
+  aliases: []
+- canonical: Vietnam
+  kind: modern
+  aliases: []
+- canonical: Vietnam (South Vietnam / GVN)
+  kind: modern
+  aliases: []
+- canonical: Vietnam (South Vietnam / Viet Cong)
+  kind: modern
+  aliases: []
+- canonical: Vietnam (South Vietnam/North Vietnam)
+  kind: modern
+  aliases: []
+- canonical: Vojvodina
+  kind: modern
+  aliases: []
+- canonical: Wales
+  kind: modern
+  aliases: []
+- canonical: Warsaw Pact
+  kind: historical
+  aliases: []
+- canonical: Washington
+  kind: modern
+  aliases: []
+- canonical: Weimar Republic
+  kind: historical
+  aliases: []
+- canonical: West Africa
+  kind: modern
+  aliases: []
+- canonical: West Bank
+  kind: modern
+  aliases: []
+- canonical: West European states
+  kind: modern
+  aliases: []
+- canonical: West German principalities
+  kind: historical
+  aliases: []
+- canonical: West Germany
+  kind: historical
+  aliases: []
+- canonical: Western Asia
+  kind: modern
+  aliases: []
+- canonical: Western Europe
+  kind: modern
+  aliases: []
+- canonical: Western European states
+  kind: modern
+  aliases: []
+- canonical: Western Papua
+  kind: modern
+  aliases: []
+- canonical: Western Powers
+  kind: modern
+  aliases: []
+- canonical: Western Roman Empire
+  kind: historical
+  aliases: []
+- canonical: Western Sahara
+  kind: modern
+  aliases: []
+- canonical: Western societies
+  kind: modern
+  aliases: []
+- canonical: Westphalia
+  kind: modern
+  aliases: []
+- canonical: Wisconsin
+  kind: modern
+  aliases: []
+- canonical: World Bank
+  kind: modern
+  aliases: []
+- canonical: Württemberg
+  kind: historical
+  aliases: []
+- canonical: Xinjiang
+  kind: modern
+  aliases: []
+- canonical: Yemen
+  kind: modern
+  aliases: []
+- canonical: Yemen (People's Democratic Republic of Yemen)
+  kind: modern
+  aliases: []
+- canonical: Yoruba states (pre-colonial Nigeria)
+  kind: modern
+  aliases: []
+- canonical: Yugoslav states
+  kind: modern
+  aliases: []
+- canonical: Yugoslavia
+  kind: historical
+  aliases: []
+- canonical: Zaire
+  kind: modern
+  aliases: []
+- canonical: Zambia
+  kind: modern
+  aliases: []
+- canonical: Zankis
+  kind: modern
+  aliases: []
+- canonical: Zimbabwe
+  kind: modern
+  aliases: []
+- canonical: Zionist movement
+  kind: modern
+  aliases: []
+- canonical: Zionist movement (as a political entity)
+  kind: modern
+  aliases: []
+- canonical: Zulu Empire
+  kind: historical
+  aliases: []
+- canonical: Zulu Kingdom
+  kind: historical
+  aliases: []
+- canonical: al-Maw al i
+  kind: modern
+  aliases: []
+- canonical: north-central Italy
+  kind: modern
+  aliases: []
+- canonical: northern Netherlands
+  kind: modern
+  aliases: []
+- canonical: not specified
+  kind: modern
+  aliases: []
+- canonical: not specified in chunk
+  kind: modern
+  aliases: []
+- canonical: other Gulf countries
+  kind: modern
+  aliases: []
+- canonical: post-Soviet de facto states
+  kind: modern
+  aliases: []
+- canonical: postcolonial Africa
+  kind: modern
+  aliases: []
+- canonical: tropical Africa
+  kind: modern
+  aliases: []
+- canonical: unspecified
+  kind: modern
+  aliases: []
+- canonical: western Belorussia
+  kind: modern
+  aliases: []
+- canonical: western Ukraine
+  kind: modern
+  aliases: []
