@@ -230,12 +230,19 @@ def _truncate_at_boundary(text: str, limit: int) -> str:
 def _head_of_tree_lines(tree: dict, max_chars: int = _HEAD_OF_TREE_SLICE_CHARS) -> list[str]:
     """Walk the tree in stable pre-order (root -> children, depth-first --
     the document's own reading order per `axial.extract._build_tree`),
-    collecting every node's own text, stopping once the accumulated length
-    reaches `max_chars`. A single node whose own text would overrun the
-    remaining budget is truncated (at a word boundary where possible, #201
-    finding 2) rather than appended whole, so the assembled slice's total
-    character count never exceeds `max_chars` -- a large source (e.g. one
-    huge un-split paragraph) can't blow the bound past its stated target.
+    collecting every node's own text, stopping once the length of the
+    *joined* slice (i.e. `"\\n".join(lines)`, exactly what `compose_prompt`
+    assembles) would reach `max_chars`. Each candidate line's cost includes
+    the `"\\n"` separator that joins it to the previous line, so the
+    accounting matches what actually lands in the prompt -- not merely the
+    sum of the nodes' own text lengths. A single node whose own text would
+    overrun the remaining budget is truncated (at a word boundary where
+    possible, #201 finding 2) rather than appended whole. Together this
+    means the length of `"\\n".join(_head_of_tree_lines(tree))` never
+    exceeds `max_chars`, regardless of node count or fragmentation -- a
+    large source (e.g. one huge un-split paragraph) can't blow the bound via
+    a single node, and neither can a tree of thousands of tiny text nodes
+    blow it via unaccounted-for join separators (#201 follow-up finding).
     Deterministic: the same tree always yields the same slice (PRD §7.3,
     "a bounded prefix of the source's own prose, taken in tree order")."""
     lines: list[str] = []
@@ -245,15 +252,18 @@ def _head_of_tree_lines(tree: dict, max_chars: int = _HEAD_OF_TREE_SLICE_CHARS) 
         nonlocal total
         text = node.get("text")
         if text:
-            remaining = max_chars - total
+            separator_cost = 1 if lines else 0
+            remaining = max_chars - total - separator_cost
             if remaining <= 0:
                 return True
             if len(text) > remaining:
-                lines.append(_truncate_at_boundary(text, remaining))
-                total = max_chars
+                truncated = _truncate_at_boundary(text, remaining)
+                if truncated:
+                    lines.append(truncated)
+                    total += separator_cost + len(truncated)
                 return True
             lines.append(text)
-            total += len(text)
+            total += separator_cost + len(text)
             if total >= max_chars:
                 return True
         for child in node.get("children", []):

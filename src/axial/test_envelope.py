@@ -268,9 +268,11 @@ def test_compose_prompt_head_of_tree_slice_is_bounded_and_deterministic():
     un-split 39000-char paragraph, plausible on real docling output) must
     not leak through whole -- it is truncated so the assembled evidence
     never exceeds the stated `_HEAD_OF_TREE_SLICE_CHARS` target, plus only a
-    small, fixed template/prefix overhead (the "## Source text ..." label,
-    the section separators, and the surrounding prompt template text --
-    ~900 characters, measured independently of the paragraph's own size)."""
+    small, FIXED template/prefix overhead (the "## Source text ..." label
+    plus the surrounding prompt template text -- ~909 characters, measured
+    independently of both the paragraph's own size and the number of nodes
+    contributing to the slice; see the many-small-node companion test below
+    for the node-count axis of this same guarantee)."""
     from axial.envelope import _HEAD_OF_TREE_SLICE_CHARS, compose_prompt
 
     long_paragraph = "Sentence about nothing in particular. " * 1000  # far over the slice size
@@ -291,18 +293,50 @@ def test_compose_prompt_head_of_tree_slice_is_bounded_and_deterministic():
 
     assert prompt_a == prompt_b  # deterministic
 
-    # A real upper bound, not a tautology: this fails if the whole 39000+
-    # -character paragraph leaks through unbounded (that would put
+    # A real, node-count-independent upper bound: this fails if the whole
+    # 39000+-character paragraph leaks through unbounded (that would put
     # len(prompt) well past 39000), and passes once a single node's
     # contribution is capped to the remaining slice budget. The margin
-    # covers only the fixed template text + the head-of-tree label + a
-    # handful of line-join newlines, never the paragraph's own bulk.
+    # covers only the fixed template text + the head-of-tree label, never
+    # the paragraph's own bulk.
     _FIXED_OVERHEAD_MARGIN = 1000
     assert len(prompt_a) <= _HEAD_OF_TREE_SLICE_CHARS + _FIXED_OVERHEAD_MARGIN, (
         f"expected the head-of-tree slice to be bounded at roughly "
         f"{_HEAD_OF_TREE_SLICE_CHARS} chars (plus a small fixed overhead), "
         f"got a {len(prompt_a)}-char prompt -- the monster paragraph leaked "
         f"through uncapped"
+    )
+
+
+def test_compose_prompt_head_of_tree_slice_is_bounded_for_many_tiny_nodes():
+    """#201 follow-up finding: the widening fallback's join-separator cost
+    (the `"\\n"` that `compose_prompt` inserts between every collected line)
+    must itself be counted toward the slice budget, not just the sum of the
+    nodes' own text lengths -- otherwise a tree fragmented into many tiny
+    text nodes (realistic on OCR-adjacent / per-font-garbled / list-heavy
+    docling output) leaks separator overhead past the stated bound: 8000
+    one-character nodes previously composed a ~12908-char prompt (roughly
+    2.15x the 6000-char target) because 5999 join newlines went uncounted.
+    The composed prompt must stay within `_HEAD_OF_TREE_SLICE_CHARS` plus
+    only the FIXED template/label overhead (~909 characters -- the
+    `_PROMPT_TEMPLATE` boilerplate plus the one "## Source text ..." label
+    line), never overhead that scales with node count."""
+    from axial.envelope import _HEAD_OF_TREE_SLICE_CHARS, compose_prompt
+
+    tiny_nodes = [
+        {"type": "prose", "order": str(i), "text": "x", "children": []} for i in range(8000)
+    ]
+    tree = {"children": tiny_nodes}
+
+    prompt = compose_prompt(tree)
+
+    _FIXED_OVERHEAD_MARGIN = 1000  # same fixed-overhead margin as the single-node test above
+    assert len(prompt) <= _HEAD_OF_TREE_SLICE_CHARS + _FIXED_OVERHEAD_MARGIN, (
+        f"expected the head-of-tree slice to be bounded at roughly "
+        f"{_HEAD_OF_TREE_SLICE_CHARS} chars (plus a small fixed overhead) "
+        f"even for a tree of thousands of tiny nodes, got a "
+        f"{len(prompt)}-char prompt -- join-separator overhead leaked "
+        f"through unbounded"
     )
 
 
