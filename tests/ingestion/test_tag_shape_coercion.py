@@ -195,7 +195,8 @@ import yaml
 
 from axial.chunk import read_chunks, run_chunk_recursive
 from axial.envelope import compute_source_id
-from axial.schema import Schema, load_schema
+from axial.schema import Axis, Schema, load_schema
+from axial.tag import TagNotInSchemaError, validate_multi_value_tag
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "envelope"
@@ -838,4 +839,63 @@ def test_claim_type_multi_element_list_secondary_still_raises(isolated_vault_roo
         f"expected the offending axis {CLAIM_TYPE_AXIS!r} to be named in "
         f"the error output for the multi-element-list secondary, got "
         f"combined output: {combined!r}"
+    )
+
+
+def test_validate_multi_value_tag_dict_secondary_raises_tag_not_in_schema_error():
+    """Fix-lane regression test for issue #202.
+
+    Bug: `validate_tag` (`tag.py` ~line 702) does a set-membership check
+    `value not in axis.tag_ids`, where `axis.tag_ids` is a `set`. Every
+    OTHER bad-tag value (an out-of-vocab string, a number, etc.) is
+    hashable, so that membership test cleanly returns `False` and the
+    intended `TagNotInSchemaError` is raised. But when the model returns a
+    malformed shape roll -- a `dict` nested as one element of a `secondary`
+    list -- that dict is UNHASHABLE, so `value not in axis.tag_ids` itself
+    raises `TypeError: unhashable type: 'dict'` before `TagNotInSchemaError`
+    is ever constructed.
+
+    Why this matters operationally: `TagNotInSchemaError` is a `TagError`,
+    which `axial.vault` wraps into a `VaultError` subclass and the
+    per-source ingest worker catches as an ordinary per-source FAIL -- the
+    worker logs it and continues to the next source. A bare `TypeError` is
+    neither a `TagError` nor a `VaultError`, so it propagates uncaught and
+    crashes the WHOLE ingest worker instead of failing just the one
+    offending source.
+
+    This drives `validate_multi_value_tag` directly -- the real caller in
+    the reported crash's own traceback (it passes each `secondary` list
+    element into `validate_tag` via a list comprehension, `tag.py` ~line
+    831) -- against a minimal, directly constructed `Schema`/`Axis`: the
+    tightest reproduction of the crash, with no CLI/LLM/vault subprocess
+    machinery needed to pin this contract. `pytest.raises(TagNotInSchemaError)`
+    fails outright if a `TypeError` escapes instead, which is exactly
+    today's (pre-fix) behavior."""
+    axis = Axis(
+        name="claim_type",
+        applies_to=["prose"],
+        cardinality="primary_plus_secondary",
+        value_count=2,
+        tag_ids={"nationalism-theory", "civilian-targeting"},
+    )
+    schema = Schema(version="test", axes={"claim_type": axis})
+
+    malformed_secondary_element = {"unexpected": "shape"}
+    parsed = {
+        "primary": "nationalism-theory",
+        "secondary": ["civilian-targeting", malformed_secondary_element],
+    }
+
+    with pytest.raises(TagNotInSchemaError) as excinfo:
+        validate_multi_value_tag(schema, "claim_type", parsed)
+
+    assert excinfo.value.tag == malformed_secondary_element, (
+        f"expected the raised TagNotInSchemaError to carry the offending "
+        f"dict value {malformed_secondary_element!r} as its .tag attribute "
+        f"(naming the offending tag, per validate_tag's own contract), got "
+        f"{excinfo.value.tag!r}"
+    )
+    assert excinfo.value.axis_name == "claim_type", (
+        f"expected the raised TagNotInSchemaError to name the 'claim_type' "
+        f"axis, got {excinfo.value.axis_name!r}"
     )
