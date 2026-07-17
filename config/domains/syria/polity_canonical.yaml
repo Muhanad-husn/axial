@@ -1009,7 +1009,7 @@ nodes:
   kind: historical
   aliases: []
 - canonical: German-occupied Soviet Union
-  kind: modern
+  kind: historical
   aliases: []
 - canonical: German-occupied Soviet territories
   kind: modern
@@ -2068,7 +2068,7 @@ nodes:
   kind: modern
   aliases: []
 - canonical: Russia (Soviet Union under German occupation)
-  kind: modern
+  kind: historical
   aliases: []
 - canonical: Russian Empire
   kind: modern
@@ -2254,11 +2254,11 @@ nodes:
   kind: modern
   aliases: []
 - canonical: Soviet Union
-  kind: modern
+  kind: historical
   aliases:
   - USSR
 - canonical: Soviet Union (German-occupied)
-  kind: modern
+  kind: historical
   aliases: []
 - canonical: Soviet bloc
   kind: modern

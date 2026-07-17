@@ -290,6 +290,36 @@ def test_run_polity_build_is_deterministic_across_runs(tmp_path):
     assert first == second
 
 
+def test_run_polity_build_dedupes_case_and_whitespace_variants_and_reloads_clean(tmp_path):
+    vault_dir = tmp_path / "vault"
+    prose_dir = vault_dir / "prose"
+    domain_dir = tmp_path / "domain"
+    # "Syria" mentioned twice, "syria" once -- most-frequent surface form
+    # ("Syria") should win the bucket deterministically.
+    _write_note(prose_dir, "src_001_body_001", polity="Syria")
+    _write_note(prose_dir, "src_002_body_001", polity="Syria")
+    _write_note(prose_dir, "src_003_body_001", polity="syria")
+    _write_note(prose_dir, "src_004_body_001", polity="Ottoman Empire")
+    _write_note(prose_dir, "src_005_body_001", polity="ottoman empire")
+
+    text = run_polity_build(vault_dir=vault_dir)
+    document = yaml.safe_load(text)
+
+    canonicals = [node["canonical"] for node in document["nodes"]]
+    # One node per normalized referent -- not one per raw verbatim.
+    assert len(canonicals) == 2
+    assert canonicals == sorted(canonicals)
+    normalized_set = {c.casefold() for c in canonicals}
+    assert normalized_set == {"syria", "ottoman empire"}
+    # Deterministic representative: the most-frequent surface form wins.
+    assert "Syria" in canonicals
+
+    # The emitted seed must ALWAYS load cleanly -- no AmbiguousAliasError.
+    _write_canonical(domain_dir, text)
+    cmap = load_polity_canonical(domain_dir)
+    assert len(cmap.nodes) == 2
+
+
 # -- axial polity report --
 
 

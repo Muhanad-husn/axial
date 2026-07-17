@@ -286,17 +286,35 @@ def run_polity_build(
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
 ) -> str:
     """Scan the vault prose notes (model-free) and emit a deterministic seed
-    canonical tree as YAML text: one root node per distinct polity verbatim,
-    sorted, for the operator to curate by hand. Same vault -> identical
-    output (a pure function of the vault's own note contents)."""
+    canonical tree as YAML text: one root node per distinct polity REFERENT
+    (bucketed by the module's own normalized key, `_normalize`, not the raw
+    string), sorted, for the operator to curate by hand. Case/whitespace
+    variants of the same verbatim (e.g. "Syria" and "syria") always collapse
+    to a single node -- this keeps the emitted seed loadable by
+    `load_polity_canonical` without ever raising `AmbiguousAliasError`. Same
+    vault -> identical output (a pure function of the vault's own note
+    contents)."""
     if vault_dir is None:
         vault_dir = _default_vault_dir(config_path)
 
     prose_dir = vault_dir / "prose"
     harvest = harvest_vault_polities(prose_dir) if prose_dir.is_dir() else {}
 
+    buckets: dict[str, list[str]] = {}
+    for verbatim in harvest:
+        buckets.setdefault(_normalize(verbatim), []).append(verbatim)
+
+    representatives = []
+    for normalized in sorted(buckets):
+        variants = buckets[normalized]
+        # Deterministic surface-form pick: most-frequent verbatim wins, ties
+        # broken by first-sorted string -- never depends on harvest order.
+        representative = min(variants, key=lambda v: (-harvest[v]["count"], v))
+        representatives.append(representative)
+
     nodes = [
-        {"canonical": verbatim, "kind": "modern", "aliases": []} for verbatim in sorted(harvest)
+        {"canonical": verbatim, "kind": "modern", "aliases": []}
+        for verbatim in sorted(representatives)
     ]
     document = {"version": 1, "nodes": nodes}
     return yaml.safe_dump(document, sort_keys=False, allow_unicode=True)
