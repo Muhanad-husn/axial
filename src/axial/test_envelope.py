@@ -403,6 +403,83 @@ def test_compose_prompt_carries_the_grounding_instruction():
     assert "outside knowledge" in lowered or "prior knowledge" in lowered
 
 
+# --- router-filtered input selection (#216, PRD §7.8) ------------------------
+
+
+def test_compose_prompt_matched_section_drops_non_prose_descendant():
+    """A matched section's body may carry a non-prose descendant (e.g. a
+    `table` or `caption` block, §7.8 ARTIFACT) alongside real prose --
+    `_matched_section_blocks` must keep only the PROSE-routed descendant text,
+    never re-deriving its own prose/non-prose decision outside the shared
+    router (`axial.router.route_for`)."""
+    from axial.envelope import compose_prompt
+
+    tree = {
+        "children": [
+            {
+                "type": "prose",
+                "order": "1",
+                "text": "Introduction",
+                "label": "section_header",
+                "children": [
+                    {
+                        "type": "prose",
+                        "order": "1.1",
+                        "text": "The Halcyon-7 marker sentence is genuine prose evidence.",
+                        "label": "text",
+                    },
+                    {
+                        "type": "prose",
+                        "order": "1.2",
+                        "text": "Table caption: Vireo-3 figures by quarter.",
+                        "label": "caption",
+                    },
+                ],
+            }
+        ]
+    }
+
+    prompt = compose_prompt(tree)
+
+    assert "Halcyon-7 marker sentence" in prompt
+    assert "Vireo-3 figures by quarter" not in prompt
+
+
+def test_head_of_tree_lines_skips_non_prose_labeled_nodes():
+    """`_head_of_tree_lines` must filter each candidate node through the
+    shared router (§7.8) before collecting it: a `document_index` (TOC) node
+    ahead of the first prose routes to APPARATUS and must never reach the
+    widened slice, even though it sits earliest in tree order."""
+    from axial.envelope import _head_of_tree_lines
+
+    tree = {
+        "type": "prose",
+        "order": "0",
+        "children": [
+            {
+                "type": "prose",
+                "order": "1",
+                "text": "Table of Contents: the Egret-5 index locus.",
+                "label": "document_index",
+                "children": [],
+            },
+            {
+                "type": "prose",
+                "order": "2",
+                "text": "The Egret-5 prose marker opens the body of the source.",
+                "label": "text",
+                "children": [],
+            },
+        ],
+    }
+
+    lines = _head_of_tree_lines(tree)
+
+    joined = "\n".join(lines)
+    assert "The Egret-5 prose marker opens the body of the source." in joined
+    assert "Table of Contents: the Egret-5 index locus." not in joined
+
+
 # --- response parsing / validation ------------------------------------------
 
 
