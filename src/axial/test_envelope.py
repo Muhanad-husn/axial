@@ -220,9 +220,57 @@ def test_compose_prompt_widens_when_matched_section_is_near_empty():
     assert "Falcon-4 marker phrase" in prompt
 
 
+def test_compose_prompt_widens_when_matched_section_body_is_whitespace_only():
+    """#201 finding 1: a matched heading whose captured body is nothing but
+    whitespace (e.g. spaces/newlines with no real words) must widen exactly
+    like a genuinely empty match -- raw character count alone (250 spaces
+    clears the 200-char floor) must NOT be mistaken for substantive evidence
+    (PRD §7.3, 'never an empty or whitespace-only section block'). This is
+    distinct from the existing near-empty test above, which uses
+    `children: []` (zero raw characters); here the body has plenty of raw
+    characters, all of them whitespace."""
+    from axial.envelope import compose_prompt
+
+    tree = {
+        "children": [
+            {
+                "type": "prose",
+                "order": "1",
+                "text": "Introduction",
+                "children": [
+                    {"type": "prose", "order": "1.1", "text": " " * 250},
+                ],
+            },
+            {
+                "type": "prose",
+                "order": "2",
+                "text": "Substantive Content Elsewhere",
+                "children": [
+                    {
+                        "type": "prose",
+                        "order": "2.1",
+                        "text": "The Osprey-2 marker phrase lives only in this later section.",
+                    }
+                ],
+            },
+        ]
+    }
+
+    prompt = compose_prompt(tree)
+
+    assert "Osprey-2 marker phrase" in prompt
+
+
 def test_compose_prompt_head_of_tree_slice_is_bounded_and_deterministic():
     """The widening fallback's slice size is a bounded, stated tunable, and
-    the same tree always yields the identical slice."""
+    the same tree always yields the identical slice (#201 finding 2): a
+    single node whose own text alone dwarfs the slice budget (e.g. one
+    un-split 39000-char paragraph, plausible on real docling output) must
+    not leak through whole -- it is truncated so the assembled evidence
+    never exceeds the stated `_HEAD_OF_TREE_SLICE_CHARS` target, plus only a
+    small, fixed template/prefix overhead (the "## Source text ..." label,
+    the section separators, and the surrounding prompt template text --
+    ~900 characters, measured independently of the paragraph's own size)."""
     from axial.envelope import _HEAD_OF_TREE_SLICE_CHARS, compose_prompt
 
     long_paragraph = "Sentence about nothing in particular. " * 1000  # far over the slice size
@@ -242,9 +290,20 @@ def test_compose_prompt_head_of_tree_slice_is_bounded_and_deterministic():
     prompt_b = compose_prompt(tree)
 
     assert prompt_a == prompt_b  # deterministic
-    # The full 39000+-character paragraph must not reach the prompt whole --
-    # the slice is bounded, not "widen to everything".
-    assert len(prompt_a) < len(long_paragraph) + _HEAD_OF_TREE_SLICE_CHARS
+
+    # A real upper bound, not a tautology: this fails if the whole 39000+
+    # -character paragraph leaks through unbounded (that would put
+    # len(prompt) well past 39000), and passes once a single node's
+    # contribution is capped to the remaining slice budget. The margin
+    # covers only the fixed template text + the head-of-tree label + a
+    # handful of line-join newlines, never the paragraph's own bulk.
+    _FIXED_OVERHEAD_MARGIN = 1000
+    assert len(prompt_a) <= _HEAD_OF_TREE_SLICE_CHARS + _FIXED_OVERHEAD_MARGIN, (
+        f"expected the head-of-tree slice to be bounded at roughly "
+        f"{_HEAD_OF_TREE_SLICE_CHARS} chars (plus a small fixed overhead), "
+        f"got a {len(prompt_a)}-char prompt -- the monster paragraph leaked "
+        f"through uncapped"
+    )
 
 
 def test_compose_prompt_does_not_widen_a_normal_well_matched_source():

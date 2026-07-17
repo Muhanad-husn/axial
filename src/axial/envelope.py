@@ -190,23 +190,54 @@ def _node_text_lines(node: dict) -> list[str]:
 def _matched_section_blocks(tree: dict) -> list[str]:
     """Build one text block per matched intro/abstract/conclusion node: the
     section's own direct text plus its children's, not its children's alone
-    (PRD §7.3, "full text of the selected sections")."""
+    (PRD §7.3, "full text of the selected sections"). The node's own text is
+    always the `## heading` line itself (`heading = node.get("text", "")`),
+    so it is not also repeated as the first body line -- only descendants'
+    text is appended below the heading, avoiding a verbatim duplicate line
+    without dropping any content (the own text still appears once, in the
+    heading)."""
     blocks = []
     for node in select_envelope_nodes(tree):
         heading = node.get("text", "")
-        body_lines = _node_text_lines(node)
-        blocks.append(f"## {heading}\n" + "\n".join(body_lines))
+        body_lines = [
+            line for child in node.get("children", []) for line in _node_text_lines(child)
+        ]
+        block = f"## {heading}"
+        if body_lines:
+            block += "\n" + "\n".join(body_lines)
+        blocks.append(block)
     return blocks
+
+
+def _truncate_at_boundary(text: str, limit: int) -> str:
+    """Truncate `text` to at most `limit` characters, preferring to cut at
+    the nearest preceding whitespace boundary so a word isn't sliced
+    mid-token. Falls back to a hard character cut when no boundary is close
+    enough to the limit (e.g. one very long unbroken token), so the result
+    is never longer than `limit` either way. Deterministic."""
+    if len(text) <= limit:
+        return text
+    if limit <= 0:
+        return ""
+    cut = text.rfind(" ", 0, limit)
+    # Only honor the boundary if it doesn't throw away most of the budget
+    # (e.g. a single 38k-char paragraph with no early space).
+    if cut > limit // 2:
+        return text[:cut]
+    return text[:limit]
 
 
 def _head_of_tree_lines(tree: dict, max_chars: int = _HEAD_OF_TREE_SLICE_CHARS) -> list[str]:
     """Walk the tree in stable pre-order (root -> children, depth-first --
     the document's own reading order per `axial.extract._build_tree`),
     collecting every node's own text, stopping once the accumulated length
-    reaches `max_chars` (rounding up to the line that crosses the threshold
-    rather than truncating a sentence mid-way). Deterministic: the same tree
-    always yields the same slice (PRD §7.3, "a bounded prefix of the
-    source's own prose, taken in tree order")."""
+    reaches `max_chars`. A single node whose own text would overrun the
+    remaining budget is truncated (at a word boundary where possible, #201
+    finding 2) rather than appended whole, so the assembled slice's total
+    character count never exceeds `max_chars` -- a large source (e.g. one
+    huge un-split paragraph) can't blow the bound past its stated target.
+    Deterministic: the same tree always yields the same slice (PRD §7.3,
+    "a bounded prefix of the source's own prose, taken in tree order")."""
     lines: list[str] = []
     total = 0
 
@@ -214,6 +245,13 @@ def _head_of_tree_lines(tree: dict, max_chars: int = _HEAD_OF_TREE_SLICE_CHARS) 
         nonlocal total
         text = node.get("text")
         if text:
+            remaining = max_chars - total
+            if remaining <= 0:
+                return True
+            if len(text) > remaining:
+                lines.append(_truncate_at_boundary(text, remaining))
+                total = max_chars
+                return True
             lines.append(text)
             total += len(text)
             if total >= max_chars:
@@ -227,15 +265,26 @@ def _head_of_tree_lines(tree: dict, max_chars: int = _HEAD_OF_TREE_SLICE_CHARS) 
     return lines
 
 
+def _substantive_length(text: str) -> int:
+    """Character count of `text` with all whitespace stripped out -- so a
+    block that is entirely whitespace (e.g. a matched heading whose captured
+    body is blank/space-padded) measures as zero, not as however many raw
+    characters it happens to occupy (PRD §7.3, "never an empty or
+    whitespace-only section block", #201 finding 1)."""
+    return len("".join(text.split()))
+
+
 def compose_prompt(tree: dict) -> str:
     """Compose the envelope prompt from the source's intro/abstract/
     conclusion nodes (heuristic over the extraction tree's section
-    headings). When that heuristic selects little or no text (PRD §7.3,
-    "evidence floor on the input"), widen instead to a substantive
-    head-of-tree slice of the source's own prose, so the model is never
-    handed an empty or near-empty evidence block (#201)."""
+    headings). When that heuristic selects little or no SUBSTANTIVE text
+    (PRD §7.3, "evidence floor on the input" -- measured on whitespace-
+    stripped content, so raw whitespace can't clear the floor), widen
+    instead to a substantive head-of-tree slice of the source's own prose,
+    so the model is never handed an empty, near-empty, or whitespace-only
+    evidence block (#201)."""
     blocks = _matched_section_blocks(tree)
-    if sum(len(block) for block in blocks) < _EVIDENCE_FLOOR_CHARS:
+    if sum(_substantive_length(block) for block in blocks) < _EVIDENCE_FLOOR_CHARS:
         lines = _head_of_tree_lines(tree)
         evidence = "## Source text (head-of-tree excerpt)\n" + "\n".join(lines)
     else:
