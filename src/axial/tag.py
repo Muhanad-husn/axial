@@ -699,7 +699,7 @@ def validate_tag(schema: Schema, axis_name: str, value: Any) -> Any:
     axis = schema.axes.get(axis_name)
     if axis is not None:
         value = _normalize_axis_prefixed_value(axis_name, value, axis.tag_ids)
-    if axis is None or value not in axis.tag_ids:
+    if axis is None or not isinstance(value, str) or value not in axis.tag_ids:
         raise TagNotInSchemaError(
             axis_name, value, vocabulary=(axis.tag_ids if axis is not None else None)
         )
