@@ -162,7 +162,7 @@ One JSON per source in `data/trees/`, keyed by `source_id` (the same determinist
 
 ### 7.5 Gold-set label sheet
 
-`data/gold/label_sheet.xlsx`: **one row per chunk, one column per axis.** Columns: `chunk_id`, `source`, `section`, `chunk_text`, then one column per axis with **dropdown validation sourced from the codebook**, plus a `polities_touched` **context** column that rides between the pre-labeled axes and the blind axes (after `empirical_scope`, before `claim_type`): it is pre-filled from the tagger's `polities_touched` list, carries no dropdown, and is not a labeling axis (Appendix I). Hybrid labeling per §9. The same sheet, once returned, is the machine-readable answer key for scoring — no transformation step between labeling and eval.
+`data/gold/label_sheet.xlsx`: **one row per chunk, one column per axis.** Columns: `chunk_id`, `source`, `section`, `chunk_text`, then one column per axis with **dropdown validation sourced from the codebook**, plus a `polities_touched` **pre-labeled, correctable** column that rides between the pre-labeled axes and the blind axes (after `empirical_scope`, before `claim_type`): it is pre-filled from the tagger's `polities_touched` list and corrected by the Academic where wrong, like the other pre-labeled columns; it is free-text, so it carries no dropdown, and it is not one of the four codebook dropdown axes — but it is a labeled field, not read-only provenance (Appendix I). Hybrid labeling per §9. The same sheet, once returned, is the machine-readable answer key for scoring — no transformation step between labeling and eval.
 
 ### 7.6 Gold-set delivery bundle
 
@@ -540,6 +540,6 @@ artifact_refs: [hinnebusch2001_tbl_02]
 
 ## Appendix I — Label-sheet columns
 
-`chunk_id | source | section | chunk_text | field (pre-labeled) | empirical_scope (pre-labeled) | polities_touched (pre-labeled, context) | claim_type (blind) | theory_school (blind) | notes`
+`chunk_id | source | section | chunk_text | field (pre-labeled) | empirical_scope (pre-labeled) | polities_touched (pre-labeled, free-text) | claim_type (blind) | theory_school (blind) | notes`
 
-Dropdowns on the four axis columns are generated from `codebook.yaml`. Pre-labeled columns arrive filled with the tagger's guess for the Academic to correct; blind columns arrive empty. `polities_touched` is a pre-filled **context** column, not one of the four labeling axes: it carries the tagger's `polities_touched` list (the raw polity strings, joined) to inform the Academic's judgment, has no dropdown, and is never scored.
+Dropdowns on the four axis columns are generated from `codebook.yaml`. Pre-labeled columns arrive filled with the tagger's guess for the Academic to correct; blind columns arrive empty. `polities_touched` is a **pre-labeled, correctable** free-text field: it arrives pre-filled with the tagger's guess (the raw polity strings, joined) for the Academic to correct where wrong. It is free-text, so it has no dropdown, and it is not one of the four codebook axes — but it is scored against the tagger the same way the pre-labeled axes are.

@@ -51,9 +51,10 @@ GOLD_DIR = Path("data/gold")
 
 # Appendix I's label-sheet columns, in order. `role_in_argument` is a
 # balancing stratum but NOT a sheet column (Appendix I names none); `notes`
-# ships empty. `polities_touched` is a plain pre-filled context column (the
-# tagger's already-tagged facet, shipped as-tagged) -- not an axis, no
-# dropdown.
+# ships empty. `polities_touched` is a pre-labeled, correctable, scored
+# free-text facet (same mode as field/empirical_scope: pre-filled with the
+# tagger's guess, corrected by typing where wrong) -- not a codebook axis, so
+# it carries no dropdown.
 SHEET_COLUMNS = (
     "chunk_id",
     "source",
@@ -752,9 +753,13 @@ in-cell **dropdowns** only -- do not free-type a value.
   leave it where right):
   - `field`
   - `empirical_scope`
+  - `polities_touched` -- **free text, no dropdown.** The cell is pre-filled
+    with the tagger's guessed polities (semicolon-separated); correct it by
+    typing where wrong, leave it where right. An empty cell means the tagger
+    found no engaged polity -- leave it empty if that's correct.
 
-Leave the provenance columns untouched. `notes` is optional free text for any
-chunk you want to flag.
+Leave the provenance columns (`chunk_id`, `source`, `section`) untouched.
+`notes` is optional free text for any chunk you want to flag.
 
 ## How to return it
 
