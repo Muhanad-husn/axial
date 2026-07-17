@@ -171,3 +171,29 @@ def test_main_artifacts_prints_error_and_returns_nonzero_on_artifacts_error(monk
 
     assert exit_code != 0
     assert "simulated artifacts failure" in captured.err
+
+
+def test_main_eval_prints_error_and_returns_nonzero_on_malformed_polity_canonical_map(
+    monkeypatch, capsys
+):
+    """`run_eval` can raise a `PolityCanonicalError` subclass (#215's alias
+    fold reads `polity_canonical.yaml`, #205) when the map is malformed --
+    `_eval()` must catch it via the repo's `error: ...` / exit-1 convention,
+    not let it surface as a raw traceback (mirrors `_polity_report`'s own
+    `except PolityCanonicalError`, #215 stage-2 review)."""
+    import axial.cli as cli_mod
+    from axial.polity_canonical import MalformedPolityCanonicalError
+
+    def _boom():
+        raise MalformedPolityCanonicalError(
+            Path("some/polity_canonical.yaml"), "simulated malformed map"
+        )
+
+    monkeypatch.setattr(cli_mod, "run_eval", _boom)
+
+    exit_code = cli_mod.main(["eval"])
+    captured = capsys.readouterr()
+
+    assert exit_code != 0
+    assert "simulated malformed map" in captured.err
+    assert "Traceback" not in captured.err

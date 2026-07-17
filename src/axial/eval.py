@@ -27,6 +27,41 @@ by the plan (plans/eval/01-score-gold-set.md:68,74) and stage-2 review of
       "unmatched": {"sheet_only": [chunk_id, ...], "chunks_only": [chunk_id, ...]}
     }
 
+A third section, `per_polity_score`, scores the free-text, many-valued
+`polities_touched` facet as a SET-based metric (locked by
+tests/eval/test_eval_polities.py, issue #215) -- it does not fit the
+single-value categorical-axis machinery above:
+
+    {
+      "per_polity_score": {
+        "micro": {"precision": float, "recall": float, "f1": float},
+        "macro_f1": float,
+        "both_empty_matches": int,
+        "per_chunk": [{"chunk_id", "tp", "fp", "fn", "f1"}, ...]
+      }
+    }
+
+Design choices for `per_polity_score` (#215):
+  - Both sides are folded through the #205 canonical alias map
+    (`axial.polity_canonical`) before set comparison, so surface variants of
+    the same referent (e.g. `USSR` vs `Soviet Union`) count as one polity, a
+    true positive rather than a false-positive-plus-false-negative. An
+    unmapped verbatim's own casefold+whitespace-normalized form is its key
+    (still compares exactly). Missing map file -> graceful degradation:
+    every polity falls back to its own casefold+whitespace key, non-fatal.
+  - Scope: only chunks with BOTH a row on the returned sheet AND a tagger
+    record are scored (the join intersection) -- a tagger chunk with no
+    sheet row is excluded entirely (it already surfaces in
+    `unmatched.chunks_only`), never treated as a both-empty match.
+  - Unlike the categorical axes, an empty Academic `polities_touched` cell
+    on a returned row is a REAL answer ("no engaged polity"), not a
+    non-answer to exclude -- see gold.py's Academic-facing README text.
+  - Both-empty (tagger and Academic both list no polity) is a perfect
+    per-chunk match (f1 = 1.0, counted in `both_empty_matches`) but
+    contributes nothing to the pooled micro TP/FP/FN.
+  - Micro = pooled TP/FP/FN across every scored chunk; macro_f1 = mean of
+    each chunk's own F1 (both-empty chunks' 1.0 included).
+
 Design choices (not locked by the outer test, made here):
   - `per_axis_agreement` denominator: only chunks carrying a non-empty
     Academic label on that axis; an empty Academic cell excludes the
@@ -67,6 +102,7 @@ Design choices (not locked by the outer test, made here):
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -82,6 +118,12 @@ from axial.gold import (
     _load_gold_records,
 )
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
+from axial.polity_canonical import (
+    MissingPolityCanonicalFileError,
+    PolityCanonical,
+    canonicalize,
+    load_polity_canonical,
+)
 from axial.tag import DEFAULT_DOMAIN_DIR
 
 # Re-exported so callers (the CLI) don't need to import from axial.gold too.
@@ -114,6 +156,7 @@ class MissingReturnedSheetError(EvalError):
 
 _CHUNK_ID_COLUMN = SHEET_COLUMNS.index("chunk_id") + 1
 _AXIS_COLUMNS_INDEX = {axis: SHEET_COLUMNS.index(axis) + 1 for axis in AXIS_COLUMNS}
+_POLITIES_COLUMN = SHEET_COLUMNS.index("polities_touched") + 1
 
 
 def _normalize_cell(value: Any) -> str | None:
@@ -140,6 +183,145 @@ def _load_academic_labels(sheet_path: Path) -> dict[str, dict[str, str | None]]:
             for axis, column in _AXIS_COLUMNS_INDEX.items()
         }
     return labels
+
+
+def _parse_polities_cell(value: Any) -> list[str]:
+    """Parse a returned sheet's free-text `polities_touched` cell
+    (`"; "`-joined, per `gold.build_workbook`) into a list of polity
+    strings: split on `;`, strip each, drop empties. A truly-blank cell
+    (`None`/whitespace) parses to an empty list -- a REAL "no engaged
+    polity" answer for this facet, not a non-answer (see module
+    docstring)."""
+    text = _normalize_cell(value)
+    if text is None:
+        return []
+    return [part.strip() for part in text.split(";") if part.strip()]
+
+
+def _load_academic_polities(sheet_path: Path) -> dict[str, list[str]]:
+    """Read the returned answer-key sheet's `polities_touched` column into
+    `{chunk_id: [polity, ...]}`. A parallel reader to `_load_academic_labels`
+    (kept separate so the existing four-axis reader stays byte-for-byte
+    intact) -- same row/chunk_id join, different column."""
+    worksheet = load_workbook(sheet_path, read_only=True).worksheets[0]
+    polities: dict[str, list[str]] = {}
+    for row in worksheet.iter_rows(min_row=2):
+        chunk_id = _normalize_cell(row[_CHUNK_ID_COLUMN - 1].value)
+        if chunk_id is None:
+            continue
+        polities[chunk_id] = _parse_polities_cell(row[_POLITIES_COLUMN - 1].value)
+    return polities
+
+
+def _load_polity_canonical_or_none(domain_dir: str | Path) -> PolityCanonical | None:
+    """Load `<domain_dir>/polity_canonical.yaml` (issue #205), or `None` when
+    the file is simply absent (`MissingPolityCanonicalFileError`) --
+    graceful degradation, non-fatal: `_polity_fold_key` falls back to
+    casefold+whitespace normalization for every polity when no map is
+    loaded. Any OTHER `PolityCanonicalError` (malformed YAML, ambiguous
+    alias) is a real authoring error and is left to propagate."""
+    try:
+        return load_polity_canonical(domain_dir)
+    except MissingPolityCanonicalFileError:
+        print(
+            f"warning: no polity canonical map found under {Path(domain_dir)} "
+            f"(#205) -- scoring polities_touched without alias folding (surface "
+            f"strings compared casefold+whitespace-normalized only)",
+            file=sys.stderr,
+        )
+        return None
+
+
+_WHITESPACE_PATTERN = re.compile(r"\s+")
+
+
+def _polity_fold_key(verbatim: str, cmap: PolityCanonical | None) -> str:
+    """The comparison key for one polity verbatim: when `cmap` resolves it
+    to a mapped node, the node's own canonical name; otherwise (or when no
+    map is loaded at all) a casefold+whitespace-normalized form of the
+    verbatim itself, so unmapped/unfolded polities still compare exactly."""
+    if cmap is not None:
+        result = canonicalize(verbatim, cmap)
+        if result.status == "mapped" and result.canonical is not None:
+            return result.canonical
+    return _WHITESPACE_PATTERN.sub(" ", verbatim.strip()).casefold()
+
+
+def _fold_polity_set(names: list[str], cmap: PolityCanonical | None) -> set[str]:
+    """Fold a list of polity verbatims into their comparison-key set (see
+    `_polity_fold_key`)."""
+    return {_polity_fold_key(name, cmap) for name in names}
+
+
+def _score_polity_chunk(tagger_keys: set[str], academic_keys: set[str]) -> dict[str, Any]:
+    """Set-based precision/recall/F1 for one chunk's folded tagger vs.
+    Academic polity key sets. Both empty -> a perfect match (f1 = 1.0,
+    "no engaged polity" agreed); a half-empty chunk falls out to f1 = 0.0
+    (tp = 0) with no special case needed."""
+    tp = len(tagger_keys & academic_keys)
+    fp = len(tagger_keys - academic_keys)
+    fn = len(academic_keys - tagger_keys)
+
+    if not tagger_keys and not academic_keys:
+        f1 = 1.0
+    else:
+        precision = tp / (tp + fp) if (tp + fp) else 0.0
+        recall = tp / (tp + fn) if (tp + fn) else 0.0
+        f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+
+    return {"tp": tp, "fp": fp, "fn": fn, "f1": f1}
+
+
+def _build_polity_score(
+    tagger_records: list[dict[str, Any]],
+    academic_polities: dict[str, list[str]],
+    cmap: PolityCanonical | None,
+) -> dict[str, Any]:
+    """Score the many-valued `polities_touched` facet as a set-based metric
+    (issue #215). Scored only over chunks with BOTH a tagger record AND a
+    row on the returned sheet (the join intersection) -- see module
+    docstring for the scope/both-empty/fold design choices."""
+    per_chunk: list[dict[str, Any]] = []
+    both_empty_matches = 0
+    pooled_tp = pooled_fp = pooled_fn = 0
+    f1_values: list[float] = []
+
+    for record in tagger_records:
+        chunk_id = record.get("chunk_id")
+        if chunk_id not in academic_polities:
+            continue  # no sheet row -- excluded, not a both-empty match
+
+        tagger_keys = _fold_polity_set(record.get("polities_touched") or [], cmap)
+        academic_keys = _fold_polity_set(academic_polities[chunk_id], cmap)
+
+        scored = _score_polity_chunk(tagger_keys, academic_keys)
+        per_chunk.append({"chunk_id": chunk_id, **scored})
+        f1_values.append(scored["f1"])
+
+        if not tagger_keys and not academic_keys:
+            both_empty_matches += 1
+        else:
+            pooled_tp += scored["tp"]
+            pooled_fp += scored["fp"]
+            pooled_fn += scored["fn"]
+
+    micro_precision = pooled_tp / (pooled_tp + pooled_fp) if (pooled_tp + pooled_fp) else 0.0
+    micro_recall = pooled_tp / (pooled_tp + pooled_fn) if (pooled_tp + pooled_fn) else 0.0
+    micro_f1 = (
+        (2 * micro_precision * micro_recall / (micro_precision + micro_recall))
+        if (micro_precision + micro_recall)
+        else 0.0
+    )
+    macro_f1 = (sum(f1_values) / len(f1_values)) if f1_values else 0.0
+
+    per_chunk.sort(key=lambda row: row["chunk_id"])
+
+    return {
+        "micro": {"precision": micro_precision, "recall": micro_recall, "f1": micro_f1},
+        "macro_f1": macro_f1,
+        "both_empty_matches": both_empty_matches,
+        "per_chunk": per_chunk,
+    }
 
 
 def _build_report(
@@ -286,6 +468,10 @@ def run_eval(
 
     report = _build_report(tagger_records, academic_by_chunk, vocabularies)
     _warn_unmatched(report["unmatched"])
+
+    academic_polities = _load_academic_polities(sheet_path)
+    cmap = _load_polity_canonical_or_none(domain_dir)
+    report["per_polity_score"] = _build_polity_score(tagger_records, academic_polities, cmap)
 
     labels_dir.mkdir(parents=True, exist_ok=True)
     report_path = labels_dir / "eval_report.json"

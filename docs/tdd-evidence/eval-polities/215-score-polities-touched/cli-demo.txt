@@ -1,0 +1,56 @@
+# Live axial eval demo — #215 polities_touched set-based metric
+# (throwaway gold set seeded to mirror the acceptance fixture:
+#  p1 exact match, p2 extra-tagger FP, p3 missing-tagger FN,
+#  p4 USSR->Soviet Union alias fold via the #205 map, p5 both-empty)
+
+$ axial eval        # cwd = seeded gold root, AXIAL_LLM_PROVIDER=explode (any LLM call is a bug)
+"data\\gold\\labels\\eval_report.json"
+exit=0
+
+# per_polity_score section of the written data/gold/labels/eval_report.json:
+{
+  "both_empty_matches": 1,
+  "macro_f1": 0.8666666666666666,
+  "micro": {
+    "f1": 0.8333333333333334,
+    "precision": 0.8333333333333334,
+    "recall": 0.8333333333333334
+  },
+  "per_chunk": [
+    {
+      "chunk_id": "demo-p1",
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "tp": 2
+    },
+    {
+      "chunk_id": "demo-p2",
+      "f1": 0.6666666666666666,
+      "fn": 0,
+      "fp": 1,
+      "tp": 1
+    },
+    {
+      "chunk_id": "demo-p3",
+      "f1": 0.6666666666666666,
+      "fn": 1,
+      "fp": 0,
+      "tp": 1
+    },
+    {
+      "chunk_id": "demo-p4",
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "tp": 1
+    },
+    {
+      "chunk_id": "demo-p5",
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "tp": 0
+    }
+  ]
+}
