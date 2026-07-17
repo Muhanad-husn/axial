@@ -37,17 +37,49 @@ _ENVELOPE_HEADINGS = ("introduction", "abstract", "conclusion")
 
 _REQUIRED_STRING_FIELDS = ("thesis", "scope", "stated_argument")
 
+# --- Evidence-floor tunables (PRD §7.3, #201) --------------------------------
+#
+# "The slice size is a stated tunable, not a magic constant, proven via
+# inspection in the spirit of the chunk band [min, max] (§7.7) and the
+# low-alpha threshold (§7.8)." -- specs/PRODUCT.md 7.3. Two named constants,
+# mirroring that band shape: a floor that decides whether the heading-matched
+# evidence counts as "little or no text", and a target size for the
+# head-of-tree fallback slice used when it doesn't.
+
+# A matched intro/abstract/conclusion section (or set of sections) whose
+# combined own-plus-descendant text falls below this many characters is
+# functionally empty -- e.g. a bare heading with no real body captured -- and
+# is treated exactly like an unmatched heading heuristic (widen). Set well
+# below the real fixture's genuine two-section evidence (~500 characters,
+# tests/fixtures/envelope/thesis_paper_tree.json's Introduction+Conclusion),
+# so a normal, well-matched source's evidence is never disturbed.
+_EVIDENCE_FLOOR_CHARS = 200
+
+# Target size of the head-of-tree widening fallback: a bounded prefix of the
+# source's own prose, taken in tree order (PRD §7.3). Large enough to give
+# the model several paragraphs of real source text to ground thesis/scope/
+# stated_argument on -- roughly two chunk-worths per the chunk band's
+# CHUNK_MAX (§7.7) -- while staying bounded so a large source doesn't blow
+# out the once-per-source envelope prompt. A starting point, not a
+# proven-final value (mirrors CHUNK_MIN/CHUNK_MAX's own framing).
+_HEAD_OF_TREE_SLICE_CHARS = 6000
+
 _PROMPT_TEMPLATE = """\
 You are extracting a structural envelope from an academic source's \
-introduction, abstract, and conclusion sections only. Read the sections \
-below and respond with ONLY a JSON object (no prose, no markdown fences) \
-with exactly these keys:
+introduction, abstract, and conclusion sections, or -- when those are not \
+clearly labeled -- a representative excerpt of the source's own opening \
+prose. Read the source text below and respond with ONLY a JSON object (no \
+prose, no markdown fences) with exactly these keys:
 
 - "thesis": the author's stated thesis, as a non-empty string.
 - "toc": a non-empty JSON array of the source's section/chapter labels.
 - "scope": the stated scope of the argument, as a non-empty string.
 - "stated_argument": the argument as restated (e.g. in the conclusion), \
 as a non-empty string.
+
+Base your answer only on the supplied source text below. Do not infer the \
+thesis, scope, or stated argument from the title, the filename, or any \
+outside knowledge -- every field must come solely from the text provided.
 
 Sections:
 
@@ -155,18 +187,60 @@ def _node_text_lines(node: dict) -> list[str]:
     return lines
 
 
-def compose_prompt(tree: dict) -> str:
-    """Compose the envelope prompt from the source's intro/abstract/
-    conclusion nodes only (heuristic over the extraction tree's section
-    headings), never the whole tree."""
-    sections = []
+def _matched_section_blocks(tree: dict) -> list[str]:
+    """Build one text block per matched intro/abstract/conclusion node: the
+    section's own direct text plus its children's, not its children's alone
+    (PRD §7.3, "full text of the selected sections")."""
+    blocks = []
     for node in select_envelope_nodes(tree):
         heading = node.get("text", "")
-        body_lines = [
-            line for child in node.get("children", []) for line in _node_text_lines(child)
-        ]
-        sections.append(f"## {heading}\n" + "\n".join(body_lines))
-    return _PROMPT_TEMPLATE.format(sections="\n\n".join(sections))
+        body_lines = _node_text_lines(node)
+        blocks.append(f"## {heading}\n" + "\n".join(body_lines))
+    return blocks
+
+
+def _head_of_tree_lines(tree: dict, max_chars: int = _HEAD_OF_TREE_SLICE_CHARS) -> list[str]:
+    """Walk the tree in stable pre-order (root -> children, depth-first --
+    the document's own reading order per `axial.extract._build_tree`),
+    collecting every node's own text, stopping once the accumulated length
+    reaches `max_chars` (rounding up to the line that crosses the threshold
+    rather than truncating a sentence mid-way). Deterministic: the same tree
+    always yields the same slice (PRD §7.3, "a bounded prefix of the
+    source's own prose, taken in tree order")."""
+    lines: list[str] = []
+    total = 0
+
+    def _walk(node: dict) -> bool:
+        nonlocal total
+        text = node.get("text")
+        if text:
+            lines.append(text)
+            total += len(text)
+            if total >= max_chars:
+                return True
+        for child in node.get("children", []):
+            if _walk(child):
+                return True
+        return False
+
+    _walk(tree)
+    return lines
+
+
+def compose_prompt(tree: dict) -> str:
+    """Compose the envelope prompt from the source's intro/abstract/
+    conclusion nodes (heuristic over the extraction tree's section
+    headings). When that heuristic selects little or no text (PRD §7.3,
+    "evidence floor on the input"), widen instead to a substantive
+    head-of-tree slice of the source's own prose, so the model is never
+    handed an empty or near-empty evidence block (#201)."""
+    blocks = _matched_section_blocks(tree)
+    if sum(len(block) for block in blocks) < _EVIDENCE_FLOOR_CHARS:
+        lines = _head_of_tree_lines(tree)
+        evidence = "## Source text (head-of-tree excerpt)\n" + "\n".join(lines)
+    else:
+        evidence = "\n\n".join(blocks)
+    return _PROMPT_TEMPLATE.format(sections=evidence)
 
 
 def parse_response(raw: str) -> dict[str, Any]:

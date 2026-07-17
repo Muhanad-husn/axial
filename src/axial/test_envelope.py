@@ -12,6 +12,10 @@ from axial.llm import ExplodingLLMClient, StubLLMClient
 
 
 def _tree_with_sections(*, include_body=True) -> dict:
+    # Body paragraphs are deliberately long enough (see axial.envelope's
+    # _EVIDENCE_FLOOR_CHARS) that this well-matched, normal-shaped tree never
+    # dips into the #201 head-of-tree widening fallback -- these tests pin
+    # the PRIMARY intro/abstract/conclusion heuristic's own behavior.
     return {
         "children": [
             {
@@ -23,7 +27,13 @@ def _tree_with_sections(*, include_body=True) -> dict:
                         {
                             "type": "prose",
                             "order": "1.1",
-                            "text": "This paper argues X.",
+                            "text": (
+                                "This paper argues X: that the observed institutional "
+                                "variation across the sampled cases is better explained "
+                                "by infrastructural capacity than by coercive enforcement "
+                                "alone, a claim developed at length across the following "
+                                "comparative case chapters."
+                            ),
                         }
                     ]
                     if include_body
@@ -42,7 +52,19 @@ def _tree_with_sections(*, include_body=True) -> dict:
                 "type": "prose",
                 "order": "3",
                 "text": "Conclusion",
-                "children": [{"type": "prose", "order": "3.1", "text": "In sum, X is true."}],
+                "children": [
+                    {
+                        "type": "prose",
+                        "order": "3.1",
+                        "text": (
+                            "In sum, X is true: the evidence assembled across these "
+                            "cases shows that infrastructural power consistently "
+                            "outperforms coercive capacity as a predictor of durable "
+                            "post-conflict institutional order, confirming the paper's "
+                            "opening thesis in full."
+                        ),
+                    }
+                ],
             },
         ]
     }
@@ -123,9 +145,169 @@ def test_compose_prompt_excludes_body_section_text():
 
     prompt = compose_prompt(tree)
 
-    assert "This paper argues X." in prompt
-    assert "In sum, X is true." in prompt
+    assert "This paper argues X" in prompt
+    assert "In sum, X is true" in prompt
     assert "Body material, not envelope input." not in prompt
+
+
+# --- evidence floor / head-of-tree widening (#201) ---------------------------
+
+
+def test_compose_prompt_widens_when_no_heading_matches():
+    """Evidence floor (PRD §7.3): a topic-titled tree whose top-level
+    headings match none of intro/abstract/conclusion must still surface
+    real source text, drawn in tree order, rather than an empty evidence
+    block."""
+    from axial.envelope import compose_prompt, select_envelope_nodes
+
+    tree = {
+        "children": [
+            {
+                "type": "prose",
+                "order": "1",
+                "text": "Border Enforcement Regimes",
+                "children": [
+                    {
+                        "type": "prose",
+                        "order": "1.1",
+                        "text": "The Kestrel-9 marker phrase appears nowhere else in this repo.",
+                    }
+                ],
+            },
+            {
+                "type": "prose",
+                "order": "2",
+                "text": "Fiscal Extraction Networks",
+                "children": [
+                    {"type": "prose", "order": "2.1", "text": "Unrelated later material."}
+                ],
+            },
+        ]
+    }
+    assert select_envelope_nodes(tree) == []  # fixture sanity check
+
+    prompt = compose_prompt(tree)
+
+    assert "Kestrel-9 marker phrase" in prompt
+
+
+def test_compose_prompt_widens_when_matched_section_is_near_empty():
+    """A matched heading with little/no captured body (PRD §7.3, 'little or
+    no text') widens exactly as if nothing had matched -- a bare heading
+    match is not itself substantive evidence."""
+    from axial.envelope import compose_prompt
+
+    tree = {
+        "children": [
+            {"type": "prose", "order": "1", "text": "Introduction", "children": []},
+            {
+                "type": "prose",
+                "order": "2",
+                "text": "Substantive Content Elsewhere",
+                "children": [
+                    {
+                        "type": "prose",
+                        "order": "2.1",
+                        "text": "The Falcon-4 marker phrase lives only in this later section.",
+                    }
+                ],
+            },
+        ]
+    }
+
+    prompt = compose_prompt(tree)
+
+    assert "Falcon-4 marker phrase" in prompt
+
+
+def test_compose_prompt_head_of_tree_slice_is_bounded_and_deterministic():
+    """The widening fallback's slice size is a bounded, stated tunable, and
+    the same tree always yields the identical slice."""
+    from axial.envelope import _HEAD_OF_TREE_SLICE_CHARS, compose_prompt
+
+    long_paragraph = "Sentence about nothing in particular. " * 1000  # far over the slice size
+    tree = {
+        "children": [
+            {"type": "prose", "order": "1", "text": "Untitled Section", "children": []},
+            {
+                "type": "prose",
+                "order": "2",
+                "text": "Later Section",
+                "children": [{"type": "prose", "order": "2.1", "text": long_paragraph}],
+            },
+        ]
+    }
+
+    prompt_a = compose_prompt(tree)
+    prompt_b = compose_prompt(tree)
+
+    assert prompt_a == prompt_b  # deterministic
+    # The full 39000+-character paragraph must not reach the prompt whole --
+    # the slice is bounded, not "widen to everything".
+    assert len(prompt_a) < len(long_paragraph) + _HEAD_OF_TREE_SLICE_CHARS
+
+
+def test_compose_prompt_does_not_widen_a_normal_well_matched_source():
+    """No regression: a normal intro/abstract/conclusion source with real
+    matched-section evidence keeps using the heading heuristic's own output
+    unchanged -- the widening fallback never fires for it."""
+    from axial.envelope import compose_prompt
+
+    tree = _tree_with_sections()
+
+    prompt = compose_prompt(tree)
+
+    # "Comparative Cases" is neither intro/abstract/conclusion nor within
+    # the (already ample) evidence floor's reach -- if it leaked in, the
+    # primary heuristic's own section-scoping would have broken.
+    assert "Body material, not envelope input." not in prompt
+
+
+def test_compose_prompt_includes_matched_node_own_direct_text():
+    """PRD §7.3 'full text of the selected sections': a matched section's
+    own direct text is part of the evidence, not merely its children's."""
+    from axial.envelope import compose_prompt
+
+    tree = {
+        "children": [
+            {
+                "type": "prose",
+                "order": "1",
+                "text": (
+                    "Abstract: this paper's distinctive marker sentence about "
+                    "gravitational-lensing anomalies is the entire abstract, sitting "
+                    "directly on this node rather than on any child."
+                ),
+                "children": [
+                    {
+                        "type": "prose",
+                        "order": "1.1",
+                        "text": "A follow-up remark about the same anomalies.",
+                    }
+                ],
+            }
+        ]
+    }
+
+    prompt = compose_prompt(tree)
+
+    assert "distinctive marker sentence about gravitational-lensing anomalies" in prompt
+    assert "A follow-up remark about the same anomalies." in prompt
+
+
+def test_compose_prompt_carries_the_grounding_instruction():
+    """PRD §7.3 'Grounded by construction' / PRD §8 P0-3: the prompt must
+    instruct the model to base its answer only on the supplied text, and
+    not on the title, the filename, or outside knowledge."""
+    from axial.envelope import compose_prompt
+
+    prompt = compose_prompt(_tree_with_sections())
+    lowered = prompt.lower()
+
+    assert "only" in lowered and "source text" in lowered
+    assert "title" in lowered
+    assert "filename" in lowered or "file name" in lowered
+    assert "outside knowledge" in lowered or "prior knowledge" in lowered
 
 
 # --- response parsing / validation ------------------------------------------
