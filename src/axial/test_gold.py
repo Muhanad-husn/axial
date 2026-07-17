@@ -339,6 +339,7 @@ class TestRunGoldSample:
                 "chunk_text",
                 "field",
                 "empirical_scope",
+                "polities_touched",
                 "role_in_argument",
                 "claim_type",
                 "theory_school",
@@ -419,6 +420,29 @@ class TestBuildWorkbook:
             assert dv.type == "list"
             # formula1 points at the hidden vocab sheet's column range
             assert "vocab!" in (dv.formula1 or "")
+
+    def test_polities_touched_prefilled_and_joined(self):
+        records = [
+            {
+                **_gold_record("s-1_1_a_001", "state", "scope:general", "a-claim", "a-school"),
+                "polities_touched": ["Egypt", "Syria"],
+            },
+            {
+                **_gold_record(
+                    "s-1_2_b_001", "violence", "scope:country-case", "b-claim", "b-school"
+                ),
+                "polities_touched": [],
+            },
+        ]
+        wb = build_workbook(records, self._vocab())
+        ws = wb.worksheets[0]
+        idx = {name: i + 1 for i, name in enumerate(SHEET_COLUMNS)}
+        # sits immediately after empirical_scope, is not a dropdown axis
+        assert idx["polities_touched"] == idx["empirical_scope"] + 1
+        assert "polities_touched" not in AXIS_COLUMNS
+        assert ws.cell(row=1, column=idx["polities_touched"]).value == "polities_touched"
+        assert ws.cell(row=2, column=idx["polities_touched"]).value == "Egypt; Syria"
+        assert ws.cell(row=3, column=idx["polities_touched"]).value in (None, "")
 
 
 class TestRunGoldSheet:

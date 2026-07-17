@@ -9,10 +9,12 @@ Then  a dated delivery folder `data/gold/delivery/<YYYY-MM-DD>/` exists
 And   it contains exactly three files: label_sheet.xlsx, a byte-identical
       copy of the generated sheet; README-for-academic.md, the human-facing
       labeling instructions; and manifest.json, the machine-readable summary
-And   manifest.json records the chunk_count, the four axis columns, which
-      axes are labeled blind (claim_type, theory_school) vs pre-labeled
-      (field, empirical_scope), the sheet filename, the delivery date, and
-      where the Academic returns the filled sheet (data/gold/labels/)
+And   manifest.json records the chunk_count, Appendix I's full column list
+      (including the pre-filled polities_touched context column), the four
+      axis columns, which axes are labeled blind (claim_type, theory_school)
+      vs pre-labeled (field, empirical_scope), the sheet filename, the
+      delivery date, and where the Academic returns the filled sheet
+      (data/gold/labels/)
 And   README-for-academic.md names the four axes, the blind/correct split,
       and the return location
 And   re-running overwrites the same dated folder in place (no stale files)
@@ -50,6 +52,22 @@ EXPECTED_AXES = ["field", "empirical_scope", "claim_type", "theory_school"]
 EXPECTED_BLIND = ["claim_type", "theory_school"]
 EXPECTED_PRELABELED = ["field", "empirical_scope"]
 
+# Appendix I's full label-sheet column order, including the pre-filled
+# `polities_touched` context column (not an axis) between empirical_scope
+# and claim_type. The delivery manifest's `columns` field must echo this.
+EXPECTED_COLUMNS = [
+    "chunk_id",
+    "source",
+    "section",
+    "chunk_text",
+    "field",
+    "empirical_scope",
+    "polities_touched",
+    "claim_type",
+    "theory_school",
+    "notes",
+]
+
 # Seeded sampled records, reusing slice 01's flat output shape (see
 # test_gold_sheet.py). `gold sheet` renders these; `gold deliver` packages them.
 SEEDED_RECORDS = [
@@ -60,6 +78,7 @@ SEEDED_RECORDS = [
         "chunk_text": "First substantive prose chunk.",
         "field": "state",
         "empirical_scope": "scope:general",
+        "polities_touched": ["Syria", "Iraq"],
         "role_in_argument": "role:setup",
         "claim_type": "state-formation",
         "theory_school": "bellicist",
@@ -71,6 +90,7 @@ SEEDED_RECORDS = [
         "chunk_text": "Second substantive prose chunk.",
         "field": "violence",
         "empirical_scope": "scope:country-case",
+        "polities_touched": ["Lebanon"],
         "role_in_argument": "role:claim",
         "claim_type": "civilian-targeting",
         "theory_school": "micro-sociological",
@@ -82,6 +102,7 @@ SEEDED_RECORDS = [
         "chunk_text": "Third substantive prose chunk.",
         "field": "ideology",
         "empirical_scope": "scope:comparative",
+        "polities_touched": [],
         "role_in_argument": "role:evidence",
         "claim_type": "ideology-as-system",
         "theory_school": "discursive",
@@ -205,6 +226,11 @@ def test_gold_deliver_packages_sheet_for_academic(isolated_vault_root):
     assert manifest["chunk_count"] == len(SEEDED_RECORDS), (
         f"expected manifest chunk_count={len(SEEDED_RECORDS)}, got {manifest.get('chunk_count')!r}"
     )
+    assert manifest["columns"] == EXPECTED_COLUMNS, (
+        f"expected manifest columns to equal Appendix I's label-sheet columns "
+        f"in order ({EXPECTED_COLUMNS}, including the polities_touched context "
+        f"column), got {manifest.get('columns')!r}"
+    )
     assert manifest["axes"] == EXPECTED_AXES, (
         f"expected manifest axes={EXPECTED_AXES}, got {manifest.get('axes')!r}"
     )
@@ -214,6 +240,11 @@ def test_gold_deliver_packages_sheet_for_academic(isolated_vault_root):
     assert manifest["prelabeled_axes"] == EXPECTED_PRELABELED, (
         f"expected manifest prelabeled_axes={EXPECTED_PRELABELED}, got "
         f"{manifest.get('prelabeled_axes')!r}"
+    )
+    assert manifest["prelabeled_freetext"] == ["polities_touched"], (
+        f"expected manifest prelabeled_freetext=['polities_touched'] to flag "
+        f"the pre-filled, non-axis context column, got "
+        f"{manifest.get('prelabeled_freetext')!r}"
     )
     assert manifest["sheet"] == "label_sheet.xlsx", (
         f"expected manifest sheet='label_sheet.xlsx', got {manifest.get('sheet')!r}"
@@ -237,6 +268,10 @@ def test_gold_deliver_packages_sheet_for_academic(isolated_vault_root):
         assert axis in readme, f"expected the README to name the {axis!r} axis, but it does not"
     assert "labels" in readme, (
         "expected the README to tell the Academic where to return the sheet (data/gold/labels/)"
+    )
+    assert "polities_touched" in readme, (
+        "expected the README to mention the pre-filled polities_touched context "
+        "column so the Academic knows it is not a blind labeling axis"
     )
 
 

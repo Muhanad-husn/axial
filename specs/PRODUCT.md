@@ -162,7 +162,7 @@ One JSON per source in `data/trees/`, keyed by `source_id` (the same determinist
 
 ### 7.5 Gold-set label sheet
 
-`data/gold/label_sheet.xlsx`: **one row per chunk, one column per axis.** Columns: `chunk_id`, `source`, `section`, `chunk_text`, then one column per axis with **dropdown validation sourced from the codebook**. Hybrid labeling per §9. The same sheet, once returned, is the machine-readable answer key for scoring — no transformation step between labeling and eval.
+`data/gold/label_sheet.xlsx`: **one row per chunk, one column per axis.** Columns: `chunk_id`, `source`, `section`, `chunk_text`, then one column per axis with **dropdown validation sourced from the codebook**, plus a `polities_touched` **pre-labeled, correctable** column that rides between the pre-labeled axes and the blind axes (after `empirical_scope`, before `claim_type`): it is pre-filled from the tagger's `polities_touched` list and corrected by the Academic where wrong, like the other pre-labeled columns; it is free-text, so it carries no dropdown, and it is not one of the four codebook dropdown axes — but it is a labeled field, not read-only provenance (Appendix I). Hybrid labeling per §9. The same sheet, once returned, is the machine-readable answer key for scoring — no transformation step between labeling and eval.
 
 ### 7.6 Gold-set delivery bundle
 
@@ -172,7 +172,7 @@ Once §7.5 has produced the sheet, `axial gold deliver` packages it into a self-
 - **Contents:** exactly three files, nothing else.
   - `label_sheet.xlsx` — a byte-identical copy of the generated `data/gold/label_sheet.xlsx`.
   - `README-for-academic.md` — human labeling instructions. Names the four axis columns (`field`, `empirical_scope`, `claim_type`, `theory_school`), states the blind vs. pre-labeled split per §9, and tells the Academic to return the filled sheet under `data/gold/labels/`.
-  - `manifest.json` — machine-readable summary carrying: `sheet` (`"label_sheet.xlsx"`); `delivered` (the `YYYY-MM-DD` stamp, equal to the folder name); `chunk_count` (the number of labelable rows, the sheet's rows minus the header); `columns` (the label-sheet columns of Appendix I); `axes` (`["field", "empirical_scope", "claim_type", "theory_school"]`); `blind_axes` (`["claim_type", "theory_school"]`); `prelabeled_axes` (`["field", "empirical_scope"]`); and `return_to` (the labels inbox, `data/gold/labels/`).
+  - `manifest.json` — machine-readable summary carrying: `sheet` (`"label_sheet.xlsx"`); `delivered` (the `YYYY-MM-DD` stamp, equal to the folder name); `chunk_count` (the number of labelable rows, the sheet's rows minus the header); `columns` (the label-sheet columns of Appendix I); `axes` (`["field", "empirical_scope", "claim_type", "theory_school"]`); `blind_axes` (`["claim_type", "theory_school"]`); `prelabeled_axes` (`["field", "empirical_scope"]`); `prelabeled_freetext` (the pre-labeled free-text columns the Academic corrects that are not codebook dropdown axes, `["polities_touched"]`); and `return_to` (the labels inbox, `data/gold/labels/`).
 - **Idempotent per day:** re-running `axial gold deliver` overwrites the same dated folder in place, leaving no stale files — the folder holds exactly the three handoff files after any run.
 - **Missing-sheet error:** running `axial gold deliver` with no generated sheet fails with a non-zero exit and a clear message telling the operator to run `axial gold sheet` first. No delivery folder is created in that case.
 
@@ -540,6 +540,6 @@ artifact_refs: [hinnebusch2001_tbl_02]
 
 ## Appendix I — Label-sheet columns
 
-`chunk_id | source | section | chunk_text | field (pre-labeled) | empirical_scope (pre-labeled) | claim_type (blind) | theory_school (blind) | notes`
+`chunk_id | source | section | chunk_text | field (pre-labeled) | empirical_scope (pre-labeled) | polities_touched (pre-labeled, free-text) | claim_type (blind) | theory_school (blind) | notes`
 
-Dropdowns on the four axis columns are generated from `codebook.yaml`. Pre-labeled columns arrive filled with the tagger's guess for the Academic to correct; blind columns arrive empty.
+Dropdowns on the four axis columns are generated from `codebook.yaml`. Pre-labeled columns arrive filled with the tagger's guess for the Academic to correct; blind columns arrive empty. `polities_touched` is a **pre-labeled, correctable** free-text field: it arrives pre-filled with the tagger's guess (the raw polity strings, joined) for the Academic to correct where wrong. It is free-text, so it has no dropdown, and it is not one of the four codebook axes — but it is scored against the tagger the same way the pre-labeled axes are.
