@@ -30,6 +30,7 @@ from axial.gold import (
 from axial.ingest import run_ingest
 from axial.intake import IntakeError, intake
 from axial.pipeline_ready import PipelineReadyError, run_pipeline_ready
+from axial.polity_canonical import PolityCanonicalError, run_polity_build, run_polity_report
 from axial.schema import SchemaError, load_schema
 from axial.tag import DEFAULT_DOMAIN_DIR, TagError, run_tag
 from axial.validate import cross_validate
@@ -210,6 +211,30 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     vault_write_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
+
+    polity_parser = subparsers.add_parser(
+        "polity", help="offline canonical polity-map operations (deterministic, model-free)"
+    )
+    polity_subparsers = polity_parser.add_subparsers(dest="polity_command")
+
+    polity_subparsers.add_parser(
+        "build",
+        help=(
+            "scan the vault's prose notes for distinct polity verbatims and "
+            "emit a deterministic seed canonical tree (YAML) to stdout, for "
+            "the operator to curate into polity_canonical.yaml"
+        ),
+    )
+
+    polity_subparsers.add_parser(
+        "report",
+        help=(
+            "canonicalize the vault's collected polity verbatims against "
+            "<domain>/polity_canonical.yaml, printing a JSON report (mapped/"
+            "candidates/leaks/candidate_count) to stdout and a human "
+            "notification to stderr"
+        ),
+    )
 
     ingest_parser = subparsers.add_parser(
         "ingest",
@@ -456,6 +481,38 @@ def _vault_write(source_path: str) -> int:
     return 0
 
 
+def _polity_build() -> int:
+    text = run_polity_build()
+    print(text, end="")
+    return 0
+
+
+def _polity_report() -> int:
+    try:
+        report = run_polity_report()
+    except PolityCanonicalError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(report))
+
+    notes: list[str] = []
+    if report["candidates"]:
+        notes.append(f"{len(report['candidates'])} candidate(s) unresolved:")
+        for candidate in report["candidates"]:
+            notes.append(f"  - {candidate['verbatim']} (count={candidate['count']})")
+    if report["leaks"]:
+        notes.append(f"{len(report['leaks'])} leak(s) flagged (never folded):")
+        for leak in report["leaks"]:
+            notes.append(f"  - {leak['verbatim']} -> {', '.join(leak['parts'])}")
+    if notes:
+        print("\n".join(notes), file=sys.stderr)
+    else:
+        print("nothing to resolve: all polities resolved", file=sys.stderr)
+
+    return 0
+
+
 def _ingest(worklist_path: str) -> int:
     return run_ingest(worklist_path)
 
@@ -523,6 +580,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "vault" and args.vault_command == "write":
         return _vault_write(args.source_path)
+
+    if args.command == "polity" and args.polity_command == "build":
+        return _polity_build()
+
+    if args.command == "polity" and args.polity_command == "report":
+        return _polity_report()
 
     if args.command == "ingest":
         return _ingest(args.worklist_path)
