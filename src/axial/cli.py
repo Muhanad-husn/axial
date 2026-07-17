@@ -462,7 +462,7 @@ def _gold_deliver() -> int:
 def _eval() -> int:
     try:
         path = run_eval()
-    except (EvalError, GoldError) as exc:
+    except (EvalError, GoldError, PolityCanonicalError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
