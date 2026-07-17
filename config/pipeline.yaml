@@ -15,6 +15,21 @@
 llm:
   provider: openrouter
   base_url: https://openrouter.ai/api/v1
+  # Per-pass model reasoning (issue #207, PRD §7.9): a per-pass setting,
+  # never hardcoded (src/axial/llm.py's OpenRouterClient reads this map via
+  # _resolve_reasoning_by_pass, falling back to axial.llm.
+  # DEFAULT_REASONING_BY_PASS when this block or the file is absent). ON for
+  # the structural-envelope pass and the content-apparatus classification
+  # gate (small, judgment-heavy, once/rarely-per-source calls); OFF
+  # (unchanged since #147, which found reasoning blew the wall-clock on
+  # large chunk-echo tag calls) for the high-volume tag/artifacts/xref
+  # calls.
+  reasoning_by_pass:
+    envelope: true
+    content_apparatus: true
+    tag: false
+    artifacts: false
+    xref: false
 
 paths:
   envelopes_dir: data/envelopes

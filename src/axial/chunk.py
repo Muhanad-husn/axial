@@ -2,12 +2,16 @@
 retired the embedding mechanism and became the SOLE chunking mechanism as of
 issue #191, spec-drift #191) is deterministic recursive descent over a
 separator hierarchy (paragraph -> line -> sentence -> raw char), with ZERO
-embedding-model or text-generating LLM calls anywhere in this path. A
-deterministic two-sided band guard `[CHUNK_MIN, CHUNK_MAX]` wraps the
-separator-hierarchy split. It reads ONLY the persisted structural tree
-(`data/trees/<source_id>.json`, via `axial.extract`) -- no envelope. It
-writes records to `data/chunks/<source_id>.jsonl` (PRD §7.7) -- the CLI
-`chunk` subcommand's mechanism (see `src/axial/cli.py`).
+embedding-model calls anywhere in this path. A deterministic two-sided band
+guard `[CHUNK_MIN, CHUNK_MAX]` wraps the separator-hierarchy split. It reads
+ONLY the persisted structural tree (`data/trees/<source_id>.json`, via
+`axial.extract`) -- no envelope. It writes records to
+`data/chunks/<source_id>.jsonl` (PRD §7.7) -- the CLI `chunk` subcommand's
+mechanism (see `src/axial/cli.py`). The chunk SPLIT critical path itself
+makes no text-generating LLM call; the one exception, added by issue #207,
+is the router's bounded, per-block content-apparatus classification call
+(§7.8), made ONLY for a block a cheap deterministic pre-filter flags as a
+possible dense citation run -- see `_routed_section_body` below.
 
 `read_chunks` (issue #154, slice 04 of the chunk-redesign subproject) is the
 downstream-facing reader for that same on-disk artifact: `tag.py`, `xref.py`,
@@ -64,9 +68,23 @@ from axial.envelope import (
     compute_source_id,
 )
 from axial.extract import load_persisted_tree, tree_path
-from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
+from axial.llm import (
+    CONTENT_APPARATUS_PASS_NAME,
+    DEFAULT_PIPELINE_CONFIG_PATH,
+    LLMClient,
+    LLMError,
+    get_client,
+)
+from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.nonprose_guard import MAX_NON_ALPHA_RATIO, garble_only_skip_reason
-from axial.router import APPARATUS, PROSE, apparatus_reason, iter_routed_blocks
+from axial.router import (
+    APPARATUS,
+    CONTENT_APPARATUS_REASON,
+    PROSE,
+    apparatus_reason,
+    is_content_apparatus_candidate,
+    iter_routed_blocks,
+)
 
 CHUNKS_DIR = Path("data/chunks")
 
@@ -135,6 +153,23 @@ class MissingSourceError(ChunkError):
     """Raised when the source path does not exist or is not a file."""
 
     def __init__(self, cause: _EnvelopeMissingSourceError):
+        self.cause = cause
+        super().__init__(str(cause))
+
+
+class ContentApparatusClassificationFailedError(ChunkError):
+    """Raised when the router's content-apparatus classification call
+    (issue #207, PRD §7.8 "Model-backed classification of flagged
+    candidates") fails -- an `LLMClient` configuration/transport error
+    (`LLMError`) or a persistently unparseable model response
+    (`ModelJsonError`). Mirrors `axial.tag`/`axial.envelope`'s own
+    `LLMFailedError`-style wrapping so a caller catches one typed
+    `ChunkError` instead of a bare `LLMError`/JSON exception. This call is
+    made for a pre-filter-flagged candidate ONLY (never for the overwhelming
+    majority of clean-prose blocks), so a failure here never happens on a
+    run with no flagged candidates."""
+
+    def __init__(self, cause: LLMError | ModelJsonError):
         self.cause = cause
         super().__init__(str(cause))
 
@@ -291,20 +326,84 @@ def _section_nodes(tree: dict) -> list[dict]:
     ]
 
 
-def _routed_section_body(section: dict) -> tuple[list[str], list[dict[str, Any]]]:
+# =============================================================================
+# Content-detected apparatus (issue #207, PRD §7.8 "Content-detected
+# apparatus" / "Model-backed classification of flagged candidates"): the
+# router's cheap pre-filter (`axial.router.is_content_apparatus_candidate`)
+# flags a candidate PROSE-routed block; this bounded, per-block model call
+# resolves it to `apparatus` (drop) or `prose` (keep). Only a flagged
+# candidate is ever sent here -- see `_routed_section_body` below.
+# =============================================================================
+
+_CONTENT_APPARATUS_PROMPT_TEMPLATE = """\
+You are classifying ONE block of text from an academic source that a \
+cheap, deterministic pre-filter has flagged as a POSSIBLE dense run of \
+bibliographic citations (a reference list, bibliography, or endnote run \
+mis-sectioned under an ordinary body heading). Decide whether this block \
+is genuinely non-content apparatus (a bibliography / citation list / \
+endnote run) or ordinary substantive prose that merely mentions a source \
+or two in passing.
+
+Respond with ONLY a JSON object (no prose, no markdown fences) with \
+exactly this key:
+
+- "route": either "apparatus" (this block is a bibliography/citation-list/
+  endnote run and should be dropped) or "prose" (this block is ordinary
+  substantive prose and should be kept).
+
+When in doubt, respond "prose" -- a block not confidently apparatus must
+never be dropped.
+
+Block text:
+
+{text}
+"""
+
+
+def _classify_content_apparatus(client: LLMClient, text: str) -> bool:
+    """Send `text` (a pre-filter-flagged candidate block) to the bounded
+    content-apparatus classification call (`pass_name=CONTENT_APPARATUS_
+    PASS_NAME`, §7.8/§7.9) and return True when it resolves to `apparatus`
+    (drop), False for anything else -- including an unrecognized/missing
+    `route` value, per the never-drop-on-uncertainty rule (§7.8): a block
+    not confidently classified as apparatus stays prose.
+
+    Wraps any `LLMError` (client construction/transport) or persistent
+    `ModelJsonError` (an unparseable response surviving `complete_json`'s
+    bounded re-ask budget) as `ContentApparatusClassificationFailedError`,
+    mirroring `axial.tag`/`axial.envelope`'s own typed-error wrapping.
+    """
+    prompt = _CONTENT_APPARATUS_PROMPT_TEMPLATE.format(text=text)
+    try:
+        raw_response = complete_json(client, prompt, pass_name=CONTENT_APPARATUS_PASS_NAME)
+    except (LLMError, ModelJsonError) as exc:
+        raise ContentApparatusClassificationFailedError(exc) from exc
+    parsed = parse_model_json(raw_response)
+    route = parsed.get("route") if isinstance(parsed, dict) else None
+    return route == APPARATUS
+
+
+def _routed_section_body(
+    section: dict, resolve_client: Callable[[], LLMClient]
+) -> tuple[list[str], list[dict[str, Any]]]:
     """Route every block in `section`'s body (its `children`, excluding the
     section's own heading) through the shared source router (issue #167, PRD
     §7.8) via `axial.router.iter_routed_blocks`, and split the result into
     `(prose_lines, apparatus_drops)`:
 
     - `prose_lines` -- ordered text of every prose-routed block (`text`,
-      `section_header`, `title`, an in-body `list_item`), chunked as today.
+      `section_header`, `title`, an in-body `list_item`) that is EITHER not
+      flagged by the content-apparatus pre-filter, OR flagged and then
+      classified back to prose by the bounded model call below -- chunked as
+      today.
     - `apparatus_drops` -- one router-owned skip record
       (`chunks_skips_sidecar_path`'s `{"section", "section_order", "reason"}`
       shape) per apparatus-routed block (`document_index`, `footnote`,
-      `page_header`/`page_footer`, or a back-matter `list_item`): dropped,
-      never chunked, each with a route-specific reason
-      (`axial.router.apparatus_reason`).
+      `page_header`/`page_footer`, or a back-matter `list_item`, each via
+      `axial.router.apparatus_reason`) PLUS one per content-apparatus-flagged
+      block the model call resolves to apparatus (issue #207, reason
+      `axial.router.CONTENT_APPARATUS_REASON` -- distinct from every
+      label-driven reason): dropped, never chunked.
 
     Artifact-routed blocks (`table`, `picture`, `caption`) contribute to
     NEITHER list -- excluded from chunking, but not a "drop" (§7.8: they are
@@ -317,6 +416,11 @@ def _routed_section_body(section: dict) -> tuple[list[str], list[dict[str, Any]]
     always `False` in the wiring below today; it stays correct in isolation
     (and for any future caller that stops pre-filtering whole sections) since
     it is derived independently, right here, from this section's own text.
+
+    `resolve_client` (issue #207) is called ONLY when the content-apparatus
+    pre-filter actually flags a block -- never eagerly -- so a section with
+    zero flagged candidates never constructs/touches an `LLMClient` at all
+    (§7.8: "clean prose ... reaches the chunk stage with zero model spend").
     """
     section_label = section.get("text", "")
     section_order = section.get("order", "")
@@ -328,8 +432,20 @@ def _routed_section_body(section: dict) -> tuple[list[str], list[dict[str, Any]]
         for node, route in iter_routed_blocks(child, in_back_matter_section=in_back_matter_section):
             if route == PROSE:
                 text = node.get("text")
-                if text:
-                    prose_lines.append(text)
+                if not text:
+                    continue
+                if is_content_apparatus_candidate(text):
+                    client = resolve_client()
+                    if _classify_content_apparatus(client, text):
+                        apparatus_drops.append(
+                            {
+                                "section": section_label,
+                                "section_order": node.get("order", section_order),
+                                "reason": CONTENT_APPARATUS_REASON,
+                            }
+                        )
+                        continue
+                prose_lines.append(text)
             elif route == APPARATUS:
                 apparatus_drops.append(
                     {
@@ -438,14 +554,34 @@ def _hard_split_by_chars(text: str, chunk_max: int) -> list[str]:
     return [text[i : i + chunk_max] for i in range(0, len(text), chunk_max)]
 
 
-def _enforce_min(groups: list[list[str]], chunk_min: int) -> list[list[str]]:
-    """MIN-side band guard (PRD §5 stage 4 / §8 P0-4): a below-`chunk_min`
-    chunk merges forward into the next one, within this call's own section
-    only (callers never pass groups spanning two sections). Merging
-    repeats until the accumulated group reaches `chunk_min`, so only the
-    LAST group in the returned list can end up below `chunk_min` -- exactly
-    the documented exception (a section's last chunk, or a whole section
-    shorter than `chunk_min`, may remain below it)."""
+def _enforce_min(
+    groups: list[list[str]], chunk_min: int, chunk_max: int = CHUNK_MAX
+) -> list[list[str]]:
+    """MIN-side band guard (PRD §5 stage 4 / §8 P0-4, revised by issue #207):
+    a below-`chunk_min` chunk merges forward into the next one, within this
+    call's own section only (callers never pass groups spanning two
+    sections). Merging repeats until the accumulated group reaches
+    `chunk_min`, so this forward pass alone can only ever leave the LAST
+    group in the list below `chunk_min` (every earlier group either already
+    met `chunk_min` on its own, or was absorbed forward into a later one).
+
+    §207 closes that one remaining gap: when the forward pass leaves the
+    LAST group below `chunk_min` and a same-section PREDECESSOR group
+    exists, prefer merging it BACKWARD into that predecessor instead of
+    leaving it stranded, as long as the merge would not breach `chunk_max`
+    (the MAX guard stays intact -- "a merge that would breach CHUNK_MAX is
+    not performed", PRD §8 P0-4). A trailing group that is the section's
+    SOLE group (no same-section neighbour at all -- `len(groups) == 1`) is
+    kept as-is, per the same P0-4 exception as before.
+
+    The backward merge is skipped when the trailing group is itself
+    fragment-floor material (`_fragment_floor_reason` is not `None` --
+    #193/#197's low-alpha/blank-page junk, e.g. a lone citation-crumb tail):
+    that junk must stay isolated so the post-split fragment floor
+    (`_write_chunk_sections`) can still evaluate and drop it on its own,
+    rather than being alpha-diluted and smuggled, undetected, into an
+    otherwise-legitimate neighboring chunk.
+    """
     if not groups:
         return []
     merged: list[list[str]] = [list(groups[0])]
@@ -454,6 +590,15 @@ def _enforce_min(groups: list[list[str]], chunk_min: int) -> list[list[str]]:
             merged[-1].extend(group)
         else:
             merged.append(list(group))
+
+    if len(merged) > 1 and _group_char_len(merged[-1]) < chunk_min:
+        trailing_text = " ".join(merged[-1])
+        if _fragment_floor_reason(trailing_text) is None:
+            candidate = merged[-2] + merged[-1]
+            if _group_char_len(candidate) <= chunk_max:
+                merged[-2] = candidate
+                merged.pop()
+
     return merged
 
 
@@ -558,6 +703,7 @@ def _write_chunk_sections(
     split_section: Callable[[str], list[str]],
     chunks_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    client: LLMClient | None = None,
 ) -> list[dict[str, Any]]:
     """The per-section routing/writing orchestrator the chunk stage uses
     (issue #165, slice 06): walk the tree's top-level sections (skipping
@@ -568,7 +714,17 @@ def _write_chunk_sections(
     `split_section` (the recursive/structural splitter), assemble records
     via the shared `build_chunk_records` (`chunk_id` scheme / field set /
     section-then-position order, PRD §7.7), and write them plus the
-    `.skips.jsonl` sidecar."""
+    `.skips.jsonl` sidecar.
+
+    `client` (issue #207) is the optional `LLMClient` DI seam threaded down
+    to the content-apparatus classification call (mirroring `axial.tag.
+    run_tag`'s own `client=` seam): lazily resolved (via `axial.llm.
+    get_client` when `None`) ONLY the first time the content-apparatus
+    pre-filter actually flags a candidate block, ACROSS the whole run --
+    never per-section -- so a source with zero flagged candidates never
+    constructs an `LLMClient` at all, and one already supplied is reused for
+    every subsequent flagged candidate rather than re-resolved.
+    """
     if chunks_dir is None:
         chunks_dir = _default_chunks_dir(config_path)
     out_path = chunks_checkpoint_path(source_id, chunks_dir)
@@ -579,10 +735,23 @@ def _write_chunk_sections(
     skips_path = chunks_skips_sidecar_path(source_id, chunks_dir)
     skip_records: list[dict[str, Any]] = []
 
+    # A single mutable slot shared by every section's call below, so the
+    # client is resolved (constructed) AT MOST ONCE per run, and only on
+    # first actual need -- see `resolve_client`'s own docstring reasoning.
+    client_box: list[LLMClient | None] = [client]
+
+    def resolve_client() -> LLMClient:
+        if client_box[0] is None:
+            try:
+                client_box[0] = get_client(config_path=config_path)
+            except LLMError as exc:
+                raise ContentApparatusClassificationFailedError(exc) from exc
+        return client_box[0]
+
     all_records: list[dict[str, Any]] = []
     out_lines: list[str] = []
     for section in sections:
-        body_lines, apparatus_drops = _routed_section_body(section)
+        body_lines, apparatus_drops = _routed_section_body(section, resolve_client)
         skip_records.extend(apparatus_drops)
         if not body_lines:
             continue  # no chunkable prose in this section -- zero records
@@ -772,7 +941,7 @@ def _recursive_section_chunks(
         return []
 
     groups: list[list[str]] = [[piece] for piece in pieces]
-    groups = _enforce_min(groups, chunk_min)
+    groups = _enforce_min(groups, chunk_min, chunk_max)
     groups = _enforce_max_recursive(groups, chunk_max)
 
     return [" ".join(group) for group in groups]
@@ -784,6 +953,7 @@ def run_chunk_recursive(
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     chunk_min: int = CHUNK_MIN,
     chunk_max: int = CHUNK_MAX,
+    client: LLMClient | None = None,
 ) -> list[dict[str, Any]]:
     """Run the recursive/structural chunk stage on `source_path` (issue
     #165, slice 06; the SOLE chunk mechanism as of issue #191): read the
@@ -796,7 +966,16 @@ def run_chunk_recursive(
 
     Constructs no embedding model, makes no `encode` call, and touches no
     embedding cache on disk -- zero embedding-model cost by construction.
-    Also makes no text-generating LLM call -- this whole module never has.
+    The chunk SPLIT critical path itself makes no text-generating LLM call
+    either, exactly as before -- but issue #207's router content-apparatus
+    arm (PRD §7.8) adds ONE bounded, per-block classification call for a
+    block the cheap deterministic pre-filter flags as a possible dense
+    citation run; the overwhelming majority of blocks (all unflagged, clean
+    prose) still cost zero model spend. `client` (an optional `LLMClient`,
+    mirroring `axial.tag.run_tag`'s / `axial.xref.run_xref`'s own `client=`
+    DI seam) is threaded down to that one call site; when `None` and at
+    least one candidate is flagged, `axial.llm.get_client` resolves the
+    configured provider lazily, on first need only.
 
     Writes the §7.7 artifact shape (`build_chunk_records`'s `chunk_id`
     scheme, field set, section-then-position order) to
@@ -804,7 +983,11 @@ def run_chunk_recursive(
     other downstream consumer of `read_chunks` works on it unchanged.
 
     Raises `MissingSourceError` / `MissingTreeError` -- this mechanism
-    never runs extraction itself.
+    never runs extraction itself. Raises
+    `ContentApparatusClassificationFailedError` if the content-apparatus
+    classification call itself fails (client construction or a persistently
+    unparseable response) -- only reachable when at least one block was
+    flagged.
     """
     source_id, tree = _resolve_chunk_inputs(source_path)
 
@@ -821,6 +1004,7 @@ def run_chunk_recursive(
         _split_section,
         chunks_dir=chunks_dir,
         config_path=config_path,
+        client=client,
     )
 
 

@@ -218,6 +218,38 @@ ARTIFACTS_PASS_NAME = "artifacts"
 # CHUNK_PASS_NAME above.
 XREF_PASS_NAME = "xref"
 
+# Pass name the structural-envelope pass's `.complete()` call identifies
+# itself with (see src/axial/envelope.py). Same out-of-band dispatch
+# convention as CHUNK_PASS_NAME above -- issue #207 threads this through so
+# the per-pass reasoning setting (§7.9) can tell the envelope call apart
+# from every other pass.
+ENVELOPE_PASS_NAME = "envelope"
+
+# Pass name the router's content-apparatus classification call identifies
+# itself with (see src/axial/chunk.py / src/axial/router.py, issue #207,
+# PRD §7.8 "Model-backed classification of flagged candidates"). Same
+# out-of-band dispatch convention as CHUNK_PASS_NAME above.
+CONTENT_APPARATUS_PASS_NAME = "content_apparatus"
+
+# Per-pass model reasoning (§7.9, issue #207): reasoning is ON for the
+# structural-envelope pass and the content-apparatus classification gate --
+# both small, judgment-heavy, once/rarely-per-source calls -- and OFF
+# (unchanged since #147) for the high-volume tag/artifacts/xref calls and
+# any pass not named here (the safe default). This is the CODE-LEVEL
+# default `OpenRouterClient` falls back to when constructed without an
+# explicit `reasoning_by_pass` mapping (e.g. a test building it directly);
+# `config/pipeline.yaml`'s own `llm.reasoning_by_pass` block (read by
+# `_resolve_reasoning_by_pass` below) is the actual carried-per-pass source
+# of truth for a real run and can override any entry here without a code
+# change -- mirrors this default exactly today.
+DEFAULT_REASONING_BY_PASS: dict[str, bool] = {
+    ENVELOPE_PASS_NAME: True,
+    CONTENT_APPARATUS_PASS_NAME: True,
+    TAG_PASS_NAME: False,
+    ARTIFACTS_PASS_NAME: False,
+    XREF_PASS_NAME: False,
+}
+
 # Fault-injection seam (mirroring `AXIAL_FORCE_DOCLING_FAILURE` in
 # extract.py): forces the `pass_name=ARTIFACTS_PASS_NAME` canned response to
 # carry exactly this string as the returned `artifact_role`, valid or not,
@@ -381,6 +413,17 @@ def _canned_xref_response() -> str:
     return json.dumps({"referenced_artifact_ids": referenced})
 
 
+def _canned_content_apparatus_response() -> str:
+    """The canned response for a content-apparatus classification call
+    (identified by `pass_name=CONTENT_APPARATUS_PASS_NAME`, issue #207): a
+    `route` value against the same prose/apparatus taxonomy `axial.router`
+    already classifies on. Defaults to `"prose"` (keep) -- the conservative,
+    never-drop-on-uncertainty default (§7.8) -- so a stub-driven end-to-end
+    run never surprises a caller by silently dropping content it didn't ask
+    the stub to drop."""
+    return json.dumps({"route": "prose"})
+
+
 def _canned_response_for(pass_name: str | None) -> str:
     """Dispatch the canned response by pass: `pass_name == CHUNK_PASS_NAME`
     gets the chunk-shaped canned response, `pass_name == TAG_PASS_NAME` gets
@@ -388,11 +431,12 @@ def _canned_response_for(pass_name: str | None) -> str:
     to a non-empty value, that raw string verbatim -- read at call time, and
     only for tag-pass calls), `pass_name == ARTIFACTS_PASS_NAME` gets the
     artifact-role-shaped canned response, `pass_name == XREF_PASS_NAME` gets
-    the referenced-artifact-ids-shaped canned response; anything else (the
-    envelope pass, which never passes `pass_name`) gets the original
-    envelope-shaped canned response. Shared by `StubLLMClient` and
-    `RecordLLMClient` so `record` is indistinguishable from `stub` for the
-    same call."""
+    the referenced-artifact-ids-shaped canned response, `pass_name ==
+    CONTENT_APPARATUS_PASS_NAME` gets the route-shaped canned response
+    (issue #207); anything else (the envelope pass, `pass_name ==
+    ENVELOPE_PASS_NAME`, included) gets the original envelope-shaped canned
+    response. Shared by `StubLLMClient` and `RecordLLMClient` so `record` is
+    indistinguishable from `stub` for the same call."""
     if pass_name == CHUNK_PASS_NAME:
         global _chunk_pass_call_count
         _chunk_pass_call_count += 1
@@ -429,6 +473,8 @@ def _canned_response_for(pass_name: str | None) -> str:
         return _canned_artifact_response()
     if pass_name == XREF_PASS_NAME:
         return _canned_xref_response()
+    if pass_name == CONTENT_APPARATUS_PASS_NAME:
+        return _canned_content_apparatus_response()
     return StubLLMClient._CANNED_RESPONSE
 
 
@@ -703,6 +749,7 @@ class OpenRouterClient:
         transport: httpx.BaseTransport | None = None,
         request_deadline_seconds: float = _REQUEST_DEADLINE_SECONDS,
         content_fallback_model: str | None = None,
+        reasoning_by_pass: dict[str, bool] | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
@@ -712,11 +759,24 @@ class OpenRouterClient:
         # pre-#116 caller/test that builds `OpenRouterClient` without this
         # kwarg keeps working unchanged.
         self._content_fallback_model = content_fallback_model
+        # Per-pass model reasoning (§7.9, issue #207): defaults to
+        # `DEFAULT_REASONING_BY_PASS` when not given explicitly, so every
+        # pre-#207 caller/test that builds `OpenRouterClient` directly
+        # (without plumbing config/pipeline.yaml through) still gets the
+        # correct per-pass reasoning setting. `_build_openrouter_client`
+        # passes the config-resolved mapping (`_resolve_reasoning_by_pass`)
+        # for a real run, so config/pipeline.yaml stays the actual carried-
+        # per-pass source of truth (§7.9) rather than this default.
+        self._reasoning_by_pass = (
+            dict(DEFAULT_REASONING_BY_PASS) if reasoning_by_pass is None else reasoning_by_pass
+        )
         self._client = httpx.Client(
             base_url=base_url, transport=transport, timeout=_REQUEST_TIMEOUT
         )
 
-    def _post_with_deadline(self, prompt: str, model: str | None = None) -> httpx.Response:
+    def _post_with_deadline(
+        self, prompt: str, model: str | None = None, pass_name: str | None = None
+    ) -> httpx.Response:
         """Run the blocking `httpx` POST on a daemon watchdog thread and
         enforce `self._request_deadline_seconds` as a hard wall-clock
         ceiling, independent of httpx's own (per-*read*, not per-call)
@@ -736,8 +796,13 @@ class OpenRouterClient:
         `self._content_fallback_model` without duplicating the watchdog
         machinery. Defaults to `self._model`, unchanged for every other
         caller.
+
+        `pass_name` (issue #207, §7.9) selects this call's `reasoning.enabled`
+        value from `self._reasoning_by_pass` (defaulting to `False` for a
+        pass not named there -- the safe, unchanged-since-#147 default).
         """
         target_model = self._model if model is None else model
+        reasoning_enabled = self._reasoning_by_pass.get(pass_name, False)
         outcome: dict[str, Any] = {}
         done = threading.Event()
 
@@ -750,15 +815,20 @@ class OpenRouterClient:
                         "model": target_model,
                         "messages": [{"role": "user", "content": prompt}],
                         "max_tokens": _MAX_COMPLETION_TOKENS,
-                        # Issue #147: the production_low model started being
-                        # served as a reasoning model. The added reasoning
-                        # phase pushed large chunk-echo calls (max_tokens
-                        # =60000) past the 300s wall-clock request deadline.
-                        # Disable reasoning on every request -- both the
-                        # primary model and the content_fallback_model
-                        # reroute share this one call site via the `model`
-                        # override above, so this single field covers both.
-                        "reasoning": {"enabled": False},
+                        # Issue #147 (revised per-pass by issue #207, §7.9):
+                        # the production_low model started being served as a
+                        # reasoning model, and the added reasoning phase
+                        # pushed large chunk-echo calls (max_tokens=60000)
+                        # past the 300s wall-clock request deadline. Reasoning
+                        # is now a PER-PASS setting (`reasoning_enabled`,
+                        # resolved above from `self._reasoning_by_pass`) --
+                        # ON for the envelope/content-apparatus passes, OFF
+                        # (unchanged) for the high-volume tag/artifacts/xref
+                        # calls #147 was about. Both the primary model and
+                        # the content_fallback_model reroute share this one
+                        # call site via the `model` override above, so this
+                        # single field covers both.
+                        "reasoning": {"enabled": reasoning_enabled},
                     },
                 )
             except BaseException as exc:  # noqa: BLE001 - re-raised on the caller's thread below
@@ -781,7 +851,7 @@ class OpenRouterClient:
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             is_last_attempt = attempt == _MAX_ATTEMPTS
             try:
-                response = self._post_with_deadline(prompt)
+                response = self._post_with_deadline(prompt, pass_name=pass_name)
             except httpx.TransportError as exc:
                 if is_last_attempt:
                     raise
@@ -839,7 +909,7 @@ class OpenRouterClient:
                 # log it here, carrying the refused prompt's identity, then
                 # hand off to the fallback.
                 _log_retry(pass_name, attempt, "content_filter", prompt=prompt)
-                return self._reroute_content_filter(prompt)
+                return self._reroute_content_filter(prompt, pass_name=pass_name)
 
             is_empty = content is None or not content.strip()
             is_truncated = finish_reason == "length"
@@ -873,7 +943,7 @@ class OpenRouterClient:
 
         raise AssertionError("unreachable: the retry loop always returns or raises")
 
-    def _reroute_content_filter(self, prompt: str) -> str:
+    def _reroute_content_filter(self, prompt: str, pass_name: str | None = None) -> str:
         """Handle a `content_filter` refusal from the primary model (issue
         #116). Blind-retrying the exact same prompt against the exact same
         model cannot change a moderation decision, so the primary is never
@@ -885,6 +955,10 @@ class OpenRouterClient:
         is configured at all, since there is then no way to recover a
         refusal -- raise `ContentRefusedError` so the caller can quarantine
         just this chunk instead of failing the whole source.
+
+        `pass_name` (issue #207) is threaded through to `_post_with_deadline`
+        unchanged, so the fallback attempt's `reasoning.enabled` value is
+        resolved from the SAME per-pass setting as the primary attempt.
         """
         if self._content_fallback_model is None:
             raise ContentRefusedError(
@@ -892,7 +966,9 @@ class OpenRouterClient:
                 "content_fallback_model is configured to reroute to (issue #116)"
             )
         try:
-            response = self._post_with_deadline(prompt, model=self._content_fallback_model)
+            response = self._post_with_deadline(
+                prompt, model=self._content_fallback_model, pass_name=pass_name
+            )
         except httpx.TransportError as exc:
             raise OpenRouterError(
                 f"content_fallback_model {self._content_fallback_model!r} request failed: {exc}"
@@ -1061,6 +1137,19 @@ def _resolve_model(secrets: dict[str, Any], llm_config: dict[str, Any]) -> str:
     return DEFAULT_BUILDING_MODEL
 
 
+def _resolve_reasoning_by_pass(llm_config: dict[str, Any]) -> dict[str, bool]:
+    """Per-pass model reasoning (§7.9, issue #207): `config/pipeline.yaml`'s
+    `llm.reasoning_by_pass` block is the carried-per-pass source of truth --
+    "never hardcoded" -- so its entries OVERRIDE `DEFAULT_REASONING_BY_PASS`
+    (itself just the same defaults, in code, for a caller/test that builds
+    `OpenRouterClient` directly without config plumbing). An absent block or
+    absent file leaves the code-level default entirely unchanged."""
+    merged = dict(DEFAULT_REASONING_BY_PASS)
+    configured = llm_config.get("reasoning_by_pass") or {}
+    merged.update(configured)
+    return merged
+
+
 def _build_openrouter_client(llm_config: dict[str, Any]) -> OpenRouterClient:
     secrets = _load_openrouter_secrets(_secrets_path())
     base_url = llm_config.get("base_url", DEFAULT_OPENROUTER_BASE_URL)
@@ -1070,11 +1159,13 @@ def _build_openrouter_client(llm_config: dict[str, Any]) -> OpenRouterClient:
     # absent key (the common case today) yields `None` -- no fallback
     # configured, unchanged behavior for anyone who hasn't set it up.
     content_fallback_model = secrets.get("content_fallback_model")
+    reasoning_by_pass = _resolve_reasoning_by_pass(llm_config)
     return OpenRouterClient(
         api_key=api_key,
         model=model,
         base_url=base_url,
         content_fallback_model=content_fallback_model,
+        reasoning_by_pass=reasoning_by_pass,
     )
 
 
