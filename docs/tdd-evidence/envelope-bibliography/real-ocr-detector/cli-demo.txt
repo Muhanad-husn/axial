@@ -1,0 +1,13 @@
+=== fix-lane boundary demo: real-OCR bibliography-by-aggregate detection ===
+
+Synthetic real-OCR fixture (invented citations mirroring real shapes):
+  '1 Introduction' single-citation leaves: 18
+  detected as bibliographic leaves (new signal): 18/18  share=1.00  (threshold=0.8)
+  citation leaves that LEAK into composed evidence: 0  (expect 0)
+  body-prose marker 'Marrowfield equilibrium thesis' present: True  (expect True -> widened past biblio)
+
+Real Tilly cached tree (data/, gitignored) -- detection counts only, no prose:
+  matched section [31 prose leaves]: bibliographic 31/31 share=1.00  excluded_as_bibliography=True
+  matched section [54 prose leaves]: bibliographic 54/54 share=1.00  excluded_as_bibliography=True
+
+(control + all inner/acceptance assertions covered by the committed test suite)
