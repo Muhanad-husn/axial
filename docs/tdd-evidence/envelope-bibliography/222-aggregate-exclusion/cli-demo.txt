@@ -1,0 +1,28 @@
+=== #222 boundary demo: compose_prompt on the mis-sectioned-bibliography fixture ===
+matched envelope sections (heading heuristic): ['Conclusion']
+citation-wall leaves in the matched 'Conclusion' section: 28
+combined citation-wall chars (clears the 200-char floor): 2275
+
+citation leaves that LEAK into the composed evidence: 0  (expect 0 -> aggregate-excluded before the floor check)
+body-prose marker 'Halberstadt convergence thesis' present: True  (expect True -> widened past the bibliography)
+front-matter marker 'Quillbrook Fictional Press' present:   False  (expect False -> prefix skipped)
+front-matter marker 'ISBN 979-0-00000-001-7' present:        False  (expect False -> prefix skipped)
+
+=== composed evidence handed to the model ===
+You are extracting a structural envelope from an academic source's introduction, abstract, and conclusion sections, or -- when those are not clearly labeled -- a representative excerpt of the source's own opening prose. Read the source text below and respond with ONLY a JSON object (no prose, no markdown fences) with exactly these keys:
+
+- "thesis": the author's stated thesis, as a non-empty string.
+- "toc": a non-empty JSON array of the source's section/chapter labels.
+- "scope": the stated scope of the argument, as a non-empty string.
+- "stated_argument": the argument as restated (e.g. in the conclusion), as a non-empty string.
+
+Base your answer only on the supplied source text below. Do not infer the thesis, scope, or stated argument from the title, the filename, or any outside knowledge -- every field must come solely from the text provided.
+
+Sections:
+
+## Source text (head-of-tree excerpt)
+Argument Overview
+The Halberstadt convergence thesis holds that provincial guilds mobilize not when grievances peak but when rival factions within the guild converge on a single shared claim, a convergence that manufactures collective capacity out of previously fragmented discontent.
+This convergence dynamic, rather than any single triggering grievance, best explains why petitioning waves in the provincial guild records cluster tightly in time even where the underlying grievances themselves long predate the wave.
+Conclusion
+
