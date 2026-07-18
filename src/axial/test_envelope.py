@@ -480,6 +480,260 @@ def test_head_of_tree_lines_skips_non_prose_labeled_nodes():
     assert "Table of Contents: the Egret-5 index locus." not in joined
 
 
+# --- bibliography-by-aggregate exclusion (#222, PRD §7.3) -------------------
+
+
+_SURNAMES = [
+    "Voskuijlen",
+    "Kharrazi",
+    "Ostreicher",
+    "Villanueva",
+    "Aldrich",
+    "Petrakis",
+    "Bramwell",
+    "Emenike",
+    "Halloran",
+    "Sunderajan",
+    "Dellacroce",
+    "Windham",
+    "Achterberg",
+    "Nkemelu",
+    "Torvaldsen",
+    "Marchetti",
+    "Okonkwo",
+    "Lindqvist",
+    "Farrugia",
+    "Boateng",
+    "Steinorth",
+    "Calloway",
+    "Ibarrola",
+    "Ferencz",
+    "Vandermolen",
+    "Aoyagi",
+    "Kowalczyk",
+    "Mbeki",
+]
+
+
+def _bibliography_wall_section(heading="Conclusion", n=28):
+    return {
+        "type": "prose",
+        "order": "1",
+        "text": heading,
+        "label": "section_header",
+        "children": [
+            {
+                "type": "prose",
+                "order": f"1.{i}",
+                "text": (
+                    f"{_SURNAMES[i % len(_SURNAMES)]}, F. ({1970 + i}). "
+                    f"Fictional Title {i}. City: Press."
+                ),
+                "label": "list_item",
+            }
+            for i in range(n)
+        ],
+    }
+
+
+def test_is_bibliographic_aggregate_section_detects_a_citation_wall():
+    """A section whose descendants are overwhelmingly single-citation
+    bibliographic entries (each starting with an inverted-author-name plus a
+    parenthetical year) is detected by the aggregate share signal, not by
+    any single leaf's own per-block density (PRD §7.3)."""
+    from axial.envelope import _is_bibliographic_aggregate_section
+
+    section = _bibliography_wall_section()
+    assert _is_bibliographic_aggregate_section(section) is True
+
+
+def test_is_bibliographic_aggregate_section_leaves_ordinary_prose_alone():
+    """Conservative by construction (§7.8 never-drop-on-uncertainty): a
+    section whose descendants are ordinary argument sentences that merely
+    cite a source in passing -- not bare citation-entry leaves -- must never
+    be flagged, however many sentences happen to contain a citation."""
+    from axial.envelope import _is_bibliographic_aggregate_section
+
+    section = {
+        "type": "prose",
+        "order": "1",
+        "text": "Conclusion",
+        "label": "section_header",
+        "children": [
+            {
+                "type": "prose",
+                "order": "1.1",
+                "text": (
+                    "In sum, the argument holds, echoing the reading in "
+                    "Okafor, D. (2003) but extending it well beyond the "
+                    "original case."
+                ),
+                "label": "text",
+            },
+            {
+                "type": "prose",
+                "order": "1.2",
+                "text": "A second ordinary sentence with no citation at all.",
+                "label": "text",
+            },
+            {
+                "type": "prose",
+                "order": "1.3",
+                "text": "A third ordinary sentence, likewise citation-free.",
+                "label": "text",
+            },
+        ],
+    }
+    assert _is_bibliographic_aggregate_section(section) is False
+
+
+def test_is_bibliographic_aggregate_section_requires_a_minimum_leaf_count():
+    """A single bibliographic-looking leaf is not (by itself) "overwhelming"
+    evidence of a mis-sectioned bibliography -- the aggregate share needs a
+    minimum population to mean anything, guarding a small, ordinary section
+    against a false positive on one coincidental leaf."""
+    from axial.envelope import _is_bibliographic_aggregate_section
+
+    section = _bibliography_wall_section(n=1)
+    assert _is_bibliographic_aggregate_section(section) is False
+
+
+def test_matched_section_blocks_excludes_a_detected_bibliography_section():
+    """The exclusion happens inside `_matched_section_blocks` itself, before
+    `compose_prompt`'s evidence-floor sum ever sees the section (PRD §7.3)."""
+    from axial.envelope import _matched_section_blocks
+
+    tree = {"children": [_bibliography_wall_section()]}
+
+    blocks = _matched_section_blocks(tree)
+
+    assert blocks == []
+
+
+def test_head_of_tree_lines_skips_a_leading_front_matter_prefix():
+    """The widened head-of-tree slice steps over a leading title-page /
+    copyright-ISBN / publisher-boilerplate prefix on a content basis (label
+    plus recognizable copyright-page markers), not by expecting the router
+    to route it away -- both `title` and copyright/ISBN text are PROSE by
+    the shared router (PRD §7.3, #222)."""
+    from axial.envelope import _head_of_tree_lines
+
+    tree = {
+        "children": [
+            {"type": "prose", "order": "0", "text": "A FICTIONAL TITLE PAGE", "label": "title"},
+            {
+                "type": "prose",
+                "order": "1",
+                "text": "Copyright © 2001 Fictional Press. All rights reserved. ISBN 000-0-00-000000-0.",
+                "label": "text",
+            },
+            {
+                "type": "prose",
+                "order": "2",
+                "text": "The Marigold-9 body prose marker opens the real argument of the source.",
+                "label": "text",
+            },
+        ]
+    }
+
+    lines = _head_of_tree_lines(tree)
+
+    joined = "\n".join(lines)
+    assert "The Marigold-9 body prose marker" in joined
+    assert "FICTIONAL TITLE PAGE" not in joined
+    assert "Fictional Press" not in joined
+
+
+def test_head_of_tree_lines_front_matter_skip_is_bounded():
+    """The prefix-skip budget is a bounded tunable (PRD §7.3, #222): a run of
+    front-matter-marked blocks that together exceed
+    `_FRONT_MATTER_PREFIX_SKIP_CHARS` stops being skipped once the budget is
+    exhausted, so a pathological source can never have its entire head-of-
+    tree slice consumed as "front matter"."""
+    from axial.envelope import _FRONT_MATTER_PREFIX_SKIP_CHARS, _head_of_tree_lines
+
+    filler = "Copyright © notice filler text. " * 100  # a single oversized front-matter block
+    assert len(filler) > _FRONT_MATTER_PREFIX_SKIP_CHARS
+    tree = {
+        "children": [
+            {"type": "prose", "order": "0", "text": filler, "label": "text"},
+        ]
+    }
+
+    lines = _head_of_tree_lines(tree)
+
+    # The budget is exhausted by this single oversized block, so it is not
+    # skipped -- it becomes the first (only) line instead of vanishing.
+    assert lines == [filler]
+
+
+def test_head_of_tree_lines_does_not_skip_prose_that_merely_contains_a_boilerplate_word():
+    """Reviewer finding (#222 stage-2): the prefix skip must never fire on a
+    bare occurrence of a common word like "printed" inside a genuine
+    argument sentence -- only a high-confidence structural marker (title
+    label, ©, an ISBN number, "all rights reserved", a Library of Congress
+    line, a bare-year copyright line, or reproduction-permission legalese)
+    counts as front matter. A false-drop here would silently undermine the
+    minimum-evidence / grounded-by-construction guarantee this feature
+    exists to protect."""
+    from axial.envelope import _head_of_tree_lines
+
+    tree = {
+        "children": [
+            {
+                "type": "prose",
+                "order": "0",
+                "text": (
+                    "This book was printed in provincial presses across the "
+                    "region, and argues that guild solidarity outlives its "
+                    "founding grievance."
+                ),
+                "label": "text",
+            },
+        ]
+    }
+
+    lines = _head_of_tree_lines(tree)
+
+    joined = "\n".join(lines)
+    assert "guild solidarity outlives its founding grievance" in joined
+
+
+def test_is_front_matter_prefix_block_ignores_bare_boilerplate_words():
+    """A lone occurrence of "publisher", "copyright", or "printed" -- with no
+    structural marker alongside it -- is not enough to flag a block as front
+    matter (reviewer finding, #222 stage-2)."""
+    from axial.envelope import _is_front_matter_prefix_block
+
+    leaf = {
+        "text": (
+            "The publisher of this journal argues that copyright reform, "
+            "not printed circulation, drives citation counts."
+        ),
+        "label": "text",
+    }
+    assert _is_front_matter_prefix_block(leaf) is False
+
+
+def test_is_front_matter_prefix_block_flags_a_reproduction_permission_notice():
+    """Positive control pinned directly against the #222 outer fixture's own
+    publisher-boilerplate sentence (tests/fixtures/envelope/
+    bibliography_aggregate_tree.json): classic reproduction-permission
+    legalese is a high-confidence structural marker on its own, with no
+    "printed"/"copyright"/"publisher" bare-word reliance."""
+    from axial.envelope import _is_front_matter_prefix_block
+
+    leaf = {
+        "text": (
+            "Printed and distributed by Quillbrook Fictional Press for "
+            "educational use only; no portion of this fictional front "
+            "matter may be reproduced without permission."
+        ),
+        "label": "text",
+    }
+    assert _is_front_matter_prefix_block(leaf) is True
+
+
 # --- response parsing / validation ------------------------------------------
 
 
