@@ -188,16 +188,65 @@ def select_envelope_nodes(tree: dict) -> list[dict]:
 # density within one block, §7.8) -- only a signal aggregated ACROSS a
 # section's descendants can ever catch this, so the envelope needs its own.
 
-# A bibliographic leaf's own opening: an inverted author name immediately
-# followed by a parenthetical year, e.g. "Voskuijlen, R. (1991). ...". This
-# is deliberately anchored at the START of the leaf's text (`^`) -- an
-# ordinary argument sentence that merely cites a source in passing has its
-# citation embedded mid-sentence, never leading the leaf, so this pattern
-# does not fire on it (proven against the #222 control fixture, whose
-# in-passing citations sit well past the first word).
-_BIBLIOGRAPHIC_LEAF_RE = re.compile(
-    r"^\s*[A-Z][A-Za-z\-']+,\s+[A-Z]\.?\s*(?:[A-Z]\.?\s*)?\(\d{4}\)"
+# A bibliographic leaf's own opening. #222 shipped this anchored only on the
+# tidy "Surname, Initial (Year)" shape of its own synthetic fixture; real
+# OCR'd academic bibliographies (the Tilly source PRD §8 P0-3 names as the
+# acceptance target) turned out far messier and matched that narrow pattern
+# at only ~11-13% -- nowhere near the share threshold, so the detector was a
+# no-op on the very source it was built for (found via
+# tests/ingestion/test_envelope_bibliography_real_ocr.py, a hand-authored
+# fixture mirroring the real shapes without reproducing any real book's
+# text, DEC-23). This pattern recognizes THREE distinct real-world leaf
+# openers instead of one, each still anchored at the START of the leaf's
+# text (`^`) so an ordinary argument sentence that merely cites a source in
+# passing -- its citation always embedded mid-sentence, never leading the
+# leaf -- does not fire on it (proven against both the #222 control fixture
+# and the real-OCR control fixture):
+#   1. an inverted surname (single token, mixed case allowed, e.g.
+#      "Voskuijlen, R." or "TILLY, CHARLES") OR a multi-word ALL-CAPS
+#      surname (e.g. "PEREIRA DE QUEIROZ, MARIA ISAURA", "LE GOFF, T. J.
+#      A."), each followed by a comma and a capitalized given name/initial --
+#      the capital-after-comma requirement is itself a guard against
+#      ordinary prose, whose word after a mid-sentence comma is almost
+#      always lowercase;
+#   2. a continuation-dash entry standing in for a repeated author, e.g.
+#      "__ (1974b)." / "___ (1977).";
+#   3. a corporate/institutional author in ALL CAPS with no inverted-name
+#      comma at all, e.g. "NATIONAL ADVISORY COMMISSION ON CIVIL DISORDERS
+#      (1968)." -- one to eight consecutive ALL-CAPS-ish tokens (this
+#      alternative also incidentally catches OCR-garbled personal-name
+#      entries printed in running caps with period-separated initials, e.g.
+#      "KLAPP. ORRIN E. (1969).", since every token in that shape is itself
+#      all-uppercase).
+# Alternative 1's surname portion also tolerates a stray OCR-garbled glyph
+# in place of a letter (e.g. "I<ETTLEWELL", "ROI<I<AN" for what OCR
+# mis-read from a real surname).
+_BIBLIOGRAPHIC_LEAF_OPENER_RE = re.compile(
+    r"^\s*(?:"
+    r"[A-Z][A-Za-z<>\[\]{}\-']+"
+    r"|(?:[A-Z][A-Z<>\[\]{}\-']*\s+){1,3}[A-Z][A-Z<>\[\]{}\-']*"
+    r"),\s+[A-Z]"
+    r"|^\s*_{1,3}\s*\("
+    r"|^\s*(?:[A-Z][A-Z.&]+\s+){1,8}\("
 )
+
+# The parenthetical publication year, e.g. "(1991)" or "(1974b)". Checked
+# separately from the opener (rather than chained directly onto it) because
+# real entries interpose a variable amount of text between the opener and
+# the year -- multiple authors, "eds.", "and"-joined co-authors -- that the
+# opener alone does not attempt to parse.
+_BIBLIOGRAPHIC_LEAF_YEAR_RE = re.compile(r"\(\d{4}[a-z]?\)")
+
+# How many leading characters of the leaf the parenthetical year must fall
+# within for the opener match above to count as a genuine citation rather
+# than a coincidental one (e.g. a leaf that opens with a capitalized name
+# but only happens to mention an unrelated year much later in the
+# sentence). Measured against the real-OCR fixture's own longest genuine
+# lead-in (a four-author "eds." entry, ~75 characters from the leaf's start
+# to its "(") plus headroom -- proven via inspection, not fixture-fitted to
+# a single tidy shape (the #222 mistake this fix corrects). A stated
+# tunable, not a magic constant.
+_BIBLIOGRAPHIC_LEAF_YEAR_WINDOW_CHARS = 80
 
 # The minimum number of PROSE-routed descendant leaves a section must carry
 # before its aggregate share is even evaluated -- guards a small, ordinary
@@ -207,15 +256,36 @@ _BIBLIOGRAPHIC_LEAF_RE = re.compile(
 _BIBLIOGRAPHIC_SECTION_MIN_LEAVES = 5
 
 # The share of a section's descendant leaves that must match
-# `_BIBLIOGRAPHIC_LEAF_RE` before the section is treated as a mis-sectioned
-# bibliography rather than argument prose. Proven via inspection against the
-# #222 fixtures: the bibliography-aggregate fixture's "Conclusion" section is
-# 28/28 (100%) matching leaves; the control fixture's Introduction/Conclusion
-# sections are 0% (their in-passing citations sit mid-sentence, never
-# matching the leading-anchor pattern above). 0.8 sits comfortably between
-# the two, conservative per §7.8's never-drop-on-uncertainty principle. A
-# stated tunable, not a magic constant.
+# `_is_bibliographic_leaf` before the section is treated as a mis-sectioned
+# bibliography rather than argument prose. Proven via inspection against
+# BOTH the #222 tidy fixture (28/28, 100%) and the real-OCR fixture (18/18,
+# 100%) AND the real Tilly source's own two mis-sectioned sections (31/31
+# and 54/54, 100% each, `data/trees/tilly-from-mobilization-to-revolution-
+# f908c910464c.json`) -- the widened opener now recognizes every one of
+# these real-world shapes, so the threshold itself stays at the original,
+# conservative 0.8 (comfortably below the ~100% every genuine bibliography
+# actually clears) rather than being loosened to compensate for a narrow
+# opener (#222's mistake). Both control fixtures' in-passing citations
+# still sit at 0% share (never matching the leading-anchor opener), and a
+# corpus-wide audit across every cached `data/trees/*.json` tree found no
+# other source whose legitimate intro/conclusion prose crosses this
+# threshold. A stated tunable, not a magic constant.
 _BIBLIOGRAPHIC_LEAF_SHARE_THRESHOLD = 0.8
+
+
+def _is_bibliographic_leaf(text: str | None) -> bool:
+    """True when `text` opens like a bibliographic entry
+    (`_BIBLIOGRAPHIC_LEAF_OPENER_RE`, one of three real-world citation
+    shapes) AND carries a parenthetical publication year within the first
+    `_BIBLIOGRAPHIC_LEAF_YEAR_WINDOW_CHARS` characters -- the combination
+    guards against a leaf that merely opens with a capitalized name/acronym
+    but is not actually a citation entry."""
+    if not text:
+        return False
+    if not _BIBLIOGRAPHIC_LEAF_OPENER_RE.match(text):
+        return False
+    year_match = _BIBLIOGRAPHIC_LEAF_YEAR_RE.search(text)
+    return bool(year_match and year_match.start() <= _BIBLIOGRAPHIC_LEAF_YEAR_WINDOW_CHARS)
 
 
 def _section_body_leaves(node: dict) -> list[str]:
@@ -245,7 +315,7 @@ def _is_bibliographic_aggregate_section(node: dict) -> bool:
     leaves = _section_body_leaves(node)
     if len(leaves) < _BIBLIOGRAPHIC_SECTION_MIN_LEAVES:
         return False
-    bibliographic = sum(1 for text in leaves if _BIBLIOGRAPHIC_LEAF_RE.match(text or ""))
+    bibliographic = sum(1 for text in leaves if _is_bibliographic_leaf(text))
     return (bibliographic / len(leaves)) >= _BIBLIOGRAPHIC_LEAF_SHARE_THRESHOLD
 
 
