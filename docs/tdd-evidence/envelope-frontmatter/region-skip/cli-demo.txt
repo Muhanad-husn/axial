@@ -1,0 +1,16 @@
+=== fix-lane boundary demo: front-matter-region skip in the head-of-tree widen ===
+
+Synthetic front-matter fixture (invented; title page + copyright + dedication + preface):
+  front-matter markers leaking into slice: 0  (expect 0)
+  body-prose marker 'the Vexley threshold principle' present: True  (expect True -> skipped past all front matter)
+
+Control fixture (no front matter, opens with body prose):
+  opening-prose marker 'the Dunmore continuity argument' present: True  (expect True -> opening prose NOT over-skipped)
+
+Real Tilly cached tree (data/, gitignored) -- booleans only, no source text echoed:
+  leading copyright/publisher block skipped: OK
+  leading dedication skipped: OK
+  leading preface (acknowledgements) skipped: OK
+  slice reaches real Chapter-1 argument prose: OK
+
+(all inner/acceptance/control assertions covered by the committed test suite)
