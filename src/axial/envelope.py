@@ -332,12 +332,34 @@ def _truncate_at_boundary(text: str, limit: int) -> str:
 # a title page is never the source's own argument prose.
 _FRONT_MATTER_TITLE_LABEL = "title"
 
-# Recognizable copyright-page / publisher-boilerplate markers: standardized
-# English-language publishing conventions (ISBN, copyright notices, "all
-# rights reserved", "printed and/in ...", publisher credit lines), not
-# anything specific to one corpus or source.
+# High-confidence copyright-page structural markers only (reviewer finding,
+# #222 stage-2): a bare occurrence of a common word like "copyright",
+# "publisher", or "printed" is NOT sufficient on its own -- a genuine
+# argument paragraph can easily contain one of those words in passing (e.g.
+# "...printed in provincial presses...", "...the publisher of this
+# journal..."), and silently dropping real prose on a lone-word match would
+# undermine the very minimum-evidence / grounded-by-construction guarantee
+# this feature exists to protect (never-drop-on-uncertainty, §7.8's own
+# framing). Every alternative below is a STRUCTURAL copyright-page signal
+# that essentially never appears inside body argument prose:
+#   - the "©" symbol itself;
+#   - "all rights reserved" (a fixed legal phrase, not a word in passing);
+#   - "library of congress" (a cataloguing-in-publication line);
+#   - an ISBN NUMBER (the word "isbn" followed by a real digit run, not the
+#     bare word alone);
+#   - a bare-year copyright line ("copyright 1998", "copyright (c) 1998" --
+#     "copyright" immediately bound to a year, not the word alone);
+#   - classic reproduction-permission legalese ("...may be reproduced
+#     ... without ... permission...", the standard "no part of this
+#     publication may be reproduced without permission" boilerplate found on
+#     virtually every copyrighted book's imprint page).
 _FRONT_MATTER_BOILERPLATE_RE = re.compile(
-    r"\bisbn\b|\bcopyright\b|\ball rights reserved\b|\bprinted (?:and|in)\b|\bpublisher\b",
+    r"©"
+    r"|\ball rights reserved\b"
+    r"|\blibrary of congress\b"
+    r"|\bisbn\b[^a-zA-Z0-9]{0,20}\d{3,}"
+    r"|\bcopyright\s*(?:\(c\)\s*)?\d{4}\b"
+    r"|\breproduced\b[^.]{0,40}\bwithout\b[^.]{0,20}\bpermission\b",
     re.IGNORECASE,
 )
 
@@ -356,12 +378,16 @@ _FRONT_MATTER_PREFIX_SKIP_CHARS = _HEAD_OF_TREE_SLICE_CHARS // 4
 def _is_front_matter_prefix_block(leaf: dict) -> bool:
     """True when `leaf` looks like leading front matter / apparatus on a
     content basis: either its own `label` is `title`, or its text carries a
-    recognizable copyright-page/publisher-boilerplate marker
-    (`_FRONT_MATTER_BOILERPLATE_RE`). Deliberately narrow -- an ordinary
-    short prose sentence with none of these markers is never treated as
-    front matter (proven against the existing `document_index`-skip fixture,
-    which has no `title` label or boilerplate marker and must still surface
-    its short prose line unskipped)."""
+    HIGH-CONFIDENCE copyright-page structural marker
+    (`_FRONT_MATTER_BOILERPLATE_RE`) -- never a bare occurrence of a common
+    word like "copyright", "publisher", or "printed" (reviewer finding,
+    #222 stage-2: a genuine argument paragraph can easily contain one of
+    those words in passing, and dropping it on that alone would be exactly
+    the false-drop-on-uncertainty this feature must never commit). Proven
+    against both directions: the existing `document_index`-skip fixture
+    (no `title` label, no marker) must still surface its short prose line
+    unskipped, and a genuine paragraph that merely contains "printed in"
+    must also survive unskipped."""
     label = (leaf.get("label") or "").strip().lower()
     if label == _FRONT_MATTER_TITLE_LABEL:
         return True

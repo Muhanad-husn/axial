@@ -652,7 +652,7 @@ def test_head_of_tree_lines_front_matter_skip_is_bounded():
     tree slice consumed as "front matter"."""
     from axial.envelope import _FRONT_MATTER_PREFIX_SKIP_CHARS, _head_of_tree_lines
 
-    filler = "Copyright notice filler text. " * 100  # a single oversized front-matter block
+    filler = "Copyright © notice filler text. " * 100  # a single oversized front-matter block
     assert len(filler) > _FRONT_MATTER_PREFIX_SKIP_CHARS
     tree = {
         "children": [
@@ -665,6 +665,73 @@ def test_head_of_tree_lines_front_matter_skip_is_bounded():
     # The budget is exhausted by this single oversized block, so it is not
     # skipped -- it becomes the first (only) line instead of vanishing.
     assert lines == [filler]
+
+
+def test_head_of_tree_lines_does_not_skip_prose_that_merely_contains_a_boilerplate_word():
+    """Reviewer finding (#222 stage-2): the prefix skip must never fire on a
+    bare occurrence of a common word like "printed" inside a genuine
+    argument sentence -- only a high-confidence structural marker (title
+    label, ©, an ISBN number, "all rights reserved", a Library of Congress
+    line, a bare-year copyright line, or reproduction-permission legalese)
+    counts as front matter. A false-drop here would silently undermine the
+    minimum-evidence / grounded-by-construction guarantee this feature
+    exists to protect."""
+    from axial.envelope import _head_of_tree_lines
+
+    tree = {
+        "children": [
+            {
+                "type": "prose",
+                "order": "0",
+                "text": (
+                    "This book was printed in provincial presses across the "
+                    "region, and argues that guild solidarity outlives its "
+                    "founding grievance."
+                ),
+                "label": "text",
+            },
+        ]
+    }
+
+    lines = _head_of_tree_lines(tree)
+
+    joined = "\n".join(lines)
+    assert "guild solidarity outlives its founding grievance" in joined
+
+
+def test_is_front_matter_prefix_block_ignores_bare_boilerplate_words():
+    """A lone occurrence of "publisher", "copyright", or "printed" -- with no
+    structural marker alongside it -- is not enough to flag a block as front
+    matter (reviewer finding, #222 stage-2)."""
+    from axial.envelope import _is_front_matter_prefix_block
+
+    leaf = {
+        "text": (
+            "The publisher of this journal argues that copyright reform, "
+            "not printed circulation, drives citation counts."
+        ),
+        "label": "text",
+    }
+    assert _is_front_matter_prefix_block(leaf) is False
+
+
+def test_is_front_matter_prefix_block_flags_a_reproduction_permission_notice():
+    """Positive control pinned directly against the #222 outer fixture's own
+    publisher-boilerplate sentence (tests/fixtures/envelope/
+    bibliography_aggregate_tree.json): classic reproduction-permission
+    legalese is a high-confidence structural marker on its own, with no
+    "printed"/"copyright"/"publisher" bare-word reliance."""
+    from axial.envelope import _is_front_matter_prefix_block
+
+    leaf = {
+        "text": (
+            "Printed and distributed by Quillbrook Fictional Press for "
+            "educational use only; no portion of this fictional front "
+            "matter may be reproduced without permission."
+        ),
+        "label": "text",
+    }
+    assert _is_front_matter_prefix_block(leaf) is True
 
 
 # --- response parsing / validation ------------------------------------------
