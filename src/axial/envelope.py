@@ -433,16 +433,83 @@ _FRONT_MATTER_BOILERPLATE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Bound on how many total characters of leading prefix may ever be skipped
-# as front matter -- a stated tunable, not a magic constant, so a
-# pathological source (e.g. one that is front-matter-labeled/marked from
-# start to finish) can never have its ENTIRE head-of-tree slice consumed by
-# the skip; it still starts counting real content once the budget runs out,
-# even if that content still looks like boilerplate. Set to a quarter of
-# `_HEAD_OF_TREE_SLICE_CHARS` -- generous for a real title/copyright/preface
-# run (the #222 fixture's own front matter is ~310 characters, comfortably
-# inside it) while leaving the model the bulk of the slice for real prose.
-_FRONT_MATTER_PREFIX_SKIP_CHARS = _HEAD_OF_TREE_SLICE_CHARS // 4
+# Bound on how many total characters of leading GENERIC front matter --
+# a docling `title`-labelled block, a high-confidence copyright/ISBN marker
+# block (`_FRONT_MATTER_BOILERPLATE_RE`), or an ambiguous SHORT fragment
+# sitting between two such anchors (a bare page-number run, a one-line
+# author/affiliation credit, a one-word "Tables"/"Figures" heading) -- may
+# ever be skipped. Deliberately kept SMALL: this is NOT the tunable that
+# bounds an explicitly heading-recognized front-matter SECTION, which is
+# routinely much longer prose (see `_FRONT_MATTER_SECTION_SKIP_CHARS`
+# below) -- proven via inspection against both the real Tilly source (its
+# own title-page + copyright/ISBN + dedication + Contents/Tables fragments
+# sum to 887 characters, `data/trees/tilly-from-mobilization-to-revolution-
+# f908c910464c.json`) and the front-matter-region fixture (503 characters,
+# `tests/fixtures/envelope/frontmatter_region_tree.json`) -- comfortable
+# headroom over both while staying small enough that
+# `tests/test_envelope.py::test_head_of_tree_lines_front_matter_skip_is_
+# bounded`'s own single 3200-character oversized marker-matched block still
+# exceeds it (that regression's own invariant: a single block that alone
+# blows the budget is never skipped).
+_FRONT_MATTER_PREFIX_SKIP_CHARS = 2000
+
+# Bound on how many total characters an explicitly heading-recognized
+# front-matter SECTION (`_FRONT_MATTER_SECTION_HEADING_KEYWORDS` --
+# preface, acknowledgements/acknowledgments, foreword) may contribute to
+# the skip, tracked separately from `_FRONT_MATTER_PREFIX_SKIP_CHARS`
+# above: a genuine preface/acknowledgements run is routinely far longer
+# than an ambiguous title-page fragment or a single copyright block, yet is
+# unambiguously identified by its own heading rather than guessed at by
+# length. Proven via inspection: the real Tilly source's own Preface
+# section is 4388 characters (heading + body, `data/trees/tilly-from-
+# mobilization-to-revolution-f908c910464c.json`); the front-matter-region
+# fixture's own Preface is 1238 characters. Set with real headroom over the
+# larger of the two while remaining an explicit, bounded cap -- an
+# unusually long preface (e.g. `data/trees/mann-sources-of-social-power-
+# v1-...json`'s own "Preface to the new edition", which runs past fifty
+# thousand characters) still hits this bound and stops being skipped rather
+# than consuming an unbounded share of the source.
+_FRONT_MATTER_SECTION_SKIP_CHARS = 6000
+
+# The maximum combined PROSE-routed character length (a top-level child's
+# own heading text plus all its PROSE-routed descendant text) for that
+# child to count as an ambiguous SHORT fragment -- a bare page-number run,
+# a one-line author/affiliation credit, a one-word "Tables"/"Figures"
+# heading -- rather than a genuine body paragraph. Chosen well above every
+# such fragment actually observed across a corpus-wide survey of
+# `data/trees/*.json` (typically 5-90 characters; the longest, a padded
+# "CONTENTS" heading, reached 188) while staying well below a real short
+# paragraph or abstract opening (this module's own `_EVIDENCE_FLOOR_CHARS`,
+# 200, is the size below which even a MATCHED intro/abstract/conclusion
+# section counts as "little or no text" at all -- a genuine paragraph is
+# routinely several times that).
+_FRONT_MATTER_FRAGMENT_CHARS = 200
+
+# Front-matter SECTION heading keywords (case-insensitive substring match,
+# checked ONLY against a `section_header`/`title`-labelled node's own
+# heading text, never its descendants' body text -- so an ordinary argument
+# paragraph that happens to mention "acknowledgements" in passing is never
+# affected). Deliberately narrow: three genuinely verbose front-matter
+# section types that `_FRONT_MATTER_FRAGMENT_CHARS`'s length-based fragment
+# check alone cannot catch, because a real preface/acknowledgements/
+# foreword routinely runs to several thousand characters (see
+# `_FRONT_MATTER_SECTION_SKIP_CHARS` above). "prefaee" is the real,
+# OCR-garbled spelling docling actually produced for the real Tilly
+# source's own "Preface" heading (a single letter substitution, c -> e,
+# found via inspection of `data/trees/tilly-from-mobilization-to-
+# revolution-f908c910464c.json`) -- included literally, mirroring #222's
+# own widening to real-OCR shapes, rather than a broad fuzzy prefix match
+# (which would risk matching an unrelated chapter title like "Preferences
+# and Rational Action"). A corpus-wide survey found no book whose
+# Contents/Tables/Figures/dedication heading needed a keyword at all -- in
+# every case that content was small enough for the length-based fragment
+# check above to catch on its own.
+_FRONT_MATTER_SECTION_HEADING_KEYWORDS = (
+    "preface",
+    "prefaee",
+    "acknowledg",  # covers acknowledgement(s)/acknowledgment(s)
+    "foreword",
+)
 
 
 def _is_front_matter_prefix_block(leaf: dict) -> bool:
@@ -463,6 +530,136 @@ def _is_front_matter_prefix_block(leaf: dict) -> bool:
         return True
     text = leaf.get("text") or ""
     return bool(_FRONT_MATTER_BOILERPLATE_RE.search(text))
+
+
+def _prose_chars_in_subtree(node: dict) -> int:
+    """Combined length of every PROSE-routed leaf's own text under `node`
+    (inclusive of `node` itself), via the shared router (§7.8). This is the
+    exact accounting the eventual per-leaf collection walk in
+    `_head_of_tree_lines` applies, so a top-level child's measured size here
+    matches what it would actually cost the widened slice if collected
+    whole."""
+    return sum(
+        len(leaf.get("text") or "")
+        for leaf, route in iter_routed_blocks(node, in_back_matter_section=False)
+        if route == PROSE
+    )
+
+
+def _is_front_matter_section_heading(node: dict) -> bool:
+    """True when `node` is itself a heading-labelled node (`section_header`
+    or `title`) whose own heading text names a known VERBOSE front-matter
+    section -- preface, acknowledgements/acknowledgments, or foreword
+    (`_FRONT_MATTER_SECTION_HEADING_KEYWORDS`). Checked only against the
+    node's OWN text, never a descendant's body text, so an ordinary
+    argument paragraph that happens to mention one of these words in
+    passing is never affected."""
+    label = (node.get("label") or "").strip().lower()
+    if label not in (_FRONT_MATTER_TITLE_LABEL, "section_header"):
+        return False
+    text = (node.get("text") or "").strip().lower()
+    return any(keyword in text for keyword in _FRONT_MATTER_SECTION_HEADING_KEYWORDS)
+
+
+def _subtree_has_front_matter_leaf(node: dict) -> bool:
+    """True when any leaf within `node`'s own subtree (inclusive of `node`
+    itself) is a front-matter-flagged leaf per `_is_front_matter_prefix_block`
+    (a docling `title` label, or a high-confidence copyright/ISBN marker) --
+    applied across a WHOLE top-level child, not just its own first line, so
+    a marker buried under an ordinary heading (e.g. the legal boilerplate
+    paragraph nested under a plain "First Edition" heading, as in the real
+    Tilly source) still flags the whole child as front matter."""
+    return any(
+        _is_front_matter_prefix_block(leaf)
+        for leaf, _route in iter_routed_blocks(node, in_back_matter_section=False)
+    )
+
+
+def _front_matter_region_end(children: list[dict]) -> int:
+    """How many of `children` (a tree's top-level children, in reading
+    order) form a leading front-matter REGION to skip whole, replacing the
+    old "the first non-flagged block ends the skip for good" rule (the real
+    Tilly defect this fixes): a real title page routinely opens with an
+    untagged `section_header`/`text` block -- the book's own title, an
+    author/affiliation line -- carrying no docling `title` label and no
+    copyright marker, so a rule that ends the skip at the very first
+    unflagged block never gets past it, and the whole front-matter/preface
+    region leaks into the evidence.
+
+    Walks `children` in order, classifying each as one of:
+
+    - a high-confidence ANCHOR: a docling `title`-labelled block, a block
+      carrying a high-confidence copyright/ISBN marker anywhere in its
+      subtree (`_subtree_has_front_matter_leaf`), or a heading-recognized
+      preface/acknowledgements/foreword section
+      (`_is_front_matter_section_heading`) -- skipped regardless of its own
+      length. A heading-recognized section is bounded by
+      `_FRONT_MATTER_SECTION_SKIP_CHARS` (these routinely run long); a
+      title-label/marker anchor is bounded by `_FRONT_MATTER_PREFIX_SKIP_CHARS`
+      (these are routinely short);
+    - an ambiguous SHORT FRAGMENT (`_prose_chars_in_subtree` at or under
+      `_FRONT_MATTER_FRAGMENT_CHARS`) that still has real, longer content
+      somewhere later in `children` -- e.g. a bare page-number run or a
+      one-line "Tables" heading sitting between two anchors -- skipped the
+      same way, bounded by `_FRONT_MATTER_PREFIX_SKIP_CHARS`;
+    - anything else (a long, unrecognized block, or a short block with
+      nothing substantial left after it -- the tree's own tail) ENDS the
+      region here.
+
+    Returns 0 -- skip nothing -- unless at least one genuine ANCHOR was
+    found among the skipped children: a source with no title label, no
+    copyright/ISBN marker, and no recognized preface/acknowledgements/
+    foreword heading anywhere in its leading run gives no positive evidence
+    it has any front matter at all, so an ambiguous short leading fragment
+    (e.g. a short one-line paper title, or a short opening abstract) is
+    never swept on length alone -- guards a born-digital source that opens
+    directly with its own short prose (never-drop-on-uncertainty, #222's own
+    framing)."""
+    if not children:
+        return 0
+
+    prose_chars = [_prose_chars_in_subtree(child) for child in children]
+    # suffix_max[i] = the largest prose_chars value at or after index i (0
+    # once nothing remains), used to answer "is there real, longer content
+    # somewhere later" in O(1) per child rather than rescanning the tail.
+    suffix_max = [0] * (len(children) + 1)
+    for i in range(len(children) - 1, -1, -1):
+        suffix_max[i] = max(prose_chars[i], suffix_max[i + 1])
+
+    region_end = 0
+    saw_anchor = False
+    marker_budget_used = 0
+    section_budget_used = 0
+
+    for index, child in enumerate(children):
+        chars = prose_chars[index]
+
+        if _is_front_matter_section_heading(child):
+            if section_budget_used + chars > _FRONT_MATTER_SECTION_SKIP_CHARS:
+                break
+            section_budget_used += chars
+            saw_anchor = True
+            region_end = index + 1
+            continue
+
+        if _subtree_has_front_matter_leaf(child):
+            if marker_budget_used + chars > _FRONT_MATTER_PREFIX_SKIP_CHARS:
+                break
+            marker_budget_used += chars
+            saw_anchor = True
+            region_end = index + 1
+            continue
+
+        is_fragment = chars <= _FRONT_MATTER_FRAGMENT_CHARS
+        has_more_ahead = suffix_max[index + 1] > _FRONT_MATTER_FRAGMENT_CHARS
+        if not (is_fragment and has_more_ahead):
+            break
+        if marker_budget_used + chars > _FRONT_MATTER_PREFIX_SKIP_CHARS:
+            break
+        marker_budget_used += chars
+        region_end = index + 1
+
+    return region_end if saw_anchor else 0
 
 
 def _head_of_tree_lines(tree: dict, max_chars: int = _HEAD_OF_TREE_SLICE_CHARS) -> list[str]:
@@ -489,33 +686,31 @@ def _head_of_tree_lines(tree: dict, max_chars: int = _HEAD_OF_TREE_SLICE_CHARS) 
     neither can a tree of thousands of tiny text nodes blow it via
     unaccounted-for join separators (#201 follow-up finding). Deterministic:
     the same tree always yields the same slice (PRD §7.3, "a bounded prefix
-    of the source's own prose, taken in tree order"). It also skips a
-    leading front-matter / apparatus prefix (title page, copyright/ISBN,
-    publisher boilerplate) before it starts counting toward `max_chars`:
-    each candidate block is checked with `_is_front_matter_prefix_block`
-    while still in the leading run, and skipped (not counted, not
-    collected) as long as the total skipped so far stays within
-    `_FRONT_MATTER_PREFIX_SKIP_CHARS`. The very first block that either
-    doesn't look like front matter, or would push the skip past its bounded
-    budget, ends the skip for good -- everything from there on (even a
-    short block) is collected exactly as before (#222)."""
+    of the source's own prose, taken in tree order").
+
+    Before any of that, it skips a leading front-matter REGION (title page,
+    copyright/ISBN block, publisher boilerplate, preface scaffolding) via
+    `_front_matter_region_end`, computed once over `tree`'s top-level
+    children: unlike the walk's own line-by-line collection, the region-skip
+    decision operates at top-level-child granularity, because a real title
+    page's own opening block routinely carries neither a docling `title`
+    label nor a copyright marker (the real Tilly defect this replaces an
+    earlier, narrower rule for) -- only the REGION shape (short, ambiguous
+    fragments and verbose, heading-recognized sections sitting between
+    genuine anchors) reveals it. The region is never entered at all unless
+    at least one genuine anchor is found (see `_front_matter_region_end`),
+    so a source with no front matter keeps its own opening prose untouched."""
+    children = tree.get("children", [])
+    region_end = _front_matter_region_end(children)
+    remaining_tree = {"children": children[region_end:]}
+
     lines: list[str] = []
     total = 0
-    skipped_prefix_chars = 0
-    skipping_prefix = True
 
-    for leaf, route in iter_routed_blocks(tree, in_back_matter_section=False):
+    for leaf, route in iter_routed_blocks(remaining_tree, in_back_matter_section=False):
         if route != PROSE:
             continue
         text = leaf.get("text")
-        if skipping_prefix:
-            if (
-                _is_front_matter_prefix_block(leaf)
-                and skipped_prefix_chars + len(text) <= _FRONT_MATTER_PREFIX_SKIP_CHARS
-            ):
-                skipped_prefix_chars += len(text)
-                continue
-            skipping_prefix = False
         separator_cost = 1 if lines else 0
         remaining = max_chars - total - separator_cost
         if remaining <= 0:
