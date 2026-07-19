@@ -131,6 +131,13 @@ _PROTECTED_DIRS = (
     REPO_ROOT / "data" / "trees",
     REPO_ROOT / "data" / "envelopes",
     REPO_ROOT / "data" / "chunks",
+    # data/drive/ holds the Drive connector's fetch-state manifest
+    # (fetch_state.json, issue #238). Drive outer tests that exercise
+    # run_drive_ingest without an explicit fetch_state_path write the real
+    # default manifest as a side effect; without this isolation a manifest
+    # entry from one test leaks into a later test that reuses the same Drive
+    # file id and (correctly) triggers the incremental pre-download skip.
+    REPO_ROOT / "data" / "drive",
 )
 
 # Extensions snapshotted/restored per protected directory: *.json for the
