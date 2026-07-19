@@ -956,11 +956,21 @@ def is_valid_toc(toc: Any) -> bool:
 
 
 def validate_envelope_fields(data: dict[str, Any]) -> None:
-    """Validate the required envelope fields on a parsed model response,
-    raising a typed error on malformed output (PRD §7.3's four required
-    fields: thesis, toc, scope, stated_argument). `toc` must be a non-empty
-    list of `{title, children[]}` objects (#235) -- the old flat
-    list-of-strings shape no longer validates."""
+    """Validate `data` against the envelope's locked shape (PRD §7.3's four
+    required fields: thesis, toc, scope, stated_argument), raising a typed
+    error on malformed output. `toc` must be a non-empty list of `{title,
+    children[]}` objects (`is_valid_toc`, #235) -- the old flat
+    list-of-strings shape no longer validates.
+
+    Two call sites, both intentional: `reject_degenerate_thesis_fields` runs
+    its own equivalent of this check's string-field half (never the `toc`
+    half) inside `complete_json`'s bounded re-ask loop on the raw model
+    response; and `run_envelope` calls THIS function directly on the FULLY
+    ASSEMBLED envelope dict, immediately before `write_envelope`, as a
+    defense-in-depth pre-write gate -- a no-op on the happy path (the
+    assembled `toc` is either the model's own valid nested answer or
+    `_fallback_toc`'s always-valid deterministic fallback), but a genuine
+    net against a future regression in either path."""
     for field in _REQUIRED_STRING_FIELDS:
         value = data.get(field)
         if not isinstance(value, str) or not value.strip():
@@ -1131,5 +1141,13 @@ def run_envelope(
         final_toc = _fallback_toc(tree, path, parsed)
 
     envelope = build_envelope(path, source_id, parsed, toc=final_toc)
+    # Defense-in-depth pre-write gate (restored, reviewer finding): the
+    # FINAL assembled envelope dict -- not just the raw model response --
+    # is re-checked against the locked shape (nested toc included, #235)
+    # immediately before it is ever persisted. A no-op on the happy path
+    # (`final_toc` is either the model's own already-valid nested toc or
+    # `_fallback_toc`'s always-valid deterministic fallback), but a genuine
+    # net against a future regression in either path.
+    validate_envelope_fields(envelope)
     write_envelope(envelope, out_path)
     return envelope
