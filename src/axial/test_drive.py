@@ -1,13 +1,26 @@
-"""Inner unit tests for the axial drive connector (issue #237, slice 01).
+"""Inner unit tests for the axial drive connector (issue #237 slice 01;
+issue #238 slice 02: incremental fetch-state).
 
-Seeds the behaviours the outer acceptance test (`tests/test_drive_ingest.py`)
-composes: the `[drive]` secrets loader, pagination, the `.pdf`/`.docx`
-candidate filter, the download-to-cache path (extension preserved), lazy
-`DriveClient` construction (google libs mocked), and `ingest_fn` dispatch.
+Seeds the behaviours the outer acceptance tests
+(`tests/test_drive_ingest.py`, `tests/test_drive_incremental.py`) compose:
+the `[drive]` secrets loader, pagination, the `.pdf`/`.docx` candidate
+filter, the download-to-cache path (extension preserved), lazy
+`DriveClient` construction (google libs mocked), `ingest_fn` dispatch, and
+the fetch-state manifest (round-trip, skip predicate, write-after-success).
+
+Every call to the real `run_drive_ingest` in this file passes an explicit,
+per-test `fetch_state_path` (a `tmp_path`-scoped file) -- never the module
+default `data/drive/fetch_state.json`. That default is a real, cwd-relative,
+persisted path (P0-11b's whole point is that it survives across runs), so
+leaving it un-isolated would let one test's manifest entry leak into
+another test that happens to reuse the same fixture Drive file id -- the
+same class of shared on-disk state problem `tests/conftest.py` already
+guards for `data/trees/`, `data/envelopes/`, and `data/chunks/`.
 """
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -17,11 +30,16 @@ import pytest
 from axial.drive import (
     DriveClient,
     DriveSecretsError,
+    FetchStateError,
     _build_drive_client,
     _cache_path,
+    _fetch_state_entry,
     _is_candidate,
+    _is_unchanged,
     _list_all_candidates,
     _load_drive_secrets,
+    _load_fetch_state,
+    _write_fetch_state,
     run_drive_ingest,
 )
 
@@ -131,6 +149,7 @@ class _FakeClient:
     def __init__(self, pages):
         self._pages = pages
         self.list_calls: list[tuple[str, str | None]] = []
+        self.download_calls: list[str] = []
 
     def list_files(self, folder_id, page_token=None):
         self.list_calls.append((folder_id, page_token))
@@ -138,6 +157,18 @@ class _FakeClient:
 
     def download(self, file_id):  # pragma: no cover - not exercised here
         raise NotImplementedError
+
+
+def _tracking_download(client: "_FakeClient", blob: bytes = b"pdf-bytes"):
+    """A `download` override for `_FakeClient` that both returns `blob` and
+    records the call into `client.download_calls`, for tests that need to
+    assert exactly which candidates were (or were not) downloaded."""
+
+    def _download(file_id: str) -> bytes:
+        client.download_calls.append(file_id)
+        return blob
+
+    return _download
 
 
 def test_list_all_candidates_paginates_to_exhaustion_and_filters():
@@ -220,6 +251,7 @@ def test_run_drive_ingest_writes_downloaded_bytes_and_calls_ingest_fn_once_per_c
         ingest_fn=calls.append,
         secrets_path=secrets_path,
         cache_dir=cache_dir,
+        fetch_state_path=tmp_path / "fetch_state.json",
     )
 
     assert exit_code == 0
@@ -244,6 +276,7 @@ def test_run_drive_ingest_halts_on_missing_secrets_before_any_client_call(tmp_pa
         ingest_fn=calls.append,
         secrets_path=secrets_path,
         cache_dir=tmp_path / "cache",
+        fetch_state_path=tmp_path / "fetch_state.json",
     )
 
     assert exit_code != 0
@@ -405,7 +438,11 @@ def test_run_drive_ingest_default_path_runs_the_full_chain_per_candidate(monkeyp
     client.download = lambda file_id: b"pdf-bytes"
 
     exit_code = run_drive_ingest(
-        "BOOKS", client=client, secrets_path=secrets_path, cache_dir=cache_dir
+        "BOOKS",
+        client=client,
+        secrets_path=secrets_path,
+        cache_dir=cache_dir,
+        fetch_state_path=tmp_path / "fetch_state.json",
     )
 
     assert exit_code == 0
@@ -452,7 +489,11 @@ def test_run_drive_ingest_isolates_a_per_candidate_chain_failure_and_continues(
     client.download = lambda file_id: b"pdf-bytes"
 
     exit_code = run_drive_ingest(
-        "BOOKS", client=client, secrets_path=secrets_path, cache_dir=cache_dir
+        "BOOKS",
+        client=client,
+        secrets_path=secrets_path,
+        cache_dir=cache_dir,
+        fetch_state_path=tmp_path / "fetch_state.json",
     )
 
     assert exit_code == 0, "one bad candidate must not fail the overall run"
@@ -463,6 +504,331 @@ def test_run_drive_ingest_isolates_a_per_candidate_chain_failure_and_continues(
 
     captured = capsys.readouterr()
     assert "bad.pdf" in (captured.out + captured.err)
+
+
+# --- fetch-state manifest (issue #238, P0-11b) --------------------------------
+
+
+def test_load_fetch_state_absent_file_reads_as_empty(tmp_path):
+    assert _load_fetch_state(tmp_path / "absent.json") == {}
+
+
+def test_load_fetch_state_blank_file_reads_as_empty(tmp_path):
+    path = tmp_path / "fetch_state.json"
+    path.write_text("   \n", encoding="utf-8")
+
+    assert _load_fetch_state(path) == {}
+
+
+def test_fetch_state_round_trips_write_then_read(tmp_path):
+    path = tmp_path / "nested" / "fetch_state.json"
+    manifest = {
+        "f-alpha": {
+            "modifiedTime": "2026-07-01T00:00:00.000Z",
+            "md5Checksum": "checksum-v1",
+            "fetched_at": "2026-07-19T00:00:00+00:00",
+        }
+    }
+
+    _write_fetch_state(path, manifest)
+
+    assert path.is_file(), "expected _write_fetch_state to create parent dirs and the file"
+    assert _load_fetch_state(path) == manifest
+
+
+def test_load_fetch_state_raises_fetch_state_error_for_malformed_json(tmp_path):
+    path = tmp_path / "fetch_state.json"
+    path.write_text("not valid json {{{", encoding="utf-8")
+
+    with pytest.raises(FetchStateError):
+        _load_fetch_state(path)
+
+
+def test_load_fetch_state_raises_fetch_state_error_when_not_a_json_object(tmp_path):
+    path = tmp_path / "fetch_state.json"
+    path.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
+
+    with pytest.raises(FetchStateError):
+        _load_fetch_state(path)
+
+
+def test_is_unchanged_true_only_when_both_tokens_match():
+    record = {"id": "f-alpha", "modifiedTime": "2026-07-01T00:00:00.000Z", "md5Checksum": "v1"}
+    manifest = {
+        "f-alpha": {"modifiedTime": "2026-07-01T00:00:00.000Z", "md5Checksum": "v1"},
+    }
+
+    assert _is_unchanged(record, manifest) is True
+
+
+def test_is_unchanged_false_when_id_absent_from_manifest():
+    record = {"id": "f-new", "modifiedTime": "2026-07-01T00:00:00.000Z", "md5Checksum": "v1"}
+
+    assert _is_unchanged(record, manifest={}) is False
+
+
+@pytest.mark.parametrize(
+    ("manifest_modified_time", "manifest_md5"),
+    [
+        ("2026-07-02T00:00:00.000Z", "v1"),  # modifiedTime differs
+        ("2026-07-01T00:00:00.000Z", "v2"),  # md5Checksum differs
+        ("2026-07-02T00:00:00.000Z", "v2"),  # both differ
+    ],
+)
+def test_is_unchanged_false_when_either_token_differs(manifest_modified_time, manifest_md5):
+    record = {"id": "f-alpha", "modifiedTime": "2026-07-01T00:00:00.000Z", "md5Checksum": "v1"}
+    manifest = {"f-alpha": {"modifiedTime": manifest_modified_time, "md5Checksum": manifest_md5}}
+
+    assert _is_unchanged(record, manifest) is False
+
+
+def test_fetch_state_entry_carries_current_tokens_and_a_nonempty_fetched_at():
+    record = {
+        "id": "f-alpha",
+        "modifiedTime": "2026-07-01T00:00:00.000Z",
+        "md5Checksum": "v1",
+    }
+
+    entry = _fetch_state_entry(record)
+
+    assert entry["modifiedTime"] == "2026-07-01T00:00:00.000Z"
+    assert entry["md5Checksum"] == "v1"
+    assert entry["fetched_at"]
+
+
+def test_run_drive_ingest_skips_unchanged_candidate_before_download_and_ingest(tmp_path):
+    """Pre-download skip: a candidate already recorded in the manifest with
+    matching tokens is never downloaded and never reaches ingest_fn."""
+    key_path = _key_file(tmp_path)
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text(
+        f'[drive]\nservice_account_json = "{_toml_path(key_path)}"\nbooks_folder_id = "BOOKS"\n',
+        encoding="utf-8",
+    )
+    cache_dir = tmp_path / "cache"
+    fetch_state_path = tmp_path / "fetch_state.json"
+    _write_fetch_state(
+        fetch_state_path,
+        {
+            "f-alpha": {
+                "modifiedTime": "2026-07-01T00:00:00.000Z",
+                "md5Checksum": "v1",
+                "fetched_at": "2026-07-18T00:00:00+00:00",
+            }
+        },
+    )
+
+    client = _FakeClient(
+        {
+            None: (
+                [
+                    {
+                        "id": "f-alpha",
+                        "name": "alpha.pdf",
+                        "mimeType": "application/pdf",
+                        "modifiedTime": "2026-07-01T00:00:00.000Z",
+                        "md5Checksum": "v1",
+                    }
+                ],
+                None,
+            )
+        }
+    )
+    calls = []
+
+    exit_code = run_drive_ingest(
+        "BOOKS",
+        client=client,
+        ingest_fn=calls.append,
+        secrets_path=secrets_path,
+        cache_dir=cache_dir,
+        fetch_state_path=fetch_state_path,
+    )
+
+    assert exit_code == 0
+    assert client.download_calls == []
+    assert calls == []
+
+
+def test_run_drive_ingest_writes_manifest_entry_only_after_ingest_succeeds(tmp_path):
+    """Write-after-success: a candidate whose ingest_fn raises gets NO
+    manifest entry (re-fetched next run); one that succeeds does."""
+    key_path = _key_file(tmp_path)
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text(
+        f'[drive]\nservice_account_json = "{_toml_path(key_path)}"\nbooks_folder_id = "BOOKS"\n',
+        encoding="utf-8",
+    )
+    cache_dir = tmp_path / "cache"
+    fetch_state_path = tmp_path / "fetch_state.json"
+
+    from axial.extract import ExtractError
+
+    def _raising_ingest(local_path):
+        raise ExtractError("simulated pipeline failure")
+
+    client = _FakeClient(
+        {
+            None: (
+                [
+                    {
+                        "id": "f-bad",
+                        "name": "bad.pdf",
+                        "mimeType": "application/pdf",
+                        "modifiedTime": "2026-07-01T00:00:00.000Z",
+                        "md5Checksum": "v1",
+                    }
+                ],
+                None,
+            )
+        }
+    )
+    client.download = _tracking_download(client)
+
+    exit_code = run_drive_ingest(
+        "BOOKS",
+        client=client,
+        ingest_fn=_raising_ingest,
+        secrets_path=secrets_path,
+        cache_dir=cache_dir,
+        fetch_state_path=fetch_state_path,
+    )
+
+    assert exit_code == 0, "a per-candidate ingest failure must not fail the overall run"
+    assert _load_fetch_state(fetch_state_path) == {}, (
+        "expected NO manifest entry for a candidate whose ingest raised"
+    )
+
+    # A second, successful run over the same record must now succeed and
+    # write the manifest entry.
+    client2 = _FakeClient(
+        {
+            None: (
+                [
+                    {
+                        "id": "f-bad",
+                        "name": "bad.pdf",
+                        "mimeType": "application/pdf",
+                        "modifiedTime": "2026-07-01T00:00:00.000Z",
+                        "md5Checksum": "v1",
+                    }
+                ],
+                None,
+            )
+        }
+    )
+    client2.download = _tracking_download(client2)
+    calls = []
+
+    exit_code_2 = run_drive_ingest(
+        "BOOKS",
+        client=client2,
+        ingest_fn=calls.append,
+        secrets_path=secrets_path,
+        cache_dir=cache_dir,
+        fetch_state_path=fetch_state_path,
+    )
+
+    assert exit_code_2 == 0
+    assert client2.download_calls == ["f-bad"], (
+        "expected the previously-failed candidate to be re-fetched"
+    )
+    assert len(calls) == 1
+    manifest = _load_fetch_state(fetch_state_path)
+    assert "f-bad" in manifest, "expected a manifest entry once the retry succeeds"
+
+
+def test_pre_download_manifest_skip_composes_with_ingest_level_vault_status_skip(tmp_path):
+    """Plan scenario 4: the pre-download manifest skip is independent of
+    the ingest-level `vault_status=OK` skip (`axial.ingest.run_ingest`) --
+    neither masks the other. Modeled as a unit: an `ingest_fn` stand-in
+    that itself implements a vault_status=OK-style skip (its own
+    already-done set) alongside the manifest's own pre-download skip, and
+    both skip mechanisms fire independently across three candidates: one
+    skipped by the manifest before it ever reaches ingest_fn, one skipped
+    BY ingest_fn's own already-done set, and one that reaches neither skip
+    and is actually processed."""
+    key_path = _key_file(tmp_path)
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text(
+        f'[drive]\nservice_account_json = "{_toml_path(key_path)}"\nbooks_folder_id = "BOOKS"\n',
+        encoding="utf-8",
+    )
+    cache_dir = tmp_path / "cache"
+    fetch_state_path = tmp_path / "fetch_state.json"
+    _write_fetch_state(
+        fetch_state_path,
+        {
+            "f-manifest-skip": {
+                "modifiedTime": "2026-07-01T00:00:00.000Z",
+                "md5Checksum": "v1",
+                "fetched_at": "2026-07-18T00:00:00+00:00",
+            }
+        },
+    )
+
+    already_done_source_ids = {"f-vault-skip"}
+    processed = []
+
+    def _ingest_with_vault_status_skip(local_path):
+        # Stand-in for axial.ingest.run_ingest's own vault_status=OK skip,
+        # independent of the manifest's pre-download skip.
+        if local_path.stem in already_done_source_ids:
+            return
+        processed.append(local_path)
+
+    client = _FakeClient(
+        {
+            None: (
+                [
+                    {
+                        "id": "f-manifest-skip",
+                        "name": "manifest-skip.pdf",
+                        "mimeType": "application/pdf",
+                        "modifiedTime": "2026-07-01T00:00:00.000Z",
+                        "md5Checksum": "v1",
+                    },
+                    {
+                        "id": "f-vault-skip",
+                        "name": "vault-skip.pdf",
+                        "mimeType": "application/pdf",
+                        "modifiedTime": "2026-07-05T00:00:00.000Z",
+                        "md5Checksum": "v2",
+                    },
+                    {
+                        "id": "f-both-run",
+                        "name": "both-run.pdf",
+                        "mimeType": "application/pdf",
+                        "modifiedTime": "2026-07-05T00:00:00.000Z",
+                        "md5Checksum": "v3",
+                    },
+                ],
+                None,
+            )
+        }
+    )
+    client.download = _tracking_download(client)
+
+    exit_code = run_drive_ingest(
+        "BOOKS",
+        client=client,
+        ingest_fn=_ingest_with_vault_status_skip,
+        secrets_path=secrets_path,
+        cache_dir=cache_dir,
+        fetch_state_path=fetch_state_path,
+    )
+
+    assert exit_code == 0
+    # The manifest-level skip fired BEFORE download for f-manifest-skip.
+    assert "f-manifest-skip" not in client.download_calls
+    # The vault-status skip fired INSIDE ingest_fn for f-vault-skip -- it
+    # WAS downloaded (the manifest skip didn't know about it), but never
+    # landed in `processed`.
+    assert "f-vault-skip" in client.download_calls
+    assert all(path.stem != "f-vault-skip" for path in processed)
+    # The third candidate hit neither skip and was actually processed.
+    assert "f-both-run" in client.download_calls
+    assert any(path.stem == "f-both-run" for path in processed)
 
 
 # --- CLI wiring (axial drive ingest) ------------------------------------------
