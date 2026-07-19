@@ -15,6 +15,8 @@ from axial.chunk import (
     run_chunk_recursive,
 )
 from axial.codebook import CodebookError, load_codebook
+from axial.drive import DEFAULT_SECRETS_PATH as DRIVE_SECRETS_PATH
+from axial.drive import DriveSecretsError, _load_drive_secrets, run_drive_ingest
 from axial.envelope import EnvelopeError, run_envelope
 from axial.eval import EvalError, run_eval
 from axial.extract import ExtractError, extract
@@ -233,6 +235,27 @@ def build_parser() -> argparse.ArgumentParser:
             "<domain>/polity_canonical.yaml, printing a JSON report (mapped/"
             "candidates/leaks/candidate_count) to stdout and a human "
             "notification to stderr"
+        ),
+    )
+
+    drive_parser = subparsers.add_parser(
+        "drive", help="Google Drive source connector operations (Sec. 7.10, P0-11)"
+    )
+    drive_subparsers = drive_parser.add_subparsers(dest="drive_command")
+
+    drive_ingest_parser = drive_subparsers.add_parser(
+        "ingest",
+        help=(
+            "list the Drive 'Books' folder, download each .pdf/.docx candidate "
+            "to a local cache, and hand each off to the ingestion pipeline"
+        ),
+    )
+    drive_ingest_parser.add_argument(
+        "folder_id",
+        nargs="?",
+        default=None,
+        help=(
+            f"Drive folder id to list (default: [drive].books_folder_id from {DRIVE_SECRETS_PATH})"
         ),
     )
 
@@ -513,6 +536,21 @@ def _polity_report() -> int:
     return 0
 
 
+def _drive_ingest(folder_id: str | None) -> int:
+    """`axial drive ingest [folder_id]`: resolve `folder_id` to
+    `[drive].books_folder_id` when omitted, then run the connector with
+    production defaults (real `DriveClient`, real `run_vault_write`)."""
+    if folder_id is None:
+        try:
+            secrets = _load_drive_secrets(DRIVE_SECRETS_PATH)
+        except DriveSecretsError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        folder_id = secrets["books_folder_id"]
+
+    return run_drive_ingest(folder_id)
+
+
 def _ingest(worklist_path: str) -> int:
     return run_ingest(worklist_path)
 
@@ -586,6 +624,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "polity" and args.polity_command == "report":
         return _polity_report()
+
+    if args.command == "drive" and args.drive_command == "ingest":
+        return _drive_ingest(args.folder_id)
 
     if args.command == "ingest":
         return _ingest(args.worklist_path)
