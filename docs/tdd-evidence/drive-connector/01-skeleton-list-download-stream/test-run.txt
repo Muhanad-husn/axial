@@ -1,0 +1,12 @@
+$ uv run pytest src -q -m "not slow"
+........................................................................ [ 85%]
+........................................................................ [ 93%]
+...................................................                      [100%]
+843 passed, 1 deselected in 13.10s
+
+$ uv run pytest tests/test_drive_ingest.py -q
+....                                                                     [100%]
+4 passed in 1.08s
+
+$ uv run ruff check src/axial/drive.py src/axial/cli.py src/axial/test_drive.py src/axial/vault.py
+All checks passed!
