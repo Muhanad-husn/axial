@@ -12,7 +12,7 @@ staging, and re-runs are cheap and idempotent.
 
 - **Slug:** drive-connector
 - **Created:** 2026-07-19
-- **Status:** planning
+- **Status:** done (all 3 slices merged — P0-11 complete, Phase A closed)
 - **New system?** no (extends the existing ingest path; no walking skeleton for
   build/CI, but slice 01 is the thinnest end-to-end thread through the new
   connector)
@@ -24,9 +24,9 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 
 | # | Slice | Issue | Goal (one line) | Status | PR |
 |---|-------|-------|-----------------|--------|----|
-| 01 | [skeleton-list-download-stream](01-skeleton-list-download-stream.md) | [#237](https://github.com/Muhanad-husn/axial/issues/237) | `axial drive ingest <folder_id>` lists the Books folder via an injectable client, filters to `.pdf`/`.docx`, downloads each, and streams it into the existing ingestion path — all against a fake client, no network | ◐ PR | [#240](https://github.com/Muhanad-husn/axial/pull/240) |
-| 02 | [incremental-fetch-state](02-incremental-fetch-state.md) | [#238](https://github.com/Muhanad-husn/axial/issues/238) | A `data/drive/fetch_state.json` manifest makes a re-run over an unchanged folder fetch zero bytes and ingest zero new sources; changed files are re-fetched | ◐ PR | [#242](https://github.com/Muhanad-husn/axial/pull/242) |
-| 03 | [english-only-gate](03-english-only-gate.md) | [#239](https://github.com/Muhanad-husn/axial/issues/239) | A deterministic bounded-probe language gate rejects-and-logs non-English sources before extraction; English sources pass | ◐ PR | [#244](https://github.com/Muhanad-husn/axial/pull/244) |
+| 01 | [skeleton-list-download-stream](01-skeleton-list-download-stream.md) | [#237](https://github.com/Muhanad-husn/axial/issues/237) | `axial drive ingest <folder_id>` lists the Books folder via an injectable client, filters to `.pdf`/`.docx`, downloads each, and streams it into the existing ingestion path — all against a fake client, no network | ✅ done | [#240](https://github.com/Muhanad-husn/axial/pull/240) |
+| 02 | [incremental-fetch-state](02-incremental-fetch-state.md) | [#238](https://github.com/Muhanad-husn/axial/issues/238) | A `data/drive/fetch_state.json` manifest makes a re-run over an unchanged folder fetch zero bytes and ingest zero new sources; changed files are re-fetched | ✅ done | [#242](https://github.com/Muhanad-husn/axial/pull/242) |
+| 03 | [english-only-gate](03-english-only-gate.md) | [#239](https://github.com/Muhanad-husn/axial/issues/239) | A deterministic bounded-probe language gate rejects-and-logs non-English sources before extraction; English sources pass | ✅ done | [#244](https://github.com/Muhanad-husn/axial/pull/244) |
 
 <!-- Status values: ☐ todo · ◐ in-progress · ✅ done. Update the row when a slice's PR opens. -->
 
