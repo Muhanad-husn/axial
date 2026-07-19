@@ -1,0 +1,26 @@
+### Behavioral evidence: the four locked scenarios for #241
+
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- D:\axial-241\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial-241
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 4 items
+
+tests/ingestion/test_envelope_toc_bounded_reask.py::test_toc_reask_fires_once_and_second_response_wins PASSED [ 25%]
+tests/ingestion/test_envelope_toc_bounded_reask.py::test_toc_reask_bounded_and_fallback_guaranteed_when_both_invalid PASSED [ 50%]
+tests/ingestion/test_envelope_toc_bounded_reask.py::test_toc_reask_never_fires_when_first_response_already_valid PASSED [ 75%]
+tests/ingestion/test_envelope_toc_bounded_reask.py::test_toc_reask_budget_is_separate_from_thesis_degeneracy_budget PASSED [100%]
+
+============================== 4 passed in 2.11s ==============================
+
+### CLI boundary reachable
+usage: axial envelope [-h] source_path
+
+positional arguments:
+  source_path  path to a .pdf or .docx source file
+
+options:
+  -h, --help   show this help message and exit
+exit=0

@@ -1363,12 +1363,17 @@ def test_run_envelope_raises_envelope_parse_error_on_persistently_malformed_json
 # --- run_envelope: bounded re-ask on a degenerate-but-valid envelope (#80) --
 
 
-def test_run_envelope_falls_back_immediately_when_toc_is_persistently_empty(monkeypatch, tmp_path):
-    """#235 supersedes #80's toc-specific re-ask: a valid-JSON response with
-    an empty `toc` list no longer triggers a re-ask (`reject_degenerate_
-    thesis_fields` never inspects `toc`) and never raises -- `run_envelope`
-    falls back deterministically to `_toc_from_tree(tree)` on the FIRST
-    response, so the client is called exactly once."""
+def test_run_envelope_falls_back_after_one_reask_when_toc_is_persistently_empty(
+    monkeypatch, tmp_path
+):
+    """#235 supersedes #80's toc-specific re-ask inside `complete_json`'s own
+    shared budget: a valid-JSON response with an empty `toc` list never
+    exhausts `reject_degenerate_thesis_fields`'s budget or raises (that
+    validator never inspects `toc`). #241 then adds its own SEPARATE,
+    bounded-to-one toc re-ask on top -- so a client that answers every call
+    with the same persistently-empty `toc` is called exactly TWICE (the
+    original call, then the one re-ask) before `run_envelope` falls back
+    deterministically to `_toc_from_tree(tree)`."""
     import axial.envelope as envelope_mod
 
     source = tmp_path / "paper.pdf"
@@ -1397,7 +1402,7 @@ def test_run_envelope_falls_back_immediately_when_toc_is_persistently_empty(monk
     client = _AlwaysEmptyTocClient()
     envelope = envelope_mod.run_envelope(source, client=client, envelopes_dir=envelopes_dir)
 
-    assert client.call_count == 1
+    assert client.call_count == 2
     assert envelope["toc"]
     from axial.envelope import is_valid_toc
 

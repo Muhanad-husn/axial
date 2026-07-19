@@ -998,17 +998,18 @@ def reject_degenerate_thesis_fields(raw: str) -> None:
     on any of them is a re-askable failure within `complete_json`'s bounded
     budget instead of an instant abort.
 
-    Deliberately does NOT also re-ask on a degenerate/invalid `toc` (#235):
-    unlike thesis/scope/stated_argument, a persistently bad `toc` has its
-    own deterministic, always-succeeding fallback
-    (`_toc_from_tree`-derived, `run_envelope`) rather than needing to spend
-    the shared re-ask budget or ever hard-fail the whole envelope -- PRD
-    §7.3, "If the reconstruction fails validation, the pass falls back
-    deterministically ..., preserving the non-empty guarantee." Folding a
-    `toc` check into this validator would let a model that never gets `toc`
-    right (but always gets thesis/scope/stated_argument right) exhaust the
-    re-ask budget and hard-fail the pass anyway -- exactly the outcome the
-    fallback exists to avoid."""
+    Deliberately does NOT also re-ask on a degenerate/invalid `toc` within
+    THIS shared budget (#235): unlike thesis/scope/stated_argument, a
+    persistently bad `toc` gets its own SEPARATE bounded re-ask
+    (`run_envelope`, #241) followed by a deterministic, always-succeeding
+    fallback (`_toc_from_tree`-derived) rather than spending this shared
+    budget or ever hard-failing the whole envelope -- PRD §7.3, "If the
+    reconstruction fails validation, the pass falls back deterministically
+    ..., preserving the non-empty guarantee." Folding a `toc` check into
+    this validator would let a model that never gets `toc` right (but
+    always gets thesis/scope/stated_argument right) exhaust THIS re-ask
+    budget and hard-fail the pass anyway -- exactly the outcome both the
+    #241 re-ask and the #235 fallback exist to avoid."""
     data = parse_response(raw)
     for field in _REQUIRED_STRING_FIELDS:
         value = data.get(field)
@@ -1129,19 +1130,52 @@ def run_envelope(
     # `reject_degenerate_thesis_fields` already guarantees thesis/scope/
     # stated_argument are non-empty strings on `raw_response` -- those three
     # fields still hard-fail the whole pass on persistent degeneracy
-    # (unchanged, #80). `toc` is deliberately NOT re-asked on: #235's own
-    # deterministic fallback below is what preserves its non-empty
-    # guarantee instead.
+    # (unchanged, #80). `toc` is deliberately NOT re-asked on inside THAT
+    # budget: it gets its own, separate, bounded re-ask below (#241) instead
+    # of ever spending or exhausting `complete_json`'s shared attempts.
     parsed = parse_response(raw_response)
 
     model_toc = parsed.get("toc")
     if is_valid_toc(model_toc):
         final_toc = model_toc
     else:
-        # PRD §7.3: "If the reconstruction fails validation, the pass falls
-        # back deterministically to the tree's own detected heading list
-        # ..., preserving the non-empty guarantee" (#235).
-        final_toc = _fallback_toc(tree, path, parsed)
+        # Issue #241, Direction 1: one bounded toc re-ask on an invalid/
+        # degenerate `toc` shape, before ever falling through to
+        # `_fallback_toc`'s deterministic raw-heading dump. This is a
+        # SEPARATE budget from `reject_degenerate_thesis_fields`'s own
+        # re-ask loop above (#80) -- see that validator's own docstring for
+        # why folding `toc` into it would let a model that never gets `toc`
+        # right, but always gets thesis/scope/stated_argument right, exhaust
+        # the shared budget and hard-fail the whole pass. The re-ask reuses
+        # the SAME prompt (the model already saw the same single-call
+        # evidence-plus-toc-reconstruction block, #235) and is a single
+        # direct `client.complete` call, deliberately bypassing
+        # `complete_json`'s own re-ask loop entirely -- only ONE attempt is
+        # ever made here, never up to `complete_json`'s default `attempts`.
+        # Only the re-ask's `toc` is ever used: thesis/scope/stated_argument
+        # keep coming from the ORIGINAL, already-#80-validated `parsed`
+        # response, never from this second call.
+        final_toc = None
+        try:
+            reask_raw = client.complete(prompt, pass_name=ENVELOPE_PASS_NAME)
+            reask_toc = parse_response(reask_raw).get("toc")
+            if is_valid_toc(reask_toc):
+                final_toc = reask_toc
+        except (LLMError, httpx.HTTPError, EnvelopeParseError):
+            # The re-ask itself failing to land or to parse is the same
+            # species of failure as an invalid toc shape -- fall through to
+            # the deterministic fallback below rather than ever hard-failing
+            # the pass on a re-ask that didn't even produce usable JSON.
+            final_toc = None
+
+        if final_toc is None:
+            # PRD §7.3: "If the reconstruction fails validation, the pass
+            # falls back deterministically to the tree's own detected
+            # heading list ..., preserving the non-empty guarantee" (#235) --
+            # the re-ask's own failure (whether an invalid toc again, a
+            # transport error, or unparseable JSON) still lands here, so the
+            # non-empty guarantee holds regardless of how the re-ask fails.
+            final_toc = _fallback_toc(tree, path, parsed)
 
     envelope = build_envelope(path, source_id, parsed, toc=final_toc)
     # Defense-in-depth pre-write gate (restored, reviewer finding): the
