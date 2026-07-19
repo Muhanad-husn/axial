@@ -102,6 +102,26 @@ that test module's docstring for the full two-direction proof this fixture
 exercises (issue #216: today's head-of-tree walk collects every node's text
 regardless of `label`, so the APPARATUS marker leaks into the prompt
 alongside the genuine PROSE marker).
+
+Companion fixture -- structural_toc_paper.pdf / structural_toc_tree.json
+(issue #227, structural toc derivation)
+-----------------------------------------------------------------------
+Another HAND-AUTHORED tree, not regenerated from the PDF via `axial
+extract` (same rationale as router_prose_filter_paper_tree.json above): a
+front-matter region (an untagged title-page block, an author line, a
+copyright/ISBN block, publisher boilerplate, and a short "Contents" page
+listing the source's three chapters) followed by three real top-level
+chapter headings (`section_header`-labelled), each with real chapter body
+prose. The front-matter region -- INCLUDING the "Contents" page, the
+source's only chapter listing -- falls entirely inside
+`_front_matter_region_end`'s skip and never reaches the envelope prompt
+(verified directly: `compose_prompt` on this tree omits the "Contents:"
+text and its "Halvorne-6 pagination ledger" marker). tests/ingestion/
+test_envelope_structural_toc.py pins that the envelope's `toc` field must
+still reflect the three real chapter headings -- derived structurally from
+the tree, not from whatever the (stubbed) model returns -- even though the
+only place those chapter titles were literally listed together (the TOC
+page) never reaches the model.
 """
 
 from pathlib import Path
@@ -327,10 +347,90 @@ def make_router_prose_filter_paper_pdf(path: Path) -> None:
     doc.build(story)
 
 
+def make_structural_toc_paper_pdf(path: Path) -> None:
+    """A born-digital PDF whose text loosely mirrors the HAND-AUTHORED
+    structural_toc_tree.json (issue #227; see
+    tests/ingestion/test_envelope_structural_toc.py). Like
+    router_prose_filter_paper.pdf, this PDF is never actually extracted by
+    docling in the test suite -- the hand-authored tree is pre-placed at
+    data/trees/<source_id>.json instead -- so this function exists only to
+    give the fixture a real, valid, text-bearing PDF for intake's
+    text-layer probe to accept and for compute_source_id to hash."""
+    doc = SimpleDocTemplate(
+        str(path),
+        pagesize=letter,
+        leftMargin=1 * inch,
+        rightMargin=1 * inch,
+        topMargin=1 * inch,
+        bottomMargin=1 * inch,
+    )
+
+    story = []
+
+    story.append(Paragraph("The Architecture of Contentious Cycles", styles["Title"]))
+    story.append(
+        Paragraph("R. ASHWORTH VALE Correntine Institute for Comparative Studies", styles["Normal"])
+    )
+    story.append(Paragraph("Copyright (c) 1994 by Correntine Institute Press.", styles["Normal"]))
+    story.append(
+        Paragraph(
+            "All rights reserved. No part of this book may be reproduced or "
+            "transmitted in any form without permission.",
+            styles["Normal"],
+        )
+    )
+    story.append(Spacer(1, 0.25 * inch))
+
+    story.append(Paragraph("Contents", styles["Heading2"]))
+    story.append(
+        Paragraph(
+            "One, The Onset of Contention, page 3. Two, Escalation Dynamics, "
+            "page 41. Three, Settlement and Aftermath, page 88.",
+            styles["BodyText"],
+        )
+    )
+    story.append(Spacer(1, 0.25 * inch))
+
+    story.append(Paragraph("Chapter One: The Onset of Contention", styles["Heading1"]))
+    story.append(
+        Paragraph(
+            "Contentious episodes begin not with the loudest grievance but "
+            "with the first instance in which previously isolated complaints "
+            "are recognized by their bearers as instances of a shared "
+            "condition.",
+            styles["BodyText"],
+        )
+    )
+    story.append(Spacer(1, 0.25 * inch))
+
+    story.append(Paragraph("Chapter Two: Escalation Dynamics", styles["Heading1"]))
+    story.append(
+        Paragraph(
+            "Once a shared grievance is recognized, escalation follows a "
+            "predictable sequence from informal gatherings to semi-formal "
+            "assemblies.",
+            styles["BodyText"],
+        )
+    )
+    story.append(Spacer(1, 0.25 * inch))
+
+    story.append(Paragraph("Chapter Three: Settlement and Aftermath", styles["Heading1"]))
+    story.append(
+        Paragraph(
+            "Every episode surveyed here eventually settles, whether through "
+            "negotiated concession, exhaustion, or suppression.",
+            styles["BodyText"],
+        )
+    )
+
+    doc.build(story)
+
+
 def main() -> None:
     make_thesis_paper_pdf(FIXTURES_DIR / "thesis_paper.pdf")
     make_topic_titled_paper_pdf(FIXTURES_DIR / "topic_titled_paper.pdf")
     make_router_prose_filter_paper_pdf(FIXTURES_DIR / "router_prose_filter_paper.pdf")
+    make_structural_toc_paper_pdf(FIXTURES_DIR / "structural_toc_paper.pdf")
     print("Generated fixtures in", FIXTURES_DIR)
 
 

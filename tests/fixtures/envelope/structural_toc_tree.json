@@ -1,0 +1,76 @@
+{
+  "children": [
+    {
+      "type": "prose",
+      "order": "0",
+      "text": "The Architecture of Contentious Cycles",
+      "label": "title"
+    },
+    {
+      "type": "prose",
+      "order": "1",
+      "text": "R. ASHWORTH VALE Correntine Institute for Comparative Studies",
+      "label": "text"
+    },
+    {
+      "type": "prose",
+      "order": "2",
+      "text": "Copyright © 1994 by Correntine Institute Press.",
+      "label": "text"
+    },
+    {
+      "type": "prose",
+      "order": "3",
+      "text": "All rights reserved. No part of this book may be reproduced or transmitted in any form without permission.",
+      "label": "text"
+    },
+    {
+      "type": "prose",
+      "order": "4",
+      "text": "Contents: One, The Onset of Contention, page 3. Two, Escalation Dynamics, page 41. Three, Settlement and Aftermath, page 88. Filed under the Halvorne-6 pagination ledger.",
+      "label": "text"
+    },
+    {
+      "type": "prose",
+      "order": "5",
+      "text": "Chapter One: The Onset of Contention",
+      "label": "section_header",
+      "children": [
+        {
+          "type": "prose",
+          "order": "5.1",
+          "text": "Contentious episodes begin not with the loudest grievance but with the first instance in which previously isolated complaints are recognized by their bearers as instances of a shared condition. This recognition is the true onset, prior to any organized mobilization, and it is the analytic starting point this chapter develops across three illustrative episodes.",
+          "label": "text"
+        }
+      ]
+    },
+    {
+      "type": "prose",
+      "order": "6",
+      "text": "Chapter Two: Escalation Dynamics",
+      "label": "section_header",
+      "children": [
+        {
+          "type": "prose",
+          "order": "6.1",
+          "text": "Once a shared grievance is recognized, escalation follows a predictable sequence: informal gatherings widen into semi-formal assemblies, semi-formal assemblies test the state's tolerance for open association, and that test either provokes repression or further widens participation. This chapter traces that sequence across the same three episodes introduced earlier.",
+          "label": "text"
+        }
+      ]
+    },
+    {
+      "type": "prose",
+      "order": "7",
+      "text": "Chapter Three: Settlement and Aftermath",
+      "label": "section_header",
+      "children": [
+        {
+          "type": "prose",
+          "order": "7.1",
+          "text": "Every episode surveyed here eventually settles, whether through negotiated concession, exhaustion, or suppression, and the settlement's own terms shape whether the underlying grievance resurfaces in a later cycle. This closing chapter compares settlement terms across the three episodes and draws out their shared aftermath dynamics.",
+          "label": "text"
+        }
+      ]
+    }
+  ]
+}
