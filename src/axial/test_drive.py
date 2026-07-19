@@ -1,12 +1,16 @@
 """Inner unit tests for the axial drive connector (issue #237 slice 01;
-issue #238 slice 02: incremental fetch-state).
+issue #238 slice 02: incremental fetch-state; issue #239 slice 03:
+English-only language gate).
 
 Seeds the behaviours the outer acceptance tests
-(`tests/test_drive_ingest.py`, `tests/test_drive_incremental.py`) compose:
-the `[drive]` secrets loader, pagination, the `.pdf`/`.docx` candidate
-filter, the download-to-cache path (extension preserved), lazy
-`DriveClient` construction (google libs mocked), `ingest_fn` dispatch, and
-the fetch-state manifest (round-trip, skip predicate, write-after-success).
+(`tests/test_drive_ingest.py`, `tests/test_drive_incremental.py`,
+`tests/test_drive_language_gate.py`) compose: the `[drive]` secrets
+loader, pagination, the `.pdf`/`.docx` candidate filter, the
+download-to-cache path (extension preserved), lazy `DriveClient`
+construction (google libs mocked), `ingest_fn` dispatch, the fetch-state
+manifest (round-trip, skip predicate, write-after-success), and the
+English-only language gate (bounded probe, real `langdetect` detection,
+threshold, config wiring).
 
 Every call to the real `run_drive_ingest` in this file passes an explicit,
 per-test `fetch_state_path` (a `tmp_path`-scoped file) -- never the module
@@ -21,6 +25,7 @@ guards for `data/trees/`, `data/envelopes/`, and `data/chunks/`.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -28,19 +33,42 @@ from unittest.mock import MagicMock
 import pytest
 
 from axial.drive import (
+    DEFAULT_LANGUAGE_ACCEPT_THRESHOLD,
+    DEFAULT_LANGUAGE_PROBE_CHARS,
+    ENGLISH_LANGUAGE_CODE,
+    UNKNOWN_LANGUAGE_CODE,
     DriveClient,
     DriveSecretsError,
     FetchStateError,
     _build_drive_client,
     _cache_path,
+    _default_probe_text,
+    _detect_language,
     _fetch_state_entry,
     _is_candidate,
     _is_unchanged,
+    _language_gate_config,
     _list_all_candidates,
     _load_drive_secrets,
     _load_fetch_state,
     _write_fetch_state,
     run_drive_ingest,
+)
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+INTAKE_FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "intake"
+TEXT_LAYER_PDF = INTAKE_FIXTURES_DIR / "text_layer.pdf"
+
+ENGLISH_PROBE_TEXT = (
+    "This book examines the political economy of state formation in the "
+    "modern Middle East, tracing how colonial administrative structures "
+    "shaped post-independence institutions."
+)
+
+FRENCH_PROBE_TEXT = (
+    "Ce livre examine l'economie politique de la formation de l'Etat dans "
+    "le Moyen-Orient moderne, en retracant comment les structures "
+    "administratives coloniales ont faconne les institutions."
 )
 
 # --- _load_drive_secrets -----------------------------------------------------
@@ -829,6 +857,255 @@ def test_pre_download_manifest_skip_composes_with_ingest_level_vault_status_skip
     # The third candidate hit neither skip and was actually processed.
     assert "f-both-run" in client.download_calls
     assert any(path.stem == "f-both-run" for path in processed)
+
+
+# --- English-only language gate (issue #239, P0-11c) --------------------------
+
+
+def test_default_probe_text_draws_at_most_probe_chars_leading_characters():
+    """The probe draws at most `probe_chars` leading characters from the
+    source's real text layer, deterministically (same input -> same
+    truncated output)."""
+    full_text = _default_probe_text(TEXT_LAYER_PDF, probe_chars=10_000)
+    assert full_text, "sanity: the fixture must carry real extracted text"
+
+    truncated = _default_probe_text(TEXT_LAYER_PDF, probe_chars=10)
+
+    assert len(truncated) <= 10
+    assert truncated == full_text[:10]
+    # Deterministic: a second call yields byte-identical output.
+    assert _default_probe_text(TEXT_LAYER_PDF, probe_chars=10) == truncated
+
+
+def test_default_probe_text_returns_empty_string_for_unparseable_bytes(tmp_path):
+    """A downloaded candidate whose bytes aren't a real pdf/docx (corrupted
+    transfer, etc.) yields empty probe text rather than raising -- caught
+    broadly so one bad file can't crash the whole folder."""
+    garbage = tmp_path / "garbage.pdf"
+    garbage.write_bytes(b"not a real pdf\n")
+
+    assert _default_probe_text(garbage, probe_chars=100) == ""
+
+
+def test_detect_language_classifies_english_above_threshold():
+    lang, confidence = _detect_language(ENGLISH_PROBE_TEXT)
+
+    assert lang == ENGLISH_LANGUAGE_CODE
+    assert confidence >= DEFAULT_LANGUAGE_ACCEPT_THRESHOLD
+
+
+def test_detect_language_classifies_french_as_non_english():
+    lang, confidence = _detect_language(FRENCH_PROBE_TEXT)
+
+    assert lang == "fr"
+    assert lang != ENGLISH_LANGUAGE_CODE
+    assert confidence > 0
+
+
+def test_detect_language_is_deterministic_across_calls():
+    first = _detect_language(FRENCH_PROBE_TEXT)
+    second = _detect_language(FRENCH_PROBE_TEXT)
+
+    assert first == second
+
+
+def test_detect_language_blank_text_yields_unknown_not_a_confident_verdict():
+    assert _detect_language("") == (UNKNOWN_LANGUAGE_CODE, 0.0)
+    assert _detect_language("   \n\t  ") == (UNKNOWN_LANGUAGE_CODE, 0.0)
+
+
+def test_language_gate_config_falls_back_to_module_defaults_for_absent_file(tmp_path):
+    probe_chars, accept_threshold = _language_gate_config(tmp_path / "absent.yaml")
+
+    assert probe_chars == DEFAULT_LANGUAGE_PROBE_CHARS
+    assert accept_threshold == DEFAULT_LANGUAGE_ACCEPT_THRESHOLD
+
+
+def test_language_gate_config_falls_back_to_module_defaults_for_absent_drive_block(tmp_path):
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text("paths:\n  envelopes_dir: data/envelopes\n", encoding="utf-8")
+
+    probe_chars, accept_threshold = _language_gate_config(config_path)
+
+    assert probe_chars == DEFAULT_LANGUAGE_PROBE_CHARS
+    assert accept_threshold == DEFAULT_LANGUAGE_ACCEPT_THRESHOLD
+
+
+def test_language_gate_config_reads_overrides_not_hardcoded(tmp_path):
+    """Tunables are read from config, not hardcoded: an overridden
+    config_path yields the overridden values, distinct from the module
+    defaults."""
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text(
+        "drive:\n  language_probe_chars: 123\n  language_accept_threshold: 0.42\n",
+        encoding="utf-8",
+    )
+
+    probe_chars, accept_threshold = _language_gate_config(config_path)
+
+    assert probe_chars == 123
+    assert accept_threshold == 0.42
+    assert probe_chars != DEFAULT_LANGUAGE_PROBE_CHARS
+    assert accept_threshold != DEFAULT_LANGUAGE_ACCEPT_THRESHOLD
+
+
+def _drive_secrets_and_client_for_gate_test(tmp_path, *, records_and_probes: dict[str, str]):
+    """Shared arrange step for the `run_drive_ingest`-level gate tests
+    below: writes a valid `[drive]` secrets file and builds a `_FakeClient`
+    seeded with one `.pdf` candidate per `records_and_probes` key (a Drive
+    file id), plus a `probe_text_fn` keyed by local path stem (mirrors
+    `tests/test_drive_language_gate.py`'s own keying convention)."""
+    key_path = _key_file(tmp_path)
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text(
+        f'[drive]\nservice_account_json = "{_toml_path(key_path)}"\nbooks_folder_id = "BOOKS"\n',
+        encoding="utf-8",
+    )
+    records = [
+        {"id": file_id, "name": f"{file_id}.pdf", "mimeType": "application/pdf"}
+        for file_id in records_and_probes
+    ]
+    client = _FakeClient({None: (records, None)})
+    client.download = _tracking_download(client)
+
+    def probe_text_fn(local_path: Path) -> str:
+        return records_and_probes[Path(local_path).stem]
+
+    return secrets_path, client, probe_text_fn
+
+
+def test_run_drive_ingest_rejects_non_english_source_logs_reason_and_excludes_from_handoff(
+    tmp_path, capsys
+):
+    secrets_path, client, probe_text_fn = _drive_secrets_and_client_for_gate_test(
+        tmp_path, records_and_probes={"f-french": FRENCH_PROBE_TEXT}
+    )
+    calls = []
+
+    exit_code = run_drive_ingest(
+        "BOOKS",
+        client=client,
+        ingest_fn=calls.append,
+        secrets_path=secrets_path,
+        cache_dir=tmp_path / "cache",
+        fetch_state_path=tmp_path / "fetch_state.json",
+        probe_text_fn=probe_text_fn,
+    )
+
+    assert exit_code == 0
+    assert calls == [], "expected the rejected source to be excluded from the handoff set"
+    captured = capsys.readouterr()
+    message = (captured.out + captured.err).lower()
+    assert "f-french.pdf" in message
+    assert "fr" in message
+    assert re.search(r"0?\.\d+", message), "expected a numeric confidence value in the log line"
+
+
+def test_run_drive_ingest_english_source_passes_gate_with_no_rejection_logged(tmp_path, capsys):
+    secrets_path, client, probe_text_fn = _drive_secrets_and_client_for_gate_test(
+        tmp_path, records_and_probes={"f-english": ENGLISH_PROBE_TEXT}
+    )
+    calls = []
+
+    exit_code = run_drive_ingest(
+        "BOOKS",
+        client=client,
+        ingest_fn=calls.append,
+        secrets_path=secrets_path,
+        cache_dir=tmp_path / "cache",
+        fetch_state_path=tmp_path / "fetch_state.json",
+        probe_text_fn=probe_text_fn,
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    captured = capsys.readouterr()
+    assert "reject" not in (captured.out + captured.err).lower()
+
+
+def test_language_accept_threshold_honoured_at_boundary(tmp_path, capsys):
+    """A detection just below `language_accept_threshold` is rejected; the
+    same detection at/above the (now-lowered) threshold passes -- driven by
+    an overridden config_path rather than a hardcoded constant."""
+    lang, confidence = _detect_language(ENGLISH_PROBE_TEXT)
+    assert lang == ENGLISH_LANGUAGE_CODE, "sanity: fixture text must detect as English"
+
+    secrets_path, client, probe_text_fn = _drive_secrets_and_client_for_gate_test(
+        tmp_path, records_and_probes={"f-english": ENGLISH_PROBE_TEXT}
+    )
+
+    # Threshold set just ABOVE the real detected confidence -> rejected.
+    above_config = tmp_path / "above.yaml"
+    above_config.write_text(
+        f"drive:\n  language_accept_threshold: {min(confidence + 0.01, 1.0)}\n",
+        encoding="utf-8",
+    )
+    calls_rejected = []
+    exit_code_1 = run_drive_ingest(
+        "BOOKS",
+        client=client,
+        ingest_fn=calls_rejected.append,
+        secrets_path=secrets_path,
+        cache_dir=tmp_path / "cache1",
+        fetch_state_path=tmp_path / "fetch_state1.json",
+        probe_text_fn=probe_text_fn,
+        config_path=above_config,
+    )
+    assert exit_code_1 == 0
+    assert calls_rejected == [], (
+        "expected rejection when threshold is just above the real confidence"
+    )
+
+    # Threshold set at/below the real detected confidence -> passes.
+    client2 = _FakeClient({None: (client._pages[None][0], None)})
+    client2.download = _tracking_download(client2)
+    below_config = tmp_path / "below.yaml"
+    below_config.write_text(
+        f"drive:\n  language_accept_threshold: {confidence}\n",
+        encoding="utf-8",
+    )
+    calls_passed = []
+    exit_code_2 = run_drive_ingest(
+        "BOOKS",
+        client=client2,
+        ingest_fn=calls_passed.append,
+        secrets_path=secrets_path,
+        cache_dir=tmp_path / "cache2",
+        fetch_state_path=tmp_path / "fetch_state2.json",
+        probe_text_fn=probe_text_fn,
+        config_path=below_config,
+    )
+    assert exit_code_2 == 0
+    assert len(calls_passed) == 1, (
+        "expected the source to pass when the threshold is at/below its confidence"
+    )
+
+
+def test_run_drive_ingest_uses_configured_probe_chars_not_hardcoded(tmp_path):
+    """Tunables come from config, not a hardcoded constant: `_language_gate_
+    config` resolves `language_probe_chars` from the configured path, and
+    that same value is what `run_drive_ingest` threads into the default
+    probe (see `run_drive_ingest`'s `probe_chars, accept_threshold =
+    _language_gate_config(config_path)` call site)."""
+    small_probe_config = tmp_path / "pipeline.yaml"
+    small_probe_config.write_text(
+        "drive:\n  language_probe_chars: 4000\n  language_accept_threshold: 0.9\n",
+        encoding="utf-8",
+    )
+
+    probe_chars, _ = _language_gate_config(small_probe_config)
+    assert probe_chars == 4000, "sanity: config override was read"
+
+    # Directly proves the wiring: the SAME config path resolves to the SAME
+    # probe_chars value the connector would thread into `_default_probe_text`.
+    tiny_config = tmp_path / "tiny.yaml"
+    tiny_config.write_text("drive:\n  language_probe_chars: 1\n", encoding="utf-8")
+    tiny_probe_chars, _ = _language_gate_config(tiny_config)
+    assert tiny_probe_chars == 1
+    assert (
+        _default_probe_text(TEXT_LAYER_PDF, probe_chars=tiny_probe_chars)
+        == (_default_probe_text(TEXT_LAYER_PDF, probe_chars=DEFAULT_LANGUAGE_PROBE_CHARS)[:1])
+    )
 
 
 # --- CLI wiring (axial drive ingest) ------------------------------------------
