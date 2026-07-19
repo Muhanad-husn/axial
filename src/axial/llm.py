@@ -250,6 +250,24 @@ DEFAULT_REASONING_BY_PASS: dict[str, bool] = {
     XREF_PASS_NAME: False,
 }
 
+# Per-pass MODEL tiering (DEC-26, issue #235) -- the project's first per-pass
+# model override, mirroring `DEFAULT_REASONING_BY_PASS`'s own per-pass shape
+# exactly, but resolved by `OpenRouterClient` to concrete MODEL NAMES (never
+# tier names) before construction, since a tier name alone means nothing
+# without the secrets.toml tier->model lookup (`_resolve_model_by_pass`
+# below). This is the CODE-LEVEL default `OpenRouterClient` falls back to
+# when constructed without an explicit `model_by_pass` mapping (e.g. a test
+# building it directly, mirroring `DEFAULT_REASONING_BY_PASS`'s own such
+# callers) -- deliberately EMPTY: unlike reasoning (a bool with a safe
+# always-correct default), a per-pass model override is a brand-new feature
+# with no code-level default of its own, so a pass absent here (or absent
+# from config) simply keeps the client's own default configured model.
+# `config/pipeline.yaml`'s own `llm.model_by_pass` block (read by
+# `_resolve_model_by_pass` below) is the actual carried-per-pass source of
+# truth for a real run -- "never hardcoded" (DEC-26): the envelope pass's
+# `production_high` override lives there, not here.
+DEFAULT_MODEL_BY_PASS: dict[str, str] = {}
+
 # Fault-injection seam (mirroring `AXIAL_FORCE_DOCLING_FAILURE` in
 # extract.py): forces the `pass_name=ARTIFACTS_PASS_NAME` canned response to
 # carry exactly this string as the returned `artifact_role`, valid or not,
@@ -319,7 +337,15 @@ class StubLLMClient:
                 "State capacity in post-conflict settings depends more on "
                 "infrastructural reach than on coercive force alone."
             ),
-            "toc": ["Introduction", "Comparative Cases", "Conclusion"],
+            # Nested {title, children[]} shape (issue #235; PRD §7.3's
+            # amended locked `toc` shape) -- the old flat
+            # ["Introduction", "Comparative Cases", "Conclusion"] no longer
+            # validates against `axial.envelope.validate_envelope_fields`.
+            "toc": [
+                {"title": "Introduction", "children": []},
+                {"title": "Comparative Cases", "children": ["Case One", "Case Two"]},
+                {"title": "Conclusion", "children": []},
+            ],
             "scope": (
                 "Comparative, drawing on cases from the post-conflict statebuilding literature."
             ),
@@ -750,6 +776,7 @@ class OpenRouterClient:
         request_deadline_seconds: float = _REQUEST_DEADLINE_SECONDS,
         content_fallback_model: str | None = None,
         reasoning_by_pass: dict[str, bool] | None = None,
+        model_by_pass: dict[str, str] | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
@@ -769,6 +796,17 @@ class OpenRouterClient:
         # per-pass source of truth (§7.9) rather than this default.
         self._reasoning_by_pass = (
             dict(DEFAULT_REASONING_BY_PASS) if reasoning_by_pass is None else reasoning_by_pass
+        )
+        # Per-pass model tiering (DEC-26, issue #235): a map of pass_name ->
+        # concrete MODEL NAME, resolved (by `_resolve_model_by_pass`, tier
+        # name -> secrets.toml model name) BEFORE it ever reaches this
+        # constructor -- this client never resolves a tier itself. Defaults
+        # to `DEFAULT_MODEL_BY_PASS` (empty) when not given explicitly, so
+        # every pre-#235 caller/test that builds `OpenRouterClient` directly
+        # keeps sending every pass to `self._model` unchanged, exactly like
+        # today.
+        self._model_by_pass = (
+            dict(DEFAULT_MODEL_BY_PASS) if model_by_pass is None else model_by_pass
         )
         self._client = httpx.Client(
             base_url=base_url, transport=transport, timeout=_REQUEST_TIMEOUT
@@ -791,17 +829,25 @@ class OpenRouterClient:
         retry attempt starts a brand-new thread and a brand-new request, so
         an abandoned attempt can never corrupt a later one.
 
-        `model` (issue #116) overrides `self._model` for this one call --
-        the seam `complete()` uses to reroute a `content_filter` refusal to
+        `model` (issue #116) overrides EVERYTHING else for this one call,
+        including any per-pass model tiering below -- the seam `complete()`
+        uses to reroute a `content_filter` refusal to
         `self._content_fallback_model` without duplicating the watchdog
-        machinery. Defaults to `self._model`, unchanged for every other
-        caller.
+        machinery. When `model` is not given, `pass_name` (DEC-26, issue
+        #235) selects this call's target model from `self._model_by_pass`,
+        falling back to `self._model` for any pass not named there -- the
+        project's first per-pass model override, resolved exactly as
+        `reasoning_enabled` is already selected by `pass_name` below.
 
-        `pass_name` (issue #207, §7.9) selects this call's `reasoning.enabled`
-        value from `self._reasoning_by_pass` (defaulting to `False` for a
-        pass not named there -- the safe, unchanged-since-#147 default).
+        `pass_name` (issue #207, §7.9) also selects this call's
+        `reasoning.enabled` value from `self._reasoning_by_pass` (defaulting
+        to `False` for a pass not named there -- the safe, unchanged-since-
+        #147 default).
         """
-        target_model = self._model if model is None else model
+        if model is not None:
+            target_model = model
+        else:
+            target_model = self._model_by_pass.get(pass_name, self._model)
         reasoning_enabled = self._reasoning_by_pass.get(pass_name, False)
         outcome: dict[str, Any] = {}
         done = threading.Event()
@@ -1106,13 +1152,16 @@ def _resolve_api_key(secrets: dict[str, Any]) -> str:
     return api_key
 
 
-def _resolve_model(secrets: dict[str, Any], llm_config: dict[str, Any]) -> str:
-    """Model resolution (issue #23, requirement 2): `llm_tier` selects which
-    of the three model-name keys in secrets.toml to use; an unset selector
-    defaults to the building tier. Falls back to `config/pipeline.yaml`'s
-    `llm.model`, and finally to the building-tier default model, only when
-    secrets.toml doesn't name a model for the selected tier (e.g. the file
-    is absent entirely).
+def _resolve_model_for_tier(secrets: dict[str, Any], llm_config: dict[str, Any], tier: str) -> str:
+    """Resolve `tier` (one of `TIER_TO_MODEL_KEY`'s three keys) to a concrete
+    model name: secrets.toml's tier-named key is PRIMARY, falling back to
+    `config/pipeline.yaml`'s `llm.model` and finally the building-tier
+    default model, only when secrets.toml doesn't name a model for `tier`
+    (e.g. the file is absent entirely). Shared by `_resolve_model` (the
+    client's own default model, selected by `llm_tier`) and
+    `_resolve_model_by_pass` (DEC-26, issue #235: each per-pass override
+    names a tier, not a raw model, and is resolved through this SAME
+    machinery) so the two never diverge on what a tier name means.
 
     A non-`building` tier (`production_high`/`production_low`) whose model
     key is missing from secrets.toml is a misconfiguration, not a case to
@@ -1121,20 +1170,28 @@ def _resolve_model(secrets: dict[str, Any], llm_config: dict[str, Any]) -> str:
     the free building model instead. Only the `building` tier keeps the
     fallback chain, so today's no-secrets-file behavior is unchanged.
     """
-    tier = secrets.get("llm_tier") or DEFAULT_LLM_TIER
     model_key = TIER_TO_MODEL_KEY.get(tier)
     if model_key is None:
-        raise LLMConfigError(f"unknown llm_tier: {tier!r}")
+        raise LLMConfigError(f"unknown model tier: {tier!r}")
     model = secrets.get(model_key) or llm_config.get("model")
     if model:
         return model
     if tier != BUILDING_TIER:
         raise LLMConfigError(
-            f"llm_tier {tier!r} was selected but secrets.toml has no "
+            f"model tier {tier!r} was selected but secrets.toml has no "
             f"{model_key!r} key naming a model for it; set "
             f"'[openrouter].{model_key}' in secrets/secrets.toml"
         )
     return DEFAULT_BUILDING_MODEL
+
+
+def _resolve_model(secrets: dict[str, Any], llm_config: dict[str, Any]) -> str:
+    """Model resolution (issue #23, requirement 2): `llm_tier` selects which
+    of the three model-name keys in secrets.toml to use, via
+    `_resolve_model_for_tier`; an unset selector defaults to the building
+    tier."""
+    tier = secrets.get("llm_tier") or DEFAULT_LLM_TIER
+    return _resolve_model_for_tier(secrets, llm_config, tier)
 
 
 def _resolve_reasoning_by_pass(llm_config: dict[str, Any]) -> dict[str, bool]:
@@ -1150,6 +1207,28 @@ def _resolve_reasoning_by_pass(llm_config: dict[str, Any]) -> dict[str, bool]:
     return merged
 
 
+def _resolve_model_by_pass(secrets: dict[str, Any], llm_config: dict[str, Any]) -> dict[str, str]:
+    """Per-pass model tiering (DEC-26, issue #235): mirrors
+    `_resolve_reasoning_by_pass` exactly, except `config/pipeline.yaml`'s
+    `llm.model_by_pass` block names a TIER per pass (e.g. `envelope:
+    production_high`), never a raw model name, so each entry is resolved to
+    a concrete model name via `_resolve_model_for_tier` -- the SAME
+    secrets.toml tier->model machinery `_resolve_model` itself uses for the
+    client's own default model -- before it is handed to `OpenRouterClient`.
+    An absent block or absent file yields `DEFAULT_MODEL_BY_PASS` (empty):
+    no pass gets an override, and every pass keeps sending requests to the
+    client's own default configured model, exactly like before this issue.
+    A named tier with no secrets.toml key for it is a misconfiguration and
+    raises `LLMConfigError` immediately (the same guard `_resolve_model`
+    already enforces for the client's own default model) -- never a silent
+    fallback to the free building model."""
+    configured = llm_config.get("model_by_pass") or dict(DEFAULT_MODEL_BY_PASS)
+    return {
+        pass_name: _resolve_model_for_tier(secrets, llm_config, tier)
+        for pass_name, tier in configured.items()
+    }
+
+
 def _build_openrouter_client(llm_config: dict[str, Any]) -> OpenRouterClient:
     secrets = _load_openrouter_secrets(_secrets_path())
     base_url = llm_config.get("base_url", DEFAULT_OPENROUTER_BASE_URL)
@@ -1160,12 +1239,14 @@ def _build_openrouter_client(llm_config: dict[str, Any]) -> OpenRouterClient:
     # configured, unchanged behavior for anyone who hasn't set it up.
     content_fallback_model = secrets.get("content_fallback_model")
     reasoning_by_pass = _resolve_reasoning_by_pass(llm_config)
+    model_by_pass = _resolve_model_by_pass(secrets, llm_config)
     return OpenRouterClient(
         api_key=api_key,
         model=model,
         base_url=base_url,
         content_fallback_model=content_fallback_model,
         reasoning_by_pass=reasoning_by_pass,
+        model_by_pass=model_by_pass,
     )
 
 

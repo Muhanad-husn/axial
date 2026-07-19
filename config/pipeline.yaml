@@ -30,6 +30,19 @@ llm:
     tag: false
     artifacts: false
     xref: false
+  # Per-pass model tiering (DEC-26, issue #235): a per-pass MODEL override,
+  # mirroring reasoning_by_pass's own per-pass shape (src/axial/llm.py's
+  # OpenRouterClient reads this map via _resolve_model_by_pass, resolving
+  # each named tier to a concrete model through the same secrets.toml
+  # tier->model machinery llm_tier above uses). Absent from this map means
+  # the pass keeps sending requests to the client's own default configured
+  # model (llm_tier above) -- unchanged for every pass not named here. The
+  # envelope pass's toc reconstruction is a once-per-source, judgment-heavy
+  # call whose cost does not scale with corpus size, so it runs on the
+  # stronger production_high tier (deepseek-v4-pro) -- the project's first
+  # per-pass model override.
+  model_by_pass:
+    envelope: production_high
 
 paths:
   envelopes_dir: data/envelopes

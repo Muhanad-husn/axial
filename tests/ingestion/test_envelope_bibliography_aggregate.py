@@ -45,15 +45,28 @@ acceptance criteria for the source of truth:
   preface boilerplate) and begins at the first genuinely substantive body
   prose ..."
 
-Seam decision 1 -- asserting directly on `compose_prompt(tree) -> str`, not
-via a subprocess/CLI/LLM round trip
+Seam decision 1 -- asserting directly on `compose_thesis_evidence(tree) ->
+str`, not via a subprocess/CLI/LLM round trip
 -----------------------------------------------------------------------
-`compose_prompt` is a pure, synchronous function of a structural tree: it
-makes no LLM call and touches no filesystem state beyond the in-memory
-`dict` it is handed. It is the exact seam the envelope pass hands to the
-model (`run_envelope` calls it directly and passes its return value
-straight into the prompt template's `{sections}` slot), so asserting on its
-return value pins the real observable behavior without needing the
+Originally this test asserted directly on `compose_prompt(tree)`'s full
+return value, since before #235 that string carried nothing but this
+thesis/scope/stated_argument evidence slot. Issue #235 (hybrid two-signal
+`toc` reconstruction) folds a SECOND, front-matter-INCLUSIVE Signal A into
+the SAME single envelope prompt (§7.3's dual-role split, required by the
+one-call-per-source lock), so `compose_prompt(tree)`'s full text now also
+legitimately carries front matter via that separate signal -- asserting
+front-matter/bibliography-marker absence against the WHOLE prompt would no
+longer hold, even though the thesis evidence itself is still exactly as
+clean as before. `compose_thesis_evidence` is the extracted, still-KEPT-
+and-unchanged function that returns precisely what used to be
+`compose_prompt`'s own `{sections}` slot -- the matched-section blocks
+(bibliography-pruned) when they clear the evidence floor, else the pruned,
+front-matter-skipped head-of-tree excerpt -- so pointing this test's
+assertions at it (instead of the whole prompt) preserves the exact intent
+of this contract without weakening a single assertion. It is a pure,
+synchronous function of a structural tree: it makes no LLM call and touches
+no filesystem state beyond the in-memory `dict` it is handed, so asserting
+on its return value pins the real observable behavior without needing the
 `stub`/`record` LLM-provider subprocess harness the other envelope
 acceptance tests use for a different reason (proving what a live CLI
 invocation records). This test is fully deterministic and requires no
@@ -121,8 +134,9 @@ existence. Its evidence must be unchanged by the new exclusion/prefix-skip
 logic -- both its Introduction's and Conclusion's own argument sentences
 must still appear in the composed evidence.
 
-Test hygiene: pure `compose_prompt(tree)` calls over hand-loaded fixture
-JSON, no filesystem writes, no `data/` state, no LLM client, no subprocess.
+Test hygiene: pure `compose_thesis_evidence(tree)` calls over hand-loaded
+fixture JSON, no filesystem writes, no `data/` state, no LLM client, no
+subprocess.
 """
 
 from __future__ import annotations
@@ -130,7 +144,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from axial.envelope import compose_prompt, select_envelope_nodes
+from axial.envelope import compose_thesis_evidence, select_envelope_nodes
 from axial.router import CONTENT_APPARATUS_CITATION_THRESHOLD, _INVERTED_AUTHOR_NAME_RE
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -241,7 +255,7 @@ def test_bibliography_fixture_citations_are_each_below_the_per_block_threshold()
 
 def test_compose_prompt_excludes_bibliography_and_reaches_body_prose():
     tree = _load_tree(BIBLIOGRAPHY_TREE_FIXTURE)
-    evidence = compose_prompt(tree)
+    evidence = compose_thesis_evidence(tree)
 
     conclusion = _find_top_level_section(tree, "Conclusion")
     citation_texts = [child.get("text") for child in conclusion.get("children", [])]
@@ -312,7 +326,7 @@ def test_compose_prompt_control_source_evidence_unchanged():
         f"select_envelope_nodes, got {matched_headings!r}"
     )
 
-    evidence = compose_prompt(tree)
+    evidence = compose_thesis_evidence(tree)
 
     assert CONTROL_INTRO_MARKER in evidence, (
         f"expected the control fixture's Introduction argument sentence "
