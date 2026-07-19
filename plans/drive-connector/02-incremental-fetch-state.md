@@ -5,7 +5,7 @@
 - **GitHub issue:** #238
 - **Branch:** feat/drive-connector/02-incremental-fetch-state
 - **Project directory:** `.`
-- **Status:** ☐ todo
+- **Status:** ◐ PR #242 (awaiting founder approval)
 - **Walking skeleton?** no
 - **Depends on:** slice 01 (#237)
 
