@@ -5,7 +5,7 @@
 - **GitHub issue:** #237
 - **Branch:** feat/drive-connector/01-skeleton-list-download-stream
 - **Project directory:** `.`
-- **Status:** ☐ todo
+- **Status:** ◐ PR #240 (awaiting founder approval)
 - **Walking skeleton?** yes (thinnest end-to-end thread through the new connector)
 
 ## Goal — the minimum testable behaviour
@@ -97,3 +97,4 @@ Co-located under `src/axial/` (e.g. `src/axial/test_drive.py`).
 ## Status / progress log
 
 - 2026-07-19 planned.
+- 2026-07-19 red outer test committed (`f0e8df8`); implemented (`a61698b`); cross-platform TOML fixture fix (`47e9343`); default full-chain orchestrator + per-candidate isolation + vault.py docstring fix (`6b8cc76`) resolving the reviewer's stage-2 finding; evidence (`83fc7b3`). Reviewer stage-1 passed. **PR #240 opened; awaiting founder approval.** Full acceptance suite deferred to CI (live regen).
