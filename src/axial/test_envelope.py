@@ -685,6 +685,58 @@ def test_toc_candidates_for_prompt_skips_blank_heading_text():
     assert _toc_candidates_for_prompt(tree) == ["Chapter One"]
 
 
+# --- bounded toc-candidate block (#232) --------------------------------------
+
+
+def test_bound_toc_candidates_leaves_a_real_scale_list_unchanged():
+    """At or below `_TOC_CANDIDATES_MAX`, the list passes through whole,
+    with no truncation flagged -- the bound is a pathological-input rail,
+    never a routine trimmer (#232)."""
+    from axial.envelope import _TOC_CANDIDATES_MAX, _bound_toc_candidates
+
+    candidates = [f"Chapter {i}" for i in range(_TOC_CANDIDATES_MAX)]
+
+    bounded, truncated = _bound_toc_candidates(candidates)
+
+    assert bounded == candidates
+    assert truncated is False
+
+
+def test_bound_toc_candidates_truncates_whole_entries_past_the_bound():
+    """Past `_TOC_CANDIDATES_MAX`, only the first N whole entries survive --
+    never a partial heading -- and truncation is flagged so the caller can
+    attach an explicit note."""
+    from axial.envelope import _TOC_CANDIDATES_MAX, _bound_toc_candidates
+
+    candidates = [f"Chapter {i}" for i in range(_TOC_CANDIDATES_MAX + 50)]
+
+    bounded, truncated = _bound_toc_candidates(candidates)
+
+    assert bounded == candidates[:_TOC_CANDIDATES_MAX]
+    assert len(bounded) == _TOC_CANDIDATES_MAX
+    assert truncated is True
+
+
+def test_compose_prompt_appends_a_truncation_note_only_when_bounded():
+    """`compose_prompt` attaches the truncation note only for a candidate
+    list past `_TOC_CANDIDATES_MAX` -- never for one that fits (#232)."""
+    from axial.envelope import _TOC_CANDIDATES_MAX, compose_prompt
+
+    def _tree(n):
+        return {
+            "children": [
+                {"text": f"Chapter {i}", "label": "section_header", "children": []}
+                for i in range(n)
+            ]
+        }
+
+    fits_prompt = compose_prompt(_tree(_TOC_CANDIDATES_MAX))
+    over_prompt = compose_prompt(_tree(_TOC_CANDIDATES_MAX + 50))
+
+    assert "truncat" not in fits_prompt.lower()
+    assert "truncat" in over_prompt.lower()
+
+
 # --- bibliography-by-aggregate exclusion (#222, PRD §7.3) -------------------
 
 
