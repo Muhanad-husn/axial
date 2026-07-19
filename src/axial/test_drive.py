@@ -1108,6 +1108,219 @@ def test_run_drive_ingest_uses_configured_probe_chars_not_hardcoded(tmp_path):
     )
 
 
+# --- UNKNOWN safety net (reviewer Finding 3, issue #239) ----------------------
+#
+# The gate deliberately does NOT reject UNKNOWN_LANGUAGE_CODE (module
+# docstring / drive.py's `run_drive_ingest` gate-application comment):
+# "no probe signal" is not a confident non-English verdict, so such a
+# candidate proceeds to `ingest_fn` -- where the REAL pipeline's own
+# error handling is what ultimately judges an unprocessable file. The two
+# tests below lock BOTH halves of that claim: (1) the gate itself passes
+# UNKNOWN through rather than rejecting it, and (2) a genuinely textless
+# source is still caught and logged downstream, via intake's real
+# `NoTextLayerError` -- so "UNKNOWN passes the gate" is not a silent hole,
+# it is a deliberate handoff to an already-tested safety net.
+
+
+def test_unknown_language_passes_the_gate_and_reaches_the_ingest_handoff(monkeypatch, tmp_path):
+    """Part 1 (Finding 3): a downloaded candidate whose bytes are
+    genuinely unparseable (so the REAL default probe -- no injected
+    probe_text_fn -- returns "" and `_detect_language` yields
+    UNKNOWN_LANGUAGE_CODE) is NOT gate-rejected. It reaches the ingest
+    handoff: `_patch_chain` stubs the four default-chain stages so this
+    stays hermetic (no docling/LLM), and the first stage (`extract`) is
+    proven to have been called for this exact candidate's local path. No
+    "reject" line is emitted for it."""
+    key_path = _key_file(tmp_path)
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text(
+        f'[drive]\nservice_account_json = "{_toml_path(key_path)}"\nbooks_folder_id = "BOOKS"\n',
+        encoding="utf-8",
+    )
+    cache_dir = tmp_path / "cache"
+
+    order = _patch_chain(monkeypatch)
+
+    client = _FakeClient(
+        {
+            None: (
+                [{"id": "f-unparseable", "name": "unparseable.pdf", "mimeType": "application/pdf"}],
+                None,
+            )
+        }
+    )
+    # NOT a real pdf -- `_default_probe_text` catches the parse failure and
+    # returns "" (see test_default_probe_text_returns_empty_string_for_
+    # unparseable_bytes above), which `_detect_language` maps to
+    # UNKNOWN_LANGUAGE_CODE.
+    client.download = lambda file_id: b"not a real pdf, just placeholder bytes on disk\n"
+
+    exit_code = run_drive_ingest(
+        "BOOKS",
+        client=client,
+        secrets_path=secrets_path,
+        cache_dir=cache_dir,
+        fetch_state_path=tmp_path / "fetch_state.json",
+    )
+
+    assert exit_code == 0
+    local_path = cache_dir / "f-unparseable.pdf"
+    # Sanity: the property this test locks actually holds for this input --
+    # confirms the test is exercising the UNKNOWN path, not something else.
+    assert _detect_language(
+        _default_probe_text(local_path, probe_chars=DEFAULT_LANGUAGE_PROBE_CHARS)
+    ) == (
+        UNKNOWN_LANGUAGE_CODE,
+        0.0,
+    )
+    assert ("extract", local_path) in order, (
+        "expected the UNKNOWN-language candidate to reach the ingest handoff "
+        "(the gate must not reject it), but the chain was never invoked"
+    )
+
+
+def test_unknown_language_passes_the_gate_and_no_rejection_is_logged(monkeypatch, tmp_path, capsys):
+    """Companion assertion to the test above, split out so `capsys` capture
+    isn't entangled with `_patch_chain`'s monkeypatching: no "reject" line
+    is ever printed for a candidate the gate passed through as UNKNOWN."""
+    key_path = _key_file(tmp_path)
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text(
+        f'[drive]\nservice_account_json = "{_toml_path(key_path)}"\nbooks_folder_id = "BOOKS"\n',
+        encoding="utf-8",
+    )
+    cache_dir = tmp_path / "cache"
+
+    _patch_chain(monkeypatch)
+
+    client = _FakeClient(
+        {
+            None: (
+                [{"id": "f-unparseable", "name": "unparseable.pdf", "mimeType": "application/pdf"}],
+                None,
+            )
+        }
+    )
+    client.download = lambda file_id: b"not a real pdf, just placeholder bytes on disk\n"
+
+    exit_code = run_drive_ingest(
+        "BOOKS",
+        client=client,
+        secrets_path=secrets_path,
+        cache_dir=cache_dir,
+        fetch_state_path=tmp_path / "fetch_state.json",
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    message = (captured.out + captured.err).lower()
+    assert "reject" not in message, (
+        f"expected NO rejection line for an UNKNOWN-language (unparseable) "
+        f"candidate -- the gate must pass it through, not reject it; got "
+        f"stdout={captured.out!r} stderr={captured.err!r}"
+    )
+
+
+def test_genuinely_textless_source_is_ultimately_rejected_and_logged_via_intake(tmp_path, capsys):
+    """Part 2 (Finding 3): the UNKNOWN safety net's other half -- a
+    downloaded candidate that is a REAL, validly-structured but textless
+    pdf (the same fixture axial.intake's own test suite uses to prove
+    `has_text_layer` returns False, tests/fixtures/intake/no_text_layer.pdf)
+    passes the language gate (blank probe -> UNKNOWN, not rejected) but is
+    then caught and logged by the per-candidate CHAIN_ERRORS isolation,
+    because `extract()` runs `intake()` first and `intake()` raises the
+    real `NoTextLayerError` on it -- wrapped as `SourceValidationError`
+    (an `ExtractError`, part of CHAIN_ERRORS).
+
+    Deliberately unmocked (no `_patch_chain`, no injected `ingest_fn`,
+    no injected `probe_text_fn`): this exercises the REAL default probe
+    and the REAL default ingest chain's first stage. It stays hermetic
+    because `extract()` calls `intake()` BEFORE any docling/Unstructured
+    conversion or persisted-tree cache read/write (verified by reading
+    src/axial/extract.py's `extract()`: the `intake(path)` call and its
+    `except IntakeError: raise SourceValidationError` wrapping happen
+    first, before `compute_source_id`/`tree_path`/any cache access) -- so
+    this test never triggers docling, never touches data/trees/, and
+    never runs the envelope/chunk/vault stages (extract() raises before
+    `_run_full_ingest_chain` reaches any of them).
+
+    This test therefore covers the full, real "gate passes UNKNOWN ->
+    intake ultimately rejects" path for the one no-text-layer case intake
+    itself already proves deterministic and hermetic. It does NOT cover
+    every possible "genuinely unparseable" byte content (e.g. bytes that
+    aren't a parseable PDF/DOCX at all, as in the two tests above,
+    exercise the language gate's own probe-failure path, not intake's
+    text-layer check) -- those are two different real-world failure
+    modes, both already covered, by different tests, on purpose."""
+    from axial.intake import NoTextLayerError
+
+    key_path = _key_file(tmp_path)
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text(
+        f'[drive]\nservice_account_json = "{_toml_path(key_path)}"\nbooks_folder_id = "BOOKS"\n',
+        encoding="utf-8",
+    )
+    cache_dir = tmp_path / "cache"
+
+    no_text_layer_bytes = (INTAKE_FIXTURES_DIR / "no_text_layer.pdf").read_bytes()
+    client = _FakeClient(
+        {
+            None: (
+                [{"id": "f-textless", "name": "textless.pdf", "mimeType": "application/pdf"}],
+                None,
+            )
+        }
+    )
+    client.download = lambda file_id: no_text_layer_bytes
+
+    exit_code = run_drive_ingest(
+        "BOOKS",
+        client=client,
+        secrets_path=secrets_path,
+        cache_dir=cache_dir,
+        fetch_state_path=tmp_path / "fetch_state.json",
+    )
+
+    assert exit_code == 0, "a per-candidate pipeline failure must not fail the overall run"
+
+    captured = capsys.readouterr()
+    message = (captured.out + captured.err).lower()
+    # The gate passed it through: this is CHAIN_ERRORS' own "error: <name>:
+    # <exc>" line (run_drive_ingest's ingest_fn except-block), NOT the
+    # language gate's distinct "reject: <name>: detected language=..." line
+    # (its wording -- "detected language=" and "English-only gate" -- is
+    # the gate's own fingerprint; NoTextLayerError's message happens to
+    # also use the word "rejected" in its own prose, which is fine and
+    # expected -- it IS a rejection, just via intake, not the gate).
+    assert "detected language=" not in message and "english-only gate" not in message, (
+        f"expected NO language-gate rejection line (the gate must pass this "
+        f"UNKNOWN-probe candidate through); got stdout={captured.out!r} "
+        f"stderr={captured.err!r}"
+    )
+    assert message.startswith("error:"), (
+        f"expected the per-candidate CHAIN_ERRORS isolation's own 'error: "
+        f"...' line (not the gate's 'reject: ...' line); got stdout="
+        f"{captured.out!r} stderr={captured.err!r}"
+    )
+    # intake's real NoTextLayerError is what ultimately caught and logged it.
+    assert "textless.pdf" in message, (
+        f"expected the per-candidate CHAIN_ERRORS isolation to log a reason "
+        f"naming the file; got stdout={captured.out!r} stderr={captured.err!r}"
+    )
+    assert "text layer" in message or "no text" in message, (
+        f"expected the logged reason to be intake's own NoTextLayerError "
+        f"message (a real text-layer rejection, not a generic failure); "
+        f"got stdout={captured.out!r} stderr={captured.err!r}"
+    )
+    # Sanity: confirms this fixture really does trigger NoTextLayerError via
+    # the same real intake path the connector runs -- pins the premise, not
+    # just the observed log line.
+    with pytest.raises(NoTextLayerError):
+        from axial.intake import intake as real_intake
+
+        real_intake(INTAKE_FIXTURES_DIR / "no_text_layer.pdf")
+
+
 # --- CLI wiring (axial drive ingest) ------------------------------------------
 
 
