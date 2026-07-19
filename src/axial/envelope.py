@@ -107,6 +107,9 @@ text below. Do not infer them from the title, the filename, or any outside \
 knowledge -- every one of those three fields must come solely from the \
 text provided.
 
+"thesis" and "stated_argument" must state the source's general argument as \
+a whole -- not a specific example or opening anecdote.
+
 Sections:
 
 {sections}
