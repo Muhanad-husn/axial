@@ -10,6 +10,27 @@ import pytest
 
 from axial.llm import ExplodingLLMClient, StubLLMClient
 
+# The sentence `_TOC_RECONSTRUCTION_BLOCK` always opens with (axial.envelope,
+# #235) -- used by `_sections_portion` below to isolate the thesis/scope/
+# stated_argument evidence portion of a composed prompt from the toc-
+# reconstruction block that now follows it in the SAME single prompt.
+_TOC_BLOCK_MARKER = "Reconstruct the source's real table of contents"
+
+
+def _sections_portion(prompt: str) -> str:
+    """The `compose_prompt` output's thesis/scope/stated_argument evidence
+    portion only, excluding the toc-reconstruction block (#235). Signal A
+    deliberately carries broader, front-matter-inclusive, largely UNFILTERED
+    tree content (including content the thesis evidence's own exclusion
+    guarantees -- the evidence floor, the front-matter skip, the
+    bibliography-by-aggregate exclusion -- deliberately keep out of the
+    THESIS evidence specifically): a test pinning what those thesis-evidence
+    guarantees exclude must look here, not at the whole prompt, which now
+    also carries Signal A/Signal B for a DIFFERENT purpose (#235's own dual-
+    role resolution, mirrored by tests/ingestion/test_envelope_toc_two_
+    signal_reconstruction.py's own test C)."""
+    return prompt.split(_TOC_BLOCK_MARKER)[0]
+
 
 def _tree_with_sections(*, include_body=True) -> dict:
     # Body paragraphs are deliberately long enough (see axial.envelope's
@@ -147,7 +168,11 @@ def test_compose_prompt_excludes_body_section_text():
 
     assert "This paper argues X" in prompt
     assert "In sum, X is true" in prompt
-    assert "Body material, not envelope input." not in prompt
+    # Scoped to the thesis-evidence portion (see `_sections_portion`'s own
+    # docstring, #235): Signal A's broader, largely unfiltered tree walk
+    # deliberately CAN carry this same text elsewhere in the same prompt --
+    # that is not what this assertion pins.
+    assert "Body material, not envelope input." not in _sections_portion(prompt)
 
 
 # --- evidence floor / head-of-tree widening (#201) ---------------------------
@@ -298,13 +323,19 @@ def test_compose_prompt_head_of_tree_slice_is_bounded_and_deterministic():
     # len(prompt) well past 39000), and passes once a single node's
     # contribution is capped to the remaining slice budget. The margin
     # covers only the fixed template text + the head-of-tree label, never
-    # the paragraph's own bulk.
-    _FIXED_OVERHEAD_MARGIN = 1000
-    assert len(prompt_a) <= _HEAD_OF_TREE_SLICE_CHARS + _FIXED_OVERHEAD_MARGIN, (
+    # the paragraph's own bulk (1200, not 1000: #235's reworded prompt
+    # header -- describing the new nested `toc` shape -- measures 1007
+    # chars on its own, up from the pre-#235 template). Scoped to the
+    # thesis-evidence portion (`_sections_portion`, #235): the toc-
+    # reconstruction block appended after it carries its OWN, separately-
+    # bounded Signal A/B content, which this bound was never meant to cover.
+    _FIXED_OVERHEAD_MARGIN = 1200
+    sections_len = len(_sections_portion(prompt_a))
+    assert sections_len <= _HEAD_OF_TREE_SLICE_CHARS + _FIXED_OVERHEAD_MARGIN, (
         f"expected the head-of-tree slice to be bounded at roughly "
         f"{_HEAD_OF_TREE_SLICE_CHARS} chars (plus a small fixed overhead), "
-        f"got a {len(prompt_a)}-char prompt -- the monster paragraph leaked "
-        f"through uncapped"
+        f"got a {sections_len}-char sections portion -- the monster "
+        f"paragraph leaked through uncapped"
     )
 
 
@@ -330,13 +361,17 @@ def test_compose_prompt_head_of_tree_slice_is_bounded_for_many_tiny_nodes():
 
     prompt = compose_prompt(tree)
 
-    _FIXED_OVERHEAD_MARGIN = 1000  # same fixed-overhead margin as the single-node test above
-    assert len(prompt) <= _HEAD_OF_TREE_SLICE_CHARS + _FIXED_OVERHEAD_MARGIN, (
+    # Scoped to the thesis-evidence portion (`_sections_portion`, #235) --
+    # same rationale (and the same 1200 margin) as the single-node companion
+    # test above.
+    _FIXED_OVERHEAD_MARGIN = 1200
+    sections_len = len(_sections_portion(prompt))
+    assert sections_len <= _HEAD_OF_TREE_SLICE_CHARS + _FIXED_OVERHEAD_MARGIN, (
         f"expected the head-of-tree slice to be bounded at roughly "
         f"{_HEAD_OF_TREE_SLICE_CHARS} chars (plus a small fixed overhead) "
         f"even for a tree of thousands of tiny nodes, got a "
-        f"{len(prompt)}-char prompt -- join-separator overhead leaked "
-        f"through unbounded"
+        f"{sections_len}-char sections portion -- join-separator overhead "
+        f"leaked through unbounded"
     )
 
 
@@ -351,9 +386,10 @@ def test_compose_prompt_does_not_widen_a_normal_well_matched_source():
     prompt = compose_prompt(tree)
 
     # "Comparative Cases" is neither intro/abstract/conclusion nor within
-    # the (already ample) evidence floor's reach -- if it leaked in, the
-    # primary heuristic's own section-scoping would have broken.
-    assert "Body material, not envelope input." not in prompt
+    # the (already ample) evidence floor's reach -- if it leaked into the
+    # thesis-evidence portion (`_sections_portion`, #235), the primary
+    # heuristic's own section-scoping would have broken.
+    assert "Body material, not envelope input." not in _sections_portion(prompt)
 
 
 def test_compose_prompt_includes_matched_node_own_direct_text():
@@ -480,261 +516,217 @@ def test_head_of_tree_lines_skips_non_prose_labeled_nodes():
     assert "Table of Contents: the Egret-5 index locus." not in joined
 
 
-# --- LLM-selected toc subset (#231) ------------------------------------------
+# --- two-signal toc reconstruction (#235) ------------------------------------
 
 
-def test_resolve_toc_selects_subset_preserving_structural_order():
-    """The model's `toc` answer only ever narrows the tree's own structural
-    list -- the RESULT order comes from `structural_toc`'s own tree order,
-    never from whatever order the model happened to list its selection in."""
-    from axial.envelope import _resolve_toc
-
-    structural_toc = ["Introduction", "Chapter One", "Chapter Two", "Conclusion"]
-    model_toc = ["Chapter Two", "Introduction"]  # deliberately out of tree order
-
-    assert _resolve_toc(structural_toc, model_toc) == ["Introduction", "Chapter Two"]
-
-
-def test_resolve_toc_falls_back_to_full_structural_toc_when_intersection_is_empty():
-    """#227's fallback: when the model names headings absent from this tree
-    entirely (e.g. a stub/canned answer sharing nothing with the real
-    chapters), the full structural list is used rather than an empty toc."""
-    from axial.envelope import _resolve_toc
-
-    structural_toc = ["Introduction", "Chapter One", "Conclusion"]
-    model_toc = ["Some Other Book's Chapter"]
-
-    assert _resolve_toc(structural_toc, model_toc) == structural_toc
-
-
-def test_resolve_toc_drops_model_entries_not_present_in_structural_toc():
-    """The model can only ever narrow the tree's real headings, never invent
-    one: an entry in `model_toc` with no match in `structural_toc` is simply
-    dropped, while a genuine match alongside it still survives."""
-    from axial.envelope import _resolve_toc
-
-    structural_toc = ["Introduction", "Chapter One", "Conclusion"]
-    model_toc = ["Chapter One", "An Invented Chapter Not In The Tree"]
-
-    assert _resolve_toc(structural_toc, model_toc) == ["Chapter One"]
-
-
-def test_resolve_toc_preserves_a_duplicate_structural_heading():
-    """When `structural_toc` itself carries a duplicate heading text (e.g.
-    two distinct tree nodes that happen to share the same title), the
-    intersection is built by walking `structural_toc` in order and testing
-    set membership -- so a matching duplicate is preserved as-is, not
-    deduplicated. Documenting the actual behavior: `_resolve_toc` never
-    claims to deduplicate, only to reconcile against the model's answer."""
-    from axial.envelope import _resolve_toc
-
-    structural_toc = ["Chapter One", "Chapter One", "Chapter Two"]
-    model_toc = ["Chapter One"]
-
-    assert _resolve_toc(structural_toc, model_toc) == ["Chapter One", "Chapter One"]
-
-
-def test_resolve_toc_returns_empty_when_structural_toc_is_empty():
-    """#227: an empty `structural_toc` (e.g. a tree with no `section_header`-
-    labelled top-level children) returns `[]` rather than falling back to the
-    model's answer here -- `build_envelope` itself falls back further to the
-    model's own `parsed["toc"]`, preserving `validate_envelope_fields`'s
-    non-empty guarantee downstream."""
-    from axial.envelope import _resolve_toc
-
-    assert _resolve_toc([], ["Introduction", "Conclusion"]) == []
-
-
-def test_resolve_toc_falls_back_to_full_structural_toc_when_model_toc_is_empty():
-    from axial.envelope import _resolve_toc
-
-    structural_toc = ["Introduction", "Conclusion"]
-
-    assert _resolve_toc(structural_toc, []) == structural_toc
-
-
-def test_toc_candidates_for_prompt_excludes_front_matter_region_includes_chapters():
-    """The candidate list presented to the model skips the same leading
-    front-matter REGION `_head_of_tree_lines` skips (#225's
-    `_front_matter_region_end`): a title-labelled block and a copyright/ISBN
-    marker block both anchor the region, so neither reaches the candidate
-    list, while the real chapters that follow do."""
-    from axial.envelope import _toc_candidates_for_prompt
+def test_signal_a_lines_does_not_skip_front_matter():
+    """Signal A (`_signal_a_lines`) is deliberately front-matter-INCLUSIVE,
+    distinct from `_head_of_tree_lines`: a leading title-labelled block that
+    the front-matter-region skip would sweep out of thesis evidence must
+    still survive into Signal A."""
+    from axial.envelope import _signal_a_lines
 
     tree = {
         "children": [
-            {"text": "A Book About Nothing", "label": "title", "children": []},
+            {"type": "prose", "order": "0", "text": "A FICTIONAL TITLE PAGE", "label": "title"},
             {
-                "text": "Copyright © 2001 Fictional Press. ISBN 000-0-00-000000-0.",
+                "type": "prose",
+                "order": "1",
+                "text": "Contents: One, Origins. Two, Aftermath. The Kestrel-9 toc marker.",
                 "label": "text",
-                "children": [],
-            },
-            {
-                "text": "Chapter One: Origins",
-                "label": "section_header",
-                "children": [
-                    {
-                        "text": (
-                            "A long chapter body of real argumentative prose that goes "
-                            "into detail about the origins of the phenomenon under "
-                            "study, providing ample evidence for the reader to follow."
-                        ),
-                        "label": "text",
-                    }
-                ],
-            },
-            {
-                "text": "Chapter Two: Consequences",
-                "label": "section_header",
-                "children": [
-                    {
-                        "text": (
-                            "Another chapter body with plenty of substantive prose "
-                            "describing the consequences of the phenomenon in "
-                            "question, again offering more than enough material."
-                        ),
-                        "label": "text",
-                    }
-                ],
             },
         ]
     }
 
-    candidates = _toc_candidates_for_prompt(tree)
+    lines = _signal_a_lines(tree)
 
-    assert candidates == ["Chapter One: Origins", "Chapter Two: Consequences"]
+    joined = "\n".join(lines)
+    assert "A FICTIONAL TITLE PAGE" in joined
+    assert "Kestrel-9 toc marker" in joined
 
 
-def test_toc_candidates_for_prompt_excludes_a_section_header_labelled_front_matter_block():
-    """Reviewer-flagged interaction: a front-matter block that itself carries
-    a `section_header` label (e.g. a "Preface" heading) is exactly the shape
-    `_toc_from_tree` would otherwise pick up as a candidate chapter -- it
-    must still be excluded once it falls inside the front-matter region."""
-    from axial.envelope import _toc_candidates_for_prompt, _toc_from_tree
+def test_signal_a_lines_is_bounded_by_its_own_cap():
+    """Signal A's own cap (`_SIGNAL_A_SLICE_CHARS`) bounds the slice
+    independently of `_HEAD_OF_TREE_SLICE_CHARS` -- a single oversized node
+    is truncated at a word boundary rather than leaking through whole,
+    mirroring `_head_of_tree_lines`'s own bounded-walk guarantee (shared via
+    `_bounded_prose_lines`)."""
+    from axial.envelope import _SIGNAL_A_SLICE_CHARS, _signal_a_lines
+
+    long_paragraph = "Sentence about nothing in particular. " * 1000
+    tree = {"children": [{"type": "prose", "order": "0", "text": long_paragraph, "label": "text"}]}
+
+    lines = _signal_a_lines(tree)
+
+    assert len("\n".join(lines)) <= _SIGNAL_A_SLICE_CHARS
+
+
+def test_signal_a_lines_skips_non_prose_labeled_nodes():
+    """Signal A still routes through the shared source router (§7.8) -- it
+    skips the front-matter REGION skip, not prose/non-prose routing."""
+    from axial.envelope import _signal_a_lines
 
     tree = {
         "children": [
             {
-                "text": "Preface",
-                "label": "section_header",
-                "children": [
-                    {
-                        "text": (
-                            "A long preface with acknowledgements and remarks about "
-                            "the making of this book, going on for a good while to "
-                            "establish genuine substantive front-matter content that "
-                            "is not itself a genuine chapter."
-                        ),
-                        "label": "text",
-                    }
-                ],
+                "type": "prose",
+                "order": "0",
+                "text": "Vireo-3 figure caption.",
+                "label": "caption",
             },
             {
-                "text": "Chapter One: Origins",
-                "label": "section_header",
-                "children": [
-                    {
-                        "text": (
-                            "A chapter body of real argumentative prose, long enough "
-                            "on its own to end the front-matter region here."
-                        ),
-                        "label": "text",
-                    }
-                ],
+                "type": "prose",
+                "order": "1",
+                "text": "The Halcyon-7 prose marker.",
+                "label": "text",
             },
         ]
     }
 
-    # Sanity check: unfiltered, "Preface" WOULD be picked up as a candidate
-    # (it carries the section_header label _toc_from_tree looks for) -- the
-    # region skip is what removes it.
-    assert "Preface" in _toc_from_tree(tree)
+    joined = "\n".join(_signal_a_lines(tree))
 
-    candidates = _toc_candidates_for_prompt(tree)
-
-    assert candidates == ["Chapter One: Origins"]
+    assert "Halcyon-7 prose marker" in joined
+    assert "Vireo-3 figure caption" not in joined
 
 
-def test_toc_candidates_for_prompt_includes_all_top_level_headings_when_no_front_matter():
-    """A tree with no title label, no copyright/ISBN marker, and no
-    recognized preface/acknowledgements/foreword heading gives no positive
-    evidence of any front matter at all -- `_front_matter_region_end` returns
-    0, so every top-level heading surfaces as a candidate."""
-    from axial.envelope import _toc_candidates_for_prompt
+def test_compose_thesis_evidence_matches_compose_prompts_sections_slot():
+    """`compose_thesis_evidence` is `compose_prompt`'s own factored-out
+    thesis-evidence seam (founder-directed follow-up to #235): its return
+    value must be EXACTLY the string `compose_prompt` places in its
+    `{sections}` slot -- covered here via `_sections_portion` (this module's
+    own helper for isolating that slot from the toc-reconstruction block
+    appended after it)."""
+    from axial.envelope import compose_prompt, compose_thesis_evidence
 
-    tree = {
-        "children": [
-            {"text": "Chapter One", "label": "section_header", "children": []},
-            {"text": "Chapter Two", "label": "section_header", "children": []},
-        ]
-    }
-
-    assert _toc_candidates_for_prompt(tree) == ["Chapter One", "Chapter Two"]
-
-
-def test_toc_candidates_for_prompt_skips_blank_heading_text():
-    from axial.envelope import _toc_candidates_for_prompt
-
-    tree = {
-        "children": [
-            {"text": "   ", "label": "section_header", "children": []},
-            {"text": "Chapter One", "label": "section_header", "children": []},
-        ]
-    }
-
-    assert _toc_candidates_for_prompt(tree) == ["Chapter One"]
-
-
-# --- bounded toc-candidate block (#232) --------------------------------------
-
-
-def test_bound_toc_candidates_leaves_a_real_scale_list_unchanged():
-    """At or below `_TOC_CANDIDATES_MAX`, the list passes through whole,
-    with no truncation flagged -- the bound is a pathological-input rail,
-    never a routine trimmer (#232)."""
-    from axial.envelope import _TOC_CANDIDATES_MAX, _bound_toc_candidates
-
-    candidates = [f"Chapter {i}" for i in range(_TOC_CANDIDATES_MAX)]
-
-    bounded, truncated = _bound_toc_candidates(candidates)
-
-    assert bounded == candidates
-    assert truncated is False
-
-
-def test_bound_toc_candidates_truncates_whole_entries_past_the_bound():
-    """Past `_TOC_CANDIDATES_MAX`, only the first N whole entries survive --
-    never a partial heading -- and truncation is flagged so the caller can
-    attach an explicit note."""
-    from axial.envelope import _TOC_CANDIDATES_MAX, _bound_toc_candidates
-
-    candidates = [f"Chapter {i}" for i in range(_TOC_CANDIDATES_MAX + 50)]
-
-    bounded, truncated = _bound_toc_candidates(candidates)
-
-    assert bounded == candidates[:_TOC_CANDIDATES_MAX]
-    assert len(bounded) == _TOC_CANDIDATES_MAX
-    assert truncated is True
-
-
-def test_compose_prompt_appends_a_truncation_note_only_when_bounded():
-    """`compose_prompt` attaches the truncation note only for a candidate
-    list past `_TOC_CANDIDATES_MAX` -- never for one that fits (#232)."""
-    from axial.envelope import _TOC_CANDIDATES_MAX, compose_prompt
-
-    def _tree(n):
-        return {
+    for tree in (
+        _tree_with_sections(),
+        {
             "children": [
-                {"text": f"Chapter {i}", "label": "section_header", "children": []}
-                for i in range(n)
+                {"type": "prose", "order": "1", "text": "Untitled Section", "children": []},
             ]
-        }
+        },
+    ):
+        prompt = compose_prompt(tree)
+        # `_PROMPT_TEMPLATE` places `{sections}` between "Sections:\n\n" and
+        # the blank line preceding the toc-reconstruction block.
+        sections_slot = _sections_portion(prompt).split("Sections:\n\n", 1)[1].rstrip("\n")
+        assert sections_slot == compose_thesis_evidence(tree)
 
-    fits_prompt = compose_prompt(_tree(_TOC_CANDIDATES_MAX))
-    over_prompt = compose_prompt(_tree(_TOC_CANDIDATES_MAX + 50))
 
-    assert "truncat" not in fits_prompt.lower()
-    assert "truncat" in over_prompt.lower()
+def test_compose_prompt_carries_both_signals_and_the_two_signal_grounding():
+    """The single composed prompt carries Signal B's full unfiltered
+    `_toc_from_tree` list AND the two-signals-only grounding language (PRD
+    §7.3, #235)."""
+    from axial.envelope import compose_prompt
+
+    tree = {
+        "children": [
+            {"type": "prose", "order": "0", "text": "Chapter One", "label": "section_header"},
+            {"type": "prose", "order": "1", "text": "Chapter Two", "label": "section_header"},
+        ]
+    }
+
+    prompt = compose_prompt(tree)
+    lowered = prompt.lower()
+
+    assert "Chapter One" in prompt
+    assert "Chapter Two" in prompt
+    assert "two" in lowered and "signal" in lowered
+    assert "only" in lowered
+    assert "reconstruct" in lowered
+
+
+def test_compose_prompt_signal_b_includes_every_detected_heading_unfiltered():
+    """Signal B is fed to the model UNFILTERED (noise included) -- the
+    reconstruction, not code-side filtering, now excludes subsection noise
+    (superseding #231/#232's now-retired verbatim-intersection stack)."""
+    from axial.envelope import compose_prompt
+
+    tree = {
+        "children": [
+            {"type": "prose", "order": "0", "text": "Chapter One", "label": "section_header"},
+            {
+                "type": "prose",
+                "order": "1",
+                "text": "1.1 A Subsection Heading",
+                "label": "section_header",
+            },
+            {"type": "prose", "order": "2", "text": "lalrodac:lioo", "label": "section_header"},
+        ]
+    }
+
+    prompt = compose_prompt(tree)
+
+    assert "Chapter One" in prompt
+    assert "1.1 A Subsection Heading" in prompt
+    assert "lalrodac:lioo" in prompt
+
+
+# --- nested toc validation (#235) --------------------------------------------
+
+
+def test_is_valid_toc_accepts_a_well_formed_nested_list():
+    from axial.envelope import is_valid_toc
+
+    assert is_valid_toc([{"title": "Introduction", "children": ["1.1 Background"]}]) is True
+    assert is_valid_toc([{"title": "Introduction", "children": []}]) is True
+
+
+@pytest.mark.parametrize(
+    "toc",
+    [
+        [],
+        "not a list",
+        None,
+        ["Introduction"],  # old flat shape no longer validates
+        [{"children": []}],  # missing title
+        [{"title": "", "children": []}],  # blank title
+        [{"title": "Introduction", "children": "not a list"}],
+        [{"title": "Introduction", "children": [1, 2]}],  # non-string children
+        [{"title": "Introduction"}],  # missing children key
+    ],
+)
+def test_is_valid_toc_rejects_every_malformed_shape(toc):
+    from axial.envelope import is_valid_toc
+
+    assert is_valid_toc(toc) is False
+
+
+# --- deterministic nested fallback (#235) ------------------------------------
+
+
+def test_fallback_toc_reshapes_detected_headings_into_top_level_entries():
+    from axial.envelope import _fallback_toc
+
+    tree = {
+        "children": [
+            {"type": "prose", "order": "0", "text": "Chapter One", "label": "section_header"},
+            {"type": "prose", "order": "1", "text": "Chapter Two", "label": "section_header"},
+        ]
+    }
+
+    toc = _fallback_toc(tree, Path("paper.pdf"), {"title": "A Real Title"})
+
+    assert toc == [
+        {"title": "Chapter One", "children": []},
+        {"title": "Chapter Two", "children": []},
+    ]
+
+
+def test_fallback_toc_falls_back_to_a_titled_entry_when_the_tree_has_no_headings_at_all():
+    """The deepest fallback (module docstring, `_fallback_toc`): a tree with
+    no `section_header`-labelled top-level heading at all still yields a
+    non-empty nested toc, titled after the envelope's own resolved title."""
+    from axial.envelope import _fallback_toc
+
+    tree = {"children": [{"type": "prose", "order": "0", "text": "just prose", "label": "text"}]}
+
+    toc = _fallback_toc(tree, Path("my_paper.pdf"), {"title": "A Real Title"})
+
+    assert toc == [{"title": "A Real Title", "children": []}]
+
+    toc_no_title = _fallback_toc(tree, Path("my_paper.pdf"), {})
+    assert toc_no_title == [{"title": "My Paper", "children": []}]
 
 
 # --- bibliography-by-aggregate exclusion (#222, PRD §7.3) -------------------
@@ -1037,7 +1029,10 @@ def test_validate_envelope_fields_accepts_a_well_formed_response():
     validate_envelope_fields(
         {
             "thesis": "X",
-            "toc": ["Introduction", "Conclusion"],
+            "toc": [
+                {"title": "Introduction", "children": []},
+                {"title": "Conclusion", "children": []},
+            ],
             "scope": "Y",
             "stated_argument": "Z",
         }
@@ -1058,7 +1053,7 @@ def test_validate_envelope_fields_rejects_empty_required_strings(field, value):
 
     data = {
         "thesis": "X",
-        "toc": ["A"],
+        "toc": [{"title": "A", "children": []}],
         "scope": "Y",
         "stated_argument": "Z",
     }
@@ -1086,6 +1081,22 @@ def test_validate_envelope_fields_rejects_non_list_toc():
         validate_envelope_fields(data)
 
 
+def test_validate_envelope_fields_rejects_the_old_flat_toc_shape():
+    """#235: `toc` must be a non-empty list of `{title, children[]}` objects
+    -- the OLD flat list-of-strings shape no longer validates."""
+    from axial.envelope import EnvelopeValidationError, validate_envelope_fields
+
+    data = {
+        "thesis": "X",
+        "toc": ["Introduction", "Conclusion"],
+        "scope": "Y",
+        "stated_argument": "Z",
+    }
+
+    with pytest.raises(EnvelopeValidationError):
+        validate_envelope_fields(data)
+
+
 # --- envelope assembly / write-once -----------------------------------------
 
 
@@ -1095,7 +1106,7 @@ def test_build_envelope_carries_the_locked_shape(tmp_path):
     path = tmp_path / "my_paper.pdf"
     parsed = {
         "thesis": "X",
-        "toc": ["Introduction"],
+        "toc": [{"title": "Introduction", "children": []}],
         "scope": "Y",
         "stated_argument": "Z",
     }
@@ -1104,12 +1115,34 @@ def test_build_envelope_carries_the_locked_shape(tmp_path):
 
     assert envelope["source_id"] == "source-123"
     assert envelope["thesis"] == "X"
-    assert envelope["toc"] == ["Introduction"]
+    assert envelope["toc"] == [{"title": "Introduction", "children": []}]
     assert envelope["scope"] == "Y"
     assert envelope["stated_argument"] == "Z"
     assert envelope["title"] == "My Paper"
     assert envelope["author"] is None
     assert envelope["date"] is None
+
+
+def test_build_envelope_prefers_an_explicit_toc_argument_over_parsed_toc():
+    """#235: `build_envelope`'s `toc` parameter is the caller's own
+    already-resolved final toc (the model's valid nested answer, or
+    `run_envelope`'s deterministic fallback) -- it overrides `parsed["toc"]`
+    when given, rather than resolving toc itself (that reconciliation, the
+    old `_resolve_toc`, is retired)."""
+    from axial.envelope import build_envelope
+
+    path = Path("paper.pdf")
+    parsed = {
+        "thesis": "X",
+        "toc": [{"title": "Model's Own Answer", "children": []}],
+        "scope": "Y",
+        "stated_argument": "Z",
+    }
+    fallback_toc = [{"title": "Fallback Chapter", "children": []}]
+
+    envelope = build_envelope(path, "source-123", parsed, toc=fallback_toc)
+
+    assert envelope["toc"] == fallback_toc
 
 
 def test_write_envelope_creates_parent_directories(tmp_path):
@@ -1330,11 +1363,12 @@ def test_run_envelope_raises_envelope_parse_error_on_persistently_malformed_json
 # --- run_envelope: bounded re-ask on a degenerate-but-valid envelope (#80) --
 
 
-def test_run_envelope_reasks_and_succeeds_when_toc_is_first_empty(monkeypatch, tmp_path):
-    """A valid-JSON response with an empty `toc` list (response noise, the
-    same species as broken JSON) must not immediately raise
-    `EnvelopeValidationError` -- it re-asks within complete_json's bounded
-    budget and succeeds on a clean second response."""
+def test_run_envelope_falls_back_immediately_when_toc_is_persistently_empty(monkeypatch, tmp_path):
+    """#235 supersedes #80's toc-specific re-ask: a valid-JSON response with
+    an empty `toc` list no longer triggers a re-ask (`reject_degenerate_
+    thesis_fields` never inspects `toc`) and never raises -- `run_envelope`
+    falls back deterministically to `_toc_from_tree(tree)` on the FIRST
+    response, so the client is called exactly once."""
     import axial.envelope as envelope_mod
 
     source = tmp_path / "paper.pdf"
@@ -1351,28 +1385,32 @@ def test_run_envelope_reasks_and_succeeds_when_toc_is_first_empty(monkeypatch, t
             "stated_argument": "an argument",
         }
     )
-    clean = StubLLMClient._CANNED_RESPONSE
 
-    class _ScriptedClient:
+    class _AlwaysEmptyTocClient:
         def __init__(self):
-            self._responses = [degenerate, clean]
             self.call_count = 0
 
         def complete(self, prompt, pass_name=None):
-            response = self._responses[self.call_count]
             self.call_count += 1
-            return response
+            return degenerate
 
-    client = _ScriptedClient()
+    client = _AlwaysEmptyTocClient()
     envelope = envelope_mod.run_envelope(source, client=client, envelopes_dir=envelopes_dir)
 
-    assert client.call_count == 2
+    assert client.call_count == 1
     assert envelope["toc"]
+    from axial.envelope import is_valid_toc
+
+    assert is_valid_toc(envelope["toc"])
 
 
-def test_run_envelope_raises_envelope_validation_error_on_persistently_empty_toc(
+def test_run_envelope_raises_envelope_validation_error_on_persistently_empty_thesis(
     monkeypatch, tmp_path
 ):
+    """Thesis/scope/stated_argument degeneracy still hard-fails after
+    `complete_json`'s bounded re-ask budget exhausts (issue #80, unchanged
+    by #235) -- only `toc` degeneracy is exempted from this re-ask/hard-fail
+    path (the test above)."""
     import axial.envelope as envelope_mod
 
     source = tmp_path / "paper.pdf"
@@ -1383,8 +1421,8 @@ def test_run_envelope_raises_envelope_validation_error_on_persistently_empty_toc
 
     degenerate = json.dumps(
         {
-            "thesis": "a thesis",
-            "toc": [],
+            "thesis": "",
+            "toc": [{"title": "Introduction", "children": []}],
             "scope": "a scope",
             "stated_argument": "an argument",
         }

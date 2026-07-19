@@ -1,7 +1,11 @@
 # Pipeline configuration: providers, model-per-pass, paths, batch sizes
-# (PRD §6). Model-per-pass tuning is deferred (see plans/minimal-ingestion/
-# 04-structural-envelope.md, "out of scope"); v0 gives every LLM-backed pass
-# the same provider/model.
+# (PRD §6). Model-per-pass tuning was originally deferred (see
+# plans/minimal-ingestion/04-structural-envelope.md, "out of scope"), with
+# v0 giving every LLM-backed pass the same provider/model; DEC-26/issue #235
+# landed the first per-pass override (`llm.model_by_pass` below), mirroring
+# `reasoning_by_pass`'s own already-live per-pass mechanism. Every pass not
+# named in `model_by_pass` still shares the one default provider/model
+# configured here.
 #
 # The provider here is the default; it is overridden without editing this
 # file by the AXIAL_LLM_PROVIDER environment variable (see src/axial/llm.py),
@@ -30,6 +34,19 @@ llm:
     tag: false
     artifacts: false
     xref: false
+  # Per-pass model tiering (DEC-26, issue #235): a per-pass MODEL override,
+  # mirroring reasoning_by_pass's own per-pass shape (src/axial/llm.py's
+  # OpenRouterClient reads this map via _resolve_model_by_pass, resolving
+  # each named tier to a concrete model through the same secrets.toml
+  # tier->model machinery llm_tier above uses). Absent from this map means
+  # the pass keeps sending requests to the client's own default configured
+  # model (llm_tier above) -- unchanged for every pass not named here. The
+  # envelope pass's toc reconstruction is a once-per-source, judgment-heavy
+  # call whose cost does not scale with corpus size, so it runs on the
+  # stronger production_high tier (deepseek-v4-pro) -- the project's first
+  # per-pass model override.
+  model_by_pass:
+    envelope: production_high
 
 paths:
   envelopes_dir: data/envelopes

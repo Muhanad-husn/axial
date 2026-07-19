@@ -1,0 +1,38 @@
+### Copyright-safe boundary demo: axial envelope on a hand-authored fixture (stub provider, no paid call, no book text)
+
+source_id: structural_toc_paper-3e36514e9206  (fixture tree pre-placed at data/trees/structural_toc_paper-3e36514e9206.json)
+
+$ AXIAL_LLM_PROVIDER=stub uv run axial envelope tests/fixtures/envelope/structural_toc_paper.pdf
+{"author": null, "date": null, "scope": "Comparative, drawing on cases from the post-conflict statebuilding literature.", "source_id": "structural_toc_paper-3e36514e9206", "stated_argument": "Infrastructural power better explains durable post-conflict order than coercive capacity alone.", "thesis": "State capacity in post-conflict settings depends more on infrastructural reach than on coercive force alone.", "title": "Structural Toc Paper", "toc": [{"children": [], "title": "Introduction"}, {"children": ["Case One", "Case Two"], "title": "Comparative Cases"}, {"children": [], "title": "Conclusion"}]}
+exit code: 0
+
+### Written envelope (nested {title, children[]} toc, DEC-26 tier not exercised under stub):
+{
+  "author": null,
+  "date": null,
+  "scope": "Comparative, drawing on cases from the post-conflict statebuilding literature.",
+  "source_id": "structural_toc_paper-3e36514e9206",
+  "stated_argument": "Infrastructural power better explains durable post-conflict order than coercive capacity alone.",
+  "thesis": "State capacity in post-conflict settings depends more on infrastructural reach than on coercive force alone.",
+  "title": "Structural Toc Paper",
+  "toc": [
+    {
+      "children": [],
+      "title": "Introduction"
+    },
+    {
+      "children": [
+        "Case One",
+        "Case Two"
+      ],
+      "title": "Comparative Cases"
+    },
+    {
+      "children": [],
+      "title": "Conclusion"
+    }
+  ]
+}
+
+### cleanup (demo artifacts only)
+removed data/trees/structural_toc_paper-3e36514e9206.json and data/envelopes/structural_toc_paper-3e36514e9206.json

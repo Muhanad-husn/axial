@@ -1290,6 +1290,91 @@ def test_missing_production_tier_model_key_raises_directly_from_resolve_model():
         _resolve_model(secrets={"llm_tier": "production_low"}, llm_config={})
 
 
+# --- per-pass model tiering (DEC-26, issue #235) ---------------------------
+
+
+def test_resolve_model_by_pass_resolves_each_named_tier_to_a_concrete_model():
+    from axial.llm import _resolve_model_by_pass
+
+    secrets = {
+        "building_model": "free/model",
+        "production_high": "paid/high-model",
+        "production_low": "paid/low-model",
+    }
+    llm_config = {"model_by_pass": {"envelope": "production_high", "tag": "building"}}
+
+    resolved = _resolve_model_by_pass(secrets, llm_config)
+
+    assert resolved == {"envelope": "paid/high-model", "tag": "free/model"}
+
+
+def test_resolve_model_by_pass_is_empty_when_config_names_no_overrides():
+    """No pass gets a model override absent config -- every pass keeps
+    sending requests to the client's own default configured model (mirrors
+    `_resolve_reasoning_by_pass`'s own "absent means unchanged" framing,
+    but empty rather than a non-trivial safe default -- DEC-26)."""
+    from axial.llm import _resolve_model_by_pass
+
+    assert _resolve_model_by_pass(secrets={}, llm_config={}) == {}
+
+
+def test_resolve_model_by_pass_raises_for_a_tier_missing_its_secrets_key():
+    """A named production tier with no secrets.toml key is a
+    misconfiguration -- never a silent fallback to the free model (mirrors
+    `_resolve_model`'s own guard, DEC-26)."""
+    from axial.llm import LLMConfigError, _resolve_model_by_pass
+
+    with pytest.raises(LLMConfigError):
+        _resolve_model_by_pass(
+            secrets={}, llm_config={"model_by_pass": {"envelope": "production_high"}}
+        )
+
+
+def test_build_openrouter_client_wires_model_by_pass_from_config(monkeypatch, tmp_path):
+    from axial.llm import SECRETS_PATH_ENV_VAR, _build_openrouter_client
+
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text(
+        '[openrouter]\napi_key = "sk-fixture"\nbuilding_model = "free/model"\n'
+        'production_high = "paid/high-model"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(SECRETS_PATH_ENV_VAR, str(secrets_path))
+
+    client = _build_openrouter_client({"model_by_pass": {"envelope": "production_high"}})
+
+    assert client._model_by_pass == {"envelope": "paid/high-model"}
+
+
+def test_post_with_deadline_selects_target_model_by_pass_name(monkeypatch):
+    """`OpenRouterClient._post_with_deadline` selects the outgoing request's
+    `model` field from `self._model_by_pass` by `pass_name`, falling back to
+    `self._model` for any pass not named there -- exactly as `reasoning_
+    enabled` is already selected by `pass_name` (DEC-26, issue #235)."""
+    import httpx
+
+    from axial.llm import OpenRouterClient
+
+    captured: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content)["model"])
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(
+        api_key="test-key",
+        model="default/model",
+        transport=transport,
+        model_by_pass={"envelope": "paid/high-model"},
+    )
+
+    client.complete("prompt", pass_name="envelope")
+    client.complete("prompt", pass_name="tag")
+
+    assert captured == ["paid/high-model", "default/model"]
+
+
 # --- content_fallback_model wiring from secrets.toml (issue #116) ---------
 
 

@@ -38,22 +38,35 @@ second fixture is a control: a born-digital paper-style source with NO
 title page and NO preface, whose very first block is already real argument
 prose.
 
-Seam decision -- asserting on `compose_prompt(tree) -> str` directly
+Seam decision -- asserting on `compose_thesis_evidence(tree) -> str` directly
 ----------------------------------------------------------------------
 Same seam as the sibling #222 tests
 (`test_envelope_bibliography_aggregate.py`,
-`test_envelope_bibliography_real_ocr.py`): `compose_prompt` is the pure,
-synchronous function the envelope pass hands straight into the prompt
-template, so asserting on its return value pins the real observable
-behavior with no LLM call, no filesystem/`data/` state, and no docling run.
+`test_envelope_bibliography_real_ocr.py`): originally this test asserted
+directly on `compose_prompt(tree)`'s full return value, since before #235
+that string carried nothing but this thesis/scope/stated_argument evidence
+slot. Issue #235 (hybrid two-signal `toc` reconstruction) folds a SECOND,
+front-matter-INCLUSIVE Signal A into the SAME single envelope prompt (§7.3's
+dual-role split, required by the one-call-per-source lock), so
+`compose_prompt(tree)`'s full text now also legitimately carries front
+matter via that separate signal -- asserting front-matter-marker absence
+against the WHOLE prompt would no longer hold, even though the thesis
+evidence itself is still exactly as clean as before. `compose_thesis_evidence`
+is the extracted, still-KEPT-and-unchanged function that returns precisely
+what used to be `compose_prompt`'s own `{sections}` slot -- the matched-
+section blocks when they clear the evidence floor, else the pruned,
+front-matter-skipped head-of-tree excerpt -- so pointing this test's
+assertions at it (instead of the whole prompt) preserves the exact intent
+("the THESIS evidence stays clean") without weakening a single assertion.
 Neither fixture matches any of intro/abstract/conclusion at the top level
-(asserted directly below as a fixture sanity check), so `compose_prompt`'s
-evidence-floor check finds zero matched-section evidence and MUST widen to
-the head-of-tree slice for both -- the exact path `_head_of_tree_lines` and
-its prefix skip live on.
+(asserted directly below as a fixture sanity check), so
+`compose_thesis_evidence`'s evidence-floor check finds zero matched-section
+evidence and MUST widen to the head-of-tree slice for both -- the exact
+path `_head_of_tree_lines` and its prefix skip live on.
 
-Test hygiene: pure `compose_prompt(tree)` calls over hand-loaded fixture
-JSON, no filesystem writes, no `data/` state, no LLM client, no subprocess.
+Test hygiene: pure `compose_thesis_evidence(tree)` calls over hand-loaded
+fixture JSON, no filesystem writes, no `data/` state, no LLM client, no
+subprocess.
 """
 
 from __future__ import annotations
@@ -61,7 +74,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from axial.envelope import compose_prompt, select_envelope_nodes
+from axial.envelope import compose_thesis_evidence, select_envelope_nodes
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "envelope"
@@ -177,7 +190,7 @@ def test_compose_prompt_skips_the_whole_frontmatter_region_and_reaches_body():
     marker below leaks into the evidence and the body marker either never
     appears or only appears after being truncated away by the slice cap."""
     tree = _load_tree(FRONTMATTER_TREE_FIXTURE)
-    evidence = compose_prompt(tree)
+    evidence = compose_thesis_evidence(tree)
 
     leaked = [marker for marker in FRONT_MATTER_MARKERS if marker in evidence]
     assert not leaked, (
@@ -209,7 +222,7 @@ def test_compose_prompt_control_source_keeps_its_opening_prose():
     matter must never learn to eat legitimate early body prose on a source
     that never had any front matter to begin with."""
     tree = _load_tree(CONTROL_TREE_FIXTURE)
-    evidence = compose_prompt(tree)
+    evidence = compose_thesis_evidence(tree)
 
     assert CONTROL_MARKER in evidence, (
         f"expected the control fixture's own opening body paragraph "

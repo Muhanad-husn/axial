@@ -66,6 +66,27 @@ _EVIDENCE_FLOOR_CHARS = 200
 # proven-final value (mirrors CHUNK_MIN/CHUNK_MAX's own framing).
 _HEAD_OF_TREE_SLICE_CHARS = 6000
 
+# Target size of Signal A, the toc-reconstruction pass's own front-matter-
+# INCLUSIVE head-of-tree slice (PRD §7.3, #235) -- deliberately DISTINCT from
+# `_HEAD_OF_TREE_SLICE_CHARS` above, which backs the front-matter-SKIPPED
+# widening fallback for thesis/scope/stated_argument evidence. Signal A must
+# keep a printed table-of-contents page when the source prints one, and that
+# page routinely sits inside the very front matter `_HEAD_OF_TREE_SLICE_CHARS`
+# skips past -- so Signal A cannot reuse that slice. Set to the same
+# magnitude as `_HEAD_OF_TREE_SLICE_CHARS`: large enough to carry a real
+# source's title page, copyright block, and printed TOC page (the front
+# matter's own inspected sizes top out under 1000 characters, see
+# `_FRONT_MATTER_PREFIX_SKIP_CHARS`/`_FRONT_MATTER_SECTION_SKIP_CHARS` above)
+# with ample room left over for the printed TOC page itself plus the opening
+# of the first real chapter, while staying bounded so a large source doesn't
+# blow out the once-per-source envelope prompt. A starting point, not a
+# proven-final value (mirrors `_HEAD_OF_TREE_SLICE_CHARS`'s own framing) --
+# unlike that slice's size, this one has not yet been proven via inspection
+# against a real printed-TOC source at corpus scale (that validation is the
+# founder's own throwaway-experiment pass behind DEC-26, not yet re-run
+# against this exact constant).
+_SIGNAL_A_SLICE_CHARS = 6000
+
 _PROMPT_TEMPLATE = """\
 You are extracting a structural envelope from an academic source's \
 introduction, abstract, and conclusion sections, or -- when those are not \
@@ -74,18 +95,60 @@ prose. Read the source text below and respond with ONLY a JSON object (no \
 prose, no markdown fences) with exactly these keys:
 
 - "thesis": the author's stated thesis, as a non-empty string.
-- "toc": a non-empty JSON array of the source's section/chapter labels.
+- "toc": the source's reconstructed table of contents, as a non-empty JSON \
+array of {{"title": <string>, "children": [<string>, ...]}} objects -- see \
+the toc-reconstruction instructions below.
 - "scope": the stated scope of the argument, as a non-empty string.
 - "stated_argument": the argument as restated (e.g. in the conclusion), \
 as a non-empty string.
 
-Base your answer only on the supplied source text below. Do not infer the \
-thesis, scope, or stated argument from the title, the filename, or any \
-outside knowledge -- every field must come solely from the text provided.
+Base "thesis", "scope", and "stated_argument" only on the supplied source \
+text below. Do not infer them from the title, the filename, or any outside \
+knowledge -- every one of those three fields must come solely from the \
+text provided.
 
-{toc_guidance}Sections:
+Sections:
 
 {sections}
+
+{toc_block}
+"""
+
+# Toc-reconstruction instructions (PRD §7.3 "Table of contents by two-signal
+# reconstruction", #235): grounded ONLY in the two signals below, folded
+# into this SAME single envelope call rather than a second one (PRD §5 keeps
+# the envelope at one API call per source). Signal A is front-matter-
+# INCLUSIVE (it deliberately keeps a printed TOC page when the source has
+# one); Signal B is the tree's flattened, unfiltered detected-heading list
+# (noise included -- the reconstruction, not code, is now responsible for
+# excluding it, superseding #231/#232's verbatim-intersection salvage
+# stack).
+_TOC_RECONSTRUCTION_BLOCK = """\
+Reconstruct the source's real table of contents grounded in exactly two \
+signals read from its own structural tree, and only those two signals -- \
+no title, no filename, no outside knowledge.
+
+Signal A -- the source's opening pages, front matter included (so a \
+printed table-of-contents page survives here if the source prints one):
+
+{signal_a}
+
+Signal B -- the flattened list of the tree's detected top-level headings \
+(docling has flattened the heading hierarchy into one level, so this \
+routinely mixes genuine chapter/section titles together with subsection \
+headings, OCR-garble fragments, and body sentences mislabelled as \
+headings):
+
+{signal_b}
+
+For "toc", reconstruct the nested table of contents using ONLY these two \
+signals: prefer the printed table of contents in Signal A when it is \
+present and legible; otherwise reconstruct from the genuine chapter/section \
+headings in Signal B. Exclude subsection noise, OCR-garble, mislabelled \
+body lines, and pure apparatus (index, bibliography, list of figures/ \
+tables) unless one is a genuine part of the source's own structure. Every \
+title and child you include must be grounded in Signal A or Signal B --  \
+never invented.
 """
 
 
@@ -200,120 +263,6 @@ def _toc_from_tree(tree: dict) -> list[str]:
         if (child.get("label") or "").strip().lower() in _TOC_HEADING_LABELS
         and (text := (child.get("text") or "").strip())
     ]
-
-
-# --- LLM-selected toc subset (PRD §7.3/§5 stage 3, #227 follow-up, #231) ----
-#
-# A real source's `_toc_from_tree` list runs 70-260 entries: genuine chapters
-# mixed with subsection headings, OCR-garble fragments, and body sentences
-# docling mislabelled as headings -- not a usable table of contents on its
-# own. PRD §5 stage 3 fixes the envelope pass at ONE API call per source
-# (locked by tests/ingestion/test_envelope_structural_grounding.py and
-# tests/ingestion/test_envelope_router_prose_filter.py, both asserting
-# exactly one recorded prompt per run), so #231 is folded into the SAME
-# envelope call rather than a second dedicated one: when the tree yields a
-# structural heading list, `compose_prompt` appends it to the existing
-# prompt with an explicit selection instruction, and the model's ordinary
-# `"toc"` answer becomes its selection. `_resolve_toc` then intersects that
-# answer against the tree's own structural list, so the model can only ever
-# narrow the tree's real headings, never invent an entry.
-
-_TOC_CANDIDATES_BLOCK = """\
-Candidate top-level headings, flattened from the source's own structural \
-tree in reading order (a real source's list here routinely mixes genuine \
-chapter/section titles together with subsection headings, OCR-garble \
-fragments, and body sentences mislabelled as headings during extraction):
-
-{headings}
-
-For "toc", select ONLY the entries above that are genuine top-level \
-chapter or section titles -- excluding subsection headings, garbled or \
-unreadable fragments, mislabelled body text, and appendix entries. Copy \
-each selected entry's text verbatim from the list -- do not paraphrase, \
-reorder, or invent an entry not present in the list.
-
-"""
-
-# A pathological-input safety rail on the candidate-heading block above, NOT
-# a routine trimmer (issue #232). Measured across all 31 cached
-# `data/trees/*.json` sources, the largest post-front-matter-region
-# candidate list (`_toc_candidates_for_prompt`) ever observed was 260
-# headings / 8328 characters -- already noted in this module's own #231
-# commentary above ("70-260 entries"). 350 sits comfortably above that
-# ceiling (roughly 1.35x it) so it can never engage on any real, once-per-
-# source extraction tree, while still bounding a genuinely pathological
-# tree (e.g. a mis-extracted source whose every line is misrouted as a
-# heading) from growing the once-per-source envelope prompt without limit.
-# A starting point, not a proven-final value (mirrors _HEAD_OF_TREE_SLICE_
-# CHARS/_EVIDENCE_FLOOR_CHARS's own framing) -- if a future source ever
-# legitimately exceeds it, that is itself a signal the corpus ceiling moved
-# and this constant should be revisited, not silently worked around.
-_TOC_CANDIDATES_MAX = 350
-
-_TOC_CANDIDATES_TRUNCATION_NOTE = """\
-Note: this candidate list was truncated because the source's structural \
-tree produced an unusually large number of candidate headings -- only the \
-first {kept} of {total} detected headings are shown above. Treat this list \
-as incomplete, not exhaustive.
-
-"""
-
-
-def _bound_toc_candidates(candidates: list[str]) -> tuple[list[str], bool]:
-    """Bound `candidates` to at most `_TOC_CANDIDATES_MAX` WHOLE entries
-    (issue #232) -- never a partial heading -- returning the (possibly
-    truncated) list alongside whether truncation actually occurred, so the
-    caller can attach an explicit truncation note rather than cutting
-    silently. A real-scale list (at or below the bound) is returned
-    unchanged, with `False`, so no note is ever attached on ordinary input."""
-    if len(candidates) <= _TOC_CANDIDATES_MAX:
-        return candidates, False
-    return candidates[:_TOC_CANDIDATES_MAX], True
-
-
-def _toc_candidates_for_prompt(tree: dict) -> list[str]:
-    """The candidate heading list `compose_prompt` presents to the model in
-    `_TOC_CANDIDATES_BLOCK` (issue #231): `_toc_from_tree`'s full structural
-    list, further narrowed to skip the same leading front-matter REGION
-    `_head_of_tree_lines` already skips (`_front_matter_region_end`, #225).
-    Without this, a front-matter section_header (a title page, a dedication
-    -- both real shapes in tests/fixtures/envelope/frontmatter_region_tree.
-    json) would be dangled in front of the model as a chapter candidate and
-    leak straight into the prompt's own evidence, regressing
-    tests/ingestion/test_envelope_frontmatter_region_skip.py's locked "no
-    front-matter marker in compose_prompt's evidence" contract.
-
-    Deliberately DISTINCT from the `structural_toc` `run_envelope` reconciles
-    the model's answer against (`_toc_from_tree(tree)`, unfiltered): #227
-    established that the tree's own real chapter list must stay independent
-    of whatever the front-matter skip does to the prompt's evidence -- only
-    the model's candidate PRESENTATION is filtered here, never the ground
-    truth `_resolve_toc` checks the model's answer against."""
-    children = tree.get("children", [])
-    region_end = _front_matter_region_end(children)
-    return _toc_from_tree({"children": children[region_end:]})
-
-
-def _resolve_toc(structural_toc: list[str], model_toc: list[str]) -> list[str]:
-    """Reconcile the tree's structural heading list with the model's own
-    `toc` answer into the final candidate `toc` (issue #231), preserving
-    `structural_toc`'s own tree order:
-
-    1. `model_toc` intersected with `structural_toc` -- the model can only
-       ever narrow the tree's real headings, never invent one.
-    2. If that intersection is empty (e.g. the model named headings absent
-       from this tree entirely -- #227's stub fixture, whose fixed canned
-       `toc` shares nothing with the tree's real chapters), fall back to the
-       full `structural_toc`.
-    3. If `structural_toc` is itself empty, return `[]` -- `build_envelope`
-       falls back further to the model's own `parsed["toc"]`, preserving
-       `validate_envelope_fields`'s non-empty guarantee (#227)."""
-    if structural_toc and model_toc:
-        selected = set(model_toc)
-        intersection = [heading for heading in structural_toc if heading in selected]
-        if intersection:
-            return intersection
-    return structural_toc
 
 
 # --- Bibliography-by-aggregate exclusion (PRD §7.3, #222) -------------------
@@ -841,11 +790,26 @@ def _head_of_tree_lines(tree: dict, max_chars: int = _HEAD_OF_TREE_SLICE_CHARS) 
     children = tree.get("children", [])
     region_end = _front_matter_region_end(children)
     remaining_tree = {"children": children[region_end:]}
+    return _bounded_prose_lines(remaining_tree, max_chars)
 
+
+def _bounded_prose_lines(tree: dict, max_chars: int) -> list[str]:
+    """The shared bounded, tree-order PROSE-collection walk both
+    `_head_of_tree_lines` (over its own front-matter-SKIPPED `remaining_tree`)
+    and the toc-reconstruction pass's Signal A (`_signal_a_lines`, over the
+    UNTOUCHED whole tree, #235) run -- the only difference between the two
+    callers is which tree they hand this walk, never the walk itself. Walks
+    `tree` in stable pre-order via the shared source router
+    (`axial.router.iter_routed_blocks`, §7.8), keeping only PROSE-routed
+    blocks, and stops once the length of the *joined* result (i.e.
+    `"\\n".join(lines)`) would reach `max_chars`, truncating a single
+    over-budget node at a word boundary rather than dropping it whole (#201
+    finding 2) -- see `_head_of_tree_lines`'s own docstring for the full
+    accounting rationale, unchanged here."""
     lines: list[str] = []
     total = 0
 
-    for leaf, route in iter_routed_blocks(remaining_tree, in_back_matter_section=False):
+    for leaf, route in iter_routed_blocks(tree, in_back_matter_section=False):
         if route != PROSE:
             continue
         text = leaf.get("text")
@@ -867,6 +831,20 @@ def _head_of_tree_lines(tree: dict, max_chars: int = _HEAD_OF_TREE_SLICE_CHARS) 
     return lines
 
 
+def _signal_a_lines(tree: dict, max_chars: int = _SIGNAL_A_SLICE_CHARS) -> list[str]:
+    """Signal A (PRD §7.3 "Table of contents by two-signal reconstruction",
+    #235): a front-matter-**INCLUSIVE** head-of-tree slice -- the source's
+    opening pages, taken in tree order, with NO front-matter-region skip
+    applied (unlike `_head_of_tree_lines`, whose whole purpose is skipping
+    that region for the thesis/scope/stated_argument evidence, #222/#225).
+    Reusing `_bounded_prose_lines` over the WHOLE `tree` (never a
+    front-matter-sliced `remaining_tree`) is what deliberately lets a
+    printed table-of-contents page -- which routinely sits inside that same
+    front-matter region -- survive into this slice, so the toc
+    reconstruction can prefer it when the source prints one."""
+    return _bounded_prose_lines(tree, max_chars)
+
+
 def _substantive_length(text: str) -> int:
     """Character count of `text` with all whitespace stripped out -- so a
     block that is entirely whitespace (e.g. a matched heading whose captured
@@ -876,48 +854,64 @@ def _substantive_length(text: str) -> int:
     return len("".join(text.split()))
 
 
-def compose_prompt(tree: dict) -> str:
-    """Compose the envelope prompt from the source's intro/abstract/
-    conclusion nodes (heuristic over the extraction tree's section
-    headings). When that heuristic selects little or no SUBSTANTIVE text
-    (PRD §7.3, "evidence floor on the input" -- measured on whitespace-
-    stripped content, so raw whitespace can't clear the floor), widen
-    instead to a substantive head-of-tree slice of the source's own prose,
-    so the model is never handed an empty, near-empty, or whitespace-only
-    evidence block (#201).
+def compose_thesis_evidence(tree: dict) -> str:
+    """The thesis/scope/stated_argument evidence slot (front-matter-skipped,
+    bibliography-pruned) -- the matched intro/abstract/conclusion section
+    blocks when they clear the evidence floor (PRD §7.3, "evidence floor on
+    the input" -- measured on whitespace-stripped content, so raw whitespace
+    can't clear the floor, #201), else a substantive head-of-tree excerpt of
+    the source's own prose, widened past any leading front matter and any
+    mis-sectioned bibliography (#222/#225).
 
-    When the tree yields a non-empty POST-front-matter-region structural
-    heading list (`_toc_candidates_for_prompt`, #231), that list is appended
-    to the prompt as an explicit candidate list with a selection instruction:
-    the model's `"toc"` answer becomes its SELECTED subset of those real
-    headings, which `run_envelope`/`_resolve_toc` then intersects against
-    the tree's own FULL structural list (`_toc_from_tree`, unaffected by the
-    front-matter skip, #227) -- folded into this SAME call rather than a
-    second one, since PRD §5 stage 3 fixes the envelope pass at one API call
-    per source. A tree with no identifiable post-front-matter heading
-    structure omits the candidate block entirely, leaving the prompt
-    unchanged from before #231."""
+    Distinct from the toc-reconstruction's Signal A block
+    (`_signal_a_lines`): this is the KEPT, unchanged thesis-evidence
+    assembly the front-matter-region-skip / evidence-floor / bibliography-
+    aggregate machinery grounds (§7.3's dual-role split, #235) -- Signal A
+    is a SEPARATE, front-matter-INCLUSIVE slice fed only to toc
+    reconstruction. The three front-matter/bibliography regression tests
+    (`test_envelope_frontmatter_region_skip.py`,
+    `test_envelope_bibliography_aggregate.py`,
+    `test_envelope_bibliography_real_ocr.py`) assert on THIS function's own
+    output, not on `compose_prompt`'s full text, which also carries Signal
+    A/B for the unrelated toc-reconstruction purpose."""
     blocks = _matched_section_blocks(tree)
     if sum(_substantive_length(block) for block in blocks) < _EVIDENCE_FLOOR_CHARS:
         # A section already excluded from `blocks` above (bibliography-by-
         # aggregate, #222) must not resurface via the head-of-tree walk,
         # which reads the WHOLE tree in order -- prune its children first.
         lines = _head_of_tree_lines(_prune_bibliographic_sections(tree))
-        evidence = "## Source text (head-of-tree excerpt)\n" + "\n".join(lines)
-    else:
-        evidence = "\n\n".join(blocks)
-    toc_candidates = _toc_candidates_for_prompt(tree)
-    bounded_candidates, truncated = _bound_toc_candidates(toc_candidates)
-    toc_guidance = ""
-    if bounded_candidates:
-        toc_guidance = _TOC_CANDIDATES_BLOCK.format(
-            headings="\n".join(f"- {heading}" for heading in bounded_candidates)
-        )
-        if truncated:
-            toc_guidance += _TOC_CANDIDATES_TRUNCATION_NOTE.format(
-                kept=len(bounded_candidates), total=len(toc_candidates)
-            )
-    return _PROMPT_TEMPLATE.format(sections=evidence, toc_guidance=toc_guidance)
+        return "## Source text (head-of-tree excerpt)\n" + "\n".join(lines)
+    return "\n\n".join(blocks)
+
+
+def compose_prompt(tree: dict) -> str:
+    """Compose the envelope prompt from the source's intro/abstract/
+    conclusion nodes (heuristic over the extraction tree's section
+    headings). When that heuristic selects little or no SUBSTANTIVE text,
+    the thesis/scope/stated_argument evidence slot (`compose_thesis_evidence`)
+    widens instead to a substantive head-of-tree slice of the source's own
+    prose, so the model is never handed an empty, near-empty, or
+    whitespace-only evidence block (#201).
+
+    The SAME single prompt also carries the toc-reconstruction block (PRD
+    §7.3 "Table of contents by two-signal reconstruction", #235): Signal A
+    (`_signal_a_lines`, front-matter-inclusive) and Signal B (`_toc_from_tree`,
+    the tree's full unfiltered flattened heading list) -- folded into this
+    one call rather than a second one, since PRD §5 stage 3 fixes the
+    envelope pass at one API call per source. Signal B is fed UNFILTERED
+    (noise included): the reconstruction itself, not code-side filtering, is
+    now responsible for excluding subsection noise, OCR-garble, and
+    apparatus -- superseding #231/#232's now-retired verbatim-intersection
+    salvage stack."""
+    evidence = compose_thesis_evidence(tree)
+
+    signal_a = "\n".join(_signal_a_lines(tree))
+    signal_b = _toc_from_tree(tree)
+    toc_block = _TOC_RECONSTRUCTION_BLOCK.format(
+        signal_a=signal_a,
+        signal_b="\n".join(f"- {heading}" for heading in signal_b),
+    )
+    return _PROMPT_TEMPLATE.format(sections=evidence, toc_block=toc_block)
 
 
 def parse_response(raw: str) -> dict[str, Any]:
@@ -933,10 +927,50 @@ def parse_response(raw: str) -> dict[str, Any]:
     return data
 
 
+def _is_valid_toc_entry(entry: Any) -> bool:
+    """True when `entry` is a well-formed `{title, children[]}` object (PRD
+    §7.3's #235 amendment): a non-empty string `title` and a `children` list
+    of strings (possibly empty)."""
+    if not isinstance(entry, dict):
+        return False
+    title = entry.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return False
+    children = entry.get("children")
+    if not isinstance(children, list):
+        return False
+    return all(isinstance(child, str) for child in children)
+
+
+def is_valid_toc(toc: Any) -> bool:
+    """True when `toc` is a non-empty list of `_is_valid_toc_entry` objects
+    (PRD §7.3's #235 amendment: `toc` is "a non-empty list of `{title,
+    children[]}` objects"). Shared by `validate_envelope_fields` (the
+    string-field-plus-toc check on the FINAL parsed envelope) and
+    `run_envelope`'s own post-hoc reconstruction-failure check (#235's
+    deterministic fallback), so the two never drift apart on what counts as
+    a valid `toc`."""
+    return (
+        isinstance(toc, list) and len(toc) > 0 and all(_is_valid_toc_entry(entry) for entry in toc)
+    )
+
+
 def validate_envelope_fields(data: dict[str, Any]) -> None:
-    """Validate the required envelope fields on a parsed model response,
-    raising a typed error on malformed output (PRD §7.3's four required
-    fields: thesis, toc, scope, stated_argument)."""
+    """Validate `data` against the envelope's locked shape (PRD §7.3's four
+    required fields: thesis, toc, scope, stated_argument), raising a typed
+    error on malformed output. `toc` must be a non-empty list of `{title,
+    children[]}` objects (`is_valid_toc`, #235) -- the old flat
+    list-of-strings shape no longer validates.
+
+    Two call sites, both intentional: `reject_degenerate_thesis_fields` runs
+    its own equivalent of this check's string-field half (never the `toc`
+    half) inside `complete_json`'s bounded re-ask loop on the raw model
+    response; and `run_envelope` calls THIS function directly on the FULLY
+    ASSEMBLED envelope dict, immediately before `write_envelope`, as a
+    defense-in-depth pre-write gate -- a no-op on the happy path (the
+    assembled `toc` is either the model's own valid nested answer or
+    `_fallback_toc`'s always-valid deterministic fallback), but a genuine
+    net against a future regression in either path."""
     for field in _REQUIRED_STRING_FIELDS:
         value = data.get(field)
         if not isinstance(value, str) or not value.strip():
@@ -945,20 +979,40 @@ def validate_envelope_fields(data: dict[str, Any]) -> None:
             )
 
     toc = data.get("toc")
-    if not isinstance(toc, list) or not toc:
-        raise EnvelopeValidationError(f"envelope field 'toc' must be a non-empty list, got {toc!r}")
+    if not is_valid_toc(toc):
+        raise EnvelopeValidationError(
+            f"envelope field 'toc' must be a non-empty list of "
+            f"{{'title': <non-empty str>, 'children': [<str>, ...]}} objects, got {toc!r}"
+        )
 
 
-def reject_degenerate_envelope(raw: str) -> None:
-    """Validator passed to `complete_json` for the envelope pass (issue #80):
-    re-runs the existing `parse_response` + `validate_envelope_fields` on
-    `raw` -- the SAME checks behind `EnvelopeValidationError`, never
-    duplicated -- so a valid-JSON-but-degenerate response (e.g. `toc: []`)
-    is a re-askable failure within `complete_json`'s bounded budget instead
-    of an instant abort. After the last attempt, `validate_envelope_fields`'s
-    own `EnvelopeValidationError` propagates unchanged, exactly as before
-    this validator existed."""
-    validate_envelope_fields(parse_response(raw))
+def reject_degenerate_thesis_fields(raw: str) -> None:
+    """Validator passed to `complete_json` for the envelope pass (issue #80,
+    revised by #235): re-runs `parse_response` plus the `_REQUIRED_STRING_
+    FIELDS` (`thesis`/`scope`/`stated_argument`) non-empty check ONLY -- the
+    same species of degeneracy check `validate_envelope_fields` already
+    makes for those three fields -- so a valid-JSON-but-degenerate response
+    on any of them is a re-askable failure within `complete_json`'s bounded
+    budget instead of an instant abort.
+
+    Deliberately does NOT also re-ask on a degenerate/invalid `toc` (#235):
+    unlike thesis/scope/stated_argument, a persistently bad `toc` has its
+    own deterministic, always-succeeding fallback
+    (`_toc_from_tree`-derived, `run_envelope`) rather than needing to spend
+    the shared re-ask budget or ever hard-fail the whole envelope -- PRD
+    §7.3, "If the reconstruction fails validation, the pass falls back
+    deterministically ..., preserving the non-empty guarantee." Folding a
+    `toc` check into this validator would let a model that never gets `toc`
+    right (but always gets thesis/scope/stated_argument right) exhaust the
+    re-ask budget and hard-fail the pass anyway -- exactly the outcome the
+    fallback exists to avoid."""
+    data = parse_response(raw)
+    for field in _REQUIRED_STRING_FIELDS:
+        value = data.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise EnvelopeValidationError(
+                f"envelope field {field!r} must be a non-empty string, got {value!r}"
+            )
 
 
 def _fallback_title(path: Path) -> str:
@@ -968,31 +1022,54 @@ def _fallback_title(path: Path) -> str:
 
 
 def build_envelope(
-    path: Path, source_id: str, parsed: dict[str, Any], structural_toc: list[str] | None = None
+    path: Path, source_id: str, parsed: dict[str, Any], toc: list[dict] | None = None
 ) -> dict[str, Any]:
     """Assemble the locked envelope shape (PRD §7.3):
     {source_id, author, title, date, thesis, toc, scope, stated_argument}.
 
-    `toc` prefers `structural_toc` whenever it is non-empty, falling back to
-    the model's own `parsed["toc"]` only when it isn't -- preserving
-    `validate_envelope_fields`'s "toc must be a non-empty list" guarantee,
-    since `parsed["toc"]` is already validated non-empty by the time it
-    reaches here (#227). Callers pass `_resolve_toc`'s already-reconciled
-    result here (the model's selection intersected with the tree's own
-    structural list, or the full structural list when that intersection is
-    empty, issue #231) -- this function's own fallback to `parsed["toc"]`
-    is the LAST resort in that chain, reached only when the tree yielded no
-    identifiable top-level heading structure at all."""
+    `toc` is the caller's own already-resolved FINAL nested `toc` value
+    (#235): either the model's own valid nested reconstruction, or
+    `run_envelope`'s deterministic `_toc_from_tree`-derived fallback when it
+    wasn't valid -- this function no longer resolves `toc` itself (that
+    reconciliation, #231's `_resolve_toc`, is retired). Defaults to
+    `parsed.get("toc")` when the caller passes nothing, mirroring this
+    function's other "trust the caller-supplied `parsed` value" fields
+    (thesis/scope/stated_argument)."""
     return {
         "source_id": source_id,
         "author": parsed.get("author"),
         "title": parsed.get("title") or _fallback_title(path),
         "date": parsed.get("date"),
         "thesis": parsed["thesis"],
-        "toc": structural_toc if structural_toc else parsed["toc"],
+        "toc": toc if toc is not None else parsed.get("toc"),
         "scope": parsed["scope"],
         "stated_argument": parsed["stated_argument"],
     }
+
+
+def _fallback_toc(tree: dict, path: Path, parsed: dict[str, Any]) -> list[dict[str, Any]]:
+    """The deterministic nested fallback `toc` (PRD §7.3: "If the
+    reconstruction fails validation, the pass falls back deterministically
+    to the tree's own detected heading list ..., preserving the non-empty
+    guarantee", #235): `_toc_from_tree(tree)`'s flattened detected-heading
+    list, each heading reshaped into its own top-level
+    `{"title": heading, "children": []}` entry -- a flat list is a valid,
+    if unstructured, special case of the nested shape, and this keeps the
+    fallback trivially deterministic (no further reconstruction judgment
+    call to make when the model's own attempt already failed).
+
+    `_toc_from_tree(tree)` is itself empty only for a tree with no
+    `section_header`-labelled top-level heading anywhere -- an even more
+    degenerate case than this fallback's usual target. The non-empty
+    guarantee must still hold then, so this last resort falls back once
+    more, to a single entry titled after the envelope's own resolved title
+    (the model's `parsed["title"]`, or the filename-derived
+    `_fallback_title` when that's absent too, exactly like this module's
+    own `title` field resolution above)."""
+    headings = _toc_from_tree(tree)
+    if headings:
+        return [{"title": heading, "children": []} for heading in headings]
+    return [{"title": parsed.get("title") or _fallback_title(path), "children": []}]
 
 
 def write_envelope(envelope: dict[str, Any], path: Path) -> None:
@@ -1039,25 +1116,38 @@ def run_envelope(
         if client is None:
             client = get_client(config_path=config_path)
         raw_response = complete_json(
-            client, prompt, pass_name=ENVELOPE_PASS_NAME, validate=reject_degenerate_envelope
+            client, prompt, pass_name=ENVELOPE_PASS_NAME, validate=reject_degenerate_thesis_fields
         )
     except (LLMError, httpx.HTTPError) as exc:
         raise LLMFailedError(exc) from exc
     except ModelJsonError as exc:
         raise EnvelopeParseError(f"model response was not valid JSON: {exc}") from exc
 
+    # `reject_degenerate_thesis_fields` already guarantees thesis/scope/
+    # stated_argument are non-empty strings on `raw_response` -- those three
+    # fields still hard-fail the whole pass on persistent degeneracy
+    # (unchanged, #80). `toc` is deliberately NOT re-asked on: #235's own
+    # deterministic fallback below is what preserves its non-empty
+    # guarantee instead.
     parsed = parse_response(raw_response)
-    validate_envelope_fields(parsed)
 
-    # Issue #231: the model's own "toc" answer -- prompted (via
-    # `compose_prompt`'s candidate-heading block) to select genuine
-    # chapter/section entries from the tree's flattened structural list --
-    # is reconciled against that same list by `_resolve_toc`, so it can only
-    # ever narrow the tree's real headings, never invent one.
-    structural_toc = _toc_from_tree(tree)
-    model_toc = [entry for entry in parsed.get("toc") or [] if isinstance(entry, str)]
-    final_toc = _resolve_toc(structural_toc, model_toc)
+    model_toc = parsed.get("toc")
+    if is_valid_toc(model_toc):
+        final_toc = model_toc
+    else:
+        # PRD §7.3: "If the reconstruction fails validation, the pass falls
+        # back deterministically to the tree's own detected heading list
+        # ..., preserving the non-empty guarantee" (#235).
+        final_toc = _fallback_toc(tree, path, parsed)
 
-    envelope = build_envelope(path, source_id, parsed, structural_toc=final_toc)
+    envelope = build_envelope(path, source_id, parsed, toc=final_toc)
+    # Defense-in-depth pre-write gate (restored, reviewer finding): the
+    # FINAL assembled envelope dict -- not just the raw model response --
+    # is re-checked against the locked shape (nested toc included, #235)
+    # immediately before it is ever persisted. A no-op on the happy path
+    # (`final_toc` is either the model's own already-valid nested toc or
+    # `_fallback_toc`'s always-valid deterministic fallback), but a genuine
+    # net against a future regression in either path.
+    validate_envelope_fields(envelope)
     write_envelope(envelope, out_path)
     return envelope
