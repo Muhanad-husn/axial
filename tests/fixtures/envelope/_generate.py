@@ -123,11 +123,13 @@ real but non-chapter top-level heading. None of the eleven matches
 introduction/abstract/conclusion (`select_envelope_nodes` returns `[]`), so
 `compose_prompt` widens to the head-of-tree slice, which -- once the small
 leading front-matter region is skipped -- carries every one of the eleven
-headings well within the slice's own budget. tests/ingestion/
-test_envelope_llm_toc_selection.py pins that the envelope's `toc` field must
-reflect the MODEL's SELECTED subset of these headings (the real chapters),
-never the raw structural dump of all eleven -- see that test's module
-docstring for the full rationale.
+headings well within the slice's own budget. Originally built for
+#231's now-superseded verbatim-intersection mechanism
+(tests/ingestion/test_envelope_llm_toc_selection.py, retired by #235); this
+fixture's eleven-heading flattened dump is reused, unchanged, as #235's own
+Signal B target shape by
+tests/ingestion/test_envelope_toc_two_signal_reconstruction.py -- see that
+test's module docstring for the full rationale.
 
 Companion fixture -- structural_toc_paper.pdf / structural_toc_tree.json
 (issue #227, structural toc derivation)
@@ -142,12 +144,13 @@ prose. The front-matter region -- INCLUDING the "Contents" page, the
 source's only chapter listing -- falls entirely inside
 `_front_matter_region_end`'s skip and never reaches the envelope prompt
 (verified directly: `compose_prompt` on this tree omits the "Contents:"
-text and its "Halvorne-6 pagination ledger" marker). tests/ingestion/
-test_envelope_structural_toc.py pins that the envelope's `toc` field must
-still reflect the three real chapter headings -- derived structurally from
-the tree, not from whatever the (stubbed) model returns -- even though the
-only place those chapter titles were literally listed together (the TOC
-page) never reaches the model.
+text and its "Halvorne-6 pagination ledger" marker). Originally built for
+#227's structural-derivation mechanism
+(tests/ingestion/test_envelope_structural_toc.py, retired by #235); this
+fixture's front-matter-region-embedded "Contents" page is reused, unchanged,
+as #235's own dual-role (Signal A vs. thesis-evidence) target shape by
+tests/ingestion/test_envelope_toc_two_signal_reconstruction.py -- see that
+test's module docstring for the full rationale.
 """
 
 from pathlib import Path
@@ -375,8 +378,8 @@ def make_router_prose_filter_paper_pdf(path: Path) -> None:
 
 def make_structural_toc_paper_pdf(path: Path) -> None:
     """A born-digital PDF whose text loosely mirrors the HAND-AUTHORED
-    structural_toc_tree.json (issue #227; see
-    tests/ingestion/test_envelope_structural_toc.py). Like
+    structural_toc_tree.json (issue #227; reused by issue #235's
+    tests/ingestion/test_envelope_toc_two_signal_reconstruction.py). Like
     router_prose_filter_paper.pdf, this PDF is never actually extracted by
     docling in the test suite -- the hand-authored tree is pre-placed at
     data/trees/<source_id>.json instead -- so this function exists only to
@@ -454,8 +457,8 @@ def make_structural_toc_paper_pdf(path: Path) -> None:
 
 def make_llm_toc_selection_paper_pdf(path: Path) -> None:
     """A born-digital PDF whose text loosely mirrors the HAND-AUTHORED
-    llm_toc_selection_tree.json (issue #231; see
-    tests/ingestion/test_envelope_llm_toc_selection.py). Like
+    llm_toc_selection_tree.json (issue #231; reused by issue #235's
+    tests/ingestion/test_envelope_toc_two_signal_reconstruction.py). Like
     router_prose_filter_paper.pdf and structural_toc_paper.pdf, this PDF is
     never actually extracted by docling in the test suite -- the
     hand-authored tree is pre-placed at data/trees/<source_id>.json instead
