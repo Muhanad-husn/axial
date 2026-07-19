@@ -1363,7 +1363,9 @@ def test_run_envelope_raises_envelope_parse_error_on_persistently_malformed_json
 # --- run_envelope: bounded re-ask on a degenerate-but-valid envelope (#80) --
 
 
-def test_run_envelope_falls_back_immediately_when_toc_is_persistently_empty(monkeypatch, tmp_path):
+def test_run_envelope_falls_back_after_one_reask_when_toc_is_persistently_empty(
+    monkeypatch, tmp_path
+):
     """#235 supersedes #80's toc-specific re-ask inside `complete_json`'s own
     shared budget: a valid-JSON response with an empty `toc` list never
     exhausts `reject_degenerate_thesis_fields`'s budget or raises (that
