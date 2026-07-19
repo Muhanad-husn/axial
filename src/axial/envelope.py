@@ -234,6 +234,42 @@ reorder, or invent an entry not present in the list.
 
 """
 
+# A pathological-input safety rail on the candidate-heading block above, NOT
+# a routine trimmer (issue #232). Measured across all 31 cached
+# `data/trees/*.json` sources, the largest post-front-matter-region
+# candidate list (`_toc_candidates_for_prompt`) ever observed was 260
+# headings / 8328 characters -- already noted in this module's own #231
+# commentary above ("70-260 entries"). 350 sits comfortably above that
+# ceiling (roughly 1.35x it) so it can never engage on any real, once-per-
+# source extraction tree, while still bounding a genuinely pathological
+# tree (e.g. a mis-extracted source whose every line is misrouted as a
+# heading) from growing the once-per-source envelope prompt without limit.
+# A starting point, not a proven-final value (mirrors _HEAD_OF_TREE_SLICE_
+# CHARS/_EVIDENCE_FLOOR_CHARS's own framing) -- if a future source ever
+# legitimately exceeds it, that is itself a signal the corpus ceiling moved
+# and this constant should be revisited, not silently worked around.
+_TOC_CANDIDATES_MAX = 350
+
+_TOC_CANDIDATES_TRUNCATION_NOTE = """\
+Note: this candidate list was truncated because the source's structural \
+tree produced an unusually large number of candidate headings -- only the \
+first {kept} of {total} detected headings are shown above. Treat this list \
+as incomplete, not exhaustive.
+
+"""
+
+
+def _bound_toc_candidates(candidates: list[str]) -> tuple[list[str], bool]:
+    """Bound `candidates` to at most `_TOC_CANDIDATES_MAX` WHOLE entries
+    (issue #232) -- never a partial heading -- returning the (possibly
+    truncated) list alongside whether truncation actually occurred, so the
+    caller can attach an explicit truncation note rather than cutting
+    silently. A real-scale list (at or below the bound) is returned
+    unchanged, with `False`, so no note is ever attached on ordinary input."""
+    if len(candidates) <= _TOC_CANDIDATES_MAX:
+        return candidates, False
+    return candidates[:_TOC_CANDIDATES_MAX], True
+
 
 def _toc_candidates_for_prompt(tree: dict) -> list[str]:
     """The candidate heading list `compose_prompt` presents to the model in
@@ -871,13 +907,16 @@ def compose_prompt(tree: dict) -> str:
     else:
         evidence = "\n\n".join(blocks)
     toc_candidates = _toc_candidates_for_prompt(tree)
-    toc_guidance = (
-        _TOC_CANDIDATES_BLOCK.format(
-            headings="\n".join(f"- {heading}" for heading in toc_candidates)
+    bounded_candidates, truncated = _bound_toc_candidates(toc_candidates)
+    toc_guidance = ""
+    if bounded_candidates:
+        toc_guidance = _TOC_CANDIDATES_BLOCK.format(
+            headings="\n".join(f"- {heading}" for heading in bounded_candidates)
         )
-        if toc_candidates
-        else ""
-    )
+        if truncated:
+            toc_guidance += _TOC_CANDIDATES_TRUNCATION_NOTE.format(
+                kept=len(bounded_candidates), total=len(toc_candidates)
+            )
     return _PROMPT_TEMPLATE.format(sections=evidence, toc_guidance=toc_guidance)
 
 
