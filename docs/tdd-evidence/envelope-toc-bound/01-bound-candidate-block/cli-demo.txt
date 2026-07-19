@@ -1,0 +1,13 @@
+=== #232 boundary demo: toc-candidate bound (_TOC_CANDIDATES_MAX = 350 ) ===
+
+--- (1) real worst-case corpus tree: must pass through UNTRUNCATED (below bound) ---
+source        : malesevic-nation-states-and-nationalisms-5d3ec1809b12.json
+candidates    : 260 headings (corpus max)
+bound         : 350
+truncated?    : False  (expect False -- real data never trimmed)
+
+--- (2) synthetic pathological 1000-heading tree: must TRUNCATE with a note ---
+candidates in : 1000 headings
+kept in block : 350  (expect 350)
+truncated?    : True  (expect True)
+note line     : Note: this candidate list was truncated because the source's structural tree produced an unusually large number of candidate headings -- only the first 350 of 1000 detected headings are shown above. Treat this list as incomplete, not exhaustive.
