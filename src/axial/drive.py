@@ -7,8 +7,23 @@ folder through an injectable Drive client, filters listed files to
 `.pdf`/`.docx` candidates, downloads each candidate's bytes to a local cache
 path (docling needs a file path; the cache is an implementation detail, not
 a staging contract), and hands each downloaded local path to an injectable
-ingest callable -- by default the real single-source ingestion path,
-`axial.vault.run_vault_write`.
+ingest callable.
+
+By default, `ingest_fn` runs the FULL source-to-vault chain for a freshly
+downloaded file -- `axial.extract.extract` -> `axial.envelope.run_envelope`
+-> `axial.chunk.run_chunk_recursive` -> `axial.vault.run_vault_write`.
+`run_vault_write` alone is only the pipeline TAIL: it reads a pre-existing
+stored envelope (raising `MissingEnvelopeError` if one hasn't been produced
+yet) and pre-built chunks (`axial.chunk.read_chunks`, never recomputed) --
+it never runs extraction, the envelope pass, or the chunk pass itself. A
+Drive-downloaded source has been through none of those yet, so the default
+handoff must drive the whole chain, not just its tail (issue #237 review
+finding). Each candidate's chain runs in isolation: a failure at any stage
+is caught, logged to stderr, and the loop continues to the next candidate --
+one bad source never aborts the whole folder (mirrors
+`axial.ingest.run_ingest`'s per-source `FAIL` isolation). When `ingest_fn`
+is injected (tests), it is used as-is -- the chain orchestrator never
+overrides an explicit injection.
 
 Auth is a Google service account: the `[drive]` section of
 `secrets/secrets.toml` names the service-account JSON key path
@@ -30,7 +45,18 @@ import tomllib
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
-from axial.vault import run_vault_write
+from axial.chunk import ChunkError, run_chunk_recursive
+from axial.envelope import EnvelopeError, run_envelope
+from axial.extract import ExtractError, extract
+from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
+from axial.tag import DEFAULT_DOMAIN_DIR
+from axial.vault import VaultError, run_vault_write
+
+# The full taxonomy of errors any stage of the default source-to-vault chain
+# (extract -> envelope -> chunk -> vault write) can raise. Caught per
+# candidate so one bad source never aborts the whole folder (module
+# docstring).
+CHAIN_ERRORS = (ExtractError, EnvelopeError, ChunkError, VaultError)
 
 # Default locations, mirroring the module-level default conventions already
 # used across the codebase (e.g. `axial.llm.DEFAULT_SECRETS_PATH`,
@@ -153,6 +179,77 @@ def _build_drive_client(service_account_json: str) -> "DriveClient":
     return DriveClient(service_account_json)
 
 
+def _run_full_ingest_chain(
+    source_path: Path,
+    *,
+    client: LLMClient | None,
+    config_path: Path,
+    domain_dir: str | Path,
+    envelopes_dir: Path | None,
+    chunks_dir: Path | None,
+    tags_dir: Path | None,
+    artifacts_dir: Path | None,
+    xref_dir: Path | None,
+    vault_dir: Path | None,
+) -> list[Path]:
+    """Run the full source-to-vault chain for one freshly-downloaded Drive
+    source: extract -> envelope -> chunk -> vault write (module docstring).
+    `run_vault_write` alone only reads pre-existing artifacts from the three
+    passes ahead of it; a Drive-downloaded source has never been through
+    them, so the default handoff must run every stage, not just the tail.
+    Each pass persists its own artifact by `source_id`, so this is safe to
+    call even when an earlier pass already ran for this source (e.g. a
+    partial prior attempt) -- every pass is itself no-recompute/cached."""
+    extract(source_path)
+    run_envelope(source_path, client=client, envelopes_dir=envelopes_dir, config_path=config_path)
+    run_chunk_recursive(source_path, chunks_dir=chunks_dir, config_path=config_path, client=client)
+    return run_vault_write(
+        source_path,
+        client=client,
+        envelopes_dir=envelopes_dir,
+        vault_dir=vault_dir,
+        config_path=config_path,
+        domain_dir=domain_dir,
+        chunks_dir=chunks_dir,
+        tags_dir=tags_dir,
+        artifacts_dir=artifacts_dir,
+        xref_dir=xref_dir,
+    )
+
+
+def _default_ingest_fn(
+    *,
+    client: LLMClient | None,
+    config_path: Path,
+    domain_dir: str | Path,
+    envelopes_dir: Path | None,
+    chunks_dir: Path | None,
+    tags_dir: Path | None,
+    artifacts_dir: Path | None,
+    xref_dir: Path | None,
+    vault_dir: Path | None,
+) -> Callable[[Path], list[Path]]:
+    """Build the default `ingest_fn`: a closure over the threaded LLM
+    client/config/dirs that runs `_run_full_ingest_chain` for one
+    downloaded local path."""
+
+    def _ingest_one(local_path: Path) -> list[Path]:
+        return _run_full_ingest_chain(
+            local_path,
+            client=client,
+            config_path=config_path,
+            domain_dir=domain_dir,
+            envelopes_dir=envelopes_dir,
+            chunks_dir=chunks_dir,
+            tags_dir=tags_dir,
+            artifacts_dir=artifacts_dir,
+            xref_dir=xref_dir,
+            vault_dir=vault_dir,
+        )
+
+    return _ingest_one
+
+
 def run_drive_ingest(
     folder_id: str,
     *,
@@ -160,11 +257,23 @@ def run_drive_ingest(
     ingest_fn: Callable[[Path], Any] | None = None,
     secrets_path: Path = DEFAULT_SECRETS_PATH,
     cache_dir: Path = DEFAULT_CACHE_DIR,
+    llm_client: LLMClient | None = None,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
+    envelopes_dir: Path | None = None,
+    chunks_dir: Path | None = None,
+    tags_dir: Path | None = None,
+    artifacts_dir: Path | None = None,
+    xref_dir: Path | None = None,
+    vault_dir: Path | None = None,
 ) -> int:
     """List `folder_id` through `client` (paginated to exhaustion), filter to
     `.pdf`/`.docx` candidates, download each candidate's bytes to a
     deterministic path under `cache_dir`, and hand each downloaded local
-    path to `ingest_fn`. Returns 0 on success.
+    path to `ingest_fn`. Returns 0 unless a fatal error prevents the run
+    from happening at all (missing/incomplete `[drive]` secrets); a single
+    candidate's ingest failure is caught, logged, and does not affect the
+    overall exit code (module docstring's per-candidate isolation).
 
     `[drive]` secrets are loaded and validated FIRST, before any client
     construction or client call -- an absent/incomplete section halts with a
@@ -172,8 +281,11 @@ def run_drive_ingest(
     client call and no download (P0-11).
 
     `client=None` lazily constructs the real `DriveClient` from the
-    validated `service_account_json`; `ingest_fn=None` defaults to the real
-    single-source ingestion path, `axial.vault.run_vault_write`.
+    validated `service_account_json`. `ingest_fn=None` defaults to the full
+    source-to-vault chain orchestrator (module docstring); `llm_client`,
+    `config_path`, `domain_dir`, and the `*_dir` parameters are threaded
+    into that default's closure and ignored when `ingest_fn` is injected
+    (an injected callable owns its own configuration, if any).
     """
     secrets_path = Path(secrets_path)
     cache_dir = Path(cache_dir)
@@ -188,7 +300,17 @@ def run_drive_ingest(
         client = _build_drive_client(secrets["service_account_json"])
 
     if ingest_fn is None:
-        ingest_fn = run_vault_write
+        ingest_fn = _default_ingest_fn(
+            client=llm_client,
+            config_path=config_path,
+            domain_dir=domain_dir,
+            envelopes_dir=envelopes_dir,
+            chunks_dir=chunks_dir,
+            tags_dir=tags_dir,
+            artifacts_dir=artifacts_dir,
+            xref_dir=xref_dir,
+            vault_dir=vault_dir,
+        )
 
     candidates = _list_all_candidates(client, folder_id)
 
@@ -197,7 +319,12 @@ def run_drive_ingest(
         data = client.download(record["id"])
         local_path = _cache_path(cache_dir, record)
         local_path.write_bytes(data)
-        ingest_fn(local_path)
+        try:
+            ingest_fn(local_path)
+        except CHAIN_ERRORS as exc:
+            name = record.get("name") or local_path.name
+            print(f"error: {name}: {exc}", file=sys.stderr)
+            continue
 
     return 0
 

@@ -311,15 +311,84 @@ def test_build_drive_client_returns_a_drive_client_instance(tmp_path, monkeypatc
     assert isinstance(client, DriveClient)
 
 
-# --- default ingest_fn binds the real ingestion path --------------------------
+# --- default ingest_fn runs the full source-to-vault chain --------------------
+#
+# `run_vault_write` alone is only the pipeline TAIL (it reads a pre-existing
+# stored envelope and pre-built chunks, never recomputing either -- see
+# axial.vault.run_vault_write's docstring); a freshly-downloaded Drive source
+# has never been through extract/envelope/chunk, so the default `ingest_fn`
+# must drive the whole chain. These tests mock every stage (extract,
+# run_envelope, run_chunk_recursive, run_vault_write) where `axial.drive`
+# imports them -- never touching real docling/LLM calls.
 
 
-def test_run_drive_ingest_default_ingest_fn_is_run_vault_write(monkeypatch, tmp_path):
+def _patch_chain(monkeypatch, *, order: list[str] | None = None, fail_at: str | None = None):
+    """Patch the four chain stages, where `axial.drive` imports them, to
+    record call order (and each call's `source_path` argument) into
+    `order` when given, optionally raising that stage's own typed error
+    when `fail_at` names it -- so callers can assert both the happy-path
+    sequencing and the per-candidate isolation behaviour."""
     import axial.drive as drive_mod
+    from axial.chunk import ChunkError
+    from axial.envelope import EnvelopeError
+    from axial.extract import ExtractError
+    from axial.vault import VaultError
 
-    calls = []
-    monkeypatch.setattr(drive_mod, "run_vault_write", lambda path: calls.append(path))
+    if order is None:
+        order = []
 
+    def _make(name, error_cls, return_value):
+        def _stage(source_path, *args, **kwargs):
+            order.append((name, source_path))
+            if fail_at == name:
+                raise error_cls(f"synthetic {name} failure")
+            return return_value
+
+        return _stage
+
+    monkeypatch.setattr(drive_mod, "extract", _make("extract", ExtractError, {}))
+    monkeypatch.setattr(drive_mod, "run_envelope", _make("run_envelope", EnvelopeError, {}))
+    monkeypatch.setattr(
+        drive_mod, "run_chunk_recursive", _make("run_chunk_recursive", ChunkError, [])
+    )
+    monkeypatch.setattr(
+        drive_mod,
+        "run_vault_write",
+        _make("run_vault_write", VaultError, [Path("data/vault/prose/x.md")]),
+    )
+    return order
+
+
+def test_default_ingest_fn_runs_the_full_chain_in_order_for_one_source(monkeypatch, tmp_path):
+    from axial.drive import _default_ingest_fn
+
+    order = _patch_chain(monkeypatch)
+    ingest_fn = _default_ingest_fn(
+        client=None,
+        config_path=Path("config/pipeline.yaml"),
+        domain_dir="config/domains/syria",
+        envelopes_dir=None,
+        chunks_dir=None,
+        tags_dir=None,
+        artifacts_dir=None,
+        xref_dir=None,
+        vault_dir=None,
+    )
+    source_path = tmp_path / "alpha.pdf"
+
+    result = ingest_fn(source_path)
+
+    assert [name for name, _ in order] == [
+        "extract",
+        "run_envelope",
+        "run_chunk_recursive",
+        "run_vault_write",
+    ]
+    assert all(path == source_path for _, path in order)
+    assert result == [Path("data/vault/prose/x.md")]
+
+
+def test_run_drive_ingest_default_path_runs_the_full_chain_per_candidate(monkeypatch, tmp_path):
     key_path = _key_file(tmp_path)
     secrets_path = tmp_path / "secrets.toml"
     secrets_path.write_text(
@@ -327,6 +396,8 @@ def test_run_drive_ingest_default_ingest_fn_is_run_vault_write(monkeypatch, tmp_
         encoding="utf-8",
     )
     cache_dir = tmp_path / "cache"
+
+    order = _patch_chain(monkeypatch)
 
     client = _FakeClient(
         {None: ([{"id": "f-1", "name": "alpha.pdf", "mimeType": "application/pdf"}], None)}
@@ -338,7 +409,60 @@ def test_run_drive_ingest_default_ingest_fn_is_run_vault_write(monkeypatch, tmp_
     )
 
     assert exit_code == 0
-    assert calls == [cache_dir / "f-1.pdf"]
+    assert [name for name, _ in order] == [
+        "extract",
+        "run_envelope",
+        "run_chunk_recursive",
+        "run_vault_write",
+    ]
+    assert all(path == cache_dir / "f-1.pdf" for _, path in order)
+
+
+@pytest.mark.parametrize(
+    "fail_at", ["extract", "run_envelope", "run_chunk_recursive", "run_vault_write"]
+)
+def test_run_drive_ingest_isolates_a_per_candidate_chain_failure_and_continues(
+    monkeypatch, tmp_path, capsys, fail_at
+):
+    """A failure at any stage of one candidate's chain is caught, logged to
+    stderr, and the loop continues to the next candidate -- one bad source
+    never aborts the whole folder (mirrors axial.ingest.run_ingest's
+    per-source FAIL isolation)."""
+    key_path = _key_file(tmp_path)
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text(
+        f'[drive]\nservice_account_json = "{_toml_path(key_path)}"\nbooks_folder_id = "BOOKS"\n',
+        encoding="utf-8",
+    )
+    cache_dir = tmp_path / "cache"
+
+    order = _patch_chain(monkeypatch, fail_at=fail_at)
+
+    client = _FakeClient(
+        {
+            None: (
+                [
+                    {"id": "f-bad", "name": "bad.pdf", "mimeType": "application/pdf"},
+                    {"id": "f-good", "name": "good.pdf", "mimeType": "application/pdf"},
+                ],
+                None,
+            )
+        }
+    )
+    client.download = lambda file_id: b"pdf-bytes"
+
+    exit_code = run_drive_ingest(
+        "BOOKS", client=client, secrets_path=secrets_path, cache_dir=cache_dir
+    )
+
+    assert exit_code == 0, "one bad candidate must not fail the overall run"
+    # Both candidates were attempted (cache path is keyed by Drive file id,
+    # `_cache_path`) -- the failure did not abort the loop.
+    processed_paths = {path.name for _, path in order}
+    assert processed_paths == {"f-bad.pdf", "f-good.pdf"}
+
+    captured = capsys.readouterr()
+    assert "bad.pdf" in (captured.out + captured.err)
 
 
 # --- CLI wiring (axial drive ingest) ------------------------------------------

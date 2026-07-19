@@ -361,9 +361,11 @@ def run_vault_write(
 ) -> list[Path]:
     """Run vault write on `source_path`: read the stored envelope (never
     recomputing it), run the tagging pass internally via `axial.tag.run_tag`
-    (which itself runs the argumentative-chunking pass internally -- one
-    thread from source to tagged prose notes) and write one prose note per
-    tagged chunk under `<vault_dir>/prose/`, its frontmatter carrying the axis
+    (which itself reads the pre-built chunk artifact via
+    `axial.chunk.read_chunks`, never recomputing it -- the recursive/
+    structural chunk pass, issue #191, is a separate, model-free step that
+    must already have run) and write one prose note per tagged chunk under
+    `<vault_dir>/prose/`, its frontmatter carrying the axis
     block + `schema_version` (issue #31 slice 04); then run the
     artifact-classification pass internally via `axial.artifacts.run_artifacts`
     and write one note per classified artifact under `<vault_dir>/artifacts/`
