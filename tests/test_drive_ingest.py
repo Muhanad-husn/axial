@@ -81,7 +81,12 @@ def _write_secrets(
     if section:
         lines.append("[drive]")
         if service_account_json is not None:
-            lines.append(f'service_account_json = "{service_account_json}"')
+            # TOML literal string (single-quoted): no escape processing, so
+            # a Windows path's backslashes (e.g. "C:\Users\...") are taken
+            # verbatim instead of being parsed as TOML escape sequences (the
+            # double-quoted "basic string" form would raise
+            # tomllib.TOMLDecodeError on such paths). Cross-platform-safe.
+            lines.append(f"service_account_json = '{service_account_json}'")
         if books_folder_id is not None:
             lines.append(f'books_folder_id = "{books_folder_id}"')
     path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
