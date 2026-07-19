@@ -1,0 +1,15 @@
+# Real-boundary invocations (the secrets-halt path makes no network or docling call)
+
+$ uv run axial drive ingest --help
+usage: axial drive ingest [-h] [folder_id]
+
+positional arguments:
+  folder_id   Drive folder id to list (default: [drive].books_folder_id from
+              secrets\secrets.toml)
+
+options:
+  -h, --help  show this help message and exit
+
+$ uv run axial drive ingest my-books-folder-id   # no [drive] secrets -> halt before any client call or fetch-state read
+error: missing [drive] section in secrets file 'secrets\secrets.toml'
+(exit code: 1)

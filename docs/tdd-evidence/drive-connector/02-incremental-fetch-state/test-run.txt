@@ -1,0 +1,6 @@
+$ uv run pytest -q   # full acceptance suite (corpus regen complete; conftest restores data/)
+1064 passed in 306.92s (0:05:06)
+PYTEST_EXIT=0
+
+$ uv run ruff check src/axial/drive.py src/axial/test_drive.py tests/conftest.py
+All checks passed!
