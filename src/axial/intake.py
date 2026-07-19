@@ -69,24 +69,32 @@ def check_extension(path: Path) -> str:
     return extension.lstrip(".")
 
 
-def _pdf_has_text_layer(path: Path) -> bool:
+def _extract_pdf_text(path: Path) -> str:
     reader = PdfReader(str(path))
-    text = "".join(page.extract_text() or "" for page in reader.pages)
-    return bool(text.strip())
+    return "".join(page.extract_text() or "" for page in reader.pages)
 
 
-def _docx_has_text_layer(path: Path) -> bool:
+def _extract_docx_text(path: Path) -> str:
     document = Document(str(path))
-    return any(paragraph.text.strip() for paragraph in document.paragraphs)
+    return "\n".join(paragraph.text for paragraph in document.paragraphs)
+
+
+def extract_text_layer(path: Path, fmt: str) -> str:
+    """Extract `path`'s raw text layer (`fmt`: 'pdf' or 'docx'). Shared by
+    `has_text_layer`'s presence check and by any downstream bounded text
+    probe that needs actual text content, not just a boolean -- e.g.
+    `axial.drive`'s English-only language-gate probe (issue #239, P0-11c),
+    which reuses this rather than reimplementing pdf/docx text extraction."""
+    if fmt == "pdf":
+        return _extract_pdf_text(path)
+    if fmt == "docx":
+        return _extract_docx_text(path)
+    raise ValueError(f"unknown format {fmt!r}")  # pragma: no cover - guarded by check_extension
 
 
 def has_text_layer(path: Path, fmt: str) -> bool:
     """Probe `path` (of detected format `fmt`, 'pdf' or 'docx') for real body text."""
-    if fmt == "pdf":
-        return _pdf_has_text_layer(path)
-    if fmt == "docx":
-        return _docx_has_text_layer(path)
-    raise ValueError(f"unknown format {fmt!r}")  # pragma: no cover - guarded by check_extension
+    return bool(extract_text_layer(path, fmt).strip())
 
 
 def intake(path: str | Path) -> Source:

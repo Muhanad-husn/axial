@@ -51,3 +51,20 @@ llm:
 paths:
   envelopes_dir: data/envelopes
   vault_dir: data/vault
+
+# Google Drive connector tunables (issue #239, PRD §7.10 "Language-gate
+# tunables" paragraph / §8 P0-11c): the English-only language gate's
+# bounded text probe size and its accept-confidence threshold. src/axial/
+# drive.py reads this block via _language_gate_config; an absent block/key
+# falls back to that module's own DEFAULT_LANGUAGE_PROBE_CHARS /
+# DEFAULT_LANGUAGE_ACCEPT_THRESHOLD.
+drive:
+  # Leading characters of a downloaded source's text layer fed to
+  # langdetect -- large enough (a few hundred words) to classify reliably,
+  # small enough to stay cheap per source.
+  language_probe_chars: 4000
+  # Minimum langdetect confidence (0-1) for the top-detected language to be
+  # accepted as English. Set high on purpose: a false negative (a real
+  # English source rejected) costs a manual re-check; a false positive
+  # (non-English let through) pollutes the corpus and the eval.
+  language_accept_threshold: 0.9

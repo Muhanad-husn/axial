@@ -1,0 +1,9 @@
+$ uv run pytest -q   # full acceptance suite (regen complete)
+1082 passed in 340.89s (0:05:40)
+PYTEST_EXIT=0
+
+$ uv run pytest tests/test_drive_ingest.py tests/test_drive_incremental.py tests/test_drive_language_gate.py -q   # all 3 drive outer contracts
+9 passed in 2.13s
+
+$ uv run ruff check src/axial/drive.py src/axial/intake.py src/axial/test_drive.py
+All checks passed!

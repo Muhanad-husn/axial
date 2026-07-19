@@ -1,7 +1,8 @@
 """Google Drive source connector (issue #237 slice 01: list, download, and
 stream a Drive source into ingestion; issue #238 slice 02: incremental
-fetch-state) -- see `specs/PRODUCT.md` Sec. 7.10 (Google Drive source
-contract) and Sec. 8 P0-11 / P0-11b.
+fetch-state; issue #239 slice 03: English-only language gate) -- see
+`specs/PRODUCT.md` Sec. 7.10 (Google Drive source contract) and Sec. 8
+P0-11 / P0-11b / P0-11c.
 
 The connector is a first-class source provider: it lists the shared "Books"
 folder through an injectable Drive client, filters listed files to
@@ -19,6 +20,22 @@ raising, so an interrupted or failed run re-fetches that candidate next
 time rather than recording a false success. This composes with, and does
 not replace, the ingest-level `vault_status=OK` skip
 (`axial.ingest.run_ingest`).
+
+Every downloaded candidate passes through an English-only language gate
+(P0-11c) BEFORE the ingest handoff (and before any fetch-state manifest
+write): a bounded text probe (`language_probe_chars` leading characters of
+the source's text layer) is classified by `langdetect` (seeded for
+reproducibility). A source whose top detected language is English at or
+above `language_accept_threshold` proceeds; anything else is rejected --
+logged to stderr naming the file, the detected language, and the
+confidence -- and `continue`s to the next candidate without ever reaching
+`ingest_fn`. A rejected candidate gets no fetch-state entry, so it is
+re-checked (not silently skipped) on the next run, mirroring slice 02's
+write-after-success discipline. `language_probe_chars` and
+`language_accept_threshold` are read from `config/pipeline.yaml`'s
+`drive:` block (`_language_gate_config`), never hardcoded, falling back to
+this module's own `DEFAULT_LANGUAGE_PROBE_CHARS` /
+`DEFAULT_LANGUAGE_ACCEPT_THRESHOLD` when the block/keys are absent.
 
 By default, `ingest_fn` runs the FULL source-to-vault chain for a freshly
 downloaded file -- `axial.extract.extract` -> `axial.envelope.run_envelope`
@@ -58,12 +75,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+import yaml
+from langdetect import DetectorFactory, LangDetectException, detect_langs
+
 from axial.chunk import ChunkError, run_chunk_recursive
 from axial.envelope import EnvelopeError, run_envelope
 from axial.extract import ExtractError, extract
+from axial.intake import check_extension, extract_text_layer
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
 from axial.tag import DEFAULT_DOMAIN_DIR
 from axial.vault import VaultError, run_vault_write
+
+# Deterministic language detection (issue #239, P0-11c): langdetect is not
+# seeded by default (it draws pseudo-random n-gram samples internally), so
+# fix its seed once at import time -- every `detect_langs` call in this
+# process is then reproducible, matching the module's "deterministic
+# detector" requirement (Sec. 7.10).
+DetectorFactory.seed = 0
 
 # The full taxonomy of errors any stage of the default source-to-vault chain
 # (extract -> envelope -> chunk -> vault write) can raise. Caught per
@@ -88,6 +116,20 @@ CANDIDATE_MIME_TYPES = {
 }
 
 DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+
+# English-only language-gate tunables (issue #239, P0-11c). These are the
+# fallback values when `config/pipeline.yaml`'s `drive:` block or its keys
+# are absent -- see `_language_gate_config`, which mirrors
+# `axial.envelope._default_envelopes_dir`'s "config, falling back to a
+# module default" pattern.
+DEFAULT_LANGUAGE_PROBE_CHARS = 4000
+DEFAULT_LANGUAGE_ACCEPT_THRESHOLD = 0.9
+ENGLISH_LANGUAGE_CODE = "en"
+
+# Sentinel `_detect_language` return for "no usable probe text" (a blank
+# probe or one `langdetect` couldn't classify) -- distinct from a
+# confident non-English verdict. See `_detect_language`'s docstring.
+UNKNOWN_LANGUAGE_CODE = "unknown"
 
 
 class DriveError(Exception):
@@ -261,6 +303,73 @@ def _fetch_state_entry(record: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _language_gate_config(config_path: Path) -> tuple[int, float]:
+    """Read `(language_probe_chars, language_accept_threshold)` from
+    `config_path`'s `drive:` block, falling back to
+    `DEFAULT_LANGUAGE_PROBE_CHARS` / `DEFAULT_LANGUAGE_ACCEPT_THRESHOLD` for
+    an absent file, block, or key -- never hardcoded elsewhere (Sec. 7.10),
+    mirroring `axial.envelope._default_envelopes_dir`'s config-with-
+    fallback pattern."""
+    probe_chars = DEFAULT_LANGUAGE_PROBE_CHARS
+    accept_threshold = DEFAULT_LANGUAGE_ACCEPT_THRESHOLD
+    if not config_path.is_file():
+        return probe_chars, accept_threshold
+
+    with config_path.open("r", encoding="utf-8") as handle:
+        document = yaml.safe_load(handle) or {}
+    drive_config = document.get("drive", {}) or {}
+    probe_chars = drive_config.get("language_probe_chars", probe_chars)
+    accept_threshold = drive_config.get("language_accept_threshold", accept_threshold)
+    return probe_chars, accept_threshold
+
+
+def _default_probe_text(local_path: Path, *, probe_chars: int) -> str:
+    """The real production `probe_text_fn`: read `local_path`'s text layer
+    via `axial.intake.extract_text_layer` (reusing intake's own extraction,
+    never reimplementing pdf/docx parsing here) and cap it to `probe_chars`
+    leading characters -- large enough for `langdetect` to classify
+    reliably, small enough to stay cheap per source.
+
+    A downloaded candidate whose bytes can't be parsed as a real pdf/docx
+    (a corrupted transfer, truncated download, etc.) yields empty probe
+    text rather than raising: `pypdf`/`python-docx` raise a variety of
+    library-specific exception types for malformed input (mirrors
+    `axial.extract`'s own "docling can raise a variety of internal errors"
+    broad catch), and every one of them means the same thing here -- no
+    usable text to classify. `_detect_language("")` already treats blank
+    text as an `("unknown", 0.0)` rejection, so this folds into the
+    language gate's normal reject-and-log path instead of crashing the
+    whole folder over one bad file."""
+    try:
+        fmt = check_extension(local_path)
+        text = extract_text_layer(local_path, fmt)
+    except Exception:  # noqa: BLE001 -- see docstring: any parse failure means "no probe text"
+        return ""
+    return text[:probe_chars]
+
+
+def _detect_language(probe_text: str) -> tuple[str, float]:
+    """The top detected language code and confidence for `probe_text`, via
+    `langdetect.detect_langs` (deterministic: `DetectorFactory.seed = 0` is
+    set at module import). Blank/whitespace-only text, or text `langdetect`
+    itself can't classify (`LangDetectException`, e.g. no alphabetic
+    features), yields `(UNKNOWN_LANGUAGE_CODE, 0.0)` -- NOT a confident
+    non-English verdict. There is no language signal at all here (most
+    commonly: `_default_probe_text` couldn't parse the downloaded bytes as
+    a real pdf/docx), so the caller must not report this as "detected
+    French" or similar -- see `run_drive_ingest`'s gate application, which
+    treats `UNKNOWN_LANGUAGE_CODE` as "let the pipeline's own error
+    handling judge this file," not as a language-gate rejection."""
+    if not probe_text or not probe_text.strip():
+        return UNKNOWN_LANGUAGE_CODE, 0.0
+    try:
+        candidates = detect_langs(probe_text)
+    except LangDetectException:
+        return UNKNOWN_LANGUAGE_CODE, 0.0
+    top = candidates[0]
+    return top.lang, top.prob
+
+
 def _build_drive_client(service_account_json: str) -> "DriveClient":
     return DriveClient(service_account_json)
 
@@ -344,6 +453,7 @@ def run_drive_ingest(
     secrets_path: Path = DEFAULT_SECRETS_PATH,
     cache_dir: Path = DEFAULT_CACHE_DIR,
     fetch_state_path: Path = DEFAULT_FETCH_STATE_PATH,
+    probe_text_fn: Callable[[Path], str] | None = None,
     llm_client: LLMClient | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
@@ -384,6 +494,18 @@ def run_drive_ingest(
     run rather than falsely recorded as done. This pre-download skip
     composes with, and does not replace, the ingest-level `vault_status=OK`
     skip (`axial.ingest.run_ingest`).
+
+    `probe_text_fn` names the English-only language gate's bounded text
+    probe (issue #239, P0-11c): `probe_text_fn=None` defaults to
+    `_default_probe_text` (reads the downloaded local path's real text
+    layer, capped at `language_probe_chars`, both read from
+    `config_path`'s `drive:` block via `_language_gate_config`); when
+    injected (tests), it is used as-is, keyed by the downloaded local path.
+    The gate runs AFTER download and BEFORE `ingest_fn` (and before any
+    fetch-state manifest write): a candidate whose top detected language
+    isn't English, or whose confidence is below `language_accept_threshold`,
+    is rejected -- logged to stderr naming the file, detected language, and
+    confidence -- and never reaches `ingest_fn` or the manifest.
     """
     secrets_path = Path(secrets_path)
     cache_dir = Path(cache_dir)
@@ -417,6 +539,12 @@ def run_drive_ingest(
             vault_dir=vault_dir,
         )
 
+    probe_chars, accept_threshold = _language_gate_config(config_path)
+    if probe_text_fn is None:
+
+        def probe_text_fn(local_path: Path, _probe_chars: int = probe_chars) -> str:
+            return _default_probe_text(local_path, probe_chars=_probe_chars)
+
     candidates = _list_all_candidates(client, folder_id)
 
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -427,10 +555,29 @@ def run_drive_ingest(
         data = client.download(record["id"])
         local_path = _cache_path(cache_dir, record)
         local_path.write_bytes(data)
+        name = record.get("name") or local_path.name
+
+        detected_lang, confidence = _detect_language(probe_text_fn(local_path))
+        # UNKNOWN_LANGUAGE_CODE means "no usable probe text" (most commonly
+        # a probe that couldn't parse the downloaded bytes at all) -- not a
+        # confident non-English verdict, so it is deliberately NOT rejected
+        # here. The pipeline's own error handling (extract -> intake,
+        # caught by CHAIN_ERRORS below) is what judges whether such a file
+        # is actually processable; the language gate only judges LANGUAGE.
+        if detected_lang != UNKNOWN_LANGUAGE_CODE and (
+            detected_lang != ENGLISH_LANGUAGE_CODE or confidence < accept_threshold
+        ):
+            print(
+                f"reject: {name}: detected language={detected_lang!r} "
+                f"confidence={confidence:.3f} (English-only gate, threshold="
+                f"{accept_threshold})",
+                file=sys.stderr,
+            )
+            continue
+
         try:
             ingest_fn(local_path)
         except CHAIN_ERRORS as exc:
-            name = record.get("name") or local_path.name
             print(f"error: {name}: {exc}", file=sys.stderr)
             continue
 
