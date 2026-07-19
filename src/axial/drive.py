@@ -1,6 +1,7 @@
-"""Google Drive source connector (issue #237, slice 01: list, download, and
-stream a Drive source into ingestion) -- see `specs/PRODUCT.md` Sec. 7.10
-(Google Drive source contract) and Sec. 8 P0-11.
+"""Google Drive source connector (issue #237 slice 01: list, download, and
+stream a Drive source into ingestion; issue #238 slice 02: incremental
+fetch-state) -- see `specs/PRODUCT.md` Sec. 7.10 (Google Drive source
+contract) and Sec. 8 P0-11 / P0-11b.
 
 The connector is a first-class source provider: it lists the shared "Books"
 folder through an injectable Drive client, filters listed files to
@@ -8,6 +9,16 @@ folder through an injectable Drive client, filters listed files to
 path (docling needs a file path; the cache is an implementation detail, not
 a staging contract), and hands each downloaded local path to an injectable
 ingest callable.
+
+Re-runs are incremental (P0-11b): a persisted fetch-state manifest at
+`fetch_state_path` (`id -> {modifiedTime, md5Checksum, fetched_at}`) lets a
+candidate whose change tokens are unchanged since its last successful
+fetch+ingest be skipped BEFORE download -- no bytes fetched, no `ingest_fn`
+call. The manifest entry is written only AFTER `ingest_fn` returns without
+raising, so an interrupted or failed run re-fetches that candidate next
+time rather than recording a false success. This composes with, and does
+not replace, the ingest-level `vault_status=OK` skip
+(`axial.ingest.run_ingest`).
 
 By default, `ingest_fn` runs the FULL source-to-vault chain for a freshly
 downloaded file -- `axial.extract.extract` -> `axial.envelope.run_envelope`
@@ -40,8 +51,10 @@ injectable-client code path stay runnable without those libraries installed
 
 from __future__ import annotations
 
+import json
 import sys
 import tomllib
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -63,6 +76,7 @@ CHAIN_ERRORS = (ExtractError, EnvelopeError, ChunkError, VaultError)
 # `axial.ingest.RESULTS_PATH`): plain paths relative to the process cwd.
 DEFAULT_SECRETS_PATH = Path("secrets/secrets.toml")
 DEFAULT_CACHE_DIR = Path("data/drive/cache")
+DEFAULT_FETCH_STATE_PATH = Path("data/drive/fetch_state.json")
 
 # Candidate filter (Sec. 7.10 / plan slice 01): by name suffix and/or mime
 # type. Neither replaces intake's own format/text-layer validation (P0-1) --
@@ -84,6 +98,14 @@ class DriveSecretsError(DriveError):
     """Raised when `[drive]` secrets are absent, incomplete, or point at an
     unreadable key file. The message names the specific missing/invalid
     secret so the halt reason is actionable (P0-11)."""
+
+
+class FetchStateError(DriveError):
+    """Raised when the fetch-state manifest at `fetch_state_path` exists
+    but cannot be read as the expected JSON object shape (issue #238,
+    P0-11b). Malformed state is reported, never silently treated as empty
+    -- silently discarding it would trigger a full, possibly expensive,
+    re-fetch of the whole folder without telling the operator why."""
 
 
 class DriveClientProtocol(Protocol):
@@ -175,6 +197,70 @@ def _cache_path(cache_dir: Path, record: dict[str, Any]) -> Path:
     return cache_dir / f"{record['id']}{suffix}"
 
 
+def _load_fetch_state(fetch_state_path: Path) -> dict[str, dict[str, str]]:
+    """Load the fetch-state manifest (`id -> {modifiedTime, md5Checksum,
+    fetched_at}`, Sec. 7.10) from `fetch_state_path`. An absent or
+    empty/blank file loads as `{}` -- nothing has been fetched yet, not an
+    error. A present-but-malformed file (unparseable JSON, or JSON that
+    isn't an object) raises `FetchStateError` naming the path (module
+    docstring) rather than being silently treated as empty."""
+    if not fetch_state_path.is_file():
+        return {}
+    text = fetch_state_path.read_text(encoding="utf-8")
+    if not text.strip():
+        return {}
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise FetchStateError(
+            f"fetch-state manifest '{fetch_state_path}' is not valid JSON: {exc}"
+        ) from exc
+    if not isinstance(document, dict):
+        raise FetchStateError(
+            f"fetch-state manifest '{fetch_state_path}' must be a JSON object "
+            f"(id -> change-token record), got {type(document).__name__}"
+        )
+    return document
+
+
+def _write_fetch_state(fetch_state_path: Path, manifest: dict[str, dict[str, str]]) -> None:
+    """Persist `manifest` to `fetch_state_path`, creating parent dirs as
+    needed. Called once per successfully fetched+ingested candidate
+    (write-after-success, P0-11b) so an interrupted run loses at most the
+    one file in flight, never previously recorded successes."""
+    fetch_state_path.parent.mkdir(parents=True, exist_ok=True)
+    fetch_state_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def _is_unchanged(record: dict[str, Any], manifest: dict[str, dict[str, str]]) -> bool:
+    """A candidate is unchanged (skip before download, P0-11b) only when
+    its Drive `id` is already in `manifest` AND both `modifiedTime` and
+    `md5Checksum` match the recorded entry. A record absent from the
+    manifest, or differing on either token, is fetched -- this is a
+    pre-download skip that composes with, and does not replace, the
+    ingest-level `vault_status=OK` skip (`axial.ingest.run_ingest`)."""
+    entry = manifest.get(record["id"])
+    if entry is None:
+        return False
+    return entry.get("modifiedTime") == record.get("modifiedTime") and entry.get(
+        "md5Checksum"
+    ) == record.get("md5Checksum")
+
+
+def _fetch_state_entry(record: dict[str, Any]) -> dict[str, str]:
+    """The manifest entry to record for `record` once its fetch+ingest has
+    succeeded: its current change tokens plus a UTC fetch timestamp
+    (mirrors `axial.ingest`'s `datetime.now(timezone.utc).isoformat()`
+    convention)."""
+    return {
+        "modifiedTime": record.get("modifiedTime"),
+        "md5Checksum": record.get("md5Checksum"),
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def _build_drive_client(service_account_json: str) -> "DriveClient":
     return DriveClient(service_account_json)
 
@@ -257,6 +343,7 @@ def run_drive_ingest(
     ingest_fn: Callable[[Path], Any] | None = None,
     secrets_path: Path = DEFAULT_SECRETS_PATH,
     cache_dir: Path = DEFAULT_CACHE_DIR,
+    fetch_state_path: Path = DEFAULT_FETCH_STATE_PATH,
     llm_client: LLMClient | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
@@ -286,13 +373,31 @@ def run_drive_ingest(
     `config_path`, `domain_dir`, and the `*_dir` parameters are threaded
     into that default's closure and ignored when `ingest_fn` is injected
     (an injected callable owns its own configuration, if any).
+
+    `fetch_state_path` names the incremental fetch-state manifest (issue
+    #238, P0-11b): a candidate whose Drive `id` is already recorded there
+    with matching `modifiedTime` AND `md5Checksum` is skipped BEFORE
+    `client.download` -- no bytes fetched, no `ingest_fn` call. The
+    manifest entry for a candidate is written only after its `ingest_fn`
+    call returns without raising, so a candidate whose ingest fails (caught
+    by `CHAIN_ERRORS`, per-candidate isolation) is re-fetched on the next
+    run rather than falsely recorded as done. This pre-download skip
+    composes with, and does not replace, the ingest-level `vault_status=OK`
+    skip (`axial.ingest.run_ingest`).
     """
     secrets_path = Path(secrets_path)
     cache_dir = Path(cache_dir)
+    fetch_state_path = Path(fetch_state_path)
 
     try:
         secrets = _load_drive_secrets(secrets_path)
     except DriveSecretsError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        manifest = _load_fetch_state(fetch_state_path)
+    except FetchStateError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -316,6 +421,9 @@ def run_drive_ingest(
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     for record in candidates:
+        if _is_unchanged(record, manifest):
+            continue
+
         data = client.download(record["id"])
         local_path = _cache_path(cache_dir, record)
         local_path.write_bytes(data)
@@ -325,6 +433,9 @@ def run_drive_ingest(
             name = record.get("name") or local_path.name
             print(f"error: {name}: {exc}", file=sys.stderr)
             continue
+
+        manifest[record["id"]] = _fetch_state_entry(record)
+        _write_fetch_state(fetch_state_path, manifest)
 
     return 0
 
