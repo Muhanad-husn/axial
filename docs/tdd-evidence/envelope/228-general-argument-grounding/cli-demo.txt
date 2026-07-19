@@ -1,0 +1,3 @@
+== axial envelope exit code: 0
+== #228 instruction present in the real assembled envelope prompt:
+   "thesis" and "stated_argument" must state the source's general argument as a whole -- not a specific example or opening anecdote.
