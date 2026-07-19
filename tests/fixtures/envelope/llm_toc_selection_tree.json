@@ -1,0 +1,190 @@
+{
+  "children": [
+    {
+      "type": "prose",
+      "order": "0",
+      "text": "The Grammar of Escalation",
+      "label": "title"
+    },
+    {
+      "type": "prose",
+      "order": "1",
+      "text": "A. MERIDIAN THORNE, Cross-Basin Institute for Comparative Governance",
+      "label": "text"
+    },
+    {
+      "type": "prose",
+      "order": "2",
+      "text": "Copyright © 1998 by Cross-Basin Institute Press.",
+      "label": "text"
+    },
+    {
+      "type": "prose",
+      "order": "3",
+      "text": "All rights reserved. No part of this book may be reproduced or transmitted in any form without permission.",
+      "label": "text"
+    },
+    {
+      "type": "prose",
+      "order": "4",
+      "text": "Chapter One: The Onset of Contention",
+      "label": "section_header",
+      "children": [
+        {
+          "type": "prose",
+          "order": "4.1",
+          "text": "Contentious episodes begin not with the loudest grievance but with the first instance in which previously isolated complaints are recognized by their bearers as instances of a shared condition.",
+          "label": "text"
+        },
+        {
+          "type": "prose",
+          "order": "4.2",
+          "text": "This recognition is the true onset, prior to any organized mobilization, and it is the analytic starting point this chapter develops across three illustrative episodes.",
+          "label": "text"
+        }
+      ]
+    },
+    {
+      "type": "prose",
+      "order": "5",
+      "text": "1.1 Grievance Recognition and Framing",
+      "label": "section_header",
+      "children": [
+        {
+          "type": "prose",
+          "order": "5.1",
+          "text": "A brief methodological note on how grievances are coded for this study.",
+          "label": "text"
+        }
+      ]
+    },
+    {
+      "type": "prose",
+      "order": "6",
+      "text": "lalrodac:lioo",
+      "label": "section_header"
+    },
+    {
+      "type": "prose",
+      "order": "7",
+      "text": "Chapter Two: Escalation Dynamics",
+      "label": "section_header",
+      "children": [
+        {
+          "type": "prose",
+          "order": "7.1",
+          "text": "Once a shared grievance is recognized, escalation follows a predictable sequence: informal gatherings widen into semi-formal assemblies, and that test either provokes repression or further widens participation.",
+          "label": "text"
+        },
+        {
+          "type": "prose",
+          "order": "7.2",
+          "text": "This chapter traces that sequence across the same three episodes introduced earlier, comparing the pace of escalation across cases.",
+          "label": "text"
+        }
+      ]
+    },
+    {
+      "type": "prose",
+      "order": "8",
+      "text": "2.1 Informal Gatherings to Semi-Formal Assemblies",
+      "label": "section_header",
+      "children": [
+        {
+          "type": "prose",
+          "order": "8.1",
+          "text": "A short note distinguishing informal gatherings from semi-formal assemblies for coding purposes.",
+          "label": "text"
+        }
+      ]
+    },
+    {
+      "type": "prose",
+      "order": "9",
+      "text": "A successful program does all of them at once.",
+      "label": "section_header"
+    },
+    {
+      "type": "prose",
+      "order": "10",
+      "text": "Chapter Three: Settlement and Aftermath",
+      "label": "section_header",
+      "children": [
+        {
+          "type": "prose",
+          "order": "10.1",
+          "text": "Every episode surveyed here eventually settles, whether through negotiated concession, exhaustion, or suppression, and the settlement terms shape whether the grievance resurfaces.",
+          "label": "text"
+        },
+        {
+          "type": "prose",
+          "order": "10.2",
+          "text": "This closing chapter compares settlement terms across the three episodes and draws out their shared aftermath dynamics.",
+          "label": "text"
+        }
+      ]
+    },
+    {
+      "type": "prose",
+      "order": "11",
+      "text": "3.1 Negotiated Concession Pathways",
+      "label": "section_header",
+      "children": [
+        {
+          "type": "prose",
+          "order": "11.1",
+          "text": "A brief typology of concession pathways observed across the surveyed episodes.",
+          "label": "text"
+        }
+      ]
+    },
+    {
+      "type": "prose",
+      "order": "12",
+      "text": "Chapter Four: Comparative Synthesis",
+      "label": "section_header",
+      "children": [
+        {
+          "type": "prose",
+          "order": "12.1",
+          "text": "Drawing the three preceding chapters together, this closing chapter compares the onset, escalation, and settlement patterns across every episode surveyed.",
+          "label": "text"
+        },
+        {
+          "type": "prose",
+          "order": "12.2",
+          "text": "The comparison yields a small set of recurring sequences that recur regardless of the episode is own local context.",
+          "label": "text"
+        }
+      ]
+    },
+    {
+      "type": "prose",
+      "order": "13",
+      "text": "4.1 Cross-Case Convergence Patterns",
+      "label": "section_header",
+      "children": [
+        {
+          "type": "prose",
+          "order": "13.1",
+          "text": "A short note on the convergence measure used to compare cases in this section.",
+          "label": "text"
+        }
+      ]
+    },
+    {
+      "type": "prose",
+      "order": "14",
+      "text": "Appendix A: Supplementary Tables",
+      "label": "section_header",
+      "children": [
+        {
+          "type": "prose",
+          "order": "14.1",
+          "text": "Supplementary tabulations referenced in the preceding chapters are collected here for reference.",
+          "label": "text"
+        }
+      ]
+    }
+  ]
+}

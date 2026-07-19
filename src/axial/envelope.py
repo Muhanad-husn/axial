@@ -83,7 +83,7 @@ Base your answer only on the supplied source text below. Do not infer the \
 thesis, scope, or stated argument from the title, the filename, or any \
 outside knowledge -- every field must come solely from the text provided.
 
-Sections:
+{toc_guidance}Sections:
 
 {sections}
 """
@@ -200,6 +200,84 @@ def _toc_from_tree(tree: dict) -> list[str]:
         if (child.get("label") or "").strip().lower() in _TOC_HEADING_LABELS
         and (text := (child.get("text") or "").strip())
     ]
+
+
+# --- LLM-selected toc subset (PRD §7.3/§5 stage 3, #227 follow-up, #231) ----
+#
+# A real source's `_toc_from_tree` list runs 70-260 entries: genuine chapters
+# mixed with subsection headings, OCR-garble fragments, and body sentences
+# docling mislabelled as headings -- not a usable table of contents on its
+# own. PRD §5 stage 3 fixes the envelope pass at ONE API call per source
+# (locked by tests/ingestion/test_envelope_structural_grounding.py and
+# tests/ingestion/test_envelope_router_prose_filter.py, both asserting
+# exactly one recorded prompt per run), so #231 is folded into the SAME
+# envelope call rather than a second dedicated one: when the tree yields a
+# structural heading list, `compose_prompt` appends it to the existing
+# prompt with an explicit selection instruction, and the model's ordinary
+# `"toc"` answer becomes its selection. `_resolve_toc` then intersects that
+# answer against the tree's own structural list, so the model can only ever
+# narrow the tree's real headings, never invent an entry.
+
+_TOC_CANDIDATES_BLOCK = """\
+Candidate top-level headings, flattened from the source's own structural \
+tree in reading order (a real source's list here routinely mixes genuine \
+chapter/section titles together with subsection headings, OCR-garble \
+fragments, and body sentences mislabelled as headings during extraction):
+
+{headings}
+
+For "toc", select ONLY the entries above that are genuine top-level \
+chapter or section titles -- excluding subsection headings, garbled or \
+unreadable fragments, mislabelled body text, and appendix entries. Copy \
+each selected entry's text verbatim from the list -- do not paraphrase, \
+reorder, or invent an entry not present in the list.
+
+"""
+
+
+def _toc_candidates_for_prompt(tree: dict) -> list[str]:
+    """The candidate heading list `compose_prompt` presents to the model in
+    `_TOC_CANDIDATES_BLOCK` (issue #231): `_toc_from_tree`'s full structural
+    list, further narrowed to skip the same leading front-matter REGION
+    `_head_of_tree_lines` already skips (`_front_matter_region_end`, #225).
+    Without this, a front-matter section_header (a title page, a dedication
+    -- both real shapes in tests/fixtures/envelope/frontmatter_region_tree.
+    json) would be dangled in front of the model as a chapter candidate and
+    leak straight into the prompt's own evidence, regressing
+    tests/ingestion/test_envelope_frontmatter_region_skip.py's locked "no
+    front-matter marker in compose_prompt's evidence" contract.
+
+    Deliberately DISTINCT from the `structural_toc` `run_envelope` reconciles
+    the model's answer against (`_toc_from_tree(tree)`, unfiltered): #227
+    established that the tree's own real chapter list must stay independent
+    of whatever the front-matter skip does to the prompt's evidence -- only
+    the model's candidate PRESENTATION is filtered here, never the ground
+    truth `_resolve_toc` checks the model's answer against."""
+    children = tree.get("children", [])
+    region_end = _front_matter_region_end(children)
+    return _toc_from_tree({"children": children[region_end:]})
+
+
+def _resolve_toc(structural_toc: list[str], model_toc: list[str]) -> list[str]:
+    """Reconcile the tree's structural heading list with the model's own
+    `toc` answer into the final candidate `toc` (issue #231), preserving
+    `structural_toc`'s own tree order:
+
+    1. `model_toc` intersected with `structural_toc` -- the model can only
+       ever narrow the tree's real headings, never invent one.
+    2. If that intersection is empty (e.g. the model named headings absent
+       from this tree entirely -- #227's stub fixture, whose fixed canned
+       `toc` shares nothing with the tree's real chapters), fall back to the
+       full `structural_toc`.
+    3. If `structural_toc` is itself empty, return `[]` -- `build_envelope`
+       falls back further to the model's own `parsed["toc"]`, preserving
+       `validate_envelope_fields`'s non-empty guarantee (#227)."""
+    if structural_toc and model_toc:
+        selected = set(model_toc)
+        intersection = [heading for heading in structural_toc if heading in selected]
+        if intersection:
+            return intersection
+    return structural_toc
 
 
 # --- Bibliography-by-aggregate exclusion (PRD §7.3, #222) -------------------
@@ -770,7 +848,19 @@ def compose_prompt(tree: dict) -> str:
     stripped content, so raw whitespace can't clear the floor), widen
     instead to a substantive head-of-tree slice of the source's own prose,
     so the model is never handed an empty, near-empty, or whitespace-only
-    evidence block (#201)."""
+    evidence block (#201).
+
+    When the tree yields a non-empty POST-front-matter-region structural
+    heading list (`_toc_candidates_for_prompt`, #231), that list is appended
+    to the prompt as an explicit candidate list with a selection instruction:
+    the model's `"toc"` answer becomes its SELECTED subset of those real
+    headings, which `run_envelope`/`_resolve_toc` then intersects against
+    the tree's own FULL structural list (`_toc_from_tree`, unaffected by the
+    front-matter skip, #227) -- folded into this SAME call rather than a
+    second one, since PRD §5 stage 3 fixes the envelope pass at one API call
+    per source. A tree with no identifiable post-front-matter heading
+    structure omits the candidate block entirely, leaving the prompt
+    unchanged from before #231."""
     blocks = _matched_section_blocks(tree)
     if sum(_substantive_length(block) for block in blocks) < _EVIDENCE_FLOOR_CHARS:
         # A section already excluded from `blocks` above (bibliography-by-
@@ -780,7 +870,15 @@ def compose_prompt(tree: dict) -> str:
         evidence = "## Source text (head-of-tree excerpt)\n" + "\n".join(lines)
     else:
         evidence = "\n\n".join(blocks)
-    return _PROMPT_TEMPLATE.format(sections=evidence)
+    toc_candidates = _toc_candidates_for_prompt(tree)
+    toc_guidance = (
+        _TOC_CANDIDATES_BLOCK.format(
+            headings="\n".join(f"- {heading}" for heading in toc_candidates)
+        )
+        if toc_candidates
+        else ""
+    )
+    return _PROMPT_TEMPLATE.format(sections=evidence, toc_guidance=toc_guidance)
 
 
 def parse_response(raw: str) -> dict[str, Any]:
@@ -836,12 +934,16 @@ def build_envelope(
     """Assemble the locked envelope shape (PRD §7.3):
     {source_id, author, title, date, thesis, toc, scope, stated_argument}.
 
-    `toc` prefers `structural_toc` (`_toc_from_tree`'s tree-derived chapter
-    list) whenever it is non-empty, falling back to the model's own
-    `parsed["toc"]` only when the tree yields no identifiable top-level
-    heading structure -- preserving `validate_envelope_fields`'s "toc must
-    be a non-empty list" guarantee, since `parsed["toc"]` is already
-    validated non-empty by the time it reaches here (#227)."""
+    `toc` prefers `structural_toc` whenever it is non-empty, falling back to
+    the model's own `parsed["toc"]` only when it isn't -- preserving
+    `validate_envelope_fields`'s "toc must be a non-empty list" guarantee,
+    since `parsed["toc"]` is already validated non-empty by the time it
+    reaches here (#227). Callers pass `_resolve_toc`'s already-reconciled
+    result here (the model's selection intersected with the tree's own
+    structural list, or the full structural list when that intersection is
+    empty, issue #231) -- this function's own fallback to `parsed["toc"]`
+    is the LAST resort in that chain, reached only when the tree yielded no
+    identifiable top-level heading structure at all."""
     return {
         "source_id": source_id,
         "author": parsed.get("author"),
@@ -908,6 +1010,15 @@ def run_envelope(
     parsed = parse_response(raw_response)
     validate_envelope_fields(parsed)
 
-    envelope = build_envelope(path, source_id, parsed, structural_toc=_toc_from_tree(tree))
+    # Issue #231: the model's own "toc" answer -- prompted (via
+    # `compose_prompt`'s candidate-heading block) to select genuine
+    # chapter/section entries from the tree's flattened structural list --
+    # is reconciled against that same list by `_resolve_toc`, so it can only
+    # ever narrow the tree's real headings, never invent one.
+    structural_toc = _toc_from_tree(tree)
+    model_toc = [entry for entry in parsed.get("toc") or [] if isinstance(entry, str)]
+    final_toc = _resolve_toc(structural_toc, model_toc)
+
+    envelope = build_envelope(path, source_id, parsed, structural_toc=final_toc)
     write_envelope(envelope, out_path)
     return envelope

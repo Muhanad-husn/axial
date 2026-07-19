@@ -480,6 +480,211 @@ def test_head_of_tree_lines_skips_non_prose_labeled_nodes():
     assert "Table of Contents: the Egret-5 index locus." not in joined
 
 
+# --- LLM-selected toc subset (#231) ------------------------------------------
+
+
+def test_resolve_toc_selects_subset_preserving_structural_order():
+    """The model's `toc` answer only ever narrows the tree's own structural
+    list -- the RESULT order comes from `structural_toc`'s own tree order,
+    never from whatever order the model happened to list its selection in."""
+    from axial.envelope import _resolve_toc
+
+    structural_toc = ["Introduction", "Chapter One", "Chapter Two", "Conclusion"]
+    model_toc = ["Chapter Two", "Introduction"]  # deliberately out of tree order
+
+    assert _resolve_toc(structural_toc, model_toc) == ["Introduction", "Chapter Two"]
+
+
+def test_resolve_toc_falls_back_to_full_structural_toc_when_intersection_is_empty():
+    """#227's fallback: when the model names headings absent from this tree
+    entirely (e.g. a stub/canned answer sharing nothing with the real
+    chapters), the full structural list is used rather than an empty toc."""
+    from axial.envelope import _resolve_toc
+
+    structural_toc = ["Introduction", "Chapter One", "Conclusion"]
+    model_toc = ["Some Other Book's Chapter"]
+
+    assert _resolve_toc(structural_toc, model_toc) == structural_toc
+
+
+def test_resolve_toc_drops_model_entries_not_present_in_structural_toc():
+    """The model can only ever narrow the tree's real headings, never invent
+    one: an entry in `model_toc` with no match in `structural_toc` is simply
+    dropped, while a genuine match alongside it still survives."""
+    from axial.envelope import _resolve_toc
+
+    structural_toc = ["Introduction", "Chapter One", "Conclusion"]
+    model_toc = ["Chapter One", "An Invented Chapter Not In The Tree"]
+
+    assert _resolve_toc(structural_toc, model_toc) == ["Chapter One"]
+
+
+def test_resolve_toc_preserves_a_duplicate_structural_heading():
+    """When `structural_toc` itself carries a duplicate heading text (e.g.
+    two distinct tree nodes that happen to share the same title), the
+    intersection is built by walking `structural_toc` in order and testing
+    set membership -- so a matching duplicate is preserved as-is, not
+    deduplicated. Documenting the actual behavior: `_resolve_toc` never
+    claims to deduplicate, only to reconcile against the model's answer."""
+    from axial.envelope import _resolve_toc
+
+    structural_toc = ["Chapter One", "Chapter One", "Chapter Two"]
+    model_toc = ["Chapter One"]
+
+    assert _resolve_toc(structural_toc, model_toc) == ["Chapter One", "Chapter One"]
+
+
+def test_resolve_toc_returns_empty_when_structural_toc_is_empty():
+    """#227: an empty `structural_toc` (e.g. a tree with no `section_header`-
+    labelled top-level children) returns `[]` rather than falling back to the
+    model's answer here -- `build_envelope` itself falls back further to the
+    model's own `parsed["toc"]`, preserving `validate_envelope_fields`'s
+    non-empty guarantee downstream."""
+    from axial.envelope import _resolve_toc
+
+    assert _resolve_toc([], ["Introduction", "Conclusion"]) == []
+
+
+def test_resolve_toc_falls_back_to_full_structural_toc_when_model_toc_is_empty():
+    from axial.envelope import _resolve_toc
+
+    structural_toc = ["Introduction", "Conclusion"]
+
+    assert _resolve_toc(structural_toc, []) == structural_toc
+
+
+def test_toc_candidates_for_prompt_excludes_front_matter_region_includes_chapters():
+    """The candidate list presented to the model skips the same leading
+    front-matter REGION `_head_of_tree_lines` skips (#225's
+    `_front_matter_region_end`): a title-labelled block and a copyright/ISBN
+    marker block both anchor the region, so neither reaches the candidate
+    list, while the real chapters that follow do."""
+    from axial.envelope import _toc_candidates_for_prompt
+
+    tree = {
+        "children": [
+            {"text": "A Book About Nothing", "label": "title", "children": []},
+            {
+                "text": "Copyright © 2001 Fictional Press. ISBN 000-0-00-000000-0.",
+                "label": "text",
+                "children": [],
+            },
+            {
+                "text": "Chapter One: Origins",
+                "label": "section_header",
+                "children": [
+                    {
+                        "text": (
+                            "A long chapter body of real argumentative prose that goes "
+                            "into detail about the origins of the phenomenon under "
+                            "study, providing ample evidence for the reader to follow."
+                        ),
+                        "label": "text",
+                    }
+                ],
+            },
+            {
+                "text": "Chapter Two: Consequences",
+                "label": "section_header",
+                "children": [
+                    {
+                        "text": (
+                            "Another chapter body with plenty of substantive prose "
+                            "describing the consequences of the phenomenon in "
+                            "question, again offering more than enough material."
+                        ),
+                        "label": "text",
+                    }
+                ],
+            },
+        ]
+    }
+
+    candidates = _toc_candidates_for_prompt(tree)
+
+    assert candidates == ["Chapter One: Origins", "Chapter Two: Consequences"]
+
+
+def test_toc_candidates_for_prompt_excludes_a_section_header_labelled_front_matter_block():
+    """Reviewer-flagged interaction: a front-matter block that itself carries
+    a `section_header` label (e.g. a "Preface" heading) is exactly the shape
+    `_toc_from_tree` would otherwise pick up as a candidate chapter -- it
+    must still be excluded once it falls inside the front-matter region."""
+    from axial.envelope import _toc_candidates_for_prompt, _toc_from_tree
+
+    tree = {
+        "children": [
+            {
+                "text": "Preface",
+                "label": "section_header",
+                "children": [
+                    {
+                        "text": (
+                            "A long preface with acknowledgements and remarks about "
+                            "the making of this book, going on for a good while to "
+                            "establish genuine substantive front-matter content that "
+                            "is not itself a genuine chapter."
+                        ),
+                        "label": "text",
+                    }
+                ],
+            },
+            {
+                "text": "Chapter One: Origins",
+                "label": "section_header",
+                "children": [
+                    {
+                        "text": (
+                            "A chapter body of real argumentative prose, long enough "
+                            "on its own to end the front-matter region here."
+                        ),
+                        "label": "text",
+                    }
+                ],
+            },
+        ]
+    }
+
+    # Sanity check: unfiltered, "Preface" WOULD be picked up as a candidate
+    # (it carries the section_header label _toc_from_tree looks for) -- the
+    # region skip is what removes it.
+    assert "Preface" in _toc_from_tree(tree)
+
+    candidates = _toc_candidates_for_prompt(tree)
+
+    assert candidates == ["Chapter One: Origins"]
+
+
+def test_toc_candidates_for_prompt_includes_all_top_level_headings_when_no_front_matter():
+    """A tree with no title label, no copyright/ISBN marker, and no
+    recognized preface/acknowledgements/foreword heading gives no positive
+    evidence of any front matter at all -- `_front_matter_region_end` returns
+    0, so every top-level heading surfaces as a candidate."""
+    from axial.envelope import _toc_candidates_for_prompt
+
+    tree = {
+        "children": [
+            {"text": "Chapter One", "label": "section_header", "children": []},
+            {"text": "Chapter Two", "label": "section_header", "children": []},
+        ]
+    }
+
+    assert _toc_candidates_for_prompt(tree) == ["Chapter One", "Chapter Two"]
+
+
+def test_toc_candidates_for_prompt_skips_blank_heading_text():
+    from axial.envelope import _toc_candidates_for_prompt
+
+    tree = {
+        "children": [
+            {"text": "   ", "label": "section_header", "children": []},
+            {"text": "Chapter One", "label": "section_header", "children": []},
+        ]
+    }
+
+    assert _toc_candidates_for_prompt(tree) == ["Chapter One"]
+
+
 # --- bibliography-by-aggregate exclusion (#222, PRD §7.3) -------------------
 
 
