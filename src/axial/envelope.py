@@ -178,6 +178,30 @@ def select_envelope_nodes(tree: dict) -> list[dict]:
     return [child for child in tree.get("children", []) if _is_envelope_heading(child)]
 
 
+# The docling label(s) that mark a top-level chapter/section heading for
+# structural `toc` derivation (issue #227). Chosen against
+# tests/fixtures/envelope/structural_toc_tree.json's own three real
+# chapters, each labelled `section_header`.
+_TOC_HEADING_LABELS = ("section_header",)
+
+
+def _toc_from_tree(tree: dict) -> list[str]:
+    """The source's own table of contents, read directly off the
+    extraction tree: the `text` of every top-level child labelled
+    `_TOC_HEADING_LABELS`, in tree order (PRD §7.3, §5 stage 3 -- `toc` is a
+    real property of the source's own structure, not an LLM guess, #227).
+    Blank/whitespace-only heading text is skipped. Independent of whatever
+    the front-matter-region skip (#225) does to the envelope PROMPT's own
+    evidence -- this reads the tree directly, so a swept-from-the-prompt TOC
+    page can never cost the source its real chapter list."""
+    return [
+        text
+        for child in tree.get("children", [])
+        if (child.get("label") or "").strip().lower() in _TOC_HEADING_LABELS
+        and (text := (child.get("text") or "").strip())
+    ]
+
+
 # --- Bibliography-by-aggregate exclusion (PRD §7.3, #222) -------------------
 #
 # docling sometimes mis-attaches a source's bibliography under an ordinary
@@ -806,16 +830,25 @@ def _fallback_title(path: Path) -> str:
     return path.stem.replace("_", " ").replace("-", " ").strip().title()
 
 
-def build_envelope(path: Path, source_id: str, parsed: dict[str, Any]) -> dict[str, Any]:
+def build_envelope(
+    path: Path, source_id: str, parsed: dict[str, Any], structural_toc: list[str] | None = None
+) -> dict[str, Any]:
     """Assemble the locked envelope shape (PRD §7.3):
-    {source_id, author, title, date, thesis, toc, scope, stated_argument}."""
+    {source_id, author, title, date, thesis, toc, scope, stated_argument}.
+
+    `toc` prefers `structural_toc` (`_toc_from_tree`'s tree-derived chapter
+    list) whenever it is non-empty, falling back to the model's own
+    `parsed["toc"]` only when the tree yields no identifiable top-level
+    heading structure -- preserving `validate_envelope_fields`'s "toc must
+    be a non-empty list" guarantee, since `parsed["toc"]` is already
+    validated non-empty by the time it reaches here (#227)."""
     return {
         "source_id": source_id,
         "author": parsed.get("author"),
         "title": parsed.get("title") or _fallback_title(path),
         "date": parsed.get("date"),
         "thesis": parsed["thesis"],
-        "toc": parsed["toc"],
+        "toc": structural_toc if structural_toc else parsed["toc"],
         "scope": parsed["scope"],
         "stated_argument": parsed["stated_argument"],
     }
@@ -875,6 +908,6 @@ def run_envelope(
     parsed = parse_response(raw_response)
     validate_envelope_fields(parsed)
 
-    envelope = build_envelope(path, source_id, parsed)
+    envelope = build_envelope(path, source_id, parsed, structural_toc=_toc_from_tree(tree))
     write_envelope(envelope, out_path)
     return envelope
