@@ -1,0 +1,13 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0 -- D:\axial\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 3 items
+
+tests/ingestion/test_envelope_structural_toc.py::test_structural_toc_fixture_matches_no_envelope_heading PASSED [ 33%]
+tests/ingestion/test_envelope_structural_toc.py::test_structural_toc_fixture_toc_page_is_skipped_from_the_prompt PASSED [ 66%]
+tests/ingestion/test_envelope_structural_toc.py::test_envelope_toc_reflects_real_chapters_not_the_stubbed_model_toc PASSED [100%]
+
+============================== 3 passed in 2.31s ==============================
