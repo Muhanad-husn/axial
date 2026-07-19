@@ -103,6 +103,32 @@ exercises (issue #216: today's head-of-tree walk collects every node's text
 regardless of `label`, so the APPARATUS marker leaks into the prompt
 alongside the genuine PROSE marker).
 
+Companion fixture -- llm_toc_selection_paper.pdf / llm_toc_selection_tree.json
+(issue #231, LLM-selected toc subset)
+-----------------------------------------------------------------------
+Another HAND-AUTHORED tree (same rationale as router_prose_filter_paper_tree.json
+and structural_toc_tree.json above): a front-matter region (an untagged
+title-page block, an author line, a copyright block, publisher boilerplate)
+followed by ELEVEN top-level `section_header` siblings that mimic the real
+FLATTENED shape #231 targets -- real trees carry 70-260 such siblings mixing
+genuine chapters, subsection-style headings, OCR-garble fragments, and body
+sentences mislabelled as headings, all flattened to the same nesting depth.
+Of the eleven: four are genuine chapter titles ("Chapter One: The Onset of
+Contention" ... "Chapter Four: Comparative Synthesis"), four are
+subsection-style headings ("1.1 Grievance Recognition and Framing", etc.),
+one is an OCR-garble fragment ("lalrodac:lioo"), one is a body sentence
+mislabelled as a heading ("A successful program does all of them at once."),
+and one is an appendix heading ("Appendix A: Supplementary Tables") -- a
+real but non-chapter top-level heading. None of the eleven matches
+introduction/abstract/conclusion (`select_envelope_nodes` returns `[]`), so
+`compose_prompt` widens to the head-of-tree slice, which -- once the small
+leading front-matter region is skipped -- carries every one of the eleven
+headings well within the slice's own budget. tests/ingestion/
+test_envelope_llm_toc_selection.py pins that the envelope's `toc` field must
+reflect the MODEL's SELECTED subset of these headings (the real chapters),
+never the raw structural dump of all eleven -- see that test's module
+docstring for the full rationale.
+
 Companion fixture -- structural_toc_paper.pdf / structural_toc_tree.json
 (issue #227, structural toc derivation)
 -----------------------------------------------------------------------
@@ -426,11 +452,148 @@ def make_structural_toc_paper_pdf(path: Path) -> None:
     doc.build(story)
 
 
+def make_llm_toc_selection_paper_pdf(path: Path) -> None:
+    """A born-digital PDF whose text loosely mirrors the HAND-AUTHORED
+    llm_toc_selection_tree.json (issue #231; see
+    tests/ingestion/test_envelope_llm_toc_selection.py). Like
+    router_prose_filter_paper.pdf and structural_toc_paper.pdf, this PDF is
+    never actually extracted by docling in the test suite -- the
+    hand-authored tree is pre-placed at data/trees/<source_id>.json instead
+    -- so this function exists only to give the fixture a real, valid,
+    text-bearing PDF for intake's text-layer probe to accept and for
+    compute_source_id to hash."""
+    doc = SimpleDocTemplate(
+        str(path),
+        pagesize=letter,
+        leftMargin=1 * inch,
+        rightMargin=1 * inch,
+        topMargin=1 * inch,
+        bottomMargin=1 * inch,
+    )
+
+    story = []
+
+    story.append(Paragraph("The Grammar of Escalation", styles["Title"]))
+    story.append(
+        Paragraph(
+            "A. MERIDIAN THORNE Cross-Basin Institute for Comparative Governance", styles["Normal"]
+        )
+    )
+    story.append(Paragraph("Copyright (c) 1998 by Cross-Basin Institute Press.", styles["Normal"]))
+    story.append(
+        Paragraph(
+            "All rights reserved. No part of this book may be reproduced or "
+            "transmitted in any form without permission.",
+            styles["Normal"],
+        )
+    )
+    story.append(Spacer(1, 0.25 * inch))
+
+    story.append(Paragraph("Chapter One: The Onset of Contention", styles["Heading1"]))
+    story.append(
+        Paragraph(
+            "Contentious episodes begin not with the loudest grievance but "
+            "with the first instance in which previously isolated complaints "
+            "are recognized by their bearers as instances of a shared "
+            "condition.",
+            styles["BodyText"],
+        )
+    )
+    story.append(Spacer(1, 0.15 * inch))
+
+    story.append(Paragraph("1.1 Grievance Recognition and Framing", styles["Heading2"]))
+    story.append(
+        Paragraph(
+            "A brief methodological note on how grievances are coded for this study.",
+            styles["BodyText"],
+        )
+    )
+    story.append(Spacer(1, 0.15 * inch))
+
+    story.append(Paragraph("lalrodac:lioo", styles["Heading2"]))
+    story.append(Spacer(1, 0.15 * inch))
+
+    story.append(Paragraph("Chapter Two: Escalation Dynamics", styles["Heading1"]))
+    story.append(
+        Paragraph(
+            "Once a shared grievance is recognized, escalation follows a "
+            "predictable sequence from informal gatherings to semi-formal "
+            "assemblies.",
+            styles["BodyText"],
+        )
+    )
+    story.append(Spacer(1, 0.15 * inch))
+
+    story.append(Paragraph("2.1 Informal Gatherings to Semi-Formal Assemblies", styles["Heading2"]))
+    story.append(
+        Paragraph(
+            "A short note distinguishing informal gatherings from semi-formal "
+            "assemblies for coding purposes.",
+            styles["BodyText"],
+        )
+    )
+    story.append(Spacer(1, 0.15 * inch))
+
+    story.append(Paragraph("A successful program does all of them at once.", styles["Heading2"]))
+    story.append(Spacer(1, 0.15 * inch))
+
+    story.append(Paragraph("Chapter Three: Settlement and Aftermath", styles["Heading1"]))
+    story.append(
+        Paragraph(
+            "Every episode surveyed here eventually settles, whether through "
+            "negotiated concession, exhaustion, or suppression.",
+            styles["BodyText"],
+        )
+    )
+    story.append(Spacer(1, 0.15 * inch))
+
+    story.append(Paragraph("3.1 Negotiated Concession Pathways", styles["Heading2"]))
+    story.append(
+        Paragraph(
+            "A brief typology of concession pathways observed across the surveyed episodes.",
+            styles["BodyText"],
+        )
+    )
+    story.append(Spacer(1, 0.15 * inch))
+
+    story.append(Paragraph("Chapter Four: Comparative Synthesis", styles["Heading1"]))
+    story.append(
+        Paragraph(
+            "Drawing the three preceding chapters together, this closing "
+            "chapter compares the onset, escalation, and settlement patterns "
+            "across every episode surveyed.",
+            styles["BodyText"],
+        )
+    )
+    story.append(Spacer(1, 0.15 * inch))
+
+    story.append(Paragraph("4.1 Cross-Case Convergence Patterns", styles["Heading2"]))
+    story.append(
+        Paragraph(
+            "A short note on the convergence measure used to compare cases in this section.",
+            styles["BodyText"],
+        )
+    )
+    story.append(Spacer(1, 0.15 * inch))
+
+    story.append(Paragraph("Appendix A: Supplementary Tables", styles["Heading2"]))
+    story.append(
+        Paragraph(
+            "Supplementary tabulations referenced in the preceding chapters "
+            "are collected here for reference.",
+            styles["BodyText"],
+        )
+    )
+
+    doc.build(story)
+
+
 def main() -> None:
     make_thesis_paper_pdf(FIXTURES_DIR / "thesis_paper.pdf")
     make_topic_titled_paper_pdf(FIXTURES_DIR / "topic_titled_paper.pdf")
     make_router_prose_filter_paper_pdf(FIXTURES_DIR / "router_prose_filter_paper.pdf")
     make_structural_toc_paper_pdf(FIXTURES_DIR / "structural_toc_paper.pdf")
+    make_llm_toc_selection_paper_pdf(FIXTURES_DIR / "llm_toc_selection_paper.pdf")
     print("Generated fixtures in", FIXTURES_DIR)
 
 
