@@ -5,7 +5,7 @@
 - **GitHub issue:** #239
 - **Branch:** feat/drive-connector/03-english-only-gate
 - **Project directory:** `.`
-- **Status:** ☐ todo
+- **Status:** ◐ PR #244 (awaiting founder approval)
 - **Walking skeleton?** no
 - **Depends on:** slice 01 (#237); independent of slice 02
 
