@@ -113,8 +113,10 @@ A brief is the phase's input, supplied as a versioned file. Its shape:
 `{brief_id, case, request, lens?}`.
 - `case` — the anchor: a free-text polity or set of polities under the same faithful-naming rule as `polity`/`polities_touched` (PRODUCT.md Appendix C). It anchors retrieval; it does not fence it (Principle §3).
 - `request` — the analytical question, free text.
-- `lens` — optional named lens from `config/lenses/`; when absent the analysis stage selects one and records which, so the choice is always disclosed.
+- `lens` — optional named lens from `config/lenses/`; when absent the analysis stage selects one and records which, so the choice is always disclosed. The key is optional; its value is not. A present `lens` must be a non-empty string, and a blank or whitespace-only value is rejected exactly as a blank `case` or `request` is. Omitting the key is the only way to ask the stage to choose.
 - `brief_id` — a stable, deterministic id over the brief's content (no randomness, no timestamps), so re-running the same brief is traceable.
+
+`case` and `request` are required and must be non-empty after whitespace stripping. A brief that violates any of these field rules is rejected at intake, naming the offending field.
 
 ### 7.2 The interrogation result (Principle III) **[FIRM]**
 
