@@ -111,6 +111,33 @@ def test_load_brief_non_string_lens_raises_named(tmp_path: Path):
     assert "lens" in str(excinfo.value)
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        'case: "x"\nrequest: "y"\nlens: ""\n',
+        'case: "x"\nrequest: "y"\nlens: "   "\n',
+    ],
+)
+def test_load_brief_rejects_blank_or_whitespace_only_lens(tmp_path: Path, body: str):
+    """issue #275: §7.1 says the `lens` key is optional but its value is
+    not -- a present-but-blank or whitespace-only `lens` must be rejected
+    exactly like a blank `case` or `request`, not silently coerced to
+    `None` ("the stage chooses")."""
+    path = _write_brief(tmp_path, "blank_lens.yaml", body)
+    with pytest.raises(EmptyFieldError) as excinfo:
+        load_brief(path)
+    assert "lens" in str(excinfo.value)
+
+
+def test_load_brief_omitted_lens_still_yields_none(tmp_path: Path):
+    """issue #275 guard: omitting the `lens` key entirely is the only way
+    to ask the stage to choose (§7.1), and must keep working after the
+    blank/whitespace-only rejection above."""
+    path = _write_brief(tmp_path, "no_lens.yaml", 'case: "x"\nrequest: "y"\n')
+    brief = load_brief(path)
+    assert brief.lens is None
+
+
 def test_load_brief_rejects_unknown_top_level_keys(tmp_path: Path):
     path = _write_brief(
         tmp_path,

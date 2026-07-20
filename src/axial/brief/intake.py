@@ -160,13 +160,22 @@ def _require_nonempty_string(path: Path, raw: dict[str, Any], field_name: str) -
 
 
 def _validate_lens(path: Path, raw: dict[str, Any]) -> str | None:
+    """Validate an optional `lens` (§7.1): the key is optional, but its
+    value is not. Omitting the key -- or setting it explicitly to `null` --
+    is the only way to ask the stage to choose, and yields `None`. A
+    *present* `lens` must be a non-empty string after whitespace stripping;
+    a blank or whitespace-only value is rejected exactly like a blank
+    `case` or `request` (issue #275), not silently coerced to "the stage
+    chooses"."""
     if "lens" not in raw or raw["lens"] is None:
         return None
     value = raw["lens"]
     if not isinstance(value, str):
         raise NonStringFieldError(path, "lens", value)
     stripped = value.strip()
-    return stripped or None
+    if not stripped:
+        raise EmptyFieldError(path, "lens")
+    return stripped
 
 
 def _validate_brief_dict(path: Path, raw: Any) -> BriefContent:
