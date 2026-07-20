@@ -518,6 +518,8 @@ The gold set is the measurement instrument, so its construction is specified, no
 - Intake correctness: 100% of scanned/no-text-layer test files rejected, zero silent pass-through.
 - Envelope reuse: tagging reads the stored envelope (verified: no recompute).
 
+*Simulated labels (DEC-29) are a **provisional development signal only.** Eval may be run against an AI-simulated gold sheet during the academic pause to exercise the harness, but such a run never counts as the acceptance measurement — the real Academic-labeled gold set remains the instrument, and every provisional number is re-derived on real labels before promotion.*
+
 **Lagging (post-v0):** reduction in re-ingestion churn on the full corpus; stability of the vocabulary across a second batch.
 
 ---
@@ -531,7 +533,7 @@ The config/data seam is the pause point. Because the tagger reads the codebook f
 3. **Tagging + artifact routing + cross-reference.**
 4. **Gold-set generation** — run 2–3 on ~20–28 sampled sources; emit the label sheet. *Produces the Academic deliverable.*
    - **4b. Delivery bundle** — `axial gold deliver` packages the emitted sheet into a dated, offline handoff folder (§7.6): the sheet copy, `README-for-academic.md`, and `manifest.json`. This is the concrete bridge across the pause seam — step 4 produces the sheet, delivery hands it off offline, step 5 is the Academic filling it.
-5. **⏸ ACADEMIC LABELING** — Academic fills the sheet (hybrid, §9). *Pause here, or continue building 6–7 on placeholder labels.*
+5. **⏸ ACADEMIC LABELING** — Academic fills the sheet (hybrid, §9). *Pause here, continue building 6–7 on placeholder labels, or continue on **simulated** interim academic labels — an isolated, clearly-marked development path (`sim` namespaces only, torn down and re-run on real input before any promoted result; see DEC-29 and `docs/sim-academic/`).*
 6. **Eval harness** — score, decide contested/candidate tags.
 7. **Schema revision + second batch** — revise the schema from eval findings, re-run, compare. Only then consider the full ~120-source corpus (out of scope for v0).
 

@@ -364,6 +364,8 @@ The build must not block on the Academic, exactly as Phase A did not (PRODUCT.md
 
 **Honest dependency statement.** The rung-3 gates cannot produce *trusted numbers* until three things exist together: the full ~30-source tagged vault (Phase-A operational rollout, in flight), the pinned corpus manifest (P0-10), and the academic-authored hard cases. **Building and dry-running the harnesses does not wait on any of them** — the mechanical validators and the process-side oracles are programmatic (eval charter, sequencing). The engine and its gates are built now; the trusted answer-quality number lands when the referee data lands.
 
+**Simulated interim referee data (DEC-29).** During the academic pause, an isolated development path may stand in AI-simulated hard cases under `evals/cases/sim/` so the rung-3 harnesses have referee data to dry-run against. This pins a **provisional** hard-case shape (`case_id`, `question`, `answer_kind` ∈ {`expected_answer`, `rubric`}, `required_citation_source_ids`, `rubric`, `instant_dismissal_criteria`; ids only) — a working answer to the adjudication-format Open Question below, explicitly **non-binding** until real academic cases land. Simulated cases are marked, never mixed with `evals/cases/`, produce no trusted number, and are torn down and re-run on real input before promotion.
+
 ---
 
 ## 10. Success metrics & eval gates (rung 3)
@@ -418,6 +420,6 @@ The build proceeds bottom-up, so each layer stands on a tested one beneath it. T
 
 Genuinely unresolved; everything else in this document is settled.
 
-- **[eval]** Judge-model protocol details — model family, the judge-vs-academic agreement-sampling protocol, and the exact adjudication format (expected-answer-plus-citations vs. rubric vs. a keyed mix). *Deferred to eval #1's open threads; not blocking the build.*
+- **[eval]** Judge-model protocol details — model family, the judge-vs-academic agreement-sampling protocol, and the exact adjudication format (expected-answer-plus-citations vs. rubric vs. a keyed mix). *Deferred to eval #1's open threads; not blocking the build. The simulated-academic path (§9, DEC-29) pins a **provisional** keyed-mix shape (`answer_kind` per case) to dry-run against; it is a working hypothesis, not the resolution.*
 - **[engineering]** Trajectory-log storage format beyond the in-record log — whether eval #3 needs a richer standalone store for cross-run replay (§7.6, P1-1).
 - **[engineering]** Recall measurement and the embedding-index reopening condition — how recall is measured on real briefs, and the concrete signal that reopens the deferred embedding index (§3 non-goal 4). *An embedding index is built only on demonstrated recall failure, never speculatively.*
