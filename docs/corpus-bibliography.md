@@ -10,8 +10,7 @@ from a file are marked `[not recovered]` rather than guessed. Where a field was
 filled from outside the file, the entry says so explicitly.
 
 Not every item is a standalone scholarly monograph. Edited collections, a
-journal article, a single book chapter, and a master's research paper are
-flagged in the notes.
+journal article, and a master's research paper are flagged in the notes.
 
 ---
 
@@ -120,11 +119,10 @@ edition 2012.
 `mann-sources-of-social-power-v1-5f90ead66c93`
 
 Mann, Michael. *The Sources of Social Power. Volume 2: The Rise of Classes and
-Nation-States, 1760–1914*. Cambridge: Cambridge University Press, 1993. New
-edition 2012.
-*The corpus file is the 2012 new edition, and it is incomplete — 85 pages ending
-mid-chapter 3, not the full volume. See the note on partial files below.*
-`mann-sources-of-social-power-v2-1c31465ab5e1`
+Nation-States, 1760–1914*. Cambridge: Cambridge University Press, 1993.
+*The corpus file is the 1993 edition (transferred to digital printing 2006). The
+complete volume is held.*
+`mann-sources-of-social-power-v2-ec759675dcbd`
 
 Mann, Michael. *The Sources of Social Power. Volume 3: Global Empires and
 Revolution, 1890–1945*. Cambridge: Cambridge University Press, 2012.
@@ -141,17 +139,9 @@ London: Routledge, 2009.
 Tilly, Charles. *From Mobilization to Revolution*. New York: Random House, 1978.
 `tilly-from-mobilization-to-revolution-f908c910464c`
 
-Üngör, Uğur Ümit. *Paramilitarism*. [Publisher not recovered from file.] [Year
-not recovered from file.]
-*Not a monograph as held — the corpus file is chapter 1 only, the introduction
-("Old Wine in New Bottles?"), 20 pages. The file has no title page or copyright
-page. The book title comes from the running head; the author is inferred from a
-footnote in which the writer self-cites* Shabbiha: Assad's Militias and Mass
-Violence in Syria *as "my book", together with the corpus filename. Neither
-publisher nor year appears anywhere in the file. The widely circulated edition
-of this work is Oxford University Press, 2020, but nothing in the file confirms
-that, so it is recorded here as unrecovered.*
-`ugur-paramilitarism-eb1cd79ca198`
+Üngör, Uğur Ümit. *Paramilitarism: Mass Violence in the Shadow of the State*.
+Oxford: Oxford University Press, 2020.
+`ugur-paramilitarism-ae5701dcc706`
 
 Vignal, Leïla. *War-Torn: The Unmaking of Syria, 2011–2021*. London: Hurst &
 Company, 2021.
@@ -175,24 +165,17 @@ Statebuilding*. Oxford: Oxford University Press, 2007.
 
 ## Notes on the corpus
 
-**Composition.** 27 of the 30 items are books; 26 of those are held complete.
-Of the 27, six are edited collections rather than single-author monographs
-(Beshara; Hall and Schroeder; Heydemann ×2; Kao and Lust; Malešević and
-Haugaard), leaving 21 single-author monographs. Four of the 27 are volumes of a
-single work: Mann, *Sources of Social Power* volumes 1–4, of which volume 2 is
-held only in part.
+**Composition.** 28 of the 30 items are books, all held complete. Of the 28,
+six are edited collections rather than single-author monographs (Beshara; Hall
+and Schroeder; Heydemann ×2; Kao and Lust; Malešević and Haugaard), leaving 22
+single-author monographs. Four of the 28 are volumes of a single work: Mann,
+*Sources of Social Power* volumes 1–4.
 
-The remaining three items are not books at all:
+The remaining two items are not books at all:
 
 - Malešević, "Do Civil Wars Make or Break States?" — a journal article in
   *Theory and Society*.
-- Üngör, *Paramilitarism* — one chapter, not the book.
 - Kandiah — an unpublished master's research paper.
-
-**Partial files.** The Mann volume 2 file contains front matter and roughly the
-first three chapters, ending mid-sentence at printed page 63. The Üngör file
-contains only the introductory chapter. Both are held in the corpus as if they
-were whole works.
 
 **Unreliable embedded metadata.** PDF metadata was cross-checked against title
 pages, and in one case contradicted it outright: the Heydemann *War,
