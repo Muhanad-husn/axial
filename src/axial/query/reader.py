@@ -10,7 +10,10 @@ back. This module is the read side, built from scratch (issue #249, slice
 
 LLM-free and embedding-free by construction (§7.5's "no model and no
 embedding model"): every path here is pure file I/O, YAML parsing, and
-in-memory filtering. Nothing here imports or constructs a provider client.
+in-memory filtering. Nothing here imports OR constructs a provider client --
+this module imports `axial.paths` for vault-dir resolution, never
+`axial.vault` (whose write-side stack pulls in `axial.llm` and the whole
+LLM-backed pipeline, issue #249 F1).
 
 Read-only by construction (§3 non-goal 5): no function in this module
 writes to the vault.
@@ -24,15 +27,11 @@ from typing import Any
 
 import yaml
 
-from axial.vault import _default_vault_dir
+from axial.paths import default_vault_dir
 
-# The §7.5 fixed axis filter set for `query_by_tag`: the frontmatter axes a
-# conjunction of filters may name. `polity` filters on `empirical_scope`'s
-# nested `polity` sub-field, distinct from the `empirical_scope` filter
-# itself (which matches on `value`) -- both are listed here, neither is a
-# top-level frontmatter key of its own. An unknown key is rejected rather
-# than silently matching everything (a typo'd axis must not quietly widen a
-# query).
+# The §7.5 fixed axis filter set for `query_by_tag`. `polity` matches
+# `empirical_scope`'s nested `polity` sub-field, distinct from the
+# `empirical_scope` filter itself (which matches on `value`).
 KNOWN_FILTER_KEYS = frozenset(
     {"field", "claim_type", "theory_school", "empirical_scope", "polity", "role_in_argument"}
 )
@@ -43,9 +42,8 @@ class QueryError(Exception):
 
 
 class MalformedNoteError(QueryError):
-    """Raised when a note's frontmatter is absent, unterminated, not valid
-    YAML, not a mapping, or missing a required field -- always naming the
-    offending file, never returning a partially-parsed result."""
+    """A note's frontmatter is absent, unterminated, not valid YAML, not a
+    mapping, or missing a required field."""
 
     def __init__(self, path: Path, reason: str):
         self.path = path
@@ -54,9 +52,7 @@ class MalformedNoteError(QueryError):
 
 
 class ChunkNotFoundError(QueryError):
-    """Raised when `get_chunk` is asked for a chunk_id with no note under
-    `<vault_dir>/prose/` -- never returns `None` into a caller that will not
-    check it."""
+    """No note exists for a `get_chunk` chunk_id."""
 
     def __init__(self, chunk_id: str, path: Path):
         self.chunk_id = chunk_id
@@ -65,8 +61,7 @@ class ChunkNotFoundError(QueryError):
 
 
 class ArtifactNotFoundError(QueryError):
-    """Raised when `get_artifact` is asked for an artifact_id with no note
-    under `<vault_dir>/artifacts/` -- never returns `None`."""
+    """No note exists for a `get_artifact` artifact_id."""
 
     def __init__(self, artifact_id: str, path: Path):
         self.artifact_id = artifact_id
@@ -77,7 +72,7 @@ class ArtifactNotFoundError(QueryError):
 
 
 class UnknownFilterError(QueryError):
-    """Raised when `query_by_tag` is called with a filter key outside
+    """`query_by_tag` was called with a filter key outside
     KNOWN_FILTER_KEYS -- a typo'd axis must not quietly widen a query into
     matching everything."""
 
@@ -87,6 +82,16 @@ class UnknownFilterError(QueryError):
             f"unknown query_by_tag filter key(s) {sorted(unknown_keys)!r}; "
             f"expected only {sorted(KNOWN_FILTER_KEYS)!r}"
         )
+
+
+class MissingVaultDirError(QueryError):
+    """`query_by_tag`'s `<vault_dir>/prose/` does not exist -- a missing or
+    typo'd vault_dir is a caller bug, not an empty corpus, so it raises
+    rather than silently returning `[]`."""
+
+    def __init__(self, prose_dir: Path):
+        self.prose_dir = prose_dir
+        super().__init__(f"vault prose directory does not exist: {prose_dir}")
 
 
 @dataclass(frozen=True)
@@ -206,7 +211,7 @@ def get_chunk(chunk_id: str, vault_dir: Path | None = None) -> ChunkNote:
     """Fetch one prose note by id (§7.5). Raises `ChunkNotFoundError`,
     naming `chunk_id`, when no note exists -- never returns `None`."""
     if vault_dir is None:
-        vault_dir = _default_vault_dir()
+        vault_dir = default_vault_dir()
     path = Path(vault_dir) / "prose" / f"{chunk_id}.md"
     if not path.is_file():
         raise ChunkNotFoundError(chunk_id, path)
@@ -217,7 +222,7 @@ def get_artifact(artifact_id: str, vault_dir: Path | None = None) -> ArtifactNot
     """Fetch one artifact note by id (§7.5). Raises `ArtifactNotFoundError`,
     naming `artifact_id`, when no note exists -- never returns `None`."""
     if vault_dir is None:
-        vault_dir = _default_vault_dir()
+        vault_dir = default_vault_dir()
     path = Path(vault_dir) / "artifacts" / f"{artifact_id}.md"
     if not path.is_file():
         raise ArtifactNotFoundError(artifact_id, path)
@@ -254,10 +259,6 @@ def _match_empirical_scope(frontmatter: dict[str, Any], filter_value: str) -> bo
 
 
 def _match_polity(frontmatter: dict[str, Any], filter_value: str) -> bool:
-    # A note whose empirical_scope.polity is null (a cross-case/comparative
-    # note) never matches a polity filter -- `None == filter_value` is
-    # already False for any non-null filter_value, so no extra guard is
-    # needed here.
     scope = frontmatter.get("empirical_scope")
     return isinstance(scope, dict) and scope.get("polity") == filter_value
 
@@ -277,13 +278,21 @@ _FILTER_MATCHERS = {
 }
 
 
-def query_by_tag(vault_dir: Path | None = None, **filters: str) -> list[str]:
+def query_by_tag(*, vault_dir: Path | None = None, **filters: str) -> list[str]:
     """Every chunk_id whose prose note satisfies the **conjunction** of the
     given tag-axis filters (§7.5): `field`, `claim_type` (incl. subtags),
     `empirical_scope` (incl. `polity`), `role_in_argument`, `theory_school`.
     A filter set no note satisfies returns `[]`, not an error; an unknown
     filter key raises `UnknownFilterError` instead of silently matching
-    everything.
+    everything. `vault_dir` is keyword-only so a filter value can never be
+    mistaken for it positionally.
+
+    A note missing the axis a given filter targets is treated as not
+    matching that filter -- excluded, not an error -- so one note with a
+    thin frontmatter does not abort an otherwise-good scan. `chunk_id`
+    itself is not optional in this sense: every note under `prose/` must
+    carry one to be scanned at all (`MalformedNoteError` otherwise), so a
+    result id always resolves back through `get_chunk`.
 
     Results are sorted by `chunk_id` (§7.5's determinism contract) --
     directory iteration order is filesystem/OS-dependent and MUST NOT leak
@@ -293,16 +302,18 @@ def query_by_tag(vault_dir: Path | None = None, **filters: str) -> list[str]:
         raise UnknownFilterError(unknown_keys)
 
     if vault_dir is None:
-        vault_dir = _default_vault_dir()
+        vault_dir = default_vault_dir()
     prose_dir = Path(vault_dir) / "prose"
+    if not prose_dir.is_dir():
+        raise MissingVaultDirError(prose_dir)
 
     matches: list[str] = []
-    if prose_dir.is_dir():
-        for path in prose_dir.iterdir():
-            if path.suffix != ".md":
-                continue
-            frontmatter, _body = _read_frontmatter(path)
-            if all(_FILTER_MATCHERS[name](frontmatter, value) for name, value in filters.items()):
-                matches.append(frontmatter.get("chunk_id", path.stem))
+    for path in prose_dir.iterdir():
+        if path.suffix != ".md":
+            continue
+        frontmatter, _body = _read_frontmatter(path)
+        chunk_id = _require(frontmatter, path, "chunk_id")
+        if all(_FILTER_MATCHERS[name](frontmatter, value) for name, value in filters.items()):
+            matches.append(chunk_id)
 
     return sorted(matches)

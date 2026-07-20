@@ -11,6 +11,7 @@ from axial.query import (
     ArtifactNotFoundError,
     ChunkNotFoundError,
     MalformedNoteError,
+    MissingVaultDirError,
     UnknownFilterError,
     get_artifact,
     get_chunk,
@@ -321,6 +322,82 @@ def test_results_are_sorted_by_chunk_id_despite_scrambled_write_order(tmp_path):
     result = query_by_tag(role_in_argument="role:claim", vault_dir=tmp_path)
 
     assert result == ["c1", "c2", "c3", "c4"]
+
+
+def test_query_by_tag_vault_dir_is_keyword_only():
+    """A filter value passed positionally must never be mistaken for
+    vault_dir (issue #249 F4): query_by_tag takes no positional parameters
+    at all, so a positional call raises TypeError immediately instead of
+    silently resolving `vault_dir` to a filter string and returning `[]`."""
+    with pytest.raises(TypeError):
+        query_by_tag("field:political-sociology")
+
+
+def test_query_by_tag_raises_when_the_vault_dir_does_not_exist(tmp_path):
+    """A missing or typo'd `vault_dir` is a caller bug, not an empty corpus
+    (issue #249 F3) -- every other bad input in this module raises, and a
+    silently empty result here would hide that mistake as "no matches"."""
+    missing_vault_dir = tmp_path / "no-such-vault"
+
+    with pytest.raises(MissingVaultDirError) as exc_info:
+        query_by_tag(role_in_argument="role:claim", vault_dir=missing_vault_dir)
+    assert str(missing_vault_dir / "prose") in str(exc_info.value)
+
+
+def test_query_by_tag_raises_on_a_note_missing_chunk_id(tmp_path):
+    """`query_by_tag` must never hand back a filename-derived id for a note
+    `get_chunk` would itself refuse (issue #249 F2) -- a note with no
+    `chunk_id` key at all aborts the scan with the same `MalformedNoteError`
+    `get_chunk` would raise, naming the offending file, rather than being
+    silently included (or excluded) under a guessed id."""
+    prose_dir = tmp_path / "prose"
+    prose_dir.mkdir(parents=True)
+    frontmatter = {"section": "A Section", "chunk_text": "text.", "role_in_argument": "role:claim"}
+    text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
+    (prose_dir / "no_id.md").write_text(text, encoding="utf-8")
+
+    with pytest.raises(MalformedNoteError) as exc_info:
+        query_by_tag(role_in_argument="role:claim", vault_dir=tmp_path)
+    assert "no_id.md" in str(exc_info.value)
+
+
+def test_query_by_tag_excludes_a_note_missing_the_filtered_axis_rather_than_raising(tmp_path):
+    """Stated decision (issue #249 F5): a note missing the specific axis a
+    filter targets is excluded from the match set, not an error -- so one
+    thin note does not abort an otherwise-good full-vault scan. This is
+    distinct from a missing `chunk_id` (F2 above), which always raises:
+    `chunk_id` is the note's identity, not a filterable tag axis.
+    `get_chunk` on that same note still raises, since it promises the
+    note's full field surface (§7.5)."""
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "has_field", field={"primary": "field:x", "secondary": []})
+
+    frontmatter = {
+        "chunk_id": "missing_field",
+        "section": "A Section",
+        "chunk_text": "missing_field text.",
+        "source_meta": {"author": "A", "title": "T", "date": 2020, "thesis": "X", "scope": "Y"},
+        "schema_version": "0.1",
+        "role_in_argument": "role:claim",
+        # No `field` key at all.
+        "claim_type": {"primary": "claim:causal", "secondary": None, "subtags": []},
+        "theory_school": {
+            "primary": "school:synthetic-institutionalist",
+            "secondary": None,
+            "status": "candidate",
+        },
+        "empirical_scope": {"value": "scope:country-case", "polity": "Freedonia"},
+        "polities_touched": ["Freedonia"],
+        "artifact_refs": [],
+    }
+    text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
+    (prose_dir / "missing_field.md").write_text(text, encoding="utf-8")
+
+    result = query_by_tag(field="field:x", vault_dir=tmp_path)
+
+    assert result == ["has_field"]
+    with pytest.raises(MalformedNoteError):
+        get_chunk("missing_field", vault_dir=tmp_path)
 
 
 # -- get_chunk / get_artifact: not-found --------------------------------------
