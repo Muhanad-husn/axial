@@ -20,6 +20,7 @@ from axial.drive import DEFAULT_SECRETS_PATH as DRIVE_SECRETS_PATH
 from axial.drive import DriveSecretsError, _load_drive_secrets, run_drive_ingest
 from axial.envelope import EnvelopeError, run_envelope
 from axial.eval import EvalError, run_eval
+from axial.eval.corpus_pin import CorpusPinError, write_pin
 from axial.extract import ExtractError, extract
 from axial.gold import (
     DEFAULT_MAX_SIZE,
@@ -298,6 +299,23 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     brief_show_parser.add_argument("brief_path", help="path to a versioned brief YAML file")
+
+    pin_parser = subparsers.add_parser(
+        "pin", help="corpus-pin manifest operations (specs/PHASE-B.md §7.12, §8 P0-10)"
+    )
+    pin_subparsers = pin_parser.add_subparsers(dest="pin_command")
+
+    pin_write_parser = pin_subparsers.add_parser(
+        "write",
+        help=(
+            "compute and write a corpus-pin manifest (source list + content "
+            "hashes, ingest-code SHA, vault snapshot hash) to "
+            "evals/corpus_pin/<name>.json (LLM-free)"
+        ),
+    )
+    pin_write_parser.add_argument(
+        "name", help="pin name, e.g. 'baseline' -> evals/corpus_pin/baseline.json"
+    )
 
     return parser
 
@@ -595,6 +613,17 @@ def _brief_show(brief_path: str) -> int:
     return 0
 
 
+def _pin_write(name: str) -> int:
+    try:
+        path = write_pin(name)
+    except CorpusPinError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(str(path)))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -665,6 +694,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "brief" and args.brief_command == "show":
         return _brief_show(args.brief_path)
+
+    if args.command == "pin" and args.pin_command == "write":
+        return _pin_write(args.name)
 
     parser.print_help()
     return 0

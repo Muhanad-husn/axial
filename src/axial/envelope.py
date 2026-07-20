@@ -194,6 +194,17 @@ class EnvelopeValidationError(EnvelopeError):
     """Raised when a parsed model response is missing required envelope fields."""
 
 
+def content_digest(path: Path) -> str:
+    """Full sha256 hex digest of `path`'s bytes -- the one hashing
+    primitive `compute_source_id` below truncates for readability, and the
+    one `axial.eval.corpus_pin` reuses in full for its `content_hash` field
+    (issue #248, PRD §7.12: "reusing envelope.compute_source_id()'s
+    existing hashing path, not a second convention"). Kept as a small,
+    public, standalone function precisely so a second module can import and
+    reuse it without inventing its own hashing convention."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def compute_source_id(path: Path) -> str:
     """Compute a stable, deterministic source_id from `path`'s content,
     before any LLM call. Combines the filename stem (for readability) with a
@@ -202,8 +213,7 @@ def compute_source_id(path: Path) -> str:
     """
     if not path.is_file():
         raise MissingSourceError(path)
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
-    return f"{path.stem}-{digest}"
+    return f"{path.stem}-{content_digest(path)[:12]}"
 
 
 def envelope_path(source_id: str, envelopes_dir: Path = ENVELOPES_DIR) -> Path:
