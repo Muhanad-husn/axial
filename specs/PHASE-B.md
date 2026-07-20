@@ -1,6 +1,6 @@
 # PRD — Axial: Phase B Analysis Engine (Syria v0)
 
-**Project:** Axial · **Version:** 1.0 · **Status:** Ratified · **Owner:** Operator (single-operator system)
+**Project:** Axial · **Version:** 1.1 · **Status:** Ratified · **Owner:** Operator (single-operator system)
 
 **Inherits.** This PRD is the Phase-B phase spec under [`specs/CHARTER.md`](CHARTER.md), the product-wide behavioural constitution; its P0 criteria are the analysis-layer instance of the charter's five principles. Its substrate is Phase A, specified in [`specs/PRODUCT.md`](PRODUCT.md); Phase A is consumed here, never modified here. This spec does not restate or override the charter (charter §4).
 
@@ -74,7 +74,7 @@ Six stages, each a discrete, independently testable module. Each stage notes whe
 3. **Retrieval planning & the agentic query loop (model-driven over deterministic tools).** From the interrogation result and the case anchor, a model plans retrieval, calls stage-2 tools, inspects results, and **re-queries when results are thin**. Case-as-anchor, not case-as-fence: the agent may pull cross-polity material bearing on the case (charter §3). Every tool call and every returned chunk id is appended to the **retrieval trajectory log** (§7.6). The loop runs under a bounded step budget.
 4. **Evidence assembly & analysis (model, high tier + reasoning; Principles I, II).** The retrieved evidence set is assembled and made inspectable *before* the expensive call (inspect-before-spend, §7 CLI). The synthesis pass applies the lens and performs axial coding across the evidence, emitting the **claim graph** (§7.4): each claim marked (a)/(b)/(c) with grounds pointers into the vault. Grounded by construction, not generate-then-cite.
 5. **Validators (deterministic, with bounded model checks where unavoidable; Principles II, IV, V).** Post-passes outside the model's control (§7.9): the **attribution validator** confirms every claim has a kind and every (a)/(b) claim has resolvable grounds; the **counter-position validator** confirms a counter-position section is present or an explicit one-sided disclosure is made on a contested brief; the **coverage/confidence validator** confirms a per-polity coverage map (from `polities_touched`) and a confidence disclosure are present. A failed mechanical check blocks release.
-6. **Rendering & persistence (deterministic).** Writes the structured **analysis record** (§7.3, one JSON per brief run) and a rendered **markdown answer** (§7.10). The record carries the interrogation result, claim graph, counter-position section, coverage map, confidence disclosure, trajectory log, and the corpus-pin the run was produced against.
+6. **Rendering & persistence (deterministic).** Writes the structured **analysis record** (§7.3, one JSON per brief run) and a rendered **markdown answer** (§7.10). The record carries the interrogation result, claim graph, counter-position section, coverage map, confidence disclosure, **source-usage disclosure** (§7.13), trajectory log, and the corpus-pin the run was produced against. The source-usage disclosure is computed here by counting, with no model call, and in v0 it is recorded and rendered but gates nothing.
 
 ---
 
@@ -89,7 +89,7 @@ src/axial/
   retrieve/     # retrieval planning + agentic query loop (stage 3)
   analyze/      # evidence assembly + lens/axial-coding synthesis -> claim graph (stage 4)
   validate/     # attribution / counter-position / coverage validators (stage 5)
-  answer/       # analysis-record + markdown rendering + persistence (stage 6)
+  answer/       # analysis-record + source-usage counting + markdown rendering + persistence (stage 6)
   eval/         # (existing) + the rung-3 gate harnesses (§10)
 config/
   briefs/
@@ -142,10 +142,13 @@ One JSON per brief run at `data/analyses/<brief_id>.json`, the phase's analogue 
   counter_position,                    # the counter-position section (§7.8)
   coverage_map,                        # per-polity coverage (§7.7)
   confidence: { overall_band, rationale },   # disclosed, calibrated (Principle V)
+  source_usage,                        # per-source contribution vs. available share (§7.13)
   trajectory: [ <tool_call> ],         # the retrieval trajectory log (§7.6)
   model_by_pass                        # which model + reasoning setting each pass used
 }
 ```
+
+`confidence.overall_band` is exactly one of `high` / `medium` / `low`, the same three-band vocabulary as the per-claim field (§7.4). `confidence.rationale` states the coverage counts that justify the band, drawn from `coverage_map`, so the band is never disclosed without the counts behind it. `source_usage` is non-nullable and follows §7.13; on disposition `refuse` it is present with an empty source list, like `claims`.
 
 The record is the audit surface: every claim traces to grounds, every grounds pointer resolves to a real vault id, and the trajectory shows how retrieval got there. It is written once per run and is read by eval #1 (output) and eval #3 (process). On disposition `refuse`, `claims` is empty and the answer carries the refusal.
 
@@ -155,8 +158,14 @@ The unit of the analysis. Each claim:
 `{claim_id, text, kind, grounds[], confidence, polities_touched[]}`.
 - `kind` — exactly one of `a` (**source-says**), `b` (**tool-infers-across-sources**), `c` (**speculation**), per charter Principle II. The (b) seam is the product's whole value and its whole risk: it is the new knowledge, and it is the claim least able to be checked against an answer key. It is **always** marked as the tool's inference, never voiced as if a source said it.
 - `grounds` — a list of `{ref_type, ref_id}` pointers, where `ref_type` is `chunk` or `artifact` and `ref_id` is a real vault id (`chunk_id` or `artifact_id`). **Required non-empty for every (a) and (b) claim.** A (c) claim may carry partial or empty grounds but must be marked speculation.
-- `confidence` — a disclosed confidence value per the confidence vocabulary (Open Questions).
+- `confidence` — exactly one of three discrete bands: `high`, `medium`, `low`. Never a numeric score.
 - `polities_touched` — the union of the `polities_touched` facets of the claim's grounds chunks, so coverage (§7.7) is computable from the claim graph.
+
+**The confidence vocabulary is three bands, and the reasoning binds everywhere confidence appears in this phase (§7.3, §7.7, §7.10).** A model emitting `0.73` is not computing a probability. It is producing a number that looks like confidence. That is manufactured precision, and dressing an unmeasured guess as a measurement is exactly what charter Principle V's honest-confidence requirement forbids. Bands are also far cheaper to calibrate: three buckets need far less scarce Academic judgment to check than a continuous scale does.
+
+**A band is never rendered instead of the counts that justify it.** Every confidence disclosure, per-claim and overall, appears alongside the real coverage counts from §7.7: `medium` confidence, grounded in N evidence chunks drawn from a corpus holding M substantive chunks on that polity. The count is the honest signal; the band is the summary of it. A band shown alone is the manufactured-precision failure in another costume.
+
+**Band targets [TENTATIVE].** Each band carries a stated expected-correctness rate, so the band means something checkable and the calibration gate (§10) has something to measure against: `high` ≥ 0.85, `medium` 0.60–0.85, `low` < 0.60. These are tunable starting hypotheses in the sense of charter §2, tuned on the first judged runs; that they are stated at all is FIRM.
 
 `claim_id` is stable and deterministic within a run. **Unrequested, corpus-grounded analogues** the brief did not ask for are permitted, and are always emitted as (b) claims grounded in real corpus material, never as a training-memory analogy dressed as a finding (charter §3, Principle II).
 
@@ -187,7 +196,7 @@ Computed deterministically from `polities_touched`, never asked of a model. For 
 - `evidence_chunk_count` — how many chunks in *this run's* grounds engage it.
 - `coverage_band` — a disclosed band (e.g. dense / moderate / thin) derived from the counts against a stated tunable threshold, proven via inspection in the spirit of the Phase-A chunk band (PRODUCT.md §7.7).
 
-A claim about a thinly-covered polity is disclosed as thin and feeds the calibration layer (Principle V): it is not stated with the confidence of a claim over a densely-covered case.
+A claim about a thinly-covered polity is disclosed as thin and feeds the calibration layer (Principle V): it is not stated with the confidence of a claim over a densely-covered case. The map is where the counts behind every confidence band live (§7.4): `coverage_band` and the confidence bands travel with `corpus_chunk_count` and `evidence_chunk_count`, never in place of them.
 
 ### 7.8 The counter-position section (Principle IV) **[FIRM]**
 
@@ -207,7 +216,7 @@ Three validators run after synthesis, outside the model's control. Each is **mec
 
 ### 7.10 The rendered markdown answer **[FIRM]**
 
-Alongside the JSON record, stage 6 renders a human-readable markdown answer. It presents the claims with their kind visible ((a)/(b)/(c) legible to the reader, since those carry different weight, Principle II), the counter-position section, the coverage map, and the confidence disclosure. On refusal it states the refusal and its reason. Rendering is deterministic: the same record renders the same markdown. This is plain rendering only; venue/length/style adaptation is Phase D (§3).
+Alongside the JSON record, stage 6 renders a human-readable markdown answer. It presents the claims with their kind visible ((a)/(b)/(c) legible to the reader, since those carry different weight, Principle II), the counter-position section, the coverage map, the confidence disclosure, and the source-usage disclosure (§7.13). **Every confidence band it renders carries its counts next to it** (§7.4): the overall band next to the coverage counts named in its rationale, and each polity's coverage band next to that polity's corpus and evidence chunk counts. A band rendered bare is a rendering failure. On refusal it states the refusal and its reason. Rendering is deterministic: the same record renders the same markdown. This is plain rendering only; venue/length/style adaptation is Phase D (§3).
 
 ### 7.11 Per-pass model tiering & reasoning **[TENTATIVE]**
 
@@ -226,6 +235,42 @@ Scores only compare against a pinned corpus (eval charter, shared constraint 1).
 - **vault snapshot hash** — a hash over the produced notes (chunk_ids + tags, never chunk_text, per DEC-23).
 
 The manifest is committed under `evals/corpus_pin/` (safe: ids + hashes only). Every analysis record (§7.3) records the `corpus_pin` it was produced against; two runs are comparable only if their pins match. The pin is reused by eval #2 and #3 unchanged.
+
+### 7.13 The source-usage disclosure (bias investigation) **[FIRM]**
+
+**What it is.** Every analysis record discloses what proportion of its evidence came from each source, **and the denominator alongside it**: how much of the material that source had *available* under the tag filters this run actually queried. A source contributing 60% of the grounds while holding 22% of the chunks that matched those filters is a signal. The contribution figure alone is not, because on its own it cannot separate a thin corpus, where that source is genuinely the only coverage, from over-selection, where the run reached past alternatives that existed.
+
+**Why it exists.** All five rung-3 gates of §10 can pass on an analysis that draws most of its evidence from one book. Attribution is complete, grounds resolve, a counter-position is present, coverage is disclosed, confidence is banded, and the result is a **well-attributed monoculture**: one author's worldview presented as synthesis. Nothing else in this phase detects it. The founder's bias-investigation intent is the framing here, and the vault makes it tractable: because tag coordinates sit on both the sources and the queries, a source weighing consistently heavier on certain tags is measurable rather than merely suspected. The disclosure is diagnostic in a specific sense: it narrows the cause to one of three, which are then separable by inspection.
+
+- **The corpus.** That source really is the only substantive coverage under those filters. Its available share is high too, and the ratio is near 1.
+- **The retrieval logic.** The query API's filtering or ordering favors it. The same skew reappears across briefs with unrelated requests.
+- **The model.** The agent kept choosing it when alternatives were there. The trajectory log (§7.6) shows alternatives returned and passed over.
+
+**Shape.** A field on the record (§7.3), non-nullable:
+
+```
+source_usage: {
+  filters_observed: [ <tag_filter> ],   # union of the tag filters queried this run, from the trajectory (§7.6)
+  sources: [ {
+    source_id,
+    evidence_chunk_count,               # chunks of this source appearing in claim grounds
+    evidence_share,                     # of all grounds chunks in the run
+    available_chunk_count,              # chunks of this source matching filters_observed
+    available_share,                    # of all chunks matching filters_observed, corpus-wide
+    usage_ratio                         # evidence_share / available_share; null when available_share is 0
+  } ]
+}
+```
+
+`sources` is empty on disposition `refuse`, and on any run whose claims carry no grounds. `usage_ratio` near 1 means the source was drawn on in proportion to what it had; well above 1 means it was drawn on harder than its availability explains.
+
+**How it is computed. No model call.** Deterministically, from data the record already holds: claim grounds resolve to vault ids, every `chunk_id` embeds its `source_id`, and the trajectory log records the tag filters of every query, which the deterministic `query_by_tag` / `query_by_polity` tools (§7.5) re-run to count the denominator over the pinned vault. This is the same architectural family as the §7.7 coverage map: a count over facets already written, never a judgment asked of a model.
+
+**Scope discipline: diagnostic, not gating, in v0.** There is no defensible concentration threshold yet. What counts as too concentrated depends on corpus composition and on how broad the question is, and a narrow question over a corpus with one specialist source *should* concentrate. So v0 discloses and records it; it gates nothing. This follows the discipline §7.7's coverage band and §7.8's contested-detection rule already follow: state the tunable, prove it by inspection, then set it.
+
+**The promotion condition, stated concretely.** Source usage becomes a sixth rung-3 gate (§10) when, and only when, inspection across at least the full dev-brief backlog (P0-11, 26 briefs) over a single pinned corpus yields a `usage_ratio` distribution in which a candidate threshold separates runs the founder judges over-concentrated from runs judged legitimately concentrated, without flagging the latter. Until that inspection has happened, no threshold is asserted.
+
+**Design for the aggregate.** One run's distribution is weak evidence. The signal appears across many runs: a source drawing several times its available share *whenever* queries touch a given tag. The per-run shape above is therefore designed to aggregate cleanly, keyed on `source_id` and joinable on `filters_observed`, so per-source usage ratios can be pooled across every record sharing a corpus pin. A cross-run inspection affordance over `data/analyses/` is in scope for this phase (P0-13).
 
 ---
 
@@ -265,9 +310,10 @@ The manifest is committed under `evals/corpus_pin/` (safe: ids + hashes only). E
 **P0-7 Coverage & confidence disclosure (charter Principle V, §3).**
 - [ ] A **per-polity coverage map** is computed deterministically from `polities_touched` (§7.7) for every polity the claims touch, carrying corpus and evidence chunk counts and a disclosed coverage band. Observable: given a brief whose claims touch a thinly-covered polity, that polity is disclosed as thin.
 - [ ] Every answer carries a disclosed `confidence` with a rationale; a claim over a thinly-covered polity is not disclosed with dense-case confidence. A missing coverage map or confidence disclosure blocks release (§7.9).
+- [ ] Confidence is one of the three bands `high` / `medium` / `low`, per-claim and overall, never a numeric score (§7.4). Observable: no record carries a numeric confidence value, and every rendered band appears next to the coverage counts that justify it (§7.10).
 
 **P0-8 Analysis record & rendered answer (output contract).**
-- [ ] One analysis-record JSON per brief run at `data/analyses/<brief_id>.json`, carrying the full §7.3 shape (brief, corpus_pin, schema_version, lens, interrogation, claims, counter_position, coverage_map, confidence, trajectory, model_by_pass). No field nullable except as stated in §7.3–§7.8.
+- [ ] One analysis-record JSON per brief run at `data/analyses/<brief_id>.json`, carrying the full §7.3 shape (brief, corpus_pin, schema_version, lens, interrogation, claims, counter_position, coverage_map, confidence, source_usage, trajectory, model_by_pass). No field nullable except as stated in §7.3–§7.8 and §7.13.
 - [ ] A deterministic markdown answer is rendered from the record (§7.10), with claim kinds legible to the reader. The same record renders the same markdown.
 - [ ] Each record records the `corpus_pin` and `schema_version` it was produced against.
 
@@ -286,10 +332,17 @@ The manifest is committed under `evals/corpus_pin/` (safe: ids + hashes only). E
 - [ ] The five rung-3 gate harnesses of §10 (attribution fidelity, grounding, synthesis quality, calibration, adversarial brief red-teaming) are implemented as **pass/fail gates**, each with a named metric and a tunable starting threshold, and are **dry-runnable now** against dev briefs and synthetic cases (their process-side oracles are programmatic; eval charter, sequencing).
 - [ ] The gates read the analysis record (§7.3) and the trajectory log (§7.6); the answer-quality referee (eval #1) swaps in academic cases **as data, never a code change** (§9, §10).
 
+**P0-13 Source-usage disclosure (bias investigation; diagnostic, not gating in v0).**
+- [ ] Every analysis record carries the §7.13 `source_usage` field: per source, its evidence chunk count and share, **and the denominator** — the count and share of that source's chunks available under `filters_observed`, the tag filters the run actually queried — plus the `usage_ratio` between them. Observable: a record whose grounds come disproportionately from one source shows that source's share above its available share, and the two figures are always present together.
+- [ ] It is computed **deterministically, with zero model calls**, from the claim grounds, the `source_id` embedded in each `chunk_id`, and the trajectory log's recorded filters, re-counted over the pinned vault through the §7.5 tools. Observable: the field is produced in tests with no LLM client present, and the same record over the same pinned vault yields the same figures.
+- [ ] It is **disclosed and recorded, and gates nothing** in v0: no threshold on `usage_ratio` blocks release, and no rung-3 gate reads it (§10). The promotion condition to a sixth gate is stated in §7.13 and is not met by this phase.
+- [ ] A cross-run inspection affordance `axial brief usage` reads the records under `data/analyses/` sharing a corpus pin and reports per-source usage ratios aggregated across runs and broken down by tag filter, so a source that draws several times its available share whenever queries touch a given tag is visible. Consistent with the inspect-before-spend `examine` precedent (P0-9), it makes **zero model calls**. Observable: over a set of recorded runs, the command names the heaviest-weighing sources and the filters under which they weigh heaviest.
+- [ ] The rendered answer (§7.10) shows the disclosure alongside the coverage map.
+
 ### Nice-to-Have (P1)
 
 - **P1-1** A standalone trajectory store richer than the in-record log, if eval #3 needs replay across runs.
-- **P1-2** Confidence calibration reporting via a reliability diagram in addition to the headline calibration-error number.
+- **P1-2** Calibration reporting via a three-bar band reliability diagram (observed correctness rate per band against its target, §7.4) in addition to the headline pass/fail of the band-wise gate.
 - **P1-3** A per-brief run log capturing agent judgment calls (re-queries, dead-ends recovered), mirroring PRODUCT.md P1-3.
 
 ### Future Considerations (P2 — design for, don't build)
@@ -320,12 +373,14 @@ These are the **rung-3 ship-blocking eval gates** for the layers Phase B builds 
 | **Attribution fidelity** | Principle II | attribution-completeness = share of claims with a valid kind + resolvable (a)/(b) grounds; plus (b)-seam mislabel rate | completeness = **1.00** (mechanical hard gate); (b) mislabel rate **≤ 0.05** on judged sample |
 | **Grounding** | Principle I | grounding-support rate = share of (a) claims whose cited grounds substantively support the claim, judged by an independent model anchored to the chunk text | **≥ 0.90** |
 | **Synthesis quality (counter-position present)** | Principle IV | counter-position-presence rate on the contested-brief subset (present-or-disclosed), plus judged steelman-quality | presence **≥ 0.95**; steelman-quality **≥** rubric bar (eval #1) |
-| **Calibration** | Principle V | calibration error between disclosed confidence and judged correctness (metric choice open) | error **≤ 0.15** |
+| **Calibration** | Principle V | **band-wise reliability**: for each of `high` / `medium` / `low`, the observed judged-correctness rate of the claims in that band, against the band's stated target (§7.4) | every band within **0.15** of its target rate, and the observed rates strictly ordered high > medium > low |
 | **Adversarial brief red-teaming** | Principle III | premise-catch rate on a seeded set of briefs carrying smuggled premises / thin-coverage asks | **≥ 0.80** |
 
 - The attribution-fidelity mechanical portion is a **hard 100% gate**, not a sampled rate: it is mechanically checkable, so any unmarked or unresolvable-grounds claim fails outright (P0-5).
 - The **judge is independent**: an LLM-as-judge anchored to the academic's expected answer, from a **different model family** than the generating model, spot-checked against academic agreement before trust (eval #1, eval charter constraint 2). The generating model never grades its own output.
 - **No self-grading on softballs**: gates are scored on hard cases the system cannot already ace (the anti-Üngör principle, eval charter constraint 4).
+- **Calibration is measured band-wise, not as error over a continuous score.** The question is whether `high`-band claims actually hold up at the rate `high` implies, and likewise for `medium` and `low`. Expected calibration error and Brier score both presuppose a numeric confidence the three-band vocabulary deliberately does not produce (§7.4), so they are inapplicable here rather than merely unchosen. The gate needs enough judged claims per band to mean anything; the minimum sample per band is a stated tunable set on the first judged runs.
+- **Source usage (§7.13) is deliberately not a gate.** Its absence from this table is a decision, not an oversight. It is disclosed and recorded from day one, and it becomes a sixth rung-3 gate only when the §7.13 promotion condition is met: no defensible concentration threshold exists yet, and asserting one before inspection would flag legitimately concentrated analyses.
 - Eval **#3 (agentic trajectory)** scores the retrieval trajectory (§7.6) with mostly programmatic oracles (retrieval-hit against required-citation sets, step efficiency, tool-call validity). Eval **#2 (hybrid-tagging distillation)** is a separate **cost track** and is **out of scope for this spec** (mentioned only to bound it out).
 
 ---
@@ -351,7 +406,7 @@ The build proceeds bottom-up, so each layer stands on a tested one beneath it. T
 - **The pinned corpus manifest** (P0-10) — implemented here, since nothing else owns the format.
 - **The academic-authored hard cases** (eval #1) — the answer-quality referee, swapped in as data.
 
-**Stack.** Python, driven through the `axial` CLI. **Inference:** API-based via the existing provider clients (OpenRouter, NVIDIA), through the existing `model_by_pass` / `reasoning_by_pass` config seams (PRODUCT.md §7.9, §12): analysis/synthesis wants the high tier with reasoning ON; interrogation and the validator model checks may run cheaper; tier assignments are **[TENTATIVE]** and proven on the dev briefs. **Retrieval:** the deterministic query API over the tagged vault; **no embedding dependency in v0** (§3). **Substrate consumed read-only:** the Phase-A vault (`data/vault/prose/`, `data/vault/artifacts/`, markdown + YAML frontmatter), the per-source envelopes (`data/envelopes/`), and the domain schema (`config/domains/syria/`). Phase B adds no new inference dependency beyond what Phase A already carries.
+**Stack.** Python, driven through the `axial` CLI. **Inference:** API-based via the existing provider clients (OpenRouter, NVIDIA), through the existing `model_by_pass` / `reasoning_by_pass` config seams (PRODUCT.md §7.9, §12): analysis/synthesis wants the high tier with reasoning ON; interrogation and the validator model checks may run cheaper; tier assignments are **[TENTATIVE]** and proven on the dev briefs. **Retrieval:** the deterministic query API over the tagged vault; **no embedding dependency in v0** (§3). **Substrate consumed read-only:** the Phase-A vault (`data/vault/prose/`, `data/vault/artifacts/`, markdown + YAML frontmatter), the per-source envelopes (`data/envelopes/`), and the domain schema (`config/domains/syria/`). Phase B adds no new inference dependency beyond what Phase A already carries, though the existing provider clients gain **native tool-calling** (`tools` / `tool_calls`) to drive the stage-3 agentic loop, rather than a hand-rolled JSON tool protocol over the text-completion seam.
 
 **Parked / owned elsewhere:** eval #2 (hybrid-tagging distillation) is a separate cost track (eval charter); the Academic labeling pause is a Phase-A concern (PRODUCT.md §11).
 
@@ -362,7 +417,5 @@ The build proceeds bottom-up, so each layer stands on a tested one beneath it. T
 Genuinely unresolved; everything else in this document is settled.
 
 - **[eval]** Judge-model protocol details — model family, the judge-vs-academic agreement-sampling protocol, and the exact adjudication format (expected-answer-plus-citations vs. rubric vs. a keyed mix). *Deferred to eval #1's open threads; not blocking the build.*
-- **[eval]** Calibration metric choice — expected calibration error vs. Brier score vs. a reliability-diagram summary, and the confidence vocabulary it scores against. *Starting threshold in §10; tune on the first real runs.*
-- **[data]** Confidence vocabulary — discrete bands (high/medium/low) vs. a numeric score, for both per-claim and overall confidence (§7.4, §7.7).
 - **[engineering]** Trajectory-log storage format beyond the in-record log — whether eval #3 needs a richer standalone store for cross-run replay (§7.6, P1-1).
 - **[engineering]** Recall measurement and the embedding-index reopening condition — how recall is measured on real briefs, and the concrete signal that reopens the deferred embedding index (§3 non-goal 4). *An embedding index is built only on demonstrated recall failure, never speculatively.*
