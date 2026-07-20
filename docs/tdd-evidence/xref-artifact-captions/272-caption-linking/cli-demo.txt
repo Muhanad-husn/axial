@@ -1,0 +1,15 @@
+### #272 fix demo: compose_xref_prompt now carries artifact CAPTIONS (synthetic data, no LLM)
+
+chunk citing an artifact by caption:
+  'As shown in Table 8.2, military spending rose sharply across the region during this period.'
+
+composed xref prompt's 'Known artifacts' block:
+   Known artifacts:
+   - src_art_85.8: Table 8.2 Military expenditure as a percentage of GNP, selected states
+   - src_art_101.6: Table 9.1 Government expenditure and revenue, 1970-1990
+   - src_art_7.1
+
+=> the caption 'Table 8.2 ...' the chunk names is now in the prompt (was: bare 'src_art_85.8' only),
+   so the model can map the citation to the artifact id. No-caption artifact falls back to id alone.
+
+exit: 0 (demo assertions passed)
