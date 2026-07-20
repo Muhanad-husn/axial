@@ -41,9 +41,37 @@ def test_stub_client_honors_the_forced_xref_target_env_var(monkeypatch):
 def test_compose_xref_prompt_includes_chunk_text_and_known_artifact_ids():
     from axial.xref import compose_xref_prompt
 
-    prompt = compose_xref_prompt("as Table 3 shows, state capacity varies.", ["paper_art_1"])
+    prompt = compose_xref_prompt(
+        "as Table 3 shows, state capacity varies.",
+        [{"artifact_id": "paper_art_1"}],
+    )
 
     assert "as Table 3 shows, state capacity varies." in prompt
+    assert "paper_art_1" in prompt
+
+
+def test_compose_xref_prompt_includes_the_artifact_caption():
+    """issue #272: a known artifact's caption -- the very table/figure
+    wording a citing chunk's prose names -- must reach the prompt, not just
+    its opaque id."""
+    from axial.xref import compose_xref_prompt
+
+    prompt = compose_xref_prompt(
+        "as Table 3 shows, state capacity varies.",
+        [{"artifact_id": "paper_art_1", "caption": "Table 3 State capacity by region"}],
+    )
+
+    assert "paper_art_1" in prompt
+    assert "Table 3 State capacity by region" in prompt
+
+
+def test_compose_xref_prompt_falls_back_to_bare_id_when_no_caption():
+    """issue #272: an artifact with no attached caption still renders --
+    never a broken/blank line."""
+    from axial.xref import compose_xref_prompt
+
+    prompt = compose_xref_prompt("no tables mentioned here.", [{"artifact_id": "paper_art_1"}])
+
     assert "paper_art_1" in prompt
 
 

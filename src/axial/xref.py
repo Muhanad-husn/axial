@@ -190,14 +190,24 @@ def _non_prose_skip_reason(chunk_text: str) -> str | None:
     )
 
 
-def compose_xref_prompt(chunk_text: str, artifact_ids: list[str]) -> str:
+def compose_xref_prompt(chunk_text: str, artifact_records: list[dict[str, Any]]) -> str:
     """Compose the xref-detection prompt from the chunk's own text and the
-    source's real, known artifact ids -- never a hardcoded list."""
-    ids_block = (
-        "\n".join(f"- {artifact_id}" for artifact_id in artifact_ids)
-        if artifact_ids
-        else _NO_ARTIFACTS_PLACEHOLDER
-    )
+    source's real, known artifacts -- never a hardcoded list.
+
+    Each known artifact is rendered as its `artifact_id` AND its `caption`
+    (`axial.artifacts.build_artifact_record`'s own field), when it has one
+    -- not the bare id alone (issue #272). A citing chunk's prose names the
+    artifact by its caption ("as Table 8.2 shows"), which an opaque id like
+    "src_art_85.8" carries no trace of, so a bare-id list left the model with
+    nothing to match against and zero cross-references were ever detected.
+    An artifact with no attached caption falls back to its bare id alone,
+    never a broken/blank line."""
+    lines = []
+    for record in artifact_records:
+        artifact_id = record["artifact_id"]
+        caption = record.get("caption")
+        lines.append(f"- {artifact_id}: {caption}" if caption else f"- {artifact_id}")
+    ids_block = "\n".join(lines) if lines else _NO_ARTIFACTS_PLACEHOLDER
     return _XREF_PROMPT_TEMPLATE.format(artifact_ids=ids_block, chunk_text=chunk_text)
 
 
@@ -304,7 +314,10 @@ def run_xref(
         raise ArtifactsFailedError(exc) from exc
 
     known_artifact_ids = {record["artifact_id"] for record in artifact_records}
-    artifact_id_list = sorted(known_artifact_ids)
+    # Sorted by artifact_id for a deterministic prompt ordering (mirrors the
+    # prior bare-id list's own sort); carries each record's `caption` through
+    # to `compose_xref_prompt` (issue #272).
+    sorted_artifact_records = sorted(artifact_records, key=lambda record: record["artifact_id"])
 
     # Per-chunk checkpoint/resume (issue #110), opt-in via `xref_dir`,
     # mirroring the tag/artifacts passes: load already-processed chunks so a
@@ -342,7 +355,7 @@ def run_xref(
             print(f"xref: skipping chunk {chunk_id}: {skip_reason}", file=sys.stderr)
             continue
 
-        prompt = compose_xref_prompt(chunk_text, artifact_id_list)
+        prompt = compose_xref_prompt(chunk_text, sorted_artifact_records)
 
         try:
             raw_response = complete_json(client, prompt, pass_name=XREF_PASS_NAME)
