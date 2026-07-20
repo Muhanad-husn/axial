@@ -251,6 +251,10 @@ axes:
       definition: Identity-based and psychoanalytical approaches to ideology.
       positive_example: A passage substantively discussing subject centered.
       negative_example: A passage with no bearing on subject centered.
+    not-applicable:
+      definition: The chunk advances no theoretical position. Use for tables, figures, quantitative series, transitional or narrative passages, and apparatus prose. This marks the ABSENCE of a theory school, not a school in its own right; never use it as a hedge when a school does apply.
+      positive_example: A table of state finance data, or a passage narrating a sequence of events without interpreting them.
+      negative_example: A passage arguing that war drove state formation (that is `bellicist`).
   artifact_role:
     case-study:
       definition: Empirical or quantitative tables; structured evidence for a case or comparison.

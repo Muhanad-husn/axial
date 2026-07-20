@@ -164,6 +164,8 @@ axes:
         - discursive
         - historical-sociological
         - subject-centered
+      none:
+        - not-applicable
 
   # Appendix D -- Artifact-role axis.
   artifact_role:
