@@ -4,6 +4,11 @@ Accepts only `.pdf` and `.docx`. Rejects everything else with a clear,
 typed, logged reason. Verifies a real text layer exists before anything
 downstream runs -- a scanned/image-only PDF is rejected, never silently
 passed through an OCR path (there is none in this slice).
+
+For an accepted PDF, also runs the deterministic holdings-completeness
+probe (§7.11, §8 P0-1b) over the same text layer, via `axial.holdings`,
+which owns the probe's own signals and tunables -- this module's job is
+only to build `page_texts` and attach the resulting flag to `Source`.
 """
 
 from __future__ import annotations
@@ -13,6 +18,8 @@ from pathlib import Path
 
 from docx import Document
 from pypdf import PdfReader
+
+from axial.holdings import probe as _holdings_probe
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx"}
 
@@ -54,11 +61,21 @@ class NoTextLayerError(IntakeError):
 
 @dataclass
 class Source:
-    """Source-metadata stub returned on successful intake."""
+    """Source-metadata stub returned on successful intake.
+
+    `holdings_flag` (§7.11, §8 P0-1b) is populated for every accepted PDF
+    source by the deterministic holdings-completeness probe: `None` when
+    neither signal fires, otherwise a dict naming which signal fired
+    (`"toc_page_extent"` or `"orphan_fragment"`) and carrying the measured
+    value that fired it plus the threshold in force. Never computed for a
+    DOCX source (no computable physical page count). Flag-only: a fired
+    flag never blocks intake or alters anything else on this object.
+    """
 
     path: Path
     format: str
     text_layer_ok: bool
+    holdings_flag: dict | None = None
 
 
 def check_extension(path: Path) -> str:
@@ -69,9 +86,16 @@ def check_extension(path: Path) -> str:
     return extension.lstrip(".")
 
 
-def _extract_pdf_text(path: Path) -> str:
+def _pdf_page_texts(path: Path) -> list[str]:
+    """One raw text-layer string per physical page of `path`, in reading
+    order -- the per-page granularity the holdings-completeness probe needs
+    (§7.11) and that a single concatenated string discards."""
     reader = PdfReader(str(path))
-    return "".join(page.extract_text() or "" for page in reader.pages)
+    return [page.extract_text() or "" for page in reader.pages]
+
+
+def _extract_pdf_text(path: Path) -> str:
+    return "".join(_pdf_page_texts(path))
 
 
 def _extract_docx_text(path: Path) -> str:
@@ -98,7 +122,11 @@ def has_text_layer(path: Path, fmt: str) -> bool:
 
 
 def intake(path: str | Path) -> Source:
-    """Run intake on `path`: validate extension, verify a text layer, return metadata."""
+    """Run intake on `path`: validate extension, verify a text layer, run
+    the holdings-completeness probe (PDF only, §7.11/§8 P0-1b), and return
+    metadata. A fired probe signal is flag-only -- it never raises, never
+    rejects, and the source still completes intake exactly as an unflagged
+    one would."""
     path = Path(path)
 
     if not path.is_file():
@@ -106,7 +134,14 @@ def intake(path: str | Path) -> Source:
 
     fmt = check_extension(path)
 
-    if not has_text_layer(path, fmt):
-        raise NoTextLayerError(path)
+    if fmt == "pdf":
+        page_texts = _pdf_page_texts(path)
+        if not "".join(page_texts).strip():
+            raise NoTextLayerError(path)
+        holdings_flag = _holdings_probe(page_texts)
+    else:
+        if not has_text_layer(path, fmt):
+            raise NoTextLayerError(path)
+        holdings_flag = None
 
-    return Source(path=path, format=fmt, text_layer_ok=True)
+    return Source(path=path, format=fmt, text_layer_ok=True, holdings_flag=holdings_flag)
