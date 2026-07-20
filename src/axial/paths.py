@@ -11,6 +11,11 @@ should not have to import the write-side orchestration stack to find out.
 `pathlib` and `yaml`. `axial.vault` re-exports `VAULT_DIR` /
 `_default_vault_dir` from here unchanged, so its existing callers
 (`axial.gold`, `axial.polity_canonical`) are unaffected.
+
+`DEFAULT_PIPELINE_CONFIG_PATH` is owned here, not in `axial.llm` (issue
+#249 finding 1): `axial.llm` imports and re-exports it under its original
+name, so its eleven existing callers are unaffected, and there is a single
+source of truth instead of two literals that happen to agree today.
 """
 
 from __future__ import annotations
@@ -20,9 +25,6 @@ from typing import Any
 
 import yaml
 
-# Mirrors `axial.llm.DEFAULT_PIPELINE_CONFIG_PATH`'s value exactly, kept as
-# its own literal rather than imported from `axial.llm` -- which pulls in
-# `httpx` -- so this module stays import-light.
 DEFAULT_PIPELINE_CONFIG_PATH = Path("config/pipeline.yaml")
 
 VAULT_DIR = Path("data/vault")

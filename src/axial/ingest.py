@@ -47,7 +47,7 @@ from axial.vault import VaultError, run_vault_write
 # Persistent results file (issue #119's own contract): appended to, never
 # overwritten, across every `axial ingest` invocation -- a plain path
 # relative to the process cwd, mirroring every other module-level default in
-# this codebase (e.g. `axial.gold.GOLD_DIR`, `axial.vault.VAULT_DIR`).
+# this codebase (e.g. `axial.gold.GOLD_DIR`, `axial.paths.VAULT_DIR`).
 RESULTS_PATH = Path("data/gold/ingest.results.tsv")
 
 RESULTS_COLUMNS = (
