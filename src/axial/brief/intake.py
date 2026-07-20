@@ -89,12 +89,16 @@ class MissingFieldError(BriefError):
 
 
 class EmptyFieldError(BriefError):
-    """Raised when a required field is present but blank/whitespace-only."""
+    """Raised when a field is present but blank/whitespace-only. Covers
+    both required fields (`case`, `request`) and optional-but-non-blank
+    fields (`lens`, §7.1) -- the wording must stay accurate for both, so it
+    never claims a field is "required" when only its *value*, not its
+    presence, is."""
 
     def __init__(self, path: Path, field_name: str):
         self.path = path
         self.field = field_name
-        super().__init__(f"brief at {path} has an empty required field {field_name!r}")
+        super().__init__(f"brief at {path}: field {field_name!r} is present but empty")
 
 
 class NonStringFieldError(BriefError):
