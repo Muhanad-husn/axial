@@ -102,191 +102,12 @@ def test_intake_rejects_unsupported_extension():
 
 
 # =============================================================================
-# Holdings-completeness probe (issue #268 slice 1, §7.11 / §8 P0-1b) -- inner
-# unit cycles beneath the locked outer contract in
+# Holdings-completeness probe wiring (issue #268 slice 1, §7.11 / §8 P0-1b):
+# how `intake()` attaches `Source.holdings_flag`. The probe's own signal
+# logic and tunables live in `axial.holdings` and are tested in
+# `test_holdings.py`; this is beneath the locked outer contract in
 # tests/ingestion/test_holdings_completeness_probe.py.
 # =============================================================================
-
-
-def test_is_contents_heading_matches_after_lowercase_and_whitespace_collapse():
-    from axial.intake import _is_contents_heading
-
-    assert _is_contents_heading("Contents") is True
-    assert _is_contents_heading("  CONTENTS  ") is True
-    assert _is_contents_heading("Table   of    Contents") is True
-    assert _is_contents_heading("table of contents") is True
-
-
-def test_is_contents_heading_rejects_ordinary_prose():
-    from axial.intake import _is_contents_heading
-
-    assert _is_contents_heading("This chapter discusses the contents of the archive.") is False
-    assert _is_contents_heading("Chapter One") is False
-    assert _is_contents_heading("") is False
-
-
-def test_extract_entry_reference_reads_trailing_number_past_dot_leader():
-    from axial.intake import _extract_entry_reference
-
-    assert _extract_entry_reference("Chapter One .......... 1") == 1
-    assert _extract_entry_reference("Chapter Two .......... 25") == 25
-    assert _extract_entry_reference("Index .................................. 11") == 11
-
-
-def test_extract_entry_reference_rejects_decoy_bare_year_with_no_dot_leader():
-    from axial.intake import _extract_entry_reference
-
-    assert _extract_entry_reference("This edition was substantially revised in 1975") is None
-
-
-def test_extract_entry_reference_rejects_garbled_trailing_tokens():
-    from axial.intake import _extract_entry_reference
-
-    assert _extract_entry_reference("Chapter One .......................... l0l") is None
-    assert _extract_entry_reference("Chapter Two .......................... 4O") is None
-    assert _extract_entry_reference("Chapter Three ......................... ??") is None
-    assert _extract_entry_reference("Appendix .............................. ~~~") is None
-
-
-def test_signal_a_reading_finds_max_reference_on_contents_page():
-    from axial.intake import _signal_a_reading
-
-    page_texts = [
-        "Contents\nChapter One .......... 1\nChapter Two .......... 25\n"
-        "Chapter Three .......... 60",
-        "filler page one",
-        "filler page two",
-    ]
-    assert _signal_a_reading(page_texts) == 60
-
-
-def test_signal_a_reading_stops_contents_region_when_a_page_yields_no_entries():
-    from axial.intake import _signal_a_reading
-
-    page_texts = [
-        "Contents\nIntroduction .......... 1",
-        "This is ordinary body prose with no entries at all.",
-        "Chapter Nine .......... 900",  # unreachable: region already closed
-    ]
-    assert _signal_a_reading(page_texts) == 1
-
-
-def test_signal_a_reading_is_none_when_no_contents_heading_found():
-    from axial.intake import _signal_a_reading
-
-    page_texts = ["just some prose", "more prose", "even more prose"]
-    assert _signal_a_reading(page_texts) is None
-
-
-def test_signal_a_reading_is_none_when_contents_page_has_no_readable_entries():
-    from axial.intake import _signal_a_reading
-
-    page_texts = [
-        "Contents\nChapter One .......... l0l\nChapter Two .......... 4O\n"
-        "Chapter Three ......... ??\nAppendix .............. ~~~"
-    ]
-    assert _signal_a_reading(page_texts) is None
-
-
-def test_signal_a_reading_only_searches_first_contents_search_pages():
-    from axial.intake import CONTENTS_SEARCH_PAGES, _signal_a_reading
-
-    page_texts = ["filler"] * CONTENTS_SEARCH_PAGES + ["Contents\nChapter One .... 1"]
-    assert _signal_a_reading(page_texts) is None
-
-
-def test_backmatter_density_is_zero_for_ordinary_prose_tail():
-    from axial.intake import _backmatter_density
-
-    page_texts = [f"This is ordinary body prose on page {i}." for i in range(6)]
-    assert _backmatter_density(page_texts) == 0.0
-
-
-def test_backmatter_density_is_high_for_bibliography_and_index_tail():
-    from axial.intake import _backmatter_density
-
-    page_texts = [f"This is ordinary body prose on page {i}." for i in range(6)] + [
-        "Bayat, A. (2010) Life as Politics. Stanford University Press.\n"
-        "Heydemann, S. (2013) Tracking the Arab Spring. Journal of Democracy 24.",
-        "state formation, 12, 45, 88-91\ncivil society, 33, 67, 102",
-    ]
-    density = _backmatter_density(page_texts)
-    assert density > 0.5, f"expected a dense bibliography/index tail, got density={density}"
-
-
-def test_backmatter_density_recognizes_bayat_and_heydemann_shaped_entries():
-    """The §7.11 false-positive guard: a heading-regex back-matter test
-    reports both bayat and heydemann-war as lacking back matter; the
-    content-based density test must not."""
-    from axial.intake import BACKMATTER_ENTRY_DENSITY, _backmatter_density
-
-    page_texts = ["filler prose page"] + [
-        "Bayat, A. (2010) Life as Politics: How Ordinary People Change the "
-        "Middle East. Stanford University Press.",
-        "Heydemann, S. (2013) Tracking the Arab Spring: Syria and the Future "
-        "of Authoritarianism. Journal of Democracy 24.",
-        "Ismail, S. (2018) The Rule of Violence. Cambridge University Press.",
-    ]
-    assert _backmatter_density(page_texts) >= BACKMATTER_ENTRY_DENSITY
-
-
-def test_holdings_completeness_probe_fires_signal_a_below_cover_floor():
-    from axial.intake import COVER_FLOOR, _holdings_completeness_probe
-
-    page_texts = [
-        "Contents\nChapter One .......... 1\nChapter Two .......... 25\n"
-        "Chapter Three .......... 60",
-        "filler",
-        "filler",
-        "filler",
-    ]
-    flag = _holdings_completeness_probe(page_texts)
-    assert flag == {
-        "signal": "toc_page_extent",
-        "cover": pytest.approx(4 / 60),
-        "physical_pages": 4,
-        "max_page_reference": 60,
-        "threshold": COVER_FLOOR,
-    }
-
-
-def test_holdings_completeness_probe_none_when_signal_a_reading_is_healthy():
-    from axial.intake import _holdings_completeness_probe
-
-    page_texts = ["Contents\nChapter One .......... 1\nChapter Two .......... 2"] + ["filler"] * 2
-    assert _holdings_completeness_probe(page_texts) is None
-
-
-def test_holdings_completeness_probe_fires_signal_b_on_orphan_fragment():
-    from axial.intake import ORPHAN_PAGE_CEILING, _holdings_completeness_probe
-
-    page_texts = ["ordinary prose with no back matter and no contents page"] * 6
-    flag = _holdings_completeness_probe(page_texts)
-    assert flag is not None
-    assert flag["signal"] == "orphan_fragment"
-    assert flag["physical_pages"] == 6
-    assert isinstance(flag["backmatter_density"], (int, float))
-    assert flag["threshold"] == ORPHAN_PAGE_CEILING
-
-
-def test_holdings_completeness_probe_none_when_signal_b_page_count_too_high():
-    from axial.intake import ORPHAN_PAGE_CEILING, _holdings_completeness_probe
-
-    page_texts = ["ordinary prose with no back matter and no contents page"] * (
-        ORPHAN_PAGE_CEILING + 1
-    )
-    assert _holdings_completeness_probe(page_texts) is None
-
-
-def test_holdings_completeness_probe_none_when_signal_b_has_back_matter():
-    from axial.intake import _holdings_completeness_probe
-
-    page_texts = ["ordinary prose with no contents page"] * 6 + [
-        "Bayat, A. (2010) Life as Politics. Stanford University Press.\n"
-        "Heydemann, S. (2013) Tracking the Arab Spring. Journal of Democracy 24.",
-        "state formation, 12, 45, 88-91\ncivil society, 33, 67, 102",
-    ]
-    assert _holdings_completeness_probe(page_texts) is None
 
 
 def test_pdf_page_texts_returns_one_string_per_physical_page():
@@ -328,3 +149,27 @@ def test_intake_never_computes_holdings_flag_for_docx_source():
 
     assert source.format == "docx"
     assert source.holdings_flag is None
+
+
+def test_intake_makes_no_network_calls(monkeypatch):
+    """Determinism guard (issue #268 review F5): §7.11/§8 P0-1b requires
+    the holdings-completeness probe to make zero model, embedding, and
+    network calls. It holds structurally today (the probe only ever reads
+    `page_texts` already in hand), but nothing asserted that -- so a later
+    edit that reached for a network call during intake would regress
+    silently. Cheap enforcement: block socket connection attempts for the
+    duration of `intake()` and assert it still completes."""
+    import socket
+
+    from axial.intake import intake
+
+    def _blocked(*args, **kwargs):
+        raise AssertionError("intake() attempted a network connection")
+
+    monkeypatch.setattr(socket.socket, "connect", _blocked)
+    monkeypatch.setattr(socket.socket, "connect_ex", _blocked)
+    monkeypatch.setattr(socket, "create_connection", _blocked)
+
+    source = intake(TEXT_LAYER_PDF)
+
+    assert source.text_layer_ok is True
