@@ -48,6 +48,32 @@ CONTENTS_SEARCH_PAGES = 30
 # How many pages, starting at the located contents heading, the contents
 # region can span: the heading's own page, plus following pages while they
 # keep yielding entry-shaped lines, bounded here.
+#
+# DO NOT widen this without re-measuring against the real corpus first --
+# the obvious retune is a trap, measured directly (issue #268 review, 2nd
+# pass, F3). `batatu`'s printed contents genuinely spans 5 pages (its
+# heading page, pypdf index 6, through index 10 -- all 5 still yielding
+# entries when the "keep yielding" walk is let run uncapped, past this
+# 3-page bound). This bound truncates that walk after 3 pages (indices
+# 6-8), recovering maxref 262 instead of the true 414 -- COVER 1.649
+# instead of the spec's originally measured ~1.04 -- individually harmless,
+# since 1.649 only pushes further from the fire threshold (the safe
+# direction). But immediately past `batatu`'s true 5-page span, page index
+# 11 yields no entries (a gap), and pages 12-13 beyond that gap are a "List
+# of Tables" section that -- measured -- also parses as entry-shaped under
+# the current regex: 'at Constant 1985 Prices in Selected Years between
+# 1963' reads as entry reference 1963, and '12-5 Ba ʿth Regional Commands
+# March 1966-November 1970' reads as 1970. Reaching those two pages
+# (whether by widening this bound far enough to bridge the gap, or by any
+# future contents-region walk that tolerates one) drags maxref to 1970 and
+# COVER to 432/1970 = 0.219 -- BELOW cover_floor (0.5): a false fire. Note
+# that neither trailing word ("between", "November") is in
+# `_ENTRY_TRAILING_STOPWORDS` -- both are ordinary content words, not
+# function words, so the semantic filter structurally cannot catch this
+# case; it is this 3-page bound alone that holds it off today, incidentally
+# rather than by the strict-entry-shape design §7.11 describes. See that
+# stopword filter's own comment below for the same caveat. Left at 3,
+# unwidened, on this measurement.
 CONTENTS_SPAN_PAGES = 3
 
 # The fraction of the source's tail (by physical page count) Signal B's
@@ -111,6 +137,20 @@ _TOC_ENTRY_LINE_RE = re.compile(r"^(?P<title>\S.*?[A-Za-z.)])\s+(?P<number>\d{1,
 # ("Empire", "Potestas", "Puzzles", "Index", "Conclusion" ...); the decoy's
 # number is incidental to an ordinary sentence, and it is exactly this
 # family of word ("...revised IN 1975") that precedes it.
+#
+# This is a targeted guard against THAT shape of false positive -- an
+# ordinary sentence ending in a bare number -- not a general defense
+# against any stray integer landing at the end of an otherwise entry-shaped
+# line. It is NOT what holds off every such case: measured on the real
+# corpus (issue #268 review, 2nd pass, F3), a "List of Tables" entry whose
+# title is itself a date range ("...in Selected Years between 1963",
+# "...March 1966-November 1970") parses as a valid trailing reference, and
+# neither "between" nor "November" is a function word this stoplist
+# catches -- see `CONTENTS_SPAN_PAGES`'s own comment for the measured
+# consequence. §7.11 describes "strict entry-shape matching" as what holds
+# a stray integer off in general; measured, that is only true within the
+# region this stoplist actually reaches -- `CONTENTS_SPAN_PAGES`'s bound is
+# what holds the date-range case off today, incidentally.
 _ENTRY_TRAILING_STOPWORDS = frozenset(
     "a an the of in on at by to for from with and or as is was were be "
     "been but that this these those into onto over under since during "
@@ -190,8 +230,17 @@ def _find_contents_region(page_texts: list[str]) -> list[str] | None:
 def _signal_a_reading(page_texts: list[str]) -> int | None:
     """Signal A's own reading (§7.11): the maximum entry page reference
     found in the contents region, or `None` when no contents page is
-    located or the region yields no readable entry reference at all --
-    "no reading", handed off to Signal B rather than a false fire."""
+    located, the region yields no readable entry reference at all, or the
+    maximum recovered reference is non-positive -- "no reading", handed off
+    to Signal B rather than a false fire.
+
+    The non-positive case matters on its own: `_TOC_ENTRY_LINE_RE` accepts
+    `\\d{1,4}`, which includes '0' (e.g. a mis-extracted "Preface 0" line).
+    A reference of 0 as `probe`'s divisor is a `ZeroDivisionError` --
+    exactly the "never rejects, never halts intake" property P0-1b forbids
+    breaking (issue #268 review, 2nd pass, F1). Treating it as no reading
+    keeps the same safe-direction discipline as an unreadable/garbled
+    reference: it degrades, it never crashes or fires falsely."""
     region = _find_contents_region(page_texts)
     if region is None:
         return None
@@ -203,7 +252,8 @@ def _signal_a_reading(page_texts: list[str]) -> int | None:
     ]
     if not references:
         return None
-    return max(references)
+    max_reference = max(references)
+    return max_reference if max_reference > 0 else None
 
 
 def _is_index_entry_line(line: str) -> bool:

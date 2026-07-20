@@ -228,6 +228,60 @@ def test_backmatter_density_not_diluted_by_wrapped_continuation_lines():
     )
 
 
+_TAIL_WINDOW_BACKMATTER_PAGE = (
+    "Bayat, A. (2010) Life as Politics: How Ordinary People Change the "
+    "Middle East. Stanford University Press.\n"
+    "Heydemann, S. (2013) Tracking the Arab Spring: Syria and the Future "
+    "of Authoritarianism. Journal of Democracy 24.\n"
+    "Ismail, S. (2018) The Rule of Violence. Cambridge University Press."
+)
+_TAIL_WINDOW_FILLER_PAGE = "This is ordinary body prose with no bibliographic content at all."
+
+
+def test_backmatter_density_only_reads_the_tail_window_not_the_whole_document():
+    """Regression for issue #268 review (2nd pass) F2: `TAIL_WINDOW_FRACTION`
+    was fully mutation-blind -- neither 1.0 (the whole document) nor 0.001
+    (essentially nothing) changed any test's outcome, even though on the
+    real corpus either would materially change every density reading.
+    Pinned with a literal 20-page document (window = `round(20 * 0.10)` =
+    2 pages): back matter placed in the window (page index 18, second-to-
+    last of 20) must register; the SAME content placed just outside it
+    (page index 17, third-to-last) must not -- proving the function reads
+    only its tail window, not the whole document, in either direction."""
+    from axial.holdings import TAIL_WINDOW_FRACTION, _backmatter_density
+
+    assert TAIL_WINDOW_FRACTION == 0.10, (
+        "this test pins the tail window with a literal page count; update "
+        "it if TAIL_WINDOW_FRACTION is deliberately retuned"
+    )
+
+    within_window = [_TAIL_WINDOW_FILLER_PAGE] * 18 + [
+        _TAIL_WINDOW_BACKMATTER_PAGE,
+        _TAIL_WINDOW_FILLER_PAGE,
+    ]
+    just_outside_window = [_TAIL_WINDOW_FILLER_PAGE] * 17 + [
+        _TAIL_WINDOW_BACKMATTER_PAGE,
+        _TAIL_WINDOW_FILLER_PAGE,
+        _TAIL_WINDOW_FILLER_PAGE,
+    ]
+    assert len(within_window) == 20
+    assert len(just_outside_window) == 20
+
+    from axial.holdings import BACKMATTER_ENTRY_DENSITY
+
+    density_within = _backmatter_density(within_window)
+    density_outside = _backmatter_density(just_outside_window)
+    assert density_within >= BACKMATTER_ENTRY_DENSITY, (
+        f"expected back matter placed inside the tail window to register, "
+        f"got density={density_within}"
+    )
+    assert density_outside < BACKMATTER_ENTRY_DENSITY, (
+        f"expected the SAME back matter placed just outside the tail "
+        f"window to be invisible to it, got density={density_outside}"
+    )
+    assert density_within != density_outside
+
+
 def test_probe_fires_signal_a_below_cover_floor():
     from axial.holdings import COVER_FLOOR, probe
 
@@ -285,3 +339,42 @@ def test_probe_none_when_signal_b_has_back_matter():
         "state formation, 12, 45, 88-91\ncivil society, 33, 67, 102",
     ]
     assert probe(page_texts) is None
+
+
+def test_signal_a_reading_treats_a_zero_reference_as_no_reading():
+    r"""Regression for issue #268 review (2nd pass) F1: `_TOC_ENTRY_LINE_RE`
+    accepts `\d{1,4}`, which includes '0'. If every recovered reference in
+    the contents region is 0, `max(references)` is 0, and `probe` used to
+    divide `physical_pages / 0` -- a `ZeroDivisionError` propagating out of
+    `intake()`, directly violating P0-1b's 'never rejects, never halts
+    intake.' A non-positive maximum must degrade to no reading, exactly
+    like an unreadable/garbled one, and fall through to Signal B."""
+    from axial.holdings import _signal_a_reading
+
+    assert _signal_a_reading(["Contents\nPreface 0", "filler"]) is None
+
+
+def test_probe_never_raises_when_every_recovered_reference_is_zero():
+    """§7.11/§8 P0-1b: 'never rejects a source, never halts intake.' Calling
+    `probe()` here without wrapping it in `pytest.raises` IS the assertion:
+    a `ZeroDivisionError` (or any exception) fails this test."""
+    from axial.holdings import probe
+
+    result = probe(["Contents\nPreface 0", "filler"])
+
+    assert result is None or result["signal"] == "orphan_fragment"
+
+
+def test_probe_never_raises_on_empty_page_texts():
+    """Same discipline at the other edge: an empty `page_texts` list must
+    not raise either."""
+    from axial.holdings import probe
+
+    result = probe([])
+
+    assert result is None or result == {
+        "signal": "orphan_fragment",
+        "physical_pages": 0,
+        "backmatter_density": 0.0,
+        "threshold": 120,
+    }
