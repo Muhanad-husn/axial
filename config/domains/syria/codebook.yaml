@@ -255,6 +255,10 @@ axes:
       definition: The chunk advances no theoretical position. Use for tables, figures, quantitative series, transitional or narrative passages, and apparatus prose. This marks the ABSENCE of a theory school, not a school in its own right; never use it as a hedge when a school does apply.
       positive_example: A table of state finance data, or a passage narrating a sequence of events without interpreting them.
       negative_example: A passage arguing that war drove state formation (that is `bellicist`).
+    unlisted:
+      definition: A real theoretical school DOES apply to the chunk, but it is not one of the schools listed above (this vocabulary was derived from one expert's mind-map and does not yet cover every school a source may invoke -- e.g. pluralist theories of the state). Use `unlisted` only when a genuine school applies and none of the listed ones fit; never use it as a hedge, and never use `not-applicable` instead of `unlisted` just because the true school is missing from this list -- that would hide a real vocabulary gap.
+      positive_example: A passage applying a real theory of the state, violence, or ideology that is not represented among the listed schools (e.g. a pluralist account of state power).
+      negative_example: A passage that fits a listed school (use that school, not `unlisted`), or a passage that advances no theoretical position at all (that is `not-applicable`).
   artifact_role:
     case-study:
       definition: Empirical or quantitative tables; structured evidence for a case or comparison.

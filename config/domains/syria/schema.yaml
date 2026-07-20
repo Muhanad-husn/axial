@@ -166,6 +166,8 @@ axes:
         - subject-centered
       none:
         - not-applicable
+      open:
+        - unlisted
 
   # Appendix D -- Artifact-role axis.
   artifact_role:

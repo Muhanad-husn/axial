@@ -41,7 +41,14 @@ code change (PRD §4):
     `_declared_subtags` -- never the axis's full subtag universe), and an
     axis-level `status` flag (e.g. theory_school's `candidate`), when the
     schema declares one, is always taken from the schema itself
-    (`_axis_extras`), never trusted from the model's response.
+    (`_axis_extras`), never trusted from the model's response. `theory_
+    school` alone carries one further soft-land: a primary/secondary that
+    is still out of the vocabulary after the #102 correction re-ask lands
+    as the `unlisted` sentinel instead of raising, and the model's real
+    proposal is logged as a candidate addition (`log_theory_school_not_
+    in_schema`) -- the vocabulary was derived from one expert's mind-map
+    (Appendix E) and a source outside that frame can legitimately name a
+    real school it does not yet cover.
   - `cardinality == "many"` (`polities_touched`, issue #194 slice 05,
     Appendix C/G): `parse_many_valued_tag_response` parses a JSON list of
     free-text strings -- no vocabulary check applies (`values: free_text`
@@ -51,10 +58,11 @@ code change (PRD §4):
 
 Any tag value absent from its axis's schema vocabulary is a hard error
 naming the axis and the offending tag (`TagNotInSchemaError`, reused
-unchanged for every vocabulary-checked cardinality). Each emitted record
-carries the chunk's provenance (chunk_id, section, chunk_text) plus the
-`schema_version` it was tagged under, so a later schema change is
-detectable per note.
+unchanged for every vocabulary-checked cardinality) -- EXCEPT `theory_
+school`, whose own soft-land (above) accepts an out-of-vocabulary value as
+`unlisted` rather than aborting the source. Each emitted record carries the
+chunk's provenance (chunk_id, section, chunk_text) plus the `schema_version`
+it was tagged under, so a later schema change is detectable per note.
 
 A source whose chunking yields zero chunks yields zero tagged records
 without ever calling the LLM for the tag pass.
@@ -809,6 +817,33 @@ def parse_multi_value_tag_response(raw: str, axis: Axis) -> dict[str, Any]:
     return parsed
 
 
+def _validate_subtags(schema: Schema, axis_name: str, parsed: dict[str, Any]) -> None:
+    """Validate+normalize `parsed['subtags']` in place against
+    `parsed['primary']`'s OWN declared subtags (`_declared_subtags`), not the
+    axis's full subtag universe -- shared by `validate_multi_value_tag` and
+    the theory_school soft-land path (`_validate_theory_school_with_
+    softland`), which validate `primary`/`secondary` differently (the latter
+    softens an out-of-vocab value to `unlisted` instead of raising) but
+    validate `subtags` identically: theory_school never structurally
+    declares subtags (`_axis_declares_subtags`), so a hallucinated one stays
+    a hard error either way, out of the soft-land's scope."""
+    if "subtags" not in parsed:
+        return
+    declared = _declared_subtags(schema.axes[axis_name], parsed["primary"])
+    normalized_subtags = []
+    for subtag in parsed["subtags"]:
+        normalized = _normalize_axis_prefixed_value(axis_name, subtag, declared)
+        if normalized not in declared:
+            raise TagNotInSchemaError(
+                axis_name,
+                subtag,
+                vocabulary=declared,
+                position=f"as a subtag of the primary {parsed['primary']!r}",
+            )
+        normalized_subtags.append(normalized)
+    parsed["subtags"] = normalized_subtags
+
+
 def validate_multi_value_tag(schema: Schema, axis_name: str, parsed: dict[str, Any]) -> None:
     """Validate a parsed primary+secondary axis value against the loaded
     schema: `primary` and every `secondary`/`subtags` entry must exist in
@@ -832,20 +867,7 @@ def validate_multi_value_tag(schema: Schema, axis_name: str, parsed: dict[str, A
     elif secondary is not None:
         parsed["secondary"] = validate_tag(schema, axis_name, secondary)
 
-    if "subtags" in parsed:
-        declared = _declared_subtags(schema.axes[axis_name], parsed["primary"])
-        normalized_subtags = []
-        for subtag in parsed["subtags"]:
-            normalized = _normalize_axis_prefixed_value(axis_name, subtag, declared)
-            if normalized not in declared:
-                raise TagNotInSchemaError(
-                    axis_name,
-                    subtag,
-                    vocabulary=declared,
-                    position=f"as a subtag of the primary {parsed['primary']!r}",
-                )
-            normalized_subtags.append(normalized)
-        parsed["subtags"] = normalized_subtags
+    _validate_subtags(schema, axis_name, parsed)
 
 
 def parse_many_valued_tag_response(raw: str, axis_name: str) -> list[str]:
@@ -954,6 +976,129 @@ def log_polity_not_in_list(schema: Schema, polity: str) -> None:
             f"logging as a candidate addition",
             file=sys.stderr,
         )
+
+
+# The sentinel `theory_school` value a real-but-unlisted school lands as
+# (config/domains/syria/schema.yaml's `groups.open`, alongside `none.
+# not-applicable`): the axis is closed-vocabulary, unlike free-text polity,
+# so an out-of-vocab value cannot be accepted verbatim -- it lands as this
+# legal placeholder instead, with the model's actual proposal preserved in
+# the candidates log (`log_theory_school_not_in_schema`) for operator
+# review/promotion, never silently dropped.
+THEORY_SCHOOL_UNLISTED_VALUE = "unlisted"
+
+# The operator's review queue for theory_school candidates (module docstring
+# above, "closed vocabulary" design note): one JSONL record per out-of-vocab
+# proposal, appended alongside the tag-pass checkpoint directory in use for
+# the run that produced it.
+THEORY_SCHOOL_CANDIDATES_FILENAME = "theory_school_candidates.jsonl"
+
+
+def _theory_school_candidates_path(tags_dir: Path) -> Path:
+    """Where theory_school out-of-vocab candidates are logged
+    (`log_theory_school_not_in_schema`) for a run using `tags_dir` as its
+    tag-checkpoint directory."""
+    return tags_dir / THEORY_SCHOOL_CANDIDATES_FILENAME
+
+
+def log_theory_school_not_in_schema(
+    value: str,
+    position: str,
+    source_id: str,
+    chunk_record: dict[str, Any],
+    candidates_path: Path,
+) -> None:
+    """Log a non-fatal diagnostic to stderr, plus an append-only JSONL
+    candidates-log record, when a `theory_school` value the model proposes
+    (even after the #102 bounded correction re-ask already ran once) is not
+    a member of the loaded schema's `theory_school` vocabulary.
+
+    Mirrors `log_polity_not_in_list`'s "accept and log, never fatal"
+    philosophy (spec-drift #77), but `theory_school` is closed-vocabulary
+    (unlike free-text polity): the proposal itself cannot be accepted
+    verbatim, so the caller lands the chunk's `theory_school` position as
+    `THEORY_SCHOOL_UNLISTED_VALUE` instead, and this function preserves the
+    model's actual proposed string here, in the candidates log, as the
+    record an operator reviews to decide whether it deserves promotion into
+    the controlled vocabulary. `position` is `"primary"` or `"secondary"`,
+    naming which slot the proposal came from."""
+    print(
+        f"theory_school {value!r} is not in the axis vocabulary; recording "
+        f"as unlisted and logging a candidate addition",
+        file=sys.stderr,
+    )
+    candidates_path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "source_id": source_id,
+        "chunk_id": chunk_record.get("chunk_id"),
+        "section": chunk_record.get("section"),
+        "proposed_value": value,
+        "position": position,
+    }
+    with candidates_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record) + "\n")
+
+
+def _validate_theory_school_with_softland(
+    schema: Schema,
+    parsed: dict[str, Any],
+    source_id: str,
+    chunk_record: dict[str, Any],
+    candidates_path: Path,
+) -> dict[str, Any]:
+    """Validate a parsed `theory_school` primary/secondary value, softening
+    an out-of-vocabulary value into the `unlisted` sentinel instead of
+    raising `TagNotInSchemaError` -- the founder-approved soft-land that
+    brings `theory_school` onto the same accept-and-log pattern
+    `log_polity_not_in_list` already established for polity (spec-drift
+    #77), adapted for a closed vocabulary: the offending value cannot be
+    accepted verbatim, so it becomes `THEORY_SCHOOL_UNLISTED_VALUE` and its
+    real proposal is preserved in the candidates log instead
+    (`log_theory_school_not_in_schema`, naming whether it came from
+    `primary` or `secondary`).
+
+    `run_tag` only ever calls this on the SECOND parse attempt for a chunk
+    -- after the #102 bounded correction re-ask has already run once and the
+    corrected response is STILL out-of-vocab -- so a genuine model slip
+    still gets one repair attempt before landing as `unlisted` (see
+    `run_tag`'s own per-chunk `_validate` closure).
+
+    `subtags` is validated identically to `validate_multi_value_tag`
+    (`_validate_subtags`, unchanged, still fatal on a miss): theory_school
+    never structurally declares subtags, so this is out of the soft-land's
+    scope."""
+    axis_name = THEORY_SCHOOL_AXIS
+    try:
+        parsed["primary"] = validate_tag(schema, axis_name, parsed["primary"])
+    except TagNotInSchemaError as exc:
+        log_theory_school_not_in_schema(
+            exc.tag, "primary", source_id, chunk_record, candidates_path
+        )
+        parsed["primary"] = THEORY_SCHOOL_UNLISTED_VALUE
+
+    secondary = parsed.get("secondary")
+    if isinstance(secondary, list):
+        validated_secondary = []
+        for value in secondary:
+            try:
+                validated_secondary.append(validate_tag(schema, axis_name, value))
+            except TagNotInSchemaError as exc:
+                log_theory_school_not_in_schema(
+                    exc.tag, "secondary", source_id, chunk_record, candidates_path
+                )
+                validated_secondary.append(THEORY_SCHOOL_UNLISTED_VALUE)
+        parsed["secondary"] = validated_secondary
+    elif secondary is not None:
+        try:
+            parsed["secondary"] = validate_tag(schema, axis_name, secondary)
+        except TagNotInSchemaError as exc:
+            log_theory_school_not_in_schema(
+                exc.tag, "secondary", source_id, chunk_record, candidates_path
+            )
+            parsed["secondary"] = THEORY_SCHOOL_UNLISTED_VALUE
+
+    _validate_subtags(schema, axis_name, parsed)
+    return parsed
 
 
 def build_tagged_record(
@@ -1077,7 +1222,14 @@ def apply_correction_reask(
 
 
 def _parse_and_validate_tags(
-    raw_response: str, axes_to_tag: list[str], schema: Schema
+    raw_response: str,
+    axes_to_tag: list[str],
+    schema: Schema,
+    *,
+    theory_school_softland: bool = False,
+    source_id: str | None = None,
+    chunk_record: dict[str, Any] | None = None,
+    theory_school_candidates_path: Path | None = None,
 ) -> tuple[dict[str, str], dict[str, dict[str, Any]], dict[str, list[str]], str | None]:
     """Parse+validate every tagged axis from one raw tag-pass response,
     dispatched on each axis's schema-declared cardinality (never its name).
@@ -1090,7 +1242,23 @@ def _parse_and_validate_tags(
     since it has no vocabulary to validate against. Factored out of
     `run_tag`'s per-chunk body (issue #102) so the identical parse+validate
     can run on both the original answer and the bounded correction re-ask's
-    answer."""
+    answer.
+
+    `theory_school_softland` (theory_school soft-land, mirroring spec-drift
+    #77's polity philosophy for this one closed axis): when True, an
+    out-of-vocabulary `theory_school` primary/secondary is NOT raised as
+    `TagNotInSchemaError` -- it lands as `THEORY_SCHOOL_UNLISTED_VALUE` and
+    is logged as a candidate addition instead
+    (`_validate_theory_school_with_softland` /
+    `log_theory_school_not_in_schema`). `run_tag` only ever sets this True on
+    the SECOND parse attempt for a chunk, after the #102 bounded correction
+    re-ask has already run once and failed -- so a genuine model slip still
+    gets one repair attempt before landing as `unlisted`. `source_id`,
+    `chunk_record`, and `theory_school_candidates_path` are the candidate
+    log's own provenance, required only when `theory_school_softland` is
+    True. Every OTHER closed axis (field, claim_type, role_in_argument,
+    empirical_scope) is untouched by this parameter and still raises exactly
+    as before -- the softening is scoped to `theory_school` alone."""
     values: dict[str, str] = {}
     multi_value_axes: dict[str, dict[str, Any]] = {}
     many_valued_axes: dict[str, list[str]] = {}
@@ -1099,7 +1267,16 @@ def _parse_and_validate_tags(
         axis = schema.axes[axis_name]
         if axis.cardinality in MULTI_VALUE_CARDINALITIES:
             parsed = parse_multi_value_tag_response(raw_response, axis)
-            validate_multi_value_tag(schema, axis_name, parsed)
+            if axis_name == THEORY_SCHOOL_AXIS and theory_school_softland:
+                parsed = _validate_theory_school_with_softland(
+                    schema,
+                    parsed,
+                    source_id,
+                    chunk_record,
+                    theory_school_candidates_path,
+                )
+            else:
+                validate_multi_value_tag(schema, axis_name, parsed)
             parsed.update(_axis_extras(axis))
             multi_value_axes[axis_name] = parsed
         elif axis.cardinality == MANY_VALUED_CARDINALITY:
@@ -1139,6 +1316,11 @@ class TaggedRecords(list):
 # re-ask already ran) is DELIBERATELY NOT included here (founder ruling,
 # descoped from #120): it stays the P0-6 hard error, source-fatal, exactly as
 # before this issue -- see tests/test_tag_axis_prefix.py / test_tag_vocab_reask.py.
+# The one exception is `theory_school` (founder-approved soft-land, distinct
+# from #120's quarantine mechanism -- no checkpoint record, no skipped
+# chunk): a still out-of-vocab `theory_school` after its own bounded re-ask
+# lands as `unlisted` instead, via `run_tag`'s own `_validate` closure --
+# every OTHER closed axis stays exactly as fatal as this comment describes.
 QUARANTINE_REASON_CONTENT_FILTER = "content_filter"
 QUARANTINE_REASON_MALFORMED_JSON = "malformed_json"
 
@@ -1250,6 +1432,16 @@ def run_tag(
     # role_in_argument alone.
     axes_to_tag = [axis_name for axis_name in TAGGED_AXES if axis_name in schema.axes]
 
+    # theory_school soft-land (founder-approved): the candidates log lives
+    # alongside whichever tag-checkpoint directory this run actually uses --
+    # the supplied `tags_dir` when checkpointing is active, else the same
+    # config-resolved default `_default_tags_dir` falls back to -- so a
+    # standalone `axial tag` run (no checkpoint) still gets a durable
+    # candidates log, not just a checkpointed `axial vault write` run.
+    theory_school_candidates_path = _theory_school_candidates_path(
+        tags_dir if tags_dir is not None else _default_tags_dir(config_path)
+    )
+
     tagged_records: list[dict[str, Any]] = []
     quarantine_count = 0
     for chunk_record in chunk_records:
@@ -1352,17 +1544,46 @@ def run_tag(
         # bounded correction re-ask (issue #102, P0-6): the model is shown the
         # failing position's controlled vocabulary and must return a valid
         # value or an explicit NONE; still-out-of-vocab after that single
-        # re-ask propagates `TagNotInSchemaError` as the hard error. Polity /
-        # parse / cardinality errors propagate unchanged (never re-asked
-        # here). `client` is already resolved above, so the correction re-ask
-        # reuses it; any transport failure it raises wraps to `LLMFailedError`.
+        # re-ask propagates `TagNotInSchemaError` as the hard error -- EXCEPT
+        # for `theory_school` (founder-approved soft-land): a still-invalid
+        # `theory_school` after its own bounded re-ask lands as `unlisted`
+        # instead of aborting the source (every other closed axis is
+        # unaffected and stays fatal exactly as before). `_validate` tracks,
+        # per chunk, whether `theory_school` was the axis that triggered the
+        # FIRST failure (`theory_school_reasked`): the first parse attempt
+        # always raises normally (so the #102 re-ask genuinely fires once),
+        # and only the SECOND attempt -- `apply_correction_reask`'s own
+        # re-validation of the correction re-ask's answer -- soft-lands a
+        # still-invalid `theory_school`. Polity / parse / cardinality errors
+        # propagate unchanged (never re-asked here). `client` is already
+        # resolved above, so the correction re-ask reuses it; any transport
+        # failure it raises wraps to `LLMFailedError`.
+        theory_school_reasked = False
+
+        def _validate(raw: str) -> Any:
+            nonlocal theory_school_reasked
+            try:
+                return _parse_and_validate_tags(
+                    raw,
+                    axes_to_tag,
+                    schema,
+                    theory_school_softland=theory_school_reasked,
+                    source_id=source_id,
+                    chunk_record=chunk_record,
+                    theory_school_candidates_path=theory_school_candidates_path,
+                )
+            except TagNotInSchemaError as exc:
+                if exc.axis_name == THEORY_SCHOOL_AXIS:
+                    theory_school_reasked = True
+                raise
+
         try:
             values, multi_value_axes, many_valued_axes, polity = apply_correction_reask(
                 client,
                 TAG_PASS_NAME,
                 raw_response,
                 prompt,
-                lambda raw: _parse_and_validate_tags(raw, axes_to_tag, schema),
+                _validate,
             )
         except (LLMError, httpx.HTTPError) as exc:
             raise LLMFailedError(exc) from exc
