@@ -309,7 +309,11 @@ def _build_sources(envelopes_dir: Path, sources_dir: Path) -> list[dict[str, str
     (§7.12: "reusing envelope.compute_source_id()'s existing hashing
     path"), applied here to the actual input rather than the (nondeterministic,
     LLM-produced) envelope output -- see the module docstring. Sorted by
-    `source_id` so filesystem enumeration order never affects the result."""
+    `source_id` so filesystem enumeration order never affects the result.
+    Raises `MalformedEnvelopeError` -- naming the envelope's own path --
+    both when a `*.json` file isn't parseable JSON and when it parses to
+    something other than a mapping (e.g. a bare JSON list/scalar), mirroring
+    `_split_frontmatter`'s identical non-mapping guard on the note path."""
     if not envelopes_dir.is_dir():
         raise MissingEnvelopesDirError(envelopes_dir)
 
@@ -319,6 +323,12 @@ def _build_sources(envelopes_dir: Path, sources_dir: Path) -> list[dict[str, str
             envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             raise MalformedEnvelopeError(envelope_path, exc) from exc
+
+        if not isinstance(envelope, dict):
+            raise MalformedEnvelopeError(
+                envelope_path,
+                TypeError(f"envelope did not parse to a mapping, got {type(envelope).__name__}"),
+            )
 
         source_id = envelope.get("source_id") or envelope_path.stem
         stem = _stem_from_source_id(source_id, envelope_path)

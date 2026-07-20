@@ -81,7 +81,17 @@ def _write_envelope_raw(envelopes_dir: Path, source_id: str, body: str | None = 
     return path
 
 
-def _write_note(prose_dir: Path, chunk_id: str, **axis_overrides) -> Path:
+def _write_note(
+    prose_dir: Path, chunk_id: str, filename: str | None = None, **axis_overrides
+) -> Path:
+    """Write a prose note whose frontmatter `chunk_id` is `chunk_id`. The
+    on-disk filename defaults to `f"{chunk_id}.md"` (most call sites), but a
+    caller may pass an explicit `filename` to deliberately DECOUPLE the
+    filesystem name from the `chunk_id` -- required by any test that means
+    to distinguish filesystem enumeration ("glob") order from `chunk_id`
+    sort order (see the F3 finding on issue #248: when filename == chunk_id,
+    the two orders are textually identical and no test built on them can
+    ever catch a missing/removed sort)."""
     prose_dir.mkdir(parents=True, exist_ok=True)
     frontmatter = {
         "chunk_id": chunk_id,
@@ -93,7 +103,7 @@ def _write_note(prose_dir: Path, chunk_id: str, **axis_overrides) -> Path:
         "field": {"primary": "state", "secondary": []},
         **axis_overrides,
     }
-    path = prose_dir / f"{chunk_id}.md"
+    path = prose_dir / (filename or f"{chunk_id}.md")
     path.write_text(render_note(frontmatter, "# Introduction\n\nbody\n"), encoding="utf-8")
     return path
 
@@ -239,6 +249,24 @@ def test_build_sources_malformed_envelope_json_raises_naming_the_path(tmp_path: 
     assert str(bad_path) in str(excinfo.value)
 
 
+def test_build_sources_non_mapping_envelope_raises_naming_the_path(tmp_path: Path):
+    """F2 re-review finding: valid JSON that isn't a mapping (e.g. a
+    top-level list) must not escape as a bare `AttributeError` from
+    `envelope.get(...)` -- mirrors `_split_frontmatter`'s identical
+    non-mapping guard on the note path (`test_split_frontmatter_non_mapping_
+    raises_malformed_note_naming_the_path` below)."""
+    envelopes_dir = tmp_path / "envelopes"
+    sources_dir = tmp_path / "sources"
+    envelopes_dir.mkdir(parents=True)
+    bad_path = envelopes_dir / "not-a-mapping.json"
+    bad_path.write_text(json.dumps(["not", "a", "mapping"]), encoding="utf-8")
+
+    with pytest.raises(MalformedEnvelopeError) as excinfo:
+        _build_sources(envelopes_dir, sources_dir)
+
+    assert str(bad_path) in str(excinfo.value)
+
+
 def test_split_frontmatter_invalid_yaml_raises_malformed_note_naming_the_path(tmp_path: Path):
     vault_dir = tmp_path / "vault"
     prose_dir = vault_dir / "prose"
@@ -305,35 +333,46 @@ def test_ingest_code_sha_unreadable_repo_fails_loudly_not_a_placeholder(tmp_path
 
 
 def test_collect_snapshot_pairs_is_sorted_by_chunk_id_regardless_of_write_order(tmp_path: Path):
-    """F3: assert the sort DIRECTLY on the canonical pair list (rather than
-    only on two vaults' equal hashes, which common filesystems' already-
-    alphabetical `Path.glob` order can satisfy even with the `sort` call
-    deleted) -- writing notes in descending chunk_id order must still yield
-    an ascending pair list."""
+    """F3 (re-review, issue #248): assert the sort DIRECTLY on the canonical
+    pair list, with the on-disk FILENAME deliberately decoupled from
+    `chunk_id` (via `_write_note`'s `filename=` param) -- when filename ==
+    chunk_id (the prior version of this test), `Path.glob`'s own
+    alphabetical-by-filename order is textually identical to chunk_id sort
+    order, so the test cannot distinguish "sorted" from "glob order,
+    whatever that happens to be" and would still pass with the `sort` call
+    at `_collect_snapshot_pairs` deleted entirely. Here, glob visits
+    `01_note.md/02_note.md/03_note.md` in that filename order, whose
+    frontmatter `chunk_id`s are `zzz_chunk/aaa_chunk/mmm_chunk` -- NOT
+    already sorted -- so only a real sort produces the asserted ascending
+    result."""
     vault_dir = tmp_path / "vault"
     prose_dir = vault_dir / "prose"
-    _write_note(prose_dir, "zzz_chunk")
-    _write_note(prose_dir, "mmm_chunk")
-    _write_note(prose_dir, "aaa_chunk")
+    _write_note(prose_dir, "zzz_chunk", filename="01_note.md")
+    _write_note(prose_dir, "aaa_chunk", filename="02_note.md")
+    _write_note(prose_dir, "mmm_chunk", filename="03_note.md")
 
     pairs = _collect_snapshot_pairs(vault_dir)
 
     chunk_ids = [pair[0] for pair in pairs]
-    assert chunk_ids == sorted(chunk_ids)
     assert chunk_ids == ["aaa_chunk", "mmm_chunk", "zzz_chunk"]
 
 
 def test_snapshot_hash_sorted_by_chunk_id_independent_of_enumeration_order(tmp_path: Path):
+    """Companion to the test above at the hash level: two vaults whose notes
+    are enumerated in different filename order (again decoupled from
+    `chunk_id` via `filename=`, for the same reason) must still hash equal,
+    since the hash is computed over the sorted pair list, never raw glob
+    order."""
     vault_a = tmp_path / "vault_a"
     prose_a = vault_a / "prose"
-    _write_note(prose_a, "zzz_chunk")
-    _write_note(prose_a, "aaa_chunk")
+    _write_note(prose_a, "zzz_chunk", filename="01_note.md")
+    _write_note(prose_a, "aaa_chunk", filename="02_note.md")
 
     vault_b = tmp_path / "vault_b"
     prose_b = vault_b / "prose"
-    # written in the opposite order on disk
-    _write_note(prose_b, "aaa_chunk")
-    _write_note(prose_b, "zzz_chunk")
+    # same two chunk_ids, but visited in the OPPOSITE filename order
+    _write_note(prose_b, "aaa_chunk", filename="01_note.md")
+    _write_note(prose_b, "zzz_chunk", filename="02_note.md")
 
     assert _build_vault_snapshot_hash(vault_a) == _build_vault_snapshot_hash(vault_b)
 
