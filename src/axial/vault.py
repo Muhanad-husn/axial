@@ -82,14 +82,13 @@ from axial.envelope import (
 )
 from axial.chunk import _default_chunks_dir
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
+from axial.paths import default_vault_dir as _default_vault_dir
 from axial.tag import TagError, _default_tags_dir, run_tag
 from axial.xref import XrefError, _default_xref_dir, run_xref, xref_checkpoint_path
 
 # Source-level fields reused verbatim from the envelope (PRD §7.2), excluding
 # `fields`, a schema-driven axis tag deferred to phase-3 tagging.
 SOURCE_META_FIELDS = ("author", "title", "date", "thesis", "scope")
-
-VAULT_DIR = Path("data/vault")
 
 # Default domain directory for the internal artifacts pass, mirroring
 # `axial.artifacts.DEFAULT_DOMAIN_DIR`, overridable via a `domain_dir`
@@ -159,18 +158,11 @@ class XrefFailedError(VaultError):
         super().__init__(str(cause))
 
 
-def _default_vault_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
-    """Read `paths.vault_dir` from `config/pipeline.yaml` (mirrors
-    `axial.envelope._default_envelopes_dir`), falling back to `VAULT_DIR`
-    when the file/key is absent."""
-    if not config_path.is_file():
-        return VAULT_DIR
-    with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
-    paths_config = document.get("paths", {}) or {}
-    configured = paths_config.get("vault_dir")
-    return Path(configured) if configured else VAULT_DIR
-
+# `_default_vault_dir` now lives in `axial.paths` (issue #249 F1) and is
+# imported above under its original name, so every existing caller of
+# `axial.vault._default_vault_dir` (`axial.gold`, `axial.polity_canonical`)
+# is unaffected. `VAULT_DIR` moved the same way; its own callers should now
+# import it from `axial.paths` directly.
 
 # Axis blocks carried through verbatim from the tagged record's own nested
 # shape (issue #29 slice 03), which already matches Appendix H's illustrated

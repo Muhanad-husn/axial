@@ -94,6 +94,8 @@ from typing import Any, Protocol
 import httpx
 import yaml
 
+from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
+
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
 
@@ -179,7 +181,11 @@ STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_TAG_RESPONSE_SEQUENCE"
 STUB_ARTIFACT_FAIL_AT_ENV_VAR = "AXIAL_STUB_ARTIFACT_FAIL_AT"
 
 SECRETS_PATH_ENV_VAR = "AXIAL_SECRETS_PATH"
-DEFAULT_PIPELINE_CONFIG_PATH = Path("config/pipeline.yaml")
+# `DEFAULT_PIPELINE_CONFIG_PATH` itself now lives in `axial.paths` (issue
+# #249 finding 1), imported above and re-exported here under its original
+# name so every existing `from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH`
+# caller (`artifacts`, `chunk`, `envelope`, `eval`, `gold`, `ingest`, `tag`,
+# `vault`, `drive`, `pipeline_ready`, `polity_canonical`) is unaffected.
 DEFAULT_SECRETS_PATH = Path("secrets/secrets.toml")
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
