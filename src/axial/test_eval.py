@@ -1,4 +1,4 @@
-"""Inner unit tests for the gold-set scoring harness (src/axial/eval.py,
+"""Inner unit tests for the gold-set scoring harness (src/axial/eval/__init__.py,
 issue #135; polities_touched set-based scoring, issue #215).
 
 The outer acceptance test (tests/test_eval.py) drives `axial eval` end to
