@@ -21,6 +21,18 @@ When  `axial pin write baseline` runs again
 Then  the `vault_snapshot_hash` differs from the previous run's hash and the
       `sources` list is unchanged
 
+Given a fixture vault whose envelope's raw source file is absent from
+      data/sources/ (e.g. it was never placed there, or was cleaned up
+      since the envelope was written)
+When  `axial pin write baseline` runs
+Then  the command exits non-zero, no evals/corpus_pin/baseline.json is
+      written at all, and stderr names both the missing source_id and the
+      sources directory -- `content_hash` is never silently backfilled from
+      the envelope hash, the source_id's own digest, or any other fallback
+      (founder adjudication on issue #248, added to this locked contract
+      when the fixture was updated to place its source file under
+      data/sources/ -- see git history for that commit's message)
+
 See specs/PHASE-B.md §7.12 (the corpus-pin manifest, [FIRM]: source list +
 content hashes reusing `envelope.compute_source_id()`'s hashing path,
 ingest-code SHA, vault snapshot hash over chunk_ids + tags never chunk_text
@@ -168,7 +180,25 @@ def _build_fixture_vault(root: Path) -> dict[str, Any]:
     # source_id is genuinely content-derived rather than a hand-typed
     # string standing in for one. Its content is throwaway filler, never
     # real book text (repo copyright policy).
-    source_file = root / "synthetic_source_fixture.txt"
+    #
+    # Placed under data/sources/ with a SUPPORTED_EXTENSIONS-real extension
+    # (.pdf) -- not merely at the isolated root -- because `axial pin
+    # write`'s `content_hash` is (per the founder's #248 adjudication) a
+    # full sha256 of the raw ingested source file read from data/sources/,
+    # never a hash of the LLM-produced envelope JSON: envelopes are
+    # regenerated routinely (#235, #241, the GLM trial), so hashing the
+    # envelope would move every content_hash on every regen even though no
+    # source changed. `write_pin` fails loudly (`MissingSourceFileError`)
+    # rather than falling back if no matching file is found here.
+    # `compute_source_id` is called on this exact file (not a separate
+    # stand-in) so the source_id's own embedded content digest and the
+    # pin's content_hash describe the identical bytes -- keeping the
+    # fixture honest rather than merely shape-matching. The `.pdf` name is
+    # nominal only: corpus_pin never parses the file, only reads its raw
+    # bytes, so no real PDF structure is required.
+    sources_dir = root / "data" / "sources"
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    source_file = sources_dir / "synthetic_source_fixture.pdf"
     source_file.write_text(
         "Synthetic placeholder source file for the corpus-pin acceptance "
         "fixture. Not real source material.",
@@ -254,6 +284,8 @@ def _build_fixture_vault(root: Path) -> dict[str, Any]:
 
     return {
         "source_id": source_id,
+        "source_file": source_file,
+        "sources_dir": sources_dir,
         "note_1_path": note_1_path,
         "note_1_frontmatter": note_1_frontmatter,
         "note_1_body": note_1_body,
@@ -437,4 +469,49 @@ def test_pin_write_snapshot_hash_moves_on_a_tag_change_but_sources_list_does_not
         "expected the 'sources' list to be completely unchanged by a vault "
         f"tag edit (no envelope was touched), got baseline={baseline_manifest.get('sources')!r} "
         f"vs mutated={mutated_manifest.get('sources')!r}"
+    )
+
+
+def test_pin_write_fails_loudly_when_a_raw_source_file_is_missing(isolated_vault_root):
+    """Scenario 4 (issue #248, founder adjudication on `content_hash`): if
+    the envelope's raw source file cannot be found under data/sources/,
+    `axial pin write` must fail loudly -- non-zero exit, no pin file written
+    at all, stderr naming both the source_id and the sources directory --
+    rather than silently backfilling content_hash from the envelope hash,
+    the source_id's own digest, or any other fallback. This is the direct,
+    previously-untested consequence of the adjudication: a provenance tool
+    that degrades its own provenance silently is worse than one that stops."""
+    root = isolated_vault_root
+    fixture = _build_fixture_vault(root)
+
+    # Simulate the exact condition the adjudication targets -- the
+    # envelope exists (built from this file's own content, so its
+    # source_id's embedded digest is real), but the raw file it names is no
+    # longer present under data/sources/ at pin-write time.
+    fixture["source_file"].unlink()
+
+    result = _run_pin_write(root, "baseline")
+    _assert_ran_the_real_subcommand(result)
+
+    assert result.returncode != 0, (
+        "expected a non-zero exit when the envelope's raw source file is "
+        f"missing from data/sources/, got 0\nstdout: {result.stdout!r}\n"
+        f"stderr: {result.stderr!r}"
+    )
+
+    pin_path = _pin_path(root)
+    assert not pin_path.is_file(), (
+        "expected NO evals/corpus_pin/baseline.json to be written at all when "
+        f"the raw source file is missing (a degraded/partial manifest would "
+        f"silently defeat the fail-loud guarantee) -- found one at {pin_path}"
+    )
+
+    assert fixture["source_id"] in result.stderr, (
+        "expected the failure to name the specific source_id it could not "
+        f"resolve a raw file for ({fixture['source_id']!r}), got stderr: "
+        f"{result.stderr!r}"
+    )
+    assert "sources" in result.stderr, (
+        "expected the failure to name the sources directory it looked under, "
+        f"got stderr: {result.stderr!r}"
     )
