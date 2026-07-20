@@ -7,6 +7,7 @@ from pathlib import Path
 
 import axial
 from axial.artifacts import ArtifactsError, run_artifacts
+from axial.brief import BriefError, load_brief
 from axial.chunk import (
     ChunkError,
     _default_chunks_dir,
@@ -283,6 +284,20 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_ready_parser.add_argument(
         "--manifest", required=True, help="path to a TOML manifest of canaries"
     )
+
+    brief_parser = subparsers.add_parser(
+        "brief", help="Phase-B brief intake operations (specs/PHASE-B.md §7.1)"
+    )
+    brief_subparsers = brief_parser.add_subparsers(dest="brief_command")
+
+    brief_show_parser = brief_subparsers.add_parser(
+        "show",
+        help=(
+            "load and validate a brief file, printing its case, request, "
+            "lens, and computed brief_id (read-only, LLM-free)"
+        ),
+    )
+    brief_show_parser.add_argument("brief_path", help="path to a versioned brief YAML file")
 
     return parser
 
@@ -566,6 +581,20 @@ def _pipeline_ready(manifest_path: str) -> int:
     return exit_code
 
 
+def _brief_show(brief_path: str) -> int:
+    try:
+        brief = load_brief(brief_path)
+    except BriefError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"brief_id: {brief.brief_id}")
+    print(f"case: {brief.case}")
+    print(f"request: {brief.request}")
+    print(f"lens: {brief.lens if brief.lens is not None else '(none)'}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -633,6 +662,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "pipeline-ready":
         return _pipeline_ready(args.manifest)
+
+    if args.command == "brief" and args.brief_command == "show":
+        return _brief_show(args.brief_path)
 
     parser.print_help()
     return 0

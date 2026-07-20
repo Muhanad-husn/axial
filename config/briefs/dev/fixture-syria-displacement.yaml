@@ -1,0 +1,5 @@
+# Dev fixture brief (issue #247, slice 01). Its path and content are pinned
+# by the outer acceptance test at tests/analysis/test_brief_intake.py --
+# do not rename or reword case/request without updating that test.
+case: "Syria"
+request: "How did displacement reshape local authority?"

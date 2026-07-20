@@ -197,3 +197,52 @@ def test_main_eval_prints_error_and_returns_nonzero_on_malformed_polity_canonica
     assert exit_code != 0
     assert "simulated malformed map" in captured.err
     assert "Traceback" not in captured.err
+
+
+def test_build_parser_recognises_brief_show_subcommand():
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["brief", "show", "config/briefs/dev/fixture-syria-displacement.yaml"])
+
+    assert args.command == "brief"
+    assert args.brief_command == "show"
+    assert args.brief_path == "config/briefs/dev/fixture-syria-displacement.yaml"
+
+
+def test_main_brief_show_prints_case_request_lens_and_brief_id(tmp_path, capsys):
+    from axial.cli import main
+
+    brief_path = tmp_path / "some_brief.yaml"
+    brief_path.write_text('case: "Syria"\nrequest: "A question"\n', encoding="utf-8")
+
+    exit_code = main(["brief", "show", str(brief_path)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Syria" in captured.out
+    assert "A question" in captured.out
+    assert "brief_id" in captured.out
+
+
+def test_main_brief_show_against_missing_file_is_nonzero_and_names_path(capsys):
+    from axial.cli import main
+
+    exit_code = main(["brief", "show", "no/such/brief.yaml"])
+    captured = capsys.readouterr()
+
+    assert exit_code != 0
+    assert "brief.yaml" in captured.err
+
+
+def test_main_brief_show_against_missing_case_is_nonzero_and_names_case(tmp_path, capsys):
+    from axial.cli import main
+
+    brief_path = tmp_path / "malformed_brief.yaml"
+    brief_path.write_text('request: "A question"\n', encoding="utf-8")
+
+    exit_code = main(["brief", "show", str(brief_path)])
+    captured = capsys.readouterr()
+
+    assert exit_code != 0
+    assert "case" in captured.err

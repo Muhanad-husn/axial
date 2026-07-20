@@ -1,0 +1,6 @@
+# Dev fixture brief (issue #247, slice 01). Exercises the optional `lens`
+# field (§7.1) with a plain string value -- lens *resolution* against
+# config/lenses/ is out of scope for this slice.
+case: "Lebanon"
+request: "How has confessional power-sharing shaped local governance since 1990?"
+lens: "institutional"

@@ -1,0 +1,4 @@
+# Dev fixture brief (issue #247, slice 01). A second case with no `lens`,
+# exercising the required-fields-only shape.
+case: "Iraq"
+request: "What role have tribal structures played in post-2003 local security provision?"
