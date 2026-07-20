@@ -16,18 +16,23 @@ decision log is in [`docs/DECISIONS.md`](docs/DECISIONS.md).
   every later stage. Prefer reading the cached tree to re-running extraction.
 - GitHub issues and PRs are the system of record.
 
+## Developer principles
+
+- **Practicality over perfectionism.** 80/20 rule: build the smallest thing that
+  meets the acceptance bar, and keep the bar strict, not the mechanism. Polishing
+  past the bar is a process bug, not diligence.
+- **Over-engineering tripwires** — stop and simplify, or justify in one line in
+  the PR body: a hand-tuned constant or magic number in a heuristic; an
+  abstraction with one implementation; a config option nobody sets; a fix larger
+  than its bug.
+- **Don't reinvent the wheel.** Check existing tools and libraries — or a single
+  LLM call — before building. If you know of something useful that isn't
+  installed, suggest adding it.
+- **Measure, don't speculate.** When in doubt, prototype and measure rather than
+  analyze indefinitely.
+
 ## Writing conventions
 
 Plain, direct prose; no filler, no ceremony. Short sentences over long ones. At
 most two em dashes per 500 words. Code comments only where the code cannot say
 it itself.
-
-## Developer principles
-
-- **Practicality over perfectionism.** 80/20 rule. A working solution beats a
-  theoretically optimal one.
-- **Don't reinvent the wheel.** Check existing tools and libraries before
-  building. If you know of something useful that isn't installed, suggest adding
-  it.
-- **Measure, don't speculate.** When in doubt, prototype and measure rather than
-  analyze indefinitely.
