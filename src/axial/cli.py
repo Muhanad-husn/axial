@@ -35,6 +35,7 @@ from axial.ingest import run_ingest
 from axial.intake import IntakeError, intake
 from axial.pipeline_ready import PipelineReadyError, run_pipeline_ready
 from axial.polity_canonical import PolityCanonicalError, run_polity_build, run_polity_report
+from axial.run import PASS_REGISTRY, run_pass
 from axial.schema import SchemaError, load_schema
 from axial.tag import DEFAULT_DOMAIN_DIR, TagError, run_tag
 from axial.validate import cross_validate
@@ -271,6 +272,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest_parser.add_argument(
         "worklist_path", help="path to a line-delimited worklist file of source paths"
+    )
+
+    run_parser = subparsers.add_parser(
+        "run",
+        help=(
+            "run one registered per-source pass over every source path listed in "
+            "a line-delimited worklist file, isolating each source's failure "
+            "(record FAIL and continue) -- see issue #277"
+        ),
+    )
+    run_parser.add_argument(
+        "pass_name",
+        metavar="pass",
+        help=f"registered pass name (one of: {', '.join(sorted(PASS_REGISTRY))})",
+    )
+    run_parser.add_argument(
+        "--worklist",
+        required=True,
+        dest="worklist_path",
+        help="path to a line-delimited worklist file of source paths",
+    )
+    run_parser.add_argument(
+        "--domain",
+        dest="domain_dir",
+        default=str(DEFAULT_DOMAIN_DIR),
+        help=(
+            "path to a domain directory containing schema.yaml and codebook.yaml "
+            f"(default: {DEFAULT_DOMAIN_DIR}); ignored by passes that take no domain"
+        ),
     )
 
     pipeline_ready_parser = subparsers.add_parser(
@@ -588,6 +618,11 @@ def _ingest(worklist_path: str) -> int:
     return run_ingest(worklist_path)
 
 
+def _run(pass_name: str, worklist_path: str, domain_dir: str) -> int:
+    _outcomes, exit_code = run_pass(pass_name, worklist_path, domain_dir=domain_dir)
+    return exit_code
+
+
 def _pipeline_ready(manifest_path: str) -> int:
     try:
         table_text, exit_code = run_pipeline_ready(manifest_path)
@@ -688,6 +723,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "ingest":
         return _ingest(args.worklist_path)
+
+    if args.command == "run":
+        return _run(args.pass_name, args.worklist_path, args.domain_dir)
 
     if args.command == "pipeline-ready":
         return _pipeline_ready(args.manifest)
