@@ -176,6 +176,15 @@ def _place_tree_fixture(source_pdf: Path, tree_fixture_path: Path) -> Path:
     return tree_path
 
 
+# `axial envelope` runs `extract()`, which since issue #303 makes intake's
+# own stage-1 holdings/title-page model call for a source that has not been
+# judged yet -- so the `record` transcript of one envelope run legitimately
+# carries two prompts. That call is not the envelope pass, and the
+# assertions below (including "exactly one call per source", PRD §5 stage 3)
+# are about the envelope pass, so it is filtered out of the transcript here.
+_HOLDINGS_PROMPT_MARKER = "carries the complete work it names"
+
+
 def _read_recorded_prompts(record_path: Path) -> list[str]:
     """Parse `AXIAL_LLM_RECORD_PATH`'s content: one JSON-encoded prompt
     string per line (RecordLLMClient's own contract, src/axial/llm.py)."""
@@ -192,6 +201,9 @@ def _read_recorded_prompts(record_path: Path) -> list[str]:
             f"per line (RecordLLMClient's own contract), got a "
             f"{type(prompt).__name__}: {prompt!r}"
         )
+        if _HOLDINGS_PROMPT_MARKER in prompt:
+            # Not an envelope-pass prompt: see _HOLDINGS_PROMPT_MARKER.
+            continue
         prompts.append(prompt)
     return prompts
 
