@@ -11,12 +11,21 @@ import yaml
 
 _ENVELOPE = {
     "source_id": "paper-abc123",
-    "author": None,
-    "title": "Some Paper",
-    "date": None,
     "thesis": "Envelope thesis text.",
+    "toc": [{"title": "Introduction", "children": []}],
     "scope": "Envelope scope text.",
     "stated_argument": "Envelope stated_argument text.",
+}
+
+# The persisted source-metadata record (§7.12/§7.13, issue #278): the sole
+# origin of `author`/`title`/`date`. Each field is in one of the three
+# distinguishable states -- a resolved `{value, provenance}`, `unavailable`,
+# or `not_attempted`.
+_SOURCE_META = {
+    "source_id": "paper-abc123",
+    "author": {"value": "Some Author", "provenance": "title page"},
+    "title": {"value": "Some Paper", "provenance": "embedded metadata"},
+    "date": "unavailable",
 }
 
 _RECORD = {
@@ -68,26 +77,43 @@ _DISCARD_ARTIFACT_RECORD = {
 def test_build_frontmatter_carries_chunk_id_section_chunk_text():
     from axial.vault import build_frontmatter
 
-    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE, _SOURCE_META)
 
     assert frontmatter["chunk_id"] == _RECORD["chunk_id"]
     assert frontmatter["section"] == _RECORD["section"]
     assert frontmatter["chunk_text"] == _RECORD["chunk_text"]
 
 
-def test_build_frontmatter_source_meta_carries_five_fields_from_envelope():
+def test_build_frontmatter_source_meta_composes_five_fields_from_record_and_envelope():
+    """§7.13 (#278): the five-key block is unchanged, but `author`/`title`/
+    `date` now come from the source-metadata record and `thesis`/`scope`
+    from the envelope."""
     from axial.vault import build_frontmatter
 
-    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE, _SOURCE_META)
     source_meta = frontmatter["source_meta"]
 
     assert source_meta == {
-        "author": None,
+        "author": "Some Author",
         "title": "Some Paper",
-        "date": None,
+        "date": "unavailable",
         "thesis": "Envelope thesis text.",
         "scope": "Envelope scope text.",
     }
+
+
+def test_build_frontmatter_source_meta_renders_a_field_the_record_omits_as_not_attempted():
+    """§7.13's three states stay distinguishable downstream: a record that
+    carries no `date` key at all is `not_attempted`, never a blank that
+    reads like an attempted-and-empty answer."""
+    from axial.intake import NOT_ATTEMPTED
+    from axial.vault import build_frontmatter
+
+    record_without_date = {k: v for k, v in _SOURCE_META.items() if k != "date"}
+
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE, record_without_date)
+
+    assert frontmatter["source_meta"]["date"] == NOT_ATTEMPTED
 
 
 # --- axis block (issue #31 slice 04) -----------------------------------------
@@ -96,7 +122,7 @@ def test_build_frontmatter_source_meta_carries_five_fields_from_envelope():
 def test_build_frontmatter_carries_schema_version():
     from axial.vault import build_frontmatter
 
-    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE, _SOURCE_META)
 
     assert frontmatter["schema_version"] == _RECORD["schema_version"]
 
@@ -104,7 +130,7 @@ def test_build_frontmatter_carries_schema_version():
 def test_build_frontmatter_role_in_argument_is_a_flat_scalar():
     from axial.vault import build_frontmatter
 
-    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE, _SOURCE_META)
 
     assert frontmatter["role_in_argument"] == _RECORD["role_in_argument"]
 
@@ -112,7 +138,7 @@ def test_build_frontmatter_role_in_argument_is_a_flat_scalar():
 def test_build_frontmatter_field_and_claim_type_carried_through_verbatim():
     from axial.vault import build_frontmatter
 
-    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE, _SOURCE_META)
 
     assert frontmatter["field"] == _RECORD["field"]
     assert frontmatter["claim_type"] == _RECORD["claim_type"]
@@ -121,7 +147,7 @@ def test_build_frontmatter_field_and_claim_type_carried_through_verbatim():
 def test_build_frontmatter_theory_school_carries_primary_and_status():
     from axial.vault import build_frontmatter
 
-    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE, _SOURCE_META)
 
     assert frontmatter["theory_school"]["primary"] == _RECORD["theory_school"]["primary"]
     assert frontmatter["theory_school"]["status"] == _RECORD["theory_school"]["status"]
@@ -130,7 +156,7 @@ def test_build_frontmatter_theory_school_carries_primary_and_status():
 def test_build_frontmatter_empirical_scope_nests_value_and_polity():
     from axial.vault import build_frontmatter
 
-    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE, _SOURCE_META)
 
     assert frontmatter["empirical_scope"] == {
         "value": _RECORD["empirical_scope"],
@@ -141,7 +167,7 @@ def test_build_frontmatter_empirical_scope_nests_value_and_polity():
 def test_build_frontmatter_empirical_scope_never_carries_a_legacy_country_key():
     from axial.vault import build_frontmatter
 
-    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE, _SOURCE_META)
 
     assert "country" not in frontmatter["empirical_scope"]
 
@@ -149,7 +175,7 @@ def test_build_frontmatter_empirical_scope_never_carries_a_legacy_country_key():
 def test_build_frontmatter_empirical_scope_omits_polity_when_record_has_none():
     from axial.vault import build_frontmatter
 
-    frontmatter = build_frontmatter(_NON_POLITY_RECORD, _ENVELOPE)
+    frontmatter = build_frontmatter(_NON_POLITY_RECORD, _ENVELOPE, _SOURCE_META)
 
     assert frontmatter["empirical_scope"] == {"value": _NON_POLITY_RECORD["empirical_scope"]}
     assert "polity" not in frontmatter["empirical_scope"]
@@ -158,7 +184,7 @@ def test_build_frontmatter_empirical_scope_omits_polity_when_record_has_none():
 def test_build_frontmatter_carries_polities_touched_list_verbatim():
     from axial.vault import build_frontmatter
 
-    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE, _SOURCE_META)
 
     assert frontmatter["polities_touched"] == _RECORD["polities_touched"]
 
@@ -169,7 +195,7 @@ def test_build_frontmatter_omits_polities_touched_when_record_has_none():
     record = dict(_RECORD)
     del record["polities_touched"]
 
-    frontmatter = build_frontmatter(record, _ENVELOPE)
+    frontmatter = build_frontmatter(record, _ENVELOPE, _SOURCE_META)
 
     assert "polities_touched" not in frontmatter
 
@@ -180,7 +206,7 @@ def test_build_frontmatter_omits_polities_touched_when_record_has_none():
 def test_render_note_has_delimited_yaml_frontmatter_parseable_by_pyyaml():
     from axial.vault import build_frontmatter, render_note
 
-    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE, _SOURCE_META)
     note_text = render_note(frontmatter, "body text here")
 
     lines = note_text.splitlines()
@@ -193,7 +219,7 @@ def test_render_note_has_delimited_yaml_frontmatter_parseable_by_pyyaml():
 def test_render_note_body_contains_chunk_text_below_frontmatter():
     from axial.vault import build_frontmatter, render_note
 
-    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE, _SOURCE_META)
     note_text = render_note(frontmatter, "This is the chunk's own prose text.")
 
     lines = note_text.splitlines()
@@ -234,7 +260,7 @@ def test_render_note_survives_chunk_text_containing_a_bare_triple_dash_line():
         "chunk_text": "First line of the chunk.\n---\nSecond line after a bare rule.",
     }
 
-    frontmatter = build_frontmatter(record, _ENVELOPE)
+    frontmatter = build_frontmatter(record, _ENVELOPE, _SOURCE_META)
     note_text = render_note(frontmatter, record["chunk_text"])
 
     parsed_frontmatter, body = _split_frontmatter_like_outer_test(note_text)
@@ -251,7 +277,7 @@ def test_write_chunk_note_writes_under_prose_dir_named_by_chunk_id(tmp_path):
     from axial.vault import write_chunk_note
 
     vault_dir = tmp_path / "vault"
-    note_path = write_chunk_note(_RECORD, _ENVELOPE, vault_dir)
+    note_path = write_chunk_note(_RECORD, _ENVELOPE, _SOURCE_META, vault_dir)
 
     assert note_path == vault_dir / "prose" / f"{_RECORD['chunk_id']}.md"
     assert note_path.is_file()
@@ -261,7 +287,7 @@ def test_write_chunk_note_creates_parent_dirs(tmp_path):
     from axial.vault import write_chunk_note
 
     vault_dir = tmp_path / "nested" / "vault"
-    note_path = write_chunk_note(_RECORD, _ENVELOPE, vault_dir)
+    note_path = write_chunk_note(_RECORD, _ENVELOPE, _SOURCE_META, vault_dir)
 
     assert note_path.is_file()
 
@@ -270,7 +296,7 @@ def test_write_chunk_note_does_not_touch_artifacts_dir(tmp_path):
     from axial.vault import write_chunk_note
 
     vault_dir = tmp_path / "vault"
-    write_chunk_note(_RECORD, _ENVELOPE, vault_dir)
+    write_chunk_note(_RECORD, _ENVELOPE, _SOURCE_META, vault_dir)
 
     assert not (vault_dir / "artifacts").exists()
 
@@ -282,8 +308,8 @@ def test_write_chunk_note_rerun_overwrites_in_place_without_duplicating(tmp_path
 
     vault_dir = tmp_path / "vault"
 
-    first_path = write_chunk_note(_RECORD, _ENVELOPE, vault_dir)
-    second_path = write_chunk_note(_RECORD, _ENVELOPE, vault_dir)
+    first_path = write_chunk_note(_RECORD, _ENVELOPE, _SOURCE_META, vault_dir)
+    second_path = write_chunk_note(_RECORD, _ENVELOPE, _SOURCE_META, vault_dir)
 
     assert first_path == second_path
     prose_files = [p for p in (vault_dir / "prose").iterdir() if p.is_file()]
@@ -421,6 +447,22 @@ def test_run_vault_write_raises_missing_source_error_for_nonexistent_file(tmp_pa
         )
 
 
+def _write_stored_source_meta(source_path: Path) -> None:
+    """Write the source-metadata record `run_vault_write` now requires
+    (§7.12/§7.13, #278) at the default `axial.intake.SOURCE_META_DIR` --
+    which conftest.py's autouse isolation fixture already points at a fresh
+    per-test temp directory, the same path `run_vault_write` resolves when
+    no `source_meta_dir` is given."""
+    import axial.intake as intake_mod
+    from axial.envelope import compute_source_id
+
+    source_id = compute_source_id(source_path)
+    record = {**_SOURCE_META, "source_id": source_id}
+    intake_mod.write_source_meta(
+        record, intake_mod.source_meta_path(source_id, intake_mod.SOURCE_META_DIR)
+    )
+
+
 def _write_stored_envelope(envelopes_dir: Path, source_path: Path) -> None:
     from axial.envelope import compute_source_id, envelope_path
 
@@ -428,6 +470,7 @@ def _write_stored_envelope(envelopes_dir: Path, source_path: Path) -> None:
     source_id = compute_source_id(source_path)
     envelope = {**_ENVELOPE, "source_id": source_id}
     envelope_path(source_id, envelopes_dir).write_text(json.dumps(envelope), encoding="utf-8")
+    _write_stored_source_meta(source_path)
 
 
 def test_run_vault_write_composes_the_tagger_not_the_chunker_directly(monkeypatch, tmp_path):
@@ -509,6 +552,7 @@ def _arrange_stored_envelope(tmp_path):
     env_path = envelope_path(source_id, envelopes_dir)
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text(_json.dumps(_ENVELOPE), encoding="utf-8")
+    _write_stored_source_meta(source_path)
 
     return source_path, envelopes_dir
 
@@ -619,7 +663,7 @@ def test_build_backlink_maps_empty_pairs_yields_empty_maps():
 def test_build_frontmatter_defaults_artifact_refs_to_empty_list():
     from axial.vault import build_frontmatter
 
-    frontmatter = build_frontmatter(_RECORD, _ENVELOPE)
+    frontmatter = build_frontmatter(_RECORD, _ENVELOPE, _SOURCE_META)
 
     assert frontmatter["artifact_refs"] == []
 
@@ -627,7 +671,9 @@ def test_build_frontmatter_defaults_artifact_refs_to_empty_list():
 def test_build_frontmatter_carries_given_artifact_refs():
     from axial.vault import build_frontmatter
 
-    frontmatter = build_frontmatter(_RECORD, _ENVELOPE, artifact_refs=["art-1", "art-2"])
+    frontmatter = build_frontmatter(
+        _RECORD, _ENVELOPE, _SOURCE_META, artifact_refs=["art-1", "art-2"]
+    )
 
     assert frontmatter["artifact_refs"] == ["art-1", "art-2"]
 
@@ -652,7 +698,9 @@ def test_write_chunk_note_writes_given_artifact_refs_into_frontmatter(tmp_path):
     from axial.vault import write_chunk_note
 
     vault_dir = tmp_path / "vault"
-    note_path = write_chunk_note(_RECORD, _ENVELOPE, vault_dir, artifact_refs=["art-1"])
+    note_path = write_chunk_note(
+        _RECORD, _ENVELOPE, _SOURCE_META, vault_dir, artifact_refs=["art-1"]
+    )
 
     frontmatter, _ = _split_frontmatter_like_outer_test(note_path.read_text(encoding="utf-8"))
     assert frontmatter["artifact_refs"] == ["art-1"]

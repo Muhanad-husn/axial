@@ -110,9 +110,10 @@ chunk_text) unchanged: reusing tests/test_vault_write.py's own assertions
 -----------------------------------------------------------------------
 This test carries forward the exact assertions tests/test_vault_write.py
 locks for the non-axis frontmatter fields (`chunk_id`, `section`,
-`chunk_text`, and `source_meta`'s five reused-from-the-envelope fields --
-`author`, `title`, `date`, `thesis`, `scope` -- each read from the stored
-envelope on disk, never hardcoded), so this test doubles as a regression
+`chunk_text`, and `source_meta`'s five source-level fields -- `author`,
+`title` and `date` read from the persisted source-metadata record on disk,
+`thesis` and `scope` from the stored envelope, never hardcoded (§7.13,
+issue #278)), so this test doubles as a regression
 guard on that slice's contract while this slice's own pass composes the
 tagger internally instead of the chunker directly. Provenance
 (chunk_id/section/chunk_text) is read off the independently-run tagged
@@ -195,9 +196,14 @@ PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 
 KNOWN_SECTION_LABELS = {"Introduction", "Comparative Cases", "Conclusion"}
 
-# Source-level fields §7.2 names as "reused from the envelope" (excluding
-# `fields`, a schema-driven axis tag -- mirrors tests/test_vault_write.py.
-SOURCE_META_FIELDS = ("author", "title", "date", "thesis", "scope")
+# The five source-level fields §7.2 names (excluding `fields`, a
+# schema-driven axis tag), split by origin -- mirrors
+# tests/ingestion/test_vault_write.py: issue #278/§7.13 moved
+# `author`/`title`/`date` out of the envelope and into the persisted
+# source-metadata record (§7.12). The note's key set is unchanged.
+RECORD_SOURCE_META_FIELDS = ("author", "title", "date")
+ENVELOPE_SOURCE_META_FIELDS = ("thesis", "scope")
+SOURCE_META_FIELDS = RECORD_SOURCE_META_FIELDS + ENVELOPE_SOURCE_META_FIELDS
 
 # argparse's fallback error for an as-yet-nonexistent subcommand/flag. Any of
 # these substrings in the combined output means the target subcommand's
@@ -333,6 +339,20 @@ def _arrange_stored_envelope(root: Path) -> Path:
         run_chunk_recursive(THESIS_PAPER_PDF)
 
     return next(iter(new_files))
+
+
+def _stored_source_meta(root: Path) -> dict:
+    """The persisted source-metadata record intake wrote for this fixture
+    (§7.12) -- the note's `author`/`title`/`date` must come from here, never
+    from the envelope and never from the filename (§7.13, #278). Mirrors
+    tests/ingestion/test_vault_write.py's helper of the same name."""
+    source_id = compute_source_id(THESIS_PAPER_PDF)
+    path = root / "data" / "source_meta" / f"{source_id}.json"
+    assert path.exists(), (
+        f"expected intake to have written the source-metadata record at "
+        f"{path} (§7.12: written at intake, before extraction), but it does not exist"
+    )
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _parse_records(stdout: str, container_keys: tuple[str, ...]) -> list[dict]:
@@ -490,7 +510,12 @@ def _find_note_for_chunk(chunk_id: str, root: Path) -> Path:
 
 
 def _assert_phase2_fields_unchanged(
-    frontmatter: dict, note_path: Path, expected: dict, envelope: dict, envelope_path: Path
+    frontmatter: dict,
+    note_path: Path,
+    expected: dict,
+    envelope: dict,
+    envelope_path: Path,
+    record: dict,
 ) -> None:
     """The phase-2 (chunk_id/section/chunk_text/source_meta) assertions this
     test carries forward verbatim from tests/test_vault_write.py, so this
@@ -526,11 +551,33 @@ def _assert_phase2_fields_unchanged(
             f"{field!r} key (PRD §7.2 source-level fields), got keys: "
             f"{sorted(source_meta.keys())}"
         )
+
+    for field in ENVELOPE_SOURCE_META_FIELDS:
         assert source_meta[field] == envelope.get(field), (
             f"expected {note_path}'s frontmatter 'source_meta.{field}' to "
             f"equal the stored envelope's own {field!r} value (read from "
             f"{envelope_path} on disk, never hardcoded), got "
             f"{source_meta[field]!r} vs. envelope's {envelope.get(field)!r}"
+        )
+
+    # §7.13 (#278): author/title/date come from the source-metadata record,
+    # not the envelope -- and never as an empty value indistinguishable from
+    # an unattempted read.
+    for field in RECORD_SOURCE_META_FIELDS:
+        assert field not in envelope, (
+            f"§7.13: the envelope no longer carries {field!r}, got envelope keys {sorted(envelope)}"
+        )
+        recorded = record[field]
+        expected_value = recorded["value"] if isinstance(recorded, dict) else recorded
+        assert source_meta[field] == expected_value, (
+            f"expected {note_path}'s frontmatter 'source_meta.{field}' to "
+            f"come from the source-metadata record (§7.12/§7.13), got "
+            f"{source_meta[field]!r} vs. the record's {expected_value!r}"
+        )
+        assert source_meta[field] not in (None, ""), (
+            f"§7.13: an unavailable field is recorded as unavailable, never "
+            f"as an empty value; got 'source_meta.{field}' == "
+            f"{source_meta[field]!r}"
         )
 
 
@@ -633,6 +680,7 @@ def test_vault_write_persists_axis_frontmatter_matching_appendix_h(isolated_vaul
     root = isolated_vault_root
     envelope_path = _arrange_stored_envelope(root)
     envelope = json.loads(envelope_path.read_bytes())
+    record = _stored_source_meta(root)
 
     expected_records = _arrange_expected_tagged_records(root)
 
@@ -670,7 +718,9 @@ def test_vault_write_persists_axis_frontmatter_matching_appendix_h(isolated_vaul
             f"note; body (truncated): {body[:1000]!r}"
         )
 
-        _assert_phase2_fields_unchanged(frontmatter, note_path, expected, envelope, envelope_path)
+        _assert_phase2_fields_unchanged(
+            frontmatter, note_path, expected, envelope, envelope_path, record
+        )
         _assert_axis_block_matches_appendix_h(frontmatter, note_path, expected)
 
     # the envelope itself must be untouched by vault write (PRD §10 "no

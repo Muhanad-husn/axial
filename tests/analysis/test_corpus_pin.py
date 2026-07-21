@@ -206,11 +206,11 @@ def _build_fixture_vault(root: Path) -> dict[str, Any]:
     )
     source_id = compute_source_id(source_file)
 
+    # §7.13 (#278): the envelope carries no author/title/date -- those come
+    # from the source-metadata record, and the note's `source_meta` block
+    # below is composed from both.
     envelope = {
         "source_id": source_id,
-        "author": "Synthetic Author",
-        "title": "A Synthetic Source For The Corpus-Pin Fixture",
-        "date": 2020,
         "thesis": "A synthetic placeholder thesis, for fixture purposes only.",
         "toc": [
             {"title": "Introduction", "children": []},
@@ -226,9 +226,9 @@ def _build_fixture_vault(root: Path) -> dict[str, Any]:
     )
 
     source_meta = {
-        "author": envelope["author"],
-        "title": envelope["title"],
-        "date": envelope["date"],
+        "author": "Synthetic Author",
+        "title": "A Synthetic Source For The Corpus-Pin Fixture",
+        "date": 2020,
         "thesis": envelope["thesis"],
         "scope": envelope["scope"],
     }

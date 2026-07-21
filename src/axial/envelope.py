@@ -1,9 +1,14 @@
 """Structural-envelope pass: one LLM call per source over its intro/abstract/
 conclusion, producing a reusable envelope (PRD §5 stage 3, §7.3, §8 P0-3).
 
-The envelope -- `{source_id, author, title, date, thesis, toc[], scope,
-stated_argument}` -- is written once to `data/envelopes/<source_id>.json`
-and reused by every later stage for that source (chunking, tagging). This
+The envelope -- `{source_id, thesis, toc[], scope, stated_argument}` -- is
+written once to `data/envelopes/<source_id>.json` and reused by every later
+stage for that source (chunking, tagging). `author`, `title` and `date` are
+deliberately NOT here (§7.13, #278): they are facts about the file, read at
+intake and recorded in the source-metadata record (§7.12, `axial.intake`),
+which is their sole origin. The envelope holds only what the model concludes
+about the *work* by reading its argument, so the pass reads source text and
+nothing else -- no title, no filename. This
 module computes a stable `source_id` *before* any LLM call and checks the
 cache first, so a source with an existing envelope short-circuits with zero
 LLM client calls (PRD §10, "no recompute" -- verified behaviorally by
@@ -1029,17 +1034,17 @@ def reject_degenerate_thesis_fields(raw: str) -> None:
             )
 
 
-def _fallback_title(path: Path) -> str:
-    """Best-effort title derived from the filename when the model response
-    doesn't supply one -- no dedicated metadata-extraction pass exists yet."""
-    return path.stem.replace("_", " ").replace("-", " ").strip().title()
-
-
 def build_envelope(
-    path: Path, source_id: str, parsed: dict[str, Any], toc: list[dict] | None = None
+    source_id: str, parsed: dict[str, Any], toc: list[dict] | None = None
 ) -> dict[str, Any]:
     """Assemble the locked envelope shape (PRD §7.3):
-    {source_id, author, title, date, thesis, toc, scope, stated_argument}.
+    {source_id, thesis, toc, scope, stated_argument}.
+
+    `author`, `title` and `date` are NOT envelope fields (§7.13, #278):
+    they are facts about the file, read at intake from the PDF's own
+    embedded metadata and title page, and they live in the source-metadata
+    record (§7.12). The envelope holds only what the model concludes about
+    the *work* by reading its argument.
 
     `toc` is the caller's own already-resolved FINAL nested `toc` value
     (#235): either the model's own valid nested reconstruction, or
@@ -1051,9 +1056,6 @@ def build_envelope(
     (thesis/scope/stated_argument)."""
     return {
         "source_id": source_id,
-        "author": parsed.get("author"),
-        "title": parsed.get("title") or _fallback_title(path),
-        "date": parsed.get("date"),
         "thesis": parsed["thesis"],
         "toc": toc if toc is not None else parsed.get("toc"),
         "scope": parsed["scope"],
@@ -1061,7 +1063,14 @@ def build_envelope(
     }
 
 
-def _fallback_toc(tree: dict, path: Path, parsed: dict[str, Any]) -> list[dict[str, Any]]:
+# The single entry `_fallback_toc` emits for a tree with no detected heading
+# at all. It names the fact -- no heading was found -- rather than standing
+# in for the source's title: the envelope no longer carries a title, and a
+# filename-derived one is exactly the fabrication §7.13/#278 retires.
+_NO_HEADINGS_TOC_TITLE = "(no headings detected)"
+
+
+def _fallback_toc(tree: dict) -> list[dict[str, Any]]:
     """The deterministic nested fallback `toc` (PRD §7.3: "If the
     reconstruction fails validation, the pass falls back deterministically
     to the tree's own detected heading list ..., preserving the non-empty
@@ -1076,14 +1085,15 @@ def _fallback_toc(tree: dict, path: Path, parsed: dict[str, Any]) -> list[dict[s
     `section_header`-labelled top-level heading anywhere -- an even more
     degenerate case than this fallback's usual target. The non-empty
     guarantee must still hold then, so this last resort falls back once
-    more, to a single entry titled after the envelope's own resolved title
-    (the model's `parsed["title"]`, or the filename-derived
-    `_fallback_title` when that's absent too, exactly like this module's
-    own `title` field resolution above)."""
+    more, to a single entry that states that fact
+    (`_NO_HEADINGS_TOC_TITLE`). It is deliberately NOT derived from the
+    filename or from any title: §7.13/#278 removed `title` from the
+    envelope precisely because a filename slug is a fabrication, and a
+    fallback toc entry is no place to reintroduce one."""
     headings = _toc_from_tree(tree)
     if headings:
         return [{"title": heading, "children": []} for heading in headings]
-    return [{"title": parsed.get("title") or _fallback_title(path), "children": []}]
+    return [{"title": _NO_HEADINGS_TOC_TITLE, "children": []}]
 
 
 def write_envelope(envelope: dict[str, Any], path: Path) -> None:
@@ -1185,9 +1195,9 @@ def run_envelope(
             # the re-ask's own failure (whether an invalid toc again, a
             # transport error, or unparseable JSON) still lands here, so the
             # non-empty guarantee holds regardless of how the re-ask fails.
-            final_toc = _fallback_toc(tree, path, parsed)
+            final_toc = _fallback_toc(tree)
 
-    envelope = build_envelope(path, source_id, parsed, toc=final_toc)
+    envelope = build_envelope(source_id, parsed, toc=final_toc)
     # Defense-in-depth pre-write gate (restored, reviewer finding): the
     # FINAL assembled envelope dict -- not just the raw model response --
     # is re-checked against the locked shape (nested toc included, #235)

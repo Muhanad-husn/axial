@@ -14,13 +14,19 @@ pass also reuses `axial.envelope.compute_source_id`/`envelope_path`/
 `_default_envelopes_dir` to locate and read the source's stored envelope
 (never recomputing it, PRD §10 "no recompute"). If no stored envelope
 exists yet, this pass raises its own typed `MissingEnvelopeError` telling
-the caller to run `axial envelope` first.
+the caller to run `axial envelope` first, and it raises
+`MissingSourceMetaError` the same way for an absent source-metadata record
+rather than silently emitting the null author/date and filename-slug title
+issue #278 retires.
 
 Each chunk is written to its own note at `<vault_dir>/prose/<chunk_id>.md`,
 opening with a `---`-delimited YAML frontmatter block (PyYAML `safe_dump`)
 carrying `chunk_id`, `section`, `chunk_text`, a `source_meta` mapping
-(`author`, `title`, `date`, `thesis`, `scope`) reused verbatim from the
-envelope, and the chunk-level axis block (`schema_version`,
+(`author`, `title`, `date`, `thesis`, `scope`) composed from two artifacts
+(§7.13, issue #278) -- `author`/`title`/`date` from the persisted
+source-metadata record `data/source_meta/<source_id>.json` (§7.12,
+`axial.intake`), which is their sole origin, and `thesis`/`scope` from the
+envelope -- and the chunk-level axis block (`schema_version`,
 `role_in_argument`, `field`, `claim_type`, `theory_school`,
 `empirical_scope`, `polities_touched`) carried through from the tagged
 record and reshaped to match Appendix H's nesting (PRD §7.2), followed by a
@@ -81,14 +87,27 @@ from axial.envelope import (
     _default_envelopes_dir,
 )
 from axial.chunk import _default_chunks_dir
+
+# Imported as a module, not by-name: `SOURCE_META_DIR` is read at call time
+# so a test that redirects it (src/axial/conftest.py's autouse isolation
+# fixture) is honored here too, mirroring `axial.chunk`'s own CHUNKS_DIR
+# resolution.
+from axial import intake as _intake
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
 from axial.paths import default_vault_dir as _default_vault_dir
 from axial.tag import TagError, _default_tags_dir, run_tag
 from axial.xref import XrefError, _default_xref_dir, run_xref, xref_checkpoint_path
 
-# Source-level fields reused verbatim from the envelope (PRD §7.2), excluding
-# `fields`, a schema-driven axis tag deferred to phase-3 tagging.
-SOURCE_META_FIELDS = ("author", "title", "date", "thesis", "scope")
+# The five source-level frontmatter fields (PRD §7.2), excluding `fields`, a
+# schema-driven axis tag deferred to phase-3 tagging. The key set is
+# unchanged by #278; where three of the five come from is not. `author`,
+# `title` and `date` are facts about the FILE, read at intake into the
+# source-metadata record (§7.12/§7.13), which is their sole origin;
+# `thesis` and `scope` are what the model concluded about the WORK, and
+# stay in the envelope (§7.3).
+RECORD_SOURCE_META_FIELDS = ("author", "title", "date")
+ENVELOPE_SOURCE_META_FIELDS = ("thesis", "scope")
+SOURCE_META_FIELDS = RECORD_SOURCE_META_FIELDS + ENVELOPE_SOURCE_META_FIELDS
 
 # Default domain directory for the internal artifacts pass, mirroring
 # `axial.artifacts.DEFAULT_DOMAIN_DIR`, overridable via a `domain_dir`
@@ -121,6 +140,21 @@ class MissingEnvelopeError(VaultError):
         self.path = path
         super().__init__(
             f"no stored envelope found at {path}; run `axial envelope` on the source first"
+        )
+
+
+class MissingSourceMetaError(VaultError):
+    """Raised when no source-metadata record exists yet for the source
+    (§7.12/§7.13) -- the sole origin of `author`, `title` and `date`. The
+    caller must run intake (any ingest path funnels through it) first. This
+    is deliberately loud: silently composing the block without the record
+    would re-emit exactly the nulls and filename-slug title #278 retires."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        super().__init__(
+            f"no source-metadata record found at {path}; run intake on the source first "
+            f"(`axial ingest`/`axial extract` writes it)"
         )
 
 
@@ -170,15 +204,61 @@ class XrefFailedError(VaultError):
 _VERBATIM_AXIS_BLOCKS = ("field", "claim_type", "theory_school")
 
 
+def read_source_meta(source_id: str, source_meta_dir: Path) -> dict[str, Any]:
+    """Read `source_id`'s persisted source-metadata record (§7.12), raising
+    `MissingSourceMetaError` when it is absent or unreadable -- never
+    returning an empty stand-in, which would silently re-emit the nulls
+    #278 retires."""
+    path = _intake.source_meta_path(source_id, source_meta_dir)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise MissingSourceMetaError(path) from exc
+    if not isinstance(record, dict):
+        raise MissingSourceMetaError(path)
+    return record
+
+
+def bibliographic_value(source_meta: dict[str, Any], field: str) -> Any:
+    """One §7.13 bibliographic field, rendered for the note's frontmatter.
+
+    The record holds each field in exactly one of three distinguishable
+    states, and all three survive into the note: a resolved value carries
+    `{"value", "provenance"}` and renders as the value itself; the
+    `unavailable` and `not_attempted` sentinels render as themselves. A key
+    the record does not carry at all is `not_attempted` -- no read has run
+    for it -- never a blank that reads like an empty answer."""
+    value = source_meta.get(field, _intake.NOT_ATTEMPTED)
+    if isinstance(value, dict):
+        return value.get("value")
+    return value
+
+
+def build_source_meta_block(
+    source_meta: dict[str, Any], envelope: dict[str, Any]
+) -> dict[str, Any]:
+    """The note's five-key `source_meta` block (PRD §7.2/§7.13), composed
+    from two artifacts: `author`/`title`/`date` from the source-metadata
+    record (§7.12 -- their sole origin, never the envelope and never the
+    filename), `thesis`/`scope` from the envelope (§7.3). The key set and
+    its order are unchanged; only where three of the five values come from
+    is."""
+    block = {field: bibliographic_value(source_meta, field) for field in RECORD_SOURCE_META_FIELDS}
+    block.update({field: envelope.get(field) for field in ENVELOPE_SOURCE_META_FIELDS})
+    return block
+
+
 def build_frontmatter(
     record: dict[str, Any],
     envelope: dict[str, Any],
+    source_meta: dict[str, Any],
     artifact_refs: list[str] | None = None,
 ) -> dict[str, Any]:
     """Assemble a chunk note's frontmatter mapping from a tagged record
     (`axial.tag.build_tagged_record`'s shape): `chunk_id`, `section`,
-    `chunk_text`, and `source_meta` (the five source-level fields, PRD §7.2)
-    reused verbatim from the envelope, plus the chunk-level axis block --
+    `chunk_text`, and `source_meta` (the five source-level fields, PRD §7.2,
+    composed by `build_source_meta_block` from the source-metadata record
+    and the envelope), plus the chunk-level axis block --
     `schema_version`, `role_in_argument` (flat scalar), `field`/`claim_type`/
     `theory_school` (nested, carried through as the tagger produced them),
     `empirical_scope` reshaped from the tagger's flat scalar + separate
@@ -193,7 +273,7 @@ def build_frontmatter(
         "chunk_id": record["chunk_id"],
         "section": record["section"],
         "chunk_text": record["chunk_text"],
-        "source_meta": {field: envelope.get(field) for field in SOURCE_META_FIELDS},
+        "source_meta": build_source_meta_block(source_meta, envelope),
         "schema_version": record["schema_version"],
         "role_in_argument": record["role_in_argument"],
     }
@@ -246,14 +326,17 @@ def _note_path(vault_dir: Path, chunk_id: str) -> Path:
 def write_chunk_note(
     record: dict[str, Any],
     envelope: dict[str, Any],
+    source_meta: dict[str, Any],
     vault_dir: Path,
     artifact_refs: list[str] | None = None,
 ) -> Path:
     """Write one chunk's note under `<vault_dir>/prose/<chunk_id>.md`,
-    creating parent directories as needed. `artifact_refs` (issue #34 slice
-    02) is this chunk's detected backlink list, threaded through to
-    `build_frontmatter` verbatim."""
-    frontmatter = build_frontmatter(record, envelope, artifact_refs=artifact_refs)
+    creating parent directories as needed. `source_meta` is the source's
+    persisted source-metadata record (§7.12), the origin of the note's
+    `author`/`title`/`date`. `artifact_refs` (issue #34 slice 02) is this
+    chunk's detected backlink list, threaded through to `build_frontmatter`
+    verbatim."""
+    frontmatter = build_frontmatter(record, envelope, source_meta, artifact_refs=artifact_refs)
     body = f"# {record['section']}\n\n{record['chunk_text']}\n"
     note_text = render_note(frontmatter, body)
 
@@ -350,9 +433,12 @@ def run_vault_write(
     tags_dir: Path | None = None,
     artifacts_dir: Path | None = None,
     xref_dir: Path | None = None,
+    source_meta_dir: Path | None = None,
 ) -> list[Path]:
-    """Run vault write on `source_path`: read the stored envelope (never
-    recomputing it), run the tagging pass internally via `axial.tag.run_tag`
+    """Run vault write on `source_path`: read the stored envelope and the
+    stored source-metadata record (never recomputing either -- `source_meta_dir`
+    defaults to `axial.intake.SOURCE_META_DIR`, and an absent record raises
+    `MissingSourceMetaError`, §7.13), run the tagging pass internally via `axial.tag.run_tag`
     (which itself reads the pre-built chunk artifact via
     `axial.chunk.read_chunks`, never recomputing it -- the recursive/
     structural chunk pass, issue #191, is a separate, model-free step that
@@ -385,6 +471,14 @@ def run_vault_write(
     if not env_path.exists():
         raise MissingEnvelopeError(env_path)
     envelope = json.loads(env_path.read_text(encoding="utf-8"))
+
+    # §7.13: author/title/date come from the source-metadata record, not the
+    # envelope. Read before any LLM pass runs, so a source that never went
+    # through intake fails on the cheap check rather than after paying for a
+    # full tag/artifacts/xref run.
+    source_meta = read_source_meta(
+        source_id, source_meta_dir if source_meta_dir is not None else _intake.SOURCE_META_DIR
+    )
 
     # Per-chunk / per-artifact checkpoint/resume (issue #81, extended by
     # issue #98): scoped to vault write. Resolve every checkpoint dir here
@@ -451,7 +545,11 @@ def run_vault_write(
 
     prose_paths = [
         write_chunk_note(
-            record, envelope, vault_dir, artifact_refs=chunk_to_artifacts.get(record["chunk_id"])
+            record,
+            envelope,
+            source_meta,
+            vault_dir,
+            artifact_refs=chunk_to_artifacts.get(record["chunk_id"]),
         )
         for record in records
     ]
