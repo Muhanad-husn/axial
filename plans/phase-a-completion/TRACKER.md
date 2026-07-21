@@ -7,7 +7,7 @@ as slices land. Issues remain the system of record; this is the map over them.
 - **Branch:** `claude/phase-a-hybrid-tagging-sqx2xc`
 - **Plan:** [`README.md`](README.md) (stages, waves, deferred decisions)
 - **Decision:** `docs/DECISIONS.md` → DEC-32
-- **Last updated:** 2026-07-21 — wave 2 dispatched; three PRs open awaiting review (#305, #306, #307)
+- **Last updated:** 2026-07-21 — wave 2: #305 and #306 merged; #307 held on gate-4, fix in flight
 
 ## Read-me-first (30-second orient)
 
@@ -29,7 +29,7 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
 ### Stage 0 — clean the shop (hygiene, parallel with stage 1)
 - ✅ 0a #291 — safe GC for orphaned derived artifacts (`reconcile.py`, new) — PR #301 merged `209bfec`
-- ◐ 0b #270 — structured run logging — plan ✅ `plans/run-logging/` (2 slices). Slice 01 (seam + `extract`) **PR #305 open**; slice 02 still held back (the serialization point)
+- ◐ 0b #270 — structured run logging — plan ✅ `plans/run-logging/` (2 slices). ✅ slice 01 (seam + `extract`) — PR #305 merged `853f780`; ☐ slice 02 still held back (the serialization point)
 - ☐ 0c #289 — verify gold-sheet dropdowns (`gold.py`) — ✎ fix-lane, verify-first
 
 ### Stage 1 — metadata correctness (one ordered chain, before any re-tag) — plan ✅ `plans/intake-metadata/`
@@ -43,7 +43,7 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
 ### Stage 3 — runner — plan ✅ `plans/run/` (3 slices)
 - ✅ 3·01 #277 — runner core + pass registry + failure isolation (walking skeleton) — PR #300 merged `e8f9661`
-- ◐ 3·02 #277 — unified resume ledger + done-predicate (replaces today's 3 mechanisms) — **PR #306 open**
+- ✅ 3·02 #277 — unified resume ledger + done-predicate (replaces today's 3 mechanisms) — PR #306 merged `6047450`. Ledger at `data/logs/run/ledger.tsv`, keyed `(pass, source_id)`; `extract`/`envelope` use a file-exists predicate, the rest use the ledger. **P1-4 is satisfied for a named worklist.**
 - ☐ 3·03 #277 — source-set inputs (worklist + corpus glob) + end-of-run summary
 
 ### Stage 4 — freeze (operation, not a slice) → **PHASE A CLOSES HERE**
@@ -59,31 +59,32 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
 ## Next action
 
-**Wave 2 is built; three PRs are open and none is merged.** Worktrees live under
-`.claude/worktrees/{intake-metadata-02, run-02, run-logging-01}`.
+**Wave 2: two of three lanes merged.** #305 (`853f780`) and #306 (`6047450`) are on
+`main`, which is green after both (`1064 passed` on the src tier — the two lanes compose).
+Their worktrees are cleaned up.
 
-| Lane | Slice | PR | State |
-|------|-------|----|-------|
-| intake-metadata | #285 source-meta record | [#307](https://github.com/Muhanad-husn/axial/pull/307) | ⚠️ **held — real-corpus check failed** |
-| run | #277·02 unified resume ledger | [#306](https://github.com/Muhanad-husn/axial/pull/306) | ready for review |
-| run-logging | #270·01 seam + `extract` | [#305](https://github.com/Muhanad-husn/axial/pull/305) | ready for review |
-
-**The open decision is on #307.** Gate-4 validation over all 30 real sources found:
+**#307 is the one open item.** Gate-4 validation over all 30 real sources found:
 (1) `hall-schroeder-anatomy-of-power` crashes intake on a pypdf `NullObject`;
 (2) `heydemann-war-institutions-social-change` carries embedded metadata for *a different
-book* and would be recorded as a confident value with provenance; (3) the title-page
-fallback reads **2 of 13** real cases correctly — the #268 pattern. Recommendation is to
-replace the fallback with one model call reusing slice 01's front-matter read, which
-addresses (2) and (3) together, and to guard the `NullObject`. Full table in the PR body.
+book* (`Michael Hanby` / `AUGUSTINE AND MODERNITY`) and would be recorded as a confident
+value with provenance; (3) the title-page fallback reads **2 of 13** real cases correctly,
+storing the author as the title twice and Cambridge boilerplate twice — the #268 pattern.
+Full table in the PR body.
 
-Two review notes carried up from the other lanes:
+**Founder decision (2026-07-21):** replace the hand-rolled fallback with one model call
+reusing slice 01's reasoning-ON front-matter read, cross-check embedded metadata against
+the title page so a recycled-metadata PDF resolves to `unavailable` rather than a confident
+wrong value, and guard the `NullObject`. The 30-source table is the acceptance evidence,
+not the suite. Builder is in flight in `.claude/worktrees/intake-metadata-02`.
 
-- **#306 edits a locked slice-01 test** (`tests/test_run.py`, `OK` → `SKIP` on two
-  sources). Justified and correct — the file-exists predicate now reads the fixtures that
-  test pre-places — but the consequence is that no source in *that* test exercises the
-  success path end to end; the new outer test covers it instead.
+Two notes carried forward from the merged lanes:
+
+- **#306 edited a locked slice-01 test** (`tests/test_run.py`, `OK` → `SKIP` on two
+  sources) — correct, since the file-exists predicate now reads the fixtures that test
+  pre-places, but no source in *that* test exercises the success path end to end any more;
+  `tests/test_run_resume.py` covers it instead.
 - **#306's ledger sits at `data/logs/run/ledger.tsv`**, beside the per-run
-  `data/logs/<date>-<name>/` dirs, though it is a cross-run artifact. Cheap to move now.
+  `data/logs/<date>-<name>/` dirs, though it is a cross-run artifact. Cheap to move.
 
 Still held back: **#270 slice 02** (fans out into `envelope`/`tag`/`eval` — the one
 real serialization point; hold until the intake-metadata and tag lanes settle),
