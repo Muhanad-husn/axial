@@ -3,7 +3,9 @@
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
+from typing import Callable
 
 import axial
 from axial.artifacts import ArtifactsError, run_artifacts
@@ -18,7 +20,7 @@ from axial.chunk import (
 from axial.codebook import CodebookError, load_codebook
 from axial.drive import DEFAULT_SECRETS_PATH as DRIVE_SECRETS_PATH
 from axial.drive import DriveSecretsError, _load_drive_secrets, run_drive_ingest
-from axial.envelope import EnvelopeError, run_envelope
+from axial.envelope import EnvelopeError, MissingSourceError, compute_source_id, run_envelope
 from axial.eval import EvalError, run_eval
 from axial.eval.corpus_pin import CorpusPinError, write_pin
 from axial.extract import ExtractError, extract
@@ -37,6 +39,7 @@ from axial.pipeline_ready import PipelineReadyError, run_pipeline_ready
 from axial.polity_canonical import PolityCanonicalError, run_polity_build, run_polity_report
 from axial.reconcile import ReconcileError, format_gc_report, run_gc
 from axial.run import PASS_REGISTRY, run_pass
+from axial.runlog import run_context
 from axial.schema import SchemaError, load_schema
 from axial.tag import DEFAULT_DOMAIN_DIR, TagError, run_tag
 from axial.validate import cross_validate
@@ -421,12 +424,53 @@ def _intake(source_path: str) -> int:
     return 0
 
 
-def _extract(source_path: str) -> int:
+def _safe_source_id(source_path: str) -> str:
+    """Best-effort source_id for a run.jsonl record: falls back to "" when
+    the path doesn't resolve to a real file (mirrors axial.ingest's own
+    missing-source fallback row), so a record is always written even when
+    `extract()` failed before a source_id could otherwise be computed."""
     try:
-        tree = extract(source_path)
-    except ExtractError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return compute_source_id(Path(source_path))
+    except MissingSourceError:
+        return ""
+
+
+def _extract(
+    source_path: str,
+    *,
+    root: Path | None = None,
+    clock: Callable[[], str] | None = None,
+) -> int:
+    """Run structural extraction on `source_path`, wrapped in a run-logging
+    context (issue #270 slice 01): one `run.jsonl` record per call, teed
+    `console.log`, and the pass's existing stdout unchanged. `root`/`clock`
+    are the run_context determinism seam -- tests inject both; the CLI's own
+    call site (main(), below) passes neither and gets the real
+    `data/logs/extract-<now>/`."""
+    with run_context("extract", root=root, clock=clock) as run:
+        start = time.monotonic()
+        try:
+            tree = extract(source_path)
+        except ExtractError as exc:
+            run.record(
+                source_id=_safe_source_id(source_path),
+                pass_name="extract",
+                model=None,
+                status="error",
+                duration_sec=time.monotonic() - start,
+                error=str(exc),
+            )
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        run.record(
+            source_id=_safe_source_id(source_path),
+            pass_name="extract",
+            model=None,
+            status="ok",
+            duration_sec=time.monotonic() - start,
+            error=None,
+        )
 
     print(json.dumps(tree, sort_keys=True))
     return 0
