@@ -133,7 +133,7 @@ The domain schema (`config/domains/syria/schema.yaml`) declares the axes and the
 
 Loader contract:
 - The loader reads the schema and codebook and exposes: the axis list, each axis's cardinality (single vs. primary+secondary vs. one-value), each tag's status flag, and each tag's definition/examples.
-- **Every tag applied by the tagger must exist in the loaded schema.** A tag absent from the schema triggers a bounded correction re-ask: the tagger is shown that axis's controlled vocabulary and must return a valid value or an explicit `NONE`. A tag still absent from the schema after that single bounded re-ask is a hard error — never a silent pass, and never a code-side guess or normalization of the value. Only the model self-corrects; the code never rewrites an out-of-vocabulary value into a valid one. **Exception: `theory_school`** (Appendix E), whose vocabulary is derived from one expert's mind-map and does not yet cover every school a source may legitimately invoke — a value still out of vocabulary after the bounded re-ask lands as the `unlisted` sentinel instead of failing the source, with the model's proposed name logged for operator review (Appendix E). Every other axis (`field`, `claim_type`, `role_in_argument`, `empirical_scope`) keeps the hard-error contract above unchanged.
+- **Every tag applied by the tagger must exist in the loaded schema.** A tag absent from the schema triggers a bounded correction re-ask: the tagger is shown that axis's controlled vocabulary and must return a valid value or an explicit `NONE`. A tag still absent from the schema after that single bounded re-ask is a hard error — never a silent pass, and never a code-side guess or normalization of the value. Only the model self-corrects; the code never rewrites an out-of-vocabulary value into a valid one. **Exception: `theory_school`** (Appendix E), whose vocabulary is derived from one expert's mind-map and does not yet cover every school a source may legitimately invoke — a value still out of vocabulary after the bounded re-ask lands as the `unlisted` sentinel instead of failing the source, with the model's proposed name logged for operator review (Appendix E). Every other axis (`field`, `claim_type`, `role_in_argument`, `empirical_scope`) keeps the hard-error contract above unchanged. Under best-of-N (§7.14) this contract runs **per draw**: a draw still out of vocabulary after its own bounded re-ask casts no ballot, and the hard error stands only when every draw is invalid.
 - The schema carries a `version` field; every note written records the schema version it was tagged under, so a later schema change is detectable per note.
 - Swapping domains = pointing the loader at a different `domains/<name>/` directory. No code path branches on country.
 
@@ -359,6 +359,24 @@ A value is never invented to avoid state 2. Embedded PDF metadata is often junk 
 
 **The envelope's grounding guarantee is unaffected, and is strengthened.** §7.3 already forbids deriving `thesis`, `scope` or `stated_argument` from the title, the filename, or outside knowledge. Moving `title` out of the envelope removes the last reason the pass had to handle a title at all, so the envelope call reads source text and nothing else.
 
+### 7.14 Best-of-N voting on the blind tag axes
+
+The tag pass draws its per-chunk call **`N` times** and **majority-votes the blind axes** (`claim_type`, `theory_school`) across the draws. `N` is a **per-pass setting carried in the model configuration** (`config/pipeline.yaml`, `llm.votes_by_pass` — the same shape as `reasoning_by_pass` and `model_by_pass`, §7.9/§12), never hardcoded at a call site; it is **3** for the tag pass and **1** for every pass not named, and `N = 1` is an exact no-op — one draw, no voting layer, today's record shape unchanged.
+
+**Why.** A single draw of `theory_school` sits at its intra-annotator ceiling: the same coder given the same prompt twice reproduces its own label only ~0.73 of the time, and prompt, codebook and added-source-context fixes were all measured against that ceiling and were null (DEC-30). Voting does not improve the coder; it recovers the modal answer a single draw was sampling around. Measured over six independent draws on the same 60 chunks: `theory_school` 0.757 → **0.918**, `claim_type` 0.796 → **0.866** (DEC-31). The gains on the pre-labeled axes are real but small, so this contract **votes the blind axes only**; the head axes (`field`, `empirical_scope`, `role_in_argument`, `polities_touched`) take the **first draw's** value.
+
+**Abstention is a per-axis flag, never a vocabulary value.** When an axis's `N` draws hold no strict plurality (for `N = 3`, all three differ — 8.8% of chunks for `theory_school`, 3.3% for `claim_type`), that axis records:
+
+```yaml
+theory_school: { primary: null, abstained: true, draws: [<the distinct primaries, in draw order>], status: candidate }
+```
+
+No tag is fabricated, and the contest is preserved for review. This is deliberately **outside the value space**: `not-applicable` asserts the passage advances no theoretical position and `unlisted` asserts a real school this vocabulary does not cover, while abstention asserts **the draws disagree** — a statement about the draw distribution, not about the passage. Conflating them is the very error Appendix E's absence marker exists to prevent, so a consumer checks `abstained` before it reads `primary`. The flag is per axis, not per record: a chunk routinely decides one blind axis while abstaining the other. A **decided** axis is unchanged from the single-draw shape — `primary` set, no `abstained` key — and carries the `secondary`/`subtags` of a draw that actually voted for the winner.
+
+**Interaction with the bounded correction re-ask (§7.1 / P0-6).** Each draw runs the whole parse → validate → single bounded re-ask path independently. A `theory_school` draw that soft-lands to `unlisted` casts a **legal ballot** and can win or lose like any other value. A draw still out of vocabulary on a hard-error axis after its own re-ask is a **spoiled ballot the vote ignores**, and the axis decides among the valid draws — voting therefore self-repairs invalid draws (`theory_school` out-of-vocab rate 0.0056 → 0.0000). Only when **every** draw is invalid does the P0-6 hard error stand, so the schema-gap guarantee is preserved at the chunk level.
+
+The measured figures above come from the simulated gold set (DEC-29/DEC-32) and are a provisional development signal; the mechanism they validate is not. `N = 5` drives abstention to ~1% for 5× the calls and is a config change, not a code change.
+
 ### Must-Have (P0)
 
 **P0-1 Intake validation.**
@@ -445,6 +463,7 @@ A value is never invented to avoid state 2. Embedded PDF metadata is often junk 
 - [ ] Field = one primary + ≥0 secondary. Empirical-scope = exactly one value. Claim-type = one primary + optional secondary.
 - [ ] A tag absent from the schema triggers a bounded correction re-ask showing that axis's controlled vocabulary; a tag still absent after that bounded re-ask raises a hard error (never a silent pass, never a code-side guess/normalization) — except `theory_school` (Appendix E), which soft-lands to the `unlisted` sentinel and logs the proposal for review instead of failing the source.
 - [ ] Each note records the schema `version` it was tagged under.
+- [ ] The blind axes (`claim_type`, `theory_school`) are majority-voted over `N` draws, with `N` read per pass from config and never hardcoded (§7.14). A draw invalid after its own bounded re-ask is excluded from the vote rather than failing the source; the hard error above stands only when every draw is invalid. An axis whose draws hold no strict plurality records `abstained: true` with a null primary and the distinct draws — never a fabricated tag, and never `not-applicable`.
 
 **P0-7 Cross-reference pass.**
 - [ ] Prose→artifact references produce bidirectional links in both notes' frontmatter.
@@ -643,6 +662,8 @@ Provisional; kept-or-cut by the eval. Derived from the Academic's mind-map; orth
 >
 > The cost is **abstention**: a majority-of-3 is undecided when all three draws differ (**8.8%** of chunks here; 1.1% at N=5). Abstention is a legitimate outcome — it flags a genuinely contested passage rather than coin-flipping it — but it is a **distinct signal from `not-applicable`**, which asserts that the passage advances no theoretical position at all. Conflating the two would repeat the very error the absence marker exists to prevent.
 >
+> **How abstention is recorded** (§7.14): as a **flag on the axis object**, `{primary: null, abstained: true, draws: [...], status: candidate}` — never as a value inside the vocabulary below. The three sentinels stay what they are: a real school id asserts *this school applies*, `not-applicable` asserts *no theoretical position is advanced*, `unlisted` asserts *a real school applies that this vocabulary misses*, and abstention asserts *the draws disagree about which of those is true*. A consumer checks `abstained` before it reads `primary`. An abstained chunk is excluded from the cross-field recurrence analysis below for the same reason `not-applicable` and `unlisted` are — it records no positioned school — and carries its own visible rate.
+>
 > **Reading any agreement figure for this axis:** state whether it is single-draw or voted, report intra-annotator reliability alongside it, and compare only within one model family (cross-family vs same-family differs by ~0.25 with no design change).
 
 - **State:** `colonial-postcolonial`, `marxist-political-economy`, `cultural-ideational`, `bellicist`, `neo-bellicist`, `external-statebuilding`, `neo-marxist`, `modernization-developmental`, `institutionalist-state-centered`, `structuralist`, `state-in-society` (Migdal), `constructivist`.
@@ -729,6 +750,12 @@ theory_school: { primary: institutionalist-state-centered, status: candidate }
 role_in_argument: role:claim
 artifact_refs: [hinnebusch2001_tbl_02]
 ---
+```
+
+A **blind axis whose best-of-N draws did not decide** (§7.14) writes the abstention marker in place of a value — never a fabricated tag, and never one of the vocabulary's own sentinels:
+
+```yaml
+theory_school: { primary: null, abstained: true, draws: [bellicist, structuralist, not-applicable], status: candidate }
 ```
 
 ## Appendix I — Label-sheet columns

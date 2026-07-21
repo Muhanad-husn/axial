@@ -72,6 +72,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -97,6 +98,7 @@ from axial.llm import (
     LLMClient,
     LLMError,
     get_client,
+    votes_for_pass,
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.nonprose_guard import garble_only_skip_reason
@@ -1291,6 +1293,82 @@ def _parse_and_validate_tags(
     return values, multi_value_axes, many_valued_axes, polity
 
 
+# The BLIND axes (§9 / Appendix I): the two axes the gold label sheet sends
+# to the Academic unlabeled, and the two best-of-N majority-votes across its
+# `N` draws (DEC-31, issue #294). The head/pre-labeled axes (`field`,
+# `empirical_scope`, `role_in_argument`, `polities_touched`) keep their FIRST
+# draw's value: DEC-31's gains there are real but small, and voting them is a
+# semantics choice nothing has asked for yet -- the `N` draws are all in hand,
+# so extending the vote to one later is a change here, not a rebuild.
+BLIND_AXES = (CLAIM_TYPE_AXIS, THEORY_SCHOOL_AXIS)
+
+# The abstention marker on a blind axis whose `N` draws hold no strict
+# plurality (DEC-31: 8.8% of chunks for theory_school at N=3). It is a FLAG on
+# the axis object, deliberately never a value inside the controlled
+# vocabulary: `not-applicable` asserts the passage advances no theoretical
+# position and `unlisted` asserts a real school this vocabulary misses, while
+# abstention asserts the DRAWS DISAGREE -- a statement about the draw
+# distribution, not about the passage. Conflating them is the exact error
+# Appendix E's absence marker exists to prevent, so keeping abstention
+# structurally outside the value space makes the two impossible to confuse: a
+# consumer checks this key before it reads `primary`.
+ABSTAINED_KEY = "abstained"
+
+
+def _strict_plurality(values: list[str]) -> str | None:
+    """The single most-common entry in `values` when it is STRICTLY more
+    common than every other, else `None` (the vote abstains). A tie for the
+    lead is never broken -- coin-flipping a contested chunk is exactly what
+    the abstention marker exists to avoid."""
+    ranked = Counter(values).most_common()
+    if not ranked:
+        return None
+    if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
+        return None
+    return ranked[0][0]
+
+
+def vote_blind_axes(
+    draws: list[dict[str, dict[str, Any]]], schema: Schema
+) -> dict[str, dict[str, Any]]:
+    """Majority-vote each blind axis across `draws` -- the per-chunk
+    `multi_value_axes` mapping from each of the pass's `N` draws, in draw
+    order (issue #294, DEC-31).
+
+    A blind axis whose draws hold a strict plurality of `primary` values
+    records the whole axis object from the FIRST draw that voted for the
+    winner, so `secondary`/`subtags` stay coherent with the primary they were
+    drawn alongside and the record shape is byte-identical to a single draw's.
+    A blind axis with no strict plurality records the abstention marker
+    instead: `{"primary": None, "abstained": True, "draws": [<distinct
+    primaries, in draw order>], ...axis extras}` -- the contest is preserved
+    for operator review, and no tag is fabricated. Axis extras (today only
+    `theory_school`'s schema-declared `status`) come from the schema, exactly
+    as `_axis_extras` supplies them on a decided axis.
+
+    Every other axis takes `draws[0]`'s value unchanged (head axes are not
+    voted, see `BLIND_AXES`). `draws` must be non-empty; a spoiled draw is
+    dropped by the caller before it gets here, so every ballot counted is one
+    the schema already validated."""
+    voted = dict(draws[0])
+    for axis_name in BLIND_AXES:
+        ballots = [draw[axis_name] for draw in draws if axis_name in draw]
+        if not ballots:
+            continue
+        winner = _strict_plurality([ballot["primary"] for ballot in ballots])
+        if winner is None:
+            abstained: dict[str, Any] = {
+                "primary": None,
+                ABSTAINED_KEY: True,
+                "draws": list(dict.fromkeys(ballot["primary"] for ballot in ballots)),
+            }
+            abstained.update(_axis_extras(schema.axes[axis_name]))
+            voted[axis_name] = abstained
+        else:
+            voted[axis_name] = next(ballot for ballot in ballots if ballot["primary"] == winner)
+    return voted
+
+
 class TaggedRecords(list):
     """A `list` of tagged records that also surfaces `quarantine_count`
     (issue #120): a plain `list` subclass so every existing call site
@@ -1348,6 +1426,7 @@ def run_tag(
     domain_dir: str | Path | None = None,
     tags_dir: Path | None = None,
     chunks_dir: Path | None = None,
+    votes: int | None = None,
 ) -> TaggedRecords:
     """Run the tagging pass on `source_path`.
 
@@ -1384,6 +1463,15 @@ def run_tag(
     the retry resumes instead of restarting. `chunks_dir`, when supplied, is
     where `read_chunks` looks for the on-disk chunk artifact (defaults to the
     same `data/chunks/` resolution `axial chunk` itself writes to).
+
+    Best-of-N (issue #294, DEC-31): each chunk's whole draw+parse+validate+
+    re-ask path runs `votes` times and the BLIND axes (`BLIND_AXES`) are
+    majority-voted across the draws (`vote_blind_axes`); the head axes take
+    the first draw's value. `votes`, when omitted, is resolved from per-pass
+    config (`llm.votes_by_pass.tag`, `axial.llm.votes_for_pass`) -- an
+    explicit argument overrides it, exactly like `domain_dir` overrides its
+    own config resolution. `votes == 1` is an exact no-op: one draw, no
+    voting layer, no `abstained` key, today's record shape unchanged.
     """
     if domain_dir is None:
         domain_dir = _default_domain_dir(config_path)
@@ -1441,6 +1529,13 @@ def run_tag(
     theory_school_candidates_path = _theory_school_candidates_path(
         tags_dir if tags_dir is not None else _default_tags_dir(config_path)
     )
+
+    # Best-of-N (issue #294): how many times this pass draws its per-chunk
+    # call before voting the blind axes. Read once per run from per-pass
+    # config (`llm.votes_by_pass.tag`, defaulting to
+    # `axial.llm.DEFAULT_VOTES_BY_PASS`), never a literal in the draw loop.
+    if votes is None:
+        votes = votes_for_pass(TAG_PASS_NAME, config_path)
 
     tagged_records: list[dict[str, Any]] = []
     quarantine_count = 0
@@ -1500,93 +1595,129 @@ def run_tag(
             polity_examples=schema.polity_examples,
         )
 
-        try:
-            raw_response = complete_json(
-                client,
-                prompt,
-                pass_name=TAG_PASS_NAME,
-                validate=lambda raw: reject_degenerate_tag_values(raw, axes_to_tag, schema),
-            )
-        except ContentRefusedError as exc:
-            # Content-caused, never transient (issue #120): a moderation
-            # refusal surviving the #116 fallback reroute cannot be fixed by
-            # retrying the identical prompt against the same model -- caught
-            # narrowly here (before the broader LLMError clause below, since
-            # `ContentRefusedError` subclasses it) so only this specific class
-            # is quarantined; every other `LLMError`/`httpx.HTTPError` still
-            # propagates exactly as today. Quarantine is scoped to when the
-            # checkpoint is active (`tags_dir` supplied) -- mirroring every
-            # other checkpoint-only behavior in this pass (issue #81's own
-            # "opt-in" docstring above): a standalone `axial tag` run with no
-            # checkpoint has nowhere to durably record the quarantine, so it
-            # keeps today's hard-error contract unchanged.
-            if checkpoint_path is None:
-                raise LLMFailedError(exc) from exc
-            _quarantine_chunk(chunk_record, QUARANTINE_REASON_CONTENT_FILTER, checkpoint_path)
-            quarantine_count += 1
-            continue
-        except (LLMError, httpx.HTTPError) as exc:
-            raise LLMFailedError(exc) from exc
-        except ModelJsonError as exc:
-            # Malformed JSON that persisted through `complete_json`'s entire
-            # bounded retry budget (issue #120) -- content-shaped, not
-            # transient, so this specific chunk is quarantined rather than
-            # aborting the whole source (checkpoint-scoped, see above).
-            if checkpoint_path is None:
-                raise TagParseError(f"model response was not valid JSON: {exc}") from exc
-            _quarantine_chunk(chunk_record, QUARANTINE_REASON_MALFORMED_JSON, checkpoint_path)
-            quarantine_count += 1
-            continue
-
-        # Shared, data-driven cardinality dispatch (issue #29 slice 03): each
-        # axis is parsed/validated by its own schema-declared `cardinality`,
-        # never by its name. An out-of-vocabulary value triggers exactly ONE
-        # bounded correction re-ask (issue #102, P0-6): the model is shown the
-        # failing position's controlled vocabulary and must return a valid
-        # value or an explicit NONE; still-out-of-vocab after that single
-        # re-ask propagates `TagNotInSchemaError` as the hard error -- EXCEPT
-        # for `theory_school` (founder-approved soft-land): a still-invalid
-        # `theory_school` after its own bounded re-ask lands as `unlisted`
-        # instead of aborting the source (every other closed axis is
-        # unaffected and stays fatal exactly as before). `_validate` tracks,
-        # per chunk, whether `theory_school` was the axis that triggered the
-        # FIRST failure (`theory_school_reasked`): the first parse attempt
-        # always raises normally (so the #102 re-ask genuinely fires once),
-        # and only the SECOND attempt -- `apply_correction_reask`'s own
-        # re-validation of the correction re-ask's answer -- soft-lands a
-        # still-invalid `theory_school`. Polity / parse / cardinality errors
-        # propagate unchanged (never re-asked here). `client` is already
-        # resolved above, so the correction re-ask reuses it; any transport
-        # failure it raises wraps to `LLMFailedError`.
-        theory_school_reasked = False
-
-        def _validate(raw: str) -> Any:
-            nonlocal theory_school_reasked
+        # Best-of-N (issue #294, DEC-31): draw that one call `votes` times,
+        # each draw running the identical parse+validate+#102-re-ask path, and
+        # majority-vote the blind axes across the results below. `votes` is
+        # per-pass config, resolved once above -- never a literal here. At
+        # `votes == 1` this loop runs once and the voting layer is skipped
+        # entirely, which is today's behavior exactly.
+        draws: list[tuple[dict[str, str], dict[str, Any], dict[str, list[str]], str | None]] = []
+        spoiled: TagNotInSchemaError | None = None
+        quarantine_reason: str | None = None
+        for _ in range(votes):
             try:
-                return _parse_and_validate_tags(
-                    raw,
-                    axes_to_tag,
-                    schema,
-                    theory_school_softland=theory_school_reasked,
-                    source_id=source_id,
-                    chunk_record=chunk_record,
-                    theory_school_candidates_path=theory_school_candidates_path,
+                raw_response = complete_json(
+                    client,
+                    prompt,
+                    pass_name=TAG_PASS_NAME,
+                    validate=lambda raw: reject_degenerate_tag_values(raw, axes_to_tag, schema),
                 )
-            except TagNotInSchemaError as exc:
-                if exc.axis_name == THEORY_SCHOOL_AXIS:
-                    theory_school_reasked = True
-                raise
+            except ContentRefusedError as exc:
+                # Content-caused, never transient (issue #120): a moderation
+                # refusal surviving the #116 fallback reroute cannot be fixed
+                # by retrying the identical prompt against the same model --
+                # caught narrowly here (before the broader LLMError clause
+                # below, since `ContentRefusedError` subclasses it) so only
+                # this specific class is quarantined; every other `LLMError`/
+                # `httpx.HTTPError` still propagates exactly as today.
+                # Quarantine is scoped to when the checkpoint is active
+                # (`tags_dir` supplied) -- mirroring every other
+                # checkpoint-only behavior in this pass (issue #81's own
+                # "opt-in" docstring above): a standalone `axial tag` run with
+                # no checkpoint has nowhere to durably record the quarantine,
+                # so it keeps today's hard-error contract unchanged. A refusal
+                # on ANY draw quarantines the chunk, unchanged from #120: the
+                # refusal is a property of the chunk's content, so the
+                # remaining draws would only pay for the same refusal again.
+                if checkpoint_path is None:
+                    raise LLMFailedError(exc) from exc
+                quarantine_reason = QUARANTINE_REASON_CONTENT_FILTER
+                break
+            except (LLMError, httpx.HTTPError) as exc:
+                raise LLMFailedError(exc) from exc
+            except ModelJsonError as exc:
+                # Malformed JSON that persisted through `complete_json`'s
+                # entire bounded retry budget (issue #120) -- content-shaped,
+                # not transient, so this specific chunk is quarantined rather
+                # than aborting the whole source (checkpoint-scoped, see
+                # above).
+                if checkpoint_path is None:
+                    raise TagParseError(f"model response was not valid JSON: {exc}") from exc
+                quarantine_reason = QUARANTINE_REASON_MALFORMED_JSON
+                break
 
-        try:
-            values, multi_value_axes, many_valued_axes, polity = apply_correction_reask(
-                client,
-                TAG_PASS_NAME,
-                raw_response,
-                prompt,
-                _validate,
-            )
-        except (LLMError, httpx.HTTPError) as exc:
-            raise LLMFailedError(exc) from exc
+            # Shared, data-driven cardinality dispatch (issue #29 slice 03):
+            # each axis is parsed/validated by its own schema-declared
+            # `cardinality`, never by its name. An out-of-vocabulary value
+            # triggers exactly ONE bounded correction re-ask (issue #102,
+            # P0-6): the model is shown the failing position's controlled
+            # vocabulary and must return a valid value or an explicit NONE;
+            # still-out-of-vocab after that single re-ask raises
+            # `TagNotInSchemaError` -- EXCEPT for `theory_school`
+            # (founder-approved soft-land): a still-invalid `theory_school`
+            # after its own bounded re-ask lands as `unlisted` instead of
+            # aborting the source (every other closed axis is unaffected).
+            # `_validate` tracks, per draw, whether `theory_school` was the
+            # axis that triggered the FIRST failure (`theory_school_reasked`):
+            # the first parse attempt always raises normally (so the #102
+            # re-ask genuinely fires once), and only the SECOND attempt --
+            # `apply_correction_reask`'s own re-validation of the correction
+            # re-ask's answer -- soft-lands a still-invalid `theory_school`.
+            # Polity / parse / cardinality errors propagate unchanged (never
+            # re-asked here). `client` is already resolved above, so the
+            # correction re-ask reuses it; any transport failure it raises
+            # wraps to `LLMFailedError`.
+            theory_school_reasked = False
+
+            def _validate(raw: str) -> Any:
+                nonlocal theory_school_reasked
+                try:
+                    return _parse_and_validate_tags(
+                        raw,
+                        axes_to_tag,
+                        schema,
+                        theory_school_softland=theory_school_reasked,
+                        source_id=source_id,
+                        chunk_record=chunk_record,
+                        theory_school_candidates_path=theory_school_candidates_path,
+                    )
+                except TagNotInSchemaError as exc:
+                    if exc.axis_name == THEORY_SCHOOL_AXIS:
+                        theory_school_reasked = True
+                    raise
+
+            try:
+                draws.append(
+                    apply_correction_reask(
+                        client,
+                        TAG_PASS_NAME,
+                        raw_response,
+                        prompt,
+                        _validate,
+                    )
+                )
+            except (LLMError, httpx.HTTPError) as exc:
+                raise LLMFailedError(exc) from exc
+            except TagNotInSchemaError as exc:
+                # A spoiled ballot (issue #294): this draw is still out of
+                # vocabulary after its own #102 re-ask, so it casts no vote
+                # and the axis decides among the draws that are valid. Only
+                # when EVERY draw is spoiled does the P0-6 hard error stand
+                # (below) -- at `votes == 1` that is immediate, exactly as
+                # before best-of-N existed.
+                spoiled = spoiled or exc
+
+        if quarantine_reason is not None:
+            _quarantine_chunk(chunk_record, quarantine_reason, checkpoint_path)
+            quarantine_count += 1
+            continue
+
+        if not draws:
+            raise spoiled
+
+        values, multi_value_axes, many_valued_axes, polity = draws[0]
+        if len(draws) > 1:
+            multi_value_axes = vote_blind_axes([draw[1] for draw in draws], schema)
 
         record = build_tagged_record(
             chunk_record,

@@ -1,0 +1,15 @@
+$ axial tag tests/fixtures/envelope/thesis_paper.pdf   # llm.votes_by_pass.tag = 3
+  chunks in fixture ........ 3
+  tag-pass calls recorded .. 9   (= 3 chunks x 3 draws)
+
+  chunk 1 - draws were [bellicist, bellicist, biological-evolutionary] -> strict plurality
+    theory_school: {"primary": "bellicist", "secondary": null, "status": "candidate"}
+    abstained key present? False
+
+  chunk 2 - draws were [bellicist, biological-evolutionary, civilizing-decline] -> no plurality
+    theory_school: {"primary": null, "abstained": true, "draws": ["bellicist", "biological-evolutionary", "civilizing-decline"], "status": "candidate"}
+
+$ axial tag tests/fixtures/envelope/thesis_paper.pdf   # llm.votes_by_pass.tag = 1
+  tag-pass calls recorded .. 3   (= 3 chunks x 1 draw - exact no-op)
+    theory_school: {"primary": "bellicist", "secondary": null, "status": "candidate"}
+    abstained key present anywhere? False

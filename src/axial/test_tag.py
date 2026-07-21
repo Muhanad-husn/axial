@@ -1170,7 +1170,9 @@ def test_run_tag_zero_chunks_yields_zero_tagged_records_without_a_tag_llm_call(
 
     stub_client = StubLLMClient()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=stub_client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(
+        tmp_path / "paper.pdf", client=stub_client, domain_dir=domain_dir, votes=1
+    )
 
     assert records == []
     assert stub_client.call_count == 0
@@ -1188,7 +1190,9 @@ def test_run_tag_produces_one_record_per_chunk_with_role_and_schema_version(monk
 
     stub_client = StubLLMClient()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=stub_client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(
+        tmp_path / "paper.pdf", client=stub_client, domain_dir=domain_dir, votes=1
+    )
 
     assert len(records) == 2
     assert stub_client.call_count == 2
@@ -1220,7 +1224,9 @@ def test_run_tag_calls_the_client_with_the_tag_pass_name(monkeypatch, tmp_path):
             return json.dumps({"role_in_argument": "role:claim"})
 
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    tag_mod.run_tag(tmp_path / "paper.pdf", client=_CapturingClient(), domain_dir=domain_dir)
+    tag_mod.run_tag(
+        tmp_path / "paper.pdf", client=_CapturingClient(), domain_dir=domain_dir, votes=1
+    )
 
     assert calls == [TAG_PASS_NAME]
 
@@ -1243,7 +1249,9 @@ def test_run_tag_raises_a_hard_error_for_an_out_of_schema_tag(monkeypatch, tmp_p
 
     with pytest.raises(tag_mod.TagNotInSchemaError):
         (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-        tag_mod.run_tag(tmp_path / "paper.pdf", client=_OutOfSchemaClient(), domain_dir=domain_dir)
+        tag_mod.run_tag(
+            tmp_path / "paper.pdf", client=_OutOfSchemaClient(), domain_dir=domain_dir, votes=1
+        )
 
 
 # --- run_tag: empirical_scope + polity-case extra field (issue #28 slice 02) --
@@ -1312,7 +1320,9 @@ def test_run_tag_polity_case_record_carries_empirical_scope_and_polity(monkeypat
             )
 
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+    records = tag_mod.run_tag(
+        tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir, votes=1
+    )
 
     assert len(records) == 1
     assert records[0]["role_in_argument"] == "role:claim"
@@ -1333,7 +1343,9 @@ def test_run_tag_non_polity_case_record_carries_no_polity(monkeypatch, tmp_path)
             )
 
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+    records = tag_mod.run_tag(
+        tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir, votes=1
+    )
 
     assert records[0]["empirical_scope"] == "scope:general"
     assert "polity" not in records[0]
@@ -1353,7 +1365,7 @@ def test_run_tag_polity_case_missing_polity_raises_hard_error(monkeypatch, tmp_p
 
     with pytest.raises(tag_mod.CountryCaseMissingPolityError):
         (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-        tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir, votes=1)
 
 
 def test_run_tag_polity_case_out_of_list_polity_is_accepted_and_logged(
@@ -1378,7 +1390,9 @@ def test_run_tag_polity_case_out_of_list_polity_is_accepted_and_logged(
             )
 
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+    records = tag_mod.run_tag(
+        tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir, votes=1
+    )
 
     assert records[0]["polity"] == "Atlantis"
 
@@ -1420,7 +1434,7 @@ def test_run_tag_polity_case_missing_polity_then_clean_reasks_and_succeeds(monke
 
     client = _ScriptedClient()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert len(records) == 1
     assert records[0]["empirical_scope"] == "scope:country-case"
@@ -1453,7 +1467,7 @@ def test_run_tag_polity_case_persistent_missing_polity_raises_after_three_attemp
 
     with pytest.raises(tag_mod.CountryCaseMissingPolityError):
         (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert client.call_count == 3
 
@@ -1482,7 +1496,7 @@ def test_run_tag_polity_case_polity_present_makes_exactly_one_call(monkeypatch, 
 
     client = _CountingClient()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert records[0]["polity"] == "Syria"
     assert client.call_count == 1
@@ -1510,7 +1524,7 @@ def test_run_tag_non_polity_case_scope_with_no_polity_is_unaffected(monkeypatch,
 
     client = _CountingClient()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert records[0]["empirical_scope"] == "scope:general"
     assert "polity" not in records[0]
@@ -1535,7 +1549,7 @@ def test_run_tag_makes_exactly_one_llm_call_per_chunk_even_with_two_tagged_axes(
             )
 
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+    tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir, votes=1)
 
     assert calls == [TAG_PASS_NAME]
 
@@ -1552,7 +1566,9 @@ def test_run_tag_regresses_role_in_argument_when_empirical_scope_axis_absent(mon
 
     stub_client = StubLLMClient()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=stub_client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(
+        tmp_path / "paper.pdf", client=stub_client, domain_dir=domain_dir, votes=1
+    )
 
     assert len(records) == 1
     assert records[0]["role_in_argument"] == "role:claim"
@@ -1638,7 +1654,9 @@ def test_run_tag_assigns_field_claim_type_theory_school_in_the_appendix_h_shape(
             )
 
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+    records = tag_mod.run_tag(
+        tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir, votes=1
+    )
 
     assert len(records) == 1
     record = records[0]
@@ -1676,7 +1694,7 @@ def test_run_tag_raises_a_hard_error_for_an_out_of_schema_field_primary(monkeypa
 
     with pytest.raises(tag_mod.TagNotInSchemaError) as exc_info:
         (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-        tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir, votes=1)
 
     message = str(exc_info.value)
     assert "field" in message
@@ -1702,7 +1720,7 @@ def test_run_tag_raises_a_hard_error_for_an_undeclared_claim_type_subtag(monkeyp
 
     with pytest.raises(tag_mod.TagNotInSchemaError) as exc_info:
         (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-        tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir, votes=1)
 
     message = str(exc_info.value)
     assert "claim_type" in message
@@ -1735,7 +1753,7 @@ def test_run_tag_succeeds_when_first_completion_is_malformed_json(monkeypatch, t
 
     client = _ScriptedClient()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert len(records) == 1
     assert records[0]["role_in_argument"] == "role:claim"
@@ -1766,7 +1784,7 @@ def test_run_tag_raises_tag_parse_error_on_persistently_malformed_json(monkeypat
 
     with pytest.raises(tag_mod.TagParseError):
         (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert client.call_count == 3
 
@@ -1824,7 +1842,9 @@ def test_run_tag_carries_polities_touched_list_verbatim(monkeypatch, tmp_path):
             )
 
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+    records = tag_mod.run_tag(
+        tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir, votes=1
+    )
 
     assert len(records) == 1
     assert records[0]["polities_touched"] == ["Syria", "Iraq"]
@@ -1843,7 +1863,9 @@ def test_run_tag_polities_touched_defaults_to_empty_list_when_key_absent(monkeyp
             return json.dumps({"role_in_argument": "role:claim"})
 
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir)
+    records = tag_mod.run_tag(
+        tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir, votes=1
+    )
 
     assert records[0]["polities_touched"] == []
 
@@ -1869,7 +1891,7 @@ def test_run_tag_polities_touched_never_applies_a_vocabulary_check(monkeypatch, 
 
     client = _CountingClient()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert records[0]["polities_touched"] == ["Ottoman Empire"]
     assert client.call_count == 1
@@ -1888,7 +1910,9 @@ def test_run_tag_regresses_role_in_argument_when_polities_touched_axis_absent(
 
     stub_client = StubLLMClient()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=stub_client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(
+        tmp_path / "paper.pdf", client=stub_client, domain_dir=domain_dir, votes=1
+    )
 
     assert len(records) == 1
     assert "polities_touched" not in records[0]
@@ -1930,7 +1954,7 @@ def test_run_tag_reasks_and_succeeds_when_primary_axis_value_is_first_empty_stri
 
     client = _ScriptedClient()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert len(records) == 1
     assert records[0]["role_in_argument"] == "role:claim"
@@ -1961,7 +1985,7 @@ def test_run_tag_raises_tag_parse_error_on_persistently_empty_string_primary(mon
 
     with pytest.raises(tag_mod.TagParseError):
         (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert client.call_count == 3
 
@@ -2003,7 +2027,7 @@ def test_run_tag_reasks_and_succeeds_when_secondary_entry_is_first_empty_string(
 
     client = _ScriptedClient()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert len(records) == 1
     assert records[0]["field"] == {"primary": "state", "secondary": ["ideology"]}
@@ -2048,7 +2072,7 @@ def test_run_tag_reasks_and_succeeds_when_subtag_is_first_empty_string(monkeypat
 
     client = _ScriptedClient()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert len(records) == 1
     assert records[0]["claim_type"]["subtags"] == ["formation:bellicist"]
@@ -2082,7 +2106,7 @@ def test_run_tag_reasks_and_succeeds_when_polities_touched_entry_is_first_empty_
 
     client = _ScriptedClient()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert len(records) == 1
     assert records[0]["polities_touched"] == ["Syria"]
@@ -2123,7 +2147,7 @@ def test_run_tag_out_of_vocab_non_empty_tag_hard_errors_after_one_bounded_reask(
 
     with pytest.raises(tag_mod.TagNotInSchemaError):
         (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert client.call_count == 2
 
@@ -2156,7 +2180,7 @@ def test_run_tag_zaum_payload_carries_scope_and_polity_with_zero_reasks(monkeypa
 
     client = _CountingClient()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert len(records) == 1
     assert records[0]["empirical_scope"] == "scope:country-case"
@@ -2192,7 +2216,7 @@ def test_run_tag_value_as_key_dialect_carries_scope_and_polity_with_zero_reasks(
 
     client = _CountingClient()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert len(records) == 1
     assert records[0]["empirical_scope"] == "scope:country-case"
@@ -2227,7 +2251,7 @@ def test_run_tag_two_candidate_object_dialect_still_errors(monkeypatch, tmp_path
 
     with pytest.raises(tag_mod.TagParseError):
         (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert client.call_count == 3
 
@@ -2265,7 +2289,7 @@ def test_run_tag_reasks_and_succeeds_when_value_key_extracted_value_is_first_emp
 
     client = _ScriptedClient()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert len(records) == 1
     assert records[0]["role_in_argument"] == "role:claim"
@@ -2318,7 +2342,7 @@ def test_run_tag_out_of_vocab_primary_corrects_on_bounded_reask(monkeypatch, tmp
 
     client = _ScriptedTagClient([bad, good])
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert len(records) == 1
     assert records[0]["claim_type"]["primary"] == "state-autonomy"
@@ -2353,7 +2377,7 @@ def test_run_tag_out_of_vocab_subtag_corrects_on_bounded_reask(monkeypatch, tmp_
 
     client = _ScriptedTagClient([bad, good])
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert len(records) == 1
     assert records[0]["claim_type"]["subtags"] == ["formation:bellicist"]
@@ -2383,7 +2407,7 @@ def test_run_tag_persistent_out_of_vocab_hard_errors_after_exactly_one_reask(mon
 
     with pytest.raises(tag_mod.TagNotInSchemaError) as exc_info:
         (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert "claim_type" in str(exc_info.value)
     assert "sub:bogus" in str(exc_info.value)
@@ -2422,7 +2446,7 @@ def test_run_tag_correction_reask_that_returns_none_hard_errors(monkeypatch, tmp
 
     with pytest.raises(tag_mod.TagNotInSchemaError):
         (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert client.call_count == 2
 
@@ -2447,7 +2471,7 @@ def test_run_tag_in_vocab_first_answer_never_triggers_a_correction_reask(monkeyp
 
     client = _ScriptedTagClient([good])
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert len(records) == 1
     assert client.call_count == 1

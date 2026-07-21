@@ -569,7 +569,7 @@ def test_tag_pass_no_longer_pre_skips_large_legit_chunk_but_backstop_still_catch
 
     client = _TagCountingClient()
     records = tag_module.run_tag(
-        source_path, client=client, domain_dir=DOMAIN_DIR, chunks_dir=chunks_dir
+        source_path, client=client, domain_dir=DOMAIN_DIR, chunks_dir=chunks_dir, votes=1
     )
 
     assert isinstance(records, list), (

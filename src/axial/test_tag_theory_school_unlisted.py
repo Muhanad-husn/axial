@@ -142,7 +142,7 @@ def test_theory_school_out_of_vocab_survives_reask_lands_unlisted_preserving_oth
 
     client = _ScriptedClient([first, still_bad])
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+    records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert len(records) == 1
     record = records[0]
@@ -175,7 +175,9 @@ def test_theory_school_softland_writes_a_candidates_log_record(monkeypatch, tmp_
     payload = _payload(theory_school_primary=OUT_OF_VOCAB_SCHOOL, field_secondary=[])
     client = _ScriptedClient([payload, payload])
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
-    tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, tags_dir=tags_dir)
+    tag_mod.run_tag(
+        tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, tags_dir=tags_dir, votes=1
+    )
 
     candidates_path = tags_dir / "theory_school_candidates.jsonl"
     assert candidates_path.is_file(), (
@@ -244,7 +246,7 @@ def test_out_of_vocab_field_still_raises_fatally(monkeypatch, tmp_path):
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
 
     with pytest.raises(tag_mod.TagNotInSchemaError) as exc_info:
-        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir)
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert exc_info.value.axis_name == "field"
     # Both the original ask and the single bounded re-ask fired before the
@@ -266,7 +268,7 @@ def test_theory_school_in_vocab_on_first_answer_never_softlands_or_logs(monkeypa
     client = _ScriptedClient([payload])
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(
-        tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, tags_dir=tags_dir
+        tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, tags_dir=tags_dir, votes=1
     )
 
     assert records[0]["theory_school"]["primary"] == IN_VOCAB_SCHOOL

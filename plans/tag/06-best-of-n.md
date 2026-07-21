@@ -5,7 +5,7 @@
 - **GitHub issue:** #294
 - **Branch:** feat/tag/06-best-of-n
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ built (PR pending founder approval)
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -243,3 +243,15 @@ third confirms `N=1` produces one call per chunk and no `abstained` key ever.
 ## Status / progress log
 
 - 2026-07-21 planned.
+- 2026-07-21 built on `feat/tag/06-best-of-n`. Outer acceptance test
+  `tests/ingestion/test_tag_best_of_n.py` (3 scenarios: decided + abstained
+  vote with the recorded 3x call count; config default N=3 with no
+  pipeline.yaml; N=1 exact no-op). Voting layer is `axial.tag.vote_blind_axes`
+  + `BLIND_AXES` + `ABSTAINED_KEY`; config seam is
+  `axial.llm.DEFAULT_VOTES_BY_PASS` / `_resolve_votes_by_pass` /
+  `votes_for_pass` plus `llm.votes_by_pass.tag: 3` in `config/pipeline.yaml`.
+  Spec: new §7.14, §7.1 per-draw note, P0-6 bullet, Appendix E abstention
+  representation, Appendix H abstained frontmatter example.
+  Blast radius: existing re-ask / resume / quarantine / input-guard tests pin
+  single-draw (`votes=1`, or a single-draw `pipeline.yaml` in their staging
+  root) so the vote does not confound the behavior they were written to lock.

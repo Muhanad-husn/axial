@@ -330,12 +330,27 @@ def _existing_envelope_files(root: Path) -> set[Path]:
     return set(envelopes_dir.glob("*.json"))
 
 
+def _pin_single_draw(root: Path) -> None:
+    """Pin the tag pass to ONE draw per chunk via this staging root's own
+    `config/pipeline.yaml` (`llm.votes_by_pass.tag`, issue #294). Best-of-N
+    defaults to 3 draws, which would multiply every tag-pass call count this
+    file asserts; the behavior locked here sits one layer BELOW the vote (the
+    #102 bounded correction re-ask / the #81 checkpoint-resume call
+    accounting), so it is pinned to single-draw rather than rewritten around
+    the vote. Best-of-N's own call counts are asserted in
+    tests/ingestion/test_tag_best_of_n.py."""
+    config_path = root / "config" / "pipeline.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("llm:\n  votes_by_pass:\n    tag: 1\n", encoding="utf-8")
+
+
 def _arrange_stored_envelope(root: Path, source_path: Path) -> Path:
     """Pre-place the real tree fixture, then run `axial envelope` with the
     stub provider so a stored envelope exists on disk before vault write.
     Returns the new envelope's path. Asserts the arrange step itself
     succeeded (mirrors tests/test_vault_write.py's helper of the same
     name, generalized to an arbitrary `source_path`)."""
+    _pin_single_draw(root)
     _place_tree_fixture(source_path, root)
     before_files = _existing_envelope_files(root)
 
