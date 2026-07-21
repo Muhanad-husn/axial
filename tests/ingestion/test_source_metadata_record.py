@@ -104,9 +104,11 @@ class _RecordedHoldingsClient:
             }
         )
         self.calls = 0
+        self.prompts: list[str] = []
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         self.calls += 1
+        self.prompts.append(prompt)
         return self._response
 
 
@@ -238,6 +240,24 @@ REAL_METADATA_INFO = {
 # No embedded title/author at all -- the title-page fallback must carry the
 # whole read. The first line is the printed title; a later line states the
 # publication year next to a copyright marker.
+# Issue #316: the title page prints the main title on one line and its
+# subtitle on the next, and the main title also runs as the book's own
+# header -- the corpus shape whose recorded title was the subtitle alone.
+SPLIT_TITLE_BOOK = [
+    ["Paramilitarism"],
+    [
+        "Paramilitarism",
+        "Mass Violence in the Shadow of the State",
+        "Ugur Umit Ungor",
+        "Copyright © 2020 by the University Press",
+    ],
+] + [["Paramilitarism"] + _body(i) for i in range(1, 5)]
+
+# The control: one printed title line, nothing to compose.
+SINGLE_LINE_TITLE_BOOK = [
+    ["Quasi-States", "Robert H. Jackson", "Copyright © 1990 by the University Press"],
+] + [_body(i) for i in range(1, 4)]
+
 TITLE_PAGE_ONLY_BOOK = [
     [
         "The Long Road to Damascus",
@@ -448,6 +468,62 @@ def test_title_page_fallback_and_date_and_filename_never_a_source(tmp_path):
     # none either -- attempted, nothing recoverable.
     assert record["author"] == "unavailable"
     assert "totally_different_name" not in json.dumps(record["title"])
+
+
+def test_a_title_printed_across_two_lines_is_recorded_whole(tmp_path):
+    """Issue #316.
+
+    Given a source whose title page prints a main title and a subtitle on
+          separate lines
+    When  the title-page read runs over it
+    Then  the recorded title carries both, joined as printed
+
+    The model's own judgment is measured on the real corpus, not here. What
+    this pins is the chain that judgment depends on: the title page reaches
+    the model as printed even though its main title also runs as a header
+    (the running-furniture strip deletes it from the cleaned window), the
+    prompt states that the two printed lines are ONE title, and the record
+    carries the composed answer whole -- which is what `ugur-paramilitarism`
+    and `batatu-syrias-peasantry` lost.
+    """
+    path = _write_pdf(tmp_path, "ugur-paramilitarism.pdf", SPLIT_TITLE_BOOK)
+    meta_dir = tmp_path / "source_meta"
+    client = _RecordedHoldingsClient(
+        verdict="complete",
+        title_page_title="Paramilitarism: Mass Violence in the Shadow of the State",
+    )
+
+    intake(path, client=client, source_meta_dir=meta_dir)
+
+    prompt = client.prompts[0]
+    assert "Paramilitarism\nMass Violence in the Shadow of the State" in prompt
+    assert "subtitle" in prompt.lower()
+    # The rule this fix must not weaken (§7.13): a title page that states
+    # nothing still yields nothing.
+    assert "Never invent a value the front matter does not carry" in prompt
+
+    source_id = compute_source_id(path)
+    record = json.loads((meta_dir / f"{source_id}.json").read_text(encoding="utf-8"))
+
+    assert record["title"] == {
+        "value": "Paramilitarism: Mass Violence in the Shadow of the State",
+        "provenance": "title page",
+    }
+
+
+def test_a_single_line_title_is_unaffected(tmp_path):
+    """The other half of #316's criterion: a title page printing one title
+    line records exactly that line, with nothing appended to it."""
+    path = _write_pdf(tmp_path, "single-line-title.pdf", SINGLE_LINE_TITLE_BOOK)
+    meta_dir = tmp_path / "source_meta"
+    client = _RecordedHoldingsClient(verdict="complete", title_page_title="Quasi-States")
+
+    intake(path, client=client, source_meta_dir=meta_dir)
+
+    source_id = compute_source_id(path)
+    record = json.loads((meta_dir / f"{source_id}.json").read_text(encoding="utf-8"))
+
+    assert record["title"] == {"value": "Quasi-States", "provenance": "title page"}
 
 
 def test_client_less_call_never_produces_a_title_page_reading(tmp_path):

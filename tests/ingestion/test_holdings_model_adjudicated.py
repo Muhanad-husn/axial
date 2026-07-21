@@ -302,16 +302,21 @@ def test_a_research_paper_with_no_contents_page_is_not_flagged(tmp_path):
 
 def test_the_tilly_folio_is_stripped_before_the_model_reads_the_heading(tmp_path):
     """§7.11's stated observable: `tilly`'s contents heading extracts as
-    `viii Contents`, and the folio must not survive into the model's
-    input."""
+    `viii Contents`, and the folio must not survive into the cleaned window
+    the holdings judgment reads.
+
+    Since issue #316 the prompt also shows the opening pages as printed, for
+    the bibliographic read that the strip was starving (§7.13), so the
+    observable is scoped to the cleaned window -- which is what the strip
+    exists to produce."""
     path = _write_pdf(tmp_path, "tilly_folios.pdf", TILLY_FOLIOS)
     client = _RecordedClient(RECORDED_COMPLETE_BOOK)
 
     intake(path, client=client)
 
-    prompt = client.calls[0][0]
-    assert "viii Contents" not in prompt
-    assert "Contents" in prompt.splitlines()
+    cleaned_window = client.calls[0][0].split("=== FRONT MATTER ===")[1]
+    assert "viii Contents" not in cleaned_window
+    assert "Contents" in cleaned_window.splitlines()
 
 
 def test_exactly_one_model_call_is_made_on_the_holdings_pass(tmp_path):

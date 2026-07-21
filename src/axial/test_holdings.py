@@ -217,6 +217,53 @@ def test_prompt_states_the_embedded_metadata_claim_when_given():
     assert "Augustine and Modernity" in prompt
 
 
+def test_the_title_page_reaches_the_model_as_printed_when_its_title_also_runs_as_a_header():
+    """Issue #316's root cause. A book whose main title runs as its own
+    header makes that title recur often enough to count as running
+    furniture, and the strip then deletes it from the title page itself --
+    so the read could only ever return the subtitle. Measured on 7 of the 30
+    corpus sources. The opening pages are therefore shown as printed as
+    well, and the cleaned windows are unchanged (the holdings judgment keeps
+    exactly the text it was measured on)."""
+    from axial.holdings import probe, strip_running_furniture
+
+    pages = [
+        "Paramilitarism",
+        "Paramilitarism\nMass Violence in the Shadow\nof the State\nUgur Umit Ungor",
+    ] + [f"Paramilitarism\nbody prose on page {i} about pro-government militias" for i in range(4)]
+    client = _RecordingClient(COMPLETE_ANSWER)
+
+    probe(pages, client=client, physical_pages=len(pages))
+
+    # The strip removes the main title from the title page -- this is why the
+    # defect existed, and it still happens to the cleaned window.
+    assert "Paramilitarism" not in strip_running_furniture(pages)[1]
+    # The model nonetheless sees the title page as the book prints it.
+    assert "Paramilitarism\nMass Violence in the Shadow" in client.calls[0][0]
+
+
+def test_prompt_tells_the_model_a_main_title_and_its_subtitle_are_one_title():
+    """Issue #316: on two real sources the read returned only the subtitle
+    line (`Mass Violence in the Shadow of the State` for a book titled
+    `Paramilitarism: Mass Violence in the Shadow of the State`). A title page
+    prints one title across two lines; the prompt has to say so. The rule
+    against inventing a value the front matter does not carry must survive
+    beside it -- a confabulated title is a worse failure than a partial one."""
+    from axial.holdings import probe
+
+    client = _RecordingClient(COMPLETE_ANSWER)
+
+    probe(
+        ["Paramilitarism\nMass Violence in the Shadow of the State\nUgur Ungor"],
+        client=client,
+        physical_pages=300,
+    )
+
+    prompt = client.calls[0][0]
+    assert "subtitle" in prompt.lower()
+    assert "Never invent a value the front matter does not carry" in prompt
+
+
 def test_prompt_states_no_embedded_metadata_when_none_given():
     from axial.holdings import probe
 
@@ -350,6 +397,24 @@ def test_probe_reads_the_title_pages_own_stated_bibliographic_fields():
     assert result["title_page"]["title"] == "The Long Road to Damascus"
     assert result["title_page"]["author"] == "Jane Q. Historian"
     assert result["title_page"]["date"] == "1971"
+
+
+def test_a_title_composed_of_a_main_title_and_a_subtitle_is_read_whole():
+    """Issue #316's acceptance shape at this seam: whatever the model
+    composes off the two printed lines reaches the reading intact -- nothing
+    here splits a title at its colon or keeps only one clause."""
+    from axial.holdings import probe
+
+    answer = dict(
+        COMPLETE_ANSWER,
+        title_page_title="Paramilitarism: Mass Violence in the Shadow of the State",
+    )
+
+    result = probe(["front matter text"], client=_RecordingClient(answer), physical_pages=300)
+
+    assert (
+        result["title_page"]["title"] == "Paramilitarism: Mass Violence in the Shadow of the State"
+    )
 
 
 def test_title_page_fields_default_to_none_when_the_document_states_none():
