@@ -138,6 +138,16 @@ _PROTECTED_DIRS = (
     # entry from one test leaks into a later test that reuses the same Drive
     # file id and (correctly) triggers the incremental pre-download skip.
     REPO_ROOT / "data" / "drive",
+    # data/source_meta/ holds the persisted source-metadata record (issue
+    # #285, §7.12). `axial.intake.intake()` now writes one JSON per source
+    # here as an UNCONDITIONAL side effect of every successful intake call
+    # -- including `extract()`'s own internal validation-only call, which
+    # every envelope/chunk/tag/artifacts/xref/vault-write test transitively
+    # runs. Without this isolation, any test exercising those passes over a
+    # shared fixture (deterministic source_id, same collision risk
+    # `data/trees`/`data/envelopes` already guard against) would leak a real
+    # record into the next test that computes the same source_id.
+    REPO_ROOT / "data" / "source_meta",
 )
 
 # Extensions snapshotted/restored per protected directory: *.json for the

@@ -185,3 +185,298 @@ def test_intake_without_a_client_makes_no_model_call_and_raises_no_flag():
 
     assert source.text_layer_ok is True
     assert source.holdings_flag is None
+
+
+# =============================================================================
+# Persisted source-metadata record (issue #285, §7.12/§7.13, §8 P0-1c/P0-1d).
+# Outer, end-to-end coverage lives in
+# tests/ingestion/test_source_metadata_record.py; these are pure/unit-level
+# checks of the individual helpers plus a couple of shape-level integration
+# checks against the existing shared fixtures. `axial.intake.SOURCE_META_DIR`
+# is redirected to an isolated tmp dir for every test in this file by the
+# autouse `_isolate_checkpoint_dirs` fixture in src/axial/conftest.py, so a
+# call to `intake()` below with no explicit `source_meta_dir` never touches
+# the real repo's `data/source_meta/`.
+# =============================================================================
+
+
+def test_source_meta_path_is_keyed_by_source_id_under_the_given_dir(tmp_path):
+    from axial.intake import source_meta_path
+
+    path = source_meta_path("some-source-abc123456789", tmp_path)
+
+    assert path == tmp_path / "some-source-abc123456789.json"
+
+
+class TestPlausibleMetadataValue:
+    def test_passes_through_a_real_value(self):
+        from axial.intake import _plausible_metadata_value
+
+        assert _plausible_metadata_value("Jane Q. Historian", "pdfTeX", "LaTeX") == (
+            "Jane Q. Historian"
+        )
+
+    def test_rejects_empty_and_whitespace_only(self):
+        from axial.intake import _plausible_metadata_value
+
+        assert _plausible_metadata_value("") is None
+        assert _plausible_metadata_value("   ") is None
+        assert _plausible_metadata_value(None) is None
+
+    def test_rejects_a_value_equal_to_a_junk_candidate_case_and_whitespace_insensitively(self):
+        from axial.intake import _plausible_metadata_value
+
+        assert _plausible_metadata_value("Adobe Acrobat Pro DC", "Adobe Acrobat Pro DC") is None
+        assert (
+            _plausible_metadata_value("  adobe   acrobat pro dc  ", "Adobe Acrobat Pro DC") is None
+        )
+
+    def test_only_rejects_an_exact_junk_match_not_a_mere_substring(self):
+        from axial.intake import _plausible_metadata_value
+
+        # A real author whose name happens to contain a producer-ish
+        # substring must still pass through -- the comparison is exact,
+        # never a substring/fuzzy match.
+        assert _plausible_metadata_value("Adobe Acrobat Historian", "Adobe Acrobat Pro DC") == (
+            "Adobe Acrobat Historian"
+        )
+
+
+class TestCleanGuardsNonStringPypdfSentinels:
+    """§307 finding 1: pypdf can hand back a raw `NullObject` (or any other
+    non-string sentinel) for a malformed metadata field instead of a plain
+    `None`. `_clean` -- and therefore `_plausible_metadata_value`, which
+    every embedded-metadata read routes through -- must treat that as
+    absent rather than crash on `.split()`."""
+
+    def test_a_null_object_is_treated_as_absent_not_a_crash(self):
+        from pypdf.generic import NullObject
+
+        from axial.intake import _clean
+
+        assert _clean(NullObject()) is None
+
+    def test_plausible_metadata_value_survives_a_null_object_value(self):
+        from pypdf.generic import NullObject
+
+        from axial.intake import _plausible_metadata_value
+
+        assert _plausible_metadata_value(NullObject()) is None
+
+    def test_plausible_metadata_value_survives_a_null_object_junk_candidate(self):
+        from pypdf.generic import NullObject
+
+        from axial.intake import _plausible_metadata_value
+
+        # A real value must still pass through even when a junk candidate
+        # (producer/creator) is itself an unreadable sentinel.
+        assert _plausible_metadata_value("Jane Q. Historian", NullObject()) == ("Jane Q. Historian")
+
+
+class TestResolveBibliographicValue:
+    """§307 findings 2/3: the title-page cross-check that replaces the
+    retired deterministic fallback (`_resolve_bibliographic_value`)."""
+
+    def test_no_embedded_value_falls_back_to_the_title_page_reading(self):
+        from axial.intake import PROVENANCE_TITLE_PAGE, _resolve_bibliographic_value
+
+        resolved = _resolve_bibliographic_value(None, "Sinisa Malesevic", None)
+
+        assert resolved == {"value": "Sinisa Malesevic", "provenance": PROVENANCE_TITLE_PAGE}
+
+    def test_no_embedded_value_and_no_title_page_reading_is_unavailable(self):
+        from axial.intake import UNAVAILABLE, _resolve_bibliographic_value
+
+        assert _resolve_bibliographic_value(None, None, None) == UNAVAILABLE
+
+    def test_an_embedded_value_the_model_flags_as_a_mismatch_is_unavailable(self):
+        """The required outcome for a recycled-metadata PDF (#285 finding 2,
+        `heydemann-war-institutions-social-change`): a wrong value with
+        provenance is worse than an honest blank."""
+        from axial.intake import UNAVAILABLE, _resolve_bibliographic_value
+
+        resolved = _resolve_bibliographic_value("Michael Hanby", "Steven Heydemann", False)
+
+        assert resolved == UNAVAILABLE
+
+    def test_an_embedded_value_the_model_confirms_stands(self):
+        from axial.intake import PROVENANCE_EMBEDDED_METADATA, _resolve_bibliographic_value
+
+        resolved = _resolve_bibliographic_value("Jane Q. Historian", "Jane Q. Historian", True)
+
+        assert resolved == {
+            "value": "Jane Q. Historian",
+            "provenance": PROVENANCE_EMBEDDED_METADATA,
+        }
+
+    def test_an_embedded_value_with_no_matches_verdict_still_stands(self):
+        """A `None` match (no comparison was made -- e.g. an older-shaped
+        canned response in a test, or a model that skipped the judgment)
+        trusts the embedded value: only an explicit `false` downgrades it."""
+        from axial.intake import PROVENANCE_EMBEDDED_METADATA, _resolve_bibliographic_value
+
+        resolved = _resolve_bibliographic_value("Jane Q. Historian", None, None)
+
+        assert resolved == {
+            "value": "Jane Q. Historian",
+            "provenance": PROVENANCE_EMBEDDED_METADATA,
+        }
+
+
+class TestBibliographicField:
+    def test_a_found_value_carries_its_provenance(self):
+        from axial.intake import _bibliographic_field
+
+        assert _bibliographic_field("Jane Q. Historian", "embedded metadata") == {
+            "value": "Jane Q. Historian",
+            "provenance": "embedded metadata",
+        }
+
+    def test_no_value_is_the_unavailable_sentinel(self):
+        from axial.intake import UNAVAILABLE, _bibliographic_field
+
+        assert _bibliographic_field(None, "embedded metadata") == UNAVAILABLE
+
+
+class TestResolveHoldingsFlag:
+    def test_a_supplied_client_always_wins_even_when_it_computed_none(self, tmp_path):
+        from axial.intake import _resolve_holdings_flag
+
+        meta_path = tmp_path / "some-id.json"
+        meta_path.write_text('{"holdings_flag": {"document_kind": "book"}}', encoding="utf-8")
+
+        resolved = _resolve_holdings_flag(None, object(), meta_path)
+
+        assert resolved is None
+
+    def test_no_client_and_no_existing_record_resolves_to_none(self, tmp_path):
+        from axial.intake import _resolve_holdings_flag
+
+        resolved = _resolve_holdings_flag(None, None, tmp_path / "absent.json")
+
+        assert resolved is None
+
+    def test_no_client_preserves_the_existing_records_flag(self, tmp_path):
+        from axial.intake import _resolve_holdings_flag
+
+        meta_path = tmp_path / "some-id.json"
+        meta_path.write_text('{"holdings_flag": {"document_kind": "book"}}', encoding="utf-8")
+
+        resolved = _resolve_holdings_flag(None, None, meta_path)
+
+        assert resolved == {"document_kind": "book"}
+
+
+class TestResolveBibliographicFields:
+    """`author`/`title`/`date` preserved the same way as `holdings_flag`
+    (`_resolve_recorded_field`, generalized): a client-less call (every
+    `extract()` validation call) must never regress an already-recorded,
+    model-informed answer back to a client-less-only guess."""
+
+    def test_no_client_and_no_existing_record_uses_the_computed_fields(self, tmp_path):
+        from axial.intake import UNAVAILABLE, _resolve_bibliographic_fields
+
+        computed = {
+            "author": UNAVAILABLE,
+            "title": {"value": "A Title", "provenance": "embedded metadata"},
+            "date": UNAVAILABLE,
+        }
+
+        resolved = _resolve_bibliographic_fields(computed, None, tmp_path / "absent.json")
+
+        assert resolved == computed
+
+    def test_no_client_preserves_the_existing_records_fields(self, tmp_path):
+        import json
+
+        from axial.intake import _resolve_bibliographic_fields
+
+        meta_path = tmp_path / "some-id.json"
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "author": {"value": "Steven Heydemann", "provenance": "title page"},
+                    "title": {
+                        "value": "War, Institutions, and Social Change",
+                        "provenance": "title page",
+                    },
+                    "date": "unavailable",
+                }
+            ),
+            encoding="utf-8",
+        )
+        computed = {"author": "unavailable", "title": "unavailable", "date": "unavailable"}
+
+        resolved = _resolve_bibliographic_fields(computed, None, meta_path)
+
+        assert resolved["author"] == {"value": "Steven Heydemann", "provenance": "title page"}
+        assert resolved["title"] == {
+            "value": "War, Institutions, and Social Change",
+            "provenance": "title page",
+        }
+
+    def test_a_supplied_client_always_overwrites_with_the_computed_fields(self, tmp_path):
+        import json
+
+        from axial.intake import _resolve_bibliographic_fields
+
+        meta_path = tmp_path / "some-id.json"
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "author": {"value": "Stale Prior Answer", "provenance": "title page"},
+                    "title": "unavailable",
+                    "date": "unavailable",
+                }
+            ),
+            encoding="utf-8",
+        )
+        computed = {"author": "unavailable", "title": "unavailable", "date": "unavailable"}
+
+        resolved = _resolve_bibliographic_fields(computed, object(), meta_path)
+
+        assert resolved == computed
+
+
+def test_intake_writes_a_source_meta_record_for_a_pdf(tmp_path):
+    import json
+
+    from axial.envelope import compute_source_id
+    from axial.intake import intake, source_meta_path
+
+    intake(TEXT_LAYER_PDF, source_meta_dir=tmp_path)
+
+    record_path = source_meta_path(compute_source_id(TEXT_LAYER_PDF), tmp_path)
+    assert record_path.exists()
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["source_id"] == compute_source_id(TEXT_LAYER_PDF)
+    assert isinstance(record["physical_page_count"], int)
+    assert "holdings_flag" in record
+    for field in ("author", "title", "date"):
+        assert field in record
+
+
+def test_intake_writes_a_source_meta_record_for_a_docx_with_no_page_count(tmp_path):
+    import json
+
+    from axial.envelope import compute_source_id
+    from axial.intake import NOT_ATTEMPTED, intake, source_meta_path
+
+    intake(TEXT_DOCX, source_meta_dir=tmp_path)
+
+    record_path = source_meta_path(compute_source_id(TEXT_DOCX), tmp_path)
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["physical_page_count"] is None
+    # No mechanism exists for a DOCX's publication date in this slice.
+    assert record["date"] == NOT_ATTEMPTED
+
+
+def test_intake_default_source_meta_dir_is_isolated_by_the_autouse_fixture(tmp_path):
+    """Sanity check on this file's own isolation seam: `SOURCE_META_DIR` is
+    redirected away from the real repo `data/source_meta/` for every test
+    here, so a call with no explicit `source_meta_dir` still lands under an
+    isolated tmp location, never the real cwd-relative default."""
+    import axial.intake as intake_mod
+
+    REPO_DEFAULT = Path("data/source_meta")
+    assert intake_mod.SOURCE_META_DIR != REPO_DEFAULT

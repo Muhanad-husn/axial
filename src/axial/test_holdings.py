@@ -1,14 +1,19 @@
-"""Inner unit tests for the holdings-completeness check (issue #284, PRD
-§7.11 / §8 P0-1b).
+"""Inner unit tests for the holdings-completeness check and title-page
+bibliographic read (issue #284, issue #285, PRD §7.11/§7.13, §8 P0-1b/P0-1d).
 
 The retired deterministic design's tests went with it: there is no
 printed-TOC COVER ratio, no back-matter density, no tunable table, and no
 socket-patch determinism guard (the check now makes exactly one model call
 by design, so a no-network assertion would guard a design that no longer
 exists). What is left to unit-test is the deterministic pre-processing, the
-prompt seam, and the mapping from a model answer to the flag shape; the
-model's judgment itself is measured over the real 30-source corpus, not
-here.
+prompt seam, and the mapping from a model answer to the flag/title-page
+shape; the model's judgment itself is measured over the real 30-source
+corpus, not here.
+
+`probe()` now always returns a dict with two keys, `"holdings_flag"` and
+`"title_page"` (issue #285: one combined call replaces the deterministic
+title-page fallback #268 measured out of `axial.intake`, and lets the model
+cross-check embedded metadata against what the title page actually says).
 """
 
 from __future__ import annotations
@@ -194,22 +199,50 @@ def test_docx_prompt_states_the_page_count_is_unobtainable():
     assert "unknown" in client.calls[0][0]
 
 
+def test_prompt_states_the_embedded_metadata_claim_when_given():
+    from axial.holdings import probe
+
+    client = _RecordingClient(COMPLETE_ANSWER)
+
+    probe(
+        ["Some document text"],
+        client=client,
+        physical_pages=10,
+        embedded_author="Michael Hanby",
+        embedded_title="Augustine and Modernity",
+    )
+
+    prompt = client.calls[0][0]
+    assert "Michael Hanby" in prompt
+    assert "Augustine and Modernity" in prompt
+
+
+def test_prompt_states_no_embedded_metadata_when_none_given():
+    from axial.holdings import probe
+
+    client = _RecordingClient(COMPLETE_ANSWER)
+
+    probe(["Some document text"], client=client, physical_pages=10)
+
+    assert "states no author and no title" in client.calls[0][0]
+
+
 # =============================================================================
-# Verdict -> flag
+# Verdict -> holdings_flag
 # =============================================================================
 
 
 def test_partial_verdict_produces_a_flag_recording_its_measurement():
     from axial.holdings import probe
 
-    flag = probe(
+    result = probe(
         ["Contents\nIntroduction 1", "body"],
         client=_RecordingClient(PARTIAL_ANSWER),
         physical_pages=85,
         source_name="mann-v2.pdf",
     )
 
-    assert flag == {
+    assert result["holdings_flag"] == {
         "source": "mann-v2.pdf",
         "document_kind": "book",
         "claimed_extent": "816 pages",
@@ -222,13 +255,13 @@ def test_partial_verdict_produces_a_flag_recording_its_measurement():
 def test_complete_verdict_produces_no_flag():
     from axial.holdings import probe
 
-    flag = probe(
+    result = probe(
         ["Contents\nIntroduction 1", "body"],
         client=_RecordingClient(COMPLETE_ANSWER),
         physical_pages=412,
     )
 
-    assert flag is None
+    assert result["holdings_flag"] is None
 
 
 def test_partial_verdict_with_no_stated_extent_still_flags():
@@ -239,8 +272,9 @@ def test_partial_verdict_with_no_stated_extent_still_flags():
     answer = dict(PARTIAL_ANSWER, claimed_extent=None, claimed_extent_stated_by=None)
     answer["document_kind"] = "chapter_offprint"
 
-    flag = probe(["chapter one text"], client=_RecordingClient(answer), physical_pages=20)
+    result = probe(["chapter one text"], client=_RecordingClient(answer), physical_pages=20)
 
+    flag = result["holdings_flag"]
     assert flag["claimed_extent"] is None
     assert flag["claimed_extent_stated_by"] is None
     assert flag["document_kind"] == "chapter_offprint"
@@ -251,18 +285,23 @@ def test_unrecognised_document_kind_is_recorded_as_unknown_not_raised():
 
     answer = dict(PARTIAL_ANSWER, document_kind="pamphlet")
 
-    flag = probe(["text"], client=_RecordingClient(answer), physical_pages=4)
+    result = probe(["text"], client=_RecordingClient(answer), physical_pages=4)
 
-    assert flag["document_kind"] == "unknown"
+    assert result["holdings_flag"]["document_kind"] == "unknown"
 
 
 @pytest.mark.parametrize("raw", ["not json at all", '{"verdict": ', json.dumps(["a", "list"])])
-def test_an_unreadable_answer_degrades_to_no_flag(raw):
+def test_an_unreadable_answer_degrades_to_no_flag_and_nothing_read(raw):
     """The bar is 0 false positives: an answer the check cannot read must
-    not become a flag, and must not halt intake either (P0-1b)."""
+    not become a flag (or a bibliographic reading), and must not halt
+    intake either (P0-1b)."""
     from axial.holdings import probe
 
-    assert probe(["text"], client=_RecordingClient(raw), physical_pages=4) is None
+    result = probe(["text"], client=_RecordingClient(raw), physical_pages=4)
+
+    assert result["holdings_flag"] is None
+    assert result["title_page"]["author"] is None
+    assert result["title_page"]["title"] is None
 
 
 def test_a_failing_model_call_never_raises():
@@ -273,7 +312,10 @@ def test_a_failing_model_call_never_raises():
         def complete(self, prompt, pass_name=None):
             raise LLMError("provider is down")
 
-    assert probe(["text"], client=_Exploding(), physical_pages=4) is None
+    result = probe(["text"], client=_Exploding(), physical_pages=4)
+
+    assert result["holdings_flag"] is None
+    assert result["title_page"]["author"] is None
 
 
 def test_empty_text_makes_no_model_call():
@@ -281,5 +323,80 @@ def test_empty_text_makes_no_model_call():
 
     client = _RecordingClient(COMPLETE_ANSWER)
 
-    assert probe(["", "   "], client=client, physical_pages=2) is None
+    result = probe(["", "   "], client=client, physical_pages=2)
+
+    assert result["holdings_flag"] is None
+    assert result["title_page"]["author"] is None
     assert client.calls == []
+
+
+# =============================================================================
+# Verdict -> title_page (issue #285, §7.13)
+# =============================================================================
+
+
+def test_probe_reads_the_title_pages_own_stated_bibliographic_fields():
+    from axial.holdings import probe
+
+    answer = dict(
+        COMPLETE_ANSWER,
+        title_page_title="The Long Road to Damascus",
+        title_page_author="Jane Q. Historian",
+        title_page_date="1971",
+    )
+
+    result = probe(["front matter text"], client=_RecordingClient(answer), physical_pages=200)
+
+    assert result["title_page"]["title"] == "The Long Road to Damascus"
+    assert result["title_page"]["author"] == "Jane Q. Historian"
+    assert result["title_page"]["date"] == "1971"
+
+
+def test_title_page_fields_default_to_none_when_the_document_states_none():
+    from axial.holdings import probe
+
+    result = probe(
+        ["front matter text"], client=_RecordingClient(COMPLETE_ANSWER), physical_pages=1
+    )
+
+    title_page = result["title_page"]
+    assert title_page["title"] is None
+    assert title_page["author"] is None
+    assert title_page["date"] is None
+
+
+def test_a_true_matches_verdict_is_read_as_a_bool():
+    from axial.holdings import probe
+
+    answer = dict(COMPLETE_ANSWER, author_metadata_matches=True, title_metadata_matches=True)
+
+    result = probe(["text"], client=_RecordingClient(answer), physical_pages=1)
+
+    assert result["title_page"]["author_matches_embedded"] is True
+    assert result["title_page"]["title_matches_embedded"] is True
+
+
+def test_a_false_matches_verdict_is_read_as_a_bool():
+    """The cross-check's whole point (#285 finding 2): a model that reads
+    the title page and judges the embedded metadata does NOT name this
+    document must be able to say so plainly."""
+    from axial.holdings import probe
+
+    answer = dict(COMPLETE_ANSWER, author_metadata_matches=False, title_metadata_matches=False)
+
+    result = probe(["text"], client=_RecordingClient(answer), physical_pages=1)
+
+    assert result["title_page"]["author_matches_embedded"] is False
+    assert result["title_page"]["title_matches_embedded"] is False
+
+
+def test_a_missing_or_null_matches_verdict_is_none_not_false():
+    """No embedded claim was given to compare (or the answer omitted the
+    key): `None`, never coerced to `False` -- `axial.intake` treats `None`
+    as "no evidence of a mismatch", not as a mismatch."""
+    from axial.holdings import probe
+
+    result = probe(["text"], client=_RecordingClient(COMPLETE_ANSWER), physical_pages=1)
+
+    assert result["title_page"]["author_matches_embedded"] is None
+    assert result["title_page"]["title_matches_embedded"] is None
