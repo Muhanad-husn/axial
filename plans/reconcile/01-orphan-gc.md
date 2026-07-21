@@ -5,7 +5,7 @@
 - **GitHub issue:** #291
 - **Branch:** feat/reconcile/01-orphan-gc
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ✅ merged
 - **Walking skeleton?** yes (establishes the new `src/axial/reconcile.py` module
   and the new `axial reconcile` subcommand group)
 
@@ -148,3 +148,10 @@ carrying no real source text.
 ## Status / progress log
 
 - 2026-07-21 planned.
+- 2026-07-21 built, then hardened in review: the plan did not anticipate that an empty
+  keep-set (absent `data/sources/`, i.e. the wrong working directory) makes *every* derived
+  artifact an orphan, so `--apply --yes` would have deleted the whole derived corpus.
+  `run_gc` now raises `EmptyKeepSetError` before any confirm/removal/log; no override flag.
+- 2026-07-21 rebased onto `main` (one-hunk `cli.py` conflict with #300's `run` group);
+  suite green at 1047 with both subcommand groups; CI green; founder approved; merged
+  `209bfec` via PR #301. Branch tip `f64b8d1` in `.tdd-branch-cleanup.log`.
