@@ -18,6 +18,7 @@ from openpyxl import load_workbook
 from axial.gold import (
     AXIS_COLUMNS,
     SHEET_COLUMNS,
+    VOCAB_SHEET_NAME,
     EmptyFrameError,
     MissingChunksError,
     _axis_vocabularies,
@@ -371,6 +372,33 @@ class TestAxisVocabularies:
         assert len(vocab["theory_school"]) > 10
         # sorted for determinism
         assert vocab["claim_type"] == sorted(vocab["claim_type"])
+
+    def test_theory_school_sentinels_in_dropdown(self):
+        """PRs #286/#287 ratified `not-applicable` and `unlisted` as legal
+        theory_school values -- the gold sheet must offer them or the
+        Academic hits the same vocabulary wall the tagger did (#289). The
+        vocabulary must be the full flattened codebook, not a curated or
+        filtered subset: compare against an independent read of
+        codebook.yaml, then confirm the sentinels actually land in the
+        rendered dropdown's helper-sheet column, not just the in-memory
+        dict.
+        """
+        vocab = _axis_vocabularies(DEFAULT_DOMAIN_DIR)
+        with (DEFAULT_DOMAIN_DIR / "codebook.yaml").open(encoding="utf-8") as f:
+            raw_axes = yaml.safe_load(f)["axes"]
+        assert set(vocab["theory_school"]) == set(raw_axes["theory_school"])
+        assert "not-applicable" in vocab["theory_school"]
+        assert "unlisted" in vocab["theory_school"]
+
+        records = [
+            _gold_record("s-1_1_a_001", "state", "scope:general", "state-formation", "bellicist")
+        ]
+        wb = build_workbook(records, vocab)
+        vocab_ws = wb[VOCAB_SHEET_NAME]
+        header = [vocab_ws.cell(row=1, column=c).value for c in range(1, vocab_ws.max_column + 1)]
+        col = header.index("theory_school") + 1
+        rendered = {vocab_ws.cell(row=r, column=col).value for r in range(2, vocab_ws.max_row + 1)}
+        assert {"not-applicable", "unlisted"} <= rendered
 
 
 class TestBuildWorkbook:
