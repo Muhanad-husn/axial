@@ -7,7 +7,7 @@ as slices land. Issues remain the system of record; this is the map over them.
 - **Branch:** `claude/phase-a-hybrid-tagging-sqx2xc`
 - **Plan:** [`README.md`](README.md) (stages, waves, deferred decisions)
 - **Decision:** `docs/DECISIONS.md` → DEC-32
-- **Last updated:** 2026-07-21 — stage 0a (#291), 2a (#294) and 3·01 (#277) merged; #284 in flight
+- **Last updated:** 2026-07-21 — first slice of all four lanes merged (#291, #284, #294, #277·01); next wave awaits founder go-ahead
 
 ## Read-me-first (30-second orient)
 
@@ -33,8 +33,8 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 - ☐ 0c #289 — verify gold-sheet dropdowns (`gold.py`) — ✎ fix-lane, verify-first
 
 ### Stage 1 — metadata correctness (one ordered chain, before any re-tag) — plan ✅ `plans/intake-metadata/`
-- ☐ 1·01 #284 — holdings check → model-adjudicated rewrite (`holdings.py`)
-- ☐ 1·02 #285 — persisted source-metadata record; **sole origin of author/title/date (P0-1d)** (needs 01)
+- ✅ 1·01 #284 — holdings check → model-adjudicated rewrite (`holdings.py`) — PR #304 merged `affd369`. **Built but NOT wired into the ingest path → #303** (after #285)
+- ☐ 1·02 #285 — persisted source-metadata record; **sole origin of author/title/date (P0-1d)** (needs 01) — also unblocks #303
 - ☐ 1·03 #278 — **resolved: remove** author/date from the envelope (intake owns them); vault writer composes from both (needs 02). *No longer a Wave-1 independent slice.*
 
 ### Stage 2 — tag quality (before any re-tag)
@@ -59,20 +59,23 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
 ## Next action
 
-All slice plans are written — the four feature lanes below can start concurrently
-(one worktree each, slices sequential inside a lane). Reviewer bandwidth is the cap
-(≤3–4 at once), not file conflict.
+**Wave 1 is done** — the first slice of all four lanes is merged (#291, #284, #294,
+#277·01). The `tag` and `reconcile` lanes are complete; `intake-metadata` and `run`
+have slices left. **The next wave awaits the founder's go-ahead** — no worktrees are
+cut without it.
 
-| Lane | Order | Plan |
-|------|-------|------|
-| **intake-metadata** | #284 → #285 → #278 | `plans/intake-metadata/` |
-| **tag** | #294 | `plans/tag/06-best-of-n.md` |
-| **run** | #277 core → ledger → sources+summary | `plans/run/` |
-| **reconcile** | #291 | `plans/reconcile/` |
+Candidate wave 2, in dependency order:
 
-Then: **#270 run-logging** (slice 01 early; slice 02 *after* the intake-metadata +
-tag lanes — the one conflict point), the two fix-lane issues (#289 anytime, #288
-after run·03), then **stage 4** (freeze = Phase A closes), then **stage 5**.
+| Lane | Next slice | Notes |
+|------|-----------|-------|
+| **intake-metadata** | #285 source-meta record | unblocks both #278 *and* #303 |
+| **run** | #277·02 unified resume ledger | this is what actually satisfies P1-4 |
+| **run-logging** | #270 slice 01 | seam + `extract` only; slice 02 stays held back |
+
+Still held back: **#270 slice 02** (fans out into `envelope`/`tag`/`eval` — the one
+real serialization point), **#288** (after run·03), **#289** (fix-lane, anytime),
+**#303** (holdings wiring — after #285). Then **stage 4** (freeze = Phase A closes),
+then **stage 5**.
 
 See [`README.md`](README.md) → *Execution — parallel feature lanes & worktrees* for
 the full conflict rationale.

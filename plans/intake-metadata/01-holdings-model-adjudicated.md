@@ -5,7 +5,7 @@
 - **GitHub issue:** #284
 - **Branch:** feat/intake-metadata/01-holdings-model-adjudicated
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ✅ merged
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
