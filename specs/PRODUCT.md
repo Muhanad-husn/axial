@@ -509,7 +509,7 @@ The measured figures above come from the simulated gold set (DEC-29/DEC-32) and 
   for a named worklist** as `axial run <pass> --worklist <file>` (issue #277):
   a pass registry drives any registered per-source pass with per-source
   failure isolation, and a single runner-owned resume ledger
-  (`data/logs/run/ledger.tsv`, keyed by `(pass, source_id)`) plus a
+  (`data/run/ledger.tsv`, keyed by `(pass, source_id)`) plus a
   per-pass done-predicate mean a re-run skips every already-done source doing
   zero pipeline work. `extract`/`envelope` use their own persisted-output
   file as the done-signal; every other pass uses the ledger. Still open (a
