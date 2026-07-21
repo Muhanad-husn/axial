@@ -42,7 +42,7 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 - ☐ 2b #288 — report not-applicable / unlisted rates — ✎ fix-lane (attaches to #277 slice-03 summary)
 
 ### Stage 3 — runner — plan ✅ `plans/run/` (3 slices)
-- ☐ 3·01 #277 — runner core + pass registry + failure isolation (walking skeleton)
+- ◐ 3·01 #277 — runner core + pass registry + failure isolation (walking skeleton) — **PR #300**, awaiting founder approval
 - ☐ 3·02 #277 — unified resume ledger + done-predicate (replaces today's 3 mechanisms)
 - ☐ 3·03 #277 — source-set inputs (worklist + corpus glob) + end-of-run summary
 

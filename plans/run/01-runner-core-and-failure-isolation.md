@@ -112,3 +112,6 @@ Then  it exits non-zero and prints a fatal error naming the unknown pass, having
 ## Status / progress log
 
 - 2026-07-21 planned.
+- 2026-07-21 built on `feat/run/01-runner-core-and-failure-isolation`; sprint suite
+  green (1018 passed); PR https://github.com/Muhanad-husn/axial/pull/300 prepared,
+  awaiting founder approval. No spec change — P1-4's resume bar belongs to slice 02.
