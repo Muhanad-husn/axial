@@ -705,7 +705,7 @@ def test_fallback_toc_reshapes_detected_headings_into_top_level_entries():
         ]
     }
 
-    toc = _fallback_toc(tree, Path("paper.pdf"), {"title": "A Real Title"})
+    toc = _fallback_toc(tree)
 
     assert toc == [
         {"title": "Chapter One", "children": []},
@@ -713,20 +713,21 @@ def test_fallback_toc_reshapes_detected_headings_into_top_level_entries():
     ]
 
 
-def test_fallback_toc_falls_back_to_a_titled_entry_when_the_tree_has_no_headings_at_all():
+def test_fallback_toc_names_the_no_headings_case_rather_than_the_filename():
     """The deepest fallback (module docstring, `_fallback_toc`): a tree with
     no `section_header`-labelled top-level heading at all still yields a
-    non-empty nested toc, titled after the envelope's own resolved title."""
-    from axial.envelope import _fallback_toc
+    non-empty nested toc. Its single entry states that no heading was found;
+    it is never derived from the filename (§7.13/#278 retired the
+    filename-slug title, and a fallback entry is no place to reintroduce
+    one)."""
+    from axial.envelope import _NO_HEADINGS_TOC_TITLE, _fallback_toc
 
     tree = {"children": [{"type": "prose", "order": "0", "text": "just prose", "label": "text"}]}
 
-    toc = _fallback_toc(tree, Path("my_paper.pdf"), {"title": "A Real Title"})
+    toc = _fallback_toc(tree)
 
-    assert toc == [{"title": "A Real Title", "children": []}]
-
-    toc_no_title = _fallback_toc(tree, Path("my_paper.pdf"), {})
-    assert toc_no_title == [{"title": "My Paper", "children": []}]
+    assert toc == [{"title": _NO_HEADINGS_TOC_TITLE, "children": []}]
+    assert "my paper" not in _NO_HEADINGS_TOC_TITLE.lower()
 
 
 # --- bibliography-by-aggregate exclusion (#222, PRD §7.3) -------------------
@@ -1100,10 +1101,12 @@ def test_validate_envelope_fields_rejects_the_old_flat_toc_shape():
 # --- envelope assembly / write-once -----------------------------------------
 
 
-def test_build_envelope_carries_the_locked_shape(tmp_path):
+def test_build_envelope_carries_the_locked_shape():
+    """§7.3/§7.13 (#278): the locked shape is exactly `{source_id, thesis,
+    toc, scope, stated_argument}` -- `author`/`title`/`date` are facts about
+    the file and live in the source-metadata record (§7.12)."""
     from axial.envelope import build_envelope
 
-    path = tmp_path / "my_paper.pdf"
     parsed = {
         "thesis": "X",
         "toc": [{"title": "Introduction", "children": []}],
@@ -1111,16 +1114,14 @@ def test_build_envelope_carries_the_locked_shape(tmp_path):
         "stated_argument": "Z",
     }
 
-    envelope = build_envelope(path, "source-123", parsed)
+    envelope = build_envelope("source-123", parsed)
 
+    assert set(envelope) == {"source_id", "thesis", "toc", "scope", "stated_argument"}
     assert envelope["source_id"] == "source-123"
     assert envelope["thesis"] == "X"
     assert envelope["toc"] == [{"title": "Introduction", "children": []}]
     assert envelope["scope"] == "Y"
     assert envelope["stated_argument"] == "Z"
-    assert envelope["title"] == "My Paper"
-    assert envelope["author"] is None
-    assert envelope["date"] is None
 
 
 def test_build_envelope_prefers_an_explicit_toc_argument_over_parsed_toc():
@@ -1131,7 +1132,6 @@ def test_build_envelope_prefers_an_explicit_toc_argument_over_parsed_toc():
     old `_resolve_toc`, is retired)."""
     from axial.envelope import build_envelope
 
-    path = Path("paper.pdf")
     parsed = {
         "thesis": "X",
         "toc": [{"title": "Model's Own Answer", "children": []}],
@@ -1140,7 +1140,7 @@ def test_build_envelope_prefers_an_explicit_toc_argument_over_parsed_toc():
     }
     fallback_toc = [{"title": "Fallback Chapter", "children": []}]
 
-    envelope = build_envelope(path, "source-123", parsed, toc=fallback_toc)
+    envelope = build_envelope("source-123", parsed, toc=fallback_toc)
 
     assert envelope["toc"] == fallback_toc
 
@@ -1288,17 +1288,7 @@ def test_run_envelope_writes_a_file_that_round_trips_the_locked_fields(monkeypat
     assert len(written) == 1
     on_disk = json.loads(written[0].read_text(encoding="utf-8"))
     assert on_disk == envelope
-    for field in (
-        "source_id",
-        "author",
-        "title",
-        "date",
-        "thesis",
-        "toc",
-        "scope",
-        "stated_argument",
-    ):
-        assert field in on_disk
+    assert set(on_disk) == {"source_id", "thesis", "toc", "scope", "stated_argument"}
 
 
 # --- run_envelope: bounded re-ask on complete-but-unparseable JSON (#76) ---

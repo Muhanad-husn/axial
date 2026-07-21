@@ -125,17 +125,20 @@ Seam decision 5 -- source-level values read from disk, never hardcoded
 -----------------------------------------------------------------------
 Exactly as tests/test_chunk.py's seam decision 3(a) and
 tests/test_envelope.py's seam decision 3, this test never hardcodes stub
-wording. It reads the stored envelope's own `author`/`title`/`date`/
-`thesis`/`scope` values back from the envelope JSON file on disk at test
-time and asserts each note's `source_meta` block carries the SAME values
-(including possibly-null `author`/`date`, since the current stub's canned
-envelope response supplies neither -- see src/axial/llm.py's
-`StubLLMClient._CANNED_RESPONSE`, which has no "author"/"date" keys, so
-`axial envelope`'s own fallback logic in src/axial/envelope.py leaves
-those two null). Asserting exact value equality against whatever the
-envelope itself holds -- rather than asserting non-null or hardcoding
-stub prose -- proves the metadata was faithfully carried through without
-baking any particular stub response into the locked contract.
+wording. It reads the expected source-level values back from disk at test
+time and asserts each note's `source_meta` block carries the SAME values.
+Issue #278 (§7.13) split where they are read FROM, not what is asserted:
+`thesis` and `scope` still come from the stored envelope JSON, while
+`author`, `title` and `date` now come from the persisted source-metadata
+record `data/source_meta/<source_id>.json` that intake writes (§7.12) --
+the sole origin of the three, never the envelope and never the filename.
+Asserting exact value equality against whatever those two files hold --
+rather than asserting non-null or hardcoding stub prose -- proves the
+metadata was faithfully composed without baking any particular stub
+response into the locked contract. One further clause is asserted: a
+bibliographic field is never an empty/null value, because §7.13 requires
+an unavailable read to be recorded as `unavailable` and distinguishable
+from an unattempted one.
 
 Seam decision 6 -- artifact-pool separation, minimally
 -----------------------------------------------------------------------
@@ -224,9 +227,14 @@ PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 
 KNOWN_SECTION_LABELS = {"Introduction", "Comparative Cases", "Conclusion"}
 
-# Source-level fields §7.2 names as "reused from the envelope" (excluding
-# `fields`, a schema-driven axis tag deferred to phase-3 tagging).
-SOURCE_META_FIELDS = ("author", "title", "date", "thesis", "scope")
+# The five source-level fields §7.2 names (excluding `fields`, a
+# schema-driven axis tag deferred to phase-3 tagging), split by origin:
+# issue #278/§7.13 moved `author`/`title`/`date` out of the envelope and
+# into the persisted source-metadata record (§7.12), leaving `thesis` and
+# `scope` on the envelope. The note's key set is unchanged.
+RECORD_SOURCE_META_FIELDS = ("author", "title", "date")
+ENVELOPE_SOURCE_META_FIELDS = ("thesis", "scope")
+SOURCE_META_FIELDS = RECORD_SOURCE_META_FIELDS + ENVELOPE_SOURCE_META_FIELDS
 
 # argparse's fallback error for an as-yet-nonexistent subcommand, e.g.
 # "axial: error: argument command: invalid choice: 'vault' (choose from
@@ -436,6 +444,61 @@ def _split_frontmatter(text: str, note_path: Path) -> tuple[dict, str]:
     return frontmatter, body
 
 
+def _stored_source_meta(root: Path) -> dict:
+    """The persisted source-metadata record intake wrote for this fixture
+    (§7.12) -- the note's `author`/`title`/`date` must come from here, never
+    from the envelope and never from the filename (§7.13, #278)."""
+    source_id = compute_source_id(THESIS_PAPER_PDF)
+    path = root / "data" / "source_meta" / f"{source_id}.json"
+    assert path.exists(), (
+        f"expected intake to have written the source-metadata record at "
+        f"{path} (§7.12: written at intake, before extraction), but it does not exist"
+    )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _assert_source_meta_composed(
+    source_meta: dict, note_path: Path, envelope: dict, envelope_path: Path, record: dict
+) -> None:
+    """§7.13 (#278): the note's five-key `source_meta` block is composed from
+    two artifacts -- `author`/`title`/`date` from the source-metadata record,
+    `thesis`/`scope` from the envelope. Values are read from both files on
+    disk at test time, never hardcoded (module docstring, seam decision 5)."""
+    for field in SOURCE_META_FIELDS:
+        assert field in source_meta, (
+            f"expected {note_path}'s frontmatter 'source_meta' to carry a "
+            f"{field!r} key (PRD §7.2 source-level fields), got keys: "
+            f"{sorted(source_meta.keys())}"
+        )
+
+    for field in ENVELOPE_SOURCE_META_FIELDS:
+        assert source_meta[field] == envelope.get(field), (
+            f"expected {note_path}'s frontmatter 'source_meta.{field}' to "
+            f"equal the stored envelope's own {field!r} value (read from "
+            f"{envelope_path} on disk), got {source_meta[field]!r} vs. "
+            f"envelope's {envelope.get(field)!r}"
+        )
+
+    for field in RECORD_SOURCE_META_FIELDS:
+        assert field not in envelope, (
+            f"§7.13: the envelope no longer carries {field!r}; it is a fact "
+            f"about the file, recorded at intake. Got envelope keys "
+            f"{sorted(envelope)}"
+        )
+        recorded = record[field]
+        expected = recorded["value"] if isinstance(recorded, dict) else recorded
+        assert source_meta[field] == expected, (
+            f"expected {note_path}'s frontmatter 'source_meta.{field}' to "
+            f"come from the source-metadata record (§7.12/§7.13), got "
+            f"{source_meta[field]!r} vs. the record's {expected!r}"
+        )
+        assert source_meta[field] not in (None, ""), (
+            f"§7.13: an unavailable field is recorded as unavailable, never "
+            f"as an empty value indistinguishable from an unattempted read; "
+            f"got 'source_meta.{field}' == {source_meta[field]!r}"
+        )
+
+
 def _find_note_for_chunk(chunk_id: str, root: Path) -> Path:
     prose_dir = _prose_dir(root)
     assert prose_dir.exists(), (
@@ -457,6 +520,7 @@ def test_vault_write_creates_one_prose_note_per_chunk_with_three_level_frontmatt
     root = isolated_vault_root
     envelope_path = _arrange_stored_envelope(root)
     envelope = json.loads(envelope_path.read_bytes())
+    record = _stored_source_meta(root)
 
     expected_records = _arrange_expected_chunk_records(root)
 
@@ -519,24 +583,10 @@ def test_vault_write_creates_one_prose_note_per_chunk_with_three_level_frontmatt
         source_meta = frontmatter.get("source_meta")
         assert isinstance(source_meta, dict), (
             f"expected {note_path}'s frontmatter to carry a 'source_meta' "
-            f"mapping with the source-level fields reused from the "
-            f"envelope (PRD §7.2 'source-level:... Reused from the "
-            f"envelope'; Appendix H nests these under 'source_meta'), got "
-            f"{source_meta!r}"
+            f"mapping with the source-level fields (PRD §7.2; Appendix H "
+            f"nests these under 'source_meta'), got {source_meta!r}"
         )
-        for field in SOURCE_META_FIELDS:
-            assert field in source_meta, (
-                f"expected {note_path}'s frontmatter 'source_meta' to "
-                f"carry a {field!r} key (PRD §7.2 source-level fields), "
-                f"got keys: {sorted(source_meta.keys())}"
-            )
-            assert source_meta[field] == envelope.get(field), (
-                f"expected {note_path}'s frontmatter 'source_meta.{field}' "
-                f"to equal the stored envelope's own {field!r} value "
-                f"(read from {envelope_path} on disk, never hardcoded -- "
-                f"see module docstring, seam decision 5), got "
-                f"{source_meta[field]!r} vs. envelope's {envelope.get(field)!r}"
-            )
+        _assert_source_meta_composed(source_meta, note_path, envelope, envelope_path, record)
 
     # the envelope itself must be untouched by vault write, same "read not
     # recomputed" discipline as tests/test_chunk.py locks for the chunk pass.

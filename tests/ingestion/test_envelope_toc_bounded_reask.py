@@ -252,9 +252,7 @@ def test_toc_reask_fires_once_and_second_response_wins(tmp_path):
     )
 
     tree = _tree()
-    deterministic_fallback = envelope_module._fallback_toc(
-        tree, LLM_TOC_PDF, json.loads(_envelope_response(toc=[]))
-    )
+    deterministic_fallback = envelope_module._fallback_toc(tree)
     assert envelope["toc"] != deterministic_fallback, (
         f"expected the written envelope's `toc` to differ from "
         f"`_fallback_toc`'s deterministic raw-heading dump "
@@ -297,8 +295,7 @@ def test_toc_reask_bounded_and_fallback_guaranteed_when_both_invalid(tmp_path):
     _assert_valid_nested_toc(envelope["toc"])
 
     tree = _tree()
-    parsed = json.loads(_envelope_response(toc=[]))
-    expected_fallback = envelope_module._fallback_toc(tree, LLM_TOC_PDF, parsed)
+    expected_fallback = envelope_module._fallback_toc(tree)
     assert envelope["toc"] == expected_fallback, (
         f"expected the written envelope's `toc` to equal `_fallback_toc`'s "
         f"own deterministic result (PRD §7.3: 'falls back deterministically "
