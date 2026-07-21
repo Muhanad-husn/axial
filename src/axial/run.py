@@ -31,12 +31,24 @@ the ledger -- an APPEND, never an overwrite, reusing `axial.ingest`'s TSV
 discipline (`_append_result_row`/`_load_completed_source_ids`) verbatim in
 shape.
 
-Out of scope for this slice too (see the plan): the corpus glob source set
-and the polished end-of-run summary (slice 03); the #270 run-log emitter and
+Slice 03 (`plans/run/03-source-sets-and-run-summary.md`) adds the second
+**source set**: `--corpus`, every `data/sources/*.pdf`/`*.docx` file in
+sorted (deterministic) order, as an alternative to `--worklist`. Exactly one
+source set is required per run -- both or neither is a fatal `SourceSetError`
+before any source is touched. It also formalizes the end-of-run summary this
+module already printed (a tally line of OK/FAIL/SKIP counts) into a
+structured in-process value, `RunSummary`, that `run_pass` returns alongside
+the exit code -- so a consumer (#270's log emitter, #288's not-applicable/
+unlisted rates report) can attach to it without reaching into runner
+internals. `RunSummary.rates` is the named attachment point for #288; this
+slice leaves it `None` and never computes it.
+
+Out of scope for this slice too (see the plan): the #270 run-log emitter and
 the #288 rates report; parallelism; cross-pass chaining; reaching into the
 per-chunk `.jsonl` checkpoints inside tag/artifacts/xref -- a pass's
 done-predicate may consult its own checkpoints internally, but this module
-neither replaces nor reaches into them (source-level resume only).
+neither replaces nor reaches into them (source-level resume only); recursive
+or configurable corpus roots beyond the single `data/sources/` glob.
 """
 
 from __future__ import annotations
@@ -90,6 +102,16 @@ LEDGER_COLUMNS = ("pass", "source_path", "source_id", "status", "reason", "times
 # for an OK outcome.
 TABLE_COLUMNS = ("source_path", "source_id", "status", "reason")
 
+# The corpus source set's root (slice 03) -- a plain path relative to the
+# process cwd, mirroring every other module-level default in this codebase
+# (LEDGER_PATH above, axial.reconcile.SOURCES_DIR, axial.ingest.RESULTS_PATH).
+CORPUS_SOURCES_DIR = Path("data/sources")
+
+# The two documented extensions the corpus glob matches (plan's out-of-scope
+# note: "one corpus root, the two documented extensions" -- no config option
+# for this, since nothing today needs a third).
+CORPUS_EXTENSIONS = (".pdf", ".docx")
+
 
 class RunError(Exception):
     """Base class for fatal run errors -- ones that stop the whole worklist
@@ -119,16 +141,62 @@ class LedgerError(RunError):
         super().__init__(f"cannot access ledger {path}: {cause}")
 
 
+class SourceSetError(RunError):
+    """Raised when the requested source set is invalid: `--worklist` and
+    `--corpus` given together, or neither given (module docstring: exactly
+    one source set is required per run) -- fatal, before any source is
+    touched."""
+
+    def __init__(self, worklist_given: bool, corpus_given: bool):
+        self.worklist_given = worklist_given
+        self.corpus_given = corpus_given
+        if worklist_given and corpus_given:
+            message = "--worklist and --corpus are mutually exclusive; supply exactly one"
+        else:
+            message = "exactly one source set is required: --worklist <file> or --corpus"
+        super().__init__(message)
+
+
 @dataclass(frozen=True)
 class Outcome:
-    """One source's recorded in-process outcome: OK or FAIL, with a short
-    reason (DEC-23: ids, statuses, and short reasons only, never source
+    """One source's recorded in-process outcome: OK, FAIL, or SKIP, with a
+    short reason (DEC-23: ids, statuses, and short reasons only, never source
     text)."""
 
     source_path: str
     source_id: str
     status: str
     reason: str = ""
+
+
+@dataclass(frozen=True)
+class RunSummary:
+    """The end-of-run summary (slice 03): a structured in-process value
+    `run_pass` returns and prints, so a consumer (#270's log emitter, #288's
+    not-applicable/unlisted rates report) can attach to it without reaching
+    into runner internals. `outcomes` carries every attempted source's row
+    (DEC-23: ids, statuses, counts, and short reasons only, never source
+    text); the OK/FAIL/SKIP counts always sum to `total`.
+
+    `rates` is the named attachment point for #288's not-applicable/unlisted
+    rates report -- always `None` here; this slice defines the seam, #288
+    computes and fills it. Nothing in this module reads or writes it beyond
+    this default."""
+
+    pass_name: str
+    outcomes: list[Outcome]
+    total: int
+    ok_count: int
+    fail_count: int
+    skip_count: int
+    rates: Any | None = None
+
+
+def _empty_summary(pass_name: str) -> RunSummary:
+    """The summary returned alongside a fatal exit (unknown pass, invalid
+    source set, unreadable worklist, unappendable ledger) -- no source was
+    ever attempted."""
+    return RunSummary(pass_name, [], 0, 0, 0, 0)
 
 
 @dataclass(frozen=True)
@@ -286,29 +354,87 @@ def _ledger_row(pass_name: str, outcome: Outcome) -> dict[str, str]:
     }
 
 
+def resolve_corpus_source_paths(sources_dir: Path) -> list[str]:
+    """The corpus source set (slice 03): every `sources_dir` file matching
+    `CORPUS_EXTENSIONS` (`.pdf`, `.docx`), sorted for a deterministic order
+    -- never raw filesystem iteration order, which is not guaranteed across
+    platforms. Mirrors `axial.reconcile.live_source_ids`'s own single-level
+    (non-recursive) scan. An absent or empty `sources_dir` yields an empty
+    list -- an empty source set, not an error (a run over it reports
+    total=0, see `run_pass`)."""
+    if not sources_dir.is_dir():
+        return []
+    matches = [
+        path
+        for extension in CORPUS_EXTENSIONS
+        for path in sources_dir.glob(f"*{extension}")
+        if path.is_file()
+    ]
+    return sorted(str(path) for path in matches)
+
+
+def _resolve_source_paths(
+    worklist_path: str | Path | None, corpus: bool, sources_dir: Path | None
+) -> list[str]:
+    """Resolve the one required source set (module docstring): `worklist_path`
+    (slice 01) or `corpus` (slice 03), never both, never neither. Raises
+    `SourceSetError` for the both/neither cases and `WorklistError` if a
+    given worklist path cannot be read -- both fatal, checked before any
+    source is touched."""
+    worklist_given = worklist_path is not None
+    if worklist_given == corpus:
+        raise SourceSetError(worklist_given, corpus)
+    if worklist_given:
+        return read_worklist(worklist_path)
+    return resolve_corpus_source_paths(
+        sources_dir if sources_dir is not None else CORPUS_SOURCES_DIR
+    )
+
+
+def _summarize(pass_name: str, outcomes: list[Outcome]) -> RunSummary:
+    ok_count = sum(1 for outcome in outcomes if outcome.status == OK_STATUS)
+    skip_count = sum(1 for outcome in outcomes if outcome.status == SKIP_STATUS)
+    fail_count = len(outcomes) - ok_count - skip_count
+    return RunSummary(pass_name, outcomes, len(outcomes), ok_count, fail_count, skip_count)
+
+
 def run_pass(
     pass_name: str,
-    worklist_path: str | Path,
+    worklist_path: str | Path | None = None,
     client: LLMClient | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
     ledger_path: Path | None = None,
-) -> tuple[list[Outcome], int]:
-    """Drive the registered pass named `pass_name` over every source path in
-    `worklist_path`, one source at a time (module docstring). Prints a
-    tab-separated outcome table (header + one row per attempted source,
-    including skipped ones) to stdout, plus one `error:`/`skip:` diagnostic
-    line to stderr/stdout per FAIL/SKIP, and returns `(outcomes, exit_code)`.
+    *,
+    corpus: bool = False,
+    sources_dir: Path | None = None,
+) -> tuple[RunSummary, int]:
+    """Drive the registered pass named `pass_name` over its resolved source
+    set, one source at a time (module docstring). The source set is either a
+    line-delimited worklist (`worklist_path`) or the corpus glob (`corpus=
+    True`, every `sources_dir` `.pdf`/`.docx` file in sorted order) --
+    exactly one of the two is required; supplying both, or neither, is a
+    fatal `SourceSetError`. Prints a tab-separated outcome table (header +
+    one row per attempted source, including skipped ones) to stdout, plus
+    one `error:`/`skip:` diagnostic line to stderr/stdout per FAIL/SKIP, an
+    end-of-run tally line, and returns `(summary, exit_code)`.
+
+    `summary` is a `RunSummary` -- the same structured value printed as the
+    tally line, returned so a consumer (#270's log emitter, #288's rates
+    report) can attach to it without reaching into runner internals (slice
+    03). Its `outcomes` is empty and every count is 0 for every fatal
+    condition below.
 
     Exit code is 0 even when some sources FAIL -- a per-source failure is
     expected, recoverable operator signal, not a crash (mirroring
     `axial.ingest.run_ingest`). It is non-zero ONLY when the loop itself
-    cannot run: an unknown pass name, an unreadable worklist, or an
-    unappendable ledger. All fatal conditions are checked before any source
-    is touched (except the ledger append itself, which can only fail once a
-    source has actually run), and `outcomes` is empty for the first three.
+    cannot run: an unknown pass name, an invalid source set, an unreadable
+    worklist, or an unappendable ledger. All fatal conditions are checked
+    before any source is touched (except the ledger append itself, which can
+    only fail once a source has actually run).
 
-    `ledger_path` defaults to `LEDGER_PATH`; overridable for tests, mirroring
+    `ledger_path` defaults to `LEDGER_PATH`; `sources_dir` defaults to
+    `CORPUS_SOURCES_DIR`; both overridable for tests, mirroring
     `axial.ingest.run_ingest`'s own `results_path` seam. Before the loop, the
     ledger is read once for this pass's own already-done `source_id`s
     (`_load_done_source_ids`); each source then asks `descriptor
@@ -328,13 +454,13 @@ def run_pass(
     descriptor = PASS_REGISTRY.get(pass_name)
     if descriptor is None:
         print(f"error: {UnknownPassError(pass_name)}", file=sys.stderr)
-        return [], 1
+        return _empty_summary(pass_name), 1
 
     try:
-        source_paths = read_worklist(worklist_path)
-    except WorklistError as exc:
+        source_paths = _resolve_source_paths(worklist_path, corpus, sources_dir)
+    except (SourceSetError, WorklistError) as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return [], 1
+        return _empty_summary(pass_name), 1
 
     if ledger_path is None:
         ledger_path = LEDGER_PATH
@@ -343,13 +469,18 @@ def run_pass(
         ledger_done_ids = _load_done_source_ids(ledger_path, pass_name)
     except LedgerError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return [], 1
+        return _empty_summary(pass_name), 1
 
     if client is None:
         client = get_client(config_path=config_path)
 
     outcomes: list[Outcome] = []
     print("\t".join(TABLE_COLUMNS))
+
+    if not source_paths:
+        print(f"run: pass={pass_name} nothing to do (0 sources in source set)")
+        return _summarize(pass_name, outcomes), 0
+
     for source_path_str in source_paths:
         source_path = Path(source_path_str)
 
@@ -364,7 +495,7 @@ def run_pass(
                 _append_ledger_row(ledger_path, _ledger_row(pass_name, outcome))
             except LedgerError as exc:
                 print(f"error: {exc}", file=sys.stderr)
-                return outcomes, 1
+                return _summarize(pass_name, outcomes), 1
             continue
 
         if descriptor.done_predicate(source_id, ledger_done_ids, config_path):
@@ -389,16 +520,14 @@ def run_pass(
             _append_ledger_row(ledger_path, _ledger_row(pass_name, outcome))
         except LedgerError as exc:
             print(f"error: {exc}", file=sys.stderr)
-            return outcomes, 1
+            return _summarize(pass_name, outcomes), 1
         if outcome.status == OK_STATUS:
             ledger_done_ids.add(source_id)
 
-    ok_count = sum(1 for outcome in outcomes if outcome.status == OK_STATUS)
-    skip_count = sum(1 for outcome in outcomes if outcome.status == SKIP_STATUS)
-    fail_count = len(outcomes) - ok_count - skip_count
+    summary = _summarize(pass_name, outcomes)
     print(
-        f"run: pass={pass_name} total={len(outcomes)} ok={ok_count} "
-        f"skipped={skip_count} failed={fail_count}"
+        f"run: pass={pass_name} total={summary.total} ok={summary.ok_count} "
+        f"skipped={summary.skip_count} failed={summary.fail_count}"
     )
 
-    return outcomes, 0
+    return summary, 0

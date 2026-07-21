@@ -50,7 +50,7 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 |---|-------|-------|-----------------|--------|----|
 | 01 | [runner-core-and-failure-isolation](01-runner-core-and-failure-isolation.md) | [#277](https://github.com/Muhanad-husn/axial/issues/277) | `axial run <pass> --worklist FILE` drives one registered per-source pass over a worklist, isolating each source's failure (record and continue), exiting non-zero only when the loop itself cannot run — walking skeleton for `src/axial/run.py` and the pass registry | ☐ todo | TBD |
 | 02 | [unified-resume-ledger](02-unified-resume-ledger.md) | [#277](https://github.com/Muhanad-husn/axial/issues/277) | The runner owns one resume ledger; each pass declares a **done-predicate**; a re-run skips every already-done source doing zero pipeline work, replacing the three source-level mechanisms with one | ☐ todo | TBD |
-| 03 | [source-sets-and-run-summary](03-source-sets-and-run-summary.md) | [#277](https://github.com/Muhanad-husn/axial/issues/277) | Accept the corpus glob (`data/sources/*.pdf\|*.docx`) as an alternative source set to `--worklist`, and emit an end-of-run summary (OK/FAIL/SKIP counts + per-source outcomes) with the seam #288 attaches its rates report to | ☐ todo | TBD |
+| 03 | [source-sets-and-run-summary](03-source-sets-and-run-summary.md) | [#277](https://github.com/Muhanad-husn/axial/issues/277) | Accept the corpus glob (`data/sources/*.pdf\|*.docx`) as an alternative source set to `--worklist`, and emit an end-of-run summary (OK/FAIL/SKIP counts + per-source outcomes) with the seam #288 attaches its rates report to | ◐ in review | TBD |
 
 <!-- Status values: ☐ todo · ◐ in-progress · ✅ done. Update the row when a slice's PR opens. -->
 
