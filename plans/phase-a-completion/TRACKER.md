@@ -6,6 +6,8 @@ as slices land. Issues remain the system of record; this is the map over them.
 
 - **Branch:** `claude/phase-a-hybrid-tagging-sqx2xc`
 - **Plan:** [`README.md`](README.md) (stages, waves, deferred decisions)
+- **Running stage 4?** [`STAGE-4-RUNBOOK.md`](STAGE-4-RUNBOOK.md) — costs, traps, parallel
+  topology, and the cross-session hazard. Read it before launching any corpus pass
 - **Decision:** `docs/DECISIONS.md` → DEC-32
 - **Last updated:** 2026-07-21 — **wave 4 complete**: #313/#314/#315 merged. **Every planned Phase A slice is built.** What remains is stage 4, the freeze — a founder-run operation
 
