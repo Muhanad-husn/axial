@@ -35,6 +35,7 @@ from axial.gold import (
 )
 from axial.ingest import run_ingest
 from axial.intake import IntakeError, intake
+from axial.llm import ENVELOPE_PASS_NAME, TAG_PASS_NAME, get_client
 from axial.pipeline_ready import PipelineReadyError, run_pipeline_ready
 from axial.polity_canonical import PolityCanonicalError, run_polity_build, run_polity_report
 from axial.reconcile import ReconcileError, format_gc_report, run_gc
@@ -476,12 +477,52 @@ def _extract(
     return 0
 
 
-def _envelope(source_path: str) -> int:
-    try:
-        envelope = run_envelope(source_path)
-    except EnvelopeError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+def _envelope(
+    source_path: str,
+    *,
+    root: Path | None = None,
+    clock: Callable[[], str] | None = None,
+) -> int:
+    """Run the structural-envelope pass on `source_path`, wrapped in a
+    run-logging context (issue #270 slice 02): one `run.jsonl` record per
+    call, teed `console.log`, the pass's existing stdout unchanged.
+    `root`/`clock` are the run_context determinism seam (mirrors
+    `_extract`, slice 01).
+
+    The client is built once here, before calling `run_envelope`, rather
+    than left for `run_envelope` to build lazily on its own cache miss --
+    mirroring `axial.run.run_pass`'s own already-established precedent of
+    constructing the pass's client once up front. This is how the record's
+    `model` field is known even on a cache hit (`run_envelope` then returns
+    the stored envelope without ever calling `.complete()` on the client
+    passed in -- the "no recompute" guarantee, PRD §10, is unaffected: only
+    construction moved earlier, no completion call was added)."""
+    with run_context("envelope", root=root, clock=clock) as run:
+        start = time.monotonic()
+        client = get_client()
+        model = client.model_for_pass(ENVELOPE_PASS_NAME)
+        try:
+            envelope = run_envelope(source_path, client=client)
+        except EnvelopeError as exc:
+            run.record(
+                source_id=_safe_source_id(source_path),
+                pass_name="envelope",
+                model=model,
+                status="error",
+                duration_sec=time.monotonic() - start,
+                error=str(exc),
+            )
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        run.record(
+            source_id=_safe_source_id(source_path),
+            pass_name="envelope",
+            model=model,
+            status="ok",
+            duration_sec=time.monotonic() - start,
+            error=None,
+        )
 
     print(json.dumps(envelope, sort_keys=True))
     return 0
@@ -544,12 +585,45 @@ def _chunk_examine() -> int:
     return 0
 
 
-def _tag(source_path: str, domain_dir: str) -> int:
-    try:
-        records = run_tag(source_path, domain_dir=domain_dir)
-    except TagError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+def _tag(
+    source_path: str,
+    domain_dir: str,
+    *,
+    root: Path | None = None,
+    clock: Callable[[], str] | None = None,
+) -> int:
+    """Run the tagging pass on `source_path`, wrapped in a run-logging
+    context (issue #270 slice 02): one `run.jsonl` record per CALL (per
+    source, not per chunk -- `run_tag` makes one LLM call per chunk
+    internally, but this wraps the whole invocation in a single record, so
+    `run.jsonl` stays ~one row/source, mirroring the plan's per-source
+    granularity default). `root`/`clock` mirror `_extract`/`_envelope`."""
+    with run_context("tag", root=root, clock=clock) as run:
+        start = time.monotonic()
+        client = get_client()
+        model = client.model_for_pass(TAG_PASS_NAME)
+        try:
+            records = run_tag(source_path, client=client, domain_dir=domain_dir)
+        except TagError as exc:
+            run.record(
+                source_id=_safe_source_id(source_path),
+                pass_name="tag",
+                model=model,
+                status="error",
+                duration_sec=time.monotonic() - start,
+                error=str(exc),
+            )
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        run.record(
+            source_id=_safe_source_id(source_path),
+            pass_name="tag",
+            model=model,
+            status="ok",
+            duration_sec=time.monotonic() - start,
+            error=None,
+        )
 
     print(json.dumps(records))
     return 0
@@ -616,12 +690,51 @@ def _gold_deliver() -> int:
     return 0
 
 
-def _eval() -> int:
-    try:
-        path = run_eval()
-    except (EvalError, GoldError, PolityCanonicalError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+def _eval(
+    *,
+    root: Path | None = None,
+    clock: Callable[[], str] | None = None,
+) -> int:
+    """Score the gold set, wrapped in a run-logging context (issue #270
+    slice 02). Two deliberate departures from the other three passes, both
+    because `run_eval` genuinely differs from them, not by oversight:
+
+    - `model=None` always -- `run_eval` is an offline join over two on-disk
+      inputs (the tagger's own sampled chunk records and the Academic's
+      returned answer key) and makes no LLM call at all (see
+      `axial.eval.run_eval`'s own docstring: "Offline and deterministic: no
+      LLM call, no network"). This mirrors slice 01's own `extract`
+      precedent for a model-free pass (`plans/run-logging/README.md`: "The
+      model field is nullable ... that is a feature, not a gap").
+    - One record per invocation, `source_id=""` -- `axial eval` takes no
+      source_path (unlike extract/envelope/tag); it scores the WHOLE gold
+      set in one atomic pass, so "one record per source" does not apply.
+      `source_id=""` mirrors `_safe_source_id`'s own no-source-resolved
+      fallback."""
+    with run_context("eval", root=root, clock=clock) as run:
+        start = time.monotonic()
+        try:
+            path = run_eval()
+        except (EvalError, GoldError, PolityCanonicalError) as exc:
+            run.record(
+                source_id="",
+                pass_name="eval",
+                model=None,
+                status="error",
+                duration_sec=time.monotonic() - start,
+                error=str(exc),
+            )
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        run.record(
+            source_id="",
+            pass_name="eval",
+            model=None,
+            status="ok",
+            duration_sec=time.monotonic() - start,
+            error=None,
+        )
 
     print(json.dumps(str(path)))
     return 0

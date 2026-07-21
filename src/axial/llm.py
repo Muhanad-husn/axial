@@ -355,6 +355,15 @@ class LLMClient(Protocol):
         """
         ...
 
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        """Return the model identifier this client would target for
+        `pass_name`, without making a completion call (issue #270 slice 02:
+        the run-logging seam's per-pass `run.jsonl` record reads this to
+        populate the record's `model` field). Every provider already knows
+        this value -- this exposes it, it does not add a new client or a
+        new config option."""
+        ...
+
 
 class StubLLMClient:
     """Fixture-canned client for tests and CI: no network, deterministic
@@ -433,6 +442,13 @@ class StubLLMClient:
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         self.call_count += 1
         return _canned_response_for(pass_name)
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        """A fixed, deterministic id -- there is no real model behind this
+        client, but the run-logging record still needs a stable non-null
+        value to prove a model-bearing pass's `model` field round-trips
+        under the stub provider (issue #270 slice 02)."""
+        return "stub"
 
 
 def _canned_artifact_response() -> str:
@@ -571,6 +587,12 @@ class RecordLLMClient:
             handle.write(json.dumps(prompt) + "\n")
         return _canned_response_for(pass_name)
 
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        """Mirrors `StubLLMClient.model_for_pass` exactly -- same fixed id,
+        since this client's completion responses are also indistinguishable
+        from the stub's (module docstring)."""
+        return "stub"
+
 
 class ExplodingLLMClient:
     """Poison client that raises if its completion method is ever invoked.
@@ -588,6 +610,11 @@ class ExplodingLLMClient:
             "LLM-backed pass attempted to recompute instead of reusing a "
             "cached result"
         )
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        """A fixed id, never raising -- mirrors the class's own contract
+        that only `.complete()` is fatal (docstring above)."""
+        return "explode"
 
 
 class LLMError(Exception):
@@ -860,6 +887,17 @@ class OpenRouterClient:
             base_url=base_url, transport=transport, timeout=_REQUEST_TIMEOUT
         )
 
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        """The model this client targets for `pass_name` (issue #270 slice
+        02): `self._model_by_pass`'s per-pass override (DEC-26) when
+        `pass_name` is named there, else this client's own default
+        `self._model`. This is the SAME resolution `_post_with_deadline`
+        itself applies to an ordinary (non-`model`-overridden) request --
+        kept here as the single source of truth so the two can never drift,
+        and exposed so a caller can learn which model a pass would use
+        without making a completion call."""
+        return self._model_by_pass.get(pass_name, self._model)
+
     def _post_with_deadline(
         self, prompt: str, model: str | None = None, pass_name: str | None = None
     ) -> httpx.Response:
@@ -892,10 +930,7 @@ class OpenRouterClient:
         to `False` for a pass not named there -- the safe, unchanged-since-
         #147 default).
         """
-        if model is not None:
-            target_model = model
-        else:
-            target_model = self._model_by_pass.get(pass_name, self._model)
+        target_model = model if model is not None else self.model_for_pass(pass_name)
         reasoning_enabled = self._reasoning_by_pass.get(pass_name, False)
         outcome: dict[str, Any] = {}
         done = threading.Event()
