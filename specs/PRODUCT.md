@@ -517,13 +517,18 @@ The measured figures above come from the simulated gold set (DEC-29/DEC-32) and 
 - **P1-4** Batch/resume: re-running skips already-processed sources. **Landed**
   as `axial run <pass>` (issue #277): a pass registry drives any registered
   per-source pass with per-source failure isolation, and a single
-  runner-owned resume ledger (`data/run/ledger.tsv`, keyed by
+  runner-owned resume ledger (`data/run/ledger.tsv` by default, keyed by
   `(pass, source_id)`) plus a per-pass done-predicate mean a re-run skips
   every already-done source doing zero pipeline work. `extract`/`envelope`
   use their own persisted-output file as the done-signal; every other pass
-  uses the ledger. The source set is exactly one of `--worklist <file>` (a
-  named list) or `--corpus` (every `data/sources/*.pdf`/`*.docx` file, sorted)
-  — supplying both, or neither, is a fatal usage error. The runner returns a
+  uses the ledger. `--ledger <path>` (issue #317) overrides the default
+  ledger location — several concurrent `axial run` processes over disjoint
+  source sets each pass their own `--ledger` so they never share one
+  append-mode file, and a re-run with the same `--ledger` path resumes from
+  it exactly as the default path does. The source set is exactly one of
+  `--worklist <file>` (a named list) or `--corpus` (every
+  `data/sources/*.pdf`/`*.docx` file, sorted) — supplying both, or neither, is
+  a fatal usage error. The runner returns a
   structured end-of-run `RunSummary` (total sources, OK/FAIL/SKIP counts, and
   each attempted source's `source_id`/status/short reason — DEC-23: never
   source text) as well as printing it, so downstream consumers can attach to

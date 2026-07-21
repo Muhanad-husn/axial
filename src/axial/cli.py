@@ -324,6 +324,17 @@ def build_parser() -> argparse.ArgumentParser:
             f"(default: {DEFAULT_DOMAIN_DIR}); ignored by passes that take no domain"
         ),
     )
+    run_parser.add_argument(
+        "--ledger",
+        dest="ledger_path",
+        default=None,
+        help=(
+            "path to this run's resume ledger TSV (default: "
+            "data/run/ledger.tsv, axial.run.LEDGER_PATH); give each of "
+            "several concurrent `axial run` processes over disjoint source "
+            "sets its own --ledger so they never share one append-mode file"
+        ),
+    )
 
     pipeline_ready_parser = subparsers.add_parser(
         "pipeline-ready",
@@ -819,8 +830,20 @@ def _ingest(worklist_path: str) -> int:
     return run_ingest(worklist_path)
 
 
-def _run(pass_name: str, worklist_path: str | None, corpus: bool, domain_dir: str) -> int:
-    summary, exit_code = run_pass(pass_name, worklist_path, corpus=corpus, domain_dir=domain_dir)
+def _run(
+    pass_name: str,
+    worklist_path: str | None,
+    corpus: bool,
+    domain_dir: str,
+    ledger_path: str | None = None,
+) -> int:
+    summary, exit_code = run_pass(
+        pass_name,
+        worklist_path,
+        corpus=corpus,
+        domain_dir=domain_dir,
+        ledger_path=Path(ledger_path) if ledger_path is not None else None,
+    )
 
     # Issue #288: attach and print the theory_school not-applicable/unlisted
     # rates report as a post-processing step over this run's own OK/SKIP
@@ -950,7 +973,9 @@ def main(argv: list[str] | None = None) -> int:
         return _ingest(args.worklist_path)
 
     if args.command == "run":
-        return _run(args.pass_name, args.worklist_path, args.corpus, args.domain_dir)
+        return _run(
+            args.pass_name, args.worklist_path, args.corpus, args.domain_dir, args.ledger_path
+        )
 
     if args.command == "pipeline-ready":
         return _pipeline_ready(args.manifest)
