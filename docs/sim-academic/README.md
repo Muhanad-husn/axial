@@ -211,12 +211,59 @@ costs ~3× on a pass that already runs on the cheap tier.
   buys non-circular definitions over placeholders that carried no information — a
   readability argument, explicitly *not* a measured agreement gain.
 - **Do not wire source context into the tag prompt.** It buys `theory_school` −0.03.
-- **The only lever aimed at the real cause is sampling, not prompting.** Best-of-N
-  majority voting (Finding 4) recovers a defined answer on 97% of chunks.
+- **The only lever aimed at the real cause is sampling, not prompting** — now measured,
+  see Finding 5.
 - **`theory_school` is [CANDIDATE] (Appendix E) and this is the §10 keep/cut/rename
-  evidence — but the cut case is weak.** It clears the ≥0.6 survival bar, and a modal
-  label exists for 97% of chunks. **Hold the decision until best-of-N is measured**
-  rather than deciding against a single-draw number.
+  evidence.** With best-of-3 it reaches 0.918, so the cut case is weak — **keep it,
+  with best-of-N** (DEC-31).
+
+### Finding 5 — best-of-N works, and it breaks the single-draw ceiling
+
+Six independent draws of the same task on the same 60 chunks (Panel A: `base-L1`,
+`baseR-L1`, `base-L2`; Panel B: `panelB-D1..D3`). N=1 is the mean over all 15 draw
+pairs; N=3 enumerates all 10 disjoint 3/3 splits, majority-votes each half and compares
+half against half. Deterministic, no sampling.
+
+| axis | N=1 | N=3 | gain |
+|---|---|---|---|
+| **`theory_school`** | 0.757 | **0.918** | **+0.162** |
+| **`claim_type`** | 0.796 | **0.866** | +0.070 |
+| `polities_touched` | 0.897 | 0.946 | +0.049 |
+| `empirical_scope` | 0.893 | 0.939 | +0.045 |
+| `field` | 0.968 | 0.980 | +0.012 |
+
+The largest gain lands on the axis that was stuck, and **0.918 is past the 0.73
+single-draw ceiling**. That confirms the diagnosis: the ceiling was a property of
+*drawing once*, not of the axis. Voting does not make the coder smarter — it recovers
+the modal answer a single draw was sampling around. (Predicted ~0.92 from a 0.88
+single-draw hit rate; measured 0.918.)
+
+**Abstention is the cost.** A majority-of-3 is undecided when all three draws differ.
+The earlier "only 3% irreducible" was one lucky panel; the true rate:
+
+| axis | N=3 | N=5 |
+|---|---|---|
+| `theory_school` | **8.8%** | 1.1% |
+| `claim_type` | 3.3% | 0.0% |
+| `empirical_scope` | 1.2% | 0.0% |
+
+So 0.918 is measured on the ~91% that decide. Two notes: the undecided chunks are **not
+short** (median 1145 ch vs 1307 decided), so this is genuine contestedness rather than
+thin input; and abstention is arguably a **feature** — it flags ambiguous chunks instead
+of coin-flipping them, which is the charter's calibrated-confidence principle at the tag
+layer. It is a *different* signal from `not-applicable` ("no theory here") and would
+need its own treatment.
+
+**The vote also self-repairs.** `baseR-L1`'s invalid `power-typology` values were
+outvoted: `theory_school` invalid rate **0.0056 single draw → 0.0000 at N=3**.
+
+**Cost comparison across everything tried:**
+
+| | cost | `theory_school` gain |
+|---|---|---|
+| codebook rewrite (kept, trimmed) | +24% tokens | 0 |
+| source context (rejected) | a code change | −0.01 |
+| **best-of-3** | **3× calls, cheap tier** | **+0.162** |
 
 **Limitations, stated plainly.**
 - The ceiling rests on **one replicate at n=60**. A second should land before it is
