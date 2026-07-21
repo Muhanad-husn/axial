@@ -36,6 +36,7 @@ import pytest
 import axial.chunk as _chunk_mod
 import axial.intake as _intake_mod
 import axial.tag as _tag_mod
+from axial.llm import PROVIDER_ENV_VAR as _PROVIDER_ENV_VAR
 
 
 @pytest.fixture(autouse=True)
@@ -44,6 +45,21 @@ def _isolate_checkpoint_dirs(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(_chunk_mod, "CHUNKS_DIR", base / "chunks")
     monkeypatch.setattr(_tag_mod, "TAGS_DIR", base / "tags")
     monkeypatch.setattr(_intake_mod, "SOURCE_META_DIR", base / "source_meta")
+
+
+@pytest.fixture(autouse=True)
+def _offline_llm_provider_by_default(monkeypatch):
+    """Default these in-process tests to the no-network stub provider.
+
+    Issue #303 made `extract()` construct a client of its own for a source
+    whose §7.11/§7.13 judgment has not been made yet -- and the isolation
+    above gives every test a fresh, empty `source_meta` dir, so every
+    `extract()` here looks unjudged. On a developer machine with real API
+    credentials configured (unlike CI, which has none) that would otherwise
+    reach a live provider from the per-commit gate. Tests that exercise
+    provider resolution itself set or clear `AXIAL_LLM_PROVIDER` explicitly
+    and are unaffected."""
+    monkeypatch.setenv(_PROVIDER_ENV_VAR, "stub")
 
 
 # --- shared chunk-tree test helpers ------------------------------------------

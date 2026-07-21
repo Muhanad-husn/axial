@@ -10,8 +10,10 @@ Given an LLM client, intake also runs the holdings-completeness check
 owns the check's own cleaning, prompt and flag shape -- this module's job
 is only to build `page_texts`, supply the physical page count, and attach
 the resulting flag to `Source`. The check is a model call, so it runs only
-for a caller that supplies a client: `extract()` calls `intake()` purely to
-validate a file and never pays for a judgment it does not read.
+for a caller that supplies a client -- and the pipeline supplies one exactly
+once per source: `extract()` (every ingest path funnels through it) reads
+the persisted record first and passes a client only for a source that has
+not been judged yet (`holdings_judged`, issue #303).
 
 Every successful intake also writes the persisted source-metadata record
 (§7.12/§7.13, §8 P0-1c/P0-1d) to `data/source_meta/<source_id>.json`,
@@ -63,6 +65,15 @@ NOT_ATTEMPTED = "not_attempted"
 
 PROVENANCE_EMBEDDED_METADATA = "embedded metadata"
 PROVENANCE_TITLE_PAGE = "title page"
+
+# Record key: has this source's one model-backed intake judgment been made
+# and landed? (§7.11 holdings + §7.13 title-page read -- one call answers
+# both, so one marker governs both.) It is what makes the check affordable
+# in the pipeline (issue #303): `extract()` runs on every pass over every
+# source, the judgment is a reasoning-ON call, and the record is where it is
+# paid for once and read back thereafter. A `holdings_flag` of `null` cannot
+# serve as that marker: it means both "judged complete" and "never judged".
+HOLDINGS_CHECKED = "holdings_checked"
 
 # `date` never reads embedded metadata (§7.13): a PDF's own CreationDate/
 # ModDate measure when the *file* was produced, not when the *work* was
@@ -181,6 +192,25 @@ def source_meta_path(source_id: str, source_meta_dir: Path = SOURCE_META_DIR) ->
     """The write-once-per-intake path for `source_id`'s source-metadata
     record JSON (mirrors `axial.extract.tree_path`/`axial.envelope.envelope_path`)."""
     return source_meta_dir / f"{source_id}.json"
+
+
+def holdings_judged(source_id: str, source_meta_dir: Path | None = None) -> bool:
+    """True when `source_id`'s persisted record already carries the intake
+    judgment -- the §7.11 holdings verdict and the §7.13 title-page read that
+    the same model call produces.
+
+    This is the once-per-source cache predicate the ingest path reads before
+    deciding whether to supply `intake()` a client (§7.12, issue #303). It
+    keys off the record having been model-derived at all, not off the flag:
+    the flag is `null` both for a source judged complete and for one never
+    judged, and the two must not be confused.
+    """
+    meta_dir = source_meta_dir if source_meta_dir is not None else SOURCE_META_DIR
+    try:
+        record = json.loads(source_meta_path(source_id, meta_dir).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(record, dict) and record.get(HOLDINGS_CHECKED) is True
 
 
 def _clean(value: Any) -> str | None:
@@ -393,12 +423,15 @@ def build_source_meta(
     physical_pages: int | None,
     holdings_flag: dict | None,
     bibliographic_fields: dict[str, Any],
+    holdings_checked: bool,
 ) -> dict[str, Any]:
     """Assemble the §7.12 source-metadata record: the full sha256 file hash,
     the physical page count (present for a PDF, an explicit `null` for a
     DOCX -- distinct from a numeric zero), the §7.11 holdings flag in full
-    or an explicit no-flag, and the already-resolved §7.13 bibliographic
-    fields. Carries no source text (DEC-23): values and short reasons only."""
+    or an explicit no-flag, whether that judgment has been made at all
+    (`holdings_checked`, see `HOLDINGS_CHECKED`), and the already-resolved
+    §7.13 bibliographic fields. Carries no source text (DEC-23): values and
+    short reasons only."""
     from axial.envelope import content_digest  # local import: dodges the
     # envelope -> extract -> intake import cycle (mirrors extract.py's own
     # local `compute_source_id` import, same reason).
@@ -408,6 +441,7 @@ def build_source_meta(
         "file_hash": content_digest(path),
         "physical_page_count": physical_pages,
         "holdings_flag": holdings_flag,
+        HOLDINGS_CHECKED: holdings_checked,
     }
     record.update(bibliographic_fields)
     return record
@@ -442,7 +476,10 @@ def intake(
     before any extraction runs. This is unconditional and does not depend on
     `client`: the page count, file hash, and bibliographic fields are
     model-free and always read; only `holdings_flag` depends on whether this
-    call ran the judgment (see `_resolve_holdings_flag`)."""
+    call ran the judgment (see `_resolve_holdings_flag`). The record also
+    carries whether that judgment has landed at all (`HOLDINGS_CHECKED`), so
+    the ingest path can pay for it once per source and read it back after
+    (`holdings_judged`, issue #303)."""
     path = Path(path)
 
     if not path.is_file():
@@ -467,6 +504,7 @@ def intake(
     if client is None:
         holdings_flag: dict | None = None
         title_page: dict[str, Any] | None = None
+        answered = False
     else:
         probed = _holdings_probe(
             page_texts,
@@ -480,6 +518,7 @@ def intake(
         )
         holdings_flag = probed["holdings_flag"]
         title_page = probed["title_page"] if fmt == "pdf" else None
+        answered = bool(probed["answered"])
 
     # §7.12/§7.13, §8 P0-1c/P0-1d: local import dodges the
     # envelope -> extract -> intake import cycle (see build_source_meta's
@@ -490,9 +529,12 @@ def intake(
     meta_dir = source_meta_dir if source_meta_dir is not None else SOURCE_META_DIR
     meta_path = source_meta_path(source_id, meta_dir)
     written_flag = _resolve_holdings_flag(holdings_flag, client, meta_path)
+    written_checked = _resolve_recorded_field(HOLDINGS_CHECKED, answered, client, meta_path)
     biblio = read_bibliographic_fields(fmt, embedded_author, embedded_title, title_page=title_page)
     written_biblio = _resolve_bibliographic_fields(biblio, client, meta_path)
-    record = build_source_meta(source_id, path, fmt, physical_pages, written_flag, written_biblio)
+    record = build_source_meta(
+        source_id, path, fmt, physical_pages, written_flag, written_biblio, bool(written_checked)
+    )
     write_source_meta(record, meta_path)
 
     return Source(path=path, format=fmt, text_layer_ok=True, holdings_flag=holdings_flag)

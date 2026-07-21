@@ -30,7 +30,8 @@ import unicodedata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable
 
-from axial.intake import IntakeError, intake
+from axial.intake import IntakeError, holdings_judged, intake
+from axial.llm import LLMClient, LLMError, get_client
 
 if TYPE_CHECKING:
     # Only used as type annotations; kept out of the runtime import path so
@@ -472,11 +473,60 @@ def _log_fallback(path: Path, reason: str) -> None:
     )
 
 
+def _intake_client(path: Path) -> LLMClient | None:
+    """The client `intake()` needs to make this source's one model-backed
+    judgment -- the §7.11 holdings check plus the §7.13 title-page read, one
+    call for both -- or `None` when this call must not pay for it (§8 P0-1b,
+    issue #303).
+
+    Wiring it unconditionally would be wrong: `extract()` runs on every
+    pipeline pass over every source, including the persisted-tree cache hits
+    that are the common case, and the judgment is a reasoning-ON call. The
+    §7.12 record is what makes it affordable -- it persists the judgment, so
+    a source already judged (`holdings_judged`) is never re-judged and no
+    client is even constructed for it.
+
+    A client that cannot be built -- no API key configured, as in offline CI
+    -- degrades to `None` with a warning, exactly as a failed check degrades
+    inside `holdings.probe`: P0-1b forbids this check halting intake, and an
+    unavailable model must not stop a source from being extracted. The
+    source stays unjudged in the record and is judged on a later pass.
+    """
+    # Local import: avoids the circular import (axial.envelope imports
+    # `extract` from this module at its own module top).
+    from axial.envelope import MissingSourceError, compute_source_id
+
+    try:
+        source_id = compute_source_id(path)
+    except (MissingSourceError, OSError):
+        # Not a readable file: `intake()` is about to raise its own typed
+        # error for it, which is the error the caller must see.
+        return None
+
+    if holdings_judged(source_id):
+        return None
+
+    try:
+        return get_client()
+    except LLMError as exc:
+        print(
+            f"holdings/bibliographic check unavailable for {path.name}: {exc}",
+            file=sys.stderr,
+        )
+        return None
+
+
 def extract(path: str | Path) -> dict:
     """Run structural extraction on `path`: validate (reusing intake), convert
     with docling, and normalize. If docling fails or returns degenerate
     (empty/structureless) output, fall back to Unstructured for that source
     and log the fallback (PRD §8 P0-2).
+
+    Intake here is the pipeline's intake (PRD §5 stage 1): a source that has
+    not yet been judged gets its §7.11 holdings check and §7.13 title-page
+    read on this call, once, persisted into the §7.12 record -- see
+    `_intake_client` for why that is conditional. A raised flag changes
+    nothing about the extraction that follows (§7.11 is flag-only).
 
     The resulting tree is produced once per source_id and persisted to
     `data/trees/<source_id>.json` (PRD §7.4, §8 P0-2): a source whose
@@ -494,7 +544,7 @@ def extract(path: str | Path) -> dict:
     call; the source's real persisted tree (if any) is left untouched.
     """
     try:
-        source = intake(path)
+        source = intake(path, client=_intake_client(Path(path)))
     except IntakeError as exc:
         raise SourceValidationError(exc) from exc
 
