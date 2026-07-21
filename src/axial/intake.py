@@ -18,15 +18,18 @@ Every successful intake also writes the persisted source-metadata record
 before any extraction runs: the physical page count, the full sha256 file
 hash, the §7.11 holdings flag in full (or an explicit no-flag), and
 author/title/date read from the PDF's own embedded metadata and title page
-(never the filename). This is model-free -- it reads facts already in hand
-from the P0-1 text layer plus pypdf/python-docx's own document-info
-readers, no new heavy extractor and no second LLM call.
+(never the filename). The embedded-metadata half is model-free (pypdf/
+python-docx's own document-info readers); the title-page half reuses
+`axial.holdings.probe`'s one combined model call (issue #285) rather than a
+second pass or a hand-rolled positional heuristic, and that same call
+cross-checks the embedded metadata against what the title page actually
+says -- a PDF's embedded author/title is sometimes recycled from an
+unrelated file, and only something that reads the page can notice.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -61,23 +64,14 @@ NOT_ATTEMPTED = "not_attempted"
 PROVENANCE_EMBEDDED_METADATA = "embedded metadata"
 PROVENANCE_TITLE_PAGE = "title page"
 
-# A publication year stated near a copyright/publication marker on the
-# title page (§7.13) -- the only source `date` ever reads from, because a
-# PDF's own embedded CreationDate/ModDate measure when the *file* was
-# produced, not when the *work* was published, and are never a valid `date`
-# provenance (§7.13: "a file-creation date that is not the publication
-# date"). Bounded to a plausible four-digit year (1400-2099) within 20
-# non-digit characters of the marker, so an unrelated nearby number doesn't
-# match.
-_COPYRIGHT_YEAR_RE = re.compile(
-    r"(?:©|copyright|first published|published)\D{0,20}?(1[4-9]\d{2}|20\d{2})",
-    re.IGNORECASE,
-)
-
-# Sanity bound on the title-page fallback's candidate title line (§7.13):
-# large enough for a real (if long) book title, small enough that a
-# full paragraph mistaken for a title line is rejected rather than stored.
-_MAX_TITLE_LINE_CHARS = 200
+# `date` never reads embedded metadata (§7.13): a PDF's own CreationDate/
+# ModDate measure when the *file* was produced, not when the *work* was
+# published. Its only source is a title-page read -- a model call
+# (`axial.holdings.probe`, issue #285) rather than a positional regex: the
+# retired deterministic heuristic (a copyright-marker proximity match, plus
+# a first-non-blank-line title rule) was measured against the real 30-source
+# corpus and found right in ~2 of 13 cases where it fired (#268's own
+# pattern); do not rebuild it.
 
 
 class IntakeError(Exception):
@@ -189,17 +183,24 @@ def source_meta_path(source_id: str, source_meta_dir: Path = SOURCE_META_DIR) ->
     return source_meta_dir / f"{source_id}.json"
 
 
-def _clean(value: str | None) -> str | None:
+def _clean(value: Any) -> str | None:
     """`value` with internal whitespace collapsed and edges stripped, or
-    `None` for an absent/blank input -- shared normalization for both the
-    junk-metadata comparison and the recorded value itself."""
-    if value is None:
+    `None` for an absent/blank/non-string input -- shared normalization for
+    both the junk-metadata comparison and the recorded value itself.
+
+    Guards against pypdf handing back a raw `NullObject` (or any other
+    non-string sentinel) for a malformed metadata field instead of a plain
+    `None` -- issue #285 finding 1: `hall-schroeder-anatomy-of-power.pdf`
+    crashed intake outright (`AttributeError: 'NullObject' object has no
+    attribute 'split'`) because nothing checked the type before calling
+    `.split()`."""
+    if not isinstance(value, str):
         return None
     cleaned = " ".join(value.split())
     return cleaned or None
 
 
-def _plausible_metadata_value(value: str | None, *junk: str | None) -> str | None:
+def _plausible_metadata_value(value: Any, *junk: Any) -> str | None:
     """`value`, cleaned, when it is a real bibliographic value -- non-empty
     and not equal (case/whitespace-insensitive) to any of `junk`, the
     document's own producer/creator strings that a PDF writer sometimes
@@ -217,31 +218,6 @@ def _plausible_metadata_value(value: str | None, *junk: str | None) -> str | Non
     return cleaned
 
 
-def _title_page_title(first_page_text: str) -> str | None:
-    """The title page's own first substantive line, when the page carries
-    one -- the deterministic fallback for `title` when embedded metadata
-    carries none (§7.13). Bounded to the page's very first non-blank line
-    within a sane length: a real title page opens with the title, and
-    scanning further risks picking up a subtitle, author line, or publisher
-    boilerplate instead -- a body paragraph mistaken for a title line is
-    rejected on length rather than stored."""
-    for line in first_page_text.splitlines():
-        candidate = _clean(line)
-        if candidate is None:
-            continue
-        return candidate if 2 <= len(candidate) <= _MAX_TITLE_LINE_CHARS else None
-    return None
-
-
-def _title_page_date(first_page_text: str) -> str | None:
-    """A publication year read off the title page's own copyright/
-    publication line (`_COPYRIGHT_YEAR_RE`), or `None` when the page states
-    none -- the only mechanism `date` ever reads from (see that pattern's
-    own docstring for why embedded file-creation dates are never used)."""
-    match = _COPYRIGHT_YEAR_RE.search(first_page_text)
-    return match.group(1) if match else None
-
-
 def _bibliographic_field(value: str | None, provenance: str) -> dict[str, str] | str:
     """The §7.13 field shape for a resolved `value`: `{"value", "provenance"}`
     when a real value was found, else the `UNAVAILABLE` sentinel -- the read
@@ -250,53 +226,136 @@ def _bibliographic_field(value: str | None, provenance: str) -> dict[str, str] |
     return {"value": value, "provenance": provenance} if value else UNAVAILABLE
 
 
-def read_bibliographic_fields(
-    fmt: str, path: Path, page_texts: list[str]
-) -> dict[str, dict[str, str] | str]:
-    """Read author/title/date at intake (§7.13): the PDF's own embedded
-    document metadata first, then -- for a PDF's `title`/`date` only -- the
-    title page's own text already in hand from the P0-1 read
-    (`page_texts[0]`). Never the filename. A DOCX exposes no title-page
-    equivalent to a physical first page and no valid `date` provenance at
-    all in this slice (its own `created`/`modified` properties are file
-    timestamps, not a publication date, exactly like a PDF's CreationDate) --
-    its `date` is `NOT_ATTEMPTED` rather than a guessed `UNAVAILABLE`,
-    naming plainly that no mechanism was even tried."""
+def _embedded_metadata(fmt: str, path: Path) -> tuple[str | None, str | None]:
+    """The file's own embedded author/title, junk-filtered (§7.13) -- the
+    model-free half of the bibliographic read. Shared by the title-page
+    cross-check prompt (`intake()` states this as the claim to check) and
+    `read_bibliographic_fields` (which resolves it into the recorded
+    field)."""
     if fmt == "pdf":
         info = PdfReader(str(path)).metadata
-        author_meta = info.author if info else None
-        title_meta = info.title if info else None
         junk = (info.producer if info else None, info.creator if info else None)
-
-        author = _plausible_metadata_value(author_meta, *junk)
-        title = _plausible_metadata_value(title_meta, *junk)
-
-        first_page = page_texts[0] if page_texts else ""
-        if title is not None:
-            title_provenance = PROVENANCE_EMBEDDED_METADATA
-        else:
-            title = _title_page_title(first_page)
-            title_provenance = PROVENANCE_TITLE_PAGE
-
-        date = _title_page_date(first_page)
-
-        return {
-            "author": _bibliographic_field(author, PROVENANCE_EMBEDDED_METADATA),
-            "title": _bibliographic_field(title, title_provenance),
-            "date": _bibliographic_field(date, PROVENANCE_TITLE_PAGE),
-        }
-
+        author = _plausible_metadata_value(info.author if info else None, *junk)
+        title = _plausible_metadata_value(info.title if info else None, *junk)
+        return author, title
     if fmt == "docx":
         props = Document(str(path)).core_properties
-        author = _plausible_metadata_value(props.author)
-        title = _plausible_metadata_value(props.title)
+        return (
+            _plausible_metadata_value(props.author),
+            _plausible_metadata_value(props.title),
+        )
+    raise ValueError(f"unknown format {fmt!r}")  # pragma: no cover - guarded by check_extension
+
+
+def _resolve_bibliographic_value(
+    embedded: str | None, title_page_value: str | None, matches_embedded: bool | None
+) -> dict[str, str] | str:
+    """One §7.13 field (author or title), resolved from both the file's
+    embedded metadata and the model's title-page cross-check (issue #285,
+    replacing the deterministic title-page heuristic #268 measured out of
+    the design -- it read 2 of 13 real cases correctly):
+
+    - the file carries no embedded value at all -> the title-page reading
+      (the model's replacement for the retired first-non-blank-line rule)
+      carries the whole answer;
+    - the file carries an embedded value and the model read the title page
+      and judged it does NOT plausibly name this document ->
+      `UNAVAILABLE`, never the embedded value -- a wrong value with
+      provenance is worse than an honest blank, and this is the whole point
+      of the cross-check (recycled/unrelated embedded metadata, #285
+      finding 2);
+    - the file carries an embedded value and the model's judgment is
+      affirmative or absent (no comparison was made) -> the embedded value
+      stands, exactly as before the cross-check existed.
+    """
+    if embedded is None:
+        return _bibliographic_field(title_page_value, PROVENANCE_TITLE_PAGE)
+    if matches_embedded is False:
+        return UNAVAILABLE
+    return _bibliographic_field(embedded, PROVENANCE_EMBEDDED_METADATA)
+
+
+def read_bibliographic_fields(
+    fmt: str,
+    embedded_author: str | None,
+    embedded_title: str | None,
+    *,
+    title_page: dict[str, Any] | None = None,
+) -> dict[str, dict[str, str] | str]:
+    """Resolve author/title/date into their §7.13 record shape from
+    `embedded_author`/`embedded_title` (the file's own embedded metadata,
+    already junk-filtered by `_embedded_metadata`) and, for a PDF, the model's
+    title-page reading (`title_page`, `axial.holdings.probe`'s own shape --
+    `None` when no client ran the check this call). Never the filename.
+
+    A DOCX exposes no title-page equivalent to read and no valid `date`
+    provenance at all in this slice (its own `created`/`modified` properties
+    are file timestamps, not a publication date, exactly like a PDF's
+    CreationDate) -- its `date` is `NOT_ATTEMPTED` rather than a guessed
+    `UNAVAILABLE`, naming plainly that no mechanism was even tried.
+    """
+    if fmt == "docx":
         return {
-            "author": _bibliographic_field(author, PROVENANCE_EMBEDDED_METADATA),
-            "title": _bibliographic_field(title, PROVENANCE_EMBEDDED_METADATA),
+            "author": _bibliographic_field(embedded_author, PROVENANCE_EMBEDDED_METADATA),
+            "title": _bibliographic_field(embedded_title, PROVENANCE_EMBEDDED_METADATA),
             "date": NOT_ATTEMPTED,
         }
 
-    raise ValueError(f"unknown format {fmt!r}")  # pragma: no cover - guarded by check_extension
+    if fmt != "pdf":
+        raise ValueError(f"unknown format {fmt!r}")  # pragma: no cover - guarded by check_extension
+
+    if title_page is None:
+        # No client this call: the title-page read/cross-check is a model
+        # call and runs only for a caller that supplies one (mirrors
+        # holdings_flag, §7.11/§7.12). Embedded metadata is model-free and
+        # trusted as-is when it is all that ran.
+        return {
+            "author": _bibliographic_field(embedded_author, PROVENANCE_EMBEDDED_METADATA),
+            "title": _bibliographic_field(embedded_title, PROVENANCE_EMBEDDED_METADATA),
+            "date": UNAVAILABLE,
+        }
+
+    return {
+        "author": _resolve_bibliographic_value(
+            embedded_author, title_page.get("author"), title_page.get("author_matches_embedded")
+        ),
+        "title": _resolve_bibliographic_value(
+            embedded_title, title_page.get("title"), title_page.get("title_matches_embedded")
+        ),
+        "date": _bibliographic_field(title_page.get("date"), PROVENANCE_TITLE_PAGE),
+    }
+
+
+def _resolve_recorded_field(
+    key: str, computed_value: Any, client: LLMClient | None, meta_path: Path
+) -> Any:
+    """The value to WRITE for record key `key` on this call.
+
+    A caller that supplies no `client` never re-runs a call's model-backed
+    judgment (§7.11/§7.13 are paid model calls): `computed_value` reflects
+    only what a client-less call can determine on its own. Writing that
+    straight through would silently regress an already-recorded, better
+    answer the next time any client-less caller re-validates the same
+    source -- and `extract()` does exactly that on every call, including
+    from inside envelope regeneration -- which is precisely the loss §7.12
+    rules out ("does not lose ... the holdings flag"). So a client-less call
+    instead PRESERVES whatever `key` the existing on-disk record already
+    carries (`computed_value` if there is no existing record, or the key is
+    absent from it). A call that DID supply a client always writes its own
+    freshly computed answer -- that is a real decision, not an absence of
+    one, and must overwrite a stale answer from an earlier, now-superseded
+    call."""
+    if client is not None:
+        return computed_value
+    if not meta_path.exists():
+        return computed_value
+    try:
+        existing = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return computed_value
+    if not isinstance(existing, dict) or key not in existing:
+        return computed_value
+    return existing[key]
 
 
 def _resolve_holdings_flag(
@@ -305,31 +364,26 @@ def _resolve_holdings_flag(
     """The `holdings_flag` value to WRITE into the record on this call --
     distinct from `Source.holdings_flag`, the per-call return value, which
     stays exactly `computed_flag` (unchanged contract, see `intake`'s own
-    docstring).
+    docstring). A thin, holdings-flag-typed wrapper over
+    `_resolve_recorded_field`, kept as its own name since `intake()`'s and
+    this module's own docstrings already refer to it by name."""
+    return _resolve_recorded_field("holdings_flag", computed_flag, client, meta_path)
 
-    A caller that supplies no `client` never re-runs the holdings judgment
-    (it is a paid model call, §7.11): `computed_flag` is unconditionally
-    `None` then. Writing that `None` straight through would silently erase
-    an already-recorded flag the next time any client-less caller
-    re-validates the same source -- and `extract()` does exactly that on
-    every call, including from inside envelope regeneration -- which is
-    precisely the loss §7.12 rules out ("does not lose ... the holdings
-    flag"). So a client-less call instead PRESERVES whatever `holdings_flag`
-    the existing on-disk record already carries (`None` if there is no
-    existing record, or none was ever raised). A call that DID supply a
-    client always writes its own freshly computed answer, including `None`
-    for a source freshly judged complete -- that is a real decision, not an
-    absence of one, and must overwrite a stale flag from an earlier,
-    now-superseded judgment."""
-    if client is not None:
-        return computed_flag
-    if not meta_path.exists():
-        return None
-    try:
-        existing = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return existing.get("holdings_flag") if isinstance(existing, dict) else None
+
+def _resolve_bibliographic_fields(
+    computed: dict[str, Any], client: LLMClient | None, meta_path: Path
+) -> dict[str, Any]:
+    """`author`/`title`/`date` resolved the same way as `holdings_flag`
+    (`_resolve_recorded_field`, one call per field): a client-less call
+    (every `extract()` validation call, §7.12) preserves whatever the
+    existing on-disk record already carries for each field rather than
+    regressing it back to a client-less-only read -- the title-page
+    cross-check that produced a better answer is a paid model call, and a
+    later call that skips it must never silently undo it."""
+    return {
+        field: _resolve_recorded_field(field, computed[field], client, meta_path)
+        for field in ("author", "title", "date")
+    }
 
 
 def build_source_meta(
@@ -338,13 +392,13 @@ def build_source_meta(
     fmt: str,
     physical_pages: int | None,
     holdings_flag: dict | None,
-    page_texts: list[str],
+    bibliographic_fields: dict[str, Any],
 ) -> dict[str, Any]:
     """Assemble the §7.12 source-metadata record: the full sha256 file hash,
     the physical page count (present for a PDF, an explicit `null` for a
     DOCX -- distinct from a numeric zero), the §7.11 holdings flag in full
-    or an explicit no-flag, and the §7.13 bibliographic fields. Carries no
-    source text (DEC-23): values and short reasons only."""
+    or an explicit no-flag, and the already-resolved §7.13 bibliographic
+    fields. Carries no source text (DEC-23): values and short reasons only."""
     from axial.envelope import content_digest  # local import: dodges the
     # envelope -> extract -> intake import cycle (mirrors extract.py's own
     # local `compute_source_id` import, same reason).
@@ -355,7 +409,7 @@ def build_source_meta(
         "physical_page_count": physical_pages,
         "holdings_flag": holdings_flag,
     }
-    record.update(read_bibliographic_fields(fmt, path, page_texts))
+    record.update(bibliographic_fields)
     return record
 
 
@@ -408,16 +462,24 @@ def intake(
         page_texts = [text]
         physical_pages = None
 
-    holdings_flag = (
-        None
-        if client is None
-        else _holdings_probe(
+    embedded_author, embedded_title = _embedded_metadata(fmt, path)
+
+    if client is None:
+        holdings_flag: dict | None = None
+        title_page: dict[str, Any] | None = None
+    else:
+        probed = _holdings_probe(
             page_texts,
             client=client,
             physical_pages=physical_pages,
             source_name=path.name,
+            # A DOCX has no title page to cross-check; only a PDF's
+            # embedded claim is worth stating in the prompt (§7.13).
+            embedded_author=embedded_author if fmt == "pdf" else None,
+            embedded_title=embedded_title if fmt == "pdf" else None,
         )
-    )
+        holdings_flag = probed["holdings_flag"]
+        title_page = probed["title_page"] if fmt == "pdf" else None
 
     # §7.12/§7.13, §8 P0-1c/P0-1d: local import dodges the
     # envelope -> extract -> intake import cycle (see build_source_meta's
@@ -428,7 +490,9 @@ def intake(
     meta_dir = source_meta_dir if source_meta_dir is not None else SOURCE_META_DIR
     meta_path = source_meta_path(source_id, meta_dir)
     written_flag = _resolve_holdings_flag(holdings_flag, client, meta_path)
-    record = build_source_meta(source_id, path, fmt, physical_pages, written_flag, page_texts)
+    biblio = read_bibliographic_fields(fmt, embedded_author, embedded_title, title_page=title_page)
+    written_biblio = _resolve_bibliographic_fields(biblio, client, meta_path)
+    record = build_source_meta(source_id, path, fmt, physical_pages, written_flag, written_biblio)
     write_source_meta(record, meta_path)
 
     return Source(path=path, format=fmt, text_layer_ok=True, holdings_flag=holdings_flag)

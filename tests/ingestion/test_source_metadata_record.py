@@ -74,9 +74,21 @@ EXISTING_TEXT_DOCX = REPO_ROOT / "tests" / "fixtures" / "intake" / "text.docx"
 
 
 class _RecordedHoldingsClient:
-    """Replays one recorded holdings verdict and counts calls."""
+    """Replays one recorded holdings verdict -- and, optionally, a title-page
+    bibliographic reading (issue #285: the same combined call now covers
+    both) -- and counts calls."""
 
-    def __init__(self, verdict: str, reason: str = "stub reason for the record test"):
+    def __init__(
+        self,
+        verdict: str,
+        reason: str = "stub reason for the record test",
+        *,
+        title_page_title: str | None = None,
+        title_page_author: str | None = None,
+        title_page_date: str | None = None,
+        author_metadata_matches: bool | None = None,
+        title_metadata_matches: bool | None = None,
+    ):
         self._response = json.dumps(
             {
                 "document_kind": "book",
@@ -84,6 +96,11 @@ class _RecordedHoldingsClient:
                 "claimed_extent_stated_by": "printed contents page",
                 "verdict": verdict,
                 "reason": reason,
+                "title_page_title": title_page_title,
+                "title_page_author": title_page_author,
+                "title_page_date": title_page_date,
+                "author_metadata_matches": author_metadata_matches,
+                "title_metadata_matches": title_metadata_matches,
             }
         )
         self.calls = 0
@@ -245,6 +262,18 @@ PRODUCER_AS_AUTHOR_INFO = {
 
 NO_COPYRIGHT_LINE_BOOK = [["A Perfectly Fine Title", "Some front matter with no year stated."]]
 
+# Embedded metadata naming an entirely different, unrelated book -- the
+# recycled-metadata pattern behind issue #285 finding 2
+# (`heydemann-war-institutions-social-change`): the file's own front matter
+# (TITLE_PAGE_ONLY_BOOK) states one book; its embedded metadata claims
+# another.
+RECYCLED_METADATA_INFO = {
+    "Author": "Michael Hanby",
+    "Title": "Augustine and Modernity",
+    "Producer": "pdfTeX-1.40.21",
+    "Creator": "LaTeX with hyperref package",
+}
+
 
 # =============================================================================
 # Tests
@@ -389,10 +418,23 @@ def test_bibliographic_fields_read_from_embedded_metadata(tmp_path):
 
 
 def test_title_page_fallback_and_date_and_filename_never_a_source(tmp_path):
+    """The title-page fallback (issue #285) is now the model's own reading
+    of the front matter, reusing the holdings check's one combined call --
+    replacing the retired first-non-blank-line/copyright-regex heuristic
+    (#268's own pattern, measured right in only 2 of 13 real cases). A
+    client is required to produce it, exactly like the holdings flag
+    itself; a client-less call is covered separately below
+    (`test_bibliographic_fields_read_from_embedded_metadata` and
+    `test_client_less_call_never_produces_a_title_page_reading`)."""
     path = _write_pdf(tmp_path, "totally_different_name.pdf", TITLE_PAGE_ONLY_BOOK)
     meta_dir = tmp_path / "source_meta"
+    client = _RecordedHoldingsClient(
+        verdict="complete",
+        title_page_title="The Long Road to Damascus",
+        title_page_date="1971",
+    )
 
-    intake(path, source_meta_dir=meta_dir)
+    intake(path, client=client, source_meta_dir=meta_dir)
 
     source_id = compute_source_id(path)
     record = json.loads((meta_dir / f"{source_id}.json").read_text(encoding="utf-8"))
@@ -402,10 +444,84 @@ def test_title_page_fallback_and_date_and_filename_never_a_source(tmp_path):
         "provenance": "title page",
     }
     assert record["date"] == {"value": "1971", "provenance": "title page"}
-    # No embedded author anywhere, and no title-page author heuristic is
-    # attempted in this slice -- attempted, nothing recoverable.
+    # No embedded author anywhere, and the model's title-page read named
+    # none either -- attempted, nothing recoverable.
     assert record["author"] == "unavailable"
     assert "totally_different_name" not in json.dumps(record["title"])
+
+
+def test_client_less_call_never_produces_a_title_page_reading(tmp_path):
+    """The title-page read is a model call and runs only for a caller that
+    supplies a client, mirroring `holdings_flag` -- a client-less call
+    (every `extract()` validation call) must not fabricate a "title page"
+    provenance value it never actually read."""
+    path = _write_pdf(tmp_path, "totally_different_name.pdf", TITLE_PAGE_ONLY_BOOK)
+    meta_dir = tmp_path / "source_meta"
+
+    intake(path, source_meta_dir=meta_dir)
+
+    source_id = compute_source_id(path)
+    record = json.loads((meta_dir / f"{source_id}.json").read_text(encoding="utf-8"))
+
+    assert record["title"] == "unavailable"
+    assert record["date"] == "unavailable"
+
+
+def test_embedded_metadata_naming_a_different_book_is_recorded_as_unavailable(tmp_path):
+    """Issue #285 finding 2, the required outcome: recycled embedded
+    metadata for an unrelated book is never recorded as a value with
+    provenance -- only a model that reads the title page can notice the
+    mismatch, so the cross-check is what makes this fixable at all."""
+    path = _write_pdf(
+        tmp_path,
+        "heydemann-war-institutions-social-change.pdf",
+        TITLE_PAGE_ONLY_BOOK,
+        info=RECYCLED_METADATA_INFO,
+    )
+    meta_dir = tmp_path / "source_meta"
+    client = _RecordedHoldingsClient(
+        verdict="complete",
+        title_page_title="The Long Road to Damascus",
+        author_metadata_matches=False,
+        title_metadata_matches=False,
+    )
+
+    intake(path, client=client, source_meta_dir=meta_dir)
+
+    source_id = compute_source_id(path)
+    record = json.loads((meta_dir / f"{source_id}.json").read_text(encoding="utf-8"))
+
+    assert record["author"] == "unavailable"
+    assert record["title"] == "unavailable"
+    serialized = json.dumps(record)
+    assert "Michael Hanby" not in serialized
+    assert "Augustine and Modernity" not in serialized
+
+
+def test_embedded_metadata_confirmed_by_the_title_page_still_stands(tmp_path):
+    """The cross-check is additive, not a new way to lose a previously-
+    working answer: embedded metadata the model reads and confirms is
+    recorded exactly as before the check existed."""
+    path = _write_pdf(tmp_path, "book.pdf", REAL_METADATA_BOOK, info=REAL_METADATA_INFO)
+    meta_dir = tmp_path / "source_meta"
+    client = _RecordedHoldingsClient(
+        verdict="complete",
+        title_page_author="Jane Q. Historian",
+        title_page_title="State Legitimacy and Civil Conflict",
+        author_metadata_matches=True,
+        title_metadata_matches=True,
+    )
+
+    intake(path, client=client, source_meta_dir=meta_dir)
+
+    source_id = compute_source_id(path)
+    record = json.loads((meta_dir / f"{source_id}.json").read_text(encoding="utf-8"))
+
+    assert record["author"] == {"value": "Jane Q. Historian", "provenance": "embedded metadata"}
+    assert record["title"] == {
+        "value": "State Legitimacy and Civil Conflict",
+        "provenance": "embedded metadata",
+    }
 
 
 def test_junk_embedded_metadata_is_recorded_as_unavailable_not_passed_through(tmp_path):

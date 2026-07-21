@@ -242,48 +242,85 @@ class TestPlausibleMetadataValue:
         )
 
 
-class TestTitlePageTitle:
-    def test_returns_the_first_substantive_line(self):
-        from axial.intake import _title_page_title
+class TestCleanGuardsNonStringPypdfSentinels:
+    """§307 finding 1: pypdf can hand back a raw `NullObject` (or any other
+    non-string sentinel) for a malformed metadata field instead of a plain
+    `None`. `_clean` -- and therefore `_plausible_metadata_value`, which
+    every embedded-metadata read routes through -- must treat that as
+    absent rather than crash on `.split()`."""
 
-        text = "\n\nThe Making of a Revolution\nA Study in Political Change\n"
-        assert _title_page_title(text) == "The Making of a Revolution"
+    def test_a_null_object_is_treated_as_absent_not_a_crash(self):
+        from pypdf.generic import NullObject
 
-    def test_returns_none_for_blank_text(self):
-        from axial.intake import _title_page_title
+        from axial.intake import _clean
 
-        assert _title_page_title("") is None
-        assert _title_page_title("   \n\n  ") is None
+        assert _clean(NullObject()) is None
 
-    def test_rejects_an_overlong_line_as_not_a_title(self):
-        from axial.intake import _MAX_TITLE_LINE_CHARS, _title_page_title
+    def test_plausible_metadata_value_survives_a_null_object_value(self):
+        from pypdf.generic import NullObject
 
-        text = ("x" * (_MAX_TITLE_LINE_CHARS + 1)) + "\nA Real Title\n"
-        assert _title_page_title(text) is None
+        from axial.intake import _plausible_metadata_value
+
+        assert _plausible_metadata_value(NullObject()) is None
+
+    def test_plausible_metadata_value_survives_a_null_object_junk_candidate(self):
+        from pypdf.generic import NullObject
+
+        from axial.intake import _plausible_metadata_value
+
+        # A real value must still pass through even when a junk candidate
+        # (producer/creator) is itself an unreadable sentinel.
+        assert _plausible_metadata_value("Jane Q. Historian", NullObject()) == ("Jane Q. Historian")
 
 
-class TestTitlePageDate:
-    def test_finds_a_year_near_a_copyright_marker(self):
-        from axial.intake import _title_page_date
+class TestResolveBibliographicValue:
+    """§307 findings 2/3: the title-page cross-check that replaces the
+    retired deterministic fallback (`_resolve_bibliographic_value`)."""
 
-        assert _title_page_date("Copyright © 1978 by the University Press") == "1978"
+    def test_no_embedded_value_falls_back_to_the_title_page_reading(self):
+        from axial.intake import PROVENANCE_TITLE_PAGE, _resolve_bibliographic_value
 
-    def test_finds_a_year_near_the_word_published(self):
-        from axial.intake import _title_page_date
+        resolved = _resolve_bibliographic_value(None, "Sinisa Malesevic", None)
 
-        assert _title_page_date("First published 1965 by Some Press") == "1965"
+        assert resolved == {"value": "Sinisa Malesevic", "provenance": PROVENANCE_TITLE_PAGE}
 
-    def test_returns_none_when_no_marker_is_present(self):
-        from axial.intake import _title_page_date
+    def test_no_embedded_value_and_no_title_page_reading_is_unavailable(self):
+        from axial.intake import UNAVAILABLE, _resolve_bibliographic_value
 
-        # A bare four-digit number with no copyright/publication keyword
-        # nearby is not evidence of a publication year.
-        assert _title_page_date("Chapter Three, page 1978 of the manuscript") is None
+        assert _resolve_bibliographic_value(None, None, None) == UNAVAILABLE
 
-    def test_returns_none_for_blank_text(self):
-        from axial.intake import _title_page_date
+    def test_an_embedded_value_the_model_flags_as_a_mismatch_is_unavailable(self):
+        """The required outcome for a recycled-metadata PDF (#285 finding 2,
+        `heydemann-war-institutions-social-change`): a wrong value with
+        provenance is worse than an honest blank."""
+        from axial.intake import UNAVAILABLE, _resolve_bibliographic_value
 
-        assert _title_page_date("") is None
+        resolved = _resolve_bibliographic_value("Michael Hanby", "Steven Heydemann", False)
+
+        assert resolved == UNAVAILABLE
+
+    def test_an_embedded_value_the_model_confirms_stands(self):
+        from axial.intake import PROVENANCE_EMBEDDED_METADATA, _resolve_bibliographic_value
+
+        resolved = _resolve_bibliographic_value("Jane Q. Historian", "Jane Q. Historian", True)
+
+        assert resolved == {
+            "value": "Jane Q. Historian",
+            "provenance": PROVENANCE_EMBEDDED_METADATA,
+        }
+
+    def test_an_embedded_value_with_no_matches_verdict_still_stands(self):
+        """A `None` match (no comparison was made -- e.g. an older-shaped
+        canned response in a test, or a model that skipped the judgment)
+        trusts the embedded value: only an explicit `false` downgrades it."""
+        from axial.intake import PROVENANCE_EMBEDDED_METADATA, _resolve_bibliographic_value
+
+        resolved = _resolve_bibliographic_value("Jane Q. Historian", None, None)
+
+        assert resolved == {
+            "value": "Jane Q. Historian",
+            "provenance": PROVENANCE_EMBEDDED_METADATA,
+        }
 
 
 class TestBibliographicField:
@@ -328,6 +365,77 @@ class TestResolveHoldingsFlag:
         resolved = _resolve_holdings_flag(None, None, meta_path)
 
         assert resolved == {"document_kind": "book"}
+
+
+class TestResolveBibliographicFields:
+    """`author`/`title`/`date` preserved the same way as `holdings_flag`
+    (`_resolve_recorded_field`, generalized): a client-less call (every
+    `extract()` validation call) must never regress an already-recorded,
+    model-informed answer back to a client-less-only guess."""
+
+    def test_no_client_and_no_existing_record_uses_the_computed_fields(self, tmp_path):
+        from axial.intake import UNAVAILABLE, _resolve_bibliographic_fields
+
+        computed = {
+            "author": UNAVAILABLE,
+            "title": {"value": "A Title", "provenance": "embedded metadata"},
+            "date": UNAVAILABLE,
+        }
+
+        resolved = _resolve_bibliographic_fields(computed, None, tmp_path / "absent.json")
+
+        assert resolved == computed
+
+    def test_no_client_preserves_the_existing_records_fields(self, tmp_path):
+        import json
+
+        from axial.intake import _resolve_bibliographic_fields
+
+        meta_path = tmp_path / "some-id.json"
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "author": {"value": "Steven Heydemann", "provenance": "title page"},
+                    "title": {
+                        "value": "War, Institutions, and Social Change",
+                        "provenance": "title page",
+                    },
+                    "date": "unavailable",
+                }
+            ),
+            encoding="utf-8",
+        )
+        computed = {"author": "unavailable", "title": "unavailable", "date": "unavailable"}
+
+        resolved = _resolve_bibliographic_fields(computed, None, meta_path)
+
+        assert resolved["author"] == {"value": "Steven Heydemann", "provenance": "title page"}
+        assert resolved["title"] == {
+            "value": "War, Institutions, and Social Change",
+            "provenance": "title page",
+        }
+
+    def test_a_supplied_client_always_overwrites_with_the_computed_fields(self, tmp_path):
+        import json
+
+        from axial.intake import _resolve_bibliographic_fields
+
+        meta_path = tmp_path / "some-id.json"
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "author": {"value": "Stale Prior Answer", "provenance": "title page"},
+                    "title": "unavailable",
+                    "date": "unavailable",
+                }
+            ),
+            encoding="utf-8",
+        )
+        computed = {"author": "unavailable", "title": "unavailable", "date": "unavailable"}
+
+        resolved = _resolve_bibliographic_fields(computed, object(), meta_path)
+
+        assert resolved == computed
 
 
 def test_intake_writes_a_source_meta_record_for_a_pdf(tmp_path):

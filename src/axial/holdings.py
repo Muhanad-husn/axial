@@ -1,12 +1,21 @@
-"""Holdings-completeness check (PRD §7.11, §8 P0-1b).
+"""Holdings-completeness check and title-page bibliographic read (PRD §7.11,
+§7.13, §8 P0-1b/P0-1d).
 
 A **partial holding** is a source file that carries only part of the work
 it names: one volume of a multi-volume set, a truncated scan, an extract
 circulated as if it were the whole book. This module cleans the raw text
 layer `axial.intake` already extracts and hands it to **one** model call
 that judges, in a single pass, what kind of document this is, what extent
-it claims for itself, and whether the file covers that extent. The result
-is a flag (or `None`) that `intake()` attaches to the `Source` it
+it claims for itself, and whether the file covers that extent -- and, in
+the same pass (issue #285), what the document's own title page states as
+its title/author/publication year, and whether the file's *embedded*
+metadata plausibly names the same document. `probe()` returns both halves
+together (`holdings_flag`, `title_page`) rather than paying for a second
+model call over the same front matter: `axial.intake` owns the three-state
+field policy (embedded metadata, `unavailable`, `not_attempted`) that turns
+the raw `title_page` reading into a recorded field.
+
+`intake()` attaches `holdings_flag` (or `None`) to the `Source` it
 produces. It never rejects: this is a flag-only signal for an operator to
 judge, not an intake gate.
 
@@ -153,8 +162,29 @@ def _render(pages: list[str], first_index: int) -> str:
     return "\n\n".join(blocks)
 
 
-def compose_prompt(page_texts: list[str], physical_pages: int | None) -> str:
-    """Assemble the single holdings prompt: window `page_texts` down to the
+def _embedded_metadata_claim(embedded_author: str | None, embedded_title: str | None) -> str:
+    """The prompt line stating what the file's *embedded* metadata claims
+    (or that it claims nothing), for the model to cross-check against what
+    it reads on the actual title page (§7.13, issue #285 finding 2: recycled
+    embedded metadata describing an unrelated book)."""
+    claims = []
+    if embedded_author:
+        claims.append(f'- Author: "{embedded_author}"')
+    if embedded_title:
+        claims.append(f'- Title: "{embedded_title}"')
+    if not claims:
+        return "The file's own embedded metadata states no author and no title."
+    return "The file's own embedded metadata claims:\n" + "\n".join(claims)
+
+
+def compose_prompt(
+    page_texts: list[str],
+    physical_pages: int | None,
+    *,
+    embedded_author: str | None = None,
+    embedded_title: str | None = None,
+) -> str:
+    """Assemble the single combined prompt: window `page_texts` down to the
     front matter and the tail, strip running furniture from those pages,
     and render them with their physical page numbers.
 
@@ -162,6 +192,12 @@ def compose_prompt(page_texts: list[str], physical_pages: int | None) -> str:
     extent and coverage together (§7.11), and is told to answer "complete"
     whenever the evidence is absent or ambiguous -- the 0-false-positive
     bar is the contract, and an unread document must not become a flag.
+
+    In the same call (§7.13, issue #285), it is also asked to read the
+    title page's own stated title/author/publication year, and to judge
+    whether `embedded_author`/`embedded_title` (the file's *embedded*
+    metadata, when any was found) plausibly names this same document --
+    the cross-check that catches recycled/unrelated embedded metadata.
     """
     front, tail = _window(page_texts)
     cleaned = strip_running_furniture(front + tail)
@@ -175,13 +211,17 @@ def compose_prompt(page_texts: list[str], physical_pages: int | None) -> str:
     if tail:
         sections.append(f"=== FINAL PAGES ===\n{_render(tail, len(page_texts) - len(tail))}")
 
-    return f"""You are checking whether a source file carries the complete work it names, or only part of it (one volume of a set, a truncated scan, a single chapter circulated as if it were the book).
+    embedded_claim = _embedded_metadata_claim(embedded_author, embedded_title)
+
+    return f"""You are checking whether a source file carries the complete work it names, or only part of it (one volume of a set, a truncated scan, a single chapter circulated as if it were the book) -- and separately reading its bibliographic identity off its own title page.
 
 Physical extent of the file: {extent}.
 
 Below are two EXCERPTS from the file, labelled with their physical page numbers: its opening pages, and its final pages. The pages between the two excerpts are present in the file and are simply not shown to you here. Running headers, running titles and page-number folios have been stripped.
 
 {"\n\n".join(sections)}
+
+{embedded_claim}
 
 === YOUR JUDGMENT ===
 
@@ -190,6 +230,8 @@ Decide these together, from the supplied text and the physical extent only. Do n
 1. What kind of document this is: "book", "research_paper", "chapter_offprint", or "fragment".
 2. What extent the document claims for itself, if it states one: the last page number in a printed table of contents, a title page naming a volume of a set, a stated page range. Give a short value ("816 pages", "volume 2 of 4", "pp. 45-72") and what stated it ("printed contents page", "title page"). Use null for both when the document states no extent.
 3. Whether the file covers that claimed extent.
+4. What the document's own title page / front matter states -- NOT the embedded metadata claim above -- as its title, its author(s), and its publication year (typically next to a copyright or "first published" marker). Use null for any of these the front matter itself does not state. Never invent a value the front matter does not carry, and never copy this answer from the embedded metadata claim above.
+5. Whether the embedded metadata claim above plausibly describes THIS document: does its stated Author name a real author of this work, and does its stated Title name this work? A wrong or unrelated author/title -- metadata recycled from a different file during conversion -- answers false. Use null for a field the embedded metadata claimed nothing for (there is nothing to judge).
 
 Rules:
 - The unshown middle of the file is omitted from this prompt, NOT missing from the file. Never treat that gap as evidence of truncation.
@@ -199,7 +241,7 @@ Rules:
 - When the evidence is absent, weak, or ambiguous, answer "complete".
 
 Return ONLY this JSON object, no prose and no code fence:
-{{"document_kind": "book|research_paper|chapter_offprint|fragment", "claimed_extent": "<short value or null>", "claimed_extent_stated_by": "<what stated it, or null>", "verdict": "complete|partial", "reason": "<one or two short sentences, no quoted source text>"}}"""
+{{"document_kind": "book|research_paper|chapter_offprint|fragment", "claimed_extent": "<short value or null>", "claimed_extent_stated_by": "<what stated it, or null>", "verdict": "complete|partial", "reason": "<one or two short sentences, no quoted source text>", "title_page_title": "<title stated on the title page, or null>", "title_page_author": "<author(s) stated on the title page, or null>", "title_page_date": "<publication year stated on the title page, or null>", "author_metadata_matches": true|false|null, "title_metadata_matches": true|false|null}}"""
 
 
 def _reject_unusable_answer(raw: str) -> None:
@@ -246,40 +288,113 @@ def _flag_from(
     }
 
 
+def _empty_title_page() -> dict[str, Any]:
+    """The title-page reading's own "nothing read" shape -- the default when
+    no model call was made or the call/answer was unusable. Every key is
+    `None`, distinguishable from a real (if negative) judgment."""
+    return {
+        "author": None,
+        "title": None,
+        "date": None,
+        "author_matches_embedded": None,
+        "title_matches_embedded": None,
+    }
+
+
+def _title_page_from(verdict: dict[str, Any]) -> dict[str, Any]:
+    """The title-page half of the model's answer (§7.13, issue #285): its
+    own stated title/author/publication year, and -- only when the prompt
+    supplied an embedded-metadata claim to check -- whether that claim
+    plausibly names this document.
+
+    A match key is `None` when the model made no judgment (no embedded
+    claim was given to compare, or the answer omitted/garbled the key):
+    `axial.intake` treats that as "no evidence of a mismatch" and keeps
+    trusting the embedded value exactly as it did before this check
+    existed. Only an explicit `false` downgrades it -- the asymmetry that
+    makes the cross-check additive rather than a new way to lose a
+    previously-working answer.
+    """
+
+    def _text(key: str) -> str | None:
+        value = verdict.get(key)
+        text = str(value).strip() if value else ""
+        return text or None
+
+    def _match(key: str) -> bool | None:
+        value = verdict.get(key)
+        return value if isinstance(value, bool) else None
+
+    return {
+        "author": _text("title_page_author"),
+        "title": _text("title_page_title"),
+        "date": _text("title_page_date"),
+        "author_matches_embedded": _match("author_metadata_matches"),
+        "title_matches_embedded": _match("title_metadata_matches"),
+    }
+
+
 def probe(
     page_texts: list[str],
     *,
     client: LLMClient,
     physical_pages: int | None,
     source_name: str = "",
-) -> dict | None:
-    """Run the holdings-completeness check (§7.11, §8 P0-1b) over
-    `page_texts` (one raw text-layer string per physical page, in reading
-    order -- `axial.intake._pdf_page_texts`'s own shape; a DOCX passes its
-    whole text as a single element and `physical_pages=None`).
+    embedded_author: str | None = None,
+    embedded_title: str | None = None,
+) -> dict[str, Any]:
+    """Run the combined holdings-completeness + title-page bibliographic
+    read (§7.11/§7.13, §8 P0-1b/P0-1d) over `page_texts` (one raw text-layer
+    string per physical page, in reading order --
+    `axial.intake._pdf_page_texts`'s own shape; a DOCX passes its whole text
+    as a single element and `physical_pages=None`).
 
     Strips running furniture, then makes exactly ONE model call, on the
     holdings pass (reasoning ON, carried in `config/pipeline.yaml`, never
-    hardcoded). Returns the flag dict for a holding judged partial, or
-    `None`. Reads neither `data/trees/` nor `data/envelopes/`.
+    hardcoded) -- covering both judgments together rather than paying for a
+    second pass over the same front matter (issue #285). `embedded_author`/
+    `embedded_title`, when given, are stated in the prompt as the file's own
+    embedded-metadata claim for the model to cross-check against what it
+    actually reads on the title page.
 
-    Never raises. A failed or unparseable model call degrades to "no flag"
+    Always returns a dict with two keys:
+    - `"holdings_flag"`: the §7.11 flag dict for a holding judged partial,
+      or `None` (unchanged shape/semantics from before this call carried a
+      second purpose).
+    - `"title_page"`: the §7.13 reading, see `_title_page_from`/
+      `_empty_title_page`.
+
+    Reads neither `data/trees/` nor `data/envelopes/`. Never raises. A
+    failed or unparseable model call degrades to "no flag, nothing read"
     with a warning on stderr: P0-1b forbids this check halting intake, and
-    the 0-false-positive bar forbids guessing a flag it could not read.
+    the 0-false-positive bar forbids guessing either half of the answer it
+    could not read.
     """
+    no_read = {"holdings_flag": None, "title_page": _empty_title_page()}
     if not any(text.strip() for text in page_texts):
-        return None
+        return no_read
 
-    prompt = compose_prompt(page_texts, physical_pages)
+    prompt = compose_prompt(
+        page_texts,
+        physical_pages,
+        embedded_author=embedded_author,
+        embedded_title=embedded_title,
+    )
     try:
         raw = complete_json(
             client, prompt, pass_name=HOLDINGS_PASS_NAME, validate=_reject_unusable_answer
         )
         verdict = parse_model_json(raw)
     except (LLMError, httpx.HTTPError, ModelJsonError, ValueError) as exc:
-        print(f"holdings check unavailable for {source_name or 'source'}: {exc}", file=sys.stderr)
-        return None
+        print(
+            f"holdings/bibliographic check unavailable for {source_name or 'source'}: {exc}",
+            file=sys.stderr,
+        )
+        return no_read
 
     if not isinstance(verdict, dict):
-        return None
-    return _flag_from(verdict, source_name, physical_pages)
+        return no_read
+    return {
+        "holdings_flag": _flag_from(verdict, source_name, physical_pages),
+        "title_page": _title_page_from(verdict),
+    }
