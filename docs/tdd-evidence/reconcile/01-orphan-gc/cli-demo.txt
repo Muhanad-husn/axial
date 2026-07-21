@@ -1,0 +1,44 @@
+$ axial reconcile gc                      # dry run is the DEFAULT: lists, removes nothing
+reconcile gc: 8 orphaned file(s) across 1 source_id(s)
+orphaned source_id: prose_and_table-deadbeef1234
+  data\artifacts\prose_and_table-deadbeef1234.json
+  data\chunks\prose_and_table-deadbeef1234.jsonl
+  data\chunks\prose_and_table-deadbeef1234.skips.jsonl
+  data\envelopes\prose_and_table-deadbeef1234.json
+  data\tags\prose_and_table-deadbeef1234.json
+  data\trees\prose_and_table-deadbeef1234.json
+  data\vault\prose\prose_and_table-deadbeef1234_c1.md
+  data\xref\prose_and_table-deadbeef1234.json
+dry run: nothing removed (rerun with --apply to remove)
+exit=0
+
+  files on disk after the dry run: 17  (was 17 - unchanged)
+
+$ axial reconcile gc --apply --yes        # consent given: remove + log
+reconcile gc: 8 orphaned file(s) across 1 source_id(s)
+orphaned source_id: prose_and_table-deadbeef1234
+  data\artifacts\prose_and_table-deadbeef1234.json
+  data\chunks\prose_and_table-deadbeef1234.jsonl
+  data\chunks\prose_and_table-deadbeef1234.skips.jsonl
+  data\envelopes\prose_and_table-deadbeef1234.json
+  data\tags\prose_and_table-deadbeef1234.json
+  data\trees\prose_and_table-deadbeef1234.json
+  data\vault\prose\prose_and_table-deadbeef1234_c1.md
+  data\xref\prose_and_table-deadbeef1234.json
+removed 8 orphaned file(s); log written to data\logs\reconcile\20260721T160844Z.jsonl
+exit=0
+
+  live source_id artifacts surviving: 7 of 7
+  stale source_id artifacts remaining:  0 of 8
+  data/sources/ untouched:              1 file
+  non-source-scoped file kept:          yes
+
+$ cat data/logs/reconcile/*.jsonl | head -3   # paths + ids only, no source text (DEC-23)
+{"type": "run", "keep_set": ["prose_and_table-8bf9b6c2a681"]}
+{"type": "removed", "path": "data\\artifacts\\prose_and_table-deadbeef1234.json", "source_id": "prose_and_table-deadbeef1234"}
+{"type": "removed", "path": "data\\chunks\\prose_and_table-deadbeef1234.jsonl", "source_id": "prose_and_table-deadbeef1234"}
+
+$ axial reconcile gc --apply --yes   # ...from a directory with no data/sources/ (the guard)
+error: refusing to remove anything: found 1 derived artifact(s) that look orphaned, but the live source_id keep-set is EMPTY because no source file was found in data\sources (resolved: C:\Users\mou97\AppData\Local\Temp\gcguard\data\sources). This almost always means the wrong working directory, not that every derived artifact is genuine garbage -- check that C:\Users\mou97\AppData\Local\Temp\gcguard\data\sources is really your data/sources/ directory, then rerun.
+exit=1
+  file survived: 1 of 1; log dir created: no
