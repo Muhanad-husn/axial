@@ -31,6 +31,10 @@ llm:
   reasoning_by_pass:
     envelope: true
     content_apparatus: true
+    # Holdings-completeness check (§7.11, issue #284): one call per source,
+    # same profile as the envelope. The acceptance bar is 0 false positives
+    # over 30 sources, so precision is the whole point.
+    holdings: true
     tag: false
     artifacts: false
     xref: false

@@ -1,380 +1,285 @@
-"""Inner unit tests for the holdings-completeness probe (issue #268 slice 1,
-§7.11 / §8 P0-1b) -- beneath the locked outer contract in
-tests/ingestion/test_holdings_completeness_probe.py."""
+"""Inner unit tests for the holdings-completeness check (issue #284, PRD
+§7.11 / §8 P0-1b).
+
+The retired deterministic design's tests went with it: there is no
+printed-TOC COVER ratio, no back-matter density, no tunable table, and no
+socket-patch determinism guard (the check now makes exactly one model call
+by design, so a no-network assertion would guard a design that no longer
+exists). What is left to unit-test is the deterministic pre-processing, the
+prompt seam, and the mapping from a model answer to the flag shape; the
+model's judgment itself is measured over the real 30-source corpus, not
+here.
+"""
+
+from __future__ import annotations
+
+import json
 
 import pytest
 
 
-def test_is_contents_heading_matches_after_lowercase_and_whitespace_collapse():
-    from axial.holdings import _is_contents_heading
+class _RecordingClient:
+    """Stub LLM client: answers with `response` and records every call."""
 
-    assert _is_contents_heading("Contents") is True
-    assert _is_contents_heading("  CONTENTS  ") is True
-    assert _is_contents_heading("Table   of    Contents") is True
-    assert _is_contents_heading("table of contents") is True
+    def __init__(self, response: str | dict):
+        self.response = response if isinstance(response, str) else json.dumps(response)
+        self.calls: list[tuple[str, str | None]] = []
 
-
-def test_is_contents_heading_rejects_ordinary_prose():
-    from axial.holdings import _is_contents_heading
-
-    assert _is_contents_heading("This chapter discusses the contents of the archive.") is False
-    assert _is_contents_heading("Chapter One") is False
-    assert _is_contents_heading("") is False
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.calls.append((prompt, pass_name))
+        return self.response
 
 
-def test_extract_entry_reference_reads_trailing_number_past_dot_leader():
-    from axial.holdings import _extract_entry_reference
+COMPLETE_ANSWER = {
+    "document_kind": "book",
+    "claimed_extent": "412 pages",
+    "claimed_extent_stated_by": "printed contents page",
+    "verdict": "complete",
+    "reason": "The file runs past the last page the contents states.",
+}
 
-    assert _extract_entry_reference("Chapter One .......... 1") == 1
-    assert _extract_entry_reference("Chapter Two .......... 25") == 25
-    assert _extract_entry_reference("Index .................................. 11") == 11
-
-
-def test_extract_entry_reference_rejects_decoy_bare_year_with_no_dot_leader():
-    from axial.holdings import _extract_entry_reference
-
-    assert _extract_entry_reference("This edition was substantially revised in 1975") is None
-
-
-def test_extract_entry_reference_rejects_garbled_trailing_tokens():
-    from axial.holdings import _extract_entry_reference
-
-    assert _extract_entry_reference("Chapter One .......................... l0l") is None
-    assert _extract_entry_reference("Chapter Two .......................... 4O") is None
-    assert _extract_entry_reference("Chapter Three ......................... ??") is None
-    assert _extract_entry_reference("Appendix .............................. ~~~") is None
+PARTIAL_ANSWER = {
+    "document_kind": "book",
+    "claimed_extent": "816 pages",
+    "claimed_extent_stated_by": "printed contents page",
+    "verdict": "partial",
+    "reason": "The contents states the volume runs to 816 pages; the file holds 85.",
+}
 
 
-def test_extract_entry_reference_reads_real_pypdf_shaped_entries_no_dot_leader():
-    """Dot leaders do not survive real `pypdf` text extraction -- the gap
-    collapses to a single space (issue #268 review, F1). Shapes below are
-    drawn from the real 30-source corpus (mann-v3, agamben, kalyvas)."""
-    from axial.holdings import _extract_entry_reference
-
-    assert (
-        _extract_entry_reference("2 Globalization imperially fractured: The British Empire 17")
-        == 17
-    )
-    assert _extract_entry_reference("6 Auctoritas and Potestas 74") == 74
-    assert _extract_entry_reference("I.1. Four Puzzles 1") == 1
-    assert _extract_entry_reference("Index 505") == 505
-    assert _extract_entry_reference("Bibliography 467") == 467
+# =============================================================================
+# Deterministic pre-processing: running header/footer stripping
+# =============================================================================
 
 
-def test_extract_entry_reference_rejects_trailing_stopword_before_number():
-    """The single-space shape alone can't tell a real entry from a prose
-    sentence that happens to end in a number (the locked outer test's decoy:
-    '...revised in 1975'). The last word of the title before the leader is
-    the filter: a genuine entry title ends in the substantive noun/name
-    being indexed, never a bare function word like 'in'."""
-    from axial.holdings import _extract_entry_reference
+def test_leading_folio_is_stripped_off_a_running_head():
+    """§7.11's own stated observable: `tilly`'s contents heading extracts as
+    `viii Contents` -- a folio stitched to the running head -- and must
+    reach the model as `Contents`."""
+    from axial.holdings import strip_running_furniture
 
-    assert _extract_entry_reference("This edition was substantially revised in 1975") is None
-    assert _extract_entry_reference("A survey of the archive from 1975") is None
-    assert _extract_entry_reference("The committee met on 12") is None
-
-
-def test_signal_a_reading_finds_max_reference_on_contents_page():
-    from axial.holdings import _signal_a_reading
-
-    page_texts = [
-        "Contents\nChapter One .......... 1\nChapter Two .......... 25\n"
-        "Chapter Three .......... 60",
-        "filler page one",
-        "filler page two",
+    pages = [
+        "vi Preface\nMy friends will recognize this book for what it is.",
+        "vii Preface\nSeveral sections first took shape as memoranda.",
+        "viii Contents\n1 INTRODUCTION\n2 THEORIES OF COLLECTIVE ACTION",
     ]
-    assert _signal_a_reading(page_texts) == 60
+
+    cleaned = strip_running_furniture(pages)
+
+    assert cleaned[2].splitlines()[0] == "Contents"
+    assert "viii" not in cleaned[2]
 
 
-def test_signal_a_reading_stops_contents_region_when_a_page_yields_no_entries():
-    from axial.holdings import _signal_a_reading
+def test_a_recurring_running_head_is_removed_entirely():
+    from axial.holdings import strip_running_furniture
 
-    page_texts = [
-        "Contents\nIntroduction .......... 1",
-        "This is ordinary body prose with no entries at all.",
-        "Chapter Nine .......... 900",  # unreachable: region already closed
+    pages = [f"Chapter Three\nbody text on page {i}\n{i}" for i in range(6)]
+
+    cleaned = strip_running_furniture(pages)
+
+    assert all("Chapter Three" not in page for page in cleaned)
+    assert all("body text" in page for page in cleaned)
+
+
+def test_a_heading_appearing_once_is_untouched():
+    from axial.holdings import strip_running_furniture
+
+    pages = [
+        "Bibliography\nBayat, A. Life as Politics.",
+        "ordinary prose about the case",
+        "more ordinary prose about the case",
     ]
-    assert _signal_a_reading(page_texts) == 1
+
+    cleaned = strip_running_furniture(pages)
+
+    assert cleaned[0].splitlines()[0] == "Bibliography"
 
 
-def test_signal_a_reading_stops_contents_region_at_the_span_bound_even_when_pages_keep_yielding_entries():
-    """The entry-exhaustion exit above isn't the only stop condition
-    (issue #268 review F4): the region is ALSO bounded at
-    `CONTENTS_SPAN_PAGES` pages even when every following page keeps
-    yielding entries. A 4th page with a much larger reference must never
-    be counted once the bound is reached -- pinned with a literal, not
-    scaled off the constant, so a mutation to it (e.g. `CONTENTS_SPAN_PAGES
-    = 999`) is actually caught."""
-    from axial.holdings import CONTENTS_SPAN_PAGES, _signal_a_reading
+def test_a_line_that_is_only_a_page_number_is_dropped():
+    from axial.holdings import strip_running_furniture
 
-    assert CONTENTS_SPAN_PAGES == 3, (
-        "this test pins the region bound with a literal page count; update "
-        "it if CONTENTS_SPAN_PAGES is deliberately retuned"
-    )
-    page_texts = [
-        "Contents\nChapter One .......... 1",
-        "Chapter Two .......... 2",
-        "Chapter Three .......... 3",
-        "Chapter Four .......... 999",  # 4th page: still entry-shaped, still excluded
+    pages = ["12\nthe body of the page\nsecond line", "13\nanother page body\nmore"]
+
+    cleaned = strip_running_furniture(pages)
+
+    assert cleaned[0].startswith("the body of the page")
+
+
+def test_a_contents_entry_keeps_its_trailing_page_reference():
+    """The strip is confined to page furniture: a contents entry ending in
+    its own page number is content, and losing it would cost the model the
+    claimed extent it is asked to read."""
+    from axial.holdings import strip_running_furniture
+
+    pages = [
+        "Contents\nIntroduction 1\nChapter One 25\nIndex 411",
+        "body",
+        "body",
     ]
-    assert _signal_a_reading(page_texts) == 3
+
+    cleaned = strip_running_furniture(pages)
+
+    assert "Index 411" in cleaned[0]
 
 
-def test_signal_a_reading_is_none_when_no_contents_heading_found():
-    from axial.holdings import _signal_a_reading
+def test_prose_opening_with_a_year_is_not_mistaken_for_a_folio():
+    """The leading-folio strip is gated on the document actually numbering
+    pages at the top, so an ordinary sentence opening with a number keeps
+    its number."""
+    from axial.holdings import strip_running_furniture
 
-    page_texts = ["just some prose", "more prose", "even more prose"]
-    assert _signal_a_reading(page_texts) is None
+    pages = ["1978 was a turning point for the movement.", "ordinary prose", "more prose"]
 
+    cleaned = strip_running_furniture(pages)
 
-def test_signal_a_reading_is_none_when_contents_page_has_no_readable_entries():
-    from axial.holdings import _signal_a_reading
-
-    page_texts = [
-        "Contents\nChapter One .......... l0l\nChapter Two .......... 4O\n"
-        "Chapter Three ......... ??\nAppendix .............. ~~~"
-    ]
-    assert _signal_a_reading(page_texts) is None
+    assert cleaned[0].startswith("1978 was a turning point")
 
 
-def test_signal_a_reading_finds_contents_heading_within_the_search_window():
-    """Pins `CONTENTS_SEARCH_PAGES`'s current value (30) with a literal
-    page count, not by scaling the fixture off the constant itself (issue
-    #268 review F3): a fixture built as `["filler"] * CONTENTS_SEARCH_PAGES
-    + [...]` passes for ANY value of the constant -- it is mutation-blind.
-    A literal boundary actually exercises it."""
-    from axial.holdings import CONTENTS_SEARCH_PAGES, _signal_a_reading
-
-    assert CONTENTS_SEARCH_PAGES == 30, (
-        "this test pins the search window with literal page counts; update "
-        "them if CONTENTS_SEARCH_PAGES is deliberately retuned"
-    )
-    page_texts = ["filler"] * 29 + ["Contents\nChapter One .... 1"]
-    assert _signal_a_reading(page_texts) == 1
+# =============================================================================
+# The one model call
+# =============================================================================
 
 
-def test_signal_a_reading_does_not_search_past_the_search_window():
-    from axial.holdings import CONTENTS_SEARCH_PAGES, _signal_a_reading
+def test_probe_makes_exactly_one_call_on_the_holdings_pass():
+    from axial.holdings import probe
+    from axial.llm import HOLDINGS_PASS_NAME
 
-    assert CONTENTS_SEARCH_PAGES == 30, (
-        "this test pins the search window with literal page counts; update "
-        "them if CONTENTS_SEARCH_PAGES is deliberately retuned"
-    )
-    page_texts = ["filler"] * 30 + ["Contents\nChapter One .... 1"]
-    assert _signal_a_reading(page_texts) is None
+    client = _RecordingClient(COMPLETE_ANSWER)
 
+    probe(["Contents\nIntroduction 1", "body"], client=client, physical_pages=2)
 
-def test_backmatter_density_is_zero_for_ordinary_prose_tail():
-    from axial.holdings import _backmatter_density
-
-    page_texts = [f"This is ordinary body prose on page {i}." for i in range(6)]
-    assert _backmatter_density(page_texts) == 0.0
+    assert len(client.calls) == 1
+    assert client.calls[0][1] == HOLDINGS_PASS_NAME
 
 
-def test_backmatter_density_is_high_for_bibliography_and_index_tail():
-    from axial.holdings import BACKMATTER_ENTRY_DENSITY, _backmatter_density
+def test_holdings_pass_runs_with_reasoning_on():
+    """§7.9: reasoning is ON for this pass, carried per pass in
+    `config/pipeline.yaml`, never hardcoded."""
+    import yaml
 
-    page_texts = [f"This is ordinary body prose on page {i}." for i in range(6)] + [
-        "Bayat, A. (2010) Life as Politics. Stanford University Press.\n"
-        "Heydemann, S. (2013) Tracking the Arab Spring. Journal of Democracy 24.",
-        "state formation, 12, 45, 88-91\ncivil society, 33, 67, 102",
-    ]
-    density = _backmatter_density(page_texts)
-    assert density >= BACKMATTER_ENTRY_DENSITY, (
-        f"expected a dense bibliography/index tail, got density={density}"
+    from axial.llm import HOLDINGS_PASS_NAME, _resolve_reasoning_by_pass
+    from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
+
+    config = yaml.safe_load(DEFAULT_PIPELINE_CONFIG_PATH.read_text(encoding="utf-8"))
+
+    assert config["llm"]["reasoning_by_pass"][HOLDINGS_PASS_NAME] is True
+    assert _resolve_reasoning_by_pass({})[HOLDINGS_PASS_NAME] is True
+
+
+def test_prompt_carries_the_physical_page_count_and_the_cleaned_text():
+    from axial.holdings import probe
+
+    client = _RecordingClient(COMPLETE_ANSWER)
+
+    probe(
+        ["viii Contents\nIntroduction 1", "vii body", "ix body"],
+        client=client,
+        physical_pages=3,
     )
 
-
-def test_backmatter_density_recognizes_bayat_and_heydemann_shaped_entries():
-    """The §7.11 false-positive guard: a heading-regex back-matter test
-    reports both bayat and heydemann-war as lacking back matter; the
-    content-based density test must not."""
-    from axial.holdings import BACKMATTER_ENTRY_DENSITY, _backmatter_density
-
-    page_texts = ["filler prose page"] + [
-        "Bayat, A. (2010) Life as Politics: How Ordinary People Change the "
-        "Middle East. Stanford University Press.",
-        "Heydemann, S. (2013) Tracking the Arab Spring: Syria and the Future "
-        "of Authoritarianism. Journal of Democracy 24.",
-        "Ismail, S. (2018) The Rule of Violence. Cambridge University Press.",
-    ]
-    assert _backmatter_density(page_texts) >= BACKMATTER_ENTRY_DENSITY
+    prompt = client.calls[0][0]
+    assert "3 pages" in prompt
+    assert "Contents" in prompt
 
 
-def test_backmatter_density_not_diluted_by_wrapped_continuation_lines():
-    """Regression for issue #268 review F2: a genuine bibliography entry
-    wraps across several extracted lines, and only the first carries the
-    'Lastname, F.' shape (measured on the real corpus's `state-legitimacy`
-    tail). A raw matching-lines-over-total-lines count is diluted below any
-    sane threshold by the continuation lines; a signals-per-100-words rate
-    is not, because the denominator is text volume, not line count."""
-    from axial.holdings import BACKMATTER_ENTRY_DENSITY, _backmatter_density
+def test_docx_prompt_states_the_page_count_is_unobtainable():
+    """§7.11: a DOCX exposes no physical page count, and its absence is
+    unobtainable evidence rather than damning."""
+    from axial.holdings import probe
 
-    page_texts = ["filler prose page"] + [
-        "Bayat, A. (2010) Life as Politics: How Ordinary\n"
-        "People Change the Middle East in the New\n"
-        "Century of Uprisings and Change.\n"
-        "Stanford University Press.\n"
-        "Heydemann, S. (2013) Tracking the Arab Spring:\n"
-        "Syria and the Future of Authoritarianism in the\n"
-        "Middle East and Beyond the Current Crisis.\n"
-        "Journal of Democracy 24 (3), 251-272."
-    ]
-    density = _backmatter_density(page_texts)
-    assert density >= BACKMATTER_ENTRY_DENSITY, (
-        f"expected wrapped bibliography entries to still test as back "
-        f"matter despite only 2 of 8 lines carrying the inverted-author-"
-        f"name shape, got density={density}"
+    client = _RecordingClient(COMPLETE_ANSWER)
+
+    probe(["Some document text"], client=client, physical_pages=None)
+
+    assert "unknown" in client.calls[0][0]
+
+
+# =============================================================================
+# Verdict -> flag
+# =============================================================================
+
+
+def test_partial_verdict_produces_a_flag_recording_its_measurement():
+    from axial.holdings import probe
+
+    flag = probe(
+        ["Contents\nIntroduction 1", "body"],
+        client=_RecordingClient(PARTIAL_ANSWER),
+        physical_pages=85,
+        source_name="mann-v2.pdf",
     )
 
-
-_TAIL_WINDOW_BACKMATTER_PAGE = (
-    "Bayat, A. (2010) Life as Politics: How Ordinary People Change the "
-    "Middle East. Stanford University Press.\n"
-    "Heydemann, S. (2013) Tracking the Arab Spring: Syria and the Future "
-    "of Authoritarianism. Journal of Democracy 24.\n"
-    "Ismail, S. (2018) The Rule of Violence. Cambridge University Press."
-)
-_TAIL_WINDOW_FILLER_PAGE = "This is ordinary body prose with no bibliographic content at all."
-
-
-def test_backmatter_density_only_reads_the_tail_window_not_the_whole_document():
-    """Regression for issue #268 review (2nd pass) F2: `TAIL_WINDOW_FRACTION`
-    was fully mutation-blind -- neither 1.0 (the whole document) nor 0.001
-    (essentially nothing) changed any test's outcome, even though on the
-    real corpus either would materially change every density reading.
-    Pinned with a literal 20-page document (window = `round(20 * 0.10)` =
-    2 pages): back matter placed in the window (page index 18, second-to-
-    last of 20) must register; the SAME content placed just outside it
-    (page index 17, third-to-last) must not -- proving the function reads
-    only its tail window, not the whole document, in either direction."""
-    from axial.holdings import TAIL_WINDOW_FRACTION, _backmatter_density
-
-    assert TAIL_WINDOW_FRACTION == 0.10, (
-        "this test pins the tail window with a literal page count; update "
-        "it if TAIL_WINDOW_FRACTION is deliberately retuned"
-    )
-
-    within_window = [_TAIL_WINDOW_FILLER_PAGE] * 18 + [
-        _TAIL_WINDOW_BACKMATTER_PAGE,
-        _TAIL_WINDOW_FILLER_PAGE,
-    ]
-    just_outside_window = [_TAIL_WINDOW_FILLER_PAGE] * 17 + [
-        _TAIL_WINDOW_BACKMATTER_PAGE,
-        _TAIL_WINDOW_FILLER_PAGE,
-        _TAIL_WINDOW_FILLER_PAGE,
-    ]
-    assert len(within_window) == 20
-    assert len(just_outside_window) == 20
-
-    from axial.holdings import BACKMATTER_ENTRY_DENSITY
-
-    density_within = _backmatter_density(within_window)
-    density_outside = _backmatter_density(just_outside_window)
-    assert density_within >= BACKMATTER_ENTRY_DENSITY, (
-        f"expected back matter placed inside the tail window to register, "
-        f"got density={density_within}"
-    )
-    assert density_outside < BACKMATTER_ENTRY_DENSITY, (
-        f"expected the SAME back matter placed just outside the tail "
-        f"window to be invisible to it, got density={density_outside}"
-    )
-    assert density_within != density_outside
-
-
-def test_probe_fires_signal_a_below_cover_floor():
-    from axial.holdings import COVER_FLOOR, probe
-
-    page_texts = [
-        "Contents\nChapter One .......... 1\nChapter Two .......... 25\n"
-        "Chapter Three .......... 60",
-        "filler",
-        "filler",
-        "filler",
-    ]
-    flag = probe(page_texts)
     assert flag == {
-        "signal": "toc_page_extent",
-        "cover": pytest.approx(4 / 60),
-        "physical_pages": 4,
-        "max_page_reference": 60,
-        "threshold": COVER_FLOOR,
+        "source": "mann-v2.pdf",
+        "document_kind": "book",
+        "claimed_extent": "816 pages",
+        "claimed_extent_stated_by": "printed contents page",
+        "observed_pages": 85,
+        "reason": PARTIAL_ANSWER["reason"],
     }
 
 
-def test_probe_none_when_signal_a_reading_is_healthy():
+def test_complete_verdict_produces_no_flag():
     from axial.holdings import probe
 
-    page_texts = ["Contents\nChapter One .......... 1\nChapter Two .......... 2"] + ["filler"] * 2
-    assert probe(page_texts) is None
-
-
-def test_probe_fires_signal_b_on_orphan_fragment():
-    from axial.holdings import ORPHAN_PAGE_CEILING, probe
-
-    page_texts = ["ordinary prose with no back matter and no contents page"] * 6
-    flag = probe(page_texts)
-    assert flag is not None
-    assert flag["signal"] == "orphan_fragment"
-    assert flag["physical_pages"] == 6
-    assert isinstance(flag["backmatter_density"], (int, float))
-    assert flag["threshold"] == ORPHAN_PAGE_CEILING
-
-
-def test_probe_none_when_signal_b_page_count_too_high():
-    from axial.holdings import ORPHAN_PAGE_CEILING, probe
-
-    page_texts = ["ordinary prose with no back matter and no contents page"] * (
-        ORPHAN_PAGE_CEILING + 1
+    flag = probe(
+        ["Contents\nIntroduction 1", "body"],
+        client=_RecordingClient(COMPLETE_ANSWER),
+        physical_pages=412,
     )
-    assert probe(page_texts) is None
+
+    assert flag is None
 
 
-def test_probe_none_when_signal_b_has_back_matter():
+def test_partial_verdict_with_no_stated_extent_still_flags():
+    """A chapter offprint states no extent of its own; the flag records the
+    absence rather than dropping the finding."""
     from axial.holdings import probe
 
-    page_texts = ["ordinary prose with no contents page"] * 6 + [
-        "Bayat, A. (2010) Life as Politics. Stanford University Press.\n"
-        "Heydemann, S. (2013) Tracking the Arab Spring. Journal of Democracy 24.",
-        "state formation, 12, 45, 88-91\ncivil society, 33, 67, 102",
-    ]
-    assert probe(page_texts) is None
+    answer = dict(PARTIAL_ANSWER, claimed_extent=None, claimed_extent_stated_by=None)
+    answer["document_kind"] = "chapter_offprint"
+
+    flag = probe(["chapter one text"], client=_RecordingClient(answer), physical_pages=20)
+
+    assert flag["claimed_extent"] is None
+    assert flag["claimed_extent_stated_by"] is None
+    assert flag["document_kind"] == "chapter_offprint"
 
 
-def test_signal_a_reading_treats_a_zero_reference_as_no_reading():
-    r"""Regression for issue #268 review (2nd pass) F1: `_TOC_ENTRY_LINE_RE`
-    accepts `\d{1,4}`, which includes '0'. If every recovered reference in
-    the contents region is 0, `max(references)` is 0, and `probe` used to
-    divide `physical_pages / 0` -- a `ZeroDivisionError` propagating out of
-    `intake()`, directly violating P0-1b's 'never rejects, never halts
-    intake.' A non-positive maximum must degrade to no reading, exactly
-    like an unreadable/garbled one, and fall through to Signal B."""
-    from axial.holdings import _signal_a_reading
-
-    assert _signal_a_reading(["Contents\nPreface 0", "filler"]) is None
-
-
-def test_probe_never_raises_when_every_recovered_reference_is_zero():
-    """§7.11/§8 P0-1b: 'never rejects a source, never halts intake.' Calling
-    `probe()` here without wrapping it in `pytest.raises` IS the assertion:
-    a `ZeroDivisionError` (or any exception) fails this test."""
+def test_unrecognised_document_kind_is_recorded_as_unknown_not_raised():
     from axial.holdings import probe
 
-    result = probe(["Contents\nPreface 0", "filler"])
+    answer = dict(PARTIAL_ANSWER, document_kind="pamphlet")
 
-    assert result is None or result["signal"] == "orphan_fragment"
+    flag = probe(["text"], client=_RecordingClient(answer), physical_pages=4)
+
+    assert flag["document_kind"] == "unknown"
 
 
-def test_probe_never_raises_on_empty_page_texts():
-    """Same discipline at the other edge: an empty `page_texts` list must
-    not raise either."""
+@pytest.mark.parametrize("raw", ["not json at all", '{"verdict": ', json.dumps(["a", "list"])])
+def test_an_unreadable_answer_degrades_to_no_flag(raw):
+    """The bar is 0 false positives: an answer the check cannot read must
+    not become a flag, and must not halt intake either (P0-1b)."""
     from axial.holdings import probe
 
-    result = probe([])
+    assert probe(["text"], client=_RecordingClient(raw), physical_pages=4) is None
 
-    assert result is None or result == {
-        "signal": "orphan_fragment",
-        "physical_pages": 0,
-        "backmatter_density": 0.0,
-        "threshold": 120,
-    }
+
+def test_a_failing_model_call_never_raises():
+    from axial.holdings import probe
+    from axial.llm import LLMError
+
+    class _Exploding:
+        def complete(self, prompt, pass_name=None):
+            raise LLMError("provider is down")
+
+    assert probe(["text"], client=_Exploding(), physical_pages=4) is None
+
+
+def test_empty_text_makes_no_model_call():
+    from axial.holdings import probe
+
+    client = _RecordingClient(COMPLETE_ANSWER)
+
+    assert probe(["", "   "], client=client, physical_pages=2) is None
+    assert client.calls == []
