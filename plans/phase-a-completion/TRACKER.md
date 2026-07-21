@@ -33,9 +33,10 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 - ☐ 0c #289 — verify gold-sheet dropdowns (`gold.py`) — ✎ fix-lane, verify-first
 
 ### Stage 1 — metadata correctness (one ordered chain, before any re-tag) — plan ✅ `plans/intake-metadata/`
-- ✅ 1·01 #284 — holdings check → model-adjudicated rewrite (`holdings.py`) — PR #304 merged `affd369`. **Built but NOT wired into the ingest path → #303.** #285 is now merged, so #303 is unblocked — and it now gates the bibliographic cross-check too, not just the holdings flag
-- ✅ 1·02 #285 — persisted source-metadata record; **sole origin of author/title/date (P0-1d)** — PR #307 merged `fa6b2d9`. Took two rounds: the first failed gate 4, the rework deleted the heuristic and extended slice 01's model call to read + cross-check the title page (author 29/30, title 28/30, date 30/30, 0 crashes). **Dormant until #303 passes a client.**
-- ☐ 1·03 #278 — **resolved: remove** author/date from the envelope (intake owns them); vault writer composes from both (needs 02). *No longer a Wave-1 independent slice.*
+- ✅ 1·01 #284 — holdings check → model-adjudicated rewrite (`holdings.py`) — PR #304 merged `affd369`. **Now live in the ingest path via #303.**
+- ✅ 1·01b #303 — wire the judgment into the ingest path — PR #311 merged `41aba59`. `extract()` builds a client only for an unjudged source; the §7.12 record gains `holdings_checked`, so a judged source constructs **no client at all**. Gate 4 over all 30: pass 1 = 30 calls (one each), pass 2 = **0 calls, 0 clients**; biblio coverage identical to #307 (author 29/30, title 28/30, date 30/30, 0 crashes); 0 flags raised. **P0-1b is true of the pipeline now, not just of `intake()`.**
+- ✅ 1·02 #285 — persisted source-metadata record; **sole origin of author/title/date (P0-1d)** — PR #307 merged `fa6b2d9`. Took two rounds: the first failed gate 4, the rework deleted the heuristic and extended slice 01's model call to read + cross-check the title page (author 29/30, title 28/30, date 30/30, 0 crashes). **No longer dormant — #303 passes the client.**
+- ☐ 1·03 #278 — **resolved: remove** author/date from the envelope (intake owns them); vault writer composes from both (needs 02). **Released and startable** — its two blockers (#285, and #270·02's `envelope.py` fan-out) have both merged. **Sequence it after #303, never beside it** — same lane, same intake/envelope metadata boundary.
 
 ### Stage 2 — tag quality (before any re-tag)
 - ✅ 2a #294 — best-of-N voting on blind axes (`tag.py`; **predecessor of stage 5**) — PR #302 merged `aa0607d`; abstention settled in **DEC-33** + spec §7.14
@@ -47,9 +48,21 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 - ✅ 3·03 #277 — source-set inputs (worklist + corpus glob) + end-of-run summary — PR #309 merged `1237e8d`. `RunSummary` is a returned structured value with a `rates` attachment point, so **#288 is unblocked**. **#277 stays open**: the issue's bounded-concurrency scenario is deferred by `plans/run/README.md`, so the PR said `Part of #277`, not `Closes`
 
 ### Stage 4 — freeze (operation, not a slice) → **PHASE A CLOSES HERE**
+
+> ⚠️ **4.0 is new and load-bearing. Do not skip it.** `data/source_meta/` on the real
+> corpus is **empty** — #303's gate-4 validation deliberately wrote to a scratch
+> directory, so no source has a persisted record yet. #278 makes the vault writer
+> compose author/title/date **from those records**. Re-tagging before a real ingest
+> pass has written them freezes ~17k chunks carrying empty bibliographic metadata —
+> the exact defect #278 exists to fix, baked in and expensive to undo.
+
+- ☐ **4.0 run a real ingest pass over all 30 sources to write `data/source_meta/`** — one
+  reasoning-ON call per source (~30 calls); verify 30 records exist and carry real
+  author/title/date before proceeding
 - ☐ 4.1 re-tag the corpus via #277 with stages 1–2 in place
 - ☐ 4.2 score against the sim gold set (P0-10 eval)
-- ☐ 4.3 freeze schema (ratify `theory_school` KEEP, DEC-31, on corpus-wide numbers)
+- ☐ 4.3 freeze schema (ratify `theory_school` KEEP, DEC-31, on corpus-wide numbers) —
+  reads #288's not-applicable/unlisted rates, so **land #288 before this**
 - ☐ 4.4 record the frozen tag distribution (input to stage 5)
 
 ### Stage 5 — HDBSCAN distillation eval (gated behind stage 4)
@@ -59,11 +72,12 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
 ## Next action
 
-**Wave 3 is two-thirds landed.** #309 (`1237e8d`, run·03) and #310 (`301e37a`,
-run-logging·02) are merged; `main` is green at **1109 passed** on the src tier and
-both worktrees are torn down. **#303 is still building** in
-`D:\axial-wt\303-holdings-wiring` — it is the last slice of this wave and the one
-that gates stage 4.
+**Wave 3 is complete.** All three PRs merged — #309 (`1237e8d`, run·03), #310
+(`301e37a`, run-logging·02), #311 (`41aba59`, #303 holdings wiring). `main` is green
+at **1124 passed** on the src tier. Every worktree and branch is torn down; the repo
+is `main` only, local and remote, working tree clean.
+
+**Wave 4 has not started** — the founder is running it in a fresh session.
 
 Two things a cold start should know about wave 3:
 
@@ -77,32 +91,19 @@ Two things a cold start should know about wave 3:
   contended for `envelope`/`tag` had merged first, as planned. `llm.py` gained
   `model_for_pass()` — a cross-phase shared module, so CI green was the gate.
 
-**#307 took a second round, and that is the wave's main lesson.** Its suite was green and
-its corpus check was not. Gate-4 validation over all 30 real sources found: a pypdf
-`NullObject` crash; `heydemann-war-institutions-social-change` carrying embedded metadata
-for *a different book* (`Michael Hanby` / `AUGUSTINE AND MODERNITY`) recorded as a confident
-value; and a title-page fallback reading **2 of 13** real cases. Founder ruled: delete the
-heuristic, extend slice 01's reasoning-ON front-matter call to also read and cross-check the
-title page, guard the `NullObject`. Re-measured on all 30:
+**RESOLVED — the "model path is dormant in production" warning that stood here through
+wave 2 is closed by #311.** `extract()` now supplies a client for an unjudged source, so
+the reasoning-ON holdings + title-page call runs in the real pipeline. The wave-2 concern
+that a real ingest would record the wrong Heydemann metadata no longer applies: gate 4
+re-measured the wired path over all 30 and got #307's numbers exactly (author 29/30,
+title 28/30, date 30/30, 0 crashes, 0 flags), with Heydemann correctly `unavailable`.
 
-| Field | Before | After |
-|---|---|---|
-| author with a value | 22/30 | **29/30** |
-| title with a value | 23/30 | **28/30** |
-| date with a value | 3/30 | **30/30** |
-| crashes | 1 | **0** |
-
-Heydemann now records `unavailable` for author and title. Two honest residuals: `batatu`'s
-title is a partial read, and `ayubi` moved from a wrong value to `unavailable` — a coverage
-loss that is a quality gain.
-
-> ⚠️ **The model path is dormant in production.** `read_bibliographic_fields` takes it only
-> when a caller supplies a `client`, and **no production call site passes one** — not
-> `extract()`, not `cli._intake`. Until **#303** lands, a real ingest run still records the
-> wrong Heydemann metadata. Two consequences: **#303 is now the switch that makes
-> bibliographic correctness real**, not just holdings wiring; and **stage 4's re-tag must
-> run after #303**, or the frozen corpus bakes embedded-metadata-only `source_meta` into
-> ~17k chunks.
+**The lesson that carried wave 2 into wave 3 still stands: a green suite is not evidence.**
+#307's suite was green and its corpus check was not — it took a second round after gate 4
+found a pypdf `NullObject` crash, embedded metadata for *a different book* recorded as a
+confident value, and a title-page fallback reading 2 of 13 real cases. Wave 3 confirmed the
+rule twice more: #303's own cross-cutting regression (four envelope record-transcript tests
+asserting "exactly ONE recorded prompt") was caught by **CI**, not by the local suite.
 
 One note carried forward from the merged lanes:
 
@@ -116,19 +117,26 @@ merged. `data/logs/` is one directory per run; the ledger outlives every run and
 at the start of the next one, so it is runner state, not a log. No migration was needed —
 nothing had been written to disk yet.)*
 
-### What is startable next
+### Wave 4 — what to start in the fresh session
 
-| Lane | Next slice | Notes |
-|------|-----------|-------|
-| **intake-metadata** | **#303** holdings + client wiring | ◐ **in flight** — worktree `D:\axial-wt\303-holdings-wiring`, branch `feat/intake-metadata/04-holdings-client-wiring`. Cut from `acd6ded`, so it will need a rebase onto `301e37a` |
-| **intake-metadata** | #278 envelope cleanup (slice 03) | ☐ held back all of wave 3 by design — it edits `envelope.py`, which #270·02 fanned into. #270·02 has now merged, so **#278 is released** |
-| **stage 2** | #288 not-applicable/unlisted rates | ☐ fix-lane, **now startable** — #277·03 landed the `RunSummary.rates` seam |
-| **stage 0** | #289 gold dropdown | ☐ fix-lane, anytime (verify-first) |
+All three are unblocked and **module-disjoint, so they can run as three concurrent
+worktrees**. Nothing is in flight; `main` is clean.
 
-Ordering note for the next wave: **#278 and #303 are the same lane and both touch the
-intake/envelope metadata boundary** — sequence them, do not run them concurrently.
-Then **stage 4** (freeze = Phase A closes) — **which must not precede #303** — then
-**stage 5**.
+| Lane | Work | Plan | Notes |
+|------|------|------|-------|
+| **intake-metadata** | **#278** envelope cleanup (slice 03) | ✅ `plans/intake-metadata/03-envelope-metadata-cleanup.md` | The only planned slice left in Phase A. Drops author/title/date from the envelope's locked shape; vault composes from record + envelope. Both blockers (#285, #270·02) have merged |
+| **stage 2** | **#288** not-applicable / unlisted rates | ✎ fix-lane | Reads `RunSummary.rates` (landed in #309) and the candidates log. **Land before stage 4.3** — the `theory_school` KEEP ratification reads these rates |
+| **stage 0** | **#289** gold-sheet dropdowns | ✎ fix-lane | Verify-first; likely already correct. Smallest of the three |
+
+Then **stage 4** (freeze = Phase A closes), respecting **4.0 first** — see the ⚠️ on the
+stage-4 checklist above. Then **stage 5**.
+
+**Deferred, filed, not scheduled:** [#312](https://github.com/Muhanad-husn/axial/issues/312)
+— `extract()` re-reads the full pypdf text layer and re-hashes the file on every call, even
+on a tree-cache hit. Measured at gate 4: a no-op corpus pass costs 10–410 s per source with
+**zero** model calls (~50 min per pass). Pre-existing; #303 made it dominant. Deliberately
+**not** scheduled before stage 4 — it touches `extract.py`/`intake.py`, the path the freeze
+depends on.
 
 See [`README.md`](README.md) → *Execution — parallel feature lanes & worktrees* for
 the full conflict rationale.
