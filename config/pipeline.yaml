@@ -47,6 +47,16 @@ llm:
   # per-pass model override.
   model_by_pass:
     envelope: production_high
+  # Per-pass best-of-N voting (DEC-31, issue #294): how many times a pass
+  # draws its per-unit call before majority-voting the blind axes, mirroring
+  # the two per-pass blocks above (src/axial/llm.py's _resolve_votes_by_pass
+  # merges this over axial.llm.DEFAULT_VOTES_BY_PASS). Absent from this map
+  # means one draw and no voting layer -- today's behavior for every pass
+  # but tag. N=3 is DEC-31's measured agreement-per-cost point (theory_school
+  # 0.757 -> 0.918, claim_type 0.796 -> 0.866); N=5 buys near-zero abstention
+  # for 5x the calls and is a config change here, not a code change.
+  votes_by_pass:
+    tag: 3
 
 paths:
   envelopes_dir: data/envelopes

@@ -1649,3 +1649,57 @@ def test_retry_log_line_names_malformed_json_trigger(monkeypatch, capsys):
     assert len(lines) == 1
     assert "artifacts" in lines[0]
     assert "JSONDecodeError" in lines[0]
+
+
+# --- per-pass best-of-N voting (issue #294, DEC-31) -----------------------
+
+
+def test_resolve_votes_by_pass_defaults_the_tag_pass_to_three():
+    """An absent `llm.votes_by_pass` block leaves the code-level default
+    untouched: the tag pass draws three times (DEC-31's measured
+    agreement-per-cost point)."""
+    from axial.llm import TAG_PASS_NAME, _resolve_votes_by_pass
+
+    assert _resolve_votes_by_pass({})[TAG_PASS_NAME] == 3
+
+
+def test_resolve_votes_by_pass_lets_config_override_the_default():
+    """`config/pipeline.yaml` is the carried-per-pass source of truth --
+    "never hardcoded" -- so its entries override `DEFAULT_VOTES_BY_PASS`
+    (mirrors `_resolve_reasoning_by_pass`)."""
+    from axial.llm import TAG_PASS_NAME, _resolve_votes_by_pass
+
+    merged = _resolve_votes_by_pass({"votes_by_pass": {TAG_PASS_NAME: 5}})
+
+    assert merged[TAG_PASS_NAME] == 5
+
+
+def test_votes_for_pass_resolves_an_unnamed_pass_to_a_single_draw(tmp_path):
+    """A pass named in neither the default nor config draws once -- no
+    voting layer at all, today's behavior for artifacts/xref/envelope."""
+    from axial.llm import ARTIFACTS_PASS_NAME, SINGLE_DRAW, votes_for_pass
+
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text("llm:\n  votes_by_pass:\n    tag: 3\n", encoding="utf-8")
+
+    assert votes_for_pass(ARTIFACTS_PASS_NAME, config_path) == SINGLE_DRAW
+
+
+def test_votes_for_pass_reads_the_config_file_for_a_named_pass(tmp_path):
+    """`votes_for_pass` is the seam the tag pass itself reads: config wins
+    over the code-level default, so `N` is never a literal at the call
+    site."""
+    from axial.llm import TAG_PASS_NAME, votes_for_pass
+
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text("llm:\n  votes_by_pass:\n    tag: 1\n", encoding="utf-8")
+
+    assert votes_for_pass(TAG_PASS_NAME, config_path) == 1
+
+
+def test_votes_for_pass_falls_back_to_the_default_when_the_config_is_absent(tmp_path):
+    """An absent config file never raises -- it yields the code-level
+    default (mirrors every other config resolver in this module)."""
+    from axial.llm import TAG_PASS_NAME, votes_for_pass
+
+    assert votes_for_pass(TAG_PASS_NAME, tmp_path / "does-not-exist.yaml") == 3

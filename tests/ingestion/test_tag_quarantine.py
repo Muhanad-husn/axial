@@ -320,6 +320,7 @@ def test_content_caused_failure_is_quarantined_and_source_completes(
             client=client,
             domain_dir=DOMAIN_DIR,
             tags_dir=tags_dir,
+            votes=1,
         )
     except Exception as exc:  # noqa: BLE001 -- the acceptance itself is "no exception"
         raise AssertionError(
@@ -434,6 +435,7 @@ def test_transient_failure_is_not_quarantined_and_still_propagates(tmp_path, mon
             client=client,
             domain_dir=DOMAIN_DIR,
             tags_dir=tags_dir,
+            votes=1,
         )
 
     assert isinstance(excinfo.value, tag_module.LLMFailedError), (
@@ -496,6 +498,7 @@ def test_resume_skips_already_quarantined_chunk(tmp_path, monkeypatch, capsys):
         client=client,
         domain_dir=DOMAIN_DIR,
         tags_dir=tags_dir,
+        votes=1,
     )
 
     assert quarantined_text not in client.calls_by_chunk_text, (

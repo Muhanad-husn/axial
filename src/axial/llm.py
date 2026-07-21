@@ -274,6 +274,24 @@ DEFAULT_REASONING_BY_PASS: dict[str, bool] = {
 # `production_high` override lives there, not here.
 DEFAULT_MODEL_BY_PASS: dict[str, str] = {}
 
+# Per-pass best-of-N voting (DEC-31, issue #294): how many times a pass draws
+# its per-unit call before majority-voting the result. Mirrors
+# `DEFAULT_REASONING_BY_PASS`'s per-pass shape exactly -- this is the
+# CODE-LEVEL default, and `config/pipeline.yaml`'s own `llm.votes_by_pass`
+# block (read by `_resolve_votes_by_pass` below) is the carried-per-pass
+# source of truth, so `N` is never hardcoded at a call site. Only the tag
+# pass is named: DEC-31 measured `theory_school` 0.757 -> 0.918 and
+# `claim_type` 0.796 -> 0.866 at N=3, past the single-draw intra-annotator
+# ceiling. Every pass absent here resolves to `SINGLE_DRAW` -- one draw, no
+# voting layer, today's behavior exactly.
+DEFAULT_VOTES_BY_PASS: dict[str, int] = {
+    TAG_PASS_NAME: 3,
+}
+
+# The "no voting" resolution: one draw, no voting layer at all. Every pass
+# `DEFAULT_VOTES_BY_PASS`/config does not name resolves to this.
+SINGLE_DRAW = 1
+
 # Fault-injection seam (mirroring `AXIAL_FORCE_DOCLING_FAILURE` in
 # extract.py): forces the `pass_name=ARTIFACTS_PASS_NAME` canned response to
 # carry exactly this string as the returned `artifact_role`, valid or not,
@@ -1211,6 +1229,31 @@ def _resolve_reasoning_by_pass(llm_config: dict[str, Any]) -> dict[str, bool]:
     configured = llm_config.get("reasoning_by_pass") or {}
     merged.update(configured)
     return merged
+
+
+def _resolve_votes_by_pass(llm_config: dict[str, Any]) -> dict[str, int]:
+    """Per-pass best-of-N voting (DEC-31, issue #294): mirrors
+    `_resolve_reasoning_by_pass` exactly -- `config/pipeline.yaml`'s
+    `llm.votes_by_pass` block is the carried-per-pass source of truth ("never
+    hardcoded"), so its entries OVERRIDE `DEFAULT_VOTES_BY_PASS`. An absent
+    block or absent file leaves the code-level default entirely unchanged.
+    A pass named in neither resolves to `SINGLE_DRAW` via `votes_for_pass`."""
+    merged = dict(DEFAULT_VOTES_BY_PASS)
+    configured = llm_config.get("votes_by_pass") or {}
+    merged.update(configured)
+    return merged
+
+
+def votes_for_pass(pass_name: str, config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> int:
+    """How many times `pass_name` draws its per-unit LLM call before voting
+    (issue #294). Unlike `reasoning`/`model`, this setting is consumed by the
+    PASS's own loop rather than by the client request, so it is read here
+    directly instead of being threaded into `OpenRouterClient` -- the config
+    shape and resolver are otherwise identical to the two per-pass settings
+    above. A pass named nowhere resolves to `SINGLE_DRAW`."""
+    return _resolve_votes_by_pass(_load_pipeline_llm_config(config_path)).get(
+        pass_name, SINGLE_DRAW
+    )
 
 
 def _resolve_model_by_pass(secrets: dict[str, Any], llm_config: dict[str, Any]) -> dict[str, str]:

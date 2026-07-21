@@ -132,7 +132,7 @@ def test_run_tag_appends_a_tag_checkpoint_line_per_chunk(monkeypatch, tmp_path):
     tags_dir = tmp_path / "tags"
 
     records = tag_mod.run_tag(
-        source, client=StubLLMClient(), domain_dir=domain_dir, tags_dir=tags_dir
+        source, client=StubLLMClient(), domain_dir=domain_dir, tags_dir=tags_dir, votes=1
     )
 
     checkpoint = tags_dir / f"{source_id}.jsonl"
@@ -151,14 +151,18 @@ def test_run_tag_resume_skips_already_checkpointed_chunks(monkeypatch, tmp_path)
     tags_dir = tmp_path / "tags"
 
     # First run tags everything.
-    tag_mod.run_tag(source, client=StubLLMClient(), domain_dir=domain_dir, tags_dir=tags_dir)
+    tag_mod.run_tag(
+        source, client=StubLLMClient(), domain_dir=domain_dir, tags_dir=tags_dir, votes=1
+    )
 
     # Second run must not re-send any chunk to the model.
     class _CountingClient(StubLLMClient):
         pass
 
     counting = _CountingClient()
-    records = tag_mod.run_tag(source, client=counting, domain_dir=domain_dir, tags_dir=tags_dir)
+    records = tag_mod.run_tag(
+        source, client=counting, domain_dir=domain_dir, tags_dir=tags_dir, votes=1
+    )
 
     assert counting.call_count == 0
     assert [r["chunk_id"] for r in records] == [r["chunk_id"] for r in _CHUNK_RECORDS]
@@ -185,7 +189,9 @@ def test_run_tag_resume_tags_only_missing_chunks_in_stable_order(monkeypatch, tm
     append_tag_checkpoint(checkpoint, seeded)
 
     counting = StubLLMClient()
-    records = tag_mod.run_tag(source, client=counting, domain_dir=domain_dir, tags_dir=tags_dir)
+    records = tag_mod.run_tag(
+        source, client=counting, domain_dir=domain_dir, tags_dir=tags_dir, votes=1
+    )
 
     # Only the two missing chunks were tagged.
     assert counting.call_count == len(_CHUNK_RECORDS) - 1
@@ -231,7 +237,9 @@ def test_load_tag_checkpoint_drops_torn_final_line_and_resume_retags_it(monkeypa
 
     # Resume: only the torn (third) chunk is re-tagged.
     counting = StubLLMClient()
-    records = tag_mod.run_tag(source, client=counting, domain_dir=domain_dir, tags_dir=tags_dir)
+    records = tag_mod.run_tag(
+        source, client=counting, domain_dir=domain_dir, tags_dir=tags_dir, votes=1
+    )
 
     assert counting.call_count == 1
     assert [r["chunk_id"] for r in records] == [r["chunk_id"] for r in _CHUNK_RECORDS]

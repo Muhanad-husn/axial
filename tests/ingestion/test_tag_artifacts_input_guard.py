@@ -202,7 +202,7 @@ def test_tag_pass_skips_oversized_non_prose_chunk_never_sent_to_llm(tmp_path, mo
     source_path.write_text("tag guard test source", encoding="utf-8")
 
     client = _TagCountingClient()
-    records = tag_module.run_tag(source_path, client=client, domain_dir=DOMAIN_DIR)
+    records = tag_module.run_tag(source_path, client=client, domain_dir=DOMAIN_DIR, votes=1)
 
     assert isinstance(records, list), (
         f"expected run_tag to return a list, got {type(records).__name__}: {records!r}"
@@ -253,7 +253,7 @@ def test_tag_pass_source_of_only_guarded_chunk_completes_with_zero_records(
     source_path.write_text("only back-matter", encoding="utf-8")
 
     client = _TagCountingClient()
-    records = tag_module.run_tag(source_path, client=client, domain_dir=DOMAIN_DIR)
+    records = tag_module.run_tag(source_path, client=client, domain_dir=DOMAIN_DIR, votes=1)
 
     assert client.call_count == 0, "no prose chunk -> no tag-pass LLM call at all"
     assert records == [], "no prose chunk -> no tagged records"
