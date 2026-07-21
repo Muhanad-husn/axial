@@ -113,13 +113,11 @@ The recorded track: `docs/exploration/hybrid-tagging-classifier.md` +
 `docs/eval/02-hybrid-tagging-distillation.md`. Runs **on top of** a done Phase A.
 Sized so it needs **no full-corpus LLM run** (see Notes).
 
-| # | Slice | Goal |
-|---|-------|------|
-| 5a | embedding pass + vector store | Net-new: embed every chunk once and persist the vectors **in a real vector store**, not a flat array — 5c/5d/5e all issue nearest-neighbour queries (see *Vector store*, Notes). The v0 chunker is embedding-free by design (§7.5); this is a *different job* (distillation representation), not a chunking change. Cheap and one-time. |
-| 5b | readiness map | HDBSCAN over all chunk embeddings after **dimensionality reduction** (unsupervised — no LLM; density clustering needs the reduction step, see *Feature engineering*, Notes). Emit the readiness map: which tags sit in tight learnable regions vs. smear as noise; identify the `-1` noise set as the LLM-routed tail. Cluster ids start at 0 — the `-1`/route split is the load-bearing detail. |
-| 5c | stratified teacher labels | LLM-label a **cluster-stratified ~6–9k** sample (not 17k): start ~6k, extend on the learning-curve saturation signal. Stratify by 5b's clusters so every dense region is represented — this is what makes generalization safe, not hopeful. Feature quality (5b) sets this number: cleaner features saturate the curve sooner and shrink the sample. |
-| 5d | head classifiers | Light classifier head per graduated axis on frozen embeddings. A tag graduates only at parity with the teacher against the sim gold set (within noise). Abstention threshold per class; the confident fraction automates, the rest defers to the LLM. |
-| 5e | outer eval | eval-02: quality-per-dollar of the hybrid vs the all-LLM baseline, referee = sim gold. Out-of-sample check: classifier predicts the untagged remainder, LLM spot-checks a few hundred (this is also the drift monitor). |
+| # | Slice | Issue | Goal |
+|---|-------|-------|------|
+| 5a | embedding pass + vector store | [#296](https://github.com/Muhanad-husn/axial/issues/296) | Net-new: embed every chunk once and persist the vectors **in a real vector store**, not a flat array — 5c/5d/5e all issue nearest-neighbour queries (see *Vector store*, Notes). The v0 chunker is embedding-free by design (§7.5); this is a *different job* (distillation representation), not a chunking change. Cheap and one-time. |
+| 5b | readiness map | [#297](https://github.com/Muhanad-husn/axial/issues/297) | HDBSCAN over all chunk embeddings after **dimensionality reduction** (unsupervised — no LLM; density clustering needs the reduction step, see *Feature engineering*, Notes). Emit the readiness map: which tags sit in tight learnable regions vs. smear as noise; identify the `-1` noise set as the LLM-routed tail. Cluster ids start at 0 — the `-1`/route split is the load-bearing detail. |
+| 5c–5e | distillation eval | [#298](https://github.com/Muhanad-husn/axial/issues/298) | **5c** LLM-label a cluster-stratified ~6–9k sample (not 17k; learning-curve-driven; stratified by 5b's clusters so generalization is safe, not hopeful — feature quality sets the number). **5d** light classifier head per graduated axis on frozen embeddings; a tag graduates only at gold-parity with the teacher within noise; per-class abstention automates the confident fraction, defers the rest. **5e** eval-02 quality-per-dollar vs the all-LLM baseline, referee = the ~120-chunk gold set; out-of-sample spot-check = drift monitor. Verdict decides build vs stay-all-LLM. |
 
 Verdict → if it proves out, it is **spec drift**: raise the build issues, founder
 adjudicates, spec-author revises PRODUCT.md, TDD harness builds it. If it does
@@ -136,6 +134,57 @@ stage 4.
   5a→5b→5c→5d→5e internally. 5b needs only embeddings (5a), not LLM labels.
 - Nothing here depends on the Phase B (`sub:analysis-v0`) issues; that track is
   out of scope for this plan.
+
+## Execution — parallel waves & worktrees
+
+One slice = one worktree = one red-green-refactor PR through the harness. Each
+worktree writes its own red outer acceptance test from the issue's Gherkin, drives
+it green, self-reviews, and stops at a **prepared PR** — merges stay founder-
+approved (DEC-3), so worktrees never merge. The waves below are grouped by
+**file-ownership disjointness**: everything inside a wave touches different modules
+and can run concurrently without stepping on each other.
+
+### Wave 1 — no predecessors, disjoint modules (up to 4 parallel worktrees)
+
+| Slice | Issue | Owns | Notes |
+|-------|-------|------|-------|
+| 1a | #278 | `envelope.py` | author/date extraction |
+| 1b | #284 | `holdings.py` | full rewrite, self-contained module |
+| 0a | #291 | `reconcile.py` (new) | new CLI subcommand, no shared files |
+| 0c | #289 | `gold.py` (+ test) | verify-first; likely just a guard test |
+
+### Wave 2 — depends only on Wave 1 or nothing (up to 3 parallel worktrees)
+
+| Slice | Issue | Owns | Depends on |
+|-------|-------|------|------------|
+| 2a | #294 | `tag.py` | — (predecessor of stage 5) |
+| 3 | #277 | `ingest.py` → runner | — |
+| 1c | #285 | `intake.py` + `data/source_meta/` writer | **1b** (carries §7.11 holdings flag) |
+
+### Wave 3 — cross-cutting, serialize (not parallel with the passes)
+
+| Slice | Issue | Touches | Why serial |
+|-------|-------|---------|-----------|
+| 0b | #270 | `extract`/`envelope`/`tag`/`eval` | run-logging seam wires into passes 1a/2a change — land after they're stable to avoid churn |
+| 2b | #288 | tag reporting | attaches to #277's end-of-run summary — after slice 3 |
+
+### Then, serial (not worktrees)
+
+- **Stage 4** — an operation, not a slice: re-tag via the #277 runner → score vs
+  sim gold → freeze schema. **Phase A closes here.**
+- **Stage 5** — a fresh set of worktrees (5a→5b→5c→5d→5e, mostly serial by data
+  dependency), gated behind stage 4 and its two deferred decisions.
+
+### Practical caps
+
+- **≤3–4 concurrent worktrees** — the limiter is reviewer bandwidth, not file
+  conflict. Wave 1's four is the comfortable ceiling.
+- Six slices have *no* predecessor at all (1a, 1b, 0a, 0c, 2a, 3) and touch six
+  different modules, so the true parallel width is wider than the wave grouping —
+  the waves cap it for review sanity, not correctness.
+- **0b (#270) is the one true serialization point.** It edits the same passes
+  several other slices edit; running it concurrently guarantees conflicts. Land it
+  alone, ideally just before stage 4 so the re-tag run is fully logged.
 
 ## Out of scope (whole feature)
 
