@@ -93,7 +93,8 @@ the full conflict rationale.
 ## How to resume in a fresh session
 
 1. Read this file, then `README.md`, then DEC-32, then the relevant lane's plan.
-2. `git checkout claude/phase-a-hybrid-tagging-sqx2xc && git pull`.
+2. `git checkout main && git pull` (the plans live on `main`; cut each slice's
+   `feat/<feature>/NN-slug` branch from there).
 3. Check the status board above and each issue's open PRs for anything ◐ in flight.
 4. Pick the next ☐ slice per its lane order; run it through the harness; open a PR;
    update its checkbox to ◐ (PR #), then ✅ on merge.
