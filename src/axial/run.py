@@ -1,37 +1,64 @@
 """Corpus-wide pass runner: drives one registered per-source pass over a
 worklist of source paths, one source at a time, with per-source failure
-isolation (issue #277, slice 01; `plans/run/01-runner-core-and-failure-
-isolation.md`).
+isolation and a single unified resume ledger (issue #277; slice 01
+`plans/run/01-runner-core-and-failure-isolation.md`, slice 02
+`plans/run/02-unified-resume-ledger.md`).
 
-This is the walking skeleton for `axial run <pass> --worklist <file>`. It
-generalizes `axial.ingest.run_ingest`'s proven loop shape -- read the source
-set, run one source, record an outcome, continue on failure, exit non-zero
-only when the loop itself cannot run -- from one hard-wired pass
-(`run_vault_write`, caught only for `VaultError`) to any pass in the
-**pass registry**: a plain dict mapping a pass name to a small descriptor
-carrying that pass's per-source callable and the `*Error` base it declares.
-This is the retirement path for the bare-`except Exception` loop wrapper the
-postmortem named as root cause D -- every registered pass's OWN declared
-error type is now what gets caught, never a catch-all.
+This is `axial run <pass> --worklist <file>`. It generalizes
+`axial.ingest.run_ingest`'s proven loop shape -- read the source set, skip
+what is already done, run one source, record an outcome, continue on
+failure, exit non-zero only when the loop itself cannot run -- from one
+hard-wired pass (`run_vault_write`, caught only for `VaultError`) to any
+pass in the **pass registry**: a plain dict mapping a pass name to a small
+descriptor carrying that pass's per-source callable, the `*Error` base it
+declares, and its **done-predicate**. This is the retirement path for the
+bare-`except Exception` loop wrapper the postmortem named as root cause D --
+every registered pass's OWN declared error type is now what gets caught,
+never a catch-all.
 
-Out of scope for this slice (see the plan): the unified resume ledger and
-done-predicate protocol (slice 02, each pass's own file-exists/checkpoint
-idempotence still applies unchanged); the corpus glob source set and the
-polished end-of-run summary (slice 03); the #270 run-log emitter and the
-#288 rates report; parallelism; cross-pass chaining.
+Slice 02 adds the runner's own resume ledger -- one TSV, `data/logs/run/
+ledger.tsv` by default, keyed by `(pass, source_id)` -- and a
+`done_predicate` field on each pass descriptor: a small function answering
+"is this source_id already done for this pass?" Before invoking a pass, the
+loop asks the predicate; a source it reports done is skipped doing zero
+pipeline work -- no invocation, no LLM call, no output rewrite -- logging
+one `skip: <source> already done (<pass>)` line. `extract` and `envelope`
+declare a file-exists predicate over their own persisted-output cache (the
+README's mechanism 2); every other registered pass declares the ledger
+predicate (the README's mechanisms 1 and 3, now unified into one ledger the
+runner owns). Every non-skipped source appends exactly one outcome row to
+the ledger -- an APPEND, never an overwrite, reusing `axial.ingest`'s TSV
+discipline (`_append_result_row`/`_load_completed_source_ids`) verbatim in
+shape.
+
+Out of scope for this slice too (see the plan): the corpus glob source set
+and the polished end-of-run summary (slice 03); the #270 run-log emitter and
+the #288 rates report; parallelism; cross-pass chaining; reaching into the
+per-chunk `.jsonl` checkpoints inside tag/artifacts/xref -- a pass's
+done-predicate may consult its own checkpoints internally, but this module
+neither replaces nor reaches into them (source-level resume only).
 """
 
 from __future__ import annotations
 
+import csv
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from axial.artifacts import ArtifactsError, run_artifacts
 from axial.chunk import ChunkError, run_chunk_recursive
-from axial.envelope import EnvelopeError, MissingSourceError, compute_source_id, run_envelope
-from axial.extract import ExtractError, extract
+from axial.envelope import (
+    EnvelopeError,
+    MissingSourceError,
+    _default_envelopes_dir,
+    compute_source_id,
+    envelope_path,
+    run_envelope,
+)
+from axial.extract import ExtractError, extract, tree_path
 from axial.ingest import WorklistError, read_worklist
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient, get_client
 from axial.tag import DEFAULT_DOMAIN_DIR, TagError, run_tag
@@ -40,6 +67,16 @@ from axial.xref import XrefError, run_xref
 
 OK_STATUS = "OK"
 FAIL_STATUS = "FAIL"
+SKIP_STATUS = "SKIP"
+
+# The runner-owned resume ledger (module docstring): one TSV, appended to,
+# never overwritten, across every `axial run` invocation -- mirrors
+# `axial.ingest.RESULTS_PATH`'s convention exactly, generalized from one
+# hard-wired pass to a `pass` column so every registered pass shares the
+# same file, keyed by `(pass, source_id)`.
+LEDGER_PATH = Path("data/logs/run/ledger.tsv")
+
+LEDGER_COLUMNS = ("pass", "source_path", "source_id", "status", "reason", "timestamp")
 
 # The printed per-source outcome table's column order (mirrors
 # axial.pipeline_ready.TABLE_COLUMNS's convention: a header row + one row per
@@ -64,6 +101,18 @@ class UnknownPassError(RunError):
         super().__init__(f"unknown pass {pass_name!r}; known passes: {known}")
 
 
+class LedgerError(RunError):
+    """Raised when the runner-owned resume ledger cannot be read or appended
+    to -- fatal, mirroring `axial.ingest.ResultsFileError` (module
+    docstring: an unappendable ledger stops the loop, exactly like an
+    unappendable results file stops `run_ingest`)."""
+
+    def __init__(self, path: Path, cause: Exception):
+        self.path = path
+        self.cause = cause
+        super().__init__(f"cannot access ledger {path}: {cause}")
+
+
 @dataclass(frozen=True)
 class Outcome:
     """One source's recorded in-process outcome: OK or FAIL, with a short
@@ -78,16 +127,21 @@ class Outcome:
 
 @dataclass(frozen=True)
 class PassDescriptor:
-    """One registered pass: its per-source invoker and the `*Error` base it
-    raises. `invoke` normalizes every pass's own differently-shaped
-    entrypoint (some take no client, some no domain_dir -- see each pass
-    module) behind one uniform `(source_path, client, config_path,
-    domain_dir)` call shape, so the runner loop never special-cases a pass by
-    name."""
+    """One registered pass: its per-source invoker, the `*Error` base it
+    raises, and its done-predicate. `invoke` normalizes every pass's own
+    differently-shaped entrypoint (some take no client, some no domain_dir --
+    see each pass module) behind one uniform `(source_path, client,
+    config_path, domain_dir)` call shape, so the runner loop never
+    special-cases a pass by name. `done_predicate` is likewise uniform --
+    `(source_id, ledger_done_ids, config_path) -> bool` -- whether a pass's
+    own natural done-signal is a persisted-output file (extract, envelope)
+    or the runner's own ledger (every other pass): the loop calls it the same
+    way regardless (module docstring)."""
 
     name: str
     invoke: Callable[[str, LLMClient | None, Path, str | Path], Any]
     error: type[Exception]
+    done_predicate: Callable[[str, set[str], Path], bool]
 
 
 def _invoke_extract(source_path: str, client: LLMClient | None, config_path: Path, domain_dir):
@@ -120,18 +174,50 @@ def _invoke_vault_write(source_path: str, client: LLMClient | None, config_path:
     )
 
 
+def _tree_done_predicate(source_id: str, ledger_done_ids: set[str], config_path: Path) -> bool:
+    """extract's own done-signal: its persisted tree already exists at
+    `data/trees/<source_id>.json` (module docstring's mechanism 2)."""
+    return tree_path(source_id).exists()
+
+
+def _envelope_done_predicate(source_id: str, ledger_done_ids: set[str], config_path: Path) -> bool:
+    """envelope's own done-signal: its persisted envelope already exists at
+    `data/envelopes/<source_id>.json` (module docstring's mechanism 2)."""
+    envelopes_dir = _default_envelopes_dir(config_path)
+    return envelope_path(source_id, envelopes_dir).exists()
+
+
+def _ledger_done_predicate(source_id: str, ledger_done_ids: set[str], config_path: Path) -> bool:
+    """The runner-owned ledger's own done-signal (module docstring's
+    mechanisms 1 and 3, now unified): an OK row already recorded for this
+    `(pass, source_id)`. `ledger_done_ids` is loaded once per `run_pass`
+    call, not re-read per source."""
+    return source_id in ledger_done_ids
+
+
 # The pass registry (module docstring): a plain dict, not a plugin system --
 # seven known passes, all in this repo, each with a `(source_path, client,
 # config_path, domain_dir)`-shaped invoker (via the `_invoke_*` adapters
-# above) and the `*Error` base it declares.
+# above), the `*Error` base it declares, and its done-predicate. extract and
+# envelope declare their own persisted-output file as the done-signal; every
+# other pass -- lacking a single atomic per-source output file, since
+# chunk/tag/artifacts/xref checkpoint per-chunk, a finer granularity this
+# runner does not reach into (module docstring) -- declares the runner's own
+# ledger.
 PASS_REGISTRY: dict[str, PassDescriptor] = {
-    "extract": PassDescriptor("extract", _invoke_extract, ExtractError),
-    "envelope": PassDescriptor("envelope", _invoke_envelope, EnvelopeError),
-    "chunk": PassDescriptor("chunk", _invoke_chunk, ChunkError),
-    "tag": PassDescriptor("tag", _invoke_tag, TagError),
-    "artifacts": PassDescriptor("artifacts", _invoke_artifacts, ArtifactsError),
-    "xref": PassDescriptor("xref", _invoke_xref, XrefError),
-    "vault-write": PassDescriptor("vault-write", _invoke_vault_write, VaultError),
+    "extract": PassDescriptor("extract", _invoke_extract, ExtractError, _tree_done_predicate),
+    "envelope": PassDescriptor(
+        "envelope", _invoke_envelope, EnvelopeError, _envelope_done_predicate
+    ),
+    "chunk": PassDescriptor("chunk", _invoke_chunk, ChunkError, _ledger_done_predicate),
+    "tag": PassDescriptor("tag", _invoke_tag, TagError, _ledger_done_predicate),
+    "artifacts": PassDescriptor(
+        "artifacts", _invoke_artifacts, ArtifactsError, _ledger_done_predicate
+    ),
+    "xref": PassDescriptor("xref", _invoke_xref, XrefError, _ledger_done_predicate),
+    "vault-write": PassDescriptor(
+        "vault-write", _invoke_vault_write, VaultError, _ledger_done_predicate
+    ),
 }
 
 
@@ -145,25 +231,89 @@ def _render_row(outcome: Outcome) -> str:
     return "\t".join(row[column] for column in TABLE_COLUMNS)
 
 
+def _load_done_source_ids(ledger_path: Path, pass_name: str) -> set[str]:
+    """The set of `source_id`s that already carry an OK row for `pass_name`
+    in the ledger (module docstring's done-predicate precondition; mirrors
+    `axial.ingest._load_completed_source_ids`, generalized with a `pass`
+    filter since one ledger now serves every pass). An absent ledger yields
+    an empty done-set -- nothing skipped."""
+    if not ledger_path.exists():
+        return set()
+    try:
+        with ledger_path.open("r", newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle, delimiter="\t")
+            return {
+                row["source_id"]
+                for row in reader
+                if row.get("pass") == pass_name
+                and row.get("status") == OK_STATUS
+                and row.get("source_id")
+            }
+    except OSError as exc:
+        raise LedgerError(ledger_path, exc) from exc
+
+
+def _append_ledger_row(ledger_path: Path, row: dict[str, str]) -> None:
+    """Append one row to the ledger, writing a header first if it does not
+    exist yet -- an APPEND, never an overwrite (module docstring; mirrors
+    `axial.ingest._append_result_row`)."""
+    try:
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        file_exists = ledger_path.exists()
+        with ledger_path.open("a", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=LEDGER_COLUMNS, delimiter="\t")
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
+    except OSError as exc:
+        raise LedgerError(ledger_path, exc) from exc
+
+
+def _ledger_row(pass_name: str, outcome: Outcome) -> dict[str, str]:
+    return {
+        "pass": pass_name,
+        "source_path": outcome.source_path,
+        "source_id": outcome.source_id,
+        "status": outcome.status,
+        "reason": outcome.reason,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def run_pass(
     pass_name: str,
     worklist_path: str | Path,
     client: LLMClient | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
+    ledger_path: Path | None = None,
 ) -> tuple[list[Outcome], int]:
     """Drive the registered pass named `pass_name` over every source path in
     `worklist_path`, one source at a time (module docstring). Prints a
-    tab-separated outcome table (header + one row per attempted source) to
-    stdout, plus one `error:` diagnostic line to stderr per FAIL, and returns
-    `(outcomes, exit_code)`.
+    tab-separated outcome table (header + one row per attempted source,
+    including skipped ones) to stdout, plus one `error:`/`skip:` diagnostic
+    line to stderr/stdout per FAIL/SKIP, and returns `(outcomes, exit_code)`.
 
     Exit code is 0 even when some sources FAIL -- a per-source failure is
     expected, recoverable operator signal, not a crash (mirroring
     `axial.ingest.run_ingest`). It is non-zero ONLY when the loop itself
-    cannot run: an unknown pass name, or an unreadable worklist. Both fatal
-    conditions are checked before any source is touched, and `outcomes` is
-    empty in that case.
+    cannot run: an unknown pass name, an unreadable worklist, or an
+    unappendable ledger. All fatal conditions are checked before any source
+    is touched (except the ledger append itself, which can only fail once a
+    source has actually run), and `outcomes` is empty for the first three.
+
+    `ledger_path` defaults to `LEDGER_PATH`; overridable for tests, mirroring
+    `axial.ingest.run_ingest`'s own `results_path` seam. Before the loop, the
+    ledger is read once for this pass's own already-done `source_id`s
+    (`_load_done_source_ids`); each source then asks `descriptor
+    .done_predicate` -- file-exists for extract/envelope, ledger-membership
+    for every other pass (module docstring) -- and a source it reports done
+    is skipped doing zero pipeline work: no `descriptor.invoke` call, hence
+    no LLM call and no output rewrite, since that call is exactly what would
+    do either. Every non-skipped source appends exactly one row to the
+    ledger; a re-run therefore never appends a duplicate OK row and never
+    rewrites a prior run's rows (`_append_ledger_row` only ever opens the
+    file in append mode).
 
     The shared `client` is constructed once for the whole run (if not passed
     explicitly) and threaded, along with `config_path`/`domain_dir`, into
@@ -177,6 +327,15 @@ def run_pass(
     try:
         source_paths = read_worklist(worklist_path)
     except WorklistError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return [], 1
+
+    if ledger_path is None:
+        ledger_path = LEDGER_PATH
+
+    try:
+        ledger_done_ids = _load_done_source_ids(ledger_path, pass_name)
+    except LedgerError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return [], 1
 
@@ -195,6 +354,18 @@ def run_pass(
             outcome = Outcome(str(source_path), "", FAIL_STATUS, str(exc))
             outcomes.append(outcome)
             print(_render_row(outcome))
+            try:
+                _append_ledger_row(ledger_path, _ledger_row(pass_name, outcome))
+            except LedgerError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return outcomes, 1
+            continue
+
+        if descriptor.done_predicate(source_id, ledger_done_ids, config_path):
+            print(f"skip: {source_path} already done ({pass_name})")
+            outcome = Outcome(str(source_path), source_id, SKIP_STATUS)
+            outcomes.append(outcome)
+            print(_render_row(outcome))
             continue
 
         try:
@@ -208,8 +379,20 @@ def run_pass(
         outcomes.append(outcome)
         print(_render_row(outcome))
 
+        try:
+            _append_ledger_row(ledger_path, _ledger_row(pass_name, outcome))
+        except LedgerError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return outcomes, 1
+        if outcome.status == OK_STATUS:
+            ledger_done_ids.add(source_id)
+
     ok_count = sum(1 for outcome in outcomes if outcome.status == OK_STATUS)
-    fail_count = len(outcomes) - ok_count
-    print(f"run: pass={pass_name} total={len(outcomes)} ok={ok_count} failed={fail_count}")
+    skip_count = sum(1 for outcome in outcomes if outcome.status == SKIP_STATUS)
+    fail_count = len(outcomes) - ok_count - skip_count
+    print(
+        f"run: pass={pass_name} total={len(outcomes)} ok={ok_count} "
+        f"skipped={skip_count} failed={fail_count}"
+    )
 
     return outcomes, 0

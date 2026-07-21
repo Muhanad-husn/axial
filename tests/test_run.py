@@ -10,11 +10,25 @@ criterion gherkin as three scenarios:
      running pass raise its own declared error, with AXIAL_LLM_PROVIDER=stub:
      `axial run <pass> --worklist <worklist>` exits 0, attempts all three
      sources in worklist order, records the middle one FAIL with a short
-     reason, and records the first and third OK.
+     reason, and records the first and third as already done.
   2. A worklist path that does not exist: exits non-zero, prints a fatal
      error naming the unreadable worklist, and attempts no source.
   3. A pass name absent from the registry: exits non-zero, prints a fatal
      error naming the unknown pass, and attempts no source.
+
+Slice-02 status-value update (one-line justification, CLAUDE.local.md: tests
+are contracts, not locked artifacts -- an edit needs a justification, not a
+rewrite)
+-----------------------------------------------------------------------
+Scenario 1's first and third sources now show SKIP, not OK. Slice 02 gave
+`extract` a runner-level, PRE-invocation file-exists done-predicate reading
+the exact same `data/trees/<source_id>.json` location this test pre-places
+a fixture at (to keep the test fast -- see below); a source whose tree
+already exists before `axial run` is even called is now, correctly and by
+design, "already done" and skipped, not re-run. This is not a bypass of the
+scenario's own intent (failure isolation: the middle source's failure does
+not stop the loop from reaching the third) -- SKIP still proves the loop
+reached and recorded every source; only the specific status label changed.
 
 Pass choice -- `extract`, not `tag`/`envelope`/etc.
 -----------------------------------------------------------------------
@@ -197,8 +211,10 @@ def test_middle_source_failure_is_isolated_and_loop_continues(isolated_vault_roo
     row_2 = table[str(SOURCE_2_FAIL)]
     row_3 = table[str(SOURCE_3_OK)]
 
-    assert row_1["status"] == "OK", f"expected the first source OK, got row: {row_1!r}"
-    assert row_3["status"] == "OK", f"expected the third source OK, got row: {row_3!r}"
+    # SKIP, not OK -- see the module docstring's slice-02 note: the
+    # pre-placed tree fixture is now this pass's own already-done signal.
+    assert row_1["status"] == "SKIP", f"expected the first source SKIP, got row: {row_1!r}"
+    assert row_3["status"] == "SKIP", f"expected the third source SKIP, got row: {row_3!r}"
 
     assert row_2["status"] == "FAIL", f"expected the middle source FAIL, got row: {row_2!r}"
     assert row_2.get("reason", "").strip(), (

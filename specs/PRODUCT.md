@@ -505,7 +505,16 @@ The measured figures above come from the simulated gold set (DEC-29/DEC-32) and 
 - **P1-1** ~~Long-section handling: sections beyond a token threshold chunked across multiple calls with a coherence strategy (overlap window or recursive summary).~~ **SUPERSEDED by the P0-4 chunking redesign.** Deterministic long-section splitting was a band-aid on the LLM-echo chunker; the redesigned chunk stage (recursive/structural) bounds every unit by construction via its two-sided size band, dissolving the monster-section problem at its source. No longer live scope.
 - **P1-2** Cohen's / Krippendorff's κ in addition to raw agreement, per axis.
 - **P1-3** Ingestion log capturing per-source judgment calls (fallbacks used, ambiguous tags).
-- **P1-4** Batch/resume: re-running skips already-processed sources.
+- **P1-4** Batch/resume: re-running skips already-processed sources. **Landed
+  for a named worklist** as `axial run <pass> --worklist <file>` (issue #277):
+  a pass registry drives any registered per-source pass with per-source
+  failure isolation, and a single runner-owned resume ledger
+  (`data/logs/run/ledger.tsv`, keyed by `(pass, source_id)`) plus a
+  per-pass done-predicate mean a re-run skips every already-done source doing
+  zero pipeline work. `extract`/`envelope` use their own persisted-output
+  file as the done-signal; every other pass uses the ledger. Still open (a
+  later slice, `plans/run/README.md`): accepting the corpus glob as an
+  alternative to a named worklist, and an end-of-run summary.
 
 ### Future Considerations (P2 — design for, don't build)
 
