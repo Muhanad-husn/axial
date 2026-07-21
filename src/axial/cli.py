@@ -35,6 +35,7 @@ from axial.ingest import run_ingest
 from axial.intake import IntakeError, intake
 from axial.pipeline_ready import PipelineReadyError, run_pipeline_ready
 from axial.polity_canonical import PolityCanonicalError, run_polity_build, run_polity_report
+from axial.reconcile import ReconcileError, format_gc_report, run_gc
 from axial.run import PASS_REGISTRY, run_pass
 from axial.schema import SchemaError, load_schema
 from axial.tag import DEFAULT_DOMAIN_DIR, TagError, run_tag
@@ -345,6 +346,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pin_write_parser.add_argument(
         "name", help="pin name, e.g. 'baseline' -> evals/corpus_pin/baseline.json"
+    )
+
+    reconcile_parser = subparsers.add_parser(
+        "reconcile", help="safe reconciliation/GC for orphaned derived artifacts (issue #291)"
+    )
+    reconcile_subparsers = reconcile_parser.add_subparsers(dest="reconcile_command")
+
+    reconcile_gc_parser = reconcile_subparsers.add_parser(
+        "gc",
+        help=(
+            "list derived artifacts (trees/envelopes/chunks/tags/artifacts/"
+            "xref/vault) whose source_id has no live file in data/sources/; "
+            "dry run by default (nothing removed), --apply removes them after "
+            "confirmation (or --yes for non-interactive) and writes a paths/"
+            "source_ids-only removal log under data/logs/reconcile/"
+        ),
+    )
+    reconcile_gc_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="remove the listed orphaned files (after confirmation)",
+    )
+    reconcile_gc_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="auto-confirm removal under --apply, for non-interactive runs",
     )
 
     return parser
@@ -659,6 +686,17 @@ def _pin_write(name: str) -> int:
     return 0
 
 
+def _reconcile_gc(apply: bool, yes: bool) -> int:
+    try:
+        result = run_gc(apply=apply, yes=yes)
+    except ReconcileError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_gc_report(result))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -735,6 +773,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "pin" and args.pin_command == "write":
         return _pin_write(args.name)
+
+    if args.command == "reconcile" and args.reconcile_command == "gc":
+        return _reconcile_gc(args.apply, args.yes)
 
     parser.print_help()
     return 0
