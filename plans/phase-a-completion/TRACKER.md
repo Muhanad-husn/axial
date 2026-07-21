@@ -28,7 +28,7 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 **Plan-ready:** ✅ = slice plan written · ✎ = fix-lane, no plan needed (build from the issue).
 
 ### Stage 0 — clean the shop (hygiene, parallel with stage 1)
-- ☐ 0a #291 — safe GC for orphaned derived artifacts (`reconcile.py`, new) — plan ✅ `plans/reconcile/` (1 slice, dry-run-default safety)
+- ◐ 0a #291 — safe GC for orphaned derived artifacts (`reconcile.py`, new) — **PR #301**, awaiting founder approval
 - ☐ 0b #270 — structured run logging — plan ✅ `plans/run-logging/` (2 slices; **decided: slice, not fix-lane**; slice 02 is the serialization point)
 - ☐ 0c #289 — verify gold-sheet dropdowns (`gold.py`) — ✎ fix-lane, verify-first
 
