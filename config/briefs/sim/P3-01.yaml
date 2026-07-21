@@ -1,0 +1,8 @@
+# origin: simulated
+# model: GPT-5.6 Terra
+# persona: P3
+# reasoning_mode_confirmed: extended-thinking
+# date: 2026-07-21
+# path_version: sim-v1
+case: "Syria, late Ottoman period to 1946"
+request: "Was Syrian nationhood assembled chiefly by modern political organization and state-making, or did it draw decisive symbolic resources from pre-existing ethno-historical attachments?"

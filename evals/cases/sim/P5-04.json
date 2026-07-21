@@ -1,0 +1,37 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "claude-opus-4-8",
+    "persona": "P5",
+    "reasoning_mode_confirmed": "extended-thinking",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P5-04",
+  "question": "Do the pro-regime sectarian massacres of 2012-2013 resolve better under control (Kalyvas), delegation (Ungor), or identity-and-discourse (Elcheroth and Reicher; Chouliaraki), and can the lenses be integrated?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "kalyvas-logic-of-violence-in-civil-war-0b5817b2642e",
+    "ugur-paramilitarism-ae5701dcc706",
+    "elcheroth-reicher-identity-violence-and-power-78f0cccef5b9",
+    "chouliaraki-wronged-weaponization-of-victimhood-91e7fc84f05c",
+    "vignal-war-torn-c7005c2bf8ef"
+  ],
+  "rubric": [
+    "States, for a single massacre or a defined class of them, what each lens predicts and what each would count as confirming evidence.",
+    "Shows where the lenses genuinely contradict on the same event, rather than listing them as complementary.",
+    "Commits to which lens carries the primary causal weight for that event and defends the commitment, giving a mechanism rather than calling it a tragedy.",
+    "Handles delegation correctly: the perpetrators were militias acting in the state's shadow (Ungor), so any control account (Kalyvas) must specify whose control and at what level.",
+    "Addresses whether identity-based victim-selection is compatible with Kalyvas's selective/indiscriminate scheme or breaks it.",
+    "Says explicitly whether integration is possible or whether one lens absorbs the others, and at what analytic cost.",
+    "Discloses the evidentiary limits on the specific events invoked."
+  ],
+  "instant_dismissal_criteria": [
+    "Calls the massacres a tragedy or senseless violence and stops.",
+    "Lists the three lenses as complementary without ever forcing the contradiction.",
+    "Refuses to commit to a primary mechanism.",
+    "Treats the militia perpetrators as outside or against the state."
+  ],
+  "notes": "This is the sharpest case: the lenses were built to contradict here. The failure mode I most expect is fluent both-and synthesis that never names the point where control and identity give opposite readings of who died and why."
+}

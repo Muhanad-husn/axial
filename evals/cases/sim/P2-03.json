@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "GLM 5.2",
+    "persona": "P2",
+    "reasoning_mode_confirmed": "extended-thinking",
+    "date": "2026-05-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P2-03",
+  "question": "Did the war economy and fragmentation of authority permanently destroy Syrian state capacity, or did it adapt and consolidate despotic power in regime-held areas?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "vignal-war-torn-c7005c2bf8ef",
+    "heydemann-war-institutions-social-change-66701ffbb36c",
+    "do-civil-wars-make-or-break-states-4faeb528594d",
+    "ugur-paramilitarism-ae5701dcc706"
+  ],
+  "rubric": [
+    "Must engage with Vignal's concept of the 'unmaking' of Syria.",
+    "Must analyze the war economy as a reconfiguration, not just a destruction, of networks of privilege.",
+    "Must address the role of paramilitarism (Üngör) in extending or replacing state authority.",
+    "Must apply Malešević's argument on whether civil wars make or break states to the Syrian case."
+  ],
+  "instant_dismissal_criteria": [
+    "Treating 'the state' as a single, coherent actor throughout the war.",
+    "Assuming war economy dynamics are purely predatory and not also constitutive of new governance structures.",
+    "Ignoring the role of paramilitaries and local militias."
+  ],
+  "notes": "The disagreement is between state-collapse narratives and authoritarian-resilience narratives. A strong answer must show how the war economy restructured, rather than simply destroyed, the regime's social base."
+}

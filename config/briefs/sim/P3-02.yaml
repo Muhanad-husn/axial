@@ -1,0 +1,8 @@
+# origin: simulated
+# model: GPT-5.6 Terra
+# persona: P3
+# reasoning_mode_confirmed: extended-thinking
+# date: 2026-07-21
+# path_version: sim-v1
+case: "French Mandate Syria, 1920–1946"
+request: "Through which administrative and representative practices did religious communities become politically consequential minorities, and which of those practices survived into post-mandate Syrian statehood?"

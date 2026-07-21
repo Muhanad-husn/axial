@@ -1,0 +1,10 @@
+# origin: simulated
+# model: Gemini 3.1 Pro
+# persona: P1
+# reasoning_mode_confirmed: not-stated-in-output
+# date: 2026-07-21
+# path_version: sim-v1
+# note: source output was prose; `case` set to the polity anchor per PHASE-B 7.1
+# theme: Ideological Power and the Weaponization of Victimhood
+case: "Syria, 2011-2024"
+request: "How does the systemic weaponization of victimhood (Chouliaraki) function as a distinct ideological power network (Mann) to sustain intense military mobilization in a fragmented quasi-state? By what specific micro-sociological mechanisms do competing armed factions mobilize hatred and demobilize internal dissent (Elcheroth & Reicher) to forge exclusive ethno-symbolic solidarities (Smith) in the absence of centralized state infrastructure?"

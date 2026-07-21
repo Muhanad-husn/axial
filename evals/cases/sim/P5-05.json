@@ -1,0 +1,35 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "claude-opus-4-8",
+    "persona": "P5",
+    "reasoning_mode_confirmed": "extended-thinking",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P5-05",
+  "question": "Does Agamben's state of exception explain Ba'athist and wartime rule in Syria, or does it relabel a sociology that Batatu, Ayubi, and Mann explain better?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "agamben-state-of-exception-b22edc40e0fc",
+    "ayubi-over-stating-the-arab-state-16fd6a2e503f",
+    "batatu-syrias-peasantry-598624067df3",
+    "mann-sources-of-social-power-v2-ec759675dcbd"
+  ],
+  "rubric": [
+    "Reconstructs Agamben's claim precisely: the exception as a suspension of law that becomes the permanent normal technique of government, producing a zone where law and its absence are indistinct.",
+    "Confronts the literal 1963-2011 Emergency Law as the strongest case for the frame, and reads the wartime period as its extension rather than a fresh start.",
+    "Tests the frame against the sociological accounts: the regime's specific social base (Batatu), the fierce-but-weak, despotic-without-infrastructural-depth reading (Ayubi), and Mann's infrastructural/despotic distinction.",
+    "Identifies at least one thing the juridical lens explains that the sociological one does not, and at least one thing it merely relabels.",
+    "Keeps the concept doing specific work or drops it, rather than using exception as an all-purpose word for authoritarianism.",
+    "States its own confidence honestly, given that this is a contest of interpretive frames and not a factual dispute."
+  ],
+  "instant_dismissal_criteria": [
+    "Deploys state of exception as a synonym for repression with no juridical specificity.",
+    "Ignores the actual 1963-2011 Emergency Law when it is the obvious test.",
+    "Treats the philosophical and sociological accounts as interchangeable, or never adjudicates between them.",
+    "Claims false precision about which frame is correct when the disagreement is interpretive."
+  ],
+  "notes": "The honest difficulty here is that the frame partly fits and partly relabels. A system should struggle to say precisely where Agamben adds causal force over Mann and Ayubi, and should resist the pull to either canonize or dismiss the concept wholesale."
+}

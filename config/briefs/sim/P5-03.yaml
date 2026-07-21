@@ -1,0 +1,8 @@
+# origin: simulated
+# model: claude-opus-4-8
+# persona: P5
+# reasoning_mode_confirmed: extended-thinking
+# date: 2026-07-21
+# path_version: sim-v1
+case: "Syria, 1963-2024"
+request: "Syria governed under Emergency Law from 1963 to 2011 and then under open wartime exception. Does Agamben's account of the exception that becomes the permanent technique of rule explain the logic of Ba'athist and wartime government, or does it abstract away the social base and infrastructural specifics that Batatu, Ayubi, and Mann treat as the real explanation of how the regime governed and killed? Identify where the juridical lens adds causal force and where it only relabels sociology."

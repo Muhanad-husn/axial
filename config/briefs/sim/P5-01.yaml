@@ -1,0 +1,8 @@
+# origin: simulated
+# model: claude-opus-4-8
+# persona: P5
+# reasoning_mode_confirmed: extended-thinking
+# date: 2026-07-21
+# path_version: sim-v1
+case: "Syria, 2011-2024"
+request: "Kalyvas predicts selective violence where an armed actor holds dominant but incomplete control and indiscriminate violence where its control is low. Map the observed distribution of regime and pro-regime militia violence, from siege and aerial bombardment to close-quarters sectarian killing, against Syria's zones of territorial control. Does the control gradient predict where selective versus indiscriminate violence occurred, or does a sectarian identity logic cut across it? Name the massacres that are the decisive test cases either way."

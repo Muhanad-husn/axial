@@ -1,0 +1,10 @@
+# origin: simulated
+# model: Gemini 3.1 Pro
+# persona: P1
+# reasoning_mode_confirmed: not-stated-in-output
+# date: 2026-07-21
+# path_version: sim-v1
+# note: source output was prose; `case` set to the polity anchor per PHASE-B 7.1
+# theme: Waves of War and Agrarian Minoritarianism
+case: "Syria, 1920-2011"
+request: "In what specific organizational ways do the French colonial institutionalization of minority identities (White) and the class-based, agrarian mobility structures of the lesser rural notables (Batatu) intersect with Wimmer's 'waves of war' thesis? How did these pre-existing networks of privilege (Heydemann) utilize ethno-nationalist and sectarian boundaries to ensure the organizational cohesion of the state's despotic core against a peri-urban opposition?"

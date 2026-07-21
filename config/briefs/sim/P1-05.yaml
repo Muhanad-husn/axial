@@ -1,0 +1,10 @@
+# origin: simulated
+# model: Gemini 3.1 Pro
+# persona: P1
+# reasoning_mode_confirmed: not-stated-in-output
+# date: 2026-07-21
+# path_version: sim-v1
+# note: source output was prose; `case` set to the polity anchor per PHASE-B 7.1
+# theme: The State of Exception and Divisible Sovereignty
+case: "Syria and the Levant, 2011-2024"
+request: "Does the durable proliferation of highly structured unrecognized states (Caspersen) and the permanent normalization of the state of exception by the central government (Agamben) render the concept of absolute, indivisible sovereignty analytically obsolete in the Levant? How do international norms of statebuilding and recognition (Zaum, Jackson) paradoxically entrench this fractured equilibrium and prevent empirical state consolidation (Kandiah)?"

@@ -1,0 +1,30 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "claude-opus-4-8",
+    "persona": "P5",
+    "reasoning_mode_confirmed": "extended-thinking",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P5-02",
+  "question": "Were the shabbiha and the National Defence Forces an extension of the state's coercive capacity (delegation) or evidence of the state's retreat from violence (absence)?",
+  "answer_kind": "expected_answer",
+  "expected_answer": "A strong answer commits to delegation over absence and shows it. The shabbiha and the later National Defence Forces were state-sanctioned instruments operating in the regime's shadow (Ungor): recruited through and rewarded by regime-linked networks, licensed to kill in ways the regular apparatus wanted performed but preferred to keep deniable. It then refuses the false binary by distinguishing delegation-as-strategy, the deliberate outsourcing of identity-coded, deniable violence to lower the political and infrastructural cost of repression, from the later drift in which delegated violence fragmented into war-economy predation the regime tolerated but no longer fully directed. Mann's distinction does the analytic work: militia delegation can raise the regime's despotic reach while signalling infrastructural thinness, so delegation is not the opposite of state power but a particular, cheap, and dangerous form of it. Batatu and Ayubi anchor why: a regime resting on a narrow social base and a fierce-but-shallow apparatus reaches for delegated coercion precisely because deep infrastructural penetration was never there. A strong answer names the evidence that would separate strategy from decay, chains of command and payment, the timing and meaning of formalization into the NDF, and whether militias were disciplined when they acted against regime interest, and it states where that evidence is thin.",
+  "required_citation_source_ids": [
+    "ugur-paramilitarism-ae5701dcc706",
+    "mann-sources-of-social-power-v2-ec759675dcbd",
+    "mann-sources-of-social-power-v4-1b7e828e0199",
+    "malesevic-sociology-of-war-and-violence-fd2cbe41384f",
+    "batatu-syrias-peasantry-598624067df3",
+    "ayubi-over-stating-the-arab-state-16fd6a2e503f"
+  ],
+  "rubric": [],
+  "instant_dismissal_criteria": [
+    "Treats the militias as outside or against the state, or as proof the state had collapsed.",
+    "Reads militia violence as spontaneous communal hatred with no organizational form.",
+    "Conflates despotic reach with infrastructural power.",
+    "Offers both delegation and decay without specifying a sequence or the evidence that would distinguish them."
+  ],
+  "notes": "The system should struggle because absence is the intuitive reading of militias and the corpus (Ungor, Mann) says the opposite. Rewarding the delegation answer requires the tool to hold the Mann distinction, not just cite it."
+}

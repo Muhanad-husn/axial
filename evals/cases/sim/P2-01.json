@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "GLM 5.2",
+    "persona": "P2",
+    "reasoning_mode_confirmed": "extended-thinking",
+    "date": "2026-05-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P2-01",
+  "question": "Did the Ba'thist transition from populism to crony capitalism cause the rural defections that fueled the 2011 uprising, or were rural grievances a secondary factor to contingent political mobilization?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "batatu-syrias-peasantry-598624067df3",
+    "heydemann-networks-of-privilege-72a4a9a9b3b0",
+    "vignal-war-torn-c7005c2bf8ef",
+    "bayat-revolution-without-revolutionaries-ce6bb0643cfb"
+  ],
+  "rubric": [
+    "Must trace the social base of Ba'thist rule from Batatu's analysis of the peasantry and lesser rural notables.",
+    "Must link Heydemann's 'networks of privilege' to the dismantling of populist economic structures.",
+    "Must specify which rural classes defected in 2011 and why, rather than treating 'the peasantry' as a monolithic actor.",
+    "Must engage with Vignal's analysis of the spatial and social dynamics of the uprising."
+  ],
+  "instant_dismissal_criteria": [
+    "Treating the 2011 uprising as a purely sectarian event.",
+    "Ignoring the rural political economy and class dynamics.",
+    "Assuming the opposition was a coherent actor from the start."
+  ],
+  "notes": "The real scholarly disagreement sits between structural accounts of rural alienation (Batatu, Heydemann) and contingent accounts of mobilization (Bayat)."
+}

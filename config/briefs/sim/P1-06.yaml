@@ -1,0 +1,10 @@
+# origin: simulated
+# model: Gemini 3.1 Pro
+# persona: P1
+# reasoning_mode_confirmed: not-stated-in-output
+# date: 2026-07-21
+# path_version: sim-v1
+# note: source output was prose; `case` set to the polity anchor per PHASE-B 7.1
+# theme: Civil War as Infrastructural Disarticulation
+case: "Syria, 2011-2024"
+request: "Can the protracted Syrian civil war be understood not as a delayed, violent state-building enterprise analogous to early modern Europe, but as a permanent, violent disarticulation of infrastructural capacity, as theorized by Malesevic? What are the empirical indicators that the monopoly on legitimate violence has been irrevocably lost to a decentralized network of warlords and external patrons?"

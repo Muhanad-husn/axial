@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "GLM 5.2",
+    "persona": "P2",
+    "reasoning_mode_confirmed": "extended-thinking",
+    "date": "2026-05-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P2-02",
+  "question": "Is the Syrian regime 'strong' or 'weak', and does the literature on authoritarian resilience adequately capture its institutional thinness?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "ayubi-over-stating-the-arab-state-16fd6a2e503f",
+    "mann-sources-of-social-power-v2-ec759675dcbd",
+    "heydemann-networks-of-privilege-72a4a9a9b3b0",
+    "state-legitimacy-capacity-syrian-conflict-454c87b22e16"
+  ],
+  "rubric": [
+    "Must distinguish between despotic power (coercive capacity) and infrastructural power (institutional reach), using Mann's framework.",
+    "Must apply Ayubi's concept of the 'over-stated' Arab state to Syria.",
+    "Must analyze how 'networks of privilege' (Heydemann) function as a substitute for formal institutional strength.",
+    "Must specify capacity for what, where, and over whom, rather than a binary strong/weak assessment."
+  ],
+  "instant_dismissal_criteria": [
+    "Importing a generic civil-war or state-failure model with no Syrian social structure underneath it.",
+    "Treating the regime as nothing but repression.",
+    "Conflating despotic power with infrastructural power."
+  ],
+  "notes": "The binary of 'strong vs weak' is the core analytical tension. A strong answer must resolve it by disaggregating state capacity."
+}

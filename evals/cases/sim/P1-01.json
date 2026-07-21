@@ -1,0 +1,25 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "Gemini 3.1 Pro",
+    "persona": "P1",
+    "reasoning_mode_confirmed": "not-stated-in-output",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P1-01",
+  "question": "The Viability of the Bellicist Thesis in Modern Civil Conflict",
+  "answer_kind": "expected_answer",
+  "expected_answer": "A strong answer must meticulously map the specific mechanisms that prevent the coercive-extraction cycle from taking hold in the Syrian context. It must quantitatively and qualitatively demonstrate how the availability of massive external geopolitical rents, illicit smuggling networks, and diaspora funding allows state and non-state actors to wage protracted war without engaging in universal domestic taxation or societal bargaining, thereby explaining the active unmaking of bureaucratic capacity.",
+  "required_citation_source_ids": [
+    "tilly-from-mobilization-to-revolution-f908c910464c",
+    "do-civil-wars-make-or-break-states-4faeb528594d",
+    "heydemann-war-institutions-social-change-66701ffbb36c",
+    "vignal-war-torn-c7005c2bf8ef"
+  ],
+  "rubric": [],
+  "instant_dismissal_criteria": [
+    "Any analysis that attempts to borrow the Tillyan framework of 'state-building through war' and apply it to a contemporary civil war without explicitly measuring infrastructural capacity, or that argues the state is becoming 'stronger' merely because it survived a military challenge, will be dismissed on sight."
+  ],
+  "notes": "Where the real disagreement sits: The fundamental tension lies between Charles Tilly's classical assertion that the existential pressures of war drive the consolidation of state capacity and infrastructural power, versus Sinisa Malesevic's and Steven Heydemann's argument that modern intra-state wars, fueled by external rents, actively break states by unmooring the military apparatus from the civil bureaucracy."
+}
