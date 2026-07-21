@@ -25,7 +25,9 @@ Deterministic first, model second (§7.11):
 - **running headers/footers are stripped** before any text is read for
   judgment, so `tilly`'s contents heading -- which extracts as
   `viii Contents`, a folio stitched to the running head -- reaches the
-  model as `Contents`.
+  model as `Contents`. The **opening pages are shown a second time as
+  printed** (§7.13, issue #316), because a book whose title runs as its
+  own header loses that title off its own title page to the strip.
 
 The earlier deterministic two-signal design (a printed-contents page-extent
 ratio with a back-matter-density fallback) was measured and removed in
@@ -61,6 +63,15 @@ FRONT_MATTER_PAGES = 20
 # complete short work (ends with a reference list / index) from a fragment
 # that breaks off mid-argument.
 TAIL_PAGES = 3
+
+# Leading pages shown to the model a second time, exactly as extracted, in
+# addition to the cleaned windows below. The half title, title page and
+# copyright page live here. The running-furniture strip deletes a book's main
+# title from its own title page whenever that title also runs as a header --
+# measured over the corpus on 7 of the 30 sources, and on `ugur-paramilitarism`
+# and `chouliaraki` the printed main title then reached the model on no page at
+# all, so the read could only ever return the subtitle (issue #316).
+AS_PRINTED_PAGES = 4
 
 # How many sampled pages a head/foot line must recur on before it counts as
 # running furniture (a running head, running title, or top-of-page folio)
@@ -154,6 +165,25 @@ def _window(page_texts: list[str]) -> tuple[list[str], list[str]]:
     return front, tail
 
 
+def _as_printed(page_texts: list[str]) -> str:
+    """The first `AS_PRINTED_PAGES` pages that carry text, rendered exactly
+    as extracted -- no furniture stripping (§7.13, issue #316).
+
+    The strip is right for the holdings judgment and wrong for the
+    bibliographic read: a title that runs as a header recurs often enough to
+    be counted as furniture, and is then removed from the title page itself.
+    Blank pages are skipped rather than counted, since a half title is
+    routinely followed by a blank leaf."""
+    blocks: list[str] = []
+    for index, text in enumerate(page_texts):
+        if not text.strip():
+            continue
+        blocks.append(f"[page {index + 1}]\n{text.strip()}")
+        if len(blocks) >= AS_PRINTED_PAGES:
+            break
+    return "\n\n".join(blocks)
+
+
 def _render(pages: list[str], first_index: int) -> str:
     blocks = []
     for offset, text in enumerate(pages):
@@ -186,7 +216,10 @@ def compose_prompt(
 ) -> str:
     """Assemble the single combined prompt: window `page_texts` down to the
     front matter and the tail, strip running furniture from those pages,
-    and render them with their physical page numbers.
+    and render them with their physical page numbers. The opening pages are
+    ALSO rendered as printed, unstripped (`_as_printed`, issue #316): the
+    strip serves the holdings judgment and starves the title-page read,
+    which needs the title page as the book prints it.
 
     The model is asked for one judgment covering document kind, claimed
     extent and coverage together (§7.11), and is told to answer "complete"
@@ -207,7 +240,10 @@ def compose_prompt(
         if physical_pages is not None
         else "unknown (this file format exposes no page count)"
     )
-    sections = [f"=== FRONT MATTER ===\n{_render(front, 0)}"]
+    sections = [
+        f"=== OPENING PAGES, AS PRINTED (nothing stripped) ===\n{_as_printed(page_texts)}",
+        f"=== FRONT MATTER ===\n{_render(front, 0)}",
+    ]
     if tail:
         sections.append(f"=== FINAL PAGES ===\n{_render(tail, len(page_texts) - len(tail))}")
 
@@ -230,7 +266,7 @@ Decide these together, from the supplied text and the physical extent only. Do n
 1. What kind of document this is: "book", "research_paper", "chapter_offprint", or "fragment".
 2. What extent the document claims for itself, if it states one: the last page number in a printed table of contents, a title page naming a volume of a set, a stated page range. Give a short value ("816 pages", "volume 2 of 4", "pp. 45-72") and what stated it ("printed contents page", "title page"). Use null for both when the document states no extent.
 3. Whether the file covers that claimed extent.
-4. What the document's own title page / front matter states -- NOT the embedded metadata claim above -- as its title, its author(s), and its publication year (typically next to a copyright or "first published" marker). Use null for any of these the front matter itself does not state. Never invent a value the front matter does not carry, and never copy this answer from the embedded metadata claim above.
+4. What the document's own title page / front matter states -- NOT the embedded metadata claim above -- as its title, its author(s), and its publication year (typically next to a copyright or "first published" marker). A title page routinely prints ONE title across two lines, a main title above its subtitle, with no punctuation joining them; read those lines together as a single title, main title first, joined with ": ". Answering with the subtitle alone, or with the main title alone, is wrong. Do not sweep in the neighbouring lines that are not part of the title: the author, a series name, the publisher, an edition or volume statement. Use null for any of these the front matter itself does not state. Never invent a value the front matter does not carry, and never copy this answer from the embedded metadata claim above.
 5. Whether the embedded metadata claim above plausibly describes THIS document: does its stated Author name a real author of this work, and does its stated Title name this work? A wrong or unrelated author/title -- metadata recycled from a different file during conversion -- answers false. Use null for a field the embedded metadata claimed nothing for (there is nothing to judge).
 
 Rules:
@@ -241,7 +277,7 @@ Rules:
 - When the evidence is absent, weak, or ambiguous, answer "complete".
 
 Return ONLY this JSON object, no prose and no code fence:
-{{"document_kind": "book|research_paper|chapter_offprint|fragment", "claimed_extent": "<short value or null>", "claimed_extent_stated_by": "<what stated it, or null>", "verdict": "complete|partial", "reason": "<one or two short sentences, no quoted source text>", "title_page_title": "<title stated on the title page, or null>", "title_page_author": "<author(s) stated on the title page, or null>", "title_page_date": "<publication year stated on the title page, or null>", "author_metadata_matches": true|false|null, "title_metadata_matches": true|false|null}}"""
+{{"document_kind": "book|research_paper|chapter_offprint|fragment", "claimed_extent": "<short value or null>", "claimed_extent_stated_by": "<what stated it, or null>", "verdict": "complete|partial", "reason": "<one or two short sentences, no quoted source text>", "title_page_title": "<the full title stated on the title page -- main title and subtitle together -- or null>", "title_page_author": "<author(s) stated on the title page, or null>", "title_page_date": "<publication year stated on the title page, or null>", "author_metadata_matches": true|false|null, "title_metadata_matches": true|false|null}}"""
 
 
 def _reject_unusable_answer(raw: str) -> None:
