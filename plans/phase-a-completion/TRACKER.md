@@ -7,7 +7,7 @@ as slices land. Issues remain the system of record; this is the map over them.
 - **Branch:** `claude/phase-a-hybrid-tagging-sqx2xc`
 - **Plan:** [`README.md`](README.md) (stages, waves, deferred decisions)
 - **Decision:** `docs/DECISIONS.md` → DEC-32
-- **Last updated:** 2026-07-21 — wave 2: #305 and #306 merged; #307 held on gate-4, fix in flight
+- **Last updated:** 2026-07-21 — wave 2: #305, #306, #308 merged; #307 held on gate-4, fix in flight
 
 ## Read-me-first (30-second orient)
 
@@ -43,7 +43,7 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
 ### Stage 3 — runner — plan ✅ `plans/run/` (3 slices)
 - ✅ 3·01 #277 — runner core + pass registry + failure isolation (walking skeleton) — PR #300 merged `e8f9661`
-- ✅ 3·02 #277 — unified resume ledger + done-predicate (replaces today's 3 mechanisms) — PR #306 merged `6047450`. Ledger at `data/logs/run/ledger.tsv`, keyed `(pass, source_id)`; `extract`/`envelope` use a file-exists predicate, the rest use the ledger. **P1-4 is satisfied for a named worklist.**
+- ✅ 3·02 #277 — unified resume ledger + done-predicate (replaces today's 3 mechanisms) — PR #306 merged `6047450`, ledger relocated by PR #308. Ledger at `data/run/ledger.tsv`, keyed `(pass, source_id)`; `extract`/`envelope` use a file-exists predicate, the rest use the ledger. **P1-4 is satisfied for a named worklist** — the corpus glob is still slice 03.
 - ☐ 3·03 #277 — source-set inputs (worklist + corpus glob) + end-of-run summary
 
 ### Stage 4 — freeze (operation, not a slice) → **PHASE A CLOSES HERE**
@@ -77,14 +77,17 @@ the title page so a recycled-metadata PDF resolves to `unavailable` rather than 
 wrong value, and guard the `NullObject`. The 30-source table is the acceptance evidence,
 not the suite. Builder is in flight in `.claude/worktrees/intake-metadata-02`.
 
-Two notes carried forward from the merged lanes:
+One note carried forward from the merged lanes:
 
 - **#306 edited a locked slice-01 test** (`tests/test_run.py`, `OK` → `SKIP` on two
   sources) — correct, since the file-exists predicate now reads the fixtures that test
   pre-places, but no source in *that* test exercises the success path end to end any more;
   `tests/test_run_resume.py` covers it instead.
-- **#306's ledger sits at `data/logs/run/ledger.tsv`**, beside the per-run
-  `data/logs/<date>-<name>/` dirs, though it is a cross-run artifact. Cheap to move.
+
+*(Resolved: the ledger's placement under `data/logs/` — moved to `data/run/` by PR #308,
+merged. `data/logs/` is one directory per run; the ledger outlives every run and is read
+at the start of the next one, so it is runner state, not a log. No migration was needed —
+nothing had been written to disk yet.)*
 
 Still held back: **#270 slice 02** (fans out into `envelope`/`tag`/`eval` — the one
 real serialization point; hold until the intake-metadata and tag lanes settle),
