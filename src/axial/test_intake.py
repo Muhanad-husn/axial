@@ -1,5 +1,6 @@
 """Inner unit tests for the axial intake module (issue #13, slice 01)."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -480,3 +481,101 @@ def test_intake_default_source_meta_dir_is_isolated_by_the_autouse_fixture(tmp_p
 
     REPO_DEFAULT = Path("data/source_meta")
     assert intake_mod.SOURCE_META_DIR != REPO_DEFAULT
+
+
+# =============================================================================
+# The once-per-source judgment marker (issue #303, §7.12): the record says
+# whether the §7.11/§7.13 model judgment has been made, so the ingest path
+# pays for it once and reads it back afterwards.
+# =============================================================================
+
+
+class TestHoldingsJudged:
+    def test_a_record_marked_checked_is_judged(self, tmp_path):
+        from axial.intake import HOLDINGS_CHECKED, holdings_judged
+
+        (tmp_path / "some-id.json").write_text(
+            json.dumps({HOLDINGS_CHECKED: True}), encoding="utf-8"
+        )
+
+        assert holdings_judged("some-id", tmp_path) is True
+
+    def test_a_record_from_before_the_marker_existed_is_not_judged(self, tmp_path):
+        """A record written before this slice carries a `holdings_flag` of
+        null and no marker at all. That is "never judged", not "judged
+        complete" -- the whole distinction the marker exists to make."""
+        from axial.intake import holdings_judged
+
+        (tmp_path / "some-id.json").write_text(
+            json.dumps({"holdings_flag": None}), encoding="utf-8"
+        )
+
+        assert holdings_judged("some-id", tmp_path) is False
+
+    def test_no_record_is_not_judged(self, tmp_path):
+        from axial.intake import holdings_judged
+
+        assert holdings_judged("some-id", tmp_path) is False
+
+    def test_an_unreadable_record_is_not_judged(self, tmp_path):
+        from axial.intake import holdings_judged
+
+        (tmp_path / "some-id.json").write_text("{not json", encoding="utf-8")
+
+        assert holdings_judged("some-id", tmp_path) is False
+
+
+def test_intake_with_a_client_records_the_judgment_as_made(tmp_path):
+    from axial.intake import HOLDINGS_CHECKED, intake, source_meta_path
+    from axial.envelope import compute_source_id
+
+    intake(TEXT_LAYER_PDF, client=_StubHoldingsClient(), source_meta_dir=tmp_path)
+
+    record_path = source_meta_path(compute_source_id(TEXT_LAYER_PDF), tmp_path)
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record[HOLDINGS_CHECKED] is True
+
+
+def test_intake_without_a_client_records_the_judgment_as_not_made(tmp_path):
+    from axial.intake import HOLDINGS_CHECKED, intake, source_meta_path
+    from axial.envelope import compute_source_id
+
+    intake(TEXT_LAYER_PDF, source_meta_dir=tmp_path)
+
+    record_path = source_meta_path(compute_source_id(TEXT_LAYER_PDF), tmp_path)
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record[HOLDINGS_CHECKED] is False
+
+
+def test_a_client_less_intake_never_unmarks_an_existing_judgment(tmp_path):
+    """`extract()` re-validates a source on every pass. A pass that does not
+    re-run the judgment must not erase the record of one already made, or
+    the source would be re-judged forever (§7.12, the same preservation rule
+    `holdings_flag` follows)."""
+    from axial.intake import HOLDINGS_CHECKED, intake, source_meta_path
+    from axial.envelope import compute_source_id
+
+    intake(TEXT_LAYER_PDF, client=_StubHoldingsClient(), source_meta_dir=tmp_path)
+    intake(TEXT_LAYER_PDF, source_meta_dir=tmp_path)
+
+    record_path = source_meta_path(compute_source_id(TEXT_LAYER_PDF), tmp_path)
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record[HOLDINGS_CHECKED] is True
+
+
+def test_intake_with_a_client_that_cannot_answer_records_no_judgment(tmp_path):
+    """A model call that fails is not a judgment: caching it as one would
+    leave the source unchecked forever (issue #303)."""
+    from axial.llm import LLMError
+    from axial.intake import HOLDINGS_CHECKED, intake, source_meta_path
+    from axial.envelope import compute_source_id
+
+    class _FailingClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            raise LLMError("provider unavailable")
+
+    intake(TEXT_LAYER_PDF, client=_FailingClient(), source_meta_dir=tmp_path)
+
+    record_path = source_meta_path(compute_source_id(TEXT_LAYER_PDF), tmp_path)
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record[HOLDINGS_CHECKED] is False

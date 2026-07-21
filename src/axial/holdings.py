@@ -357,12 +357,19 @@ def probe(
     embedded-metadata claim for the model to cross-check against what it
     actually reads on the title page.
 
-    Always returns a dict with two keys:
+    Always returns a dict with three keys:
     - `"holdings_flag"`: the §7.11 flag dict for a holding judged partial,
       or `None` (unchanged shape/semantics from before this call carried a
       second purpose).
     - `"title_page"`: the §7.13 reading, see `_title_page_from`/
       `_empty_title_page`.
+    - `"answered"`: whether a usable answer actually came back. `None`/no
+      flag is not evidence that the judgment was made -- an empty text
+      layer, a failed call, or an unreadable answer produces exactly the
+      same "nothing read" shape as a document judged complete. The caller
+      persisting the judgment (`axial.intake`, §7.12) needs to tell those
+      apart, or a transient failure would be cached as a judgment and the
+      source would never be checked again (issue #303).
 
     Reads neither `data/trees/` nor `data/envelopes/`. Never raises. A
     failed or unparseable model call degrades to "no flag, nothing read"
@@ -370,7 +377,7 @@ def probe(
     the 0-false-positive bar forbids guessing either half of the answer it
     could not read.
     """
-    no_read = {"holdings_flag": None, "title_page": _empty_title_page()}
+    no_read = {"holdings_flag": None, "title_page": _empty_title_page(), "answered": False}
     if not any(text.strip() for text in page_texts):
         return no_read
 
@@ -397,4 +404,5 @@ def probe(
     return {
         "holdings_flag": _flag_from(verdict, source_name, physical_pages),
         "title_page": _title_page_from(verdict),
+        "answered": True,
     }

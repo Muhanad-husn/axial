@@ -52,6 +52,8 @@ from pathlib import Path
 
 import pytest
 
+from axial.llm import PROVIDER_ENV_VAR
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -168,6 +170,21 @@ def _snapshot(directory: Path) -> dict[Path, bytes]:
             if path.is_file():
                 snapshot[path] = path.read_bytes()
     return snapshot
+
+
+@pytest.fixture(autouse=True)
+def _offline_llm_provider_by_default(monkeypatch):
+    """Default every test in this suite (and every `axial` subprocess it
+    spawns, which inherits this environment) to the no-network stub
+    provider.
+
+    Issue #303 made `extract()` construct a client of its own for a source
+    whose §7.11/§7.13 judgment has not been made yet, so on a developer
+    machine that has real API credentials configured -- unlike CI, which has
+    none -- an ordinary test run over a fixture PDF would otherwise reach a
+    live provider. Tests that exercise provider resolution itself set or
+    clear `AXIAL_LLM_PROVIDER` explicitly and are unaffected."""
+    monkeypatch.setenv(PROVIDER_ENV_VAR, "stub")
 
 
 @pytest.fixture(autouse=True)

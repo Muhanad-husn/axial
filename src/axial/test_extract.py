@@ -350,3 +350,75 @@ def test_extract_does_not_fall_back_when_docling_succeeds(monkeypatch, capsys, t
     assert tree["children"], "expected the normal docling tree"
     captured = capsys.readouterr()
     assert "fallback" not in captured.err.lower()
+
+
+# =============================================================================
+# The ingest path's client seam (issue #303, §7.11/§7.12, §8 P0-1b): the
+# holdings/title-page judgment is paid for once per source and read from the
+# persisted record after. `extract()`'s end-to-end wiring is pinned by
+# tests/ingestion/test_holdings_wired_into_ingest.py; these cover the
+# predicate itself.
+# =============================================================================
+
+
+def test_intake_client_is_built_for_a_source_that_has_not_been_judged(monkeypatch, tmp_path):
+    import axial.extract as extract_mod
+    import axial.intake as intake_mod
+
+    monkeypatch.setattr(intake_mod, "SOURCE_META_DIR", tmp_path)
+    sentinel = object()
+    monkeypatch.setattr(extract_mod, "get_client", lambda *a, **k: sentinel)
+
+    assert extract_mod._intake_client(PROSE_AND_TABLE_PDF) is sentinel
+
+
+def test_no_intake_client_is_built_for_an_already_judged_source(monkeypatch, tmp_path):
+    import axial.extract as extract_mod
+    import axial.intake as intake_mod
+    from axial.envelope import compute_source_id
+
+    monkeypatch.setattr(intake_mod, "SOURCE_META_DIR", tmp_path)
+    source_id = compute_source_id(PROSE_AND_TABLE_PDF)
+    (tmp_path / f"{source_id}.json").write_text(
+        json.dumps({intake_mod.HOLDINGS_CHECKED: True}), encoding="utf-8"
+    )
+
+    def _must_not_be_called(*args, **kwargs):
+        raise AssertionError("an already-judged source must not construct a client")
+
+    monkeypatch.setattr(extract_mod, "get_client", _must_not_be_called)
+
+    assert extract_mod._intake_client(PROSE_AND_TABLE_PDF) is None
+
+
+def test_an_unbuildable_client_degrades_to_none_with_a_warning(monkeypatch, tmp_path, capsys):
+    """P0-1b: an unavailable model never halts intake or extraction."""
+    import axial.extract as extract_mod
+    import axial.intake as intake_mod
+    from axial.llm import LLMConfigError
+
+    monkeypatch.setattr(intake_mod, "SOURCE_META_DIR", tmp_path)
+
+    def _raise(*args, **kwargs):
+        raise LLMConfigError("no API key configured")
+
+    monkeypatch.setattr(extract_mod, "get_client", _raise)
+
+    assert extract_mod._intake_client(PROSE_AND_TABLE_PDF) is None
+    assert "unavailable" in capsys.readouterr().err
+
+
+def test_no_intake_client_is_built_for_a_missing_file(monkeypatch, tmp_path):
+    """intake() owns the typed error for an unreadable source; this predicate
+    just stays out of its way."""
+    import axial.extract as extract_mod
+    import axial.intake as intake_mod
+
+    monkeypatch.setattr(intake_mod, "SOURCE_META_DIR", tmp_path)
+
+    def _must_not_be_called(*args, **kwargs):
+        raise AssertionError("a missing file must not construct a client")
+
+    monkeypatch.setattr(extract_mod, "get_client", _must_not_be_called)
+
+    assert extract_mod._intake_client(FIXTURES_DIR / "does_not_exist.pdf") is None

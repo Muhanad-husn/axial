@@ -400,3 +400,43 @@ def test_a_missing_or_null_matches_verdict_is_none_not_false():
 
     assert result["title_page"]["author_matches_embedded"] is None
     assert result["title_page"]["title_matches_embedded"] is None
+
+
+# =============================================================================
+# `answered`: did a usable answer come back? (issue #303) -- the caller that
+# persists the judgment (§7.12) must not cache a failed call as a judgment.
+# =============================================================================
+
+
+def test_a_usable_answer_reports_answered():
+    from axial.holdings import probe
+
+    result = probe(
+        ["Contents\nIntroduction 1", "body"],
+        client=_RecordingClient(COMPLETE_ANSWER),
+        physical_pages=412,
+    )
+
+    assert result["answered"] is True
+
+
+def test_a_failed_call_reports_not_answered():
+    from axial.holdings import probe
+    from axial.llm import LLMError
+
+    class _FailingClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            raise LLMError("provider unavailable")
+
+    result = probe(["Contents\nIntroduction 1"], client=_FailingClient(), physical_pages=412)
+
+    assert result["answered"] is False
+    assert result["holdings_flag"] is None
+
+
+def test_an_empty_text_layer_reports_not_answered():
+    from axial.holdings import probe
+
+    result = probe(["   ", ""], client=_RecordingClient(COMPLETE_ANSWER), physical_pages=2)
+
+    assert result["answered"] is False
