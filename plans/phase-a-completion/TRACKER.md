@@ -7,7 +7,7 @@ as slices land. Issues remain the system of record; this is the map over them.
 - **Branch:** `claude/phase-a-hybrid-tagging-sqx2xc`
 - **Plan:** [`README.md`](README.md) (stages, waves, deferred decisions)
 - **Decision:** `docs/DECISIONS.md` → DEC-32
-- **Last updated:** 2026-07-21 — all slice plans written; implementation not started
+- **Last updated:** 2026-07-21 — stage 0a (#291), 2a (#294) and 3·01 (#277) merged; #284 in flight
 
 ## Read-me-first (30-second orient)
 
@@ -38,7 +38,7 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 - ☐ 1·03 #278 — **resolved: remove** author/date from the envelope (intake owns them); vault writer composes from both (needs 02). *No longer a Wave-1 independent slice.*
 
 ### Stage 2 — tag quality (before any re-tag)
-- ☐ 2a #294 — best-of-N voting on blind axes (`tag.py`; **predecessor of stage 5**) — plan ✅ `plans/tag/06-best-of-n.md` (**abstention = per-axis `abstained:true` + null primary, distinct from `not-applicable`**)
+- ✅ 2a #294 — best-of-N voting on blind axes (`tag.py`; **predecessor of stage 5**) — PR #302 merged `aa0607d`; abstention settled in **DEC-33** + spec §7.14
 - ☐ 2b #288 — report not-applicable / unlisted rates — ✎ fix-lane (attaches to #277 slice-03 summary)
 
 ### Stage 3 — runner — plan ✅ `plans/run/` (3 slices)

@@ -5,7 +5,7 @@
 - **GitHub issue:** #294
 - **Branch:** feat/tag/06-best-of-n
 - **Project directory:** .
-- **Status:** ☑ built (PR pending founder approval)
+- **Status:** ✅ merged
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
