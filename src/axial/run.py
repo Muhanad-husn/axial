@@ -16,7 +16,7 @@ bare-`except Exception` loop wrapper the postmortem named as root cause D --
 every registered pass's OWN declared error type is now what gets caught,
 never a catch-all.
 
-Slice 02 adds the runner's own resume ledger -- one TSV, `data/logs/run/
+Slice 02 adds the runner's own resume ledger -- one TSV, `data/run/
 ledger.tsv` by default, keyed by `(pass, source_id)` -- and a
 `done_predicate` field on each pass descriptor: a small function answering
 "is this source_id already done for this pass?" Before invoking a pass, the
@@ -74,7 +74,13 @@ SKIP_STATUS = "SKIP"
 # `axial.ingest.RESULTS_PATH`'s convention exactly, generalized from one
 # hard-wired pass to a `pass` column so every registered pass shares the
 # same file, keyed by `(pass, source_id)`.
-LEDGER_PATH = Path("data/logs/run/ledger.tsv")
+#
+# It lives under `data/run/`, not `data/logs/`, deliberately: `data/logs/`
+# holds one directory per run (`<date>-<run-name>/`, the run-logging
+# convention), and this is the opposite -- one file that outlives every run
+# and is read at the START of the next one. It is runner state, a peer of
+# `data/trees/` and `data/envelopes/`, not a log.
+LEDGER_PATH = Path("data/run/ledger.tsv")
 
 LEDGER_COLUMNS = ("pass", "source_path", "source_id", "status", "reason", "timestamp")
 

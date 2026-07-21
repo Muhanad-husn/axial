@@ -80,6 +80,7 @@ import subprocess
 from pathlib import Path
 
 from axial.envelope import compute_source_id
+from axial.run import LEDGER_PATH
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_EXTRACT = REPO_ROOT / "tests" / "fixtures" / "extract"
@@ -175,7 +176,12 @@ def _skip_lines(stdout: str) -> list[str]:
 
 
 def _ledger_path(root: Path) -> Path:
-    return root / "data" / "logs" / "run" / "ledger.tsv"
+    """`root`'s copy of the runner's default ledger, derived from the
+    constant rather than restated as a literal -- the path moved once
+    already (`data/logs/run/` -> `data/run/`) and this helper was the only
+    thing that had to be chased. Deriving it means a later move cannot
+    silently break this test's arrange step."""
+    return root / LEDGER_PATH
 
 
 def _read_ledger_rows(path: Path) -> list[dict[str, str]]:
