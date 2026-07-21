@@ -1,0 +1,8 @@
+# origin: simulated
+# model: claude-opus-4-8
+# persona: P5
+# reasoning_mode_confirmed: extended-thinking
+# date: 2026-07-21
+# path_version: sim-v1
+case: "Syria, 2011-2024"
+request: "The 2011 uprising was substantially cross-sectarian and civic at its outset and sectarianized over the following years. Using Elcheroth and Reicher on how power mobilizes hatred and demobilizes dissent, adjudicate between a top-down regime strategy of sectarianization, a bottom-up identity dynamic among mobilized populations, and a control-driven military logic in Kalyvas's sense. Which mechanism carries the explanatory weight, and what observable would distinguish them?"

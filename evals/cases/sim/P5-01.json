@@ -1,0 +1,36 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "claude-opus-4-8",
+    "persona": "P5",
+    "reasoning_mode_confirmed": "extended-thinking",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P5-01",
+  "question": "Does Kalyvas's control theory predict the distribution of selective versus indiscriminate violence across Syria, or does a sectarian identity logic override the control gradient?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "kalyvas-logic-of-violence-in-civil-war-0b5817b2642e",
+    "elcheroth-reicher-identity-violence-and-power-78f0cccef5b9",
+    "ugur-paramilitarism-ae5701dcc706",
+    "vignal-war-torn-c7005c2bf8ef",
+    "malesevic-sociology-of-war-and-violence-fd2cbe41384f"
+  ],
+  "rubric": [
+    "Uses selective and indiscriminate as Kalyvas defines them, each tied to a level of territorial control, not as loose or moral descriptors.",
+    "Establishes the actual map of control (regime-held, contested, opposition-held, fragmented) before asserting where each type of violence fell.",
+    "Handles the joint production of selective violence: denunciation and local score-settling under an armed actor's umbrella, not top-down killing only.",
+    "Confronts the hard residual head-on: sectarian massacres in which victims were chosen by identity category rather than demonstrated collaboration, and asks whether that is still selective in Kalyvas's sense or a different logic entirely.",
+    "Adjudicates control logic against identity logic (Elcheroth and Reicher) explicitly on at least one named massacre, rather than asserting that both matter.",
+    "States coverage honestly: which zones and periods the evidence actually covers, and where it is thin or absent."
+  ],
+  "instant_dismissal_criteria": [
+    "Reads the violence as senseless, irrational, or purely emotional.",
+    "Treats sectarian massacres as indiscriminate without first asking whether victims were selected by category.",
+    "Never specifies the map of territorial control the argument depends on.",
+    "Uses aggregate casualty figures as a proxy for the selective/indiscriminate distinction."
+  ],
+  "notes": "The decisive test is the sectarian massacre that falls in a zone where Kalyvas predicts selective violence but whose victim-selection logic is categorical, not collaboration-based. An honest answer should feel the strain there rather than smoothing it over."
+}

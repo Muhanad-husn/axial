@@ -1,0 +1,35 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "claude-opus-4-8",
+    "persona": "P5",
+    "reasoning_mode_confirmed": "extended-thinking",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P5-03",
+  "question": "How were victim and perpetrator categories produced and weaponized in the discourse of the Syrian war, and did that production do causal work in the violence or only narrate it?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "chouliaraki-wronged-weaponization-of-victimhood-91e7fc84f05c",
+    "elcheroth-reicher-identity-violence-and-power-78f0cccef5b9",
+    "white-emergence-of-minorities-middle-east-5f35a47d9657",
+    "wimmer-waves-of-war-a67941b77943"
+  ],
+  "rubric": [
+    "Treats victimhood as produced and contested in discourse (Chouliaraki), not as a fact read straight off the casualty count.",
+    "Distinguishes at least three rival victimhood claims (regime counter-terror, minority-protection, opposition martyrdom) and analyzes the work each did, without endorsing one at face value.",
+    "Holds the discursive production of victim and perpetrator categories apart from the material distribution of violence, and identifies where the two diverge.",
+    "Connects category-production to the deeper history of how minority and majority categories were constructed (White) rather than treating sect as primordial.",
+    "Specifies what would count as evidence that a victimhood claim licensed violence causally (mobilization or demobilization traceable to the claim) rather than followed it.",
+    "Discloses where the discourse record is one-sided, curated, or thin."
+  ],
+  "instant_dismissal_criteria": [
+    "Takes victim and perpetrator categories at face value with no analysis of how the discourse produced them.",
+    "Treats sectarian identity as primordial rather than historically constructed.",
+    "Infers that the side that claimed victimhood most loudly was the actual victim, or the reverse.",
+    "Collapses the discourse analysis into a body count."
+  ],
+  "notes": "The trap is symmetry. A lazy answer either flattens all victimhood claims as equally cynical or picks the sympathetic side. The hard task is separating production of the category from distribution of the violence and being honest that they can point different ways."
+}

@@ -1,0 +1,33 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "GPT-5.6 Terra",
+    "persona": "P3",
+    "reasoning_mode_confirmed": "extended-thinking",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P3-01",
+  "question": "Was Syrian nationhood assembled chiefly by modern political organization and state-making, or did it draw decisive symbolic resources from pre-existing ethno-historical attachments?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "smith-ethno-symbolism-and-nationalism-cba7b6f3dfba",
+    "malesevic-haugaard-gellner-contemporary-social-thought-323a2518e61b",
+    "malesevic-nation-states-and-nationalisms-5d3ec1809b12",
+    "beshara-origins-of-syrian-nationhood-8410a9059300",
+    "mann-sources-of-social-power-v2-ec759675dcbd"
+  ],
+  "rubric": [
+    "Separates the origin and persistence of cultural repertoires from the modern political organization of national membership",
+    "Specifies mechanisms and temporal sequence rather than treating modernism and ethno-symbolism as mutually exhaustive labels",
+    "Identifies which institutions and actors converted symbols, language, territory, or history into nationally salient categories",
+    "Explains what the Syrian evidence can test and what it cannot settle in the wider modernist versus ethno-symbolist disagreement"
+  ],
+  "instant_dismissal_criteria": [
+    "Posits an ancient Syrian nation without specifying historical carriers or institutional transmission",
+    "Treats nationalism as a purely cultural sentiment detached from organization and state power",
+    "Uses present-day territorial Syria as evidence of a continuous national identity"
+  ],
+  "notes": "The disagreement is not whether cultural materials existed, but whether they explain national formation without modern organization and whether the corpus can establish causal priority."
+}

@@ -1,0 +1,29 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "Grok 4.5",
+    "persona": "P4",
+    "reasoning_mode_confirmed": "extended",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P4-04",
+  "question": "Did AANES/SDF or Idlib administrations meet the threshold of unrecognized states, or only of durable wartime governance?",
+  "answer_kind": "expected_answer",
+  "expected_answer": "A strong answer applies Caspersen’s criteria (empirical control, state-like institutions, seeking or performing sovereignty, absence of widespread recognition) separately to northeast and Idlib; likely finds partial institutional state-likeness without full unrecognized-state status, stresses dependence on external patrons, and refuses to treat either as simply 'the Syrian state lite'. It contrasts Jackson’s residual juridical shell at the UN with these entities’ lack of juridical standing, and notes Zaum-type external sponsorship can freeze rather than resolve the recognition gap.",
+  "required_citation_source_ids": [
+    "caspersen-unrecognized-states-fbc0efe4fffc",
+    "jackson-quasi-states-7eb3f39a639f",
+    "zaum-sovereignty-paradox-834d3343aa95",
+    "vignal-war-torn-c7005c2bf8ef",
+    "decentralization-local-governance-inequality-mena-ab19e646ab7d"
+  ],
+  "rubric": [],
+  "instant_dismissal_criteria": [
+    "Calls them states or not-states without criteria",
+    "Conflates local service provision with sovereignty",
+    "Ignores patron dependence (Turkey, US-led coalition, etc.) as sovereignty-relevant",
+    "Uses failed-state language as the only scale"
+  ],
+  "notes": "Forces operationalization of Caspersen against Syrian de-facto orders; corpus is thinner on Idlib institutional detail than on general war unmaking."
+}

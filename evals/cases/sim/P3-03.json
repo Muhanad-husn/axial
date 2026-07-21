@@ -1,0 +1,35 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "GPT-5.6 Terra",
+    "persona": "P3",
+    "reasoning_mode_confirmed": "extended-thinking",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P3-03",
+  "question": "Did the Syrian war politicize sectarian difference primarily through elite organization, coercive networks, and territorial rule, or did it disclose pre-existing mass sectarian solidarities?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "elcheroth-reicher-identity-violence-and-power-78f0cccef5b9",
+    "malesevic-sociology-of-war-and-violence-fd2cbe41384f",
+    "malesevic-nation-states-and-nationalisms-5d3ec1809b12",
+    "kalyvas-logic-of-violence-in-civil-war-0b5817b2642e",
+    "ugur-paramilitarism-ae5701dcc706",
+    "vignal-war-torn-c7005c2bf8ef",
+    "white-emergence-of-minorities-middle-east-5f35a47d9657"
+  ],
+  "rubric": [
+    "Distinguishes identification, political mobilization, violence, and territorial sorting rather than using sectarianism as a single cause",
+    "Provides a temporal account of how armed organizations, state and paramilitary structures, local control, and violence altered identity salience",
+    "Allows for historically available communal repertoires without inferring fixed mass preferences from their availability",
+    "Separates evidence about elite discourse and organizational practice from evidence about popular identification or motivation"
+  ],
+  "instant_dismissal_criteria": [
+    "Explains violence by primordial Sunni-Shia or Alawite hostility",
+    "Treats any sect-coded armed actor as evidence of homogeneous sectarian constituencies",
+    "Confuses strategic targeting or local collaboration with proof of sectarian motive"
+  ],
+  "notes": "A strong answer may find interaction between inherited repertoires and wartime organization; it must not convert that interaction into a primordialist conclusion."
+}

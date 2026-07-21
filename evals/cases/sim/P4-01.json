@@ -1,0 +1,34 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "Grok 4.5",
+    "persona": "P4",
+    "reasoning_mode_confirmed": "extended",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P4-01",
+  "question": "Is fragmented Syria one sovereign state under stress or several de-facto polities?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "jackson-quasi-states-7eb3f39a639f",
+    "caspersen-unrecognized-states-fbc0efe4fffc",
+    "zaum-sovereignty-paradox-834d3343aa95",
+    "vignal-war-torn-c7005c2bf8ef"
+  ],
+  "rubric": [
+    "Separates juridical/negative sovereignty (Jackson) from empirical control and unrecognized-state criteria (Caspersen).",
+    "Treats regime, AANES/SDF, and Idlib as analytically distinct authority claims, not interchangeable 'fragments'.",
+    "Engages the recognition literature vs statebuilding literature disagreement rather than picking one vocabulary.",
+    "Uses Syrian wartime territorial and institutional evidence (e.g. Vignal) without equating map control with legitimacy.",
+    "States what the corpus cannot settle (e.g. future recognition outcomes)."
+  ],
+  "instant_dismissal_criteria": [
+    "Binary state vs failed-state framing",
+    "Collapses juridical sovereignty with empirical control",
+    "Treats de-facto control as legitimacy or UN seat as territorial monopoly",
+    "Ignores international/recognition dimension entirely"
+  ],
+  "notes": "Sharpest P4 question; disagreement sits between recognition theory and empirical statehood/unrecognized-states work."
+}

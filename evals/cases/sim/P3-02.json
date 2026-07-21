@@ -1,0 +1,33 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "GPT-5.6 Terra",
+    "persona": "P3",
+    "reasoning_mode_confirmed": "extended-thinking",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P3-02",
+  "question": "Through which administrative and representative practices did religious communities become politically consequential minorities in French Mandate Syria, and which of those practices survived into post-mandate Syrian statehood?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "white-emergence-of-minorities-middle-east-5f35a47d9657",
+    "beshara-origins-of-syrian-nationhood-8410a9059300",
+    "wimmer-waves-of-war-a67941b77943",
+    "mann-sources-of-social-power-v3-3e9f48ff605a",
+    "ayubi-over-stating-the-arab-state-16fd6a2e503f"
+  ],
+  "rubric": [
+    "Distinguishes religious communities from politically constituted minorities",
+    "Identifies concrete practices of classification, representation, territorial administration, education, law, or security and names the institutional agents involved",
+    "Traces continuity and transformation across the mandate and post-independence periods rather than assuming either direct inheritance or a clean break",
+    "Connects minority-making to the boundaries of national membership and state-building without reducing it to colonial manipulation alone"
+  ],
+  "instant_dismissal_criteria": [
+    "Treats minorities or sects as timeless and self-evident actors",
+    "Equates religious difference with minority status",
+    "Invokes divide-and-rule without specifying the administrative mechanisms or post-mandate afterlife"
+  ],
+  "notes": "The live disagreement concerns the relative causal weight of mandate institutions, local political agency, and later state organization in making communal categories politically durable."
+}

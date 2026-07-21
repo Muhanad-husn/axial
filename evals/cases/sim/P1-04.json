@@ -1,0 +1,24 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "Gemini 3.1 Pro",
+    "persona": "P1",
+    "reasoning_mode_confirmed": "not-stated-in-output",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P1-04",
+  "question": "The Micro-Dynamics of Paramilitarism and Jointly Produced Violence",
+  "answer_kind": "expected_answer",
+  "expected_answer": "It must demonstrate that violence is a highly rationalized, jointly produced phenomenon driven by the imperatives of territorial control and local civilian collaboration. Furthermore, it must untangle the paradox wherein a state reasserts its despotic sovereignty by deliberately outsourcing its monopoly on violence to paramilitaries, thereby permanently destroying its own infrastructural command-and-control capabilities.",
+  "required_citation_source_ids": [
+    "kalyvas-logic-of-violence-in-civil-war-0b5817b2642e",
+    "ugur-paramilitarism-ae5701dcc706",
+    "mann-sources-of-social-power-v2-ec759675dcbd"
+  ],
+  "rubric": [],
+  "instant_dismissal_criteria": [
+    "Explanations framing the violence as an uncontrollable 'fog of war' or irrational bloodlust, or any paper that conflates a regime's military reconquest of territory, achieved via outsourced paramilitaries, with the actual restoration of infrastructural state capacity."
+  ],
+  "notes": "Where the real disagreement sits: This addresses the friction between analyses that view civil war violence as irrational, chaotic, or purely expressive, versus the micro-sociological frameworks of Kalyvas and Ungor, which prove that violence is a highly structured, selective strategy of territorial hegemony heavily reliant on local denunciation and decentralized militia structures."
+}

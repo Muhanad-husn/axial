@@ -1,0 +1,8 @@
+# origin: simulated
+# model: claude-opus-4-8
+# persona: P5
+# reasoning_mode_confirmed: extended-thinking
+# date: 2026-07-21
+# path_version: sim-v1
+case: "Syria, 2011-2024"
+request: "Take the pro-regime sectarian massacres of 2012-2013 as a single class of events. Do they resolve better under Kalyvas's control logic, Ungor's delegation logic, or the identity-and-discourse logic of Elcheroth and Reicher and Chouliaraki? Where these lenses give contradictory readings of the same massacre, which yields the more defensible causal account, and can they be integrated without one silently absorbing the others?"

@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "GLM 5.2",
+    "persona": "P2",
+    "reasoning_mode_confirmed": "extended-thinking",
+    "date": "2026-05-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P2-04",
+  "question": "How does the Syrian regime's use of sect as a political resource fit into theories of ethnic exclusion and nationalism?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "batatu-syrias-peasantry-598624067df3",
+    "white-emergence-of-minorities-middle-east-5f35a47d9657",
+    "wimmer-waves-of-war-a67941b77943",
+    "smith-ethno-symbolism-and-nationalism-cba7b6f3dfba"
+  ],
+  "rubric": [
+    "Must differentiate between 'sect' as a social identity and 'sect' as a political resource instrumentalized by the regime.",
+    "Must engage with White's historical analysis of the 'emergence of minorities' in the Mandate period.",
+    "Must test Wimmer's framework of ethnic exclusion against the Syrian case, where the regime formally eschewed ethnic nationalism.",
+    "Must ground the analysis in Batatu's social structure, particularly minority recruitment into the officer corps."
+  ],
+  "instant_dismissal_criteria": [
+    "Reducing the conflict to primordial sectarian hatred.",
+    "Treating sectarianism as an explanation rather than something that needs to be explained.",
+    "Ignoring the class and rural dimensions of minority recruitment."
+  ],
+  "notes": "The challenge is to apply comparative theories of ethnic exclusion (Wimmer) to a state that officially operated under a pan-Arab, secular ideology while instrumentalizing sect for regime survival."
+}

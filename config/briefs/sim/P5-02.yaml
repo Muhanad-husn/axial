@@ -1,0 +1,8 @@
+# origin: simulated
+# model: claude-opus-4-8
+# persona: P5
+# reasoning_mode_confirmed: extended-thinking
+# date: 2026-07-21
+# path_version: sim-v1
+case: "Syria, 2011-2024"
+request: "Read the shabbiha and the later National Defence Forces through Ungor's thesis that paramilitarism is violence delegated in the shadow of the state, not the mark of the state's absence. Were pro-regime militias an extension of regime coercive capacity, a privatization of violence the regular apparatus could no longer perform, or both in sequence? Specify the infrastructural-power evidence that would separate delegation-as-strategy from delegation-as-decay."

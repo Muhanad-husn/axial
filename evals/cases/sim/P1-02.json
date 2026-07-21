@@ -1,0 +1,25 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "Gemini 3.1 Pro",
+    "persona": "P1",
+    "reasoning_mode_confirmed": "not-stated-in-output",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P1-02",
+  "question": "Ideological Mobilization vs. Organizational/Class Capture",
+  "answer_kind": "expected_answer",
+  "expected_answer": "It must establish precisely how the state's core networks of privilege utilized sectarian narratives not as a root cause of conflict, but as a deliberate organizational resource to mobilize hatred and ensure the existential loyalty of the military-security nexus. It must trace the origins of this cohesion back to the specific rural-urban class dynamics and agrarian mobility structures that allowed lesser rural notables to capture the despotic core of the state mid-century.",
+  "required_citation_source_ids": [
+    "batatu-syrias-peasantry-598624067df3",
+    "wimmer-waves-of-war-a67941b77943",
+    "white-emergence-of-minorities-middle-east-5f35a47d9657",
+    "elcheroth-reicher-identity-violence-and-power-78f0cccef5b9"
+  ],
+  "rubric": [],
+  "instant_dismissal_criteria": [
+    "An analysis that reduces the conflict to an ancient, immutable sectarian war, completely ignoring the deep history of agrarian class mobility, urban-rural political economy, and the deliberate, modern organizational construction of minoritarian solidarity by the state apparatus."
+  ],
+  "notes": "Where the real disagreement sits: The friction is between Wimmer's macro-thesis that waves of war are driven by ethnic boundaries and struggles for ethno-national state capture, versus Batatu's foundational documentation that power in Syria is deeply rooted in modern agrarian class structures and the specific organizational capture of the military, rather than ancient sectarianism."
+}

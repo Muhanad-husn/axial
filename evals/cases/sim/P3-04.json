@@ -1,0 +1,35 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "GPT-5.6 Terra",
+    "persona": "P3",
+    "reasoning_mode_confirmed": "extended-thinking",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P3-04",
+  "question": "When did ethnic or sectarian exclusion function as a strategy of political order and state formation in Syria after 2011 rather than as a contingent by-product of civil-war violence?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "wimmer-waves-of-war-a67941b77943",
+    "mann-sources-of-social-power-v4-1b7e828e0199",
+    "kalyvas-logic-of-violence-in-civil-war-0b5817b2642e",
+    "ugur-paramilitarism-ae5701dcc706",
+    "do-civil-wars-make-or-break-states-4faeb528594d",
+    "vignal-war-torn-c7005c2bf8ef",
+    "caspersen-unrecognized-states-fbc0efe4fffc"
+  ],
+  "rubric": [
+    "Defines exclusion in relation to membership, rights, security, and control of institutions rather than demographic separation alone",
+    "Shows the organizational and territorial mechanisms linking exclusion to authority-building",
+    "Tests strategic political-order explanations against local, contingent, and non-identity-based dynamics of civil-war violence",
+    "Distinguishes state-building claims for the Syrian state, sub-state rulers, and aspiring de facto authorities, including their differing external recognition contexts"
+  ],
+  "instant_dismissal_criteria": [
+    "Assumes every identity-based atrocity was a state-building project",
+    "Treats ethnic exclusion as inevitable once war begins",
+    "Collapses territorial control, international recognition, and legitimate national membership into one measure"
+  ],
+  "notes": "The disagreement concerns whether exclusion is constitutive of durable political order or an episodic instrument whose consequences may undermine rather than build governing capacity."
+}

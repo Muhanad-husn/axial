@@ -1,0 +1,35 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "Grok 4.5",
+    "persona": "P4",
+    "reasoning_mode_confirmed": "extended",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P4-03",
+  "question": "Was Syria’s emergency/exception a temporary wartime device or a durable structure of rule before and after 2011?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "agamben-state-of-exception-b22edc40e0fc",
+    "ayubi-over-stating-the-arab-state-16fd6a2e503f",
+    "batatu-syrias-peasantry-598624067df3",
+    "vignal-war-torn-c7005c2bf8ef",
+    "ugur-paramilitarism-ae5701dcc706"
+  ],
+  "rubric": [
+    "Uses Agamben as a conceptual frame for suspended normal law, not as a free-floating metaphor.",
+    "Anchors claims in pre-2011 emergency/security governance and wartime continuity or rupture.",
+    "Relates exception to paramilitary and shadow-of-the-state violence without reducing everything to 'exception'.",
+    "Avoids reading the entire Arab state literature as already Agambenian.",
+    "Marks where philosophy of exception and comparative Middle East institutional history pull apart."
+  ],
+  "instant_dismissal_criteria": [
+    "Slogan-level 'permanent exception' with no institutional timeline",
+    "Treats 2011 as the sole origin of emergency rule",
+    "Quotes the vibe of Agamben without linking to Syrian legal-political practice",
+    "Ignores non-regime armed orders when discussing exception"
+  ],
+  "notes": "Disagreement: philosophical generalization of exception vs historically specific Ba'thist/security-state trajectories."
+}

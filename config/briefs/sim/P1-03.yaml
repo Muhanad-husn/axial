@@ -1,0 +1,10 @@
+# origin: simulated
+# model: Gemini 3.1 Pro
+# persona: P1
+# reasoning_mode_confirmed: not-stated-in-output
+# date: 2026-07-21
+# path_version: sim-v1
+# note: source output was prose; `case` set to the polity anchor per PHASE-B 7.1
+# theme: Despotic Survival vs. Infrastructural Collapse
+case: "Syria, 2000-2024"
+request: "To what extent does the post-2011 Syrian regime rely entirely on the expansion of despotic power rather than the maintenance of infrastructural power (Mann) to ensure its survival? How does the 'over-stated' nature of the pre-war Arab state (Ayubi), characterized by massive security architectures but brittle administrative roots, explain the rapid fragmentation of territorial control and the state's inability to routinely logistically penetrate reconquered areas (Vignal)?"

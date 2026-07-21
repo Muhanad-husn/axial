@@ -1,0 +1,8 @@
+# origin: simulated
+# model: Grok 4.5
+# persona: P4
+# reasoning_mode_confirmed: extended
+# date: 2026-07-21
+# path_version: sim-v1
+case: "AANES/SDF northeast Syria; Idlib administrations; residual regime control"
+request: "What (non-)recognition politics did these de-facto authorities face, and did any approach Caspersen’s threshold of unrecognized statehood versus remaining wartime governance without a state project?"

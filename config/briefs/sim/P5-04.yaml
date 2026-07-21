@@ -1,0 +1,8 @@
+# origin: simulated
+# model: claude-opus-4-8
+# persona: P5
+# reasoning_mode_confirmed: extended-thinking
+# date: 2026-07-21
+# path_version: sim-v1
+case: "Syria, 2011-2024"
+request: "Trace how victim and perpetrator categories were produced and weaponized across the war's rival discourses: the regime's counter-terror and minority-protection framings and the opposition's martyrdom framing. Following Chouliaraki, hold the discursive production of victimhood apart from the material distribution of violence and show where they diverge. What evidence would establish that a victimhood claim did causal work in licensing violence rather than merely narrating it after the fact?"

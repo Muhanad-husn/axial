@@ -513,6 +513,12 @@ The gold set is the measurement instrument, so its construction is specified, no
 - **Tag coverage:** count of tags never applied across the gold set (removal candidates) and chunks the Academic tagged needing a value the schema lacked (addition candidates).
 - **Contested-tag resolution:** each `[CONTESTED]` and `[CANDIDATE]` tag gets a keep/cut/rename decision from its gold-set behavior.
 
+**Reading an agreement number honestly (DEC-30).** Two constraints bind every figure above and must be stated whenever one is reported:
+- **Agreement cannot exceed the annotator's own reliability.** An axis whose coder reproduces itself at 0.73 cannot show inter-annotator agreement above ~0.73, so an observed 0.73 is a *ceiling*, not a failure. Report intra-annotator (test–retest) reliability alongside any agreement figure, or the figure is uninterpretable.
+- **Only compare within one model family.** Same-family agreement runs ~0.25 higher than cross-family on identical instructions, with no design change whatsoever; mixing the two manufactures illusory gains.
+
+A corollary for the tagger: single-draw tagging carries real draw variance (~27% of `theory_school` labels change on a re-roll) that is invisible in production because the pipeline draws once. Where an axis is at ceiling, **best-of-N sampling is the available lever, not further prompt or codebook work.**
+
 **Acceptance thresholds (starting hypotheses, tunable — see Open Questions):**
 - A tag "survives" v0 if it is applied on ≥2 gold chunks *and* reaches ≥0.6 agreement on those chunks.
 - Intake correctness: 100% of scanned/no-text-layer test files rejected, zero silent pass-through.
@@ -630,6 +636,8 @@ Cardinality: one value. Closed set.
 ## Appendix E — Theory-school axis (prose chunks) **[CANDIDATE]**
 
 Provisional; kept-or-cut by the eval. Derived from the Academic's mind-map; orthogonal to claim-type (a `state-capacity` claim can come from a Bellicist *or* an Institutionalist school). Cardinality if kept: one primary + optional secondary. Grouped controlled vocabulary:
+
+> **Measured reliability ceiling (DEC-30).** Simulated dual-labelling puts this axis at an **intra-annotator ceiling of ~0.73**: a coder given an identical prompt twice reproduces its own `theory_school` value only 73% of the time, and two independent coders agree 73% — i.e. it is already at ceiling, with no headroom for a prompt, codebook, or added-context fix (all three were measured and were null). This is a **single-draw** property: across three draws, 97% of chunks have a defined majority label and only 3% are irreducible, so best-of-N sampling — not better instructions — is the lever. **Consequence for the keep-or-cut decision (§10): do not settle it against a single-draw agreement number.** Any agreement figure for this axis must be read against its ceiling, and compared only within one model family (cross-family vs same-family agreement differs by ~0.25 with no design change).
 
 - **State:** `colonial-postcolonial`, `marxist-political-economy`, `cultural-ideational`, `bellicist`, `neo-bellicist`, `external-statebuilding`, `neo-marxist`, `modernization-developmental`, `institutionalist-state-centered`, `structuralist`, `state-in-society` (Migdal), `constructivist`.
 - **Violence:** `opportunity-feasibility`, `constructivist-anti-essentialist`, `biological-evolutionary`, `structural-violence`, `civilizing-decline` (Eliasian), `state-centered-organizational` (Weberian/neo-Weberian, bellicist), `micro-sociological` (interactionist/situationist; micro-foundations, Kalyvas; micro-solidarity, Malešević), `interpretive-constructivist`, `marxist-critical-pol-econ`, `postcolonial-decolonial`, `criminological` (rational-choice, social-learning, traits, strain/anomie, routine-activity, feminist).

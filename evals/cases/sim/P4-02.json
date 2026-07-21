@@ -1,0 +1,34 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "Grok 4.5",
+    "persona": "P4",
+    "reasoning_mode_confirmed": "extended",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P4-02",
+  "question": "Did external statebuilding and intervention in Syria enact Zaum’s sovereignty paradox?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "zaum-sovereignty-paradox-834d3343aa95",
+    "jackson-quasi-states-7eb3f39a639f",
+    "state-legitimacy-capacity-syrian-conflict-454c87b22e16",
+    "vignal-war-torn-c7005c2bf8ef"
+  ],
+  "rubric": [
+    "Defines the paradox as external actors claiming to restore sovereignty while exercising trusteeship-like powers that hollow it.",
+    "Specifies which external projects (diplomatic track, reconstruction conditionality, security patronage, local governance support) count as statebuilding-like.",
+    "Distinguishes effects on Damascus’s juridical standing from effects on rival de-facto authorities’ autonomy.",
+    "Does not treat all foreign military presence as automatically 'statebuilding'.",
+    "Surfaces limits of applying post-conflict trusteeship cases to an active multi-patron war."
+  ],
+  "instant_dismissal_criteria": [
+    "Equates any foreign troop presence with statebuilding",
+    "Assumes external aid always strengthens sovereignty",
+    "No engagement with Zaum’s norm/politics tension",
+    "Answers only with great-power scorekeeping and no sovereignty concept"
+  ],
+  "notes": "Hard because Syria is not a classic UN transitional administration case; analogy must be argued, not assumed."
+}

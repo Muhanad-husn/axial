@@ -1,0 +1,25 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "Gemini 3.1 Pro",
+    "persona": "P1",
+    "reasoning_mode_confirmed": "not-stated-in-output",
+    "date": "2026-07-21",
+    "path_version": "sim-v1"
+  },
+  "case_id": "P1-03",
+  "question": "The Empirical Void of Quasi-Sovereignty and the State of Exception",
+  "answer_kind": "expected_answer",
+  "expected_answer": "The analysis must prove that legal sovereignty in the post-colonial world is frequently divorced from empirical statehood. It must account for the durable persistence of unrecognized polities that develop their own infrastructural capacities, demonstrating that the international system's insistence on preserving juridical borders actively institutionalizes a permanent state of exception and impedes the empirical resolution of the conflict.",
+  "required_citation_source_ids": [
+    "jackson-quasi-states-7eb3f39a639f",
+    "caspersen-unrecognized-states-fbc0efe4fffc",
+    "agamben-state-of-exception-b22edc40e0fc",
+    "zaum-sovereignty-paradox-834d3343aa95"
+  ],
+  "rubric": [],
+  "instant_dismissal_criteria": [
+    "Treating the recognized central government as the sole legitimate analytical actor possessing absolute sovereignty, or viewing territories outside central control merely as temporary 'ungoverned spaces' rather than deeply structured, competing political-military orders."
+  ],
+  "notes": "Where the real disagreement sits: The theoretical clash is between mainstream international relations paradigms that treat the UN-recognized state as the sole absolute sovereign actor, versus the sociological reality documented by Jackson, Caspersen, and Zaum, where empirical sovereignty is highly divisible and the 'recognized' state is merely a hollowed-out quasi-state sustained by external norms."
+}

@@ -1,0 +1,10 @@
+# origin: simulated
+# model: Gemini 3.1 Pro
+# persona: P1
+# reasoning_mode_confirmed: not-stated-in-output
+# date: 2026-07-21
+# path_version: sim-v1
+# note: source output was prose; `case` set to the polity anchor per PHASE-B 7.1
+# theme: The Bellicist Paradox and Paramilitarization
+case: "Syria, 2011-2024"
+request: "How does the deliberate, state-sponsored paramilitarization of the Syrian conflict (Ungor) challenge Tilly's coercive-extraction cycle? Specifically, how does reliance on external geopolitical rents and non-state militias circumvent the necessity for domestic taxation and bureaucratic rationalization, thereby causing the war-making apparatus to actively hollow out infrastructural power rather than consolidate it (Malesevic, Mann)?"

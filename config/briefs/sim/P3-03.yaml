@@ -1,0 +1,8 @@
+# origin: simulated
+# model: GPT-5.6 Terra
+# persona: P3
+# reasoning_mode_confirmed: extended-thinking
+# date: 2026-07-21
+# path_version: sim-v1
+case: "Syria, 1946–2011"
+request: "How far did Baathist state organization produce a Syrian national solidarity that displaced sectarian and local identifications, and where were its limits institutionally visible?"

@@ -1,0 +1,8 @@
+# origin: simulated
+# model: Grok 4.5
+# persona: P4
+# reasoning_mode_confirmed: extended
+# date: 2026-07-21
+# path_version: sim-v1
+case: "Syria under external military and diplomatic intervention, 2011–2024"
+request: "Does the sovereignty paradox apply: did external statebuilding, mediation, and great-power tutelage undercut the sovereignty they claimed to restore or protect, and for which territorial authority?"

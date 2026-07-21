@@ -1,0 +1,8 @@
+# origin: simulated
+# model: Grok 4.5
+# persona: P4
+# reasoning_mode_confirmed: extended
+# date: 2026-07-21
+# path_version: sim-v1
+case: "Syria, 2011–2024 — regime, AANES/SDF northeast, Idlib"
+request: "Is fragmented Syria one juridical sovereign under stress or several empirical polities that never acquired recognition? Distinguish Jackson-style negative sovereignty from Caspersen-style de-facto statehood; do not collapse the two."
