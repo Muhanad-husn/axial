@@ -1,0 +1,16 @@
+$ axial run extract --worklist worklist.txt      # 3 sources, middle one crafted to fail
+error: D:\axial\.claude\worktrees\run-core\tests\fixtures\intake\unsupported.txt: unsupported file extension '.txt' for D:\axial\.claude\worktrees\run-core\tests\fixtures\intake\unsupported.txt; expected one of ['.docx', '.pdf']
+source_path	source_id	status	reason
+D:\axial\.claude\worktrees\run-core\tests\fixtures\extract\prose_and_table.pdf	prose_and_table-8bf9b6c2a681	OK	
+D:\axial\.claude\worktrees\run-core\tests\fixtures\intake\unsupported.txt	unsupported-3a8f0a658b29	FAIL	unsupported file extension '.txt' for D:\axial\.claude\worktrees\run-core\tests\fixtures\intake\unsupported.txt; expected one of ['.docx', '.pdf']
+D:\axial\.claude\worktrees\run-core\tests\fixtures\envelope\thesis_paper.pdf	thesis_paper-82bcba3c2d51	OK	
+run: pass=extract total=3 ok=2 failed=1
+exit=0
+
+$ axial run extract --worklist does-not-exist.txt   # fatal: unreadable worklist
+error: cannot read worklist does-not-exist.txt
+exit=1
+
+$ axial run no-such-pass --worklist worklist.txt    # fatal: unknown pass
+error: unknown pass 'no-such-pass'; known passes: artifacts, chunk, envelope, extract, tag, vault-write, xref
+exit=1
