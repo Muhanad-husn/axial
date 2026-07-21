@@ -49,13 +49,18 @@ per-chunk `.jsonl` checkpoints inside tag/artifacts/xref -- a pass's
 done-predicate may consult its own checkpoints internally, but this module
 neither replaces nor reaches into them (source-level resume only); recursive
 or configurable corpus roots beyond the single `data/sources/` glob.
+
+Issue #288 (not-applicable/unlisted `theory_school` rates) has since been
+built at the bottom of this module -- `attach_theory_school_rates` and
+`render_theory_school_rates` -- as the promised CONSUMER of `RunSummary`:
+called explicitly after `run_pass` returns, never from inside its loop.
 """
 
 from __future__ import annotations
 
 import csv
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -73,7 +78,13 @@ from axial.envelope import (
 from axial.extract import ExtractError, extract, tree_path
 from axial.ingest import WorklistError, read_worklist
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient, get_client
-from axial.tag import DEFAULT_DOMAIN_DIR, TagError, run_tag
+from axial.tag import (
+    DEFAULT_DOMAIN_DIR,
+    TagError,
+    TheorySchoolSourceRate,
+    run_tag,
+    theory_school_rates_report,
+)
 from axial.vault import VaultError, run_vault_write
 from axial.xref import XrefError, run_xref
 
@@ -179,9 +190,13 @@ class RunSummary:
     text); the OK/FAIL/SKIP counts always sum to `total`.
 
     `rates` is the named attachment point for #288's not-applicable/unlisted
-    rates report -- always `None` here; this slice defines the seam, #288
-    computes and fills it. Nothing in this module reads or writes it beyond
-    this default."""
+    rates report: `None` from `run_pass` itself (the runner loop never
+    computes it -- a `RunSummary` it returns is unenriched, exactly as slice
+    03 left it), filled by calling `attach_theory_school_rates` on the
+    returned summary as a separate step afterward. That function is a
+    CONSUMER of this value, same as #270's log emitter -- it never reaches
+    into `run_pass`'s own loop, and calling it is always optional and always
+    safe (it never raises; see its own docstring)."""
 
     pass_name: str
     outcomes: list[Outcome]
@@ -531,3 +546,94 @@ def run_pass(
     )
 
     return summary, 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #288: not-applicable/unlisted theory_school rates report.
+#
+# A CONSUMER of `RunSummary` (module docstring, `RunSummary.rates`'s own
+# docstring): called explicitly by a caller (e.g. the CLI) after `run_pass`
+# has already returned, never by the loop itself -- attaching this report
+# never special-cases a pass by name (`PassDescriptor`'s own design note):
+# a source with no persisted theory_school data (any pass other than
+# tag/vault-write, or one this report has nothing to say about) simply
+# contributes no row, so calling it after ANY pass is always safe and never
+# needs to know which pass produced the run.
+# ---------------------------------------------------------------------------
+
+# The rendered rates table's column order (mirrors TABLE_COLUMNS's own
+# convention above: a header row + one row per source with data, columns
+# looked up by name, never by position).
+THEORY_SCHOOL_RATES_COLUMNS = (
+    "source_id",
+    "total",
+    "not_applicable_count",
+    "not_applicable_pct",
+    "unlisted_count",
+    "unlisted_pct",
+    "unlisted_schools",
+)
+
+
+def attach_theory_school_rates(
+    summary: RunSummary,
+    tags_dir: Path | None = None,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+) -> RunSummary:
+    """Fill `summary.rates` with the theory_school not-applicable/unlisted
+    report (issue #288) for every source this run produced or reused tag
+    output for: every OK or SKIP outcome's `source_id` (a FAILed source
+    produced no tag output this run, so it is excluded; an outcome whose
+    `source_id` could not be computed is also excluded -- it is always `""`
+    for that case). Returns a NEW `RunSummary` (frozen dataclass) with
+    `rates` set; every other field is `summary`'s own, unchanged.
+
+    This is deliberately a plain post-processing step, not part of
+    `run_pass`'s own loop -- see `RunSummary.rates`'s docstring. The
+    underlying computation (`axial.tag.theory_school_rates_report`) already
+    never raises for its own known failure modes (a torn checkpoint, a
+    malformed candidates-log line); the broad catch here is this seam's own
+    last line of defense for the issue's acceptance bar -- "the summary must
+    never block or fail the run" -- so a genuinely unexpected bug in the
+    computation still cannot take down an otherwise-successful run. Unlike
+    the main loop's own per-source failure isolation (which catches only a
+    pass's OWN declared error type, module docstring), this is not driving
+    a pass at all; it is an optional report over already-persisted output,
+    attached strictly after the run has already finished."""
+    source_ids = {
+        outcome.source_id
+        for outcome in summary.outcomes
+        if outcome.source_id and outcome.status != FAIL_STATUS
+    }
+    try:
+        rates = theory_school_rates_report(source_ids, tags_dir=tags_dir, config_path=config_path)
+    except Exception as exc:  # broad and deliberate -- see docstring: never block/fail the run
+        print(f"warning: could not compute theory_school rates: {exc}", file=sys.stderr)
+        return summary
+    return replace(summary, rates=rates)
+
+
+def _render_theory_school_rates_row(rate: TheorySchoolSourceRate) -> str:
+    row = {
+        "source_id": rate.source_id,
+        "total": str(rate.total),
+        "not_applicable_count": str(rate.not_applicable_count),
+        "not_applicable_pct": f"{rate.not_applicable_pct}%",
+        "unlisted_count": str(rate.unlisted_count),
+        "unlisted_pct": f"{rate.unlisted_pct}%",
+        "unlisted_schools": ",".join(rate.unlisted_schools) if rate.unlisted_schools else "-",
+    }
+    return "\t".join(row[column] for column in THEORY_SCHOOL_RATES_COLUMNS)
+
+
+def render_theory_school_rates(rates: list[TheorySchoolSourceRate]) -> str:
+    """Render the theory_school not-applicable/unlisted rates report (issue
+    #288) as a tab-separated table -- header + one row per source with data
+    -- mirroring `_render_row`'s own outcome-table convention. Returns an
+    empty string for an empty report, so a caller can skip printing it
+    entirely rather than print a header with no rows under it."""
+    if not rates:
+        return ""
+    lines = ["\t".join(THEORY_SCHOOL_RATES_COLUMNS)]
+    lines.extend(_render_theory_school_rates_row(rate) for rate in rates)
+    return "\n".join(lines)
