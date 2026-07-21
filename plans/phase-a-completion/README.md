@@ -115,9 +115,9 @@ Sized so it needs **no full-corpus LLM run** (see Notes).
 
 | # | Slice | Goal |
 |---|-------|------|
-| 5a | embedding pass | Net-new: embed every chunk once and persist the vectors. The v0 chunker is embedding-free by design (§7.5); this is a *different job* (distillation representation), not a chunking change. Cheap and one-time. |
-| 5b | readiness map | HDBSCAN over **all** chunk embeddings (unsupervised — no LLM). Emit the readiness map: which tags sit in tight learnable regions vs. smear as noise; identify the `-1` noise set as the LLM-routed tail. Cluster ids start at 0 — the `-1`/route split is the load-bearing detail. |
-| 5c | stratified teacher labels | LLM-label a **cluster-stratified ~6–9k** sample (not 17k): start ~6k, extend on the learning-curve saturation signal. Stratify by 5b's clusters so every dense region is represented — this is what makes generalization safe, not hopeful. |
+| 5a | embedding pass + vector store | Net-new: embed every chunk once and persist the vectors **in a real vector store**, not a flat array — 5c/5d/5e all issue nearest-neighbour queries (see *Vector store*, Notes). The v0 chunker is embedding-free by design (§7.5); this is a *different job* (distillation representation), not a chunking change. Cheap and one-time. |
+| 5b | readiness map | HDBSCAN over all chunk embeddings after **dimensionality reduction** (unsupervised — no LLM; density clustering needs the reduction step, see *Feature engineering*, Notes). Emit the readiness map: which tags sit in tight learnable regions vs. smear as noise; identify the `-1` noise set as the LLM-routed tail. Cluster ids start at 0 — the `-1`/route split is the load-bearing detail. |
+| 5c | stratified teacher labels | LLM-label a **cluster-stratified ~6–9k** sample (not 17k): start ~6k, extend on the learning-curve saturation signal. Stratify by 5b's clusters so every dense region is represented — this is what makes generalization safe, not hopeful. Feature quality (5b) sets this number: cleaner features saturate the curve sooner and shrink the sample. |
 | 5d | head classifiers | Light classifier head per graduated axis on frozen embeddings. A tag graduates only at parity with the teacher against the sim gold set (within noise). Abstention threshold per class; the confident fraction automates, the rest defers to the LLM. |
 | 5e | outer eval | eval-02: quality-per-dollar of the hybrid vs the all-LLM baseline, referee = sim gold. Out-of-sample check: classifier predicts the untagged remainder, LLM spot-checks a few hundred (this is also the drift monitor). |
 
@@ -173,3 +173,31 @@ stage 4.
 - **DEC-23 across the whole plan.** No source text in any committed artifact —
   not in source-meta records (1c), not in run logs (0b), not in the readiness
   map or classifier metadata (5b/5d). Ids, values, and short reasons only.
+- **Vector store — flagged, not decided (5a).** A flat `.npy` stores 17k vectors
+  fine; the reason to reach for a real vector DB is *queries*, not storage. Three
+  stage-5 mechanisms are nearest-neighbour lookups: the exploration's LLM-as-
+  oversampler (find chunks near a rare tag by similarity), the out-of-sample
+  drift monitor (5e), and `-1` triage. All want **ANN with metadata filtering**
+  (search within a `source_id`/axis). Selection axes to weigh when the time
+  comes: embedded/local (LanceDB, Chroma, FAISS+sidecar) vs server (Qdrant,
+  pgvector); metadata-filtered ANN as a hard requirement; deterministic,
+  pinnable persistence (corpus pin, DEC-23); and scale — ~17k now but ~60–80k at
+  120+ sources. **Cross-track note:** Phase B's retrieval loop (#253/#254) needs
+  a similarity store too, so this choice likely serves both — but it crosses
+  v0's deliberate embedding-free boundary (§7.5), so it is net-new infra and a
+  spec-drift-adjacent decision, not a quiet add. Decide at 5a, not before.
+- **Feature engineering — flagged, not decided (5b/5c/5d).** Reduction is
+  load-bearing, not cosmetic: HDBSCAN degrades in raw high-dim embedding space
+  (distance concentration), so density clustering needs a reduction step first.
+  It also feeds the learning curve directly — cleaner features saturate sooner,
+  which shrinks 5c's sample below ~9k. Open considerations to carry: **PCA**
+  (deterministic, cheap, pins cleanly, preserves global structure) vs **UMAP**
+  (better-separated clusters but stochastic — fights the repo's determinism
+  contracts unless seeded and pinned); whether clustering (5b) and classification
+  (5d) want *different* representations (reduced/whitened for density, full or
+  lightly-reduced + a linear head for the classifier); **L2-normalisation** for
+  cosine geometry and standardisation before reduction; and possibly per-cluster
+  local reduction for a cleaner sub-problem (the doc's per-cluster instinct).
+  Any reduction step must be pinned/reproducible like every other stage. None of
+  this is decided here — it is recorded so it does not slip into 5b as an
+  afterthought.
