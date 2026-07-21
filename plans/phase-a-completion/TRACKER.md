@@ -7,7 +7,7 @@ as slices land. Issues remain the system of record; this is the map over them.
 - **Branch:** `claude/phase-a-hybrid-tagging-sqx2xc`
 - **Plan:** [`README.md`](README.md) (stages, waves, deferred decisions)
 - **Decision:** `docs/DECISIONS.md` → DEC-32
-- **Last updated:** 2026-07-21 — wave 2: #305, #306, #308 merged; #307 held on gate-4, fix in flight
+- **Last updated:** 2026-07-21 — **wave 2 complete**: #305, #306, #307, #308 all merged; repo clean; wave 3 candidates listed below
 
 ## Read-me-first (30-second orient)
 
@@ -33,8 +33,8 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 - ☐ 0c #289 — verify gold-sheet dropdowns (`gold.py`) — ✎ fix-lane, verify-first
 
 ### Stage 1 — metadata correctness (one ordered chain, before any re-tag) — plan ✅ `plans/intake-metadata/`
-- ✅ 1·01 #284 — holdings check → model-adjudicated rewrite (`holdings.py`) — PR #304 merged `affd369`. **Built but NOT wired into the ingest path → #303** (after #285)
-- ◐ 1·02 #285 — persisted source-metadata record; **sole origin of author/title/date (P0-1d)** (needs 01) — also unblocks #303. **PR #307 open — HELD: real-corpus check failed** (1 crash, 1 confidently-wrong record, title-page fallback 2/13 correct). Founder decision pending on heuristic → model call
+- ✅ 1·01 #284 — holdings check → model-adjudicated rewrite (`holdings.py`) — PR #304 merged `affd369`. **Built but NOT wired into the ingest path → #303.** #285 is now merged, so #303 is unblocked — and it now gates the bibliographic cross-check too, not just the holdings flag
+- ✅ 1·02 #285 — persisted source-metadata record; **sole origin of author/title/date (P0-1d)** — PR #307 merged `fa6b2d9`. Took two rounds: the first failed gate 4, the rework deleted the heuristic and extended slice 01's model call to read + cross-check the title page (author 29/30, title 28/30, date 30/30, 0 crashes). **Dormant until #303 passes a client.**
 - ☐ 1·03 #278 — **resolved: remove** author/date from the envelope (intake owns them); vault writer composes from both (needs 02). *No longer a Wave-1 independent slice.*
 
 ### Stage 2 — tag quality (before any re-tag)
@@ -59,23 +59,36 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
 ## Next action
 
-**Wave 2: two of three lanes merged.** #305 (`853f780`) and #306 (`6047450`) are on
-`main`, which is green after both (`1064 passed` on the src tier — the two lanes compose).
-Their worktrees are cleaned up.
+**Wave 2 is complete.** All four PRs merged — #305 (`853f780`), #306 (`6047450`),
+#308 (`9c56dbe`), #307 (`fa6b2d9`). `main` is green at **1095 passed** on the src tier.
+Every worktree and branch is torn down; the repo is `main` only, local and remote.
 
-**#307 is the one open item.** Gate-4 validation over all 30 real sources found:
-(1) `hall-schroeder-anatomy-of-power` crashes intake on a pypdf `NullObject`;
-(2) `heydemann-war-institutions-social-change` carries embedded metadata for *a different
-book* (`Michael Hanby` / `AUGUSTINE AND MODERNITY`) and would be recorded as a confident
-value with provenance; (3) the title-page fallback reads **2 of 13** real cases correctly,
-storing the author as the title twice and Cambridge boilerplate twice — the #268 pattern.
-Full table in the PR body.
+**#307 took a second round, and that is the wave's main lesson.** Its suite was green and
+its corpus check was not. Gate-4 validation over all 30 real sources found: a pypdf
+`NullObject` crash; `heydemann-war-institutions-social-change` carrying embedded metadata
+for *a different book* (`Michael Hanby` / `AUGUSTINE AND MODERNITY`) recorded as a confident
+value; and a title-page fallback reading **2 of 13** real cases. Founder ruled: delete the
+heuristic, extend slice 01's reasoning-ON front-matter call to also read and cross-check the
+title page, guard the `NullObject`. Re-measured on all 30:
 
-**Founder decision (2026-07-21):** replace the hand-rolled fallback with one model call
-reusing slice 01's reasoning-ON front-matter read, cross-check embedded metadata against
-the title page so a recycled-metadata PDF resolves to `unavailable` rather than a confident
-wrong value, and guard the `NullObject`. The 30-source table is the acceptance evidence,
-not the suite. Builder is in flight in `.claude/worktrees/intake-metadata-02`.
+| Field | Before | After |
+|---|---|---|
+| author with a value | 22/30 | **29/30** |
+| title with a value | 23/30 | **28/30** |
+| date with a value | 3/30 | **30/30** |
+| crashes | 1 | **0** |
+
+Heydemann now records `unavailable` for author and title. Two honest residuals: `batatu`'s
+title is a partial read, and `ayubi` moved from a wrong value to `unavailable` — a coverage
+loss that is a quality gain.
+
+> ⚠️ **The model path is dormant in production.** `read_bibliographic_fields` takes it only
+> when a caller supplies a `client`, and **no production call site passes one** — not
+> `extract()`, not `cli._intake`. Until **#303** lands, a real ingest run still records the
+> wrong Heydemann metadata. Two consequences: **#303 is now the switch that makes
+> bibliographic correctness real**, not just holdings wiring; and **stage 4's re-tag must
+> run after #303**, or the frozen corpus bakes embedded-metadata-only `source_meta` into
+> ~17k chunks.
 
 One note carried forward from the merged lanes:
 
@@ -89,11 +102,18 @@ merged. `data/logs/` is one directory per run; the ledger outlives every run and
 at the start of the next one, so it is runner state, not a log. No migration was needed —
 nothing had been written to disk yet.)*
 
-Still held back: **#270 slice 02** (fans out into `envelope`/`tag`/`eval` — the one
-real serialization point; hold until the intake-metadata and tag lanes settle),
-**#277·03** (source sets + summary), **#288** (after run·03), **#289** (fix-lane,
-anytime), **#303** (holdings wiring — after #285). Then **stage 4** (freeze = Phase A
-closes), then **stage 5**.
+### Candidate wave 3 — all unblocked now
+
+| Lane | Next slice | Notes |
+|------|-----------|-------|
+| **intake-metadata** | **#303** holdings + client wiring | **promote this to first.** It is what makes #284 *and* #307's cross-check actually run; stage 4 must not precede it |
+| **intake-metadata** | #278 envelope cleanup (slice 03) | drops author/title/date from the envelope; vault composes from both. Needs #285 ✅ |
+| **run** | #277·03 source sets + summary | corpus glob + end-of-run summary; unblocks #288 |
+| **run-logging** | #270 slice 02 | **now safe** — it fans out into `envelope`/`tag`/`eval`, and the lanes that contended for those files have landed |
+
+#270 slice 02 was the wave-2 serialization point and is released: the intake-metadata and
+tag lanes are both settled. **#289** (gold dropdown) is fix-lane, anytime. Then **stage 4**
+(freeze = Phase A closes) — **after #303** — then **stage 5**.
 
 See [`README.md`](README.md) → *Execution — parallel feature lanes & worktrees* for
 the full conflict rationale.
