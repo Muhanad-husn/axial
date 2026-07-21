@@ -64,40 +64,54 @@ single-draw tags in place — no error, no signal.
 ensure no stale `tag` rows are in `data/run/ledger.tsv`. Verify by checking that the run's
 first source actually makes model calls.
 
-## Trap 3 — `data/xref/` is EMPTY, so xref will recompute in full
+## Trap 3 — `data/xref/` is empty, so xref recomputes — but it is MEASURED, and it is fine
 
-**Correction to this runbook's first version, which assumed xref checkpoints existed.**
-They do not. `data/xref/` holds **0 entries**, even though the corpus vault was built with
-xref links (#272). `run_xref` makes **one LLM call per chunk** when its checkpoint is
-absent — **18,410 calls**, historically ~2000 s/source ≈ **16 hours**.
+`data/xref/` holds **0 entries** even though the corpus vault was built with xref links
+(#272), so `run_xref` recomputes: one LLM call per chunk. Since `vault-write` calls
+`run_xref` internally (trap 1), any corpus-wide `vault-write` pays it.
 
-Since `vault-write` calls `run_xref` internally (trap 1), *any* corpus-wide `vault-write`
-today pays that 16 hours. This is the single largest hidden cost in stage 4, and it is
-**not** tag.
+**Do not extrapolate this from the "~2000 s/source" figure in memory — that is the max,
+not the median.** The 2026-07-20 #272 rollout measured the real thing, all 30 sources,
+in `data/logs/xref-rerun.log`:
 
-Three ways out, cheapest first:
+```
+min 45 s · median 945 s · max 2168 s
+total work 7.8 h  →  ~2.6 h wall clock at 3 workers
+```
 
-1. **Don't run `vault-write` at all for the #278 fix.** The metadata fix needs the
-   frontmatter `source_meta` block rewritten on notes that already exist — no pipeline
-   pass. This is the already-identified P0-1d vault rewrite. See "The decoupling" below.
-2. **Reconstruct `data/xref/<source_id>.jsonl` from the existing notes' links** — the
-   pairs are on disk in 18,410 notes. Worth checking whether they round-trip faithfully;
-   if they do, a one-off script turns 16 hours into minutes.
-3. Pay it, once, deliberately.
+**A full corpus `vault-write` — xref from scratch, tag and artifacts reused — is a ~2.6-hour
+job, not a 16-hour one.** Earlier versions of this runbook said 16 h. That was wrong.
+
+**The driver already exists and is proven:** `data/logs/_drivers-archive/xref_rerun.py` —
+`axial vault write` per source, 3 workers via `ThreadPoolExecutor` + `subprocess`,
+resumable through per-source done-markers in `data/logs/xref-done/` (all 30 present). Its
+own docstring independently confirms two things this runbook derived from the code:
+"LLM-bound, no docling" and "reuses tag/artifact checkpoints (no re-tag)".
+
+Note it bypasses `axial run` entirely, so it produces **no `RunSummary`, no #288 rates, and
+no run-logging**. That is the argument for lane B: parallelising the *supported* runner
+path rather than reaching for the driver again.
+
+**After the next run, do not clear `data/xref/`** — populated checkpoints make every
+subsequent vault-write nearly free.
 
 ## The decoupling — the #278 fix does NOT need a re-tag
 
 These are two separate operations with wildly different costs, and the plan previously
 bundled them:
 
-| Operation | What it fixes | LLM cost |
-|---|---|---|
-| **Metadata rewrite** (P0-1d) | 18,410 notes carrying fabricated slug titles + null authors | **~30 calls** (4.0's holdings pass) + I/O |
-| **Re-tag** (best-of-3) | Tag quality: single-draw 0.73 → best-of-3 0.918 on `theory_school` | **~55,400 calls** |
+| Operation | What it fixes | LLM cost | Wall clock, 3 workers |
+|---|---|---|---|
+| **4.0 + vault-write** | 18,410 notes carrying fabricated slug titles + null authors | ~30 holdings calls + 18,410 xref | **~2.6 h** (measured) |
+| **Re-tag** (best-of-3) | Tag quality: single-draw 0.73 → best-of-3 0.918 on `theory_school` | **~55,400 calls** | ~8–15 h (est.) |
 
-The metadata defect is the one that has been the headline concern since #278, and it is
-**~30 model calls away**, not 55,400. Do it first, independently, and the corpus stops
-lying about its own bibliography regardless of what is decided about tagging.
+The metadata defect — the headline concern since #278 — is a **single ~2.6-hour run** away
+and does not need a re-tag at all. Do it first and independently: the corpus stops lying
+about its own bibliography regardless of what is decided about tagging.
+
+The re-tag estimate is derived from the measured xref rate (~1.5 s/call) and is **not
+measured** — tag echoes the chunk and emits structured output, so it is likely slower.
+Probe one source before committing.
 
 ---
 
@@ -214,6 +228,23 @@ before the freeze, not the full re-tag.
 
 **Residual risk:** if distillation fails to reach teacher parity, the full re-tag is still
 owed — the sample is then a ~15% insurance premium, not a loss.
+
+### …but the measured numbers weaken the cost case for sampling
+
+Sampling was worth proposing when the re-tag looked like a multi-day ordeal. On the
+measured rate it is **roughly one overnight run at 3–4 workers**. Against that, sampling
+buys ~6–13 hours of unattended machine time and costs:
+
+- **estimated** rather than exact rates for the 4.3 freeze,
+- a **mixed-provenance vault** that Phase B then has to reason about,
+- an extra decision and an extra sampling-design review.
+
+Unattended overnight time is the cheapest resource in this project. **Recommend the full
+re-tag** unless the one-source probe comes back far slower than the xref rate implies —
+in which case the stratified design above is ready to use. The stage-5 circularity
+argument (paying to label everything, then building the thing that avoids paying to label
+everything) is real but is an argument about *sequencing stage 5*, not about skipping a
+one-night run that makes the freeze exact.
 
 ## Sequence
 
