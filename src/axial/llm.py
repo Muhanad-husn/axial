@@ -231,6 +231,11 @@ XREF_PASS_NAME = "xref"
 # from every other pass.
 ENVELOPE_PASS_NAME = "envelope"
 
+# Pass name the holdings-completeness check's single per-source call
+# identifies itself with (see src/axial/holdings.py, issue #284, PRD §7.11).
+# Same out-of-band dispatch convention as CHUNK_PASS_NAME above.
+HOLDINGS_PASS_NAME = "holdings"
+
 # Pass name the router's content-apparatus classification call identifies
 # itself with (see src/axial/chunk.py / src/axial/router.py, issue #207,
 # PRD §7.8 "Model-backed classification of flagged candidates"). Same
@@ -251,6 +256,7 @@ CONTENT_APPARATUS_PASS_NAME = "content_apparatus"
 DEFAULT_REASONING_BY_PASS: dict[str, bool] = {
     ENVELOPE_PASS_NAME: True,
     CONTENT_APPARATUS_PASS_NAME: True,
+    HOLDINGS_PASS_NAME: True,
     TAG_PASS_NAME: False,
     ARTIFACTS_PASS_NAME: False,
     XREF_PASS_NAME: False,
@@ -474,6 +480,22 @@ def _canned_content_apparatus_response() -> str:
     return json.dumps({"route": "prose"})
 
 
+def _canned_holdings_response() -> str:
+    """The canned response for a holdings-completeness call (identified by
+    `pass_name=HOLDINGS_PASS_NAME`, issue #284, §7.11): a `complete`
+    verdict -- the no-flag answer -- so a stub-driven end-to-end run never
+    invents a partial-holding flag for a fixture nobody asked to flag."""
+    return json.dumps(
+        {
+            "document_kind": "book",
+            "claimed_extent": None,
+            "claimed_extent_stated_by": None,
+            "verdict": "complete",
+            "reason": "Stub client: no holdings judgment was made.",
+        }
+    )
+
+
 def _canned_response_for(pass_name: str | None) -> str:
     """Dispatch the canned response by pass: `pass_name == CHUNK_PASS_NAME`
     gets the chunk-shaped canned response, `pass_name == TAG_PASS_NAME` gets
@@ -525,6 +547,8 @@ def _canned_response_for(pass_name: str | None) -> str:
         return _canned_xref_response()
     if pass_name == CONTENT_APPARATUS_PASS_NAME:
         return _canned_content_apparatus_response()
+    if pass_name == HOLDINGS_PASS_NAME:
+        return _canned_holdings_response()
     return StubLLMClient._CANNED_RESPONSE
 
 

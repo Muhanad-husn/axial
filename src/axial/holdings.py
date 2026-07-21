@@ -1,335 +1,285 @@
-"""Holdings-completeness probe (issue #268, PRD §7.11, §8 P0-1b).
+"""Holdings-completeness check (PRD §7.11, §8 P0-1b).
 
 A **partial holding** is a source file that carries only part of the work
 it names: one volume of a multi-volume set, a truncated scan, an extract
-circulated as if it were the whole book. This module runs a deterministic
-check -- zero model, embedding, and network calls -- over the raw text
-layer `axial.intake` already extracts, and returns a flag (or `None`) that
-`intake()` attaches to the `Source` it produces. It never rejects: this is
-a flag-only signal for an operator to judge, not an intake gate.
+circulated as if it were the whole book. This module cleans the raw text
+layer `axial.intake` already extracts and hands it to **one** model call
+that judges, in a single pass, what kind of document this is, what extent
+it claims for itself, and whether the file covers that extent. The result
+is a flag (or `None`) that `intake()` attaches to the `Source` it
+produces. It never rejects: this is a flag-only signal for an operator to
+judge, not an intake gate.
 
-Two signals run, in order (`probe`, below). Signal A (printed-TOC page
-extent) is preferred; Signal B (orphan fragment) covers only the sources on
-which Signal A has no reading. See each signal's own functions for the
-detail; the six tunables below are the corpus-tuned cutoffs, kept named and
-commented (in the spirit of the chunk band, §7.7, and the low-alpha
-threshold, §7.8) rather than scattered as magic literals.
+Deterministic first, model second (§7.11):
+
+- the **physical page count** comes from the file, never from the model;
+- **running headers/footers are stripped** before any text is read for
+  judgment, so `tilly`'s contents heading -- which extracts as
+  `viii Contents`, a folio stitched to the running head -- reaches the
+  model as `Contents`.
+
+The earlier deterministic two-signal design (a printed-contents page-extent
+ratio with a back-matter-density fallback) was measured and removed in
+#284: a research paper legitimately has no contents page, and no threshold
+separates a complete paper from a truncated book. §7.11 records the full
+measurement; do not rebuild it.
 """
 
 from __future__ import annotations
 
 import re
+import sys
+from typing import Any
+
+import httpx
+
+from axial.llm import HOLDINGS_PASS_NAME, LLMClient, LLMError
+from axial.model_json import ModelJsonError, complete_json, parse_model_json
 
 # =============================================================================
-# Tunables. Stated tunables, not hardcoded magic numbers -- named so they can
-# be revisited as the corpus grows, without hunting for literals scattered
-# through the code.
+# Stated tunables (§7.11: "at most a small number ... plausibly the size of
+# the front-matter window and the size of the tail window", values set by
+# measurement over the 30-source corpus, not asserted).
 # =============================================================================
 
-# Signal A (printed-TOC page extent) fires when COVER = physical page count /
-# max contents-page reference falls below this floor. Proven by inspection
-# over the 30-source corpus (issue #268's pinned measurement-pass comment):
-# the one known truncated source (Mann, vol. 2) scores 0.10; the lowest-
-# scoring complete work scores 1.03 -- 0.5 sits inside that ~9.9x gap with
-# wide margin on both sides.
-COVER_FLOOR = 0.5
+# Leading physical pages handed to the model. Measured over the corpus: the
+# printed contents page starts at page index 3-8 and can span 5 pages
+# (`batatu`), and a volume/part statement lives on the title page; 20 pages
+# covers every corpus source's front matter with margin.
+FRONT_MATTER_PAGES = 20
 
-# Signal B (orphan fragment) requires the physical page count to sit below
-# this ceiling. A paper/chapter offprint/fragment is short; a full book
-# with no contents page found is not. Proven by inspection over the 30-source
-# corpus (the sole orphan-fragment true positive, Ungor, is 20pp).
-ORPHAN_PAGE_CEILING = 120
+# Trailing physical pages handed to the model. The tail is what separates a
+# complete short work (ends with a reference list / index) from a fragment
+# that breaks off mid-argument.
+TAIL_PAGES = 3
 
-# How many leading physical pages of the raw text layer are scanned, in
-# order, for a contents heading line before Signal A gives up and reports
-# no reading.
-CONTENTS_SEARCH_PAGES = 30
+# How many sampled pages a head/foot line must recur on before it counts as
+# running furniture (a running head, running title, or top-of-page folio)
+# rather than content. A real running head repeats on every page of a
+# section -- dozens; a heading that happens to repeat twice (`tilly`'s
+# two-page contents) is content and must survive.
+RUNNING_FURNITURE_MIN_PAGES = 3
 
-# How many pages, starting at the located contents heading, the contents
-# region can span: the heading's own page, plus following pages while they
-# keep yielding entry-shaped lines, bounded here.
-#
-# DO NOT widen this without re-measuring against the real corpus first --
-# the obvious retune is a trap, measured directly (issue #268 review, 2nd
-# pass, F3). `batatu`'s printed contents genuinely spans 5 pages (its
-# heading page, pypdf index 6, through index 10 -- all 5 still yielding
-# entries when the "keep yielding" walk is let run uncapped, past this
-# 3-page bound). This bound truncates that walk after 3 pages (indices
-# 6-8), recovering maxref 262 instead of the true 414 -- COVER 1.649
-# instead of the spec's originally measured ~1.04 -- individually harmless,
-# since 1.649 only pushes further from the fire threshold (the safe
-# direction). But immediately past `batatu`'s true 5-page span, page index
-# 11 yields no entries (a gap), and pages 12-13 beyond that gap are a "List
-# of Tables" section that -- measured -- also parses as entry-shaped under
-# the current regex: 'at Constant 1985 Prices in Selected Years between
-# 1963' reads as entry reference 1963, and '12-5 Ba ʿth Regional Commands
-# March 1966-November 1970' reads as 1970. Reaching those two pages
-# (whether by widening this bound far enough to bridge the gap, or by any
-# future contents-region walk that tolerates one) drags maxref to 1970 and
-# COVER to 432/1970 = 0.219 -- BELOW cover_floor (0.5): a false fire. Note
-# that neither trailing word ("between", "November") is in
-# `_ENTRY_TRAILING_STOPWORDS` -- both are ordinary content words, not
-# function words, so the semantic filter structurally cannot catch this
-# case; it is this 3-page bound alone that holds it off today, incidentally
-# rather than by the strict-entry-shape design §7.11 describes. See that
-# stopword filter's own comment below for the same caveat. Left at 3,
-# unwidened, on this measurement.
-CONTENTS_SPAN_PAGES = 3
+DOCUMENT_KINDS = frozenset({"book", "research_paper", "chapter_offprint", "fragment"})
 
-# The fraction of the source's tail (by physical page count) Signal B's
-# back-matter test measures over, e.g. the final 10% of an 80-page source is
-# its last 8 pages.
-TAIL_WINDOW_FRACTION = 0.10
-
-# The minimum rate of bibliography/index-entry SIGNALS (inverted
-# author-name citations, or index term-plus-page-list lines) per 100 words
-# of Signal B's tail window, for the source to count as carrying back
-# matter. §7.11 pins this by observable rather than a pre-existing measured
-# corpus value: "bayat" and "heydemann-war" (real sources whose reference-
-# list/index tails a heading-regex test misses, §7.11's own named false-
-# positive guard) must test as HAVING back matter, and a true orphan
-# fragment (an ordinary-prose tail with no bibliographic apparatus at all)
-# must not.
-#
-# This is a RATE over text volume (words), not a fraction of matching LINES
-# over total lines, deliberately: measured against the real 30-source corpus
-# (issue #268 review, F2), a genuine bibliography entry routinely wraps
-# across several extracted lines and only its first line carries the
-# "Lastname, F." shape (e.g. `state-legitimacy`'s tail: an author/year/title
-# line, then "Stanford University Press.", then a journal citation split
-# over 2-3 more lines) -- a per-LINE fraction is diluted by exactly those
-# continuation lines until it reads as "no back matter" even on a real
-# bibliography, which is precisely the heading-regex failure mode §7.11
-# rejects (measured: `heydemann-war` scored 0.059 under a per-line fraction,
-# well under any sane threshold). A per-100-words rate is immune to how many
-# lines a citation happens to wrap across, since the denominator is text
-# volume, not line count.
-#
-# Measured over the real corpus's 7 no-contents-page sources (data/_scratch,
-# not committed): the true orphan fragment (Ungor) scores 0.0 signals/100w;
-# every source with genuine back matter -- including the two named false-
-# positive guards -- scores at or above `heydemann-war`'s 2.76 (its
-# contributor-bio-heavy back matter is the corpus's sparsest legitimate
-# case; `bayat` scores 10.32, `do-civil-wars` 3.36, `state-legitimacy`
-# 4.31). 1.0 sits with wide margin on both sides of that (0.0, 2.76] gap.
-BACKMATTER_ENTRY_DENSITY = 1.0
-
-_CONTENTS_HEADINGS = frozenset({"contents", "table of contents"})
-
-# An entry-shaped contents-page line: title text ending in a letter, a
-# period, or a close-paren, then whitespace, then a trailing 1-4 digit whole
-# number and nothing else. A real dot-leader run's own last character is a
-# period, so this shape covers it too, but does NOT require it -- measured
-# against the real 30-source corpus (issue #268 review, F1), a printed dot
-# leader does not survive `pypdf` text extraction: the visual gap collapses
-# to a single space (e.g. "6 Auctoritas and Potestas 74"), and requiring a
-# literal leader run left Signal A a reading on only 4/30 real sources
-# instead of the spec's measured 21/30.
-_TOC_ENTRY_LINE_RE = re.compile(r"^(?P<title>\S.*?[A-Za-z.)])\s+(?P<number>\d{1,4})$")
-
-# A structural entry-shape match alone is not strict enough once the leader
-# requirement is dropped: it also matches an ordinary prose sentence that
-# happens to end in a bare number, e.g. the locked outer test's decoy line
-# ("This edition was substantially revised in 1975"). The semantic filter
-# that holds that off without reintroducing the leader requirement: reject
-# a match whose title's own LAST WORD is a common short function word. A
-# genuine entry title ends in the substantive noun/name being indexed
-# ("Empire", "Potestas", "Puzzles", "Index", "Conclusion" ...); the decoy's
-# number is incidental to an ordinary sentence, and it is exactly this
-# family of word ("...revised IN 1975") that precedes it.
-#
-# This is a targeted guard against THAT shape of false positive -- an
-# ordinary sentence ending in a bare number -- not a general defense
-# against any stray integer landing at the end of an otherwise entry-shaped
-# line. It is NOT what holds off every such case: measured on the real
-# corpus (issue #268 review, 2nd pass, F3), a "List of Tables" entry whose
-# title is itself a date range ("...in Selected Years between 1963",
-# "...March 1966-November 1970") parses as a valid trailing reference, and
-# neither "between" nor "November" is a function word this stoplist
-# catches -- see `CONTENTS_SPAN_PAGES`'s own comment for the measured
-# consequence. §7.11 describes "strict entry-shape matching" as what holds
-# a stray integer off in general; measured, that is only true within the
-# region this stoplist actually reaches -- `CONTENTS_SPAN_PAGES`'s bound is
-# what holds the date-range case off today, incidentally.
-_ENTRY_TRAILING_STOPWORDS = frozenset(
-    "a an the of in on at by to for from with and or as is was were be "
-    "been but that this these those into onto over under since during "
-    "after before than then so".split()
-)
-
-# An inverted author-name citation entry, e.g. "Bayat, A." or "Heydemann, S.":
-# a capitalized surname, a comma, then a capitalized initial/given-name
-# token. Narrow by construction (mirrors the family of signal
-# `axial.router`'s content-apparatus arm uses per block, §7.8) so an
-# ordinary sentence's incidental comma never matches.
-_INVERTED_AUTHOR_NAME_RE = re.compile(r"[A-Z][a-z]+,\s+[A-Z]")
-
-# An index entry: a term followed by a comma-separated list of page numbers
-# (optionally hyphenated ranges), and nothing else on the line -- e.g.
-# "state formation, 12, 45, 88-91".
-_INDEX_ENTRY_LINE_RE = re.compile(r"^.+?,\s*\d+(?:[-–]\d+)?(?:,\s*\d+(?:[-–]\d+)?)*\s*$")
+# A page-number token: a 1-4 digit arabic number, or a roman numeral.
+_FOLIO_RE = re.compile(r"(?:\d{1,4}|[ivxlcdm]{1,7})", re.IGNORECASE)
+_LEADING_FOLIO_RE = re.compile(rf"^{_FOLIO_RE.pattern}\s+(?=\S)", re.IGNORECASE)
+_WHOLE_FOLIO_RE = re.compile(rf"^{_FOLIO_RE.pattern}$", re.IGNORECASE)
 
 
-def _is_contents_heading(line: str) -> bool:
-    """True when `line`, lowercased with internal whitespace collapsed, reads
-    exactly `contents` or `table of contents` (§7.11)."""
-    normalized = " ".join(line.strip().split()).lower()
-    return normalized in _CONTENTS_HEADINGS
+def _page_lines(page_text: str) -> list[str]:
+    return [line for line in (raw.strip() for raw in page_text.splitlines()) if line]
 
 
-def _entry_title_last_word(title: str) -> str:
-    """The title's own last word, letters only, lowercased -- what
-    `_extract_entry_reference`'s stopword filter tests."""
-    return re.sub(r"[^A-Za-z]", "", title.rsplit(None, 1)[-1]).lower()
+def _signature(line: str) -> str:
+    """A running-furniture signature: the line with digits removed, cased
+    down and whitespace-collapsed, so `vi Preface` and `viii Preface` are
+    one signature."""
+    return " ".join(re.sub(r"\d+", "", line).split()).casefold()
 
 
-def _extract_entry_reference(line: str) -> int | None:
-    """The trailing whole number on an entry-shaped contents-page `line`
-    (title text ending in a letter/period/close-paren, whitespace, then a
-    1-4 digit number), or `None` when `line` does not match that shape --
-    an ordinary prose line, a bare year whose title ends in a function word,
-    or a garbled/non-numeric trailing token (§7.11)."""
-    match = _TOC_ENTRY_LINE_RE.match(line.strip())
-    if match is None:
+def _uses_top_folios(pages: list[list[str]]) -> bool:
+    """True when the document prints page numbers at the top of its pages --
+    measured, not assumed: at least `RUNNING_FURNITURE_MIN_PAGES` of the
+    sampled pages open with a page-number token followed by more text.
+
+    Gating the leading-folio strip on this keeps it off documents that do
+    not number pages at the top, where a first line opening with a number
+    ("1978 was a turning point ...") is ordinary prose, not furniture."""
+    hits = sum(1 for lines in pages if lines and _LEADING_FOLIO_RE.match(lines[0]))
+    return hits >= RUNNING_FURNITURE_MIN_PAGES
+
+
+def strip_running_furniture(page_texts: list[str]) -> list[str]:
+    """Remove running headers, running titles and page-number folios from
+    `page_texts` (§7.11, a stated requirement of the check).
+
+    Three deterministic removals, all confined to each page's first and last
+    line -- where page furniture lives -- so a contents entry in the body of
+    a page is never touched:
+
+    - a first/last line that is nothing but a page number is dropped;
+    - a first/last line whose signature recurs across
+      `RUNNING_FURNITURE_MIN_PAGES` or more pages is dropped (a running head);
+    - when the document numbers pages at the top, a leading page-number
+      token is stripped off the first line, leaving the text beside it --
+      this is what turns `viii Contents` into `Contents`.
+    """
+    pages = [_page_lines(text) for text in page_texts]
+
+    counts: dict[str, int] = {}
+    for lines in pages:
+        for line in set(lines[:1] + lines[-1:]):
+            counts[_signature(line)] = counts.get(_signature(line), 0) + 1
+
+    top_folios = _uses_top_folios(pages)
+
+    cleaned: list[str] = []
+    for lines in pages:
+        if not lines:
+            cleaned.append("")
+            continue
+        out = list(lines)
+        edges = [0, len(out) - 1] if len(out) > 1 else [0]
+        for index in edges:
+            line = out[index]
+            if _WHOLE_FOLIO_RE.match(line):
+                out[index] = ""
+                continue
+            if counts.get(_signature(line), 0) >= RUNNING_FURNITURE_MIN_PAGES:
+                out[index] = ""
+                continue
+            if index == 0 and top_folios:
+                out[index] = _LEADING_FOLIO_RE.sub("", line)
+        cleaned.append("\n".join(line for line in out if line))
+    return cleaned
+
+
+def _window(page_texts: list[str]) -> tuple[list[str], list[str]]:
+    """The front-matter and tail windows handed to the model. A document
+    shorter than both windows together yields its whole text as front
+    matter and an empty tail (never the same page twice)."""
+    front = page_texts[:FRONT_MATTER_PAGES]
+    tail = page_texts[max(len(front), len(page_texts) - TAIL_PAGES) :]
+    return front, tail
+
+
+def _render(pages: list[str], first_index: int) -> str:
+    blocks = []
+    for offset, text in enumerate(pages):
+        if text.strip():
+            blocks.append(f"[page {first_index + offset + 1}]\n{text.strip()}")
+    return "\n\n".join(blocks)
+
+
+def compose_prompt(page_texts: list[str], physical_pages: int | None) -> str:
+    """Assemble the single holdings prompt: window `page_texts` down to the
+    front matter and the tail, strip running furniture from those pages,
+    and render them with their physical page numbers.
+
+    The model is asked for one judgment covering document kind, claimed
+    extent and coverage together (§7.11), and is told to answer "complete"
+    whenever the evidence is absent or ambiguous -- the 0-false-positive
+    bar is the contract, and an unread document must not become a flag.
+    """
+    front, tail = _window(page_texts)
+    cleaned = strip_running_furniture(front + tail)
+    front, tail = cleaned[: len(front)], cleaned[len(front) :]
+    extent = (
+        f"{physical_pages} pages"
+        if physical_pages is not None
+        else "unknown (this file format exposes no page count)"
+    )
+    sections = [f"=== FRONT MATTER ===\n{_render(front, 0)}"]
+    if tail:
+        sections.append(f"=== FINAL PAGES ===\n{_render(tail, len(page_texts) - len(tail))}")
+
+    return f"""You are checking whether a source file carries the complete work it names, or only part of it (one volume of a set, a truncated scan, a single chapter circulated as if it were the book).
+
+Physical extent of the file: {extent}.
+
+Below are two EXCERPTS from the file, labelled with their physical page numbers: its opening pages, and its final pages. The pages between the two excerpts are present in the file and are simply not shown to you here. Running headers, running titles and page-number folios have been stripped.
+
+{"\n\n".join(sections)}
+
+=== YOUR JUDGMENT ===
+
+Decide these together, from the supplied text and the physical extent only. Do not use outside knowledge of this work.
+
+1. What kind of document this is: "book", "research_paper", "chapter_offprint", or "fragment".
+2. What extent the document claims for itself, if it states one: the last page number in a printed table of contents, a title page naming a volume of a set, a stated page range. Give a short value ("816 pages", "volume 2 of 4", "pp. 45-72") and what stated it ("printed contents page", "title page"). Use null for both when the document states no extent.
+3. Whether the file covers that claimed extent.
+
+Rules:
+- The unshown middle of the file is omitted from this prompt, NOT missing from the file. Never treat that gap as evidence of truncation.
+- A research paper, a book chapter and an essay normally have NO table of contents. A missing table of contents is not evidence of truncation.
+- The physical page count normally EXCEEDS the last printed page number, because front matter is numbered separately. A small shortfall is normal. Only a file that runs to a small fraction of what it claims is truncated.
+- Answer "partial" only on positive evidence in the text: a claimed extent the file plainly cannot cover, front matter naming a volume or part the file does not contain, or a work that breaks off mid-argument with no ending, no conclusion and no reference apparatus.
+- When the evidence is absent, weak, or ambiguous, answer "complete".
+
+Return ONLY this JSON object, no prose and no code fence:
+{{"document_kind": "book|research_paper|chapter_offprint|fragment", "claimed_extent": "<short value or null>", "claimed_extent_stated_by": "<what stated it, or null>", "verdict": "complete|partial", "reason": "<one or two short sentences, no quoted source text>"}}"""
+
+
+def _reject_unusable_answer(raw: str) -> None:
+    """Validator for `complete_json`'s bounded re-ask (issue #80's
+    degenerate-content mechanism): the answer must be an object naming a
+    verdict, and a "partial" verdict must carry a reason -- a flag whose
+    stated reason is blank is a flag an operator cannot judge. Measured:
+    one answer in eight came back with an empty reason."""
+    answer = parse_model_json(raw)
+    if not isinstance(answer, dict):
+        raise ValueError(f"holdings answer was not a JSON object: {type(answer).__name__}")
+    verdict = str(answer.get("verdict", "")).strip().lower()
+    if verdict not in {"complete", "partial"}:
+        raise ValueError(f"holdings answer named no verdict: {verdict!r}")
+    if verdict == "partial" and not str(answer.get("reason", "")).strip():
+        raise ValueError("holdings answer flagged a partial holding with no stated reason")
+
+
+def _flag_from(
+    verdict: dict[str, Any], source_name: str, physical_pages: int | None
+) -> dict | None:
+    """Build the §7.11 flag from the model's parsed answer, or `None` when
+    it judged the holding complete.
+
+    The flag records its measurement -- source, concluded kind, claimed
+    extent and what stated it, observed page count, stated reason -- never a
+    bare boolean, and carries values and short reasons only, no source text
+    (DEC-23). An answer that is not a recognisable "partial" verdict is
+    treated as complete: the bar is 0 false positives, so an unreadable
+    answer must not become a flag.
+    """
+    if str(verdict.get("verdict", "")).strip().lower() != "partial":
         return None
-    if _entry_title_last_word(match.group("title")) in _ENTRY_TRAILING_STOPWORDS:
-        return None
-    return int(match.group("number"))
-
-
-def _find_contents_region(page_texts: list[str]) -> list[str] | None:
-    """Locate the contents region (§7.11): scan the first
-    `CONTENTS_SEARCH_PAGES` of `page_texts`, in order, for the first page
-    carrying a contents heading line; the region is that page plus following
-    pages while they keep yielding at least one entry-shaped line, bounded
-    at `CONTENTS_SPAN_PAGES` pages total. Returns `None` when no contents
-    heading is found within the search window."""
-    search_limit = min(len(page_texts), CONTENTS_SEARCH_PAGES)
-    heading_index = None
-    for index in range(search_limit):
-        if any(_is_contents_heading(line) for line in page_texts[index].splitlines()):
-            heading_index = index
-            break
-    if heading_index is None:
-        return None
-
-    region = [page_texts[heading_index]]
-    next_index = heading_index + 1
-    while len(region) < CONTENTS_SPAN_PAGES and next_index < len(page_texts):
-        page_text = page_texts[next_index]
-        has_entry = any(
-            _extract_entry_reference(line) is not None for line in page_text.splitlines()
-        )
-        if not has_entry:
-            break
-        region.append(page_text)
-        next_index += 1
-    return region
-
-
-def _signal_a_reading(page_texts: list[str]) -> int | None:
-    """Signal A's own reading (§7.11): the maximum entry page reference
-    found in the contents region, or `None` when no contents page is
-    located, the region yields no readable entry reference at all, or the
-    maximum recovered reference is non-positive -- "no reading", handed off
-    to Signal B rather than a false fire.
-
-    The non-positive case matters on its own: `_TOC_ENTRY_LINE_RE` accepts
-    `\\d{1,4}`, which includes '0' (e.g. a mis-extracted "Preface 0" line).
-    A reference of 0 as `probe`'s divisor is a `ZeroDivisionError` --
-    exactly the "never rejects, never halts intake" property P0-1b forbids
-    breaking (issue #268 review, 2nd pass, F1). Treating it as no reading
-    keeps the same safe-direction discipline as an unreadable/garbled
-    reference: it degrades, it never crashes or fires falsely."""
-    region = _find_contents_region(page_texts)
-    if region is None:
-        return None
-    references = [
-        ref
-        for page_text in region
-        for line in page_text.splitlines()
-        if (ref := _extract_entry_reference(line)) is not None
-    ]
-    if not references:
-        return None
-    max_reference = max(references)
-    return max_reference if max_reference > 0 else None
-
-
-def _is_index_entry_line(line: str) -> bool:
-    """True when `line` is shaped like an index entry: a term followed by a
-    page-number list. Content-based, never a heading match (§7.11)."""
-    stripped = line.strip()
-    return bool(stripped) and bool(_INDEX_ENTRY_LINE_RE.match(stripped))
-
-
-def _backmatter_density(page_texts: list[str]) -> float:
-    """The measured RATE (§7.11) of bibliography/index-entry signals --
-    inverted author-name citations and index term-plus-page-list lines --
-    per 100 words across the tail window: the last `TAIL_WINDOW_FRACTION` of
-    `page_texts` by physical page count (at least one page).
-
-    A rate over text volume, not a fraction of matching LINES over total
-    lines: the inverted-author-name signal is counted over the window's
-    joined text (so a citation wrapped across several extracted lines is
-    still one signal, found wherever it falls), and the denominator is word
-    count, not line count -- immune to how many lines a wrapped citation
-    happens to span, unlike a per-line fraction (see `BACKMATTER_ENTRY_
-    DENSITY`'s own comment for the real-corpus case this fixes). `0.0` when
-    the window carries no words at all."""
-    physical_pages = len(page_texts)
-    window_size = max(1, round(physical_pages * TAIL_WINDOW_FRACTION))
-    window_pages = page_texts[-window_size:]
-    lines = [
-        line.strip()
-        for page_text in window_pages
-        for line in page_text.splitlines()
-        if line.strip()
-    ]
-    if not lines:
-        return 0.0
-    joined = " ".join(lines)
-    word_count = len(joined.split())
-    if word_count == 0:
-        return 0.0
-    author_signals = len(_INVERTED_AUTHOR_NAME_RE.findall(joined))
-    index_signals = sum(1 for line in lines if _is_index_entry_line(line))
-    return (author_signals + index_signals) / word_count * 100
-
-
-def probe(page_texts: list[str]) -> dict | None:
-    """Run the deterministic holdings-completeness probe (§7.11, §8 P0-1b)
-    over `page_texts` (one raw text-layer string per physical page, in
-    reading order -- `axial.intake._pdf_page_texts`'s own shape). Signal A
-    runs first; only a source on which it returns no reading falls through
-    to Signal B. Returns the fired flag dict, or `None` when neither signal
-    fires. Zero model, embedding, or network calls: this function only ever
-    reads the `page_texts` already in hand."""
-    physical_pages = len(page_texts)
-
-    max_reference = _signal_a_reading(page_texts)
-    if max_reference is not None:
-        cover = physical_pages / max_reference
-        if cover < COVER_FLOOR:
-            return {
-                "signal": "toc_page_extent",
-                "cover": cover,
-                "physical_pages": physical_pages,
-                "max_page_reference": max_reference,
-                "threshold": COVER_FLOOR,
-            }
-        return None
-
-    if physical_pages >= ORPHAN_PAGE_CEILING:
-        return None
-
-    density = _backmatter_density(page_texts)
-    if density >= BACKMATTER_ENTRY_DENSITY:
-        return None
-
+    kind = str(verdict.get("document_kind", "")).strip().lower().replace(" ", "_")
+    claimed = verdict.get("claimed_extent")
+    stated_by = verdict.get("claimed_extent_stated_by")
     return {
-        "signal": "orphan_fragment",
-        "physical_pages": physical_pages,
-        "backmatter_density": density,
-        "threshold": ORPHAN_PAGE_CEILING,
+        "source": source_name,
+        "document_kind": kind if kind in DOCUMENT_KINDS else "unknown",
+        "claimed_extent": str(claimed) if claimed else None,
+        "claimed_extent_stated_by": str(stated_by) if stated_by else None,
+        "observed_pages": physical_pages,
+        "reason": str(verdict.get("reason", "")).strip(),
     }
+
+
+def probe(
+    page_texts: list[str],
+    *,
+    client: LLMClient,
+    physical_pages: int | None,
+    source_name: str = "",
+) -> dict | None:
+    """Run the holdings-completeness check (§7.11, §8 P0-1b) over
+    `page_texts` (one raw text-layer string per physical page, in reading
+    order -- `axial.intake._pdf_page_texts`'s own shape; a DOCX passes its
+    whole text as a single element and `physical_pages=None`).
+
+    Strips running furniture, then makes exactly ONE model call, on the
+    holdings pass (reasoning ON, carried in `config/pipeline.yaml`, never
+    hardcoded). Returns the flag dict for a holding judged partial, or
+    `None`. Reads neither `data/trees/` nor `data/envelopes/`.
+
+    Never raises. A failed or unparseable model call degrades to "no flag"
+    with a warning on stderr: P0-1b forbids this check halting intake, and
+    the 0-false-positive bar forbids guessing a flag it could not read.
+    """
+    if not any(text.strip() for text in page_texts):
+        return None
+
+    prompt = compose_prompt(page_texts, physical_pages)
+    try:
+        raw = complete_json(
+            client, prompt, pass_name=HOLDINGS_PASS_NAME, validate=_reject_unusable_answer
+        )
+        verdict = parse_model_json(raw)
+    except (LLMError, httpx.HTTPError, ModelJsonError, ValueError) as exc:
+        print(f"holdings check unavailable for {source_name or 'source'}: {exc}", file=sys.stderr)
+        return None
+
+    if not isinstance(verdict, dict):
+        return None
+    return _flag_from(verdict, source_name, physical_pages)
