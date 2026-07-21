@@ -7,7 +7,7 @@ as slices land. Issues remain the system of record; this is the map over them.
 - **Branch:** `claude/phase-a-hybrid-tagging-sqx2xc`
 - **Plan:** [`README.md`](README.md) (stages, waves, deferred decisions)
 - **Decision:** `docs/DECISIONS.md` → DEC-32
-- **Last updated:** 2026-07-21 — **wave 2 complete**: #305, #306, #307, #308 all merged; repo clean; wave 3 candidates listed below
+- **Last updated:** 2026-07-21 — **wave 3 in flight**: #309 (run·03) and #310 (run-logging·02) merged; #303 still building
 
 ## Read-me-first (30-second orient)
 
@@ -29,7 +29,7 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
 ### Stage 0 — clean the shop (hygiene, parallel with stage 1)
 - ✅ 0a #291 — safe GC for orphaned derived artifacts (`reconcile.py`, new) — PR #301 merged `209bfec`
-- ◐ 0b #270 — structured run logging — plan ✅ `plans/run-logging/` (2 slices). ✅ slice 01 (seam + `extract`) — PR #305 merged `853f780`; ☐ slice 02 still held back (the serialization point)
+- ✅ 0b #270 — structured run logging — plan ✅ `plans/run-logging/` (2 slices). ✅ slice 01 (seam + `extract`) — PR #305 merged `853f780`; ✅ slice 02 (`envelope`/`tag`/`eval`) — PR #310 merged `301e37a`. **`eval` records `model: null`** — it makes no LLM call; the plan was wrong to call it model-bearing and was corrected, not the code
 - ☐ 0c #289 — verify gold-sheet dropdowns (`gold.py`) — ✎ fix-lane, verify-first
 
 ### Stage 1 — metadata correctness (one ordered chain, before any re-tag) — plan ✅ `plans/intake-metadata/`
@@ -39,12 +39,12 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
 ### Stage 2 — tag quality (before any re-tag)
 - ✅ 2a #294 — best-of-N voting on blind axes (`tag.py`; **predecessor of stage 5**) — PR #302 merged `aa0607d`; abstention settled in **DEC-33** + spec §7.14
-- ☐ 2b #288 — report not-applicable / unlisted rates — ✎ fix-lane (attaches to #277 slice-03 summary)
+- ☐ 2b #288 — report not-applicable / unlisted rates — ✎ fix-lane. **Now startable**: #277·03 landed the `RunSummary.rates` attachment point it was waiting on
 
 ### Stage 3 — runner — plan ✅ `plans/run/` (3 slices)
 - ✅ 3·01 #277 — runner core + pass registry + failure isolation (walking skeleton) — PR #300 merged `e8f9661`
 - ✅ 3·02 #277 — unified resume ledger + done-predicate (replaces today's 3 mechanisms) — PR #306 merged `6047450`, ledger relocated by PR #308. Ledger at `data/run/ledger.tsv`, keyed `(pass, source_id)`; `extract`/`envelope` use a file-exists predicate, the rest use the ledger. **P1-4 is satisfied for a named worklist** — the corpus glob is still slice 03.
-- ☐ 3·03 #277 — source-set inputs (worklist + corpus glob) + end-of-run summary
+- ✅ 3·03 #277 — source-set inputs (worklist + corpus glob) + end-of-run summary — PR #309 merged `1237e8d`. `RunSummary` is a returned structured value with a `rates` attachment point, so **#288 is unblocked**. **#277 stays open**: the issue's bounded-concurrency scenario is deferred by `plans/run/README.md`, so the PR said `Part of #277`, not `Closes`
 
 ### Stage 4 — freeze (operation, not a slice) → **PHASE A CLOSES HERE**
 - ☐ 4.1 re-tag the corpus via #277 with stages 1–2 in place
@@ -59,9 +59,23 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
 ## Next action
 
-**Wave 2 is complete.** All four PRs merged — #305 (`853f780`), #306 (`6047450`),
-#308 (`9c56dbe`), #307 (`fa6b2d9`). `main` is green at **1095 passed** on the src tier.
-Every worktree and branch is torn down; the repo is `main` only, local and remote.
+**Wave 3 is two-thirds landed.** #309 (`1237e8d`, run·03) and #310 (`301e37a`,
+run-logging·02) are merged; `main` is green at **1109 passed** on the src tier and
+both worktrees are torn down. **#303 is still building** in
+`D:\axial-wt\303-holdings-wiring` — it is the last slice of this wave and the one
+that gates stage 4.
+
+Two things a cold start should know about wave 3:
+
+- **A harness bug was fixed mid-wave.** `.claude/hooks/block-merge.ps1` resolved the
+  current branch from `$PSScriptRoot`, which only exists in the launch checkout
+  (always `main`), so it false-blocked **every** subagent push from a worktree. It
+  now uses `commit-gate.ps1`'s cwd resolution (leading `cd <dir> &&` → `$j.cwd` →
+  session dir). Verified the gate still blocks pushes from a main checkout, pushes
+  naming `main`, and `gh pr merge`. Snapshot `d0b5e41` in `axial-harness`.
+- **#270 slice 02 was released from serialization and landed clean.** The lanes that
+  contended for `envelope`/`tag` had merged first, as planned. `llm.py` gained
+  `model_for_pass()` — a cross-phase shared module, so CI green was the gate.
 
 **#307 took a second round, and that is the wave's main lesson.** Its suite was green and
 its corpus check was not. Gate-4 validation over all 30 real sources found: a pypdf
@@ -102,18 +116,19 @@ merged. `data/logs/` is one directory per run; the ledger outlives every run and
 at the start of the next one, so it is runner state, not a log. No migration was needed —
 nothing had been written to disk yet.)*
 
-### Candidate wave 3 — all unblocked now
+### What is startable next
 
 | Lane | Next slice | Notes |
 |------|-----------|-------|
-| **intake-metadata** | **#303** holdings + client wiring | **promote this to first.** It is what makes #284 *and* #307's cross-check actually run; stage 4 must not precede it |
-| **intake-metadata** | #278 envelope cleanup (slice 03) | drops author/title/date from the envelope; vault composes from both. Needs #285 ✅ |
-| **run** | #277·03 source sets + summary | corpus glob + end-of-run summary; unblocks #288 |
-| **run-logging** | #270 slice 02 | **now safe** — it fans out into `envelope`/`tag`/`eval`, and the lanes that contended for those files have landed |
+| **intake-metadata** | **#303** holdings + client wiring | ◐ **in flight** — worktree `D:\axial-wt\303-holdings-wiring`, branch `feat/intake-metadata/04-holdings-client-wiring`. Cut from `acd6ded`, so it will need a rebase onto `301e37a` |
+| **intake-metadata** | #278 envelope cleanup (slice 03) | ☐ held back all of wave 3 by design — it edits `envelope.py`, which #270·02 fanned into. #270·02 has now merged, so **#278 is released** |
+| **stage 2** | #288 not-applicable/unlisted rates | ☐ fix-lane, **now startable** — #277·03 landed the `RunSummary.rates` seam |
+| **stage 0** | #289 gold dropdown | ☐ fix-lane, anytime (verify-first) |
 
-#270 slice 02 was the wave-2 serialization point and is released: the intake-metadata and
-tag lanes are both settled. **#289** (gold dropdown) is fix-lane, anytime. Then **stage 4**
-(freeze = Phase A closes) — **after #303** — then **stage 5**.
+Ordering note for the next wave: **#278 and #303 are the same lane and both touch the
+intake/envelope metadata boundary** — sequence them, do not run them concurrently.
+Then **stage 4** (freeze = Phase A closes) — **which must not precede #303** — then
+**stage 5**.
 
 See [`README.md`](README.md) → *Execution — parallel feature lanes & worktrees* for
 the full conflict rationale.

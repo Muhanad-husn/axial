@@ -5,7 +5,7 @@
 - **GitHub issue:** #270
 - **Branch:** feat/run-logging/02-wire-remaining-passes
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ✅ merged — PR #310, `301e37a`
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -101,6 +101,27 @@ No global `datetime` monkeypatch.
 - [ ] Reviewer's two-stage review passed.
 - [ ] Evidence collected and PR prepared into `main` — merge awaits founder approval.
 
+## Correction — `eval` is not a model-bearing pass
+
+This plan called `envelope`, `tag` and `eval` "the model-bearing passes" and its
+Gherkin demanded a non-null `model` on every record. That was wrong about `eval`:
+`src/axial/eval/` imports only `DEFAULT_PIPELINE_CONFIG_PATH` from `axial.llm`
+and holds no client — the pass scores predictions against gold labels and makes
+no completion call at all. So the landed slice records:
+
+- `model: null` for `eval` — writing the stub's id would name a model that never
+  ran, which is a false run record. Matches slice 01's `extract` precedent.
+- one record per **invocation**, `source_id: ""` — `eval` takes no `source_path`;
+  it scores the whole gold set atomically, so there is no per-source granularity
+  to record.
+
+Founder accepted both on 2026-07-21. The plan was corrected rather than the code:
+the acceptance criterion above still reads as originally written, and its
+"non-null `model`" clause applies to `envelope` and `tag` only.
+
 ## Status / progress log
 
 - 2026-07-21 planned.
+- 2026-07-21 merged as PR #310 (`301e37a`). Two deviations accepted (above);
+  `llm.py` gained `model_for_pass()` on the protocol and all four clients, which
+  de-duplicates the resolution `_post_with_deadline` already performed.
