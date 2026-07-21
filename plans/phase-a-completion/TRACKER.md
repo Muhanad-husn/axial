@@ -7,7 +7,7 @@ as slices land. Issues remain the system of record; this is the map over them.
 - **Branch:** `claude/phase-a-hybrid-tagging-sqx2xc`
 - **Plan:** [`README.md`](README.md) (stages, waves, deferred decisions)
 - **Decision:** `docs/DECISIONS.md` → DEC-32
-- **Last updated:** 2026-07-21 — first slice of all four lanes merged (#291, #284, #294, #277·01); next wave awaits founder go-ahead
+- **Last updated:** 2026-07-21 — wave 2 dispatched; three PRs open awaiting review (#305, #306, #307)
 
 ## Read-me-first (30-second orient)
 
@@ -29,12 +29,12 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
 ### Stage 0 — clean the shop (hygiene, parallel with stage 1)
 - ✅ 0a #291 — safe GC for orphaned derived artifacts (`reconcile.py`, new) — PR #301 merged `209bfec`
-- ☐ 0b #270 — structured run logging — plan ✅ `plans/run-logging/` (2 slices; **decided: slice, not fix-lane**; slice 02 is the serialization point)
+- ◐ 0b #270 — structured run logging — plan ✅ `plans/run-logging/` (2 slices). Slice 01 (seam + `extract`) **PR #305 open**; slice 02 still held back (the serialization point)
 - ☐ 0c #289 — verify gold-sheet dropdowns (`gold.py`) — ✎ fix-lane, verify-first
 
 ### Stage 1 — metadata correctness (one ordered chain, before any re-tag) — plan ✅ `plans/intake-metadata/`
 - ✅ 1·01 #284 — holdings check → model-adjudicated rewrite (`holdings.py`) — PR #304 merged `affd369`. **Built but NOT wired into the ingest path → #303** (after #285)
-- ☐ 1·02 #285 — persisted source-metadata record; **sole origin of author/title/date (P0-1d)** (needs 01) — also unblocks #303
+- ◐ 1·02 #285 — persisted source-metadata record; **sole origin of author/title/date (P0-1d)** (needs 01) — also unblocks #303. **PR #307 open — HELD: real-corpus check failed** (1 crash, 1 confidently-wrong record, title-page fallback 2/13 correct). Founder decision pending on heuristic → model call
 - ☐ 1·03 #278 — **resolved: remove** author/date from the envelope (intake owns them); vault writer composes from both (needs 02). *No longer a Wave-1 independent slice.*
 
 ### Stage 2 — tag quality (before any re-tag)
@@ -43,7 +43,7 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
 ### Stage 3 — runner — plan ✅ `plans/run/` (3 slices)
 - ✅ 3·01 #277 — runner core + pass registry + failure isolation (walking skeleton) — PR #300 merged `e8f9661`
-- ☐ 3·02 #277 — unified resume ledger + done-predicate (replaces today's 3 mechanisms)
+- ◐ 3·02 #277 — unified resume ledger + done-predicate (replaces today's 3 mechanisms) — **PR #306 open**
 - ☐ 3·03 #277 — source-set inputs (worklist + corpus glob) + end-of-run summary
 
 ### Stage 4 — freeze (operation, not a slice) → **PHASE A CLOSES HERE**
@@ -59,23 +59,37 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
 ## Next action
 
-**Wave 1 is done** — the first slice of all four lanes is merged (#291, #284, #294,
-#277·01). The `tag` and `reconcile` lanes are complete; `intake-metadata` and `run`
-have slices left. **The next wave awaits the founder's go-ahead** — no worktrees are
-cut without it.
+**Wave 2 is built; three PRs are open and none is merged.** Worktrees live under
+`.claude/worktrees/{intake-metadata-02, run-02, run-logging-01}`.
 
-Candidate wave 2, in dependency order:
+| Lane | Slice | PR | State |
+|------|-------|----|-------|
+| intake-metadata | #285 source-meta record | [#307](https://github.com/Muhanad-husn/axial/pull/307) | ⚠️ **held — real-corpus check failed** |
+| run | #277·02 unified resume ledger | [#306](https://github.com/Muhanad-husn/axial/pull/306) | ready for review |
+| run-logging | #270·01 seam + `extract` | [#305](https://github.com/Muhanad-husn/axial/pull/305) | ready for review |
 
-| Lane | Next slice | Notes |
-|------|-----------|-------|
-| **intake-metadata** | #285 source-meta record | unblocks both #278 *and* #303 |
-| **run** | #277·02 unified resume ledger | this is what actually satisfies P1-4 |
-| **run-logging** | #270 slice 01 | seam + `extract` only; slice 02 stays held back |
+**The open decision is on #307.** Gate-4 validation over all 30 real sources found:
+(1) `hall-schroeder-anatomy-of-power` crashes intake on a pypdf `NullObject`;
+(2) `heydemann-war-institutions-social-change` carries embedded metadata for *a different
+book* and would be recorded as a confident value with provenance; (3) the title-page
+fallback reads **2 of 13** real cases correctly — the #268 pattern. Recommendation is to
+replace the fallback with one model call reusing slice 01's front-matter read, which
+addresses (2) and (3) together, and to guard the `NullObject`. Full table in the PR body.
+
+Two review notes carried up from the other lanes:
+
+- **#306 edits a locked slice-01 test** (`tests/test_run.py`, `OK` → `SKIP` on two
+  sources). Justified and correct — the file-exists predicate now reads the fixtures that
+  test pre-places — but the consequence is that no source in *that* test exercises the
+  success path end to end; the new outer test covers it instead.
+- **#306's ledger sits at `data/logs/run/ledger.tsv`**, beside the per-run
+  `data/logs/<date>-<name>/` dirs, though it is a cross-run artifact. Cheap to move now.
 
 Still held back: **#270 slice 02** (fans out into `envelope`/`tag`/`eval` — the one
-real serialization point), **#288** (after run·03), **#289** (fix-lane, anytime),
-**#303** (holdings wiring — after #285). Then **stage 4** (freeze = Phase A closes),
-then **stage 5**.
+real serialization point; hold until the intake-metadata and tag lanes settle),
+**#277·03** (source sets + summary), **#288** (after run·03), **#289** (fix-lane,
+anytime), **#303** (holdings wiring — after #285). Then **stage 4** (freeze = Phase A
+closes), then **stage 5**.
 
 See [`README.md`](README.md) → *Execution — parallel feature lanes & worktrees* for
 the full conflict rationale.
