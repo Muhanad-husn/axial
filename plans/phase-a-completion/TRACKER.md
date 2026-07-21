@@ -7,7 +7,7 @@ as slices land. Issues remain the system of record; this is the map over them.
 - **Branch:** `claude/phase-a-hybrid-tagging-sqx2xc`
 - **Plan:** [`README.md`](README.md) (stages, waves, deferred decisions)
 - **Decision:** `docs/DECISIONS.md` → DEC-32
-- **Last updated:** 2026-07-21 — **wave 3 in flight**: #309 (run·03) and #310 (run-logging·02) merged; #303 still building
+- **Last updated:** 2026-07-21 — **wave 4 in flight**: all three lanes built, PRs #313/#314/#315 open, awaiting founder approval
 
 ## Read-me-first (30-second orient)
 
@@ -30,17 +30,19 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 ### Stage 0 — clean the shop (hygiene, parallel with stage 1)
 - ✅ 0a #291 — safe GC for orphaned derived artifacts (`reconcile.py`, new) — PR #301 merged `209bfec`
 - ✅ 0b #270 — structured run logging — plan ✅ `plans/run-logging/` (2 slices). ✅ slice 01 (seam + `extract`) — PR #305 merged `853f780`; ✅ slice 02 (`envelope`/`tag`/`eval`) — PR #310 merged `301e37a`. **`eval` records `model: null`** — it makes no LLM call; the plan was wrong to call it model-bearing and was corrected, not the code
-- ☐ 0c #289 — verify gold-sheet dropdowns (`gold.py`) — ✎ fix-lane, verify-first
+- ◐ 0c #289 — verify gold-sheet dropdowns (`gold.py`) — ✎ fix-lane, verify-first. **PR #313 open.** Verified: no code fix needed. The dropdown resolves to `vocab!$D$2:$D$31`, 30 values, both sentinels present in the rendered sheet — reproduced independently against a real workbook build. The PR is the regression test only (+28 lines in `test_gold.py`), pinning the vocabulary to an independent YAML parse of `axes.theory_school` so a future curated subset or hardcoded list goes red
 
 ### Stage 1 — metadata correctness (one ordered chain, before any re-tag) — plan ✅ `plans/intake-metadata/`
 - ✅ 1·01 #284 — holdings check → model-adjudicated rewrite (`holdings.py`) — PR #304 merged `affd369`. **Now live in the ingest path via #303.**
 - ✅ 1·01b #303 — wire the judgment into the ingest path — PR #311 merged `41aba59`. `extract()` builds a client only for an unjudged source; the §7.12 record gains `holdings_checked`, so a judged source constructs **no client at all**. Gate 4 over all 30: pass 1 = 30 calls (one each), pass 2 = **0 calls, 0 clients**; biblio coverage identical to #307 (author 29/30, title 28/30, date 30/30, 0 crashes); 0 flags raised. **P0-1b is true of the pipeline now, not just of `intake()`.**
 - ✅ 1·02 #285 — persisted source-metadata record; **sole origin of author/title/date (P0-1d)** — PR #307 merged `fa6b2d9`. Took two rounds: the first failed gate 4, the rework deleted the heuristic and extended slice 01's model call to read + cross-check the title page (author 29/30, title 28/30, date 30/30, 0 crashes). **No longer dormant — #303 passes the client.**
-- ☐ 1·03 #278 — **resolved: remove** author/date from the envelope (intake owns them); vault writer composes from both (needs 02). **Released and startable** — its two blockers (#285, and #270·02's `envelope.py` fan-out) have both merged. **Sequence it after #303, never beside it** — same lane, same intake/envelope metadata boundary.
+- ◐ 1·03 #278 — **resolved: remove** author/date from the envelope (intake owns them); vault writer composes from both. **PR #315 open** — the last planned slice in Phase A. Envelope shape is now `{source_id, thesis, toc[], scope, stated_argument}`; `_fallback_title` deleted (its second caller, `_fallback_toc`'s deepest fallback, now emits `(no headings detected)` rather than a filename label); `vault.py` composes author/title/date from the record and thesis/scope from the envelope, with all three record states (`{value, provenance}` / `unavailable` / `not_attempted`) surviving into the note. Validated on **6 real sources with live model calls** — slug titles replaced with real printed titles, real authors, real dates; `unavailable` demonstrated model-free. Nothing written to the real `data/source_meta/`.
+  - ⚠️ **#278 had been closed on GitHub while unimplemented** (envelope still built the three fields; vault still read them from the envelope). Reopened so PR #315 closes it for real.
+  - ⚠️ **Two of six titles came back partial** — the title-page read returned the subtitle and dropped the main title (`ugur`, `batatu`). Filed as **[#316](https://github.com/Muhanad-husn/axial/issues/316)**, and it is a **decide-before-4.0** item: 4.0 writes all 30 records at one call each, so fixing the prompt afterwards means redoing that pass.
 
 ### Stage 2 — tag quality (before any re-tag)
 - ✅ 2a #294 — best-of-N voting on blind axes (`tag.py`; **predecessor of stage 5**) — PR #302 merged `aa0607d`; abstention settled in **DEC-33** + spec §7.14
-- ☐ 2b #288 — report not-applicable / unlisted rates — ✎ fix-lane. **Now startable**: #277·03 landed the `RunSummary.rates` attachment point it was waiting on
+- ◐ 2b #288 — report not-applicable / unlisted rates — ✎ fix-lane. **PR #314 open.** `RunSummary.rates` is filled by `attach_theory_school_rates` *after* `run_pass` returns, not inside the loop (computing it inside would force the runner to special-case pass names, against the pass registry's design note); `cli.py`'s `_run` renders the table and never touches `exit_code`. Real-corpus numbers, re-derived independently by the orchestrator: **Üngör 27.8% not-applicable (77/277), Mann v2 15.4% + 1.1% unlisted (208/15 of 1347)**. ⚠️ **The other 28 sources read 0.0%/0.0% because they were tagged before #286/#287 added the sentinels** — a true reading of what is on disk, but "not measured under the current schema", not "no not-applicable chunks". Resolves itself at 4.1; **do not read stale zeros as signal at 4.3**
 
 ### Stage 3 — runner — plan ✅ `plans/run/` (3 slices)
 - ✅ 3·01 #277 — runner core + pass registry + failure isolation (walking skeleton) — PR #300 merged `e8f9661`
@@ -58,7 +60,12 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
 - ☐ **4.0 run a real ingest pass over all 30 sources to write `data/source_meta/`** — one
   reasoning-ON call per source (~30 calls); verify 30 records exist and carry real
-  author/title/date before proceeding
+  author/title/date before proceeding. **Now a hard prerequisite, not an optimisation:**
+  once #278 lands, vault write *fails loudly* without a record. Note `axial envelope`
+  alone will not create records — all 30 envelopes are cached, and a cached envelope
+  short-circuits before `extract()`, which is where #303/#311 put intake. **Settle
+  [#316](https://github.com/Muhanad-husn/axial/issues/316) (partial title reads) before
+  this pass**, or ~30 records need rewriting after it
 - ☐ 4.1 re-tag the corpus via #277 with stages 1–2 in place
 - ☐ 4.2 score against the sim gold set (P0-10 eval)
 - ☐ 4.3 freeze schema (ratify `theory_school` KEEP, DEC-31, on corpus-wide numbers) —
@@ -72,12 +79,33 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
 ## Next action
 
-**Wave 3 is complete.** All three PRs merged — #309 (`1237e8d`, run·03), #310
-(`301e37a`, run-logging·02), #311 (`41aba59`, #303 holdings wiring). `main` is green
-at **1124 passed** on the src tier. Every worktree and branch is torn down; the repo
-is `main` only, local and remote, working tree clean.
+**Wave 4 is built and awaiting founder approval.** Three module-disjoint lanes ran as
+three concurrent worktrees; all three branches are pushed and their PRs are open. Nothing
+is merged.
 
-**Wave 4 has not started** — the founder is running it in a fresh session.
+| PR | Lane | Worktree | Blast radius |
+|----|------|----------|--------------|
+| [#313](https://github.com/Muhanad-husn/axial/pull/313) | #289 gold-sheet dropdowns | `D:/axial-wt/289-dropdowns` | test-only |
+| [#314](https://github.com/Muhanad-husn/axial/pull/314) | #288 not-applicable/unlisted rates | `D:/axial-wt/288-rates` | `tag.py`, `run.py`, `cli.py` — **CI green before approval** |
+| [#315](https://github.com/Muhanad-husn/axial/pull/315) | #278 envelope metadata cleanup | `D:/axial-wt/278-envelope-meta` | `envelope.py`, `vault.py` — cross-phase, **CI green before approval** |
+
+**#278 closes the last planned slice in Phase A.** What remains before the freeze is
+stage 4, and 4.0 is the founder's to run.
+
+Three things a cold start should know about wave 4:
+
+- **The "green suite is not evidence" rule paid again, in the other direction.** All
+  three lanes ran real-corpus checks. #289's verify-first was *confirmed* (no code fix
+  needed — the founder's measurement was right, reproduced independently). #278's found
+  a real defect the suite could never see: 2 of 6 title-page reads returned the subtitle
+  and dropped the main title (**[#316](https://github.com/Muhanad-husn/axial/issues/316)**,
+  decide before 4.0). #288's found that 28 of 30 sources report 0.0% only because they
+  predate the sentinels.
+- **An issue's GitHub state is not evidence either.** #278 was closed as completed while
+  its code was entirely unimplemented. Check the code, not the checkbox.
+- **The plan missed a call site.** `_fallback_title` had a second caller — `_fallback_toc`'s
+  deepest fallback labelled a single-entry TOC from the filename. Deleting the slug path
+  for the bibliographic fields would have left the slug alive in the TOC.
 
 Two things a cold start should know about wave 3:
 
@@ -117,19 +145,16 @@ merged. `data/logs/` is one directory per run; the ledger outlives every run and
 at the start of the next one, so it is runner state, not a log. No migration was needed —
 nothing had been written to disk yet.)*
 
-### Wave 4 — what to start in the fresh session
+### Wave 5 — after the wave-4 PRs merge
 
-All three are unblocked and **module-disjoint, so they can run as three concurrent
-worktrees**. Nothing is in flight; `main` is clean.
+Wave 4 (#278 / #288 / #289) is built; see the table under *Next action*. Once those
+merge, tear down the three worktrees under `D:/axial-wt/` and the repo returns to
+`main`-only.
 
-| Lane | Work | Plan | Notes |
-|------|------|------|-------|
-| **intake-metadata** | **#278** envelope cleanup (slice 03) | ✅ `plans/intake-metadata/03-envelope-metadata-cleanup.md` | The only planned slice left in Phase A. Drops author/title/date from the envelope's locked shape; vault composes from record + envelope. Both blockers (#285, #270·02) have merged |
-| **stage 2** | **#288** not-applicable / unlisted rates | ✎ fix-lane | Reads `RunSummary.rates` (landed in #309) and the candidates log. **Land before stage 4.3** — the `theory_school` KEEP ratification reads these rates |
-| **stage 0** | **#289** gold-sheet dropdowns | ✎ fix-lane | Verify-first; likely already correct. Smallest of the three |
-
-Then **stage 4** (freeze = Phase A closes), respecting **4.0 first** — see the ⚠️ on the
-stage-4 checklist above. Then **stage 5**.
+What follows is **not** another build wave. It is **stage 4** — the freeze, where Phase A
+closes — and it opens with **4.0, a founder-run corpus operation**, respecting the ⚠️ on
+the stage-4 checklist above. Settle
+[#316](https://github.com/Muhanad-husn/axial/issues/316) before 4.0 runs. Then **stage 5**.
 
 **Deferred, filed, not scheduled:** [#312](https://github.com/Muhanad-husn/axial/issues/312)
 — `extract()` re-reads the full pypdf text layer and re-hashes the file on every call, even
