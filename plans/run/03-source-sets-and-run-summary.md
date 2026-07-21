@@ -5,7 +5,7 @@
 - **GitHub issue:** #277
 - **Branch:** feat/run/03-source-sets-and-run-summary
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ◐ in review
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -100,3 +100,12 @@ Then  it exits non-zero with a usage error naming the conflict, having attempted
 ## Status / progress log
 
 - 2026-07-21 planned.
+- 2026-07-21 built on `feat/run/03-source-sets-and-run-summary`; sprint suite
+  green (src 1105 passed; tests/test_run.py + tests/test_run_resume.py +
+  tests/test_run_corpus.py 8 passed). `run_pass` now returns a structured
+  `RunSummary` (total/ok/fail/skip counts + per-source outcomes + the
+  `rates` seam for #288) instead of a bare outcomes list; existing
+  slice-01/02 unit tests in `src/axial/test_run.py` updated to unpack it
+  (one-line justification in the PR body — tests are contracts, not locked
+  artifacts). Spec P1-4 updated in the same PR. PR TBD, awaiting founder
+  approval.

@@ -281,9 +281,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser(
         "run",
         help=(
-            "run one registered per-source pass over every source path listed in "
-            "a line-delimited worklist file, isolating each source's failure "
-            "(record FAIL and continue) -- see issue #277"
+            "run one registered per-source pass over a source set (a "
+            "line-delimited worklist file or the data/sources/ corpus glob), "
+            "isolating each source's failure (record FAIL and continue), and "
+            "printing an end-of-run OK/FAIL/SKIP summary -- see issue #277"
         ),
     )
     run_parser.add_argument(
@@ -293,9 +294,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument(
         "--worklist",
-        required=True,
         dest="worklist_path",
-        help="path to a line-delimited worklist file of source paths",
+        default=None,
+        help=(
+            "path to a line-delimited worklist file of source paths; "
+            "mutually exclusive with --corpus, exactly one is required"
+        ),
+    )
+    run_parser.add_argument(
+        "--corpus",
+        action="store_true",
+        help=(
+            "run over every data/sources/*.pdf and *.docx file, sorted; "
+            "mutually exclusive with --worklist, exactly one is required"
+        ),
     )
     run_parser.add_argument(
         "--domain",
@@ -689,8 +701,8 @@ def _ingest(worklist_path: str) -> int:
     return run_ingest(worklist_path)
 
 
-def _run(pass_name: str, worklist_path: str, domain_dir: str) -> int:
-    _outcomes, exit_code = run_pass(pass_name, worklist_path, domain_dir=domain_dir)
+def _run(pass_name: str, worklist_path: str | None, corpus: bool, domain_dir: str) -> int:
+    _summary, exit_code = run_pass(pass_name, worklist_path, corpus=corpus, domain_dir=domain_dir)
     return exit_code
 
 
@@ -807,7 +819,7 @@ def main(argv: list[str] | None = None) -> int:
         return _ingest(args.worklist_path)
 
     if args.command == "run":
-        return _run(args.pass_name, args.worklist_path, args.domain_dir)
+        return _run(args.pass_name, args.worklist_path, args.corpus, args.domain_dir)
 
     if args.command == "pipeline-ready":
         return _pipeline_ready(args.manifest)

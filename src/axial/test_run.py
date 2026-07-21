@@ -1,16 +1,18 @@
 """Inner unit tests for the axial run module (issue #277: slice 01 runner
 core + pass registry + per-source failure isolation; slice 02 unified resume
-ledger + per-pass done-predicate).
+ledger + per-pass done-predicate; slice 03 source sets + end-of-run summary).
 
 Mirrors src/axial/test_ingest.py's own style: monkeypatch module-level names
 so each behavior from the slice plans' "Inner loop" lists is pinned in
 isolation, without touching a real pass, a real LLM provider, or real
 docling. The outer, subprocess-level acceptance tests (tests/test_run.py,
-tests/test_run_resume.py) cover the end-to-end CLI contract against real
-registered passes (`extract`/`envelope`); this module covers the runner's
-own internal contract: registry resolution, worklist reading, failure
-isolation, the exit-code rule, shared-client/config threading, and (slice
-02) the ledger read/append discipline and the done-predicate skip branch.
+tests/test_run_resume.py, tests/test_run_corpus.py) cover the end-to-end CLI
+contract against real registered passes (`extract`/`envelope`/`chunk`); this
+module covers the runner's own internal contract: registry resolution,
+worklist/corpus source-set reading, failure isolation, the exit-code rule,
+shared-client/config threading, the ledger read/append discipline, the
+done-predicate skip branch, and (slice 03) the corpus resolver, the
+exactly-one-source-set rule, and the returned `RunSummary`.
 
 Every `run_pass(...)` call below passes an explicit `ledger_path=` under
 `tmp_path` -- slice 02 gave `run_pass` a real default ledger
@@ -22,6 +24,7 @@ same hygiene `src/axial/test_ingest.py` already applies to `results_path=`.
 from __future__ import annotations
 
 import csv
+import dataclasses
 from pathlib import Path
 
 import pytest
@@ -32,9 +35,11 @@ from axial.run import (
     LEDGER_COLUMNS,
     OK_STATUS,
     PassDescriptor,
+    RunSummary,
     SKIP_STATUS,
     _append_ledger_row,
     _load_done_source_ids,
+    resolve_corpus_source_paths,
     run_pass,
 )
 
@@ -104,9 +109,10 @@ def test_unknown_pass_name_is_fatal_before_any_source_is_touched(tmp_path, monke
     calls: list[Path] = []
     monkeypatch.setattr(run_mod, "compute_source_id", lambda path: (calls.append(path), "id")[1])
 
-    outcomes, exit_code = run_pass(
+    summary, exit_code = run_pass(
         "not-a-real-pass", worklist, client=_FakeClient(), ledger_path=_ledger_path(tmp_path)
     )
+    outcomes = summary.outcomes
 
     assert exit_code == 1
     assert outcomes == []
@@ -124,9 +130,10 @@ def test_unreadable_worklist_is_fatal_and_attempts_no_source(tmp_path, monkeypat
 
     _register_fake_pass(monkeypatch, _invoke)
 
-    outcomes, exit_code = run_pass(
+    summary, exit_code = run_pass(
         "fake", missing, client=_FakeClient(), ledger_path=_ledger_path(tmp_path)
     )
+    outcomes = summary.outcomes
 
     assert exit_code == 1
     assert outcomes == []
@@ -144,9 +151,10 @@ def test_blank_lines_in_worklist_are_skipped(tmp_path, monkeypatch):
     _register_fake_pass(monkeypatch, _invoke)
     monkeypatch.setattr(run_mod, "compute_source_id", lambda path: str(path))
 
-    outcomes, exit_code = run_pass(
+    summary, exit_code = run_pass(
         "fake", worklist, client=_FakeClient(), ledger_path=_ledger_path(tmp_path)
     )
+    outcomes = summary.outcomes
 
     assert exit_code == 0
     assert [Path(path) for path in seen] == [Path("/a/one.pdf"), Path("/a/two.pdf")]
@@ -175,9 +183,10 @@ def test_source_whose_id_cannot_be_computed_is_recorded_fail_and_loop_continues(
 
     _register_fake_pass(monkeypatch, _invoke)
 
-    outcomes, exit_code = run_pass(
+    summary, exit_code = run_pass(
         "fake", worklist, client=_FakeClient(), ledger_path=_ledger_path(tmp_path)
     )
+    outcomes = summary.outcomes
 
     assert exit_code == 0
     # The pass is never invoked for the source whose id could not be computed.
@@ -205,9 +214,10 @@ def test_declared_error_is_recorded_fail_with_reason_and_loop_continues(tmp_path
 
     _register_fake_pass(monkeypatch, _invoke)
 
-    outcomes, exit_code = run_pass(
+    summary, exit_code = run_pass(
         "fake", worklist, client=_FakeClient(), ledger_path=_ledger_path(tmp_path)
     )
+    outcomes = summary.outcomes
 
     assert exit_code == 0
     by_path = {Path(outcome.source_path): outcome for outcome in outcomes}
@@ -242,7 +252,7 @@ def test_exit_code_is_zero_when_some_sources_fail_but_loop_ran_to_completion(tmp
 
     _register_fake_pass(monkeypatch, _invoke)
 
-    _outcomes, exit_code = run_pass(
+    _summary, exit_code = run_pass(
         "fake", worklist, client=_FakeClient(), ledger_path=_ledger_path(tmp_path)
     )
 
@@ -396,7 +406,8 @@ def test_unappendable_ledger_is_fatal(tmp_path, monkeypatch):
 
     _register_fake_pass(monkeypatch, _invoke)
 
-    outcomes, exit_code = run_pass("fake", worklist, client=_FakeClient(), ledger_path=ledger)
+    summary, exit_code = run_pass("fake", worklist, client=_FakeClient(), ledger_path=ledger)
+    outcomes = summary.outcomes
 
     assert exit_code == 1
     assert outcomes == []
@@ -416,9 +427,10 @@ def test_source_reported_done_is_skipped_with_zero_invocation_and_one_skip_line(
 
     _register_fake_pass(monkeypatch, _invoke, done_predicate=lambda *a: True)
 
-    outcomes, exit_code = run_pass(
+    summary, exit_code = run_pass(
         "fake", worklist, client=_FakeClient(), ledger_path=_ledger_path(tmp_path)
     )
+    outcomes = summary.outcomes
 
     assert exit_code == 0
     assert len(outcomes) == 1
@@ -472,7 +484,8 @@ def test_done_predicate_receives_the_pass_own_loaded_done_set(tmp_path, monkeypa
         done_predicate=_predicate,
     )
 
-    outcomes, exit_code = run_pass("fake", worklist, client=_FakeClient(), ledger_path=ledger)
+    summary, exit_code = run_pass("fake", worklist, client=_FakeClient(), ledger_path=ledger)
+    outcomes = summary.outcomes
 
     assert exit_code == 0
     assert received_sets == [{"seen-id"}]
@@ -488,9 +501,10 @@ def test_not_done_source_runs_and_is_not_skipped(tmp_path, monkeypatch):
         monkeypatch, lambda *a, **k: calls.append(a), done_predicate=lambda *a: False
     )
 
-    outcomes, exit_code = run_pass(
+    summary, exit_code = run_pass(
         "fake", worklist, client=_FakeClient(), ledger_path=_ledger_path(tmp_path)
     )
+    outcomes = summary.outcomes
 
     assert exit_code == 0
     assert len(calls) == 1
@@ -548,11 +562,13 @@ def test_fail_recorded_source_is_not_in_done_set_and_is_retried(tmp_path, monkey
 
     _register_fake_pass(monkeypatch, _invoke, done_predicate=run_mod._ledger_done_predicate)
 
-    outcomes_1, exit_code_1 = run_pass("fake", worklist, client=_FakeClient(), ledger_path=ledger)
+    summary_1, exit_code_1 = run_pass("fake", worklist, client=_FakeClient(), ledger_path=ledger)
+    outcomes_1 = summary_1.outcomes
     assert exit_code_1 == 0
     assert outcomes_1[0].status == FAIL_STATUS
 
-    outcomes_2, exit_code_2 = run_pass("fake", worklist, client=_FakeClient(), ledger_path=ledger)
+    summary_2, exit_code_2 = run_pass("fake", worklist, client=_FakeClient(), ledger_path=ledger)
+    outcomes_2 = summary_2.outcomes
     assert exit_code_2 == 0
     assert attempt["count"] == 2, "a FAIL-recorded source must be retried, not skipped"
     assert outcomes_2[0].status == OK_STATUS
@@ -589,3 +605,208 @@ def test_extract_and_envelope_use_file_exists_predicate_every_other_pass_uses_le
     assert run_mod.PASS_REGISTRY["envelope"].done_predicate is run_mod._envelope_done_predicate
     for name in ("chunk", "tag", "artifacts", "xref", "vault-write"):
         assert run_mod.PASS_REGISTRY[name].done_predicate is run_mod._ledger_done_predicate
+
+
+# ---------------------------------------------------------------------------
+# Slice 03: source-set inputs (corpus glob) + end-of-run summary
+# ---------------------------------------------------------------------------
+
+
+# --- corpus resolver --------------------------------------------------------------
+
+
+def test_resolve_corpus_source_paths_returns_pdf_and_docx_sorted_ignoring_other_extensions(
+    tmp_path,
+):
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir()
+    (sources_dir / "b.pdf").write_bytes(b"")
+    (sources_dir / "a.docx").write_bytes(b"")
+    (sources_dir / "c.pdf").write_bytes(b"")
+    (sources_dir / "ignored.txt").write_bytes(b"")
+    (sources_dir / "ignored.md").write_bytes(b"")
+
+    result = resolve_corpus_source_paths(sources_dir)
+
+    # Sorted (deterministic) order, never raw filesystem enumeration order.
+    assert result == sorted(result)
+    assert [Path(path).name for path in result] == ["a.docx", "b.pdf", "c.pdf"]
+
+
+def test_resolve_corpus_source_paths_empty_when_dir_absent(tmp_path):
+    assert resolve_corpus_source_paths(tmp_path / "does-not-exist") == []
+
+
+# --- exactly one source set --------------------------------------------------------
+
+
+def test_worklist_and_corpus_together_is_a_usage_error_and_attempts_no_source(
+    tmp_path, monkeypatch
+):
+    worklist = _write_worklist(tmp_path, ["/fake/one.pdf"])
+
+    def _invoke(*args, **kwargs):
+        raise AssertionError("no pass invocation for an invalid (both) source set")
+
+    _register_fake_pass(monkeypatch, _invoke)
+
+    summary, exit_code = run_pass(
+        "fake",
+        worklist,
+        client=_FakeClient(),
+        corpus=True,
+        ledger_path=_ledger_path(tmp_path),
+    )
+
+    assert exit_code == 1
+    assert summary.outcomes == []
+    assert summary.total == 0
+
+
+def test_neither_worklist_nor_corpus_is_a_usage_error_and_attempts_no_source(tmp_path, monkeypatch):
+    def _invoke(*args, **kwargs):
+        raise AssertionError("no pass invocation for an invalid (neither) source set")
+
+    _register_fake_pass(monkeypatch, _invoke)
+
+    summary, exit_code = run_pass("fake", client=_FakeClient(), ledger_path=_ledger_path(tmp_path))
+
+    assert exit_code == 1
+    assert summary.outcomes == []
+    assert summary.total == 0
+
+
+# --- corpus mode wiring -------------------------------------------------------------
+
+
+def test_corpus_mode_drives_pass_over_resolved_sources_in_sorted_order(tmp_path, monkeypatch):
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir()
+    (sources_dir / "b.pdf").write_bytes(b"")
+    (sources_dir / "a.docx").write_bytes(b"")
+    (sources_dir / "ignored.txt").write_bytes(b"")
+
+    monkeypatch.setattr(run_mod, "compute_source_id", lambda path: Path(path).stem)
+    seen: list[str] = []
+    _register_fake_pass(monkeypatch, lambda source_path, *a, **k: seen.append(source_path))
+
+    summary, exit_code = run_pass(
+        "fake",
+        client=_FakeClient(),
+        corpus=True,
+        sources_dir=sources_dir,
+        ledger_path=_ledger_path(tmp_path),
+    )
+
+    assert exit_code == 0
+    assert seen == [str(sources_dir / "a.docx"), str(sources_dir / "b.pdf")]
+    assert summary.total == 2
+
+
+# --- the returned summary ------------------------------------------------------------
+
+
+def test_summary_counts_sum_to_total_across_ok_fail_skip(tmp_path, monkeypatch):
+    worklist = _write_worklist(tmp_path, ["/fake/ok.pdf", "/fake/bad.pdf", "/fake/done.pdf"])
+    monkeypatch.setattr(run_mod, "compute_source_id", lambda path: f"id-{Path(path).stem}")
+
+    def _invoke(source_path, client, config_path, domain_dir):
+        if Path(source_path) == Path("/fake/bad.pdf"):
+            raise _DeclaredError("boom")
+
+    def _done_predicate(source_id, ledger_done_ids, config_path):
+        return source_id == "id-done"
+
+    _register_fake_pass(monkeypatch, _invoke, done_predicate=_done_predicate)
+
+    summary, exit_code = run_pass(
+        "fake", worklist, client=_FakeClient(), ledger_path=_ledger_path(tmp_path)
+    )
+
+    assert exit_code == 0
+    assert summary.total == 3
+    assert summary.ok_count == 1
+    assert summary.fail_count == 1
+    assert summary.skip_count == 1
+    assert summary.ok_count + summary.fail_count + summary.skip_count == summary.total
+
+    statuses_by_id = {outcome.source_id: outcome.status for outcome in summary.outcomes}
+    assert statuses_by_id["id-ok"] == OK_STATUS
+    assert statuses_by_id["id-bad"] == FAIL_STATUS
+    assert statuses_by_id["id-done"] == SKIP_STATUS
+
+
+def test_run_summary_outcome_rows_carry_only_ids_statuses_and_short_reasons():
+    # DEC-23: the summary's per-source rows are ids, statuses, and short
+    # reasons only -- never source text. Pinned at the schema level: Outcome
+    # has no field that could ever hold extracted source content.
+    field_names = {field.name for field in dataclasses.fields(run_mod.Outcome)}
+    assert field_names == {"source_path", "source_id", "status", "reason"}
+
+
+def test_summary_is_returned_as_structured_value_independent_of_stdout(
+    tmp_path, monkeypatch, capsys
+):
+    worklist = _write_worklist(tmp_path, ["/fake/one.pdf"])
+    monkeypatch.setattr(run_mod, "compute_source_id", lambda path: "id-1")
+    _register_fake_pass(monkeypatch, lambda *args, **kwargs: None)
+
+    summary, exit_code = run_pass(
+        "fake", worklist, client=_FakeClient(), ledger_path=_ledger_path(tmp_path)
+    )
+    capsys.readouterr()  # drain printed output -- the return value stands alone
+
+    assert exit_code == 0
+    assert isinstance(summary, RunSummary)
+    assert summary.pass_name == "fake"
+    assert summary.outcomes[0].source_id == "id-1"
+    # The named attachment point for #288's not-applicable/unlisted rates
+    # report: this slice defines the seam and never computes it.
+    assert summary.rates is None
+
+
+# --- empty source set ----------------------------------------------------------------
+
+
+def test_empty_worklist_source_set_exits_zero_with_total_zero_and_nothing_to_do_message(
+    tmp_path, monkeypatch, capsys
+):
+    worklist = tmp_path / "empty.txt"
+    worklist.write_text("\n\n", encoding="utf-8")
+
+    def _invoke(*args, **kwargs):
+        raise AssertionError("no pass invocation for an empty source set")
+
+    _register_fake_pass(monkeypatch, _invoke)
+
+    summary, exit_code = run_pass(
+        "fake", worklist, client=_FakeClient(), ledger_path=_ledger_path(tmp_path)
+    )
+
+    assert exit_code == 0
+    assert summary.total == 0
+    assert summary.outcomes == []
+
+    captured = capsys.readouterr()
+    assert "nothing to do" in captured.out
+
+
+def test_empty_corpus_source_set_exits_zero_with_total_zero(tmp_path, monkeypatch):
+    sources_dir = tmp_path / "sources"  # never created -- an empty source set
+
+    def _invoke(*args, **kwargs):
+        raise AssertionError("no pass invocation for an empty corpus")
+
+    _register_fake_pass(monkeypatch, _invoke)
+
+    summary, exit_code = run_pass(
+        "fake",
+        client=_FakeClient(),
+        corpus=True,
+        sources_dir=sources_dir,
+        ledger_path=_ledger_path(tmp_path),
+    )
+
+    assert exit_code == 0
+    assert summary.total == 0
+    assert summary.outcomes == []
