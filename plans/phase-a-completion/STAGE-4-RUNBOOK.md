@@ -24,6 +24,22 @@ Checked against the real repo on 2026-07-21, not assumed:
 | `data/run/ledger.tsv` | **absent** | Clean slate; nothing to reconcile |
 | `data/source_meta/` | **empty** | 4.0 has not run |
 | Runner concurrency | **none** | `run_pass` is a serial loop; `plans/run/README.md` deferred bounded concurrency |
+| Tag checkpoints | **18,410 records**, all 30 sources | The corpus is **already fully tagged** (single-draw). A checkpointed chunk is reused verbatim and **never re-sent to the model** (`tag.py:1733`) |
+| Artifacts checkpoints | **30 files** | Reused, 0 calls |
+| **Xref checkpoints** | **0 — EMPTY** | Xref recomputes in full: 18,410 calls ≈ 16 h. See trap 3 |
+| Gold label sheet | 120 chunks | 4.2's eval denominator — **120 × 3 = 360 calls**, not 55,400 |
+
+### Model routing — check this before assuming
+
+| Pass | Tier | Model | Reasoning |
+|---|---|---|---|
+| `envelope` | `production_high` | `deepseek-v4-pro` | **ON** |
+| `holdings` (4.0's call, incl. the title-page read) | default `production_low` | **`deepseek-v4-flash`** | ON |
+| `tag` | default `production_low` | **`deepseek-v4-flash`** | **OFF**, votes 3 |
+
+Only `envelope` is overridden to `deepseek-v4-pro` (`model_by_pass`). **`tag` and
+`holdings` both run on flash.** A plan that assumes pro-with-reasoning for the tag or
+title-page passes is assuming something that is not configured.
 
 ---
 
@@ -48,12 +64,40 @@ single-draw tags in place — no error, no signal.
 ensure no stale `tag` rows are in `data/run/ledger.tsv`. Verify by checking that the run's
 first source actually makes model calls.
 
-## Trap 3 — do NOT re-run xref, and do not let it re-run by accident
+## Trap 3 — `data/xref/` is EMPTY, so xref will recompute in full
 
-Stage 4 changes **tags and source metadata**. It does not re-chunk. `xref` links chunks to
-chunks, so its existing checkpoints stay valid — reusing them saves roughly
-30 × 2000 s ≈ **16 hours**. This is a deliberate decision, recorded here so a later session
-does not "helpfully" clear the xref cache along with the tag cache.
+**Correction to this runbook's first version, which assumed xref checkpoints existed.**
+They do not. `data/xref/` holds **0 entries**, even though the corpus vault was built with
+xref links (#272). `run_xref` makes **one LLM call per chunk** when its checkpoint is
+absent — **18,410 calls**, historically ~2000 s/source ≈ **16 hours**.
+
+Since `vault-write` calls `run_xref` internally (trap 1), *any* corpus-wide `vault-write`
+today pays that 16 hours. This is the single largest hidden cost in stage 4, and it is
+**not** tag.
+
+Three ways out, cheapest first:
+
+1. **Don't run `vault-write` at all for the #278 fix.** The metadata fix needs the
+   frontmatter `source_meta` block rewritten on notes that already exist — no pipeline
+   pass. This is the already-identified P0-1d vault rewrite. See "The decoupling" below.
+2. **Reconstruct `data/xref/<source_id>.jsonl` from the existing notes' links** — the
+   pairs are on disk in 18,410 notes. Worth checking whether they round-trip faithfully;
+   if they do, a one-off script turns 16 hours into minutes.
+3. Pay it, once, deliberately.
+
+## The decoupling — the #278 fix does NOT need a re-tag
+
+These are two separate operations with wildly different costs, and the plan previously
+bundled them:
+
+| Operation | What it fixes | LLM cost |
+|---|---|---|
+| **Metadata rewrite** (P0-1d) | 18,410 notes carrying fabricated slug titles + null authors | **~30 calls** (4.0's holdings pass) + I/O |
+| **Re-tag** (best-of-3) | Tag quality: single-draw 0.73 → best-of-3 0.918 on `theory_school` | **~55,400 calls** |
+
+The metadata defect is the one that has been the headline concern since #278, and it is
+**~30 model calls away**, not 55,400. Do it first, independently, and the corpus stops
+lying about its own bibliography regardless of what is decided about tagging.
 
 ---
 
@@ -139,19 +183,56 @@ or happens before the run starts.
 
 ---
 
+## Can a stratified sample replace the full re-tag?
+
+Probably yes for the *decisions*, and this is worth settling before spending 55,400 calls.
+What each remaining step actually needs:
+
+| Step | Needs | Full corpus? |
+|---|---|---|
+| 4.2 eval | the **120** gold chunks tagged under the new regime | **No** — 360 calls |
+| 4.3 freeze (`theory_school` KEEP, #288 rates) | a *proportion estimate* | **No** — a stratified n≈1,500–2,500 gives ±2% at 95% on a ~25% rate |
+| 4.4 frozen distribution | a distribution estimate | **No** — same sample |
+| Stage 5 #298 | **stratified teacher labels**, ~100–300/class | **No** — stratified by design |
+
+Every one of these is served by **one** stratified sample. And note the circularity in the
+current plan: paying 55,400 LLM calls to label the whole corpus, then running stage 5 to
+learn how to avoid paying LLM calls to label the whole corpus. `docs/exploration/hybrid-tagging-classifier.md`
+is explicit that distillation is a **post-schema-freeze** move — which puts the sample
+before the freeze, not the full re-tag.
+
+**Two methodological cautions:**
+
+1. **Stratify on the existing single-draw tags, but not only on them.** They are a valid
+   stratification variable (it need only correlate, not be perfect). But `not-applicable`
+   and `unlisted` were only available to 2 of 30 sources, so the old tags **cannot**
+   stratify for them. Add a proportional **random** stratum so values the old tagger never
+   had access to can still surface.
+2. **The vault ends mixed-provenance** — a re-tagged fraction at best-of-3, the rest at
+   single-draw. Phase B reads the vault. Either mark provenance per note or accept it
+   knowingly; do not discover it later.
+
+**Residual risk:** if distillation fails to reach teacher parity, the full re-tag is still
+owed — the sample is then a ~15% insurance premium, not a loss.
+
 ## Sequence
 
 1. Land lane A (#316) and lane B (`--ledger`). Two worktrees, no serialization point.
+   **For lane A, try `model_by_pass: holdings: production_high` before rewriting the
+   prompt** — the title-page read currently runs on flash, and a one-line config change is
+   cheaper than a prompt rewrite (the #268 lesson).
 2. Verify 30/30 tree-cache hits.
-3. **4.0** serial. Then verify **30 records exist and carry real author/title/date** — not
-   just that the files exist. Spot-check against the real books; this is the pass that
-   fixes #278's defect in the corpus, and the only control on it is a human reading it.
-4. Clear `data/tags/*.jsonl` (keep the candidates log). Leave `data/xref/` alone.
-5. **4.1a** tag — probe one source, then 3–4 parallel workers.
-6. **4.1b** vault-write — reuses checkpoints.
-7. **4.2** eval against the sim gold set → **4.3** schema freeze (reads #288's rates —
-   these are only meaningful *after* 4.1; before it, 28 of 30 sources read 0.0% purely
-   because they predate the sentinels) → **4.4** record the frozen distribution.
+3. **4.0** serial — **but stop after 3–5 sources and read the output** before letting it
+   run to 30. This is the first real exercise of the wired holdings + title-page path at
+   this tier; judge it on its own first responses.
+4. Verify **30 records carry real author/title/date** — not just that files exist.
+   Spot-check against the real books. The only control on this is a human reading it.
+5. **Metadata rewrite (P0-1d)** — get #278's fix into all 18,410 notes without a re-tag.
+6. **Decide sample-vs-full re-tag** (section above). If sampling: draw the stratified set,
+   tag it, and carry it into 4.2/4.3/4.4 *and* stage 5's teacher set.
+7. **4.2** eval → **4.3** freeze (#288's rates are only meaningful on re-tagged chunks;
+   before that, 28 of 30 sources read 0.0% purely because they predate the sentinels) →
+   **4.4** record the frozen distribution.
 
 Phase A closes at 4.4. Stage 5 (HDBSCAN distillation) follows.
 
