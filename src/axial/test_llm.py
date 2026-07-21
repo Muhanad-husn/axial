@@ -382,6 +382,29 @@ def test_stub_client_dispatch_is_by_pass_name_not_prompt_content():
     assert "chunks" not in parsed
 
 
+def test_stub_client_model_for_pass_returns_a_fixed_non_null_id():
+    """Issue #270 slice 02: the run-logging seam's `model` field reads this
+    off the client the pass already holds. The stub carries no real model,
+    so it returns a fixed id ("stub"), the same for every pass_name --
+    never None, never a completion call."""
+    from axial.llm import StubLLMClient
+
+    client = StubLLMClient()
+
+    assert client.model_for_pass("envelope") == "stub"
+    assert client.model_for_pass("tag") == "stub"
+    assert client.model_for_pass(None) == "stub"
+    assert client.call_count == 0, "model_for_pass must never make a completion call"
+
+
+def test_record_client_model_for_pass_matches_the_stub(tmp_path):
+    from axial.llm import RecordLLMClient
+
+    client = RecordLLMClient(tmp_path / "record.jsonl")
+
+    assert client.model_for_pass("envelope") == "stub"
+
+
 def test_exploding_client_construction_does_not_raise():
     from axial.llm import ExplodingLLMClient
 
@@ -397,6 +420,16 @@ def test_exploding_client_raises_when_complete_is_invoked():
 
     with pytest.raises(Exception):
         client.complete("anything")
+
+
+def test_exploding_client_model_for_pass_does_not_raise():
+    """Mirrors the class's own "construction/selection never raises, only
+    .complete() is fatal" contract (docstring)."""
+    from axial.llm import ExplodingLLMClient
+
+    client = ExplodingLLMClient()
+
+    assert client.model_for_pass("envelope") == "explode"
 
 
 def test_get_client_selects_stub_via_env_override(monkeypatch, tmp_path):
@@ -1373,6 +1406,24 @@ def test_post_with_deadline_selects_target_model_by_pass_name(monkeypatch):
     client.complete("prompt", pass_name="tag")
 
     assert captured == ["paid/high-model", "default/model"]
+
+
+def test_model_for_pass_resolves_the_same_way_post_with_deadline_does():
+    """Issue #270 slice 02: `model_for_pass` is the single source of truth
+    `_post_with_deadline` itself now calls (no duplicated resolution) -- a
+    per-pass override wins, an unnamed pass falls back to the client's own
+    default model, and calling it makes no request at all."""
+    from axial.llm import OpenRouterClient
+
+    client = OpenRouterClient(
+        api_key="test-key",
+        model="default/model",
+        model_by_pass={"envelope": "paid/high-model"},
+    )
+
+    assert client.model_for_pass("envelope") == "paid/high-model"
+    assert client.model_for_pass("tag") == "default/model"
+    assert client.model_for_pass(None) == "default/model"
 
 
 # --- content_fallback_model wiring from secrets.toml (issue #116) ---------

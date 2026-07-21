@@ -119,14 +119,26 @@ def test_build_parser_recognises_tag_subcommand_domain_override():
 
 
 def test_main_tag_against_a_tag_error_is_nonzero_and_prints_error(monkeypatch, capsys):
+    """Issue #270 slice 02 note: `_tag()` now builds its LLM client (for the
+    run-logging record's `model` field) before calling `run_tag`, so this
+    test selects the no-network `stub` provider -- otherwise client
+    construction itself would raise `LLMConfigError` (no configured API
+    key) before ever reaching the monkeypatched `run_tag` below, which
+    would test client-construction failure instead of this test's own
+    intent: a `TagError` from the tag pass is caught and reported cleanly."""
     import axial.cli as cli_mod
+    from axial.llm import PROVIDER_ENV_VAR
     from axial.tag import TagError
 
-    def _boom(source_path, domain_dir):
+    monkeypatch.setenv(PROVIDER_ENV_VAR, "stub")
+
+    def _boom(source_path, client, domain_dir):
         raise TagError("simulated tag failure")
 
     monkeypatch.setattr(
-        cli_mod, "run_tag", lambda source_path, domain_dir: _boom(source_path, domain_dir)
+        cli_mod,
+        "run_tag",
+        lambda source_path, client, domain_dir: _boom(source_path, client, domain_dir),
     )
 
     exit_code = cli_mod.main(["tag", "some/source.pdf"])
