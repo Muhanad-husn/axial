@@ -1,0 +1,14 @@
+$ intake(<source>, client=...)   # holdings check, reasoning ON, one call per source
+
+  -- real corpus sources (expect: no flag) --
+  mann-sources-of-social-power (824pp) complete (no flag)
+  state-legitimacy-capacity-sy (58pp) complete (no flag)
+  do-civil-wars-make-or-break- (24pp) complete (no flag)
+
+  -- same source truncated to the extent #267 recorded (expect: flag) --
+  mann-sources-of-soci first 85pp    FLAGGED partial
+      document_kind              book
+      claimed_extent             816 pages
+      claimed_extent_stated_by   printed table of contents
+      observed_pages             85
+      reason                     The file contains only 85 physical pages, far fewer than the 816 pages listed in the table of contents, and the text breaks off mid-sentence at page 85.

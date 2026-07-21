@@ -1,0 +1,62 @@
+bringing up nodes...
+bringing up nodes...
+
+........................................................................ [  6%]
+........................................................................ [ 13%]
+........................................................................ [ 20%]
+........................................................................ [ 27%]
+........................................................................ [ 34%]
+........................................................................ [ 41%]
+........................................................................ [ 48%]
+........................................................................ [ 55%]
+........................................................................ [ 62%]
+........................................................................ [ 69%]
+........................................................................ [ 76%]
+........................................................................ [ 82%]
+........................................................................ [ 89%]
+........................................................................ [ 96%]
+.................................                                        [100%]
+1041 passed in 17.79s
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- D:\axial\.claude\worktrees\intake-metadata\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial\.claude\worktrees\intake-metadata
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 33 items
+
+tests/ingestion/test_holdings_model_adjudicated.py::test_flags_exactly_the_partial_holdings_and_no_others PASSED [  3%]
+tests/ingestion/test_holdings_model_adjudicated.py::test_a_flag_records_its_measurement_never_a_bare_boolean PASSED [  6%]
+tests/ingestion/test_holdings_model_adjudicated.py::test_a_flag_carries_no_source_text PASSED [  9%]
+tests/ingestion/test_holdings_model_adjudicated.py::test_a_research_paper_with_no_contents_page_is_not_flagged PASSED [ 12%]
+tests/ingestion/test_holdings_model_adjudicated.py::test_the_tilly_folio_is_stripped_before_the_model_reads_the_heading PASSED [ 15%]
+tests/ingestion/test_holdings_model_adjudicated.py::test_exactly_one_model_call_is_made_on_the_holdings_pass PASSED [ 18%]
+tests/ingestion/test_holdings_model_adjudicated.py::test_a_flagged_source_completes_intake_exactly_as_an_unflagged_one PASSED [ 21%]
+tests/ingestion/test_holdings_model_adjudicated.py::test_the_check_reads_neither_the_tree_nor_the_envelope PASSED [ 24%]
+tests/ingestion/test_holdings_model_adjudicated.py::test_a_docx_is_checked_and_is_not_flagged_for_missing_coverage_evidence PASSED [ 27%]
+tests/ingestion/test_holdings_model_adjudicated.py::test_every_fixture_source_completes_intake[truncated_volume.pdf-pages0-{"document_kind": "book", "claimed_extent": "816 pages", "claimed_extent_stated_by": "printed contents page", "verdict": "partial", "reason": "The contents page claims 816 pages, but the file has only 85 pages and ends mid-sentence, far short of that extent."}-True] PASSED [ 30%]
+tests/ingestion/test_holdings_model_adjudicated.py::test_every_fixture_source_completes_intake[chapter_fragment.pdf-pages1-{"document_kind": "fragment", "claimed_extent": null, "claimed_extent_stated_by": null, "verdict": "partial", "reason": "The file contains only the first 20 pages of a book, stopping mid-introduction with no conclusion or end matter."}-True] PASSED [ 33%]
+tests/ingestion/test_holdings_model_adjudicated.py::test_every_fixture_source_completes_intake[complete_book.pdf-pages2-{"document_kind": "book", "claimed_extent": "411 pages", "claimed_extent_stated_by": "printed contents page", "verdict": "complete", "reason": "The file runs past the last page the contents states and ends with an index."}-False] PASSED [ 36%]
+tests/ingestion/test_holdings_model_adjudicated.py::test_every_fixture_source_completes_intake[research_paper.pdf-pages3-{"document_kind": "research_paper", "claimed_extent": null, "claimed_extent_stated_by": null, "verdict": "complete", "reason": "A journal article with an abstract and a full reference list; papers carry no contents page."}-False] PASSED [ 39%]
+tests/ingestion/test_holdings_model_adjudicated.py::test_every_fixture_source_completes_intake[tilly_folios.pdf-pages4-{"document_kind": "book", "claimed_extent": "411 pages", "claimed_extent_stated_by": "printed contents page", "verdict": "complete", "reason": "The file runs past the last page the contents states and ends with an index."}-False] PASSED [ 42%]
+src/axial/test_holdings.py::test_leading_folio_is_stripped_off_a_running_head PASSED [ 45%]
+src/axial/test_holdings.py::test_a_recurring_running_head_is_removed_entirely PASSED [ 48%]
+src/axial/test_holdings.py::test_a_heading_appearing_once_is_untouched PASSED [ 51%]
+src/axial/test_holdings.py::test_a_line_that_is_only_a_page_number_is_dropped PASSED [ 54%]
+src/axial/test_holdings.py::test_a_contents_entry_keeps_its_trailing_page_reference PASSED [ 57%]
+src/axial/test_holdings.py::test_prose_opening_with_a_year_is_not_mistaken_for_a_folio PASSED [ 60%]
+src/axial/test_holdings.py::test_probe_makes_exactly_one_call_on_the_holdings_pass PASSED [ 63%]
+src/axial/test_holdings.py::test_holdings_pass_runs_with_reasoning_on PASSED [ 66%]
+src/axial/test_holdings.py::test_prompt_carries_the_physical_page_count_and_the_cleaned_text PASSED [ 69%]
+src/axial/test_holdings.py::test_docx_prompt_states_the_page_count_is_unobtainable PASSED [ 72%]
+src/axial/test_holdings.py::test_partial_verdict_produces_a_flag_recording_its_measurement PASSED [ 75%]
+src/axial/test_holdings.py::test_complete_verdict_produces_no_flag PASSED [ 78%]
+src/axial/test_holdings.py::test_partial_verdict_with_no_stated_extent_still_flags PASSED [ 81%]
+src/axial/test_holdings.py::test_unrecognised_document_kind_is_recorded_as_unknown_not_raised PASSED [ 84%]
+src/axial/test_holdings.py::test_an_unreadable_answer_degrades_to_no_flag[not json at all] PASSED [ 87%]
+src/axial/test_holdings.py::test_an_unreadable_answer_degrades_to_no_flag[{"verdict": ] PASSED [ 90%]
+src/axial/test_holdings.py::test_an_unreadable_answer_degrades_to_no_flag[["a", "list"]] PASSED [ 93%]
+src/axial/test_holdings.py::test_a_failing_model_call_never_raises PASSED [ 96%]
+src/axial/test_holdings.py::test_empty_text_makes_no_model_call PASSED   [100%]
+
+============================= 33 passed in 0.89s ==============================
