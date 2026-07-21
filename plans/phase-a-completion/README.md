@@ -69,13 +69,21 @@ before we touch the corpus.
 ### Stage 1 — Fix what each chunk carries (metadata correctness)
 
 Every chunk's `source_meta` is wrong or thin until these land. They must precede
-the re-tag so the frozen corpus carries the right bibliographic facts.
+the re-tag so the frozen corpus carries the right bibliographic facts. Planning
+(`plans/intake-metadata/`) turned these three into **one ordered feature chain**
+— they are not independent, because author/title/date ownership couples them:
 
-| # | Issue | Goal |
-|---|-------|------|
-| 1a | [#278](https://github.com/Muhanad-husn/axial/issues/278) | `author`/`date` are null in all 30 envelopes and propagate empty into ~17k chunks. Populate them (P0-1d) or remove the fields so nothing downstream believes it has metadata it lacks. |
-| 1b | [#284](https://github.com/Muhanad-husn/axial/issues/284) | Rebuild the holdings check as model-adjudicated (§7.11 rewrite / P0-1b): drop the six tunables, add running header/footer stripping + one reasoning-ON call over cleaned front matter. `src/axial/holdings.py` is currently spec-divergent. |
-| 1c | [#285](https://github.com/Muhanad-husn/axial/issues/285) | Persisted source-metadata record (§7.12 / P0-1c): one JSON per source at `data/source_meta/<source_id>.json`, written at intake, surviving envelope regen — page count, holdings flag, full sha256, author/title/date. The durable home the holdings flag currently has nowhere to live. |
+| Slice | Issue | Goal |
+|-------|-------|------|
+| 01 | [#284](https://github.com/Muhanad-husn/axial/issues/284) | Rebuild the holdings check as model-adjudicated (§7.11 rewrite / P0-1b): drop the six tunables, add running header/footer stripping + one reasoning-ON call over cleaned front matter. `src/axial/holdings.py` is currently spec-divergent. |
+| 02 | [#285](https://github.com/Muhanad-husn/axial/issues/285) | Persisted source-metadata record (§7.12 / P0-1c): one JSON per source at `data/source_meta/<source_id>.json`, written at intake, surviving envelope regen — page count, holdings flag, full sha256, and **author/title/date (P0-1d) — this record is their sole origin.** Depends on 01 (carries the holdings flag). |
+| 03 | [#278](https://github.com/Muhanad-husn/axial/issues/278) | **Resolved: remove, not populate.** The envelope's author/date being null in all 30 is fixed by *dropping* those fields from the envelope entirely — intake/source-meta (slice 02) owns them per §7.12's boundary rule, and the vault writer composes `source_meta` from both sources. Depends on 02. Does **not** re-tag the ~17k — that flush is stage 4. |
+
+> **Note the change from the first draft of this plan:** #278 was sketched as an
+> independent `envelope.py`-only Wave-1 slice ("populate *or* remove"). §7.13/P0-1d
+> settle it as *remove*, which couples #278 to #285 — so it is now the last link in
+> the intake-metadata chain, not a parallel slice. Rationale in
+> `plans/intake-metadata/README.md`. Founder should sanity-check the remove call.
 
 ### Stage 2 — Fix how chunks are labelled (tag quality)
 
@@ -135,56 +143,53 @@ stage 4.
 - Nothing here depends on the Phase B (`sub:analysis-v0`) issues; that track is
   out of scope for this plan.
 
-## Execution — parallel waves & worktrees
+## Execution — parallel feature lanes & worktrees
 
-One slice = one worktree = one red-green-refactor PR through the harness. Each
-worktree writes its own red outer acceptance test from the issue's Gherkin, drives
-it green, self-reviews, and stops at a **prepared PR** — merges stay founder-
-approved (DEC-3), so worktrees never merge. The waves below are grouped by
-**file-ownership disjointness**: everything inside a wave touches different modules
-and can run concurrently without stepping on each other.
+One slice = one red-green-refactor PR through the harness. A worktree writes its
+red outer acceptance test (already spec'd and DEC-1-locked in each slice plan),
+drives it green, self-reviews, and stops at a **prepared PR** — merges stay
+founder-approved (DEC-3), so worktrees never merge.
 
-### Wave 1 — no predecessors, disjoint modules (up to 4 parallel worktrees)
+Planning refined the shape: three features are **ordered slice chains**, not
+independent one-shot slices. So the unit of parallelism is the **feature lane** —
+one worktree per lane, slices sequential inside it, lanes concurrent. Every slice
+below now has a written plan; see the tracker's plan-ready column.
 
-| Slice | Issue | Owns | Notes |
-|-------|-------|------|-------|
-| 1a | #278 | `envelope.py` | author/date extraction |
-| 1b | #284 | `holdings.py` | full rewrite, self-contained module |
-| 0a | #291 | `reconcile.py` (new) | new CLI subcommand, no shared files |
-| 0c | #289 | `gold.py` (+ test) | verify-first; likely just a guard test |
+### Lanes — run concurrently, disjoint modules
 
-### Wave 2 — depends only on Wave 1 or nothing (up to 3 parallel worktrees)
+| Lane | Slices (in order) | Owns | Plan |
+|------|-------------------|------|------|
+| intake-metadata | #284 → #285 → #278 | `holdings.py`, intake, `data/source_meta/`, `envelope.py`, `vault.py` | `plans/intake-metadata/` |
+| tag | #294 | `tag.py`, `config/pipeline.yaml` | `plans/tag/06-best-of-n.md` |
+| run | #277 core → ledger → sources+summary | new `run` module, `cli.py` | `plans/run/` |
+| reconcile | #291 | new `reconcile.py`, `cli.py` | `plans/reconcile/` |
 
-| Slice | Issue | Owns | Depends on |
-|-------|-------|------|------------|
-| 2a | #294 | `tag.py` | — (predecessor of stage 5) |
-| 3 | #277 | `ingest.py` → runner | — |
-| 1c | #285 | `intake.py` + `data/source_meta/` writer | **1b** (carries §7.11 holdings flag) |
+Four lanes, four worktrees — within the ≤3–4 concurrent cap (reviewer bandwidth is
+the limiter, not file conflict).
 
-### Wave 3 — cross-cutting, serialize (not parallel with the passes)
+### Serialize / fix-lane — not lanes
 
-| Slice | Issue | Touches | Why serial |
-|-------|-------|---------|-----------|
-| 0b | #270 | `extract`/`envelope`/`tag`/`eval` | run-logging seam wires into passes 1a/2a change — land after they're stable to avoid churn |
-| 2b | #288 | tag reporting | attaches to #277's end-of-run summary — after slice 3 |
+| Item | Plan / lane | When |
+|------|-------------|------|
+| #270 run-logging | `plans/run-logging/` (2 slices) | slice 01 (seam + `extract`) can go early; **slice 02 fans out into `envelope`/`tag`/`eval` — land it after the intake-metadata and tag lanes or it conflicts.** The one true serialization point. |
+| #288 rates report | fix-lane | after run slice 03 (attaches to its end-of-run summary) |
+| #289 gold dropdown | fix-lane | anytime (verify-first) |
+
+### Cross-lane conflict notes
+
+- **`cli.py`** is registered into by both `run` and `reconcile` (a subcommand group
+  each) — different lines, low-risk, but sequence the two registrations if a rebase
+  bites.
+- **#270 slice 02** is the real conflict: it edits `envelope`/`tag`/`eval`, which
+  the intake-metadata and tag lanes also edit. Land it after those lanes.
+- Everything else is module-disjoint.
 
 ### Then, serial (not worktrees)
 
-- **Stage 4** — an operation, not a slice: re-tag via the #277 runner → score vs
-  sim gold → freeze schema. **Phase A closes here.**
-- **Stage 5** — a fresh set of worktrees (5a→5b→5c→5d→5e, mostly serial by data
-  dependency), gated behind stage 4 and its two deferred decisions.
-
-### Practical caps
-
-- **≤3–4 concurrent worktrees** — the limiter is reviewer bandwidth, not file
-  conflict. Wave 1's four is the comfortable ceiling.
-- Six slices have *no* predecessor at all (1a, 1b, 0a, 0c, 2a, 3) and touch six
-  different modules, so the true parallel width is wider than the wave grouping —
-  the waves cap it for review sanity, not correctness.
-- **0b (#270) is the one true serialization point.** It edits the same passes
-  several other slices edit; running it concurrently guarantees conflicts. Land it
-  alone, ideally just before stage 4 so the re-tag run is fully logged.
+- **Stage 4** — re-tag via the #277 runner → score vs sim gold → freeze. Phase A
+  closes here.
+- **Stage 5** — a fresh set of worktrees (#296 → #297 → #298), gated behind stage 4
+  and its two deferred decisions.
 
 ## Out of scope (whole feature)
 

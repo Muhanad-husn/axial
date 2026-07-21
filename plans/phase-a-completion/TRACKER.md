@@ -7,7 +7,7 @@ as slices land. Issues remain the system of record; this is the map over them.
 - **Branch:** `claude/phase-a-hybrid-tagging-sqx2xc`
 - **Plan:** [`README.md`](README.md) (stages, waves, deferred decisions)
 - **Decision:** `docs/DECISIONS.md` → DEC-32
-- **Last updated:** 2026-07-21 — planning complete, implementation not started
+- **Last updated:** 2026-07-21 — all slice plans written; implementation not started
 
 ## Read-me-first (30-second orient)
 
@@ -25,22 +25,26 @@ as slices land. Issues remain the system of record; this is the map over them.
 
 Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
-### Stage 0 — clean the shop (hygiene, parallel with stage 1)
-- ☐ 0a #291 — safe GC for orphaned derived artifacts (`reconcile.py`, new)
-- ☐ 0b #270 — structured run logging (cross-cutting; **serialize**, land just before stage 4)
-- ☐ 0c #289 — verify gold-sheet dropdowns (`gold.py`; verify-first, likely just a test)
+**Plan-ready:** ✅ = slice plan written · ✎ = fix-lane, no plan needed (build from the issue).
 
-### Stage 1 — metadata correctness (before any re-tag)
-- ☐ 1a #278 — envelope author/date null bug (`envelope.py`)
-- ☐ 1b #284 — holdings check → model-adjudicated rewrite (`holdings.py`)
-- ☐ 1c #285 — persisted source-metadata record (`intake.py` + `data/source_meta/`; needs 1b)
+### Stage 0 — clean the shop (hygiene, parallel with stage 1)
+- ☐ 0a #291 — safe GC for orphaned derived artifacts (`reconcile.py`, new) — plan ✅ `plans/reconcile/` (1 slice, dry-run-default safety)
+- ☐ 0b #270 — structured run logging — plan ✅ `plans/run-logging/` (2 slices; **decided: slice, not fix-lane**; slice 02 is the serialization point)
+- ☐ 0c #289 — verify gold-sheet dropdowns (`gold.py`) — ✎ fix-lane, verify-first
+
+### Stage 1 — metadata correctness (one ordered chain, before any re-tag) — plan ✅ `plans/intake-metadata/`
+- ☐ 1·01 #284 — holdings check → model-adjudicated rewrite (`holdings.py`)
+- ☐ 1·02 #285 — persisted source-metadata record; **sole origin of author/title/date (P0-1d)** (needs 01)
+- ☐ 1·03 #278 — **resolved: remove** author/date from the envelope (intake owns them); vault writer composes from both (needs 02). *No longer a Wave-1 independent slice.*
 
 ### Stage 2 — tag quality (before any re-tag)
-- ☐ 2a #294 — best-of-N voting on blind axes (`tag.py`; **predecessor of stage 5**)
-- ☐ 2b #288 — report not-applicable / unlisted rates (attaches to #277 summary)
+- ☐ 2a #294 — best-of-N voting on blind axes (`tag.py`; **predecessor of stage 5**) — plan ✅ `plans/tag/06-best-of-n.md` (**abstention = per-axis `abstained:true` + null primary, distinct from `not-applicable`**)
+- ☐ 2b #288 — report not-applicable / unlisted rates — ✎ fix-lane (attaches to #277 slice-03 summary)
 
-### Stage 3 — runner
-- ☐ 3 #277 — corpus-wide resumable pass runner (`ingest.py` → generalized)
+### Stage 3 — runner — plan ✅ `plans/run/` (3 slices)
+- ☐ 3·01 #277 — runner core + pass registry + failure isolation (walking skeleton)
+- ☐ 3·02 #277 — unified resume ledger + done-predicate (replaces today's 3 mechanisms)
+- ☐ 3·03 #277 — source-set inputs (worklist + corpus glob) + end-of-run summary
 
 ### Stage 4 — freeze (operation, not a slice) → **PHASE A CLOSES HERE**
 - ☐ 4.1 re-tag the corpus via #277 with stages 1–2 in place
@@ -55,18 +59,41 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
 
 ## Next action
 
-**Start Wave 1** — the conflict-free front, up to 4 parallel worktrees, disjoint modules:
-`#278 (envelope.py)`, `#284 (holdings.py)`, `#291 (reconcile.py)`, `#289 (gold.py)`.
-Highest value first: #278 and #284 are the correctness fixes. Then Wave 2
-(`#294`, `#277`, `#285`), then serial Wave 3 (`#270`, `#288`), then stage 4.
+All slice plans are written — the four feature lanes below can start concurrently
+(one worktree each, slices sequential inside a lane). Reviewer bandwidth is the cap
+(≤3–4 at once), not file conflict.
 
-See [`README.md`](README.md) → *Execution — parallel waves & worktrees* for the full
-wave/conflict rationale.
+| Lane | Order | Plan |
+|------|-------|------|
+| **intake-metadata** | #284 → #285 → #278 | `plans/intake-metadata/` |
+| **tag** | #294 | `plans/tag/06-best-of-n.md` |
+| **run** | #277 core → ledger → sources+summary | `plans/run/` |
+| **reconcile** | #291 | `plans/reconcile/` |
+
+Then: **#270 run-logging** (slice 01 early; slice 02 *after* the intake-metadata +
+tag lanes — the one conflict point), the two fix-lane issues (#289 anytime, #288
+after run·03), then **stage 4** (freeze = Phase A closes), then **stage 5**.
+
+See [`README.md`](README.md) → *Execution — parallel feature lanes & worktrees* for
+the full conflict rationale.
+
+## Decisions settled during planning (a builder should know)
+
+- **#278 → remove, not populate.** Envelope drops author/title/date; intake's
+  source-meta record (P0-1d) is their sole origin; vault writer composes `source_meta`
+  from both. This couples #278 to #285. Founder should sanity-check.
+- **#294 abstention** = per-axis `abstained: true` + `primary: null` + preserved
+  draws; a distinct signal from `not-applicable`/`unlisted`, never a vocab value.
+- **#270 = slice** (2 slices), not fix-lane — new cross-cutting seam.
+- **#277 = 3 slices** (core → unified ledger → sources+summary); the "3 resume
+  mechanisms" are, in the real code, a TSV ledger + file-exists + per-source xref
+  checkpoint (the issue's `loop_worker.py` / `xref-done/` names don't exist here).
+- **#291 = 1 slice**, dry-run-by-default, delete only under `--apply` + confirm.
 
 ## How to resume in a fresh session
 
-1. Read this file, then `README.md`, then DEC-32.
+1. Read this file, then `README.md`, then DEC-32, then the relevant lane's plan.
 2. `git checkout claude/phase-a-hybrid-tagging-sqx2xc && git pull`.
 3. Check the status board above and each issue's open PRs for anything ◐ in flight.
-4. Pick the next ☐ slice per the wave order; run it through the harness; open a PR;
+4. Pick the next ☐ slice per its lane order; run it through the harness; open a PR;
    update its checkbox to ◐ (PR #), then ✅ on merge.

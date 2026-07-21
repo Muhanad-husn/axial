@@ -30,6 +30,7 @@ slice 04 persists the tags into the vault frontmatter.
 | 02 | [scope-and-country](02-scope-and-country.md) | adds `empirical_scope` (exactly one) + the `scope:country-case`→`country` extra field from the controlled `country_list` | ☐ todo | [#28](https://github.com/Muhanad-husn/axial/issues/28) | — |
 | 03 | [primary-secondary-axes](03-primary-secondary-axes.md) | adds `field`, `claim_type` (+subtags), `theory_school` `[candidate]` — the primary+(optional/≥0)secondary validator, data-driven across all three | ☐ todo | [#29](https://github.com/Muhanad-husn/axial/issues/29) | — |
 | 04 | [tag-vault-frontmatter](04-tag-vault-frontmatter.md) | prose notes gain the chunk-level axis frontmatter + `schema_version` (Appendix H shape) | ☐ todo | [#31](https://github.com/Muhanad-husn/axial/issues/31) | — |
+| 06 | [best-of-n](06-best-of-n.md) | draws the tag call `N`× per chunk (config `votes_by_pass`, default 3) and majority-votes the blind axes `claim_type`/`theory_school`; undecided votes abstain via a per-axis flag distinct from `not-applicable` (DEC-31) | ☐ todo | [#294](https://github.com/Muhanad-husn/axial/issues/294) | — |
 
 ## Out of scope (whole feature)
 
