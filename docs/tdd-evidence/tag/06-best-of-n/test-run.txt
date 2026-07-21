@@ -1,0 +1,43 @@
+bringing up nodes...
+bringing up nodes...
+
+........................................................................ [  6%]
+........................................................................ [ 13%]
+........................................................................ [ 20%]
+........................................................................ [ 27%]
+........................................................................ [ 34%]
+........................................................................ [ 41%]
+........................................................................ [ 48%]
+........................................................................ [ 54%]
+........................................................................ [ 61%]
+........................................................................ [ 68%]
+........................................................................ [ 75%]
+........................................................................ [ 82%]
+........................................................................ [ 89%]
+........................................................................ [ 96%]
+.........................................                                [100%]
+1049 passed in 20.80s
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- D:\axial\.claude\worktrees\tag-best-of-n\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial\.claude\worktrees\tag-best-of-n
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 14 items
+
+tests/ingestion/test_tag_best_of_n.py::test_blind_axes_are_majority_voted_across_three_draws PASSED [  7%]
+tests/ingestion/test_tag_best_of_n.py::test_votes_default_to_three_when_config_omits_the_block PASSED [ 14%]
+tests/ingestion/test_tag_best_of_n.py::test_single_vote_is_an_exact_no_op PASSED [ 21%]
+src/axial/test_tag_voting.py::test_strict_plurality_decides_a_blind_axis PASSED [ 28%]
+src/axial/test_tag_voting.py::test_three_distinct_draws_abstain_instead_of_coin_flipping PASSED [ 35%]
+src/axial/test_tag_voting.py::test_abstention_is_never_a_vocabulary_value PASSED [ 42%]
+src/axial/test_tag_voting.py::test_unlisted_casts_a_legal_ballot_and_can_win_the_vote PASSED [ 50%]
+src/axial/test_tag_voting.py::test_head_axes_take_the_first_draw_and_never_gain_an_abstained_key PASSED [ 57%]
+src/axial/test_tag_voting.py::test_a_single_ballot_decides_without_abstaining PASSED [ 64%]
+src/axial/test_tag_voting.py::test_run_tag_votes_three_draws_and_records_the_modal_blind_values PASSED [ 71%]
+src/axial/test_tag_voting.py::test_run_tag_spoiled_claim_type_ballot_is_excluded_from_the_vote PASSED [ 78%]
+src/axial/test_tag_voting.py::test_run_tag_all_draws_invalid_still_raises_the_p0_6_hard_error PASSED [ 85%]
+src/axial/test_tag_voting.py::test_run_tag_unlisted_softland_casts_a_ballot_and_can_lose PASSED [ 92%]
+src/axial/test_tag_voting.py::test_run_tag_at_one_vote_is_an_exact_no_op PASSED [100%]
+
+============================= 14 passed in 7.09s ==============================
