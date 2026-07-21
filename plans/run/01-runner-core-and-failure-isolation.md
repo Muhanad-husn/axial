@@ -5,7 +5,7 @@
 - **GitHub issue:** #277
 - **Branch:** feat/run/01-runner-core-and-failure-isolation
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ✅ merged
 - **Walking skeleton?** yes
 
 ## Goal — the minimum testable behaviour
@@ -115,3 +115,5 @@ Then  it exits non-zero and prints a fatal error naming the unknown pass, having
 - 2026-07-21 built on `feat/run/01-runner-core-and-failure-isolation`; sprint suite
   green (1018 passed); PR https://github.com/Muhanad-husn/axial/pull/300 prepared,
   awaiting founder approval. No spec change — P1-4's resume bar belongs to slice 02.
+- 2026-07-21 CI green (full tree), founder approved, merged `e8f9661`. Worktree removed;
+  branch tip `1b832f0` recorded in `.tdd-branch-cleanup.log` if it is ever needed back.
