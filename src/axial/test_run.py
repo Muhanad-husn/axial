@@ -37,11 +37,15 @@ from axial.run import (
     PassDescriptor,
     RunSummary,
     SKIP_STATUS,
+    THEORY_SCHOOL_RATES_COLUMNS,
     _append_ledger_row,
     _load_done_source_ids,
+    attach_theory_school_rates,
+    render_theory_school_rates,
     resolve_corpus_source_paths,
     run_pass,
 )
+from axial.tag import TheorySchoolSourceRate
 
 
 class _FakeClient:
@@ -810,3 +814,106 @@ def test_empty_corpus_source_set_exits_zero_with_total_zero(tmp_path, monkeypatc
     assert exit_code == 0
     assert summary.total == 0
     assert summary.outcomes == []
+
+
+# ---------------------------------------------------------------------------
+# Issue #288: not-applicable/unlisted theory_school rates report attach
+# ---------------------------------------------------------------------------
+
+
+def test_attach_theory_school_rates_computes_from_ok_and_skip_excluding_fail(tmp_path, monkeypatch):
+    worklist = _write_worklist(tmp_path, ["/fake/ok.pdf", "/fake/bad.pdf", "/fake/done.pdf"])
+    monkeypatch.setattr(run_mod, "compute_source_id", lambda path: f"id-{Path(path).stem}")
+
+    def _invoke(source_path, client, config_path, domain_dir):
+        if Path(source_path) == Path("/fake/bad.pdf"):
+            raise _DeclaredError("boom")
+
+    def _done_predicate(source_id, ledger_done_ids, config_path):
+        return source_id == "id-done"
+
+    _register_fake_pass(monkeypatch, _invoke, done_predicate=_done_predicate)
+
+    summary, _exit_code = run_pass(
+        "fake", worklist, client=_FakeClient(), ledger_path=_ledger_path(tmp_path)
+    )
+
+    received = {}
+
+    def _fake_report(source_ids, tags_dir=None, config_path=None):
+        received["source_ids"] = set(source_ids)
+        received["tags_dir"] = tags_dir
+        received["config_path"] = config_path
+        return ["canned-rate"]
+
+    monkeypatch.setattr(run_mod, "theory_school_rates_report", _fake_report)
+
+    updated = attach_theory_school_rates(summary, tags_dir=Path("some/tags"))
+
+    # A FAILed source produced no tag output this run -- excluded. OK and
+    # SKIP source_ids both go in.
+    assert received["source_ids"] == {"id-ok", "id-done"}
+    assert received["tags_dir"] == Path("some/tags")
+    assert updated.rates == ["canned-rate"]
+
+    # Every other field of the returned summary is the same summary,
+    # untouched (an immutable attach, not a rebuild).
+    assert updated.pass_name == summary.pass_name
+    assert updated.outcomes == summary.outcomes
+    assert updated.total == summary.total
+    assert updated.ok_count == summary.ok_count
+    assert updated.fail_count == summary.fail_count
+    assert updated.skip_count == summary.skip_count
+
+
+def test_attach_theory_school_rates_never_raises_on_an_unexpected_computation_failure(
+    tmp_path, monkeypatch
+):
+    # The issue's own acceptance bar: "the summary never blocks or fails the
+    # run." Even a genuinely unexpected bug in the rates computation must
+    # not propagate past this seam -- the run itself already finished.
+    worklist = _write_worklist(tmp_path, ["/fake/one.pdf"])
+    monkeypatch.setattr(run_mod, "compute_source_id", lambda path: "id-1")
+    _register_fake_pass(monkeypatch, lambda *a, **k: None)
+
+    summary, _exit_code = run_pass(
+        "fake", worklist, client=_FakeClient(), ledger_path=_ledger_path(tmp_path)
+    )
+
+    def _boom(source_ids, tags_dir=None, config_path=None):
+        raise RuntimeError("a genuinely unexpected bug in the rates computation")
+
+    monkeypatch.setattr(run_mod, "theory_school_rates_report", _boom)
+
+    updated = attach_theory_school_rates(summary)  # must not raise
+
+    assert updated.rates is None
+    assert updated.outcomes == summary.outcomes
+
+
+def test_render_theory_school_rates_returns_empty_string_for_no_rates():
+    assert render_theory_school_rates([]) == ""
+
+
+def test_render_theory_school_rates_formats_a_header_and_one_row_per_source():
+    rates = [
+        TheorySchoolSourceRate(
+            source_id="src-1",
+            total=100,
+            not_applicable_count=27,
+            not_applicable_pct=27.0,
+            unlisted_count=3,
+            unlisted_pct=3.0,
+            unlisted_schools=["pluralist"],
+        )
+    ]
+
+    rendered = render_theory_school_rates(rates)
+    lines = rendered.splitlines()
+
+    assert lines[0] == "\t".join(THEORY_SCHOOL_RATES_COLUMNS)
+    assert len(lines) == 2
+    assert "src-1" in lines[1]
+    assert "27.0%" in lines[1]
+    assert "3.0%" in lines[1]
+    assert "pluralist" in lines[1]

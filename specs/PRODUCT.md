@@ -527,8 +527,13 @@ The measured figures above come from the simulated gold set (DEC-29/DEC-32) and 
   each attempted source's `source_id`/status/short reason — DEC-23: never
   source text) as well as printing it, so downstream consumers can attach to
   it without reaching into runner internals: #270's structured run-log
-  emitter and #288's not-applicable/unlisted rates report (`RunSummary.rates`,
-  left `None` here) both build on this value, not yet implemented.
+  emitter builds on this value, not yet implemented. **#288's not-applicable/
+  unlisted rates report landed**: `axial run <pass>`'s CLI wrapper calls
+  `axial.run.attach_theory_school_rates(summary)` after the loop returns,
+  filling `RunSummary.rates` with one `TheorySchoolSourceRate` per source
+  that carries theory_school tag data (Appendix E), and prints it via
+  `render_theory_school_rates` when non-empty. This is a plain consumer, not
+  part of the loop: `run_pass` itself still always returns `rates=None`.
 
 ### Future Considerations (P2 — design for, don't build)
 
@@ -702,6 +707,8 @@ The absence marker exists because the axis mandates a primary value. Without it,
 Out-of-vocabulary `theory_school` is **not** source-fatal (unlike every other closed axis, §7.1/P0-6): a value still absent from the vocabulary after the bounded correction re-ask (§7.1) lands as `unlisted`, and the model's actual proposed name is logged to a persistent candidates queue (`data/tags/theory_school_candidates.jsonl`) with its source/chunk/section provenance, for an operator to review and, when warranted, promote into the controlled vocabulary. The vocabulary above was derived from a Syria-focused mind-map; a source outside that frame (e.g. a book on European/American state formation naming `pluralist` theories of the state) can legitimately invoke a real school this list does not yet cover — `unlisted` makes that an honest, non-fatal outcome instead of aborting the whole source over one axis's gap.
 
 Note the deliberate cross-field recurrence (Malešević, Brubaker, Mann, Tilly appear under multiple fields) — this is the faceting pressure the eval should watch: if theory-school tags co-vary too tightly with field or claim-type, the axis is redundant and gets cut. `not-applicable` and `unlisted` are both excluded from this analysis — neither records a positioned school, and counting either would read as spurious recurrence. Each instead carries its own visible rate (an `unlisted` rate is itself a signal: a high rate means the vocabulary's frame has outgrown the corpus and warrants a deliberate revision pass, not a series of one-off promotions). Fabricated attributions would corrupt the same signal, which is the second reason the absence marker exists.
+
+**The visible rate, concretely (issue #288).** `axial run <pass>` (P1-4) attaches a per-source not-applicable/unlisted rate report to its end-of-run summary: for every source the run produced or reused tag output for, the count and percentage of chunks landing `not-applicable` and `unlisted`, and — for `unlisted` only — the distinct proposed school names the candidates queue above recorded for that source (an empty/blank proposal names nothing promotable and is excluded). This is read-only over already-persisted tag output; it never re-tags a chunk, never gates a run, and a source with no tag data simply carries no row. It is the operator's promote-or-reconsider signal for this axis, feeding the stage-4 `theory_school` KEEP ratification.
 
 ## Appendix F — Role-in-argument axis (prose chunks) **[FIRM]**
 

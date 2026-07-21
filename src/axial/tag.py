@@ -73,8 +73,9 @@ from __future__ import annotations
 import json
 import sys
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import httpx
 
@@ -989,6 +990,14 @@ def log_polity_not_in_list(schema: Schema, polity: str) -> None:
 # review/promotion, never silently dropped.
 THEORY_SCHOOL_UNLISTED_VALUE = "unlisted"
 
+# The absence-marker `theory_school` value asserting the chunk advances no
+# theoretical position at all (schema.yaml's `groups.none`, PRD Appendix E)
+# -- a real, legal vocabulary value the model chooses itself, never a
+# soft-land like `THEORY_SCHOOL_UNLISTED_VALUE` above. Named here (rather
+# than left a bare string) purely for the not-applicable/unlisted rates
+# report below (issue #288).
+THEORY_SCHOOL_NOT_APPLICABLE_VALUE = "not-applicable"
+
 # The operator's review queue for theory_school candidates (module docstring
 # above, "closed vocabulary" design note): one JSONL record per out-of-vocab
 # proposal, appended alongside the tag-pass checkpoint directory in use for
@@ -1039,6 +1048,171 @@ def log_theory_school_not_in_schema(
     }
     with candidates_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record) + "\n")
+
+
+@dataclass(frozen=True)
+class TheorySchoolSourceRate:
+    """One source's not-applicable/unlisted theory_school rate (issue #288)
+    -- the operator's promote-or-reconsider signal for the axis
+    (specs/PRODUCT.md Appendix E): a high `not_applicable` rate says the
+    axis rarely applies to this source; a high `unlisted` rate says the
+    vocabulary's frame (derived from one expert's mind-map) has outgrown it.
+
+    `total` is the number of this source's chunks that actually carry a
+    `theory_school` primary -- quarantined chunks and a schema that does not
+    declare the axis both carry none, so they never inflate or deflate the
+    percentage (`theory_school_rates_for_source`). `unlisted_schools` is the
+    distinct, sorted `proposed_value`s the candidates log recorded for this
+    source_id -- the real school names an operator reviews for promotion;
+    there is no equivalent list for `not_applicable`, which asserts no
+    school applies at all, so there is nothing to name."""
+
+    source_id: str
+    total: int
+    not_applicable_count: int
+    not_applicable_pct: float
+    unlisted_count: int
+    unlisted_pct: float
+    unlisted_schools: list[str]
+
+
+def _rate_pct(count: int, total: int) -> float:
+    """`count` as a percentage of `total`, rounded to one decimal place for
+    display -- `0.0` for a zero total (callers never actually hit this: see
+    `theory_school_rates_for_source`'s own `total == 0` guard)."""
+    return round(100 * count / total, 1) if total else 0.0
+
+
+def _read_theory_school_candidates(candidates_path: Path) -> list[dict[str, Any]]:
+    """Read the theory_school candidates log (`log_theory_school_not_in_
+    schema`'s append-only JSONL), tolerating an absent file (no candidates
+    logged yet) and skipping a malformed line with a stderr diagnostic
+    rather than raising -- this is a read-only report over another pass's
+    output, never a gate (issue #288's acceptance bar: never block or fail
+    the run)."""
+    if not candidates_path.exists():
+        return []
+    try:
+        lines = candidates_path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        print(f"warning: could not read {candidates_path}: {exc}", file=sys.stderr)
+        return []
+    records: list[dict[str, Any]] = []
+    for line_no, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            records.append(json.loads(stripped))
+        except json.JSONDecodeError as exc:
+            print(
+                f"warning: skipping malformed theory_school candidates line "
+                f"{line_no} in {candidates_path}: {exc}",
+                file=sys.stderr,
+            )
+    return records
+
+
+def theory_school_rates_for_source(
+    source_id: str,
+    tags_dir: Path,
+    candidates: list[dict[str, Any]] | None = None,
+) -> TheorySchoolSourceRate | None:
+    """Compute `source_id`'s not-applicable/unlisted theory_school rate from
+    its persisted tag checkpoint (`<tags_dir>/<source_id>.jsonl`) -- issue
+    #288. Returns `None` when there is nothing to report: no checkpoint file
+    (this source was never tagged with checkpointing active), every chunk
+    quarantined, or a schema that never declared the axis.
+
+    `candidates`, when supplied, is the whole (unfiltered) candidates log
+    already loaded by a caller computing a whole-corpus report
+    (`theory_school_rates_report`) -- passed in so the same file is not
+    re-read once per source; omitted, it defaults to reading just this
+    source's own share of `tags_dir`'s candidates log. A candidate record
+    with a blank `proposed_value` (seen in the real corpus log -- not every
+    logged proposal names a real school) is excluded from `unlisted_schools`:
+    it names nothing an operator could promote.
+
+    A torn or unreadable checkpoint file is a diagnostic, never a crash:
+    this report must never block or fail a run (issue #288's acceptance
+    bar)."""
+    checkpoint_path = tags_checkpoint_path(source_id, tags_dir)
+    try:
+        records = load_tag_checkpoint(checkpoint_path)
+    except (TagError, OSError) as exc:
+        print(
+            f"warning: could not read tag checkpoint for {source_id!r} at "
+            f"{checkpoint_path} for theory_school rates: {exc}",
+            file=sys.stderr,
+        )
+        return None
+
+    total = 0
+    not_applicable_count = 0
+    unlisted_count = 0
+    for record in records:
+        if "quarantine_reason" in record:
+            continue
+        theory_school = record.get(THEORY_SCHOOL_AXIS)
+        if not theory_school:
+            continue
+        total += 1
+        primary = theory_school.get("primary")
+        if primary == THEORY_SCHOOL_NOT_APPLICABLE_VALUE:
+            not_applicable_count += 1
+        elif primary == THEORY_SCHOOL_UNLISTED_VALUE:
+            unlisted_count += 1
+
+    if total == 0:
+        return None
+
+    if candidates is None:
+        candidates = _read_theory_school_candidates(_theory_school_candidates_path(tags_dir))
+    unlisted_schools = sorted(
+        {
+            candidate["proposed_value"]
+            for candidate in candidates
+            if candidate.get("source_id") == source_id and candidate.get("proposed_value")
+        }
+    )
+
+    return TheorySchoolSourceRate(
+        source_id=source_id,
+        total=total,
+        not_applicable_count=not_applicable_count,
+        not_applicable_pct=_rate_pct(not_applicable_count, total),
+        unlisted_count=unlisted_count,
+        unlisted_pct=_rate_pct(unlisted_count, total),
+        unlisted_schools=unlisted_schools,
+    )
+
+
+def theory_school_rates_report(
+    source_ids: Iterable[str],
+    tags_dir: Path | None = None,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+) -> list[TheorySchoolSourceRate]:
+    """The whole-corpus (or whole-run) not-applicable/unlisted rates report
+    (issue #288): one `TheorySchoolSourceRate` per `source_id` that actually
+    carries theory_school tag data, sorted by `source_id` for a
+    deterministic report -- a `source_id` with no data (never tagged, or the
+    read failed) contributes no row. Repeated `source_id`s are deduplicated.
+
+    `tags_dir`, when omitted, resolves from `config_path` exactly like every
+    other tag-pass path (`_default_tags_dir`) -- the same directory
+    `run_tag`'s checkpoint and the candidates log both already live in. The
+    candidates log is read once for the whole report, never once per
+    source."""
+    if tags_dir is None:
+        tags_dir = _default_tags_dir(config_path)
+    candidates = _read_theory_school_candidates(_theory_school_candidates_path(tags_dir))
+
+    rates = []
+    for source_id in sorted(set(source_ids)):
+        rate = theory_school_rates_for_source(source_id, tags_dir, candidates=candidates)
+        if rate is not None:
+            rates.append(rate)
+    return rates
 
 
 def _validate_theory_school_with_softland(

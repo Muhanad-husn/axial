@@ -39,7 +39,12 @@ from axial.llm import ENVELOPE_PASS_NAME, TAG_PASS_NAME, get_client
 from axial.pipeline_ready import PipelineReadyError, run_pipeline_ready
 from axial.polity_canonical import PolityCanonicalError, run_polity_build, run_polity_report
 from axial.reconcile import ReconcileError, format_gc_report, run_gc
-from axial.run import PASS_REGISTRY, run_pass
+from axial.run import (
+    PASS_REGISTRY,
+    attach_theory_school_rates,
+    render_theory_school_rates,
+    run_pass,
+)
 from axial.runlog import run_context
 from axial.schema import SchemaError, load_schema
 from axial.tag import DEFAULT_DOMAIN_DIR, TagError, run_tag
@@ -815,7 +820,20 @@ def _ingest(worklist_path: str) -> int:
 
 
 def _run(pass_name: str, worklist_path: str | None, corpus: bool, domain_dir: str) -> int:
-    _summary, exit_code = run_pass(pass_name, worklist_path, corpus=corpus, domain_dir=domain_dir)
+    summary, exit_code = run_pass(pass_name, worklist_path, corpus=corpus, domain_dir=domain_dir)
+
+    # Issue #288: attach and print the theory_school not-applicable/unlisted
+    # rates report as a post-processing step over this run's own OK/SKIP
+    # sources -- a CONSUMER of `summary`, never reaching into `run_pass`'s
+    # own loop, and safe to call after any pass (a pass with no persisted
+    # theory_school data simply yields no rows to print). Never affects
+    # `exit_code`: the report must never block or fail the run.
+    summary = attach_theory_school_rates(summary)
+    rendered = render_theory_school_rates(summary.rates or [])
+    if rendered:
+        print("theory_school not-applicable/unlisted rates:")
+        print(rendered)
+
     return exit_code
 
 
