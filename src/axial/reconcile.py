@@ -69,6 +69,34 @@ class ReconcileError(Exception):
     """Base class for all reconcile errors."""
 
 
+class EmptyKeepSetError(ReconcileError):
+    """Raised by `run_gc` under `apply=True` when the live keep-set is
+    EMPTY but the scan found derived artifacts it would otherwise treat as
+    orphans. An empty keep-set almost never means "every derived artifact
+    on disk is genuine garbage" -- it means the scan could not see any
+    source file in `sources_dir` at all, which is overwhelmingly the wrong
+    working directory (the single most likely operator error for a
+    cwd-relative tool), not a corpus that has genuinely lost every one of
+    its sources. Raised BEFORE any confirm call and before anything is
+    removed or logged -- `--yes` cannot bypass it, and there is
+    deliberately no override flag (nobody has asked for "delete
+    everything anyway")."""
+
+    def __init__(self, sources_dir: Path, orphan_count: int):
+        self.sources_dir = sources_dir
+        self.orphan_count = orphan_count
+        resolved = sources_dir.resolve()
+        super().__init__(
+            f"refusing to remove anything: found {orphan_count} derived "
+            f"artifact(s) that look orphaned, but the live source_id "
+            f"keep-set is EMPTY because no source file was found in "
+            f"{sources_dir} (resolved: {resolved}). This almost always "
+            f"means the wrong working directory, not that every derived "
+            f"artifact is genuine garbage -- check that {resolved} is "
+            f"really your data/sources/ directory, then rerun."
+        )
+
+
 @dataclass(frozen=True)
 class DerivedDirs:
     """The derived-dir surfaces reconcile scans -- an explicit constant,
@@ -321,11 +349,20 @@ def run_gc(
     `--yes`, and the only consent path the outer acceptance test ever
     drives); `yes=False` calls `confirm` (defaulting to a real interactive
     prompt) with the rendered scan report, and declining removes nothing.
+
+    Raises `EmptyKeepSetError` under `apply=True` when the keep-set came
+    back empty but the scan still found orphans -- almost always the
+    wrong working directory, not a corpus that has genuinely lost every
+    source -- before any confirm call, before any removal, before any log
+    write. `--yes` does not bypass this; there is no override flag.
     """
     scan = scan_orphans(sources_dir=sources_dir, dirs=dirs)
 
     if not apply or not scan.orphans:
         return GcResult(scan=scan, applied=False, aborted=False, removed=[], log_path=None)
+
+    if not scan.keep_set:
+        raise EmptyKeepSetError(sources_dir, scan.orphan_count)
 
     if not yes:
         confirm_fn = confirm or _default_confirm

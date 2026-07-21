@@ -17,8 +17,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from axial.reconcile import (
     DerivedDirs,
+    EmptyKeepSetError,
     attribute_vault_note,
     live_source_ids,
     remove_orphans,
@@ -227,7 +230,18 @@ def test_dry_run_lists_orphans_and_deletes_nothing(tmp_path):
 
 
 def test_apply_without_yes_declining_confirm_removes_nothing(tmp_path):
+    from axial.envelope import compute_source_id
+
     dirs = _make_dirs(tmp_path)
+    # A real live source alongside the stale one -- a non-empty keep-set --
+    # so this test exercises the confirm-decline path in isolation from the
+    # separate empty-keep-set guard (see the dedicated tests below).
+    sources_dir = tmp_path / "data" / "sources"
+    sources_dir.mkdir(parents=True)
+    paper = sources_dir / "paper.pdf"
+    paper.write_bytes(b"live paper bytes")
+    _write_flat_set(dirs, compute_source_id(paper))
+
     stale_paths = _write_flat_set(dirs, STALE_ID)
     log_dir = tmp_path / "data" / "logs" / "reconcile"
 
@@ -235,7 +249,7 @@ def test_apply_without_yes_declining_confirm_removes_nothing(tmp_path):
         apply=True,
         yes=False,
         confirm=lambda _prompt: False,
-        sources_dir=tmp_path / "data" / "sources",
+        sources_dir=sources_dir,
         dirs=dirs,
         log_dir=log_dir,
     )
@@ -334,6 +348,81 @@ def test_no_orphans_at_all_when_every_flat_artifact_is_live(tmp_path):
     result = scan_orphans(sources_dir=sources_dir, dirs=dirs)
 
     assert result.orphans == {}
+
+
+# --- empty keep-set + orphans present: refuse to remove, never a no-op ------
+#
+# Regression coverage for the coordinator-flagged safety gap: `data/sources/`
+# absent or empty (the "wrong working directory" scenario, or a run before
+# sources are placed) must never be read as "every derived artifact is
+# garbage" -- `run_gc` must refuse outright under `apply=True`, before any
+# confirm call, before any removal, before any log write, and `--yes` must
+# not bypass the refusal (there is no override flag).
+
+
+def test_apply_and_yes_refuses_when_keep_set_empty_and_orphans_present(tmp_path):
+    dirs = _make_dirs(tmp_path)
+    stale_paths = _write_flat_set(dirs, STALE_ID)
+    stale_paths.append(_prose_note(dirs, STALE_ID, with_source_id=True))
+    sources_dir = tmp_path / "data" / "sources"  # never created: empty keep-set
+    log_dir = tmp_path / "data" / "logs" / "reconcile"
+
+    with pytest.raises(EmptyKeepSetError) as excinfo:
+        run_gc(apply=True, yes=True, sources_dir=sources_dir, dirs=dirs, log_dir=log_dir)
+
+    assert str(sources_dir) in str(excinfo.value)
+    for path in stale_paths:
+        assert path.exists(), f"guard must remove nothing, but {path} is gone"
+    assert not log_dir.exists(), "guard must write no log"
+
+
+def test_apply_without_yes_refuses_before_any_confirm_call(tmp_path):
+    dirs = _make_dirs(tmp_path)
+    _write_flat_set(dirs, STALE_ID)
+    sources_dir = tmp_path / "data" / "sources"  # never created: empty keep-set
+    confirm_calls: list[str] = []
+
+    with pytest.raises(EmptyKeepSetError):
+        run_gc(
+            apply=True,
+            yes=False,
+            confirm=lambda prompt: confirm_calls.append(prompt) or True,
+            sources_dir=sources_dir,
+            dirs=dirs,
+        )
+
+    assert confirm_calls == [], "the empty-keep-set guard must fire before any confirm call"
+
+
+def test_dry_run_is_unaffected_by_the_empty_keep_set_guard(tmp_path):
+    """The guard only gates removal (`apply=True`) -- a plain dry run over
+    an empty/absent data/sources/ still just lists what it found, exactly
+    as every other dry run does."""
+    dirs = _make_dirs(tmp_path)
+    stale_paths = _write_flat_set(dirs, STALE_ID)
+    sources_dir = tmp_path / "data" / "sources"  # never created: empty keep-set
+
+    result = run_gc(apply=False, sources_dir=sources_dir, dirs=dirs)
+
+    assert result.scan.orphans[STALE_ID]
+    for path in stale_paths:
+        assert path.exists()
+
+
+def test_genuinely_empty_data_tree_is_still_a_clean_no_op(tmp_path):
+    """No sources AND no derived artifacts at all is not the guarded case
+    -- there is nothing to refuse, so this stays a clean, log-free no-op
+    (the plan's own last inner-loop item)."""
+    dirs = _make_dirs(tmp_path)  # nothing created under any of these dirs
+    sources_dir = tmp_path / "data" / "sources"  # never created either
+    log_dir = tmp_path / "data" / "logs" / "reconcile"
+
+    result = run_gc(apply=True, yes=True, sources_dir=sources_dir, dirs=dirs, log_dir=log_dir)
+
+    assert result.scan.orphans == {}
+    assert result.applied is False
+    assert result.log_path is None
+    assert not log_dir.exists()
 
 
 # --- removal log shape: paths + source_ids only, no source text (DEC-23) ----

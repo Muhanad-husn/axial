@@ -267,3 +267,37 @@ def test_no_orphans_at_all_exits_zero_with_empty_list_and_no_log(tmp_path_factor
     assert result.returncode == 0
     assert "no orphaned derived artifacts found" in result.stdout
     assert not (root / "data" / "logs" / "reconcile").exists()
+
+
+def test_apply_and_yes_refuses_to_delete_the_whole_corpus_when_sources_dir_is_missing(
+    tmp_path_factory,
+):
+    """Regression for the coordinator-flagged safety gap: no data/sources/
+    at all (the "wrong working directory" scenario) plus a full set of
+    derived artifacts must never be read as "everything is an orphan" --
+    `--apply --yes` must refuse outright: exit non-zero, remove nothing,
+    write no log."""
+    root = tmp_path_factory.mktemp("reconcile_gc_no_sources_dir")
+
+    # No data/sources/ directory is ever created here -- the exact repro:
+    # a full derived corpus with no way to see which sources are live.
+    stale_paths = _write_flat_set(root, STALE_ID)
+    stale_paths += _write_vault_notes(root, STALE_ID)
+
+    result = _run_reconcile_gc(root, "--apply", "--yes")
+
+    assert result.returncode != 0, (
+        f"expected a nonzero exit when the keep-set is empty, got 0\n"
+        f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+    )
+
+    combined = result.stdout + result.stderr
+    assert "sources" in combined.lower(), (
+        f"expected the error to name the sources dir it looked in: {combined!r}"
+    )
+
+    for path in stale_paths:
+        assert path.exists(), f"expected {path} to survive the refused run"
+    assert not (root / "data" / "logs" / "reconcile").exists(), (
+        "a refused run must write no removal log"
+    )
