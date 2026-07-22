@@ -19,6 +19,7 @@ uses, so this is unit-tested without ever making a live call.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,22 @@ PROVENANCE_CROSSREF = "crossref"
 
 def _cache_path(cache_dir: Path, cache_key: str) -> Path:
     return cache_dir / f"{cache_key}.json"
+
+
+def _write_cache(cache_dir: Path, cache_file: Path, payload: dict[str, Any]) -> None:
+    """Best-effort cache write -- mirrors the cache-READ path's own
+    tolerance (`_fetch_json` below already degrades a corrupt/unreadable
+    cache file to a cache miss rather than raising). A disk-full,
+    permission-denied, or read-only-mount failure here must not propagate
+    out of a resolver that promises never to raise: the caller still gets
+    its correct, freshly-fetched answer, just uncached -- the next call
+    tries the network again instead of reading a cache that was never
+    written."""
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(json.dumps(payload), encoding="utf-8")
+    except OSError as exc:
+        print(f"bib_lookup: failed to cache {cache_file.name}: {exc}", file=sys.stderr)
 
 
 def _fetch_json(
@@ -79,8 +96,7 @@ def _fetch_json(
         return {"ok": False, "error": str(exc)}
 
     if response.status_code == 404:
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file.write_text(json.dumps({"__not_found__": True}), encoding="utf-8")
+        _write_cache(cache_dir, cache_file, {"__not_found__": True})
         return {"ok": False, "not_found": True}
     if response.status_code >= 400:
         return {"ok": False, "error": f"HTTP {response.status_code}"}
@@ -90,8 +106,7 @@ def _fetch_json(
     except ValueError:
         return {"ok": False, "error": "non-JSON response body"}
 
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_file.write_text(json.dumps(body), encoding="utf-8")
+    _write_cache(cache_dir, cache_file, body)
     return {"ok": True, "body": body}
 
 
@@ -110,6 +125,23 @@ def _names_are_variants(a: str, b: str) -> bool:
         (a_tokens, b_tokens) if len(a_tokens) <= len(b_tokens) else (b_tokens, a_tokens)
     )
     return bool(shorter) and shorter == longer[: len(shorter)]
+
+
+def _crossref_date(msg: dict[str, Any]) -> str | None:
+    """The publication year from Crossref's `published`/`issued` date-parts
+    shape, or `None` -- tolerant of a malformed-but-valid response (a
+    non-dict `published`/`issued`, a non-list `date-parts`), one of the
+    failure modes this module's own never-raises contract names."""
+    for key in ("published", "issued"):
+        value = msg.get(key)
+        if not isinstance(value, dict):
+            continue
+        date_parts = value.get("date-parts")
+        if isinstance(date_parts, list) and date_parts and isinstance(date_parts[0], list):
+            year = date_parts[0][0] if date_parts[0] else None
+            if year:
+                return str(year)
+    return None
 
 
 def _dedupe_similar_authors(names: list[str]) -> list[str]:
@@ -214,13 +246,11 @@ def resolve_doi(
         )
         or None
     )
-    date_parts = (msg.get("published") or msg.get("issued") or {}).get("date-parts") or [[None]]
-    date = str(date_parts[0][0]) if date_parts and date_parts[0] and date_parts[0][0] else None
     return {
         "resolved": True,
         "title": title,
         "author": author,
-        "date": date,
+        "date": _crossref_date(msg),
         "publisher": msg.get("publisher") or None,
         "source": PROVENANCE_CROSSREF,
     }

@@ -29,12 +29,27 @@ Then  the persisted record's title/author/date/publisher are the fetched
 And   the record's `identifier` field carries `{type, value}`
 
 Given the fetched author does not plausibly overlap intake's already-known
-      author (the guard fails)
+      author (a single, unambiguous identifier resolving to an entirely
+      different person's work)
 When  the record is built
 Then  intake falls back to its existing embedded-metadata/title-page values
       unchanged
 And   `identifier` still records what was found, for audit, but is not used
       for the four fields
+
+Given a source's front matter carries MORE THAN ONE distinct checksum-valid
+      identifier (e.g. a multi-volume work's own "also available in this
+      series" ISBN block -- the real, measured case:
+      `mann-sources-of-social-power-v1`/`v3`/`v4` all carry the identical
+      ISBN `9781107028654`)
+When  the record is built
+Then  the capture ABSTAINS -- no lookup is attempted at all -- because an
+      author-overlap guard cannot separate same-author volumes (the fetch
+      for the shared ISBN resolves to "Mann, Michael", which overlaps every
+      volume's own known author, so the guard alone would pass a
+      wrong-volume fetch through)
+And   intake falls back to its existing embedded-metadata/title-page values
+      unchanged, and `identifier` records the candidates found, for audit
 
 Given no identifier is found, or it fails to resolve
 When  the record is built
@@ -43,7 +58,13 @@ Then  the record is produced exactly as intake does today, with
 
 See plans/book-metadata-open-library/01-identifier-lookup-and-merge.md for
 the full slice contract and specs/PRODUCT.md §7.12/§7.13 for the source of
-truth this test pins.
+truth this test pins. The ambiguous-capture criterion above is the
+founder's post-review correction (issue #326): the reviewer measured that
+the author-overlap guard alone does NOT catch the Mann case (a live Open
+Library call resolves the shared ISBN to an author that plausibly overlaps
+every volume), so ambiguity abstention -- not the guard -- is what protects
+it. `test_guard_rejects_a_fetch_for_a_genuinely_different_persons_work`
+below is what the guard actually does catch.
 
 Seam decisions
 -----------------------------------------------------------------------
@@ -361,25 +382,89 @@ class TestMergeIntoIntake:
         assert record["publisher"] == {"value": "A University Press", "provenance": "open_library"}
         assert record["identifier"] == {"type": "isbn", "value": REAL_ISBN}
 
-    def test_guard_fails_mann_volumes_case_fields_kept_identifier_still_recorded(self, tmp_path):
-        """Fixture replaying the spike's own real near-miss
-        (`mann-sources-of-social-power-v2`): the identifier resolves to a
-        different volume, whose author the guard must not accept as a match."""
+    def test_ambiguous_multi_volume_isbn_block_abstains_lookup_never_attempted(self, tmp_path):
+        """The REAL case (post-review correction, issue #326): a live Open
+        Library call resolves `mann-sources-of-social-power-v1`/`v3`/`v4`'s
+        shared ISBN `9781107028654` to author `"Mann, Michael"` -- which
+        DOES plausibly overlap each volume's own known author `"Michael
+        Mann"` (`authors_plausibly_overlap` returns `True` for that pair,
+        see `test_intake.py::TestAuthorsPlausiblyOverlap`). The guard alone
+        would therefore pass a wrong-volume fetch straight through. What
+        actually protects this source is that its front matter carries MORE
+        THAN ONE distinct ISBN (its own volume-specific one, plus the
+        series' shared one in an "also available" block) -- capture
+        abstains before any lookup is attempted, so the guard is never even
+        reached. The transport below fails the test outright if it receives
+        any request at all."""
+        mann_front_matter = [
+            ["The Sources of Social Power", "Volume 4: Globalizations, 1945-2011"],
+            [
+                f"ISBN: {REAL_ISBN[:3]}-{REAL_ISBN[3]}-{REAL_ISBN[4:7]}-{REAL_ISBN[7:12]}-"
+                f"{REAL_ISBN[12]}",
+                "Also available in this series:",
+                # The real corpus finding: v1/v3/v4 all share this ISBN.
+                "ISBN: 978-1-107-02865-4",
+            ],
+        ] + [_body(i) for i in range(1, 4)]
         path = _write_pdf(
             tmp_path,
-            "mann-sources-of-social-power-v2.pdf",
+            "mann-sources-of-social-power-v4.pdf",
+            mann_front_matter,
+            info={"Author": "Michael Mann", "Title": "The Sources of Social Power, Vol. IV"},
+        )
+        meta_dir = tmp_path / "source_meta"
+        cache_dir = tmp_path / "bib_cache"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise AssertionError(
+                f"no lookup should ever be attempted for an ambiguous capture, got: {request.url}"
+            )
+
+        never_called_transport = httpx.MockTransport(handler)
+
+        intake(
+            path,
+            source_meta_dir=meta_dir,
+            bib_transport=never_called_transport,
+            bib_cache_dir=cache_dir,
+        )
+
+        record = json.loads(
+            (meta_dir / f"{compute_source_id(path)}.json").read_text(encoding="utf-8")
+        )
+        assert record["author"] == {"value": "Michael Mann", "provenance": "embedded metadata"}
+        assert record["title"] == {
+            "value": "The Sources of Social Power, Vol. IV",
+            "provenance": "embedded metadata",
+        }
+        assert record["publisher"] == "unavailable"
+        assert record["identifier"] == {
+            "type": "isbn",
+            "value": None,
+            "abstained": True,
+            "candidates": sorted([REAL_ISBN, "9781107028654"]),
+        }
+
+    def test_guard_rejects_a_fetch_for_a_genuinely_different_persons_work(self, tmp_path):
+        """What the author-overlap guard actually does catch: a single,
+        unambiguous identifier whose fetch names an entirely different
+        person -- a mistyped or recycled identifier, not a same-author
+        wrong-volume mismatch (see the ambiguity test above for that case)."""
+        path = _write_pdf(
+            tmp_path,
+            "book.pdf",
             FRONT_MATTER_WITH_ISBN,
-            info={"Author": "Michael Mann", "Title": "The Sources of Social Power, Vol. II"},
+            info={"Author": "Jane Q. Historian", "Title": "State Legitimacy and Civil Conflict"},
         )
         meta_dir = tmp_path / "source_meta"
         cache_dir = tmp_path / "bib_cache"
         transport = _open_library_transport(
             REAL_ISBN,
             {
-                "title": "The Sources of Social Power, Vol. I",
-                "authors": [{"name": "A Totally Different Editor"}],
-                "publish_date": "1986",
-                "publishers": [{"name": "A University Press"}],
+                "title": "An Entirely Unrelated Book",
+                "authors": [{"name": "A Completely Different Person"}],
+                "publish_date": "2001",
+                "publishers": [{"name": "Some Other Press"}],
             },
         )
 
@@ -388,9 +473,9 @@ class TestMergeIntoIntake:
         record = json.loads(
             (meta_dir / f"{compute_source_id(path)}.json").read_text(encoding="utf-8")
         )
-        assert record["author"] == {"value": "Michael Mann", "provenance": "embedded metadata"}
+        assert record["author"] == {"value": "Jane Q. Historian", "provenance": "embedded metadata"}
         assert record["title"] == {
-            "value": "The Sources of Social Power, Vol. II",
+            "value": "State Legitimacy and Civil Conflict",
             "provenance": "embedded metadata",
         }
         assert record["publisher"] == "unavailable"

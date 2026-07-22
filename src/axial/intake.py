@@ -33,10 +33,15 @@ For a PDF, the record also carries a `publisher` field and a raw
 the front matter (`axial.identifiers`, no network) is looked up against
 Open Library/Crossref (`axial.bib_lookup`, cached to disk) and merged into
 author/title/date/publisher behind a same-work identity guard that
-cross-checks the fetched author against intake's already-known one. The
-guard failing, no identifier, or an unresolved lookup leaves the four
-fields exactly as the embedded-metadata/title-page read produced them;
-`identifier` is recorded either way, for audit.
+cross-checks the fetched author against intake's already-known one. Two
+things independently withhold the fetch and leave the four fields exactly
+as the embedded-metadata/title-page read produced them: the front matter
+carrying more than one distinct identifier (ambiguous -- e.g. a multi-
+volume work's own series listing several ISBNs; no lookup is even
+attempted, since a same-author wrong-volume fetch would pass the guard
+below), or the guard rejecting a single, unambiguous fetch whose author
+does not overlap intake's already-known one. `identifier` is recorded
+either way, for audit.
 """
 
 from __future__ import annotations
@@ -436,13 +441,26 @@ def _resolve_bibliographic_fields(
 # =============================================================================
 # Identifier capture + lookup merge (§7.12/§7.13, issue #326): an ISBN/DOI
 # found in a source's own front matter, resolved against Open Library/
-# Crossref, and merged into the bibliographic fields behind a same-work
-# identity guard. Kept to one author-overlap check (no general fuzzy-
-# matching framework) -- the one real near-miss the spike found
-# (`mann-sources-of-social-power-v2` resolving to a different volume's
-# identifier) is a wrong-volume mismatch, not a name-spelling difference, so
-# a single overlap check is sufficient; escalate only if real-corpus
-# validation surfaces more misses.
+# Crossref, and merged into the bibliographic fields.
+#
+# Two independent safeguards, each catching a DIFFERENT failure mode --
+# post-review correction, the founder's own ruling on #326:
+# - **Ambiguity abstention** (`identifiers.capture`'s `abstained` shape,
+#   applied below before any lookup runs) catches a multi-volume work whose
+#   front matter lists several of its own series' ISBNs in one block. This
+#   is the one REAL near-miss measured on the corpus
+#   (`mann-sources-of-social-power-v1`/`v3`/`v4` all carry the identical
+#   ISBN `9781107028654`) -- an author-overlap guard cannot catch it,
+#   because the wrong volume shares the true author (the fetch resolves to
+#   "Mann, Michael", which overlaps every volume's own known author, so the
+#   guard alone would pass it through). Abstaining before the lookup is
+#   what protects this case.
+# - The **author-overlap guard** (`authors_plausibly_overlap`, kept as one
+#   check, no general fuzzy-matching framework) catches a DIFFERENT
+#   mismatch: a single, unambiguous identifier that resolves to an entirely
+#   different person's work (a mistyped/recycled identifier). It does not
+#   and structurally cannot separate same-author volumes from each other --
+#   that is ambiguity abstention's job, not this guard's.
 # =============================================================================
 
 
@@ -471,8 +489,16 @@ def authors_plausibly_overlap(known_author: str | None, fetched_author: str | No
     for that reason alone would defeat the real gap this slice fixes
     (`ayubi-over-stating-the-arab-state`'s `None` title, where no prior
     author reading existed either). A present `known_author` with no
-    overlapping token in `fetched_author` fails -- the guard's one real job,
-    catching a wrong-volume/wrong-edition identifier match."""
+    overlapping token in `fetched_author` fails -- catching a single,
+    unambiguous identifier that resolves to an entirely different person's
+    work.
+
+    This guard does **not** catch a same-author wrong-volume/wrong-edition
+    mismatch (measured: a fetch for the wrong Mann volume still resolves to
+    "Mann, Michael", which overlaps the known "Michael Mann" -- this
+    function returns `True`, correctly, for that pair). That failure mode is
+    caught upstream instead, by ambiguity abstention on the capture itself
+    (see the section docstring above) -- not by this function."""
     if not known_author:
         return True
     if not fetched_author:
@@ -484,19 +510,20 @@ def _known_author_value(author_field: dict[str, str] | str) -> str | None:
     return author_field.get("value") if isinstance(author_field, dict) else None
 
 
-def _capture_identifier(fmt: str, page_texts: list[str]) -> dict[str, str] | None:
+def _capture_identifier(fmt: str, page_texts: list[str]) -> dict[str, Any] | None:
     """The validated ISBN/DOI `identifier` this source's front matter
-    carries, or `None` -- PDF only (issue #326): identifier scanning reads
-    the same head window `axial.holdings` already uses for its own
-    front-matter judgment (`FRONT_MATTER_PAGES`), adding no new tunable
-    window size of its own."""
+    carries (see `identifiers.capture` for its three possible shapes,
+    including the `abstained` ambiguous-capture case), or `None` -- PDF
+    only (issue #326): identifier scanning reads the same head window
+    `axial.holdings` already uses for its own front-matter judgment
+    (`FRONT_MATTER_PAGES`), adding no new tunable window size of its own."""
     if fmt != "pdf":
         return None
     return identifiers.capture("\n".join(page_texts[:FRONT_MATTER_PAGES]))
 
 
 def _lookup_identifier(
-    identifier: dict[str, str],
+    identifier: dict[str, Any],
     bib_transport: httpx.BaseTransport | None,
     bib_cache_dir: Path | None,
 ) -> dict[str, Any]:
@@ -511,7 +538,7 @@ def _lookup_identifier(
 
 def _merge_identifier_fields(
     biblio: dict[str, Any],
-    identifier: dict[str, str] | None,
+    identifier: dict[str, Any] | None,
     fmt: str,
     bib_transport: httpx.BaseTransport | None,
     bib_cache_dir: Path | None,
@@ -521,12 +548,24 @@ def _merge_identifier_fields(
     guard passes. `publisher` has no reading mechanism other than this
     lookup: `NOT_ATTEMPTED` for a DOCX (no identifier scan runs at all in
     this slice) and `UNAVAILABLE` for a PDF with no identifier, an
-    unresolved lookup, or a failing guard (a read was attempted -- the scan,
-    or the scan plus the lookup -- and nothing recoverable/trustworthy came
-    of it)."""
+    ambiguous capture, an unresolved lookup, or a failing guard (a read was
+    attempted -- the scan, or the scan plus the lookup -- and nothing
+    recoverable/trustworthy came of it).
+
+    An **ambiguous** `identifier` (`identifiers.capture`'s `abstained: True`
+    shape -- more than one distinct identifier found, e.g. a multi-volume
+    work's "also available" ISBN block) never reaches the lookup at all:
+    no single identifier exists to look up, and the same-work identity
+    guard cannot rescue this case downstream -- a wrong-volume fetch
+    typically shares the true author (measured: `mann-sources-of-social-
+    power-v1`/`v3`/`v4` all carry ISBN `9781107028654`, which resolves to
+    author "Mann, Michael", which overlaps every volume's own known author,
+    so the guard alone would pass a wrong-volume fetch through). Abstaining
+    on the ambiguous capture, before any lookup runs, is what protects this
+    case -- not the guard."""
     merged = dict(biblio)
     merged["publisher"] = NOT_ATTEMPTED if fmt != "pdf" else UNAVAILABLE
-    if identifier is None:
+    if identifier is None or identifier.get("abstained"):
         return merged
 
     lookup = _lookup_identifier(identifier, bib_transport, bib_cache_dir)
@@ -553,7 +592,7 @@ def build_source_meta(
     holdings_flag: dict | None,
     bibliographic_fields: dict[str, Any],
     holdings_checked: bool,
-    identifier: dict[str, str] | None = None,
+    identifier: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the §7.12 source-metadata record: the full sha256 file hash,
     the physical page count (present for a PDF, an explicit `null` for a
@@ -561,11 +600,14 @@ def build_source_meta(
     or an explicit no-flag, whether that judgment has been made at all
     (`holdings_checked`, see `HOLDINGS_CHECKED`), the already-resolved §7.13
     bibliographic fields (author/title/date/publisher), and the raw
-    validated `identifier` found in the source's own front matter
-    (`{"type": "isbn"|"doi", "value": ...}` or `None`, issue #326) -- kept
-    for audit even when the same-work identity guard rejected it for the
-    four fields above. Carries no source text (DEC-23): values and short
-    reasons only."""
+    `identifier` found in the source's own front matter (issue #326) --
+    kept for audit even when it was not used for the four fields above.
+    `identifier` is one of: `None` (nothing found); `{"type", "value"}` (one
+    identifier found, the same-work identity guard may have accepted or
+    rejected it); or `{"type", "value": None, "abstained": True,
+    "candidates": [...]}` (more than one distinct identifier found --
+    ambiguous, no lookup was even attempted, see `identifiers.capture`).
+    Carries no source text (DEC-23): values and short reasons only."""
     from axial.envelope import content_digest  # local import: dodges the
     # envelope -> extract -> intake import cycle (mirrors extract.py's own
     # local `compute_source_id` import, same reason).
@@ -609,9 +651,11 @@ def intake(
 
     For a PDF, an ISBN/DOI found in the front matter is also looked up
     against Open Library/Crossref (issue #326) and merged into
-    author/title/date/publisher behind the same-work identity guard
-    (`_merge_identifier_fields`) -- independent of `client`, since the
-    lookup is a free, cached network call, not a paid model call.
+    author/title/date/publisher (`_merge_identifier_fields`) -- independent
+    of `client`, since the lookup is a free, cached network call, not a
+    paid model call. An ambiguous capture (more than one distinct
+    identifier found) abstains before any lookup runs; a single,
+    unambiguous fetch is still gated by the same-work identity guard.
     `bib_transport` is a mockable `httpx` transport for that lookup
     (`httpx.MockTransport`, the same seam `axial.llm.OpenRouterClient`
     already uses); `None` uses a real `httpx.Client` in production.

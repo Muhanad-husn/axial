@@ -230,6 +230,82 @@ class TestResolveDoi:
         assert result["resolved"] is False
         assert result["error"] is not None
 
+    def test_a_non_dict_published_field_does_not_raise(self, tmp_path):
+        """Malformed-but-valid JSON -- one of this module's own named
+        failure modes -- must not crash the read: `published` here is a
+        string, not the expected `{"date-parts": [...]}` dict."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(
+                200,
+                {
+                    "message": {
+                        "title": ["A Paper"],
+                        "author": [{"given": "Ada", "family": "Lovelace"}],
+                        "published": "not-a-dict",
+                    }
+                },
+            )
+
+        result = resolve_doi("10.1/malformed", transport=_transport(handler), cache_dir=tmp_path)
+
+        assert result["resolved"] is True
+        assert result["date"] is None
+
+    def test_a_non_list_date_parts_does_not_raise(self, tmp_path):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(
+                200,
+                {"message": {"title": ["A Paper"], "published": {"date-parts": "not-a-list"}}},
+            )
+
+        result = resolve_doi("10.1/malformed2", transport=_transport(handler), cache_dir=tmp_path)
+
+        assert result["resolved"] is True
+        assert result["date"] is None
+
+
+class TestCacheWriteNeverRaises:
+    """§ never-raises contract: a cache-WRITE failure (disk full,
+    permission denied, read-only mount) must degrade exactly like the
+    cache-READ path already does -- the caller still gets its correct,
+    freshly-fetched answer, just uncached."""
+
+    def test_an_unwritable_cache_dir_never_raises_isbn(self, tmp_path):
+        blocked = tmp_path / "blocked"
+        blocked.write_text("a file, not a directory", encoding="utf-8")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(200, {"ISBN:9780262033848": {"title": "A Title"}})
+
+        result = resolve_isbn("9780262033848", transport=_transport(handler), cache_dir=blocked)
+
+        assert result["resolved"] is True
+        assert result["title"] == "A Title"
+
+    def test_an_unwritable_cache_dir_never_raises_doi(self, tmp_path):
+        blocked = tmp_path / "blocked"
+        blocked.write_text("a file, not a directory", encoding="utf-8")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(200, {"message": {"title": ["A Paper"]}})
+
+        result = resolve_doi("10.1/whatever", transport=_transport(handler), cache_dir=blocked)
+
+        assert result["resolved"] is True
+        assert result["title"] == "A Paper"
+
+    def test_an_unwritable_cache_dir_never_raises_on_a_not_found_write(self, tmp_path):
+        blocked = tmp_path / "blocked"
+        blocked.write_text("a file, not a directory", encoding="utf-8")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404)
+
+        result = resolve_doi("10.1/nope", transport=_transport(handler), cache_dir=blocked)
+
+        assert result == {"resolved": False, "error": None}
+
 
 @pytest.fixture(autouse=True)
 def _no_real_cache_dir_by_default(monkeypatch, tmp_path):

@@ -92,3 +92,57 @@ class TestCapture:
 
     def test_returns_none_when_neither_is_present(self):
         assert capture("ordinary body prose discussing the case in general terms") is None
+
+
+class TestCaptureAmbiguity:
+    """Founder decision (post-review of #326): more than one distinct
+    checksum-valid ISBN in the front matter is ambiguous, not a "pick one"
+    call -- an author-overlap guard cannot separate same-author volumes,
+    which is exactly the real case measured on the corpus:
+    `mann-sources-of-social-power-v1`/`v3`/`v4` all carry the identical
+    ISBN `9781107028654` in an "also available in this series" block
+    alongside their own volume-specific ISBN."""
+
+    TWO_VALID_ISBNS = (
+        "ISBN: 978-0-262-03384-8\nAlso available in this series:\nISBN: 978-0-198-82524-1\n"
+    )
+
+    def test_more_than_one_distinct_valid_isbn_abstains(self):
+        result = capture(self.TWO_VALID_ISBNS)
+
+        assert result == {
+            "type": "isbn",
+            "value": None,
+            "abstained": True,
+            "candidates": ["9780198825241", "9780262033848"],
+        }
+
+    def test_a_repeated_identical_isbn_is_not_ambiguous(self):
+        """The same ISBN printed twice (e.g. once on the title page, once
+        on the copyright page) is one identifier, not two candidates."""
+        text = "ISBN: 978-0-262-03384-8\n...\nISBN 9780262033848 (print)"
+
+        assert capture(text) == {"type": "isbn", "value": "9780262033848"}
+
+    def test_ambiguous_isbns_win_over_a_doi_found_on_the_same_page(self):
+        """ISBN precedence still applies to an ambiguous capture -- a
+        confusing ISBN block does not fall through to a DOI found
+        elsewhere on the page."""
+        text = self.TWO_VALID_ISBNS + "https://doi.org/10.1145/3292500.3330701"
+
+        result = capture(text)
+
+        assert result["type"] == "isbn"
+        assert result["abstained"] is True
+
+    def test_more_than_one_distinct_valid_doi_abstains(self):
+        text = "https://doi.org/10.1145/3292500.3330701\nhttps://doi.org/10.1007/s11186-025-09677-5"
+
+        result = capture(text)
+
+        assert result == {
+            "type": "doi",
+            "value": None,
+            "abstained": True,
+            "candidates": ["10.1007/s11186-025-09677-5", "10.1145/3292500.3330701"],
+        }

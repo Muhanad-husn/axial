@@ -232,3 +232,18 @@ Then  the record is produced exactly as intake does today, with `identifier: nul
 - 2026-07-22 planned, following the completed exploration spike (gate passed
   93% coverage / 100% resolution — see `FINDINGS.md`). Consolidated from three
   slices into one at the founder's request. No dependencies.
+- 2026-07-23 **correction, post-review.** The plan above (and the shipped
+  first pass, PR-bound commit `746e01b`) assumed the same-work identity
+  guard alone catches the Mann-volumes near-miss (see "The identity guard
+  is not optional polish" above). The reviewer measured, via a live Open
+  Library call, that it does not: `mann-sources-of-social-power-v1`/`v3`/`v4`
+  all carry the identical ISBN `9781107028654`, which resolves to author
+  "Mann, Michael" — plausibly overlapping every volume's own known author
+  "Michael Mann" — so the guard alone passes a wrong-volume fetch straight
+  through. **Founder ruling:** front matter carrying more than one distinct
+  checksum-valid identifier is ambiguous and abstains — no lookup is
+  attempted at all — which catches this case at the root; the author-overlap
+  guard is kept unchanged for the single-identifier case, where it still
+  does its job (a fetch naming a genuinely different person). See
+  `specs/PRODUCT.md` §7.13's "Two independent safeguards" for the corrected,
+  shipped description.

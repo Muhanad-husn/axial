@@ -12,11 +12,23 @@ a DOI shape -- and the check digit is the precision filter: a mistyped or
 corrupted identifier is dropped, never returned as if valid. An all-same-
 digit placeholder (`0-000-00000-0`) passes the checksum arithmetic but is
 never a real ISBN -- a copyright-page fill-in -- and is rejected too.
+
+**Ambiguous capture abstains (founder decision, post-review of #326).** A
+multi-volume work's front matter routinely lists several of its own
+edition's/series' ISBNs in one "also available" block -- measured on the
+real corpus, `mann-sources-of-social-power-v1`/`v3`/`v4` all carry the
+*identical* ISBN `9781107028654` alongside their own volume-specific one.
+An author-overlap guard cannot separate same-author volumes by author, so
+when more than one distinct checksum-valid identifier of the winning type
+is found, `capture()` abstains rather than guessing one: no lookup is
+attempted for that source, and the candidates are kept for audit only. See
+`capture()`'s own docstring for the exact shape.
 """
 
 from __future__ import annotations
 
 import re
+from typing import Any
 
 # --- Identifier capture -----------------------------------------------------
 # Capture generously, then let the check digit be the precision filter.
@@ -102,17 +114,36 @@ def find_dois(text: str) -> set[str]:
     return found
 
 
-def capture(text: str) -> dict[str, str] | None:
-    """The single validated identifier this slice's merge step uses:
-    `{"type": "isbn"|"doi", "value": <normalized>}`, or `None` when `text`
-    carries neither. An ISBN wins over a DOI when both are present (the
-    spike's own precedence -- Open Library resolves against a metadata-
-    richer record than Crossref's works endpoint). Sorted so the choice
-    among multiple matches of the same type is deterministic."""
-    isbns = find_isbns(text)
+def capture(text: str) -> dict[str, Any] | None:
+    """The identifier this slice's merge step reads, in one of three shapes:
+
+    - `None` -- `text` carries neither an ISBN nor a DOI;
+    - `{"type": "isbn"|"doi", "value": <normalized>}` -- exactly one distinct
+      identifier of the winning type was found;
+    - `{"type": "isbn"|"doi", "value": None, "abstained": True, "candidates":
+      [...]}` -- **more than one distinct identifier of the winning type was
+      found**, e.g. a multi-volume work's copyright page listing an "also
+      available in this series" block of several ISBNs. There is no
+      principled way to pick a winner among several genuinely different
+      identifiers, so the caller must not use any of them for a lookup;
+      `candidates` (sorted, for determinism) is kept for audit, mirroring
+      the vote-abstention shape §7.14 already uses for "the draws disagree,
+      not a value" (`{primary: null, abstained: true, draws: [...]}`) rather
+      than inventing a new sentinel vocabulary.
+
+    An ISBN wins over a DOI when both are present (the spike's own
+    precedence -- Open Library resolves against a metadata-richer record
+    than Crossref's works endpoint); this precedence applies even when the
+    ISBNs found are ambiguous -- a confusing ISBN block does not fall
+    through to a DOI found elsewhere on the same page."""
+    isbns = sorted(find_isbns(text))
+    if len(isbns) > 1:
+        return {"type": "isbn", "value": None, "abstained": True, "candidates": isbns}
     if isbns:
-        return {"type": "isbn", "value": sorted(isbns)[0]}
-    dois = find_dois(text)
+        return {"type": "isbn", "value": isbns[0]}
+    dois = sorted(find_dois(text))
+    if len(dois) > 1:
+        return {"type": "doi", "value": None, "abstained": True, "candidates": dois}
     if dois:
-        return {"type": "doi", "value": sorted(dois)[0]}
+        return {"type": "doi", "value": dois[0]}
     return None

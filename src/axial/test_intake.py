@@ -626,12 +626,31 @@ class TestAuthorsPlausiblyOverlap:
 
         assert authors_plausibly_overlap("Malesevic, Sinisa", "Siniša Malešević") is True
 
-    def test_a_wrong_volume_mismatch_fails(self):
-        """The Mann-volumes near-miss the guard exists to catch: a
-        wrong-edition identifier fetch names a different person entirely."""
+    def test_a_fetch_naming_a_genuinely_different_person_fails(self):
+        """What this guard actually catches: a single, unambiguous
+        identifier whose fetch names an entirely different person (a
+        mistyped or recycled identifier) -- not a same-author wrong-volume
+        mismatch, see the next test."""
         from axial.intake import authors_plausibly_overlap
 
         assert authors_plausibly_overlap("Michael Mann", "A Totally Different Editor") is False
+
+    def test_the_real_mann_volumes_pair_passes_the_guard_alone_does_not_catch_it(self):
+        """Post-review correction (issue #326): the reviewer measured, via a
+        live Open Library call, that the wrong-volume ISBN shared by
+        `mann-sources-of-social-power-v1`/`v3`/`v4` resolves to author
+        `"Mann, Michael"` -- which plausibly overlaps each volume's own
+        known author `"Michael Mann"`. This function correctly returns
+        `True` for that pair: an author-overlap guard structurally cannot
+        separate same-author volumes from each other. What actually
+        protects this source is ambiguity abstention on the capture itself
+        (`identifiers.capture`'s `abstained` shape, applied in
+        `_merge_identifier_fields` before any lookup runs) -- see
+        `tests/ingestion/test_identifier_metadata.py`'s own ambiguity test
+        for the end-to-end proof."""
+        from axial.intake import authors_plausibly_overlap
+
+        assert authors_plausibly_overlap("Michael Mann", "Mann, Michael") is True
 
 
 class TestMergeIdentifierFields:
@@ -709,23 +728,55 @@ class TestMergeIdentifierFields:
     def test_a_failing_guard_leaves_the_four_fields_unchanged_but_lookup_still_ran(
         self, monkeypatch, tmp_path
     ):
+        """A single, unambiguous identifier whose fetch names an entirely
+        different person -- not the Mann-volumes case (a same-author
+        wrong-volume mismatch, which this guard does NOT catch; see
+        `test_an_ambiguous_identifier_never_reaches_the_lookup_at_all`
+        below for what actually protects that one)."""
         import axial.bib_lookup as bib_lookup_mod
         from axial.intake import _merge_identifier_fields
 
         def _resolved(value, **kwargs):
             return {
                 "resolved": True,
-                "title": "A Different Volume's Title",
-                "author": "A Totally Different Editor",
-                "date": "1986",
-                "publisher": "Some Publisher",
+                "title": "An Entirely Unrelated Book",
+                "author": "A Completely Different Person",
+                "date": "2001",
+                "publisher": "Some Other Press",
                 "source": "open_library",
             }
 
         monkeypatch.setattr(bib_lookup_mod, "resolve_isbn", _resolved)
 
-        biblio = self._biblio(author={"value": "Michael Mann", "provenance": "embedded metadata"})
+        biblio = self._biblio(
+            author={"value": "Jane Q. Historian", "provenance": "embedded metadata"}
+        )
         identifier = {"type": "isbn", "value": "9780000000000"}
         merged = _merge_identifier_fields(biblio, identifier, "pdf", None, tmp_path)
 
+        assert merged["author"] == {"value": "Jane Q. Historian", "provenance": "embedded metadata"}
+
+    def test_an_ambiguous_identifier_never_reaches_the_lookup_at_all(self, monkeypatch, tmp_path):
+        """The real Mann-volumes protection: an `abstained` capture (more
+        than one distinct identifier found) short-circuits before
+        `_lookup_identifier` is ever called -- proven here by monkeypatching
+        `resolve_isbn` to raise if it is invoked at all."""
+        import axial.bib_lookup as bib_lookup_mod
+        from axial.intake import UNAVAILABLE, _merge_identifier_fields
+
+        def _must_not_be_called(value, **kwargs):
+            raise AssertionError("resolve_isbn must not be called for an ambiguous identifier")
+
+        monkeypatch.setattr(bib_lookup_mod, "resolve_isbn", _must_not_be_called)
+
+        biblio = self._biblio(author={"value": "Michael Mann", "provenance": "embedded metadata"})
+        identifier = {
+            "type": "isbn",
+            "value": None,
+            "abstained": True,
+            "candidates": ["9780262033848", "9781107028654"],
+        }
+        merged = _merge_identifier_fields(biblio, identifier, "pdf", None, tmp_path)
+
         assert merged["author"] == {"value": "Michael Mann", "provenance": "embedded metadata"}
+        assert merged["publisher"] == UNAVAILABLE
