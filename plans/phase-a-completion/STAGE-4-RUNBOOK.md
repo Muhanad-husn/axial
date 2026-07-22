@@ -115,20 +115,48 @@ Probe one source before committing.
 
 ---
 
-## Priorities to close BEFORE any long run
+## Priorities closed before the long runs — ✅ both landed
 
-Both are small, module-disjoint, and can run as two concurrent worktrees.
+| Lane | Work | Outcome |
+|---|---|---|
+| **A** | [#316](https://github.com/Muhanad-husn/axial/issues/316) title-page read | **Closed**, PR #319 (`02b9fb0`), plus PR #322 (`225fc79`) |
+| **B** | `--ledger` on `axial run` | **Closed**, PR #318 (`50c954d`) |
 
-| Lane | Work | Module | Why it must come first |
-|---|---|---|---|
-| **A** | [#316](https://github.com/Muhanad-husn/axial/issues/316) — title-page read returns the subtitle, drops the main title (2 of 6 measured) | `holdings.py` prompt | 4.0 writes all 30 records at one model call each. Fixing after means redoing the pass |
-| **B** | Expose `--ledger` (and the tags/candidates path) on `axial run` | `cli.py` | `run_pass` already takes `ledger_path`; the CLI does not expose it. Without it, parallel workers share one append-mode TSV |
+### Lane A's root cause was not the prompt, and not the model — record this
 
-Lane B is the enabler for everything in the next section. It is an argparse flag threaded
-to a parameter that already exists — small, but it is the difference between a safe
-parallel 4.1 and one that races on a shared file.
+This runbook previously advised trying `model_by_pass: holdings: production_high` before
+rewriting the prompt. **That was measured and refuted: `production_high` scored 20/30 with
+five regressions — worse than the flash baseline.** Do not retry it.
 
-**Validate lane A on more than six sources.** 2 of 6 is not a rate to plan around.
+The real cause was upstream of the model entirely: the **running-furniture strip counted a
+book's main title as a recurring header** — which it is, on every body page — and deleted
+it from the title page itself. That removed the printed main title from **7 of 30 sources**;
+on `ugur-paramilitarism` and `chouliaraki` the main title reached the model **on no page at
+all**, so no prompt and no tier could have read it.
+
+The fix renders the opening pages **twice**: cleaned (byte-unchanged) for the completeness
+judgment, and *as printed* for the bibliographic read.
+
+**Measured live:** the six multi-line-title sources went 6/30 → **30/30** correct draws
+(five draws each); a full 30-source pass went 21/30 → **29/30**, no source made worse; zero
+holdings flags.
+
+The lesson generalises: "the model got it wrong" was wrong three times over here — the model
+never saw the data. Check what actually reaches the prompt before tuning the prompt or the
+tier.
+
+### Still owed on main
+
+**PR #322 merged (`ea753f7`, 02:41) with its validation outstanding** — the plan commit
+four minutes earlier had named Step 1 as its merge gate. `data/source_meta/` is still
+empty, so neither number has been taken. #322 only reframes the prompt's framing sentence,
+but it is a live-prompt change that no test can score, so the two numbers are owed against
+main: `holdings_flag` null in all 30, and titles no worse than 29/30.
+
+Also open: **[#320](https://github.com/Muhanad-husn/axial/issues/320)** closed won't-fix
+(`tilly`'s title layer is garbled in the file — 1 of 30, correct it by hand in the record),
+and **[#323](https://github.com/Muhanad-husn/axial/issues/323)** — no live positive control
+exists for the holdings flag, so every "flag raised" test pins plumbing, not judgment.
 
 ---
 
@@ -248,10 +276,8 @@ one-night run that makes the freeze exact.
 
 ## Sequence
 
-1. Land lane A (#316) and lane B (`--ledger`). Two worktrees, no serialization point.
-   **For lane A, try `model_by_pass: holdings: production_high` before rewriting the
-   prompt** — the title-page read currently runs on flash, and a one-line config change is
-   cheaper than a prompt rewrite (the #268 lesson).
+1. ✅ Lanes A and B are landed (see *Priorities closed* above). **Do not retry the
+   `production_high` tier on `holdings`** — measured at 20/30 with five regressions.
 2. Verify 30/30 tree-cache hits.
 3. **4.0** serial — **but stop after 3–5 sources and read the output** before letting it
    run to 30. This is the first real exercise of the wired holdings + title-page path at

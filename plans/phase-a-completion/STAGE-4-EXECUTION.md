@@ -8,10 +8,15 @@ Read this file top to bottom before launching anything; the order is load-bearin
 Lane A (#316) and lane B (#317 `--ledger`, PR #318) are closed. Nothing is left to build.
 `data/source_meta/` is empty; the corpus is fully tagged under the *old* single-draw regime.
 
-**Updated 2026-07-22, after #316's follow-ups:** #320 closed won't-fix (`tilly`'s garbled
-title layer — 1 of 30, visibly corrupt, correct by hand in the record). **PR #322 (#321) is
-open and unmerged, and Step 1 below is its merge gate** — run Step 1 before merging it.
-#323 tracks the missing live positive control for the holdings check.
+**Updated 2026-07-22 (second revision).** #320 closed won't-fix (`tilly`'s garbled title
+layer — 1 of 30, visibly corrupt, correct by hand in the record). #323 tracks the missing
+live positive control for the holdings check.
+
+**Correction: PR #322 is MERGED** (`ea753f7`, 02:41), four minutes after the commit that
+named Step 1 as its merge gate. `data/source_meta/` is still empty, so neither number was
+taken. **Step 1 is therefore no longer a merge gate — it is validation owed against `main`.**
+Run it the same way and report the same two numbers; the difference is only what a bad
+result triggers. A regression now means a fix or revert on `main`, not a withheld merge.
 
 ---
 
@@ -121,8 +126,8 @@ means zero shared-file risk.
 $RUN = "2026-07-22-stage4-0-probe"
 mkdir data/logs/$RUN
 @("data/sources/ugur-paramilitarism.pdf",
-  "data/sources/batatu-syrias-peasantry.pdf",
-  "data/sources/hall-schroeder-anatomy-of-power.pdf") |
+  "data/sources/chouliaraki-wronged-weaponization-of-victimhood.pdf",
+  "data/sources/batatu-syrias-peasantry.pdf") |
   Set-Content -Encoding utf8 data/logs/$RUN/worklist.txt
 
 uv run axial run extract --worklist data/logs/$RUN/worklist.txt `
@@ -132,12 +137,16 @@ uv run axial run extract --worklist data/logs/$RUN/worklist.txt `
 Then **read the three records** in `data/source_meta/` and check `author`, `title`, `date`
 against the actual books. Do not proceed on "the files exist."
 
-This is the first real exercise of the wired holdings + title-page path after lane A. The
-known failure mode is a **partial title** — the subtitle captured, the main title dropped
-(#316). `ugur` and `batatu` are in the probe precisely because both failed that way before.
+**Probe selection is deliberate.** #316's root cause was the running-furniture strip
+deleting the book's main title from its own title page — it removed the printed main title
+from 7 of 30 sources, and on **`ugur-paramilitarism` and `chouliaraki` the main title
+reached the model on no page at all**. Those two are the hardest cases in the corpus and
+the sharpest test that the fix is live; `batatu` is a multi-line-title source from the six
+that went 6/30 → 30/30.
 
-**Gate:** all three titles complete and correct → continue. Any partial title → stop, and
-raise it on #316 rather than running 27 more.
+**Gate:** all three titles complete and correct → continue. A partial title on any of them
+means the fix is not doing what it was measured to do — stop, and raise it on #322 rather
+than running 27 more.
 
 ### 1b. The remaining 27
 
@@ -157,12 +166,16 @@ carries all 30 entries keyed by `source_id`, human-curated from the files themse
 every title can be diffed mechanically. Read the disagreements; the list is the control,
 not a substitute for judgment about what a disagreement means.
 
-**This run is also the merge gate for PR #322** (#321, the prompt's framing sentence).
-That PR cannot be measured by any test — it changes the text of a live prompt. Both halves
-it owes come out of these same 30 records, at no extra cost:
+**This run also takes the two numbers PR #322 owes** (#321, the prompt's framing sentence).
+That PR cannot be measured by any test — it changes the text of a live prompt — and it
+merged before they were taken. Both come out of these same 30 records, at no extra cost:
 
 | §7.11 false-positive half | `holdings_flag` null in all 30 records |
-| §7.13 title read | titles diffed against the bibliography, no worse than #316's 29/30 |
+| §7.13 title read | titles diffed against the bibliography, **no worse than 29/30** |
+
+**Expect 29/30, not 30/30.** `tilly`'s title layer is garbled in the file itself — #320,
+closed won't-fix. It is the known exception; correct it by hand in the record and do not
+treat it as a regression. A *different* source failing is the signal that matters.
 
 §7.11's **true-positive half is not owed here** and must not be manufactured. #267 replaced
 both partial files with complete copies on purpose and the defective bytes are gone; PR #322
@@ -170,7 +183,8 @@ retires the "truncate them back" construction and re-gates that half on changes 
 check's *judgment*, which this run does not involve. **Do not truncate a book to test the
 check.** The exposure that leaves — no live positive control — is #323.
 
-Report the two numbers on #322 before asking for the merge.
+Report both numbers on #322. If the title read comes back worse than 29/30, that is a fix
+or revert decision on `main` — #322 is already merged, so there is no gate left to hold.
 
 ---
 
