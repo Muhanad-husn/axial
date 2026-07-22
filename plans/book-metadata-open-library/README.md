@@ -43,7 +43,7 @@ version, run against the real 30-source corpus:
 - **One genuine risk surfaced and scoped in:** a multi-volume work
   (`mann-sources-of-social-power-v2`) resolved to the wrong volume's identifier
   — near-identical titles across volumes mean a title-overlap sanity check
-  alone will not catch this. Slice 03 below builds a stronger guard.
+  alone will not catch this. The slice below builds a stronger guard.
 - Two fields — `publisher`, and a `date` more authoritative than a PDF's
   embedded `CreationDate` — come along for free; neither is captured today.
 
@@ -64,7 +64,7 @@ document replaces the spike's exploratory framing with a sliced build plan.
   cross-check and as the fallback when a lookup fails or the mismatch guard
   rejects a fetch. Whether to skip the model call outright when an identifier
   resolves confidently is a follow-up cost optimization, not in scope here
-  (see slice 03's Out of scope) — correctness first, cost second.
+  (see the slice's Out of scope) — correctness first, cost second.
 - **A title-overlap guard is not enough.** The Mann-volumes near-miss means
   the mismatch guard needs to also check the fetched author against what
   intake already has (embedded metadata or title-page reading), not just
@@ -91,19 +91,14 @@ are unchanged.
 
 ## Slices
 
-Develop top to bottom. One slice = one red-green-refactor pass = one PR.
+One slice, one red-green-refactor pass, one PR — capture, resolve, and merge
+land together since the walking skeleton is small enough to ship as a unit.
 
 | # | Slice | Issue | Goal (one line) | Status | PR |
 |---|-------|-------|-----------------|--------|----|
-| 01 | [identifier-capture-validate](01-identifier-capture-validate.md) | TBD | Capture ISBN/DOI from a source's front-matter text and keep only checksum/syntax-valid ones; pure, no network | ☐ todo | TBD |
-| 02 | [bibliographic-lookup-cache](02-bibliographic-lookup-cache.md) | TBD | Resolve a validated identifier via Open Library (ISBN) or Crossref (DOI), caching the raw response; never halts intake on failure | ☐ todo | TBD |
-| 03 | [source-meta-merge-guard](03-source-meta-merge-guard.md) | TBD | Wire the fetch into `build_source_meta`, preferring it over the title-page read when a same-work identity guard passes; extend the record shape | ☐ todo | TBD |
+| 01 | [identifier-lookup-and-merge](01-identifier-lookup-and-merge.md) | TBD | Capture + checksum-validate an ISBN/DOI, resolve it via Open Library/Crossref with caching, and merge the result into `build_source_meta` behind a same-work identity guard | ☐ todo | TBD |
 
-<!-- Status values: ☐ todo · ◐ in-progress · ✅ done. Update the row when a slice's PR opens. -->
-
-GitHub issues are not yet filed for these slices (per the repo's norm of
-drafting issue bodies for founder review before filing — the `sprint-plan`
-skill does this). File on request.
+<!-- Status values: ☐ todo · ◐ in-progress · ✅ done. Update the row when the slice's PR opens. -->
 
 ## Out of scope
 
