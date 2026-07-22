@@ -2,7 +2,7 @@
 
 - **Feature:** book-metadata-open-library
 - **Slice slug:** identifier-lookup-and-merge
-- **GitHub issue:** TBD
+- **GitHub issue:** [#326](https://github.com/Muhanad-husn/axial/issues/326)
 - **Branch:** feat/book-metadata-open-library/01-identifier-lookup-and-merge
 - **Project directory:** .
 - **Status:** ☐ todo

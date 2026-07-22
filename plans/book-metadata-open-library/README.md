@@ -96,7 +96,7 @@ land together since the walking skeleton is small enough to ship as a unit.
 
 | # | Slice | Issue | Goal (one line) | Status | PR |
 |---|-------|-------|-----------------|--------|----|
-| 01 | [identifier-lookup-and-merge](01-identifier-lookup-and-merge.md) | TBD | Capture + checksum-validate an ISBN/DOI, resolve it via Open Library/Crossref with caching, and merge the result into `build_source_meta` behind a same-work identity guard | ☐ todo | TBD |
+| 01 | [identifier-lookup-and-merge](01-identifier-lookup-and-merge.md) | [#326](https://github.com/Muhanad-husn/axial/issues/326) | Capture + checksum-validate an ISBN/DOI, resolve it via Open Library/Crossref with caching, and merge the result into `build_source_meta` behind a same-work identity guard | ☐ todo | TBD |
 
 <!-- Status values: ☐ todo · ◐ in-progress · ✅ done. Update the row when the slice's PR opens. -->
 
