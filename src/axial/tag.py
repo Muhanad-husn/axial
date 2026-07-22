@@ -1557,8 +1557,15 @@ class TaggedRecords(list):
 
 # Content-caused failure classes this pass quarantines a single chunk for
 # instead of aborting the whole source (issue #120): a `ContentRefusedError`
-# survives the #116 fallback reroute (content_filter), or a `ModelJsonError`
-# survives `complete_json`'s bounded retry budget (malformed_json). Each is a
+# survives the #116 fallback reroute (content_filter), a `ModelJsonError`
+# survives `complete_json`'s bounded retry budget (malformed_json), or a
+# `TagParseError` survives either its bounded retry budget (via
+# `reject_degenerate_tag_values`, `complete_json`'s own `validate`) or
+# `apply_correction_reask`'s re-validation of a correction re-ask's answer
+# (parse_error -- e.g. `parse_multi_value_tag_response` getting a bare
+# scalar for a `primary_plus_secondary` axis, or `_reject_blank_tag` finding
+# a still-empty tag value; measured 2026-07-22, 18/18 real full-source tag
+# attempts died on one of these two shapes with no handler at all). Each is a
 # content-shaped failure -- retrying the identical prompt against the same
 # model cannot change the outcome -- unlike a transient `OpenRouterError`/
 # `httpx.HTTPError`, which must keep propagating unchanged (never quarantined,
@@ -1575,6 +1582,7 @@ class TaggedRecords(list):
 # every OTHER closed axis stays exactly as fatal as this comment describes.
 QUARANTINE_REASON_CONTENT_FILTER = "content_filter"
 QUARANTINE_REASON_MALFORMED_JSON = "malformed_json"
+QUARANTINE_REASON_PARSE_ERROR = "parse_error"
 
 
 def _quarantine_chunk(
@@ -1819,6 +1827,25 @@ def run_tag(
                     raise TagParseError(f"model response was not valid JSON: {exc}") from exc
                 quarantine_reason = QUARANTINE_REASON_MALFORMED_JSON
                 break
+            except TagParseError:
+                # `reject_degenerate_tag_values` (this call's own `validate`)
+                # raises `TagParseError` on a shape error (a
+                # `primary_plus_secondary` axis, e.g. `field`, answered with
+                # a bare scalar instead of the required `{"primary": ...,
+                # "secondary": [...]}` object) or a blank tag value/secondary
+                # entry/subtag -- `complete_json` re-asks its own bounded
+                # budget on ANY such exception and, on persistence, raises
+                # the last one UNCHANGED (issue #325, measured 2026-07-22:
+                # 18/18 real full-source tag attempts died here uncaught).
+                # Same reasoning as the identical `TagParseError` clause
+                # below `apply_correction_reask`: content-shaped, no
+                # recovery path left once this budget is spent, so ANY draw
+                # quarantines the whole chunk immediately rather than
+                # spending the remaining votes on the same failure.
+                if checkpoint_path is None:
+                    raise
+                quarantine_reason = QUARANTINE_REASON_PARSE_ERROR
+                break
 
             # Shared, data-driven cardinality dispatch (issue #29 slice 03):
             # each axis is parsed/validated by its own schema-declared
@@ -1880,6 +1907,20 @@ def run_tag(
                 # (below) -- at `votes == 1` that is immediate, exactly as
                 # before best-of-N existed.
                 spoiled = spoiled or exc
+            except TagParseError:
+                # Same class, same reasoning as the `TagParseError` clause
+                # above the `complete_json` call: here it means the
+                # correction re-ask's own answer (validated fresh by
+                # `_parse_and_validate_tags`, bypassing `complete_json`'s
+                # degenerate-value check entirely -- `apply_correction_reask`
+                # calls `client.complete` directly) came back mis-shaped or
+                # blank for some axis. No further re-ask exists for a parse
+                # error (`apply_correction_reask` only re-asks on
+                # `TagNotInSchemaError`), so this quarantines on any draw too.
+                if checkpoint_path is None:
+                    raise
+                quarantine_reason = QUARANTINE_REASON_PARSE_ERROR
+                break
 
         if quarantine_reason is not None:
             _quarantine_chunk(chunk_record, quarantine_reason, checkpoint_path)
