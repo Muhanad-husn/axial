@@ -249,11 +249,17 @@ def compose_prompt(
 
     embedded_claim = _embedded_metadata_claim(embedded_author, embedded_title)
 
+    blocks_named = (
+        "its opening pages as printed, its front matter, and its final pages"
+        if tail
+        else "its opening pages as printed and its front matter"
+    )
+
     return f"""You are checking whether a source file carries the complete work it names, or only part of it (one volume of a set, a truncated scan, a single chapter circulated as if it were the book) -- and separately reading its bibliographic identity off its own title page.
 
 Physical extent of the file: {extent}.
 
-Below are two EXCERPTS from the file, labelled with their physical page numbers: its opening pages, and its final pages. The pages between the two excerpts are present in the file and are simply not shown to you here. Running headers, running titles and page-number folios have been stripped.
+Below are labelled blocks from the file, each headed with its physical page numbers: {blocks_named}. The opening pages are shown exactly as printed, with nothing stripped; the other blocks have running headers, running titles and page-number folios stripped. Any pages not shown between these blocks are present in the file, not missing from it.
 
 {"\n\n".join(sections)}
 

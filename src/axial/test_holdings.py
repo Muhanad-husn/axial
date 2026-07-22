@@ -19,6 +19,7 @@ cross-check embedded metadata against what the title page actually says).
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -272,6 +273,86 @@ def test_prompt_states_no_embedded_metadata_when_none_given():
     probe(["Some document text"], client=client, physical_pages=10)
 
     assert "states no author and no title" in client.calls[0][0]
+
+
+# =============================================================================
+# The framing sentence above the blocks (issue #321): it must count and
+# label the blocks `compose_prompt` actually renders, in both shapes --
+# `FINAL PAGES` only renders when the file is long enough to have a tail
+# (`_window`) -- rather than pinning a fixed "two excerpts" wording that goes
+# stale the moment a block is added or a short file has no tail.
+# =============================================================================
+
+_BLOCK_HEADER_RE = re.compile(r"(?m)^=== (.+?) ===$")
+_COUNT_WORDS = {"two": 2, "three": 3}
+
+
+def _rendered_block_labels(prompt: str) -> list[str]:
+    """The labelled source-text blocks -- excludes `=== YOUR JUDGMENT ===`,
+    which is a section of the prompt, not a block of source text."""
+    before_judgment = prompt.split("=== YOUR JUDGMENT ===", 1)[0]
+    return _BLOCK_HEADER_RE.findall(before_judgment)
+
+
+def _framing_paragraph(prompt: str) -> str:
+    """The paragraph between the physical-extent line and the first
+    rendered block -- the sentence issue #321 is about."""
+    return prompt.split("\n\n=== ", 1)[0].rsplit("\n\n", 1)[-1]
+
+
+def _claimed_block_count(sentence: str) -> int | None:
+    for word, n in _COUNT_WORDS.items():
+        if re.search(rf"\b{word}\b", sentence, re.IGNORECASE):
+            return n
+    return None
+
+
+def test_framing_sentence_describes_every_block_rendered_when_a_tail_exists():
+    """A file long enough for `_window` to produce a tail renders three
+    blocks (opening-as-printed, front matter, final pages). The sentence
+    must name all three -- not just the two it used to -- and any count it
+    states must match."""
+    from axial.holdings import compose_prompt
+
+    pages = [f"body text on page {i}" for i in range(25)]
+
+    prompt = compose_prompt(pages, physical_pages=25)
+
+    labels = _rendered_block_labels(prompt)
+    assert len(labels) == 3  # sanity: this shape does carry a FINAL PAGES block
+
+    sentence = _framing_paragraph(prompt)
+    for keyword in ("opening", "front matter", "final"):
+        assert keyword in sentence.lower(), (
+            f"a {keyword!r} block is rendered but the framing sentence never mentions it"
+        )
+
+    claimed = _claimed_block_count(sentence)
+    assert claimed is None or claimed == len(labels), (
+        f"framing sentence claims {claimed} block(s) but {len(labels)} are rendered"
+    )
+
+
+def test_framing_sentence_does_not_claim_final_pages_when_the_file_has_no_tail():
+    """A short file's whole text is front matter (`_window`): no `FINAL
+    PAGES` block renders, so the sentence must not describe one -- and if it
+    still states a count, that count must match the two blocks actually
+    there."""
+    from axial.holdings import compose_prompt
+
+    pages = [f"body text on page {i}" for i in range(5)]
+
+    prompt = compose_prompt(pages, physical_pages=5)
+
+    labels = _rendered_block_labels(prompt)
+    assert len(labels) == 2  # sanity: no tail, so no FINAL PAGES block
+
+    sentence = _framing_paragraph(prompt)
+    assert "final" not in sentence.lower()
+
+    claimed = _claimed_block_count(sentence)
+    if claimed is not None:
+        assert claimed == len(labels)
 
 
 # =============================================================================
