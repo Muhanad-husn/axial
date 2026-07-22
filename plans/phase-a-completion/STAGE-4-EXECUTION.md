@@ -46,7 +46,7 @@ The founder asked about agents and worktrees for this. Straight answer:
 | Job | Use | Why not the alternative |
 |---|---|---|
 | **Running** a pass | A **detached OS process** per worker | An agent adds nothing to `axial run` and cannot reliably babysit a multi-hour job. Agents are for judgment, not for waiting |
-| **Monitoring** | Cheap polling from this session (`tail` the log, count ledger rows) | Delegating a wait loop burns tokens to do nothing |
+| **Monitoring** | `.claude/tools/run-monitor.py` — `--watch` for a human, `--once` per session peek | Delegating a wait loop burns tokens to do nothing |
 | **Analysing a finished run** | A **subagent** | Genuinely good delegation: `run.jsonl` is thousands of lines in, a paragraph out. Keeps the log out of your context |
 | **Writing `summary.md`** | A **subagent**, from `run.jsonl` + `console.log` | Same shape — large input, small output |
 | **Fixing code mid-run** | **Don't.** Queue it | Rule 2 — you cannot commit while a run is live |
@@ -77,17 +77,62 @@ $src = Get-ChildItem data/sources -Include *.pdf,*.docx -Recurse | Sort-Object N
 Each worker gets its own `--ledger` so three processes never share one append-mode TSV.
 Concatenate the per-worker ledgers when all three finish.
 
-### Monitoring
+### Monitoring — use the dashboard
+
+`.claude/tools/run-monitor.py` reports every live worker, its CPU and memory, checkpoint
+progress, and whether anything has silently hung.
 
 ```powershell
-# progress: rows across all worker ledgers vs. 30
-(Get-ChildItem data/run/ledger.$RUN.w*.tsv | Get-Content | Measure-Object -Line).Lines
-# liveness
-Get-Content data/logs/$RUN/console.w1.log -Tail 5
+# human dashboard, refreshes in place - leave it open in its own window
+uv run python .claude/tools/run-monitor.py --watch --pass tag --run-dir data/logs/$RUN
+
+# one snapshot, ~15 lines - this is what a Claude session calls on each peek
+uv run python .claude/tools/run-monitor.py --once --pass tag --run-dir data/logs/$RUN
 ```
 
-Poll on a **long** interval (15–30 min). These are multi-hour jobs; polling every minute
-buys nothing.
+Output:
+
+```
+axial run monitor | 2026-07-22 14:03:11 | pass=tag (per chunk)
+3 live worker(s) | 291% CPU total
+
+      PID  WORKER                   CPU%   RSS MB  ELAPSED
+    12044  worklist.w1              98.2      412  1:24:03
+    12061  worklist.w2              96.4      398  1:24:03
+    12078  worklist.w3              96.8      405  1:24:02
+
+  checkpoints 11,204 lines in 30 file(s)  (+37 since last peek)
+  ledger      18 row(s) across 3 file(s)
+  last write  3s ago
+
+STATUS  HEALTHY
+```
+
+**Why hang detection is trustworthy here.** `tag` and `xref` append one checkpoint line
+**per chunk**, so genuine progress ticks every few seconds even while a single source takes
+36 minutes. The monitor calls a run stalled only when **three independent signals are flat
+at once** — checkpoints not growing, logs not growing, and CPU idle. A merely slow book
+trips none of them. `--stall-seconds` defaults to 2400 s, above the slowest single source
+ever measured (2168 s).
+
+**`extract` is the exception:** it checkpoints per *source*, not per chunk, so pass
+`--pass extract --stall-seconds 3600` in Step 1 or you will get false alarms.
+
+Two traps the monitor was fixed for, worth knowing because they would both have faked
+health: the repo lives at `D:\axial`, so **substring-matching "axial" matches every process
+in the repo** — including the monitor itself; and `uv run axial run …` produces a *chain* of
+processes that all carry the same argv, so counting each link reports three workers per real
+worker. It now matches the `axial`→`run` token pair and keeps only leaf processes.
+
+### Scheduled peeks
+
+For the Claude session, poll on a **long** interval — 20–30 min. These are multi-hour jobs
+and a peek costs a tool call, so minute-by-minute polling buys nothing. `/loop 25m` with the
+`--once` command is the cheapest way to keep an eye on it; the session only needs to act
+when `STATUS` is not `HEALTHY`.
+
+Escalate on `*** STALLED ***`. On `SUSPECT`, take one more peek before doing anything — that
+status exists precisely so a single quiet sample does not trigger a restart.
 
 ### One shared-file caveat that `--ledger` does not cover
 
@@ -279,7 +324,8 @@ uv run axial eval          # scores against the gold labels; makes no model call
 | Symptom | What it means | Do |
 |---|---|---|
 | A source reports FAIL | Per-source isolation worked; the run continued | Read its `run.jsonl` row. Re-run that source alone after the pass finishes |
-| A worker stalls with no output | Usually a slow source, not a hang — max measured is 2168 s | Wait one full max-interval before acting. Check the ledger row count is still climbing overall |
+| A worker looks stuck | Usually a slow source, not a hang — max measured is 2168 s | Run the monitor. `HEALTHY` with a recent checkpoint write means it is working. Only `*** STALLED ***` (checkpoints flat + logs flat + CPU idle) is a real hang |
+| Monitor says `*** STALLED ***` | Three signals flat at once | Kill that worker and relaunch its worklist. Resume skips completed work with zero model calls |
 | Re-tag finishes suspiciously fast | Checkpoints were not cleared | Stop. Archive `data/tags/*.jsonl`. Relaunch |
 | A run dies partway | Every pass is resumable | Relaunch the same command. The ledger + per-source checkpoints skip completed work with zero model calls |
 | Machine OOM / segfault during extract | Two docling processes ran concurrently | A source missed the tree cache. Run it alone, serially |
