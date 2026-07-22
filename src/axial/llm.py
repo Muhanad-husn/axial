@@ -342,6 +342,20 @@ _chunk_pass_call_count = 0
 # (issue #98), mirroring `_tag_pass_call_count` above exactly.
 _artifact_pass_call_count = 0
 
+# Guards every one of the three counters above (issue #325 follow-up): a
+# bare module-global `count += 1` is not one atomic operation, and
+# `run_tag`'s votes loop now fires multiple `complete()` calls against the
+# SAME `StubLLMClient`/`RecordLLMClient` instance concurrently (issue #325
+# follow-up, best-of-N draws no longer sequential) -- confirmed racy in
+# practice, not just in theory: without this lock,
+# `tests/ingestion/test_tag_best_of_n.py` failed roughly 1 run in 5 under
+# concurrent votes. Real providers (`OpenRouterClient`) never touch these
+# counters at all, so this lock never taxes a production call; it exists
+# purely to keep the test/CI-only canned-response dispatch (and
+# `StubLLMClient`/`RecordLLMClient`'s own `call_count`) correct under
+# concurrent draws.
+_stub_dispatch_lock = threading.Lock()
+
 
 class LLMClient(Protocol):
     """A single-method completion interface every provider implements."""
@@ -440,8 +454,13 @@ class StubLLMClient:
         self.call_count = 0
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
-        self.call_count += 1
-        return _canned_response_for(pass_name)
+        # Locked (see `_stub_dispatch_lock`'s own comment): `call_count` and
+        # `_canned_response_for`'s dispatch counters are shared, mutable
+        # state a concurrent caller (`run_tag`'s votes loop) can call this
+        # from multiple threads at once.
+        with _stub_dispatch_lock:
+            self.call_count += 1
+            return _canned_response_for(pass_name)
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         """A fixed, deterministic id -- there is no real model behind this
@@ -581,11 +600,17 @@ class RecordLLMClient:
         self.call_count = 0
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
-        self.call_count += 1
-        self._record_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._record_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(prompt) + "\n")
-        return _canned_response_for(pass_name)
+        # Locked (see `_stub_dispatch_lock`'s own comment): `call_count`,
+        # the append below, and `_canned_response_for`'s dispatch counters
+        # are all shared, mutable state a concurrent caller can call this
+        # from multiple threads at once -- an unlocked interleaved append
+        # could also torn-write two prompts into the same line.
+        with _stub_dispatch_lock:
+            self.call_count += 1
+            self._record_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._record_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(prompt) + "\n")
+            return _canned_response_for(pass_name)
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         """Mirrors `StubLLMClient.model_for_pass` exactly -- same fixed id,
