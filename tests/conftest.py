@@ -150,6 +150,14 @@ _PROTECTED_DIRS = (
     # `data/trees`/`data/envelopes` already guard against) would leak a real
     # record into the next test that computes the same source_id.
     REPO_ROOT / "data" / "source_meta",
+    # data/bib_lookup_cache/ holds the identifier-lookup response cache
+    # (issue #326, §7.12/§7.13). `axial.intake.intake()`'s identifier merge
+    # runs unconditionally (not gated on a client), so any test exercising
+    # `extract()`/etc. over a fixture whose front matter happens to carry a
+    # checksum-valid ISBN/DOI would otherwise cache a real (or a live-network-
+    # attempted) response into the real repo's cache dir -- the same leak
+    # `data/source_meta` above closes for the bibliographic record itself.
+    REPO_ROOT / "data" / "bib_lookup_cache",
 )
 
 # Extensions snapshotted/restored per protected directory: *.json for the

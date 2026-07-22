@@ -369,10 +369,11 @@ class TestResolveHoldingsFlag:
 
 
 class TestResolveBibliographicFields:
-    """`author`/`title`/`date` preserved the same way as `holdings_flag`
-    (`_resolve_recorded_field`, generalized): a client-less call (every
-    `extract()` validation call) must never regress an already-recorded,
-    model-informed answer back to a client-less-only guess."""
+    """`author`/`title`/`date`/`publisher` preserved the same way as
+    `holdings_flag` (`_resolve_recorded_field`, generalized): a client-less
+    call (every `extract()` validation call) must never regress an
+    already-recorded, model-informed answer back to a client-less-only
+    guess."""
 
     def test_no_client_and_no_existing_record_uses_the_computed_fields(self, tmp_path):
         from axial.intake import UNAVAILABLE, _resolve_bibliographic_fields
@@ -381,6 +382,7 @@ class TestResolveBibliographicFields:
             "author": UNAVAILABLE,
             "title": {"value": "A Title", "provenance": "embedded metadata"},
             "date": UNAVAILABLE,
+            "publisher": UNAVAILABLE,
         }
 
         resolved = _resolve_bibliographic_fields(computed, None, tmp_path / "absent.json")
@@ -402,11 +404,17 @@ class TestResolveBibliographicFields:
                         "provenance": "title page",
                     },
                     "date": "unavailable",
+                    "publisher": {"value": "A Publisher", "provenance": "open_library"},
                 }
             ),
             encoding="utf-8",
         )
-        computed = {"author": "unavailable", "title": "unavailable", "date": "unavailable"}
+        computed = {
+            "author": "unavailable",
+            "title": "unavailable",
+            "date": "unavailable",
+            "publisher": "unavailable",
+        }
 
         resolved = _resolve_bibliographic_fields(computed, None, meta_path)
 
@@ -415,6 +423,7 @@ class TestResolveBibliographicFields:
             "value": "War, Institutions, and Social Change",
             "provenance": "title page",
         }
+        assert resolved["publisher"] == {"value": "A Publisher", "provenance": "open_library"}
 
     def test_a_supplied_client_always_overwrites_with_the_computed_fields(self, tmp_path):
         import json
@@ -428,11 +437,17 @@ class TestResolveBibliographicFields:
                     "author": {"value": "Stale Prior Answer", "provenance": "title page"},
                     "title": "unavailable",
                     "date": "unavailable",
+                    "publisher": "unavailable",
                 }
             ),
             encoding="utf-8",
         )
-        computed = {"author": "unavailable", "title": "unavailable", "date": "unavailable"}
+        computed = {
+            "author": "unavailable",
+            "title": "unavailable",
+            "date": "unavailable",
+            "publisher": "unavailable",
+        }
 
         resolved = _resolve_bibliographic_fields(computed, object(), meta_path)
 
@@ -579,3 +594,138 @@ def test_intake_with_a_client_that_cannot_answer_records_no_judgment(tmp_path):
     record_path = source_meta_path(compute_source_id(TEXT_LAYER_PDF), tmp_path)
     record = json.loads(record_path.read_text(encoding="utf-8"))
     assert record[HOLDINGS_CHECKED] is False
+
+
+# =============================================================================
+# Identifier capture + lookup merge (issue #326, §7.12/§7.13): the same-work
+# identity guard and the publisher/identifier field wiring. Full end-to-end
+# coverage (intake() over a fixture PDF, a mocked lookup transport) lives in
+# tests/ingestion/test_identifier_metadata.py; these are unit-level checks of
+# the guard and the merge helper in isolation.
+# =============================================================================
+
+
+class TestAuthorsPlausiblyOverlap:
+    def test_no_known_author_passes_by_default(self):
+        """Nothing to contradict -- the real gap this slice fixes
+        (`ayubi-over-stating-the-arab-state`'s `None` title) has no prior
+        author reading to compare against either."""
+        from axial.intake import authors_plausibly_overlap
+
+        assert authors_plausibly_overlap(None, "Nazih N. M. Ayubi") is True
+
+    def test_a_known_author_with_no_fetched_author_fails(self):
+        from axial.intake import authors_plausibly_overlap
+
+        assert authors_plausibly_overlap("Michael Mann", None) is False
+
+    def test_diacritics_and_last_first_order_are_treated_as_a_match(self):
+        """The spike's own false-mismatch case: `Malesevic, Sinisa` vs
+        `Siniša Malešević`."""
+        from axial.intake import authors_plausibly_overlap
+
+        assert authors_plausibly_overlap("Malesevic, Sinisa", "Siniša Malešević") is True
+
+    def test_a_wrong_volume_mismatch_fails(self):
+        """The Mann-volumes near-miss the guard exists to catch: a
+        wrong-edition identifier fetch names a different person entirely."""
+        from axial.intake import authors_plausibly_overlap
+
+        assert authors_plausibly_overlap("Michael Mann", "A Totally Different Editor") is False
+
+
+class TestMergeIdentifierFields:
+    def _biblio(self, author=None):
+        from axial.intake import UNAVAILABLE as _UNAVAILABLE
+
+        return {
+            "author": author if author is not None else _UNAVAILABLE,
+            "title": _UNAVAILABLE,
+            "date": _UNAVAILABLE,
+        }
+
+    def test_no_identifier_leaves_fields_unchanged_and_publisher_unavailable_for_pdf(self):
+        from axial.intake import UNAVAILABLE, _merge_identifier_fields
+
+        biblio = self._biblio()
+        merged = _merge_identifier_fields(biblio, None, "pdf", None, None)
+
+        assert merged["author"] == UNAVAILABLE
+        assert merged["title"] == UNAVAILABLE
+        assert merged["date"] == UNAVAILABLE
+        assert merged["publisher"] == UNAVAILABLE
+
+    def test_no_identifier_scan_for_docx_leaves_publisher_not_attempted(self):
+        from axial.intake import NOT_ATTEMPTED, _merge_identifier_fields
+
+        merged = _merge_identifier_fields(self._biblio(), None, "docx", None, None)
+
+        assert merged["publisher"] == NOT_ATTEMPTED
+
+    def test_an_unresolved_lookup_leaves_the_four_fields_unchanged(self, monkeypatch, tmp_path):
+        import axial.bib_lookup as bib_lookup_mod
+        from axial.intake import UNAVAILABLE, _merge_identifier_fields
+
+        monkeypatch.setattr(
+            bib_lookup_mod,
+            "resolve_isbn",
+            lambda value, **kwargs: {"resolved": False, "error": None},
+        )
+
+        identifier = {"type": "isbn", "value": "9780262033848"}
+        merged = _merge_identifier_fields(self._biblio(), identifier, "pdf", None, tmp_path)
+
+        assert merged["author"] == UNAVAILABLE
+        assert merged["title"] == UNAVAILABLE
+        assert merged["publisher"] == UNAVAILABLE
+
+    def test_a_passing_guard_overrides_all_four_fields_with_provenance(self, monkeypatch, tmp_path):
+        import axial.bib_lookup as bib_lookup_mod
+        from axial.intake import _merge_identifier_fields
+
+        def _resolved(value, **kwargs):
+            return {
+                "resolved": True,
+                "title": "A Fetched Title",
+                "author": "Jane Q. Historian",
+                "date": "1985",
+                "publisher": "A Publisher",
+                "source": "open_library",
+            }
+
+        monkeypatch.setattr(bib_lookup_mod, "resolve_isbn", _resolved)
+
+        biblio = self._biblio(
+            author={"value": "Jane Q. Historian", "provenance": "embedded metadata"}
+        )
+        identifier = {"type": "isbn", "value": "9780262033848"}
+        merged = _merge_identifier_fields(biblio, identifier, "pdf", None, tmp_path)
+
+        assert merged["title"] == {"value": "A Fetched Title", "provenance": "open_library"}
+        assert merged["author"] == {"value": "Jane Q. Historian", "provenance": "open_library"}
+        assert merged["date"] == {"value": "1985", "provenance": "open_library"}
+        assert merged["publisher"] == {"value": "A Publisher", "provenance": "open_library"}
+
+    def test_a_failing_guard_leaves_the_four_fields_unchanged_but_lookup_still_ran(
+        self, monkeypatch, tmp_path
+    ):
+        import axial.bib_lookup as bib_lookup_mod
+        from axial.intake import _merge_identifier_fields
+
+        def _resolved(value, **kwargs):
+            return {
+                "resolved": True,
+                "title": "A Different Volume's Title",
+                "author": "A Totally Different Editor",
+                "date": "1986",
+                "publisher": "Some Publisher",
+                "source": "open_library",
+            }
+
+        monkeypatch.setattr(bib_lookup_mod, "resolve_isbn", _resolved)
+
+        biblio = self._biblio(author={"value": "Michael Mann", "provenance": "embedded metadata"})
+        identifier = {"type": "isbn", "value": "9780000000000"}
+        merged = _merge_identifier_fields(biblio, identifier, "pdf", None, tmp_path)
+
+        assert merged["author"] == {"value": "Michael Mann", "provenance": "embedded metadata"}

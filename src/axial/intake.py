@@ -27,18 +27,33 @@ second pass or a hand-rolled positional heuristic, and that same call
 cross-checks the embedded metadata against what the title page actually
 says -- a PDF's embedded author/title is sometimes recycled from an
 unrelated file, and only something that reads the page can notice.
+
+For a PDF, the record also carries a `publisher` field and a raw
+`identifier` (issue #326): an ISBN/DOI captured and checksum-validated from
+the front matter (`axial.identifiers`, no network) is looked up against
+Open Library/Crossref (`axial.bib_lookup`, cached to disk) and merged into
+author/title/date/publisher behind a same-work identity guard that
+cross-checks the fetched author against intake's already-known one. The
+guard failing, no identifier, or an unresolved lookup leaves the four
+fields exactly as the embedded-metadata/title-page read produced them;
+`identifier` is recorded either way, for audit.
 """
 
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
 from docx import Document
 from pypdf import PdfReader
 
+from axial import bib_lookup, identifiers
+from axial.holdings import FRONT_MATTER_PAGES
 from axial.holdings import probe as _holdings_probe
 from axial.llm import LLMClient
 
@@ -403,17 +418,131 @@ def _resolve_holdings_flag(
 def _resolve_bibliographic_fields(
     computed: dict[str, Any], client: LLMClient | None, meta_path: Path
 ) -> dict[str, Any]:
-    """`author`/`title`/`date` resolved the same way as `holdings_flag`
-    (`_resolve_recorded_field`, one call per field): a client-less call
-    (every `extract()` validation call, §7.12) preserves whatever the
-    existing on-disk record already carries for each field rather than
-    regressing it back to a client-less-only read -- the title-page
-    cross-check that produced a better answer is a paid model call, and a
-    later call that skips it must never silently undo it."""
+    """`author`/`title`/`date`/`publisher` resolved the same way as
+    `holdings_flag` (`_resolve_recorded_field`, one call per field): a
+    client-less call (every `extract()` validation call, §7.12) preserves
+    whatever the existing on-disk record already carries for each field
+    rather than regressing it back to a client-less-only read -- the
+    title-page cross-check, and the identifier-lookup merge below, that
+    produced a better answer both depend on a fuller read (a model call, or
+    the freshly-computed same-work identity guard) than a client-less call
+    can redo, and a later call that skips it must never silently undo it."""
     return {
         field: _resolve_recorded_field(field, computed[field], client, meta_path)
-        for field in ("author", "title", "date")
+        for field in ("author", "title", "date", "publisher")
     }
+
+
+# =============================================================================
+# Identifier capture + lookup merge (§7.12/§7.13, issue #326): an ISBN/DOI
+# found in a source's own front matter, resolved against Open Library/
+# Crossref, and merged into the bibliographic fields behind a same-work
+# identity guard. Kept to one author-overlap check (no general fuzzy-
+# matching framework) -- the one real near-miss the spike found
+# (`mann-sources-of-social-power-v2` resolving to a different volume's
+# identifier) is a wrong-volume mismatch, not a name-spelling difference, so
+# a single overlap check is sufficient; escalate only if real-corpus
+# validation surfaces more misses.
+# =============================================================================
+
+
+def _strip_diacritics(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
+
+def _name_tokens(name: str) -> set[str]:
+    """Meaningful name tokens for the identity guard: diacritics folded away
+    (`Siniša` -> `sinisa`), commas normalized so `"Last, First"` and
+    `"First Last"` yield the same token set, bare initials/punctuation
+    dropped."""
+    ascii_name = _strip_diacritics(name).replace(",", " ")
+    return {token.casefold() for token in re.findall(r"[A-Za-z]+", ascii_name) if len(token) > 1}
+
+
+def authors_plausibly_overlap(known_author: str | None, fetched_author: str | None) -> bool:
+    """The same-work identity guard: `True` when `known_author` (intake's
+    own already-known reading -- embedded metadata or the title-page read)
+    and `fetched_author` (the identifier lookup's answer) share at least one
+    meaningful name token.
+
+    `known_author=None` (intake has no author of its own to cross-check
+    against) passes -- there is nothing to contradict, and rejecting a fetch
+    for that reason alone would defeat the real gap this slice fixes
+    (`ayubi-over-stating-the-arab-state`'s `None` title, where no prior
+    author reading existed either). A present `known_author` with no
+    overlapping token in `fetched_author` fails -- the guard's one real job,
+    catching a wrong-volume/wrong-edition identifier match."""
+    if not known_author:
+        return True
+    if not fetched_author:
+        return False
+    return bool(_name_tokens(known_author) & _name_tokens(fetched_author))
+
+
+def _known_author_value(author_field: dict[str, str] | str) -> str | None:
+    return author_field.get("value") if isinstance(author_field, dict) else None
+
+
+def _capture_identifier(fmt: str, page_texts: list[str]) -> dict[str, str] | None:
+    """The validated ISBN/DOI `identifier` this source's front matter
+    carries, or `None` -- PDF only (issue #326): identifier scanning reads
+    the same head window `axial.holdings` already uses for its own
+    front-matter judgment (`FRONT_MATTER_PAGES`), adding no new tunable
+    window size of its own."""
+    if fmt != "pdf":
+        return None
+    return identifiers.capture("\n".join(page_texts[:FRONT_MATTER_PAGES]))
+
+
+def _lookup_identifier(
+    identifier: dict[str, str],
+    bib_transport: httpx.BaseTransport | None,
+    bib_cache_dir: Path | None,
+) -> dict[str, Any]:
+    if identifier["type"] == "isbn":
+        return bib_lookup.resolve_isbn(
+            identifier["value"], transport=bib_transport, cache_dir=bib_cache_dir
+        )
+    return bib_lookup.resolve_doi(
+        identifier["value"], transport=bib_transport, cache_dir=bib_cache_dir
+    )
+
+
+def _merge_identifier_fields(
+    biblio: dict[str, Any],
+    identifier: dict[str, str] | None,
+    fmt: str,
+    bib_transport: httpx.BaseTransport | None,
+    bib_cache_dir: Path | None,
+) -> dict[str, Any]:
+    """`biblio` (already resolved from embedded metadata/title page), with
+    the identifier-lookup override applied when the same-work identity
+    guard passes. `publisher` has no reading mechanism other than this
+    lookup: `NOT_ATTEMPTED` for a DOCX (no identifier scan runs at all in
+    this slice) and `UNAVAILABLE` for a PDF with no identifier, an
+    unresolved lookup, or a failing guard (a read was attempted -- the scan,
+    or the scan plus the lookup -- and nothing recoverable/trustworthy came
+    of it)."""
+    merged = dict(biblio)
+    merged["publisher"] = NOT_ATTEMPTED if fmt != "pdf" else UNAVAILABLE
+    if identifier is None:
+        return merged
+
+    lookup = _lookup_identifier(identifier, bib_transport, bib_cache_dir)
+    if not lookup.get("resolved"):
+        return merged
+
+    known_author = _known_author_value(biblio["author"])
+    if not authors_plausibly_overlap(known_author, lookup.get("author")):
+        return merged
+
+    provenance = lookup["source"]
+    merged["author"] = _bibliographic_field(lookup.get("author"), provenance)
+    merged["title"] = _bibliographic_field(lookup.get("title"), provenance)
+    merged["date"] = _bibliographic_field(lookup.get("date"), provenance)
+    merged["publisher"] = _bibliographic_field(lookup.get("publisher"), provenance)
+    return merged
 
 
 def build_source_meta(
@@ -424,14 +553,19 @@ def build_source_meta(
     holdings_flag: dict | None,
     bibliographic_fields: dict[str, Any],
     holdings_checked: bool,
+    identifier: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Assemble the §7.12 source-metadata record: the full sha256 file hash,
     the physical page count (present for a PDF, an explicit `null` for a
     DOCX -- distinct from a numeric zero), the §7.11 holdings flag in full
     or an explicit no-flag, whether that judgment has been made at all
-    (`holdings_checked`, see `HOLDINGS_CHECKED`), and the already-resolved
-    §7.13 bibliographic fields. Carries no source text (DEC-23): values and
-    short reasons only."""
+    (`holdings_checked`, see `HOLDINGS_CHECKED`), the already-resolved §7.13
+    bibliographic fields (author/title/date/publisher), and the raw
+    validated `identifier` found in the source's own front matter
+    (`{"type": "isbn"|"doi", "value": ...}` or `None`, issue #326) -- kept
+    for audit even when the same-work identity guard rejected it for the
+    four fields above. Carries no source text (DEC-23): values and short
+    reasons only."""
     from axial.envelope import content_digest  # local import: dodges the
     # envelope -> extract -> intake import cycle (mirrors extract.py's own
     # local `compute_source_id` import, same reason).
@@ -442,6 +576,7 @@ def build_source_meta(
         "physical_page_count": physical_pages,
         "holdings_flag": holdings_flag,
         HOLDINGS_CHECKED: holdings_checked,
+        "identifier": identifier,
     }
     record.update(bibliographic_fields)
     return record
@@ -459,6 +594,8 @@ def intake(
     *,
     client: LLMClient | None = None,
     source_meta_dir: Path | None = None,
+    bib_transport: httpx.BaseTransport | None = None,
+    bib_cache_dir: Path | None = None,
 ) -> Source:
     """Run intake on `path`: validate extension, verify a text layer, and --
     when `client` is given -- run the holdings-completeness check
@@ -469,6 +606,19 @@ def intake(
     A DOCX is checked too (the earlier blanket DOCX exemption is retired,
     §7.11); it exposes no physical page count, which the check handles as
     unobtainable evidence rather than as damning.
+
+    For a PDF, an ISBN/DOI found in the front matter is also looked up
+    against Open Library/Crossref (issue #326) and merged into
+    author/title/date/publisher behind the same-work identity guard
+    (`_merge_identifier_fields`) -- independent of `client`, since the
+    lookup is a free, cached network call, not a paid model call.
+    `bib_transport` is a mockable `httpx` transport for that lookup
+    (`httpx.MockTransport`, the same seam `axial.llm.OpenRouterClient`
+    already uses); `None` uses a real `httpx.Client` in production.
+    `bib_cache_dir` overrides where the raw lookup response is cached
+    (defaults to `axial.bib_lookup.CACHE_DIR`), mirroring `source_meta_dir`
+    -- so a test can keep every write hermetic under its own `tmp_path`
+    rather than the real, gitignored `data/bib_lookup_cache/`.
 
     Every successful call also writes the persisted source-metadata record
     (§7.12/§7.13) to `<source_meta_dir>/<source_id>.json` -- `source_meta_dir`
@@ -531,9 +681,18 @@ def intake(
     written_flag = _resolve_holdings_flag(holdings_flag, client, meta_path)
     written_checked = _resolve_recorded_field(HOLDINGS_CHECKED, answered, client, meta_path)
     biblio = read_bibliographic_fields(fmt, embedded_author, embedded_title, title_page=title_page)
+    identifier = _capture_identifier(fmt, page_texts)
+    biblio = _merge_identifier_fields(biblio, identifier, fmt, bib_transport, bib_cache_dir)
     written_biblio = _resolve_bibliographic_fields(biblio, client, meta_path)
     record = build_source_meta(
-        source_id, path, fmt, physical_pages, written_flag, written_biblio, bool(written_checked)
+        source_id,
+        path,
+        fmt,
+        physical_pages,
+        written_flag,
+        written_biblio,
+        bool(written_checked),
+        identifier,
     )
     write_source_meta(record, meta_path)
 
