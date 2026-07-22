@@ -8,6 +8,11 @@ Read this file top to bottom before launching anything; the order is load-bearin
 Lane A (#316) and lane B (#317 `--ledger`, PR #318) are closed. Nothing is left to build.
 `data/source_meta/` is empty; the corpus is fully tagged under the *old* single-draw regime.
 
+**Updated 2026-07-22, after #316's follow-ups:** #320 closed won't-fix (`tilly`'s garbled
+title layer — 1 of 30, visibly corrupt, correct by hand in the record). **PR #322 (#321) is
+open and unmerged, and Step 1 below is its merge gate** — run Step 1 before merging it.
+#323 tracks the missing live positive control for the holdings check.
+
 ---
 
 ## Rules that hold for every step
@@ -145,8 +150,27 @@ uv run axial run extract --corpus --ledger data/run/ledger.$RUN.tsv `
 `--corpus` is safe here: the three probed sources are already done and their records exist,
 so they are skipped. Expect ~50–70 min; most of it is #312's re-read, not model time.
 
-**Gate:** 30 records exist **and carry real author/title/date**. Spot-check at least five
-against the real books. A human reading it is the only control this step has.
+**Gate:** 30 records exist **and carry real author/title/date**.
+
+Do not spot-check five by hand. [`docs/academic/corpus-bibliography.md`](../../docs/academic/corpus-bibliography.md)
+carries all 30 entries keyed by `source_id`, human-curated from the files themselves, so
+every title can be diffed mechanically. Read the disagreements; the list is the control,
+not a substitute for judgment about what a disagreement means.
+
+**This run is also the merge gate for PR #322** (#321, the prompt's framing sentence).
+That PR cannot be measured by any test — it changes the text of a live prompt. Both halves
+it owes come out of these same 30 records, at no extra cost:
+
+| §7.11 false-positive half | `holdings_flag` null in all 30 records |
+| §7.13 title read | titles diffed against the bibliography, no worse than #316's 29/30 |
+
+§7.11's **true-positive half is not owed here** and must not be manufactured. #267 replaced
+both partial files with complete copies on purpose and the defective bytes are gone; PR #322
+retires the "truncate them back" construction and re-gates that half on changes to the
+check's *judgment*, which this run does not involve. **Do not truncate a book to test the
+check.** The exposure that leaves — no live positive control — is #323.
+
+Report the two numbers on #322 before asking for the merge.
 
 ---
 
