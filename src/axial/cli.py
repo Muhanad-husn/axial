@@ -10,6 +10,8 @@ from typing import Callable
 import axial
 from axial.analyze import format_examine_report as format_brief_examine_report
 from axial.analyze import run_examine
+from axial.analyze.synthesis import SynthesisError
+from axial.answer import AnswerError, run_brief
 from axial.artifacts import ArtifactsError, run_artifacts
 from axial.brief import BriefError, load_brief
 from axial.brief.interrogate import InterrogationError, interrogate, persist_interrogation
@@ -389,6 +391,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     brief_examine_parser.add_argument("brief_path", help="path to a versioned brief YAML file")
+
+    brief_run_parser = brief_subparsers.add_parser(
+        "run",
+        help=(
+            "run the full engine (stages 1-6) over a brief and persist the "
+            "analysis record to data/analyses/<brief_id>.json "
+            "(specs/PHASE-B.md §7.3, §8 P0-8/P0-9) -- exits 0 on every "
+            "disposition, including refuse"
+        ),
+    )
+    brief_run_parser.add_argument("brief_path", help="path to a versioned brief YAML file")
 
     pin_parser = subparsers.add_parser(
         "pin", help="corpus-pin manifest operations (specs/PHASE-B.md §7.12, §8 P0-10)"
@@ -963,6 +976,28 @@ def _brief_examine(brief_path: str) -> int:
     return 0
 
 
+def _brief_run(brief_path: str) -> int:
+    try:
+        brief = load_brief(brief_path)
+    except BriefError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    client = get_client()
+    try:
+        result = run_brief(brief, client=client)
+    except (InterrogationError, QueryError, SynthesisError, CorpusPinError, AnswerError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"brief_id: {brief.brief_id}")
+    print(f"disposition: {result.record['interrogation']['disposition']}")
+    print(f"persisted: {result.path}")
+    # §7.2: a `refuse` disposition is a completed, valid run -- exit 0 on
+    # every disposition (mirrors `_brief_interrogate`/`_brief_examine`).
+    return 0
+
+
 def _pin_write(name: str) -> int:
     try:
         path = write_pin(name)
@@ -1066,6 +1101,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "brief" and args.brief_command == "examine":
         return _brief_examine(args.brief_path)
+
+    if args.command == "brief" and args.brief_command == "run":
+        return _brief_run(args.brief_path)
 
     if args.command == "pin" and args.pin_command == "write":
         return _pin_write(args.name)
