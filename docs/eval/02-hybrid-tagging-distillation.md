@@ -1,6 +1,18 @@
 # Eval 2 — hybrid-tagging distillation (cost axis)
 
-**Status:** foundation stub. The "exploratory process."
+**Status:** foundation stub, stage 5a shipped. **5a (issue #296): every prose
+chunk in the frozen vault is embedded once (local sentence-transformer,
+`sentence-transformers/all-MiniLM-L6-v2`) and persisted in a LanceDB vector
+store (`data/distill/embeddings.lance`, `src/axial/distill/embed.py`,
+`axial distill embed`), keyed by `chunk_id` with a flattened, filterable
+metadata projection (`source_id` + each single-valued tag axis) — never
+`chunk_text` (DEC-23). The embedding manifest
+(`data/distill/embedding_manifest.json`) records the corpus-pin id and
+`vault_snapshot_hash` this pass ran against; `axial.distill.staleness`
+(`check_staleness`) is the small, reusable seam every later stage-5
+artifact (5b's clusters, 5c/5d's classifiers) reuses to tell "still matches
+production" from "corpus moved, re-derive." 5b (readiness map) onward is not
+yet built.
 **Depends on:** full 24-source re-run (tag distribution) + P0-10 gold set (referee).
 **Subject doc:** the exploration this evaluates lives at
 `docs/exploration/hybrid-tagging-classifier.md`.
