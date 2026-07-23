@@ -10,6 +10,7 @@ from typing import Callable
 import axial
 from axial.artifacts import ArtifactsError, run_artifacts
 from axial.brief import BriefError, load_brief
+from axial.brief.interrogate import InterrogationError, interrogate, persist_interrogation
 from axial.chunk import (
     ChunkError,
     _default_chunks_dir,
@@ -362,6 +363,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     brief_show_parser.add_argument("brief_path", help="path to a versioned brief YAML file")
+
+    brief_interrogate_parser = brief_subparsers.add_parser(
+        "interrogate",
+        help=(
+            "run the bounded interrogation pre-pass over a loaded brief "
+            "(specs/PHASE-B.md §7.2), persist the interrogation result, "
+            "and print its disposition -- exits 0 on every disposition, "
+            "including refuse"
+        ),
+    )
+    brief_interrogate_parser.add_argument("brief_path", help="path to a versioned brief YAML file")
 
     pin_parser = subparsers.add_parser(
         "pin", help="corpus-pin manifest operations (specs/PHASE-B.md §7.12, §8 P0-10)"
@@ -885,6 +897,36 @@ def _brief_show(brief_path: str) -> int:
     return 0
 
 
+def _brief_interrogate(brief_path: str) -> int:
+    try:
+        brief = load_brief(brief_path)
+    except BriefError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    client = get_client()
+    try:
+        result = interrogate(brief, client=client)
+    except InterrogationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    path = persist_interrogation(brief, result)
+
+    print(f"brief_id: {brief.brief_id}")
+    print(f"disposition: {result.disposition}")
+    for premise in result.premises_found:
+        print(f"  premise ({premise.assessment}): {premise.premise}")
+    for bound in result.bounds_applied:
+        print(f"  bound: {bound}")
+    if result.refusal is not None:
+        print(f"refusal: {result.refusal['reason']}")
+    print(f"persisted: {path}")
+    # §7.2: a `refuse` disposition is a completed, valid run -- exit 0 on
+    # every disposition, never just the non-refusing ones.
+    return 0
+
+
 def _pin_write(name: str) -> int:
     try:
         path = write_pin(name)
@@ -982,6 +1024,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "brief" and args.brief_command == "show":
         return _brief_show(args.brief_path)
+
+    if args.command == "brief" and args.brief_command == "interrogate":
+        return _brief_interrogate(args.brief_path)
 
     if args.command == "pin" and args.pin_command == "write":
         return _pin_write(args.name)
