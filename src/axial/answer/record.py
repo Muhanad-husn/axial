@@ -29,6 +29,12 @@ assembles every other §7.3 field first, then calls
 `axial.answer.source_usage.compute_source_usage` over the record-so-far
 (its own `claims`/`trajectory`/`interrogation.disposition`) to fill it in --
 zero model calls, pure vault reads plus arithmetic (see that module).
+
+The rendered markdown answer (§7.10, issue #261) is written alongside the
+JSON: `run_brief` calls `persist_markdown`, which renders the just-built
+record through `axial.answer.render.render_markdown` (a pure function of
+the record -- no model call, no vault read, no clock) and writes it to
+`<analyses_dir>/<brief_id>.md`.
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ from typing import Any
 
 from axial.analyze.assembly import assemble_evidence
 from axial.analyze.synthesis import Claim, resolve_lens, synthesize
+from axial.answer.render import render_markdown
 from axial.answer.source_usage import compute_source_usage
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult, interrogate
@@ -134,11 +141,13 @@ def _placeholder_confidence() -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class BriefRunResult:
-    """`run_brief`'s own return shape: the persisted §7.3 record plus the
-    path it was written to."""
+    """`run_brief`'s own return shape: the persisted §7.3 record, the path
+    it was written to, and the path of the rendered markdown answer written
+    alongside it (§7.10)."""
 
     record: dict[str, Any]
     path: Path
+    markdown_path: Path
 
 
 def build_record(
@@ -195,6 +204,27 @@ def persist_record(
     analyses_dir.mkdir(parents=True, exist_ok=True)
     path = analyses_dir / f"{brief_id}.json"
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def persist_markdown(
+    brief_id: str,
+    record: dict[str, Any],
+    *,
+    analyses_dir: Path | None = None,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+) -> Path:
+    """Render `record` to markdown (§7.10, `axial.answer.render.render_markdown`)
+    and write it to `<analyses_dir>/<brief_id>.md`, alongside the JSON record
+    written by `persist_record` -- keyed on `brief_id` the same way, so
+    re-running the same brief overwrites the same file rather than
+    accumulating one per run."""
+    if analyses_dir is None:
+        analyses_dir = default_analyses_dir(config_path)
+    analyses_dir = Path(analyses_dir)
+    analyses_dir.mkdir(parents=True, exist_ok=True)
+    path = analyses_dir / f"{brief_id}.md"
+    path.write_text(render_markdown(record), encoding="utf-8")
     return path
 
 
@@ -274,4 +304,7 @@ def run_brief(
     path = persist_record(
         brief.brief_id, record, analyses_dir=analyses_dir, config_path=config_path
     )
-    return BriefRunResult(record=record, path=path)
+    markdown_path = persist_markdown(
+        brief.brief_id, record, analyses_dir=analyses_dir, config_path=config_path
+    )
+    return BriefRunResult(record=record, path=path, markdown_path=markdown_path)

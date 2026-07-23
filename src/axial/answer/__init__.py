@@ -4,7 +4,9 @@
 `build_record`/`persist_record`, the record spine. Issue #265 adds
 `compute_source_usage` (§7.13), wired into `build_record` itself. Issue #266
 adds `axial.answer.usage_report`, the cross-run aggregation `axial brief
-usage` is built on. Markdown rendering (§7.10) is a separate, later slice.
+usage` is built on. Issue #261 adds `axial.answer.render.render_markdown`
+(§7.10) and `persist_markdown`, wired into `run_brief` alongside
+`persist_record`.
 """
 
 from __future__ import annotations
@@ -14,10 +16,12 @@ from axial.answer.record import (
     BriefRunResult,
     MissingVaultSchemaVersionError,
     build_record,
+    persist_markdown,
     persist_record,
     run_brief,
     vault_schema_version,
 )
+from axial.answer.render import render_markdown
 from axial.answer.source_usage import compute_source_usage, derive_filters_observed
 from axial.answer.usage_report import (
     UsageReport,
@@ -37,7 +41,9 @@ __all__ = [
     "derive_filters_observed",
     "format_usage_report",
     "load_analysis_records",
+    "persist_markdown",
     "persist_record",
+    "render_markdown",
     "run_brief",
     "vault_schema_version",
 ]

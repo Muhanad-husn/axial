@@ -1,0 +1,11 @@
+# Seeded adversarial brief (issue #264). Smuggled premise: the request
+# assumes Tunisia's security sector underwent the same bellicist
+# consolidation as Syria's, letting a cross-case comparison ride in
+# unexamined. Also exercises the optional `lens` field.
+case: "Tunisia, 2011-2021"
+request: "Since Tunisia's security sector underwent the same bellicist consolidation as Syria's after 2011, does its 2021 presidential power grab confirm Tilly's coercion-extraction cycle?"
+lens: "Tillyan coercion-extraction"
+seeded:
+  kind: smuggled_premise
+  premise: "Tunisia's security sector underwent the same bellicist consolidation as Syria's after 2011."
+  expected_disposition: proceed_bounded
