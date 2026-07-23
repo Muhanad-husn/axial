@@ -17,7 +17,10 @@ it will assign, makes one LLM call with a dedicated `pass_name="tag"`
 (`axial.llm.TAG_PASS_NAME`), parses the model's single response into each
 axis's value(s), and validates every value against the loaded schema
 (`axial.schema.load_schema`): any value absent from its axis's tag set is a
-hard error, never a silent pass (PRD §7.1, P0-6).
+hard error at the validator layer (PRD §7.1, P0-6), never a silent pass --
+`run_tag`'s own votes loop below (issue #329) redirects a persisting one to
+a per-chunk quarantine instead of aborting the source, when its checkpoint
+is active.
 
 How each axis is parsed/validated is dispatched on the loaded schema's own
 `Axis.cardinality` -- never on the axis's name -- so adding another axis of
@@ -29,9 +32,10 @@ code change (PRD §4):
     `parse_tag_response` / `validate_tag`, exactly as slices 01/02 built
     them. When `empirical_scope` resolves to `"scope:country-case"`, the
     same response must also carry a non-empty `polity` (Appendix C/G) --
-    missing or empty is a hard error, but a value outside the schema's
-    `polity_examples` is accepted verbatim and logged to stderr as a
-    candidate addition, never fatal (spec-drift #77).
+    missing or empty is a hard error at the validator layer (`run_tag`
+    quarantines a persisting one instead, issue #329), but a value outside
+    the schema's `polity_examples` is accepted verbatim and logged to
+    stderr as a candidate addition, never fatal (spec-drift #77).
   - `cardinality in {"primary_plus_secondary", "primary_plus_optional_
     secondary"}` (`field`, `claim_type`, `theory_school`):
     `parse_multi_value_tag_response` / `validate_multi_value_tag`, one
@@ -75,6 +79,7 @@ import sys
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -1591,18 +1596,45 @@ class TaggedRecords(list):
 # sites, for the same reason.
 #
 # A persisting `TagNotInSchemaError` (out-of-vocab, after the #102 correction
-# re-ask already ran) is DELIBERATELY NOT included here (founder ruling,
-# descoped from #120): it stays the P0-6 hard error, source-fatal, exactly as
-# before this issue -- see tests/test_tag_axis_prefix.py / test_tag_vocab_reask.py.
-# The one exception is `theory_school` (founder-approved soft-land, distinct
-# from #120's quarantine mechanism -- no checkpoint record, no skipped
-# chunk): a still out-of-vocab `theory_school` after its own bounded re-ask
-# lands as `unlisted` instead, via `run_tag`'s own `_validate` closure --
-# every OTHER closed axis stays exactly as fatal as this comment describes.
+# re-ask already ran) was DELIBERATELY EXCLUDED here for a while (founder
+# ruling, descoped from #120): it stayed the P0-6 hard error, source-fatal.
+# Issue #329 (2026-07-23) REVERSES that specific ruling: the founder's policy
+# is now that any content-shaped per-chunk failure quarantines and continues,
+# with no carved-out exception for this one class -- so a persisting
+# `TagNotInSchemaError` joins the same bucket (`out_of_vocab`), handled at the
+# `if not draws:` check below (checkpoint-scoped, exactly like every other
+# reason here: no checkpoint active keeps today's hard-error contract, since
+# there is nowhere durable to record the quarantine). See
+# tests/ingestion/test_tag_quarantine.py and test_tag_vocab_reask.py for the
+# updated contract.
+#
+# `CountryCaseMissingPolityError` (empirical_scope == "scope:country-case"
+# with an empty `polity`) is the same species as `TagParseError`/
+# `TagCardinalityError` immediately above -- content-shaped, no repair path,
+# reachable from `apply_correction_reask`'s call site the same way -- so it
+# joins the bucket too (`missing_polity`, issue #329).
+#
+# The one exception that stays a soft-land outside this quarantine mechanism
+# entirely is `theory_school` (founder-approved, distinct from #120's
+# mechanism -- no checkpoint record, no skipped chunk): a still out-of-vocab
+# `theory_school` after its own bounded re-ask lands as `unlisted` instead,
+# via `run_tag`'s own `_validate` closure -- every OTHER closed axis is
+# unaffected by that soft-land.
 QUARANTINE_REASON_CONTENT_FILTER = "content_filter"
 QUARANTINE_REASON_MALFORMED_JSON = "malformed_json"
 QUARANTINE_REASON_PARSE_ERROR = "parse_error"
 QUARANTINE_REASON_CARDINALITY_ERROR = "cardinality_error"
+QUARANTINE_REASON_MISSING_POLITY = "missing_polity"
+QUARANTINE_REASON_OUT_OF_VOCAB = "out_of_vocab"
+
+# Central cross-source quarantine review log (issue #329): one JSONL line per
+# quarantined chunk, across every source and every reason, written alongside
+# the per-source checkpoint (`_quarantine_chunk` below) -- mirrors the
+# existing `theory_school_candidates.jsonl` precedent already in this file
+# (a review-later log, never a gate). Lives in the same directory the active
+# `tags_dir` resolves to, so every source sharing that directory (the normal
+# case) accumulates into the one file.
+QUARANTINE_LOG_FILENAME = "_quarantine_log.jsonl"
 
 
 class AllChunksQuarantinedError(TagError):
@@ -1636,7 +1668,12 @@ class AllChunksQuarantinedError(TagError):
 
 
 def _quarantine_chunk(
-    chunk_record: dict[str, Any], reason: str, checkpoint_path: Path | None
+    chunk_record: dict[str, Any],
+    reason: str,
+    checkpoint_path: Path | None,
+    *,
+    source_id: str | None = None,
+    detail: str | None = None,
 ) -> None:
     """Log and checkpoint chunk_record's quarantine (issue #120): a stderr
     line naming the chunk and reason, then -- when a checkpoint is active --
@@ -1644,11 +1681,30 @@ def _quarantine_chunk(
     same write+flush-per-record path ordinary tagged records use
     (`append_tag_checkpoint`), so a resume run recognizes and skips it
     (`run_tag`'s checkpoint-load split below) without ever re-calling the
-    model."""
+    model.
+
+    Also appends the same event to the central cross-source quarantine log
+    (`QUARANTINE_LOG_FILENAME`, issue #329), alongside the checkpoint
+    directory `checkpoint_path` resolves to -- one JSON line per quarantined
+    chunk, across every source and reason, for later pattern review (never a
+    gate, mirroring the `theory_school_candidates.jsonl` precedent). Only
+    written when a checkpoint is active, exactly like the per-source
+    checkpoint append it sits alongside."""
     chunk_id = chunk_record["chunk_id"]
     print(f"tag: quarantining chunk {chunk_id}: {reason}", file=sys.stderr)
     if checkpoint_path is not None:
         append_tag_checkpoint(checkpoint_path, {"chunk_id": chunk_id, "quarantine_reason": reason})
+        quarantine_log_path = checkpoint_path.parent / QUARANTINE_LOG_FILENAME
+        quarantine_log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_record = {
+            "source_id": source_id,
+            "chunk_id": chunk_id,
+            "reason": reason,
+            "detail": detail,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        with quarantine_log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(log_record) + "\n")
 
 
 def run_tag(
@@ -1982,6 +2038,26 @@ def run_tag(
                     quarantine_reason = QUARANTINE_REASON_CARDINALITY_ERROR
                     quarantine_detail = str(exc)
                     break
+                except CountryCaseMissingPolityError as exc:
+                    # `reject_degenerate_tag_values` (this call's own
+                    # `validate`) also runs `parse_polity_response` when a
+                    # single-cardinality axis resolves to `scope:country-case`
+                    # (issue #92), raising `CountryCaseMissingPolityError` on
+                    # a missing/blank `polity` -- the same species of
+                    # content-shaped failure as the `TagParseError`/
+                    # `TagCardinalityError` clauses immediately above,
+                    # surviving the same bounded retry budget the same way
+                    # (issue #329: this class had NO handler anywhere in the
+                    # votes loop). No dedicated repair path exists for a
+                    # missing polity either, so ANY draw quarantines the
+                    # whole chunk immediately, exactly mirroring the
+                    # `TagCardinalityError` clause's choice for the same
+                    # reason.
+                    if checkpoint_path is None:
+                        raise
+                    quarantine_reason = QUARANTINE_REASON_MISSING_POLITY
+                    quarantine_detail = str(exc)
+                    break
 
                 # Shared, data-driven cardinality dispatch (issue #29 slice 03):
                 # each axis is parsed/validated by its own schema-declared
@@ -2039,9 +2115,10 @@ def run_tag(
                     # A spoiled ballot (issue #294): this draw is still out of
                     # vocabulary after its own #102 re-ask, so it casts no vote
                     # and the axis decides among the draws that are valid. Only
-                    # when EVERY draw is spoiled does the P0-6 hard error stand
-                    # (below) -- at `votes == 1` that is immediate, exactly as
-                    # before best-of-N existed.
+                    # when EVERY draw is spoiled does the `if not draws:` check
+                    # below fire (quarantine when a checkpoint is active, else
+                    # the P0-6 hard error, issue #329) -- at `votes == 1` that
+                    # is immediate, exactly as before best-of-N existed.
                     spoiled = spoiled or exc
                 except TagParseError as exc:
                     # Same class, same reasoning as the `TagParseError` clause
@@ -2078,9 +2155,30 @@ def run_tag(
                     quarantine_reason = QUARANTINE_REASON_CARDINALITY_ERROR
                     quarantine_detail = str(exc)
                     break
+                except CountryCaseMissingPolityError as exc:
+                    # Content-shaped, no repair path (issue #329): `_parse_
+                    # and_validate_tags` (this call's `_validate` closure)
+                    # raised this when `empirical_scope` resolved to
+                    # `scope:country-case` but the same response's `polity`
+                    # came back empty -- `apply_correction_reask` only
+                    # re-asks on `TagNotInSchemaError`, so there is no bounded
+                    # re-ask for a missing polity either. Same reasoning and
+                    # same checkpoint-scoped fallback as the `TagParseError`/
+                    # `TagCardinalityError` clauses immediately above.
+                    if checkpoint_path is None:
+                        raise
+                    quarantine_reason = QUARANTINE_REASON_MISSING_POLITY
+                    quarantine_detail = str(exc)
+                    break
 
         if quarantine_reason is not None:
-            _quarantine_chunk(chunk_record, quarantine_reason, checkpoint_path)
+            _quarantine_chunk(
+                chunk_record,
+                quarantine_reason,
+                checkpoint_path,
+                source_id=source_id,
+                detail=quarantine_detail,
+            )
             quarantine_count += 1
             quarantine_examples.append(
                 f"{chunk_record['chunk_id']}: {quarantine_reason}"
@@ -2089,7 +2187,26 @@ def run_tag(
             continue
 
         if not draws:
-            raise spoiled
+            # A persisting `TagNotInSchemaError` (issue #329, reversing the
+            # #120-era P0-6 ruling): every draw's own #102 correction re-ask
+            # still came back out-of-vocab, so no draw cast a vote. With no
+            # checkpoint active there is nowhere durable to record the
+            # quarantine, so this keeps today's hard-error contract exactly
+            # (checkpoint-scoped fallback, same as every other reason above).
+            if checkpoint_path is None:
+                raise spoiled
+            _quarantine_chunk(
+                chunk_record,
+                QUARANTINE_REASON_OUT_OF_VOCAB,
+                checkpoint_path,
+                source_id=source_id,
+                detail=str(spoiled),
+            )
+            quarantine_count += 1
+            quarantine_examples.append(
+                f"{chunk_record['chunk_id']}: {QUARANTINE_REASON_OUT_OF_VOCAB} -- {spoiled}"
+            )
+            continue
 
         values, multi_value_axes, many_valued_axes, polity = draws[0]
         if len(draws) > 1:

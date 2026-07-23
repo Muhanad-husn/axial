@@ -3,6 +3,12 @@ correction re-ask for an out-of-vocabulary tag, instead of an immediate hard
 error).
 
 Locked behavioral contract (DEC-1) -- do not edit once committed red.
+UPDATE (issue #329, 2026-07-23, one-line justification per CLAUDE.local.md's
+test-ownership rule): the founder has REVERSED the #120-era P0-6 ruling that
+a persisting out-of-vocabulary tag stays source-fatal. It now quarantines
+the chunk instead (checkpoint-scoped, same as every other quarantine
+reason) -- scenario 2/3 below are updated accordingly; scenario 1 (the
+correction re-ask succeeding) and scenario 4 (the happy path) are unchanged.
 
 Given a stubbed tag-pass response whose `claim_type.subtags` carries an
       out-of-vocabulary value on its FIRST answer for a chunk, and a
@@ -17,14 +23,19 @@ Then  it exits 0 and every written note's frontmatter carries the
 Given a stubbed tag-pass response whose `claim_type.subtags` carries the
       SAME out-of-vocabulary value on EVERY call the run makes -- the
       original ask AND whatever correction re-ask the bounded budget
-      affords
-Then  `axial vault write` still exits non-zero, naming the offending value
-      and axis with the existing `TagNotInSchemaError` wording on stderr,
-      and the recorded traffic proves the bounded re-ask fired exactly once
-      before the run gave up (P0-6's hard-error guard survives introducing
-      the re-ask; the re-ask itself never loops unboundedly)
+      affords -- for EVERY chunk (the stub answers every tag-pass call
+      identically)
+Then  `axial vault write` still exits non-zero -- now via
+      `AllChunksQuarantinedError` (every chunk quarantines, so the source
+      surfaces zero usable tags) rather than a bare `TagNotInSchemaError`
+      -- naming the offending value and axis with the existing
+      `TagNotInSchemaError` wording on stderr (embedded in the aggregate
+      error's own message), and the recorded traffic proves the bounded
+      re-ask fired exactly once per chunk before each one quarantined
+      (P0-6's bounded-re-ask guard survives the reversal; the re-ask
+      itself still never loops unboundedly)
 
-Given that same still-fatal run
+Given that same all-quarantined run
 Then  no file anywhere under the vault carries the valid value the model
       never actually returned -- the only path to a corrected tag is the
       MODEL correcting itself, never a code-side guess/normalization of the
@@ -36,13 +47,13 @@ Then  `axial vault write` exits 0 and the tag pass makes exactly one LLM
       call per chunk -- the correction path never fires, so the happy path
       pays no extra cost
 
-See specs/PRODUCT.md §7.1 (loader contract) and §8 P0-6, both just revised:
-"A tag absent from the schema triggers a bounded correction re-ask: the
-tagger is shown that axis's controlled vocabulary and must return a valid
-value or an explicit NONE. A tag still absent from the schema after that
-single bounded re-ask is a hard error -- never a silent pass, and never a
-code-side guess or normalization of the value. Only the model
-self-corrects."
+See specs/PRODUCT.md §7.1 (loader contract) and P0-6, both revised again by
+issue #329: "A tag absent from the schema triggers a bounded correction
+re-ask: the tagger is shown that axis's controlled vocabulary and must
+return a valid value or an explicit NONE. A tag still absent from the
+schema after that single bounded re-ask quarantines the chunk -- never a
+silent pass, and never a code-side guess or normalization of the value.
+Only the model self-corrects."
 
 Fixture reuse: exactly tests/test_vault_write.py's and
 tests/test_tag_axis_prefix.py's fixture (tests/fixtures/envelope/
@@ -665,19 +676,30 @@ def test_out_of_vocab_subtag_corrects_on_bounded_reask(isolated_vault_root):
     )
 
 
-def test_persistently_out_of_vocab_subtag_still_hard_errors_after_bounded_reask(
+def test_persistently_out_of_vocab_subtag_still_errors_after_bounded_reask(
     isolated_vault_root,
 ):
-    """Issue #102 acceptance clause 2 (P0-6 preservation): a claim_type
-    subtag that stays out-of-vocab on EVERY tag-pass answer, including the
-    bounded correction re-ask, still raises the schema-gap hard error --
-    and the recorded call count proves the bounded re-ask genuinely fired
-    once (not skipped) before the run gave up (not looped further)."""
+    """Issue #102 acceptance clause 2, UPDATED by issue #329 (founder
+    reversal, 2026-07-23): a claim_type subtag that stays out-of-vocab on
+    EVERY tag-pass answer, including the bounded correction re-ask, no
+    longer raises a bare schema-gap hard error -- it QUARANTINES the chunk
+    instead (checkpoint-scoped, `axial vault write` always supplies one).
+    This stub answers every tag-pass call identically, so EVERY chunk in
+    the fixture hits the same out-of-vocab shape and quarantines; with zero
+    surviving tagged records, `run_tag` raises `AllChunksQuarantinedError`
+    (#327), so the run still exits non-zero overall -- but via the
+    aggregate-outcome signal, not the old bare `TagNotInSchemaError`. The
+    offending value/axis still surface on stderr (embedded in the aggregate
+    error's own message, since `TagNotInSchemaError`'s wording is captured
+    as each quarantine's `detail`), and the recorded call count proves the
+    bounded re-ask still genuinely fires once per chunk (not skipped, not
+    looped further) before each one quarantines."""
     root = isolated_vault_root
     _arrange_stored_envelope(root)
 
     schema = load_schema(str(DOMAIN_DIR))
     _assert_schema_invariants(schema)
+    expected_chunk_count = _arrange_expected_chunk_count(root)
 
     payload = _baseline_tag_payload(schema)
     payload["claim_type"]["subtags"] = [OUT_OF_VOCAB_SUBTAG]
@@ -698,16 +720,19 @@ def test_persistently_out_of_vocab_subtag_still_hard_errors_after_bounded_reask(
     assert result.returncode != 0, (
         f"expected a non-zero exit code for `axial vault write` when the "
         f"tag-pass response's claim_type.subtags is {OUT_OF_VOCAB_SUBTAG!r} "
-        f"on EVERY call, including the bounded correction re-ask (issue "
-        f"#102, P0-6: 'a tag still absent from the schema after that "
-        f"single bounded re-ask is a hard error'), got exit code 0\n"
+        f"on EVERY call, including the bounded correction re-ask -- every "
+        f"chunk quarantines (issue #329), leaving zero usable tags, so "
+        f"`AllChunksQuarantinedError` (#327) should still make the run "
+        f"exit non-zero, got exit code 0\n"
         f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
     combined = result.stdout + result.stderr
     assert "not in the schema" in combined, (
         f"expected the existing TagNotInSchemaError wording ('... is not "
-        f"in the schema's ... axis') to still surface once the bounded "
-        f"re-ask is exhausted, got combined output: {combined!r}"
+        f"in the schema's ... axis') to still surface, now embedded in "
+        f"AllChunksQuarantinedError's own message (each quarantine's "
+        f"'detail' is str(the original TagNotInSchemaError)), got combined "
+        f"output: {combined!r}"
     )
     assert OUT_OF_VOCAB_SUBTAG in combined, (
         f"expected the offending value {OUT_OF_VOCAB_SUBTAG!r} to be named "
@@ -719,15 +744,17 @@ def test_persistently_out_of_vocab_subtag_still_hard_errors_after_bounded_reask(
     )
 
     tag_family_calls = _count_tag_family_calls(record_path)
-    assert tag_family_calls == 2, (
-        f"expected exactly 2 tag-pass-family LLM call(s) before the hard "
-        f"error (one original ask + exactly one bounded correction re-ask "
-        f"for the single chunk that fails, issue #102's own 'single "
-        f"bounded re-ask' wording -- the run must abort on this chunk "
-        f"before ever reaching a later one), got {tag_family_calls} "
-        f"recorded non-chunk-pass call(s) in {record_path}. This would "
-        f"fail either if the bounded re-ask was silently skipped (too few "
-        f"calls) or if it looped past the single bounded attempt (too many)."
+    assert tag_family_calls == 2 * expected_chunk_count, (
+        f"expected exactly 2 tag-pass-family LLM call(s) per chunk (one "
+        f"original ask + exactly one bounded correction re-ask, issue "
+        f"#102's own 'single bounded re-ask' wording) across all "
+        f"{expected_chunk_count} chunk(s) -- issue #329: every chunk is now "
+        f"ATTEMPTED and quarantined rather than aborting the run at the "
+        f"first one -- got {tag_family_calls} recorded non-chunk-pass "
+        f"call(s) in {record_path}. This would fail either if the bounded "
+        f"re-ask was silently skipped (too few calls), if it looped past "
+        f"the single bounded attempt (too many), or if the run stopped "
+        f"short of attempting every chunk (too few)."
     )
 
 

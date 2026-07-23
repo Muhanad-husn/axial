@@ -1,8 +1,9 @@
 """Inner unit tests for best-of-N majority voting on the blind tag axes
 (issue #294, DEC-31): the voting function itself, the abstention marker's
 shape, and `run_tag`'s draw loop -- spoiled ballots, the `unlisted`
-soft-land as a legal ballot, and the preserved P0-6 hard error when every
-draw is invalid.
+soft-land as a legal ballot, and (issue #329, reversing the #120-era P0-6
+ruling) the chunk quarantining -- rather than aborting the source -- when
+every draw is invalid.
 
 Mirrors `src/axial/test_tag_theory_school_unlisted.py`'s in-process
 `run_tag` style (a small synthetic domain under `tmp_path`, `read_chunks`
@@ -21,7 +22,7 @@ import pytest
 
 from axial.llm import TAG_PASS_NAME
 from axial.schema import load_schema
-from axial.tag import ABSTAINED_KEY, TagNotInSchemaError, vote_blind_axes
+from axial.tag import ABSTAINED_KEY, AllChunksQuarantinedError, vote_blind_axes
 
 IN_VOCAB_SCHOOL = "bellicist"
 OTHER_SCHOOL = "marxist-political-economy"
@@ -345,9 +346,16 @@ def test_run_tag_spoiled_claim_type_ballot_is_excluded_from_the_vote(tmp_path, m
     assert ABSTAINED_KEY not in records[0]["claim_type"]
 
 
-def test_run_tag_all_draws_invalid_still_raises_the_p0_6_hard_error(tmp_path, monkeypatch):
-    """When EVERY draw is spoiled, the existing `TagNotInSchemaError` hard
-    error stands -- the schema-gap guarantee survives best-of-N.
+def test_run_tag_all_draws_invalid_quarantines_the_chunk(tmp_path, monkeypatch):
+    """When EVERY draw is spoiled, issue #329 (reversing the #120-era P0-6
+    ruling that this used to raise `TagNotInSchemaError` and abort the
+    source) means the chunk quarantines instead -- `_run`'s fixture supplies
+    exactly one chunk, so with it quarantined and zero tagged records,
+    `run_tag` raises `AllChunksQuarantinedError` (#327), naming the
+    offending value/axis in its own message (each quarantine's `detail` is
+    `str()` of the original `TagNotInSchemaError`). The schema-gap guarantee
+    still holds at the chunk level -- best-of-N only self-repairs when at
+    least one draw is valid.
 
     Every primary AND every correction re-ask returns the identical
     out-of-vocab payload (issue #325 follow-up: both pools need their own
@@ -356,11 +364,12 @@ def test_run_tag_all_draws_invalid_still_raises_the_p0_6_hard_error(tmp_path, mo
     responses = [_payload(claim_type=OUT_OF_VOCAB_CLAIM)] * 3
     correction_responses = [_payload(claim_type=OUT_OF_VOCAB_CLAIM)] * 3
 
-    with pytest.raises(TagNotInSchemaError) as excinfo:
+    with pytest.raises(AllChunksQuarantinedError) as excinfo:
         _run(tmp_path, monkeypatch, responses, votes=3, correction_responses=correction_responses)
 
-    assert excinfo.value.axis_name == "claim_type"
-    assert excinfo.value.tag == OUT_OF_VOCAB_CLAIM
+    assert excinfo.value.quarantine_count == 1
+    assert "claim_type" in str(excinfo.value)
+    assert OUT_OF_VOCAB_CLAIM in str(excinfo.value)
 
 
 def test_run_tag_unlisted_softland_casts_a_ballot_and_can_lose(tmp_path, monkeypatch):

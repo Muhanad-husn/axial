@@ -3,13 +3,20 @@ shipped via #81; cleanup-on-success dropped by founder decision -- this test
 covers quarantine ONLY).
 
 Locked behavioral contract (DEC-1) -- do not edit without founder-adjudicated
-authorization. REVISED per a founder ruling: `out_of_vocab` (an out-of-
-vocabulary tag value persisting after the #102 correction re-ask,
-`TagNotInSchemaError`) is DESCOPED from quarantine -- it remains a hard
-error per P0-6 (#96/#102): a schema-coverage signal that must halt the
-source, not be silently skipped. Quarantine now covers exactly two classes:
-`content_filter` (`ContentRefusedError`) and `malformed_json`
-(`ModelJsonError` persisting after `complete_json`'s bounded retries).
+authorization. UPDATE (issue #329, 2026-07-23, one-line justification for
+this edit per CLAUDE.local.md's test-ownership rule): a prior revision of
+this docstring DESCOPED `out_of_vocab` (an out-of-vocabulary tag value
+persisting after the #102 correction re-ask, `TagNotInSchemaError`) from
+quarantine, ruling it a P0-6 hard error instead (#96/#102). The founder has
+now explicitly REVERSED that specific ruling: `out_of_vocab` joins
+quarantine like every other content-shaped reason. Quarantine covers
+`content_filter` (`ContentRefusedError`), `malformed_json` (`ModelJsonError`
+persisting after `complete_json`'s bounded retries), `parse_error`/
+`cardinality_error` (#325/#326), `missing_polity` (`CountryCaseMissingPolityError`,
+#329), and `out_of_vocab` (#329) -- this file itself still only drives
+scenarios 1-3 below (content_filter/malformed_json/transient/resume); the
+other reasons are covered in `src/axial/test_tag.py` and
+`tests/ingestion/test_tag_vocab_reask.py`.
 
 Today, one content-caused failure on any chunk in the tag pass aborts the
 WHOLE source (mann-v4 died at tag ~858/1010 to a single refused chunk,
@@ -18,8 +25,8 @@ this class of reason, see docs/postmortem/gold-run-2026-07/README.md). This
 test locks the fix: a chunk whose failure is CONTENT-CAUSED (content_filter
 or malformed_json) is skipped, logged, and recorded, and the source
 CONTINUES; a TRANSIENT failure keeps today's retry/backoff path completely
-unchanged (never quarantined); an out-of-vocabulary tag value (P0-6) keeps
-its existing hard-error contract unchanged too (never quarantined).
+unchanged (never quarantined). An out-of-vocabulary tag value now quarantines
+too (issue #329) -- see the tests named above, not this file.
 
 Scenario 1 -- content-caused failure -> quarantined, source completes
 -----------------------------------------------------------------------
@@ -69,15 +76,13 @@ And    a stderr line `tag: skipping quarantined chunk <chunk_id> (reason:
 And    that chunk is absent from the returned tagged records; every other
        chunk is processed (and tagged) normally
 
-See GitHub issue #120 for the source of truth, and the founder ruling above
-for the `out_of_vocab` descope. `axial.tag.run_tag`'s per-chunk loop
-(~line 1094, the loop body starting just after the #132 non-prose guard)
+See GitHub issue #120 for the source of truth, and issue #329 for the
+`out_of_vocab` reversal noted above. `axial.tag.run_tag`'s per-chunk loop
 already quarantines `ContentRefusedError` and a persisting `ModelJsonError`
 (shipped implementation, this commit); a persisting `TagNotInSchemaError`
-(out-of-vocab) is intentionally left OUT of scope here and continues to
-propagate straight out of `run_tag` as the P0-6 hard error, unchanged --
-that is covered by the existing P0-6 tests (test_tag_axis_prefix.py /
-test_tag_vocab_reask.py), not this file.
+(out-of-vocab) is OUT of scope for THIS file specifically (it quarantines
+too now, per #329, but that is covered by `src/axial/test_tag.py` and the
+updated `test_tag_vocab_reask.py`, not this file).
 
 Seam decision 1 -- bypassing docling/network via a monkeypatched upstream
 pass, exactly mirroring tests/test_xref_checkpoint.py's Seam decision 1
