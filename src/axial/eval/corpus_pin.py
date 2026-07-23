@@ -71,6 +71,7 @@ import yaml
 from axial.envelope import content_digest, _default_envelopes_dir
 from axial.intake import SUPPORTED_EXTENSIONS
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
+from axial.paths import default_sources_dir as _default_sources_dir
 from axial.vault import _default_vault_dir
 
 # The default write location (§7.12: "committed under evals/corpus_pin/").
@@ -80,16 +81,11 @@ from axial.vault import _default_vault_dir
 # acceptance test's isolation-seam docstring).
 EVALS_DIR = Path("evals") / "corpus_pin"
 
-# The default location of the raw ingested source files (the "durable
-# operator convention" docs/postmortem/gold-run-2026-07/canary-run-runbook.md
-# describes -- ingestion reads from here, and operators keep it around
-# across runs). No pass writes to this directory and no other module reads
-# from it today, so -- unlike vault_dir/envelopes_dir -- there is no
-# existing config key; `_default_sources_dir` still follows the identical
-# `config/pipeline.yaml`-then-fallback resolution `axial.vault.
-# _default_vault_dir`/`axial.envelope._default_envelopes_dir` already use,
-# so a future `paths.sources_dir` entry is honored the moment it's added.
-SOURCES_DIR = Path("data/sources")
+# `SOURCES_DIR`/`default_sources_dir` now live in `axial.paths` (issue
+# #281); the latter is imported above as `_default_sources_dir`, so this
+# module -- like `axial.vault` for `VAULT_DIR`/`_default_vault_dir` -- has
+# exactly one owner of the config-path resolution rather than a second,
+# independently-agreeing copy of it.
 
 # The envelope's own `source_id` shape is `f"{path.stem}-{digest[:12]}"`
 # (axial.envelope.compute_source_id) -- a stem, a literal hyphen, then
@@ -221,22 +217,6 @@ class GitShaUnavailableError(CorpusPinError):
     def __init__(self, cause: Exception):
         self.cause = cause
         super().__init__(f"could not resolve the axial checkout's own git HEAD commit: {cause}")
-
-
-def _default_sources_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
-    """Read `paths.sources_dir` from `config/pipeline.yaml` (mirrors
-    `axial.vault._default_vault_dir` / `axial.envelope._default_envelopes_dir`'s
-    own config-then-fallback resolution), falling back to `SOURCES_DIR`
-    when the file/key is absent -- no key exists in the shipped
-    `config/pipeline.yaml` today, but this still honors one the moment an
-    operator adds it, exactly like the other two directories."""
-    if not config_path.is_file():
-        return SOURCES_DIR
-    with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
-    paths_config = document.get("paths", {}) or {}
-    configured = paths_config.get("sources_dir")
-    return Path(configured) if configured else SOURCES_DIR
 
 
 def _repo_root() -> Path:
@@ -434,13 +414,13 @@ def write_pin(
 
     `vault_dir`/`envelopes_dir`/`sources_dir` default to
     `config/pipeline.yaml`'s `paths.vault_dir`/`paths.envelopes_dir`/
-    `paths.sources_dir` (mirroring `axial.vault`/`axial.envelope`'s own
-    resolution -- `sources_dir`'s own default, `_default_sources_dir`, is
-    this module's, since no other module reads raw source files today),
-    falling back to `data/vault`/`data/envelopes`/`data/sources` when the
-    file/key is absent. `evals_dir` defaults to `EVALS_DIR` -- there is no
-    config key or CLI flag for it (this codebase exposes no `--evals-dir`
-    anywhere; see the module docstring).
+    `paths.sources_dir`, all three resolved through `axial.paths` (issue
+    #281 -- `_default_vault_dir`/`_default_sources_dir` from `axial.paths`,
+    `_default_envelopes_dir` from `axial.envelope`), falling back to
+    `data/vault`/`data/envelopes`/`data/sources` when the file/key is
+    absent. `evals_dir` defaults to `EVALS_DIR` -- there is no config key
+    or CLI flag for it (this codebase exposes no `--evals-dir` anywhere;
+    see the module docstring).
 
     Deterministic and LLM-free: reruns over an unchanged vault + envelopes
     + raw sources + git HEAD write a byte-identical file (module
