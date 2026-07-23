@@ -28,10 +28,17 @@ require no network access:
                                      an artifact-role-shaped canned response
                                      whose `artifact_role` value honors the
                                      `AXIAL_STUB_ARTIFACT_ROLE` fault-injection
-                                     seam below; anything else -- including
-                                     the envelope pass, which never passes
-                                     it -- gets the original envelope-shaped
-                                     one). Dispatch is out-of-band (a call
+                                     seam below; `pass_name="interrogate"`,
+                                     passed by src/axial/brief/interrogate.py,
+                                     selects an interrogation-shaped canned
+                                     response (or, if
+                                     `AXIAL_STUB_INTERROGATE_RESPONSE` is set
+                                     to a non-empty value, that raw string
+                                     verbatim -- issue #252); anything else --
+                                     including the envelope pass, which never
+                                     passes it -- gets the original
+                                     envelope-shaped one). Dispatch is
+                                     out-of-band (a call
                                      argument), never embedded in the prompt
                                      text itself, so no internal marker ever
                                      reaches a real model. This resolves the
@@ -236,6 +243,16 @@ ENVELOPE_PASS_NAME = "envelope"
 # Same out-of-band dispatch convention as CHUNK_PASS_NAME above.
 HOLDINGS_PASS_NAME = "holdings"
 
+# Pass name the brief-interrogation pre-pass's single per-brief call
+# identifies itself with (see src/axial/brief/interrogate.py, issue #252,
+# PRD §7.2). Same out-of-band dispatch convention as CHUNK_PASS_NAME above --
+# naming this constant is also what makes the pass routable through the
+# `model_by_pass` / `reasoning_by_pass` / `votes_by_pass` config seams
+# (§7.11, TENTATIVE): unnamed here, it simply resolves every one of those to
+# its safe default (no model override, reasoning off, single draw), exactly
+# like any other pass this module does not single out.
+INTERROGATE_PASS_NAME = "interrogate"
+
 # Pass name the router's content-apparatus classification call identifies
 # itself with (see src/axial/chunk.py / src/axial/router.py, issue #207,
 # PRD §7.8 "Model-backed classification of flagged candidates"). Same
@@ -305,6 +322,18 @@ SINGLE_DRAW = 1
 # without needing a real model to misbehave. Unset/"" means the default
 # in-schema role below applies.
 STUB_ARTIFACT_ROLE_ENV_VAR = "AXIAL_STUB_ARTIFACT_ROLE"
+
+# Issue #252 test/CI-only seam: mirrors STUB_TAG_RESPONSE_ENV_VAR above,
+# exactly, for the brief-interrogation pass instead of the tag pass. When set
+# to a non-empty value, the stub/record clients' interrogate-pass response
+# becomes this raw string verbatim instead of the default canned
+# interrogation response, letting an acceptance test drive a specific
+# `{premises_found, bounds_applied, refusal}` combination end-to-end via
+# subprocess (e.g. a contradicted premise, a non-null refusal, or a
+# model-emitted `disposition` the deterministic wrapper must discard). Read
+# at call time, like every other seam here. Never affects any other pass's
+# canned response.
+STUB_INTERROGATE_RESPONSE_ENV_VAR = "AXIAL_STUB_INTERROGATE_RESPONSE"
 
 # The default, fixed in-schema `artifact_role` the stub/record canned
 # response carries when STUB_ARTIFACT_ROLE_ENV_VAR is unset -- the happy
@@ -531,6 +560,33 @@ def _canned_holdings_response() -> str:
     )
 
 
+# The default canned response for an interrogate-pass call (§7.2): no
+# smuggled premise found, no bound stated, no refusal -- and a model-supplied
+# `disposition` deliberately included so a stub-driven run exercises the
+# wrapper's "discard the model's own disposition" rule even on the happy
+# path (`axial.brief.interrogate.disposition_for` recomputes it regardless
+# of what this says).
+_CANNED_INTERROGATE_RESPONSE = json.dumps(
+    {
+        "premises_found": [],
+        "bounds_applied": [],
+        "refusal": None,
+        "disposition": "proceed",
+    }
+)
+
+
+def _canned_interrogate_response() -> str:
+    """The canned response for an interrogate-pass call (identified by
+    `pass_name=INTERROGATE_PASS_NAME`, never by prompt content): read fresh
+    from `STUB_INTERROGATE_RESPONSE_ENV_VAR` on every call so a test can
+    inject any `{premises_found, bounds_applied, refusal}` combination
+    end-to-end (see the env var's own comment above); unset/"" falls back to
+    the neutral `_CANNED_INTERROGATE_RESPONSE`."""
+    override = os.environ.get(STUB_INTERROGATE_RESPONSE_ENV_VAR, "")
+    return override or _CANNED_INTERROGATE_RESPONSE
+
+
 def _canned_response_for(pass_name: str | None) -> str:
     """Dispatch the canned response by pass: `pass_name == CHUNK_PASS_NAME`
     gets the chunk-shaped canned response, `pass_name == TAG_PASS_NAME` gets
@@ -540,10 +596,14 @@ def _canned_response_for(pass_name: str | None) -> str:
     artifact-role-shaped canned response, `pass_name == XREF_PASS_NAME` gets
     the referenced-artifact-ids-shaped canned response, `pass_name ==
     CONTENT_APPARATUS_PASS_NAME` gets the route-shaped canned response
-    (issue #207); anything else (the envelope pass, `pass_name ==
-    ENVELOPE_PASS_NAME`, included) gets the original envelope-shaped canned
-    response. Shared by `StubLLMClient` and `RecordLLMClient` so `record` is
-    indistinguishable from `stub` for the same call."""
+    (issue #207), `pass_name == INTERROGATE_PASS_NAME` gets the
+    interrogation-shaped canned response (or, if
+    `AXIAL_STUB_INTERROGATE_RESPONSE` is set to a non-empty value, that raw
+    string verbatim -- issue #252); anything else (the envelope pass,
+    `pass_name == ENVELOPE_PASS_NAME`, included) gets the original
+    envelope-shaped canned response. Shared by `StubLLMClient` and
+    `RecordLLMClient` so `record` is indistinguishable from `stub` for the
+    same call."""
     if pass_name == CHUNK_PASS_NAME:
         global _chunk_pass_call_count
         _chunk_pass_call_count += 1
@@ -584,6 +644,8 @@ def _canned_response_for(pass_name: str | None) -> str:
         return _canned_content_apparatus_response()
     if pass_name == HOLDINGS_PASS_NAME:
         return _canned_holdings_response()
+    if pass_name == INTERROGATE_PASS_NAME:
+        return _canned_interrogate_response()
     return StubLLMClient._CANNED_RESPONSE
 
 

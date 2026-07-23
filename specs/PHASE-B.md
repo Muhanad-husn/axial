@@ -125,7 +125,7 @@ Emitted by stage 1, persisted into the analysis record (§7.3). Shape:
 - `premises_found` — a list of `{premise, assessment}`: each smuggled premise the pre-pass found in the brief and whether the corpus supports it, contradicts it, or is silent.
 - `bounds_applied` — a list of statements of what the corpus can and cannot answer for this brief (e.g. "covers X, not Y").
 - `refusal` — `null`, or `{reason}` when the corpus does not support the request as posed.
-- `disposition` — exactly one of `proceed`, `proceed_bounded`, `refuse`, set by the deterministic wrapper from the fields above.
+- `disposition` — exactly one of `proceed`, `proceed_bounded`, `refuse`, set by the deterministic wrapper from the fields above, in this precedence: a non-null `refusal` always yields `refuse`, regardless of what `premises_found`/`bounds_applied` say; otherwise any `premises_found` entry assessed `contradicts`, or a non-empty `bounds_applied`, yields `proceed_bounded`; otherwise `proceed`. The wrapper is total (always resolves to exactly one of the three) and never reads a `disposition` the model itself emits — a model-supplied value is parsed-then-discarded, not trusted.
 
 A `refuse` disposition is a completed, valid run: the record is written, the answer states the refusal and its reason, and no synthesis call is made.
 

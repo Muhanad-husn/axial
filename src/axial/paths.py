@@ -38,6 +38,11 @@ VAULT_DIR = Path("data/vault")
 # across runs).
 SOURCES_DIR = Path("data/sources")
 
+# The default location of Phase-B analysis records, one JSON per brief run,
+# `<brief_id>.json` (specs/PHASE-B.md §7.3). Issue #252 slice 01 persists
+# only the §7.2 interrogation result here, ahead of the full record.
+ANALYSES_DIR = Path("data/analyses")
+
 
 def _read_configured_dir(config_path: Path, key: str, fallback: Path) -> Path:
     """Read `paths.<key>` from `config_path`, falling back to `fallback`
@@ -64,3 +69,9 @@ def default_sources_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Pat
     """Read `paths.sources_dir` from `config_path`, falling back to
     `SOURCES_DIR` when the file or key is absent."""
     return _read_configured_dir(config_path, "sources_dir", SOURCES_DIR)
+
+
+def default_analyses_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
+    """Read `paths.analyses_dir` from `config_path`, falling back to
+    `ANALYSES_DIR` when the file or key is absent."""
+    return _read_configured_dir(config_path, "analyses_dir", ANALYSES_DIR)
