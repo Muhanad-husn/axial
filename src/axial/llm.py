@@ -47,7 +47,14 @@ require no network access:
                                      response (or, if
                                      `AXIAL_STUB_ATTRIBUTION_RESPONSE` is set
                                      to a non-empty value, that raw string
-                                     verbatim -- issue #258); anything else --
+                                     verbatim -- issue #258); `pass_name=
+                                     "counter_position"`, passed by
+                                     src/axial/validators/counter_position.py,
+                                     selects a verdict-shaped canned response
+                                     (or, if
+                                     `AXIAL_STUB_COUNTER_POSITION_RESPONSE` is
+                                     set to a non-empty value, that raw string
+                                     verbatim -- issue #259); anything else --
                                      including the envelope pass, which never
                                      passes it -- gets the original
                                      envelope-shaped one). Dispatch is
@@ -317,6 +324,16 @@ SYNTHESIZE_PASS_NAME = "synthesize"
 # model that generated the claims it is checking (§7.9, charter §2).
 ATTRIBUTION_PASS_NAME = "attribution"
 
+# Pass name the stage-5 counter-position validator's bounded steelman-quality
+# check identifies itself with (see src/axial/validators/counter_position.py,
+# issue #259, PRD §7.9): does the §7.8 counter-position section state the
+# opposing school at its strongest, or a strawman. Same out-of-band dispatch
+# convention as ATTRIBUTION_PASS_NAME above -- naming this constant is what
+# makes the check routable through `model_by_pass`, and it must resolve to a
+# DIFFERENT model than SYNTHESIZE_PASS_NAME, never the model that generated
+# the counter-position it is checking (§7.9, charter §2).
+COUNTER_POSITION_PASS_NAME = "counter_position"
+
 # Per-pass model reasoning (§7.9, issue #207): reasoning is ON for the
 # structural-envelope pass and the content-apparatus classification gate --
 # both small, judgment-heavy, once/rarely-per-source calls -- and OFF
@@ -414,6 +431,16 @@ STUB_SYNTHESIZE_RESPONSE_ENV_VAR = "AXIAL_STUB_SYNTHESIZE_RESPONSE"
 # at call time, like every other seam here. Never affects any other pass's
 # canned response.
 STUB_ATTRIBUTION_RESPONSE_ENV_VAR = "AXIAL_STUB_ATTRIBUTION_RESPONSE"
+
+# Issue #259 test/CI-only seam: mirrors STUB_ATTRIBUTION_RESPONSE_ENV_VAR
+# above, exactly, for the stage-5 counter-position validator's bounded
+# steelman-quality check instead of the (b)-seam check. When set to a
+# non-empty value, the stub/record clients' counter_position-pass response
+# becomes this raw string verbatim instead of the default canned response,
+# letting a test script the scripted judge's verdict ("steelman" or
+# "strawman"). Read at call time, like every other seam here. Never affects
+# any other pass's canned response.
+STUB_COUNTER_POSITION_RESPONSE_ENV_VAR = "AXIAL_STUB_COUNTER_POSITION_RESPONSE"
 
 # Issue #258 test/CI-only seam: a JSON object mapping pass_name -> model
 # name, read fresh from the environment by `StubLLMClient`/`RecordLLMClient`'s
@@ -753,6 +780,23 @@ def _canned_attribution_response() -> str:
     return override or _CANNED_ATTRIBUTION_RESPONSE
 
 
+_CANNED_COUNTER_POSITION_RESPONSE = json.dumps(
+    {"verdict": "steelman", "detail": "Stub client: no judgment was made."}
+)
+
+
+def _canned_counter_position_response() -> str:
+    """The canned response for a counter_position-pass call (identified by
+    `pass_name=COUNTER_POSITION_PASS_NAME`, issue #259): read fresh from
+    `STUB_COUNTER_POSITION_RESPONSE_ENV_VAR` on every call so a test can
+    script the steelman-quality judge's verdict (see that env var's own
+    comment above); unset/"" falls back to the conservative "steelman"
+    default, so a stub-driven run never invents a strawman flag nobody
+    scripted."""
+    override = os.environ.get(STUB_COUNTER_POSITION_RESPONSE_ENV_VAR, "")
+    return override or _CANNED_COUNTER_POSITION_RESPONSE
+
+
 def _model_for_pass_from_stub_mapping(pass_name: str | None) -> str:
     """Shared by `StubLLMClient`/`RecordLLMClient`'s `model_for_pass`: honors
     `STUB_MODEL_BY_PASS_ENV_VAR` when set and `pass_name` is one of its keys,
@@ -829,6 +873,8 @@ def _canned_response_for(pass_name: str | None) -> str:
         return _canned_synthesize_response()
     if pass_name == ATTRIBUTION_PASS_NAME:
         return _canned_attribution_response()
+    if pass_name == COUNTER_POSITION_PASS_NAME:
+        return _canned_counter_position_response()
     return StubLLMClient._CANNED_RESPONSE
 
 

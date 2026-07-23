@@ -58,8 +58,11 @@ from axial.tag import DEFAULT_DOMAIN_DIR, TagError, run_tag
 from axial.validate import cross_validate
 from axial.validators import (
     AttributionValidatorError,
+    CounterPositionValidatorError,
     format_attribution_report,
+    format_counter_position_report,
     validate_attribution,
+    validate_counter_position,
 )
 from axial.vault import VaultError, run_vault_write
 from axial.xref import XrefError, run_xref
@@ -412,10 +415,12 @@ def build_parser() -> argparse.ArgumentParser:
     brief_validate_parser = brief_subparsers.add_parser(
         "validate",
         help=(
-            "run the stage-5 attribution validator over a persisted "
-            "analysis record at data/analyses/<brief_id>.json "
-            "(specs/PHASE-B.md §7.9, issue #258) -- exits 0 only when every "
-            "claim is marked and every (a)/(b) grounds pointer resolves"
+            "run the stage-5 attribution and counter-position validators over "
+            "a persisted analysis record at data/analyses/<brief_id>.json "
+            "(specs/PHASE-B.md §7.9, issues #258/#259) -- exits 0 only when "
+            "every claim is marked, every (a)/(b) grounds pointer resolves, "
+            "and a contested brief's §7.8 counter-position section is present "
+            "or explicitly disclosed one-sided"
         ),
     )
     brief_validate_parser.add_argument(
@@ -1031,18 +1036,26 @@ def _brief_validate(brief_id: str) -> int:
 
     client = get_client()
     try:
-        report = validate_attribution(record, client=client)
+        attribution_report = validate_attribution(record, client=client)
     except AttributionValidatorError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        counter_position_report = validate_counter_position(record, client=client)
+    except CounterPositionValidatorError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
     print(f"brief_id: {brief_id}")
-    print(format_attribution_report(report))
+    print(format_attribution_report(attribution_report))
+    print(format_counter_position_report(counter_position_report))
     # A failure blocks release (§7.9): no answer is emitted on a non-zero
     # exit, and this command never writes to `record_path` either way --
-    # the validator only ever reports (README.md: "it never edits the
-    # record").
-    return 0 if report.passed else 1
+    # every validator here only ever reports (README.md: "it never edits
+    # the record"). Both validators run regardless of each other's outcome
+    # so the operator sees the full picture in one pass; the exit code
+    # blocks release when EITHER fails.
+    return 0 if attribution_report.passed and counter_position_report.passed else 1
 
 
 def _pin_write(name: str) -> int:
