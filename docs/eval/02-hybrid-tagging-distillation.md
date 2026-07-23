@@ -1,7 +1,7 @@
 # Eval 2 — hybrid-tagging distillation (cost axis)
 
-**Status:** foundation stub, stage 5a shipped. **5a (issue #296): every prose
-chunk in the frozen vault is embedded once (local sentence-transformer,
+**Status:** foundation stub, stages 5a–5b shipped. **5a (issue #296): every
+prose chunk in the frozen vault is embedded once (local sentence-transformer,
 `sentence-transformers/all-MiniLM-L6-v2`) and persisted in a LanceDB vector
 store (`data/distill/embeddings.lance`, `src/axial/distill/embed.py`,
 `axial distill embed`), keyed by `chunk_id` with a flattened, filterable
@@ -11,8 +11,25 @@ metadata projection (`source_id` + each single-valued tag axis) — never
 `vault_snapshot_hash` this pass ran against; `axial.distill.staleness`
 (`check_staleness`) is the small, reusable seam every later stage-5
 artifact (5b's clusters, 5c/5d's classifiers) reuses to tell "still matches
-production" from "corpus moved, re-derive." 5b (readiness map) onward is not
-yet built.
+production" from "corpus moved, re-derive."
+
+**5b (issue #297): the readiness map.** `src/axial/distill/readiness.py`
+(`axial distill readiness-map`) reads every persisted vector from 5a, over
+zero LLM spend, and clusters them: L2-normalise (cosine geometry) →
+standardise → **PCA** (deterministic, `svd_solver="full"`; UMAP stays
+notebook-only per DEC-35, never a production representation) → **HDBSCAN**
+(`allow_single_cluster=True` — without it a corpus region that is tight but
+has no second, equally-dense region to split off against reads as 100%
+noise, verified directly against this library version). HDBSCAN's own `-1`
+label — never cluster `0` — passes through unrelabelled as the LLM-routed
+noise tail; real clusters start at `0`. The emitted
+`data/distill/readiness_manifest.json` records the corpus-pin provenance
+(`axial.distill.staleness`), the pinned config, and, per tag axis per tag
+value, the noise fraction, dominant-cluster id/share, and a `"tight"` /
+`"noise"` readiness call (majority-share threshold, `DEFAULT_READY_DOMINANT_SHARE
+= 0.5`) — plus the full `chunk_id → cluster_id` assignment 5c's
+cluster-stratified sampling reads. 5c (stratified teacher labels) onward is
+not yet built.
 **Depends on:** full 24-source re-run (tag distribution) + P0-10 gold set (referee).
 **Subject doc:** the exploration this evaluates lives at
 `docs/exploration/hybrid-tagging-classifier.md`.

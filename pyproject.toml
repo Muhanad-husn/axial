@@ -38,13 +38,15 @@ dev = [
 # sentence-transformer for the embedding pass + LanceDB for the vector
 # store. Neither belongs in `dependencies` (not needed by the Phase A
 # pipeline) nor `dev` (not CI tooling) -- its own group, installed via
-# `uv sync --group distill`. Scoped to exactly what this slice imports;
-# DEC-35 also named scikit-learn/hdbscan/umap-learn for later stage-5
-# slices (5b/5c) -- deliberately not added here (unused by #296, would trip
-# the repo's "no unused dependency" tripwire). A later slice adds them when
-# it needs them.
+# `uv sync --group distill`. scikit-learn + hdbscan added in #297 (stage
+# 5b: PCA reduction + HDBSCAN clustering for the readiness map) --
+# `umap-learn` deliberately NOT added: DEC-35 named it for notebook-only
+# visualization, but #297 builds no notebook, so it would be an unused
+# dependency.
 distill = [
+    "hdbscan>=0.8.38",
     "lancedb>=0.15",
+    "scikit-learn>=1.5",
     "sentence-transformers>=3.0",
 ]
 
