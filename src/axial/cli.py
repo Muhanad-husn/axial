@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Callable
 
 import axial
+from axial.analyze import format_examine_report as format_brief_examine_report
+from axial.analyze import run_examine
 from axial.artifacts import ArtifactsError, run_artifacts
 from axial.brief import BriefError, load_brief
 from axial.brief.interrogate import InterrogationError, interrogate, persist_interrogation
@@ -39,6 +41,7 @@ from axial.intake import IntakeError, intake
 from axial.llm import ENVELOPE_PASS_NAME, TAG_PASS_NAME, get_client
 from axial.pipeline_ready import PipelineReadyError, run_pipeline_ready
 from axial.polity_canonical import PolityCanonicalError, run_polity_build, run_polity_report
+from axial.query.reader import QueryError
 from axial.reconcile import ReconcileError, format_gc_report, run_gc
 from axial.run import (
     PASS_REGISTRY,
@@ -374,6 +377,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     brief_interrogate_parser.add_argument("brief_path", help="path to a versioned brief YAML file")
+
+    brief_examine_parser = brief_subparsers.add_parser(
+        "examine",
+        help=(
+            "run interrogation and retrieval and report the retrieved "
+            "chunk_ids (retrieval order), the raw per-polity coverage "
+            "counts, and the interrogation result -- makes ZERO stage-4 "
+            "synthesis calls and writes nothing under data/analyses/ "
+            "(specs/PHASE-B.md §5 stage 4, §7.5, §8 P0-9, issue #255)"
+        ),
+    )
+    brief_examine_parser.add_argument("brief_path", help="path to a versioned brief YAML file")
 
     pin_parser = subparsers.add_parser(
         "pin", help="corpus-pin manifest operations (specs/PHASE-B.md §7.12, §8 P0-10)"
@@ -927,6 +942,27 @@ def _brief_interrogate(brief_path: str) -> int:
     return 0
 
 
+def _brief_examine(brief_path: str) -> int:
+    try:
+        brief = load_brief(brief_path)
+    except BriefError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    client = get_client()
+    try:
+        result = run_examine(brief, client=client)
+    except (InterrogationError, QueryError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_brief_examine_report(brief, result))
+    # P0-9 inspect-before-spend: examine makes no stage-4 synthesis call, so
+    # a `refuse` disposition -- like every other disposition -- is a
+    # completed run, exit 0 (mirrors `_brief_interrogate`'s own §7.2 rule).
+    return 0
+
+
 def _pin_write(name: str) -> int:
     try:
         path = write_pin(name)
@@ -1027,6 +1063,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "brief" and args.brief_command == "interrogate":
         return _brief_interrogate(args.brief_path)
+
+    if args.command == "brief" and args.brief_command == "examine":
+        return _brief_examine(args.brief_path)
 
     if args.command == "pin" and args.pin_command == "write":
         return _pin_write(args.name)
