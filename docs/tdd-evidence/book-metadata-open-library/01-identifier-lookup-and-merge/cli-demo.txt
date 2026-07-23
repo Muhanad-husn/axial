@@ -1,0 +1,57 @@
+usage: axial [-h] [--version]
+             {schema,intake,extract,envelope,chunk,tag,artifacts,xref,gold,eval,vault,polity,drive,ingest,run,pipeline-ready,brief,pin,reconcile} ...
+
+positional arguments:
+  {schema,intake,extract,envelope,chunk,tag,artifacts,xref,gold,eval,vault,polity,drive,ingest,run,pipeline-ready,brief,pin,reconcile}
+    schema              domain schema operations
+    intake              validate a source file and probe it for a real text
+                        layer
+    extract             run structural extraction, emitting a hierarchical
+                        JSON tree
+    envelope            run the structural-envelope pass, writing
+                        data/envelopes/<source_id>.json
+    chunk               run the recursive/structural chunk stage, writing
+                        bounded prose chunk records to
+                        data/chunks/<source_id>.jsonl (LLM-free); 'examine' is
+                        a reserved source_path value that instead reports
+                        chunk-quality stats over data/chunks/ (zero
+                        LLM/embedding calls)
+    tag                 run the tagging pass, emitting tagged chunk records to
+                        stdout
+    artifacts           run the artifact-classification pass, emitting one
+                        record per artifact node to stdout
+    xref                run the cross-reference-detection pass, emitting
+                        (chunk_id, artifact_id) reference pairs to stdout
+    gold                gold-set (Academic labeling) operations
+    eval                score the Academic's returned label_sheet.xlsx under
+                        data/gold/labels/ against the tagger's own chunk
+                        records, writing data/gold/labels/eval_report.json
+    vault               vault operations
+    polity              offline canonical polity-map operations
+                        (deterministic, model-free)
+    drive               Google Drive source connector operations (Sec. 7.10,
+                        P0-11)
+    ingest              run vault-write over every source path listed in a
+                        line-delimited worklist file, skipping sources already
+                        recorded as vault_status=OK in
+                        data/gold/ingest.results.tsv
+    run                 run one registered per-source pass over a source set
+                        (a line-delimited worklist file or the data/sources/
+                        corpus glob), isolating each source's failure (record
+                        FAIL and continue), and printing an end-of-run
+                        OK/FAIL/SKIP summary -- see issue #277
+    pipeline-ready      ingest every canary named in a TOML manifest and
+                        evaluate it against the 'pipeline ready' bar (single-
+                        attempt completion, quarantine budget, time envelope),
+                        printing a per-canary PASS/FAIL table
+    brief               Phase-B brief intake operations (specs/PHASE-B.md
+                        §7.1)
+    pin                 corpus-pin manifest operations (specs/PHASE-B.md
+                        §7.12, §8 P0-10)
+    reconcile           safe reconciliation/GC for orphaned derived artifacts
+                        (issue #291)
+
+options:
+  -h, --help            show this help message and exit
+  --version             print the axial version and exit
+--- exit: 0 ---
