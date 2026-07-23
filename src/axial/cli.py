@@ -5,7 +5,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import axial
 from axial.analyze import format_examine_report as format_brief_examine_report
@@ -73,6 +73,12 @@ from axial.validators import (
     format_counter_position_report,
     validate_attribution,
     validate_counter_position,
+)
+from axial.validators.coverage import (
+    compute_coverage_map,
+    format_coverage_confidence_report,
+    format_coverage_map,
+    validate_coverage_and_confidence,
 )
 from axial.vault import VaultError, run_vault_write
 from axial.xref import XrefError, run_xref
@@ -425,15 +431,31 @@ def build_parser() -> argparse.ArgumentParser:
     brief_validate_parser = brief_subparsers.add_parser(
         "validate",
         help=(
-            "run the stage-5 attribution and counter-position validators over "
-            "a persisted analysis record at data/analyses/<brief_id>.json "
-            "(specs/PHASE-B.md §7.9, issues #258/#259) -- exits 0 only when "
-            "every claim is marked, every (a)/(b) grounds pointer resolves, "
-            "and a contested brief's §7.8 counter-position section is present "
-            "or explicitly disclosed one-sided"
+            "run the stage-5 attribution, counter-position, and "
+            "coverage/confidence validators over a persisted analysis record "
+            "at data/analyses/<brief_id>.json (specs/PHASE-B.md §7.9, issues "
+            "#258/#259/#260) -- exits 0 only when every claim is marked, "
+            "every (a)/(b) grounds pointer resolves, a contested brief's "
+            "§7.8 counter-position section is present or explicitly "
+            "disclosed one-sided, every polity the claims touch has a "
+            "coverage_map entry, and a confidence disclosure is present and "
+            "not overconfident"
         ),
     )
     brief_validate_parser.add_argument(
+        "brief_id", help="brief_id of a persisted record under data/analyses/"
+    )
+
+    brief_coverage_parser = brief_subparsers.add_parser(
+        "coverage",
+        help=(
+            "print the §7.7 per-polity coverage map (corpus/evidence chunk "
+            "counts and coverage_band) computed from a persisted record's "
+            "claims -- the inspection affordance for the coverage_bands "
+            "config, LLM-free (specs/PHASE-B.md §7.7, issue #260)"
+        ),
+    )
+    brief_coverage_parser.add_argument(
         "brief_id", help="brief_id of a persisted record under data/analyses/"
     )
 
@@ -1076,7 +1098,10 @@ def _brief_run(brief_path: str) -> int:
     return 0
 
 
-def _brief_validate(brief_id: str) -> int:
+def _load_analysis_record(brief_id: str) -> tuple[dict[str, Any], Path] | None:
+    """Shared by `_brief_validate`/`_brief_coverage`: load
+    `<analyses_dir>/<brief_id>.json`, printing a named error and returning
+    `None` when no record exists rather than raising."""
     record_path = default_analyses_dir() / f"{brief_id}.json"
     if not record_path.is_file():
         print(
@@ -1084,9 +1109,15 @@ def _brief_validate(brief_id: str) -> int:
             f"(expected at {record_path})",
             file=sys.stderr,
         )
-        return 1
+        return None
+    return json.loads(record_path.read_text(encoding="utf-8")), record_path
 
-    record = json.loads(record_path.read_text(encoding="utf-8"))
+
+def _brief_validate(brief_id: str) -> int:
+    loaded = _load_analysis_record(brief_id)
+    if loaded is None:
+        return 1
+    record, _record_path = loaded
 
     client = get_client()
     try:
@@ -1100,16 +1131,46 @@ def _brief_validate(brief_id: str) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    # The coverage/confidence validator (§7.9, issue #260) is a pure,
+    # model-free check over the record's own `coverage_map`/`confidence`
+    # fields -- it never touches `client`, so it cannot itself trip the
+    # `explode` provider.
+    coverage_report = validate_coverage_and_confidence(record)
+
     print(f"brief_id: {brief_id}")
     print(format_attribution_report(attribution_report))
     print(format_counter_position_report(counter_position_report))
+    print(format_coverage_confidence_report(coverage_report))
+    # Prints the record's own persisted coverage_map alongside the gate's
+    # verdict (§7.7: "a band is never rendered instead of the counts that
+    # justify it") -- the same rendering `_brief_coverage` uses for its
+    # freshly-computed map, reused here over the record's AS-PERSISTED one.
+    print(format_coverage_map(record.get("coverage_map") or {}))
     # A failure blocks release (§7.9): no answer is emitted on a non-zero
-    # exit, and this command never writes to `record_path` either way --
-    # every validator here only ever reports (README.md: "it never edits
-    # the record"). Both validators run regardless of each other's outcome
+    # exit, and this command never writes to the record either way -- every
+    # validator here only ever reports (README.md: "it never edits the
+    # record"). All three validators run regardless of each other's outcome
     # so the operator sees the full picture in one pass; the exit code
-    # blocks release when EITHER fails.
-    return 0 if attribution_report.passed and counter_position_report.passed else 1
+    # blocks release when ANY fails.
+    return (
+        0
+        if (attribution_report.passed and counter_position_report.passed and coverage_report.passed)
+        else 1
+    )
+
+
+def _brief_coverage(brief_id: str) -> int:
+    loaded = _load_analysis_record(brief_id)
+    if loaded is None:
+        return 1
+    record, _record_path = loaded
+
+    claims = record.get("claims") or []
+    coverage_map = compute_coverage_map(claims)
+
+    print(f"brief_id: {brief_id}")
+    print(format_coverage_map(coverage_map))
+    return 0
 
 
 def _brief_usage(pin: str | None) -> int:
@@ -1256,6 +1317,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "brief" and args.brief_command == "validate":
         return _brief_validate(args.brief_id)
+
+    if args.command == "brief" and args.brief_command == "coverage":
+        return _brief_coverage(args.brief_id)
 
     if args.command == "brief" and args.brief_command == "usage":
         return _brief_usage(args.pin)

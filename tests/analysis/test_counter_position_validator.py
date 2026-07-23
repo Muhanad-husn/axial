@@ -151,7 +151,18 @@ def _write_record(
         },
         "claims": claims,
         "counter_position": counter_position,
-        "coverage_map": {},
+        # A complete coverage_map for "Syria" (the only polity every claim
+        # here touches) and a non-top-band confidence disclosure -- since
+        # #260, `_brief_validate` also runs the coverage/confidence
+        # validator, so these fixtures must satisfy it too, not just the
+        # counter-position validator under test.
+        "coverage_map": {
+            "Syria": {
+                "corpus_chunk_count": 50,
+                "evidence_chunk_count": 1,
+                "coverage_band": "moderate",
+            }
+        },
         "confidence": {"overall_band": "low", "rationale": "fixture"},
         "trajectory": [],
         "model_by_pass": {},
