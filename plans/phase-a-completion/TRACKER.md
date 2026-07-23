@@ -653,16 +653,21 @@ the full conflict rationale.
 
 ## How to resume in a fresh session
 
-**Stage 4 is running — the build-lane steps below no longer apply.** Read
-*Stage 4 — live state* above and follow its *Next actions*. Stage 4 is operations:
-run in the main checkout `D:/axial`, **never a worktree** (`data/` is gitignored, so a
-corpus pass in a worktree silently operates on nothing).
+**Stage 4 is done; Phase A is closed.** The `Stage 4 — live state` section above is
+kept as incident history, not something a fresh session needs to act on. Current
+work is stage 5, scoped but not yet built (DEC-35).
 
-For a build-lane session (stage 5 onward):
+For a stage-5 (or any future build-lane) session:
 
-1. Read this file, then `README.md`, then DEC-32, then the relevant lane's plan.
+1. Read this file first, then `README.md`'s stage-5 section, then DEC-35 (stage-5
+   scoping) or DEC-32 (stage-5 sizing/dependency shape), then the relevant issue.
 2. `git checkout main && git pull` (the plans live on `main`; cut each slice's
    `feat/<feature>/NN-slug` branch from there).
 3. Check the status board above and each issue's open PRs for anything ◐ in flight.
-4. Pick the next ☐ slice per its lane order; run it through the harness; open a PR;
+4. `gh issue list` (or the GitHub plugin equivalent) scoped to #298's sub-issues
+   (#347–#353) to see which are open with no blocking dependency and no open PR —
+   those are dispatch candidates. When more than one qualifies (5d's five axis
+   issues, #348–#352, once #347/5c is done), spin one worktree per issue and
+   dispatch them concurrently, same as stage 0–3's parallel feature lanes.
+5. Pick the next ☐ slice per its lane order; run it through the harness; open a PR;
    update its checkbox to ◐ (PR #), then ✅ on merge.
