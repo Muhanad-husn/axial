@@ -1,0 +1,9 @@
+# A synthesis lens (specs/PHASE-B.md §7.1, §7.4, issue #256). See
+# political-economy.yaml's own header comment for what a lens is and why
+# lens content lives here as data, not code.
+name: state-formation
+description: >-
+  Reads the evidence for how state capacity and authority were built,
+  contested, or eroded: the origins of coercive and infrastructural power,
+  the actors that built or captured it, and how that formation shapes the
+  outcomes the evidence describes.

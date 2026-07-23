@@ -34,7 +34,13 @@ require no network access:
                                      response (or, if
                                      `AXIAL_STUB_INTERROGATE_RESPONSE` is set
                                      to a non-empty value, that raw string
-                                     verbatim -- issue #252); anything else --
+                                     verbatim -- issue #252); `pass_name=
+                                     "synthesize"`, passed by
+                                     src/axial/analyze/synthesis.py, selects a
+                                     claim-graph-shaped canned response (or,
+                                     if `AXIAL_STUB_SYNTHESIZE_RESPONSE` is
+                                     set to a non-empty value, that raw string
+                                     verbatim -- issue #256); anything else --
                                      including the envelope pass, which never
                                      passes it -- gets the original
                                      envelope-shaped one). Dispatch is
@@ -285,6 +291,15 @@ CONTENT_APPARATUS_PASS_NAME = "content_apparatus"
 # tier (that is a measured, separate decision per §7.11's own note).
 RETRIEVE_PASS_NAME = "retrieve"
 
+# Pass name the stage-4 synthesis pass's single per-brief call identifies
+# itself with (see src/axial/analyze/synthesis.py, issue #256, PRD §7.4/
+# §7.11). Same out-of-band dispatch convention as CHUNK_PASS_NAME above --
+# naming this constant is what makes the pass routable through the
+# `model_by_pass`/`reasoning_by_pass` config seams; unlike RETRIEVE_PASS_NAME,
+# §7.11 already states a tier for this pass (high, reasoning ON), so it is
+# also named in DEFAULT_REASONING_BY_PASS below.
+SYNTHESIZE_PASS_NAME = "synthesize"
+
 # Per-pass model reasoning (§7.9, issue #207): reasoning is ON for the
 # structural-envelope pass and the content-apparatus classification gate --
 # both small, judgment-heavy, once/rarely-per-source calls -- and OFF
@@ -300,6 +315,7 @@ DEFAULT_REASONING_BY_PASS: dict[str, bool] = {
     ENVELOPE_PASS_NAME: True,
     CONTENT_APPARATUS_PASS_NAME: True,
     HOLDINGS_PASS_NAME: True,
+    SYNTHESIZE_PASS_NAME: True,
     TAG_PASS_NAME: False,
     ARTIFACTS_PASS_NAME: False,
     XREF_PASS_NAME: False,
@@ -360,6 +376,17 @@ STUB_ARTIFACT_ROLE_ENV_VAR = "AXIAL_STUB_ARTIFACT_ROLE"
 # at call time, like every other seam here. Never affects any other pass's
 # canned response.
 STUB_INTERROGATE_RESPONSE_ENV_VAR = "AXIAL_STUB_INTERROGATE_RESPONSE"
+
+# Issue #256 test/CI-only seam: mirrors STUB_INTERROGATE_RESPONSE_ENV_VAR
+# above, exactly, for the stage-4 synthesis pass instead of the interrogate
+# pass. When set to a non-empty value, the stub/record clients'
+# synthesize-pass response becomes this raw string verbatim instead of the
+# default canned synthesis response, letting an acceptance test drive a
+# specific claim graph (e.g. one (a)/(b)/(c) claim each, or a claim with
+# empty grounds to drive the loud-failure path) end-to-end via subprocess or
+# in-process. Read at call time, like every other seam here. Never affects
+# any other pass's canned response.
+STUB_SYNTHESIZE_RESPONSE_ENV_VAR = "AXIAL_STUB_SYNTHESIZE_RESPONSE"
 
 # The default, fixed in-schema `artifact_role` the stub/record canned
 # response carries when STUB_ARTIFACT_ROLE_ENV_VAR is unset -- the happy
@@ -651,6 +678,24 @@ def _canned_interrogate_response() -> str:
     return override or _CANNED_INTERROGATE_RESPONSE
 
 
+# The default canned response for a synthesize-pass call (§7.4): a single
+# empty claim graph. Every real acceptance test drives this pass via
+# `STUB_SYNTHESIZE_RESPONSE_ENV_VAR` (an empty claims list on its own proves
+# nothing about the shape §7.4 requires), so this default exists only so a
+# stub-driven run that never scripts a claim graph doesn't crash.
+_CANNED_SYNTHESIZE_RESPONSE = json.dumps({"claims": []})
+
+
+def _canned_synthesize_response() -> str:
+    """The canned response for a synthesize-pass call (identified by
+    `pass_name=SYNTHESIZE_PASS_NAME`, never by prompt content): read fresh
+    from `STUB_SYNTHESIZE_RESPONSE_ENV_VAR` on every call so a test can
+    inject any claim graph end-to-end (see the env var's own comment
+    above); unset/"" falls back to the empty `_CANNED_SYNTHESIZE_RESPONSE`."""
+    override = os.environ.get(STUB_SYNTHESIZE_RESPONSE_ENV_VAR, "")
+    return override or _CANNED_SYNTHESIZE_RESPONSE
+
+
 def _canned_response_for(pass_name: str | None) -> str:
     """Dispatch the canned response by pass: `pass_name == CHUNK_PASS_NAME`
     gets the chunk-shaped canned response, `pass_name == TAG_PASS_NAME` gets
@@ -710,6 +755,8 @@ def _canned_response_for(pass_name: str | None) -> str:
         return _canned_holdings_response()
     if pass_name == INTERROGATE_PASS_NAME:
         return _canned_interrogate_response()
+    if pass_name == SYNTHESIZE_PASS_NAME:
+        return _canned_synthesize_response()
     return StubLLMClient._CANNED_RESPONSE
 
 

@@ -1,0 +1,12 @@
+# A synthesis lens (specs/PHASE-B.md §7.1, §7.4, issue #256): a named
+# theoretical frame the stage-4 synthesis pass applies to the assembled
+# evidence during axial coding. Lens content is data, never code (CLAUDE.md
+# "domain content is data, not code") -- swapping or adding a lens is a new
+# file here, not a source change.
+name: political-economy
+description: >-
+  Reads the evidence for how material interests, resource control, and
+  distributive conflict shape political outcomes: who controls what
+  economic base, who bears the cost of a given arrangement, and how
+  economic structure constrains or enables the political actors the
+  evidence describes.
