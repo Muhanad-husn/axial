@@ -66,6 +66,16 @@ paths:
   envelopes_dir: data/envelopes
   vault_dir: data/vault
 
+# Stage-3 agentic retrieval loop (issue #253, PRD §7.5/§7.6, P0-3): a
+# bounded step budget is a stated tunable, never hardcoded at the call
+# site (src/axial/retrieve/loop.py reads this via _resolve_step_budget,
+# falling back to its own DEFAULT_STEP_BUDGET when this file or key is
+# absent). 10 is a starting value for the walking skeleton, not yet
+# measured against the dev briefs (that measurement is a later, separate
+# pass, like the tier choice in §7.11).
+retrieve:
+  step_budget: 10
+
 # Google Drive connector tunables (issue #239, PRD §7.10 "Language-gate
 # tunables" paragraph / §8 P0-11c): the English-only language gate's
 # bounded text probe size and its accept-confidence threshold. src/axial/

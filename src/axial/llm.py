@@ -187,6 +187,23 @@ STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_TAG_RESPONSE_SEQUENCE"
 # canned-response dispatch both `stub` and `record` delegate to.
 STUB_ARTIFACT_FAIL_AT_ENV_VAR = "AXIAL_STUB_ARTIFACT_FAIL_AT"
 
+# Issue #253 slice 01 test/CI-only seam: the scripted tool-call channel for
+# `StubLLMClient`/`RecordLLMClient`'s `complete_with_tools()` (the retrieval
+# loop's model-driven tool-use entry point, distinct from `.complete()`'s
+# JSON-completion channel above). A JSON-encoded array whose elements are
+# each either `{"tool": <name>, "args": {...}}` (the next tool call the
+# scripted model issues) or `null` (the model's turn carries no tool call --
+# the loop's clean-end signal). Unlike `STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR`
+# et al., this is indexed by a counter kept on the CLIENT INSTANCE, not a
+# module-level global: the retrieval loop's tests construct their own
+# `StubLLMClient`/`RecordLLMClient` in-process (never via subprocess), so a
+# process-wide counter would leak state across tests in the same worker --
+# an instance counter can't. Cycles once exhausted
+# (`sequence[index % len(sequence)]`), mirroring the existing sequence seams'
+# own cycling convention. Read fresh from the environment on every call.
+# Unset/"" or an empty JSON array is treated as "no tool call" (`None`).
+STUB_TOOL_CALLS_ENV_VAR = "AXIAL_STUB_TOOL_CALLS"
+
 SECRETS_PATH_ENV_VAR = "AXIAL_SECRETS_PATH"
 # `DEFAULT_PIPELINE_CONFIG_PATH` itself now lives in `axial.paths` (issue
 # #249 finding 1), imported above and re-exported here under its original
@@ -258,6 +275,15 @@ INTERROGATE_PASS_NAME = "interrogate"
 # PRD §7.8 "Model-backed classification of flagged candidates"). Same
 # out-of-band dispatch convention as CHUNK_PASS_NAME above.
 CONTENT_APPARATUS_PASS_NAME = "content_apparatus"
+
+# Pass name the stage-3 agentic retrieval loop's tool-calling turns identify
+# themselves with (see src/axial/retrieve/loop.py, issue #253, PRD §7.5/§7.6).
+# Same out-of-band dispatch convention as CHUNK_PASS_NAME above -- naming
+# this constant is what makes the pass routable through the
+# `model_by_pass`/`reasoning_by_pass`/`votes_by_pass` config seams (§7.11
+# TENTATIVE); slice 01 only wires the name through, it does not choose a
+# tier (that is a measured, separate decision per §7.11's own note).
+RETRIEVE_PASS_NAME = "retrieve"
 
 # Per-pass model reasoning (§7.9, issue #207): reasoning is ON for the
 # structural-envelope pass and the content-apparatus classification gate --
@@ -407,6 +433,26 @@ class LLMClient(Protocol):
         new config option."""
         ...
 
+    def complete_with_tools(
+        self, prompt: str, tools: list[dict[str, Any]], pass_name: str | None = None
+    ) -> dict[str, Any] | None:
+        """Native tool-calling entry point (issue #253 slice 01, PRD
+        §7.5/§7.6): send `prompt` plus a `tools` schema (the provider
+        function-calling shape `axial.retrieve.tools.tool_specs_for_provider`
+        builds) and return the model's requested tool call as
+        `{"tool": <name>, "args": <dict>}`, or `None` when this turn carries
+        no tool call at all. Added ALONGSIDE `complete()` -- every existing
+        `.complete()` caller is unaffected, this is a new, separate entry
+        point every provider must also implement.
+
+        `pass_name` is the same out-of-band routing/dispatch seam
+        `.complete()` already documents -- a real provider accepts and
+        ignores it for anything but per-pass model/reasoning tiering; the
+        stub/record test clients use it only to keep call-count bookkeeping
+        symmetric with `.complete()` (their scripted tool-call channel does
+        not vary by pass, unlike the canned JSON-completion dispatch)."""
+        ...
+
 
 class StubLLMClient:
     """Fixture-canned client for tests and CI: no network, deterministic
@@ -481,6 +527,11 @@ class StubLLMClient:
 
     def __init__(self) -> None:
         self.call_count = 0
+        # Issue #253 slice 01: a per-INSTANCE counter for the scripted
+        # tool-call channel (`STUB_TOOL_CALLS_ENV_VAR`'s own comment
+        # explains why this is instance-level, not a module global like the
+        # chunk/tag/artifact counters above).
+        self._tool_call_index = 0
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         # Locked (see `_stub_dispatch_lock`'s own comment): `call_count` and
@@ -497,6 +548,19 @@ class StubLLMClient:
         value to prove a model-bearing pass's `model` field round-trips
         under the stub provider (issue #270 slice 02)."""
         return "stub"
+
+    def complete_with_tools(
+        self, prompt: str, tools: list[dict[str, Any]], pass_name: str | None = None
+    ) -> dict[str, Any] | None:
+        """Play back the next element of `STUB_TOOL_CALLS_ENV_VAR`, indexed
+        by this instance's own call counter (see that env var's module-level
+        comment for why). `tools`/`pass_name` are accepted for interface
+        parity with a real provider but do not affect the script."""
+        with _stub_dispatch_lock:
+            self.call_count += 1
+            index = self._tool_call_index
+            self._tool_call_index += 1
+        return _scripted_tool_call_for(index)
 
 
 def _canned_artifact_response() -> str:
@@ -649,6 +713,25 @@ def _canned_response_for(pass_name: str | None) -> str:
     return StubLLMClient._CANNED_RESPONSE
 
 
+def _scripted_tool_call_for(call_index: int) -> dict[str, Any] | None:
+    """The scripted tool-call channel `StubLLMClient`/`RecordLLMClient`'s
+    `complete_with_tools()` both delegate to (mirroring `_canned_response_for`
+    being shared by their `.complete()` methods, so `record` stays
+    indistinguishable from `stub` for the same call). Reads
+    `STUB_TOOL_CALLS_ENV_VAR` fresh from the environment on every call (like
+    every other stub seam in this module); an unset/empty value or an empty
+    JSON array means "no tool call" (`None`). `call_index` is 0-indexed and
+    supplied by the caller's own instance counter -- see that env var's
+    module-level comment for why this is per-instance, not per-process."""
+    raw = os.environ.get(STUB_TOOL_CALLS_ENV_VAR, "")
+    if not raw:
+        return None
+    sequence = json.loads(raw)
+    if not sequence:
+        return None
+    return sequence[call_index % len(sequence)]
+
+
 class RecordLLMClient:
     """Test/CI-only client selected via `AXIAL_LLM_PROVIDER=record`: appends
     every prompt it receives, JSON-encoded on its own line, to
@@ -660,6 +743,9 @@ class RecordLLMClient:
     def __init__(self, record_path: Path) -> None:
         self._record_path = record_path
         self.call_count = 0
+        # Issue #253 slice 01: mirrors `StubLLMClient._tool_call_index`
+        # exactly (see that attribute's own comment).
+        self._tool_call_index = 0
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         # Locked (see `_stub_dispatch_lock`'s own comment): `call_count`,
@@ -680,6 +766,22 @@ class RecordLLMClient:
         from the stub's (module docstring)."""
         return "stub"
 
+    def complete_with_tools(
+        self, prompt: str, tools: list[dict[str, Any]], pass_name: str | None = None
+    ) -> dict[str, Any] | None:
+        """Delegates to the exact same `_scripted_tool_call_for` dispatch
+        `StubLLMClient.complete_with_tools` uses (so `record` is
+        indistinguishable from `stub` for this channel too), with the same
+        prompt-recording side effect `.complete()` already has."""
+        with _stub_dispatch_lock:
+            self.call_count += 1
+            self._record_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._record_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(prompt) + "\n")
+            index = self._tool_call_index
+            self._tool_call_index += 1
+        return _scripted_tool_call_for(index)
+
 
 class ExplodingLLMClient:
     """Poison client that raises if its completion method is ever invoked.
@@ -696,6 +798,15 @@ class ExplodingLLMClient:
             "ExplodingLLMClient.complete() was invoked -- this indicates an "
             "LLM-backed pass attempted to recompute instead of reusing a "
             "cached result"
+        )
+
+    def complete_with_tools(
+        self, prompt: str, tools: list[dict[str, Any]], pass_name: str | None = None
+    ) -> dict[str, Any] | None:
+        raise RuntimeError(
+            "ExplodingLLMClient.complete_with_tools() was invoked -- this "
+            "indicates an LLM-backed pass attempted to recompute instead of "
+            "reusing a cached result"
         )
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
@@ -986,7 +1097,11 @@ class OpenRouterClient:
         return self._model_by_pass.get(pass_name, self._model)
 
     def _post_with_deadline(
-        self, prompt: str, model: str | None = None, pass_name: str | None = None
+        self,
+        prompt: str,
+        model: str | None = None,
+        pass_name: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> httpx.Response:
         """Run the blocking `httpx` POST on a daemon watchdog thread and
         enforce `self._request_deadline_seconds` as a hard wall-clock
@@ -1016,36 +1131,43 @@ class OpenRouterClient:
         `reasoning.enabled` value from `self._reasoning_by_pass` (defaulting
         to `False` for a pass not named there -- the safe, unchanged-since-
         #147 default).
+
+        `tools` (issue #253 slice 01) is a purely additive payload field: it
+        is included only when the caller passes a non-`None` value
+        (`complete_with_tools`), so an ordinary `complete()` call's payload
+        is byte-for-byte unchanged from before this parameter existed.
         """
         target_model = model if model is not None else self.model_for_pass(pass_name)
         reasoning_enabled = self._reasoning_by_pass.get(pass_name, False)
         outcome: dict[str, Any] = {}
         done = threading.Event()
+        payload: dict[str, Any] = {
+            "model": target_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": _MAX_COMPLETION_TOKENS,
+            # Issue #147 (revised per-pass by issue #207, §7.9): the
+            # production_low model started being served as a reasoning
+            # model, and the added reasoning phase pushed large chunk-echo
+            # calls (max_tokens=60000) past the 300s wall-clock request
+            # deadline. Reasoning is now a PER-PASS setting
+            # (`reasoning_enabled`, resolved above from
+            # `self._reasoning_by_pass`) -- ON for the envelope/content-
+            # apparatus passes, OFF (unchanged) for the high-volume
+            # tag/artifacts/xref calls #147 was about. Both the primary
+            # model and the content_fallback_model reroute share this one
+            # call site via the `model` override above, so this single
+            # field covers both.
+            "reasoning": {"enabled": reasoning_enabled},
+        }
+        if tools is not None:
+            payload["tools"] = tools
 
         def _run() -> None:
             try:
                 outcome["response"] = self._client.post(
                     "/chat/completions",
                     headers={"Authorization": f"Bearer {self._api_key}"},
-                    json={
-                        "model": target_model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "max_tokens": _MAX_COMPLETION_TOKENS,
-                        # Issue #147 (revised per-pass by issue #207, §7.9):
-                        # the production_low model started being served as a
-                        # reasoning model, and the added reasoning phase
-                        # pushed large chunk-echo calls (max_tokens=60000)
-                        # past the 300s wall-clock request deadline. Reasoning
-                        # is now a PER-PASS setting (`reasoning_enabled`,
-                        # resolved above from `self._reasoning_by_pass`) --
-                        # ON for the envelope/content-apparatus passes, OFF
-                        # (unchanged) for the high-volume tag/artifacts/xref
-                        # calls #147 was about. Both the primary model and
-                        # the content_fallback_model reroute share this one
-                        # call site via the `model` override above, so this
-                        # single field covers both.
-                        "reasoning": {"enabled": reasoning_enabled},
-                    },
+                    json=payload,
                 )
             except BaseException as exc:  # noqa: BLE001 - re-raised on the caller's thread below
                 outcome["error"] = exc
@@ -1156,6 +1278,103 @@ class OpenRouterClient:
                 continue
 
             return content
+
+        raise AssertionError("unreachable: the retry loop always returns or raises")
+
+    def complete_with_tools(
+        self, prompt: str, tools: list[dict[str, Any]], pass_name: str | None = None
+    ) -> dict[str, Any] | None:
+        """Native tool-calling entry point (issue #253 slice 01, PRD
+        §7.5/§7.6): sends `tools` in the `/chat/completions` payload and
+        reads `tool_calls` off the response, reusing the SAME
+        watchdog/deadline/reasoning/model-by-pass machinery `complete()`
+        uses via `_post_with_deadline` -- added ALONGSIDE `complete()`,
+        never changing its signature or its payload when `tools` is not
+        passed (see `_post_with_deadline`'s own docstring).
+
+        Returns the model's first requested tool call as
+        `{"tool": <name>, "args": <parsed-json-object>}`, or `None` when
+        this turn carries no tool call at all -- the retrieval loop
+        (`axial.retrieve.loop.run_retrieval_loop`) treats that as a clean
+        end (retrying a tool-less turn is explicitly out of scope for v0,
+        plan `plans/retrieval-loop/01-tool-loop-skeleton.md`'s own
+        "out of scope" list). Only the FIRST tool call in a turn is honored
+        even if the model requests several in parallel -- the v0 loop is
+        single-call-per-step by design (§7.6 logs one trajectory entry per
+        call); a later slice can widen this if a real model's tool-use
+        pattern needs it.
+
+        Deliberately narrower than `complete()`'s retry policy: transport
+        errors, 429/5xx, and the wall-clock deadline retry exactly like
+        `complete()` does, but there is no `content_filter` fallback
+        reroute here -- no acceptance test drives this path against
+        anything but the scripted `stub`/`record` provider (this feature's
+        own explicit non-goal: "Any live-LLM test"), so adding untested
+        moderation-reroute plumbing here would be speculative robustness,
+        not a proven need.
+        """
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            is_last_attempt = attempt == _MAX_ATTEMPTS
+            try:
+                response = self._post_with_deadline(prompt, pass_name=pass_name, tools=tools)
+            except httpx.TransportError as exc:
+                if is_last_attempt:
+                    raise
+                _log_retry(pass_name, attempt, type(exc).__name__)
+                _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
+                continue
+            except _RequestDeadlineExceeded as exc:
+                if is_last_attempt:
+                    raise OpenRouterError(
+                        f"request wall-clock deadline of {self._request_deadline_seconds}s "
+                        f"exceeded on attempt {attempt}/{_MAX_ATTEMPTS} (issue #108)"
+                    ) from exc
+                _log_retry(pass_name, attempt, type(exc).__name__)
+                _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
+                continue
+
+            if not is_last_attempt and (response.status_code == 429 or response.status_code >= 500):
+                _log_retry(pass_name, attempt, str(response.status_code))
+                _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
+                continue
+
+            response.raise_for_status()
+            try:
+                data = response.json()
+            except (json.JSONDecodeError, ValueError) as exc:
+                if is_last_attempt:
+                    snippet = repr(response.text[:300])
+                    raise OpenRouterError(
+                        f"malformed API response body: {exc}; body snippet: {snippet}"
+                    ) from exc
+                _log_retry(pass_name, attempt, type(exc).__name__)
+                _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
+                continue
+            try:
+                message = data["choices"][0]["message"]
+            except (KeyError, IndexError, TypeError) as exc:
+                raise OpenRouterError(f"unexpected OpenRouter response shape: {data!r}") from exc
+
+            tool_calls = message.get("tool_calls") or []
+            if not tool_calls:
+                return None
+
+            first = tool_calls[0]
+            try:
+                function = first["function"]
+                name = function["name"]
+                raw_arguments = function.get("arguments", "{}")
+            except (KeyError, TypeError) as exc:
+                raise OpenRouterError(f"malformed tool_call in response: {first!r}") from exc
+            try:
+                args = (
+                    json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+                )
+            except json.JSONDecodeError as exc:
+                raise OpenRouterError(
+                    f"malformed tool_call arguments JSON for {name!r}: {raw_arguments!r}"
+                ) from exc
+            return {"tool": name, "args": args}
 
         raise AssertionError("unreachable: the retry loop always returns or raises")
 
