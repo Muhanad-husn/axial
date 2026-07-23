@@ -11,8 +11,13 @@ as slices land. Issues remain the system of record; this is the map over them.
   [`STAGE-4-RUNBOOK.md`](STAGE-4-RUNBOOK.md) is the *why* — measured costs, traps, and the
   sample-vs-full-re-tag analysis. Read both before launching any corpus pass
 - **Decision:** `docs/DECISIONS.md` → DEC-32
-- **Last updated:** 2026-07-22 — **stage 4 is RUNNING.** Step 0 preflight passed; 4.0 is live
-  as a detached process. Read *Stage 4 — live state* below before touching anything
+- **Last updated:** 2026-07-23 — **STAGE 4 COMPLETE. PHASE A IS CLOSED.** 4.0 through 4.4
+  all done: corpus retag (0 unresolved fails, every mid-run FAIL self-recovered),
+  post-retag vault-write (30/30), 4.2 eval (simulated, provisional per DEC-32), 4.3
+  schema freeze (DEC-34, real corpus-wide numbers), 4.4 distribution recorded
+  ([`docs/eval/04-frozen-tag-distribution.md`](../../docs/eval/04-frozen-tag-distribution.md)).
+  Next is stage 5 (HDBSCAN distillation), a separate build. *Stage 4 — live state* below
+  is kept as the incident history, not current state.
 
 ## Read-me-first (30-second orient)
 
@@ -91,7 +96,11 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
   non-quarantined chunks, every one of the 30 sources reporting real data for the first
   time (28/30 previously read a false 0.0%/0.0% because they predated the sentinels).
   `theory_school` stays KEPT.
-- ☐ 4.4 record the frozen tag distribution (input to stage 5)
+- ✅ **4.4 record the frozen tag distribution (input to stage 5) — DONE 2026-07-23.**
+  Full per-axis distribution recorded in
+  [`docs/eval/04-frozen-tag-distribution.md`](../../docs/eval/04-frozen-tag-distribution.md):
+  17,824 tagged chunks, 586 quarantined; every axis's value breakdown plus the top 20
+  of 998 distinct polities. **Phase A closes here.**
 
 ---
 
