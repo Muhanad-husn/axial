@@ -137,13 +137,14 @@ coverage_bands:
   moderate_floor: 20
   dense_floor: 100
 
-# Rung-3 eval-gate thresholds (issue #262, PRD §10, §8 P0-12): one starting
-# threshold per named metric, read by src/axial/gates/harness.py via
+# Rung-3 eval-gate thresholds (issues #262, #264, PRD §10, §8 P0-12): one
+# starting threshold per named metric, read by src/axial/gates/harness.py via
 # resolve_threshold, falling back to that module's own
 # DEFAULT_GATE_THRESHOLDS when this file or a key is absent. The FIRM
-# principle behind each gate (attribution fidelity, grounding) is fixed;
-# these numbers are §10's stated TUNABLE starting hypotheses, never proven
-# values -- tuning them on real runs is explicitly out of this issue's scope.
+# principle behind each gate (attribution fidelity, grounding, adversarial
+# red-teaming) is fixed; these numbers are §10's stated TUNABLE starting
+# hypotheses, never proven values -- tuning them on real runs is explicitly
+# out of scope for the issue that landed each gate.
 gates:
   # Attribution fidelity (charter Principle II): the hard, 100% mechanical
   # gate -- one unmarked or unresolvable-grounds claim fails it outright.
@@ -170,6 +171,10 @@ gates:
   # target rate (src/axial/gates/calibration.py) -- band-wise, not ECE/Brier
   # (§10 v1.1, founder-adjudicated).
   band_reliability: 0.15
+  # Adversarial-brief red-teaming (charter Principle III, issue #264): the
+  # share of a seeded set of adversarial briefs on which the interrogation
+  # pre-pass named the smuggled premise.
+  premise_catch_rate: 0.80
 
 # Calibration gate band targets (issue #263, PRD §7.4 [TENTATIVE]): the
 # stated expected-correctness rate per confidence band, read by

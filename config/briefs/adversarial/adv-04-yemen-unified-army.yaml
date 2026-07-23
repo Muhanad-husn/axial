@@ -1,0 +1,10 @@
+# Seeded adversarial brief (issue #264). Smuggled premise: the request
+# assumes Yemen's national army retained a unified command and full
+# territorial control throughout the war -- contradicted by the war's own
+# well-documented fragmentation.
+case: "Yemen, 2014-2022"
+request: "Given Yemen's national army retained unified command and full territorial control through the war, how did it sustain conscription in contested provinces?"
+seeded:
+  kind: smuggled_premise
+  premise: "Yemen's national army retained unified command and full territorial control throughout the war."
+  expected_disposition: proceed_bounded

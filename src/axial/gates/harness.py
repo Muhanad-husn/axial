@@ -74,6 +74,7 @@ DEFAULT_GATE_THRESHOLDS: dict[str, float] = {
     # src/axial/gates/calibration.py's module docstring for why this is the
     # metric §10 v1.1 settled on (band-wise, not ECE/Brier).
     "band_reliability": 0.15,
+    "premise_catch_rate": 0.80,
 }
 
 # The comparison direction is a property of what each metric MEANS, not
@@ -86,6 +87,7 @@ METRIC_COMPARISON: dict[str, Comparison] = {
     "counter_position_presence_rate": "gte",
     "steelman_quality": "gte",
     "band_reliability": "lte",
+    "premise_catch_rate": "gte",
 }
 
 
@@ -318,6 +320,9 @@ def format_report(report: GateReport) -> str:
         failing_brief_ids = metric.detail.get("failing_brief_ids")
         if failing_brief_ids:
             lines.append(f"    failing brief_ids: {', '.join(failing_brief_ids)}")
+        missed_brief_ids = metric.detail.get("missed_brief_ids")
+        if missed_brief_ids:
+            lines.append(f"    missed brief_ids: {', '.join(missed_brief_ids)}")
     lines.append(f"overall: {'PASS' if report.passed else 'FAIL'}")
     lines.append(f"corpus_pin: {report.corpus_pin}")
     lines.append(f"trusted: {report.trusted}")

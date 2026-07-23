@@ -360,6 +360,19 @@ GROUNDING_PASS_NAME = "grounding"
 # DIFFERENT model than SYNTHESIZE_PASS_NAME.
 CALIBRATION_PASS_NAME = "calibration"
 
+# Pass name the rung-3 adversarial-brief red-teaming gate's independent
+# premise-correspondence judge call identifies itself with (see
+# src/axial/gates/adversarial.py, issue #264, PRD §10): does a premise the
+# interrogation pre-pass (INTERROGATE_PASS_NAME) found correspond to the
+# seeded brief's declared "answer key" premise. Same out-of-band dispatch
+# convention as CHUNK_PASS_NAME above -- naming this constant is what makes
+# the judge routable through `model_by_pass`; it must resolve to a DIFFERENT
+# model than INTERROGATE_PASS_NAME, since the pass that proposed the
+# premises_found being scored must never grade whether its own finding
+# corresponds to the seed (§10, charter §2). Mirrors GROUNDING_PASS_NAME
+# exactly, one pass name per independent judge seam.
+PREMISE_MATCH_PASS_NAME = "premise_match"
+
 # Per-pass model reasoning (§7.9, issue #207): reasoning is ON for the
 # structural-envelope pass and the content-apparatus classification gate --
 # both small, judgment-heavy, once/rarely-per-source calls -- and OFF
@@ -490,6 +503,33 @@ STUB_GROUNDING_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_GROUNDING_RESPONSE_SEQUEN
 # canned response. Read fresh from the environment on every call.
 STUB_CALIBRATION_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_CALIBRATION_RESPONSE_SEQUENCE"
 
+# Issue #264 test/CI-only seam: mirrors STUB_GROUNDING_RESPONSE_SEQUENCE_ENV_VAR
+# above, exactly, for the brief-interrogation pass instead of the grounding
+# judge -- the rung-3 adversarial-brief gate runs the interrogation pre-pass
+# once per seeded brief in one process, so a single-string override
+# (STUB_INTERROGATE_RESPONSE_ENV_VAR) cannot script "name it on 9, miss it on
+# 1" across a run. A JSON-encoded array of raw interrogate-pass response
+# strings, indexed by a fresh, dedicated, per-process 1-indexed counter
+# (`_interrogate_pass_call_count`). Takes priority over
+# STUB_INTERROGATE_RESPONSE_ENV_VAR when both are set, mirroring the chunk/tag
+# sequence-over-single-override precedence. Cycles once exhausted. An
+# unset/empty value falls back to that single-override (or, if that is also
+# unset, the neutral default canned response).
+STUB_INTERROGATE_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_INTERROGATE_RESPONSE_SEQUENCE"
+
+# Issue #264 test/CI-only seam: mirrors STUB_GROUNDING_RESPONSE_SEQUENCE_ENV_VAR
+# above, exactly, for the rung-3 adversarial-brief gate's independent
+# premise-correspondence judge call instead of the grounding judge. A
+# JSON-encoded array of raw premise_match-pass response strings (each
+# `{"verdict": "corresponds"|"does_not_correspond"}`), indexed by a fresh,
+# dedicated, per-process 1-indexed counter (`_premise_match_pass_call_count`)
+# -- one call per seeded brief whose interrogation result named at least one
+# premise, so a test scripts "9 correspond, 1 does not" as an array. Cycles
+# once exhausted. An unset/empty value falls back to the conservative
+# "does_not_correspond" canned response -- a stub-driven run never invents a
+# catch nobody scripted.
+STUB_PREMISE_MATCH_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_PREMISE_MATCH_RESPONSE_SEQUENCE"
+
 # Issue #258 test/CI-only seam: a JSON object mapping pass_name -> model
 # name, read fresh from the environment by `StubLLMClient`/`RecordLLMClient`'s
 # `model_for_pass` (which otherwise always answers the fixed id "stub"
@@ -549,6 +589,16 @@ _grounding_pass_call_count = 0
 # dispatches, driving the AXIAL_STUB_CALIBRATION_RESPONSE_SEQUENCE seam
 # (issue #263), mirroring `_grounding_pass_call_count` above exactly.
 _calibration_pass_call_count = 0
+
+# Per-process, 1-indexed counter of interrogate-pass canned-response
+# dispatches, driving the AXIAL_STUB_INTERROGATE_RESPONSE_SEQUENCE seam
+# (issue #264), mirroring `_grounding_pass_call_count` above exactly.
+_interrogate_pass_call_count = 0
+
+# Per-process, 1-indexed counter of premise_match-pass canned-response
+# dispatches, driving the AXIAL_STUB_PREMISE_MATCH_RESPONSE_SEQUENCE seam
+# (issue #264), mirroring `_grounding_pass_call_count` above exactly.
+_premise_match_pass_call_count = 0
 
 # Guards every one of the counters above (issue #325 follow-up): a
 # bare module-global `count += 1` is not one atomic operation, and
@@ -797,13 +847,47 @@ _CANNED_INTERROGATE_RESPONSE = json.dumps(
 
 def _canned_interrogate_response() -> str:
     """The canned response for an interrogate-pass call (identified by
-    `pass_name=INTERROGATE_PASS_NAME`, never by prompt content): read fresh
-    from `STUB_INTERROGATE_RESPONSE_ENV_VAR` on every call so a test can
-    inject any `{premises_found, bounds_applied, refusal}` combination
-    end-to-end (see the env var's own comment above); unset/"" falls back to
+    `pass_name=INTERROGATE_PASS_NAME`, never by prompt content). A JSON array
+    read fresh from `STUB_INTERROGATE_RESPONSE_SEQUENCE_ENV_VAR`, indexed by
+    the fresh per-process interrogate-pass counter just advanced (issue
+    #264: the adversarial-brief gate calls this pass once per seeded brief in
+    one process), takes priority over the single-string
+    `STUB_INTERROGATE_RESPONSE_ENV_VAR` override so a test can script "name
+    it on 9 briefs, miss it on 1" across a run; unset/"" falls back to that
+    single override (see its own comment above), which itself falls back to
     the neutral `_CANNED_INTERROGATE_RESPONSE`."""
+    global _interrogate_pass_call_count
+    _interrogate_pass_call_count += 1
+    sequence_raw = os.environ.get(STUB_INTERROGATE_RESPONSE_SEQUENCE_ENV_VAR, "")
+    if sequence_raw:
+        sequence = json.loads(sequence_raw)
+        if sequence:
+            return sequence[(_interrogate_pass_call_count - 1) % len(sequence)]
     override = os.environ.get(STUB_INTERROGATE_RESPONSE_ENV_VAR, "")
     return override or _CANNED_INTERROGATE_RESPONSE
+
+
+_CANNED_PREMISE_MATCH_RESPONSE = json.dumps({"verdict": "does_not_correspond"})
+
+
+def _canned_premise_match_response() -> str:
+    """The canned response for a premise_match-pass call (identified by
+    `pass_name=PREMISE_MATCH_PASS_NAME`, issue #264): a JSON array read fresh
+    from `STUB_PREMISE_MATCH_RESPONSE_SEQUENCE_ENV_VAR`, indexed by the fresh
+    per-process premise_match-pass counter just advanced (see that env var's
+    own comment for why -- one call per seeded brief whose interrogation
+    named at least one premise, so a test scripts a verdict sequence across
+    calls); unset/empty falls back to the conservative default
+    `"does_not_correspond"` -- a stub-driven run never invents a catch nobody
+    scripted."""
+    global _premise_match_pass_call_count
+    _premise_match_pass_call_count += 1
+    sequence_raw = os.environ.get(STUB_PREMISE_MATCH_RESPONSE_SEQUENCE_ENV_VAR, "")
+    if sequence_raw:
+        sequence = json.loads(sequence_raw)
+        if sequence:
+            return sequence[(_premise_match_pass_call_count - 1) % len(sequence)]
+    return _CANNED_PREMISE_MATCH_RESPONSE
 
 
 # The default canned response for a synthesize-pass call (§7.4): a single
@@ -922,8 +1006,10 @@ def _canned_response_for(pass_name: str | None) -> str:
     CONTENT_APPARATUS_PASS_NAME` gets the route-shaped canned response
     (issue #207), `pass_name == INTERROGATE_PASS_NAME` gets the
     interrogation-shaped canned response (or, if
-    `AXIAL_STUB_INTERROGATE_RESPONSE` is set to a non-empty value, that raw
-    string verbatim -- issue #252); anything else (the envelope pass,
+    `AXIAL_STUB_INTERROGATE_RESPONSE`/`_SEQUENCE` is set to a non-empty
+    value, that raw string/sequence verbatim -- issue #252/#264), `pass_name
+    == PREMISE_MATCH_PASS_NAME` gets the correspondence-verdict-shaped canned
+    response (issue #264); anything else (the envelope pass,
     `pass_name == ENVELOPE_PASS_NAME`, included) gets the original
     envelope-shaped canned response. Shared by `StubLLMClient` and
     `RecordLLMClient` so `record` is indistinguishable from `stub` for the
@@ -980,6 +1066,8 @@ def _canned_response_for(pass_name: str | None) -> str:
         return _canned_grounding_response()
     if pass_name == CALIBRATION_PASS_NAME:
         return _canned_calibration_response()
+    if pass_name == PREMISE_MATCH_PASS_NAME:
+        return _canned_premise_match_response()
     return StubLLMClient._CANNED_RESPONSE
 
 

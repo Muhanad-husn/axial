@@ -1,12 +1,20 @@
 """Rung-3 eval gates: pass/fail harnesses scoring an analysis engine's
-attribution fidelity and grounding over a directory of analysis records
-(specs/PHASE-B.md §10, §8 P0-12, issue #262).
+attribution fidelity, grounding, synthesis quality, calibration, and
+adversarial-brief red-teaming (specs/PHASE-B.md §10, §8 P0-12, issues #262,
+#263, #264).
 
-Slice 01 ships the common gate shape (`axial.gates.harness`) plus two gates:
-`attribution-fidelity` (`axial.gates.attribution`) and `grounding`
-(`axial.gates.grounding`). Later slices (issues #263, #264) plug additional
-gates into `GATE_RUNNERS` without reshaping this package -- see
-plans/rung3-gates/README.md.
+Slice 01 shipped the common gate shape (`axial.gates.harness`) plus two
+gates: `attribution-fidelity` (`axial.gates.attribution`) and `grounding`
+(`axial.gates.grounding`). Slice 02 (issue #263) adds `synthesis-quality`
+(`axial.gates.synthesis_quality`) and `calibration`
+(`axial.gates.calibration`). Slice 03 (issue #264) adds `adversarial`
+(`axial.gates.adversarial`) into `GATE_RUNNERS` without reshaping this
+package -- see plans/rung3-gates/README.md. Unlike the others, the
+adversarial gate's `records` argument is a `list[SeededBrief]` (loaded via
+`axial.gates.adversarial.load_seeded_briefs` from a directory of seeded YAML
+briefs, not `load_records`'s JSON analysis records) -- the CLI's `_gate_run`
+picks the right loader per gate name; this module's shared dispatch shape is
+unaffected.
 """
 
 from __future__ import annotations
@@ -14,6 +22,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from axial.gates.adversarial import GATE_NAME as ADVERSARIAL_GATE_NAME
+from axial.gates.adversarial import (
+    AdversarialGateError,
+    InvalidExpectedDispositionError,
+    InvalidSeededKindError,
+    MalformedSeededBlockError,
+    MissingSeededBlockError,
+    PremiseMatchCheckFailedError,
+    SeededBrief,
+)
+from axial.gates.adversarial import SelfGradingError as AdversarialSelfGradingError
+from axial.gates.adversarial import load_seeded_briefs, run_adversarial_gate
 from axial.gates.attribution import GATE_NAME as ATTRIBUTION_FIDELITY_GATE_NAME
 from axial.gates.attribution import run_attribution_fidelity_gate
 from axial.gates.calibration import GATE_NAME as CALIBRATION_GATE_NAME
@@ -58,6 +78,7 @@ GATE_RUNNERS = {
     GROUNDING_GATE_NAME: run_grounding_gate,
     SYNTHESIS_QUALITY_GATE_NAME: run_synthesis_quality_gate,
     CALIBRATION_GATE_NAME: run_calibration_gate,
+    ADVERSARIAL_GATE_NAME: run_adversarial_gate,
 }
 
 
@@ -71,7 +92,7 @@ class UnknownGateError(GateError):
 
 def run_gate(
     gate: str,
-    records: list[dict[str, Any]],
+    records: list[Any],
     *,
     client: LLMClient,
     vault_dir: Path | None = None,
@@ -80,7 +101,10 @@ def run_gate(
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
 ) -> GateReport:
     """Dispatch to `gate`'s runner in `GATE_RUNNERS`. Raises
-    `UnknownGateError` for an unregistered name."""
+    `UnknownGateError` for an unregistered name. `records` is a
+    `list[dict[str, Any]]` for `attribution-fidelity`/`grounding` (analysis
+    records) or a `list[SeededBrief]` for `adversarial` (module docstring) --
+    whichever loader the caller used to build it."""
     runner = GATE_RUNNERS.get(gate)
     if runner is None:
         raise UnknownGateError(gate)
@@ -95,6 +119,7 @@ def run_gate(
 
 
 __all__ = [
+    "ADVERSARIAL_GATE_NAME",
     "ATTRIBUTION_FIDELITY_GATE_NAME",
     "GROUNDING_GATE_NAME",
     "SYNTHESIS_QUALITY_GATE_NAME",
@@ -105,20 +130,30 @@ __all__ = [
     "CalibrationCheckFailedError",
     "CalibrationGateError",
     "CalibrationSelfGradingError",
+    "AdversarialGateError",
+    "AdversarialSelfGradingError",
     "GateError",
     "GateReport",
     "InvalidConfidenceBandError",
     "MetricResult",
     "GroundingCheckFailedError",
     "GroundingGateError",
+    "InvalidExpectedDispositionError",
+    "InvalidSeededKindError",
+    "MalformedSeededBlockError",
+    "MissingSeededBlockError",
+    "PremiseMatchCheckFailedError",
+    "SeededBrief",
     "SelfGradingError",
     "UnresolvableGroundsError",
     "UnknownGateError",
     "academic_cases_present",
     "format_report",
     "load_records",
+    "load_seeded_briefs",
     "resolve_corpus_pin",
     "resolve_trusted",
+    "run_adversarial_gate",
     "run_attribution_fidelity_gate",
     "run_calibration_gate",
     "run_gate",
