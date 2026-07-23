@@ -1,0 +1,102 @@
+brief_id: 84c6dd95acf41894
+disposition: proceed
+persisted: data\analyses\84c6dd95acf41894.json
+exit=0
+
+--- data/analyses/84c6dd95acf41894.json ---
+{
+    "brief": {
+        "brief_id": "84c6dd95acf41894",
+        "case": "Syria",
+        "lens": null,
+        "request": "How did displacement reshape local authority?"
+    },
+    "brief_id": "84c6dd95acf41894",
+    "claims": [
+        {
+            "claim_id": "a434334b195d389b",
+            "confidence": "medium",
+            "grounds": [
+                {
+                    "ref_id": "brfix_001_syria_a",
+                    "ref_type": "chunk"
+                }
+            ],
+            "kind": "a",
+            "polities_touched": [
+                "Syria"
+            ],
+            "text": "The corpus states that displacement reshaped local authority in Syria."
+        },
+        {
+            "claim_id": "e67ca614535b0ddc",
+            "confidence": "low",
+            "grounds": [
+                {
+                    "ref_id": "brfix_001_syria_a",
+                    "ref_type": "chunk"
+                },
+                {
+                    "ref_id": "brfix_002_iraq_a",
+                    "ref_type": "chunk"
+                }
+            ],
+            "kind": "b",
+            "polities_touched": [
+                "Syria",
+                "Iraq"
+            ],
+            "text": "A cross-source inference linking Syrian and Iraqi displacement dynamics."
+        }
+    ],
+    "confidence": {
+        "overall_band": "low",
+        "rationale": "placeholder: confidence has not yet been computed by the analysis-validators (issues #258-260), and coverage_map is likewise a placeholder in this slice, so no real counts back this band"
+    },
+    "corpus_pin": "baseline",
+    "counter_position": {
+        "corpus_one_sided": false,
+        "grounds": [],
+        "one_sided_reason": null,
+        "present": false,
+        "stance": null
+    },
+    "coverage_map": {},
+    "interrogation": {
+        "bounds_applied": [],
+        "disposition": "proceed",
+        "premises_found": [],
+        "refusal": null
+    },
+    "lens": "political-economy",
+    "model_by_pass": {
+        "interrogate": "stub",
+        "retrieve": "stub",
+        "synthesize": "stub"
+    },
+    "schema_version": "0.1",
+    "trajectory": [
+        {
+            "args": {
+                "chunk_id": "brfix_001_syria_a"
+            },
+            "result_count": 1,
+            "result_ids": [
+                "brfix_001_syria_a"
+            ],
+            "step": 1,
+            "tool": "get_chunk"
+        },
+        {
+            "args": {
+                "chunk_id": "brfix_002_iraq_a"
+            },
+            "result_count": 1,
+            "result_ids": [
+                "brfix_002_iraq_a"
+            ],
+            "step": 2,
+            "tool": "get_chunk"
+        }
+    ]
+}
