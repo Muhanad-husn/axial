@@ -2134,10 +2134,25 @@ def test_run_tag_quarantines_a_persistently_blank_claim_type_secondary_response(
     assert client.calls_for_poisoned == 3
 
 
+def _read_central_quarantine_log(tags_dir):
+    """Every record in the central cross-source quarantine log (issue #329),
+    keyed by nothing -- callers filter by `chunk_id`/`reason` themselves,
+    since a shared `tags_dir` can carry records from more than one source."""
+    import axial.tag as tag_mod
+
+    log_path = tags_dir / tag_mod.QUARANTINE_LOG_FILENAME
+    if not log_path.exists():
+        return []
+    return [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line]
+
+
 def test_run_tag_quarantine_log_and_reason_for_a_parse_error(monkeypatch, tmp_path, capsys):
     """The quarantine log line and checkpoint reason for a `TagParseError`
     match the `QUARANTINE_REASON_PARSE_ERROR` constant, exactly mirroring
-    the `content_filter`/`malformed_json` quarantine log contract (#120)."""
+    the `content_filter`/`malformed_json` quarantine log contract (#120).
+    Also proves the central cross-source quarantine log (issue #329) carries
+    a correct record for this reason -- not just the two new reasons this
+    issue adds -- so the log is genuinely shared, not reason-specific."""
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_multi_value_axes(tmp_path)
@@ -2189,6 +2204,288 @@ def test_run_tag_quarantine_log_and_reason_for_a_parse_error(monkeypatch, tmp_pa
         checkpoint_records[poisoned_id]["quarantine_reason"]
         == tag_mod.QUARANTINE_REASON_PARSE_ERROR
     )
+
+    log_records = [
+        r for r in _read_central_quarantine_log(tags_dir) if r.get("chunk_id") == poisoned_id
+    ]
+    assert len(log_records) == 1, (
+        f"expected exactly one central quarantine log record for "
+        f"{poisoned_id!r}, got {log_records!r}"
+    )
+    assert log_records[0]["source_id"] == source_id
+    assert log_records[0]["reason"] == tag_mod.QUARANTINE_REASON_PARSE_ERROR
+    assert log_records[0]["detail"]
+    assert log_records[0]["timestamp"]
+
+
+# --- run_tag: CountryCaseMissingPolityError quarantine (issue #329) -------
+#
+# Zero handler existed anywhere in the votes loop for this exception before
+# this issue: `empirical_scope` resolves to `scope:country-case` but the
+# same response's `polity` comes back empty, and `apply_correction_reask`
+# only re-asks on `TagNotInSchemaError` -- so this propagated straight out
+# of `_validate` uncaught, aborting the whole source.
+
+
+def test_run_tag_quarantines_a_missing_polity_error(monkeypatch, tmp_path):
+    """With a checkpoint active, a persisting `CountryCaseMissingPolityError`
+    quarantines just the offending chunk and the source completes; every
+    other chunk tags normally. `reject_degenerate_tag_values` (`complete_
+    json`'s own `validate`) itself calls `parse_polity_response`, so a
+    persisting missing polity is caught by `complete_json`'s own bounded
+    retry budget (3 attempts) before it ever reaches `apply_correction_
+    reask` -- exactly mirroring the `malformed_json` quarantine reason's own
+    call-count contract."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_empirical_scope(tmp_path)
+    chunk_records = _three_chunk_records()
+    poisoned_text = chunk_records[1]["text"]
+    survivors = [c["chunk_id"] for i, c in enumerate(chunk_records) if i != 1]
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
+
+    missing_polity_response = json.dumps(
+        {"role_in_argument": "role:claim", "empirical_scope": "scope:country-case"}
+    )
+    valid_response = json.dumps(
+        {"role_in_argument": "role:claim", "empirical_scope": "scope:general"}
+    )
+
+    class _Client:
+        def __init__(self):
+            self.calls_for_poisoned = 0
+
+        def complete(self, prompt, pass_name=None):
+            if poisoned_text not in prompt:
+                return valid_response
+            self.calls_for_poisoned += 1
+            return missing_polity_response
+
+    client = _Client()
+    tags_dir = tmp_path / "data" / "tags"
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+    source_id = tag_mod.compute_source_id(tmp_path / "paper.pdf")
+    checkpoint_path = tag_mod.tags_checkpoint_path(source_id, tags_dir)
+
+    result = tag_mod.run_tag(
+        tmp_path / "paper.pdf",
+        client=client,
+        domain_dir=domain_dir,
+        tags_dir=tags_dir,
+        votes=1,
+    )
+
+    tagged_ids = [r["chunk_id"] for r in result]
+    poisoned_id = chunk_records[1]["chunk_id"]
+    assert poisoned_id not in tagged_ids
+    assert tagged_ids == survivors
+    assert result.quarantine_count == 1
+    # complete_json's own bounded retry (reject_degenerate_tag_values as its
+    # validate, which itself checks polity) must run to exhaustion before
+    # quarantining -- never a short-circuit on the first bad draw.
+    assert client.calls_for_poisoned == 3
+
+    checkpoint_records = {
+        r["chunk_id"]: r
+        for r in (
+            json.loads(line) for line in checkpoint_path.read_text(encoding="utf-8").splitlines()
+        )
+    }
+    assert (
+        checkpoint_records[poisoned_id]["quarantine_reason"]
+        == tag_mod.QUARANTINE_REASON_MISSING_POLITY
+    )
+
+    log_records = [
+        r for r in _read_central_quarantine_log(tags_dir) if r.get("chunk_id") == poisoned_id
+    ]
+    assert len(log_records) == 1
+    assert log_records[0]["source_id"] == source_id
+    assert log_records[0]["reason"] == tag_mod.QUARANTINE_REASON_MISSING_POLITY
+    assert log_records[0]["detail"]
+    assert log_records[0]["timestamp"]
+
+
+def test_run_tag_quarantines_a_missing_polity_error_surfaced_by_a_correction_reask(
+    monkeypatch, tmp_path
+):
+    """The #102 correction re-ask's own answer is a FRESH full re-generation
+    of every axis, entirely unvetted by `reject_degenerate_tag_values` --
+    so a missing polity can surface here too, on a DIFFERENT axis than the
+    one the correction targeted (exactly the beshara-shape reasoning
+    `TagCardinalityError`'s own correction-reask test already covers): the
+    original response's out-of-vocab `role_in_argument` triggers the reask,
+    and the reask's own answer moves `empirical_scope` to `scope:country-case`
+    with no `polity`. `apply_correction_reask` never re-asks a second time
+    (only `TagNotInSchemaError` triggers it), so this quarantines
+    immediately -- proving the OTHER raise site (`_parse_and_validate_tags`
+    via the `_validate` closure passed to `apply_correction_reask`) is
+    handled too, not just the one inside `complete_json`'s own bounded
+    retry budget."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_empirical_scope(tmp_path)
+    chunk_records = _three_chunk_records()
+    poisoned_text = chunk_records[1]["text"]
+    survivors = [c["chunk_id"] for i, c in enumerate(chunk_records) if i != 1]
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
+
+    out_of_vocab_role = json.dumps(
+        {"role_in_argument": "role:not-a-real-tag", "empirical_scope": "scope:general"}
+    )
+    corrected_but_missing_polity = json.dumps(
+        {"role_in_argument": "role:claim", "empirical_scope": "scope:country-case"}
+    )
+    valid_response = json.dumps(
+        {"role_in_argument": "role:claim", "empirical_scope": "scope:general"}
+    )
+
+    class _Client:
+        def __init__(self):
+            self.calls_for_poisoned = 0
+
+        def complete(self, prompt, pass_name=None):
+            if poisoned_text not in prompt:
+                return valid_response
+            self.calls_for_poisoned += 1
+            if "CORRECTION REQUIRED" in prompt:
+                return corrected_but_missing_polity
+            return out_of_vocab_role
+
+    client = _Client()
+    tags_dir = tmp_path / "data" / "tags"
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+    source_id = tag_mod.compute_source_id(tmp_path / "paper.pdf")
+    checkpoint_path = tag_mod.tags_checkpoint_path(source_id, tags_dir)
+
+    result = tag_mod.run_tag(
+        tmp_path / "paper.pdf",
+        client=client,
+        domain_dir=domain_dir,
+        tags_dir=tags_dir,
+        votes=1,
+    )
+
+    tagged_ids = [r["chunk_id"] for r in result]
+    poisoned_id = chunk_records[1]["chunk_id"]
+    assert poisoned_id not in tagged_ids
+    assert tagged_ids == survivors
+    assert result.quarantine_count == 1
+    # exactly one initial call plus one bounded #102 correction re-ask --
+    # never complete_json's own JSON/degeneracy retry budget, since the
+    # initial response is well-formed and non-degenerate.
+    assert client.calls_for_poisoned == 2
+
+    checkpoint_records = {
+        r["chunk_id"]: r
+        for r in (
+            json.loads(line) for line in checkpoint_path.read_text(encoding="utf-8").splitlines()
+        )
+    }
+    assert (
+        checkpoint_records[poisoned_id]["quarantine_reason"]
+        == tag_mod.QUARANTINE_REASON_MISSING_POLITY
+    )
+
+
+# --- run_tag: persisting TagNotInSchemaError quarantine (issue #329) -----
+#
+# Reverses the #120-era P0-6 ruling (descoped there, re-confirmed hard-fatal
+# by tests/ingestion/test_tag_quarantine.py's module docstring): a tag still
+# out of vocabulary after its own bounded #102 correction re-ask used to
+# abort the whole source via `raise spoiled`. Founder ruling, issue #329:
+# fold it into quarantine too, with the same checkpoint-scoped fallback
+# every other reason already has.
+
+
+def test_run_tag_quarantines_a_persisting_out_of_vocab_tag(monkeypatch, tmp_path):
+    """With a checkpoint active, a tag still out of vocabulary after its own
+    bounded #102 correction re-ask quarantines just that chunk (instead of
+    the old `raise spoiled` hard error) and the source completes; every
+    other chunk tags normally. The bounded re-ask must still fire exactly
+    once before quarantining -- two calls for the poisoned chunk, never a
+    short-circuit on the first bad draw."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
+    chunk_records = _three_chunk_records()
+    poisoned_text = chunk_records[1]["text"]
+    survivors = [c["chunk_id"] for i, c in enumerate(chunk_records) if i != 1]
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
+
+    out_of_vocab_response = json.dumps({"role_in_argument": "role:not-a-real-tag"})
+    valid_response = json.dumps({"role_in_argument": "role:claim"})
+
+    class _Client:
+        def __init__(self):
+            self.calls_for_poisoned = 0
+
+        def complete(self, prompt, pass_name=None):
+            if poisoned_text not in prompt:
+                return valid_response
+            self.calls_for_poisoned += 1
+            return out_of_vocab_response
+
+    client = _Client()
+    tags_dir = tmp_path / "data" / "tags"
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+    source_id = tag_mod.compute_source_id(tmp_path / "paper.pdf")
+    checkpoint_path = tag_mod.tags_checkpoint_path(source_id, tags_dir)
+
+    result = tag_mod.run_tag(
+        tmp_path / "paper.pdf",
+        client=client,
+        domain_dir=domain_dir,
+        tags_dir=tags_dir,
+        votes=1,
+    )
+
+    tagged_ids = [r["chunk_id"] for r in result]
+    poisoned_id = chunk_records[1]["chunk_id"]
+    assert poisoned_id not in tagged_ids
+    assert tagged_ids == survivors
+    assert result.quarantine_count == 1
+    assert client.calls_for_poisoned == 2
+
+    checkpoint_records = {
+        r["chunk_id"]: r
+        for r in (
+            json.loads(line) for line in checkpoint_path.read_text(encoding="utf-8").splitlines()
+        )
+    }
+    assert (
+        checkpoint_records[poisoned_id]["quarantine_reason"]
+        == tag_mod.QUARANTINE_REASON_OUT_OF_VOCAB
+    )
+
+    log_records = [
+        r for r in _read_central_quarantine_log(tags_dir) if r.get("chunk_id") == poisoned_id
+    ]
+    assert len(log_records) == 1
+    assert log_records[0]["source_id"] == source_id
+    assert log_records[0]["reason"] == tag_mod.QUARANTINE_REASON_OUT_OF_VOCAB
+    assert log_records[0]["detail"]
+    assert log_records[0]["timestamp"]
+
+
+def test_run_tag_out_of_vocab_still_hard_errors_with_no_checkpoint_active(monkeypatch, tmp_path):
+    """The checkpoint-scoped fallback (issue #329): with NO `tags_dir`
+    supplied (checkpoint inactive), a persisting out-of-vocab tag keeps the
+    pre-#329 hard-error contract exactly -- there is nowhere durable to
+    record a quarantine, mirroring every other quarantine reason's own
+    `if checkpoint_path is None: raise` fallback."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_minimal_domain(tmp_path, tag_ids=("role:claim",))
+    _one_chunk_read_chunks(monkeypatch, tag_mod)
+
+    class _Client:
+        def complete(self, prompt, pass_name=None):
+            return json.dumps({"role_in_argument": "role:not-a-real-tag"})
+
+    with pytest.raises(tag_mod.TagNotInSchemaError):
+        (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+        tag_mod.run_tag(tmp_path / "paper.pdf", client=_Client(), domain_dir=domain_dir, votes=1)
 
 
 # --- run_tag: all-chunks-quarantined still fails loud (PR #327 fix,
