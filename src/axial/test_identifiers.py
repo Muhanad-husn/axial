@@ -94,38 +94,40 @@ class TestCapture:
         assert capture("ordinary body prose discussing the case in general terms") is None
 
 
-class TestCaptureAmbiguity:
-    """Founder decision (post-review of #326): more than one distinct
-    checksum-valid ISBN in the front matter is ambiguous, not a "pick one"
-    call -- an author-overlap guard cannot separate same-author volumes,
-    which is exactly the real case measured on the corpus:
-    `mann-sources-of-social-power-v1`/`v3`/`v4` all carry the identical
-    ISBN `9781107028654` in an "also available in this series" block
-    alongside their own volume-specific ISBN."""
+class TestCaptureMultipleCandidates:
+    """Founder decision (post-review of #326, refined a second time after
+    real-corpus measurement showed treating every multi-ISBN capture as
+    ambiguous cost 93%->37% coverage): `capture()` itself only reports that
+    more than one distinct candidate was found -- it does not decide
+    whether they describe the same work (harmless, e.g. hardcover/paperback
+    ISBNs) or genuinely different works (e.g. `mann-sources-of-social-
+    power-v1`/`v3`/`v4`'s shared series ISBN `9781107028654` alongside
+    their own volume-specific one). That decision needs a resolve-and-
+    compare step (`axial.intake._merge_identifier_fields`), which this pure
+    module does not perform."""
 
     TWO_VALID_ISBNS = (
         "ISBN: 978-0-262-03384-8\nAlso available in this series:\nISBN: 978-0-198-82524-1\n"
     )
 
-    def test_more_than_one_distinct_valid_isbn_abstains(self):
+    def test_more_than_one_distinct_valid_isbn_reports_every_candidate(self):
         result = capture(self.TWO_VALID_ISBNS)
 
         assert result == {
             "type": "isbn",
             "value": None,
-            "abstained": True,
             "candidates": ["9780198825241", "9780262033848"],
         }
 
-    def test_a_repeated_identical_isbn_is_not_ambiguous(self):
+    def test_a_repeated_identical_isbn_is_not_multiple(self):
         """The same ISBN printed twice (e.g. once on the title page, once
         on the copyright page) is one identifier, not two candidates."""
         text = "ISBN: 978-0-262-03384-8\n...\nISBN 9780262033848 (print)"
 
         assert capture(text) == {"type": "isbn", "value": "9780262033848"}
 
-    def test_ambiguous_isbns_win_over_a_doi_found_on_the_same_page(self):
-        """ISBN precedence still applies to an ambiguous capture -- a
+    def test_multiple_isbns_win_over_a_doi_found_on_the_same_page(self):
+        """ISBN precedence still applies to a multi-candidate capture -- a
         confusing ISBN block does not fall through to a DOI found
         elsewhere on the page."""
         text = self.TWO_VALID_ISBNS + "https://doi.org/10.1145/3292500.3330701"
@@ -133,9 +135,9 @@ class TestCaptureAmbiguity:
         result = capture(text)
 
         assert result["type"] == "isbn"
-        assert result["abstained"] is True
+        assert result["value"] is None
 
-    def test_more_than_one_distinct_valid_doi_abstains(self):
+    def test_more_than_one_distinct_valid_doi_reports_every_candidate(self):
         text = "https://doi.org/10.1145/3292500.3330701\nhttps://doi.org/10.1007/s11186-025-09677-5"
 
         result = capture(text)
@@ -143,6 +145,5 @@ class TestCaptureAmbiguity:
         assert result == {
             "type": "doi",
             "value": None,
-            "abstained": True,
             "candidates": ["10.1007/s11186-025-09677-5", "10.1145/3292500.3330701"],
         }

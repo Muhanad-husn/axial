@@ -13,16 +13,25 @@ corrupted identifier is dropped, never returned as if valid. An all-same-
 digit placeholder (`0-000-00000-0`) passes the checksum arithmetic but is
 never a real ISBN -- a copyright-page fill-in -- and is rejected too.
 
-**Ambiguous capture abstains (founder decision, post-review of #326).** A
-multi-volume work's front matter routinely lists several of its own
-edition's/series' ISBNs in one "also available" block -- measured on the
-real corpus, `mann-sources-of-social-power-v1`/`v3`/`v4` all carry the
-*identical* ISBN `9781107028654` alongside their own volume-specific one.
-An author-overlap guard cannot separate same-author volumes by author, so
-when more than one distinct checksum-valid identifier of the winning type
-is found, `capture()` abstains rather than guessing one: no lookup is
-attempted for that source, and the candidates are kept for audit only. See
-`capture()`'s own docstring for the exact shape.
+**More than one distinct identifier is undetermined here, not abstained
+(founder decision, post-review of #326, refined a second time after
+real-corpus measurement).** A multi-volume work's front matter routinely
+lists several of its own edition's/series' ISBNs in one "also available"
+block (`mann-sources-of-social-power-v1`/`v3`/`v4` all carry the identical
+ISBN `9781107028654` alongside their own volume-specific one) -- but MOST
+real multi-ISBN front matter is not that: a book routinely prints a
+hardcover ISBN, a paperback ISBN and an ebook ISBN for the *same* work.
+Measured on the real 30-source corpus: treating every multi-ISBN capture as
+ambiguous outright dropped fast-path coverage from 93% to 37% (only 4 of
+the 17 "ambiguous" sources were a genuine cross-work mismatch like Mann).
+
+This module cannot tell those two cases apart on its own -- doing so needs
+to *resolve* the candidates and compare what they describe, which is
+`axial.bib_lookup`'s job, not this pure module's. `capture()` therefore
+returns every distinct candidate of the winning type when there is more
+than one, and leaves the resolve-and-compare decision to
+`axial.intake._merge_identifier_fields`. See `capture()`'s own docstring
+for the exact shape.
 """
 
 from __future__ import annotations
@@ -115,35 +124,34 @@ def find_dois(text: str) -> set[str]:
 
 
 def capture(text: str) -> dict[str, Any] | None:
-    """The identifier this slice's merge step reads, in one of three shapes:
+    """The identifier(s) this slice's merge step reads, in one of three
+    shapes:
 
     - `None` -- `text` carries neither an ISBN nor a DOI;
     - `{"type": "isbn"|"doi", "value": <normalized>}` -- exactly one distinct
       identifier of the winning type was found;
-    - `{"type": "isbn"|"doi", "value": None, "abstained": True, "candidates":
-      [...]}` -- **more than one distinct identifier of the winning type was
-      found**, e.g. a multi-volume work's copyright page listing an "also
-      available in this series" block of several ISBNs. There is no
-      principled way to pick a winner among several genuinely different
-      identifiers, so the caller must not use any of them for a lookup;
-      `candidates` (sorted, for determinism) is kept for audit, mirroring
-      the vote-abstention shape §7.14 already uses for "the draws disagree,
-      not a value" (`{primary: null, abstained: true, draws: [...]}`) rather
-      than inventing a new sentinel vocabulary.
+    - `{"type": "isbn"|"doi", "value": None, "candidates": [...]}` -- **more
+      than one distinct identifier of the winning type was found** (sorted,
+      for determinism). This module does not decide here whether they
+      describe the same work in different bindings (harmless) or genuinely
+      different works (e.g. a multi-volume series, the Mann case) -- that
+      requires resolving each candidate, which is `axial.bib_lookup`'s job.
+      The caller (`axial.intake._merge_identifier_fields`) resolves every
+      candidate and decides.
 
     An ISBN wins over a DOI when both are present (the spike's own
     precedence -- Open Library resolves against a metadata-richer record
     than Crossref's works endpoint); this precedence applies even when the
-    ISBNs found are ambiguous -- a confusing ISBN block does not fall
+    ISBNs found are multiple -- a confusing ISBN block does not fall
     through to a DOI found elsewhere on the same page."""
     isbns = sorted(find_isbns(text))
     if len(isbns) > 1:
-        return {"type": "isbn", "value": None, "abstained": True, "candidates": isbns}
+        return {"type": "isbn", "value": None, "candidates": isbns}
     if isbns:
         return {"type": "isbn", "value": isbns[0]}
     dois = sorted(find_dois(text))
     if len(dois) > 1:
-        return {"type": "doi", "value": None, "abstained": True, "candidates": dois}
+        return {"type": "doi", "value": None, "candidates": dois}
     if dois:
         return {"type": "doi", "value": dois[0]}
     return None

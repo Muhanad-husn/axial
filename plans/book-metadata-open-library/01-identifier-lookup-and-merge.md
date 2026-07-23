@@ -247,3 +247,33 @@ Then  the record is produced exactly as intake does today, with `identifier: nul
   does its job (a fetch naming a genuinely different person). See
   `specs/PRODUCT.md` §7.13's "Two independent safeguards" for the corrected,
   shipped description.
+- 2026-07-23 **second correction, post real-corpus measurement of the first
+  ruling.** Abstaining on ANY multi-identifier capture measured at 93%->37%
+  coverage (only 4 of 17 "ambiguous" sources were a genuine cross-work
+  mismatch; the rest were harmless hardcover/paperback/ebook ISBN blocks for
+  one book). **Founder ruling:** resolve every candidate and compare the
+  resolved records (author overlap **and** title agreement, reusing the
+  spike's own `phase2_compare.py` substring-containment test) — agreement
+  proceeds, disagreement abstains. Shipped and measured live against real
+  Open Library data: 90% (27/30) usable (11 unambiguous-single, 16
+  multi-resolved-agree, 1 multi-resolved-disagree, 2 neither) — nearly all
+  of the original 93% recovered.
+  **Open finding, not yet resolved:** none of the 4 real Mann volumes
+  abstain under resolve-all-and-compare. Their front-matter ISBNs turn out
+  to be eight registrations of ONE combined Open Library catalog record (a
+  4-volume box set whose `title` field is the generic series name, with
+  each volume's actual subtitle living only in `table_of_contents`, not
+  `title`) — every candidate genuinely agrees with every other, so there is
+  no disagreement to abstain on. The single-fetch guard then applies
+  (author-only, matches), and: `v1`/`v3` lose their known volume-specific
+  title suffix for the generic series title; `v4`'s known 2013 date is
+  overwritten with the box set's 2012; `v2` (a separate file, its own 4
+  candidate ISBNs, also internally agreeing) has its known **1993 date
+  overwritten with 1986** — reproducing the exact seven-year-gap near-miss
+  the whole guard exists to prevent, because this is a same-title/same-
+  author/different-*printing* mismatch, which no author/title comparison
+  can see. Separately, `caspersen-unrecognized-states`'s two ISBNs (US
+  "Unrecognized States" vs UK "Unrecognised States") are a real same-book
+  spelling variant the title-substring check does not recognize as
+  agreeing (a small, measured false-abstention cost). Reported to the
+  founder for a decision rather than resolved unilaterally.

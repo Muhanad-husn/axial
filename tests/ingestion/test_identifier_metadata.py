@@ -38,18 +38,21 @@ And   `identifier` still records what was found, for audit, but is not used
       for the four fields
 
 Given a source's front matter carries MORE THAN ONE distinct checksum-valid
-      identifier (e.g. a multi-volume work's own "also available in this
-      series" ISBN block -- the real, measured case:
-      `mann-sources-of-social-power-v1`/`v3`/`v4` all carry the identical
-      ISBN `9781107028654`)
+      identifier (e.g. a hardcover/paperback ISBN block for one book, or a
+      multi-volume work's own "also available in this series" listing)
 When  the record is built
-Then  the capture ABSTAINS -- no lookup is attempted at all -- because an
-      author-overlap guard cannot separate same-author volumes (the fetch
-      for the shared ISBN resolves to "Mann, Michael", which overlaps every
-      volume's own known author, so the guard alone would pass a
-      wrong-volume fetch through)
-And   intake falls back to its existing embedded-metadata/title-page values
-      unchanged, and `identifier` records the candidates found, for audit
+Then  EVERY candidate is resolved, and the resolved records are compared
+And   if they plausibly describe the same work (author AND title agree),
+      intake proceeds exactly as the single-identifier path -- one of the
+      agreeing records is used, subject to the same author-overlap guard
+      against intake's own already-known author
+And   if they disagree (the real, measured case:
+      `mann-sources-of-social-power-v1`/`v3`/`v4` all carry the identical
+      ISBN `9781107028654` alongside their own volume-specific one, and the
+      shared ISBN resolves to "Mann, Michael" -- overlapping every volume's
+      own known author, so author-overlap alone would not catch this),
+      the capture ABSTAINS: no candidate is used, and `identifier` records
+      every candidate found, for audit
 
 Given no identifier is found, or it fails to resolve
 When  the record is built
@@ -58,13 +61,16 @@ Then  the record is produced exactly as intake does today, with
 
 See plans/book-metadata-open-library/01-identifier-lookup-and-merge.md for
 the full slice contract and specs/PRODUCT.md §7.12/§7.13 for the source of
-truth this test pins. The ambiguous-capture criterion above is the
-founder's post-review correction (issue #326): the reviewer measured that
-the author-overlap guard alone does NOT catch the Mann case (a live Open
-Library call resolves the shared ISBN to an author that plausibly overlaps
-every volume), so ambiguity abstention -- not the guard -- is what protects
-it. `test_guard_rejects_a_fetch_for_a_genuinely_different_persons_work`
-below is what the guard actually does catch.
+truth this test pins. The multi-candidate criterion above is the founder's
+post-review correction (issue #326), refined a second time after real-
+corpus measurement: an earlier version abstained on ANY multi-identifier
+capture, which cost 93%->37% fast-path coverage because most multi-ISBN
+front matter is a harmless multi-binding block, not a genuine cross-work
+mismatch. Resolving and comparing every candidate recovers that coverage
+while still catching the one real near-miss (Mann).
+`test_guard_rejects_a_fetch_for_a_genuinely_different_persons_work` below
+is what the single-identifier author-overlap guard, unchanged, still
+catches on its own.
 
 Seam decisions
 -----------------------------------------------------------------------
@@ -382,20 +388,16 @@ class TestMergeIntoIntake:
         assert record["publisher"] == {"value": "A University Press", "provenance": "open_library"}
         assert record["identifier"] == {"type": "isbn", "value": REAL_ISBN}
 
-    def test_ambiguous_multi_volume_isbn_block_abstains_lookup_never_attempted(self, tmp_path):
-        """The REAL case (post-review correction, issue #326): a live Open
-        Library call resolves `mann-sources-of-social-power-v1`/`v3`/`v4`'s
-        shared ISBN `9781107028654` to author `"Mann, Michael"` -- which
-        DOES plausibly overlap each volume's own known author `"Michael
-        Mann"` (`authors_plausibly_overlap` returns `True` for that pair,
-        see `test_intake.py::TestAuthorsPlausiblyOverlap`). The guard alone
-        would therefore pass a wrong-volume fetch straight through. What
-        actually protects this source is that its front matter carries MORE
-        THAN ONE distinct ISBN (its own volume-specific one, plus the
-        series' shared one in an "also available" block) -- capture
-        abstains before any lookup is attempted, so the guard is never even
-        reached. The transport below fails the test outright if it receives
-        any request at all."""
+    def test_multi_isbn_candidates_that_resolve_to_different_works_abstain(self, tmp_path):
+        """The REAL case (post-review correction, issue #326, refined a
+        second time after real-corpus measurement): resolving the shared
+        ISBN `9781107028654` (a live Open Library call) gives author
+        "Mann, Michael" -- which DOES plausibly overlap each volume's own
+        known author "Michael Mann" (`authors_plausibly_overlap` returns
+        `True` for that pair). Author-overlap alone would therefore pass a
+        wrong-volume fetch straight through. What actually protects this
+        source is that BOTH candidates are resolved and their TITLES
+        disagree (different volumes) -- abstain, use neither."""
         mann_front_matter = [
             ["The Sources of Social Power", "Volume 4: Globalizations, 1945-2011"],
             [
@@ -415,17 +417,29 @@ class TestMergeIntoIntake:
         meta_dir = tmp_path / "source_meta"
         cache_dir = tmp_path / "bib_cache"
 
-        def handler(request: httpx.Request) -> httpx.Response:
-            raise AssertionError(
-                f"no lookup should ever be attempted for an ambiguous capture, got: {request.url}"
-            )
+        shared_isbn = "9781107028654"
 
-        never_called_transport = httpx.MockTransport(handler)
+        def handler(request: httpx.Request) -> httpx.Response:
+            if shared_isbn in str(request.url):
+                record = {
+                    "title": "The Sources of Social Power, Volume 1: A History of "
+                    "Power from the Beginning to AD 1760",
+                    "authors": [{"name": "Mann, Michael"}],
+                    "publish_date": "2012",
+                }
+            else:
+                record = {
+                    "title": "The Sources of Social Power, Volume 4: Globalizations, 1945-2011",
+                    "authors": [{"name": "Mann, Michael"}],
+                    "publish_date": "2013",
+                }
+            key = "ISBN:" + (shared_isbn if shared_isbn in str(request.url) else REAL_ISBN)
+            return httpx.Response(200, json={key: record})
 
         intake(
             path,
             source_meta_dir=meta_dir,
-            bib_transport=never_called_transport,
+            bib_transport=httpx.MockTransport(handler),
             bib_cache_dir=cache_dir,
         )
 
@@ -442,7 +456,67 @@ class TestMergeIntoIntake:
             "type": "isbn",
             "value": None,
             "abstained": True,
-            "candidates": sorted([REAL_ISBN, "9781107028654"]),
+            "candidates": sorted([REAL_ISBN, shared_isbn]),
+        }
+
+    def test_multi_isbn_candidates_that_resolve_to_the_same_work_are_used(self, tmp_path):
+        """Real corpus shape (`beshara-origins-of-syrian-nationhood`'s two
+        ISBNs -- a hardcover and a Routledge paperback of the same book):
+        both candidates resolve to the same author and title -- proceed,
+        using one of the agreeing records, subject to the same
+        author-overlap guard as any other fetch."""
+        hardcover_isbn = "9780203816776"
+        paperback_isbn = "9780415615044"
+        front_matter = [
+            ["The Origins of Syrian Nationhood"],
+            [
+                f"ISBN: {hardcover_isbn[:3]}-{hardcover_isbn[3]}-{hardcover_isbn[4:6]}-"
+                f"{hardcover_isbn[6:12]}-{hardcover_isbn[12]} (hardback)",
+                f"ISBN: {paperback_isbn[:3]}-{paperback_isbn[3]}-{paperback_isbn[4:6]}-"
+                f"{paperback_isbn[6:12]}-{paperback_isbn[12]} (paperback)",
+            ],
+        ] + [_body(i) for i in range(1, 3)]
+        path = _write_pdf(
+            tmp_path,
+            "beshara-origins-of-syrian-nationhood.pdf",
+            front_matter,
+            info={"Author": "Nadine Meouchy"},
+        )
+        meta_dir = tmp_path / "source_meta"
+        cache_dir = tmp_path / "bib_cache"
+
+        agreed_record = {
+            "title": "The Origins of Syrian Nationhood",
+            "authors": [{"name": "Nadine Meouchy"}],
+            "publish_date": "2013",
+            "publishers": [{"name": "Routledge"}],
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            for isbn in (hardcover_isbn, paperback_isbn):
+                if isbn in str(request.url):
+                    return httpx.Response(200, json={f"ISBN:{isbn}": agreed_record})
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        intake(
+            path,
+            source_meta_dir=meta_dir,
+            bib_transport=httpx.MockTransport(handler),
+            bib_cache_dir=cache_dir,
+        )
+
+        record = json.loads(
+            (meta_dir / f"{compute_source_id(path)}.json").read_text(encoding="utf-8")
+        )
+        assert record["title"] == {
+            "value": "The Origins of Syrian Nationhood",
+            "provenance": "open_library",
+        }
+        assert record["author"] == {"value": "Nadine Meouchy", "provenance": "open_library"}
+        assert record["publisher"] == {"value": "Routledge", "provenance": "open_library"}
+        assert record["identifier"] == {
+            "type": "isbn",
+            "value": sorted([hardcover_isbn, paperback_isbn])[0],
         }
 
     def test_guard_rejects_a_fetch_for_a_genuinely_different_persons_work(self, tmp_path):
