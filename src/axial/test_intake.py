@@ -369,10 +369,11 @@ class TestResolveHoldingsFlag:
 
 
 class TestResolveBibliographicFields:
-    """`author`/`title`/`date` preserved the same way as `holdings_flag`
-    (`_resolve_recorded_field`, generalized): a client-less call (every
-    `extract()` validation call) must never regress an already-recorded,
-    model-informed answer back to a client-less-only guess."""
+    """`author`/`title`/`date`/`publisher` preserved the same way as
+    `holdings_flag` (`_resolve_recorded_field`, generalized): a client-less
+    call (every `extract()` validation call) must never regress an
+    already-recorded, model-informed answer back to a client-less-only
+    guess."""
 
     def test_no_client_and_no_existing_record_uses_the_computed_fields(self, tmp_path):
         from axial.intake import UNAVAILABLE, _resolve_bibliographic_fields
@@ -381,6 +382,7 @@ class TestResolveBibliographicFields:
             "author": UNAVAILABLE,
             "title": {"value": "A Title", "provenance": "embedded metadata"},
             "date": UNAVAILABLE,
+            "publisher": UNAVAILABLE,
         }
 
         resolved = _resolve_bibliographic_fields(computed, None, tmp_path / "absent.json")
@@ -402,11 +404,17 @@ class TestResolveBibliographicFields:
                         "provenance": "title page",
                     },
                     "date": "unavailable",
+                    "publisher": {"value": "A Publisher", "provenance": "open_library"},
                 }
             ),
             encoding="utf-8",
         )
-        computed = {"author": "unavailable", "title": "unavailable", "date": "unavailable"}
+        computed = {
+            "author": "unavailable",
+            "title": "unavailable",
+            "date": "unavailable",
+            "publisher": "unavailable",
+        }
 
         resolved = _resolve_bibliographic_fields(computed, None, meta_path)
 
@@ -415,6 +423,7 @@ class TestResolveBibliographicFields:
             "value": "War, Institutions, and Social Change",
             "provenance": "title page",
         }
+        assert resolved["publisher"] == {"value": "A Publisher", "provenance": "open_library"}
 
     def test_a_supplied_client_always_overwrites_with_the_computed_fields(self, tmp_path):
         import json
@@ -428,11 +437,17 @@ class TestResolveBibliographicFields:
                     "author": {"value": "Stale Prior Answer", "provenance": "title page"},
                     "title": "unavailable",
                     "date": "unavailable",
+                    "publisher": "unavailable",
                 }
             ),
             encoding="utf-8",
         )
-        computed = {"author": "unavailable", "title": "unavailable", "date": "unavailable"}
+        computed = {
+            "author": "unavailable",
+            "title": "unavailable",
+            "date": "unavailable",
+            "publisher": "unavailable",
+        }
 
         resolved = _resolve_bibliographic_fields(computed, object(), meta_path)
 
@@ -579,3 +594,553 @@ def test_intake_with_a_client_that_cannot_answer_records_no_judgment(tmp_path):
     record_path = source_meta_path(compute_source_id(TEXT_LAYER_PDF), tmp_path)
     record = json.loads(record_path.read_text(encoding="utf-8"))
     assert record[HOLDINGS_CHECKED] is False
+
+
+# =============================================================================
+# Identifier capture + lookup merge (issue #326, §7.12/§7.13): the same-work
+# identity guard and the publisher/identifier field wiring. Full end-to-end
+# coverage (intake() over a fixture PDF, a mocked lookup transport) lives in
+# tests/ingestion/test_identifier_metadata.py; these are unit-level checks of
+# the guard and the merge helper in isolation.
+# =============================================================================
+
+
+class TestAuthorsPlausiblyOverlap:
+    def test_no_known_author_passes_by_default(self):
+        """Nothing to contradict -- the real gap this slice fixes
+        (`ayubi-over-stating-the-arab-state`'s `None` title) has no prior
+        author reading to compare against either."""
+        from axial.intake import authors_plausibly_overlap
+
+        assert authors_plausibly_overlap(None, "Nazih N. M. Ayubi") is True
+
+    def test_a_known_author_with_no_fetched_author_fails(self):
+        from axial.intake import authors_plausibly_overlap
+
+        assert authors_plausibly_overlap("Michael Mann", None) is False
+
+    def test_diacritics_and_last_first_order_are_treated_as_a_match(self):
+        """The spike's own false-mismatch case: `Malesevic, Sinisa` vs
+        `Siniša Malešević`."""
+        from axial.intake import authors_plausibly_overlap
+
+        assert authors_plausibly_overlap("Malesevic, Sinisa", "Siniša Malešević") is True
+
+    def test_a_fetch_naming_a_genuinely_different_person_fails(self):
+        """What this guard actually catches: a single, unambiguous
+        identifier whose fetch names an entirely different person (a
+        mistyped or recycled identifier) -- not a same-author wrong-volume
+        mismatch, see the next test."""
+        from axial.intake import authors_plausibly_overlap
+
+        assert authors_plausibly_overlap("Michael Mann", "A Totally Different Editor") is False
+
+    def test_the_real_mann_volumes_pair_passes_the_guard_alone_does_not_catch_it(self):
+        """Post-review correction (issue #326): the reviewer measured, via a
+        live Open Library call, that the wrong-volume ISBN shared by
+        `mann-sources-of-social-power-v1`/`v3`/`v4` resolves to author
+        `"Mann, Michael"` -- which plausibly overlaps each volume's own
+        known author `"Michael Mann"`. This function correctly returns
+        `True` for that pair: an author-overlap guard structurally cannot
+        separate same-author volumes from each other. What actually
+        protects this source is ambiguity abstention on the capture itself
+        (`identifiers.capture`'s `abstained` shape, applied in
+        `_merge_identifier_fields` before any lookup runs) -- see
+        `tests/ingestion/test_identifier_metadata.py`'s own ambiguity test
+        for the end-to-end proof."""
+        from axial.intake import authors_plausibly_overlap
+
+        assert authors_plausibly_overlap("Michael Mann", "Mann, Michael") is True
+
+
+class TestWorksPlausiblyAgree:
+    """`_works_plausibly_agree`'s title half (`_titles_plausibly_agree`):
+    the substring-containment test `_merge_identifier_fields` needs to tell
+    a same-work multi-binding pair (same title on every edition) from a
+    genuinely different volume/edition (a distinguishing subtitle or
+    volume marker neither title is a substring of)."""
+
+    def test_identical_titles_agree(self):
+        from axial.intake import _works_plausibly_agree
+
+        a = {"author": "Jane Q. Historian", "title": "A Perfectly Fine Title"}
+        b = {"author": "Jane Q. Historian", "title": "A Perfectly Fine Title"}
+
+        assert _works_plausibly_agree(a, b) is True
+
+    def test_a_hardcover_and_paperback_title_variant_agrees(self):
+        """Real corpus shape (`beshara-origins-of-syrian-nationhood`): the
+        same book's hardcover and Routledge-imprint paperback ISBNs both
+        resolve to the identical title/author."""
+        from axial.intake import _works_plausibly_agree
+
+        a = {"author": "Nadine Meouchy", "title": "The Origins of Syrian Nationhood"}
+        b = {"author": "Nadine Meouchy", "title": "The Origins of Syrian Nationhood"}
+
+        assert _works_plausibly_agree(a, b) is True
+
+    def test_mann_volumes_disagree_on_title_despite_agreeing_on_author(self):
+        """The real Mann case: the shared-series ISBN and a volume-specific
+        ISBN both resolve to author "Mann, Michael" (author-overlap alone
+        would pass), but their titles name different volumes -- neither is
+        a substring of the other."""
+        from axial.intake import _works_plausibly_agree
+
+        shared = {
+            "author": "Mann, Michael",
+            "title": "The Sources of Social Power, Volume 1: A History of Power "
+            "from the Beginning to AD 1760",
+        }
+        this_volume = {
+            "author": "Mann, Michael",
+            "title": "The Sources of Social Power, Volume 4: Globalizations, 1945-2011",
+        }
+
+        assert _works_plausibly_agree(shared, this_volume) is False
+
+    def test_a_different_author_disagrees_even_with_a_similar_title(self):
+        from axial.intake import _works_plausibly_agree
+
+        a = {"author": "Jane Q. Historian", "title": "A Perfectly Fine Title"}
+        b = {"author": "A Totally Different Person", "title": "A Perfectly Fine Title"}
+
+        assert _works_plausibly_agree(a, b) is False
+
+    def test_a_missing_title_on_either_side_passes(self):
+        """Nothing to contradict -- mirrors `authors_plausibly_overlap`'s
+        own `None`-passes rule."""
+        from axial.intake import _works_plausibly_agree
+
+        a = {"author": "Jane Q. Historian", "title": None}
+        b = {"author": "Jane Q. Historian", "title": "Some Title"}
+
+        assert _works_plausibly_agree(a, b) is True
+
+
+class TestFillIfEmpty:
+    """`_fill_if_empty`: the gap-fill rule itself (founder ruling, #326,
+    third pass) -- a local value is authoritative and returned unchanged;
+    only `UNAVAILABLE` is filled from the fetch."""
+
+    def test_a_non_empty_local_value_is_returned_unchanged(self):
+        from axial.intake import _fill_if_empty
+
+        current = {"value": "Known Value", "provenance": "embedded metadata"}
+
+        assert _fill_if_empty(current, "Fetched Value", "open_library") is current
+
+    def test_an_empty_local_value_is_filled_with_provenance(self):
+        from axial.intake import UNAVAILABLE, _fill_if_empty
+
+        assert _fill_if_empty(UNAVAILABLE, "Fetched Value", "open_library") == {
+            "value": "Fetched Value",
+            "provenance": "open_library",
+        }
+
+    def test_an_empty_local_value_with_no_fetched_value_stays_unavailable(self):
+        from axial.intake import UNAVAILABLE, _fill_if_empty
+
+        assert _fill_if_empty(UNAVAILABLE, None, "open_library") == UNAVAILABLE
+
+
+class TestMergeIdentifierFields:
+    def _biblio(self, author=None):
+        from axial.intake import UNAVAILABLE as _UNAVAILABLE
+
+        return {
+            "author": author if author is not None else _UNAVAILABLE,
+            "title": _UNAVAILABLE,
+            "date": _UNAVAILABLE,
+        }
+
+    def test_no_identifier_leaves_fields_unchanged_and_publisher_unavailable_for_pdf(self):
+        from axial.intake import UNAVAILABLE, _merge_identifier_fields
+
+        biblio = self._biblio()
+        merged, identifier = _merge_identifier_fields(biblio, None, "pdf", None, None)
+
+        assert merged["author"] == UNAVAILABLE
+        assert merged["title"] == UNAVAILABLE
+        assert merged["date"] == UNAVAILABLE
+        assert merged["publisher"] == UNAVAILABLE
+        assert identifier is None
+
+    def test_no_identifier_scan_for_docx_leaves_publisher_not_attempted(self):
+        from axial.intake import NOT_ATTEMPTED, _merge_identifier_fields
+
+        merged, _identifier = _merge_identifier_fields(self._biblio(), None, "docx", None, None)
+
+        assert merged["publisher"] == NOT_ATTEMPTED
+
+    def test_an_unresolved_lookup_leaves_the_four_fields_unchanged(self, monkeypatch, tmp_path):
+        import axial.bib_lookup as bib_lookup_mod
+        from axial.intake import UNAVAILABLE, _merge_identifier_fields
+
+        monkeypatch.setattr(
+            bib_lookup_mod,
+            "resolve_isbn",
+            lambda value, **kwargs: {"resolved": False, "error": None},
+        )
+
+        identifier = {"type": "isbn", "value": "9780262033848"}
+        merged, recorded = _merge_identifier_fields(
+            self._biblio(), identifier, "pdf", None, tmp_path
+        )
+
+        assert merged["author"] == UNAVAILABLE
+        assert merged["title"] == UNAVAILABLE
+        assert merged["publisher"] == UNAVAILABLE
+        assert recorded == identifier
+
+    def test_a_null_local_title_is_filled_from_a_passing_fetch(self, monkeypatch, tmp_path):
+        """The ayubi shape: no embedded metadata, no client, so the
+        pre-feature title read is `unavailable`. No known author exists to
+        contradict the fetch, so the guard passes by default and the gap
+        fills."""
+        import axial.bib_lookup as bib_lookup_mod
+        from axial.intake import _merge_identifier_fields
+
+        def _resolved(value, **kwargs):
+            return {
+                "resolved": True,
+                "title": "Over-Stating the Arab State",
+                "author": "Nazih N. M. Ayubi",
+                "date": "1995",
+                "publisher": "Ithaca Press",
+                "source": "open_library",
+            }
+
+        monkeypatch.setattr(bib_lookup_mod, "resolve_isbn", _resolved)
+
+        biblio = self._biblio()  # author/title/date all unavailable
+        identifier = {"type": "isbn", "value": "9781850438281"}
+        merged, recorded = _merge_identifier_fields(biblio, identifier, "pdf", None, tmp_path)
+
+        assert merged["title"] == {
+            "value": "Over-Stating the Arab State",
+            "provenance": "open_library",
+        }
+        assert merged["author"] == {"value": "Nazih N. M. Ayubi", "provenance": "open_library"}
+        assert merged["date"] == {"value": "1995", "provenance": "open_library"}
+        assert merged["publisher"] == {"value": "Ithaca Press", "provenance": "open_library"}
+        assert recorded == identifier
+
+    def test_a_known_local_title_and_date_are_kept_only_publisher_fills(
+        self, monkeypatch, tmp_path
+    ):
+        """The Mann v1 shape: local author/title/date are already known
+        (embedded metadata/title-page read); the fetch may only fill the
+        one field that was genuinely empty -- `publisher`. A field already
+        carrying a value is returned byte-for-byte unchanged, provenance
+        included -- the file's own read wins over the catalog, even when
+        the fetch's own value would have been identical."""
+        import axial.bib_lookup as bib_lookup_mod
+        from axial.intake import _merge_identifier_fields
+
+        def _resolved(value, **kwargs):
+            return {
+                "resolved": True,
+                "title": "The sources of social power",  # coarser than the known value
+                "author": "Mann, Michael",
+                "date": "2012",
+                "publisher": "Cambridge University Press",
+                "source": "open_library",
+            }
+
+        monkeypatch.setattr(bib_lookup_mod, "resolve_isbn", _resolved)
+
+        known_title = {
+            "value": "The Sources of Social Power, Volume 1",
+            "provenance": "embedded metadata",
+        }
+        known_date = {"value": "2012", "provenance": "title page"}
+        biblio = {
+            "author": {"value": "Mann, Michael", "provenance": "embedded metadata"},
+            "title": known_title,
+            "date": known_date,
+        }
+        identifier = {"type": "isbn", "value": "9781107028654"}
+        merged, _recorded = _merge_identifier_fields(biblio, identifier, "pdf", None, tmp_path)
+
+        assert merged["title"] == known_title
+        assert merged["title"]["provenance"] == "embedded metadata"
+        assert merged["date"] == known_date
+        assert merged["author"] == {"value": "Mann, Michael", "provenance": "embedded metadata"}
+        assert merged["publisher"] == {
+            "value": "Cambridge University Press",
+            "provenance": "open_library",
+        }
+
+    def test_a_known_local_date_is_never_overwritten_by_an_earlier_printings_date(
+        self, monkeypatch, tmp_path
+    ):
+        """The real near-miss (`mann-sources-of-social-power-v2`): the
+        file's own known date is 1993; the fetch (an earlier 1986 printing
+        of the identical title/author) must never overwrite it."""
+        import axial.bib_lookup as bib_lookup_mod
+        from axial.intake import _merge_identifier_fields
+
+        def _resolved(value, **kwargs):
+            return {
+                "resolved": True,
+                "title": "The sources of social power",
+                "author": "Mann, Michael",
+                "date": "1986",
+                "publisher": "Cambridge University Press",
+                "source": "open_library",
+            }
+
+        monkeypatch.setattr(bib_lookup_mod, "resolve_isbn", _resolved)
+
+        known_date = {"value": "1993", "provenance": "title page"}
+        biblio = {
+            "author": {"value": "Michael Mann", "provenance": "embedded metadata"},
+            "title": {
+                "value": "The Sources of Social Power: Volume 2",
+                "provenance": "embedded metadata",
+            },
+            "date": known_date,
+        }
+        identifier = {"type": "isbn", "value": "0521440157"}
+        merged, _recorded = _merge_identifier_fields(biblio, identifier, "pdf", None, tmp_path)
+
+        assert merged["date"] == known_date
+        assert merged["date"]["value"] == "1993"
+        assert merged["publisher"] == {
+            "value": "Cambridge University Press",
+            "provenance": "open_library",
+        }
+
+    def test_a_failing_guard_fills_nothing(self, monkeypatch, tmp_path):
+        """A single, unambiguous identifier whose fetch names an entirely
+        different person: the guard rejects it before any field -- not
+        even an otherwise-empty one -- is filled."""
+        import axial.bib_lookup as bib_lookup_mod
+        from axial.intake import UNAVAILABLE, _merge_identifier_fields
+
+        def _resolved(value, **kwargs):
+            return {
+                "resolved": True,
+                "title": "An Entirely Unrelated Book",
+                "author": "A Completely Different Person",
+                "date": "2001",
+                "publisher": "Some Other Press",
+                "source": "open_library",
+            }
+
+        monkeypatch.setattr(bib_lookup_mod, "resolve_isbn", _resolved)
+
+        biblio = self._biblio(
+            author={"value": "Jane Q. Historian", "provenance": "embedded metadata"}
+        )
+        identifier = {"type": "isbn", "value": "9780000000000"}
+        merged, _recorded = _merge_identifier_fields(biblio, identifier, "pdf", None, tmp_path)
+
+        assert merged["author"] == {"value": "Jane Q. Historian", "provenance": "embedded metadata"}
+        assert merged["title"] == UNAVAILABLE
+        assert merged["publisher"] == UNAVAILABLE
+
+
+class TestMultiCandidateResolution:
+    """`_resolve_multi_candidate_identifier`: founder ruling, refined a
+    second time after real-corpus measurement (93%->37% coverage cost from
+    treating every multi-ISBN capture as ambiguous outright). Every
+    candidate is resolved; agreement proceeds, disagreement abstains."""
+
+    def _multi_identifier(self, candidates):
+        return {"type": "isbn", "value": None, "candidates": candidates}
+
+    def test_candidates_that_resolve_to_the_same_work_are_used(self, monkeypatch, tmp_path):
+        """Real corpus shape (`beshara-origins-of-syrian-nationhood`'s two
+        ISBNs): different bindings of one book, both resolving to the same
+        author/title -- proceed, using the winning candidate."""
+        import axial.bib_lookup as bib_lookup_mod
+        from axial.intake import _merge_identifier_fields
+
+        record = {
+            "resolved": True,
+            "title": "The Origins of Syrian Nationhood",
+            "author": "Nadine Meouchy",
+            "date": "2013",
+            "publisher": "Routledge",
+            "source": "open_library",
+        }
+        monkeypatch.setattr(bib_lookup_mod, "resolve_isbn", lambda value, **kwargs: dict(record))
+
+        known_author = {"value": "Nadine Meouchy", "provenance": "embedded metadata"}
+        biblio = {
+            "author": known_author,
+            "title": "unavailable",
+            "date": "unavailable",
+        }
+        identifier = self._multi_identifier(["9780203816776", "9780415615044"])
+        merged, recorded = _merge_identifier_fields(biblio, identifier, "pdf", None, tmp_path)
+
+        # The empty title/date gaps fill; the already-known author is kept
+        # unchanged (gap-fill never overwrites a non-empty local value).
+        assert merged["title"] == {
+            "value": "The Origins of Syrian Nationhood",
+            "provenance": "open_library",
+        }
+        assert merged["date"] == {"value": "2013", "provenance": "open_library"}
+        assert merged["author"] == known_author
+        assert recorded == {"type": "isbn", "value": "9780203816776"}
+
+    def test_candidates_that_resolve_to_the_mann_box_set_only_fill_publisher(
+        self, monkeypatch, tmp_path
+    ):
+        """The REAL measured Mann shape (post-review live-API dig): all 8
+        of `mann-sources-of-social-power-v1`'s candidate ISBNs resolve to
+        ONE combined Open Library box-set catalog record -- a coarse
+        series title, no per-volume distinction -- so they genuinely
+        AGREE (there is no disagreement to abstain on). Under gap-fill
+        semantics this is no longer a risk: the file's own known
+        volume-specific title and date are kept untouched; only the
+        (correct, shared) publisher -- never captured before -- fills."""
+        import axial.bib_lookup as bib_lookup_mod
+        from axial.intake import _merge_identifier_fields
+
+        def _resolved(value, **kwargs):
+            return {
+                "resolved": True,
+                "title": "The sources of social power",
+                "author": "Mann, Michael",
+                "date": "2012",
+                "publisher": "Cambridge University Press",
+                "source": "open_library",
+            }
+
+        monkeypatch.setattr(bib_lookup_mod, "resolve_isbn", _resolved)
+
+        known_title = {
+            "value": "The Sources of Social Power, Volume 1",
+            "provenance": "embedded metadata",
+        }
+        known_date = {"value": "2012", "provenance": "title page"}
+        biblio = {
+            "author": {"value": "Mann, Michael", "provenance": "embedded metadata"},
+            "title": known_title,
+            "date": known_date,
+        }
+        identifier = self._multi_identifier(
+            ["9781107028654", "9781107028678", "9781107031173", "9781107031180"]
+        )
+        merged, recorded = _merge_identifier_fields(biblio, identifier, "pdf", None, tmp_path)
+
+        assert merged["title"] == known_title
+        assert merged["date"] == known_date
+        assert merged["publisher"] == {
+            "value": "Cambridge University Press",
+            "provenance": "open_library",
+        }
+        assert recorded["value"] == "9781107028654"
+        assert "abstained" not in recorded
+
+    def test_candidates_that_resolve_to_different_works_abstain(self, monkeypatch, tmp_path):
+        """A genuinely different-work disagreement: candidates resolve to
+        the same author but a distinguishing, non-substring title -- no
+        candidate is used, and no lookup result reaches the author-overlap
+        guard at all."""
+        import axial.bib_lookup as bib_lookup_mod
+        from axial.intake import UNAVAILABLE, _merge_identifier_fields
+
+        def _resolved(value, **kwargs):
+            if value == "9781107028654":
+                return {
+                    "resolved": True,
+                    "title": "The Sources of Social Power, Volume 1: A History of "
+                    "Power from the Beginning to AD 1760",
+                    "author": "Mann, Michael",
+                    "date": "2012",
+                    "publisher": "Cambridge University Press",
+                    "source": "open_library",
+                }
+            return {
+                "resolved": True,
+                "title": "The Sources of Social Power, Volume 4: Globalizations, 1945-2011",
+                "author": "Mann, Michael",
+                "date": "2013",
+                "publisher": "Cambridge University Press",
+                "source": "open_library",
+            }
+
+        monkeypatch.setattr(bib_lookup_mod, "resolve_isbn", _resolved)
+
+        biblio = {
+            "author": {"value": "Michael Mann", "provenance": "embedded metadata"},
+            "title": {
+                "value": "The Sources of Social Power, Vol. IV",
+                "provenance": "embedded metadata",
+            },
+            "date": "unavailable",
+        }
+        identifier = self._multi_identifier(["9780262033848", "9781107028654"])
+        merged, recorded = _merge_identifier_fields(biblio, identifier, "pdf", None, tmp_path)
+
+        assert merged["author"] == {"value": "Michael Mann", "provenance": "embedded metadata"}
+        assert merged["title"] == {
+            "value": "The Sources of Social Power, Vol. IV",
+            "provenance": "embedded metadata",
+        }
+        assert merged["publisher"] == UNAVAILABLE
+        assert recorded == {
+            "type": "isbn",
+            "value": None,
+            "abstained": True,
+            "candidates": ["9780262033848", "9781107028654"],
+        }
+
+    def test_no_candidate_resolves_abstains(self, monkeypatch, tmp_path):
+        import axial.bib_lookup as bib_lookup_mod
+        from axial.intake import _merge_identifier_fields
+
+        monkeypatch.setattr(
+            bib_lookup_mod,
+            "resolve_isbn",
+            lambda value, **kwargs: {"resolved": False, "error": None},
+        )
+
+        identifier = self._multi_identifier(["9780262033848", "9781107028654"])
+        merged, recorded = _merge_identifier_fields(
+            {"author": "unavailable", "title": "unavailable", "date": "unavailable"},
+            identifier,
+            "pdf",
+            None,
+            tmp_path,
+        )
+
+        assert merged["author"] == "unavailable"
+        assert recorded["abstained"] is True
+
+    def test_every_candidate_is_actually_resolved_not_just_the_first(self, monkeypatch, tmp_path):
+        """Guards against a lazy short-circuit that only checks the first
+        candidate and calls it agreement: all candidates must be resolved
+        and compared."""
+        import axial.bib_lookup as bib_lookup_mod
+        from axial.intake import _merge_identifier_fields
+
+        seen_values = []
+
+        def _resolved(value, **kwargs):
+            seen_values.append(value)
+            return {
+                "resolved": True,
+                "title": "Same Title",
+                "author": "Same Author",
+                "date": "2000",
+                "publisher": "Same Publisher",
+                "source": "open_library",
+            }
+
+        monkeypatch.setattr(bib_lookup_mod, "resolve_isbn", _resolved)
+
+        identifier = self._multi_identifier(["9780262033848", "9781107028654", "9780198825241"])
+        _merge_identifier_fields(
+            {"author": "unavailable", "title": "unavailable", "date": "unavailable"},
+            identifier,
+            "pdf",
+            None,
+            tmp_path,
+        )
+
+        assert sorted(seen_values) == ["9780198825241", "9780262033848", "9781107028654"]

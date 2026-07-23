@@ -232,3 +232,65 @@ Then  the record is produced exactly as intake does today, with `identifier: nul
 - 2026-07-22 planned, following the completed exploration spike (gate passed
   93% coverage / 100% resolution — see `FINDINGS.md`). Consolidated from three
   slices into one at the founder's request. No dependencies.
+- 2026-07-23 **correction, post-review.** The plan above (and the shipped
+  first pass, PR-bound commit `746e01b`) assumed the same-work identity
+  guard alone catches the Mann-volumes near-miss (see "The identity guard
+  is not optional polish" above). The reviewer measured, via a live Open
+  Library call, that it does not: `mann-sources-of-social-power-v1`/`v3`/`v4`
+  all carry the identical ISBN `9781107028654`, which resolves to author
+  "Mann, Michael" — plausibly overlapping every volume's own known author
+  "Michael Mann" — so the guard alone passes a wrong-volume fetch straight
+  through. **Founder ruling:** front matter carrying more than one distinct
+  checksum-valid identifier is ambiguous and abstains — no lookup is
+  attempted at all — which catches this case at the root; the author-overlap
+  guard is kept unchanged for the single-identifier case, where it still
+  does its job (a fetch naming a genuinely different person). See
+  `specs/PRODUCT.md` §7.13's "Two independent safeguards" for the corrected,
+  shipped description.
+- 2026-07-23 **second correction, post real-corpus measurement of the first
+  ruling.** Abstaining on ANY multi-identifier capture measured at 93%->37%
+  coverage (only 4 of 17 "ambiguous" sources were a genuine cross-work
+  mismatch; the rest were harmless hardcover/paperback/ebook ISBN blocks for
+  one book). **Founder ruling:** resolve every candidate and compare the
+  resolved records (author overlap **and** title agreement, reusing the
+  spike's own `phase2_compare.py` substring-containment test) — agreement
+  proceeds, disagreement abstains. Shipped and measured live against real
+  Open Library data: 90% (27/30) usable (11 unambiguous-single, 16
+  multi-resolved-agree, 1 multi-resolved-disagree, 2 neither) — nearly all
+  of the original 93% recovered.
+  **Open finding, not yet resolved:** none of the 4 real Mann volumes
+  abstain under resolve-all-and-compare. Their front-matter ISBNs turn out
+  to be eight registrations of ONE combined Open Library catalog record (a
+  4-volume box set whose `title` field is the generic series name, with
+  each volume's actual subtitle living only in `table_of_contents`, not
+  `title`) — every candidate genuinely agrees with every other, so there is
+  no disagreement to abstain on. The single-fetch guard then applies
+  (author-only, matches), and: `v1`/`v3` lose their known volume-specific
+  title suffix for the generic series title; `v4`'s known 2013 date is
+  overwritten with the box set's 2012; `v2` (a separate file, its own 4
+  candidate ISBNs, also internally agreeing) has its known **1993 date
+  overwritten with 1986** — reproducing the exact seven-year-gap near-miss
+  the whole guard exists to prevent, because this is a same-title/same-
+  author/different-*printing* mismatch, which no author/title comparison
+  can see. Separately, `caspersen-unrecognized-states`'s two ISBNs (US
+  "Unrecognized States" vs UK "Unrecognised States") are a real same-book
+  spelling variant the title-substring check does not recognize as
+  agreeing (a small, measured false-abstention cost). Reported to the
+  founder for a decision rather than resolved unilaterally.
+- 2026-07-23 **third and final correction: gap-fill, not overwrite.** The
+  founder reframed the contract entirely rather than patching the
+  overwrite design further: the fetch now fills an EMPTY field only
+  (`author`/`title`/`date` == `unavailable`); a field the embedded-
+  metadata/title-page read already resolved is kept unchanged, always.
+  `publisher` (always empty, never captured before) still fills whenever a
+  fetch resolves and the guard passes. Both prior safeguards (resolve-all-
+  and-compare's disagreement abstention, the author-overlap guard) are
+  kept unchanged, gating whether a fill happens rather than whether an
+  overwrite happens. This closes the Mann near-miss structurally: every
+  Mann volume already has a correct local author/title/date, so a fill
+  never touches any of them, and `caspersen-unrecognized-states`'s title-
+  substring miss becomes low-stakes (a missed `publisher`, never a
+  corruption) -- explicitly NOT chased with fuzzier title matching
+  (over-engineering tripwire: no fuzzy matching for a no-corruption case).
+  See `specs/PRODUCT.md` §7.13's "Gap-fill, not overwrite" for the shipped
+  description.
