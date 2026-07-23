@@ -1,0 +1,25 @@
+=== Scenario: attribution-fidelity, all claims resolvable (pass) ===
+$ axial gate run attribution-fidelity --dry-run --records records-clean
+gate: attribution-fidelity
+  attribution_completeness: PASS (value=1.0000, threshold=1.0, n=20)
+  b_seam_mislabel_rate: PASS (value=0.0000, threshold=0.05, n=0)
+overall: PASS
+corpus_pin: None
+trusted: False
+exit=0
+
+=== Scenario: attribution-fidelity, one unresolvable claim (fails, names it) ===
+$ axial gate run attribution-fidelity --dry-run --records records-bad
+gate: attribution-fidelity
+  attribution_completeness: FAIL (value=0.9524, threshold=1.0, n=21)
+    failing claim_ids: c-bad-1
+  b_seam_mislabel_rate: PASS (value=0.0000, threshold=0.05, n=0)
+overall: FAIL
+corpus_pin: None
+trusted: False
+exit=1
+
+=== Scenario: grounding gate, judge pass resolves to the same model as synthesis (self-grading guard blocks, zero judge calls) ===
+$ axial gate run grounding --dry-run --records records-selfgrade
+error: the grounding judge (pass_name='grounding') resolves to model 'explode', the SAME model as the synthesis pass (pass_name='synthesize') -- self-grading: configure model_by_pass so the judge runs under a different model, from a different model family, than the pass that generated the claims it is judging
+exit=1

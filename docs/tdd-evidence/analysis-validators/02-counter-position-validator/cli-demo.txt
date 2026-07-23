@@ -1,0 +1,17 @@
+=== Scenario: contested with grounds (pass) ===
+$ axial brief validate DEV10
+brief_id: DEV10
+attribution validator: PASS (0 failures)
+counter-position validator: contested=True signal='theory_school_spread'
+counter-position validator: PASS (0 failures)
+counter-position validator: steelman-quality=steelman (Stub client: no judgment was made.)
+exit=0
+
+=== Scenario: contested, no counter-position (blocks release) ===
+$ axial brief validate DEV11
+brief_id: DEV11
+attribution validator: PASS (0 failures)
+counter-position validator: contested=True signal='theory_school_spread'
+counter-position validator: FAIL (1 failure(s))
+  contested_without_counter_position -- the brief is contested and the record's counter_position section is neither present with non-empty grounds nor disclosed as corpus one-sided with a reason (§7.8)
+exit=1
