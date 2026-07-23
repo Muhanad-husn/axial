@@ -14,11 +14,18 @@ not trusted to grade its own answer).
 Coverage counts come from `axial.query.reader.coverage_count()`, never from
 the model's recall of the corpus, and never from a free-text guess at which
 polities a premise names: the prompt renders `coverage_count()`'s entire
-real key set (§7.5's own small, deterministic result), plus the brief's
-`case` unconditionally -- rendered at `0` when the corpus is silent on it
-rather than omitted, since a case with zero coverage is itself a
-first-class interrogation signal. See `render_coverage_section`'s own
-docstring for why the earlier free-text-scan design was replaced.
+real key set (§7.5's own small, deterministic result) and nothing else --
+no row is synthesized for the brief's `case` itself. An earlier version
+injected the brief's raw `case` string as its own row (at `0` when it
+didn't already appear in `counts`), meaning to flag a place the corpus has
+never heard of; in practice nearly every real `case` bundles a place with a
+date range ("Syria, 2011-2024"), the coverage table has no time dimension
+at all, and that phrase almost never byte-for-byte matches a bare corpus
+key -- so the fabricated row fired as a false "zero coverage" signal on
+almost every real brief, producing false refusals (issue root-caused
+2026-07-23). See `render_coverage_section`'s own docstring for the current,
+simpler behavior, and `compose_prompt`'s prompt text for how the model is
+told to map a case's place name onto the table's real rows itself.
 
 On `refuse`, per §7.2, the run is COMPLETE: this module raises nothing
 special for a refusal -- the CLI persists the result and exits 0 exactly as
@@ -209,28 +216,30 @@ def parse_interrogation_response(
     return premises_found, bounds_applied, refusal
 
 
-def render_coverage_section(case: str, counts: dict[str, int]) -> str:
+def render_coverage_section(counts: dict[str, int]) -> str:
     """Render the corpus's REAL coverage as prompt text, one line per
-    polity: every polity `counts` (`axial.query.reader.coverage_count()`'s
-    own result) actually names, plus `case` unconditionally.
+    polity `counts` (`axial.query.reader.coverage_count()`'s own result)
+    actually names -- nothing else. Sorted by polity name for a
+    deterministic prompt (`coverage_count` already returns ascending
+    order; re-sorting here is belt-and-suspenders).
 
-    No guessing from free text: `counts` already IS the corpus's real,
-    deterministic key set, so showing it in full is both simpler and more
-    honest than trying to spot which polities a premise names (a Title-Case
-    text scan over `case`/`request` was tried and dropped -- issue #252
-    review -- because it merges adjacent capitalized words into one wrong
-    candidate, e.g. "Does Tunisia" instead of "Tunisia", and never matches
-    an adjectival form like "Egyptian" against the corpus's own "Egypt"
-    key; either failure fabricates a count instead of showing the real
-    one). `case` is added even when `counts` does not name it -- rendered
-    at `0`, never omitted -- because a case the corpus is silent on is
-    itself a first-class interrogation signal (§7.2), not a gap to hide.
-    Sorted by polity name for a deterministic prompt (`coverage_count`
-    already returns ascending order; re-sorting here covers `case` too,
-    however it interleaves)."""
-    polities = dict(counts)
-    polities.setdefault(case.strip(), 0)
-    return "\n".join(f"- {polity}: {polities[polity]} chunks" for polity in sorted(polities))
+    Earlier versions also injected a row for the brief's raw `case`
+    string, at `0` when it wasn't already one of `counts`' keys, meaning
+    to flag a place the corpus has never heard of. That was dropped: a
+    real `case` almost always bundles a place with a date range (e.g.
+    "Syria, 2011-2024"), the coverage table has no time dimension to
+    speak to at all, and the bundled phrase essentially never
+    byte-for-byte matches a bare corpus key -- so the fabricated row fired
+    as a false "zero coverage" signal on nearly every real brief, not as a
+    rare true positive. There is no cheap way to strip the date
+    qualifier and reliably recover the bare place name from free text (a
+    Title-Case scan was tried for a related problem -- see the coverage
+    table's own git history -- and merges/misses in exactly this way); the
+    model is asked instead to map the case's place name(s) onto this
+    table's real rows itself (`compose_prompt`'s added guidance line),
+    the same kind of judgment the rest of the pipeline already trusts it
+    to make."""
+    return "\n".join(f"- {polity}: {counts[polity]} chunks" for polity in sorted(counts))
 
 
 def compose_prompt(brief: Brief, coverage_counts: dict[str, int]) -> str:
@@ -247,7 +256,7 @@ def compose_prompt(brief: Brief, coverage_counts: dict[str, int]) -> str:
         if brief.lens
         else "Lens: (none specified; the analysis stage will choose one)"
     )
-    coverage_section = render_coverage_section(brief.case, coverage_counts)
+    coverage_section = render_coverage_section(coverage_counts)
 
     return f"""You are the brief-interrogation pre-pass of an analysis engine (specs/PHASE-B.md §7.2). Before any retrieval or synthesis runs, find every premise smuggled into this brief's case and request, and test each one against the corpus's REAL coverage below -- never against what you recall or assume about the world.
 
@@ -257,6 +266,8 @@ Request: "{brief.request}"
 
 Known corpus coverage (chunk count per polity, read from the vault query API -- a count of 0 means the corpus holds no chunk touching that polity, not that none was checked):
 {coverage_section}
+
+This table counts chunks per place only -- it has no time/period dimension. A date or period qualifier in the case (e.g. "2011-2024") is not something this table can confirm or deny; map the place name(s) the case and request name, however phrased, to their corresponding row above yourself -- do not expect an exact string match.
 
 For every premise the case or request smuggles in (an assumption the brief takes for granted rather than states as a question), decide, from the coverage table above ONLY:
 - "supports" -- the coverage plausibly sustains the premise.

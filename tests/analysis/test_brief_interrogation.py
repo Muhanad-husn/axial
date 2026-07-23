@@ -15,7 +15,7 @@ Then  the emitted interrogation result has `premises_found` containing an
   And `disposition` is one of "refuse" or "proceed_bounded" -- never "proceed"
   And the recorded prompt at AXIAL_LLM_RECORD_PATH contains the exact
       coverage counts read from the vault query API (the corpus's one real
-      polity entry, and the brief's own case at its real, zero, count)
+      polity entry only -- never a synthesized row for the brief's own case)
   And the command exits 0
 
 Given the same brief and a canned response carrying a non-null `refusal`
@@ -46,7 +46,7 @@ the real, shared `data/` tree -- via `uv run --project <repo>` (required,
 not bare `uv run`, since the subprocess's cwd is deliberately not the repo
 checkout).
 
-Seam decision 2 -- the fixture vault proves absence-means-zero directly,
+Seam decision 2 -- the fixture vault proves absence-means-absence directly,
 and the coverage assertion checks the EXACT rendered lines, not a loose
 substring
 -----------------------------------------------------------------------
@@ -57,21 +57,21 @@ result -- so this vault's real `coverage_count()` is exactly
 `{"Freedonia": 1}`; "Syria" (the brief's own `case`) and "Tunisia" are both
 absent from it.
 
-`axial.brief.interrogate.render_coverage_section` (issue #252 review: an
-earlier free-text scan over case/request that guessed which polities to
-look up was dropped -- it merged adjacent Title-Case words into one wrong
-candidate and never matched an adjectival form against the corpus's real
-key, in both cases fabricating a count instead of showing the real one)
-renders exactly two things: every polity `coverage_count()` itself names
-(here, "Freedonia: 1 chunks"), plus the brief's `case` unconditionally,
-explicit-zero when the corpus is silent on it ("Syria: 0 chunks" for this
-vault). This test asserts both of those EXACT rendered lines rather than a
-loose "some digit is present somewhere" substring check, so a regression
-back to a fabricated/mis-keyed line (the bug this review caught) would fail
-it. "Tunisia" itself is never a coverage-table entry under this design
-(it's neither the case nor a corpus-real polity) -- it appears only in the
-request's own free text, which the recorded prompt is asserted NOT to
-mistake for a coverage line.
+`axial.brief.interrogate.render_coverage_section` renders ONLY what
+`coverage_count()` itself names (here, exactly "Freedonia: 1 chunks") --
+nothing is synthesized for the brief's own `case`. An earlier version
+also injected a row for the brief's raw `case` string, explicit-zero when
+the corpus was silent on it; that was dropped (root-caused 2026-07-23)
+because a real `case` almost always bundles a place with a date range the
+coverage table has no way to speak to, so the fabricated zero-row fired as
+a false "the corpus has never heard of this place" signal on nearly every
+real brief, not a rare true one. This test asserts the EXACT rendered
+coverage line for the corpus's one real polity, and asserts NEITHER
+"Syria: ..." NOR "Tunisia: ..." appears as a coverage-table line -- a
+regression back to a fabricated/mis-keyed row for either would fail it.
+"Syria" and "Tunisia" may still appear inside the case/request's own
+verbatim free text, which the recorded prompt is asserted NOT to mistake
+for a coverage line.
 
 Seam decision 3 -- the `record` provider observes the assembled prompt
 -----------------------------------------------------------------------
@@ -233,10 +233,12 @@ def fixture_root(tmp_path: Path) -> Path:
 def test_contradicted_premise_never_proceeds_clean_and_carries_real_coverage(
     fixture_root: Path,
 ):
-    """Scenario 1 (issue #252): a premise the corpus's real coverage
-    contradicts is named in the persisted result, the disposition is never
-    a confident "proceed", and the recorded prompt carries the real
-    coverage counts `coverage_count()` returned (not model recall)."""
+    """Scenario 1 (issue #252, regression-updated for the fabricated-
+    case-row fix): a premise the corpus's real coverage contradicts is
+    named in the persisted result, the disposition is never a confident
+    "proceed", and the recorded prompt carries the real coverage counts
+    `coverage_count()` returned (not model recall, and not a synthesized
+    row for the brief's own case)."""
     brief_path = _write_brief(fixture_root)
     record_path = fixture_root / "record.jsonl"
 
@@ -286,12 +288,13 @@ def test_contradicted_premise_never_proceeds_clean_and_carries_real_coverage(
         f"{combined_prompt_text!r}"
     )
     # The brief's own `case` ("Syria") is absent from this fixture's real
-    # coverage -- it must still be rendered explicitly at 0, never omitted:
-    # a case the corpus is silent on is itself a first-class interrogation
-    # signal (§7.2).
-    assert "Syria: 0 chunks" in combined_prompt_text, (
-        "expected the recorded prompt to render the brief's own case at its "
-        f"real (zero) coverage_count, got:\n{combined_prompt_text!r}"
+    # coverage -- it must NOT get a fabricated coverage-table row of its
+    # own (the bug this test now guards): no "Syria: ..." coverage line at
+    # all, only the corpus's real "Freedonia: 1 chunks" entry above.
+    assert "Syria:" not in combined_prompt_text, (
+        "expected no fabricated 'Syria: ...' coverage line for the brief's "
+        f"own case -- the corpus has no real coverage for it, got:\n"
+        f"{combined_prompt_text!r}"
     )
     # "Tunisia" is neither the case nor a real corpus polity under this
     # vault, so it must never get a fabricated coverage-table entry of its
@@ -301,6 +304,17 @@ def test_contradicted_premise_never_proceeds_clean_and_carries_real_coverage(
         "expected no fabricated 'Tunisia: ...' coverage line -- Tunisia is "
         f"neither the case nor a real vault polity for this fixture, got:\n"
         f"{combined_prompt_text!r}"
+    )
+    # The prompt must tell the model the coverage table has no time
+    # dimension, so it maps the case's place name(s) onto the table's real
+    # rows itself instead of expecting an exact string match against a
+    # date-qualified case (the fix for the false-refusal bug this test
+    # locks; see src/axial/brief/interrogate.py's compose_prompt).
+    assert (
+        "no time" in combined_prompt_text or "no time/period dimension" in combined_prompt_text
+    ), (
+        "expected the recorded prompt to carry the 'coverage table has no "
+        f"time dimension' guidance line, got:\n{combined_prompt_text!r}"
     )
 
 
