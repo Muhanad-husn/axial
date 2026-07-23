@@ -252,7 +252,7 @@ The manifest is committed under `evals/corpus_pin/` (safe: ids + hashes only). E
 
 ```
 source_usage: {
-  filters_observed: [ <tag_filter> ],   # union of the tag filters queried this run, from the trajectory (§7.6)
+  filters_observed: [ {tool, args} ],  # union of the tag filters queried this run, from the trajectory (§7.6)
   sources: [ {
     source_id,
     evidence_chunk_count,               # chunks of this source appearing in claim grounds
@@ -264,9 +264,9 @@ source_usage: {
 }
 ```
 
-`sources` is empty on disposition `refuse`, and on any run whose claims carry no grounds. `usage_ratio` near 1 means the source was drawn on in proportion to what it had; well above 1 means it was drawn on harder than its availability explains.
+`filters_observed` entries carry `tool` alongside `args` (issue #265 slice 01): `query_by_tag`'s own `polity` filter key (the single-valued `empirical_scope.polity`) and `query_by_polity`'s `polity` arg (the many-valued `polities_touched` facet) share a key name but are different queries, so the tool that produced a filter travels with it rather than being collapsed away. `sources` lists one entry per distinct `source_id` actually appearing in the claim grounds -- never a source that only turns up in the denominator query but was never drawn on -- so `evidence_share` always sums to 1.0 across it on any run with grounds; it is empty on disposition `refuse`, and on any run whose claims carry no grounds. `available_chunk_count` is that source's share of the **union** of chunks matching any one of `filters_observed`'s entries (a chunk matching more than one observed filter counts once), re-queried over the vault -- never derived from this run's own evidence, so a source the run under-drew on (or entirely missed) still gets an honest, non-zero denominator when the corpus actually held it. `usage_ratio` near 1 means the source was drawn on in proportion to what it had; well above 1 means it was drawn on harder than its availability explains.
 
-**How it is computed. No model call.** Deterministically, from data the record already holds: claim grounds resolve to vault ids, every `chunk_id` embeds its `source_id`, and the trajectory log records the tag filters of every query, which the deterministic `query_by_tag` / `query_by_polity` tools (§7.5) re-run to count the denominator over the pinned vault. This is the same architectural family as the §7.7 coverage map: a count over facets already written, never a judgment asked of a model.
+**How it is computed. No model call.** Deterministically, from data the record already holds: claim grounds resolve to vault ids, every `chunk_id` embeds its `source_id` (a parse -- `axial.query.reader.source_id_from_chunk_id`), an `artifact` grounds pointer resolves through the artifact's own `source_id` frontmatter, and the trajectory log records the tag filters of every query, which the deterministic `query_by_tag` / `query_by_polity` tools (§7.5) re-run to count the denominator over the pinned vault. This is the same architectural family as the §7.7 coverage map: a count over facets already written, never a judgment asked of a model. Implemented at `axial.answer.source_usage.compute_source_usage`, called from `build_record` (`axial.answer.record`) so every record `axial brief run` writes carries it.
 
 **Scope discipline: diagnostic, not gating, in v0.** There is no defensible concentration threshold yet. What counts as too concentrated depends on corpus composition and on how broad the question is, and a narrow question over a corpus with one specialist source *should* concentrate. So v0 discloses and records it; it gates nothing. This follows the discipline §7.7's coverage band and §7.8's contested-detection rule already follow: state the tunable, prove it by inspection, then set it.
 

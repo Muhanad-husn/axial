@@ -30,7 +30,7 @@ from axial.query import (
     query_by_source,
     query_by_tag,
 )
-from axial.query.reader import _source_id_from_chunk_id
+from axial.query.reader import source_id_from_chunk_id
 
 # -- fixture helpers ----------------------------------------------------------
 
@@ -526,14 +526,14 @@ def test_source_id_from_chunk_id_pins_the_parse_rule():
     hyphens (axial's own source_id convention, `{stem}-{hash}`); the three
     trailing segments never do."""
     assert (
-        _source_id_from_chunk_id("some-source-abc123_1-2_intro-section_007") == "some-source-abc123"
+        source_id_from_chunk_id("some-source-abc123_1-2_intro-section_007") == "some-source-abc123"
     )
-    assert _source_id_from_chunk_id("src_0_section_001") == "src"
+    assert source_id_from_chunk_id("src_0_section_001") == "src"
 
 
 def test_source_id_from_chunk_id_raises_on_a_malformed_chunk_id():
     with pytest.raises(MalformedChunkIdError):
-        _source_id_from_chunk_id("not-enough-segments")
+        source_id_from_chunk_id("not-enough-segments")
 
 
 def test_query_by_source_returns_only_that_sources_chunks(tmp_path):

@@ -1,0 +1,6 @@
+# Dev fixture brief (issue #265, source-usage slice 01). Its path and
+# content are pinned by the outer acceptance test at
+# tests/analysis/test_source_usage.py -- do not rename or reword
+# case/request without updating that test.
+case: "Political Science Corpus"
+request: "What causal claims does the corpus support about state formation?"
