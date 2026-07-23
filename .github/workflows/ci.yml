@@ -25,7 +25,10 @@ jobs:
       # Hub on first conversion (docling-project/docling-layout-heron and
       # docling-project/docling-models). Cache them across runs so only the very
       # first run pays the download; OCR is disabled in extract.py, so no
-      # modelscope/RapidOCR weights are ever fetched.
+      # modelscope/RapidOCR weights are ever fetched. The same cache also
+      # covers the stage-5 embedding pass's sentence-transformer checkpoint
+      # (sentence-transformers/all-MiniLM-L6-v2, issue #296) -- both live
+      # under ~/.cache/huggingface, so no separate cache step is needed.
       - name: Cache docling model weights
         uses: actions/cache@v4
         with:
@@ -34,8 +37,12 @@ jobs:
           restore-keys: |
             hf-cache-
 
+      # `distill` (issue #296, DEC-35: sentence-transformers + lancedb) is an
+      # optional dependency group, not part of the default `dependencies`/`dev`
+      # groups -- synced explicitly so the stage-5 embedding-pass tests
+      # (src/axial/distill/, tests/distill/) run for real instead of skipping.
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --group distill
 
       # The one real-docling end-to-end unit test is marked `slow`; it is
       # deselected because the outer acceptance test (tests/test_extract.py)

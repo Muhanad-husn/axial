@@ -34,6 +34,19 @@ dev = [
     "pytest-xdist>=3",
     "ruff>=0.6",
 ]
+# Stage-5 distillation runtime deps (DEC-35, issue #296): a local
+# sentence-transformer for the embedding pass + LanceDB for the vector
+# store. Neither belongs in `dependencies` (not needed by the Phase A
+# pipeline) nor `dev` (not CI tooling) -- its own group, installed via
+# `uv sync --group distill`. Scoped to exactly what this slice imports;
+# DEC-35 also named scikit-learn/hdbscan/umap-learn for later stage-5
+# slices (5b/5c) -- deliberately not added here (unused by #296, would trip
+# the repo's "no unused dependency" tripwire). A later slice adds them when
+# it needs them.
+distill = [
+    "lancedb>=0.15",
+    "sentence-transformers>=3.0",
+]
 
 # tests/ holds only outer acceptance contracts (test-author, locked once red);
 # inner unit tests are co-located under src/ (implementer's domain) - DEC-20.

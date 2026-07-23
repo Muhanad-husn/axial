@@ -24,6 +24,7 @@ from axial.chunk import (
     run_chunk_recursive,
 )
 from axial.codebook import CodebookError, load_codebook
+from axial.distill.embed import EmbedError, run_embed
 from axial.drive import DEFAULT_SECRETS_PATH as DRIVE_SECRETS_PATH
 from axial.drive import DriveSecretsError, _load_drive_secrets, run_drive_ingest
 from axial.envelope import EnvelopeError, MissingSourceError, compute_source_id, run_envelope
@@ -489,6 +490,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pin_write_parser.add_argument(
         "name", help="pin name, e.g. 'baseline' -> evals/corpus_pin/baseline.json"
+    )
+
+    distill_parser = subparsers.add_parser(
+        "distill", help="stage-5 distillation-eval operations (DEC-35, issue #296)"
+    )
+    distill_subparsers = distill_parser.add_subparsers(dest="distill_command")
+
+    distill_subparsers.add_parser(
+        "embed",
+        help=(
+            "embed every vault prose chunk once via a local sentence-transformer "
+            "and persist the vectors + filterable metadata (source_id, tag axes) "
+            "in a LanceDB store (data/distill/embeddings.lance), recording the "
+            "corpus-pin id/hash this pass ran against (data/distill/embedding_manifest.json)"
+        ),
     )
 
     gate_parser = subparsers.add_parser(
@@ -1194,6 +1210,19 @@ def _pin_write(name: str) -> int:
     return 0
 
 
+def _distill_embed() -> int:
+    try:
+        result = run_embed()
+    except EmbedError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"chunk_count: {result.chunk_count}")
+    print(f"embeddings_dir: {result.embeddings_dir}")
+    print(f"manifest_path: {result.manifest_path}")
+    return 0
+
+
 def _gate_run(gate: str, records_dir: str) -> int:
     try:
         records = load_records(Path(records_dir))
@@ -1326,6 +1355,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "pin" and args.pin_command == "write":
         return _pin_write(args.name)
+
+    if args.command == "distill" and args.distill_command == "embed":
+        return _distill_embed()
 
     if args.command == "gate" and args.gate_command == "run":
         return _gate_run(args.gate, args.records)
