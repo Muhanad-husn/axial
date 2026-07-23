@@ -1,8 +1,9 @@
 """Stage-5 analysis validators: deterministic post-passes that run after
 synthesis and before any answer is released (specs/PHASE-B.md §7.9, §5 stage
-5). Slice 01 (issue #258) lands the attribution validator; counter-position
-and coverage/confidence (issues #259, #260) are siblings that extend this
-package later -- see plans/analysis-validators/README.md.
+5). Slice 01 (issue #258) lands the attribution validator, slice 02 (issue
+#259) the counter-position validator; coverage/confidence (issue #260) is a
+sibling that extends this package later -- see
+plans/analysis-validators/README.md.
 
 Named `axial.validators` (plural), not `axial.validate` (singular): the
 latter already exists as `src/axial/validate.py`, Phase A's schema<->codebook
@@ -24,6 +25,18 @@ from axial.validators.attribution import (
     format_attribution_report,
     validate_attribution,
 )
+from axial.validators.counter_position import (
+    CounterPositionFailure,
+    CounterPositionReport,
+    CounterPositionValidatorError,
+)
+from axial.validators.counter_position import (
+    SamePassModelError as CounterPositionSamePassModelError,
+)
+from axial.validators.counter_position import (
+    format_counter_position_report,
+    validate_counter_position,
+)
 
 __all__ = [
     "AttributionFailure",
@@ -32,4 +45,10 @@ __all__ = [
     "SamePassModelError",
     "format_attribution_report",
     "validate_attribution",
+    "CounterPositionFailure",
+    "CounterPositionReport",
+    "CounterPositionValidatorError",
+    "CounterPositionSamePassModelError",
+    "format_counter_position_report",
+    "validate_counter_position",
 ]

@@ -94,6 +94,19 @@ retrieve:
   # dev briefs -- tuning it is explicitly out of this slice's scope.
   thin_result_floor: 3
 
+# Stage-5 counter-position validator's contested-detection rule (issue #259,
+# PRD §7.8/§7.9): a brief is contested when its evidence spans at least this
+# many distinct *substantive* `theory_school` primaries (the `not-applicable`/
+# `unlisted` sentinels excluded), OR when any evidence chunk carries
+# `role_in_argument: role:counter-position` (not a numeric knob -- either it
+# fired or it didn't). src/axial/validators/counter_position.py reads this via
+# _resolve_min_distinct_theory_schools, falling back to its own
+# DEFAULT_MIN_DISTINCT_THEORY_SCHOOLS when this file or key is absent. 2 is
+# the spec's own stated starting hypothesis (§7.8), proven on the dev briefs
+# separately -- tuning it is explicitly out of this slice's scope.
+contested_detection:
+  min_distinct_theory_schools: 2
+
 # Google Drive connector tunables (issue #239, PRD §7.10 "Language-gate
 # tunables" paragraph / §8 P0-11c): the English-only language gate's
 # bounded text probe size and its accept-confidence threshold. src/axial/
