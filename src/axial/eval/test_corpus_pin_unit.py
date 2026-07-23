@@ -37,6 +37,7 @@ from axial.eval.corpus_pin import (
     _build_sources,
     _build_vault_snapshot_hash,
     _collect_snapshot_pairs,
+    _default_sources_dir,
     _tag_projection,
     ingest_code_sha,
     write_pin,
@@ -576,3 +577,34 @@ def test_write_pin_regenerating_the_envelope_does_not_move_content_hash(tmp_path
     second = json.loads(second_path.read_text(encoding="utf-8"))
 
     assert first["sources"] == second["sources"]
+
+
+# --- Sources-dir resolution delegates to axial.paths (issue #281) ----------
+
+
+def test_default_sources_dir_is_the_same_function_object_as_axial_paths():
+    """`corpus_pin._default_sources_dir` must be `axial.paths.
+    default_sources_dir` itself, not a second, independent implementation
+    -- issue #281: #248 added `_default_sources_dir` as its own
+    config-then-fallback resolver, duplicating the one `axial.paths` was
+    built (#249) to be the sole owner of. An identity check (rather than a
+    behavioral comparison of two implementations that might simply happen
+    to agree today) is what actually rules out a reintroduced duplicate:
+    two independent functions can return equal paths on every input and
+    still silently diverge the moment one of them is edited."""
+    import axial.paths as paths_module
+
+    assert _default_sources_dir is paths_module.default_sources_dir
+
+
+def test_default_sources_dir_honors_a_configured_sources_dir(tmp_path: Path):
+    """End-to-end proof that the delegation is live: a `paths.sources_dir`
+    key in the pipeline config is honored by `corpus_pin._default_sources_dir`
+    exactly as `axial.paths.default_sources_dir` resolves it (the
+    acceptance criterion's own example config)."""
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text(
+        "paths:\n  sources_dir: data/a_totally_different_dir\n", encoding="utf-8"
+    )
+
+    assert _default_sources_dir(config_path) == Path("data/a_totally_different_dir")
