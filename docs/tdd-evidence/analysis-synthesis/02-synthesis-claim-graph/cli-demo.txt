@@ -1,0 +1,60 @@
+lens: political-economy
+claim count: 3
+{
+  "claim_id": "ad7a2312a0f1702b",
+  "kind": "a",
+  "text": "The corpus states that displacement reshaped local authority in Syria.",
+  "grounds": [
+    {
+      "ref_type": "chunk",
+      "ref_id": "acfix_001_syria_a"
+    }
+  ],
+  "polities_touched": [
+    "Syria"
+  ],
+  "confidence": "medium"
+}
+{
+  "claim_id": "62f2996babeda436",
+  "kind": "b",
+  "text": "A cross-source inference linking Syrian and Iraqi displacement dynamics.",
+  "grounds": [
+    {
+      "ref_type": "chunk",
+      "ref_id": "acfix_001_syria_a"
+    },
+    {
+      "ref_type": "chunk",
+      "ref_id": "acfix_002_iraq_a"
+    },
+    {
+      "ref_type": "artifact",
+      "ref_id": "acfix_004_artifact"
+    }
+  ],
+  "polities_touched": [
+    "Syria",
+    "Iraq"
+  ],
+  "confidence": "low"
+}
+{
+  "claim_id": "e13f40e41065a465",
+  "kind": "c",
+  "text": "A speculative extrapolation beyond the corpus.",
+  "grounds": [],
+  "polities_touched": [],
+  "confidence": "low"
+}
+
+recorded prompt (truncated):
+You are the stage-4 synthesis pass of an analysis engine (specs/PHASE-B.md §7.4). Apply the lens named below and perform axial coding across ONLY the evidence chunks supplied below -- reason only over the grounds supplied here, never from your own parametric memory or the open web. Any assertion not traceable to a supplied grounds pointer is not a claim this pass may emit.
+
+Case: "Syria"
+Request: "How did displacement reshape local authority?"
+Lens: "political-economy"
+
+Evidence chunks (cite ONLY these chunk_ids/artifact_ids as grounds):
+- chunk_id=acfix_001_syria_a role_in_argument=role:claim...
+EXIT=0

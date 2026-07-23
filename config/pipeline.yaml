@@ -35,6 +35,10 @@ llm:
     # same profile as the envelope. The acceptance bar is 0 false positives
     # over 30 sources, so precision is the whole point.
     holdings: true
+    # Phase-B stage-4 synthesis (§7.11, issue #256): the judgment-heavy,
+    # once-per-brief call every downstream validator checks. [TENTATIVE]
+    # per §7.11 -- tuned on the first real briefs, not asserted here as final.
+    synthesize: true
     tag: false
     artifacts: false
     xref: false
@@ -51,6 +55,12 @@ llm:
   # per-pass model override.
   model_by_pass:
     envelope: production_high
+    # Phase-B stage-4 synthesis (§7.11, issue #256): high tier, mirroring
+    # envelope's own once-per-run, judgment-heavy profile. The TIER this
+    # names is a stated [TENTATIVE] operational decision (§7.11) -- which
+    # concrete high-tier model backs `production_high` is out of this
+    # slice's scope, never hardcoded here.
+    synthesize: production_high
   # Per-pass best-of-N voting (DEC-31, issue #294): how many times a pass
   # draws its per-unit call before majority-voting the blind axes, mirroring
   # the two per-pass blocks above (src/axial/llm.py's _resolve_votes_by_pass
