@@ -162,24 +162,23 @@ def test_render_coverage_section_renders_every_real_polity_coverage_count_names(
     set in full -- no free-text guessing at which polities a premise
     names, so a polity's real (possibly large) count is never overwritten
     by a fabricated one."""
-    section = render_coverage_section("Syria", {"Tunisia": 200, "Freedonia": 3})
+    section = render_coverage_section({"Tunisia": 200, "Freedonia": 3})
     assert "Tunisia: 200 chunks" in section
     assert "Freedonia: 3 chunks" in section
 
 
-def test_render_coverage_section_shows_case_at_zero_when_corpus_is_silent_on_it():
-    """A case the corpus does not cover is a first-class interrogation
-    signal (§7.2) -- rendered explicitly at 0, never omitted, exactly like
-    any other polity `coverage_count()` doesn't name."""
-    section = render_coverage_section("Tunisia", {"Syria": 12})
-    assert "Tunisia: 0 chunks" in section
-    assert "Syria: 12 chunks" in section
-
-
-def test_render_coverage_section_never_shows_case_twice_when_it_has_real_coverage():
-    section = render_coverage_section("Syria", {"Syria": 7, "Freedonia": 1})
-    assert section.count("Syria:") == 1
-    assert "Syria: 7 chunks" in section
+def test_render_coverage_section_never_fabricates_a_row_for_an_unnamed_polity():
+    """Regression (root-caused 2026-07-23): a place absent from `counts`
+    must never get a synthesized row -- the earlier design injected the
+    brief's raw `case` string at count 0, which fired as a false "zero
+    coverage" signal on almost every real brief because a `case` usually
+    bundles a place with a date range the coverage table has no way to
+    speak to. `render_coverage_section` now takes only `counts` and
+    renders exactly its real keys, nothing else."""
+    section = render_coverage_section({"Syria": 2653})
+    assert "Syria: 2653 chunks" in section
+    assert "Tunisia" not in section
+    assert section.count("\n") == 0  # exactly one line: no synthesized second row
 
 
 def test_compose_prompt_carries_real_coverage_counts_not_a_fabricated_one():
@@ -201,11 +200,24 @@ def test_compose_prompt_carries_real_coverage_counts_not_a_fabricated_one():
     assert "Does Tunisia:" not in prompt
 
 
-def test_compose_prompt_shows_case_at_zero_when_absent_from_coverage_counts():
-    brief = _brief(case="Syria", request="How did local order change?")
-    prompt = compose_prompt(brief, {"Freedonia": 3})
-    assert "Syria: 0 chunks" in prompt
-    assert "Freedonia: 3 chunks" in prompt
+def test_compose_prompt_never_fabricates_a_row_for_a_date_qualified_case():
+    """Regression for the false-refusal bug root-caused 2026-07-23: a real
+    `case` bundles a place with a date range ("Syria, 2011-2024"); that
+    full string must never appear as its own fabricated coverage-table row
+    at count 0 next to the real "Syria: 2653" row, and the prompt must
+    instead tell the model the table is place-only with no time dimension
+    so it maps the case's place name onto the real row itself."""
+    brief = _brief(
+        case="Syria, 2011-2024",
+        request="How did local order change over the course of the conflict?",
+    )
+    counts = {"Syria": 2653, "Tunisia": 41}
+    prompt = compose_prompt(brief, counts)
+
+    assert "Syria: 2653 chunks" in prompt
+    assert "Syria, 2011-2024: 0 chunks" not in prompt
+    assert "Syria, 2011-2024:" not in prompt
+    assert "no time" in prompt.lower() or "no time/period" in prompt.lower()
 
 
 # -- pass registration ------------------------------------------------------
