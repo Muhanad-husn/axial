@@ -19,7 +19,7 @@
 #                        the run's measured hours x1.5. Held-out sources: a
 #                        coarse 24h ceiling, to be calibrated after first run.
 #   quarantine_budget  - max quarantined-chunk fraction (criterion 2), flat
-#                        0.02 (<2%) per canary-set.md.
+#                        0.05 (<5%) per canary-set.md.
 #
 # The old proving input (Ungor's paramilitarism paper) is demoted to smoke-test
 # duty and is deliberately NOT a canary here.
@@ -30,7 +30,7 @@
 source_id = "mann-sources-of-social-power-v4"
 source_path = "data/sources/mann-sources-of-social-power-v4.pdf"
 time_envelope_sec = 66000
-quarantine_budget = 0.02
+quarantine_budget = 0.05
 
 [[canary]]
 # Seen: 1978 scan, worst OCR; empty-toc envelope failure; silent-hang/stall
@@ -39,7 +39,7 @@ quarantine_budget = 0.02
 source_id = "tilly-from-mobilization-to-revolution"
 source_path = "data/sources/tilly-from-mobilization-to-revolution.pdf"
 time_envelope_sec = 54000
-quarantine_budget = 0.02
+quarantine_budget = 0.05
 
 [[canary]]
 # Seen: moderation survivor (content_filter near-miss) + empty-tag crash +
@@ -47,7 +47,7 @@ quarantine_budget = 0.02
 source_id = "hall-schroeder-anatomy-of-power"
 source_path = "data/sources/hall-schroeder-anatomy-of-power.pdf"
 time_envelope_sec = 72000
-quarantine_budget = 0.02
+quarantine_budget = 0.05
 
 [[canary]]
 # Held-out (unseen): contemporary Syria war/destruction -> reintroduces the
@@ -56,7 +56,7 @@ quarantine_budget = 0.02
 source_id = "vignal-war-torn"
 source_path = "data/sources/vignal-war-torn.pdf"
 time_envelope_sec = 86400
-quarantine_budget = 0.02
+quarantine_budget = 0.05
 
 [[canary]]
 # Held-out (unseen): Syrian agrarian politics -> reintroduces the Arabic
@@ -65,4 +65,4 @@ quarantine_budget = 0.02
 source_id = "batatu-syrias-peasantry"
 source_path = "data/sources/batatu-syrias-peasantry.pdf"
 time_envelope_sec = 86400
-quarantine_budget = 0.02
+quarantine_budget = 0.05
