@@ -1,0 +1,26 @@
+$ axial brief interrogate brief.yaml
+brief_id: 6f90c9fc81498179
+disposition: proceed_bounded
+  premise (contradicts): The brief assumes Tunisia's transition followed the same sequence as Syria's.
+  bound: Covers Syria and Freedonia; the corpus is silent on Tunisia.
+persisted: data\analyses\6f90c9fc81498179.json
+EXIT=0
+
+--- persisted interrogation record (data/analyses/<brief_id>.json) ---
+{
+  "brief_id": "6f90c9fc81498179",
+  "interrogation": {
+    "bounds_applied": [
+      "Covers Syria and Freedonia; the corpus is silent on Tunisia."
+    ],
+    "disposition": "proceed_bounded",
+    "premises_found": [
+      {
+        "assessment": "contradicts",
+        "premise": "The brief assumes Tunisia's transition followed the same sequence as Syria's."
+      }
+    ],
+    "refusal": null
+  }
+}
+
