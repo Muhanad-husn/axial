@@ -41,6 +41,7 @@ from axial.gold import (
 from axial.ingest import run_ingest
 from axial.intake import IntakeError, intake
 from axial.llm import ENVELOPE_PASS_NAME, TAG_PASS_NAME, get_client
+from axial.paths import default_analyses_dir
 from axial.pipeline_ready import PipelineReadyError, run_pipeline_ready
 from axial.polity_canonical import PolityCanonicalError, run_polity_build, run_polity_report
 from axial.query.reader import QueryError
@@ -55,6 +56,11 @@ from axial.runlog import run_context
 from axial.schema import SchemaError, load_schema
 from axial.tag import DEFAULT_DOMAIN_DIR, TagError, run_tag
 from axial.validate import cross_validate
+from axial.validators import (
+    AttributionValidatorError,
+    format_attribution_report,
+    validate_attribution,
+)
 from axial.vault import VaultError, run_vault_write
 from axial.xref import XrefError, run_xref
 
@@ -402,6 +408,19 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     brief_run_parser.add_argument("brief_path", help="path to a versioned brief YAML file")
+
+    brief_validate_parser = brief_subparsers.add_parser(
+        "validate",
+        help=(
+            "run the stage-5 attribution validator over a persisted "
+            "analysis record at data/analyses/<brief_id>.json "
+            "(specs/PHASE-B.md §7.9, issue #258) -- exits 0 only when every "
+            "claim is marked and every (a)/(b) grounds pointer resolves"
+        ),
+    )
+    brief_validate_parser.add_argument(
+        "brief_id", help="brief_id of a persisted record under data/analyses/"
+    )
 
     pin_parser = subparsers.add_parser(
         "pin", help="corpus-pin manifest operations (specs/PHASE-B.md §7.12, §8 P0-10)"
@@ -998,6 +1017,34 @@ def _brief_run(brief_path: str) -> int:
     return 0
 
 
+def _brief_validate(brief_id: str) -> int:
+    record_path = default_analyses_dir() / f"{brief_id}.json"
+    if not record_path.is_file():
+        print(
+            f"error: no analysis record found for brief_id {brief_id!r} "
+            f"(expected at {record_path})",
+            file=sys.stderr,
+        )
+        return 1
+
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+
+    client = get_client()
+    try:
+        report = validate_attribution(record, client=client)
+    except AttributionValidatorError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"brief_id: {brief_id}")
+    print(format_attribution_report(report))
+    # A failure blocks release (§7.9): no answer is emitted on a non-zero
+    # exit, and this command never writes to `record_path` either way --
+    # the validator only ever reports (README.md: "it never edits the
+    # record").
+    return 0 if report.passed else 1
+
+
 def _pin_write(name: str) -> int:
     try:
         path = write_pin(name)
@@ -1104,6 +1151,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "brief" and args.brief_command == "run":
         return _brief_run(args.brief_path)
+
+    if args.command == "brief" and args.brief_command == "validate":
+        return _brief_validate(args.brief_id)
 
     if args.command == "pin" and args.pin_command == "write":
         return _pin_write(args.name)

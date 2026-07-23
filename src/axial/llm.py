@@ -40,7 +40,14 @@ require no network access:
                                      claim-graph-shaped canned response (or,
                                      if `AXIAL_STUB_SYNTHESIZE_RESPONSE` is
                                      set to a non-empty value, that raw string
-                                     verbatim -- issue #256); anything else --
+                                     verbatim -- issue #256); `pass_name=
+                                     "attribution"`, passed by
+                                     src/axial/validators/attribution.py,
+                                     selects a flagged-claim-ids-shaped canned
+                                     response (or, if
+                                     `AXIAL_STUB_ATTRIBUTION_RESPONSE` is set
+                                     to a non-empty value, that raw string
+                                     verbatim -- issue #258); anything else --
                                      including the envelope pass, which never
                                      passes it -- gets the original
                                      envelope-shaped one). Dispatch is
@@ -300,6 +307,16 @@ RETRIEVE_PASS_NAME = "retrieve"
 # also named in DEFAULT_REASONING_BY_PASS below.
 SYNTHESIZE_PASS_NAME = "synthesize"
 
+# Pass name the stage-5 attribution validator's bounded (b)-seam honesty
+# check identifies itself with (see src/axial/validators/attribution.py,
+# issue #258, PRD §7.9): does a claim marked "b" (tool-infers-across-sources)
+# read as though a single source asserted it. Same out-of-band dispatch
+# convention as CHUNK_PASS_NAME above -- naming this constant is what makes
+# the check routable through `model_by_pass`, which is the whole point: it
+# must resolve to a DIFFERENT model than SYNTHESIZE_PASS_NAME, never the
+# model that generated the claims it is checking (§7.9, charter §2).
+ATTRIBUTION_PASS_NAME = "attribution"
+
 # Per-pass model reasoning (§7.9, issue #207): reasoning is ON for the
 # structural-envelope pass and the content-apparatus classification gate --
 # both small, judgment-heavy, once/rarely-per-source calls -- and OFF
@@ -387,6 +404,30 @@ STUB_INTERROGATE_RESPONSE_ENV_VAR = "AXIAL_STUB_INTERROGATE_RESPONSE"
 # in-process. Read at call time, like every other seam here. Never affects
 # any other pass's canned response.
 STUB_SYNTHESIZE_RESPONSE_ENV_VAR = "AXIAL_STUB_SYNTHESIZE_RESPONSE"
+
+# Issue #258 test/CI-only seam: mirrors STUB_SYNTHESIZE_RESPONSE_ENV_VAR
+# above, exactly, for the stage-5 attribution validator's (b)-seam check
+# instead of the synthesis pass. When set to a non-empty value, the
+# stub/record clients' attribution-pass response becomes this raw string
+# verbatim instead of the default canned response, letting a test script
+# which claim_ids the bounded model check flags as voiced-as-a-source. Read
+# at call time, like every other seam here. Never affects any other pass's
+# canned response.
+STUB_ATTRIBUTION_RESPONSE_ENV_VAR = "AXIAL_STUB_ATTRIBUTION_RESPONSE"
+
+# Issue #258 test/CI-only seam: a JSON object mapping pass_name -> model
+# name, read fresh from the environment by `StubLLMClient`/`RecordLLMClient`'s
+# `model_for_pass` (which otherwise always answers the fixed id "stub"
+# regardless of pass_name -- neither test client has any real per-pass model
+# tiering to report). This lets a test drive both halves of the (b)-seam
+# same-model guard (§7.9: "a check whose configured model equals the
+# synthesis model is a config error worth surfacing loudly") end-to-end
+# through the CLI: map ATTRIBUTION_PASS_NAME and SYNTHESIZE_PASS_NAME to
+# distinct strings to prove the happy path, or to the same string to prove
+# the guard fires. A pass_name absent from the mapping (or the env var
+# unset/empty) keeps today's fixed "stub" answer -- every existing test
+# asserting `model_for_pass(...) == "stub"` is unaffected.
+STUB_MODEL_BY_PASS_ENV_VAR = "AXIAL_STUB_MODEL_BY_PASS"
 
 # The default, fixed in-schema `artifact_role` the stub/record canned
 # response carries when STUB_ARTIFACT_ROLE_ENV_VAR is unset -- the happy
@@ -573,8 +614,10 @@ class StubLLMClient:
         """A fixed, deterministic id -- there is no real model behind this
         client, but the run-logging record still needs a stable non-null
         value to prove a model-bearing pass's `model` field round-trips
-        under the stub provider (issue #270 slice 02)."""
-        return "stub"
+        under the stub provider (issue #270 slice 02). Issue #258:
+        `STUB_MODEL_BY_PASS_ENV_VAR`, when it names `pass_name`, overrides
+        this fixed id -- see that env var's own comment for why."""
+        return _model_for_pass_from_stub_mapping(pass_name)
 
     def complete_with_tools(
         self, prompt: str, tools: list[dict[str, Any]], pass_name: str | None = None
@@ -696,6 +739,33 @@ def _canned_synthesize_response() -> str:
     return override or _CANNED_SYNTHESIZE_RESPONSE
 
 
+_CANNED_ATTRIBUTION_RESPONSE = json.dumps({"flagged_claim_ids": []})
+
+
+def _canned_attribution_response() -> str:
+    """The canned response for an attribution-pass call (identified by
+    `pass_name=ATTRIBUTION_PASS_NAME`, issue #258): read fresh from
+    `STUB_ATTRIBUTION_RESPONSE_ENV_VAR` on every call so a test can script
+    which claim_ids the (b)-seam check flags (see the env var's own comment
+    above); unset/"" falls back to flagging nothing -- the conservative
+    default, so a stub-driven run never invents a flag nobody scripted."""
+    override = os.environ.get(STUB_ATTRIBUTION_RESPONSE_ENV_VAR, "")
+    return override or _CANNED_ATTRIBUTION_RESPONSE
+
+
+def _model_for_pass_from_stub_mapping(pass_name: str | None) -> str:
+    """Shared by `StubLLMClient`/`RecordLLMClient`'s `model_for_pass`: honors
+    `STUB_MODEL_BY_PASS_ENV_VAR` when set and `pass_name` is one of its keys,
+    otherwise falls back to the fixed `"stub"` id both clients have always
+    returned (see that env var's own comment for why this exists)."""
+    raw = os.environ.get(STUB_MODEL_BY_PASS_ENV_VAR, "")
+    if raw:
+        mapping = json.loads(raw)
+        if pass_name in mapping:
+            return mapping[pass_name]
+    return "stub"
+
+
 def _canned_response_for(pass_name: str | None) -> str:
     """Dispatch the canned response by pass: `pass_name == CHUNK_PASS_NAME`
     gets the chunk-shaped canned response, `pass_name == TAG_PASS_NAME` gets
@@ -757,6 +827,8 @@ def _canned_response_for(pass_name: str | None) -> str:
         return _canned_interrogate_response()
     if pass_name == SYNTHESIZE_PASS_NAME:
         return _canned_synthesize_response()
+    if pass_name == ATTRIBUTION_PASS_NAME:
+        return _canned_attribution_response()
     return StubLLMClient._CANNED_RESPONSE
 
 
@@ -808,10 +880,11 @@ class RecordLLMClient:
             return _canned_response_for(pass_name)
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
-        """Mirrors `StubLLMClient.model_for_pass` exactly -- same fixed id,
-        since this client's completion responses are also indistinguishable
-        from the stub's (module docstring)."""
-        return "stub"
+        """Mirrors `StubLLMClient.model_for_pass` exactly -- same fixed id
+        (subject to the same `STUB_MODEL_BY_PASS_ENV_VAR` override), since
+        this client's completion responses are also indistinguishable from
+        the stub's (module docstring)."""
+        return _model_for_pass_from_stub_mapping(pass_name)
 
     def complete_with_tools(
         self, prompt: str, tools: list[dict[str, Any]], pass_name: str | None = None

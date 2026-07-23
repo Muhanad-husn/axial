@@ -1,0 +1,14 @@
+=== Scenario: clean record ===
+$ axial brief validate DEV01
+brief_id: DEV01
+attribution validator: PASS (0 failures)
+
+exit=0
+
+=== Scenario: unresolvable grounds ===
+$ axial brief validate DEV03
+brief_id: DEV03
+attribution validator: FAIL (1 failure(s))
+  c-005: unresolvable_grounds -- chunk 'syr-9999' not found in the vault
+
+exit=1
