@@ -16,20 +16,35 @@ production" from "corpus moved, re-derive."
 **5b (issue #297): the readiness map.** `src/axial/distill/readiness.py`
 (`axial distill readiness-map`) reads every persisted vector from 5a, over
 zero LLM spend, and clusters them: L2-normalise (cosine geometry) →
-standardise → **PCA** (deterministic, `svd_solver="full"`; UMAP stays
-notebook-only per DEC-35, never a production representation) → **HDBSCAN**
-(`allow_single_cluster=True` — without it a corpus region that is tight but
-has no second, equally-dense region to split off against reads as 100%
-noise, verified directly against this library version). HDBSCAN's own `-1`
-label — never cluster `0` — passes through unrelabelled as the LLM-routed
-noise tail; real clusters start at `0`. The emitted
-`data/distill/readiness_manifest.json` records the corpus-pin provenance
-(`axial.distill.staleness`), the pinned config, and, per tag axis per tag
-value, the noise fraction, dominant-cluster id/share, and a `"tight"` /
-`"noise"` readiness call (majority-share threshold, `DEFAULT_READY_DOMINANT_SHARE
-= 0.5`) — plus the full `chunk_id → cluster_id` assignment 5c's
-cluster-stratified sampling reads. 5c (stratified teacher labels) onward is
-not yet built.
+standardise → **PCA** (`n_components=93`, deterministic `svd_solver="full"`;
+UMAP stays notebook-only per DEC-35, never a production representation) →
+**HDBSCAN** (`min_cluster_size=15`, `min_samples=5`,
+`cluster_selection_method="leaf"`, `allow_single_cluster=True`). Every one
+of these constants was measured directly against the real, frozen
+18,410-chunk vault (not a synthetic guess) after the first version's pinned
+defaults (`eom`, PCA=50) produced a degenerate 1-cluster readiness map —
+`eom` (HDBSCAN's own implicit default) always collapses this corpus to
+exactly one cluster regardless of PCA dims; `leaf` surfaces 17–42 real
+clusters instead, which is the real driver of a usable readiness signal,
+not PCA dimensionality. PCA=93 is the Kaiser criterion (eigenvalue > 1) on
+the standardized embedding matrix. HDBSCAN's own `-1` label — never cluster
+`0` — passes through unrelabelled as the LLM-routed noise tail; real
+clusters start at `0`. The emitted `data/distill/readiness_manifest.json`
+records the corpus-pin provenance (`axial.distill.staleness`), the pinned
+config, and, per tag axis per tag value, the noise fraction (over the tag's
+total chunk count) and the dominant-cluster id/share (over the tag's
+non-noise chunk count only — a founder-approved redefinition, #358: under
+`leaf`'s realistic ~90%+ corpus-wide noise rate, a share computed over total
+count would make almost every tag unable to ever read "tight") feeding a
+`"tight"` / `"noise"` readiness call (`DEFAULT_READY_DOMINANT_SHARE = 0.5`)
+— plus the full `chunk_id → cluster_id` assignment 5c's cluster-stratified
+sampling reads. Measured end to end on the real corpus: 41 clusters,
+noise_fraction 0.927; `claim_type`/`theory_school` (the blind axes) surface
+far more "tight" values (11/22, 15/30) than the head axes `field`/
+`role_in_argument`/`empirical_scope` (0/3, 0/7, 1/5) — the density signal
+finds the blind axes more separable in embedding space, the opposite of
+what teacher-label-quality intuition might suggest; flagged for 5c/5d.
+5c (stratified teacher labels) onward is not yet built.
 **Depends on:** full 24-source re-run (tag distribution) + P0-10 gold set (referee).
 **Subject doc:** the exploration this evaluates lives at
 `docs/exploration/hybrid-tagging-classifier.md`.

@@ -19,12 +19,17 @@ seeded across library versions (fights this repo's determinism contracts) and
 DEC-35 scoped it to notebook-only visualization, which this module does not
 build.
 
-Three pinned constants, each a judgment call documented where it is defined
-below (`DEFAULT_PCA_COMPONENTS`, `DEFAULT_MIN_CLUSTER_SIZE`,
-`DEFAULT_READY_DOMINANT_SHARE`) -- no real embedding store exists in every
-environment this module ships to, so these are reasoned starting points, not
-numbers fit against the real corpus; 5c/5d re-examine them once
-`data/distill/embeddings.lance` exists at corpus scale.
+Four pinned constants, each documented where it is defined below
+(`DEFAULT_PCA_COMPONENTS`, `DEFAULT_MIN_CLUSTER_SIZE`, `DEFAULT_MIN_SAMPLES`,
+`DEFAULT_READY_DOMINANT_SHARE`) -- measured directly against the real,
+frozen 18,410-chunk vault (not a synthetic guess), together with the
+`cluster_selection_method` HDBSCAN parameter (see `_default_cluster_fn`):
+`eom` (HDBSCAN's own implicit default) always collapsed the real corpus to
+exactly one cluster regardless of PCA dims or `min_cluster_size` -- the real
+driver of a degenerate "1 blob" readiness map is this parameter, not PCA
+dimensionality or `allow_single_cluster`. `leaf` surfaces 17-42 real,
+distinctly-sized clusters at every PCA dim tested and is the one this module
+now sets explicitly.
 
 Reuses `axial.distill.embed`'s own LanceDB table (`TABLE_NAME`,
 `METADATA_FILTER_KEYS`) as its read path, and
@@ -69,33 +74,56 @@ NOISE_LABEL = -1
 # contract like the corpus pin.
 DEFAULT_MANIFEST_PATH = Path("data/distill/readiness_manifest.json")
 
-# --- Pinned config (DEC-35: "the PCA dimensionality is your own
-# measurement/judgment call") ------------------------------------------------
+# --- Pinned config -- measured against the real, frozen 18,410-chunk vault
+# (post-#358 real-corpus validation), not a synthetic guess ------------------
 #
 # DEFAULT_PCA_COMPONENTS: the default embedding model (5a,
-# sentence-transformers/all-MiniLM-L6-v2) produces 384-dim vectors. 50 keeps
-# the HDBSCAN input well below the source dimensionality (mitigating
-# distance concentration, DEC-35's stated reason for reducing at all) while
-# retaining enough structure for density estimation -- a commonly cited
-# starting point for PCA-before-HDBSCAN pipelines. No real embedding store
-# exists in this environment to tune this further; revisit empirically once
-# `data/distill/embeddings.lance` holds the real corpus (5c/5d).
-DEFAULT_PCA_COMPONENTS = 50
+# sentence-transformers/all-MiniLM-L6-v2) produces 384-dim vectors.
+# Measured on the real L2-normalised + standardised 18,410x384 matrix: n=50
+# (the original pin) captures only 61.4% cumulative explained variance; 90%/
+# 95% need ~169/~216 components; the scree-plot elbow (kneedle) sits at ~28
+# but is not a reliable signal here (sentence-embedding spectra decay
+# smoothly, no sharp knee). 93 is the Kaiser criterion (eigenvalue > 1 on
+# the standardized inputs) -- the one of these four methods that gives a
+# real, principled, non-degenerate answer on this data.
+DEFAULT_PCA_COMPONENTS = 93
 
 # DEFAULT_MIN_CLUSTER_SIZE: hdbscan's own library default is 5. The frozen
-# corpus is expected at ~17k chunks (plan stage 4) across a handful of tag
-# axes, so 5 would fragment into many spurious micro-clusters; 15 is a
-# modest, single, unavoidable clustering-shape knob (every HDBSCAN call
-# needs one) -- not fit against real data, revisit at 5c/5d.
+# corpus is ~18k chunks across a handful of tag axes, so 5 would fragment
+# into many spurious micro-clusters; 15 is a modest, single, unavoidable
+# clustering-shape knob (every HDBSCAN call needs one) -- swept 15/30/50/100
+# against the real corpus (see `cluster_selection_method` in
+# `_default_cluster_fn`); 15 was not itself the variable that mattered.
 DEFAULT_MIN_CLUSTER_SIZE = 15
 
+# DEFAULT_MIN_SAMPLES: HDBSCAN's own default (`None`) resolves to
+# `min_cluster_size`, i.e. 15 -- how many neighbours a point needs to count
+# as "core" density. Measured on the real corpus (PCA=93, mcs=15, leaf):
+# min_samples=15 (the implicit default) finds 21 clusters at noise=0.953;
+# min_samples=5 finds 41 clusters at noise=0.927 -- meaningfully more real
+# sub-structure surfaces at the lower value, because fewer points are
+# required for "core" status, so more borderline points join a real cluster
+# instead of being marked noise. Set explicitly rather than left `None` so
+# this choice is visible and reproducible, not an HDBSCAN implementation
+# default this module happens to inherit.
+DEFAULT_MIN_SAMPLES = 5
+
 # DEFAULT_READY_DOMINANT_SHARE: a tag value is "tight" when its single most
-# common cluster (computed over ALL its chunks, noise included in the
-# denominator, so a noisy tag can never look tight just because its few
-# non-noise chunks happen to agree) accounts for at least this share. 0.5 --
-# majority -- is the simplest threshold that means anything ("more chunks
-# agree than disagree"); revisit against gold-parity data once 5c/5d can
-# measure whether it actually predicts classifier trainability.
+# common cluster accounts for at least this share OF ITS NON-NOISE CHUNKS
+# (see `_build_readiness_map` -- `noise_fraction`, reported separately, is
+# still computed over the tag's total count). Under `leaf` clustering, which
+# is what surfaces real corpus structure, global noise runs ~90%+, so a
+# share computed over TOTAL chunks (this module's original definition) would
+# make almost every tag unable to ever read "tight" even when its non-noise
+# chunks are 100% concentrated in one real cluster -- the opposite failure
+# mode from `eom`'s degenerate single-blob result, which trivially looked
+# "tight" for most tags precisely because it wasn't finding real structure.
+# 0.5 -- majority of the non-noise portion -- is the simplest threshold that
+# means anything; this denominator change is a founder-approved semantic
+# call (alternatives considered: lower the threshold, or keep `eom` and
+# report the 1-cluster result as the honest answer) after reviewing the real
+# corpus numbers; the threshold value itself is unchanged from the original
+# pin and can be revisited against gold-parity data at 5c/5d.
 DEFAULT_READY_DOMINANT_SHARE = 0.5
 
 ClusterFn = Callable[[list[list[float]]], list[int]]
@@ -149,6 +177,7 @@ def _default_cluster_fn(
     *,
     pca_components: int = DEFAULT_PCA_COMPONENTS,
     min_cluster_size: int = DEFAULT_MIN_CLUSTER_SIZE,
+    min_samples: int = DEFAULT_MIN_SAMPLES,
 ) -> list[int]:
     """The real reduction + clustering pipeline (lazy imports -- see module
     docstring): L2-normalise (cosine geometry) -> standardise -> PCA (`svd_solver
@@ -168,17 +197,30 @@ def _default_cluster_fn(
     n_components = max(1, min(pca_components, array.shape[0], array.shape[1]))
     reduced = PCA(n_components=n_components, svd_solver="full", random_state=0).fit_transform(array)
 
-    # `allow_single_cluster=True`: HDBSCAN's default cluster-selection method
-    # only ever reports a cluster that is a genuine *child* branch of the
-    # condensed tree, never the trivial root spanning the whole dataset --
-    # so a corpus region that is tight but has no second, equally dense
-    # region to split off against would otherwise read as 100% noise
-    # (verified directly against this library version: a single isolated,
-    # tightly-jittered blob with nothing else present returns all `-1`
-    # without this flag). The readiness map's whole job is telling a tight
-    # region from noise, so silently mislabeling a real one as noise for
-    # want of a sibling cluster would be exactly the wrong failure mode.
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=min_cluster_size, allow_single_cluster=True)
+    # `cluster_selection_method="leaf"`: measured directly against the real
+    # 18,410-chunk corpus -- `eom` (HDBSCAN's own implicit default, unset
+    # here in earlier revisions of this module) always collapsed the whole
+    # corpus to exactly one cluster, at every PCA dimensionality and
+    # `min_cluster_size` tested. `leaf` surfaces 17-42 real, distinctly-sized
+    # clusters instead. This -- not PCA dims, not `allow_single_cluster` --
+    # is the real driver of the degenerate "1 blob" result a readiness map
+    # must not produce.
+    #
+    # `allow_single_cluster=True`: confirmed harmless under `leaf` on the
+    # real corpus (a no-op there -- `leaf` already finds multiple clusters).
+    # Kept as a real guard for the case `_default_cluster_fn` is called on
+    # a genuinely single-blob input (verified directly: an isolated, tightly
+    # -jittered blob with nothing else present returns all `-1` without this
+    # flag, regardless of `cluster_selection_method`) -- the readiness map's
+    # whole job is telling a tight region from noise, so silently
+    # mislabeling a real one as noise for want of a sibling cluster would be
+    # exactly the wrong failure mode.
+    clusterer = hdbscan.HDBSCAN(
+        min_cluster_size=min_cluster_size,
+        min_samples=min_samples,
+        cluster_selection_method="leaf",
+        allow_single_cluster=True,
+    )
     labels = clusterer.fit_predict(reduced)
     return [int(label) for label in labels]
 
@@ -210,14 +252,18 @@ def _build_readiness_map(
     ready_dominant_share: float,
 ) -> dict[str, dict[str, dict[str, Any]]]:
     """Per axis (`TAG_AXES`), per non-empty tag value: total chunk count,
-    noise count/fraction, the dominant cluster id/share (share computed over
-    the tag's TOTAL chunk count, noise included -- so a tag that is mostly
-    noise can never read as "tight" just because its handful of non-noise
-    chunks happen to land in one cluster), and the resulting `"tight"` /
-    `"noise"` readiness call. A missing/empty tag value (the flattened
-    metadata's own `""` convention for "axis not set on this chunk",
-    `axial.distill.embed._flatten_metadata`) is excluded -- there is no tag
-    to report readiness for."""
+    noise count/fraction (over the tag's TOTAL chunk count -- "how much of
+    this tag is LLM-routed regardless"), the dominant cluster id/share (over
+    the tag's NON-NOISE chunk count only -- "of the portion that DID land in
+    a real cluster, how concentrated is it"; a tag with zero non-noise
+    chunks reads share `0.0` and readiness `"noise"` outright, never a
+    divide-by-zero), and the resulting `"tight"` / `"noise"` readiness call.
+    These two fractions are deliberately orthogonal (see
+    `DEFAULT_READY_DOMINANT_SHARE`'s own docstring for why total-count share
+    is the wrong denominator once `leaf` clustering is in play). A missing/
+    empty tag value (the flattened metadata's own `""` convention for "axis
+    not set on this chunk", `axial.distill.embed._flatten_metadata`) is
+    excluded -- there is no tag to report readiness for."""
     axes: dict[str, dict[str, dict[str, Any]]] = {}
     for axis in TAG_AXES:
         by_value: dict[str, dict[str, Any]] = {}
@@ -236,6 +282,7 @@ def _build_readiness_map(
         for value, entry in sorted(by_value.items()):
             total = entry["total"]
             noise_count = entry["noise_count"]
+            non_noise = total - noise_count
             cluster_counts = entry["cluster_counts"]
             if cluster_counts:
                 dominant_cluster_id, dominant_count = max(
@@ -243,7 +290,7 @@ def _build_readiness_map(
                 )
             else:
                 dominant_cluster_id, dominant_count = None, 0
-            dominant_cluster_share = dominant_count / total
+            dominant_cluster_share = dominant_count / non_noise if non_noise > 0 else 0.0
             axis_map[value] = {
                 "total": total,
                 "noise_count": noise_count,
@@ -263,6 +310,7 @@ def run_readiness(
     manifest_path: Path | None = None,
     pca_components: int = DEFAULT_PCA_COMPONENTS,
     min_cluster_size: int = DEFAULT_MIN_CLUSTER_SIZE,
+    min_samples: int = DEFAULT_MIN_SAMPLES,
     ready_dominant_share: float = DEFAULT_READY_DOMINANT_SHARE,
     evals_dir: Path | None = None,
     cluster_fn: ClusterFn | None = None,
@@ -304,7 +352,10 @@ def run_readiness(
     if cluster_fn is None:
         vectors = [row["vector"] for row in rows]
         labels = _default_cluster_fn(
-            vectors, pca_components=pca_components, min_cluster_size=min_cluster_size
+            vectors,
+            pca_components=pca_components,
+            min_cluster_size=min_cluster_size,
+            min_samples=min_samples,
         )
     else:
         labels = cluster_fn([row["vector"] for row in rows])
@@ -325,6 +376,7 @@ def run_readiness(
         "config": {
             "pca_components": pca_components,
             "min_cluster_size": min_cluster_size,
+            "min_samples": min_samples,
             "ready_dominant_share": ready_dominant_share,
         },
         "tag_axes": tag_map,

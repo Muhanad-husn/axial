@@ -159,18 +159,56 @@ def test_build_readiness_map_tight_tag_vs_noise_tag():
     assert violence_entry["readiness"] == "noise"
 
 
-def test_build_readiness_map_mostly_noise_tag_is_not_falsely_tight():
-    """A tag whose few non-noise chunks happen to agree must NOT read as
-    tight if most of its chunks are noise -- share is computed over the
-    tag's TOTAL count, not just its non-noise count."""
+def test_build_readiness_map_share_is_computed_over_non_noise_chunks_only():
+    """`dominant_cluster_share` and `noise_fraction` are deliberately
+    orthogonal (founder-approved semantics, post-#358 real-corpus
+    validation): a tag can be almost entirely noise by volume
+    (`noise_fraction` high -- most of its chunks are LLM-routed) while its
+    small non-noise remainder is still fully concentrated in one real
+    cluster (`dominant_cluster_share` == 1.0 -- "tight" once it does land
+    somewhere), because the share denominator is non-noise count, not total
+    count."""
     rows = [{"chunk_id": str(i), "field_primary": "state"} for i in range(10)]
-    # 8 of 10 are noise; the remaining 2 happen to agree on cluster 0.
+    # 8 of 10 are noise; the remaining 2 agree on cluster 0.
     labels = [-1] * 8 + [0, 0]
 
     readiness_map = _build_readiness_map(rows, labels, ready_dominant_share=0.5)
 
     entry = readiness_map["field_primary"]["state"]
-    assert entry["dominant_cluster_share"] == pytest.approx(0.2)
+    assert entry["noise_fraction"] == pytest.approx(0.8)
+    assert entry["dominant_cluster_share"] == pytest.approx(1.0)
+    assert entry["readiness"] == "tight"
+
+
+def test_build_readiness_map_fragmented_non_noise_portion_reads_noise():
+    """A tag whose non-noise chunks are themselves split across several
+    clusters (no majority) must still read "noise", regardless of how much
+    of the tag is noise overall."""
+    rows = [{"chunk_id": str(i), "field_primary": "state"} for i in range(10)]
+    # 4 noise; the remaining 6 split evenly across three different clusters
+    # -- no cluster holds a majority of the non-noise portion.
+    labels = [-1] * 4 + [0, 0, 1, 1, 2, 2]
+
+    readiness_map = _build_readiness_map(rows, labels, ready_dominant_share=0.5)
+
+    entry = readiness_map["field_primary"]["state"]
+    assert entry["dominant_cluster_share"] == pytest.approx(1 / 3)
+    assert entry["readiness"] == "noise"
+
+
+def test_build_readiness_map_all_noise_tag_reads_noise_no_divide_by_zero():
+    """A tag with zero non-noise chunks (`non_noise == 0`) must read
+    `dominant_cluster_share == 0.0` and `readiness == "noise"` outright --
+    never a `ZeroDivisionError`."""
+    rows = [{"chunk_id": str(i), "field_primary": "state"} for i in range(5)]
+    labels = [-1] * 5
+
+    readiness_map = _build_readiness_map(rows, labels, ready_dominant_share=0.5)
+
+    entry = readiness_map["field_primary"]["state"]
+    assert entry["noise_fraction"] == 1.0
+    assert entry["dominant_cluster_id"] is None
+    assert entry["dominant_cluster_share"] == 0.0
     assert entry["readiness"] == "noise"
 
 
@@ -279,6 +317,7 @@ def test_run_readiness_config_is_recorded_on_the_manifest(tmp_path: Path):
         manifest_path=manifest_path,
         pca_components=7,
         min_cluster_size=3,
+        min_samples=2,
         ready_dominant_share=0.6,
         evals_dir=evals_dir,
         cluster_fn=lambda vectors: [0] * len(vectors),
@@ -288,6 +327,7 @@ def test_run_readiness_config_is_recorded_on_the_manifest(tmp_path: Path):
     assert manifest["config"] == {
         "pca_components": 7,
         "min_cluster_size": 3,
+        "min_samples": 2,
         "ready_dominant_share": 0.6,
     }
 
