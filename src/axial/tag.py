@@ -1572,6 +1572,24 @@ class TaggedRecords(list):
 # `httpx.HTTPError`, which must keep propagating unchanged (never quarantined,
 # see `run_tag`'s per-chunk loop and the locked outer test).
 #
+# `TagCardinalityError` (a single-cardinality axis's response carrying zero
+# or multiple values, e.g. `parse_tag_response` on `empirical_scope`/
+# `role_in_argument`) joins this same bucket (cardinality_error, issue #326:
+# a live corpus run hard-failed `beshara-origins-of-syrian-nationhood` on
+# exactly this, uncaught, 804/900 chunks already checkpointed). It has no
+# dedicated repair path -- unlike `TagNotInSchemaError`'s #102 correction
+# re-ask, nothing re-asks specifically for a cardinality violation -- so it
+# is the same species as `TagParseError`: reachable both from
+# `reject_degenerate_tag_values` surviving `complete_json`'s bounded retry
+# budget, and from `apply_correction_reask`'s re-validation of a correction
+# re-ask's answer (that answer is a fresh, full re-generation of every axis,
+# unvetted by `reject_degenerate_tag_values`, so a cardinality violation can
+# surface there on ANY axis, not just the one the correction targeted --
+# exactly the beshara shape: the correction re-ask fired for a different
+# axis, and the model's fresh full answer broke `empirical_scope`'s
+# cardinality instead). Handled identically to `TagParseError` at both
+# sites, for the same reason.
+#
 # A persisting `TagNotInSchemaError` (out-of-vocab, after the #102 correction
 # re-ask already ran) is DELIBERATELY NOT included here (founder ruling,
 # descoped from #120): it stays the P0-6 hard error, source-fatal, exactly as
@@ -1584,6 +1602,7 @@ class TaggedRecords(list):
 QUARANTINE_REASON_CONTENT_FILTER = "content_filter"
 QUARANTINE_REASON_MALFORMED_JSON = "malformed_json"
 QUARANTINE_REASON_PARSE_ERROR = "parse_error"
+QUARANTINE_REASON_CARDINALITY_ERROR = "cardinality_error"
 
 
 def _quarantine_chunk(
@@ -1900,6 +1919,25 @@ def run_tag(
                         raise
                     quarantine_reason = QUARANTINE_REASON_PARSE_ERROR
                     break
+                except TagCardinalityError:
+                    # `reject_degenerate_tag_values` also calls `parse_tag_
+                    # response` for every single-cardinality axis (e.g.
+                    # `empirical_scope`, `role_in_argument`), which raises
+                    # `TagCardinalityError` on a zero- or multi-value response
+                    # instead of exactly one -- the same species of
+                    # content-shaped malformation as the `TagParseError` clause
+                    # immediately above, surviving the same bounded retry
+                    # budget the same way (issue #326: this class had no
+                    # handler at all, and a live corpus run hard-failed a
+                    # whole source on it). No dedicated repair path exists for
+                    # a cardinality violation (unlike `TagNotInSchemaError`'s
+                    # #102 re-ask), so ANY draw quarantines the whole chunk
+                    # immediately, exactly mirroring the `TagParseError`
+                    # clause's choice for the same reason.
+                    if checkpoint_path is None:
+                        raise
+                    quarantine_reason = QUARANTINE_REASON_CARDINALITY_ERROR
+                    break
 
                 # Shared, data-driven cardinality dispatch (issue #29 slice 03):
                 # each axis is parsed/validated by its own schema-declared
@@ -1974,6 +2012,25 @@ def run_tag(
                     if checkpoint_path is None:
                         raise
                     quarantine_reason = QUARANTINE_REASON_PARSE_ERROR
+                    break
+                except TagCardinalityError:
+                    # Same class, same reasoning as the `TagCardinalityError`
+                    # clause above the `complete_json` call (issue #326, the
+                    # beshara production failure): the correction re-ask's
+                    # answer is a FRESH full re-generation of every axis (the
+                    # `_CORRECTION_REASK_NOTICE` prompt asks for "the FULL JSON
+                    # object again"), entirely unvetted by `reject_degenerate_
+                    # tag_values` -- so a cardinality violation can surface
+                    # here on ANY single-cardinality axis, not just the one the
+                    # correction targeted (beshara: the re-ask fired for a
+                    # different axis, and the model's fresh answer broke
+                    # `empirical_scope`'s cardinality instead). No further
+                    # re-ask exists for a cardinality violation either, so this
+                    # quarantines on any draw too, exactly mirroring the
+                    # `TagParseError` clause immediately above.
+                    if checkpoint_path is None:
+                        raise
+                    quarantine_reason = QUARANTINE_REASON_CARDINALITY_ERROR
                     break
 
         if quarantine_reason is not None:
