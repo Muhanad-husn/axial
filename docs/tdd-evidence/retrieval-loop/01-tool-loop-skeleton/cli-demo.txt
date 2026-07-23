@@ -1,0 +1,51 @@
+$ python retrieve_demo.py  (via uv run --project, stub provider, hermetic fixture vault)
+### Scenario A -- scripted 3-call sequence (query_by_tag, query_by_polity, get_chunk)
+[
+  {
+    "step": 1,
+    "tool": "query_by_tag",
+    "args": {
+      "field": "state"
+    },
+    "result_ids": [
+      "src_001_intro_000"
+    ],
+    "result_count": 1
+  },
+  {
+    "step": 2,
+    "tool": "query_by_polity",
+    "args": {
+      "polity": "Freedonia"
+    },
+    "result_ids": [
+      "src_001_intro_000",
+      "src_002_intro_000"
+    ],
+    "result_count": 2
+  },
+  {
+    "step": 3,
+    "tool": "get_chunk",
+    "args": {
+      "chunk_id": "src_001_intro_000"
+    },
+    "result_ids": [
+      "src_001_intro_000"
+    ],
+    "result_count": 1
+  }
+]
+  OK: 3 entries, steps 1..3 no gaps, result_count == len(result_ids) for every entry
+
+### Scenario B -- unknown tool + missing-arg are gated before the query API, loop continues
+  step 1: tool='query_by_vibes' result_count=0  (bad calls recorded with empty result, never crash)
+  step 2: tool='query_by_polity' result_count=0  (bad calls recorded with empty result, never crash)
+  step 3: tool='query_by_tag' result_count=1  (bad calls recorded with empty result, never crash)
+
+### Scenario C -- step budget halts a runaway valid-call stream at exactly 3
+  budget=3 -> 3 entries, steps=[1, 2, 3]  (clean bounded return, no exception)
+
+### Scenario D -- a refused/truncated provider turn raises loudly (never a silent clean end)
+  OK: raised ContentRefusedError -- broken turn surfaces as a real failure, not an empty trajectory
+EXIT=0
