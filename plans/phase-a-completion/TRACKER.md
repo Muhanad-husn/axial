@@ -69,13 +69,28 @@ Legend: ☐ todo · ◐ in progress (note PR/worktree) · ✅ merged
   zaum) in `data/vault/prose/` all carry correct author/title/date matching
   `data/source_meta/`. See *Step 2 findings* below for two things worth knowing before
   Step 3.
-- ⏸ **4.1 re-tag — STOPPED, root cause found, fix dispatched to builder.** The 3-worker
-  launch (started ~12:41 local) was killed after ~1h when its ledgers showed **18/18 real
-  full-source attempts failing** (not just ugur) on the exact same class of error. See
-  **⚠️ Step 3 escalation** below — read this before restarting anything.
-- ☐ 4.2 score against the sim gold set (P0-10 eval)
-- ☐ 4.3 freeze schema (ratify `theory_school` KEEP, DEC-31, on corpus-wide numbers) —
-  reads #288's not-applicable/unlisted rates, so **land #288 before this**
+- ✅ **4.1 re-tag — COMPLETE 2026-07-23 ~14:31 UTC.** The 3-worker launch's escalation
+  below is history, not current state: PR #327 (quarantine + checkpoint threading) and
+  PR #331 (missing-polity + persisting out-of-vocab quarantine) both landed, the run
+  scaled to 5 workers, and every source that FAILed mid-run (ugur-paramilitarism #325,
+  zaum-sovereignty-paradox, heydemann-war-institutions-social-change, vignal-war-torn,
+  tilly-from-mobilization-to-revolution) self-recovered via the run's own retry cadence
+  before it finished — all 30 sources, 0 unresolved fails. Post-retag `vault-write` also
+  complete (30/30, 0 fails; survived a mid-run tree-cache incident, see the standing
+  session's notes on issue #329). See **⚠️ Step 3 escalation** below for the historical
+  incident narrative only.
+- ✅ **4.2 score against the sim gold set (P0-10 eval) — run 2026-07-23, SIMULATED.** No
+  real Academic labels exist yet; per founder instruction, ran a simulated stand-in
+  (independent single-draw LLM judgments on the two blind axes, blind to the tagger's
+  own values, over a freshly re-sampled 120-chunk gold set). `claim_type` 56.0%,
+  `theory_school` 54.3% agreement (116/120 chunks scored). **Provisional only per
+  DEC-32 — never promote as the real eval number.** Full detail on issue #329.
+- ✅ **4.3 freeze schema (ratify `theory_school` KEEP, DEC-31, on corpus-wide numbers) —
+  DONE 2026-07-23, DEC-34.** Real (non-simulated) data straight from the completed
+  retag's own tag checkpoints: 48.8% not-applicable, 0.6% unlisted across all 17,824
+  non-quarantined chunks, every one of the 30 sources reporting real data for the first
+  time (28/30 previously read a false 0.0%/0.0% because they predated the sentinels).
+  `theory_school` stays KEPT.
 - ☐ 4.4 record the frozen tag distribution (input to stage 5)
 
 ---
