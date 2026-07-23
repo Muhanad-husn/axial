@@ -2191,6 +2191,108 @@ def test_run_tag_quarantine_log_and_reason_for_a_parse_error(monkeypatch, tmp_pa
     )
 
 
+# --- run_tag: all-chunks-quarantined still fails loud (PR #327 fix,
+# reconciling #120/#325/#326's per-chunk quarantine with issue #105 clause
+# 4's locked "malformed shape must fail loudly" contract) -----------------
+#
+# CI caught this: tests/ingestion/test_tag_shape_coercion.py's clause-4
+# regression tests feed a genuinely malformed axis shape into a tiny
+# 3-chunk fixture where every chunk gets the same poisoned response, so
+# every chunk quarantines and `axial vault write` finished with zero tags
+# but exit code 0 -- indistinguishable from success. A source where SOME
+# chunks succeed (the two test classes above) must keep exiting 0
+# unchanged; only when NOTHING usable survives does this become a hard
+# failure.
+
+
+def test_run_tag_raises_when_every_chunk_quarantines(monkeypatch, tmp_path):
+    """When every chunk this run attempts ends up quarantined (here: all
+    three chunks get the same persistently malformed `field` shape), the
+    source has produced zero usable tags -- functionally identical to the
+    old uncaught crash this PR's own earlier commits fixed -- so `run_tag`
+    raises `AllChunksQuarantinedError` (a `TagError`) instead of returning
+    an empty, exit-0 success. The offending axis name is named in the
+    error so an operator (or a CLI's combined stdout+stderr) can see why."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    chunk_records = _three_chunk_records()
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
+
+    bare_scalar_field = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": "state",
+            "claim_type": {"primary": "state-formation", "subtags": []},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+    class _Client:
+        def complete(self, prompt, pass_name=None):
+            return bare_scalar_field
+
+    tags_dir = tmp_path / "data" / "tags"
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+
+    with pytest.raises(tag_mod.AllChunksQuarantinedError) as excinfo:
+        tag_mod.run_tag(
+            tmp_path / "paper.pdf",
+            client=_Client(),
+            domain_dir=domain_dir,
+            tags_dir=tags_dir,
+            votes=1,
+        )
+
+    assert excinfo.value.quarantine_count == 3
+    assert "field" in str(excinfo.value)
+
+
+def test_run_tag_stays_a_success_when_only_some_chunks_quarantine(monkeypatch, tmp_path):
+    """Guard against a regression that makes ANY quarantine fatal: a source
+    with a mix of quarantined and successful chunks must still return
+    normally (no exception) with the successful chunks' tags intact --
+    exactly #120/#325/#326's own intended behavior, unchanged by the new
+    all-quarantined check above."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    chunk_records = _three_chunk_records()
+    poisoned_text = chunk_records[1]["text"]
+    survivors = [c["chunk_id"] for i, c in enumerate(chunk_records) if i != 1]
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
+
+    bare_scalar_field = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": "state",
+            "claim_type": {"primary": "state-formation", "subtags": []},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+    class _Client:
+        def complete(self, prompt, pass_name=None):
+            if poisoned_text in prompt:
+                return bare_scalar_field
+            return _valid_multi_value_response()
+
+    tags_dir = tmp_path / "data" / "tags"
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+
+    result = tag_mod.run_tag(
+        tmp_path / "paper.pdf",
+        client=_Client(),
+        domain_dir=domain_dir,
+        tags_dir=tags_dir,
+        votes=1,
+    )
+
+    tagged_ids = [r["chunk_id"] for r in result]
+    assert tagged_ids == survivors
+    assert result.quarantine_count == 1
+
+
 # --- run_tag: TagCardinalityError quarantine when a checkpoint is active
 # (issue #326) -------------------------------------------------------------
 #

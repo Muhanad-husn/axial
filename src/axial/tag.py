@@ -1605,6 +1605,36 @@ QUARANTINE_REASON_PARSE_ERROR = "parse_error"
 QUARANTINE_REASON_CARDINALITY_ERROR = "cardinality_error"
 
 
+class AllChunksQuarantinedError(TagError):
+    """Raised when every chunk this run attempted to tag (i.e. every chunk
+    that was neither skipped by the garble-only guard nor still pending)
+    ended up quarantined (issue #120/#325/#326's per-chunk quarantine),
+    leaving zero tagged records for the source.
+
+    Reconciles two otherwise-conflicting contracts: #120/#325/#326's own
+    point (a single malformed chunk among many must not crash the whole
+    source -- quarantine it, keep going) and issue #105 clause 4's locked
+    acceptance bar (a genuinely malformed axis shape must still fail
+    `axial vault write` loudly, never silently degrade to an empty/success
+    result). A source where SOME chunks succeed and a few are quarantined
+    stays a success (`TaggedRecords.quarantine_count` reports how many);
+    only when NOTHING usable survives is this indistinguishable, from the
+    operator's chair, from the old uncaught crash, so it is raised here as
+    a `TagError` (caught by `axial.vault.run_vault_write` exactly like any
+    other tagging failure, giving `axial vault write` its non-zero exit)."""
+
+    def __init__(self, source_id: str, quarantine_count: int, examples: list[str]):
+        self.source_id = source_id
+        self.quarantine_count = quarantine_count
+        self.examples = examples
+        shown = "; ".join(examples[:5])
+        more = f" (+{len(examples) - 5} more)" if len(examples) > 5 else ""
+        super().__init__(
+            f"every attempted chunk for {source_id!r} was quarantined "
+            f"({quarantine_count} chunk(s)), leaving zero tagged records: {shown}{more}"
+        )
+
+
 def _quarantine_chunk(
     chunk_record: dict[str, Any], reason: str, checkpoint_path: Path | None
 ) -> None:
@@ -1741,6 +1771,15 @@ def run_tag(
 
     tagged_records: list[dict[str, Any]] = []
     quarantine_count = 0
+    # Diagnostic detail for `AllChunksQuarantinedError` below: one line per
+    # quarantined chunk (this run's own quarantines, plus any already
+    # quarantined by an earlier resumed run), so a source that ends up with
+    # zero usable tags still names the offending axis/axes in the final
+    # error, not just an opaque count.
+    quarantine_examples: list[str] = [
+        f"{chunk_id}: {reason} (previously quarantined)"
+        for chunk_id, reason in already_quarantined.items()
+    ]
     for chunk_record in chunk_records:
         # Resume: a chunk already quarantined by an earlier run (issue #120)
         # is skipped outright -- no LLM call, no re-quarantine, and it never
@@ -1864,6 +1903,7 @@ def run_tag(
             ] = []
             spoiled: TagNotInSchemaError | None = None
             quarantine_reason: str | None = None
+            quarantine_detail: str | None = None
             for future in completion_futures:
                 try:
                     raw_response = future.result()
@@ -1887,6 +1927,7 @@ def run_tag(
                     if checkpoint_path is None:
                         raise LLMFailedError(exc) from exc
                     quarantine_reason = QUARANTINE_REASON_CONTENT_FILTER
+                    quarantine_detail = str(exc)
                     break
                 except (LLMError, httpx.HTTPError) as exc:
                     raise LLMFailedError(exc) from exc
@@ -1899,8 +1940,9 @@ def run_tag(
                     if checkpoint_path is None:
                         raise TagParseError(f"model response was not valid JSON: {exc}") from exc
                     quarantine_reason = QUARANTINE_REASON_MALFORMED_JSON
+                    quarantine_detail = str(exc)
                     break
-                except TagParseError:
+                except TagParseError as exc:
                     # `reject_degenerate_tag_values` (this call's own `validate`)
                     # raises `TagParseError` on a shape error (a
                     # `primary_plus_secondary` axis, e.g. `field`, answered with
@@ -1918,8 +1960,9 @@ def run_tag(
                     if checkpoint_path is None:
                         raise
                     quarantine_reason = QUARANTINE_REASON_PARSE_ERROR
+                    quarantine_detail = str(exc)
                     break
-                except TagCardinalityError:
+                except TagCardinalityError as exc:
                     # `reject_degenerate_tag_values` also calls `parse_tag_
                     # response` for every single-cardinality axis (e.g.
                     # `empirical_scope`, `role_in_argument`), which raises
@@ -1937,6 +1980,7 @@ def run_tag(
                     if checkpoint_path is None:
                         raise
                     quarantine_reason = QUARANTINE_REASON_CARDINALITY_ERROR
+                    quarantine_detail = str(exc)
                     break
 
                 # Shared, data-driven cardinality dispatch (issue #29 slice 03):
@@ -1999,7 +2043,7 @@ def run_tag(
                     # (below) -- at `votes == 1` that is immediate, exactly as
                     # before best-of-N existed.
                     spoiled = spoiled or exc
-                except TagParseError:
+                except TagParseError as exc:
                     # Same class, same reasoning as the `TagParseError` clause
                     # above the `complete_json` call: here it means the
                     # correction re-ask's own answer (validated fresh by
@@ -2012,8 +2056,9 @@ def run_tag(
                     if checkpoint_path is None:
                         raise
                     quarantine_reason = QUARANTINE_REASON_PARSE_ERROR
+                    quarantine_detail = str(exc)
                     break
-                except TagCardinalityError:
+                except TagCardinalityError as exc:
                     # Same class, same reasoning as the `TagCardinalityError`
                     # clause above the `complete_json` call (issue #326, the
                     # beshara production failure): the correction re-ask's
@@ -2031,11 +2076,16 @@ def run_tag(
                     if checkpoint_path is None:
                         raise
                     quarantine_reason = QUARANTINE_REASON_CARDINALITY_ERROR
+                    quarantine_detail = str(exc)
                     break
 
         if quarantine_reason is not None:
             _quarantine_chunk(chunk_record, quarantine_reason, checkpoint_path)
             quarantine_count += 1
+            quarantine_examples.append(
+                f"{chunk_record['chunk_id']}: {quarantine_reason}"
+                + (f" -- {quarantine_detail}" if quarantine_detail else "")
+            )
             continue
 
         if not draws:
@@ -2060,5 +2110,19 @@ def run_tag(
         if checkpoint_path is not None:
             append_tag_checkpoint(checkpoint_path, record)
         tagged_records.append(record)
+
+    # Reconcile #120/#325/#326's per-chunk quarantine with issue #105 clause
+    # 4's locked "malformed shape must fail loudly" contract: a source where
+    # EVERY chunk this run engaged with (attempted this run, or already
+    # quarantined by an earlier resumed run) ended up quarantined has
+    # produced nothing usable -- functionally identical to the old
+    # uncaught-crash case, so it stays a hard failure rather than a silent
+    # exit-0 empty result. A source with at least one surviving tagged
+    # record (fresh or resumed) keeps exiting 0 unchanged, exactly what
+    # #120/#325/#326 intend, no matter how many OTHER chunks were
+    # quarantined.
+    total_quarantined = quarantine_count + len(already_quarantined)
+    if not tagged_records and total_quarantined > 0:
+        raise AllChunksQuarantinedError(source_id, total_quarantined, quarantine_examples)
 
     return TaggedRecords(tagged_records, quarantine_count)
