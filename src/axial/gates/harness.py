@@ -61,6 +61,7 @@ DEFAULT_GATE_THRESHOLDS: dict[str, float] = {
     "attribution_completeness": 1.00,
     "b_seam_mislabel_rate": 0.05,
     "grounding_support_rate": 0.90,
+    "premise_catch_rate": 0.80,
 }
 
 # The comparison direction is a property of what each metric MEANS, not
@@ -70,6 +71,7 @@ METRIC_COMPARISON: dict[str, Comparison] = {
     "attribution_completeness": "gte",
     "b_seam_mislabel_rate": "lte",
     "grounding_support_rate": "gte",
+    "premise_catch_rate": "gte",
 }
 
 
@@ -299,6 +301,9 @@ def format_report(report: GateReport) -> str:
         failing_claim_ids = metric.detail.get("failing_claim_ids")
         if failing_claim_ids:
             lines.append(f"    failing claim_ids: {', '.join(failing_claim_ids)}")
+        missed_brief_ids = metric.detail.get("missed_brief_ids")
+        if missed_brief_ids:
+            lines.append(f"    missed brief_ids: {', '.join(missed_brief_ids)}")
     lines.append(f"overall: {'PASS' if report.passed else 'FAIL'}")
     lines.append(f"corpus_pin: {report.corpus_pin}")
     lines.append(f"trusted: {report.trusted}")

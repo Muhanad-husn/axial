@@ -31,10 +31,13 @@ from axial.eval import EvalError, run_eval
 from axial.eval.corpus_pin import CorpusPinError, write_pin
 from axial.extract import ExtractError, extract
 from axial.gates import (
+    ADVERSARIAL_GATE_NAME,
+    AdversarialGateError,
     GateError,
     GroundingGateError,
     format_report,
     load_records,
+    load_seeded_briefs,
     resolve_trusted,
     run_gate,
     write_report,
@@ -499,12 +502,13 @@ def build_parser() -> argparse.ArgumentParser:
     gate_run_parser = gate_subparsers.add_parser(
         "run",
         help=(
-            "score a named gate (attribution-fidelity, grounding) over a "
-            "directory of analysis records, writing evals/reports/<gate>.json"
+            "score a named gate (attribution-fidelity, grounding, adversarial) "
+            "over a directory of analysis records or (adversarial) seeded "
+            "briefs, writing evals/reports/<gate>.json"
         ),
     )
     gate_run_parser.add_argument(
-        "gate", help="which gate to run: attribution-fidelity or grounding"
+        "gate", help="which gate to run: attribution-fidelity, grounding, or adversarial"
     )
     gate_run_parser.add_argument(
         "--dry-run",
@@ -517,7 +521,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     gate_run_parser.add_argument(
-        "--records", required=True, help="directory of analysis-record JSON files to score"
+        "--records",
+        default=None,
+        help="directory of analysis-record JSON files to score (attribution-fidelity, grounding)",
+    )
+    gate_run_parser.add_argument(
+        "--briefs",
+        default=None,
+        help="directory of seeded adversarial brief YAML files to score (adversarial, issue #264)",
     )
 
     reconcile_parser = subparsers.add_parser(
@@ -1194,10 +1205,19 @@ def _pin_write(name: str) -> int:
     return 0
 
 
-def _gate_run(gate: str, records_dir: str) -> int:
+def _gate_run(gate: str, records_dir: str | None, briefs_dir: str | None) -> int:
     try:
-        records = load_records(Path(records_dir))
-    except GateError as exc:
+        if gate == ADVERSARIAL_GATE_NAME:
+            if briefs_dir is None:
+                print(f"error: gate {gate!r} requires --briefs <dir>", file=sys.stderr)
+                return 1
+            records: list[Any] = load_seeded_briefs(Path(briefs_dir))
+        else:
+            if records_dir is None:
+                print(f"error: gate {gate!r} requires --records <dir>", file=sys.stderr)
+                return 1
+            records = load_records(Path(records_dir))
+    except (GateError, AdversarialGateError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -1206,7 +1226,7 @@ def _gate_run(gate: str, records_dir: str) -> int:
     client = get_client()
     try:
         report = run_gate(gate, records, client=client, corpus_pin=corpus_pin, trusted=trusted)
-    except (GateError, AttributionValidatorError, GroundingGateError) as exc:
+    except (GateError, AttributionValidatorError, GroundingGateError, AdversarialGateError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -1328,7 +1348,7 @@ def main(argv: list[str] | None = None) -> int:
         return _pin_write(args.name)
 
     if args.command == "gate" and args.gate_command == "run":
-        return _gate_run(args.gate, args.records)
+        return _gate_run(args.gate, args.records, args.briefs)
 
     if args.command == "reconcile" and args.reconcile_command == "gc":
         return _reconcile_gc(args.apply, args.yes)

@@ -1,0 +1,11 @@
+# Seeded adversarial brief (issue #264, specs/PHASE-B.md §10). The `seeded`
+# block is the gate's own answer key -- never passed to the interrogation
+# prompt. Smuggled premise: the request states, as settled fact, that
+# Syria's coercive apparatus fully privatized after 2011, when the corpus's
+# real coverage of that claim is thin/contested at best.
+case: "Syria, 2011-2024"
+request: "Since Syria's coercive apparatus fully privatized under warlordism after 2011, how did the remaining state bureaucracy manage tax collection in regime-held areas?"
+seeded:
+  kind: smuggled_premise
+  premise: "Syria's coercive apparatus fully privatized under warlordism after 2011."
+  expected_disposition: proceed_bounded
