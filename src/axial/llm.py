@@ -351,6 +351,15 @@ COUNTER_POSITION_PASS_NAME = "counter_position"
 # exactly, one pass name per independent judge seam.
 GROUNDING_PASS_NAME = "grounding"
 
+# Pass name the rung-3 calibration gate's independent judge call identifies
+# itself with (see src/axial/gates/calibration.py, issue #263, PRD §10): does
+# a claim hold up as CORRECT given its cited grounds -- the per-claim signal
+# the band-wise reliability metric compares against each confidence band's
+# stated target. Same out-of-band dispatch convention as GROUNDING_PASS_NAME
+# above, including the same self-grading guard: it must resolve to a
+# DIFFERENT model than SYNTHESIZE_PASS_NAME.
+CALIBRATION_PASS_NAME = "calibration"
+
 # Per-pass model reasoning (§7.9, issue #207): reasoning is ON for the
 # structural-envelope pass and the content-apparatus classification gate --
 # both small, judgment-heavy, once/rarely-per-source calls -- and OFF
@@ -471,6 +480,16 @@ STUB_COUNTER_POSITION_RESPONSE_ENV_VAR = "AXIAL_STUB_COUNTER_POSITION_RESPONSE"
 # environment on every call.
 STUB_GROUNDING_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_GROUNDING_RESPONSE_SEQUENCE"
 
+# Issue #263 test/CI-only seam: mirrors STUB_GROUNDING_RESPONSE_SEQUENCE_ENV_VAR
+# above, exactly, for the rung-3 calibration gate's independent judge call
+# instead of the grounding pass. A JSON-encoded array of raw calibration-pass
+# response strings (each `{"verdict": "correct"|"incorrect"}`), indexed by a
+# fresh, dedicated, per-process 1-indexed counter
+# (`_calibration_pass_call_count`) -- one call per claim being judged. Cycles
+# once exhausted; an unset/empty value falls back to the default "correct"
+# canned response. Read fresh from the environment on every call.
+STUB_CALIBRATION_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_CALIBRATION_RESPONSE_SEQUENCE"
+
 # Issue #258 test/CI-only seam: a JSON object mapping pass_name -> model
 # name, read fresh from the environment by `StubLLMClient`/`RecordLLMClient`'s
 # `model_for_pass` (which otherwise always answers the fixed id "stub"
@@ -525,6 +544,11 @@ _artifact_pass_call_count = 0
 # dispatches, driving the AXIAL_STUB_GROUNDING_RESPONSE_SEQUENCE seam (issue
 # #262), mirroring `_chunk_pass_call_count` above exactly.
 _grounding_pass_call_count = 0
+
+# Per-process, 1-indexed counter of calibration-pass canned-response
+# dispatches, driving the AXIAL_STUB_CALIBRATION_RESPONSE_SEQUENCE seam
+# (issue #263), mirroring `_grounding_pass_call_count` above exactly.
+_calibration_pass_call_count = 0
 
 # Guards every one of the counters above (issue #325 follow-up): a
 # bare module-global `count += 1` is not one atomic operation, and
@@ -853,6 +877,27 @@ def _canned_grounding_response() -> str:
     return _CANNED_GROUNDING_RESPONSE
 
 
+_CANNED_CALIBRATION_RESPONSE = json.dumps({"verdict": "correct"})
+
+
+def _canned_calibration_response() -> str:
+    """The canned response for a calibration-pass call (identified by
+    `pass_name=CALIBRATION_PASS_NAME`, issue #263): a JSON array read fresh
+    from `STUB_CALIBRATION_RESPONSE_SEQUENCE_ENV_VAR`, indexed by the fresh
+    per-process calibration-pass counter just advanced (mirrors
+    `_canned_grounding_response` exactly); unset/empty falls back to the
+    conservative default `"correct"` -- a stub-driven run never invents a
+    failed judgement nobody scripted."""
+    global _calibration_pass_call_count
+    _calibration_pass_call_count += 1
+    sequence_raw = os.environ.get(STUB_CALIBRATION_RESPONSE_SEQUENCE_ENV_VAR, "")
+    if sequence_raw:
+        sequence = json.loads(sequence_raw)
+        if sequence:
+            return sequence[(_calibration_pass_call_count - 1) % len(sequence)]
+    return _CANNED_CALIBRATION_RESPONSE
+
+
 def _model_for_pass_from_stub_mapping(pass_name: str | None) -> str:
     """Shared by `StubLLMClient`/`RecordLLMClient`'s `model_for_pass`: honors
     `STUB_MODEL_BY_PASS_ENV_VAR` when set and `pass_name` is one of its keys,
@@ -933,6 +978,8 @@ def _canned_response_for(pass_name: str | None) -> str:
         return _canned_counter_position_response()
     if pass_name == GROUNDING_PASS_NAME:
         return _canned_grounding_response()
+    if pass_name == CALIBRATION_PASS_NAME:
+        return _canned_calibration_response()
     return StubLLMClient._CANNED_RESPONSE
 
 

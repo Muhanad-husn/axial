@@ -156,3 +156,29 @@ gates:
   # grounds substantively support the claim, judged by an independent model
   # anchored to the resolved chunk text.
   grounding_support_rate: 0.90
+  # Synthesis quality (issue #263, charter Principle IV): the share of the
+  # contested-brief subset that is present-or-disclosed (§7.8).
+  counter_position_presence_rate: 0.95
+  # Synthesis quality's judged half: the share of present counter-positions
+  # that verdict "steelman" (not "strawman") against the cited grounds --
+  # this slice's operationalization of "the eval #1 rubric bar" (§10),
+  # since the rubric itself is not authored yet. No spec-stated number; 0.90
+  # is a starting hypothesis, tuned once the rubric lands.
+  steelman_quality: 0.90
+  # Calibration (issue #263, charter Principle V, §7.4): how far an
+  # observed band's judged-correctness rate may sit from that band's stated
+  # target rate (src/axial/gates/calibration.py) -- band-wise, not ECE/Brier
+  # (§10 v1.1, founder-adjudicated).
+  band_reliability: 0.15
+
+# Calibration gate band targets (issue #263, PRD §7.4 [TENTATIVE]): the
+# stated expected-correctness rate per confidence band, read by
+# src/axial/gates/calibration.py via _resolve_band_targets, falling back to
+# that module's own DEFAULT_BAND_TARGETS when this file or a key is absent.
+# `medium` is the midpoint of §7.4's stated 0.60-0.85 range. Tuning these on
+# the first judged runs is explicitly out of this issue's scope.
+calibration:
+  band_targets:
+    high: 0.85
+    medium: 0.725
+    low: 0.60

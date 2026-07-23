@@ -16,6 +16,14 @@ from typing import Any
 
 from axial.gates.attribution import GATE_NAME as ATTRIBUTION_FIDELITY_GATE_NAME
 from axial.gates.attribution import run_attribution_fidelity_gate
+from axial.gates.calibration import GATE_NAME as CALIBRATION_GATE_NAME
+from axial.gates.calibration import (
+    CalibrationCheckFailedError,
+    CalibrationGateError,
+    InvalidConfidenceBandError,
+)
+from axial.gates.calibration import SelfGradingError as CalibrationSelfGradingError
+from axial.gates.calibration import run_calibration_gate
 from axial.gates.grounding import GATE_NAME as GROUNDING_GATE_NAME
 from axial.gates.grounding import (
     GroundingCheckFailedError,
@@ -37,6 +45,8 @@ from axial.gates.harness import (
     resolve_trusted,
     write_report,
 )
+from axial.gates.synthesis_quality import GATE_NAME as SYNTHESIS_QUALITY_GATE_NAME
+from axial.gates.synthesis_quality import run_synthesis_quality_gate
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
 
 # Every gate this package ships, dispatched by its CLI name (`axial gate run
@@ -46,6 +56,8 @@ from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
 GATE_RUNNERS = {
     ATTRIBUTION_FIDELITY_GATE_NAME: run_attribution_fidelity_gate,
     GROUNDING_GATE_NAME: run_grounding_gate,
+    SYNTHESIS_QUALITY_GATE_NAME: run_synthesis_quality_gate,
+    CALIBRATION_GATE_NAME: run_calibration_gate,
 }
 
 
@@ -85,11 +97,17 @@ def run_gate(
 __all__ = [
     "ATTRIBUTION_FIDELITY_GATE_NAME",
     "GROUNDING_GATE_NAME",
+    "SYNTHESIS_QUALITY_GATE_NAME",
+    "CALIBRATION_GATE_NAME",
     "GATE_RUNNERS",
     "CASES_DIR",
     "REPORTS_DIR",
+    "CalibrationCheckFailedError",
+    "CalibrationGateError",
+    "CalibrationSelfGradingError",
     "GateError",
     "GateReport",
+    "InvalidConfidenceBandError",
     "MetricResult",
     "GroundingCheckFailedError",
     "GroundingGateError",
@@ -102,7 +120,9 @@ __all__ = [
     "resolve_corpus_pin",
     "resolve_trusted",
     "run_attribution_fidelity_gate",
+    "run_calibration_gate",
     "run_gate",
     "run_grounding_gate",
+    "run_synthesis_quality_gate",
     "write_report",
 ]

@@ -31,6 +31,7 @@ from axial.eval import EvalError, run_eval
 from axial.eval.corpus_pin import CorpusPinError, write_pin
 from axial.extract import ExtractError, extract
 from axial.gates import (
+    CalibrationGateError,
     GateError,
     GroundingGateError,
     format_report,
@@ -499,12 +500,16 @@ def build_parser() -> argparse.ArgumentParser:
     gate_run_parser = gate_subparsers.add_parser(
         "run",
         help=(
-            "score a named gate (attribution-fidelity, grounding) over a "
-            "directory of analysis records, writing evals/reports/<gate>.json"
+            "score a named gate (attribution-fidelity, grounding, "
+            "synthesis-quality, calibration) over a directory of analysis "
+            "records, writing evals/reports/<gate>.json"
         ),
     )
     gate_run_parser.add_argument(
-        "gate", help="which gate to run: attribution-fidelity or grounding"
+        "gate",
+        help=(
+            "which gate to run: attribution-fidelity, grounding, synthesis-quality, or calibration"
+        ),
     )
     gate_run_parser.add_argument(
         "--dry-run",
@@ -1206,7 +1211,13 @@ def _gate_run(gate: str, records_dir: str) -> int:
     client = get_client()
     try:
         report = run_gate(gate, records, client=client, corpus_pin=corpus_pin, trusted=trusted)
-    except (GateError, AttributionValidatorError, GroundingGateError) as exc:
+    except (
+        GateError,
+        AttributionValidatorError,
+        GroundingGateError,
+        CounterPositionValidatorError,
+        CalibrationGateError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
