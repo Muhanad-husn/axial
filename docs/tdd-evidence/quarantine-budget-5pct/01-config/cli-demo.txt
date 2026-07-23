@@ -1,0 +1,10 @@
+config/canary-manifest.toml
+  mann-sources-of-social-power-v4: quarantine_budget=0.05
+  tilly-from-mobilization-to-revolution: quarantine_budget=0.05
+  hall-schroeder-anatomy-of-power: quarantine_budget=0.05
+  vignal-war-torn: quarantine_budget=0.05
+  batatu-syrias-peasantry: quarantine_budget=0.05
+config/probe-138-content-filter.toml
+  mann-sources-of-social-power-v4: quarantine_budget=0.05
+  kalyvas-logic-of-violence-in-civil-war: quarantine_budget=0.05
+  hall-schroeder-anatomy-of-power: quarantine_budget=0.05
