@@ -123,3 +123,23 @@ drive:
   # English source rejected) costs a manual re-check; a false positive
   # (non-English let through) pollutes the corpus and the eval.
   language_accept_threshold: 0.9
+
+# Rung-3 eval-gate thresholds (issue #262, PRD §10, §8 P0-12): one starting
+# threshold per named metric, read by src/axial/gates/harness.py via
+# resolve_threshold, falling back to that module's own
+# DEFAULT_GATE_THRESHOLDS when this file or a key is absent. The FIRM
+# principle behind each gate (attribution fidelity, grounding) is fixed;
+# these numbers are §10's stated TUNABLE starting hypotheses, never proven
+# values -- tuning them on real runs is explicitly out of this issue's scope.
+gates:
+  # Attribution fidelity (charter Principle II): the hard, 100% mechanical
+  # gate -- one unmarked or unresolvable-grounds claim fails it outright.
+  attribution_completeness: 1.00
+  # Attribution fidelity's judged half: the share of kind-"b" claims an
+  # independent model finds phrased as a source assertion rather than the
+  # tool's own cross-source inference.
+  b_seam_mislabel_rate: 0.05
+  # Grounding (charter Principle I): the share of kind-"a" claims whose cited
+  # grounds substantively support the claim, judged by an independent model
+  # anchored to the resolved chunk text.
+  grounding_support_rate: 0.90
