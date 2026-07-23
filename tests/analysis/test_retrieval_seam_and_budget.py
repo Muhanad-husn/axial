@@ -22,9 +22,10 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 import yaml
 
-from axial.llm import RETRIEVE_PASS_NAME, OpenRouterClient
+from axial.llm import RETRIEVE_PASS_NAME, OpenRouterClient, OpenRouterError
 from axial.retrieve.loop import DEFAULT_STEP_BUDGET, _resolve_step_budget
 
 
@@ -158,9 +159,12 @@ def test_complete_with_tools_sends_tools_and_parses_first_tool_call():
     assert seen_bodies[0]["tools"] == tool_schema
 
 
-def test_complete_with_tools_returns_none_when_no_tool_call_issued():
-    """A turn whose message carries no `tool_calls` at all is a clean end,
-    not an error -- v0's "no retry on a tool-less turn" rule."""
+def test_complete_with_tools_returns_none_when_no_tool_call_issued_and_finish_reason_is_stop():
+    """A turn whose message carries no `tool_calls` at all, ending with a
+    genuine clean stop (`finish_reason: "stop"`), is a clean end, not an
+    error -- v0's "no retry on a tool-less turn" rule. The positive case
+    for the review finding below: a LEGITIMATE end-of-loop must still
+    return the clean-stop sentinel, not raise."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return _stop_response("just a plain text answer, no tool call")
@@ -171,3 +175,46 @@ def test_complete_with_tools_returns_none_when_no_tool_call_issued():
     result = client.complete_with_tools("prompt text", [], pass_name=RETRIEVE_PASS_NAME)
 
     assert result is None
+
+
+# --- review finding: a non-tool-call turn is not always a CLEAN end ---------
+
+
+def _no_tool_call_response(finish_reason: str) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={"choices": [{"message": {"content": None}, "finish_reason": finish_reason}]},
+    )
+
+
+def test_complete_with_tools_raises_content_refused_on_content_filter_with_no_tool_call():
+    """A `content_filter` refusal with an empty `tool_calls` list must NOT
+    be treated as a clean end-of-loop -- it must raise the same
+    `ContentRefusedError` `complete()` raises for this finish_reason, so a
+    refused turn can never masquerade as a clean short §7.6 trajectory."""
+    from axial.llm import ContentRefusedError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _no_tool_call_response("content_filter")
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="some-model", transport=transport)
+
+    with pytest.raises(ContentRefusedError, match="content_filter"):
+        client.complete_with_tools("prompt text", [], pass_name=RETRIEVE_PASS_NAME)
+
+
+def test_complete_with_tools_raises_openrouter_error_on_length_with_no_tool_call():
+    """A truncated (`length`) turn with an empty `tool_calls` list must NOT
+    be treated as a clean end-of-loop -- it must raise `OpenRouterError`
+    naming the finish_reason, so a truncated turn can never masquerade as a
+    clean short §7.6 trajectory."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _no_tool_call_response("length")
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="some-model", transport=transport)
+
+    with pytest.raises(OpenRouterError, match="length"):
+        client.complete_with_tools("prompt text", [], pass_name=RETRIEVE_PASS_NAME)

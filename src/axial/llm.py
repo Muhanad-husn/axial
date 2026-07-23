@@ -1312,6 +1312,21 @@ class OpenRouterClient:
         own explicit non-goal: "Any live-LLM test"), so adding untested
         moderation-reroute plumbing here would be speculative robustness,
         not a proven need.
+
+        A response with no `tool_calls` is the clean "no more tool calls"
+        end ONLY when `finish_reason` is a genuine clean stop (`"stop"` or
+        absent/`None`). A `finish_reason` of `content_filter`, `length`, or
+        any other non-stop value with an empty `tool_calls` list is a
+        broken/refused/truncated turn masquerading as a clean end -- left
+        unguarded, it would silently shorten the §7.6 trajectory instead of
+        surfacing the failure, undermining the log's whole audit purpose
+        (distinguishing a sound retrieval path from a broken one). Such a
+        turn raises a named `LLMError` instead (`ContentRefusedError` for
+        `content_filter`, matching `complete()`'s own type for that
+        finish_reason; `OpenRouterError` for every other non-stop value) --
+        this is NOT the `complete()` content_filter fallback reroute
+        (deliberately not built here, see above): the loop just needs the
+        failure to be loud, not recovered.
         """
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             is_last_attempt = attempt == _MAX_ATTEMPTS
@@ -1351,13 +1366,27 @@ class OpenRouterClient:
                 _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
                 continue
             try:
-                message = data["choices"][0]["message"]
+                choice = data["choices"][0]
+                message = choice["message"]
             except (KeyError, IndexError, TypeError) as exc:
                 raise OpenRouterError(f"unexpected OpenRouter response shape: {data!r}") from exc
 
+            finish_reason = choice.get("finish_reason")
             tool_calls = message.get("tool_calls") or []
             if not tool_calls:
-                return None
+                if finish_reason is None or finish_reason == "stop":
+                    return None
+                if finish_reason == "content_filter":
+                    raise ContentRefusedError(
+                        "complete_with_tools: model turn refused with "
+                        "finish_reason='content_filter' and issued no tool call "
+                        "(issue #253 slice 01 review finding)"
+                    )
+                raise OpenRouterError(
+                    "complete_with_tools: model turn ended with "
+                    f"finish_reason={finish_reason!r} and issued no tool call "
+                    "(issue #253 slice 01 review finding)"
+                )
 
             first = tool_calls[0]
             try:
