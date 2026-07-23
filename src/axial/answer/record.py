@@ -22,12 +22,13 @@ the separate analysis-validators feature (issues #258-260). This module
 writes each of those three fields as an honest, correctly-shaped
 placeholder (`_placeholder_counter_position` / `_placeholder_confidence` /
 the empty `{}` coverage map) rather than inventing partial content ahead of
-the validators that own it. `source_usage` (§7.13/P0-13) is likewise absent
-from the record this slice writes: issue #257's own deliverable and
-acceptance criterion enumerate the exact §7.3 keys this slice carries, and
-`source_usage` is not among them -- flagged in this slice's own report
-rather than silently added, since §7.3's locked shape does list it as
-non-nullable.
+the validators that own it.
+
+`source_usage` (§7.13/P0-13, issue #265) IS computed here: `build_record`
+assembles every other §7.3 field first, then calls
+`axial.answer.source_usage.compute_source_usage` over the record-so-far
+(its own `claims`/`trajectory`/`interrogation.disposition`) to fill it in --
+zero model calls, pure vault reads plus arithmetic (see that module).
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ from typing import Any
 
 from axial.analyze.assembly import assemble_evidence
 from axial.analyze.synthesis import Claim, resolve_lens, synthesize
+from axial.answer.source_usage import compute_source_usage
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult, interrogate
 from axial.eval.corpus_pin import resolve_pin_id
@@ -149,12 +151,16 @@ def build_record(
     claims: list[Claim],
     trajectory: list[dict[str, Any]],
     model_by_pass: dict[str, str],
+    vault_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Assemble the §7.3 analysis record. `claims`/`trajectory` are the
     caller's already-computed stage-4/stage-3 output (empty on a `refuse`
     disposition); `counter_position`/`coverage_map`/`confidence` are always
-    this slice's placeholders (see module docstring)."""
-    return {
+    this slice's placeholders (see module docstring). `source_usage`
+    (§7.13) is computed over the record's own `claims`/`trajectory`/
+    `interrogation` -- assembled last here, once every field it reads is
+    already in the dict."""
+    record = {
         "brief_id": brief.brief_id,
         "brief": _brief_to_dict(brief),
         "corpus_pin": corpus_pin,
@@ -168,6 +174,8 @@ def build_record(
         "trajectory": list(trajectory),
         "model_by_pass": dict(model_by_pass),
     }
+    record["source_usage"] = compute_source_usage(record, vault_dir=vault_dir)
+    return record
 
 
 def persist_record(
@@ -261,6 +269,7 @@ def run_brief(
         claims=claims,
         trajectory=trajectory,
         model_by_pass=model_by_pass,
+        vault_dir=vault_dir,
     )
     path = persist_record(
         brief.brief_id, record, analyses_dir=analyses_dir, config_path=config_path

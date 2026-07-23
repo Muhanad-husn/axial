@@ -428,7 +428,7 @@ def query_by_polity(polity: str, *, vault_dir: Path | None = None) -> list[str]:
     return sorted(matches)
 
 
-def _source_id_from_chunk_id(chunk_id: str) -> str:
+def source_id_from_chunk_id(chunk_id: str) -> str:
     """The `source_id` seam within a chunk_id
     (`<source_id>_<section_order>_<section_slug>_<NNN>`,
     `axial.chunk.build_chunk_records`). The three trailing `_`-delimited
@@ -437,7 +437,12 @@ def _source_id_from_chunk_id(chunk_id: str) -> str:
     (`axial.chunk._slugify`, `[^a-z0-9]+` -> `-`), and `NNN` is a bare
     zero-padded index -- so `source_id` is exactly everything before the
     last three `_`-delimited segments. Raises `MalformedChunkIdError` when
-    `chunk_id` has fewer than four `_`-delimited segments to split."""
+    `chunk_id` has fewer than four `_`-delimited segments to split.
+
+    Public (no leading underscore): `axial.answer.source_usage` (§7.13)
+    reuses this exact parse rule to resolve a chunk grounds pointer to its
+    `source_id`, so it is a parse shared across modules, not a
+    query_by_source-only implementation detail."""
     parts = chunk_id.rsplit("_", 3)
     if len(parts) != 4 or not parts[0]:
         raise MalformedChunkIdError(chunk_id)
@@ -446,7 +451,7 @@ def _source_id_from_chunk_id(chunk_id: str) -> str:
 
 def query_by_source(source_id: str, *, vault_dir: Path | None = None) -> list[str]:
     """Every chunk_id belonging to `source_id` (§7.5): matched on the
-    chunk_id's own embedded `source_id` seam (`_source_id_from_chunk_id`),
+    chunk_id's own embedded `source_id` seam (`source_id_from_chunk_id`),
     not a `source_meta` lookup -- `source_meta` carries no `source_id`
     field (`ChunkNote.source_meta` is `{author, title, date, thesis,
     scope}` only). Results are sorted ascending, the same determinism
@@ -456,7 +461,7 @@ def query_by_source(source_id: str, *, vault_dir: Path | None = None) -> list[st
     matches: list[str] = []
     for path, frontmatter in _iter_chunk_frontmatter(vault_dir):
         chunk_id = _require(frontmatter, path, "chunk_id")
-        if _source_id_from_chunk_id(chunk_id) == source_id:
+        if source_id_from_chunk_id(chunk_id) == source_id:
             matches.append(chunk_id)
     return sorted(matches)
 
