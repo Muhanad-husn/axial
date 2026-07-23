@@ -22,7 +22,7 @@
 source_id = "mann-sources-of-social-power-v4"
 source_path = "data/sources/mann-sources-of-social-power-v4.pdf"
 time_envelope_sec = 66000
-quarantine_budget = 0.02
+quarantine_budget = 0.05
 
 [[canary]]
 # The most violence-dense prose end-to-end (highest moderation-hazard
@@ -30,7 +30,7 @@ quarantine_budget = 0.02
 source_id = "kalyvas-logic-of-violence-in-civil-war"
 source_path = "data/sources/kalyvas-logic-of-violence-in-civil-war.pdf"
 time_envelope_sec = 58000
-quarantine_budget = 0.02
+quarantine_budget = 0.05
 
 [[canary]]
 # Moderation survivor: the one recovered content_filter hit of the run;
@@ -38,4 +38,4 @@ quarantine_budget = 0.02
 source_id = "hall-schroeder-anatomy-of-power"
 source_path = "data/sources/hall-schroeder-anatomy-of-power.pdf"
 time_envelope_sec = 72000
-quarantine_budget = 0.02
+quarantine_budget = 0.05
