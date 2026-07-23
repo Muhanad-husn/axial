@@ -1391,6 +1391,24 @@ def _log_retry(
     print(line, file=sys.stderr)
 
 
+def _raise_for_status_with_body(response: httpx.Response, *, action: str) -> None:
+    """Like `response.raise_for_status()`, but on a 4xx/5xx failure wraps the
+    resulting `httpx.HTTPStatusError` in `OpenRouterError` carrying a bounded
+    snippet of the response body (same `repr(response.text[:300])` pattern
+    used a few lines below for a malformed-JSON body). `raise_for_status()`'s
+    own message is only the generic status line ("Client error '400 Bad
+    Request' for url '...'") -- never the body, which is exactly where a
+    provider like OpenRouter puts the actual reason (e.g. a
+    context-length-exceeded message). A real synthesis-pass run hit this: an
+    oversized prompt drew a 400 whose real cause was invisible without
+    reading the body by hand (issue #358)."""
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        snippet = repr(response.text[:300])
+        raise OpenRouterError(f"{action} failed: {exc}; body snippet: {snippet}") from exc
+
+
 class OpenRouterClient:
     """Thin HTTP client for OpenRouter's chat-completions endpoint.
 
@@ -1570,7 +1588,7 @@ class OpenRouterClient:
                 _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
                 continue
 
-            response.raise_for_status()
+            _raise_for_status_with_body(response, action="API request")
             try:
                 data = response.json()
             except (json.JSONDecodeError, ValueError) as exc:
@@ -1712,7 +1730,7 @@ class OpenRouterClient:
                 _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
                 continue
 
-            response.raise_for_status()
+            _raise_for_status_with_body(response, action="API request")
             try:
                 data = response.json()
             except (json.JSONDecodeError, ValueError) as exc:
@@ -1802,7 +1820,9 @@ class OpenRouterClient:
                 f"exceeded the {self._request_deadline_seconds}s wall-clock deadline "
                 "(issue #108)"
             ) from exc
-        response.raise_for_status()
+        _raise_for_status_with_body(
+            response, action=f"content_fallback_model {self._content_fallback_model!r} request"
+        )
         try:
             data = response.json()
         except (json.JSONDecodeError, ValueError) as exc:

@@ -35,11 +35,13 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import yaml
 
 from axial.analyze.assembly import EvidenceSet
 from axial.brief.intake import Brief
 from axial.llm import SYNTHESIZE_PASS_NAME, LLMClient, LLMError
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
+from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.query.reader import (
     ArtifactNotFoundError,
     ChunkNotFoundError,
@@ -68,6 +70,40 @@ DEFAULT_LENSES_DIR = Path("config/lenses")
 # collision-free within one brief run's claim count, short enough to stay
 # readable (mirrors `axial.brief.intake._BRIEF_ID_LENGTH`).
 _CLAIM_ID_LENGTH = 16
+
+# Total evidence-text budget fed into the synthesis prompt (issue #358): the
+# retrieval loop's `step_budget` (config/pipeline.yaml `retrieve.step_budget`)
+# bounds the number of TOOL CALLS one retrieval run makes, not the number of
+# chunks a single call can return (`query_by_source`/`query_by_tag` are
+# unbounded) -- a real brief run assembled enough chunk text that the
+# synthesis prompt, combined with the fixed `max_tokens=60000` completion
+# budget sent on every call (`axial.llm._MAX_COMPLETION_TOKENS`), pushed past
+# the model's context window and OpenRouter rejected the request outright.
+# Character-based, not a real tokenizer (this repo's "measure, don't
+# speculate" philosophy, and no per-model context-window lookup table):
+# ~4 chars/token is a standard rough estimate for English prose, so 100_000
+# chars is roughly 25k tokens of evidence text -- conservative headroom
+# under a 128k-class context window even after the 60k-token completion
+# reservation and the prompt's own small fixed overhead (case/request/
+# instructions). [TENTATIVE], mirroring `retrieve.step_budget`/
+# `retrieve.thin_result_floor`'s own starting-value status: not yet measured
+# against a real brief run, tuning it is a later, separate pass.
+DEFAULT_EVIDENCE_CHAR_BUDGET = 100_000
+
+
+def _resolve_evidence_char_budget(config_path: Path | None = None) -> int:
+    """Read `synthesis.evidence_char_budget` from `config_path` (mirrors
+    `axial.retrieve.loop._resolve_step_budget`'s own config-read shape),
+    falling back to `DEFAULT_EVIDENCE_CHAR_BUDGET` when the file, the
+    `synthesis` block, or the key itself is absent."""
+    if config_path is None:
+        config_path = DEFAULT_PIPELINE_CONFIG_PATH
+    if not config_path.is_file():
+        return DEFAULT_EVIDENCE_CHAR_BUDGET
+    with config_path.open("r", encoding="utf-8") as handle:
+        document = yaml.safe_load(handle) or {}
+    synthesis_config = document.get("synthesis") or {}
+    return int(synthesis_config.get("evidence_char_budget", DEFAULT_EVIDENCE_CHAR_BUDGET))
 
 
 class SynthesisError(Exception):
@@ -228,7 +264,13 @@ def resolve_lens(lens_name: str | None, *, lenses_dir: Path | None = None) -> st
 
 
 def compose_prompt(
-    brief: Brief, lens_name: str, evidence: EvidenceSet, *, vault_dir: Path | None = None
+    brief: Brief,
+    lens_name: str,
+    evidence: EvidenceSet,
+    *,
+    vault_dir: Path | None = None,
+    config_path: Path | None = None,
+    evidence_char_budget: int | None = None,
 ) -> str:
     """Assemble the synthesis prompt (§7.4/P0-4): the brief's case/request,
     the applied lens, and every evidence chunk's id, its real prose TEXT, and
@@ -242,10 +284,32 @@ def compose_prompt(
     supplied rather than invented. Every phrase this module's acceptance
     test checks against the recorded prompt lives verbatim in this
     template, so a prompt wording change is a deliberate, visible diff, not
-    silent drift."""
+    silent drift.
+
+    `evidence_char_budget` (issue #358, default `_resolve_evidence_char_budget`
+    off `config_path`/`DEFAULT_EVIDENCE_CHAR_BUDGET`) bounds the combined
+    length of every included chunk's `chunk_text`: chunks are walked in
+    `evidence.chunk_ids`' existing (first-seen retrieval) order, and the
+    included evidence set is a deterministic PREFIX of that order -- the walk
+    stops (never mid-text truncating a chunk) at the first chunk that would
+    push the running total over budget, so every later chunk is dropped too.
+    A dropped chunk's id never appears in the evidence list, so the model has
+    nothing to cite it with (grounds validation already rejects an unlisted
+    id)."""
+    if evidence_char_budget is None:
+        evidence_char_budget = _resolve_evidence_char_budget(config_path)
+
     lines: list[str] = []
+    running_total = 0
     for chunk_id, chunk in zip(evidence.chunk_ids, evidence.chunks):
         note = get_chunk(chunk_id, vault_dir=vault_dir)
+        if running_total + len(note.chunk_text) > evidence_char_budget:
+            # The budget is exhausted: stop here rather than skipping ahead
+            # to a later, smaller chunk -- the included evidence set is
+            # always a deterministic PREFIX of the retrieval order, simple
+            # to reason about and to reproduce.
+            break
+        running_total += len(note.chunk_text)
         lines.append(
             f"- chunk_id={chunk_id} role_in_argument={chunk.role_in_argument} "
             f"polities_touched={chunk.polities_touched} "
@@ -414,10 +478,13 @@ def synthesize(
     client: LLMClient,
     vault_dir: Path | None = None,
     lenses_dir: Path | None = None,
+    config_path: Path | None = None,
 ) -> ClaimGraph:
     """Run the §7.4 synthesis pass over `evidence`: resolve the lens
     (`resolve_lens`), compose the grounded-by-construction prompt
-    (`compose_prompt`), make ONE bounded model call
+    (`compose_prompt` -- including its `evidence_char_budget` cap, issue
+    #358, resolved from `config_path`/`config/pipeline.yaml`'s
+    `synthesis.evidence_char_budget`), make ONE bounded model call
     (`pass_name=SYNTHESIZE_PASS_NAME`, routable through
     `model_by_pass`/`reasoning_by_pass`, §7.11), and parse+validate the
     result (`parse_synthesis_response`) into a `ClaimGraph`.
@@ -430,7 +497,9 @@ def synthesize(
     `UnknownLensError`/`NoLensesAvailableError` propagate unchanged from
     `resolve_lens` when the brief names a lens that does not exist."""
     lens_name = resolve_lens(brief.lens, lenses_dir=lenses_dir)
-    prompt = compose_prompt(brief, lens_name, evidence, vault_dir=vault_dir)
+    prompt = compose_prompt(
+        brief, lens_name, evidence, vault_dir=vault_dir, config_path=config_path
+    )
 
     try:
         raw = complete_json(client, prompt, pass_name=SYNTHESIZE_PASS_NAME)
