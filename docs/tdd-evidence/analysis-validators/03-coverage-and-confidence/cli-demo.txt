@@ -1,0 +1,18 @@
+=== Scenario: complete coverage map, valid confidence (pass) ===
+$ axial brief validate DEV20
+brief_id: DEV20
+attribution validator: PASS (0 failures)
+coverage/confidence validator: PASS (0 failures)
+coverage map:
+  Syria: corpus_chunk_count=240 evidence_chunk_count=1 coverage_band='dense'
+  Yemen: corpus_chunk_count=6 evidence_chunk_count=1 coverage_band='thin'
+exit=0
+
+=== Scenario: claims touch Yemen, coverage_map has no Yemen entry (blocks release) ===
+$ axial brief validate DEV21
+brief_id: DEV21
+attribution validator: PASS (0 failures)
+coverage/confidence validator: FAIL (1 failure(s))
+  missing_coverage_entry -- polity 'Yemen' is touched by claims but has no coverage_map entry
+coverage map: (empty -- no polity touched by any claim)
+exit=1
