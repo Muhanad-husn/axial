@@ -12,6 +12,7 @@ from axial.analyze import format_examine_report as format_brief_examine_report
 from axial.analyze import run_examine
 from axial.analyze.synthesis import SynthesisError
 from axial.answer import AnswerError, run_brief
+from axial.answer.usage_report import build_usage_report, format_usage_report, load_analysis_records
 from axial.artifacts import ArtifactsError, run_artifacts
 from axial.brief import BriefError, load_brief
 from axial.brief.interrogate import InterrogationError, interrogate, persist_interrogation
@@ -429,6 +430,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     brief_validate_parser.add_argument(
         "brief_id", help="brief_id of a persisted record under data/analyses/"
+    )
+
+    brief_usage_parser = brief_subparsers.add_parser(
+        "usage",
+        help=(
+            "read analysis records under data/analyses/ and report per-source "
+            "usage ratios pooled across runs sharing a corpus pin, broken down "
+            "by tag filter (specs/PHASE-B.md §7.13, §8 P0-13, issue #266) -- "
+            "makes ZERO model calls and gates nothing"
+        ),
+    )
+    brief_usage_parser.add_argument(
+        "--pin",
+        default=None,
+        help="corpus_pin to report on (default: the pin the most records share)",
     )
 
     pin_parser = subparsers.add_parser(
@@ -1083,6 +1099,16 @@ def _brief_validate(brief_id: str) -> int:
     return 0 if report.passed else 1
 
 
+def _brief_usage(pin: str | None) -> int:
+    analyses_dir = default_analyses_dir()
+    records, unreadable_count = load_analysis_records(analyses_dir)
+    report = build_usage_report(records, pin=pin, unreadable_count=unreadable_count)
+    print(format_usage_report(report))
+    # P0-13: the report gates nothing -- no ratio value drives the exit
+    # code, mirroring `chunk examine`'s own inspect-before-spend contract.
+    return 0
+
+
 def _pin_write(name: str) -> int:
     try:
         path = write_pin(name)
@@ -1217,6 +1243,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "brief" and args.brief_command == "validate":
         return _brief_validate(args.brief_id)
+
+    if args.command == "brief" and args.brief_command == "usage":
+        return _brief_usage(args.pin)
 
     if args.command == "pin" and args.pin_command == "write":
         return _pin_write(args.name)
