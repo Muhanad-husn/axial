@@ -1,0 +1,12 @@
+brief_id: 84c6dd95acf41894
+disposition: proceed_bounded
+  premise (supports): The brief assumes stable pre-war Syrian local authority.
+  bound: Corpus covers Syria's civil-war-era displacement, not pre-2000 governance.
+retrieved chunk_ids (retrieval order): 3
+  exfix_002_syria_b
+  exfix_001_syria_a
+  exfix_004_iraq
+polity coverage:
+  Iraq: corpus_chunk_count=1 evidence_chunk_count=1
+  Syria: corpus_chunk_count=3 evidence_chunk_count=2
+exit=0
