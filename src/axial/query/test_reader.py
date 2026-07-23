@@ -1,22 +1,36 @@
 """Inner unit tests for the vault reader and tag-query tool set (issue #249,
 slice 01; plans/vault-query/01-vault-reader-and-tag-query.md's inner-loop
-list)."""
+list). Slice 02 (issue #251,
+plans/vault-query/02-facet-and-traversal-queries.md's inner-loop list) adds
+unit tests for `query_by_polity`, `query_by_source`, `get_envelope`,
+`follow_backlinks`, `coverage_count` further down this file."""
 
 from __future__ import annotations
+
+import json
 
 import pytest
 import yaml
 
 from axial.query import (
     ArtifactNotFoundError,
+    BacklinkTargetNotFoundError,
     ChunkNotFoundError,
+    EnvelopeNotFoundError,
+    MalformedChunkIdError,
     MalformedNoteError,
     MissingVaultDirError,
     UnknownFilterError,
+    coverage_count,
+    follow_backlinks,
     get_artifact,
     get_chunk,
+    get_envelope,
+    query_by_polity,
+    query_by_source,
     query_by_tag,
 )
+from axial.query.reader import _source_id_from_chunk_id
 
 # -- fixture helpers ----------------------------------------------------------
 
@@ -431,3 +445,235 @@ def test_module_imports_and_runs_with_no_llm_client_configured(tmp_path, monkeyp
     # makes any hidden `.complete()` call crash loudly rather than pass silently.
     assert query_by_tag(role_in_argument="role:claim", vault_dir=tmp_path) == ["c1"]
     assert get_chunk("c1", vault_dir=tmp_path).chunk_id == "c1"
+
+
+# =============================================================================
+# Slice 02 (issue #251): query_by_polity, query_by_source / get_envelope,
+# follow_backlinks, coverage_count
+# =============================================================================
+
+
+def _write_envelope(envelopes_dir, source_id, **overrides):
+    envelopes_dir.mkdir(parents=True, exist_ok=True)
+    envelope = {
+        "source_id": source_id,
+        "thesis": "T",
+        "toc": [{"title": "Introduction", "children": ["Background"]}],
+        "scope": "S",
+        "stated_argument": "A",
+    }
+    envelope.update(overrides)
+    (envelopes_dir / f"{source_id}.json").write_text(
+        json.dumps(envelope, indent=2), encoding="utf-8"
+    )
+
+
+# -- query_by_polity ----------------------------------------------------------
+
+
+def test_query_by_polity_matches_any_entry_of_the_many_valued_list(tmp_path):
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "two_polities", polities_touched=["Syria", "Iraq"])
+    _write_chunk_note(prose_dir, "one_polity", polities_touched=["Iraq"])
+    _write_chunk_note(prose_dir, "no_match", polities_touched=["Lebanon"])
+    _write_chunk_note(prose_dir, "empty_list", polities_touched=[])
+
+    result = query_by_polity("Iraq", vault_dir=tmp_path)
+
+    assert result == ["one_polity", "two_polities"]
+
+
+def test_query_by_polity_is_distinct_from_empirical_scope_polity(tmp_path):
+    """A chunk scoped to one polity but touching another is returned for
+    the touched polity, not the scoped one -- the cross-case behaviour the
+    scope axis cannot serve (§7.5)."""
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(
+        prose_dir,
+        "c1",
+        empirical_scope={"value": "scope:comparative", "polity": "Syria"},
+        polities_touched=["Syria", "Iraq"],
+    )
+
+    assert query_by_polity("Iraq", vault_dir=tmp_path) == ["c1"]
+    assert query_by_tag(polity="Iraq", vault_dir=tmp_path) == [], (
+        "the empirical_scope.polity filter must NOT match on the many-valued polities_touched facet"
+    )
+
+
+def test_query_by_polity_is_exact_string_no_normalization(tmp_path):
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "c1", polities_touched=["Iraq"])
+
+    assert query_by_polity("iraq", vault_dir=tmp_path) == []
+    assert query_by_polity("Iraq ", vault_dir=tmp_path) == []
+
+
+def test_query_by_polity_results_sorted_despite_scrambled_write_order(tmp_path):
+    prose_dir = tmp_path / "prose"
+    for chunk_id in ["c3", "c1", "c4", "c2"]:
+        _write_chunk_note(prose_dir, chunk_id, polities_touched=["Iraq"])
+
+    assert query_by_polity("Iraq", vault_dir=tmp_path) == ["c1", "c2", "c3", "c4"]
+
+
+# -- source_id parsing (query_by_source's seam) --------------------------------
+
+
+def test_source_id_from_chunk_id_pins_the_parse_rule():
+    """chunk_id shape: <source_id>_<section_order>_<section_slug>_<NNN>
+    (axial.chunk.build_chunk_records). source_id itself may contain
+    hyphens (axial's own source_id convention, `{stem}-{hash}`); the three
+    trailing segments never do."""
+    assert (
+        _source_id_from_chunk_id("some-source-abc123_1-2_intro-section_007") == "some-source-abc123"
+    )
+    assert _source_id_from_chunk_id("src_0_section_001") == "src"
+
+
+def test_source_id_from_chunk_id_raises_on_a_malformed_chunk_id():
+    with pytest.raises(MalformedChunkIdError):
+        _source_id_from_chunk_id("not-enough-segments")
+
+
+def test_query_by_source_returns_only_that_sources_chunks(tmp_path):
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "srcA_1_intro_001")
+    _write_chunk_note(prose_dir, "srcA_1_intro_002")
+    _write_chunk_note(prose_dir, "srcB_1_intro_001")
+
+    result = query_by_source("srcA", vault_dir=tmp_path)
+
+    assert result == ["srcA_1_intro_001", "srcA_1_intro_002"]
+
+
+# -- get_envelope ---------------------------------------------------------------
+
+
+def test_get_envelope_exposes_thesis_toc_scope_stated_argument(tmp_path):
+    envelopes_dir = tmp_path / "envelopes"
+    _write_envelope(
+        envelopes_dir,
+        "src1",
+        thesis="The thesis.",
+        toc=[{"title": "Intro", "children": ["A", "B"]}, {"title": "Conclusion", "children": []}],
+        scope="The scope.",
+        stated_argument="The restated argument.",
+    )
+
+    result = get_envelope("src1", envelopes_dir=envelopes_dir)
+
+    assert result.source_id == "src1"
+    assert result.thesis == "The thesis."
+    assert result.toc == [
+        {"title": "Intro", "children": ["A", "B"]},
+        {"title": "Conclusion", "children": []},
+    ]
+    assert result.scope == "The scope."
+    assert result.stated_argument == "The restated argument."
+
+
+def test_get_envelope_preserves_the_nested_toc_shape_without_flattening(tmp_path):
+    envelopes_dir = tmp_path / "envelopes"
+    nested_toc = [{"title": "Chapter One", "children": ["Section A", "Section B"]}]
+    _write_envelope(envelopes_dir, "src1", toc=nested_toc)
+
+    result = get_envelope("src1", envelopes_dir=envelopes_dir)
+
+    assert result.toc == nested_toc
+    assert all(isinstance(entry, dict) for entry in result.toc), (
+        "a flat list of strings would mean the pre-#235 toc shape leaked "
+        "through instead of the nested {title, children} shape"
+    )
+
+
+def test_get_envelope_on_an_unknown_source_id_raises_not_found(tmp_path):
+    envelopes_dir = tmp_path / "envelopes"
+    envelopes_dir.mkdir(parents=True)
+
+    with pytest.raises(EnvelopeNotFoundError) as exc_info:
+        get_envelope("does-not-exist", envelopes_dir=envelopes_dir)
+    assert "does-not-exist" in str(exc_info.value)
+
+
+# -- follow_backlinks -----------------------------------------------------------
+
+
+def test_follow_backlinks_chunk_to_artifact_refs(tmp_path):
+    _write_chunk_note(tmp_path / "prose", "c1", artifact_refs=["a1", "a2"])
+
+    assert follow_backlinks("c1", vault_dir=tmp_path) == ["a1", "a2"]
+
+
+def test_follow_backlinks_artifact_to_cited_by_sorted(tmp_path):
+    _write_artifact_note(tmp_path / "artifacts", "a1", cited_by=["c3", "c1"])
+
+    assert follow_backlinks("a1", vault_dir=tmp_path) == ["c1", "c3"]
+
+
+def test_follow_backlinks_empty_link_list_returns_empty_not_an_error(tmp_path):
+    _write_chunk_note(tmp_path / "prose", "c1", artifact_refs=[])
+    _write_artifact_note(tmp_path / "artifacts", "a1", cited_by=[])
+
+    assert follow_backlinks("c1", vault_dir=tmp_path) == []
+    assert follow_backlinks("a1", vault_dir=tmp_path) == []
+
+
+def test_follow_backlinks_raises_on_an_id_that_is_neither_chunk_nor_artifact(tmp_path):
+    (tmp_path / "prose").mkdir(parents=True)
+    (tmp_path / "artifacts").mkdir(parents=True)
+
+    with pytest.raises(BacklinkTargetNotFoundError) as exc_info:
+        follow_backlinks("does-not-exist", vault_dir=tmp_path)
+    assert "does-not-exist" in str(exc_info.value)
+
+
+# -- coverage_count ---------------------------------------------------------------
+
+
+def test_coverage_count_counts_each_chunk_once_per_distinct_polity(tmp_path):
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "c1", polities_touched=["Iraq", "Syria"])
+    _write_chunk_note(prose_dir, "c2", polities_touched=["Iraq"])
+    _write_chunk_note(prose_dir, "c3", polities_touched=["Lebanon"])
+    # A chunk that lists the same polity twice must count once, not twice.
+    _write_chunk_note(prose_dir, "c4", polities_touched=["Iraq", "Iraq"])
+
+    result = coverage_count(vault_dir=tmp_path)
+
+    assert result == {"Iraq": 3, "Syria": 1, "Lebanon": 1}
+
+
+def test_coverage_count_over_a_vault_with_no_polities_touched_returns_empty(tmp_path):
+    _write_chunk_note(tmp_path / "prose", "c1", polities_touched=[])
+
+    assert coverage_count(vault_dir=tmp_path) == {}
+
+
+def test_coverage_count_raises_when_vault_dir_is_missing(tmp_path):
+    with pytest.raises(MissingVaultDirError):
+        coverage_count(vault_dir=tmp_path / "no-such-vault")
+
+
+# -- LLM-free by construction (slice 02 tools) -----------------------------------
+
+
+def test_slice_02_tools_run_with_no_llm_client_configured(tmp_path, monkeypatch):
+    monkeypatch.setenv("AXIAL_LLM_PROVIDER", "explode")
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(
+        prose_dir,
+        "some-source_1_intro_001",
+        polities_touched=["Iraq"],
+        artifact_refs=["a1"],
+    )
+    _write_artifact_note(tmp_path / "artifacts", "a1", cited_by=["some-source_1_intro_001"])
+    _write_envelope(tmp_path / "envelopes", "some-source")
+
+    assert query_by_polity("Iraq", vault_dir=tmp_path) == ["some-source_1_intro_001"]
+    assert query_by_source("some-source", vault_dir=tmp_path) == ["some-source_1_intro_001"]
+    assert follow_backlinks("some-source_1_intro_001", vault_dir=tmp_path) == ["a1"]
+    assert coverage_count(vault_dir=tmp_path) == {"Iraq": 1}
+    assert get_envelope("some-source", envelopes_dir=tmp_path / "envelopes").source_id == (
+        "some-source"
+    )
