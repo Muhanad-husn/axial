@@ -75,6 +75,14 @@ paths:
 # pass, like the tier choice in §7.11).
 retrieve:
   step_budget: 10
+  # Slice 02 (issue #254, PRD §4/§7.6): the re-query-on-thin threshold. A
+  # tool result whose result_count is below this floor is fed back to the
+  # model flagged as thin, so the agent can decide to broaden its query
+  # (src/axial/retrieve/loop.py reads this via _resolve_thin_result_floor,
+  # falling back to its own DEFAULT_THIN_RESULT_FLOOR when this file or key
+  # is absent). 3 is a stated starting value, not yet measured against the
+  # dev briefs -- tuning it is explicitly out of this slice's scope.
+  thin_result_floor: 3
 
 # Google Drive connector tunables (issue #239, PRD §7.10 "Language-gate
 # tunables" paragraph / §8 P0-11c): the English-only language gate's
