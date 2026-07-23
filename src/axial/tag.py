@@ -73,6 +73,7 @@ from __future__ import annotations
 import json
 import sys
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -1557,12 +1558,37 @@ class TaggedRecords(list):
 
 # Content-caused failure classes this pass quarantines a single chunk for
 # instead of aborting the whole source (issue #120): a `ContentRefusedError`
-# survives the #116 fallback reroute (content_filter), or a `ModelJsonError`
-# survives `complete_json`'s bounded retry budget (malformed_json). Each is a
+# survives the #116 fallback reroute (content_filter), a `ModelJsonError`
+# survives `complete_json`'s bounded retry budget (malformed_json), or a
+# `TagParseError` survives either its bounded retry budget (via
+# `reject_degenerate_tag_values`, `complete_json`'s own `validate`) or
+# `apply_correction_reask`'s re-validation of a correction re-ask's answer
+# (parse_error -- e.g. `parse_multi_value_tag_response` getting a bare
+# scalar for a `primary_plus_secondary` axis, or `_reject_blank_tag` finding
+# a still-empty tag value; measured 2026-07-22, 18/18 real full-source tag
+# attempts died on one of these two shapes with no handler at all). Each is a
 # content-shaped failure -- retrying the identical prompt against the same
 # model cannot change the outcome -- unlike a transient `OpenRouterError`/
 # `httpx.HTTPError`, which must keep propagating unchanged (never quarantined,
 # see `run_tag`'s per-chunk loop and the locked outer test).
+#
+# `TagCardinalityError` (a single-cardinality axis's response carrying zero
+# or multiple values, e.g. `parse_tag_response` on `empirical_scope`/
+# `role_in_argument`) joins this same bucket (cardinality_error, issue #326:
+# a live corpus run hard-failed `beshara-origins-of-syrian-nationhood` on
+# exactly this, uncaught, 804/900 chunks already checkpointed). It has no
+# dedicated repair path -- unlike `TagNotInSchemaError`'s #102 correction
+# re-ask, nothing re-asks specifically for a cardinality violation -- so it
+# is the same species as `TagParseError`: reachable both from
+# `reject_degenerate_tag_values` surviving `complete_json`'s bounded retry
+# budget, and from `apply_correction_reask`'s re-validation of a correction
+# re-ask's answer (that answer is a fresh, full re-generation of every axis,
+# unvetted by `reject_degenerate_tag_values`, so a cardinality violation can
+# surface there on ANY axis, not just the one the correction targeted --
+# exactly the beshara shape: the correction re-ask fired for a different
+# axis, and the model's fresh full answer broke `empirical_scope`'s
+# cardinality instead). Handled identically to `TagParseError` at both
+# sites, for the same reason.
 #
 # A persisting `TagNotInSchemaError` (out-of-vocab, after the #102 correction
 # re-ask already ran) is DELIBERATELY NOT included here (founder ruling,
@@ -1575,6 +1601,38 @@ class TaggedRecords(list):
 # every OTHER closed axis stays exactly as fatal as this comment describes.
 QUARANTINE_REASON_CONTENT_FILTER = "content_filter"
 QUARANTINE_REASON_MALFORMED_JSON = "malformed_json"
+QUARANTINE_REASON_PARSE_ERROR = "parse_error"
+QUARANTINE_REASON_CARDINALITY_ERROR = "cardinality_error"
+
+
+class AllChunksQuarantinedError(TagError):
+    """Raised when every chunk this run attempted to tag (i.e. every chunk
+    that was neither skipped by the garble-only guard nor still pending)
+    ended up quarantined (issue #120/#325/#326's per-chunk quarantine),
+    leaving zero tagged records for the source.
+
+    Reconciles two otherwise-conflicting contracts: #120/#325/#326's own
+    point (a single malformed chunk among many must not crash the whole
+    source -- quarantine it, keep going) and issue #105 clause 4's locked
+    acceptance bar (a genuinely malformed axis shape must still fail
+    `axial vault write` loudly, never silently degrade to an empty/success
+    result). A source where SOME chunks succeed and a few are quarantined
+    stays a success (`TaggedRecords.quarantine_count` reports how many);
+    only when NOTHING usable survives is this indistinguishable, from the
+    operator's chair, from the old uncaught crash, so it is raised here as
+    a `TagError` (caught by `axial.vault.run_vault_write` exactly like any
+    other tagging failure, giving `axial vault write` its non-zero exit)."""
+
+    def __init__(self, source_id: str, quarantine_count: int, examples: list[str]):
+        self.source_id = source_id
+        self.quarantine_count = quarantine_count
+        self.examples = examples
+        shown = "; ".join(examples[:5])
+        more = f" (+{len(examples) - 5} more)" if len(examples) > 5 else ""
+        super().__init__(
+            f"every attempted chunk for {source_id!r} was quarantined "
+            f"({quarantine_count} chunk(s)), leaving zero tagged records: {shown}{more}"
+        )
 
 
 def _quarantine_chunk(
@@ -1713,6 +1771,15 @@ def run_tag(
 
     tagged_records: list[dict[str, Any]] = []
     quarantine_count = 0
+    # Diagnostic detail for `AllChunksQuarantinedError` below: one line per
+    # quarantined chunk (this run's own quarantines, plus any already
+    # quarantined by an earlier resumed run), so a source that ends up with
+    # zero usable tags still names the offending axis/axes in the final
+    # error, not just an opaque count.
+    quarantine_examples: list[str] = [
+        f"{chunk_id}: {reason} (previously quarantined)"
+        for chunk_id, reason in already_quarantined.items()
+    ]
     for chunk_record in chunk_records:
         # Resume: a chunk already quarantined by an earlier run (issue #120)
         # is skipped outright -- no LLM call, no re-quarantine, and it never
@@ -1775,115 +1842,250 @@ def run_tag(
         # per-pass config, resolved once above -- never a literal here. At
         # `votes == 1` this loop runs once and the voting layer is skipped
         # entirely, which is today's behavior exactly.
-        draws: list[tuple[dict[str, str], dict[str, Any], dict[str, list[str]], str | None]] = []
-        spoiled: TagNotInSchemaError | None = None
-        quarantine_reason: str | None = None
-        for _ in range(votes):
-            try:
-                raw_response = complete_json(
+        #
+        # Concurrency (issue #325 follow-up, measured 2026-07-22 on the live
+        # corpus: ~22-23s/chunk at votes=3, ~7-8s per individual call --
+        # sequential draws were paying the same network round trip 3 times in
+        # a row for zero benefit, since each draw's PROMPT is identical). The
+        # `votes` primary completions -- the dominant cost, one real network
+        # call each -- are fired at once via a per-chunk `ThreadPoolExecutor`
+        # and gathered in ORIGINAL draw order below; `OpenRouterClient.complete`
+        # is safe to call this way (verified, not assumed): every value
+        # `_post_with_deadline`/`complete` reads off `self` (`_model_by_pass`,
+        # `_reasoning_by_pass`, `_api_key`, `_content_fallback_model`,
+        # `_request_deadline_seconds`) is set once in `__init__` and never
+        # mutated by a call; `self._client` is an `httpx.Client`, whose
+        # connection pool is documented safe for concurrent use across
+        # threads; every other value `complete` touches (`outcome`, `done`,
+        # `response`, the retry-loop locals) is local to that one call's own
+        # stack, not shared. `apply_correction_reask` below (the rare #102
+        # correction re-ask, only paid on an out-of-vocab miss) stays
+        # sequential and per-draw, exactly as before -- it is not the cost
+        # this measurement is about.
+        #
+        # Only the WALL-CLOCK changes here, never the result: every draw's
+        # exception/value is gathered before any of this loop's own
+        # processing runs, and that processing -- parse/validate/#102-re-ask,
+        # spoiled-ballot tracking, quarantine-reason assignment, the final
+        # majority vote -- is the exact same per-draw code as before,
+        # unmodified, walked in the exact same original-draw-index order.
+        # Given the identical N raw responses, the final tagged record (or
+        # quarantine/hard-error outcome) is byte-identical to the sequential
+        # version.
+        #
+        # One real, deliberate behavior change: the sequential loop's early
+        # `break` on a quarantine-triggering exception (`ContentRefusedError`/
+        # `ModelJsonError`/`TagParseError`) used to skip the REMAINING draws'
+        # network calls entirely, since they hadn't been made yet. Firing all
+        # `votes` calls upfront loses that savings -- every chunk now always
+        # pays for all `votes` calls, even one that will end up quarantined
+        # on the strength of the first. Accepted deliberately (not silently):
+        # measured zero quarantines across the entire live 2026-07-22 corpus
+        # run (~4,000+ chunks), so this is a rare, small cost against a ~3x
+        # latency win on every normal chunk. `break` below still stops this
+        # loop's OWN downstream processing at the first quarantine-worthy
+        # draw (byte-identical outcome to before), it just no longer prevents
+        # calls already in flight.
+        with ThreadPoolExecutor(max_workers=max(votes, 1)) as executor:
+            completion_futures = [
+                executor.submit(
+                    complete_json,
                     client,
                     prompt,
                     pass_name=TAG_PASS_NAME,
                     validate=lambda raw: reject_degenerate_tag_values(raw, axes_to_tag, schema),
                 )
-            except ContentRefusedError as exc:
-                # Content-caused, never transient (issue #120): a moderation
-                # refusal surviving the #116 fallback reroute cannot be fixed
-                # by retrying the identical prompt against the same model --
-                # caught narrowly here (before the broader LLMError clause
-                # below, since `ContentRefusedError` subclasses it) so only
-                # this specific class is quarantined; every other `LLMError`/
-                # `httpx.HTTPError` still propagates exactly as today.
-                # Quarantine is scoped to when the checkpoint is active
-                # (`tags_dir` supplied) -- mirroring every other
-                # checkpoint-only behavior in this pass (issue #81's own
-                # "opt-in" docstring above): a standalone `axial tag` run with
-                # no checkpoint has nowhere to durably record the quarantine,
-                # so it keeps today's hard-error contract unchanged. A refusal
-                # on ANY draw quarantines the chunk, unchanged from #120: the
-                # refusal is a property of the chunk's content, so the
-                # remaining draws would only pay for the same refusal again.
-                if checkpoint_path is None:
-                    raise LLMFailedError(exc) from exc
-                quarantine_reason = QUARANTINE_REASON_CONTENT_FILTER
-                break
-            except (LLMError, httpx.HTTPError) as exc:
-                raise LLMFailedError(exc) from exc
-            except ModelJsonError as exc:
-                # Malformed JSON that persisted through `complete_json`'s
-                # entire bounded retry budget (issue #120) -- content-shaped,
-                # not transient, so this specific chunk is quarantined rather
-                # than aborting the whole source (checkpoint-scoped, see
-                # above).
-                if checkpoint_path is None:
-                    raise TagParseError(f"model response was not valid JSON: {exc}") from exc
-                quarantine_reason = QUARANTINE_REASON_MALFORMED_JSON
-                break
+                for _ in range(votes)
+            ]
 
-            # Shared, data-driven cardinality dispatch (issue #29 slice 03):
-            # each axis is parsed/validated by its own schema-declared
-            # `cardinality`, never by its name. An out-of-vocabulary value
-            # triggers exactly ONE bounded correction re-ask (issue #102,
-            # P0-6): the model is shown the failing position's controlled
-            # vocabulary and must return a valid value or an explicit NONE;
-            # still-out-of-vocab after that single re-ask raises
-            # `TagNotInSchemaError` -- EXCEPT for `theory_school`
-            # (founder-approved soft-land): a still-invalid `theory_school`
-            # after its own bounded re-ask lands as `unlisted` instead of
-            # aborting the source (every other closed axis is unaffected).
-            # `_validate` tracks, per draw, whether `theory_school` was the
-            # axis that triggered the FIRST failure (`theory_school_reasked`):
-            # the first parse attempt always raises normally (so the #102
-            # re-ask genuinely fires once), and only the SECOND attempt --
-            # `apply_correction_reask`'s own re-validation of the correction
-            # re-ask's answer -- soft-lands a still-invalid `theory_school`.
-            # Polity / parse / cardinality errors propagate unchanged (never
-            # re-asked here). `client` is already resolved above, so the
-            # correction re-ask reuses it; any transport failure it raises
-            # wraps to `LLMFailedError`.
-            theory_school_reasked = False
-
-            def _validate(raw: str) -> Any:
-                nonlocal theory_school_reasked
+            draws: list[
+                tuple[dict[str, str], dict[str, Any], dict[str, list[str]], str | None]
+            ] = []
+            spoiled: TagNotInSchemaError | None = None
+            quarantine_reason: str | None = None
+            quarantine_detail: str | None = None
+            for future in completion_futures:
                 try:
-                    return _parse_and_validate_tags(
-                        raw,
-                        axes_to_tag,
-                        schema,
-                        theory_school_softland=theory_school_reasked,
-                        source_id=source_id,
-                        chunk_record=chunk_record,
-                        theory_school_candidates_path=theory_school_candidates_path,
-                    )
-                except TagNotInSchemaError as exc:
-                    if exc.axis_name == THEORY_SCHOOL_AXIS:
-                        theory_school_reasked = True
-                    raise
+                    raw_response = future.result()
+                except ContentRefusedError as exc:
+                    # Content-caused, never transient (issue #120): a moderation
+                    # refusal surviving the #116 fallback reroute cannot be fixed
+                    # by retrying the identical prompt against the same model --
+                    # caught narrowly here (before the broader LLMError clause
+                    # below, since `ContentRefusedError` subclasses it) so only
+                    # this specific class is quarantined; every other `LLMError`/
+                    # `httpx.HTTPError` still propagates exactly as today.
+                    # Quarantine is scoped to when the checkpoint is active
+                    # (`tags_dir` supplied) -- mirroring every other
+                    # checkpoint-only behavior in this pass (issue #81's own
+                    # "opt-in" docstring above): a standalone `axial tag` run with
+                    # no checkpoint has nowhere to durably record the quarantine,
+                    # so it keeps today's hard-error contract unchanged. A refusal
+                    # on ANY draw quarantines the chunk, unchanged from #120: the
+                    # refusal is a property of the chunk's content, so the
+                    # remaining draws would only pay for the same refusal again.
+                    if checkpoint_path is None:
+                        raise LLMFailedError(exc) from exc
+                    quarantine_reason = QUARANTINE_REASON_CONTENT_FILTER
+                    quarantine_detail = str(exc)
+                    break
+                except (LLMError, httpx.HTTPError) as exc:
+                    raise LLMFailedError(exc) from exc
+                except ModelJsonError as exc:
+                    # Malformed JSON that persisted through `complete_json`'s
+                    # entire bounded retry budget (issue #120) -- content-shaped,
+                    # not transient, so this specific chunk is quarantined rather
+                    # than aborting the whole source (checkpoint-scoped, see
+                    # above).
+                    if checkpoint_path is None:
+                        raise TagParseError(f"model response was not valid JSON: {exc}") from exc
+                    quarantine_reason = QUARANTINE_REASON_MALFORMED_JSON
+                    quarantine_detail = str(exc)
+                    break
+                except TagParseError as exc:
+                    # `reject_degenerate_tag_values` (this call's own `validate`)
+                    # raises `TagParseError` on a shape error (a
+                    # `primary_plus_secondary` axis, e.g. `field`, answered with
+                    # a bare scalar instead of the required `{"primary": ...,
+                    # "secondary": [...]}` object) or a blank tag value/secondary
+                    # entry/subtag -- `complete_json` re-asks its own bounded
+                    # budget on ANY such exception and, on persistence, raises
+                    # the last one UNCHANGED (issue #325, measured 2026-07-22:
+                    # 18/18 real full-source tag attempts died here uncaught).
+                    # Same reasoning as the identical `TagParseError` clause
+                    # below `apply_correction_reask`: content-shaped, no
+                    # recovery path left once this budget is spent, so ANY draw
+                    # quarantines the whole chunk immediately rather than
+                    # spending the remaining votes on the same failure.
+                    if checkpoint_path is None:
+                        raise
+                    quarantine_reason = QUARANTINE_REASON_PARSE_ERROR
+                    quarantine_detail = str(exc)
+                    break
+                except TagCardinalityError as exc:
+                    # `reject_degenerate_tag_values` also calls `parse_tag_
+                    # response` for every single-cardinality axis (e.g.
+                    # `empirical_scope`, `role_in_argument`), which raises
+                    # `TagCardinalityError` on a zero- or multi-value response
+                    # instead of exactly one -- the same species of
+                    # content-shaped malformation as the `TagParseError` clause
+                    # immediately above, surviving the same bounded retry
+                    # budget the same way (issue #326: this class had no
+                    # handler at all, and a live corpus run hard-failed a
+                    # whole source on it). No dedicated repair path exists for
+                    # a cardinality violation (unlike `TagNotInSchemaError`'s
+                    # #102 re-ask), so ANY draw quarantines the whole chunk
+                    # immediately, exactly mirroring the `TagParseError`
+                    # clause's choice for the same reason.
+                    if checkpoint_path is None:
+                        raise
+                    quarantine_reason = QUARANTINE_REASON_CARDINALITY_ERROR
+                    quarantine_detail = str(exc)
+                    break
 
-            try:
-                draws.append(
-                    apply_correction_reask(
-                        client,
-                        TAG_PASS_NAME,
-                        raw_response,
-                        prompt,
-                        _validate,
+                # Shared, data-driven cardinality dispatch (issue #29 slice 03):
+                # each axis is parsed/validated by its own schema-declared
+                # `cardinality`, never by its name. An out-of-vocabulary value
+                # triggers exactly ONE bounded correction re-ask (issue #102,
+                # P0-6): the model is shown the failing position's controlled
+                # vocabulary and must return a valid value or an explicit NONE;
+                # still-out-of-vocab after that single re-ask raises
+                # `TagNotInSchemaError` -- EXCEPT for `theory_school`
+                # (founder-approved soft-land): a still-invalid `theory_school`
+                # after its own bounded re-ask lands as `unlisted` instead of
+                # aborting the source (every other closed axis is unaffected).
+                # `_validate` tracks, per draw, whether `theory_school` was the
+                # axis that triggered the FIRST failure (`theory_school_reasked`):
+                # the first parse attempt always raises normally (so the #102
+                # re-ask genuinely fires once), and only the SECOND attempt --
+                # `apply_correction_reask`'s own re-validation of the correction
+                # re-ask's answer -- soft-lands a still-invalid `theory_school`.
+                # Polity / parse / cardinality errors propagate unchanged (never
+                # re-asked here). `client` is already resolved above, so the
+                # correction re-ask reuses it; any transport failure it raises
+                # wraps to `LLMFailedError`.
+                theory_school_reasked = False
+
+                def _validate(raw: str) -> Any:
+                    nonlocal theory_school_reasked
+                    try:
+                        return _parse_and_validate_tags(
+                            raw,
+                            axes_to_tag,
+                            schema,
+                            theory_school_softland=theory_school_reasked,
+                            source_id=source_id,
+                            chunk_record=chunk_record,
+                            theory_school_candidates_path=theory_school_candidates_path,
+                        )
+                    except TagNotInSchemaError as exc:
+                        if exc.axis_name == THEORY_SCHOOL_AXIS:
+                            theory_school_reasked = True
+                        raise
+
+                try:
+                    draws.append(
+                        apply_correction_reask(
+                            client,
+                            TAG_PASS_NAME,
+                            raw_response,
+                            prompt,
+                            _validate,
+                        )
                     )
-                )
-            except (LLMError, httpx.HTTPError) as exc:
-                raise LLMFailedError(exc) from exc
-            except TagNotInSchemaError as exc:
-                # A spoiled ballot (issue #294): this draw is still out of
-                # vocabulary after its own #102 re-ask, so it casts no vote
-                # and the axis decides among the draws that are valid. Only
-                # when EVERY draw is spoiled does the P0-6 hard error stand
-                # (below) -- at `votes == 1` that is immediate, exactly as
-                # before best-of-N existed.
-                spoiled = spoiled or exc
+                except (LLMError, httpx.HTTPError) as exc:
+                    raise LLMFailedError(exc) from exc
+                except TagNotInSchemaError as exc:
+                    # A spoiled ballot (issue #294): this draw is still out of
+                    # vocabulary after its own #102 re-ask, so it casts no vote
+                    # and the axis decides among the draws that are valid. Only
+                    # when EVERY draw is spoiled does the P0-6 hard error stand
+                    # (below) -- at `votes == 1` that is immediate, exactly as
+                    # before best-of-N existed.
+                    spoiled = spoiled or exc
+                except TagParseError as exc:
+                    # Same class, same reasoning as the `TagParseError` clause
+                    # above the `complete_json` call: here it means the
+                    # correction re-ask's own answer (validated fresh by
+                    # `_parse_and_validate_tags`, bypassing `complete_json`'s
+                    # degenerate-value check entirely -- `apply_correction_reask`
+                    # calls `client.complete` directly) came back mis-shaped or
+                    # blank for some axis. No further re-ask exists for a parse
+                    # error (`apply_correction_reask` only re-asks on
+                    # `TagNotInSchemaError`), so this quarantines on any draw too.
+                    if checkpoint_path is None:
+                        raise
+                    quarantine_reason = QUARANTINE_REASON_PARSE_ERROR
+                    quarantine_detail = str(exc)
+                    break
+                except TagCardinalityError as exc:
+                    # Same class, same reasoning as the `TagCardinalityError`
+                    # clause above the `complete_json` call (issue #326, the
+                    # beshara production failure): the correction re-ask's
+                    # answer is a FRESH full re-generation of every axis (the
+                    # `_CORRECTION_REASK_NOTICE` prompt asks for "the FULL JSON
+                    # object again"), entirely unvetted by `reject_degenerate_
+                    # tag_values` -- so a cardinality violation can surface
+                    # here on ANY single-cardinality axis, not just the one the
+                    # correction targeted (beshara: the re-ask fired for a
+                    # different axis, and the model's fresh answer broke
+                    # `empirical_scope`'s cardinality instead). No further
+                    # re-ask exists for a cardinality violation either, so this
+                    # quarantines on any draw too, exactly mirroring the
+                    # `TagParseError` clause immediately above.
+                    if checkpoint_path is None:
+                        raise
+                    quarantine_reason = QUARANTINE_REASON_CARDINALITY_ERROR
+                    quarantine_detail = str(exc)
+                    break
 
         if quarantine_reason is not None:
             _quarantine_chunk(chunk_record, quarantine_reason, checkpoint_path)
             quarantine_count += 1
+            quarantine_examples.append(
+                f"{chunk_record['chunk_id']}: {quarantine_reason}"
+                + (f" -- {quarantine_detail}" if quarantine_detail else "")
+            )
             continue
 
         if not draws:
@@ -1908,5 +2110,19 @@ def run_tag(
         if checkpoint_path is not None:
             append_tag_checkpoint(checkpoint_path, record)
         tagged_records.append(record)
+
+    # Reconcile #120/#325/#326's per-chunk quarantine with issue #105 clause
+    # 4's locked "malformed shape must fail loudly" contract: a source where
+    # EVERY chunk this run engaged with (attempted this run, or already
+    # quarantined by an earlier resumed run) ended up quarantined has
+    # produced nothing usable -- functionally identical to the old
+    # uncaught-crash case, so it stays a hard failure rather than a silent
+    # exit-0 empty result. A source with at least one surviving tagged
+    # record (fresh or resumed) keeps exiting 0 unchanged, exactly what
+    # #120/#325/#326 intend, no matter how many OTHER chunks were
+    # quarantined.
+    total_quarantined = quarantine_count + len(already_quarantined)
+    if not tagged_records and total_quarantined > 0:
+        raise AllChunksQuarantinedError(source_id, total_quarantined, quarantine_examples)
 
     return TaggedRecords(tagged_records, quarantine_count)

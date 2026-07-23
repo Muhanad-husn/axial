@@ -1990,6 +1990,481 @@ def test_run_tag_raises_tag_parse_error_on_persistently_empty_string_primary(mon
     assert client.call_count == 3
 
 
+# --- run_tag: TagParseError quarantine when a checkpoint is active
+# (issue #325) -----------------------------------------------------------
+#
+# The two tests above prove `TagParseError` still hard-errors when no
+# `tags_dir` is supplied -- untouched by this issue. These mirror them with
+# `tags_dir` supplied (checkpoint active): the exact same persistent
+# malformation quarantines just the poisoned chunk instead of aborting the
+# whole source, exactly like the existing `ContentRefusedError`/
+# `ModelJsonError` quarantine (`tests/ingestion/test_tag_quarantine.py`).
+
+
+def _three_chunk_records() -> list[dict[str, str]]:
+    return [
+        {
+            "chunk_id": f"src_1_body_{i:03d}",
+            "section": "Body",
+            "text": f"ordinary prose chunk number {i:03d} of 3",
+        }
+        for i in range(3)
+    ]
+
+
+def _valid_multi_value_response() -> str:
+    return json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": {"primary": "state", "secondary": []},
+            "claim_type": {"primary": "state-formation", "subtags": []},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+
+def test_run_tag_quarantines_a_persistently_bare_scalar_field_response(monkeypatch, tmp_path):
+    """Real 2026-07-22 failure (`mann-sources-of-social-power-v1`): a
+    `primary_plus_secondary` axis (`field`) persistently answered with a
+    bare scalar (`'state'`) instead of the required `{"primary": ...,
+    "secondary": [...]}` object is a genuine shape error -- the locked
+    `test_parse_multi_value_tag_response_still_rejects_a_bare_scalar_for_
+    primary_plus_secondary_axis` contract is untouched, this response is
+    never coerced. With a checkpoint active, `run_tag` quarantines just
+    that chunk and the source completes; every other chunk tags normally."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    chunk_records = _three_chunk_records()
+    poisoned_text = chunk_records[1]["text"]
+    survivors = [c["chunk_id"] for i, c in enumerate(chunk_records) if i != 1]
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
+
+    bare_scalar_field = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": "state",
+            "claim_type": {"primary": "state-formation", "subtags": []},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+    class _Client:
+        def __init__(self):
+            self.calls_for_poisoned = 0
+
+        def complete(self, prompt, pass_name=None):
+            if poisoned_text in prompt:
+                self.calls_for_poisoned += 1
+                return bare_scalar_field
+            return _valid_multi_value_response()
+
+    client = _Client()
+    tags_dir = tmp_path / "data" / "tags"
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+
+    result = tag_mod.run_tag(
+        tmp_path / "paper.pdf",
+        client=client,
+        domain_dir=domain_dir,
+        tags_dir=tags_dir,
+        votes=1,
+    )
+
+    tagged_ids = [r["chunk_id"] for r in result]
+    assert chunk_records[1]["chunk_id"] not in tagged_ids
+    assert tagged_ids == survivors
+    assert result.quarantine_count == 1
+    # complete_json's own bounded retry (reject_degenerate_tag_values as its
+    # validate) must run to exhaustion before quarantining -- never a
+    # short-circuit on the first bad draw.
+    assert client.calls_for_poisoned == 3
+
+
+def test_run_tag_quarantines_a_persistently_blank_claim_type_secondary_response(
+    monkeypatch, tmp_path
+):
+    """Real 2026-07-22 failure signature: `claim_type.secondary[0] tag value
+    is empty/whitespace-only: ''`. With a checkpoint active, `run_tag`
+    quarantines just that chunk and the source completes; every other chunk
+    tags normally."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    chunk_records = _three_chunk_records()
+    poisoned_text = chunk_records[1]["text"]
+    survivors = [c["chunk_id"] for i, c in enumerate(chunk_records) if i != 1]
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
+
+    blank_secondary = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": {"primary": "state", "secondary": []},
+            "claim_type": {"primary": "state-formation", "secondary": [""], "subtags": []},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+    class _Client:
+        def __init__(self):
+            self.calls_for_poisoned = 0
+
+        def complete(self, prompt, pass_name=None):
+            if poisoned_text in prompt:
+                self.calls_for_poisoned += 1
+                return blank_secondary
+            return _valid_multi_value_response()
+
+    client = _Client()
+    tags_dir = tmp_path / "data" / "tags"
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+
+    result = tag_mod.run_tag(
+        tmp_path / "paper.pdf",
+        client=client,
+        domain_dir=domain_dir,
+        tags_dir=tags_dir,
+        votes=1,
+    )
+
+    tagged_ids = [r["chunk_id"] for r in result]
+    assert chunk_records[1]["chunk_id"] not in tagged_ids
+    assert tagged_ids == survivors
+    assert result.quarantine_count == 1
+    assert client.calls_for_poisoned == 3
+
+
+def test_run_tag_quarantine_log_and_reason_for_a_parse_error(monkeypatch, tmp_path, capsys):
+    """The quarantine log line and checkpoint reason for a `TagParseError`
+    match the `QUARANTINE_REASON_PARSE_ERROR` constant, exactly mirroring
+    the `content_filter`/`malformed_json` quarantine log contract (#120)."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    chunk_records = _three_chunk_records()
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
+
+    bare_scalar_field = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": "state",
+            "claim_type": {"primary": "state-formation", "subtags": []},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+    class _Client:
+        def complete(self, prompt, pass_name=None):
+            if chunk_records[1]["text"] in prompt:
+                return bare_scalar_field
+            return _valid_multi_value_response()
+
+    tags_dir = tmp_path / "data" / "tags"
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+    source_id = tag_mod.compute_source_id(tmp_path / "paper.pdf")
+    checkpoint_path = tag_mod.tags_checkpoint_path(source_id, tags_dir)
+
+    tag_mod.run_tag(
+        tmp_path / "paper.pdf",
+        client=_Client(),
+        domain_dir=domain_dir,
+        tags_dir=tags_dir,
+        votes=1,
+    )
+
+    captured = capsys.readouterr()
+    poisoned_id = chunk_records[1]["chunk_id"]
+    assert (
+        f"tag: quarantining chunk {poisoned_id}: {tag_mod.QUARANTINE_REASON_PARSE_ERROR}"
+        in captured.err
+    )
+
+    checkpoint_records = {
+        r["chunk_id"]: r
+        for r in (
+            json.loads(line) for line in checkpoint_path.read_text(encoding="utf-8").splitlines()
+        )
+    }
+    assert (
+        checkpoint_records[poisoned_id]["quarantine_reason"]
+        == tag_mod.QUARANTINE_REASON_PARSE_ERROR
+    )
+
+
+# --- run_tag: all-chunks-quarantined still fails loud (PR #327 fix,
+# reconciling #120/#325/#326's per-chunk quarantine with issue #105 clause
+# 4's locked "malformed shape must fail loudly" contract) -----------------
+#
+# CI caught this: tests/ingestion/test_tag_shape_coercion.py's clause-4
+# regression tests feed a genuinely malformed axis shape into a tiny
+# 3-chunk fixture where every chunk gets the same poisoned response, so
+# every chunk quarantines and `axial vault write` finished with zero tags
+# but exit code 0 -- indistinguishable from success. A source where SOME
+# chunks succeed (the two test classes above) must keep exiting 0
+# unchanged; only when NOTHING usable survives does this become a hard
+# failure.
+
+
+def test_run_tag_raises_when_every_chunk_quarantines(monkeypatch, tmp_path):
+    """When every chunk this run attempts ends up quarantined (here: all
+    three chunks get the same persistently malformed `field` shape), the
+    source has produced zero usable tags -- functionally identical to the
+    old uncaught crash this PR's own earlier commits fixed -- so `run_tag`
+    raises `AllChunksQuarantinedError` (a `TagError`) instead of returning
+    an empty, exit-0 success. The offending axis name is named in the
+    error so an operator (or a CLI's combined stdout+stderr) can see why."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    chunk_records = _three_chunk_records()
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
+
+    bare_scalar_field = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": "state",
+            "claim_type": {"primary": "state-formation", "subtags": []},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+    class _Client:
+        def complete(self, prompt, pass_name=None):
+            return bare_scalar_field
+
+    tags_dir = tmp_path / "data" / "tags"
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+
+    with pytest.raises(tag_mod.AllChunksQuarantinedError) as excinfo:
+        tag_mod.run_tag(
+            tmp_path / "paper.pdf",
+            client=_Client(),
+            domain_dir=domain_dir,
+            tags_dir=tags_dir,
+            votes=1,
+        )
+
+    assert excinfo.value.quarantine_count == 3
+    assert "field" in str(excinfo.value)
+
+
+def test_run_tag_stays_a_success_when_only_some_chunks_quarantine(monkeypatch, tmp_path):
+    """Guard against a regression that makes ANY quarantine fatal: a source
+    with a mix of quarantined and successful chunks must still return
+    normally (no exception) with the successful chunks' tags intact --
+    exactly #120/#325/#326's own intended behavior, unchanged by the new
+    all-quarantined check above."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    chunk_records = _three_chunk_records()
+    poisoned_text = chunk_records[1]["text"]
+    survivors = [c["chunk_id"] for i, c in enumerate(chunk_records) if i != 1]
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
+
+    bare_scalar_field = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": "state",
+            "claim_type": {"primary": "state-formation", "subtags": []},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+    class _Client:
+        def complete(self, prompt, pass_name=None):
+            if poisoned_text in prompt:
+                return bare_scalar_field
+            return _valid_multi_value_response()
+
+    tags_dir = tmp_path / "data" / "tags"
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+
+    result = tag_mod.run_tag(
+        tmp_path / "paper.pdf",
+        client=_Client(),
+        domain_dir=domain_dir,
+        tags_dir=tags_dir,
+        votes=1,
+    )
+
+    tagged_ids = [r["chunk_id"] for r in result]
+    assert tagged_ids == survivors
+    assert result.quarantine_count == 1
+
+
+# --- run_tag: TagCardinalityError quarantine when a checkpoint is active
+# (issue #326) -------------------------------------------------------------
+#
+# Real production failure (`beshara-origins-of-syrian-nationhood`, 2026-07-22
+# live corpus re-tag run): `empirical_scope` (a single-cardinality axis)
+# answered with 3 values instead of exactly one, and `TagCardinalityError`
+# had no handler anywhere in the votes loop -- it propagated uncaught and
+# aborted the whole source after 804/900 chunks were already checkpointed.
+# These two tests cover both places `TagCardinalityError` can actually
+# surface (traced via `_parse_and_validate_tags`'s and `reject_degenerate_
+# tag_values`'s shared use of `parse_tag_response`): `reject_degenerate_tag_
+# values` surviving `complete_json`'s own bounded retry budget, and the #102
+# correction re-ask's own fresh, unvetted "reply with the FULL JSON object
+# again" answer breaking a DIFFERENT axis's cardinality than the one being
+# corrected.
+
+
+def test_run_tag_quarantines_a_persistently_multi_valued_role_in_argument_response(
+    monkeypatch, tmp_path
+):
+    """A single-cardinality axis (`role_in_argument`) persistently answered
+    with more than one value is a genuine `TagCardinalityError` --
+    `reject_degenerate_tag_values` (this call's own `validate`, run inside
+    `complete_json`'s bounded retry budget) raises it exactly like a shape
+    error. With a checkpoint active, `run_tag` quarantines just that chunk
+    and the source completes; every other chunk tags normally."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    chunk_records = _three_chunk_records()
+    poisoned_text = chunk_records[1]["text"]
+    survivors = [c["chunk_id"] for i, c in enumerate(chunk_records) if i != 1]
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
+
+    multi_valued_role = json.dumps(
+        {
+            "role_in_argument": ["role:claim", "role:claim"],
+            "field": {"primary": "state", "secondary": []},
+            "claim_type": {"primary": "state-formation", "subtags": []},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+    class _Client:
+        def __init__(self):
+            self.calls_for_poisoned = 0
+
+        def complete(self, prompt, pass_name=None):
+            if poisoned_text in prompt:
+                self.calls_for_poisoned += 1
+                return multi_valued_role
+            return _valid_multi_value_response()
+
+    client = _Client()
+    tags_dir = tmp_path / "data" / "tags"
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+    source_id = tag_mod.compute_source_id(tmp_path / "paper.pdf")
+    checkpoint_path = tag_mod.tags_checkpoint_path(source_id, tags_dir)
+
+    result = tag_mod.run_tag(
+        tmp_path / "paper.pdf",
+        client=client,
+        domain_dir=domain_dir,
+        tags_dir=tags_dir,
+        votes=1,
+    )
+
+    tagged_ids = [r["chunk_id"] for r in result]
+    poisoned_id = chunk_records[1]["chunk_id"]
+    assert poisoned_id not in tagged_ids
+    assert tagged_ids == survivors
+    assert result.quarantine_count == 1
+    # complete_json's own bounded retry (reject_degenerate_tag_values as its
+    # validate) must run to exhaustion before quarantining -- never a
+    # short-circuit on the first bad draw.
+    assert client.calls_for_poisoned == 3
+
+    checkpoint_records = {
+        r["chunk_id"]: r
+        for r in (
+            json.loads(line) for line in checkpoint_path.read_text(encoding="utf-8").splitlines()
+        )
+    }
+    assert (
+        checkpoint_records[poisoned_id]["quarantine_reason"]
+        == tag_mod.QUARANTINE_REASON_CARDINALITY_ERROR
+    )
+
+
+def test_run_tag_quarantines_a_cardinality_error_surfaced_by_a_correction_reask(
+    monkeypatch, tmp_path
+):
+    """The #102 correction re-ask's prompt asks the model to "Reply with the
+    FULL JSON object again", so a fresh, entirely unvetted answer can break a
+    DIFFERENT axis's cardinality than the one the correction targeted --
+    exactly the beshara shape: the original response's out-of-vocab `field`
+    triggers the re-ask, and the re-ask's own answer breaks
+    `role_in_argument`'s single-cardinality instead. With a checkpoint
+    active, `run_tag` quarantines just that chunk and the source completes."""
+    import axial.tag as tag_mod
+
+    domain_dir = _write_domain_with_multi_value_axes(tmp_path)
+    chunk_records = _three_chunk_records()
+    poisoned_text = chunk_records[1]["text"]
+    survivors = [c["chunk_id"] for i, c in enumerate(chunk_records) if i != 1]
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
+
+    out_of_vocab_field = json.dumps(
+        {
+            "role_in_argument": "role:claim",
+            "field": {"primary": "not-a-real-field", "secondary": []},
+            "claim_type": {"primary": "state-formation", "subtags": []},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+    corrected_but_multi_valued_role = json.dumps(
+        {
+            "role_in_argument": ["role:claim", "role:claim"],
+            "field": {"primary": "state", "secondary": []},
+            "claim_type": {"primary": "state-formation", "subtags": []},
+            "theory_school": {"primary": "bellicist"},
+        }
+    )
+
+    class _Client:
+        def __init__(self):
+            self.calls_for_poisoned = 0
+
+        def complete(self, prompt, pass_name=None):
+            if poisoned_text not in prompt:
+                return _valid_multi_value_response()
+            self.calls_for_poisoned += 1
+            if "CORRECTION REQUIRED" in prompt:
+                return corrected_but_multi_valued_role
+            return out_of_vocab_field
+
+    client = _Client()
+    tags_dir = tmp_path / "data" / "tags"
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+    source_id = tag_mod.compute_source_id(tmp_path / "paper.pdf")
+    checkpoint_path = tag_mod.tags_checkpoint_path(source_id, tags_dir)
+
+    result = tag_mod.run_tag(
+        tmp_path / "paper.pdf",
+        client=client,
+        domain_dir=domain_dir,
+        tags_dir=tags_dir,
+        votes=1,
+    )
+
+    tagged_ids = [r["chunk_id"] for r in result]
+    poisoned_id = chunk_records[1]["chunk_id"]
+    assert poisoned_id not in tagged_ids
+    assert tagged_ids == survivors
+    assert result.quarantine_count == 1
+    # exactly one initial call plus one bounded #102 correction re-ask --
+    # never complete_json's own JSON/degeneracy retry budget, since the
+    # initial response is well-formed and non-degenerate.
+    assert client.calls_for_poisoned == 2
+
+    checkpoint_records = {
+        r["chunk_id"]: r
+        for r in (
+            json.loads(line) for line in checkpoint_path.read_text(encoding="utf-8").splitlines()
+        )
+    }
+    assert (
+        checkpoint_records[poisoned_id]["quarantine_reason"]
+        == tag_mod.QUARANTINE_REASON_CARDINALITY_ERROR
+    )
+
+
 def test_run_tag_reasks_and_succeeds_when_secondary_entry_is_first_empty_string(
     monkeypatch, tmp_path
 ):

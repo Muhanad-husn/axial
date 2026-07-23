@@ -917,3 +917,103 @@ def test_render_theory_school_rates_formats_a_header_and_one_row_per_source():
     assert "27.0%" in lines[1]
     assert "3.0%" in lines[1]
     assert "pluralist" in lines[1]
+
+
+# --- the registered `tag` pass threads a real tags_dir (follow-up to #325) ------
+#
+# Every other test above registers a FAKE pass (`_register_fake_pass`) to pin
+# the runner's own generic contract. This one calls the REAL registered
+# `tag` descriptor's `invoke` (`run_mod.PASS_REGISTRY["tag"].invoke`, i.e.
+# `_invoke_tag` itself) against `axial.tag.run_tag` for real: `_invoke_tag`
+# used to call `run_tag` with no `tags_dir` at all, so `run_tag`'s own #120
+# quarantine/resume checkpoint never activated through `axial run tag` --
+# only through `run_vault_write`'s internal call. This pins that `_invoke_tag`
+# now resolves and threads a real `tags_dir`, exactly mirroring
+# `run_vault_write`'s own `_default_tags_dir(config_path)` default.
+
+
+def _write_minimal_tag_domain(tmp_path: Path) -> Path:
+    domain_dir = tmp_path / "domain"
+    domain_dir.mkdir()
+    (domain_dir / "schema.yaml").write_text(
+        "version: 0.1\n"
+        "axes:\n"
+        "  role_in_argument:\n"
+        "    applies_to: [prose]\n"
+        "    cardinality: single\n"
+        "    values: [role:claim]\n",
+        encoding="utf-8",
+    )
+    (domain_dir / "codebook.yaml").write_text(
+        "axes:\n"
+        "  role_in_argument:\n"
+        "    role:claim: {definition: d, positive_example: p, negative_example: n}\n",
+        encoding="utf-8",
+    )
+    return domain_dir
+
+
+def _write_pipeline_config(tmp_path: Path, tags_dir: Path) -> Path:
+    config_path = tmp_path / "pipeline.yaml"
+    # Forward slashes: a bare Windows backslash path embedded in YAML is
+    # itself an escape-sequence hazard: this config is read back through
+    # `yaml.safe_load`, not written for a human, so there's no reason to
+    # court that. `llm.votes_by_pass.tag: 1` pins best-of-N (DEC-31) to a
+    # single draw -- this test is about tags_dir threading, not voting, so it
+    # never depends on `DEFAULT_VOTES_BY_PASS`'s own current value.
+    config_path.write_text(
+        f"paths:\n  tags_dir: {tags_dir.as_posix()!r}\nllm:\n  votes_by_pass:\n    tag: 1\n",
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def test_invoke_tag_threads_a_real_tags_dir_so_the_checkpoint_activates(tmp_path, monkeypatch):
+    import axial.tag as tag_mod
+    from axial.envelope import compute_source_id
+
+    chunk_records = [
+        {"chunk_id": "src_1_body_000", "section": "Body", "text": "chunk zero"},
+        {"chunk_id": "src_1_body_001", "section": "Body", "text": "chunk one"},
+    ]
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
+
+    domain_dir = _write_minimal_tag_domain(tmp_path)
+    tags_dir = tmp_path / "data" / "tags"
+    config_path = _write_pipeline_config(tmp_path, tags_dir)
+
+    source_path = tmp_path / "paper.pdf"
+    source_path.write_bytes(b"fake pdf bytes")
+    source_id = compute_source_id(source_path)
+
+    class _CountingClient:
+        def __init__(self):
+            self.call_count = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.call_count += 1
+            return '{"role_in_argument": "role:claim"}'
+
+    invoke = run_mod.PASS_REGISTRY["tag"].invoke
+    client = _CountingClient()
+
+    first_records = invoke(source_path, client, config_path, domain_dir)
+
+    checkpoint_path = tags_dir / f"{source_id}.jsonl"
+    assert checkpoint_path.exists(), (
+        f"expected the registered tag pass to checkpoint per chunk under "
+        f"{tags_dir} (a real tags_dir threaded into run_tag), but no "
+        f"checkpoint file was written at all -- _invoke_tag called run_tag "
+        f"with no tags_dir"
+    )
+    assert len(list(first_records)) == 2
+    assert client.call_count == 2
+
+    # Resume: a second invocation against the SAME tags_dir must reuse every
+    # already-checkpointed chunk -- zero further LLM calls -- proving the
+    # checkpoint this pass wrote is the one it also reads back, not merely
+    # written and ignored.
+    second_records = invoke(source_path, client, config_path, domain_dir)
+
+    assert client.call_count == 2
+    assert len(list(second_records)) == 2

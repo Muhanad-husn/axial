@@ -82,6 +82,7 @@ from axial.tag import (
     DEFAULT_DOMAIN_DIR,
     TagError,
     TheorySchoolSourceRate,
+    _default_tags_dir,
     run_tag,
     theory_school_rates_report,
 )
@@ -246,7 +247,22 @@ def _invoke_chunk(source_path: str, client: LLMClient | None, config_path: Path,
 
 
 def _invoke_tag(source_path: str, client: LLMClient | None, config_path: Path, domain_dir):
-    return run_tag(source_path, client=client, config_path=config_path, domain_dir=domain_dir)
+    # Threads a real `tags_dir` (issue #325 follow-up): without one, `run_tag`
+    # never checkpoints a chunk, so its own #120 quarantine mechanism (and
+    # `tag.py`'s own resume logic) has nowhere durable to record a chunk and
+    # is a no-op through this call path -- exactly `run_vault_write`'s own
+    # internal `run_tag` call (`vault.py`), which resolves the identical
+    # default when its caller doesn't override it. This is the runner's own
+    # `tag` pass (`axial run tag`), not the standalone `axial tag <source>`
+    # debug command (`cli.py`'s `_tag`), which is unaffected and stays
+    # recompute-always by its own existing, documented design.
+    return run_tag(
+        source_path,
+        client=client,
+        config_path=config_path,
+        domain_dir=domain_dir,
+        tags_dir=_default_tags_dir(config_path),
+    )
 
 
 def _invoke_artifacts(source_path: str, client: LLMClient | None, config_path: Path, domain_dir):
