@@ -660,10 +660,13 @@ def test_openrouter_client_ignores_pass_name_and_never_forwards_it():
 
 
 def test_openrouter_client_raises_on_http_error_status(monkeypatch):
-    """A persistent 5xx is retried (issue #60) but still fails in the end,
-    exactly with the same `httpx.HTTPStatusError` type as before."""
+    """A persistent 5xx is retried (issue #60) but still fails in the end.
+    Issue #358: the final failure is wrapped in `OpenRouterError` (not the
+    raw `httpx.HTTPStatusError`) so the response body -- where a provider
+    puts the real reason -- reaches the caller; see the body-snippet
+    assertion below."""
     import axial.llm as llm_module
-    from axial.llm import OpenRouterClient
+    from axial.llm import OpenRouterClient, OpenRouterError
 
     monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
     call_count = 0
@@ -671,15 +674,16 @@ def test_openrouter_client_raises_on_http_error_status(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal call_count
         call_count += 1
-        return httpx.Response(500, json={"error": "boom"})
+        return httpx.Response(500, json={"error": "boom_5xx_marker"})
 
     transport = httpx.MockTransport(handler)
     client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
 
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(OpenRouterError) as exc_info:
         client.complete("hello world")
 
     assert call_count == 3
+    assert "boom_5xx_marker" in str(exc_info.value)
 
 
 # --- timeout and bounded retry (issue #60) ----------------------------------
@@ -820,7 +824,7 @@ def test_openrouter_client_does_not_retry_a_non_retryable_4xx(monkeypatch):
     """A 400 (or any non-429 4xx) is not transient and must fail on the
     first attempt, exactly as before this issue."""
     import axial.llm as llm_module
-    from axial.llm import OpenRouterClient
+    from axial.llm import OpenRouterClient, OpenRouterError
 
     monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
     call_count = 0
@@ -833,10 +837,99 @@ def test_openrouter_client_does_not_retry_a_non_retryable_4xx(monkeypatch):
     transport = httpx.MockTransport(handler)
     client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
 
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(OpenRouterError):
         client.complete("hello world")
 
     assert call_count == 1
+
+
+# --- error-body surfacing on a 4xx failure (issue #358) --------------------
+
+
+def test_openrouter_client_surfaces_the_response_body_on_a_400(monkeypatch):
+    """Before this fix, `raise_for_status()` was called before the response
+    body was ever read, so the raised error's message carried only the
+    generic status line ("Client error '400 Bad Request' for url ...'") --
+    never the body, which is exactly where OpenRouter puts the real reason
+    (e.g. a context-length-exceeded message). The raised `OpenRouterError`
+    must now carry a snippet of the body."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient, OpenRouterError
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "message": "This model's maximum context length exceeded: "
+                    "context_length_exceeded_marker"
+                }
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    with pytest.raises(OpenRouterError) as exc_info:
+        client.complete("hello world")
+
+    assert "context_length_exceeded_marker" in str(exc_info.value)
+
+
+def test_openrouter_client_with_tools_surfaces_the_response_body_on_a_400(monkeypatch):
+    """`complete_with_tools` shares the same 4xx-body gap as `complete`
+    (issue #358) -- must be fixed at the same call site consistently."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient, OpenRouterError
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": {"message": "context_length_exceeded_marker"}})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    with pytest.raises(OpenRouterError) as exc_info:
+        client.complete_with_tools("hello world", tools=[])
+
+    assert "context_length_exceeded_marker" in str(exc_info.value)
+
+
+def test_openrouter_client_content_fallback_surfaces_the_response_body_on_a_400(monkeypatch):
+    """The content_fallback_model reroute path (`_reroute_content_filter`)
+    shares the same 4xx-body gap (issue #358) -- must be fixed there too."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient, OpenRouterError
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+
+    def _model_of(request: httpx.Request) -> str:
+        return json.loads(request.content)["model"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        model = _model_of(request)
+        if model == "primary-model":
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": ""}, "finish_reason": "content_filter"}]},
+            )
+        return httpx.Response(400, json={"error": {"message": "context_length_exceeded_marker"}})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(
+        api_key="test-key",
+        model="primary-model",
+        transport=transport,
+        content_fallback_model="fallback-model",
+    )
+
+    with pytest.raises(OpenRouterError) as exc_info:
+        client.complete("hello world")
+
+    assert "context_length_exceeded_marker" in str(exc_info.value)
 
 
 def test_openrouter_client_does_not_retry_a_malformed_response_shape(monkeypatch):

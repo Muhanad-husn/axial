@@ -94,6 +94,24 @@ retrieve:
   # dev briefs -- tuning it is explicitly out of this slice's scope.
   thin_result_floor: 3
 
+# Stage-4 synthesis prompt's evidence-text budget (issue #358): a real brief
+# run against the real vault assembled enough chunk text that the synthesis
+# prompt, combined with the fixed 60k-token completion budget sent on every
+# call, pushed past the model's context window and OpenRouter rejected the
+# request outright -- `retrieve.step_budget` above bounds the number of tool
+# calls a retrieval run makes, not the number of chunks a single call can
+# return. src/axial/analyze/synthesis.py reads this via
+# _resolve_evidence_char_budget, falling back to its own
+# DEFAULT_EVIDENCE_CHAR_BUDGET when this file or the key is absent.
+# Character-based, not a real token count (~4 chars/token is a standard
+# rough English-prose estimate): 100_000 chars is roughly 25k tokens of
+# evidence text, conservative headroom under a 128k-class context window
+# even after the 60k-token completion reservation. [TENTATIVE], mirroring
+# step_budget/thin_result_floor's own starting-value status -- not yet
+# measured against a real brief run.
+synthesis:
+  evidence_char_budget: 100000
+
 # Stage-5 counter-position validator's contested-detection rule (issue #259,
 # PRD §7.8/§7.9): a brief is contested when its evidence spans at least this
 # many distinct *substantive* `theory_school` primaries (the `not-applicable`/

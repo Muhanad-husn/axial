@@ -411,6 +411,127 @@ def test_prompt_forbids_parametric_memory_and_marks_cross_source_inference():
 
 
 # ---------------------------------------------------------------------------
+# evidence-text budget cap (issue #358): an unbounded evidence set pushed a
+# real synthesis prompt (plus the fixed 60k-token completion budget) past the
+# model's context window on a real brief run against the real vault.
+# ---------------------------------------------------------------------------
+
+
+def _budget_chunk_frontmatter(*, chunk_id: str, text_len: int) -> dict[str, Any]:
+    frontmatter = _chunk_frontmatter(chunk_id=chunk_id, polities_touched=["Syria"])
+    frontmatter["chunk_text"] = "X" * text_len
+    return frontmatter
+
+
+def _budget_evidence_set(chunk_ids: list[str]) -> EvidenceSet:
+    return EvidenceSet(
+        chunk_ids=chunk_ids,
+        chunks=[
+            EvidenceChunk(
+                chunk_id=chunk_id,
+                polities_touched=["Syria"],
+                role_in_argument="role:claim",
+                theory_school={"primary": "school:synthetic-institutionalist"},
+                claim_type={"primary": "claim:causal"},
+                empirical_scope={"value": "scope:country-case"},
+            )
+            for chunk_id in chunk_ids
+        ],
+        polity_coverage={},
+    )
+
+
+def test_compose_prompt_drops_chunks_once_the_evidence_char_budget_is_exceeded(tmp_path: Path):
+    """Three 40-char chunks and a budget of 80 chars must include exactly
+    the first two (in retrieval order) and drop the third -- never
+    mid-text-truncate a chunk, never include the third out of order."""
+    chunk_ids = ["synfix_budget_a", "synfix_budget_b", "synfix_budget_c"]
+    chunks_fm = [_budget_chunk_frontmatter(chunk_id=cid, text_len=40) for cid in chunk_ids]
+    vault_dir = _write_vault(tmp_path, chunks=chunks_fm, artifacts=[])
+    evidence = _budget_evidence_set(chunk_ids)
+    brief = Brief(
+        brief_id="synfix-brief-budget", case="Syria", request="How?", lens="political-economy"
+    )
+
+    prompt = compose_prompt(
+        brief, "political-economy", evidence, vault_dir=vault_dir, evidence_char_budget=80
+    )
+
+    assert "synfix_budget_a" in prompt
+    assert "synfix_budget_b" in prompt
+    assert "synfix_budget_c" not in prompt
+    # The dropped chunk's full text never leaked into the prompt either.
+    assert prompt.count("X" * 40) == 2
+
+
+def test_compose_prompt_within_budget_keeps_every_chunk(tmp_path: Path):
+    """A generous budget that easily covers every chunk's text must include
+    all of them -- the cap only ever removes what does not fit."""
+    chunk_ids = ["synfix_budget_a", "synfix_budget_b"]
+    chunks_fm = [_budget_chunk_frontmatter(chunk_id=cid, text_len=40) for cid in chunk_ids]
+    vault_dir = _write_vault(tmp_path, chunks=chunks_fm, artifacts=[])
+    evidence = _budget_evidence_set(chunk_ids)
+    brief = Brief(
+        brief_id="synfix-brief-budget-ok", case="Syria", request="How?", lens="political-economy"
+    )
+
+    prompt = compose_prompt(
+        brief, "political-economy", evidence, vault_dir=vault_dir, evidence_char_budget=1000
+    )
+
+    assert "synfix_budget_a" in prompt
+    assert "synfix_budget_b" in prompt
+
+
+def test_compose_prompt_evidence_budget_truncation_is_deterministic(tmp_path: Path):
+    """The same over-budget evidence set composed twice must drop exactly
+    the same chunks both times."""
+    chunk_ids = ["synfix_budget_a", "synfix_budget_b", "synfix_budget_c"]
+    chunks_fm = [_budget_chunk_frontmatter(chunk_id=cid, text_len=40) for cid in chunk_ids]
+    vault_dir = _write_vault(tmp_path, chunks=chunks_fm, artifacts=[])
+    evidence = _budget_evidence_set(chunk_ids)
+    brief = Brief(
+        brief_id="synfix-brief-budget-det", case="Syria", request="How?", lens="political-economy"
+    )
+
+    prompt_1 = compose_prompt(
+        brief, "political-economy", evidence, vault_dir=vault_dir, evidence_char_budget=80
+    )
+    prompt_2 = compose_prompt(
+        brief, "political-economy", evidence, vault_dir=vault_dir, evidence_char_budget=80
+    )
+
+    assert prompt_1 == prompt_2
+
+
+def test_resolve_evidence_char_budget_reads_from_config_pipeline_yaml(tmp_path: Path):
+    from axial.analyze.synthesis import _resolve_evidence_char_budget
+
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"synthesis": {"evidence_char_budget": 12345}}), encoding="utf-8"
+    )
+
+    assert _resolve_evidence_char_budget(config_path) == 12345
+
+
+def test_resolve_evidence_char_budget_falls_back_to_default_when_config_absent(tmp_path: Path):
+    from axial.analyze.synthesis import DEFAULT_EVIDENCE_CHAR_BUDGET, _resolve_evidence_char_budget
+
+    missing_path = tmp_path / "does_not_exist.yaml"
+    assert _resolve_evidence_char_budget(missing_path) == DEFAULT_EVIDENCE_CHAR_BUDGET
+
+
+def test_resolve_evidence_char_budget_falls_back_when_synthesis_block_absent(tmp_path: Path):
+    from axial.analyze.synthesis import DEFAULT_EVIDENCE_CHAR_BUDGET, _resolve_evidence_char_budget
+
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text(yaml.safe_dump({"llm": {"provider": "openrouter"}}), encoding="utf-8")
+
+    assert _resolve_evidence_char_budget(config_path) == DEFAULT_EVIDENCE_CHAR_BUDGET
+
+
+# ---------------------------------------------------------------------------
 # unparseable response fails loudly
 # ---------------------------------------------------------------------------
 

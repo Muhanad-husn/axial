@@ -282,7 +282,12 @@ def run_brief(
 
         evidence = assemble_evidence(retrieval_result.evidence_ids, vault_dir=vault_dir)
         claim_graph = synthesize(
-            evidence, brief, client=client, vault_dir=vault_dir, lenses_dir=lenses_dir
+            evidence,
+            brief,
+            client=client,
+            vault_dir=vault_dir,
+            lenses_dir=lenses_dir,
+            config_path=config_path,
         )
         model_by_pass[SYNTHESIZE_PASS_NAME] = client.model_for_pass(SYNTHESIZE_PASS_NAME)
 
