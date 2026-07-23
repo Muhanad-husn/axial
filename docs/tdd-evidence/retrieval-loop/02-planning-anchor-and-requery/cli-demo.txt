@@ -1,0 +1,18 @@
+### Real invocation through the retrieval-loop boundary (run_planned_retrieval),
+### driven end-to-end by the three locked acceptance scenarios for #254.
+### No CLI surface this slice (P0-9, out of scope); the library entry point IS the boundary,
+### same seam as slice 01's tests/analysis/test_retrieval_loop_skeleton.py.
+
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- D:\axial\.claude\worktrees\sprint-start-254-planning\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial\.claude\worktrees\sprint-start-254-planning
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 3 items
+
+tests/analysis/test_retrieval_planning_requery.py::test_thin_first_result_triggers_broadened_requery_recorded_on_the_signal PASSED [ 33%]
+tests/analysis/test_retrieval_planning_requery.py::test_cross_polity_evidence_survives_assembly_uncensored_by_case_scope PASSED [ 66%]
+tests/analysis/test_retrieval_planning_requery.py::test_planning_prompt_for_step_1_carries_case_premises_and_bounds PASSED [100%]
+
+============================== 3 passed in 0.69s ==============================
