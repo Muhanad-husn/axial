@@ -1,0 +1,24 @@
+=== Scenario: cross-run aggregation, pools PIN-A, excludes PIN-B, shows per-filter skew ===
+$ axial brief usage
+usage report: 5 record(s) on corpus_pin 'PIN-A'
+  excluded 1 record(s) on corpus_pin 'PIN-B' as not comparable (§7.12)
+
+pooled usage_ratio by source (heaviest-weighing first):
+  tilly: usage_ratio=2.24 over 5 record(s)
+
+pooled usage_ratio by source, per observed tag filter:
+  tilly @ theory_school:world-systems: usage_ratio=3.10 over 3 record(s)
+  tilly @ field:political-science: usage_ratio=0.95 over 2 record(s)
+exit=0
+
+=== Scenario: --pin selects only that pin's records ===
+$ axial brief usage --pin PIN-B
+usage report: 1 record(s) on corpus_pin 'PIN-B'
+  excluded 5 record(s) on corpus_pin 'PIN-A' as not comparable (§7.12)
+
+pooled usage_ratio by source (heaviest-weighing first):
+  tilly: usage_ratio=1.00 over 1 record(s)
+
+pooled usage_ratio by source, per observed tag filter:
+  tilly @ field:political-science: usage_ratio=1.00 over 1 record(s)
+exit=0

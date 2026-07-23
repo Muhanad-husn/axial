@@ -94,6 +94,19 @@ retrieve:
   # dev briefs -- tuning it is explicitly out of this slice's scope.
   thin_result_floor: 3
 
+# Stage-5 counter-position validator's contested-detection rule (issue #259,
+# PRD §7.8/§7.9): a brief is contested when its evidence spans at least this
+# many distinct *substantive* `theory_school` primaries (the `not-applicable`/
+# `unlisted` sentinels excluded), OR when any evidence chunk carries
+# `role_in_argument: role:counter-position` (not a numeric knob -- either it
+# fired or it didn't). src/axial/validators/counter_position.py reads this via
+# _resolve_min_distinct_theory_schools, falling back to its own
+# DEFAULT_MIN_DISTINCT_THEORY_SCHOOLS when this file or key is absent. 2 is
+# the spec's own stated starting hypothesis (§7.8), proven on the dev briefs
+# separately -- tuning it is explicitly out of this slice's scope.
+contested_detection:
+  min_distinct_theory_schools: 2
+
 # Google Drive connector tunables (issue #239, PRD §7.10 "Language-gate
 # tunables" paragraph / §8 P0-11c): the English-only language gate's
 # bounded text probe size and its accept-confidence threshold. src/axial/
@@ -110,3 +123,36 @@ drive:
   # English source rejected) costs a manual re-check; a false positive
   # (non-English let through) pollutes the corpus and the eval.
   language_accept_threshold: 0.9
+
+# Per-polity coverage-band cut points (issue #260, PRD §7.7): a stated,
+# tunable hypothesis over the ~17k-chunk vault, in the spirit of the
+# Phase-A chunk band (PRODUCT.md §7.7) -- src/axial/validators/coverage.py
+# reads this via _resolve_coverage_bands, falling back to its own
+# DEFAULT_MODERATE_FLOOR/DEFAULT_DENSE_FLOOR when this file or either key
+# is absent. `thin` is corpus_chunk_count below moderate_floor, `moderate`
+# is [moderate_floor, dense_floor), `dense` is dense_floor and above.
+# Proven by inspection (`axial brief coverage <brief_id>`) against the real
+# corpus before it gates anything -- tuning it is out of this slice's scope.
+coverage_bands:
+  moderate_floor: 20
+  dense_floor: 100
+
+# Rung-3 eval-gate thresholds (issue #262, PRD §10, §8 P0-12): one starting
+# threshold per named metric, read by src/axial/gates/harness.py via
+# resolve_threshold, falling back to that module's own
+# DEFAULT_GATE_THRESHOLDS when this file or a key is absent. The FIRM
+# principle behind each gate (attribution fidelity, grounding) is fixed;
+# these numbers are §10's stated TUNABLE starting hypotheses, never proven
+# values -- tuning them on real runs is explicitly out of this issue's scope.
+gates:
+  # Attribution fidelity (charter Principle II): the hard, 100% mechanical
+  # gate -- one unmarked or unresolvable-grounds claim fails it outright.
+  attribution_completeness: 1.00
+  # Attribution fidelity's judged half: the share of kind-"b" claims an
+  # independent model finds phrased as a source assertion rather than the
+  # tool's own cross-source inference.
+  b_seam_mislabel_rate: 0.05
+  # Grounding (charter Principle I): the share of kind-"a" claims whose cited
+  # grounds substantively support the claim, judged by an independent model
+  # anchored to the resolved chunk text.
+  grounding_support_rate: 0.90

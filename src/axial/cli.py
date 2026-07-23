@@ -5,13 +5,14 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import axial
 from axial.analyze import format_examine_report as format_brief_examine_report
 from axial.analyze import run_examine
 from axial.analyze.synthesis import SynthesisError
 from axial.answer import AnswerError, run_brief
+from axial.answer.usage_report import build_usage_report, format_usage_report, load_analysis_records
 from axial.artifacts import ArtifactsError, run_artifacts
 from axial.brief import BriefError, load_brief
 from axial.brief.interrogate import InterrogationError, interrogate, persist_interrogation
@@ -29,6 +30,15 @@ from axial.envelope import EnvelopeError, MissingSourceError, compute_source_id,
 from axial.eval import EvalError, run_eval
 from axial.eval.corpus_pin import CorpusPinError, write_pin
 from axial.extract import ExtractError, extract
+from axial.gates import (
+    GateError,
+    GroundingGateError,
+    format_report,
+    load_records,
+    resolve_trusted,
+    run_gate,
+    write_report,
+)
 from axial.gold import (
     DEFAULT_MAX_SIZE,
     DEFAULT_MIN_SIZE,
@@ -58,8 +68,17 @@ from axial.tag import DEFAULT_DOMAIN_DIR, TagError, run_tag
 from axial.validate import cross_validate
 from axial.validators import (
     AttributionValidatorError,
+    CounterPositionValidatorError,
     format_attribution_report,
+    format_counter_position_report,
     validate_attribution,
+    validate_counter_position,
+)
+from axial.validators.coverage import (
+    compute_coverage_map,
+    format_coverage_confidence_report,
+    format_coverage_map,
+    validate_coverage_and_confidence,
 )
 from axial.vault import VaultError, run_vault_write
 from axial.xref import XrefError, run_xref
@@ -412,14 +431,47 @@ def build_parser() -> argparse.ArgumentParser:
     brief_validate_parser = brief_subparsers.add_parser(
         "validate",
         help=(
-            "run the stage-5 attribution validator over a persisted "
-            "analysis record at data/analyses/<brief_id>.json "
-            "(specs/PHASE-B.md §7.9, issue #258) -- exits 0 only when every "
-            "claim is marked and every (a)/(b) grounds pointer resolves"
+            "run the stage-5 attribution, counter-position, and "
+            "coverage/confidence validators over a persisted analysis record "
+            "at data/analyses/<brief_id>.json (specs/PHASE-B.md §7.9, issues "
+            "#258/#259/#260) -- exits 0 only when every claim is marked, "
+            "every (a)/(b) grounds pointer resolves, a contested brief's "
+            "§7.8 counter-position section is present or explicitly "
+            "disclosed one-sided, every polity the claims touch has a "
+            "coverage_map entry, and a confidence disclosure is present and "
+            "not overconfident"
         ),
     )
     brief_validate_parser.add_argument(
         "brief_id", help="brief_id of a persisted record under data/analyses/"
+    )
+
+    brief_coverage_parser = brief_subparsers.add_parser(
+        "coverage",
+        help=(
+            "print the §7.7 per-polity coverage map (corpus/evidence chunk "
+            "counts and coverage_band) computed from a persisted record's "
+            "claims -- the inspection affordance for the coverage_bands "
+            "config, LLM-free (specs/PHASE-B.md §7.7, issue #260)"
+        ),
+    )
+    brief_coverage_parser.add_argument(
+        "brief_id", help="brief_id of a persisted record under data/analyses/"
+    )
+
+    brief_usage_parser = brief_subparsers.add_parser(
+        "usage",
+        help=(
+            "read analysis records under data/analyses/ and report per-source "
+            "usage ratios pooled across runs sharing a corpus pin, broken down "
+            "by tag filter (specs/PHASE-B.md §7.13, §8 P0-13, issue #266) -- "
+            "makes ZERO model calls and gates nothing"
+        ),
+    )
+    brief_usage_parser.add_argument(
+        "--pin",
+        default=None,
+        help="corpus_pin to report on (default: the pin the most records share)",
     )
 
     pin_parser = subparsers.add_parser(
@@ -437,6 +489,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pin_write_parser.add_argument(
         "name", help="pin name, e.g. 'baseline' -> evals/corpus_pin/baseline.json"
+    )
+
+    gate_parser = subparsers.add_parser(
+        "gate", help="rung-3 eval-gate harness (specs/PHASE-B.md §10, §8 P0-12)"
+    )
+    gate_subparsers = gate_parser.add_subparsers(dest="gate_command")
+
+    gate_run_parser = gate_subparsers.add_parser(
+        "run",
+        help=(
+            "score a named gate (attribution-fidelity, grounding) over a "
+            "directory of analysis records, writing evals/reports/<gate>.json"
+        ),
+    )
+    gate_run_parser.add_argument(
+        "gate", help="which gate to run: attribution-fidelity or grounding"
+    )
+    gate_run_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        required=True,
+        help=(
+            "score without the full vault/pin/academic cases -- the only mode "
+            "this slice supports; `trusted` is false unless a corpus pin AND "
+            "at least one academic case exist regardless (§9)"
+        ),
+    )
+    gate_run_parser.add_argument(
+        "--records", required=True, help="directory of analysis-record JSON files to score"
     )
 
     reconcile_parser = subparsers.add_parser(
@@ -1017,7 +1098,10 @@ def _brief_run(brief_path: str) -> int:
     return 0
 
 
-def _brief_validate(brief_id: str) -> int:
+def _load_analysis_record(brief_id: str) -> tuple[dict[str, Any], Path] | None:
+    """Shared by `_brief_validate`/`_brief_coverage`: load
+    `<analyses_dir>/<brief_id>.json`, printing a named error and returning
+    `None` when no record exists rather than raising."""
     record_path = default_analyses_dir() / f"{brief_id}.json"
     if not record_path.is_file():
         print(
@@ -1025,24 +1109,78 @@ def _brief_validate(brief_id: str) -> int:
             f"(expected at {record_path})",
             file=sys.stderr,
         )
-        return 1
+        return None
+    return json.loads(record_path.read_text(encoding="utf-8")), record_path
 
-    record = json.loads(record_path.read_text(encoding="utf-8"))
+
+def _brief_validate(brief_id: str) -> int:
+    loaded = _load_analysis_record(brief_id)
+    if loaded is None:
+        return 1
+    record, _record_path = loaded
 
     client = get_client()
     try:
-        report = validate_attribution(record, client=client)
+        attribution_report = validate_attribution(record, client=client)
     except AttributionValidatorError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    try:
+        counter_position_report = validate_counter_position(record, client=client)
+    except CounterPositionValidatorError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    # The coverage/confidence validator (§7.9, issue #260) is a pure,
+    # model-free check over the record's own `coverage_map`/`confidence`
+    # fields -- it never touches `client`, so it cannot itself trip the
+    # `explode` provider.
+    coverage_report = validate_coverage_and_confidence(record)
 
     print(f"brief_id: {brief_id}")
-    print(format_attribution_report(report))
+    print(format_attribution_report(attribution_report))
+    print(format_counter_position_report(counter_position_report))
+    print(format_coverage_confidence_report(coverage_report))
+    # Prints the record's own persisted coverage_map alongside the gate's
+    # verdict (§7.7: "a band is never rendered instead of the counts that
+    # justify it") -- the same rendering `_brief_coverage` uses for its
+    # freshly-computed map, reused here over the record's AS-PERSISTED one.
+    print(format_coverage_map(record.get("coverage_map") or {}))
     # A failure blocks release (§7.9): no answer is emitted on a non-zero
-    # exit, and this command never writes to `record_path` either way --
-    # the validator only ever reports (README.md: "it never edits the
-    # record").
-    return 0 if report.passed else 1
+    # exit, and this command never writes to the record either way -- every
+    # validator here only ever reports (README.md: "it never edits the
+    # record"). All three validators run regardless of each other's outcome
+    # so the operator sees the full picture in one pass; the exit code
+    # blocks release when ANY fails.
+    return (
+        0
+        if (attribution_report.passed and counter_position_report.passed and coverage_report.passed)
+        else 1
+    )
+
+
+def _brief_coverage(brief_id: str) -> int:
+    loaded = _load_analysis_record(brief_id)
+    if loaded is None:
+        return 1
+    record, _record_path = loaded
+
+    claims = record.get("claims") or []
+    coverage_map = compute_coverage_map(claims)
+
+    print(f"brief_id: {brief_id}")
+    print(format_coverage_map(coverage_map))
+    return 0
+
+
+def _brief_usage(pin: str | None) -> int:
+    analyses_dir = default_analyses_dir()
+    records, unreadable_count = load_analysis_records(analyses_dir)
+    report = build_usage_report(records, pin=pin, unreadable_count=unreadable_count)
+    print(format_usage_report(report))
+    # P0-13: the report gates nothing -- no ratio value drives the exit
+    # code, mirroring `chunk examine`'s own inspect-before-spend contract.
+    return 0
 
 
 def _pin_write(name: str) -> int:
@@ -1054,6 +1192,31 @@ def _pin_write(name: str) -> int:
 
     print(json.dumps(str(path)))
     return 0
+
+
+def _gate_run(gate: str, records_dir: str) -> int:
+    try:
+        records = load_records(Path(records_dir))
+    except GateError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    corpus_pin, trusted = resolve_trusted()
+
+    client = get_client()
+    try:
+        report = run_gate(gate, records, client=client, corpus_pin=corpus_pin, trusted=trusted)
+    except (GateError, AttributionValidatorError, GroundingGateError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    write_report(report)
+    print(format_report(report))
+    # A dry-run number is never a trusted number (§9): `trusted` above is
+    # already false unless a corpus pin AND at least one real academic case
+    # both exist, regardless of this exit code. A failing metric still
+    # exits non-zero so a caller never mistakes a scaffold FAIL for a PASS.
+    return 0 if report.passed else 1
 
 
 def _reconcile_gc(apply: bool, yes: bool) -> int:
@@ -1155,8 +1318,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "brief" and args.brief_command == "validate":
         return _brief_validate(args.brief_id)
 
+    if args.command == "brief" and args.brief_command == "coverage":
+        return _brief_coverage(args.brief_id)
+
+    if args.command == "brief" and args.brief_command == "usage":
+        return _brief_usage(args.pin)
+
     if args.command == "pin" and args.pin_command == "write":
         return _pin_write(args.name)
+
+    if args.command == "gate" and args.gate_command == "run":
+        return _gate_run(args.gate, args.records)
 
     if args.command == "reconcile" and args.reconcile_command == "gc":
         return _reconcile_gc(args.apply, args.yes)
