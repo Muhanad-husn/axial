@@ -47,7 +47,13 @@ require no network access:
                                      response (or, if
                                      `AXIAL_STUB_ATTRIBUTION_RESPONSE` is set
                                      to a non-empty value, that raw string
-                                     verbatim -- issue #258); anything else --
+                                     verbatim -- issue #258); `pass_name=
+                                     "grounding"`, passed by
+                                     src/axial/gates/grounding.py, selects a
+                                     verdict-shaped canned response (scripted
+                                     per-call via
+                                     `AXIAL_STUB_GROUNDING_RESPONSE_SEQUENCE`
+                                     -- issue #262); anything else --
                                      including the envelope pass, which never
                                      passes it -- gets the original
                                      envelope-shaped one). Dispatch is
@@ -317,6 +323,17 @@ SYNTHESIZE_PASS_NAME = "synthesize"
 # model that generated the claims it is checking (§7.9, charter §2).
 ATTRIBUTION_PASS_NAME = "attribution"
 
+# Pass name the rung-3 grounding gate's independent judge call identifies
+# itself with (see src/axial/gates/grounding.py, issue #262, PRD §10): does a
+# kind-"a" claim's cited grounds substantively support the claim's text. Same
+# out-of-band dispatch convention as CHUNK_PASS_NAME above -- naming this
+# constant is what makes the judge routable through `model_by_pass`, which is
+# the whole point: it must resolve to a DIFFERENT model, from a different
+# model family, than SYNTHESIZE_PASS_NAME, since the generating model must
+# never grade its own output (§10, charter §2). Mirrors ATTRIBUTION_PASS_NAME
+# exactly, one pass name per independent judge seam.
+GROUNDING_PASS_NAME = "grounding"
+
 # Per-pass model reasoning (§7.9, issue #207): reasoning is ON for the
 # structural-envelope pass and the content-apparatus classification gate --
 # both small, judgment-heavy, once/rarely-per-source calls -- and OFF
@@ -415,6 +432,18 @@ STUB_SYNTHESIZE_RESPONSE_ENV_VAR = "AXIAL_STUB_SYNTHESIZE_RESPONSE"
 # canned response.
 STUB_ATTRIBUTION_RESPONSE_ENV_VAR = "AXIAL_STUB_ATTRIBUTION_RESPONSE"
 
+# Issue #262 test/CI-only seam: mirrors STUB_CHUNK_RESPONSE_SEQUENCE_ENV_VAR
+# above, exactly, for the rung-3 grounding gate's independent judge call
+# instead of the chunk pass. A JSON-encoded array of raw grounding-pass
+# response strings (each `{"verdict": "supports"|"does_not_support"}`),
+# indexed by a fresh, dedicated, per-process 1-indexed counter
+# (`_grounding_pass_call_count`) -- one call per (a) claim being judged, so a
+# test scripts "9 supports, 1 does not support" as a 10-element array. Cycles
+# once exhausted, like every other sequence seam here. An unset/empty value
+# falls back to the default "supports" canned response. Read fresh from the
+# environment on every call.
+STUB_GROUNDING_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_GROUNDING_RESPONSE_SEQUENCE"
+
 # Issue #258 test/CI-only seam: a JSON object mapping pass_name -> model
 # name, read fresh from the environment by `StubLLMClient`/`RecordLLMClient`'s
 # `model_for_pass` (which otherwise always answers the fixed id "stub"
@@ -465,7 +494,12 @@ _chunk_pass_call_count = 0
 # (issue #98), mirroring `_tag_pass_call_count` above exactly.
 _artifact_pass_call_count = 0
 
-# Guards every one of the three counters above (issue #325 follow-up): a
+# Per-process, 1-indexed counter of grounding-pass canned-response
+# dispatches, driving the AXIAL_STUB_GROUNDING_RESPONSE_SEQUENCE seam (issue
+# #262), mirroring `_chunk_pass_call_count` above exactly.
+_grounding_pass_call_count = 0
+
+# Guards every one of the counters above (issue #325 follow-up): a
 # bare module-global `count += 1` is not one atomic operation, and
 # `run_tag`'s votes loop now fires multiple `complete()` calls against the
 # SAME `StubLLMClient`/`RecordLLMClient` instance concurrently (issue #325
@@ -753,6 +787,28 @@ def _canned_attribution_response() -> str:
     return override or _CANNED_ATTRIBUTION_RESPONSE
 
 
+_CANNED_GROUNDING_RESPONSE = json.dumps({"verdict": "supports"})
+
+
+def _canned_grounding_response() -> str:
+    """The canned response for a grounding-pass call (identified by
+    `pass_name=GROUNDING_PASS_NAME`, issue #262): a JSON array read fresh
+    from `STUB_GROUNDING_RESPONSE_SEQUENCE_ENV_VAR`, indexed by the fresh
+    per-process grounding-pass counter just advanced (see that env var's own
+    comment for why -- one call per (a) claim judged, so a test scripts a
+    verdict sequence across calls); unset/empty falls back to the
+    conservative default `"supports"` -- a stub-driven run never invents a
+    failed judgement nobody scripted."""
+    global _grounding_pass_call_count
+    _grounding_pass_call_count += 1
+    sequence_raw = os.environ.get(STUB_GROUNDING_RESPONSE_SEQUENCE_ENV_VAR, "")
+    if sequence_raw:
+        sequence = json.loads(sequence_raw)
+        if sequence:
+            return sequence[(_grounding_pass_call_count - 1) % len(sequence)]
+    return _CANNED_GROUNDING_RESPONSE
+
+
 def _model_for_pass_from_stub_mapping(pass_name: str | None) -> str:
     """Shared by `StubLLMClient`/`RecordLLMClient`'s `model_for_pass`: honors
     `STUB_MODEL_BY_PASS_ENV_VAR` when set and `pass_name` is one of its keys,
@@ -829,6 +885,8 @@ def _canned_response_for(pass_name: str | None) -> str:
         return _canned_synthesize_response()
     if pass_name == ATTRIBUTION_PASS_NAME:
         return _canned_attribution_response()
+    if pass_name == GROUNDING_PASS_NAME:
+        return _canned_grounding_response()
     return StubLLMClient._CANNED_RESPONSE
 
 

@@ -29,6 +29,15 @@ from axial.envelope import EnvelopeError, MissingSourceError, compute_source_id,
 from axial.eval import EvalError, run_eval
 from axial.eval.corpus_pin import CorpusPinError, write_pin
 from axial.extract import ExtractError, extract
+from axial.gates import (
+    GateError,
+    GroundingGateError,
+    format_report,
+    load_records,
+    resolve_trusted,
+    run_gate,
+    write_report,
+)
 from axial.gold import (
     DEFAULT_MAX_SIZE,
     DEFAULT_MIN_SIZE,
@@ -437,6 +446,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pin_write_parser.add_argument(
         "name", help="pin name, e.g. 'baseline' -> evals/corpus_pin/baseline.json"
+    )
+
+    gate_parser = subparsers.add_parser(
+        "gate", help="rung-3 eval-gate harness (specs/PHASE-B.md §10, §8 P0-12)"
+    )
+    gate_subparsers = gate_parser.add_subparsers(dest="gate_command")
+
+    gate_run_parser = gate_subparsers.add_parser(
+        "run",
+        help=(
+            "score a named gate (attribution-fidelity, grounding) over a "
+            "directory of analysis records, writing evals/reports/<gate>.json"
+        ),
+    )
+    gate_run_parser.add_argument(
+        "gate", help="which gate to run: attribution-fidelity or grounding"
+    )
+    gate_run_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        required=True,
+        help=(
+            "score without the full vault/pin/academic cases -- the only mode "
+            "this slice supports; `trusted` is false unless a corpus pin AND "
+            "at least one academic case exist regardless (§9)"
+        ),
+    )
+    gate_run_parser.add_argument(
+        "--records", required=True, help="directory of analysis-record JSON files to score"
     )
 
     reconcile_parser = subparsers.add_parser(
@@ -1056,6 +1094,31 @@ def _pin_write(name: str) -> int:
     return 0
 
 
+def _gate_run(gate: str, records_dir: str) -> int:
+    try:
+        records = load_records(Path(records_dir))
+    except GateError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    corpus_pin, trusted = resolve_trusted()
+
+    client = get_client()
+    try:
+        report = run_gate(gate, records, client=client, corpus_pin=corpus_pin, trusted=trusted)
+    except (GateError, AttributionValidatorError, GroundingGateError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    write_report(report)
+    print(format_report(report))
+    # A dry-run number is never a trusted number (§9): `trusted` above is
+    # already false unless a corpus pin AND at least one real academic case
+    # both exist, regardless of this exit code. A failing metric still
+    # exits non-zero so a caller never mistakes a scaffold FAIL for a PASS.
+    return 0 if report.passed else 1
+
+
 def _reconcile_gc(apply: bool, yes: bool) -> int:
     try:
         result = run_gc(apply=apply, yes=yes)
@@ -1157,6 +1220,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "pin" and args.pin_command == "write":
         return _pin_write(args.name)
+
+    if args.command == "gate" and args.gate_command == "run":
+        return _gate_run(args.gate, args.records)
 
     if args.command == "reconcile" and args.reconcile_command == "gc":
         return _reconcile_gc(args.apply, args.yes)
