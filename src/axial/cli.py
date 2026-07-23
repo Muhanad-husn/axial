@@ -1093,6 +1093,7 @@ def _brief_run(brief_path: str) -> int:
     print(f"brief_id: {brief.brief_id}")
     print(f"disposition: {result.record['interrogation']['disposition']}")
     print(f"persisted: {result.path}")
+    print(f"answer: {result.markdown_path}")
     # §7.2: a `refuse` disposition is a completed, valid run -- exit 0 on
     # every disposition (mirrors `_brief_interrogate`/`_brief_examine`).
     return 0
