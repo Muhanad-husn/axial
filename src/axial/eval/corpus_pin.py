@@ -208,6 +208,37 @@ class MalformedNoteError(CorpusPinError):
         super().__init__(f"malformed vault note ({detail}): {path}")
 
 
+class MissingCorpusPinError(CorpusPinError):
+    """Raised when `resolve_pin_id` finds no manifest under `evals_dir` at
+    all -- `axial brief run` (issue #257, §7.12) needs a corpus pin to
+    record every run against; a missing pin is a misconfigured install
+    (`axial pin write <name>` was never run), never silently skipped."""
+
+    def __init__(self, evals_dir: Path):
+        self.evals_dir = evals_dir
+        super().__init__(
+            f"no corpus-pin manifest found under {evals_dir}; run `axial pin write <name>` first"
+        )
+
+
+class AmbiguousCorpusPinError(CorpusPinError):
+    """Raised when `resolve_pin_id` finds more than one manifest under
+    `evals_dir` -- reconciling/selecting among multiple pins is explicitly
+    out of scope for issue #257 (§7.12's own "detecting a pin mismatch" is a
+    separate, later concern), so an ambiguous directory fails loudly rather
+    than guessing one."""
+
+    def __init__(self, evals_dir: Path, candidates: list[Path]):
+        self.evals_dir = evals_dir
+        self.candidates = candidates
+        named = ", ".join(str(candidate) for candidate in candidates)
+        super().__init__(
+            f"ambiguous corpus pin under {evals_dir}: found {len(candidates)} "
+            f"manifests ({named}); name one explicitly (issue #257 scopes out "
+            f"multi-pin reconciliation)"
+        )
+
+
 class GitShaUnavailableError(CorpusPinError):
     """Raised when the axial checkout's own git HEAD commit cannot be
     read -- e.g. `git` is not installed, the checkout is not (or is no
@@ -448,3 +479,30 @@ def write_pin(
         encoding="utf-8",
     )
     return out_path
+
+
+def resolve_pin_id(evals_dir: Path | None = None) -> str:
+    """The corpus-pin id `axial brief run` (issue #257, §7.3/§7.12) records
+    every analysis record against: the filename stem of the sole `*.json`
+    manifest under `evals_dir` (default `EVALS_DIR`). There is no separate
+    "id" field inside the manifest itself (`write_pin`'s own three-field
+    shape carries none) -- the pin's NAME, the one thing distinguishing
+    `evals/corpus_pin/<name>.json` from another pin, is the natural id.
+
+    Requires exactly one manifest to exist: zero is a misconfigured install
+    (`MissingCorpusPinError` -- run `axial pin write <name>` first), more
+    than one is ambiguous (`AmbiguousCorpusPinError` -- reconciling multiple
+    pins is out of this slice's scope, left to a later, measured decision).
+    """
+    if evals_dir is None:
+        evals_dir = EVALS_DIR
+    evals_dir = Path(evals_dir)
+    if not evals_dir.is_dir():
+        raise MissingCorpusPinError(evals_dir)
+
+    candidates = sorted(evals_dir.glob("*.json"))
+    if not candidates:
+        raise MissingCorpusPinError(evals_dir)
+    if len(candidates) > 1:
+        raise AmbiguousCorpusPinError(evals_dir, candidates)
+    return candidates[0].stem
