@@ -61,6 +61,19 @@ DEFAULT_GATE_THRESHOLDS: dict[str, float] = {
     "attribution_completeness": 1.00,
     "b_seam_mislabel_rate": 0.05,
     "grounding_support_rate": 0.90,
+    # Synthesis quality (issue #263, §10 Principle IV).
+    "counter_position_presence_rate": 0.95,
+    # steelman_quality has no spec-stated number -- §10 names only "the eval
+    # #1 rubric bar", not authored yet (out of this slice's scope). 0.90 is a
+    # starting hypothesis in the same spirit as the other judged-sample
+    # thresholds above, tuned once the rubric lands.
+    "steelman_quality": 0.90,
+    # Calibration (issue #263, §10 Principle V, §7.4): the band-wise
+    # reliability tolerance -- how far an observed band's judged-correctness
+    # rate may sit from that band's stated target rate. See
+    # src/axial/gates/calibration.py's module docstring for why this is the
+    # metric §10 v1.1 settled on (band-wise, not ECE/Brier).
+    "band_reliability": 0.15,
     "premise_catch_rate": 0.80,
 }
 
@@ -71,6 +84,9 @@ METRIC_COMPARISON: dict[str, Comparison] = {
     "attribution_completeness": "gte",
     "b_seam_mislabel_rate": "lte",
     "grounding_support_rate": "gte",
+    "counter_position_presence_rate": "gte",
+    "steelman_quality": "gte",
+    "band_reliability": "lte",
     "premise_catch_rate": "gte",
 }
 
@@ -301,6 +317,9 @@ def format_report(report: GateReport) -> str:
         failing_claim_ids = metric.detail.get("failing_claim_ids")
         if failing_claim_ids:
             lines.append(f"    failing claim_ids: {', '.join(failing_claim_ids)}")
+        failing_brief_ids = metric.detail.get("failing_brief_ids")
+        if failing_brief_ids:
+            lines.append(f"    failing brief_ids: {', '.join(failing_brief_ids)}")
         missed_brief_ids = metric.detail.get("missed_brief_ids")
         if missed_brief_ids:
             lines.append(f"    missed brief_ids: {', '.join(missed_brief_ids)}")

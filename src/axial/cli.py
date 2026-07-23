@@ -34,6 +34,7 @@ from axial.extract import ExtractError, extract
 from axial.gates import (
     ADVERSARIAL_GATE_NAME,
     AdversarialGateError,
+    CalibrationGateError,
     GateError,
     GroundingGateError,
     format_report,
@@ -518,13 +519,18 @@ def build_parser() -> argparse.ArgumentParser:
     gate_run_parser = gate_subparsers.add_parser(
         "run",
         help=(
-            "score a named gate (attribution-fidelity, grounding, adversarial) "
-            "over a directory of analysis records or (adversarial) seeded "
-            "briefs, writing evals/reports/<gate>.json"
+            "score a named gate (attribution-fidelity, grounding, "
+            "synthesis-quality, calibration, adversarial) over a directory of "
+            "analysis records or (adversarial) seeded briefs, writing "
+            "evals/reports/<gate>.json"
         ),
     )
     gate_run_parser.add_argument(
-        "gate", help="which gate to run: attribution-fidelity, grounding, or adversarial"
+        "gate",
+        help=(
+            "which gate to run: attribution-fidelity, grounding, "
+            "synthesis-quality, calibration, or adversarial"
+        ),
     )
     gate_run_parser.add_argument(
         "--dry-run",
@@ -1256,7 +1262,14 @@ def _gate_run(gate: str, records_dir: str | None, briefs_dir: str | None) -> int
     client = get_client()
     try:
         report = run_gate(gate, records, client=client, corpus_pin=corpus_pin, trusted=trusted)
-    except (GateError, AttributionValidatorError, GroundingGateError, AdversarialGateError) as exc:
+    except (
+        GateError,
+        AttributionValidatorError,
+        GroundingGateError,
+        CounterPositionValidatorError,
+        CalibrationGateError,
+        AdversarialGateError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
