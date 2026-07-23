@@ -20,22 +20,27 @@ And   a not-found, network-error, or timeout result is explicit and never
       raises
 
 Given intake has already produced its existing embedded-metadata/title-page
-      reading for a source
-And   a validated identifier resolves
-When  the fetched author plausibly overlaps intake's already-known author
-      (the identity guard passes)
-Then  the persisted record's title/author/date/publisher are the fetched
-      values, each with provenance "open_library" or "crossref"
+      reading for a source, and a validated identifier resolves, and the
+      fetched author plausibly overlaps intake's already-known author (the
+      identity guard passes)
+When  the record is built
+Then  the fetch FILLS only the fields the local read left empty (the
+      `unavailable` sentinel) -- author/title/date already carrying a
+      value from embedded metadata or the title-page read are kept
+      byte-unchanged, provenance included; `publisher` (never captured
+      before this slice) always fills
+And   a filled field carries provenance "open_library" or "crossref"; a
+      kept field keeps its existing provenance
 And   the record's `identifier` field carries `{type, value}`
 
 Given the fetched author does not plausibly overlap intake's already-known
       author (a single, unambiguous identifier resolving to an entirely
       different person's work)
 When  the record is built
-Then  intake falls back to its existing embedded-metadata/title-page values
-      unchanged
-And   `identifier` still records what was found, for audit, but is not used
-      for the four fields
+Then  nothing is filled -- not even an otherwise-empty field -- and intake's
+      existing embedded-metadata/title-page values are unchanged
+And   `identifier` still records what was found, for audit, but nothing
+      from it is used
 
 Given a source's front matter carries MORE THAN ONE distinct checksum-valid
       identifier (e.g. a hardcover/paperback ISBN block for one book, or a
@@ -43,16 +48,11 @@ Given a source's front matter carries MORE THAN ONE distinct checksum-valid
 When  the record is built
 Then  EVERY candidate is resolved, and the resolved records are compared
 And   if they plausibly describe the same work (author AND title agree),
-      intake proceeds exactly as the single-identifier path -- one of the
-      agreeing records is used, subject to the same author-overlap guard
-      against intake's own already-known author
-And   if they disagree (the real, measured case:
-      `mann-sources-of-social-power-v1`/`v3`/`v4` all carry the identical
-      ISBN `9781107028654` alongside their own volume-specific one, and the
-      shared ISBN resolves to "Mann, Michael" -- overlapping every volume's
-      own known author, so author-overlap alone would not catch this),
-      the capture ABSTAINS: no candidate is used, and `identifier` records
-      every candidate found, for audit
+      intake proceeds exactly as the single-identifier path -- gaps fill
+      from one of the agreeing records, subject to the same author-overlap
+      guard against intake's own already-known author
+And   if they disagree, the capture ABSTAINS: nothing is filled, and
+      `identifier` records every candidate found, for audit
 
 Given no identifier is found, or it fails to resolve
 When  the record is built
@@ -61,13 +61,19 @@ Then  the record is produced exactly as intake does today, with
 
 See plans/book-metadata-open-library/01-identifier-lookup-and-merge.md for
 the full slice contract and specs/PRODUCT.md §7.12/§7.13 for the source of
-truth this test pins. The multi-candidate criterion above is the founder's
-post-review correction (issue #326), refined a second time after real-
-corpus measurement: an earlier version abstained on ANY multi-identifier
-capture, which cost 93%->37% fast-path coverage because most multi-ISBN
-front matter is a harmless multi-binding block, not a genuine cross-work
-mismatch. Resolving and comparing every candidate recovers that coverage
-while still catching the one real near-miss (Mann).
+truth this test pins. **Gap-fill, not overwrite, is the founder's third
+ruling on this slice** (issue #326): a live-API dig during review found
+that all 8 of `mann-sources-of-social-power-v1`'s candidate ISBNs resolve
+to ONE combined Open Library box-set catalog record (a coarse series
+title, no per-volume distinction) -- so resolve-all-and-compare correctly
+finds no disagreement, and an OVERWRITING merge would have replaced each
+volume's own correct, already-known title/date with the box set's coarser
+ones (for `mann-sources-of-social-power-v2`, overwriting a correct 1993
+date with an earlier printing's 1986 -- reproducing the exact near-miss
+this whole mechanism exists to prevent). Gap-fill closes this
+structurally: every Mann volume already has a correct local
+author/title/date, so a fill never touches any of them -- it only adds the
+shared, correct publisher.
 `test_guard_rejects_a_fetch_for_a_genuinely_different_persons_work` below
 is what the single-identifier author-overlap guard, unchanged, still
 catches on its own.
@@ -351,11 +357,14 @@ class TestResolve:
 
 
 class TestMergeIntoIntake:
-    def test_guard_passes_fetched_fields_win_with_provenance_and_identifier_recorded(
-        self, tmp_path
-    ):
-        """Guard passes because the fetched author overlaps the file's own
-        embedded-metadata author."""
+    def test_guard_passes_fills_only_empty_fields_kept_fields_stay_unchanged(self, tmp_path):
+        """Gap-fill (founder ruling, third pass, #326): the guard passes
+        (fetched author overlaps the file's own embedded-metadata author),
+        but `author` and `title` already carry a value from embedded
+        metadata -- they are kept byte-unchanged, provenance included.
+        `date` (never sourced from embedded metadata for a PDF) and
+        `publisher` (never captured before this slice) were both empty, so
+        both fill from the fetch."""
         path = _write_pdf(
             tmp_path,
             "book.pdf",
@@ -380,24 +389,24 @@ class TestMergeIntoIntake:
             (meta_dir / f"{compute_source_id(path)}.json").read_text(encoding="utf-8")
         )
         assert record["title"] == {
-            "value": "State Legitimacy and Civil Conflict",
-            "provenance": "open_library",
+            "value": "An Unrelated Embedded Title",
+            "provenance": "embedded metadata",
         }
-        assert record["author"] == {"value": "Jane Q. Historian", "provenance": "open_library"}
+        assert record["author"] == {"value": "Jane Q. Historian", "provenance": "embedded metadata"}
         assert record["date"] == {"value": "1985", "provenance": "open_library"}
         assert record["publisher"] == {"value": "A University Press", "provenance": "open_library"}
         assert record["identifier"] == {"type": "isbn", "value": REAL_ISBN}
 
     def test_multi_isbn_candidates_that_resolve_to_different_works_abstain(self, tmp_path):
-        """The REAL case (post-review correction, issue #326, refined a
-        second time after real-corpus measurement): resolving the shared
-        ISBN `9781107028654` (a live Open Library call) gives author
-        "Mann, Michael" -- which DOES plausibly overlap each volume's own
-        known author "Michael Mann" (`authors_plausibly_overlap` returns
-        `True` for that pair). Author-overlap alone would therefore pass a
-        wrong-volume fetch straight through. What actually protects this
-        source is that BOTH candidates are resolved and their TITLES
-        disagree (different volumes) -- abstain, use neither."""
+        """A constructed cross-work disagreement (author overlaps, titles
+        clearly name different volumes and neither is a substring of the
+        other) -- abstain, fill nothing. NOTE: a live-API dig during
+        review found the REAL `mann-sources-of-social-power-v1`/`v3`/`v4`
+        shared ISBN does NOT actually disagree with its siblings (all 8
+        candidates resolve to one coarse box-set catalog record) -- see
+        `test_the_real_mann_box_set_agrees_and_only_fills_publisher` below
+        for that measured shape, and gap-fill (not this abstention) is what
+        protects the real case."""
         mann_front_matter = [
             ["The Sources of Social Power", "Volume 4: Globalizations, 1945-2011"],
             [
@@ -459,12 +468,77 @@ class TestMergeIntoIntake:
             "candidates": sorted([REAL_ISBN, shared_isbn]),
         }
 
+    def test_the_real_mann_box_set_agrees_and_only_fills_publisher(self, tmp_path):
+        """The REAL measured shape (post-review live-API dig): all of
+        `mann-sources-of-social-power-v1`'s candidate ISBNs resolve to ONE
+        combined Open Library box-set catalog record (coarse series title,
+        no per-volume distinction) -- genuinely agreeing, no disagreement
+        to abstain on. Under gap-fill this is not a risk: the file's own
+        known volume-specific title and date are kept untouched; only the
+        (correct, shared) publisher fills."""
+        candidate_a = "9781107028654"
+        candidate_b = "9781107028678"
+        mann_front_matter = [
+            ["The Sources of Social Power", "Volume 1"],
+            [
+                f"ISBN: {candidate_a[:3]}-{candidate_a[3]}-{candidate_a[4:7]}-"
+                f"{candidate_a[7:12]}-{candidate_a[12]}",
+                "Also available in this series:",
+                f"ISBN: {candidate_b[:3]}-{candidate_b[3]}-{candidate_b[4:7]}-"
+                f"{candidate_b[7:12]}-{candidate_b[12]}",
+            ],
+        ] + [_body(i) for i in range(1, 3)]
+        path = _write_pdf(
+            tmp_path,
+            "mann-sources-of-social-power-v1.pdf",
+            mann_front_matter,
+            info={"Author": "Mann, Michael", "Title": "The Sources of Social Power, Volume 1"},
+        )
+        meta_dir = tmp_path / "source_meta"
+        cache_dir = tmp_path / "bib_cache"
+
+        box_set_record = {
+            "title": "The sources of social power",
+            "authors": [{"name": "Mann, Michael"}],
+            "publish_date": "2012",
+            "publishers": [{"name": "Cambridge University Press"}],
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            for isbn in (candidate_a, candidate_b):
+                if isbn in str(request.url):
+                    return httpx.Response(200, json={f"ISBN:{isbn}": box_set_record})
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        intake(
+            path,
+            source_meta_dir=meta_dir,
+            bib_transport=httpx.MockTransport(handler),
+            bib_cache_dir=cache_dir,
+        )
+
+        record = json.loads(
+            (meta_dir / f"{compute_source_id(path)}.json").read_text(encoding="utf-8")
+        )
+        assert record["title"] == {
+            "value": "The Sources of Social Power, Volume 1",
+            "provenance": "embedded metadata",
+        }
+        assert record["author"] == {"value": "Mann, Michael", "provenance": "embedded metadata"}
+        assert record["publisher"] == {
+            "value": "Cambridge University Press",
+            "provenance": "open_library",
+        }
+        assert "abstained" not in (record["identifier"] or {})
+
     def test_multi_isbn_candidates_that_resolve_to_the_same_work_are_used(self, tmp_path):
         """Real corpus shape (`beshara-origins-of-syrian-nationhood`'s two
         ISBNs -- a hardcover and a Routledge paperback of the same book):
-        both candidates resolve to the same author and title -- proceed,
-        using one of the agreeing records, subject to the same
-        author-overlap guard as any other fetch."""
+        both candidates resolve to the same author and title -- proceed to
+        fill the empty `title`/`publisher` gaps (the guard passes); the
+        already-known local `author` (embedded metadata) is kept
+        unchanged, even though the fetch's own author string agrees with
+        it -- gap-fill never substitutes an equal value for a kept one."""
         hardcover_isbn = "9780203816776"
         paperback_isbn = "9780415615044"
         front_matter = [
@@ -512,7 +586,7 @@ class TestMergeIntoIntake:
             "value": "The Origins of Syrian Nationhood",
             "provenance": "open_library",
         }
-        assert record["author"] == {"value": "Nadine Meouchy", "provenance": "open_library"}
+        assert record["author"] == {"value": "Nadine Meouchy", "provenance": "embedded metadata"}
         assert record["publisher"] == {"value": "Routledge", "provenance": "open_library"}
         assert record["identifier"] == {
             "type": "isbn",
@@ -557,12 +631,16 @@ class TestMergeIntoIntake:
 
     def test_guard_treats_diacritics_and_name_order_as_a_match(self, tmp_path):
         """The spike's own false-mismatch case: `Malesevic, Sinisa` (the
-        file's own embedded metadata) vs `Siniša Malešević` (the fetch)."""
+        file's own embedded metadata, kept) vs `Siniša Malešević` (the
+        fetch). The known author has no `Title` in its embedded metadata,
+        so `title` is the empty gap this test observes: if the guard
+        wrongly treated the diacritic/name-order pair as a mismatch,
+        `title` would stay `unavailable` instead of filling."""
         path = _write_pdf(
             tmp_path,
             "book.pdf",
             FRONT_MATTER_WITH_ISBN,
-            info={"Author": "Malesevic, Sinisa", "Title": "An Unrelated Embedded Title"},
+            info={"Author": "Malesevic, Sinisa"},
         )
         meta_dir = tmp_path / "source_meta"
         cache_dir = tmp_path / "bib_cache"
@@ -580,7 +658,9 @@ class TestMergeIntoIntake:
         record = json.loads(
             (meta_dir / f"{compute_source_id(path)}.json").read_text(encoding="utf-8")
         )
-        assert record["author"] == {"value": "Siniša Malešević", "provenance": "open_library"}
+        # The known author is kept unchanged, even though the guard passed.
+        assert record["author"] == {"value": "Malesevic, Sinisa", "provenance": "embedded metadata"}
+        # The empty title gap fills -- proof the guard actually passed.
         assert record["title"] == {
             "value": "Nation-States and Nationalism in Europe",
             "provenance": "open_library",

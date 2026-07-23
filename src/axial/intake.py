@@ -31,21 +31,26 @@ unrelated file, and only something that reads the page can notice.
 For a PDF, the record also carries a `publisher` field and a raw
 `identifier` (issue #326): an ISBN/DOI captured and checksum-validated from
 the front matter (`axial.identifiers`, no network) is looked up against
-Open Library/Crossref (`axial.bib_lookup`, cached to disk) and merged into
-author/title/date/publisher behind two independent safeguards. When the
-front matter carries more than one distinct identifier of the winning type
-(e.g. a hardcover/paperback/ebook block, or a multi-volume work's own
-series listing), EVERY candidate is resolved and compared
+Open Library/Crossref (`axial.bib_lookup`, cached to disk) and used to
+FILL any EMPTY author/title/date/publisher field -- never to overwrite a
+value the embedded-metadata/title-page read already produced. `publisher`
+is always empty (no other reading mechanism exists for it), so it fills
+whenever a fetch resolves and the guard below passes; author/title/date
+fill only when their own read came back `unavailable`. When the front
+matter carries more than one distinct identifier of the winning type (e.g.
+a hardcover/paperback/ebook block, or a multi-volume work's own series
+listing), EVERY candidate is resolved and compared
 (`_resolve_multi_candidate_identifier`): if they plausibly describe the
-same work, one of them is used like any other fetch; if they disagree
-(the real measured case, `mann-sources-of-social-power-v1`/`v3`/`v4`
-sharing one ISBN whose fetch resolves to a different volume), the capture
-abstains and no candidate is used. Either way, the resulting single fetch
-(if any) still passes through the same-work identity guard, which
-cross-checks the fetched author against intake's already-known one and
-catches a different failure mode: a single, unambiguous identifier that
-resolves to an entirely different person's work. `identifier` is recorded
-in all cases, for audit.
+same work, one of them is used to fill gaps like any other fetch; if they
+disagree, the capture abstains and nothing is filled. Either way, the
+resulting single fetch (if any) still passes through the same-work
+identity guard, which cross-checks the fetched author against intake's
+already-known one before filling anything at all. `identifier` is recorded
+in all cases, for audit. Gap-fill (rather than an earlier overwriting
+design) is what closes the real measured near-miss on
+`mann-sources-of-social-power-v1`-`v4`: every Mann volume already has a
+correct local author/title/date, so a fill never touches any of them --
+it only adds the shared, correct publisher.
 """
 
 from __future__ import annotations
@@ -447,29 +452,42 @@ def _resolve_bibliographic_fields(
 # found in a source's own front matter, resolved against Open Library/
 # Crossref, and merged into the bibliographic fields.
 #
-# Two independent safeguards, each catching a DIFFERENT failure mode --
-# founder ruling on #326, refined a second time after real-corpus
-# measurement showed the first version (abstain on ANY multi-identifier
-# capture) cost 93%->37% coverage, because most multi-ISBN front matter is
-# a hardcover/paperback/ebook block for the SAME work, not a cross-work
-# mismatch:
+# **Gap-fill, not overwrite (founder ruling, third pass on #326).** The
+# fetch fills an EMPTY field only (the `UNAVAILABLE` sentinel) -- a local
+# field that already carries a value from embedded metadata or the
+# title-page read is authoritative and is kept unchanged, provenance
+# included. `publisher` is always empty (no other reading mechanism
+# exists for it), so it always fills when a fetch resolves and the guard
+# passes -- the one field this lookup can add for nearly every source.
+#
+# Why gap-fill, not the two-safeguard overwrite design tried before it:
+# live measurement (post-review) found that the shared box-set ISBN
+# `mann-sources-of-social-power-v1`/`v3`/`v4` carry resolves to ONE
+# combined Open Library catalog record whose fields genuinely agree with
+# each other (a coarse box-set title, no per-volume distinction) -- so
+# resolve-all-and-compare correctly found no disagreement, and an
+# overwriting merge would have replaced each volume's own correct,
+# already-known title/date with the box set's coarser ones (and, for
+# `mann-sources-of-social-power-v2`, overwritten a correct 1993 date with
+# an earlier printing's 1986 -- reproducing the exact near-miss the whole
+# mechanism exists to prevent). Gap-fill closes this structurally: every
+# Mann volume already has a correct local author/title/date, so gap-fill
+# never touches any of them -- it only adds the shared, correct publisher.
+#
+# The two safeguards built for the overwrite design are kept, because they
+# still gate WHETHER a fill happens, even though a fill can never corrupt
+# an already-known value:
 # - **Resolve-all-and-compare** (`_resolve_multi_candidate_identifier`,
-#   below): when capture finds more than one distinct identifier, EVERY
-#   candidate is resolved (each independently disk-cached -- still a single
-#   attempt per identifier, no retry/backoff). If the resolved records
-#   plausibly describe the same work (`_works_plausibly_agree`), they are
-#   different bindings of one book -- proceed, using whichever candidate
-#   resolved first. If they disagree, abstain: this is the real Mann-
-#   volumes case, where the wrong-volume ISBN resolves to author
-#   "Mann, Michael" (overlapping every volume's own "Michael Mann") but a
-#   DIFFERENT title/volume -- title disagreement is what catches it, since
-#   author overlap alone would not.
-# - The **author-overlap guard** (`authors_plausibly_overlap`, unchanged)
-#   still gates a single, unambiguous identifier (whether captured as one
-#   candidate, or arrived at after resolve-all-and-compare agreed): it
-#   catches a fetch that resolves to an entirely different person's work
-#   (a mistyped/recycled identifier), which resolve-all-and-compare cannot
-#   see (there is only one candidate to compare against itself).
+#   below): a multi-candidate capture resolves EVERY candidate (each
+#   independently disk-cached -- still a single attempt per identifier, no
+#   retry/backoff) and only proceeds when the resolved records plausibly
+#   agree (`_works_plausibly_agree`); disagreement abstains, filling
+#   nothing.
+# - The **author-overlap guard** (`authors_plausibly_overlap`, unchanged):
+#   don't fill a gap from a fetch whose author doesn't overlap intake's
+#   already-known author (e.g. `ayubi-over-stating-the-arab-state`'s `None`
+#   title still fills, because there is no known author to contradict the
+#   fetch that fills it).
 # =============================================================================
 
 
@@ -488,27 +506,30 @@ def _name_tokens(name: str) -> set[str]:
 
 
 def authors_plausibly_overlap(known_author: str | None, fetched_author: str | None) -> bool:
-    """The same-work identity guard: `True` when `known_author` (intake's
-    own already-known reading -- embedded metadata or the title-page read)
-    and `fetched_author` (the identifier lookup's answer) share at least one
+    """The same-work identity guard, gating whether a fetch may FILL any
+    empty field at all: `True` when `known_author` (intake's own
+    already-known reading -- embedded metadata or the title-page read) and
+    `fetched_author` (the identifier lookup's answer) share at least one
     meaningful name token.
 
     `known_author=None` (intake has no author of its own to cross-check
     against) passes -- there is nothing to contradict, and rejecting a fetch
     for that reason alone would defeat the real gap this slice fixes
-    (`ayubi-over-stating-the-arab-state`'s `None` title, where no prior
-    author reading existed either). A present `known_author` with no
-    overlapping token in `fetched_author` fails -- catching a single,
-    unambiguous identifier that resolves to an entirely different person's
-    work.
+    (`ayubi-over-stating-the-arab-state`'s `None` title still fills, because
+    no prior author reading exists to contradict the fetch). A present
+    `known_author` with no overlapping token in `fetched_author` fails --
+    catching a single, unambiguous identifier that resolves to an entirely
+    different person's work, so none of its fields are used even to fill a
+    gap.
 
-    This guard alone does **not** catch a same-author wrong-volume/wrong-
-    edition mismatch (measured: a fetch for the wrong Mann volume still
-    resolves to "Mann, Michael", which overlaps the known "Michael Mann" --
-    this function returns `True`, correctly, for that pair). That failure
-    mode is caught upstream instead, by resolve-all-and-compare on a
-    multi-candidate capture (see the section docstring above), which also
-    checks title agreement -- not by this function alone."""
+    A same-author wrong-volume/wrong-edition fetch (measured: a fetch for
+    the wrong Mann volume still resolves to "Mann, Michael", which overlaps
+    the known "Michael Mann" -- this function returns `True`, correctly,
+    for that pair) is not this guard's problem under gap-fill semantics:
+    every Mann volume already has a correct local author/title/date, so a
+    fill never touches them regardless of what this guard decides -- the
+    field is not empty, so `_fill_if_empty` below never calls the fetch's
+    value into question in the first place."""
     if not known_author:
         return True
     if not fetched_author:
@@ -530,9 +551,12 @@ def _titles_plausibly_agree(known_title: str | None, fetched_title: str | None) 
     exact substring-containment test for its title sanity check. No
     tunable threshold: a same-work multi-binding pair prints the identical
     title on every edition's copyright page (`"..." in "..."` is exact
-    containment either way), while two different volumes/editions of a
-    series share only a common prefix -- their distinguishing subtitle or
-    volume marker means neither is a substring of the other. Either title
+    containment either way). It is not a complete disagreement detector --
+    measured: a multi-volume box-set catalog record can carry one coarse
+    title for every volume, which this function correctly treats as
+    agreement -- but that is no longer a correctness risk under gap-fill
+    semantics (see the section docstring above): a fill can only ever add a
+    value to an empty field, never replace a correct one. Either title
     missing passes (nothing to contradict), mirroring
     `authors_plausibly_overlap`'s own `None`-passes rule."""
     if not known_title or not fetched_title:
@@ -546,9 +570,9 @@ def _works_plausibly_agree(a: dict[str, Any], b: dict[str, Any]) -> bool:
     ...}`) plausibly describe the same work: both the author-overlap guard
     and the title-agreement check must pass. Used by
     `_resolve_multi_candidate_identifier` to decide whether several
-    resolved candidates are different bindings of one book (agree) or
-    genuinely different works (disagree, e.g. the Mann volumes -- same
-    author, different title/volume)."""
+    resolved candidates are different bindings of one book (agree -- fill
+    from one of them) or genuinely different works (disagree -- abstain,
+    fill nothing)."""
     return authors_plausibly_overlap(a.get("author"), b.get("author")) and _titles_plausibly_agree(
         a.get("title"), b.get("title")
     )
@@ -597,10 +621,11 @@ def _resolve_multi_candidate_identifier(
       checked pairwise against whichever resolved first) -> they are the
       same work in different bindings -> `(that record, {"type", "value":
       <the candidate that resolved it>})`, proceed exactly like a single
-      unambiguous identifier;
-    - **any resolved record disagrees** -> genuinely different works (the
-      Mann case) -> `(None, <abstained identifier for the record>)`; no
-      candidate is used.
+      unambiguous identifier (its fields still only ever FILL a gap, never
+      overwrite a known value -- see the section docstring above);
+    - **any resolved record disagrees** -> genuinely different works ->
+      `(None, <abstained identifier for the record>)`; no candidate is
+      used, nothing is filled.
 
     The "abstained identifier for the record" is `{"type", "value": None,
     "abstained": True, "candidates": [...]}` -- the audit trail, mirroring
@@ -630,6 +655,23 @@ def _resolve_multi_candidate_identifier(
     return None, abstained_record
 
 
+def _fill_if_empty(
+    current: dict[str, str] | str, fetched_value: str | None, provenance: str
+) -> dict[str, str] | str:
+    """The gap-fill rule itself (founder ruling, #326, third pass): `current`
+    (already `{"value", "provenance"}` from embedded metadata or the
+    title-page read) is authoritative and returned unchanged -- the file's
+    own read wins over the catalog, always, regardless of what the fetch
+    says. Only `current == UNAVAILABLE` (no value has been read for this
+    field yet) is filled, taking `fetched_value` with `provenance`
+    (`_bibliographic_field` keeps it `UNAVAILABLE` if `fetched_value` is
+    itself `None` -- a resolved record that simply doesn't carry this
+    field fills nothing, same as an unattempted read)."""
+    if current != UNAVAILABLE:
+        return current
+    return _bibliographic_field(fetched_value, provenance)
+
+
 def _merge_identifier_fields(
     biblio: dict[str, Any],
     identifier: dict[str, Any] | None,
@@ -638,21 +680,23 @@ def _merge_identifier_fields(
     bib_cache_dir: Path | None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """`biblio` (already resolved from embedded metadata/title page), with
-    the identifier-lookup override applied when the same-work identity
-    guard passes, and the (possibly resolved-and-updated) `identifier` to
-    record. `publisher` has no reading mechanism other than this lookup:
-    `NOT_ATTEMPTED` for a DOCX (no identifier scan runs at all in this
-    slice) and `UNAVAILABLE` for a PDF with no identifier, a multi-candidate
-    capture whose resolved records disagree, an unresolved lookup, or a
-    failing guard.
+    the identifier lookup filling any EMPTY field once the same-work
+    identity guard passes, and the (possibly resolved-and-updated)
+    `identifier` to record. A field already carrying a value is
+    authoritative and returned unchanged -- see the section docstring
+    above for why gap-fill, not overwrite, is the contract. `publisher` is
+    always empty (no other reading mechanism exists for it): `NOT_ATTEMPTED`
+    for a DOCX (no identifier scan runs at all in this slice), else
+    `UNAVAILABLE` until a resolved, guard-passing fetch fills it.
 
     A **multi-candidate** `identifier` (`identifiers.capture`'s
     `{"value": None, "candidates": [...]}` shape) is resolved and compared
     by `_resolve_multi_candidate_identifier` first; the winning single
     record (if the candidates agreed) then goes through the SAME
     author-overlap guard below as any other unambiguous fetch -- resolve-
-    all-and-compare only decides whether there IS a single work to trust,
-    not whether that work's author matches intake's own already-known one."""
+    all-and-compare only decides whether there IS a single work to fill
+    gaps from, not whether that work's author matches intake's own
+    already-known one."""
     merged = dict(biblio)
     merged["publisher"] = NOT_ATTEMPTED if fmt != "pdf" else UNAVAILABLE
     if identifier is None:
@@ -675,10 +719,10 @@ def _merge_identifier_fields(
         return merged, identifier
 
     provenance = lookup["source"]
-    merged["author"] = _bibliographic_field(lookup.get("author"), provenance)
-    merged["title"] = _bibliographic_field(lookup.get("title"), provenance)
-    merged["date"] = _bibliographic_field(lookup.get("date"), provenance)
-    merged["publisher"] = _bibliographic_field(lookup.get("publisher"), provenance)
+    merged["author"] = _fill_if_empty(biblio["author"], lookup.get("author"), provenance)
+    merged["title"] = _fill_if_empty(biblio["title"], lookup.get("title"), provenance)
+    merged["date"] = _fill_if_empty(biblio["date"], lookup.get("date"), provenance)
+    merged["publisher"] = _fill_if_empty(merged["publisher"], lookup.get("publisher"), provenance)
     return merged, identifier
 
 
@@ -751,15 +795,18 @@ def intake(
     unobtainable evidence rather than as damning.
 
     For a PDF, an ISBN/DOI found in the front matter is also looked up
-    against Open Library/Crossref (issue #326) and merged into
-    author/title/date/publisher (`_merge_identifier_fields`) -- independent
-    of `client`, since the lookup is a free, cached network call, not a
-    paid model call. A capture with more than one distinct identifier
-    resolves every candidate and compares them (`_resolve_multi_candidate_
-    identifier`): candidates that agree on the work proceed like any other
-    fetch, candidates that disagree abstain. Either way, a single fetch is
-    still gated by the same-work identity guard. `bib_transport` is a
-    mockable `httpx` transport for that lookup
+    against Open Library/Crossref (issue #326) and used to FILL any empty
+    author/title/date/publisher field (`_merge_identifier_fields`) --
+    independent of `client`, since the lookup is a free, cached network
+    call, not a paid model call. A field the embedded-metadata/title-page
+    read already resolved is kept unchanged; the fetch never overwrites it.
+    A capture with more than one distinct identifier resolves every
+    candidate and compares them (`_resolve_multi_candidate_identifier`):
+    candidates that agree on the work fill gaps like any other fetch,
+    candidates that disagree abstain and fill nothing. Either way, a
+    single fetch is still gated by the same-work identity guard before it
+    may fill anything. `bib_transport` is a mockable `httpx` transport for
+    that lookup
     (`httpx.MockTransport`, the same seam `axial.llm.OpenRouterClient`
     already uses); `None` uses a real `httpx.Client` in production.
     `bib_cache_dir` overrides where the raw lookup response is cached

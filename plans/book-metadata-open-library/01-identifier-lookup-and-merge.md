@@ -277,3 +277,20 @@ Then  the record is produced exactly as intake does today, with `identifier: nul
   spelling variant the title-substring check does not recognize as
   agreeing (a small, measured false-abstention cost). Reported to the
   founder for a decision rather than resolved unilaterally.
+- 2026-07-23 **third and final correction: gap-fill, not overwrite.** The
+  founder reframed the contract entirely rather than patching the
+  overwrite design further: the fetch now fills an EMPTY field only
+  (`author`/`title`/`date` == `unavailable`); a field the embedded-
+  metadata/title-page read already resolved is kept unchanged, always.
+  `publisher` (always empty, never captured before) still fills whenever a
+  fetch resolves and the guard passes. Both prior safeguards (resolve-all-
+  and-compare's disagreement abstention, the author-overlap guard) are
+  kept unchanged, gating whether a fill happens rather than whether an
+  overwrite happens. This closes the Mann near-miss structurally: every
+  Mann volume already has a correct local author/title/date, so a fill
+  never touches any of them, and `caspersen-unrecognized-states`'s title-
+  substring miss becomes low-stakes (a missed `publisher`, never a
+  corruption) -- explicitly NOT chased with fuzzier title matching
+  (over-engineering tripwire: no fuzzy matching for a no-corruption case).
+  See `specs/PRODUCT.md` §7.13's "Gap-fill, not overwrite" for the shipped
+  description.
