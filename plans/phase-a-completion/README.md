@@ -119,18 +119,37 @@ caveat.
 
 The recorded track: `docs/exploration/hybrid-tagging-classifier.md` +
 `docs/eval/02-hybrid-tagging-distillation.md`. Runs **on top of** a done Phase A.
-Sized so it needs **no full-corpus LLM run** (see Notes).
+Sized so it needs **no full-corpus LLM run** (see Notes). Scoping decisions —
+vector store, dimensionality reduction, embedding model, staleness tracking,
+notebook tooling, issue decomposition — are settled in **DEC-35**, not left open
+here.
 
-| # | Slice | Issue | Goal |
-|---|-------|-------|------|
-| 5a | embedding pass + vector store | [#296](https://github.com/Muhanad-husn/axial/issues/296) | Net-new: embed every chunk once and persist the vectors **in a real vector store**, not a flat array — 5c/5d/5e all issue nearest-neighbour queries (see *Vector store*, Notes). The v0 chunker is embedding-free by design (§7.5); this is a *different job* (distillation representation), not a chunking change. Cheap and one-time. |
-| 5b | readiness map | [#297](https://github.com/Muhanad-husn/axial/issues/297) | HDBSCAN over all chunk embeddings after **dimensionality reduction** (unsupervised — no LLM; density clustering needs the reduction step, see *Feature engineering*, Notes). Emit the readiness map: which tags sit in tight learnable regions vs. smear as noise; identify the `-1` noise set as the LLM-routed tail. Cluster ids start at 0 — the `-1`/route split is the load-bearing detail. |
-| 5c–5e | distillation eval | [#298](https://github.com/Muhanad-husn/axial/issues/298) | **5c** LLM-label a cluster-stratified ~6–9k sample (not 17k; learning-curve-driven; stratified by 5b's clusters so generalization is safe, not hopeful — feature quality sets the number). **5d** light classifier head per graduated axis on frozen embeddings; a tag graduates only at gold-parity with the teacher within noise; per-class abstention automates the confident fraction, defers the rest. **5e** eval-02 quality-per-dollar vs the all-LLM baseline, referee = the ~120-chunk gold set; out-of-sample spot-check = drift monitor. Verdict decides build vs stay-all-LLM. |
+| # | Slice | Issue(s) | Goal |
+|---|-------|----------|------|
+| 5a | embedding pass + vector store | [#296](https://github.com/Muhanad-husn/axial/issues/296) | Net-new: embed every chunk once (local sentence-transformer, DEC-35) and persist in **LanceDB** (DEC-35) — 5c/5d/5e all issue nearest-neighbour queries. The v0 chunker is embedding-free by design (§7.5); this is a *different job* (distillation representation), not a chunking change. Also defines the corpus-pin staleness manifest convention every later stage-5 artifact reuses (DEC-35). Cheap and one-time. |
+| 5b | readiness map | [#297](https://github.com/Muhanad-husn/axial/issues/297) | HDBSCAN over all chunk embeddings after **PCA** reduction (production path; UMAP is notebook-only visualization, DEC-35). Emit the readiness map: which tags sit in tight learnable regions vs. smear as noise; identify the `-1` noise set as the LLM-routed tail. Cluster ids start at 0 — the `-1`/route split is the load-bearing detail. |
+| 5c | stratified teacher labels | [#347](https://github.com/Muhanad-husn/axial/issues/347) | LLM-label a cluster-stratified ~6–9k sample (not 17k; learning-curve-driven; stratified by 5b's clusters so generalization is safe, not hopeful). Same worker/ledger/checkpoint shape as the stage-4 retag — dispatch concurrent workers, not a serial pass. |
+| 5d | head classifiers, one issue per axis | [#348](https://github.com/Muhanad-husn/axial/issues/348) `role_in_argument`, [#349](https://github.com/Muhanad-husn/axial/issues/349) `empirical_scope`, [#350](https://github.com/Muhanad-husn/axial/issues/350) `field`, [#351](https://github.com/Muhanad-husn/axial/issues/351) `claim_type`, [#352](https://github.com/Muhanad-husn/axial/issues/352) `theory_school` | Light classifier head per axis on PCA-reduced embeddings; a tag graduates only at gold-parity with the teacher within noise; per-class abstention automates the confident fraction, defers the rest. **File-disjoint across axes — the real concurrency opportunity in stage 5, dispatch as concurrent worktrees.** `polities_touched` excluded (many-valued, not a single-class problem). |
+| 5e | quality-per-dollar verdict | [#353](https://github.com/Muhanad-husn/axial/issues/353) | eval-02 quality-per-dollar vs the all-LLM baseline, referee = the ~120-chunk gold set; out-of-sample spot-check = drift monitor. Waits on every 5d axis issue's verdict. Verdict decides build vs stay-all-LLM. |
+
+#347–#353 are sub-issues of the tracking issue **[#298](https://github.com/Muhanad-husn/axial/issues/298)**
+(no longer taken as a PR directly — it was decomposed 2026-07-23 so 5c/5d/5e each
+land as their own PR and 5d's five axes can run concurrently).
 
 Verdict → if it proves out, it is **spec drift**: raise the build issues, founder
 adjudicates, spec-author revises PRODUCT.md, TDD harness builds it. If it does
 not, "stay all-LLM" is a successful, honest eval and Phase A still closed at
 stage 4.
+
+**Session-start protocol for stage 5 (mirrors stages 0–3's parallel-lane
+pattern).** A session picking up stage 5 reads this file and `TRACKER.md`'s
+status board, then runs `gh issue list` (or the GitHub plugin equivalent) scoped
+to the open sub-issues under #298 to see which are still unstarted. Anything
+whose dependency column above is already satisfied and that has no open PR is a
+candidate for immediate dispatch; when more than one such issue exists (as with
+5d's five axis issues once #347 lands), spin one worktree per issue and dispatch
+them concurrently rather than serially — the same lane pattern used for stage
+0's four feature lanes.
 
 ## Dependencies
 
@@ -227,31 +246,47 @@ the limiter, not file conflict).
 - **DEC-23 across the whole plan.** No source text in any committed artifact —
   not in source-meta records (1c), not in run logs (0b), not in the readiness
   map or classifier metadata (5b/5d). Ids, values, and short reasons only.
-- **Vector store — flagged, not decided (5a).** A flat `.npy` stores 17k vectors
-  fine; the reason to reach for a real vector DB is *queries*, not storage. Three
-  stage-5 mechanisms are nearest-neighbour lookups: the exploration's LLM-as-
-  oversampler (find chunks near a rare tag by similarity), the out-of-sample
-  drift monitor (5e), and `-1` triage. All want **ANN with metadata filtering**
-  (search within a `source_id`/axis). Selection axes to weigh when the time
-  comes: embedded/local (LanceDB, Chroma, FAISS+sidecar) vs server (Qdrant,
-  pgvector); metadata-filtered ANN as a hard requirement; deterministic,
-  pinnable persistence (corpus pin, DEC-23); and scale — ~17k now but ~60–80k at
-  120+ sources. **Cross-track note:** Phase B's retrieval loop (#253/#254) needs
-  a similarity store too, so this choice likely serves both — but it crosses
-  v0's deliberate embedding-free boundary (§7.5), so it is net-new infra and a
-  spec-drift-adjacent decision, not a quiet add. Decide at 5a, not before.
-- **Feature engineering — flagged, not decided (5b/5c/5d).** Reduction is
-  load-bearing, not cosmetic: HDBSCAN degrades in raw high-dim embedding space
-  (distance concentration), so density clustering needs a reduction step first.
-  It also feeds the learning curve directly — cleaner features saturate sooner,
-  which shrinks 5c's sample below ~9k. Open considerations to carry: **PCA**
-  (deterministic, cheap, pins cleanly, preserves global structure) vs **UMAP**
-  (better-separated clusters but stochastic — fights the repo's determinism
-  contracts unless seeded and pinned); whether clustering (5b) and classification
-  (5d) want *different* representations (reduced/whitened for density, full or
-  lightly-reduced + a linear head for the classifier); **L2-normalisation** for
-  cosine geometry and standardisation before reduction; and possibly per-cluster
-  local reduction for a cleaner sub-problem (the doc's per-cluster instinct).
-  Any reduction step must be pinned/reproducible like every other stage. None of
-  this is decided here — it is recorded so it does not slip into 5b as an
-  afterthought.
+- **Vector store — decided (DEC-35): LanceDB.** Embedded/local, no server
+  process, native metadata-filtered ANN, deterministic file persistence. Serves
+  all three stage-5 nearest-neighbour mechanisms (LLM-as-oversampler, 5e's
+  drift monitor, `-1` triage) and likely Phase B's retrieval loop (#253/#254)
+  too — still net-new infra crossing v0's embedding-free boundary (§7.5), built
+  at 5a (#296).
+- **Feature engineering — decided (DEC-35): PCA for every production artifact,
+  UMAP notebook-only.** Reduction is load-bearing, not cosmetic: HDBSCAN
+  degrades in raw high-dim embedding space, so density clustering needs a
+  reduction step first, and cleaner features saturate 5c's learning curve
+  sooner. PCA is deterministic and pins cleanly, matching every other stage's
+  reproducibility contract; UMAP produces better-separated clusters but is
+  stochastic even seeded across library versions, so it is used only inside
+  5b's notebook to *look at* cluster structure — never as the array a
+  classifier or HDBSCAN actually trains on. L2-normalisation + standardisation
+  precede reduction. Whether clustering (5b) and classification (5d) end up
+  wanting different PCA dimensionality is a 5b/5d measurement, not decided here.
+- **Embedding model — decided (DEC-35): local sentence-transformer.** No
+  embedding client exists in `llm.py` today. A small CPU-friendly encoder is
+  deterministic, has zero per-call cost at ~17k–80k chunks, and doesn't depend
+  on the configured OpenRouter models exposing an embedding endpoint. Not the
+  same "no local model hosting" concern as the LLM tagger (§4 non-goal 3 is
+  about a local *generative* model).
+- **Reproducibility / corpus-state staleness — decided (DEC-35): extend
+  corpus_pin (#248), don't invent a parallel mechanism.**
+  `src/axial/eval/corpus_pin.py` already hashes exactly what stage 5 needs to
+  key artifacts on — `vault_snapshot_hash` (a sha256 over every
+  `(chunk_id, tags)` pair, so it moves whenever corpus size/composition/tag
+  distribution moves), per-source `content_hash`, and `ingest_code_sha`. Every
+  stage-5 artifact (embedding manifest, cluster assignments, each trained
+  classifier) records the pin id/hash it was built from; a `check-staleness`
+  operation recomputes the current pin and diffs it, so an operator can tell
+  "this still matches production" from "corpus moved, re-derive" without
+  guessing. Defined once, at 5a, where the first artifact exists.
+- **Notebook / visualization tooling — decided (DEC-35): new `distill`
+  dependency group.** `pyproject.toml` had no `jupyter`/`ipykernel`/
+  `matplotlib`/`plotly` before this scoping pass. Stage 5 is classical
+  data-science work, not just pipeline code — embedding projections, HDBSCAN
+  persistence/size/`-1`-share, the readiness map, teacher-label sample
+  composition, per-axis confusion matrices, and quality-per-dollar comparisons
+  all need a look-and-tune surface before a classifier locks in. Lives in its
+  own group, not `dependencies` (not runtime pipeline) and not `dev` (not CI
+  tooling), alongside the new runtime deps (`sentence-transformers`, `lancedb`,
+  `scikit-learn`, `hdbscan`, `umap-learn`).

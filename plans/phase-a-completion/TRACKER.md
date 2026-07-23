@@ -16,8 +16,11 @@ as slices land. Issues remain the system of record; this is the map over them.
   post-retag vault-write (30/30), 4.2 eval (simulated, provisional per DEC-32), 4.3
   schema freeze (DEC-34, real corpus-wide numbers), 4.4 distribution recorded
   ([`docs/eval/04-frozen-tag-distribution.md`](../../docs/eval/04-frozen-tag-distribution.md)).
-  Next is stage 5 (HDBSCAN distillation), a separate build. *Stage 4 — live state* below
-  is kept as the incident history, not current state.
+  **Stage 5 scoped (DEC-35, same day): vector store, dimensionality reduction, embedding
+  model, and corpus-state staleness tracking all decided; #298 split into 7 sub-issues
+  (#347–#353) for concurrent dispatch; notebook tooling added to `pyproject.toml`.** No
+  stage-5 code written yet. *Stage 4 — live state* below is kept as the incident history,
+  not current state.
 
 ## Read-me-first (30-second orient)
 
@@ -522,10 +525,25 @@ extract` for source_meta; `data/xref/`'s "never clear" assumption; now `tags_dir
 reaching `run_tag` via the runner). Read the actual call site, not just the function's
 own docstring, before trusting a plan's claim about corpus-scale behavior.
 
-### Stage 5 — HDBSCAN distillation eval (gated behind stage 4)
-- ☐ 5a #296 — embedding pass + vector store
-- ☐ 5b #297 — HDBSCAN readiness map + cluster-(-1) router
-- ☐ 5c–5e #298 — stratified teacher labels → head classifiers → quality-per-dollar verdict
+### Stage 5 — HDBSCAN distillation eval (gated behind stage 4, now CLOSED)
+
+**Scoping done 2026-07-23 (DEC-35), before any code.** Vector store = LanceDB,
+reduction = PCA production / UMAP notebook-only, embeddings = local
+sentence-transformer, staleness = corpus_pin (#248) extended, notebook tooling
+= new `distill` dependency group. #298 decomposed into 7 sub-issues so 5d's
+five axes can run as concurrent worktrees — see `README.md` stage 5 and DEC-35
+for the full reasoning. Nothing below is built yet.
+
+- ☐ 5a #296 — embedding pass + vector store (LanceDB) + corpus-pin manifest convention
+- ☐ 5b #297 — HDBSCAN readiness map (PCA) + cluster-(-1) router — depends on 5a
+- ☐ 5c #347 — stratified teacher labels — depends on 5a, 5b, #294
+- ☐ 5d #348 — head classifier: `role_in_argument` — depends on 5c; **concurrent with #349–#352**
+- ☐ 5d #349 — head classifier: `empirical_scope` — depends on 5c; **concurrent with #348, #350–#352**
+- ☐ 5d #350 — head classifier: `field` — depends on 5c; **concurrent with #348–#349, #351–#352**
+- ☐ 5d #351 — head classifier: `claim_type` (blind axis) — depends on 5c; **concurrent with #348–#350, #352**
+- ☐ 5d #352 — head classifier: `theory_school` (blind axis) — depends on 5c; **concurrent with #348–#351**
+- ☐ 5e #353 — quality-per-dollar verdict — depends on all of #348–#352
+- Tracking issue: #298 (no longer taken as a PR directly; see its body)
 
 ## Next action
 
