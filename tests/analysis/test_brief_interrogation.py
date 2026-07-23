@@ -13,8 +13,9 @@ Then  the emitted interrogation result has `premises_found` containing an
       entry whose `premise` names the Tunisian-transition premise and whose
       `assessment` is "contradicts"
   And `disposition` is one of "refuse" or "proceed_bounded" -- never "proceed"
-  And the recorded prompt at AXIAL_LLM_RECORD_PATH contains the coverage
-      counts read from the vault query API
+  And the recorded prompt at AXIAL_LLM_RECORD_PATH contains the exact
+      coverage counts read from the vault query API (the corpus's one real
+      polity entry, and the brief's own case at its real, zero, count)
   And the command exits 0
 
 Given the same brief and a canned response carrying a non-null `refusal`
@@ -45,15 +46,32 @@ the real, shared `data/` tree -- via `uv run --project <repo>` (required,
 not bare `uv run`, since the subprocess's cwd is deliberately not the repo
 checkout).
 
-Seam decision 2 -- the fixture vault proves absence-means-zero directly
+Seam decision 2 -- the fixture vault proves absence-means-zero directly,
+and the coverage assertion checks the EXACT rendered lines, not a loose
+substring
 -----------------------------------------------------------------------
 The fixture vault carries exactly one prose note, whose `polities_touched`
 names "Freedonia" only. Per axial.query.reader.coverage_count's own
 documented contract, a polity no chunk touches is simply absent from its
-result -- so "Tunisia" is never a key in `coverage_count()`'s return value
-for this vault, and its coverage_count is 0 by that absence, without this
-test (or the implementation) having to fabricate a chunk that explicitly
-"has zero of something".
+result -- so this vault's real `coverage_count()` is exactly
+`{"Freedonia": 1}`; "Syria" (the brief's own `case`) and "Tunisia" are both
+absent from it.
+
+`axial.brief.interrogate.render_coverage_section` (issue #252 review: an
+earlier free-text scan over case/request that guessed which polities to
+look up was dropped -- it merged adjacent Title-Case words into one wrong
+candidate and never matched an adjectival form against the corpus's real
+key, in both cases fabricating a count instead of showing the real one)
+renders exactly two things: every polity `coverage_count()` itself names
+(here, "Freedonia: 1 chunks"), plus the brief's `case` unconditionally,
+explicit-zero when the corpus is silent on it ("Syria: 0 chunks" for this
+vault). This test asserts both of those EXACT rendered lines rather than a
+loose "some digit is present somewhere" substring check, so a regression
+back to a fabricated/mis-keyed line (the bug this review caught) would fail
+it. "Tunisia" itself is never a coverage-table entry under this design
+(it's neither the case nor a corpus-real polity) -- it appears only in the
+request's own free text, which the recorded prompt is asserted NOT to
+mistake for a coverage line.
 
 Seam decision 3 -- the `record` provider observes the assembled prompt
 -----------------------------------------------------------------------
@@ -258,9 +276,30 @@ def test_contradicted_premise_never_proceeds_clean_and_carries_real_coverage(
     prompts = _read_recorded_prompts(record_path)
     assert prompts, f"expected at least one recorded prompt at {record_path}"
     combined_prompt_text = "\n".join(prompts)
-    assert "Tunisia" in combined_prompt_text and "0" in combined_prompt_text, (
-        "expected the recorded prompt to carry the real vault coverage_count "
-        f"for Tunisia (0, since no fixture chunk touches it), got:\n"
+
+    # The EXACT rendered coverage line for the corpus's one real polity
+    # entry -- proof that a genuine axial.query.reader.coverage_count()
+    # value (not a fabricated or free-text-guessed one) reached the prompt.
+    assert "Freedonia: 1 chunks" in combined_prompt_text, (
+        "expected the recorded prompt to carry coverage_count()'s own real "
+        f"entry (Freedonia: 1, the fixture vault's one real chunk), got:\n"
+        f"{combined_prompt_text!r}"
+    )
+    # The brief's own `case` ("Syria") is absent from this fixture's real
+    # coverage -- it must still be rendered explicitly at 0, never omitted:
+    # a case the corpus is silent on is itself a first-class interrogation
+    # signal (§7.2).
+    assert "Syria: 0 chunks" in combined_prompt_text, (
+        "expected the recorded prompt to render the brief's own case at its "
+        f"real (zero) coverage_count, got:\n{combined_prompt_text!r}"
+    )
+    # "Tunisia" is neither the case nor a real corpus polity under this
+    # vault, so it must never get a fabricated coverage-table entry of its
+    # own (issue #252 review's regression) -- it may appear only inside the
+    # verbatim request text, never as a "Tunisia: ..." coverage line.
+    assert "Tunisia:" not in combined_prompt_text, (
+        "expected no fabricated 'Tunisia: ...' coverage line -- Tunisia is "
+        f"neither the case nor a real vault polity for this fixture, got:\n"
         f"{combined_prompt_text!r}"
     )
 

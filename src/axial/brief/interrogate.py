@@ -12,13 +12,13 @@ the single place that sets `disposition`, from the model's own
 not trusted to grade its own answer).
 
 Coverage counts come from `axial.query.reader.coverage_count()`, never from
-the model's recall of the corpus: a premise naming a polity the corpus does
-not cover is tested against a real, zero-or-low chunk count rendered into
-the prompt, not against what the model "remembers" reading. A polity absent
-from `coverage_count()`'s result has zero chunks touching it (the module's
-own documented convention) -- looked up here with `.get(polity, 0)` so a
-truly uncovered polity still reaches the prompt as an explicit `0`, not a
-silent omission a reader could mistake for "not checked."
+the model's recall of the corpus, and never from a free-text guess at which
+polities a premise names: the prompt renders `coverage_count()`'s entire
+real key set (§7.5's own small, deterministic result), plus the brief's
+`case` unconditionally -- rendered at `0` when the corpus is silent on it
+rather than omitted, since a case with zero coverage is itself a
+first-class interrogation signal. See `render_coverage_section`'s own
+docstring for why the earlier free-text-scan design was replaced.
 
 On `refuse`, per §7.2, the run is COMPLETE: this module raises nothing
 special for a refusal -- the CLI persists the result and exits 0 exactly as
@@ -29,7 +29,6 @@ on any other disposition, and simply never goes on to make a synthesis call
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -210,59 +209,45 @@ def parse_interrogation_response(
     return premises_found, bounds_applied, refusal
 
 
-# A run of one-or-more consecutive Title-Case words ("Tunisia", "United
-# States") -- a deliberately simple, deterministic heuristic for which
-# polity names in `case`/`request` free text are worth a coverage lookup
-# before the model call. It is over-inclusive (a sentence-initial capitalized
-# word is swept in too), which only ever adds a harmless extra line to the
-# prompt's coverage table -- it never suppresses a real premise's polity, and
-# it makes no judgment itself (the model still decides support/contradiction/
-# silence); it merely decides what real data the model is shown.
-_POLITY_CANDIDATE_RE = re.compile(r"\b[A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+)*\b")
+def render_coverage_section(case: str, counts: dict[str, int]) -> str:
+    """Render the corpus's REAL coverage as prompt text, one line per
+    polity: every polity `counts` (`axial.query.reader.coverage_count()`'s
+    own result) actually names, plus `case` unconditionally.
 
-
-def candidate_polities(case: str, request: str) -> list[str]:
-    """Candidate polity names to look up coverage for (§7.2): the brief's
-    own `case` (always, per §7.1: "case -- the anchor: a free-text
-    polity") plus every Title-Case word run found in `case` and `request`,
-    deduplicated and sorted for a deterministic prompt."""
-    candidates = {case.strip()}
-    # Scanned separately, never joined by a whitespace character the regex
-    # itself treats as a word-run separator (`\s` matches a joining "\n"
-    # too) -- joining them first would let a case ending mid-run bleed into
-    # the request's own first word (e.g. "Syria" + "Tunisia's..." wrongly
-    # reads as one run, "Syria\nTunisia").
-    candidates.update(_POLITY_CANDIDATE_RE.findall(case))
-    candidates.update(_POLITY_CANDIDATE_RE.findall(request))
-    return sorted(candidates)
-
-
-def render_coverage_section(polities: list[str], counts: dict[str, int]) -> str:
-    """Render `polities`' corpus coverage as prompt text, one line per
-    polity, looked up via `counts.get(polity, 0)` (§7.2/§7.5: a polity
-    `coverage_count` does not name has zero chunks touching it -- rendered
-    here explicitly as `0`, never silently omitted, so a thin/absent
-    coverage finding is carried into the prompt as real data, not left for
-    the model to infer or recall)."""
-    return "\n".join(f"- {polity}: {counts.get(polity, 0)} chunks" for polity in polities)
+    No guessing from free text: `counts` already IS the corpus's real,
+    deterministic key set, so showing it in full is both simpler and more
+    honest than trying to spot which polities a premise names (a Title-Case
+    text scan over `case`/`request` was tried and dropped -- issue #252
+    review -- because it merges adjacent capitalized words into one wrong
+    candidate, e.g. "Does Tunisia" instead of "Tunisia", and never matches
+    an adjectival form like "Egyptian" against the corpus's own "Egypt"
+    key; either failure fabricates a count instead of showing the real
+    one). `case` is added even when `counts` does not name it -- rendered
+    at `0`, never omitted -- because a case the corpus is silent on is
+    itself a first-class interrogation signal (§7.2), not a gap to hide.
+    Sorted by polity name for a deterministic prompt (`coverage_count`
+    already returns ascending order; re-sorting here covers `case` too,
+    however it interleaves)."""
+    polities = dict(counts)
+    polities.setdefault(case.strip(), 0)
+    return "\n".join(f"- {polity}: {polities[polity]} chunks" for polity in sorted(polities))
 
 
 def compose_prompt(brief: Brief, coverage_counts: dict[str, int]) -> str:
     """Assemble the interrogation prompt (§7.2): the brief's case, request,
-    and lens, plus a coverage table for every candidate polity
-    (`candidate_polities`), each count read from `coverage_counts` (the
-    real `axial.query.reader.coverage_count()` result, not model recall).
-    The model is asked to surface every smuggled premise, judge it against
-    the coverage table, state what the corpus can/cannot answer, and refuse
-    only when the request cannot be answered as posed at all."""
+    and lens, plus a coverage table of the corpus's real, full polity
+    coverage (`render_coverage_section`), read straight from
+    `coverage_counts` (the real `axial.query.reader.coverage_count()`
+    result, not model recall, and not a free-text guess at which polities
+    matter). The model is asked to surface every smuggled premise, judge it
+    against the coverage table, state what the corpus can/cannot answer,
+    and refuse only when the request cannot be answered as posed at all."""
     lens_line = (
         f'Lens: "{brief.lens}"'
         if brief.lens
         else "Lens: (none specified; the analysis stage will choose one)"
     )
-    coverage_section = render_coverage_section(
-        candidate_polities(brief.case, brief.request), coverage_counts
-    )
+    coverage_section = render_coverage_section(brief.case, coverage_counts)
 
     return f"""You are the brief-interrogation pre-pass of an analysis engine (specs/PHASE-B.md §7.2). Before any retrieval or synthesis runs, find every premise smuggled into this brief's case and request, and test each one against the corpus's REAL coverage below -- never against what you recall or assume about the world.
 

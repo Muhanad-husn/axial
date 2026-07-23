@@ -16,7 +16,6 @@ from axial.brief.interrogate import (
     InterrogationParseError,
     InvalidAssessmentError,
     PremiseAssessment,
-    candidate_polities,
     compose_prompt,
     disposition_for,
     interrogate,
@@ -158,27 +157,55 @@ def test_disposition_for_ignores_any_model_supplied_disposition():
 # -- coverage lookup --------------------------------------------------------
 
 
-def test_candidate_polities_includes_case_and_title_case_mentions():
-    candidates = candidate_polities("Syria", "Tunisia's transition followed the same sequence")
-    assert "Syria" in candidates
-    assert "Tunisia" in candidates
+def test_render_coverage_section_renders_every_real_polity_coverage_count_names():
+    """`render_coverage_section` shows `coverage_count()`'s own real key
+    set in full -- no free-text guessing at which polities a premise
+    names, so a polity's real (possibly large) count is never overwritten
+    by a fabricated one."""
+    section = render_coverage_section("Syria", {"Tunisia": 200, "Freedonia": 3})
+    assert "Tunisia: 200 chunks" in section
+    assert "Freedonia: 3 chunks" in section
 
 
-def test_render_coverage_section_includes_zero_for_absent_polity():
-    """A polity with no coverage is absent from `coverage_count()`'s own
-    result (axial.query.reader's documented convention) -- the render must
-    still show it as an explicit 0, not omit it, so a thin-coverage finding
-    reaches the prompt as real data rather than a silent gap."""
-    section = render_coverage_section(["Tunisia", "Syria"], {"Syria": 12})
+def test_render_coverage_section_shows_case_at_zero_when_corpus_is_silent_on_it():
+    """A case the corpus does not cover is a first-class interrogation
+    signal (§7.2) -- rendered explicitly at 0, never omitted, exactly like
+    any other polity `coverage_count()` doesn't name."""
+    section = render_coverage_section("Tunisia", {"Syria": 12})
     assert "Tunisia: 0 chunks" in section
     assert "Syria: 12 chunks" in section
 
 
-def test_compose_prompt_carries_real_coverage_counts_not_model_recall():
-    brief = _brief(case="Syria", request="Tunisia's transition followed the same sequence")
-    prompt = compose_prompt(brief, {"Syria": 7})
-    assert "Tunisia: 0 chunks" in prompt
+def test_render_coverage_section_never_shows_case_twice_when_it_has_real_coverage():
+    section = render_coverage_section("Syria", {"Syria": 7, "Freedonia": 1})
+    assert section.count("Syria:") == 1
+    assert "Syria: 7 chunks" in section
+
+
+def test_compose_prompt_carries_real_coverage_counts_not_a_fabricated_one():
+    """The regression this test locks (issue #252 review): an adjectival/
+    merged free-text guess ("Does Tunisia", "Egyptian") must never stand in
+    for the corpus's real count -- the prompt must carry
+    `coverage_counts`' own real value for a polity the corpus DOES cover,
+    even though the request phrases it awkwardly ("Does Tunisia's ...")."""
+    brief = _brief(
+        case="Syria",
+        request="Does Tunisia's transition follow the same broad sequence as Syria's?",
+    )
+    prompt = compose_prompt(brief, {"Tunisia": 200, "Syria": 7})
+    assert "Tunisia: 200 chunks" in prompt
     assert "Syria: 7 chunks" in prompt
+    # The request text itself legitimately contains "Does Tunisia" (verbatim
+    # quoted above) -- the regression this guards is a fabricated COVERAGE
+    # LINE keyed on that merged phrase, not the phrase's mere presence.
+    assert "Does Tunisia:" not in prompt
+
+
+def test_compose_prompt_shows_case_at_zero_when_absent_from_coverage_counts():
+    brief = _brief(case="Syria", request="How did local order change?")
+    prompt = compose_prompt(brief, {"Freedonia": 3})
+    assert "Syria: 0 chunks" in prompt
+    assert "Freedonia: 3 chunks" in prompt
 
 
 # -- pass registration ------------------------------------------------------
