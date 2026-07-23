@@ -24,6 +24,18 @@ from axial.validators.attribution import (
     format_attribution_report,
     validate_attribution,
 )
+from axial.validators.coverage import (
+    REASON_CONFIDENCE_EXCEEDS_COVERAGE,
+    REASON_MISSING_COVERAGE_ENTRY,
+    REASON_MISSING_CONFIDENCE_DISCLOSURE,
+    CoverageConfidenceFailure,
+    CoverageConfidenceReport,
+    compute_coverage_map,
+    coverage_band_for,
+    format_coverage_confidence_report,
+    format_coverage_map,
+    validate_coverage_and_confidence,
+)
 
 __all__ = [
     "AttributionFailure",
@@ -32,4 +44,14 @@ __all__ = [
     "SamePassModelError",
     "format_attribution_report",
     "validate_attribution",
+    "REASON_CONFIDENCE_EXCEEDS_COVERAGE",
+    "REASON_MISSING_COVERAGE_ENTRY",
+    "REASON_MISSING_CONFIDENCE_DISCLOSURE",
+    "CoverageConfidenceFailure",
+    "CoverageConfidenceReport",
+    "compute_coverage_map",
+    "coverage_band_for",
+    "format_coverage_confidence_report",
+    "format_coverage_map",
+    "validate_coverage_and_confidence",
 ]

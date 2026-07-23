@@ -110,3 +110,16 @@ drive:
   # English source rejected) costs a manual re-check; a false positive
   # (non-English let through) pollutes the corpus and the eval.
   language_accept_threshold: 0.9
+
+# Per-polity coverage-band cut points (issue #260, PRD §7.7): a stated,
+# tunable hypothesis over the ~17k-chunk vault, in the spirit of the
+# Phase-A chunk band (PRODUCT.md §7.7) -- src/axial/validators/coverage.py
+# reads this via _resolve_coverage_bands, falling back to its own
+# DEFAULT_MODERATE_FLOOR/DEFAULT_DENSE_FLOOR when this file or either key
+# is absent. `thin` is corpus_chunk_count below moderate_floor, `moderate`
+# is [moderate_floor, dense_floor), `dense` is dense_floor and above.
+# Proven by inspection (`axial brief coverage <brief_id>`) against the real
+# corpus before it gates anything -- tuning it is out of this slice's scope.
+coverage_bands:
+  moderate_floor: 20
+  dense_floor: 100
