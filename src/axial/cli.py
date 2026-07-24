@@ -28,6 +28,8 @@ from axial.chunk import (
 from axial.codebook import CodebookError, load_codebook
 from axial.distill.classify import AXES as DISTILL_CLASSIFY_AXES
 from axial.distill.classify import ClassifyError, run_classify
+from axial.distill.classify_embedding import AXES as DISTILL_CLASSIFY_EMBEDDING_AXES
+from axial.distill.classify_embedding import ClassifyEmbeddingError, run_classify_embedding
 from axial.distill.embed import EmbedError, run_embed
 from axial.distill.readiness import ReadinessError, run_readiness
 from axial.drive import DEFAULT_SECRETS_PATH as DRIVE_SECRETS_PATH
@@ -558,15 +560,18 @@ def build_parser() -> argparse.ArgumentParser:
     classify_parser = distill_subparsers.add_parser(
         "classify",
         help=(
-            "stage-5d TF-IDF + LogisticRegression classifier for the claim_type/"
-            "theory_school axes (DEC-37/38): trains on the vault's existing tags "
-            "(gold chunks excluded), scores against the independent gold sheet at "
-            "a confidence-threshold sweep -- data/distill/classify_<axis>_manifest.json. "
-            "Eval artifact only; never wired into the production tag pass."
+            "stage-5d classifier eval: TF-IDF + LogisticRegression for claim_type/"
+            "theory_school (DEC-37/38), LogisticRegression on dense embeddings for "
+            "field (DEC-39) -- trains on the corpus's existing tags (gold chunks "
+            "excluded), scores against the independent gold sheet at a confidence-"
+            "threshold sweep -- data/distill/classify_<axis>_manifest.json. Eval "
+            "artifact only; never wired into the production tag pass."
         ),
     )
     classify_parser.add_argument(
-        "axis", choices=list(DISTILL_CLASSIFY_AXES), help="the tag axis to train a classifier for"
+        "axis",
+        choices=list(DISTILL_CLASSIFY_AXES) + list(DISTILL_CLASSIFY_EMBEDDING_AXES),
+        help="the tag axis to train a classifier for",
     )
 
     gate_parser = subparsers.add_parser(
@@ -1331,8 +1336,11 @@ def _distill_readiness_map() -> int:
 
 def _distill_classify(axis: str) -> int:
     try:
-        result = run_classify(axis)
-    except ClassifyError as exc:
+        if axis in DISTILL_CLASSIFY_EMBEDDING_AXES:
+            result = run_classify_embedding(axis)
+        else:
+            result = run_classify(axis)
+    except (ClassifyError, ClassifyEmbeddingError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

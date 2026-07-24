@@ -363,7 +363,10 @@ def test_classify_unknown_axis_rejected_by_the_cli(isolated_vault_root):
     root = isolated_vault_root
     (root / "data").mkdir(parents=True, exist_ok=True)
 
-    result = _run_axial(root, "distill", "classify", "field")
+    # "field" used to be the unknown-axis case here, but #350 gave it a real
+    # classifier (`axial.distill.classify_embedding`) -- use a string that is
+    # not, and never will be, a real tag axis.
+    result = _run_axial(root, "distill", "classify", "not-a-real-axis")
 
     assert result.returncode != 0
     assert "invalid choice" in (result.stdout + result.stderr)
