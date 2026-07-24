@@ -1,0 +1,16 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- D:\axial\.claude\worktrees\fix-chunk-apparatus-quarantine\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial\.claude\worktrees\fix-chunk-apparatus-quarantine
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 5 items
+
+tests/ingestion/test_substantive_gate.py::test_content_apparatus_gate_drops_dense_citations_but_keeps_light_citation_prose PASSED [ 20%]
+tests/ingestion/test_substantive_gate.py::test_content_apparatus_gate_makes_zero_model_calls_on_wholly_clean_prose PASSED [ 40%]
+tests/ingestion/test_substantive_gate.py::test_content_apparatus_gate_fails_open_to_prose_when_classification_call_fails PASSED [ 60%]
+tests/ingestion/test_substantive_gate.py::test_chunk_min_side_merges_subfloor_chunk_into_same_section_predecessor PASSED [ 80%]
+tests/ingestion/test_substantive_gate.py::test_per_pass_reasoning_on_for_envelope_and_content_apparatus_off_for_tag_artifacts_xref PASSED [100%]
+
+============================== 5 passed in 7.22s ==============================
+exit=0
