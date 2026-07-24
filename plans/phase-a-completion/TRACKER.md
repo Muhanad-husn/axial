@@ -554,11 +554,11 @@ both blind axes once checked against gold. See *Stage 5 — live state* below.
 - ✅ 5a #296 — embedding pass + vector store (LanceDB) + corpus-pin manifest convention — PR #357 merged
 - ✅ 5b #297 — HDBSCAN readiness map (PCA) + cluster-(-1) router — **PR #358 merged 2026-07-24 (`0118f68`).** Real-corpus-validated. **Role demoted (DEC-37): kept as a correctly-implemented diagnostic (ARI≈0 against every tag axis is itself the finding), not a gate for 5c**
 - ✅ 5c #347 — stratified teacher labels — **redirected deliverable executed and issue closed 2026-07-24 (DEC-39).** Gold coverage now exists for all three head axes on the same 120-chunk sample; labels in `data/gold/labels/label_sheet.xlsx`
-- ◐ 5d #348 — head classifier: `role_in_argument` — **built 2026-07-24, PR #371 open (not yet merged).** Real-corpus: 63.9% accuracy @ 50.8% coverage (conf≥0.6), clears the 53.3% teacher baseline at every threshold checked, but lands on a different point of the curve than DEC-39's original probe (57.3%/62.5%) — same technique, flagged plainly in the PR, not a settled graduation call (no independent SELF/INTER reliability figure for this axis)
+- ✅ 5d #348 — head classifier: `role_in_argument` — **built and merged 2026-07-24, PR #371 (`ce5b26c`).** Real-corpus: 63.9% accuracy @ 50.8% coverage (conf≥0.6), clears the 53.3% teacher baseline at every threshold checked, but lands on a different point of the curve than DEC-39's original probe (57.3%/62.5%) — same technique, flagged plainly in the PR, not a settled graduation call (no independent SELF/INTER reliability figure for this axis)
 - ✅ 5d #349 — head classifier: `empirical_scope` — **CLOSED NEGATIVE 2026-07-24.** TF-IDF check run (the one untried lever): 61.2% accuracy @ 70.8% coverage (conf≥0.6) — still below the teacher's 64.2%, and higher-threshold "wins" are on thin, shrinking samples (n=64/51) with heavily overlapping CIs. Neither embeddings (DEC-39) nor TF-IDF beat the teacher for this axis. **Recommendation: stay LLM-only, no classifier built.**
-- ◐ 5d #350 — head classifier: `field` — **built 2026-07-24, PR #371 open (not yet merged).** Real-corpus: 78.0% accuracy @ 83.3% coverage (conf≥0.6), clears the teacher's 76.7%, inside DEC-39's cited 90% CI. Strongest result of the whole investigation.
+- ✅ 5d #350 — head classifier: `field` — **built and merged 2026-07-24, PR #371 (`ce5b26c`).** Real-corpus: 78.0% accuracy @ 83.3% coverage (conf≥0.6), clears the teacher's 76.7%, inside DEC-39's cited 90% CI. Strongest result of the whole investigation.
 - ✅ 5d #351/#352 — `claim_type`/`theory_school` TF-IDF classifier — **built and merged 2026-07-24, PR #366 (`7ffa51b`), both issues closed.** `src/axial/distill/classify.py` + `axial distill classify <axis>` — independently real-corpus-validated by the orchestrator before merge (reproduced DEC-38's exact numbers against the live vault/gold sheet: `claim_type` 75.0%/27.6% cov, `theory_school` 70.0%/34.5% cov, both at conf≥0.6). Eval artifact only — not wired into production tagging (DEC-32); that remains separate spec drift if ever pursued
-- ☐ 5e #353 — quality-per-dollar verdict — all five axes now have a gold verdict; unblocked once the founder picks which of #348/#349/#350 to build
+- ☐ 5e #353 — quality-per-dollar verdict — all five axes now have a gold verdict AND a build/close disposition (#348/#350 merged PR #371, #349 closed negative). Unblocked, the only stage-5d item left
 - Tracking issue: #298 — comment reflecting DEC-37/38/39 posted 2026-07-24; also filed 2026-07-24: **PR #365** merged (unrelated cleanup, stray corpus-pin file)
 - Also filed 2026-07-24: **PR #365** (unrelated cleanup — commits a stray `evals/corpus_pin/sim-2026-07-23.json` left untracked by an earlier brief-interrogation run), open, not yet merged
 
@@ -795,10 +795,11 @@ closing both issues: **[PR #371](https://github.com/Muhanad-husn/axial/pull/371)
 TF-IDF check (a read-only measurement, no worktree needed) in parallel with the two
 builds — **closed negative**, see the status board above.
 
-**Next:** founder review/merge of PR #371. Once merged: #349 needs no further build (stays
-LLM-only); #353 (quality-per-dollar verdict) is unblocked — every one of the five stage-5d
-axes now has either a shipped classifier (`claim_type`, `theory_school`, `field`,
-`role_in_argument`) or a closed-negative recommendation (`empirical_scope`).
+**PR #371 approved and merged 2026-07-24 (`ce5b26c`); worktree/branch cleaned up.** Every
+one of the five stage-5d axes now has either a shipped classifier (`claim_type`,
+`theory_school`, `field`, `role_in_argument`) or a closed-negative recommendation
+(`empirical_scope`, stays LLM-only). **Next: #353 (quality-per-dollar verdict) is
+unblocked** — the only stage-5d item left.
 
 ## Decisions settled during planning (a builder should know)
 
