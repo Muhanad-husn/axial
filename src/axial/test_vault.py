@@ -623,6 +623,96 @@ def test_run_vault_write_wraps_tag_not_in_schema_error_into_vault_error(monkeypa
         vault_mod.run_vault_write(source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir)
 
 
+# --- per-note fault isolation ---------------------------------------------
+#
+# Regression: a real 31-source Phase A ingestion rerun hit a bare, uncaught
+# `FileNotFoundError` (an `OSError` subclass) from `write_chunk_note`'s
+# `path.write_text` when one chunk's note path exceeded Windows' 260-char
+# MAX_PATH -- and that ONE bad write aborted every other note for that
+# source's multi-hundred-chunk book. Founder-directed fix: per-note fault
+# isolation (catch, log, skip, continue), not a filename-length fix.
+
+
+def test_run_vault_write_skips_one_failed_chunk_note_and_continues(monkeypatch, tmp_path, capsys):
+    """One chunk's note-write raising `OSError` must not abort the rest of
+    the source's notes -- it is logged to stderr and skipped, every OTHER
+    note still writes, and the skip is reported via
+    `VaultWriteResult.skipped_count`."""
+    import axial.vault as vault_mod
+
+    source_path, envelopes_dir = _arrange_stored_envelope(tmp_path)
+    vault_dir = tmp_path / "vault"
+
+    ok_record = dict(_RECORD)
+    failing_record = {
+        **_RECORD,
+        "chunk_id": "paper-abc123_2_comparative-cases_001",
+        "section": "Comparative Cases",
+        "chunk_text": "Second chunk's own prose text.",
+    }
+
+    monkeypatch.setattr(vault_mod, "run_tag", lambda *a, **k: [ok_record, failing_record])
+    monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [])
+    monkeypatch.setattr(vault_mod, "run_xref", lambda *a, **k: [])
+
+    real_write_chunk_note = vault_mod.write_chunk_note
+
+    def _flaky_write_chunk_note(record, *args, **kwargs):
+        if record["chunk_id"] == failing_record["chunk_id"]:
+            raise FileNotFoundError(
+                f"[Errno 2] No such file or directory: "
+                f"'<synthetic overlong path for {record['chunk_id']}>'"
+            )
+        return real_write_chunk_note(record, *args, **kwargs)
+
+    monkeypatch.setattr(vault_mod, "write_chunk_note", _flaky_write_chunk_note)
+
+    written = vault_mod.run_vault_write(
+        source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir
+    )
+
+    ok_note = vault_dir / "prose" / f"{ok_record['chunk_id']}.md"
+    failing_note = vault_dir / "prose" / f"{failing_record['chunk_id']}.md"
+
+    assert ok_note.is_file(), "expected the OTHER chunk's note to still be written"
+    assert not failing_note.exists(), (
+        "expected the failing chunk's note to be skipped, not partially written"
+    )
+    assert list(written) == [ok_note]
+    assert written.skipped_count == 1
+
+    stderr = capsys.readouterr().err
+    assert failing_record["chunk_id"] in stderr, (
+        f"expected a stderr diagnostic naming the failed chunk_id, got {stderr!r}"
+    )
+    assert "skipping" in stderr
+    assert "1 note(s) skipped" in stderr, (
+        f"expected an aggregate skip-count summary in stderr, got {stderr!r}"
+    )
+
+
+def test_run_vault_write_raises_when_every_note_write_fails(monkeypatch, tmp_path):
+    """A source where EVERY attempted note write fails must not report a
+    quiet empty success -- it raises `AllNotesFailedError` (mirrors
+    `axial.tag.AllChunksQuarantinedError`'s all-fail-is-loud philosophy)."""
+    import axial.vault as vault_mod
+
+    source_path, envelopes_dir = _arrange_stored_envelope(tmp_path)
+    vault_dir = tmp_path / "vault"
+
+    monkeypatch.setattr(vault_mod, "run_tag", lambda *a, **k: [_RECORD])
+    monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [])
+    monkeypatch.setattr(vault_mod, "run_xref", lambda *a, **k: [])
+
+    def _always_fail(*a, **k):
+        raise OSError("synthetic failure for regression coverage")
+
+    monkeypatch.setattr(vault_mod, "write_chunk_note", _always_fail)
+
+    with pytest.raises(vault_mod.AllNotesFailedError):
+        vault_mod.run_vault_write(source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir)
+
+
 # --- backlinks (issue #34 slice 02 -- xref-backlinks) -------------------------
 
 _XREF_PAIRS = [

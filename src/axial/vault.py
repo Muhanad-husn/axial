@@ -68,6 +68,7 @@ wrapped into a `VaultError` subclass here too.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -190,6 +191,23 @@ class XrefFailedError(VaultError):
     def __init__(self, cause: XrefError):
         self.cause = cause
         super().__init__(str(cause))
+
+
+class AllNotesFailedError(VaultError):
+    """Raised when every note write this run attempted failed (per-note
+    fault isolation below quarantines a single failed write and continues,
+    mirroring `axial.tag.TaggedRecords`'s some-succeed-some-fail-is-a-
+    success philosophy) -- but a source that attempted at least one note
+    and produced zero is a real failure worth surfacing loudly, not a
+    quiet empty success (mirrors `axial.tag.AllChunksQuarantinedError`)."""
+
+    def __init__(self, source_id: str, attempted: int):
+        self.source_id = source_id
+        self.attempted = attempted
+        super().__init__(
+            f"every note write for {source_id!r} failed ({attempted} attempted), "
+            f"leaving zero notes written -- see stderr above for each failure"
+        )
 
 
 # `_default_vault_dir` now lives in `axial.paths` (issue #249 F1) and is
@@ -396,6 +414,41 @@ def write_artifact_note(
     return path
 
 
+def _write_note_or_skip(kind: str, item_id: str, write_fn) -> Path | None:
+    """Call the zero-arg `write_fn` (one note write, returning its `Path`),
+    catching `OSError` -- the filesystem-boundary failure class (a note
+    path exceeding Windows' 260-char MAX_PATH, a permission error, a full
+    disk, ...) -- so one bad note write never aborts the rest of the
+    source's notes (issue: a real 31-source ingestion rerun hit
+    `FileNotFoundError`, an `OSError` subclass, from an oversized
+    chunk_id-derived path and lost every other chunk's note for that
+    source). Prints a stderr diagnostic naming the failed `kind`/`item_id`
+    and the path, and returns `None` on failure. Anything other than
+    `OSError` (`KeyError`, `AttributeError`, ...) still propagates --
+    those indicate a real code defect, not an environmental failure."""
+    try:
+        return write_fn()
+    except OSError as exc:
+        print(
+            f"vault: failed to write {kind} note {item_id!r}: {exc} -- skipping",
+            file=sys.stderr,
+        )
+        return None
+
+
+class VaultWriteResult(list):
+    """A `list` of note paths (prose then artifact) that also surfaces
+    `skipped_count` -- how many individual note writes this run caught and
+    skipped via `_write_note_or_skip` rather than letting abort the whole
+    source, mirroring `axial.tag.TaggedRecords.quarantine_count`. Every
+    existing caller that only ever indexed, iterated, or `len()`'d the
+    returned value is unaffected."""
+
+    def __init__(self, paths: list[Path], skipped_count: int = 0):
+        super().__init__(paths)
+        self.skipped_count = skipped_count
+
+
 def build_backlink_maps(
     pairs: list[dict[str, str]],
 ) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
@@ -434,7 +487,7 @@ def run_vault_write(
     artifacts_dir: Path | None = None,
     xref_dir: Path | None = None,
     source_meta_dir: Path | None = None,
-) -> list[Path]:
+) -> VaultWriteResult:
     """Run vault write on `source_path`: read the stored envelope and the
     stored source-metadata record (never recomputing either -- `source_meta_dir`
     defaults to `axial.intake.SOURCE_META_DIR`, and an absent record raises
@@ -457,6 +510,15 @@ def run_vault_write(
     fresh with its backlink list computed up front, so a rerun naturally
     overwrites rather than accumulates -- idempotent by construction, never
     by patching an existing file in place.
+
+    Each individual note write is fault-isolated: a write that raises
+    `OSError` (e.g. a note path exceeding Windows' 260-char MAX_PATH, a
+    permission error) is logged to stderr and skipped rather than aborting
+    every other note for the source. The returned `VaultWriteResult` (a
+    `list` of every note path actually written) carries `skipped_count`,
+    the number of notes dropped this way. A source where every attempted
+    note write failed raises `AllNotesFailedError` instead of returning an
+    empty success.
     """
     path = Path(source_path)
     try:
@@ -543,28 +605,76 @@ def run_vault_write(
     if vault_dir is None:
         vault_dir = _default_vault_dir(config_path)
 
-    prose_paths = [
-        write_chunk_note(
-            record,
-            envelope,
-            source_meta,
-            vault_dir,
-            artifact_refs=chunk_to_artifacts.get(record["chunk_id"]),
+    # Per-note fault isolation (issue: a real 31-source ingestion rerun hit
+    # an uncaught `FileNotFoundError` from one oversized chunk-id-derived
+    # note path, which aborted every OTHER note for that source too). Each
+    # write is attempted independently via `_write_note_or_skip`; a failed
+    # write is logged to stderr and skipped rather than propagated, so the
+    # rest of the source's notes still land. `skipped_count` surfaces how
+    # many were dropped this way (mirrors `axial.tag.TaggedRecords.
+    # quarantine_count`).
+    skipped_count = 0
+
+    prose_paths: list[Path] = []
+    for record in records:
+        path = _write_note_or_skip(
+            "chunk",
+            record["chunk_id"],
+            lambda record=record: write_chunk_note(
+                record,
+                envelope,
+                source_meta,
+                vault_dir,
+                artifact_refs=chunk_to_artifacts.get(record["chunk_id"]),
+            ),
         )
-        for record in records
-    ]
-    artifact_paths = [
-        write_artifact_note(
-            record, vault_dir, cited_by=artifact_to_chunks.get(record["artifact_id"])
+        if path is None:
+            skipped_count += 1
+        else:
+            prose_paths.append(path)
+
+    artifact_paths: list[Path] = []
+    for record in artifact_records:
+        path = _write_note_or_skip(
+            "artifact",
+            record["artifact_id"],
+            lambda record=record: write_artifact_note(
+                record, vault_dir, cited_by=artifact_to_chunks.get(record["artifact_id"])
+            ),
         )
-        for record in artifact_records
-    ]
+        if path is None:
+            skipped_count += 1
+        else:
+            artifact_paths.append(path)
+
+    # A source where every attempted note write failed is a real failure
+    # (nothing usable was produced), not a quiet empty success -- mirrors
+    # `axial.tag.AllChunksQuarantinedError`'s some-succeed-some-fail-is-fine
+    # / all-fail-is-loud philosophy. A source with nothing to write at all
+    # (records and artifact_records both empty) is unaffected -- that is
+    # today's ordinary empty-source outcome, not a failure.
+    attempted = len(records) + len(artifact_records)
+    if attempted > 0 and not prose_paths and not artifact_paths:
+        raise AllNotesFailedError(source_id, attempted)
+
+    # Aggregate visibility for this source (every existing caller --
+    # `axial run vault-write`, `axial ingest`, `axial vault write` --
+    # already streams stderr, so this reaches the operator alongside the
+    # per-note diagnostics above, never only as a return-value attribute
+    # nobody happens to read).
+    if skipped_count:
+        print(
+            f"vault: {skipped_count} note(s) skipped for {source_id!r} "
+            f"(see individual diagnostics above)",
+            file=sys.stderr,
+        )
 
     # The xref checkpoint (issue #110) is a failure-recovery journal, not a
     # cross-run cache: now that this vault-write invocation has fully
-    # completed (xref detected AND every note materialized), clear it so an
-    # independent later run recomputes xref fresh. A run that failed before
-    # reaching here leaves the checkpoint in place, so its resume is cheap.
+    # completed (xref detected AND every note materialized or explicitly
+    # skipped), clear it so an independent later run recomputes xref fresh.
+    # A run that failed before reaching here leaves the checkpoint in place,
+    # so its resume is cheap.
     xref_checkpoint_path(source_id, xref_dir).unlink(missing_ok=True)
 
-    return prose_paths + artifact_paths
+    return VaultWriteResult(prose_paths + artifact_paths, skipped_count)
