@@ -812,6 +812,33 @@ def test_validate_multi_value_tag_rejects_an_undeclared_subtag_naming_axis_and_s
     assert "not-a-real-subtag" in message
 
 
+def test_validate_multi_value_tag_rejects_a_dict_shaped_subtag_without_crashing():
+    """Fix-lane regression test (live 2026-07-24 crash, source "Muslim
+    society (Gellner, Ernest)"): a model dialect returns one `subtags`
+    element as a JSON object instead of a string. `_validate_subtags`'s
+    membership check (`normalized not in declared`, a `set`) would raise a
+    bare, unrecognized `TypeError: unhashable type: 'dict'` before this
+    fix -- escaping `run_tag`'s per-chunk quarantine loop entirely and
+    crashing the whole source. It must instead raise `TagNotInSchemaError`
+    (naming the offending dict), the SAME mechanism a genuine
+    out-of-vocabulary subtag already uses, so `apply_correction_reask` can
+    re-ask and `run_tag`'s quarantine loop can catch it."""
+    from axial.tag import TagNotInSchemaError, validate_multi_value_tag
+
+    malformed_subtag = {"id": "formation:bellicist"}
+    parsed = {
+        "primary": "state-formation",
+        "secondary": None,
+        "subtags": [malformed_subtag],
+    }
+
+    with pytest.raises(TagNotInSchemaError) as exc_info:
+        validate_multi_value_tag(_SCHEMA_WITH_MULTI_VALUE_AXES, "claim_type", parsed)
+
+    assert exc_info.value.tag == malformed_subtag
+    assert exc_info.value.axis_name == "claim_type"
+
+
 def test_validate_multi_value_tag_normalizes_a_prefixed_primary_in_place():
     """`validate_multi_value_tag` mutates `parsed["primary"]` to the
     normalized suffix (issue #96), so callers reading `parsed` afterward

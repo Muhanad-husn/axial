@@ -270,6 +270,11 @@ CLAIM_TYPE_AXIS = "claim_type"
 OUT_OF_VOCAB_SUBTAG = "sub:modernist"
 CORRECTED_SUBTAG = "nationalism:modernist"
 
+# Fix-lane regression fixture (live 2026-07-24 crash): a subtag returned as
+# a JSON object instead of a string -- a real, observed model dialect --
+# rather than merely an out-of-vocabulary string.
+MALFORMED_OBJECT_SUBTAG = {"id": "sub:modernist"}
+
 # argparse's fallback error for an as-yet-nonexistent subcommand/flag. Any of
 # these substrings in the combined output means the target subcommand's
 # logic was never actually exercised. Mirrors tests/test_vault_write.py and
@@ -755,6 +760,91 @@ def test_persistently_out_of_vocab_subtag_still_errors_after_bounded_reask(
         f"re-ask was silently skipped (too few calls), if it looped past "
         f"the single bounded attempt (too many), or if the run stopped "
         f"short of attempting every chunk (too few)."
+    )
+
+
+def test_object_shaped_subtag_quarantines_instead_of_crashing_the_source(
+    isolated_vault_root,
+):
+    """Fix-lane regression test (live 2026-07-24 crash, source "Muslim
+    society (Gellner, Ernest)"): a `claim_type.subtags` element returned as
+    a JSON OBJECT instead of a string -- a real, observed model dialect --
+    on EVERY tag-pass call, including the bounded correction re-ask.
+
+    Before this fix, `_validate_subtags`'s membership check (`normalized
+    not in declared`, a `set`) raised a bare, unrecognized `TypeError:
+    unhashable type: 'dict'` on the object-shaped subtag -- a class `run_
+    tag`'s per-chunk quarantine loop does not catch, so it escaped all the
+    way up through `apply_correction_reask` and `run_tag` and crashed the
+    WHOLE source with a bare traceback (never reaching the bounded
+    correction re-ask at all: exactly 1 tag-pass-family call per chunk,
+    not 2).
+
+    After this fix, the malformed shape raises `TagNotInSchemaError` --
+    the same mechanism a genuine out-of-vocabulary subtag already uses --
+    so it is re-askable (issue #102) and, on persisting through the
+    bounded re-ask, quarantines the chunk (issue #329) exactly like
+    `test_persistently_out_of_vocab_subtag_still_errors_after_bounded_
+    reask` above: `axial vault write` still exits non-zero overall (every
+    chunk quarantines, so `AllChunksQuarantinedError`), but WITHOUT a bare
+    `TypeError`/"unhashable" crash anywhere in the output, and with the
+    bounded re-ask genuinely firing once per chunk before it quarantines
+    (exactly 2 tag-pass-family calls per chunk, not 1)."""
+    root = isolated_vault_root
+    _arrange_stored_envelope(root)
+
+    schema = load_schema(str(DOMAIN_DIR))
+    _assert_schema_invariants(schema)
+    expected_chunk_count = _arrange_expected_chunk_count(root)
+
+    payload = _baseline_tag_payload(schema)
+    payload["claim_type"]["subtags"] = [MALFORMED_OBJECT_SUBTAG]
+
+    record_path = root.parent / f"{root.name}_object_shaped_subtag_record.jsonl"
+
+    result = _run_vault_write(
+        "record",
+        str(THESIS_PAPER_PDF),
+        cwd=root,
+        extra_env={
+            STUB_TAG_RESPONSE_ENV_VAR: json.dumps(payload),
+            RECORD_PATH_ENV_VAR: str(record_path),
+        },
+    )
+    _assert_not_argparse_fallback(result, "vault write")
+
+    combined = result.stdout + result.stderr
+    assert "TypeError" not in combined and "unhashable" not in combined, (
+        f"expected NO bare TypeError/'unhashable' crash anywhere in the "
+        f"output -- an object-shaped subtag must be handled by the same "
+        f"quarantine mechanism a genuine out-of-vocabulary subtag already "
+        f"uses, never escape as an unrecognized exception -- got combined "
+        f"output: {combined!r}"
+    )
+
+    assert result.returncode != 0, (
+        f"expected a non-zero exit code for `axial vault write` when the "
+        f"tag-pass response's claim_type.subtags is the object-shaped "
+        f"{MALFORMED_OBJECT_SUBTAG!r} on EVERY call -- every chunk "
+        f"quarantines (leaving zero usable tags), so "
+        f"`AllChunksQuarantinedError` should still make the run exit "
+        f"non-zero (a DIFFERENT non-zero-exit path than a bare crash), "
+        f"got exit code 0\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+    )
+    assert CLAIM_TYPE_AXIS in combined, (
+        f"expected the offending axis {CLAIM_TYPE_AXIS!r} to be named in "
+        f"the error output, got combined output: {combined!r}"
+    )
+
+    tag_family_calls = _count_tag_family_calls(record_path)
+    assert tag_family_calls == 2 * expected_chunk_count, (
+        f"expected exactly 2 tag-pass-family LLM call(s) per chunk (one "
+        f"original ask + exactly one bounded correction re-ask, mirroring "
+        f"a genuine out-of-vocabulary subtag's own contract) across all "
+        f"{expected_chunk_count} chunk(s), got {tag_family_calls} recorded "
+        f"non-chunk-pass call(s) in {record_path}. Too few (e.g. 1 per "
+        f"chunk) would mean the malformed shape crashed BEFORE the bounded "
+        f"re-ask ever fired, exactly today's (pre-fix) bug."
     )
 
 
