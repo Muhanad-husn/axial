@@ -1,5 +1,5 @@
-"""Inner unit tests for the stage-5d dense-embedding classifier (issue #350,
-DEC-39).
+"""Inner unit tests for the stage-5d dense-embedding classifier -- `field`
+(issue #350) and `role_in_argument` (issue #348), DEC-39.
 
 Most tests use an injected fake `train_fn` -- a plain `(vectors, labels) ->
 predict_fn` closure, mirroring `axial.distill.classify`'s own `train_fn` seam
@@ -10,10 +10,19 @@ tiny cleanly-separable synthetic vectors) -- fast and cheap at unit-test
 scale, not marked `slow`. The embeddings store itself is always real (a tiny
 LanceDB table written directly, `pytest.importorskip("lancedb")` at module
 level) -- this module never mocks its own read path.
+
+Most of the mechanics below (`_drop_rare_classes`, the manifest/threshold
+sweep, the loud-failure paths) are already axis-generic and exercised once,
+against `field`. The `role_in_argument`-specific tests near the bottom exist
+only to prove the second `AXIS_METADATA_COLUMNS`/`AXIS_GOLD_COLUMNS` entry
+actually wires up correctly -- a flat metadata column (`role_in_argument`
+itself) rather than `field`'s nested-`primary` projection
+(`field_primary`) -- not to duplicate every field-axis case.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -88,8 +97,8 @@ def _fake_train_fn_factory(prediction_by_id: dict[str, tuple[str, float]], vecto
 # --- AXES ------------------------------------------------------------------
 
 
-def test_axes_is_field_only():
-    assert AXES == ("field",)
+def test_axes_includes_both_dec39_validated_axes():
+    assert set(AXES) == {"field", "role_in_argument"}
 
 
 # --- _load_gold_labels -------------------------------------------------------
@@ -328,8 +337,6 @@ def test_run_classify_embedding_excludes_gold_drops_rare_class_writes_manifest(t
     assert by_threshold[0.6].covered_count == 1  # only s0's 0.95 clears 0.6
     assert by_threshold[0.6].accuracy_on_covered == pytest.approx(1.0)
 
-    import json
-
     manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["axis"] == "field"
     assert manifest["config"]["technique"] == "logistic_regression_on_dense_embeddings"
@@ -391,3 +398,80 @@ def test_run_classify_embedding_real_train_fn_separates_clean_clusters(tmp_path:
 
     assert result.full_coverage_accuracy == pytest.approx(1.0)
     assert result.teacher_gold_agreement == pytest.approx(1.0)
+
+
+# --- role_in_argument: proves the second AXIS_METADATA_COLUMNS entry ----------
+# (a flat metadata column, not field's nested-`primary` projection) wires up
+# through the same axis-generic machinery exercised above for `field`.
+
+
+def _role_row(chunk_id: str, vector: list[float], role_in_argument: str) -> dict:
+    return {"chunk_id": chunk_id, "vector": vector, "role_in_argument": role_in_argument}
+
+
+def test_load_gold_labels_role_in_argument_reads_gold_suffixed_column(tmp_path: Path):
+    sheet_path = _write_gold_sheet(
+        tmp_path / "label_sheet.xlsx",
+        ("chunk_id", "role_in_argument", "role_in_argument_gold"),
+        [
+            {
+                "chunk_id": "g1",
+                "role_in_argument": "role:claim",
+                "role_in_argument_gold": "role:evidence",
+            },
+            {"chunk_id": "g2", "role_in_argument": "role:claim", "role_in_argument_gold": ""},
+        ],
+    )
+
+    chunk_ids, eval_records, teacher_gold_agreement = _load_gold_labels(
+        sheet_path, "role_in_argument"
+    )
+
+    assert chunk_ids == {"g1", "g2"}
+    assert eval_records == [("g1", "role:evidence")]
+    assert teacher_gold_agreement == pytest.approx(0.0)  # role:claim vs role:evidence disagree
+
+
+def test_run_classify_embedding_role_in_argument_excludes_gold_writes_manifest(tmp_path: Path):
+    evals_dir = _stage_pin(tmp_path)
+    embeddings_dir = tmp_path / "emb.lance"
+
+    # 7 "role:claim" chunks (one, c0, is also a gold row) and 2 "role:digression"
+    # chunks (below the min-class-count floor of 6, dropped).
+    rows = [_role_row(f"c{i}", [float(i), 0.0], "role:claim") for i in range(7)]
+    rows += [_role_row(f"d{i}", [0.0, float(i)], "role:digression") for i in range(2)]
+    _write_embeddings(embeddings_dir, rows)
+
+    gold_sheet_path = _write_gold_sheet(
+        tmp_path / "gold.xlsx",
+        ("chunk_id", "role_in_argument", "role_in_argument_gold"),
+        [
+            {
+                "chunk_id": "c0",
+                "role_in_argument": "role:claim",
+                "role_in_argument_gold": "role:claim",
+            }
+        ],
+    )
+
+    vectors_to_ids = {(0.0, 0.0): "c0"}
+    train_fn = _fake_train_fn_factory({"c0": ("role:claim", 0.95)}, vectors_to_ids)
+
+    result = run_classify_embedding(
+        "role_in_argument",
+        embeddings_dir=embeddings_dir,
+        gold_sheet_path=gold_sheet_path,
+        manifest_path=tmp_path / "manifest.json",
+        evals_dir=evals_dir,
+        min_class_count=6,
+        train_fn=train_fn,
+    )
+
+    assert result.axis == "role_in_argument"
+    assert result.dropped_classes == ["role:digression"]
+    assert result.train_chunk_count == 6  # 7 role:claim minus the gold-excluded c0
+    assert result.gold_chunk_count == 1
+    assert result.full_coverage_accuracy == pytest.approx(1.0)
+
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["axis"] == "role_in_argument"

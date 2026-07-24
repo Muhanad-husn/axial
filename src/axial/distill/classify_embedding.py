@@ -1,49 +1,81 @@
-"""Stage-5d dense-embedding classifier for `field_primary` (issue #350,
-DEC-39, plan `plans/phase-a-completion/README.md` stage 5d).
+"""Stage-5d dense-embedding classifier for `field_primary` (issue #350) and
+`role_in_argument` (issue #348), DEC-39, plan
+`plans/phase-a-completion/README.md` stage 5d.
 
 DEC-37/38 found TF-IDF beats dense sentence embeddings for the two *blind*
 axes (`claim_type`/`theory_school`, `axial.distill.classify`). DEC-39 found
-the opposite for `field_primary` (this module) and, on a weaker margin,
-`role_in_argument`: a plain multinomial `LogisticRegression` trained
-directly on the dense vectors 5a already persisted (`axial.distill.embed`'s
-LanceDB store) is the measured-best technique. This module never re-embeds
-text -- it reads vectors straight out of that store, keyed by `chunk_id`,
-the same reuse `axial.distill.readiness` already established for its own
-clustering input. `sentence-transformers` is never imported here; if the
-store is missing, this fails loudly (`NoEmbeddingsToClassifyError`) rather
-than silently re-embedding (a different, uncontrolled input to what DEC-39
-actually measured).
+the opposite for `field_primary` and `role_in_argument` (this module,
+built as two separate issues/PRs and reconciled into one module afterward
+-- see "Two axes, one module" below): a plain multinomial
+`LogisticRegression` trained directly on the dense vectors 5a already
+persisted (`axial.distill.embed`'s LanceDB store) is the measured-best
+technique. This module never re-embeds text -- it reads vectors straight
+out of that store, keyed by `chunk_id`, the same reuse
+`axial.distill.readiness` already established for its own clustering input.
+`sentence-transformers` is never imported here; if the store is missing,
+this fails loudly (`NoEmbeddingsToClassifyError`) rather than silently
+re-embedding (a different, uncontrolled input to what DEC-39 actually
+measured).
 
-Only `field` is validated (DEC-39's gold check). `role_in_argument` (#348)
-and `empirical_scope` (#349, which DEC-39 found does NOT clear the bar) are
-each their own graduation call -- `AXIS_METADATA_COLUMNS`/`AXIS_GOLD_COLUMNS`
-below are a two-entry-ready dict specifically so a future axis on this same
-measured technique adds one entry, not a copy-pasted module (mirroring
+Two axes, one module -- `AXIS_METADATA_COLUMNS`/`AXIS_GOLD_COLUMNS`
+-----------------------------------------------------------------------
+`field` and `role_in_argument` are both DEC-39 graduation calls on the same
+technique; `empirical_scope` (#349, which DEC-39 found does NOT clear the
+bar) is not. `AXIS_METADATA_COLUMNS` maps each validated axis to its own
+column in the 5a embeddings store's flattened metadata
+(`axial.distill.embed._flatten_metadata`) -- `field` -> `field_primary`
+(nested under `primary` in vault frontmatter), `role_in_argument` ->
+`role_in_argument` (already flat) -- so a future axis on this same measured
+technique adds one dict entry, not a copy-pasted module (mirroring
 `axial.distill.classify`'s own "a future axis... gets its own small module"
 precedent, one level down: same technique, different axis, stays one
 module; a genuinely different technique still gets its own module).
+`AXIS_GOLD_COLUMNS` is derived (`f"{axis}_gold"`, see below).
 
 Gold-column wrinkle (DEC-37's citation, DEC-39's fix) -- why this module
 does NOT reuse `axial.distill.classify`'s gold-reading convention
 -----------------------------------------------------------------------
 For `claim_type`/`theory_school`, the gold sheet's own `claim_type`/
 `theory_school` columns ARE the independent gold judgment (DEC-29/30's
-blind coding method from the start). For `field` (and `role_in_argument`/
-`empirical_scope`), the ORIGINAL gold sheet's `field` column was a rubber-
-stamped copy of the tagger's own pre-filled production tag, never
+blind coding method from the start). For `field`/`role_in_argument` (and
+`empirical_scope`), the ORIGINAL gold sheet's plain-axis-name column was a
+rubber-stamped copy of the tagger's own pre-filled production tag, never
 independently judged -- trivially "1.0 agreement" against itself (DEC-37).
 DEC-39 re-labeled these three axes blind (no pre-fill shown) into new
 `field_gold`/`role_in_argument_gold`/`empirical_scope_gold` columns. This
 module reads `{axis}_gold` for the independent judgment, and computes the
 teacher's own gold agreement FRESH, from the sheet's own `{axis}` (tagger
 pre-fill) column against `{axis}_gold` -- NOT from
-`data/gold/labels/eval_report.json`'s `per_axis_agreement`, which for this
-axis is still the old rubber-stamped 1.0 (verified directly against the
-real gold sheet while building this module: comparing `field` to
-`field_gold` over the real 120-row sheet reproduces DEC-39's cited 76.7%
-exactly; `eval_report.json["per_axis_agreement"]["field"]` reads 1.0, the
-stale number). Reusing that report here would silently misreport the one
+`data/gold/labels/eval_report.json`'s `per_axis_agreement`, which for
+`field` is still the old rubber-stamped 1.0 and for `role_in_argument` has
+no entry at all (verified directly against the real gold sheet while
+building this module: comparing `field` to `field_gold` over the real
+120-row sheet reproduces DEC-39's cited 76.7% exactly;
+`eval_report.json["per_axis_agreement"]["field"]` reads 1.0, the stale
+number). Reusing that report here would silently misreport the one
 comparison number this module's whole acceptance bar hinges on.
+
+Real-corpus measurements (both independently re-validated against the real
+120-row gold sheet, `data/gold/labels/label_sheet.xlsx`, and the real 5a
+embeddings store)
+-----------------------------------------------------------------------
+`field`: full_coverage_accuracy 75.8%, teacher_gold_agreement 76.7% (the
+real gold sheet carries a plain `field` pre-fill column, so this computes);
+at `conf>=0.6`, 78.0% accuracy at 83.3% coverage -- clears the teacher.
+`role_in_argument`: full_coverage_accuracy 49.2%; at `conf>=0.6`, 63.9%
+accuracy at 50.8% coverage. The real gold sheet has no plain
+`role_in_argument` pre-fill column for this axis (only `_gold`), so
+`teacher_gold_agreement` reads `None` from a real run -- DEC-39's own
+cited 53.3% teacher-agreement figure comes from the decision log's earlier
+probe, not from anything this module computes automatically; every
+threshold checked here still clears that cited 53.3% baseline, but lands on
+a different point of the coverage/accuracy curve than DEC-39's originally
+published probe for this axis (57.3% at 62.5% coverage): same technique,
+same plain `LogisticRegression` fit, not a bit-for-bit reproduction of the
+earlier number -- noted here rather than silently treated as settled. This
+axis also has no independent SELF/INTER reliability figure the way the
+blind axes do (DEC-30) and 53.3% is itself a mediocre teacher baseline;
+treat it as a real but weaker automate-if-confident candidate.
 
 `scikit-learn`/`lancedb` (the `distill` dependency group) are imported
 lazily, inside `_default_train_fn`/`_load_embedding_lookup`, never at
@@ -84,9 +116,10 @@ from axial.eval import corpus_pin as _corpus_pin
 # axis -> its flattened metadata column in the 5a embeddings store
 # (`axial.distill.embed._flatten_metadata`), and axis -> the gold sheet's
 # independent-judgment column (DEC-39's `_gold` suffix -- see module
-# docstring). Only `field` is validated (DEC-39); adding a second axis on
-# this same technique is a one-line addition to each dict, not a new module.
-AXIS_METADATA_COLUMNS = {"field": "field_primary"}
+# docstring). `field`/`role_in_argument` are both validated (DEC-39); adding
+# a further axis on this same technique is a one-line addition to each
+# dict, not a new module.
+AXIS_METADATA_COLUMNS = {"field": "field_primary", "role_in_argument": "role_in_argument"}
 AXIS_GOLD_COLUMNS = {axis: f"{axis}_gold" for axis in AXIS_METADATA_COLUMNS}
 AXES = tuple(AXIS_METADATA_COLUMNS)
 
@@ -109,8 +142,8 @@ class ClassifyEmbeddingError(Exception):
 
 class UnknownAxisError(ClassifyEmbeddingError):
     """Raised when `axis` is not one of `AXES` -- this module implements
-    the dense-embedding technique DEC-39 validated for `field` only (see
-    module docstring)."""
+    the dense-embedding technique DEC-39 validated for `field` and
+    `role_in_argument` only (see module docstring)."""
 
     def __init__(self, axis: str):
         self.axis = axis

@@ -1,7 +1,9 @@
 # Eval 2 — hybrid-tagging distillation (cost axis)
 
 **Status:** foundation stub, stages 5a–5b shipped; 5d classifiers shipped for
-the two blind axes (#351/#352) and `field` (#350). **5d (`claim_type`/`theory_school`, issues
+the two blind axes (#351/#352) and the two dense-embedding axes, `field`
+(#350) and `role_in_argument` (#348), both reconciled into one module
+(`src/axial/distill/classify_embedding.py`). **5d (`claim_type`/`theory_school`, issues
 #351/#352, DEC-37/DEC-38):** `src/axial/distill/classify.py` (`axial distill
 classify claim_type|theory_school`) implements the ONE technique DEC-38
 measured as beating dense embeddings for these two axes — `TfidfVectorizer`
@@ -58,6 +60,32 @@ teacher; DEC-39's own notebook run cited 79.0% at 87.5% coverage for the
 same technique (a different one-off script, not this shipped module — the
 two are close, both clear the teacher, and 78.0% sits inside DEC-39's cited
 90% CI [72.3–85.3%]). Same manifest shape, same measurement-artifact-only
+status, same never-wired-into-`axial.tag.run_tag` posture as 5d's other
+modules.
+
+**5d (`role_in_argument`, issue #348, DEC-39):** same module
+(`src/axial/distill/classify_embedding.py`, `axial distill classify
+role_in_argument`), same technique, same `AXIS_METADATA_COLUMNS` dict —
+`role_in_argument` is already a flat column in the 5a metadata (no nested
+`primary`, unlike `field`), and the gold sheet's answer-key column is
+`role_in_argument_gold`. **Independently re-validated against the real
+corpus** (same 18,410-chunk vault, 120-gold sample, junctioned `data/`):
+`full_coverage_accuracy=49.2%`, `teacher_gold_agreement=None` (the real
+gold sheet carries no plain `role_in_argument` pre-fill column for this
+axis, only `_gold` — unlike `field`, so there is nothing to compare against;
+DEC-39's cited 53.3% teacher-agreement figure is from the decision log's
+earlier probe, not surfaced automatically by this manifest) — at
+`conf≥0.6`: **63.9% accuracy at 50.8% coverage**, clearing that cited
+53.3% baseline at every threshold checked (53.8%@75.8%, 63.9%@50.8%,
+68.3%@34.2%, 81.3%@13.3%). **Noted plainly, not hidden:** this lands on a
+different point of the coverage/accuracy curve than DEC-39's originally
+published probe for this axis (57.3% at 62.5% coverage) — same technique,
+same full-coverage number in the same ballpark, but not a bit-for-bit
+reproduction of the earlier headline figure. This axis also has no
+independent SELF/INTER reliability figure the way the blind axes do
+(DEC-30), and 53.3% is itself a mediocre teacher baseline — treat this as a
+real but weaker automate-if-confident candidate than `field`, not a settled
+graduation call. Same manifest shape, same measurement-artifact-only
 status, same never-wired-into-`axial.tag.run_tag` posture as 5d's other
 modules.
 

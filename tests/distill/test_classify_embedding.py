@@ -1,16 +1,16 @@
-"""Outer acceptance test for issue #350 (stage-5d: dense-embedding
-classifier for `field_primary`, DEC-39).
+"""Outer acceptance tests for the stage-5d dense-embedding classifier --
+`field` (issue #350) and `role_in_argument` (issue #348), DEC-39.
 
 Given the persisted 5a embedding store and an independent gold answer-key
 sheet
-When  `axial distill classify field` trains and evaluates the classifier
+When  `axial distill classify <axis>` trains and evaluates the classifier
 Then  it runs with zero LLM calls, and never re-embeds text (only sklearn
       touches the vectors)
 And   the gold-sampled chunk is excluded from training (leakage-free)
 And   a class below the min-training-example floor is dropped, not trained on
 And   `teacher_gold_agreement` is computed from the gold sheet's own
-      `field`-vs-`field_gold` columns (DEC-39's independent re-judgment),
-      NOT from `eval_report.json`'s stale rubber-stamped number for this axis
+      `<axis>`-vs-`<axis>_gold` columns (DEC-39's independent re-judgment),
+      NOT from `eval_report.json`'s stale/absent number for this axis
 And   the confidence-threshold split behaves correctly across multiple
       thresholds (coverage never increases as the threshold rises)
 And   no chunk_text appears anywhere in the emitted manifest (DEC-23)
@@ -21,8 +21,8 @@ DEC-37/DEC-38/DEC-39, `docs/eval/02-hybrid-tagging-distillation.md`.
 Isolation -- the isolated staging root (issue #68), same seam as
 `tests/distill/test_readiness_map.py`
 -----------------------------------------------------------------------
-`axial distill classify field` resolves `data/distill/embeddings.lance`,
-`data/gold/labels/label_sheet.xlsx`, `data/distill/classify_field_manifest.json`,
+`axial distill classify <axis>` resolves `data/distill/embeddings.lance`,
+`data/gold/labels/label_sheet.xlsx`, `data/distill/classify_<axis>_manifest.json`,
 and `evals/corpus_pin/` as plain paths relative to the process's cwd. This
 test runs the CLI as a subprocess with `cwd` set to `isolated_vault_root`,
 never touching the real, shared `data/` tree.
@@ -32,23 +32,28 @@ through the real sentence-transformer
 -----------------------------------------------------------------------
 Same reasoning as `tests/distill/test_readiness_map.py`: this module's own
 subject matter is the classifier, not the embedding pass (5a has its own
-coverage). `run_embed(..., encoder=<deterministic fake>)` -- the real
-`axial.distill.embed` injection seam -- places fixture chunks at known,
-well-separated coordinates and writes a real LanceDB store via a real
-subprocess CLI call, without downloading a sentence-transformer model.
+coverage). The `field` test below goes through `run_embed(..., encoder=
+<deterministic fake>)` -- the real `axial.distill.embed` injection seam --
+to also exercise the vault-note-to-metadata-column path; the
+`role_in_argument` test writes the LanceDB table directly (same "write the
+fixture directly, real behavior only where it's the thing under test" seam)
+since it does not need to re-prove that path a second time. Both stage a
+real corpus pin via `axial pin write` (the pin-resolution machinery is
+shared, axis-generic code -- see `classify_embedding.py`'s own docstring on
+why this module resolves a *current* pin rather than reading one back out
+of the embedding manifest).
 
-Gold-sheet fixture shape -- `field` (tagger pre-fill) vs `field_gold`
+Gold-sheet fixture shape -- `<axis>` (tagger pre-fill) vs `<axis>_gold`
 (independent judgment) deliberately disagree on one row
 -----------------------------------------------------------------------
-Real gold sheets, per DEC-39, carry BOTH the tagger's own pre-filled `field`
-value and the independently re-judged `field_gold` value in separate
-columns. This fixture's gold rows mostly agree (tagger correct) but one
-row's tagger pre-fill is deliberately wrong -- proving
-`teacher_gold_agreement` is computed from that comparison (0.8 here), not
-copied from some other source, and is a genuinely different number from
-`full_coverage_accuracy` (which the fixture keeps at 1.0, since the vectors
-themselves are cleanly separable regardless of what the tagger's own
-pre-fill said).
+Real gold sheets, per DEC-39, carry BOTH the tagger's own pre-filled `<axis>`
+value and the independently re-judged `<axis>_gold` value in separate
+columns. Each fixture's gold rows mostly agree (tagger correct) but at
+least one row's tagger pre-fill is deliberately wrong -- proving
+`teacher_gold_agreement` is computed from that comparison, not copied from
+some other source, and is a genuinely different number from
+`full_coverage_accuracy` (which the classifier predicts from the vector,
+not the tagger pre-fill).
 """
 
 from __future__ import annotations
@@ -309,3 +314,153 @@ def test_classify_field_fails_loudly_without_embeddings(isolated_vault_root):
     assert "embed" in result.stderr.lower(), (
         f"expected the failure to mention the missing embeddings store, got stderr: {result.stderr!r}"
     )
+
+
+# --- role_in_argument (issue #348) ---------------------------------------------
+#
+# Fixture design -- two well-separated clusters, one rare (dropped) class,
+# predictions/confidences verified against the real pipeline before being
+# hardcoded (same "verify then hardcode" precedent as the `field` fixture
+# above and `tests/distill/test_classify.py`).
+#
+# Cluster A (`role:claim`, 8 vectors near `(0, 0)`), cluster B
+# (`role:evidence`, 8 vectors near `(10, 10)`), cluster C (`role:digression`,
+# 3 vectors -- below the min-class-count floor of 6, dropped). Four gold
+# rows:
+#   - `a_000` reuses cluster A's own chunk_id (leakage-exclusion check); its
+#     tagger pre-fill is deliberately wrong (`role:evidence`) while
+#     `role_in_argument_gold` is correct (`role:claim`), so
+#     `teacher_gold_agreement` is a genuinely different number from
+#     `full_coverage_accuracy`.
+#   - `gold_b1`, at cluster B's own centroid -- correct, high confidence.
+#   - `gold_a2`, near the midpoint but closer to A -- correct, lower
+#     confidence (the point that makes the threshold curve move).
+#   - `gold_wrong`, at cluster B's centroid but gold-labelled `role:claim` --
+#     a genuine classifier miss, so `full_coverage_accuracy` is not a
+#     vacuous 1.0.
+
+
+def _write_role_embeddings_store(root: Path) -> None:
+    def row(chunk_id: str, vector: list[float], role_in_argument: str) -> dict:
+        return {"chunk_id": chunk_id, "vector": vector, "role_in_argument": role_in_argument}
+
+    rows = [row(f"a_{i:03d}", [0.0 + 0.05 * i, 0.0], "role:claim") for i in range(8)]
+    rows += [row(f"b_{i:03d}", [10.0 + 0.05 * i, 10.0], "role:evidence") for i in range(8)]
+    rows += [row(f"c_{i:03d}", [5.0 + 0.05 * i, -5.0], "role:digression") for i in range(3)]
+    rows.append(row("gold_b1", [10.0, 10.0], "role:evidence"))
+    rows.append(row("gold_a2", [4.5, 4.5], "role:claim"))
+    rows.append(row("gold_wrong", [10.0, 10.0], "role:claim"))
+
+    distill_dir = root / "data" / "distill"
+    distill_dir.mkdir(parents=True, exist_ok=True)
+    db = lancedb.connect(distill_dir / "embeddings.lance")
+    db.create_table("chunks", data=rows, mode="overwrite")
+    # `axial pin write` requires a `data/vault` directory to exist -- this
+    # fixture never writes real vault notes (the store is written directly,
+    # see module docstring), so an empty directory is enough.
+    (root / "data" / "vault").mkdir(parents=True, exist_ok=True)
+
+
+# (chunk_id, role_in_argument [tagger pre-fill], role_in_argument_gold
+# [independent judgment]) -- a_000's pre-fill deliberately disagrees.
+ROLE_GOLD_ROWS = [
+    ("a_000", "role:evidence", "role:claim"),
+    ("gold_b1", "role:evidence", "role:evidence"),
+    ("gold_a2", "role:claim", "role:claim"),
+    ("gold_wrong", "role:claim", "role:claim"),
+]
+
+
+def _write_role_gold_sheet(root: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "label_sheet"
+    columns = ("chunk_id", "role_in_argument", "role_in_argument_gold")
+    for col, name in enumerate(columns, start=1):
+        sheet.cell(row=1, column=col, value=name)
+    for row_index, row in enumerate(ROLE_GOLD_ROWS, start=2):
+        for col, value in enumerate(row, start=1):
+            sheet.cell(row=row_index, column=col, value=value)
+    labels_dir = root / "data" / "gold" / "labels"
+    labels_dir.mkdir(parents=True, exist_ok=True)
+    workbook.save(labels_dir / "label_sheet.xlsx")
+
+
+def test_classify_role_in_argument_excludes_gold_drops_rare_class_teacher_agreement_from_gold_columns(
+    isolated_vault_root,
+):
+    root = isolated_vault_root
+    _write_role_embeddings_store(root)
+    _write_fixture_pin(root)
+    _write_role_gold_sheet(root)
+
+    result = _run_axial(root, "distill", "classify", "role_in_argument")
+    _assert_ran_the_real_subcommand(result)
+    assert result.returncode == 0, (
+        f"expected exit 0, got {result.returncode}\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+    )
+
+    manifest_path = root / "data" / "distill" / "classify_role_in_argument_manifest.json"
+    assert manifest_path.is_file(), f"expected a classify manifest at {manifest_path}"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert manifest["axis"] == "role_in_argument"
+    assert manifest["corpus_pin_id"] == "baseline"
+    assert isinstance(manifest["vault_snapshot_hash"], str) and manifest["vault_snapshot_hash"]
+
+    # -- leakage exclusion + rare-class drop: cluster A's a_000 is also a
+    # gold chunk_id -> 7 (cluster A) + 8 (cluster B) = 15; cluster C's 3
+    # chunks stay below the min-class-count floor (6).
+    assert manifest["train_chunk_count"] == 15
+    assert manifest["dropped_classes"] == ["role:digression"]
+
+    assert manifest["gold_chunk_count"] == 4
+
+    # -- the classifier predicts off the vector, not the tagger pre-fill:
+    # a_000/gold_b1/gold_a2 correct, gold_wrong (vector at B's centroid,
+    # gold-labelled role:claim) wrong.
+    assert manifest["full_coverage_accuracy"] == pytest.approx(0.75)
+
+    # -- teacher_gold_agreement: computed fresh from role_in_argument vs
+    # role_in_argument_gold over the gold sheet's own rows (3 of 4 agree) --
+    # NOT read from eval_report.json (this fixture never stages one).
+    assert manifest["teacher_gold_agreement"] == pytest.approx(0.75)
+
+    by_threshold = {row["threshold"]: row for row in manifest["thresholds"]}
+    assert [row["threshold"] for row in manifest["thresholds"]] == [0.5, 0.6, 0.7, 0.8]
+    coverages = [by_threshold[t]["coverage"] for t in (0.5, 0.6, 0.7, 0.8)]
+    assert coverages == sorted(coverages, reverse=True), (
+        "coverage must never rise with the threshold"
+    )
+
+    # -- DEC-23: this module never reads chunk_text at all.
+    manifest_text = json.dumps(manifest)
+    assert "chunk_text" not in manifest_text
+
+
+def test_classify_role_in_argument_fails_loudly_without_a_gold_sheet(isolated_vault_root):
+    root = isolated_vault_root
+    _write_role_embeddings_store(root)
+    _write_fixture_pin(root)
+    # deliberately never write data/gold/labels/label_sheet.xlsx
+
+    result = _run_axial(root, "distill", "classify", "role_in_argument")
+    _assert_ran_the_real_subcommand(result)
+
+    assert result.returncode != 0, (
+        f"expected a non-zero exit with no gold sheet, got 0\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+    )
+    assert not (root / "data" / "distill" / "classify_role_in_argument_manifest.json").is_file()
+    assert "gold" in result.stderr.lower(), (
+        f"expected the failure to mention the missing gold sheet, got stderr: {result.stderr!r}"
+    )
+
+
+def test_classify_unknown_axis_rejected_by_the_cli(isolated_vault_root):
+    root = isolated_vault_root
+    (root / "data").mkdir(parents=True, exist_ok=True)
+
+    result = _run_axial(root, "distill", "classify", "bogus_axis")
+
+    assert result.returncode != 0
+    assert "invalid choice" in (result.stdout + result.stderr)
