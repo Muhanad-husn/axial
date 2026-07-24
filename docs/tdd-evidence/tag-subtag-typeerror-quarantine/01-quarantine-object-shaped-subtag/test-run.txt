@@ -1,0 +1,28 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- D:\axial\.claude\worktrees\fix-tag-subtag-typeerror\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial\.claude\worktrees\fix-tag-subtag-typeerror
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 141 items / 140 deselected / 1 selected
+
+src/axial/test_tag.py::test_validate_multi_value_tag_rejects_a_dict_shaped_subtag_without_crashing PASSED [100%]
+
+====================== 1 passed, 140 deselected in 0.37s ======================
+
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- D:\axial\.claude\worktrees\fix-tag-subtag-typeerror\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial\.claude\worktrees\fix-tag-subtag-typeerror
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 5 items
+
+tests/ingestion/test_tag_vocab_reask.py::test_out_of_vocab_subtag_corrects_on_bounded_reask PASSED [ 20%]
+tests/ingestion/test_tag_vocab_reask.py::test_persistently_out_of_vocab_subtag_still_errors_after_bounded_reask PASSED [ 40%]
+tests/ingestion/test_tag_vocab_reask.py::test_object_shaped_subtag_quarantines_instead_of_crashing_the_source PASSED [ 60%]
+tests/ingestion/test_tag_vocab_reask.py::test_persistently_out_of_vocab_subtag_never_yields_a_code_side_guessed_note PASSED [ 80%]
+tests/ingestion/test_tag_vocab_reask.py::test_in_vocab_subtag_never_triggers_correction_reask PASSED [100%]
+
+============================= 5 passed in 22.77s ==============================
+exit=0

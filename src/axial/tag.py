@@ -842,7 +842,18 @@ def _validate_subtags(schema: Schema, axis_name: str, parsed: dict[str, Any]) ->
     normalized_subtags = []
     for subtag in parsed["subtags"]:
         normalized = _normalize_axis_prefixed_value(axis_name, subtag, declared)
-        if normalized not in declared:
+        # A non-string subtag (live 2026-07-24 crash: the model answered a
+        # subtag as a JSON object instead of a string) is unhashable, so
+        # `in declared` (a set) would raise a bare
+        # `TypeError` before this function ever gets to raise its own
+        # `TagNotInSchemaError` -- checked first here, mirroring
+        # `validate_tag`'s identical `not isinstance(value, str) or value
+        # not in axis.tag_ids` short-circuit guard above. A malformed shape
+        # is a DIFFERENT failure than a genuine out-of-vocabulary string,
+        # but both are handled by the same mechanism: raise
+        # `TagNotInSchemaError`, which `apply_correction_reask` already
+        # re-asks on and `run_tag`'s quarantine loop already catches.
+        if not isinstance(normalized, str) or normalized not in declared:
             raise TagNotInSchemaError(
                 axis_name,
                 subtag,
