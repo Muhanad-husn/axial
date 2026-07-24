@@ -1169,8 +1169,11 @@ def _run(
     summary = attach_theory_school_rates(summary)
     rendered = render_theory_school_rates(summary.rates or [])
     if rendered:
-        print("theory_school not-applicable/unlisted rates:")
-        print(rendered)
+        # Rows are keyed by source_id (module docstring), which can carry a
+        # source filename's own diacritics -- same encoding hazard `run_pass`
+        # guards against, so this print goes through the same safe path.
+        _print_encoding_safe("theory_school not-applicable/unlisted rates:")
+        _print_encoding_safe(rendered)
 
     return exit_code
 
