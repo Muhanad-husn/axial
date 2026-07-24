@@ -2065,12 +2065,19 @@ def test_content_filter_fallback_error_finish_reason_raises_openrouter_error(mon
 # triggers) -- a transport-error trigger, a 429 trigger, and a malformed-JSON
 # trigger, each proving the pass_name is threaded through and the trigger
 # token is recognizable.
+#
+# Filtered to lines starting "llm_retry" (not stderr as a whole): the
+# real-time per-API-call logging added alongside this (every request/
+# response, not just a retried one -- see `_log_call_request`/
+# `_log_call_response`) now also writes to stderr on the very same call,
+# so asserting "exactly one stderr line total" would conflate the two
+# unrelated features. `_log_retry`'s own line count/shape is unchanged.
 
 
 def test_retry_log_line_names_transport_error_class_and_pass_name(monkeypatch, capsys):
     """A retried `httpx.TransportError` (e.g. a `ReadTimeout`) logs one
-    stderr line naming the pass_name and the exception's class name as the
-    trigger token."""
+    `llm_retry` stderr line naming the pass_name and the exception's class
+    name as the trigger token."""
     import axial.llm as llm_module
     from axial.llm import OpenRouterClient
 
@@ -2091,15 +2098,15 @@ def test_retry_log_line_names_transport_error_class_and_pass_name(monkeypatch, c
 
     assert result == "model reply"
     stderr = capsys.readouterr().err
-    lines = [line for line in stderr.splitlines() if line.strip()]
+    lines = [line for line in stderr.splitlines() if line.startswith("llm_retry")]
     assert len(lines) == 1
     assert "envelope" in lines[0]
     assert "ReadTimeout" in lines[0]
 
 
 def test_retry_log_line_names_429_status_and_pass_name(monkeypatch, capsys):
-    """A retried HTTP 429 logs one stderr line naming the pass_name and
-    "429" as the trigger token."""
+    """A retried HTTP 429 logs one `llm_retry` stderr line naming the
+    pass_name and "429" as the trigger token."""
     import axial.llm as llm_module
     from axial.llm import OpenRouterClient
 
@@ -2120,15 +2127,15 @@ def test_retry_log_line_names_429_status_and_pass_name(monkeypatch, capsys):
 
     assert result == "model reply"
     stderr = capsys.readouterr().err
-    lines = [line for line in stderr.splitlines() if line.strip()]
+    lines = [line for line in stderr.splitlines() if line.startswith("llm_retry")]
     assert len(lines) == 1
     assert "xref" in lines[0]
     assert "429" in lines[0]
 
 
 def test_retry_log_line_names_malformed_json_trigger(monkeypatch, capsys):
-    """A retried malformed-JSON body logs one stderr line naming the
-    pass_name and the decode error's class name as the trigger token."""
+    """A retried malformed-JSON body logs one `llm_retry` stderr line naming
+    the pass_name and the decode error's class name as the trigger token."""
     import axial.llm as llm_module
     from axial.llm import OpenRouterClient
 
@@ -2149,7 +2156,7 @@ def test_retry_log_line_names_malformed_json_trigger(monkeypatch, capsys):
 
     assert result == "model reply"
     stderr = capsys.readouterr().err
-    lines = [line for line in stderr.splitlines() if line.strip()]
+    lines = [line for line in stderr.splitlines() if line.startswith("llm_retry")]
     assert len(lines) == 1
     assert "artifacts" in lines[0]
     assert "JSONDecodeError" in lines[0]
