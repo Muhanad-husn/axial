@@ -1,0 +1,13 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- D:\axial\.claude\worktrees\fix-run-unicode-encoding\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial\.claude\worktrees\fix-run-unicode-encoding
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 2 items
+
+tests/test_run_unicode_encoding.py::test_run_pass_does_not_crash_on_narrow_stdout_codec PASSED [ 50%]
+tests/chunk/test_chunk_examine_encoding.py::test_chunk_examine_does_not_crash_on_narrow_stdout_codec PASSED [100%]
+
+============================== 2 passed in 3.73s ==============================
+exit=0

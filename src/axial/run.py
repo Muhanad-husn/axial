@@ -429,6 +429,43 @@ def _summarize(pass_name: str, outcomes: list[Outcome]) -> RunSummary:
     return RunSummary(pass_name, outcomes, len(outcomes), ok_count, fail_count, skip_count)
 
 
+def _print_encoding_safe(text: str, *, stream: Any = None) -> None:
+    """Print `text` to `stream` (default `sys.stdout`) without crashing when
+    the stream's codec can't represent one of its characters -- the real
+    failure mode every `axial run <pass>` invocation hits once its stdout is
+    piped rather than a real console: Windows then falls back to the
+    process's legacy codepage (e.g. `cp1252`) instead of UTF-8, and a source
+    path/id/reason carrying a character outside it (a diacritic such as the
+    combining caron in "Siniša", decomposed form) raises `UnicodeEncodeError`
+    and kills the whole pass. Every row `run_pass` prints is source-derived,
+    so every one of them goes through this.
+
+    Mirrors `axial.cli._print_encoding_safe` verbatim (duplicated, not
+    imported: `cli` imports from this module, so importing the other
+    direction would be circular) -- reconfigure the stream to UTF-8 where
+    supported; else fall back to writing backslash-escaped UTF-8 bytes
+    through the raw buffer so the line is still emitted, never silently
+    dropped. Content/wording is untouched; only the emission path changes.
+    """
+    stream = sys.stdout if stream is None else stream
+    reconfigure = getattr(stream, "reconfigure", None)
+    if callable(reconfigure):
+        try:
+            reconfigure(encoding="utf-8")
+            print(text, file=stream)
+            return
+        except (ValueError, OSError):
+            pass
+
+    buffer = getattr(stream, "buffer", None)
+    if buffer is not None:
+        buffer.write(text.encode("utf-8", errors="backslashreplace"))
+        buffer.write(b"\n")
+        buffer.flush()
+    else:
+        print(text.encode("ascii", errors="backslashreplace").decode("ascii"), file=stream)
+
+
 def run_pass(
     pass_name: str,
     worklist_path: str | Path | None = None,
@@ -484,13 +521,13 @@ def run_pass(
     """
     descriptor = PASS_REGISTRY.get(pass_name)
     if descriptor is None:
-        print(f"error: {UnknownPassError(pass_name)}", file=sys.stderr)
+        _print_encoding_safe(f"error: {UnknownPassError(pass_name)}", stream=sys.stderr)
         return _empty_summary(pass_name), 1
 
     try:
         source_paths = _resolve_source_paths(worklist_path, corpus, sources_dir)
     except (SourceSetError, WorklistError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        _print_encoding_safe(f"error: {exc}", stream=sys.stderr)
         return _empty_summary(pass_name), 1
 
     if ledger_path is None:
@@ -499,17 +536,17 @@ def run_pass(
     try:
         ledger_done_ids = _load_done_source_ids(ledger_path, pass_name)
     except LedgerError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        _print_encoding_safe(f"error: {exc}", stream=sys.stderr)
         return _empty_summary(pass_name), 1
 
     if client is None:
         client = get_client(config_path=config_path)
 
     outcomes: list[Outcome] = []
-    print("\t".join(TABLE_COLUMNS))
+    _print_encoding_safe("\t".join(TABLE_COLUMNS))
 
     if not source_paths:
-        print(f"run: pass={pass_name} nothing to do (0 sources in source set)")
+        _print_encoding_safe(f"run: pass={pass_name} nothing to do (0 sources in source set)")
         return _summarize(pass_name, outcomes), 0
 
     for source_path_str in source_paths:
@@ -518,45 +555,45 @@ def run_pass(
         try:
             source_id = compute_source_id(source_path)
         except MissingSourceError as exc:
-            print(f"error: {exc}", file=sys.stderr)
+            _print_encoding_safe(f"error: {exc}", stream=sys.stderr)
             outcome = Outcome(str(source_path), "", FAIL_STATUS, str(exc))
             outcomes.append(outcome)
-            print(_render_row(outcome))
+            _print_encoding_safe(_render_row(outcome))
             try:
                 _append_ledger_row(ledger_path, _ledger_row(pass_name, outcome))
             except LedgerError as exc:
-                print(f"error: {exc}", file=sys.stderr)
+                _print_encoding_safe(f"error: {exc}", stream=sys.stderr)
                 return _summarize(pass_name, outcomes), 1
             continue
 
         if descriptor.done_predicate(source_id, ledger_done_ids, config_path):
-            print(f"skip: {source_path} already done ({pass_name})")
+            _print_encoding_safe(f"skip: {source_path} already done ({pass_name})")
             outcome = Outcome(str(source_path), source_id, SKIP_STATUS)
             outcomes.append(outcome)
-            print(_render_row(outcome))
+            _print_encoding_safe(_render_row(outcome))
             continue
 
         try:
             descriptor.invoke(str(source_path), client, config_path, domain_dir)
         except descriptor.error as exc:
-            print(f"error: {source_path}: {exc}", file=sys.stderr)
+            _print_encoding_safe(f"error: {source_path}: {exc}", stream=sys.stderr)
             outcome = Outcome(str(source_path), source_id, FAIL_STATUS, str(exc))
         else:
             outcome = Outcome(str(source_path), source_id, OK_STATUS)
 
         outcomes.append(outcome)
-        print(_render_row(outcome))
+        _print_encoding_safe(_render_row(outcome))
 
         try:
             _append_ledger_row(ledger_path, _ledger_row(pass_name, outcome))
         except LedgerError as exc:
-            print(f"error: {exc}", file=sys.stderr)
+            _print_encoding_safe(f"error: {exc}", stream=sys.stderr)
             return _summarize(pass_name, outcomes), 1
         if outcome.status == OK_STATUS:
             ledger_done_ids.add(source_id)
 
     summary = _summarize(pass_name, outcomes)
-    print(
+    _print_encoding_safe(
         f"run: pass={pass_name} total={summary.total} ok={summary.ok_count} "
         f"skipped={summary.skip_count} failed={summary.fail_count}"
     )
@@ -624,7 +661,9 @@ def attach_theory_school_rates(
     try:
         rates = theory_school_rates_report(source_ids, tags_dir=tags_dir, config_path=config_path)
     except Exception as exc:  # broad and deliberate -- see docstring: never block/fail the run
-        print(f"warning: could not compute theory_school rates: {exc}", file=sys.stderr)
+        _print_encoding_safe(
+            f"warning: could not compute theory_school rates: {exc}", stream=sys.stderr
+        )
         return summary
     return replace(summary, rates=rates)
 
