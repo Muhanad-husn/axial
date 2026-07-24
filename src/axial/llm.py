@@ -1525,6 +1525,67 @@ def _log_retry(
     print(line, file=sys.stderr)
 
 
+def _log_call_request(pass_name: str | None, model: str, prompt: str, attempt: int) -> None:
+    """Emit one unconditional stderr line right before `OpenRouterClient`
+    issues a real outbound HTTP request (deeper visibility than PR #372's
+    stage-level lines, needed to sense a hung/slow call in real time during
+    a long benchmark sweep, #368/#369). Carries the pass name, the resolved
+    model for that pass, and the prompt length in characters -- never the
+    prompt text itself (DEC-23 forbids logging source-bearing content). The
+    attempt number is included only past the first attempt: `_log_retry`
+    already logs WHY a later attempt happens, right after this call's own
+    outcome is known; this line is just WHEN the raw call goes out, on
+    every attempt, retried or not."""
+    attempt_suffix = f" attempt={attempt}/{_MAX_ATTEMPTS}" if attempt > 1 else ""
+    print(
+        f"llm_call_request pass={pass_name} model={model}{attempt_suffix} "
+        f"prompt_chars={len(prompt)}",
+        file=sys.stderr,
+    )
+
+
+def _log_call_response(
+    pass_name: str | None,
+    model: str,
+    *,
+    elapsed_seconds: float,
+    status_code: int | None = None,
+    finish_reason: str | None = None,
+    usage: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> None:
+    """Emit one unconditional stderr line right after `_log_call_request`'s
+    matching call returns -- the raw call's own outcome, regardless of
+    whether `complete()`/`complete_with_tools()` goes on to retry it (that
+    decision is `_log_retry`'s job, logged separately). `error` (an
+    exception class name or `"deadline_exceeded"`) is given instead of
+    `status_code` when the attempt raised or timed out before any HTTP
+    response came back. `finish_reason`/`usage` are best-effort: supplied
+    only when the response body parsed as JSON with a `choices`/`usage`
+    shape, since a non-2xx or malformed body still deserves a response line
+    (status + elapsed) without one."""
+    if error is not None:
+        print(
+            f"llm_call_response pass={pass_name} model={model} outcome=error "
+            f"error={error} elapsed={elapsed_seconds:.2f}s",
+            file=sys.stderr,
+        )
+        return
+    line = (
+        f"llm_call_response pass={pass_name} model={model} outcome=received "
+        f"status={status_code} elapsed={elapsed_seconds:.2f}s"
+    )
+    if finish_reason is not None:
+        line += f" finish_reason={finish_reason}"
+    if usage:
+        line += (
+            f" prompt_tokens={usage.get('prompt_tokens')}"
+            f" completion_tokens={usage.get('completion_tokens')}"
+            f" total_tokens={usage.get('total_tokens')}"
+        )
+    print(line, file=sys.stderr)
+
+
 def _raise_for_status_with_body(response: httpx.Response, *, action: str) -> None:
     """Like `response.raise_for_status()`, but on a 4xx/5xx failure wraps the
     resulting `httpx.HTTPStatusError` in `OpenRouterError` carrying a bounded
@@ -1626,6 +1687,7 @@ class OpenRouterClient:
         model: str | None = None,
         pass_name: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        attempt: int = 1,
     ) -> httpx.Response:
         """Run the blocking `httpx` POST on a daemon watchdog thread and
         enforce `self._request_deadline_seconds` as a hard wall-clock
@@ -1662,6 +1724,16 @@ class OpenRouterClient:
         is included only when the caller passes a non-`None` value
         (`complete_with_tools`), so an ordinary `complete()` call's payload
         is byte-for-byte unchanged from before this parameter existed.
+
+        `attempt` (real-time per-call logging, #368/#369 benchmark-sweep
+        visibility) is purely for `_log_call_request`'s log line -- it never
+        affects retry behavior, which stays entirely in `complete()`'s/
+        `complete_with_tools()`'s own loops. This is the single choke point
+        every real request/response passes through, so it is also the
+        single place that logs one line before the request goes out and one
+        line when its outcome (success, HTTP error, or timeout) is known --
+        never duplicated in `complete()`, `complete_with_tools()`, or
+        `_reroute_content_filter()`.
         """
         target_model = model if model is not None else self.model_for_pass(pass_name)
         reasoning_setting = self._reasoning_by_pass.get(pass_name, False)
@@ -1711,22 +1783,60 @@ class OpenRouterClient:
             finally:
                 done.set()
 
+        _log_call_request(pass_name, target_model, prompt, attempt)
+        call_started = time.monotonic()
         watchdog = threading.Thread(target=_run, daemon=True)
         watchdog.start()
         if not done.wait(timeout=self._request_deadline_seconds):
+            _log_call_response(
+                pass_name,
+                target_model,
+                elapsed_seconds=time.monotonic() - call_started,
+                error="deadline_exceeded",
+            )
             raise _RequestDeadlineExceeded(
                 f"attempt exceeded the {self._request_deadline_seconds}s wall-clock "
                 "request deadline (issue #108)"
             )
+        elapsed_seconds = time.monotonic() - call_started
         if "error" in outcome:
+            _log_call_response(
+                pass_name,
+                target_model,
+                elapsed_seconds=elapsed_seconds,
+                error=type(outcome["error"]).__name__,
+            )
             raise outcome["error"]
-        return outcome["response"]
+        response = outcome["response"]
+        # Best-effort only: a non-2xx or malformed body still gets a
+        # response line (status + elapsed) without finish_reason/usage --
+        # `complete()`/`complete_with_tools()` are the real parsers and
+        # error handlers, this is purely observational (issue #368/#369).
+        finish_reason: str | None = None
+        usage: dict[str, Any] | None = None
+        try:
+            data = response.json()
+            choices = data.get("choices") or []
+            if choices:
+                finish_reason = choices[0].get("finish_reason")
+            usage = data.get("usage")
+        except (json.JSONDecodeError, ValueError, AttributeError):
+            pass
+        _log_call_response(
+            pass_name,
+            target_model,
+            elapsed_seconds=elapsed_seconds,
+            status_code=response.status_code,
+            finish_reason=finish_reason,
+            usage=usage,
+        )
+        return response
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             is_last_attempt = attempt == _MAX_ATTEMPTS
             try:
-                response = self._post_with_deadline(prompt, pass_name=pass_name)
+                response = self._post_with_deadline(prompt, pass_name=pass_name, attempt=attempt)
             except httpx.TransportError as exc:
                 if is_last_attempt:
                     raise
@@ -1877,7 +1987,9 @@ class OpenRouterClient:
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             is_last_attempt = attempt == _MAX_ATTEMPTS
             try:
-                response = self._post_with_deadline(prompt, pass_name=pass_name, tools=tools)
+                response = self._post_with_deadline(
+                    prompt, pass_name=pass_name, tools=tools, attempt=attempt
+                )
             except httpx.TransportError as exc:
                 if is_last_attempt:
                     raise
