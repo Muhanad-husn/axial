@@ -432,6 +432,95 @@ def test_exploding_client_model_for_pass_does_not_raise():
     assert client.model_for_pass("envelope") == "explode"
 
 
+# --- Issue #363: token capture + per-model cost -----------------------------
+
+
+def test_stub_client_usage_for_pass_returns_none_before_any_call():
+    from axial.llm import StubLLMClient
+
+    client = StubLLMClient()
+
+    assert client.usage_for_pass("synthesize") is None
+
+
+def test_stub_client_usage_for_pass_accumulates_across_calls_for_the_same_pass():
+    """Mirrors what a real multi-turn retrieval loop needs: several calls
+    tagged with the same pass_name sum into one running total (issue
+    #363)."""
+    from axial.llm import RETRIEVE_PASS_NAME, StubLLMClient
+
+    client = StubLLMClient()
+
+    client.complete("turn one", pass_name=RETRIEVE_PASS_NAME)
+    client.complete("turn two", pass_name=RETRIEVE_PASS_NAME)
+
+    usage = client.usage_for_pass(RETRIEVE_PASS_NAME)
+    assert usage == {"prompt_tokens": 200, "completion_tokens": 100, "total_tokens": 300}
+    # A pass never called stays unreported, not a fabricated zero.
+    assert client.usage_for_pass("synthesize") is None
+
+
+def test_stub_client_complete_with_tools_also_accumulates_usage():
+    from axial.llm import StubLLMClient
+
+    client = StubLLMClient()
+
+    client.complete_with_tools("prompt", tools=[], pass_name="retrieve")
+
+    assert client.usage_for_pass("retrieve") == {
+        "prompt_tokens": 100,
+        "completion_tokens": 50,
+        "total_tokens": 150,
+    }
+
+
+def test_record_client_usage_for_pass_matches_the_stub(tmp_path):
+    from axial.llm import RecordLLMClient
+
+    client = RecordLLMClient(tmp_path / "record.jsonl")
+
+    client.complete("prompt", pass_name="interrogate")
+
+    assert client.usage_for_pass("interrogate") == {
+        "prompt_tokens": 100,
+        "completion_tokens": 50,
+        "total_tokens": 150,
+    }
+
+
+def test_exploding_client_usage_for_pass_returns_none_without_raising():
+    from axial.llm import ExplodingLLMClient
+
+    client = ExplodingLLMClient()
+
+    assert client.usage_for_pass("envelope") is None
+
+
+def test_estimate_cost_computes_dollars_for_a_priced_model():
+    from axial.llm import PRICE_TABLE_USD_PER_1K, estimate_cost
+
+    model = "deepseek/deepseek-v4-flash"
+    price = PRICE_TABLE_USD_PER_1K[model]
+
+    cost = estimate_cost(model, prompt_tokens=1000, completion_tokens=1000)
+
+    assert cost == pytest.approx(price["input"] + price["output"])
+
+
+def test_estimate_cost_returns_none_for_an_unpriced_model_and_logs_once(capsys):
+    from axial.llm import estimate_cost
+
+    model = "some-vendor/unpriced-model-issue-363"
+
+    first = estimate_cost(model, prompt_tokens=10, completion_tokens=10)
+    second = estimate_cost(model, prompt_tokens=10, completion_tokens=10)
+
+    assert first is None
+    assert second is None
+    stderr_lines = [line for line in capsys.readouterr().err.splitlines() if model in line]
+    assert len(stderr_lines) == 1, f"expected exactly one log line, got {stderr_lines!r}"
+
+
 def test_get_client_selects_stub_via_env_override(monkeypatch, tmp_path):
     from axial.llm import PROVIDER_ENV_VAR, StubLLMClient, get_client
 
@@ -634,6 +723,113 @@ def test_openrouter_client_raises_a_typed_error_on_malformed_response():
 
     with pytest.raises(OpenRouterError):
         client.complete("hello world")
+
+
+def test_openrouter_client_complete_captures_usage_from_the_response():
+    """Issue #363: `complete()` reads `data["usage"]` off the same response
+    it already parses `choices` from -- no second call -- and attributes it
+    to the pass_name that made the call."""
+    from axial.llm import OpenRouterClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "model reply"}}],
+                "usage": {"prompt_tokens": 42, "completion_tokens": 17, "total_tokens": 59},
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    client.complete("hello world", pass_name="synthesize")
+
+    assert client.usage_for_pass("synthesize") == {
+        "prompt_tokens": 42,
+        "completion_tokens": 17,
+        "total_tokens": 59,
+    }
+    assert client.usage_for_pass("interrogate") is None
+
+
+def test_openrouter_client_complete_usage_for_pass_is_none_when_response_carries_no_usage():
+    """Backward compat: a response with no `usage` object at all (every
+    existing mocked test response in this file) must not crash or fabricate
+    counts."""
+    from axial.llm import OpenRouterClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    client.complete("hello world", pass_name="synthesize")
+
+    assert client.usage_for_pass("synthesize") is None
+
+
+def test_openrouter_client_complete_accumulates_usage_across_calls():
+    from axial.llm import OpenRouterClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "model reply"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    client.complete("first", pass_name="retrieve")
+    client.complete("second", pass_name="retrieve")
+
+    assert client.usage_for_pass("retrieve") == {
+        "prompt_tokens": 20,
+        "completion_tokens": 10,
+        "total_tokens": 30,
+    }
+
+
+def test_openrouter_client_complete_with_tools_captures_usage_from_the_response():
+    from axial.llm import OpenRouterClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "function": {"name": "get_chunk", "arguments": "{}"},
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"prompt_tokens": 30, "completion_tokens": 8, "total_tokens": 38},
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    client.complete_with_tools("hello world", tools=[], pass_name="retrieve")
+
+    assert client.usage_for_pass("retrieve") == {
+        "prompt_tokens": 30,
+        "completion_tokens": 8,
+        "total_tokens": 38,
+    }
 
 
 def test_openrouter_client_ignores_pass_name_and_never_forwards_it():

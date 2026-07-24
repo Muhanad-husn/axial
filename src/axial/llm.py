@@ -424,6 +424,72 @@ DEFAULT_REASONING_BY_PASS: dict[str, bool | str] = {
 # `production_high` override lives there, not here.
 DEFAULT_MODEL_BY_PASS: dict[str, str] = {}
 
+# Minimal per-model $/1k-token price table (issue #363, benchmark-cost
+# support for #362): covers the OpenRouter model ids `config/pipeline.yaml`
+# currently routes the brief pipeline's cost-bearing passes (interrogate,
+# retrieve, synthesize) to, plus the shared building-tier default. This is
+# deliberately NOT a live pricing API or an auto-refreshed table (#363's own
+# out-of-scope list -- an over-engineering tripwire) -- a static snapshot is
+# enough for a benchmark sweep. Sourced from OpenRouter's public `/models`
+# pricing endpoint, spot-checked 2026-07-24; $ per 1000 tokens. A model id
+# absent here is UNPRICED, not an error: `estimate_cost` resolves it to
+# `None` and logs the gap once, never raises and never fails a run.
+PRICE_TABLE_USD_PER_1K: dict[str, dict[str, float]] = {
+    "deepseek/deepseek-v4-pro": {"input": 0.000435, "output": 0.00087},
+    "deepseek/deepseek-v4-flash": {"input": 0.000098, "output": 0.000196},
+    "z-ai/glm-5.2": {"input": 0.0007826, "output": 0.0024596},
+    "nvidia/nemotron-3-ultra-550b-a55b:free": {"input": 0.0, "output": 0.0},
+}
+
+# Per-process set of model ids `estimate_cost` has already logged as
+# unpriced -- "logged once" (issue #363), not once per call, since a
+# benchmark sweep can call the same unpriced model hundreds of times in one
+# run.
+_unpriced_models_logged: set[str] = set()
+
+
+def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
+    """Dollar cost of one completion under `PRICE_TABLE_USD_PER_1K` (issue
+    #363): `None` -- never zero, never a raise -- when `model` is absent
+    from the table, so a run against a model nobody has priced yet still
+    succeeds; the gap is printed to stderr exactly once per model id per
+    process."""
+    price = PRICE_TABLE_USD_PER_1K.get(model)
+    if price is None:
+        if model not in _unpriced_models_logged:
+            _unpriced_models_logged.add(model)
+            print(
+                f"llm_cost_unpriced model={model!r}: no PRICE_TABLE_USD_PER_1K entry, "
+                "cost for this model will be null (issue #363)",
+                file=sys.stderr,
+            )
+        return None
+    return (prompt_tokens / 1000) * price["input"] + (completion_tokens / 1000) * price["output"]
+
+
+def _accumulate_usage(
+    store: dict[str | None, dict[str, int]], pass_name: str | None, usage: dict[str, Any] | None
+) -> None:
+    """Fold one completion call's `usage` object (issue #363) into
+    `store[pass_name]` in place, creating the entry on first use. `usage`
+    absent/falsy (a malformed response, or a test client with nothing to
+    report) is a silent no-op -- `usage_for_pass` then correctly reports
+    `None` for a pass no call ever supplied tokens for, never a fabricated
+    zero. Shared by every `LLMClient` implementation in this module so
+    `usage_for_pass`'s accumulation semantics never drift between them."""
+    if not usage:
+        return
+    prompt_tokens = int(usage.get("prompt_tokens") or 0)
+    completion_tokens = int(usage.get("completion_tokens") or 0)
+    total_tokens = int(usage.get("total_tokens") or (prompt_tokens + completion_tokens))
+    entry = store.setdefault(
+        pass_name, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    )
+    entry["prompt_tokens"] += prompt_tokens
+    entry["completion_tokens"] += completion_tokens
+    entry["total_tokens"] += total_tokens
+
+
 # Per-pass best-of-N voting (DEC-31, issue #294): how many times a pass draws
 # its per-unit call before majority-voting the result. Mirrors
 # `DEFAULT_REASONING_BY_PASS`'s per-pass shape exactly -- this is the
@@ -648,6 +714,18 @@ class LLMClient(Protocol):
         new config option."""
         ...
 
+    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
+        """Return the token usage this client has accumulated so far for
+        `pass_name` -- `{"prompt_tokens", "completion_tokens",
+        "total_tokens"}`, summed across every `.complete()`/
+        `.complete_with_tools()` call tagged with that `pass_name` -- or
+        `None` when no call for it has supplied usage yet (issue #363).
+        Mirrors `model_for_pass`'s own shape: an accumulator/getter exposed
+        on the client, not a return-value change, so no existing
+        `.complete()`/`.complete_with_tools()` call site has to change how
+        it calls this interface."""
+        ...
+
     def complete_with_tools(
         self, prompt: str, tools: list[dict[str, Any]], pass_name: str | None = None
     ) -> dict[str, Any] | None:
@@ -667,6 +745,20 @@ class LLMClient(Protocol):
         symmetric with `.complete()` (their scripted tool-call channel does
         not vary by pass, unlike the canned JSON-completion dispatch)."""
         ...
+
+
+# Issue #363 test/CI-only seam: the fixed, deterministic usage
+# `StubLLMClient`/`RecordLLMClient` report for every call, since neither
+# talks to a real model and so has no real `usage` object to parse. Exists
+# only so the accumulation machinery (`_accumulate_usage`,
+# `usage_for_pass`) is exercised end-to-end by the existing stub/record
+# acceptance-test seam without inventing a third canned-response contract;
+# the actual numbers are arbitrary and carry no pricing significance.
+_STUB_USAGE_PER_CALL: dict[str, int] = {
+    "prompt_tokens": 100,
+    "completion_tokens": 50,
+    "total_tokens": 150,
+}
 
 
 class StubLLMClient:
@@ -747,6 +839,11 @@ class StubLLMClient:
         # explains why this is instance-level, not a module global like the
         # chunk/tag/artifact counters above).
         self._tool_call_index = 0
+        # Issue #363: per-instance accumulator, mirroring `_tool_call_index`
+        # above -- there is no real model behind this client, so every call
+        # reports the same fixed `_STUB_USAGE_PER_CALL` (see its own
+        # comment), folded in via the shared `_accumulate_usage` helper.
+        self._usage_by_pass: dict[str | None, dict[str, int]] = {}
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         # Locked (see `_stub_dispatch_lock`'s own comment): `call_count` and
@@ -755,6 +852,7 @@ class StubLLMClient:
         # from multiple threads at once.
         with _stub_dispatch_lock:
             self.call_count += 1
+            _accumulate_usage(self._usage_by_pass, pass_name, _STUB_USAGE_PER_CALL)
             return _canned_response_for(pass_name)
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
@@ -765,6 +863,14 @@ class StubLLMClient:
         `STUB_MODEL_BY_PASS_ENV_VAR`, when it names `pass_name`, overrides
         this fixed id -- see that env var's own comment for why."""
         return _model_for_pass_from_stub_mapping(pass_name)
+
+    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
+        """The accumulated fixed `_STUB_USAGE_PER_CALL` usage for
+        `pass_name` (issue #363) -- there is no real model behind this
+        client, but the accumulation mechanism itself (summing across every
+        call tagged with `pass_name`) is exercised exactly as it would be
+        under a real provider, e.g. the retrieval loop's several turns."""
+        return self._usage_by_pass.get(pass_name)
 
     def complete_with_tools(
         self, prompt: str, tools: list[dict[str, Any]], pass_name: str | None = None
@@ -777,6 +883,7 @@ class StubLLMClient:
             self.call_count += 1
             index = self._tool_call_index
             self._tool_call_index += 1
+            _accumulate_usage(self._usage_by_pass, pass_name, _STUB_USAGE_PER_CALL)
         return _scripted_tool_call_for(index)
 
 
@@ -1116,6 +1223,10 @@ class RecordLLMClient:
         # Issue #253 slice 01: mirrors `StubLLMClient._tool_call_index`
         # exactly (see that attribute's own comment).
         self._tool_call_index = 0
+        # Issue #363: mirrors `StubLLMClient._usage_by_pass` exactly (same
+        # fixed `_STUB_USAGE_PER_CALL`, since `record`'s completion
+        # responses are indistinguishable from `stub`'s, module docstring).
+        self._usage_by_pass: dict[str | None, dict[str, int]] = {}
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         # Locked (see `_stub_dispatch_lock`'s own comment): `call_count`,
@@ -1128,6 +1239,7 @@ class RecordLLMClient:
             self._record_path.parent.mkdir(parents=True, exist_ok=True)
             with self._record_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(prompt) + "\n")
+            _accumulate_usage(self._usage_by_pass, pass_name, _STUB_USAGE_PER_CALL)
             return _canned_response_for(pass_name)
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
@@ -1136,6 +1248,10 @@ class RecordLLMClient:
         this client's completion responses are also indistinguishable from
         the stub's (module docstring)."""
         return _model_for_pass_from_stub_mapping(pass_name)
+
+    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
+        """Mirrors `StubLLMClient.usage_for_pass` exactly (issue #363)."""
+        return self._usage_by_pass.get(pass_name)
 
     def complete_with_tools(
         self, prompt: str, tools: list[dict[str, Any]], pass_name: str | None = None
@@ -1151,6 +1267,7 @@ class RecordLLMClient:
                 handle.write(json.dumps(prompt) + "\n")
             index = self._tool_call_index
             self._tool_call_index += 1
+            _accumulate_usage(self._usage_by_pass, pass_name, _STUB_USAGE_PER_CALL)
         return _scripted_tool_call_for(index)
 
 
@@ -1184,6 +1301,11 @@ class ExplodingLLMClient:
         """A fixed id, never raising -- mirrors the class's own contract
         that only `.complete()` is fatal (docstring above)."""
         return "explode"
+
+    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
+        """Always `None` (issue #363), never raising -- this client never
+        completes, so it never has real usage to report."""
+        return None
 
 
 class LLMError(Exception):
@@ -1470,6 +1592,10 @@ class OpenRouterClient:
         self._model_by_pass = (
             dict(DEFAULT_MODEL_BY_PASS) if model_by_pass is None else model_by_pass
         )
+        # Issue #363: per-pass accumulated token usage, folded in by
+        # `_accumulate_usage` from the real `usage` object every OpenRouter
+        # response carries (see `.complete()`/`.complete_with_tools()`).
+        self._usage_by_pass: dict[str | None, dict[str, int]] = {}
         self._client = httpx.Client(
             base_url=base_url, transport=transport, timeout=_REQUEST_TIMEOUT
         )
@@ -1484,6 +1610,15 @@ class OpenRouterClient:
         and exposed so a caller can learn which model a pass would use
         without making a completion call."""
         return self._model_by_pass.get(pass_name, self._model)
+
+    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
+        """The token usage accumulated so far for `pass_name` (issue #363):
+        `self._usage_by_pass`'s running total, folded in by
+        `_accumulate_usage` from every response's real `usage` object
+        (`.complete()`, `.complete_with_tools()`, and the content_filter
+        fallback reroute all feed the same accumulator). `None` when no
+        response tagged with `pass_name` has carried a `usage` object yet."""
+        return self._usage_by_pass.get(pass_name)
 
     def _post_with_deadline(
         self,
@@ -1625,6 +1760,11 @@ class OpenRouterClient:
                 _log_retry(pass_name, attempt, type(exc).__name__)
                 _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
                 continue
+            # Issue #363: fold in this attempt's real token usage regardless
+            # of whether it is ultimately retried -- a retried attempt still
+            # consumed (and was billed for) real tokens, so undercounting it
+            # would understate the run's true dollar cost.
+            _accumulate_usage(self._usage_by_pass, pass_name, data.get("usage"))
             try:
                 choice = data["choices"][0]
                 content = choice["message"]["content"]
@@ -1771,6 +1911,9 @@ class OpenRouterClient:
                 _log_retry(pass_name, attempt, type(exc).__name__)
                 _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
                 continue
+            # Issue #363: mirrors `complete()`'s own accumulation -- every
+            # real attempt's tokens are billed, retried or not.
+            _accumulate_usage(self._usage_by_pass, pass_name, data.get("usage"))
             try:
                 choice = data["choices"][0]
                 message = choice["message"]
@@ -1869,6 +2012,14 @@ class OpenRouterClient:
                 f"malformed content_fallback_model API response body: {exc}; "
                 f"body snippet: {snippet}"
             ) from exc
+        # Issue #363: real tokens spent on the fallback model, attributed to
+        # `pass_name` like any other call for it. Note this folds fallback
+        # usage into the SAME per-pass bucket the primary model's calls use,
+        # so a pass's accumulated tokens are priced at its primary model's
+        # rate even for the rare reroute -- content_filter refusals are a
+        # measured <1% event (docs/postmortem/gold-run-2026-07), so a
+        # per-(pass, model) cost split is not worth the added bookkeeping.
+        _accumulate_usage(self._usage_by_pass, pass_name, data.get("usage"))
         try:
             choice = data["choices"][0]
             content = choice["message"]["content"]

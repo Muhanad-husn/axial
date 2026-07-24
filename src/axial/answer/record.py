@@ -30,6 +30,15 @@ assembles every other §7.3 field first, then calls
 (its own `claims`/`trajectory`/`interrogation.disposition`) to fill it in --
 zero model calls, pure vault reads plus arithmetic (see that module).
 
+`cost` (§7.14, issue #363) is the token/dollar-cost analogue of
+`model_by_pass`, computed here the same way: `build_record` reads each named
+pass's accumulated token usage off `client.usage_for_pass` (folded in by the
+provider as `run_brief`'s stages made their calls) and prices it against
+that pass's resolved model (`axial.llm.estimate_cost`, `PRICE_TABLE_USD_PER_1K`).
+An unpriced model's pass carries a `null` `usd` figure, never zero or a
+crash (issue #363's own acceptance criterion); the run `total_usd` sums
+whatever per-pass costs ARE known, and is itself `null` only when none are.
+
 The rendered markdown answer (§7.10, issue #261) is written alongside the
 JSON: `run_brief` calls `persist_markdown`, which renders the just-built
 record through `axial.answer.render.render_markdown` (a pure function of
@@ -51,7 +60,13 @@ from axial.answer.source_usage import compute_source_usage
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult, interrogate
 from axial.eval.corpus_pin import resolve_pin_id
-from axial.llm import INTERROGATE_PASS_NAME, RETRIEVE_PASS_NAME, SYNTHESIZE_PASS_NAME, LLMClient
+from axial.llm import (
+    INTERROGATE_PASS_NAME,
+    RETRIEVE_PASS_NAME,
+    SYNTHESIZE_PASS_NAME,
+    LLMClient,
+    estimate_cost,
+)
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_analyses_dir, default_vault_dir
 from axial.query.reader import get_chunk, query_by_tag
 from axial.retrieve.loop import run_planned_retrieval
@@ -139,6 +154,39 @@ def _placeholder_confidence() -> dict[str, Any]:
     }
 
 
+def _usage_and_cost_by_pass(client: LLMClient, model_by_pass: dict[str, str]) -> dict[str, Any]:
+    """The §7.14 `cost` field (issue #363): per-pass token usage + computed
+    dollar cost, summed to a run total -- the cost/token analogue of
+    `model_by_pass` (same precedent, same per-pass shape). Reads
+    `client.usage_for_pass` for every pass that actually ran (`model_by_pass`'s
+    own keys), never guesses at a pass that did not.
+
+    A pass whose usage was never captured (a client that reports none, or a
+    real response that carried no `usage` object) contributes zero token
+    counts and a `null` `usd` -- never zero cost pretending to be real. A
+    pass whose model has no `PRICE_TABLE_USD_PER_1K` entry likewise gets a
+    `null` `usd` (`estimate_cost` itself logs that gap once). `total_usd` is
+    the sum of whatever per-pass costs ARE known; it is `null` only when
+    NONE of the passes priced, so one unpriced/uncaptured pass does not
+    blank out an otherwise-real total for a multi-pass run."""
+    by_pass: dict[str, Any] = {}
+    for pass_name, model in model_by_pass.items():
+        usage = client.usage_for_pass(pass_name)
+        prompt_tokens = usage["prompt_tokens"] if usage else 0
+        completion_tokens = usage["completion_tokens"] if usage else 0
+        total_tokens = usage["total_tokens"] if usage else 0
+        usd = estimate_cost(model, prompt_tokens, completion_tokens) if usage else None
+        by_pass[pass_name] = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "usd": usd,
+        }
+    known = [entry["usd"] for entry in by_pass.values() if entry["usd"] is not None]
+    total_usd = sum(known) if known else None
+    return {"by_pass": by_pass, "total_usd": total_usd}
+
+
 @dataclass(frozen=True)
 class BriefRunResult:
     """`run_brief`'s own return shape: the persisted §7.3 record, the path
@@ -160,6 +208,7 @@ def build_record(
     claims: list[Claim],
     trajectory: list[dict[str, Any]],
     model_by_pass: dict[str, str],
+    client: LLMClient,
     vault_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Assemble the §7.3 analysis record. `claims`/`trajectory` are the
@@ -168,7 +217,9 @@ def build_record(
     this slice's placeholders (see module docstring). `source_usage`
     (§7.13) is computed over the record's own `claims`/`trajectory`/
     `interrogation` -- assembled last here, once every field it reads is
-    already in the dict."""
+    already in the dict. `cost` (§7.14, issue #363) reads `client`'s
+    accumulated per-pass token usage (`_usage_and_cost_by_pass`) -- `client`
+    is needed only for that, never to make a completion call itself."""
     record = {
         "brief_id": brief.brief_id,
         "brief": _brief_to_dict(brief),
@@ -182,6 +233,7 @@ def build_record(
         "confidence": _placeholder_confidence(),
         "trajectory": list(trajectory),
         "model_by_pass": dict(model_by_pass),
+        "cost": _usage_and_cost_by_pass(client, model_by_pass),
     }
     record["source_usage"] = compute_source_usage(record, vault_dir=vault_dir)
     return record
@@ -304,6 +356,7 @@ def run_brief(
         claims=claims,
         trajectory=trajectory,
         model_by_pass=model_by_pass,
+        client=client,
         vault_dir=vault_dir,
     )
     path = persist_record(
