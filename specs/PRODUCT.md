@@ -511,6 +511,7 @@ The measured figures above come from the simulated gold set (DEC-29/DEC-32) and 
 **P0-8 Obsidian vault write.**
 - [ ] Prose pool and artifact pool are separate, independently queryable surfaces sharing metadata conventions.
 - [ ] Notes carry valid three-level frontmatter and backlinks.
+- [ ] Per-note fault isolation: a single note's write failing (e.g. an `OSError` from a note path exceeding Windows' MAX_PATH) is logged and skipped, not allowed to abort the rest of the source's notes; a source where every attempted note fails still raises loudly rather than reporting a quiet empty success.
 
 **P0-9 Gold-set generation & label sheet.**
 - [ ] Emits ~100–120 chunks from ~20–28 sources. Balancing strata are field × empirical_scope × role_in_argument: the sample includes ≥1 chunk for each represented value of each of these three axes. source-type (book/paper), claim_type, and theory_school are not balancing strata; they ride along descriptively on whatever is drawn, and each source-type present in the corpus contributes ≥1 chunk. Non-substantive back-matter (endnotes, references/bibliography, index, appendix, front-matter) is excluded from the sampling frame; the sampler draws only from substantive prose.
