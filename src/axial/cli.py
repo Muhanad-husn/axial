@@ -24,6 +24,8 @@ from axial.chunk import (
     run_chunk_recursive,
 )
 from axial.codebook import CodebookError, load_codebook
+from axial.distill.classify import AXES as DISTILL_CLASSIFY_AXES
+from axial.distill.classify import ClassifyError, run_classify
 from axial.distill.embed import EmbedError, run_embed
 from axial.distill.readiness import ReadinessError, run_readiness
 from axial.drive import DEFAULT_SECRETS_PATH as DRIVE_SECRETS_PATH
@@ -520,6 +522,20 @@ def build_parser() -> argparse.ArgumentParser:
             "tight cluster or smears as noise (HDBSCAN's own -1 label, never "
             "cluster 0, is the LLM-routed tail) -- data/distill/readiness_manifest.json"
         ),
+    )
+
+    classify_parser = distill_subparsers.add_parser(
+        "classify",
+        help=(
+            "stage-5d TF-IDF + LogisticRegression classifier for the claim_type/"
+            "theory_school axes (DEC-37/38): trains on the vault's existing tags "
+            "(gold chunks excluded), scores against the independent gold sheet at "
+            "a confidence-threshold sweep -- data/distill/classify_<axis>_manifest.json. "
+            "Eval artifact only; never wired into the production tag pass."
+        ),
+    )
+    classify_parser.add_argument(
+        "axis", choices=list(DISTILL_CLASSIFY_AXES), help="the tag axis to train a classifier for"
     )
 
     gate_parser = subparsers.add_parser(
@@ -1267,6 +1283,23 @@ def _distill_readiness_map() -> int:
     return 0
 
 
+def _distill_classify(axis: str) -> int:
+    try:
+        result = run_classify(axis)
+    except ClassifyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"axis: {result.axis}")
+    print(f"train_chunk_count: {result.train_chunk_count}")
+    print(f"dropped_classes: {result.dropped_classes}")
+    print(f"gold_chunk_count: {result.gold_chunk_count}")
+    print(f"full_coverage_accuracy: {result.full_coverage_accuracy}")
+    print(f"teacher_gold_agreement: {result.teacher_gold_agreement}")
+    print(f"manifest_path: {result.manifest_path}")
+    return 0
+
+
 def _gate_run(gate: str, records_dir: str | None, briefs_dir: str | None) -> int:
     try:
         if gate == ADVERSARIAL_GATE_NAME:
@@ -1421,6 +1454,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "distill" and args.distill_command == "readiness-map":
         return _distill_readiness_map()
+
+    if args.command == "distill" and args.distill_command == "classify":
+        return _distill_classify(args.axis)
 
     if args.command == "gate" and args.gate_command == "run":
         return _gate_run(args.gate, args.records, args.briefs)

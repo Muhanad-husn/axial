@@ -1,6 +1,40 @@
 # Eval 2 — hybrid-tagging distillation (cost axis)
 
-**Status:** foundation stub, stages 5a–5b shipped. **5a (issue #296): every
+**Status:** foundation stub, stages 5a–5b shipped; 5d classifiers for the two
+blind axes shipped (#351/#352). **5d (`claim_type`/`theory_school`, issues
+#351/#352, DEC-37/DEC-38):** `src/axial/distill/classify.py` (`axial distill
+classify claim_type|theory_school`) implements the ONE technique DEC-38
+measured as beating dense embeddings for these two axes — `TfidfVectorizer`
+(`max_features=20000`, `ngram_range=(1,2)`, `min_df=2`,
+`stop_words="english"`) + `LogisticRegression(max_iter=2000)`, trained
+directly on the corpus's own existing best-of-3 production tags (no fresh
+LLM relabel needed, DEC-37), excluding the gold-sampled chunk_ids
+(leakage-free) and any class with fewer than 6 training examples (too few to
+learn a stable boundary). Evaluated against the independent gold sheet
+(`data/gold/labels/label_sheet.xlsx`) — never against the tagger's own
+labels — at full coverage and across a confidence-threshold sweep
+(0.5/0.6/0.7/0.8), each threshold standing in for HDBSCAN's `-1` as the
+automate/defer-to-LLM split. DEC-38's real-corpus measurement: full-coverage
+accuracy 45.7% (`claim_type`)/47.4% (`theory_school`), both below the
+teacher's own gold agreement (56.0%/54.3%); at `conf≥0.6`, accuracy-on-covered
+climbs to 75.0%/70.0% at 27.6%/34.5% coverage — the confident subset clears
+the teacher, the full set does not. The manifest
+(`data/distill/classify_<axis>_manifest.json`) records the corpus-pin
+provenance, the pinned config, train/gold chunk counts, dropped classes, and
+the teacher's own gold agreement when `data/gold/labels/eval_report.json`
+exists (loaded, never required). **This is a measurement/eval artifact
+only** — like 5b's readiness map, it is never wired into
+`axial.tag.run_tag` or any production tagging path; whether to build the
+automate-if-confident path for real is separate spec drift for the founder
+to adjudicate (DEC-32). The other stage-5d candidate axes
+(`field_primary`/`role_in_argument`/`empirical_scope_value`) use a
+different, already-measured technique (the embedding classifier, DEC-39) and
+are not this module's job — a future slice per axis, not a generalized
+multi-technique abstraction here. Not independently re-validated against the
+real corpus/gold sheet by the builder session that shipped this slice (no
+`data/` in a fresh worktree) — see the PR body.
+
+**5a (issue #296): every
 prose chunk in the frozen vault is embedded once (local sentence-transformer,
 `sentence-transformers/all-MiniLM-L6-v2`) and persisted in a LanceDB vector
 store (`data/distill/embeddings.lance`, `src/axial/distill/embed.py`,
