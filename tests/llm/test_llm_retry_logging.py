@@ -5,6 +5,16 @@ exposure numbers become measurable instead of a lower bound).
 
 Locked behavioral contract (DEC-1) -- do not edit once committed red.
 
+Update (real-time per-API-call logging, #368/#369): a later feature adds
+its own `llm_call_request`/`llm_call_response` stderr line pair around
+EVERY request/response in `_post_with_deadline` -- the single choke point
+`complete()` routes through -- independent of retry status. That is a
+different, additive log stream, not a change to `_log_retry`'s own
+contract. The line-filtering helpers below were narrowed from "every
+stderr line" to "lines starting `llm_retry`" so this suite keeps asserting
+exactly the same `_log_retry` behavior it always has (tests are contracts
+owned by the product, not locked artifacts -- CLAUDE.local.md).
+
 Given  `OpenRouterClient.complete()` retries a transient failure (a 429/5xx,
        a truncated/empty/error `finish_reason`, or a `content_filter`
        moderation refusal rerouted to the fallback model) silently today --
@@ -98,6 +108,18 @@ def _nonempty_lines(text: str) -> list[str]:
     return [line for line in text.splitlines() if line.strip()]
 
 
+def _retry_lines(text: str) -> list[str]:
+    """Lines emitted by `_log_retry` specifically (prefix `llm_retry`), not
+    stderr as a whole. A later feature (real-time per-API-call logging,
+    #368/#369) adds its own `llm_call_request`/`llm_call_response` line
+    pair around EVERY request/response, retried or not -- this suite is
+    about `_log_retry`'s own contract (issue #117: does a retried/rerouted
+    attempt get exactly one structured line), which is unaffected and
+    still asserted here, just filtered to the lines that are actually
+    `_log_retry`'s."""
+    return [line for line in _nonempty_lines(text) if line.startswith("llm_retry")]
+
+
 def _assert_line_names_attempt(
     line: str, *, pass_name: str, attempt: int, budget: int, trigger_token: str
 ) -> None:
@@ -156,7 +178,7 @@ def test_two_non_final_retries_each_log_exactly_one_line_with_pass_attempt_and_t
     assert call_count == 3
 
     stderr = capsys.readouterr().err
-    lines = _nonempty_lines(stderr)
+    lines = _retry_lines(stderr)
     assert len(lines) == 2, (
         f"expected exactly 2 non-final-retry log lines (attempts 1 and 2 of "
         f"{_MAX_ATTEMPTS}), got {len(lines)}: {lines!r}"
@@ -180,9 +202,12 @@ def test_two_non_final_retries_each_log_exactly_one_line_with_pass_attempt_and_t
 
 
 def test_clean_first_attempt_success_logs_nothing_new(capsys):
-    """A completion that succeeds on the very first attempt must log NOTHING
-    to stderr -- no retry line is ever warranted when there is nothing to
-    retry."""
+    """A completion that succeeds on the very first attempt logs no
+    `llm_retry` line -- no retry line is ever warranted when there is
+    nothing to retry. (A clean call DOES now emit its own
+    `llm_call_request`/`llm_call_response` pair -- real-time per-API-call
+    logging, #368/#369 -- but that is a distinct feature from `_log_retry`'s
+    own "nothing to retry" contract, which this test still pins down.)"""
     from axial.llm import OpenRouterClient
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -195,8 +220,8 @@ def test_clean_first_attempt_success_logs_nothing_new(capsys):
 
     assert result == "clean success"
     stderr = capsys.readouterr().err
-    assert _nonempty_lines(stderr) == [], (
-        f"a clean first-attempt success must log nothing to stderr, got: {stderr!r}"
+    assert _retry_lines(stderr) == [], (
+        f"a clean first-attempt success must log no llm_retry line, got: {stderr!r}"
     )
 
 
@@ -223,7 +248,7 @@ def test_final_exhausted_attempt_is_not_logged_only_the_two_non_final_ones_are(m
         client.complete("prompt text", pass_name="chunk")
 
     stderr = capsys.readouterr().err
-    lines = _nonempty_lines(stderr)
+    lines = _retry_lines(stderr)
     assert len(lines) == _MAX_ATTEMPTS - 1, (
         f"expected exactly {_MAX_ATTEMPTS - 1} retry log lines (every attempt "
         f"except the final, raising one), got {len(lines)}: {lines!r}"
@@ -280,7 +305,7 @@ def test_content_filter_reroute_log_line_records_refused_prompt_hash_and_prefix(
     assert result == "fallback answer"
 
     stderr = capsys.readouterr().err
-    lines = _nonempty_lines(stderr)
+    lines = _retry_lines(stderr)
     content_filter_lines = [line for line in lines if "content_filter" in line]
     assert content_filter_lines, (
         f"expected at least one log line naming the 'content_filter' trigger "
