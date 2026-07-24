@@ -554,9 +554,9 @@ both blind axes once checked against gold. See *Stage 5 — live state* below.
 - ✅ 5a #296 — embedding pass + vector store (LanceDB) + corpus-pin manifest convention — PR #357 merged
 - ✅ 5b #297 — HDBSCAN readiness map (PCA) + cluster-(-1) router — **PR #358 merged 2026-07-24 (`0118f68`).** Real-corpus-validated. **Role demoted (DEC-37): kept as a correctly-implemented diagnostic (ARI≈0 against every tag axis is itself the finding), not a gate for 5c**
 - ✅ 5c #347 — stratified teacher labels — **redirected deliverable executed and issue closed 2026-07-24 (DEC-39).** Gold coverage now exists for all three head axes on the same 120-chunk sample; labels in `data/gold/labels/label_sheet.xlsx`
-- ☐ 5d #348 — head classifier: `role_in_argument` — **gold-checked (DEC-39): real but weaker candidate** (57.3% vs. teacher's 53.3%, wide overlapping CI, 62.5% coverage). Issue body updated on GitHub; build not started
-- ☐ 5d #349 — head classifier: `empirical_scope` — **gold-checked (DEC-39): does not clear the bar with embeddings** (59.1% vs. 64.2%). One lever untried: a TF-IDF check (mirrors DEC-38's method on the blind axes) before ruling this axis out. Issue body updated; not started
-- ☐ 5d #350 — head classifier: `field` — **gold-checked (DEC-39): strongest candidate of all five axes** (79.0% vs. teacher's 76.7% at 87.5% coverage, CI at parity). Issue body updated; build not started — the clearest next build
+- ◐ 5d #348 — head classifier: `role_in_argument` — **built 2026-07-24, PR #371 open (not yet merged).** Real-corpus: 63.9% accuracy @ 50.8% coverage (conf≥0.6), clears the 53.3% teacher baseline at every threshold checked, but lands on a different point of the curve than DEC-39's original probe (57.3%/62.5%) — same technique, flagged plainly in the PR, not a settled graduation call (no independent SELF/INTER reliability figure for this axis)
+- ✅ 5d #349 — head classifier: `empirical_scope` — **CLOSED NEGATIVE 2026-07-24.** TF-IDF check run (the one untried lever): 61.2% accuracy @ 70.8% coverage (conf≥0.6) — still below the teacher's 64.2%, and higher-threshold "wins" are on thin, shrinking samples (n=64/51) with heavily overlapping CIs. Neither embeddings (DEC-39) nor TF-IDF beat the teacher for this axis. **Recommendation: stay LLM-only, no classifier built.**
+- ◐ 5d #350 — head classifier: `field` — **built 2026-07-24, PR #371 open (not yet merged).** Real-corpus: 78.0% accuracy @ 83.3% coverage (conf≥0.6), clears the teacher's 76.7%, inside DEC-39's cited 90% CI. Strongest result of the whole investigation.
 - ✅ 5d #351/#352 — `claim_type`/`theory_school` TF-IDF classifier — **built and merged 2026-07-24, PR #366 (`7ffa51b`), both issues closed.** `src/axial/distill/classify.py` + `axial distill classify <axis>` — independently real-corpus-validated by the orchestrator before merge (reproduced DEC-38's exact numbers against the live vault/gold sheet: `claim_type` 75.0%/27.6% cov, `theory_school` 70.0%/34.5% cov, both at conf≥0.6). Eval artifact only — not wired into production tagging (DEC-32); that remains separate spec drift if ever pursued
 - ☐ 5e #353 — quality-per-dollar verdict — all five axes now have a gold verdict; unblocked once the founder picks which of #348/#349/#350 to build
 - Tracking issue: #298 — comment reflecting DEC-37/38/39 posted 2026-07-24; also filed 2026-07-24: **PR #365** merged (unrelated cleanup, stray corpus-pin file)
@@ -783,19 +783,22 @@ readiness map, merged `0118f68`), PR #365 (stray corpus-pin file, merged `461ee6
 PR #366 (`claim_type`/`theory_school` TF-IDF classifier, merged `7ffa51b`, closing
 #351/#352) all merged; worktree/branch cleanup done each time. #366 was independently
 real-corpus-validated by the orchestrator before merge — reproduced DEC-38's exact
-numbers against the live vault and gold sheet. What's left is #348/#349/#350:
+numbers against the live vault and gold sheet.
 
-1. **#350 (`field`): the strongest build candidate of the five axes** — gold-checked,
-   high coverage, CI at parity with the teacher. Clearest next build.
-2. **#348 (`role_in_argument`): a real but weaker candidate** — gold-checked positive,
-   wide CI, moderate coverage; flag the reliability caveat before any graduation call.
-3. **#349 (`empirical_scope`): do not build as scoped, but don't flat-close either** —
-   embeddings don't clear the bar; try TF-IDF (DEC-38's lift on the blind axes) before
-   ruling this axis out entirely. Cheap, same method as the blind-axis check — worth
-   doing before dispatching a build.
-4. Once the founder picks which of #348/#349/#350 to build, dispatch as concurrent
-   worktrees (file-disjoint, same pattern as stages 0–3's parallel lanes) — #350 first
-   if picked, since it has no open question left.
+**All three of #348/#349/#350 resolved same-day (2026-07-24), dispatched concurrently
+per the plan above.** #350 and #348 were built as two independent worktree builders,
+which — as expected — landed on the same new file paths (`classify_embedding.py` and its
+two test files) with incompatible content; reconciled into one combined module
+(`AXES = ("field", "role_in_argument")`) in a follow-up commit, then opened as one PR
+closing both issues: **[PR #371](https://github.com/Muhanad-husn/axial/pull/371)**
+(`58b7158` field build + `1693fca` reconciliation), open, not yet merged. #349 got its
+TF-IDF check (a read-only measurement, no worktree needed) in parallel with the two
+builds — **closed negative**, see the status board above.
+
+**Next:** founder review/merge of PR #371. Once merged: #349 needs no further build (stays
+LLM-only); #353 (quality-per-dollar verdict) is unblocked — every one of the five stage-5d
+axes now has either a shipped classifier (`claim_type`, `theory_school`, `field`,
+`role_in_argument`) or a closed-negative recommendation (`empirical_scope`).
 
 ## Decisions settled during planning (a builder should know)
 
