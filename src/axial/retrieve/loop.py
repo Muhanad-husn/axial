@@ -18,6 +18,7 @@ expected to be scripted in every acceptance test for this slice -- see
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -121,6 +122,7 @@ def run_retrieval_loop(
     trajectory: list[dict[str, Any]] = []
 
     for step in range(1, step_budget + 1):
+        print(f"retrieve: turn {step}/{step_budget} starting", file=sys.stderr)
         requested = client.complete_with_tools(prompt, tools, pass_name=RETRIEVE_PASS_NAME)
         if requested is None:
             break
@@ -128,6 +130,10 @@ def run_retrieval_loop(
         tool_name = requested.get("tool")
         args = requested.get("args") or {}
         result = dispatch(tool_name, args, vault_dir=vault_dir, envelopes_dir=envelopes_dir)
+        print(
+            f"retrieve: turn {step}/{step_budget} called {tool_name!r}, {result.count} result(s)",
+            file=sys.stderr,
+        )
 
         trajectory.append(
             {

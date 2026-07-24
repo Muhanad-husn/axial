@@ -36,6 +36,7 @@ on any other disposition, and simply never goes on to make a synthesis call
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -297,6 +298,7 @@ def interrogate(
     `InvalidAssessmentError` subclass) when the response parses as JSON but
     does not match the §7.2 shape -- both are named, immediately-fatal
     failures, never a silent `proceed`."""
+    print(f"interrogate: starting for brief case={brief.case!r}", file=sys.stderr)
     coverage_counts = coverage_count(vault_dir=vault_dir)
     prompt = compose_prompt(brief, coverage_counts)
 
@@ -308,6 +310,7 @@ def interrogate(
     premises_found, bounds_applied, refusal = parse_interrogation_response(raw)
     disposition = disposition_for(premises_found, bounds_applied, refusal)
 
+    print(f"interrogate: done, disposition={disposition}", file=sys.stderr)
     return InterrogationResult(
         premises_found=premises_found,
         bounds_applied=bounds_applied,

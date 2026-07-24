@@ -96,6 +96,7 @@ itself already follows.
 from __future__ import annotations
 
 import json
+import sys
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -362,12 +363,15 @@ def _run_one_draw(
     analyses_dir = draw_dir(sweep_dir, brief_stem, draw_index)
     record_file = _record_path(sweep_dir, brief_stem, draw_index, brief.brief_id)
 
+    print(f"sweep: {brief_stem} draw {draw_index} starting", file=sys.stderr)
+
     if record_file.is_file():
         try:
             record = json.loads(record_file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             record = None  # a torn prior write -- fall through and re-run
         if record is not None:
+            print(f"sweep: {brief_stem} draw {draw_index} SKIP (already recorded)", file=sys.stderr)
             outcome = DrawOutcome(
                 brief_path,
                 brief_stem,
@@ -395,6 +399,11 @@ def _run_one_draw(
             thin_result_floor=thin_result_floor,
         )
     except BRIEF_RUN_ERRORS as exc:
+        elapsed = time.monotonic() - start
+        print(
+            f"sweep: {brief_stem} draw {draw_index} FAIL ({elapsed:.1f}s): {exc}",
+            file=sys.stderr,
+        )
         outcome = DrawOutcome(
             brief_path,
             brief_stem,
@@ -402,11 +411,13 @@ def _run_one_draw(
             draw_index,
             FAIL_STATUS,
             str(exc),
-            time.monotonic() - start,
+            elapsed,
             None,
         )
         return outcome, None
 
+    elapsed = time.monotonic() - start
+    print(f"sweep: {brief_stem} draw {draw_index} OK ({elapsed:.1f}s)", file=sys.stderr)
     outcome = DrawOutcome(
         brief_path,
         brief_stem,
@@ -414,7 +425,7 @@ def _run_one_draw(
         draw_index,
         OK_STATUS,
         "",
-        time.monotonic() - start,
+        elapsed,
         result.path,
     )
     return outcome, result.record
@@ -436,8 +447,13 @@ def _score_brief_gates(
     (with a printed warning) rather than aborting the other 3 gates or the
     rest of the sweep -- gate scoring is a post-processing report over
     already-persisted draws, not the sweep's own critical path."""
+    brief_stem = reports_dir.parent.name
     reports: dict[str, GateReport] = {}
     for gate_name in SWEEP_GATE_NAMES:
+        print(
+            f"sweep: {brief_stem} gate {gate_name!r} scoring {len(records)} draw(s)",
+            file=sys.stderr,
+        )
         try:
             report = run_gate(
                 gate_name,
@@ -453,6 +469,10 @@ def _score_brief_gates(
             continue
         write_report(report, reports_dir=reports_dir)
         reports[gate_name] = report
+        print(
+            f"sweep: {brief_stem} gate {gate_name!r} done, passed={report.passed}",
+            file=sys.stderr,
+        )
     return reports
 
 
