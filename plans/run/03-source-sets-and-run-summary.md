@@ -5,7 +5,7 @@
 - **GitHub issue:** #277
 - **Branch:** feat/run/03-source-sets-and-run-summary
 - **Project directory:** .
-- **Status:** ◐ in review
+- **Status:** ✅ done (merged)
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -90,12 +90,12 @@ Then  it exits non-zero with a usage error naming the conflict, having attempted
 
 ## Definition of done
 
-- [ ] Outer acceptance test authored by the test-author, committed RED (flag-approved), seen to fail for the right reason — then locked.
-- [ ] All seeded unit behaviours covered; full suite passes locally; outer test GREEN.
-- [ ] Refactor pass complete with the bar green.
-- [ ] Slice's tests run in CI.
-- [ ] Reviewer's two-stage review passed.
-- [ ] Evidence collected and PR prepared into `main` — merge awaits founder approval.
+- [x] Outer acceptance test authored by the test-author, committed RED (flag-approved), seen to fail for the right reason — then locked.
+- [x] All seeded unit behaviours covered; full suite passes locally; outer test GREEN.
+- [x] Refactor pass complete with the bar green.
+- [x] Slice's tests run in CI.
+- [x] Reviewer's two-stage review passed.
+- [x] Evidence collected and PR prepared into `main` — merge awaits founder approval.
 
 ## Status / progress log
 
@@ -107,5 +107,7 @@ Then  it exits non-zero with a usage error naming the conflict, having attempted
   `rates` seam for #288) instead of a bare outcomes list; existing
   slice-01/02 unit tests in `src/axial/test_run.py` updated to unpack it
   (one-line justification in the PR body — tests are contracts, not locked
-  artifacts). Spec P1-4 updated in the same PR. PR TBD, awaiting founder
-  approval.
+  artifacts). Spec P1-4 updated in the same PR.
+- 2026-07-21 merged: PR #309 (`1237e8d`). This status marker was left stale
+  until 2026-07-24, when a redispatch of slice 02 found all three slices of
+  #277 already on `main`.

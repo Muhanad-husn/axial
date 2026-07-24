@@ -5,7 +5,7 @@
 - **GitHub issue:** #277
 - **Branch:** feat/run/02-unified-resume-ledger
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ✅ done (merged)
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -97,13 +97,19 @@ Then  the source is skipped via the pass's done-predicate without recomputing it
 
 ## Definition of done
 
-- [ ] Outer acceptance test authored by the test-author, committed RED (flag-approved), seen to fail for the right reason — then locked.
-- [ ] All seeded unit behaviours covered; full suite passes locally; outer test GREEN.
-- [ ] Refactor pass complete with the bar green.
-- [ ] Slice's tests run in CI.
-- [ ] Reviewer's two-stage review passed.
-- [ ] Evidence collected and PR prepared into `main` — merge awaits founder approval.
+- [x] Outer acceptance test authored by the test-author, committed RED (flag-approved), seen to fail for the right reason — then locked.
+- [x] All seeded unit behaviours covered; full suite passes locally; outer test GREEN.
+- [x] Refactor pass complete with the bar green.
+- [x] Slice's tests run in CI.
+- [x] Reviewer's two-stage review passed.
+- [x] Evidence collected and PR prepared into `main` — merge awaits founder approval.
 
 ## Status / progress log
 
 - 2026-07-21 planned.
+- 2026-07-21 built and merged: PR #306 (`6047450`). Ledger at
+  `data/logs/run/ledger.tsv` keyed by `(pass, source_id)`; extract/envelope
+  declare a file-exists done-predicate, every other pass declares a ledger
+  done-predicate. Spec P1-4 updated in the same PR. This status marker was
+  left stale until 2026-07-24, when a redispatch of this slice found the
+  work already on `main`.
