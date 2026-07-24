@@ -25,6 +25,7 @@ from axial.chunk import (
 )
 from axial.codebook import CodebookError, load_codebook
 from axial.distill.embed import EmbedError, run_embed
+from axial.distill.readiness import ReadinessError, run_readiness
 from axial.drive import DEFAULT_SECRETS_PATH as DRIVE_SECRETS_PATH
 from axial.drive import DriveSecretsError, _load_drive_secrets, run_drive_ingest
 from axial.envelope import EnvelopeError, MissingSourceError, compute_source_id, run_envelope
@@ -508,6 +509,16 @@ def build_parser() -> argparse.ArgumentParser:
             "and persist the vectors + filterable metadata (source_id, tag axes) "
             "in a LanceDB store (data/distill/embeddings.lance), recording the "
             "corpus-pin id/hash this pass ran against (data/distill/embedding_manifest.json)"
+        ),
+    )
+
+    distill_subparsers.add_parser(
+        "readiness-map",
+        help=(
+            "cluster every persisted chunk embedding (PCA + HDBSCAN, DEC-35, zero "
+            "LLM spend) and emit the readiness map: per tag, whether it sits in a "
+            "tight cluster or smears as noise (HDBSCAN's own -1 label, never "
+            "cluster 0, is the LLM-routed tail) -- data/distill/readiness_manifest.json"
         ),
     )
 
@@ -1241,6 +1252,21 @@ def _distill_embed() -> int:
     return 0
 
 
+def _distill_readiness_map() -> int:
+    try:
+        result = run_readiness()
+    except ReadinessError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"chunk_count: {result.chunk_count}")
+    print(f"cluster_count: {result.cluster_count}")
+    print(f"noise_count: {result.noise_count}")
+    print(f"noise_fraction: {result.noise_fraction}")
+    print(f"manifest_path: {result.manifest_path}")
+    return 0
+
+
 def _gate_run(gate: str, records_dir: str | None, briefs_dir: str | None) -> int:
     try:
         if gate == ADVERSARIAL_GATE_NAME:
@@ -1392,6 +1418,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "distill" and args.distill_command == "embed":
         return _distill_embed()
+
+    if args.command == "distill" and args.distill_command == "readiness-map":
+        return _distill_readiness_map()
 
     if args.command == "gate" and args.gate_command == "run":
         return _gate_run(args.gate, args.records, args.briefs)
