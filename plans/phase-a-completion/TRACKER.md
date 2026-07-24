@@ -11,7 +11,11 @@ as slices land. Issues remain the system of record; this is the map over them.
   [`STAGE-4-RUNBOOK.md`](STAGE-4-RUNBOOK.md) is the *why* — measured costs, traps, and the
   sample-vs-full-re-tag analysis. Read both before launching any corpus pass
 - **Decision:** `docs/DECISIONS.md` → DEC-32
-- **Last updated:** 2026-07-24 — **Stage 5 mechanism pivoted (DEC-37), refined (DEC-38),
+- **Last updated:** 2026-07-24 — **#353 (stage 5e, quality-per-dollar verdict) built,
+  PR #374 opened, not yet merged.** Verdict: **hybrid** (66.7% dollar reduction on the
+  tag pass, more accurate on average than the all-LLM baseline at conf≥0.6). This is
+  the last open stage-5d/5e item — once #374 merges, stage 5 has nothing left to build.
+  See *Stage 5 — live state* below and PR #374 for detail. **Stage 5 mechanism pivoted (DEC-37), refined (DEC-38),
   and all five axes are now gold-checked (DEC-39).** #296 (5a, embeddings) and #297 (5b,
   HDBSCAN readiness map) both merged and real-corpus-validated — but the real-corpus
   validation of #297 (PR #358) led to a full data-science exploration that overturned
@@ -558,7 +562,7 @@ both blind axes once checked against gold. See *Stage 5 — live state* below.
 - ✅ 5d #349 — head classifier: `empirical_scope` — **CLOSED NEGATIVE 2026-07-24.** TF-IDF check run (the one untried lever): 61.2% accuracy @ 70.8% coverage (conf≥0.6) — still below the teacher's 64.2%, and higher-threshold "wins" are on thin, shrinking samples (n=64/51) with heavily overlapping CIs. Neither embeddings (DEC-39) nor TF-IDF beat the teacher for this axis. **Recommendation: stay LLM-only, no classifier built.**
 - ✅ 5d #350 — head classifier: `field` — **built and merged 2026-07-24, PR #371 (`ce5b26c`).** Real-corpus: 78.0% accuracy @ 83.3% coverage (conf≥0.6), clears the teacher's 76.7%, inside DEC-39's cited 90% CI. Strongest result of the whole investigation.
 - ✅ 5d #351/#352 — `claim_type`/`theory_school` TF-IDF classifier — **built and merged 2026-07-24, PR #366 (`7ffa51b`), both issues closed.** `src/axial/distill/classify.py` + `axial distill classify <axis>` — independently real-corpus-validated by the orchestrator before merge (reproduced DEC-38's exact numbers against the live vault/gold sheet: `claim_type` 75.0%/27.6% cov, `theory_school` 70.0%/34.5% cov, both at conf≥0.6). Eval artifact only — not wired into production tagging (DEC-32); that remains separate spec drift if ever pursued
-- ☐ 5e #353 — quality-per-dollar verdict — all five axes now have a gold verdict AND a build/close disposition (#348/#350 merged PR #371, #349 closed negative). Unblocked, the only stage-5d item left
+- ◐ 5e #353 — quality-per-dollar verdict — **PR #374 opened 2026-07-24**, not yet merged. Combines the four 5d classifier manifests + a live cost probe + a bounded drift-monitor dry run into one verdict: **hybrid** — 66.7% dollar reduction on the tag pass, and *more* accurate on average at conf≥0.6 (64.4% vs. 60.1% across the four graduated axes) than the all-LLM baseline. Full numbers in `docs/eval/02-hybrid-tagging-distillation.md`'s new "5e" section. Real invocation + 1632-pass sprint-suite evidence independently verified by the orchestrator before push, not just trusted from the builder's report
 - Tracking issue: #298 — comment reflecting DEC-37/38/39 posted 2026-07-24; also filed 2026-07-24: **PR #365** merged (unrelated cleanup, stray corpus-pin file)
 - Also filed 2026-07-24: **PR #365** (unrelated cleanup — commits a stray `evals/corpus_pin/sim-2026-07-23.json` left untracked by an earlier brief-interrogation run), open, not yet merged
 
