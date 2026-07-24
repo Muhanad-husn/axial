@@ -1706,29 +1706,33 @@ class OpenRouterClient:
         call); a later slice can widen this if a real model's tool-use
         pattern needs it.
 
-        Deliberately narrower than `complete()`'s retry policy: transport
-        errors, 429/5xx, and the wall-clock deadline retry exactly like
-        `complete()` does, but there is no `content_filter` fallback
-        reroute here -- no acceptance test drives this path against
+        Shares `complete()`'s retry policy for every transient class:
+        transport errors, 429/5xx, and the wall-clock deadline retry exactly
+        like `complete()` does -- and so does a turn with no `tool_calls`
+        whose `finish_reason` is a genuine transient/truncated fault
+        (`"length"`, `"error"`, or any other non-stop value besides
+        `content_filter`): same same-model retry, same
+        `_log_retry`/backoff schedule, and only an `OpenRouterError` naming
+        the fault on the last attempt. This was found in production
+        (`data/logs/2026-07-23-sim-brief-batch/summary.md`, run `P4-01`): a
+        real brief run died on a single `finish_reason='error'` occurrence
+        mid-retrieval-loop, an outcome `complete()`'s own retry logic would
+        have recovered from -- there is no principled reason the
+        tool-calling path should treat that class of fault differently.
+
+        The one deliberate exception is `content_filter`: there is still no
+        fallback reroute here -- no acceptance test drives this path against
         anything but the scripted `stub`/`record` provider (this feature's
         own explicit non-goal: "Any live-LLM test"), so adding untested
         moderation-reroute plumbing here would be speculative robustness,
-        not a proven need.
+        not a proven need. A moderation decision does not change on retry
+        either (matching `complete()`'s own handling), so a `content_filter`
+        turn with no `tool_calls` raises `ContentRefusedError` immediately,
+        on the first attempt, with no retry at all.
 
         A response with no `tool_calls` is the clean "no more tool calls"
         end ONLY when `finish_reason` is a genuine clean stop (`"stop"` or
-        absent/`None`). A `finish_reason` of `content_filter`, `length`, or
-        any other non-stop value with an empty `tool_calls` list is a
-        broken/refused/truncated turn masquerading as a clean end -- left
-        unguarded, it would silently shorten the §7.6 trajectory instead of
-        surfacing the failure, undermining the log's whole audit purpose
-        (distinguishing a sound retrieval path from a broken one). Such a
-        turn raises a named `LLMError` instead (`ContentRefusedError` for
-        `content_filter`, matching `complete()`'s own type for that
-        finish_reason; `OpenRouterError` for every other non-stop value) --
-        this is NOT the `complete()` content_filter fallback reroute
-        (deliberately not built here, see above): the loop just needs the
-        failure to be loud, not recovered.
+        absent/`None`).
         """
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             is_last_attempt = attempt == _MAX_ATTEMPTS
@@ -1784,11 +1788,20 @@ class OpenRouterClient:
                         "finish_reason='content_filter' and issued no tool call "
                         "(issue #253 slice 01 review finding)"
                     )
-                raise OpenRouterError(
-                    "complete_with_tools: model turn ended with "
-                    f"finish_reason={finish_reason!r} and issued no tool call "
-                    "(issue #253 slice 01 review finding)"
-                )
+                # Any other non-stop finish_reason ("length", "error", etc.)
+                # with no tool_calls is a transient/truncated provider fault,
+                # not a refusal -- retry same model exactly like `complete()`'s
+                # is_truncated/is_transient_fault branch (see
+                # data/logs/2026-07-23-sim-brief-batch/summary.md).
+                if is_last_attempt:
+                    raise OpenRouterError(
+                        "complete_with_tools: model turn ended with "
+                        f"finish_reason={finish_reason!r} and issued no tool call "
+                        "(issue #253 slice 01 review finding)"
+                    )
+                _log_retry(pass_name, attempt, str(finish_reason))
+                _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
+                continue
 
             first = tool_calls[0]
             try:
