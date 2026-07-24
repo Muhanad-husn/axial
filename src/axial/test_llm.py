@@ -898,6 +898,126 @@ def test_openrouter_client_with_tools_surfaces_the_response_body_on_a_400(monkey
     assert "context_length_exceeded_marker" in str(exc_info.value)
 
 
+# --- complete_with_tools transient-fault retry -----------------------------
+#
+# `complete_with_tools` must retry a no-tool_calls turn same-model, same
+# backoff schedule as `complete()`'s own is_truncated/is_transient_fault
+# branch, when `finish_reason` is anything other than a clean stop or
+# `content_filter` -- a production brief run (P4-01) died on a single
+# finish_reason='error' occurrence mid-retrieval-loop that `complete()`
+# would have recovered from (data/logs/2026-07-23-sim-brief-batch/summary.md).
+
+
+def _no_tool_call_response(finish_reason: str, content: str = "oops") -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={"choices": [{"message": {"content": content}, "finish_reason": finish_reason}]},
+    )
+
+
+def _tool_call_response(name: str = "search", args: dict | None = None) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "choices": [
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": name,
+                                    "arguments": json.dumps(args or {"query": "test"}),
+                                }
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        },
+    )
+
+
+def test_complete_with_tools_retries_a_transient_error_finish_reason_then_succeeds(monkeypatch):
+    """A no-`tool_calls` turn with `finish_reason='error'` is a transient
+    provider fault, not a refusal -- it must be retried same-model exactly
+    like `complete()`'s own `is_transient_fault` branch, not raised on the
+    first occurrence."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return _no_tool_call_response("error")
+        return _tool_call_response("search", {"query": "test"})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    result = client.complete_with_tools("hello world", tools=[{"type": "function"}])
+
+    assert result == {"tool": "search", "args": {"query": "test"}}
+    assert call_count == 2
+
+
+def test_complete_with_tools_gives_up_after_max_attempts_on_persistent_error_finish_reason(
+    monkeypatch,
+):
+    """If every attempt returns `finish_reason='error'` with no `tool_calls`,
+    `complete_with_tools` must give up after the same bounded budget as
+    `complete()` and raise a typed `OpenRouterError` naming the fault, not
+    retry forever."""
+    import axial.llm as llm_module
+    from axial.llm import OpenRouterClient, OpenRouterError
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return _no_tool_call_response("error")
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    with pytest.raises(OpenRouterError, match="error"):
+        client.complete_with_tools("hello world", tools=[{"type": "function"}])
+
+    assert call_count == 3
+
+
+def test_complete_with_tools_content_filter_still_raises_immediately_with_no_retry(monkeypatch):
+    """`content_filter` is the one no-`tool_calls` finish_reason that must
+    NOT retry -- a moderation refusal doesn't change on a blind retry
+    (matching `complete()`'s own handling); this regression-guards that the
+    new transient-fault retry didn't also start retrying `content_filter`."""
+    import axial.llm as llm_module
+    from axial.llm import ContentRefusedError, OpenRouterClient
+
+    monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return _no_tool_call_response("content_filter", content=None)
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    with pytest.raises(ContentRefusedError):
+        client.complete_with_tools("hello world", tools=[{"type": "function"}])
+
+    assert call_count == 1
+
+
 def test_openrouter_client_content_fallback_surfaces_the_response_body_on_a_400(monkeypatch):
     """The content_fallback_model reroute path (`_reroute_content_filter`)
     shares the same 4xx-body gap (issue #358) -- must be fixed there too."""
