@@ -11,18 +11,22 @@ as slices land. Issues remain the system of record; this is the map over them.
   [`STAGE-4-RUNBOOK.md`](STAGE-4-RUNBOOK.md) is the *why* — measured costs, traps, and the
   sample-vs-full-re-tag analysis. Read both before launching any corpus pass
 - **Decision:** `docs/DECISIONS.md` → DEC-32
-- **Last updated:** 2026-07-24 — **Stage 5 mechanism pivoted (DEC-37).** #296 (5a,
-  embeddings) and #297 (5b, HDBSCAN readiness map) both merged and real-corpus-validated
-  — but the real-corpus validation of #297 (PR #358) led to a full data-science
-  exploration that overturned 5b/5c's original design: **density clustering does not
-  recover any tag axis on this corpus's embeddings (ARI≈0, exhaustively measured), and
-  a direct supervised classifier on the corpus's *already-tagged* chunks strictly beats
-  every clustering variant tried.** Gold-checking that classifier then reversed the
-  optimistic internal read: it loses to the LLM teacher on both blind axes
-  (`claim_type`/`theory_school`) it could be checked against. **#347/#348–#353 need
-  re-scoping before any of them are picked up** — see *Stage 5 — live state* below for
-  the full findings and DEC-37 for the authoritative record. Stage 4 remains closed;
-  its *live state* section is kept as incident history, not current state.
+- **Last updated:** 2026-07-24 — **Stage 5 mechanism pivoted (DEC-37), then refined
+  (DEC-38).** #296 (5a, embeddings) and #297 (5b, HDBSCAN readiness map) both merged and
+  real-corpus-validated — but the real-corpus validation of #297 (PR #358) led to a full
+  data-science exploration that overturned 5b/5c's original design: **density clustering
+  does not recover any tag axis on this corpus's embeddings (ARI≈0, exhaustively
+  measured), and a direct supervised classifier on the corpus's *already-tagged* chunks
+  strictly beats every clustering variant tried.** Gold-checking that classifier then
+  reversed the optimistic internal read: on dense embeddings it loses to the LLM teacher
+  on both blind axes (`claim_type`/`theory_school`) it could be checked against. A
+  follow-up TF-IDF baseline (DEC-38) found a **narrower positive**: at a confidence
+  threshold, TF-IDF (not embeddings) automates ~28–35% of chunks on those two axes at
+  accuracy that clears the teacher's own gold agreement — real but on a thin ~35-sample
+  evidence base. **#347/#348–#353 need re-scoping before any of them are picked up** —
+  see *Stage 5 — live state* below for the full findings and DEC-37/DEC-38 for the
+  authoritative record. Stage 4 remains closed; its *live state* section is kept as
+  incident history, not current state.
 
 ## Read-me-first (30-second orient)
 
@@ -711,6 +715,28 @@ were still not meaningfully informative, and traced the real cause one level dow
    probe suggested. This matches `docs/eval/02`'s own original expectation ("the blind
    axes likely stay LLM + best-of-N") — the internal numbers were the misleading signal,
    not the original plan.
+6. **TF-IDF baseline, same gold check (DEC-38).** Prompted by an external "standard
+   solution for wiki-style tagging" writeup — most of it re-confirmed decisions already
+   made here (confidence-thresholded shortlist + human/LLM-in-the-loop = the same
+   design as step 3's threshold; hierarchical/ontology tagging = the field→claim_type
+   idea step 4 already found gave zero lift). Its one genuinely untested idea was a
+   TF-IDF + linear baseline, never tried alongside dense embeddings. Measured, same
+   leakage-free gold check as step 5:
+
+   | axis | TF-IDF full-coverage | embedding full-coverage | TF-IDF @conf≥0.6 | tagger vs. gold |
+   |---|---|---|---|---|
+   | `claim_type_primary` | 45.7% | 39.7% | 75.0% @ 27.6% cov. (90% boot CI 62.2–87.5%) | 56.0% |
+   | `theory_school_primary` | 47.4% | 41.4% | 70.0% @ 34.5% cov. (90% boot CI 57.1–81.6%) | 54.3% |
+
+   TF-IDF beats the dense-embedding classifier outright on both blind axes, and its
+   confident subset **beats the teacher's own gold agreement** — robustly for
+   `claim_type` (CI floor 62.2% > teacher's 56.0%), more marginally for `theory_school`
+   (CI floor 57.1% barely clears teacher's 54.3%). Concatenating TF-IDF+embedding
+   features was tried and is **worse than TF-IDF alone** (40.5%/43.1% full-coverage,
+   48.1%/51.9% @conf≥0.6 — the huge sparse TF-IDF space dilutes the embedding's
+   contribution in a single linear head) — a negative result, don't retry without a
+   different combination mechanism (e.g. a proper ensemble, not feature concatenation).
+   **Caveat:** the confident subset is only ~32–40 gold chunks; real, but thin.
 
 ### What is still unknown
 
@@ -725,9 +751,13 @@ before step 5. **Do not treat them as distillation-ready without the same gold c
    in-harness Sonnet-5 dispatch already used for the two blind axes) — this is the one
    real prerequisite before #348–#350 can make a trustworthy graduation call. Likely
    lands as a rewritten #347, not a new issue — see the status board above.
-2. **#351/#352 (`claim_type`/`theory_school`): do not build as scoped.** Recommend
-   closing or re-scoping to "stay LLM-only" pending a materially different approach —
-   these are gold-checked negative results, not "needs more tuning."
+2. **#351/#352 (`claim_type`/`theory_school`): do not build a full-coverage classifier
+   as scoped, but not a flat "stay LLM-only" either.** A TF-IDF (not embedding) model
+   at a conservative confidence threshold automates a real, gold-checked slice
+   (~28–35% of chunks) at accuracy that clears the teacher's own gold agreement —
+   see step 6. Re-scope to a narrow automate-if-confident-else-defer proposal rather
+   than closing outright; flag the thin evidence base (32–40 gold chunks) plainly so
+   the founder can weigh whether that's enough to act on.
 3. **#348–#350: revise the issue bodies** before dispatch — global classifier +
    confidence threshold on existing tags (not a cluster-stratified fresh sample), gated
    on next action 1's gold coverage.
