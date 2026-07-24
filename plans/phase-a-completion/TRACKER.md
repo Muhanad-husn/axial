@@ -11,20 +11,24 @@ as slices land. Issues remain the system of record; this is the map over them.
   [`STAGE-4-RUNBOOK.md`](STAGE-4-RUNBOOK.md) is the *why* — measured costs, traps, and the
   sample-vs-full-re-tag analysis. Read both before launching any corpus pass
 - **Decision:** `docs/DECISIONS.md` → DEC-32
-- **Last updated:** 2026-07-24 — **Stage 5 mechanism pivoted (DEC-37), then refined
-  (DEC-38).** #296 (5a, embeddings) and #297 (5b, HDBSCAN readiness map) both merged and
-  real-corpus-validated — but the real-corpus validation of #297 (PR #358) led to a full
-  data-science exploration that overturned 5b/5c's original design: **density clustering
-  does not recover any tag axis on this corpus's embeddings (ARI≈0, exhaustively
-  measured), and a direct supervised classifier on the corpus's *already-tagged* chunks
-  strictly beats every clustering variant tried.** Gold-checking that classifier then
-  reversed the optimistic internal read: on dense embeddings it loses to the LLM teacher
-  on both blind axes (`claim_type`/`theory_school`) it could be checked against. A
-  follow-up TF-IDF baseline (DEC-38) found a **narrower positive**: at a confidence
-  threshold, TF-IDF (not embeddings) automates ~28–35% of chunks on those two axes at
-  accuracy that clears the teacher's own gold agreement — real but on a thin ~35-sample
-  evidence base. **#347/#348–#353 need re-scoping before any of them are picked up** —
-  see *Stage 5 — live state* below for the full findings and DEC-37/DEC-38 for the
+- **Last updated:** 2026-07-24 — **Stage 5 mechanism pivoted (DEC-37), refined (DEC-38),
+  and all five axes are now gold-checked (DEC-39).** #296 (5a, embeddings) and #297 (5b,
+  HDBSCAN readiness map) both merged and real-corpus-validated — but the real-corpus
+  validation of #297 (PR #358) led to a full data-science exploration that overturned
+  5b/5c's original design: **density clustering does not recover any tag axis on this
+  corpus's embeddings (ARI≈0, exhaustively measured), and a direct supervised classifier
+  on the corpus's *already-tagged* chunks strictly beats every clustering variant
+  tried.** Gold-checking that classifier reversed the optimistic internal read on the two
+  blind axes (`claim_type`/`theory_school` lose to the LLM teacher on dense embeddings);
+  a follow-up TF-IDF baseline (DEC-38) found a narrower positive there instead
+  (~28–35% coverage automate slice, thin ~35-sample evidence). #347's redirected
+  deliverable — extending gold coverage to the three head axes — is now **done**
+  (DEC-39), and it split them for the first time: `field` is the strongest candidate in
+  the whole investigation (79.0% @ 87.5% coverage, at parity with the teacher's own
+  76.7%), `role_in_argument` is a real but weaker candidate, `empirical_scope` does not
+  clear the bar with embeddings (a TF-IDF check is the one lever still untried there).
+  **#347–#353 need re-scoping before any of them are picked up** —
+  see *Stage 5 — live state* below for the full findings and DEC-37/DEC-38/DEC-39 for the
   authoritative record. Stage 4 remains closed; its *live state* section is kept as
   incident history, not current state.
 
@@ -737,34 +741,54 @@ were still not meaningfully informative, and traced the real cause one level dow
    contribution in a single linear head) — a negative result, don't retry without a
    different combination mechanism (e.g. a proper ensemble, not feature concatenation).
    **Caveat:** the confident subset is only ~32–40 gold chunks; real, but thin.
+7. **Head-axis gold check (DEC-39) — closes the "still unknown" gap below.** See the
+   next section for the full table and reading.
 
-### What is still unknown
+### What is now known (was "still unknown" — closed this session, DEC-39)
 
-`role_in_argument`/`empirical_scope_value`/`field_primary` have **no independent gold
-coverage at all** — the current 120-chunk sim-gold set only re-judged the two blind
-axes. Their strong internal numbers are exactly as unvalidated as the blind axes' were
-before step 5. **Do not treat them as distillation-ready without the same gold check.**
+`role_in_argument`/`empirical_scope_value`/`field_primary` had **no independent gold
+coverage** as of DEC-37. Extended the DEC-29/30 method to all three (four fresh,
+non-forked Sonnet-5 subagents, blind to the pipeline's own tag, same 120-chunk sample),
+persisted as new columns in `data/gold/labels/label_sheet.xlsx`. The internal-probe
+picture that made all three look similarly strong (84.5%/77.6%/63.3%) was misleading,
+same as it was for the blind axes — real gold check, same leakage-free method:
+
+| axis | tagger-vs-gold (90% CI) | classifier @conf≥0.6 (90% CI) | coverage |
+|---|---|---|---|
+| `field_primary` | 76.7% [70.0–83.3%] | 79.0% [72.3–85.3%] | 87.5% |
+| `empirical_scope_value` | 64.2% [56.7–71.7%] | 59.1% [50.5–67.4%] | 77.5% |
+| `role_in_argument` | 53.3% [45.8–60.8%] | 57.3% [47.8–66.7%] | 62.5% |
+
+`field` is the strongest result in the whole investigation — CI essentially on top of
+the teacher's own, at 87.5% coverage (the highest measured anywhere in stage 5).
+`role_in_argument` clears the teacher's point estimate but the CIs overlap substantially
+on a noisy, only-moderately-agreed axis — real but weaker, same shape as
+`theory_school`'s TF-IDF result. `empirical_scope` does **not** clear the bar with
+embeddings — a TF-IDF check (DEC-38's lift on the blind axes) hasn't been tried on it
+yet, the one lever still open before fully closing it. **Caveat:** one labelling draw
+per chunk, no SELF/INTER reliability figure for these three axes yet (unlike DEC-30's
+controlled arms for the blind axes) — `role_in_argument` is most exposed to this, given
+how close its numbers sit to the teacher's own mediocre 53.3%.
 
 ### Next actions
 
-1. **Extend sim-gold coverage to the three head axes** (mirrors the DEC-29/30
-   in-harness Sonnet-5 dispatch already used for the two blind axes) — this is the one
-   real prerequisite before #348–#350 can make a trustworthy graduation call. Likely
-   lands as a rewritten #347, not a new issue — see the status board above.
-2. **#351/#352 (`claim_type`/`theory_school`): do not build a full-coverage classifier
-   as scoped, but not a flat "stay LLM-only" either.** A TF-IDF (not embedding) model
-   at a conservative confidence threshold automates a real, gold-checked slice
-   (~28–35% of chunks) at accuracy that clears the teacher's own gold agreement —
-   see step 6. Re-scope to a narrow automate-if-confident-else-defer proposal rather
-   than closing outright; flag the thin evidence base (32–40 gold chunks) plainly so
-   the founder can weigh whether that's enough to act on.
-3. **#348–#350: revise the issue bodies** before dispatch — global classifier +
-   confidence threshold on existing tags (not a cluster-stratified fresh sample), gated
-   on next action 1's gold coverage.
-4. **#297/PR #358: still worth merging** — correctly implemented, real-corpus-validated,
+1. **#347: redirected deliverable is done, not just proposed** — sim-gold coverage now
+   exists for all five axes. Close #347 as complete (or file the completed work against
+   it) rather than leaving it as an open prerequisite.
+2. **#350 (`field`): the strongest build candidate of the five axes** — gold-checked,
+   high coverage, CI at parity with the teacher.
+3. **#348 (`role_in_argument`): a real but weaker candidate** — gold-checked positive,
+   wide CI, moderate coverage; flag the reliability caveat before any graduation call.
+4. **#349 (`empirical_scope`): do not build as scoped, but don't flat-close either** —
+   embeddings don't clear the bar; try TF-IDF (DEC-38's lift on the blind axes) before
+   ruling this axis out entirely.
+5. **#351/#352 (`claim_type`/`theory_school`): unchanged from DEC-38** — narrow
+   TF-IDF automate-if-confident slice, thin evidence base (32–40 gold chunks), founder
+   call on whether to build now.
+6. **#297/PR #358: still worth merging** — correctly implemented, real-corpus-validated,
    and the ARI≈0 finding is itself a useful documented negative result / future
    OOD-triage candidate, even though it no longer gates 5c.
-5. Drafts for the revised #347/#348–#352 issue bodies (and a #298 tracking comment)
+7. Drafts for the revised #347/#348–#352 issue bodies (and a #298 tracking comment)
    should go to a local file for founder review before filing, per this repo's own
    "draft before filing" practice for backlog changes.
 
