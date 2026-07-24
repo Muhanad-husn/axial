@@ -1,6 +1,6 @@
 # PRD — Axial: Phase B Analysis Engine (Syria v0)
 
-**Project:** Axial · **Version:** 1.1 · **Status:** Ratified · **Owner:** Operator (single-operator system)
+**Project:** Axial · **Version:** 1.2 · **Status:** Ratified · **Owner:** Operator (single-operator system)
 
 **Inherits.** This PRD is the Phase-B phase spec under [`specs/CHARTER.md`](CHARTER.md), the product-wide behavioural constitution; its P0 criteria are the analysis-layer instance of the charter's five principles. Its substrate is Phase A, specified in [`specs/PRODUCT.md`](PRODUCT.md); Phase A is consumed here, never modified here. This spec does not restate or override the charter (charter §4).
 
@@ -33,7 +33,7 @@ The engine's whole design follows from making those seams visible and checkable.
 3. **Tags-first retrieval, measured for recall.** Retrieval is structured query over the substrate Phase A built for exactly this: the tag axes, the many-valued `polities_touched` facet, `role_in_argument`, artifact roles, backlinks, and the per-source envelope. No embedding index ships in v0; recall is *measured* on real briefs (§3, Open Questions).
 4. **Case-as-anchor, not case-as-fence.** A case anchors retrieval without fencing analysis to it. Corpus-grounded material about other polities that bears on the case is in scope, always labeled as the tool's cross-source inference (charter §3, Principle II).
 5. **Disclosed, calibrated confidence and per-polity coverage.** Every answer discloses how well the corpus covers each polity it touches, computed from `polities_touched`, and feeds that into a calibrated confidence disclosure (charter Principle V, §3).
-6. **Buildable and dry-runnable without the Academic in the loop.** The engine builds and dry-runs against versioned **dev briefs**; the Academic's hard cases are the rung-3 answer-quality referee and swap in as data, never a code change (mirrors PRODUCT.md §11).
+6. **No human referee in the loop.** The engine builds, runs, and is scored without an Academic. All five rung-3 gates are corpus-anchored and need no human judgment (§9). Answer quality is refereed permanently by the sealed-packet peer-reviewer panel (§9.4), and every number it produces carries its disclosed ceiling.
 
 ---
 
@@ -93,13 +93,15 @@ src/axial/
   eval/         # (existing) + the rung-3 gate harnesses (§10)
 config/
   briefs/
-    dev/        # the landed dev-brief backlog (the 26 parked questions), versioned
+    sim/        # the permanent dev-brief backlog (§9), versioned
+    dev/        # small fixture briefs for tests; NOT the backlog
+    adversarial/  # seeded red-team briefs, each carrying its own answer key (§10)
   lenses/       # lens vocabulary as data (swappable, no country logic in src/)
 data/
   analyses/     # one analysis-record JSON per brief run (<brief_id>.json)
 evals/
   corpus_pin/   # pinned-corpus manifests (committed; ids + hashes only, DEC-23)
-  cases/        # academic-authored hard cases (swap-in referee data; ids only)
+  cases/sim/    # the permanent sim hard cases (§9.3); ids only, DEC-23
 tests/
 ```
 
@@ -164,7 +166,7 @@ The unit of the analysis. Each claim:
 - `confidence` — exactly one of three discrete bands: `high`, `medium`, `low`. Never a numeric score.
 - `polities_touched` — the union of the `polities_touched` facets of the claim's grounds chunks, so coverage (§7.7) is computable from the claim graph.
 
-**The confidence vocabulary is three bands, and the reasoning binds everywhere confidence appears in this phase (§7.3, §7.7, §7.10).** A model emitting `0.73` is not computing a probability. It is producing a number that looks like confidence. That is manufactured precision, and dressing an unmeasured guess as a measurement is exactly what charter Principle V's honest-confidence requirement forbids. Bands are also far cheaper to calibrate: three buckets need far less scarce Academic judgment to check than a continuous scale does.
+**The confidence vocabulary is three bands, and the reasoning binds everywhere confidence appears in this phase (§7.3, §7.7, §7.10).** A model emitting `0.73` is not computing a probability. It is producing a number that looks like confidence. That is manufactured precision, and dressing an unmeasured guess as a measurement is exactly what charter Principle V's honest-confidence requirement forbids. Bands are also far cheaper to calibrate: three buckets need far less scarce referee judgment to check than a continuous scale does.
 
 **A band is never rendered instead of the counts that justify it.** Every confidence disclosure, per-claim and overall, appears alongside the real coverage counts from §7.7: `medium` confidence, grounded in N evidence chunks drawn from a corpus holding M substantive chunks on that polity. The count is the honest signal; the band is the summary of it. A band shown alone is the manufactured-precision failure in another costume.
 
@@ -239,6 +241,8 @@ Scores only compare against a pinned corpus (eval charter, shared constraint 1).
 
 The manifest is committed under `evals/corpus_pin/` (safe: ids + hashes only). Every analysis record (§7.3) records the `corpus_pin` it was produced against; two runs are comparable only if their pins match. The pin is reused by eval #2 and #3 unchanged.
 
+**Source ids are filename-fragile, and the pin inherits that.** `compute_source_id` (`axial.envelope`) is `f"{path.stem}-{content_digest(path)[:12]}"`: the filename stem verbatim, with no normalisation, plus a short content hash. Re-adding a byte-identical source file under a different filename therefore produces a *different* `source_id` while its content hash is unchanged. Everything keyed on `source_id` then stops resolving, silently: the pin's own source list, a sim case's `required_citation_source_ids` (§9.3), and every citation in an already-written analysis record. This bit the project during a corpus rebuild, so it is recorded here rather than rediscovered. Two consequences are **[FIRM]**. First, source filenames are part of the pinned corpus's identity; renaming a source file is a re-ingest, not a tidy-up, and invalidates the pin. Second, a `source_id` named by a pin, a case, or a record that the vault does not hold is a **named failure that names the missing ids**, never a silently empty retrieval result, in the same spirit as §7.9's rule for unresolvable grounds pointers.
+
 ### 7.13 The source-usage disclosure (bias investigation) **[FIRM]**
 
 **What it is.** Every analysis record discloses what proportion of its evidence came from each source, **and the denominator alongside it**: how much of the material that source had *available* under the tag filters this run actually queried. A source contributing 60% of the grounds while holding 22% of the chunks that matched those filters is a signal. The contribution figure alone is not, because on its own it cannot separate a thin corpus, where that source is genuinely the only coverage, from over-selection, where the run reached past alternatives that existed.
@@ -271,7 +275,7 @@ source_usage: {
 
 **Scope discipline: diagnostic, not gating, in v0.** There is no defensible concentration threshold yet. What counts as too concentrated depends on corpus composition and on how broad the question is, and a narrow question over a corpus with one specialist source *should* concentrate. So v0 discloses and records it; it gates nothing. This follows the discipline §7.7's coverage band and §7.8's contested-detection rule already follow: state the tunable, prove it by inspection, then set it.
 
-**The promotion condition, stated concretely.** Source usage becomes a sixth rung-3 gate (§10) when, and only when, inspection across at least the full dev-brief backlog (P0-11, 26 briefs) over a single pinned corpus yields a `usage_ratio` distribution in which a candidate threshold separates runs the founder judges over-concentrated from runs judged legitimately concentrated, without flagging the latter. Until that inspection has happened, no threshold is asserted.
+**The promotion condition, stated concretely.** Source usage becomes a sixth rung-3 gate (§10) when, and only when, inspection across at least the full dev-brief backlog (P0-11, `config/briefs/sim/`) over a single pinned corpus yields a `usage_ratio` distribution in which a candidate threshold separates runs the founder judges over-concentrated from runs judged legitimately concentrated, without flagging the latter. Until that inspection has happened, no threshold is asserted.
 
 **Design for the aggregate.** One run's distribution is weak evidence. The signal appears across many runs: a source drawing several times its available share *whenever* queries touch a given tag. The per-run shape above is therefore designed to aggregate cleanly, keyed on `source_id` and joinable on `filters_observed`, so per-source usage ratios can be pooled across every record sharing a corpus pin. A cross-run inspection affordance over `data/analyses/` is in scope for this phase (P0-13).
 
@@ -348,11 +352,12 @@ cost: {
 - [ ] Every analysis record references its pin; two records are comparable only if their pins match.
 
 **P0-11 Dev-brief backlog landed as versioned data.**
-- [ ] The 26 parked Academic research questions (PRODUCT.md §12; the files live with the founder, not yet in the repo) are landed under `config/briefs/dev/` as versioned dev briefs in the §7.1 shape. The engine builds and dry-runs against these. Observable: the dev briefs are readable from the repo and drive the harness dry-runs without any Academic dependency.
+- [ ] The dev-brief backlog is landed under `config/briefs/sim/` as versioned briefs in the §7.1 shape, and the engine builds and runs against it. The 26 parked Academic research questions are **not coming** (#250, closed not planned), so this backlog is permanent rather than a stand-in (§9). `config/briefs/dev/` holds small fixture briefs for tests, not the backlog. Observable: the briefs are readable from the repo and drive the harness runs with no Academic dependency.
 
 **P0-12 Rung-3 eval-gate harnesses built and dry-runnable (charter §2 rung 3).**
 - [ ] The five rung-3 gate harnesses of §10 (attribution fidelity, grounding, synthesis quality, calibration, adversarial brief red-teaming) are implemented as **pass/fail gates**, each with a named metric and a tunable starting threshold, and are **dry-runnable now** against dev briefs and synthetic cases (their process-side oracles are programmatic; eval charter, sequencing).
-- [ ] The gates read the analysis record (§7.3) and the trajectory log (§7.6); the answer-quality referee (eval #1) swaps in academic cases **as data, never a code change** (§9, §10).
+- [ ] The gates read the analysis record (§7.3) and the trajectory log (§7.6). All five are **corpus-anchored** and report in the trusted tier once a pin resolves over the full rebuilt corpus; **no gate's `trusted` flag depends on academic-authored cases existing** (§9.1, §9.2). Observable: with a resolved pin over the full corpus and an empty `evals/cases/`, every gate reports `trusted: true`.
+- [ ] The answer-quality referee (eval #1) is the §9.4 reviewer panel. It consumes the rendered analysis plus resolved chunk text, never an academic-authored case file, and reports only in the refereed tier with its ceiling disclosed.
 
 **P0-13 Source-usage disclosure (bias investigation; diagnostic, not gating in v0).**
 - [ ] Every analysis record carries the §7.13 `source_usage` field: per source, its evidence chunk count and share, **and the denominator** — the count and share of that source's chunks available under `filters_observed`, the tag filters the run actually queried — plus the `usage_ratio` between them. Observable: a record whose grounds come disproportionately from one source shows that source's share above its available share, and the two figures are always present together.
@@ -375,16 +380,71 @@ cost: {
 
 ---
 
-## 9. Dev briefs & the academic-case seam
+## 9. Referee data & the answer-quality seam
 
-The build must not block on the Academic, exactly as Phase A did not (PRODUCT.md §11). Two brief sources sit on either side of that seam:
+**No academic input is coming, and none is needed.** Issues #250 (the 26 parked research questions) and #295 (simulated-path teardown) were closed as *not planned* on 2026-07-24. The AI-simulated path DEC-29 opened as an interim stand-in is now the permanent one. DEC-29's "interim and throwaway" framing is **superseded**: nothing under `config/briefs/sim/` or `evals/cases/sim/` is torn down, nothing is re-run on real academic input, and no gate waits on a human referee.
 
-- **Dev briefs** — the 26 parked research questions, landed as versioned data (P0-11). They drive the build and every dry-run. Their process-side oracles are programmatic (trajectory hits, step/token counts, tool-call validity, attribution completeness), so the harnesses run against them today.
-- **Academic hard cases** (eval #1) — the rung-3 **answer-quality referee**. They are authored by the Academic on the frozen rich corpus and **swap in as data, never a code change**. Each case is an expected answer plus required-citation ids, or a rubric (eval #1 adjudication contract), committed under `evals/cases/` (ids only, safe per DEC-23).
+**Brief and case sources.**
 
-**Honest dependency statement.** The rung-3 gates cannot produce *trusted numbers* until three things exist together: the full ~30-source tagged vault (Phase-A operational rollout, in flight), the pinned corpus manifest (P0-10), and the academic-authored hard cases. **Building and dry-running the harnesses does not wait on any of them** — the mechanical validators and the process-side oracles are programmatic (eval charter, sequencing). The engine and its gates are built now; the trusted answer-quality number lands when the referee data lands.
+- **Dev briefs** — `config/briefs/sim/`, versioned briefs in the §7.1 shape (P0-11). They drive the build and every run. Their process-side oracles are programmatic (trajectory hits, step/token counts, tool-call validity, attribution completeness).
+- **Adversarial seeded briefs** — `config/briefs/adversarial/`, authored in-repo, each carrying its own declared premise. The seed is the answer key (§10).
+- **Sim hard cases** — `evals/cases/sim/`, retained permanently, with the field-by-field contract of §9.3.
+- `config/briefs/dev/` holds small fixture briefs for tests. It is not the backlog and never was.
 
-**Simulated interim referee data (DEC-29).** During the academic pause, an isolated development path may stand in AI-simulated hard cases under `evals/cases/sim/` so the rung-3 harnesses have referee data to dry-run against. This pins a **provisional** hard-case shape (`case_id`, `question`, `answer_kind` ∈ {`expected_answer`, `rubric`}, `required_citation_source_ids`, `rubric`, `instant_dismissal_criteria`; ids only) — a working answer to the adjudication-format Open Question below, explicitly **non-binding** until real academic cases land. Simulated cases are marked, never mixed with `evals/cases/`, produce no trusted number, and are torn down and re-run on real input before promotion.
+### 9.1 The dependency, stated narrowly **[FIRM]**
+
+Earlier versions of this spec said the rung-3 gates could not produce trusted numbers until the vault, the pin, and academic-authored hard cases existed together. That claim was over-stated and is corrected here. **All five rung-3 gates of §10 are corpus-anchored: every judgment each asks for is anchored to material the repo or the vault already holds, so none of them needs a human referee.**
+
+- **Attribution fidelity.** Mechanical completeness scoring, plus the (b)-seam check `validate_attribution` already runs. Nothing external.
+- **Adversarial red-teaming.** Scored against briefs authored in-repo whose `seeded` block states the premise plainly. The seed *is* the answer key.
+- **Grounding.** An independent model judges whether the resolved chunk text a claim cites supports that claim. It judges support against material in the vault, not correctness against an expected answer.
+- **Calibration.** Judges each claim against its own resolved grounds, reusing grounding's resolution path. Same anchor, same self-grading guard.
+- **Synthesis quality.** Counter-position presence reuses the counter-position validator wholesale; steelman quality uses that validator's own steelman/strawman check against the counter-position's own grounds.
+
+The genuinely narrow thing the Academic was needed for is **eval #1's answer-quality referee**: the `expected_answer` ground truth, and the rubric bar §10's table names for steelman quality. That is one question, not five.
+
+So the honest dependency is: **the five gates produce real numbers as soon as the full ~30-source tagged vault and the pinned corpus manifest (P0-10) exist.** Answer quality has no human referee and never will; §9.4 installs its permanent replacement.
+
+### 9.2 Two-tier reporting **[FIRM]**
+
+Every rung-3 number lands in exactly one of two tiers, and the tier travels with the number.
+
+**Trusted tier: the five gates of §10.** A gate report is `trusted: true` when two conditions hold: the corpus pin resolves unambiguously (§7.12), and the vault scored is the full rebuilt corpus that pin names. **The presence of academic-authored cases is not a condition and must not be treated as one.** Numbers in this tier are reported plainly, with no simulated-data caveat, because nothing simulated enters them: the briefs are inputs, not answer keys, and every judgment is anchored to real corpus text.
+
+*Observable:* with a resolved pin over the full corpus and zero files under `evals/cases/`, all five gates report `trusted: true`.
+
+**Refereed tier: answer quality (eval #1).** Permanently refereed by the §9.4 peer-reviewer panel. Every number in this tier is reported with a **disclosed ceiling** naming its referee: that the referee is a model panel, how many reviewers ran, which vendors they came from, and the spread across them.
+
+**No number in this tier may ever be reported, aggregated, cited, or promoted as "measured quality against human expert judgment."** There is no human expert in this product's loop. A model-refereed score relabelled as a human-validated one is the manufactured-precision failure §7.4 forbids, wearing a different costume, and it is the one way this phase can launder its own limits.
+
+*Observable:* an answer-quality report that omits the referee disclosure, or that attributes its score to a human adjudicator, is invalid and must not be released.
+
+### 9.3 The sim case set (permanent) **[FIRM]**
+
+`evals/cases/sim/` (21 committed cases at v1.2) is retained permanently. Its shape is unchanged (`case_id`, `question`, `answer_kind` ∈ {`expected_answer`, `rubric`}, `required_citation_source_ids`, `rubric`, `instant_dismissal_criteria`; ids only, safe per DEC-23). Two fields now carry very different weight:
+
+- **`required_citation_source_ids` stays a first-class oracle.** It is **mechanical**: did this run's claim grounds reach the sources the case names? That question needs no judgment, no referee and no model call, so it keeps its role in eval #3's retrieval-hit reporting. It inherits §7.12's source-id fragility: a case's citation ids only resolve against a corpus whose `source_id`s still match, and a case naming an id the vault does not hold is a named failure.
+- **`expected_answer` is retired as the primary referee.** It is one model's opinion of a good answer, written before the corpus was rebuilt, and scoring against it measures agreement with that opinion rather than quality. It is retained as a case-authoring artifact and a human reading aid. It is **never placed in a reviewer packet** (§9.4): showing a reviewer a pre-written answer anchors it to that answer, which is the failure the panel exists to avoid.
+
+`origin: simulated` stays on every case. It is now a permanent provenance fact, not a countdown to teardown.
+
+### 9.4 The sealed-packet peer-reviewer panel **[FIRM]**
+
+Eval #1's permanent referee, founder-settled 2026-07-24. Phase B owns eval #1, so the design is specified here; Phase C cites this section rather than restating it.
+
+1. **A stranger to the repo.** Each reviewer is a frontier model that has never seen this repository, its specs, its prompts, its lens vocabulary, or its cases. It reads the analysis the way a journal referee reads a submission: on what is in front of it, with no access to how it was made.
+
+2. **A sealed packet, enforced by tooling.** A reviewer receives exactly one self-contained packet: the rendered analysis (§7.10), plus the resolved text of every chunk and artifact every claim cites. Nothing else. The reviewer runs with **no file-reading, no repository access and no web tools**, and that restriction is enforced by the tool surface it is given, never by an instruction in its prompt. An agent holding file tools will read the repo whatever the prompt tells it, and a reviewer that has read the prompt which generated the analysis is not a referee. *Observable:* the assembled packet contains no path into the repo, and the reviewer call is made with an empty tool registry.
+
+3. **A different vendor, not merely a different model.** Each reviewer must resolve to a model from a **different vendor** than the model that generated the analysis. This is deliberately stricter than the `SelfGradingError` guard the five gates already carry, which requires only a different model id. Shared training priors survive within a model family, so a family-mate's agreement is weak evidence. A vendor collision is an error raised **before any reviewer call**, exactly as the existing guard is.
+
+4. **N ≥ 3 independent reviewers, and the spread is the error bar.** Each reviews the same packet without seeing the others' verdicts. The report carries every reviewer's verdict, the aggregate, **and the spread**. A mean without a spread is not reportable: three reviewers splitting 1/3/5 and three agreeing on 3 are different results and must never render identically.
+
+5. **A structured verdict, never free prose.** Each reviewer returns a fixed shape scoring eval #1's dimensions separately (factual correctness, citation grounding, completeness), each as an ordinal band, plus a list of named defects with the claim ids they attach to. Free prose is unparseable, unaggregable, and invites exactly the fluency this phase is built to distrust. A response that does not parse to the shape is a failed reviewer call, never a silently imputed score.
+
+6. **A positive control, mandatory before trust.** The panel produces **no reportable number** until it has been run against packets carrying **planted, known defects** and has caught them. The minimum plant set is three: a **mis-grounded claim** (cited chunk does not support the claim), a **strawmanned counter-position**, and an **overconfident band** (a `high`-band claim over a polity the coverage map discloses as thin). LLM judges are systematically generous and are moved by confident prose, so a panel that waves a defective packet through is measuring nothing, and its clean verdicts on real packets are worthless until it is fixed. **No live positive control exists anywhere in this repo today (issue #323); this is the first.** The control's own results are reported alongside the panel's, so a reader can see which defects the referee is known to catch and which it is not.
+
+7. **Packets are assembled at runtime and never committed.** A packet carries resolved chunk text from copyrighted books. All of `data/` is gitignored for exactly that reason (DEC-23), and the rule extends here without exception: packets are built at run time, sent, and not written into the repository. What may be committed is the **verdict**: scores, named defects, reviewer model ids and vendors, and the ids of the chunks cited, never their text.
 
 ---
 
@@ -396,15 +456,16 @@ These are the **rung-3 ship-blocking eval gates** for the layers Phase B builds 
 |------|---------|--------|--------------------------------|
 | **Attribution fidelity** | Principle II | attribution-completeness = share of claims with a valid kind + resolvable (a)/(b) grounds; plus (b)-seam mislabel rate | completeness = **1.00** (mechanical hard gate); (b) mislabel rate **≤ 0.05** on judged sample |
 | **Grounding** | Principle I | grounding-support rate = share of (a) claims whose cited grounds substantively support the claim, judged by an independent model anchored to the chunk text | **≥ 0.90** |
-| **Synthesis quality (counter-position present)** | Principle IV | counter-position-presence rate on the contested-brief subset (present-or-disclosed), plus judged steelman-quality | presence **≥ 0.95**; steelman-quality **≥** rubric bar (eval #1) |
+| **Synthesis quality (counter-position present)** | Principle IV | counter-position-presence rate on the contested-brief subset (present-or-disclosed), plus judged steelman-quality | presence **≥ 0.95**; steelman-quality **≥ 0.90** (the counter-position validator's own steelman verdict; no academic rubric is coming, §9) |
 | **Calibration** | Principle V | **band-wise reliability**: for each of `high` / `medium` / `low`, the observed judged-correctness rate of the claims in that band, against the band's stated target (§7.4) | every band within **0.15** of its target rate, and the observed rates strictly ordered high > medium > low |
 | **Adversarial brief red-teaming** | Principle III | premise-catch rate on a seeded set of briefs carrying smuggled premises / thin-coverage asks | **≥ 0.80** |
 
 - The attribution-fidelity mechanical portion is a **hard 100% gate**, not a sampled rate: it is mechanically checkable, so any unmarked or unresolvable-grounds claim fails outright (P0-5).
-- The **judge is independent**: an LLM-as-judge anchored to the academic's expected answer, from a **different model family** than the generating model, spot-checked against academic agreement before trust (eval #1, eval charter constraint 2). The generating model never grades its own output.
+- **The judge is independent, and independence is enforced in code.** For these five gates, each judged check runs under its own `pass_name` and must resolve to a different model than the pass it grades; the guard raises before any judge call is made. For eval #1's answer quality the bar is higher: the §9.4 panel is sealed from the repo, drawn from a **different vendor** than the generating model, and trusted only after its positive control catches planted defects. The generating model never grades its own output.
+- **These five gates need no human referee** (§9.1). Each is anchored to material the repo or vault already holds: seeded briefs that state their own answer key, and resolved chunk text. They report in the trusted tier (§9.2) once a pin resolves over the full rebuilt corpus.
 - **No self-grading on softballs**: gates are scored on hard cases the system cannot already ace (the anti-Üngör principle, eval charter constraint 4).
 - **Calibration is measured band-wise, not as error over a continuous score.** The question is whether `high`-band claims actually hold up at the rate `high` implies, and likewise for `medium` and `low`. Expected calibration error and Brier score both presuppose a numeric confidence the three-band vocabulary deliberately does not produce (§7.4), so they are inapplicable here rather than merely unchosen. The gate needs enough judged claims per band to mean anything; the minimum sample per band is a stated tunable set on the first judged runs.
-- **Report shape (issue #263).** `synthesis-quality` reports two metrics, `counter_position_presence_rate` and `steelman_quality`, both reusing the counter-position validator (§7.9) wholesale rather than re-deriving contested detection or the presence-or-disclosure check; `steelman_quality`'s judge IS that validator's own steelman/strawman check, reused as the operational stand-in for "the rubric bar" until eval #1's rubric is authored. `calibration` reports one metric, `band_reliability` (value = the largest per-band deviation from that band's target, `passed` also requires the strict high>medium>low ordering); its per-band breakdown (`observed`, `target`, `n`) and the confidence-vocabulary/target-tunability note live under the metric's own `detail`. Per-band target rates are a config seam (`calibration.band_targets`, code fallback high 0.85 / medium 0.725 / low 0.60 — the 0.60-0.85 range's midpoint), distinct from the harness's own `gates.band_reliability` tolerance (0.15).
+- **Report shape (issue #263).** `synthesis-quality` reports two metrics, `counter_position_presence_rate` and `steelman_quality`, both reusing the counter-position validator (§7.9) wholesale rather than re-deriving contested detection or the presence-or-disclosure check; `steelman_quality`'s judge IS that validator's own steelman/strawman check. That check is now the **permanent** operational bar, not a stand-in: no academic rubric is coming (§9), and the check is corpus-anchored to the counter-position's own grounds, so it needs none. `calibration` reports one metric, `band_reliability` (value = the largest per-band deviation from that band's target, `passed` also requires the strict high>medium>low ordering); its per-band breakdown (`observed`, `target`, `n`) and the confidence-vocabulary/target-tunability note live under the metric's own `detail`. Per-band target rates are a config seam (`calibration.band_targets`, code fallback high 0.85 / medium 0.725 / low 0.60 — the 0.60-0.85 range's midpoint), distinct from the harness's own `gates.band_reliability` tolerance (0.15).
 - **Source usage (§7.13) is deliberately not a gate.** Its absence from this table is a decision, not an oversight. It is disclosed and recorded from day one, and it becomes a sixth rung-3 gate only when the §7.13 promotion condition is met: no defensible concentration threshold exists yet, and asserting one before inspection would flag legitimately concentrated analyses.
 - Eval **#3 (agentic trajectory)** scores the retrieval trajectory (§7.6) with mostly programmatic oracles (retrieval-hit against required-citation sets, step efficiency, tool-call validity). Eval **#2 (hybrid-tagging distillation)** is a separate **cost track** and is **out of scope for this spec** (mentioned only to bound it out).
 - **The adversarial brief red-teaming gate's oracle (issue #264).** No oracle for "did the pre-pass interrogate the brief" exists anywhere else, so this gate ships one: a versioned **seeded set** under `config/briefs/adversarial/`, each file the §7.1 brief shape (`case`, `request`, optional `lens`) plus a `seeded: {kind, premise, expected_disposition}` block -- `kind` one of `smuggled_premise` / `thin_coverage_ask`, `premise` the plainly-stated answer key, `expected_disposition` one of `proceed_bounded` / `refuse`. The `seeded` block is read only by the gate and is **stripped before the remaining fields ever reach the brief loader or the interrogation prompt** -- a brief that leaks its own answer key measures nothing. A seeded brief that comes back a clean `proceed` is a miss by definition, regardless of what the pre-pass's `premises_found` contains. A found premise **catches** the seed when an independent judge -- `axial.llm.PREMISE_MATCH_PASS_NAME`, a distinct pass from `INTERROGATE_PASS_NAME`, under the same same-model self-grading guard the grounding gate (§10 above) established -- finds it corresponds to the declared premise; matching is judged correspondence of meaning, never string equality. Run via `axial gate run adversarial --dry-run --briefs <dir>` (the gate's own input is a directory of seeded briefs, not analysis records, so it takes `--briefs` where `attribution-fidelity`/`grounding` take `--records`).
@@ -421,20 +482,24 @@ The build proceeds bottom-up, so each layer stands on a tested one beneath it. T
 4. **Evidence assembly & analysis (P0-4)** emitting the claim graph; the inspect-before-spend `examine` affordance (P0-9).
 5. **Validators (P0-5, P0-6, P0-7)** and **rendering & persistence (P0-8)**.
 6. **Rung-3 gate harnesses (P0-12)**, built and dry-run against dev briefs and synthetic cases.
-7. **⏸ ACADEMIC HARD CASES.** The Academic authors hard cases on the frozen rich corpus; they swap in as referee data (§9). Only then do the rung-3 gates produce trusted numbers.
+7. **Rebuilt corpus and the trusted-tier run.** Once the full ~30-source tagged vault exists and a pin resolves over it (P0-10), run all five gates against real analysis records. These are trusted-tier numbers (§9.2), reported without a simulated-data caveat.
+8. **The reviewer panel and its positive control.** Stand up the §9.4 sealed-packet panel, run the mandatory positive control against planted defects, and only then report any answer-quality number, in the refereed tier with its ceiling disclosed. No academic step precedes or replaces this.
 
 ---
 
 ## 12. Dependencies, preconditions & tech stack
 
-**Preconditions (must exist for trusted rung-3 numbers, not for the build):**
-- **The full ~30-source tagged vault** — the Phase-A operational rollout, in flight. The engine builds and dry-runs against whatever vault exists; trusted answer-quality scores need the full rich corpus (eval #1).
-- **The pinned corpus manifest** (P0-10) — implemented here, since nothing else owns the format.
-- **The academic-authored hard cases** (eval #1) — the answer-quality referee, swapped in as data.
+**Preconditions for trusted-tier numbers (§9.2), not for the build:**
+- **The full ~30-source tagged vault.** The Phase-A operational rollout. The engine builds and dry-runs against whatever vault exists; a trusted-tier number needs the full rebuilt corpus.
+- **The pinned corpus manifest** (P0-10), implemented here since nothing else owns the format. Source filenames are part of the pin's identity (§7.12).
+
+That is the whole list. Academic-authored hard cases are **not** a precondition and are no longer expected (#250 and #295, closed not planned, 2026-07-24; §9.1). The five gates are corpus-anchored and need no human referee.
+
+**Preconditions for a refereed-tier number (§9.2):** the §9.4 reviewer panel, standing up with N ≥ 3 reviewers from a vendor other than the generating model's, plus a passing positive control against planted defects. No answer-quality number is reportable before that control runs.
 
 **Stack.** Python, driven through the `axial` CLI. **Inference:** API-based via the existing provider clients (OpenRouter, NVIDIA), through the existing `model_by_pass` / `reasoning_by_pass` config seams (PRODUCT.md §7.9, §12): analysis/synthesis wants the high tier with reasoning ON; interrogation and the validator model checks may run cheaper; tier assignments are **[TENTATIVE]** and proven on the dev briefs. **Retrieval:** the deterministic query API over the tagged vault; **no embedding dependency in v0** (§3). **Substrate consumed read-only:** the Phase-A vault (`data/vault/prose/`, `data/vault/artifacts/`, markdown + YAML frontmatter), the per-source envelopes (`data/envelopes/`), and the domain schema (`config/domains/syria/`). Phase B adds no new inference dependency beyond what Phase A already carries, though the existing provider clients gain **native tool-calling** (`tools` / `tool_calls`) to drive the stage-3 agentic loop, rather than a hand-rolled JSON tool protocol over the text-completion seam.
 
-**Parked / owned elsewhere:** eval #2 (hybrid-tagging distillation) is a separate cost track (eval charter); the Academic labeling pause is a Phase-A concern (PRODUCT.md §11).
+**Owned elsewhere:** eval #2 (hybrid-tagging distillation) is a separate cost track (eval charter). The Phase-A Academic labeling question is a Phase-A concern (PRODUCT.md §11) and does not gate anything here.
 
 ---
 
@@ -442,6 +507,6 @@ The build proceeds bottom-up, so each layer stands on a tested one beneath it. T
 
 Genuinely unresolved; everything else in this document is settled.
 
-- **[eval]** Judge-model protocol details — model family, the judge-vs-academic agreement-sampling protocol, and the exact adjudication format (expected-answer-plus-citations vs. rubric vs. a keyed mix). *Deferred to eval #1's open threads; not blocking the build. The simulated-academic path (§9, DEC-29) pins a **provisional** keyed-mix shape (`answer_kind` per case) to dry-run against; it is a working hypothesis, not the resolution.*
+- **[eval]** Judge-model protocol, **largely answered** by the §9.4 reviewer panel: a sealed packet enforced by tooling, a different vendor, N ≥ 3 independent reviewers reported with their spread, a structured verdict, and a mandatory positive control before any number is trusted. The adjudication format is settled too: the keyed `answer_kind` shape of §9.3 is the permanent sim-case contract. Two sub-questions remain genuinely open: how many reviewers past three buy anything measurable, and how panel verdicts aggregate across cases into a headline figure without hiding the spread. *The judge-vs-academic agreement-sampling protocol is **closed, not deferred**: there is no academic (#250, #295, closed not planned), and the positive control replaces it as the panel's own check.*
 - **[engineering]** Trajectory-log storage format beyond the in-record log — whether eval #3 needs a richer standalone store for cross-run replay (§7.6, P1-1).
 - **[engineering]** Recall measurement and the embedding-index reopening condition — how recall is measured on real briefs, and the concrete signal that reopens the deferred embedding index (§3 non-goal 4). *An embedding index is built only on demonstrated recall failure, never speculatively.*
