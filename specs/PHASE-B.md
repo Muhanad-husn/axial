@@ -33,7 +33,7 @@ The engine's whole design follows from making those seams visible and checkable.
 3. **Tags-first retrieval, measured for recall.** Retrieval is structured query over the substrate Phase A built for exactly this: the tag axes, the many-valued `polities_touched` facet, `role_in_argument`, artifact roles, backlinks, and the per-source envelope. No embedding index ships in v0; recall is *measured* on real briefs (§3, Open Questions).
 4. **Case-as-anchor, not case-as-fence.** A case anchors retrieval without fencing analysis to it. Corpus-grounded material about other polities that bears on the case is in scope, always labeled as the tool's cross-source inference (charter §3, Principle II).
 5. **Disclosed, calibrated confidence and per-polity coverage.** Every answer discloses how well the corpus covers each polity it touches, computed from `polities_touched`, and feeds that into a calibrated confidence disclosure (charter Principle V, §3).
-6. **No human referee in the loop.** The engine builds, runs, and is scored without an Academic. All five rung-3 gates are corpus-anchored and need no human judgment (§9). Answer quality is refereed permanently by the sealed-packet peer-reviewer panel (§9.4), and every number it produces carries its disclosed ceiling.
+6. **No human referee in the loop.** The engine builds, runs, and is scored without an Academic. All five rung-3 gates are corpus-anchored and need no human judgment (§9). Answer quality is measured offline, on a sample, by the sealed-packet peer-reviewer panel (§9.4), which sits outside the pipeline entirely; every number it produces carries its disclosed ceiling.
 
 ---
 
@@ -357,7 +357,7 @@ cost: {
 **P0-12 Rung-3 eval-gate harnesses built and dry-runnable (charter §2 rung 3).**
 - [ ] The five rung-3 gate harnesses of §10 (attribution fidelity, grounding, synthesis quality, calibration, adversarial brief red-teaming) are implemented as **pass/fail gates**, each with a named metric and a tunable starting threshold, and are **dry-runnable now** against dev briefs and synthetic cases (their process-side oracles are programmatic; eval charter, sequencing).
 - [ ] The gates read the analysis record (§7.3) and the trajectory log (§7.6). All five are **corpus-anchored** and report in the trusted tier once a pin resolves over the full rebuilt corpus; **no gate's `trusted` flag depends on academic-authored cases existing** (§9.1, §9.2). Observable: with a resolved pin over the full corpus and an empty `evals/cases/`, every gate reports `trusted: true`.
-- [ ] The answer-quality referee (eval #1) is the §9.4 reviewer panel. It consumes the rendered analysis plus resolved chunk text, never an academic-authored case file, and reports only in the refereed tier with its ceiling disclosed.
+- [ ] Answer quality (eval #1) is measured by the §9.4 reviewer panel, an **offline instrument run on a sample**, not a gate and not a pipeline stage. It consumes the rendered analysis plus resolved chunk text, never an academic-authored case file, and reports only in the refereed tier with its ceiling and sampling frame disclosed. Observable: a full brief run makes zero reviewer calls, and no analysis record or gate report carries a panel-derived score.
 
 **P0-13 Source-usage disclosure (bias investigation; diagnostic, not gating in v0).**
 - [ ] Every analysis record carries the §7.13 `source_usage` field: per source, its evidence chunk count and share, **and the denominator** — the count and share of that source's chunks available under `filters_observed`, the tag filters the run actually queried — plus the `usage_ratio` between them. Observable: a record whose grounds come disproportionately from one source shows that source's share above its available share, and the two figures are always present together.
@@ -403,7 +403,7 @@ Earlier versions of this spec said the rung-3 gates could not produce trusted nu
 
 The genuinely narrow thing the Academic was needed for is **eval #1's answer-quality referee**: the `expected_answer` ground truth, and the rubric bar §10's table names for steelman quality. That is one question, not five.
 
-So the honest dependency is: **the five gates produce real numbers as soon as the full ~30-source tagged vault and the pinned corpus manifest (P0-10) exist.** Answer quality has no human referee and never will; §9.4 installs its permanent replacement.
+So the honest dependency is: **the five gates produce real numbers as soon as the full ~30-source tagged vault and the pinned corpus manifest (P0-10) exist.** Answer quality has no human referee and never will. §9.4 replaces it with an offline eval instrument, sampled and periodic rather than wired into any run.
 
 ### 9.2 Two-tier reporting **[FIRM]**
 
@@ -413,11 +413,17 @@ Every rung-3 number lands in exactly one of two tiers, and the tier travels with
 
 *Observable:* with a resolved pin over the full corpus and zero files under `evals/cases/`, all five gates report `trusted: true`.
 
-**Refereed tier: answer quality (eval #1).** Permanently refereed by the §9.4 peer-reviewer panel. Every number in this tier is reported with a **disclosed ceiling** naming its referee: that the referee is a model panel, how many reviewers ran, which vendors they came from, and the spread across them.
+**Refereed tier: answer quality, measured offline and periodically (eval #1).** Answer quality is measured by the §9.4 peer-reviewer panel, which runs **offline against a sample**, not per run. A number in this tier belongs to a **measurement run** and its stated sampling frame; it never belongs to a single analysis.
+
+Three consequences are **[FIRM]**, and each is separately observable:
+
+- **No analysis record carries a panel verdict.** The §7.3 record shape is closed and gains no reviewer field. A brief run neither triggers a panel nor waits for one.
+- **No gate report waits on a panel.** A gate is complete and `trusted` on its own terms (the paragraph above). A gate report that names a missing panel verdict as a reason for being untrusted is wrong, because most runs will never receive one by design.
+- **Every panel number is reported with a disclosed ceiling** naming its referee and its frame: that the referee is a model panel, how many reviewers ran, which vendors they came from, the spread across them, the sample the run scored, and the corpus pin it scored at.
 
 **No number in this tier may ever be reported, aggregated, cited, or promoted as "measured quality against human expert judgment."** There is no human expert in this product's loop. A model-refereed score relabelled as a human-validated one is the manufactured-precision failure §7.4 forbids, wearing a different costume, and it is the one way this phase can launder its own limits.
 
-*Observable:* an answer-quality report that omits the referee disclosure, or that attributes its score to a human adjudicator, is invalid and must not be released.
+*Observable:* an answer-quality report that omits the referee disclosure or its sampling frame, or that attributes its score to a human adjudicator, is invalid and must not be released. An analysis record or gate report carrying a panel-derived score is likewise invalid.
 
 ### 9.3 The sim case set (permanent) **[FIRM]**
 
@@ -428,9 +434,24 @@ Every rung-3 number lands in exactly one of two tiers, and the tier travels with
 
 `origin: simulated` stays on every case. It is now a permanent provenance fact, not a countdown to teardown.
 
-### 9.4 The sealed-packet peer-reviewer panel **[FIRM]**
+### 9.4 The sealed-packet peer-reviewer panel: an offline eval instrument **[FIRM]**
 
-Eval #1's permanent referee, founder-settled 2026-07-24. Phase B owns eval #1, so the design is specified here; Phase C cites this section rather than restating it.
+Founder-settled 2026-07-24. Phase B owns eval #1, so the design is specified here; Phase C cites this section rather than restating it.
+
+**What it is not.** The panel is **not part of the production pipeline**. It is not a seventh stage, not a validator, not a rung-3 gate, and not a referee wired into per-run execution. **No production analysis run receives a panel verdict**, and nothing in the engine blocks, waits on, or reads one. A brief run is complete when stage 6 has written its record and rendered its answer (§5), exactly as before this section existed.
+
+**What it is.** An **eval method for measuring answer accuracy**, run **offline, on a sample**. It is the instrument that answers "how good are the answers" at a point in time, over a chosen set of cases and model combinations. It produces a measurement of the system, not a score attached to any one analysis.
+
+**Sampling design.** A panel run scores a deliberately chosen sample, not everything:
+
+- **Across performance tiers.** Cases are picked to span the observed range, not just the good ones. A panel run over only strong outputs measures nothing useful; the tiers are what make the measurement honest.
+- **Across model combinations.** The same case is reviewed across the model wirings under comparison, so the measurement can separate the analysis engine from the model driving it.
+
+Which cases and which combinations is the sampling frame's own question, set per measurement run and recorded with the result. What is FIRM is that a panel run states its frame: which cases, drawn from which tiers, under which model combinations, at which corpus pin.
+
+**Cadence.** A panel run is an occasional, deliberate act: after a corpus rebuild, after a model rewiring, or when a benchmark sweep needs a quality axis. It is never triggered by an ordinary brief run.
+
+**The seven integrity properties below are unchanged by any of that.** They govern *how* a reviewer is guarded, not how often it runs.
 
 1. **A stranger to the repo.** Each reviewer is a frontier model that has never seen this repository, its specs, its prompts, its lens vocabulary, or its cases. It reads the analysis the way a journal referee reads a submission: on what is in front of it, with no access to how it was made.
 
@@ -445,6 +466,14 @@ Eval #1's permanent referee, founder-settled 2026-07-24. Phase B owns eval #1, s
 6. **A positive control, mandatory before trust.** The panel produces **no reportable number** until it has been run against packets carrying **planted, known defects** and has caught them. The minimum plant set is three: a **mis-grounded claim** (cited chunk does not support the claim), a **strawmanned counter-position**, and an **overconfident band** (a `high`-band claim over a polity the coverage map discloses as thin). LLM judges are systematically generous and are moved by confident prose, so a panel that waves a defective packet through is measuring nothing, and its clean verdicts on real packets are worthless until it is fixed. **No live positive control exists anywhere in this repo today (issue #323); this is the first.** The control's own results are reported alongside the panel's, so a reader can see which defects the referee is known to catch and which it is not.
 
 7. **Packets are assembled at runtime and never committed.** A packet carries resolved chunk text from copyrighted books. All of `data/` is gitignored for exactly that reason (DEC-23), and the rule extends here without exception: packets are built at run time, sent, and not written into the repository. What may be committed is the **verdict**: scores, named defects, reviewer model ids and vendors, and the ids of the chunks cited, never their text.
+
+**Cost is bounded by construction.** N ≥ 3 frontier reviewers is expensive per packet and would be indefensible per run. Sampling is what makes it affordable: a panel run scores a handful of cases across tiers and model combinations, occasionally, rather than every analysis the engine ever produces. There is no per-run cost line to budget, and none is added to §7.14's `cost` field, which stays scoped to the brief pipeline's own passes.
+
+**The benchmark seam (issue #362).** The benchmark sweep is the panel's natural consumer and is specified there, not here. #362 measures cost, latency, self-consistency and gate scores, and has **no true answer-quality referee**; the panel is exactly that missing axis. Its slice 1 buckets brief runs into performance tiers, and its slice 2 runs a brief per tier across model combinations, which is the §9.4 sampling frame already. So Phase B owes it a **seam, not a mechanism**:
+
+- The panel consumes what a sweep already has: a rendered analysis (§7.10) plus the resolved text of the chunks its claims cite, resolvable from the record's grounds through the §7.5 tools. It needs nothing the record does not already carry.
+- It emits a structured verdict per reviewer (property 5), keyed on `brief_id` and the corpus pin, so a sweep can join a quality column onto the cost/latency/gate columns it already reports.
+- Nothing about tier bucketing, model-combination selection, or sweep reporting belongs in this spec. #362 owns its own scope.
 
 ---
 
@@ -461,7 +490,7 @@ These are the **rung-3 ship-blocking eval gates** for the layers Phase B builds 
 | **Adversarial brief red-teaming** | Principle III | premise-catch rate on a seeded set of briefs carrying smuggled premises / thin-coverage asks | **≥ 0.80** |
 
 - The attribution-fidelity mechanical portion is a **hard 100% gate**, not a sampled rate: it is mechanically checkable, so any unmarked or unresolvable-grounds claim fails outright (P0-5).
-- **The judge is independent, and independence is enforced in code.** For these five gates, each judged check runs under its own `pass_name` and must resolve to a different model than the pass it grades; the guard raises before any judge call is made. For eval #1's answer quality the bar is higher: the §9.4 panel is sealed from the repo, drawn from a **different vendor** than the generating model, and trusted only after its positive control catches planted defects. The generating model never grades its own output.
+- **The judge is independent, and independence is enforced in code.** For these five gates, each judged check runs under its own `pass_name` and must resolve to a different model than the pass it grades; the guard raises before any judge call is made. Eval #1's answer quality is not scored here at all: it is measured offline on a sample by the §9.4 panel, which is sealed from the repo, drawn from a **different vendor** than the generating model, and trusted only after its positive control catches planted defects. No gate in this table waits on it. The generating model never grades its own output.
 - **These five gates need no human referee** (§9.1). Each is anchored to material the repo or vault already holds: seeded briefs that state their own answer key, and resolved chunk text. They report in the trusted tier (§9.2) once a pin resolves over the full rebuilt corpus.
 - **No self-grading on softballs**: gates are scored on hard cases the system cannot already ace (the anti-Üngör principle, eval charter constraint 4).
 - **Calibration is measured band-wise, not as error over a continuous score.** The question is whether `high`-band claims actually hold up at the rate `high` implies, and likewise for `medium` and `low`. Expected calibration error and Brier score both presuppose a numeric confidence the three-band vocabulary deliberately does not produce (§7.4), so they are inapplicable here rather than merely unchosen. The gate needs enough judged claims per band to mean anything; the minimum sample per band is a stated tunable set on the first judged runs.
@@ -483,7 +512,7 @@ The build proceeds bottom-up, so each layer stands on a tested one beneath it. T
 5. **Validators (P0-5, P0-6, P0-7)** and **rendering & persistence (P0-8)**.
 6. **Rung-3 gate harnesses (P0-12)**, built and dry-run against dev briefs and synthetic cases.
 7. **Rebuilt corpus and the trusted-tier run.** Once the full ~30-source tagged vault exists and a pin resolves over it (P0-10), run all five gates against real analysis records. These are trusted-tier numbers (§9.2), reported without a simulated-data caveat.
-8. **The reviewer panel and its positive control.** Stand up the §9.4 sealed-packet panel, run the mandatory positive control against planted defects, and only then report any answer-quality number, in the refereed tier with its ceiling disclosed. No academic step precedes or replaces this.
+8. **The reviewer panel and its positive control.** Stand up the §9.4 sealed-packet panel, run the mandatory positive control against planted defects, and only then report any answer-quality number, in the refereed tier with its ceiling and sampling frame disclosed. This is an offline measurement step, not a pipeline stage: steps 1 to 7 ship a complete engine without it, and it runs occasionally against a sample thereafter. No academic step precedes or replaces it.
 
 ---
 
@@ -495,7 +524,7 @@ The build proceeds bottom-up, so each layer stands on a tested one beneath it. T
 
 That is the whole list. Academic-authored hard cases are **not** a precondition and are no longer expected (#250 and #295, closed not planned, 2026-07-24; §9.1). The five gates are corpus-anchored and need no human referee.
 
-**Preconditions for a refereed-tier number (§9.2):** the §9.4 reviewer panel, standing up with N ≥ 3 reviewers from a vendor other than the generating model's, plus a passing positive control against planted defects. No answer-quality number is reportable before that control runs.
+**Preconditions for a refereed-tier number (§9.2):** the §9.4 reviewer panel, standing up with N ≥ 3 reviewers from a vendor other than the generating model's, plus a passing positive control against planted defects, plus a stated sampling frame. No answer-quality number is reportable before that control runs. **None of this is a precondition for shipping the engine or for a trusted-tier number**: the panel is an offline measurement instrument, so nothing in the build or in a brief run depends on it existing.
 
 **Stack.** Python, driven through the `axial` CLI. **Inference:** API-based via the existing provider clients (OpenRouter, NVIDIA), through the existing `model_by_pass` / `reasoning_by_pass` config seams (PRODUCT.md §7.9, §12): analysis/synthesis wants the high tier with reasoning ON; interrogation and the validator model checks may run cheaper; tier assignments are **[TENTATIVE]** and proven on the dev briefs. **Retrieval:** the deterministic query API over the tagged vault; **no embedding dependency in v0** (§3). **Substrate consumed read-only:** the Phase-A vault (`data/vault/prose/`, `data/vault/artifacts/`, markdown + YAML frontmatter), the per-source envelopes (`data/envelopes/`), and the domain schema (`config/domains/syria/`). Phase B adds no new inference dependency beyond what Phase A already carries, though the existing provider clients gain **native tool-calling** (`tools` / `tool_calls`) to drive the stage-3 agentic loop, rather than a hand-rolled JSON tool protocol over the text-completion seam.
 
@@ -507,6 +536,6 @@ That is the whole list. Academic-authored hard cases are **not** a precondition 
 
 Genuinely unresolved; everything else in this document is settled.
 
-- **[eval]** Judge-model protocol, **largely answered** by the §9.4 reviewer panel: a sealed packet enforced by tooling, a different vendor, N ≥ 3 independent reviewers reported with their spread, a structured verdict, and a mandatory positive control before any number is trusted. The adjudication format is settled too: the keyed `answer_kind` shape of §9.3 is the permanent sim-case contract. Two sub-questions remain genuinely open: how many reviewers past three buy anything measurable, and how panel verdicts aggregate across cases into a headline figure without hiding the spread. *The judge-vs-academic agreement-sampling protocol is **closed, not deferred**: there is no academic (#250, #295, closed not planned), and the positive control replaces it as the panel's own check.*
+- **[eval]** Judge-model protocol, **largely answered** by the §9.4 reviewer panel: a sealed packet enforced by tooling, a different vendor, N ≥ 3 independent reviewers reported with their spread, a structured verdict, and a mandatory positive control before any number is trusted. The adjudication format is settled too: the keyed `answer_kind` shape of §9.3 is the permanent sim-case contract. Two sub-questions remain genuinely open: how many reviewers past three buy anything measurable, and how panel verdicts aggregate across a sample into a headline figure without hiding the spread. **Panel cost is not among them**: the panel is sampled and offline (§9.4), so its cost is bounded by construction and adds nothing to any per-run budget. *The judge-vs-academic agreement-sampling protocol is **closed, not deferred**: there is no academic (#250, #295, closed not planned), and the positive control replaces it as the panel's own check.*
 - **[engineering]** Trajectory-log storage format beyond the in-record log — whether eval #3 needs a richer standalone store for cross-run replay (§7.6, P1-1).
 - **[engineering]** Recall measurement and the embedding-index reopening condition — how recall is measured on real briefs, and the concrete signal that reopens the deferred embedding index (§3 non-goal 4). *An embedding index is built only on demonstrated recall failure, never speculatively.*
