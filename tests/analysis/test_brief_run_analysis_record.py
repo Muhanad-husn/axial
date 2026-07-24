@@ -328,6 +328,17 @@ def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path
         "synthesize": "stub",
     }
 
+    # Issue #363: `cost` carries the same three passes, token usage
+    # captured, dollar cost null -- "stub" is never in the real price
+    # table, so this proves the unpriced path end-to-end rather than
+    # crashing or reporting a fabricated zero.
+    assert set(record["cost"]["by_pass"]) == {"interrogate", "retrieve", "synthesize"}
+    for pass_name, entry in record["cost"]["by_pass"].items():
+        assert entry["prompt_tokens"] > 0, pass_name
+        assert entry["total_tokens"] > 0, pass_name
+        assert entry["usd"] is None, f"{pass_name}: 'stub' is not in the real price table"
+    assert record["cost"]["total_usd"] is None
+
     # 1 interrogate call + 3 retrieval-loop turns (2 tool calls, then a
     # final turn with no tool call to end the loop cleanly) + 1 synthesize
     # call -- every one of the three passes actually ran and is observable.
@@ -406,6 +417,9 @@ def test_brief_run_on_refuse_disposition_writes_empty_claims_and_makes_no_synthe
     )
     assert record["trajectory"] == []
     assert record["model_by_pass"] == {"interrogate": "stub"}
+    # Issue #363: on refuse, `cost` names only the interrogate pass, mirroring
+    # `model_by_pass` -- no retrieve/synthesize entries for stages that never ran.
+    assert set(record["cost"]["by_pass"]) == {"interrogate"}
 
     prompts = _read_recorded_prompts(record_path)
     assert len(prompts) == 1, (

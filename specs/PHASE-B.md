@@ -146,7 +146,8 @@ One JSON per brief run at `data/analyses/<brief_id>.json`, the phase's analogue 
   confidence: { overall_band, rationale },   # disclosed, calibrated (Principle V)
   source_usage,                        # per-source contribution vs. available share (§7.13)
   trajectory: [ <tool_call> ],         # the retrieval trajectory log (§7.6)
-  model_by_pass                        # which model + reasoning setting each pass used
+  model_by_pass,                       # which model + reasoning setting each pass used
+  cost                                 # per-pass token usage + computed dollar cost (§7.14)
 }
 ```
 
@@ -274,6 +275,25 @@ source_usage: {
 
 **Design for the aggregate.** One run's distribution is weak evidence. The signal appears across many runs: a source drawing several times its available share *whenever* queries touch a given tag. The per-run shape above is therefore designed to aggregate cleanly, keyed on `source_id` and joinable on `filters_observed`, so per-source usage ratios can be pooled across every record sharing a corpus pin. A cross-run inspection affordance over `data/analyses/` is in scope for this phase (P0-13).
 
+### 7.14 Per-pass token usage and cost (benchmark support) **[FIRM]**
+
+**What it is.** A field on the record (§7.3), the token/dollar-cost analogue of `model_by_pass`: for each pass that ran, the tokens it consumed and the resulting dollar cost, summed to a run total. It exists to give a benchmark sweep across many brief runs (issue #362) a cost column to read directly off `data/analyses/<brief_id>.json`, without re-deriving anything.
+
+**Shape**, nullable only at `usd`/`total_usd`:
+
+```
+cost: {
+  by_pass: {
+    <pass_name>: { prompt_tokens, completion_tokens, total_tokens, usd }
+  },
+  total_usd
+}
+```
+
+`by_pass` names exactly the passes `model_by_pass` names (empty on disposition `refuse` beyond the interrogation pass, mirroring `model_by_pass` itself). Token counts come from the OpenRouter `usage` object every `/chat/completions` response carries, read off the same response `complete()`/`complete_with_tools()` already parse — no second call. `usd` is computed against a static, in-code `$/1k-token` price table (`axial.llm.PRICE_TABLE_USD_PER_1K`) covering the models the brief pipeline currently routes to; a model id absent from that table resolves `usd` to `null` — never zero, never a failed run — and logs the gap once. `total_usd` sums whatever per-pass `usd` figures ARE known and is itself `null` only when none of them are, so one unpriced or uncaptured pass does not blank out an otherwise-real total.
+
+**Scope discipline.** The price table is a static snapshot, not a live pricing API or an auto-refreshed table — updating it as models change is a manual, occasional edit, not a mechanism. Token/cost capture is scoped to the brief pipeline's three passes (interrogate, retrieve, synthesize); no other pass (extract, envelope, tag, artifacts, xref, ...) is instrumented by this field. Nothing renders `cost` in the markdown answer (§7.10) or gates on it — a human-readable cost report is issue #362's job, this field only carries the raw number.
+
 ---
 
 ## 8. Requirements
@@ -315,7 +335,7 @@ source_usage: {
 - [ ] Confidence is one of the three bands `high` / `medium` / `low`, per-claim and overall, never a numeric score (§7.4). Observable: no record carries a numeric confidence value, and every rendered band appears next to the coverage counts that justify it (§7.10).
 
 **P0-8 Analysis record & rendered answer (output contract).**
-- [ ] One analysis-record JSON per brief run at `data/analyses/<brief_id>.json`, carrying the full §7.3 shape (brief, corpus_pin, schema_version, lens, interrogation, claims, counter_position, coverage_map, confidence, source_usage, trajectory, model_by_pass). No field nullable except as stated in §7.3–§7.8 and §7.13.
+- [ ] One analysis-record JSON per brief run at `data/analyses/<brief_id>.json`, carrying the full §7.3 shape (brief, corpus_pin, schema_version, lens, interrogation, claims, counter_position, coverage_map, confidence, source_usage, trajectory, model_by_pass, cost). No field nullable except as stated in §7.3–§7.8, §7.13, and §7.14.
 - [ ] A deterministic markdown answer is rendered from the record (§7.10), with claim kinds legible to the reader. The same record renders the same markdown.
 - [ ] Each record records the `corpus_pin` and `schema_version` it was produced against.
 
