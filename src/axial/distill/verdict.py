@@ -446,7 +446,14 @@ def run_drift_check(
     except _corpus_pin.CorpusPinError as exc:
         raise CorpusPinRequiredError(exc) from exc
 
-    gold_chunk_ids = _all_gold_chunk_ids(vault_dir, gold_sheet_path)
+    # Only touch the gold sheet when a real exclusion set is actually needed:
+    # training real classifiers always needs it, but the test seam
+    # (`classifier_predictions` + `sample` both given) needs neither, and
+    # must not require `data/gold/` to exist (CI has no `data/` at all).
+    if classifier_predictions is None or sample is None:
+        gold_chunk_ids = _all_gold_chunk_ids(vault_dir, gold_sheet_path)
+    else:
+        gold_chunk_ids = set()
 
     if classifier_predictions is None:
         claim_predict = _train_tfidf_predict_fn("claim_type", vault_dir, gold_chunk_ids)
