@@ -16,6 +16,8 @@ from axial.answer.usage_report import build_usage_report, format_usage_report, l
 from axial.artifacts import ArtifactsError, run_artifacts
 from axial.brief import BriefError, load_brief
 from axial.brief.interrogate import InterrogationError, interrogate, persist_interrogation
+from axial.brief.sweep import DEFAULT_WORKERS as SWEEP_DEFAULT_WORKERS
+from axial.brief.sweep import SweepError, format_sweep_summary, run_sweep
 from axial.chunk import (
     ChunkError,
     _default_chunks_dir,
@@ -480,6 +482,35 @@ def build_parser() -> argparse.ArgumentParser:
         "--pin",
         default=None,
         help="corpus_pin to report on (default: the pin the most records share)",
+    )
+
+    brief_sweep_parser = brief_subparsers.add_parser(
+        "sweep",
+        help=(
+            "run every brief in a worklist N times each ('draws'), concurrently "
+            "and resumably, then score each brief's own 4 rung-3 gates and "
+            "quorum-accuracy (self-consistency) figure over just its own draws "
+            "(issue #368) -- each (brief, draw) writes to its own directory "
+            "under --sweep-dir, never clobbering another draw's record"
+        ),
+    )
+    brief_sweep_parser.add_argument(
+        "worklist_path", help="path to a line-delimited worklist file of brief YAML paths"
+    )
+    brief_sweep_parser.add_argument(
+        "--draws", type=int, required=True, help="number of times to run each brief"
+    )
+    brief_sweep_parser.add_argument(
+        "--sweep-dir",
+        dest="sweep_dir",
+        required=True,
+        help="root directory for this sweep's per-(brief, draw) output and gate reports",
+    )
+    brief_sweep_parser.add_argument(
+        "--workers",
+        type=int,
+        default=SWEEP_DEFAULT_WORKERS,
+        help=f"bounded concurrent (brief, draw) workers (default: {SWEEP_DEFAULT_WORKERS})",
     )
 
     pin_parser = subparsers.add_parser(
@@ -1244,6 +1275,21 @@ def _brief_usage(pin: str | None) -> int:
     return 0
 
 
+def _brief_sweep(worklist_path: str, draws: int, sweep_dir: str, workers: int) -> int:
+    try:
+        summary = run_sweep(worklist_path, draws=draws, sweep_dir=Path(sweep_dir), workers=workers)
+    except SweepError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_sweep_summary(summary))
+    # Every declared per-(brief, draw) failure is already isolated and
+    # recorded (issue #368) -- a sweep that ran to completion with some
+    # FAILed draws is still a successful invocation of the loop itself,
+    # mirroring `axial run`'s own exit-code rule (`axial.run.run_pass`).
+    return 0
+
+
 def _pin_write(name: str) -> int:
     try:
         path = write_pin(name)
@@ -1445,6 +1491,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "brief" and args.brief_command == "usage":
         return _brief_usage(args.pin)
+
+    if args.command == "brief" and args.brief_command == "sweep":
+        return _brief_sweep(args.worklist_path, args.draws, args.sweep_dir, args.workers)
 
     if args.command == "pin" and args.pin_command == "write":
         return _pin_write(args.name)
