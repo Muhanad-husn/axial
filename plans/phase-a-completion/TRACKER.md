@@ -11,16 +11,18 @@ as slices land. Issues remain the system of record; this is the map over them.
   [`STAGE-4-RUNBOOK.md`](STAGE-4-RUNBOOK.md) is the *why* — measured costs, traps, and the
   sample-vs-full-re-tag analysis. Read both before launching any corpus pass
 - **Decision:** `docs/DECISIONS.md` → DEC-32
-- **Last updated:** 2026-07-23 — **STAGE 4 COMPLETE. PHASE A IS CLOSED.** 4.0 through 4.4
-  all done: corpus retag (0 unresolved fails, every mid-run FAIL self-recovered),
-  post-retag vault-write (30/30), 4.2 eval (simulated, provisional per DEC-32), 4.3
-  schema freeze (DEC-34, real corpus-wide numbers), 4.4 distribution recorded
-  ([`docs/eval/04-frozen-tag-distribution.md`](../../docs/eval/04-frozen-tag-distribution.md)).
-  **Stage 5 scoped (DEC-35, same day): vector store, dimensionality reduction, embedding
-  model, and corpus-state staleness tracking all decided; #298 split into 7 sub-issues
-  (#347–#353) for concurrent dispatch; notebook tooling added to `pyproject.toml`.** No
-  stage-5 code written yet. *Stage 4 — live state* below is kept as the incident history,
-  not current state.
+- **Last updated:** 2026-07-24 — **Stage 5 mechanism pivoted (DEC-37).** #296 (5a,
+  embeddings) and #297 (5b, HDBSCAN readiness map) both merged and real-corpus-validated
+  — but the real-corpus validation of #297 (PR #358) led to a full data-science
+  exploration that overturned 5b/5c's original design: **density clustering does not
+  recover any tag axis on this corpus's embeddings (ARI≈0, exhaustively measured), and
+  a direct supervised classifier on the corpus's *already-tagged* chunks strictly beats
+  every clustering variant tried.** Gold-checking that classifier then reversed the
+  optimistic internal read: it loses to the LLM teacher on both blind axes
+  (`claim_type`/`theory_school`) it could be checked against. **#347/#348–#353 need
+  re-scoping before any of them are picked up** — see *Stage 5 — live state* below for
+  the full findings and DEC-37 for the authoritative record. Stage 4 remains closed;
+  its *live state* section is kept as incident history, not current state.
 
 ## Read-me-first (30-second orient)
 
@@ -525,25 +527,27 @@ extract` for source_meta; `data/xref/`'s "never clear" assumption; now `tags_dir
 reaching `run_tag` via the runner). Read the actual call site, not just the function's
 own docstring, before trusting a plan's claim about corpus-scale behavior.
 
-### Stage 5 — HDBSCAN distillation eval (gated behind stage 4, now CLOSED)
+### Stage 5 — hybrid distillation eval (gated behind stage 4, now CLOSED; mechanism pivoted DEC-37)
 
-**Scoping done 2026-07-23 (DEC-35), before any code.** Vector store = LanceDB,
-reduction = PCA production / UMAP notebook-only, embeddings = local
-sentence-transformer, staleness = corpus_pin (#248) extended, notebook tooling
-= new `distill` dependency group. #298 decomposed into 7 sub-issues so 5d's
-five axes can run as concurrent worktrees — see `README.md` stage 5 and DEC-35
-for the full reasoning. Nothing below is built yet.
+**Scoping done 2026-07-23 (DEC-35).** Vector store = LanceDB, embeddings = local
+sentence-transformer, staleness = corpus_pin (#248) extended, notebook tooling =
+new `distill` dependency group. #298 decomposed into 7 sub-issues so 5d's five
+axes can run as concurrent worktrees. **Mechanism pivoted 2026-07-24 (DEC-37,
+after real-corpus validation of #297):** HDBSCAN density clustering doesn't
+recover any tag axis (ARI≈0); a direct supervised classifier on the corpus's
+existing tags wins outright; but that classifier loses to the LLM teacher on
+both blind axes once checked against gold. See *Stage 5 — live state* below.
 
-- ☐ 5a #296 — embedding pass + vector store (LanceDB) + corpus-pin manifest convention
-- ☐ 5b #297 — HDBSCAN readiness map (PCA) + cluster-(-1) router — depends on 5a
-- ☐ 5c #347 — stratified teacher labels — depends on 5a, 5b, #294
-- ☐ 5d #348 — head classifier: `role_in_argument` — depends on 5c; **concurrent with #349–#352**
-- ☐ 5d #349 — head classifier: `empirical_scope` — depends on 5c; **concurrent with #348, #350–#352**
-- ☐ 5d #350 — head classifier: `field` — depends on 5c; **concurrent with #348–#349, #351–#352**
-- ☐ 5d #351 — head classifier: `claim_type` (blind axis) — depends on 5c; **concurrent with #348–#350, #352**
-- ☐ 5d #352 — head classifier: `theory_school` (blind axis) — depends on 5c; **concurrent with #348–#351**
-- ☐ 5e #353 — quality-per-dollar verdict — depends on all of #348–#352
-- Tracking issue: #298 (no longer taken as a PR directly; see its body)
+- ✅ 5a #296 — embedding pass + vector store (LanceDB) + corpus-pin manifest convention — PR #357 merged
+- ✅ 5b #297 — HDBSCAN readiness map (PCA) + cluster-(-1) router — PR #358 merged, real-corpus-validated. **Role demoted (DEC-37): kept as a correctly-implemented diagnostic (ARI≈0 against every tag axis is itself the finding), not a gate for 5c**
+- ◐ 5c #347 — stratified teacher labels — **original scope superseded (DEC-37): existing corpus tags ARE the training set, zero new LLM spend needed.** Redirect pending: extend sim-gold coverage to the 3 head axes before any 5d graduation call. Not picked up as scoped — needs a rewritten issue body first
+- ☐ 5d #348 — head classifier: `role_in_argument` — **technique revised (DEC-37): global classifier + confidence threshold on existing tags, not a cluster-stratified sample.** Gated on 5c's redirected gold-coverage work
+- ☐ 5d #349 — head classifier: `empirical_scope` — same revision and gate as #348
+- ☐ 5d #350 — head classifier: `field` — same revision and gate as #348
+- ⛔ 5d #351 — head classifier: `claim_type` (blind axis) — **recommend stay LLM-only (DEC-37): gold-checked, classifier loses to the teacher (39.7% vs. 56.0%).** Do not build as scoped without a materially different approach
+- ⛔ 5d #352 — head classifier: `theory_school` (blind axis) — **recommend stay LLM-only (DEC-37): gold-checked, classifier loses to the teacher (41.4% vs. 54.3%).** Do not build as scoped without a materially different approach
+- ☐ 5e #353 — quality-per-dollar verdict — depends on #348–#350 now (effectively 3 axes, not 5)
+- Tracking issue: #298 (no longer taken as a PR directly; see its body) — needs a comment reflecting DEC-37
 
 ## Next action
 
@@ -638,6 +642,102 @@ depends on.
 See [`README.md`](README.md) → *Execution — parallel feature lanes & worktrees* for
 the full conflict rationale.
 
+## Stage 5 — live state (read this first if picking up 5c/5d)
+
+**Full record: DEC-37.** This section is the working detail; DEC-37 is authoritative.
+
+### What happened
+
+#297 (5b) was built, merged real-corpus checks per this repo's own "green suite is
+not evidence" rule (see Stage 4's lessons above — the same rule paid again here), and
+that check surfaced a near-degenerate result on the real 18,410-chunk corpus:
+`cluster_count=1`, `noise_fraction=0.722`, almost every tag axis reading 0 "tight"
+values. The fix (PR #358: Kaiser-criterion PCA=93, `leaf` selection, `min_samples=5`,
+"tight" redefined over non-noise chunks) landed and is correct — but re-measuring after
+the fix, plus a founder-directed deeper data-science pass, found the improved numbers
+were still not meaningfully informative, and traced the real cause one level down.
+
+### The measurements, in order
+
+1. **Cluster-validity vs. real tags (sklearn `adjusted_rand_score` etc.).** HDBSCAN's
+   clusters (even the fixed config) score **ARI ≈ 0** (one axis slightly negative)
+   against every one of the five tag axes. Not a tuning artifact — swept PCA dims
+   50/93/100/150, `min_cluster_size` 15/30/50/100/200, `cluster_selection_method`
+   eom/leaf, `allow_single_cluster` true/false. `eom` (the implicit default) always
+   collapsed to 1–2 clusters; `leaf` found 17–42 real clusters but still ARI≈0 against
+   tags — real density structure exists in this embedding space, it just doesn't align
+   with these tag categories.
+2. **Direct supervised probe** (kNN/logistic regression/LDA, trained on the *existing*
+   corpus tags, zero new LLM calls): every axis clears its majority-class baseline by a
+   wide margin, including the two axes HDBSCAN found zero structure for
+   (`field_primary` 84.5%, `empirical_scope_value` 77.6%). Confirms density clustering
+   and classifier-learnability are different questions here, pointing in opposite
+   directions.
+3. **Cluster-then-classify vs. global-classifier-with-threshold** (a real, previously
+   successful technique from the founder's own experience, tested directly on this
+   data): per-cluster local classifiers never covered more than ~4% of the corpus at
+   any `min_cluster_size` (15–200), at accuracy no better than the global classifier.
+   A global logistic regression with a predicted-probability threshold strictly
+   dominated — e.g. `field_primary` 92.2% accuracy at 72.7% coverage (threshold=0.8),
+   vs. the best per-cluster result of 90.8% accuracy at 2.3% coverage.
+4. **Secondary explorations, folded into the recommendation:** `e5-base-v2` embeddings
+   give a small, consistent lift over `all-MiniLM-L6-v2` on a fair 4,000-chunk subset
+   (kNN +2–3 points on most axes); MiniLM truncates 56% of real chunks at its 256-token
+   window, but truncation turned out *not* to be the dominant accuracy driver
+   (untruncated `bge-small-en-v1.5` performed about the same). Cross-axis association
+   (Cramér's V) found `field_primary`↔`claim_type_primary` at 0.850 — but a
+   leakage-free hierarchical classifier (predict field, feed the *predicted* value into
+   claim_type's classifier) gave **zero** improvement over the flat baseline; the
+   embedding already carries the shared signal. Region-grouping high-cardinality sparse
+   categoricals (tested on `polity`, not a current 5d axis) raised accuracy 80.8%→88.9%,
+   mostly by rescuing individually-too-rare classes rather than revealing new signal.
+5. **Gold check — the decisive, corrective measurement.** Steps 2–4 all measured
+   accuracy against the *tagger's own* labels, which is not the same as accuracy
+   against truth. Retrained the classifiers with the 120 gold chunks fully excluded
+   from training, scored against the real (DEC-29/30 simulated) academic gold labels
+   for the two axes that gold set actually covers (`claim_type`, `theory_school` — the
+   two blind axes, the only ones DEC-29/30 independently re-judged; `field`/
+   `empirical_scope`'s "1.0 agreement" in the existing gold report is trivial, those
+   columns were copied from the tagger, never independently checked):
+
+   | axis | classifier vs. gold | tagger's own reported agreement vs. gold |
+   |---|---|---|
+   | `claim_type_primary` | 39.7% (46/116) | 56.0% |
+   | `theory_school_primary` | 41.4% (48/116) | 54.3% |
+
+   Confidence-threshold abstention (≥0.6) narrows but doesn't close the gap: 46.4%/48.1%
+   accuracy at ~70% coverage, still below the teacher. **The classifier loses to the
+   teacher on both axes it can be checked against**, reversing what the internal-only
+   probe suggested. This matches `docs/eval/02`'s own original expectation ("the blind
+   axes likely stay LLM + best-of-N") — the internal numbers were the misleading signal,
+   not the original plan.
+
+### What is still unknown
+
+`role_in_argument`/`empirical_scope_value`/`field_primary` have **no independent gold
+coverage at all** — the current 120-chunk sim-gold set only re-judged the two blind
+axes. Their strong internal numbers are exactly as unvalidated as the blind axes' were
+before step 5. **Do not treat them as distillation-ready without the same gold check.**
+
+### Next actions
+
+1. **Extend sim-gold coverage to the three head axes** (mirrors the DEC-29/30
+   in-harness Sonnet-5 dispatch already used for the two blind axes) — this is the one
+   real prerequisite before #348–#350 can make a trustworthy graduation call. Likely
+   lands as a rewritten #347, not a new issue — see the status board above.
+2. **#351/#352 (`claim_type`/`theory_school`): do not build as scoped.** Recommend
+   closing or re-scoping to "stay LLM-only" pending a materially different approach —
+   these are gold-checked negative results, not "needs more tuning."
+3. **#348–#350: revise the issue bodies** before dispatch — global classifier +
+   confidence threshold on existing tags (not a cluster-stratified fresh sample), gated
+   on next action 1's gold coverage.
+4. **#297/PR #358: still worth merging** — correctly implemented, real-corpus-validated,
+   and the ARI≈0 finding is itself a useful documented negative result / future
+   OOD-triage candidate, even though it no longer gates 5c.
+5. Drafts for the revised #347/#348–#352 issue bodies (and a #298 tracking comment)
+   should go to a local file for founder review before filing, per this repo's own
+   "draft before filing" practice for backlog changes.
+
 ## Decisions settled during planning (a builder should know)
 
 - **#278 → remove, not populate.** Envelope drops author/title/date; intake's
@@ -654,20 +754,31 @@ the full conflict rationale.
 ## How to resume in a fresh session
 
 **Stage 4 is done; Phase A is closed.** The `Stage 4 — live state` section above is
-kept as incident history, not something a fresh session needs to act on. Current
-work is stage 5, scoped but not yet built (DEC-35).
+kept as incident history, not something a fresh session needs to act on. **Stage 5's
+mechanism pivoted 2026-07-24 (DEC-37) — read `Stage 5 — live state` above before
+touching #347 or any #348–#352 issue; the original DEC-35 design (HDBSCAN-gated
+cluster-stratified sampling) is superseded, not just "not yet built."**
 
 For a stage-5 (or any future build-lane) session:
 
-1. Read this file first, then `README.md`'s stage-5 section, then DEC-35 (stage-5
-   scoping) or DEC-32 (stage-5 sizing/dependency shape), then the relevant issue.
+1. Read this file first (**especially `Stage 5 — live state`**), then `README.md`'s
+   stage-5 section, then DEC-37 (the pivot, authoritative) and DEC-35 (original
+   scoping, now partly superseded — still correct on vector store/embedding
+   model/staleness tracking, superseded on dimensionality reduction and issue
+   #347/#348–#352's build technique), then the relevant issue.
 2. `git checkout main && git pull` (the plans live on `main`; cut each slice's
    `feat/<feature>/NN-slug` branch from there).
 3. Check the status board above and each issue's open PRs for anything ◐ in flight.
-4. `gh issue list` (or the GitHub plugin equivalent) scoped to #298's sub-issues
-   (#347–#353) to see which are open with no blocking dependency and no open PR —
-   those are dispatch candidates. When more than one qualifies (5d's five axis
-   issues, #348–#352, once #347/5c is done), spin one worktree per issue and
-   dispatch them concurrently, same as stage 0–3's parallel feature lanes.
-5. Pick the next ☐ slice per its lane order; run it through the harness; open a PR;
-   update its checkbox to ◐ (PR #), then ✅ on merge.
+4. **Do not dispatch #347 or #348–#352 as currently written** — their issue bodies
+   describe the superseded design. `Stage 5 — live state`'s *Next actions* lists what
+   actually needs doing: extend sim-gold coverage to the three head axes first, then
+   revise #348–#350's bodies to the global-classifier-plus-threshold technique;
+   #351/#352 (`claim_type`/`theory_school`) are a recommended stay-LLM-only call, not a
+   dispatch candidate, pending a materially different approach. Draft the revised issue
+   bodies to a local file for review before filing/editing on GitHub.
+5. Once redirected, resume the normal lane pattern: `gh issue list` (or the GitHub
+   plugin equivalent) scoped to #298's sub-issues to see what's unblocked and has no
+   open PR; when more than one axis issue qualifies, spin one worktree per issue and
+   dispatch concurrently, same as stage 0–3's parallel feature lanes. Pick the next ☐
+   slice per its lane order; run it through the harness; open a PR; update its checkbox
+   to ◐ (PR #), then ✅ on merge.

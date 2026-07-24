@@ -124,13 +124,28 @@ vector store, dimensionality reduction, embedding model, staleness tracking,
 notebook tooling, issue decomposition — are settled in **DEC-35**, not left open
 here.
 
+> ⚠️ **Mechanism pivoted 2026-07-24 (DEC-37), after DEC-35's scoping and after
+> #297/PR #358 was built and real-corpus-validated.** Density clustering
+> (HDBSCAN, 5b) does not recover any of the five tag axes on this corpus's
+> embeddings (Adjusted Rand Index ≈ 0, exhaustively measured — not a tuning
+> gap). A direct supervised classifier trained on the corpus's *existing*
+> tags (stage 4 already tagged all 17,824 chunks; no fresh LLM relabel
+> needed) strictly beats every clustering variant tried. But internal
+> accuracy against the tagger's own labels is **not** a valid stand-in for
+> accuracy against gold: checked against the (still-simulated) 120-chunk gold
+> sheet, the classifier underperforms the teacher on both blind axes it can
+> be checked against (`claim_type` 39.7% vs. teacher's 56.0%; `theory_school`
+> 41.4% vs. 54.3%). The table below reflects the corrected plan; the original
+> HDBSCAN-gated design is kept only as history in TRACKER.md. Full reasoning
+> and every number: **DEC-37**.
+
 | # | Slice | Issue(s) | Goal |
 |---|-------|----------|------|
-| 5a | embedding pass + vector store | [#296](https://github.com/Muhanad-husn/axial/issues/296) | Net-new: embed every chunk once (local sentence-transformer, DEC-35) and persist in **LanceDB** (DEC-35) — 5c/5d/5e all issue nearest-neighbour queries. The v0 chunker is embedding-free by design (§7.5); this is a *different job* (distillation representation), not a chunking change. Also defines the corpus-pin staleness manifest convention every later stage-5 artifact reuses (DEC-35). Cheap and one-time. |
-| 5b | readiness map | [#297](https://github.com/Muhanad-husn/axial/issues/297) | HDBSCAN over all chunk embeddings after **PCA** reduction (production path; UMAP is notebook-only visualization, DEC-35). Emit the readiness map: which tags sit in tight learnable regions vs. smear as noise; identify the `-1` noise set as the LLM-routed tail. Cluster ids start at 0 — the `-1`/route split is the load-bearing detail. |
-| 5c | stratified teacher labels | [#347](https://github.com/Muhanad-husn/axial/issues/347) | LLM-label a cluster-stratified ~6–9k sample (not 17k; learning-curve-driven; stratified by 5b's clusters so generalization is safe, not hopeful). Same worker/ledger/checkpoint shape as the stage-4 retag — dispatch concurrent workers, not a serial pass. |
-| 5d | head classifiers, one issue per axis | [#348](https://github.com/Muhanad-husn/axial/issues/348) `role_in_argument`, [#349](https://github.com/Muhanad-husn/axial/issues/349) `empirical_scope`, [#350](https://github.com/Muhanad-husn/axial/issues/350) `field`, [#351](https://github.com/Muhanad-husn/axial/issues/351) `claim_type`, [#352](https://github.com/Muhanad-husn/axial/issues/352) `theory_school` | Light classifier head per axis on PCA-reduced embeddings; a tag graduates only at gold-parity with the teacher within noise; per-class abstention automates the confident fraction, defers the rest. **File-disjoint across axes — the real concurrency opportunity in stage 5, dispatch as concurrent worktrees.** `polities_touched` excluded (many-valued, not a single-class problem). |
-| 5e | quality-per-dollar verdict | [#353](https://github.com/Muhanad-husn/axial/issues/353) | eval-02 quality-per-dollar vs the all-LLM baseline, referee = the ~120-chunk gold set; out-of-sample spot-check = drift monitor. Waits on every 5d axis issue's verdict. Verdict decides build vs stay-all-LLM. |
+| 5a | embedding pass + vector store | [#296](https://github.com/Muhanad-husn/axial/issues/296) ✅ merged | Net-new: embed every chunk once (local sentence-transformer) and persist in **LanceDB** — 5c/5d/5e all issue nearest-neighbour queries. The v0 chunker is embedding-free by design (§7.5); this is a *different job* (distillation representation), not a chunking change. Also defines the corpus-pin staleness manifest convention every later stage-5 artifact reuses. Cheap and one-time. **DEC-37 candidate follow-up (not filed):** swap `all-MiniLM-L6-v2` for `e5-base-v2` — small, consistent accuracy lift measured on a fair 4,000-chunk subset, at the cost of a larger model. |
+| 5b | readiness map (**demoted: diagnostic, not a gate**) | [#297](https://github.com/Muhanad-husn/axial/issues/297) ✅ merged (PR #358) | HDBSCAN over PCA-reduced chunk embeddings. Correctly implemented and real-corpus-validated (Kaiser-criterion PCA=93, `leaf` selection, non-noise-share "tight" definition) — but DEC-37 measured ARI≈0 against every tag axis, so its role changes from "gates 5c's sample" to "documented negative result / future OOD-triage candidate." **5c no longer depends on it.** |
+| 5c | stratified teacher labels (**superseded as scoped; redirect pending**) | [#347](https://github.com/Muhanad-husn/axial/issues/347) | Original scope (LLM-label a cluster-stratified ~6–9k sample) is unnecessary — the corpus is already fully tagged by stage 4, so 5d trains directly on those tags at zero new LLM spend. **Real remaining need:** extend the DEC-29/30 simulated-academic gold check (currently 120 chunks, 2 blind axes only) to cover `role_in_argument`/`empirical_scope`/`field` too — the one prerequisite left before those three axes' strong-looking internal numbers can be trusted for a graduation call. Issue body needs rewriting before this is picked up; draft first, per the founder's standing "draft before filing" practice. |
+| 5d | head classifiers, one issue per axis | [#348](https://github.com/Muhanad-husn/axial/issues/348) `role_in_argument`, [#349](https://github.com/Muhanad-husn/axial/issues/349) `empirical_scope`, [#350](https://github.com/Muhanad-husn/axial/issues/350) `field`, [#351](https://github.com/Muhanad-husn/axial/issues/351) `claim_type`, [#352](https://github.com/Muhanad-husn/axial/issues/352) `theory_school` | **Technique revised (DEC-37):** a plain per-axis classifier (logistic regression measured; kNN comparable) trained on existing tags, PCA dropped for this step (unsupervised reduction discards exactly the thin signal a supervised classifier needs — measured, not assumed), confidence-threshold abstention replaces HDBSCAN `-1` as the automate/defer split. **#351/#352 (`claim_type`/`theory_school`) — recommend stay LLM-only, do not build a classifier**: gold-checked and the classifier loses to the teacher on both. **#348–#350 stay open as candidates** on the revised technique, gated on 5c's redirected gold-coverage work before any graduation call. `polities_touched` still excluded (many-valued, not a single-class problem); region-grouping high-cardinality sparse categoricals is a validated technique (tested on `polity`, not a current target axis) worth reconsidering if a similar axis is ever added. |
+| 5e | quality-per-dollar verdict | [#353](https://github.com/Muhanad-husn/axial/issues/353) | eval-02 quality-per-dollar vs the all-LLM baseline, referee = the ~120-chunk gold set (provisional-on-sim per DEC-29); out-of-sample spot-check = drift monitor. Waits on every 5d axis issue's verdict — now effectively 3 axes (#348–#350), not 5. Verdict decides build vs stay-all-LLM. |
 
 #347–#353 are sub-issues of the tracking issue **[#298](https://github.com/Muhanad-husn/axial/issues/298)**
 (no longer taken as a PR directly — it was decomposed 2026-07-23 so 5c/5d/5e each
@@ -223,14 +238,21 @@ the limiter, not file conflict).
 
 ## Notes / open questions
 
-- **Why no full 17k LLM run is needed for stage 5.** "Full run" bundles two costs
-  ~1000× apart. The unsupervised part (embed + cluster) is cents and runs on the
-  whole corpus with no sampling loss. The supervised part (teacher labels) is the
-  expensive one and needs only enough examples per *head* class: at the ~100–300
-  floor, a cluster-stratified ~9k covers every class down to ~2–3% prevalence —
-  which is where the head/tail line sits — and 17k buys almost nothing over it.
-  The learning curve (train on 25/50/75/100% vs a fixed held-out set) decides the
-  number empirically; start ~6k, extend only if the curve is still climbing.
+> **DEC-37 supersedes the clustering-specific claims below** (the HDBSCAN
+> readiness map, cluster-stratified sampling, and the PCA/UMAP framing as
+> stage-5's load-bearing lever). Kept as history — the reasoning for *why*
+> stage 5 was sized to avoid a full-corpus LLM run is still correct, it's just
+> achieved differently now (existing tags, not a fresh cluster-stratified
+> sample). See the stage-5 table above and DEC-37 for the current mechanism.
+
+- **Why no full 17k LLM run is needed for stage 5 — even more true now.**
+  "Full run" bundles two costs ~1000× apart. **As originally conceived**, the
+  unsupervised part (embed + cluster) was cents and ran on the whole corpus
+  with no sampling loss, and the supervised part (fresh teacher labels) needed
+  only ~6–9k cluster-stratified examples. **As actually built (DEC-37):** the
+  supervised part needs **zero** new LLM calls at all — stage 4's retag
+  already tagged every one of the 17,824 chunks, so 5d trains directly on
+  that. The saving DEC-32 argued for is larger than DEC-32 itself assumed.
 - **The referee is the ~120-chunk gold set, not a full LLM baseline.** The outer
   eval is comparative against gold (LLM-vs-gold vs classifier-vs-gold), so no
   all-LLM pass over the corpus is required for it either.
