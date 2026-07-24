@@ -19,7 +19,10 @@ the caller to run `axial envelope` first, and it raises
 rather than silently emitting the null author/date and filename-slug title
 issue #278 retires.
 
-Each chunk is written to its own note at `<vault_dir>/prose/<chunk_id>.md`,
+Each chunk is written to its own note at `<vault_dir>/prose/<chunk_id>.md`
+-- or, when that path would exceed Windows' MAX_PATH, a filename shortened
+by `_note_path`'s budget (readable source-stem prefix first, then the
+section slug; `chunk_id` itself never changes -- see `_note_path`) --
 opening with a `---`-delimited YAML frontmatter block (PyYAML `safe_dump`)
 carrying `chunk_id`, `section`, `chunk_text`, a `source_meta` mapping
 (`author`, `title`, `date`, `thesis`, `scope`) composed from two artifacts
@@ -337,8 +340,126 @@ def render_note(frontmatter: dict[str, Any], body: str) -> str:
     return f"---\n{frontmatter_yaml}---\n{body}"
 
 
-def _note_path(vault_dir: Path, chunk_id: str) -> Path:
-    return vault_dir / "prose" / f"{chunk_id}.md"
+# Windows' documented MAX_PATH (260 characters, including the drive letter
+# and the terminating null) -- the hard ceiling a note's absolute path must
+# stay under. A real 31-source Phase A ingestion rerun measured two
+# long-titled sources losing 165/484 (~34%) and 59/483 (~12%) of their
+# notes to `FileNotFoundError` from oversized chunk_id/artifact_id-derived
+# paths -- not a rare outlier, but most section slugs of ordinary length
+# for a long-titled source. A conservative, documented ceiling, not a
+# proven-final value -- mirrors `CHUNK_MIN`/`CHUNK_MAX`'s own "sensible
+# starting point, not proven-final" framing (`axial.chunk`).
+_WINDOWS_MAX_PATH = 260
+
+# Slack reserved below `_WINDOWS_MAX_PATH`: one char for the path separator
+# between the directory and the filename, plus a few chars of rounding
+# safety. The directory portion itself (`vault_dir` resolved to its real
+# absolute path, plus "prose"/"artifacts") is measured for real at call
+# time below, never guessed -- so this margin is the only guessed constant
+# in the budget, and it is small on purpose.
+_PATH_SAFETY_MARGIN = 10
+
+
+def _path_overage(directory: Path, filename: str) -> int:
+    """How many characters `<directory>/<filename>`'s absolute path is over
+    budget (`_WINDOWS_MAX_PATH` minus `_PATH_SAFETY_MARGIN`); zero or
+    negative means it fits."""
+    return (
+        len(str(directory.resolve()))
+        + 1
+        + len(filename)
+        - (_WINDOWS_MAX_PATH - _PATH_SAFETY_MARGIN)
+    )
+
+
+def _shrink_pieces(pieces: list[str], overage: int) -> list[str]:
+    """Trim `overage` characters off `pieces`, in order, each piece down to
+    empty before the next is touched -- used to shave a note filename's
+    purely-human-readable components (the source stem, then the section
+    slug) down to budget. The small, uniqueness-bearing components (the
+    content-hash suffix, the section order, the per-section chunk index)
+    are never passed in here at all, so they can never be shortened."""
+    shrunk = []
+    for piece in pieces:
+        if overage <= 0:
+            shrunk.append(piece)
+            continue
+        take = min(overage, len(piece))
+        shrunk.append(piece[: len(piece) - take])
+        overage -= take
+    return shrunk
+
+
+def _split_source_id(source_id: str) -> tuple[str, str]:
+    """Split `source_id` (`axial.envelope.compute_source_id`'s
+    `<stem>-<hash12>`) into its human-readable stem and its trailing
+    12-hex-char content hash -- the only two pieces a note filename ever
+    needs to tell apart, since the hash is source_id's own uniqueness
+    guarantee and the stem is purely for humans."""
+    hash12 = source_id[-12:]
+    stem = source_id[: -(len(hash12) + 1)]
+    return stem, hash12
+
+
+def _budgeted_chunk_filename(directory: Path, source_id: str, chunk_id: str) -> str:
+    """Shorten `chunk_id`'s note filename to fit under `directory`'s path
+    budget, touching only `source_id`'s readable stem prefix and (if that
+    alone is not enough) the section slug -- never the hash suffix, the
+    section order, or the per-section index, which is where chunk_id's own
+    on-disk uniqueness lives (`axial.chunk.build_chunk_records`). Relies on
+    `chunk_id`'s locked grammar (`<source_id>_<order_key>_<slug>_<NNN>`,
+    PRD §7.7): `order_key` and `slug` are guaranteed underscore-free
+    (`axial.chunk._slugify` maps every non-alphanumeric run, including
+    underscores, to a single hyphen; `order_key` is `section_order` with
+    "." replaced by "-"), so splitting the `source_id`-stripped suffix on
+    "_" is unambiguous."""
+    stem, hash12 = _split_source_id(source_id)
+    _, order_key, slug, index = chunk_id[len(source_id) :].split("_")
+
+    def build(s: str, sl: str) -> str:
+        return f"{s}-{hash12}_{order_key}_{sl}_{index}.md"
+
+    filename = build(stem, slug)
+    overage = _path_overage(directory, filename)
+    if overage > 0:
+        stem, slug = _shrink_pieces([stem, slug], overage)
+        filename = build(stem, slug)
+    return filename
+
+
+def _budgeted_artifact_filename(directory: Path, source_id: str, artifact_id: str) -> str:
+    """Shorten `artifact_id`'s note filename to fit under `directory`'s
+    path budget, touching only `source_id`'s readable stem prefix -- never
+    the hash suffix or the artifact's own dotted order
+    (`axial.artifacts.artifact_id_for_node`'s `<source_id>_art_<order>`),
+    which is where artifact_id's on-disk uniqueness lives."""
+    stem, hash12 = _split_source_id(source_id)
+    suffix = artifact_id[len(source_id) :]
+
+    def build(s: str) -> str:
+        return f"{s}-{hash12}{suffix}.md"
+
+    filename = build(stem)
+    overage = _path_overage(directory, filename)
+    if overage > 0:
+        (stem,) = _shrink_pieces([stem], overage)
+        filename = build(stem)
+    return filename
+
+
+def _note_path(vault_dir: Path, source_id: str, chunk_id: str) -> Path:
+    """The on-disk path for `chunk_id`'s note. The filename is `chunk_id`
+    verbatim whenever the resulting absolute path fits Windows' MAX_PATH
+    budget (the common case) -- only a source whose readable stem/slug
+    combination would push the path over budget gets its filename
+    shortened, via `_budgeted_chunk_filename`; `chunk_id` itself (used
+    everywhere else: tag records, xref pairs, this note's own frontmatter)
+    is never touched."""
+    directory = vault_dir / "prose"
+    filename = f"{chunk_id}.md"
+    if _path_overage(directory, filename) > 0:
+        filename = _budgeted_chunk_filename(directory, source_id, chunk_id)
+    return directory / filename
 
 
 def write_chunk_note(
@@ -347,18 +468,24 @@ def write_chunk_note(
     source_meta: dict[str, Any],
     vault_dir: Path,
     artifact_refs: list[str] | None = None,
+    *,
+    source_id: str,
 ) -> Path:
-    """Write one chunk's note under `<vault_dir>/prose/<chunk_id>.md`,
-    creating parent directories as needed. `source_meta` is the source's
-    persisted source-metadata record (§7.12), the origin of the note's
+    """Write one chunk's note under `<vault_dir>/prose/`, named by
+    `record['chunk_id']` (shortened only on the filesystem, per
+    `_note_path`, when the full chunk_id would push the path over Windows'
+    MAX_PATH -- `chunk_id` itself is unchanged everywhere else). Creates
+    parent directories as needed. `source_meta` is the source's persisted
+    source-metadata record (§7.12), the origin of the note's
     `author`/`title`/`date`. `artifact_refs` (issue #34 slice 02) is this
     chunk's detected backlink list, threaded through to `build_frontmatter`
-    verbatim."""
+    verbatim. `source_id` is the source's own `compute_source_id` value,
+    needed only for the filename-budget fallback."""
     frontmatter = build_frontmatter(record, envelope, source_meta, artifact_refs=artifact_refs)
     body = f"# {record['section']}\n\n{record['chunk_text']}\n"
     note_text = render_note(frontmatter, body)
 
-    path = _note_path(vault_dir, record["chunk_id"])
+    path = _note_path(vault_dir, source_id, record["chunk_id"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(note_text, encoding="utf-8")
     return path
@@ -392,23 +519,36 @@ def build_artifact_frontmatter(
     return frontmatter
 
 
-def _artifact_note_path(vault_dir: Path, artifact_id: str) -> Path:
-    return vault_dir / "artifacts" / f"{artifact_id}.md"
+def _artifact_note_path(vault_dir: Path, source_id: str, artifact_id: str) -> Path:
+    """The on-disk path for `artifact_id`'s note -- `artifact_id` verbatim
+    whenever the path fits Windows' MAX_PATH budget (the common case),
+    mirroring `_note_path`'s filename-only fallback for the rare oversized
+    case (`_budgeted_artifact_filename`)."""
+    directory = vault_dir / "artifacts"
+    filename = f"{artifact_id}.md"
+    if _path_overage(directory, filename) > 0:
+        filename = _budgeted_artifact_filename(directory, source_id, artifact_id)
+    return directory / filename
 
 
 def write_artifact_note(
     record: dict[str, Any], vault_dir: Path, cited_by: list[str] | None = None
 ) -> Path:
-    """Write one artifact's note under
-    `<vault_dir>/artifacts/<artifact_id>.md`, creating parent directories as
-    needed -- a surface separate from `<vault_dir>/prose/` (PRD §8 P0-8).
-    `cited_by` (issue #34 slice 02) is this artifact's detected backlink
-    list, threaded through to `build_artifact_frontmatter` verbatim."""
+    """Write one artifact's note under `<vault_dir>/artifacts/`, named by
+    `record['artifact_id']` (shortened only on the filesystem, per
+    `_artifact_note_path`, when the full artifact_id would push the path
+    over Windows' MAX_PATH -- `artifact_id` itself is unchanged everywhere
+    else), creating parent directories as needed -- a surface separate from
+    `<vault_dir>/prose/` (PRD §8 P0-8). `cited_by` (issue #34 slice 02) is
+    this artifact's detected backlink list, threaded through to
+    `build_artifact_frontmatter` verbatim. `record['source_id']` (always
+    present, `axial.artifacts.build_artifact_record`'s shape) is needed
+    only for the filename-budget fallback."""
     frontmatter = build_artifact_frontmatter(record, cited_by=cited_by)
     body = f"# {record['section']}\n\nArtifact `{record['artifact_id']}` ({record['artifact_role']}).\n"
     note_text = render_note(frontmatter, body)
 
-    path = _artifact_note_path(vault_dir, record["artifact_id"])
+    path = _artifact_note_path(vault_dir, record["source_id"], record["artifact_id"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(note_text, encoding="utf-8")
     return path
@@ -626,6 +766,7 @@ def run_vault_write(
                 source_meta,
                 vault_dir,
                 artifact_refs=chunk_to_artifacts.get(record["chunk_id"]),
+                source_id=source_id,
             ),
         )
         if path is None:

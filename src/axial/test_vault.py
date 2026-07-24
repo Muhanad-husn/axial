@@ -9,6 +9,13 @@ from pathlib import Path
 import pytest
 import yaml
 
+# The source_id `_RECORD`'s own `chunk_id` embeds as its prefix
+# (`axial.envelope.compute_source_id`'s `<stem>-<hash12>` shape) -- not a
+# realistic 12-hex-char hash, just enough to exercise `write_chunk_note`'s
+# now-required `source_id` argument on the ordinary (well-under-budget)
+# path.
+_SOURCE_ID = "paper-abc123"
+
 _ENVELOPE = {
     "source_id": "paper-abc123",
     "thesis": "Envelope thesis text.",
@@ -277,7 +284,7 @@ def test_write_chunk_note_writes_under_prose_dir_named_by_chunk_id(tmp_path):
     from axial.vault import write_chunk_note
 
     vault_dir = tmp_path / "vault"
-    note_path = write_chunk_note(_RECORD, _ENVELOPE, _SOURCE_META, vault_dir)
+    note_path = write_chunk_note(_RECORD, _ENVELOPE, _SOURCE_META, vault_dir, source_id=_SOURCE_ID)
 
     assert note_path == vault_dir / "prose" / f"{_RECORD['chunk_id']}.md"
     assert note_path.is_file()
@@ -287,7 +294,7 @@ def test_write_chunk_note_creates_parent_dirs(tmp_path):
     from axial.vault import write_chunk_note
 
     vault_dir = tmp_path / "nested" / "vault"
-    note_path = write_chunk_note(_RECORD, _ENVELOPE, _SOURCE_META, vault_dir)
+    note_path = write_chunk_note(_RECORD, _ENVELOPE, _SOURCE_META, vault_dir, source_id=_SOURCE_ID)
 
     assert note_path.is_file()
 
@@ -296,7 +303,7 @@ def test_write_chunk_note_does_not_touch_artifacts_dir(tmp_path):
     from axial.vault import write_chunk_note
 
     vault_dir = tmp_path / "vault"
-    write_chunk_note(_RECORD, _ENVELOPE, _SOURCE_META, vault_dir)
+    write_chunk_note(_RECORD, _ENVELOPE, _SOURCE_META, vault_dir, source_id=_SOURCE_ID)
 
     assert not (vault_dir / "artifacts").exists()
 
@@ -308,13 +315,131 @@ def test_write_chunk_note_rerun_overwrites_in_place_without_duplicating(tmp_path
 
     vault_dir = tmp_path / "vault"
 
-    first_path = write_chunk_note(_RECORD, _ENVELOPE, _SOURCE_META, vault_dir)
-    second_path = write_chunk_note(_RECORD, _ENVELOPE, _SOURCE_META, vault_dir)
+    first_path = write_chunk_note(_RECORD, _ENVELOPE, _SOURCE_META, vault_dir, source_id=_SOURCE_ID)
+    second_path = write_chunk_note(
+        _RECORD, _ENVELOPE, _SOURCE_META, vault_dir, source_id=_SOURCE_ID
+    )
 
     assert first_path == second_path
     prose_files = [p for p in (vault_dir / "prose").iterdir() if p.is_file()]
     assert len(prose_files) == 1
     assert prose_files[0] == first_path
+
+
+# --- note filename budget (Windows MAX_PATH) --------------------------------
+#
+# Regression: PR #376's per-note fault isolation fixed the SYMPTOM (one
+# oversized note path aborting the rest of a source's notes) but not the
+# root cause. A real 31-source Phase A ingestion rerun then measured the
+# root cause's actual blast radius: a long-titled source's chunk_id
+# (`<source_id>_<order>_<slug>_<NNN>`, PRD §7.7 -- `source_id` itself
+# already up to 172 chars in this corpus, plus a section slug up to
+# `_SLUG_MAX_LEN` (#94)) pushed 165/484 (~34%) and 59/483 (~12%) of two
+# sources' note paths past Windows' 260-char MAX_PATH -- most section
+# slugs of ordinary length for a long-titled source, not a rare outlier.
+# `chunk_id`/`artifact_id` themselves are never touched below; only the
+# on-disk filename is shortened.
+
+_LONG_HASH12 = "0123456789ab"
+_LONG_SOURCE_ID = f"{'A' * 200}-{_LONG_HASH12}"
+
+# The corpus's actual longest source filename stem (168 chars) -- the
+# Benjamin Thomas White source that lost 165/484 notes live before this fix.
+_REAL_LONG_STEM = (
+    "Benjamin Thomas White - The Emergence of Minorities in the Middle "
+    "East_ The Politics of Community in French Mandate Syria (2011, "
+    "Edinburgh University Press) - libgen.li"
+)
+_REAL_LONG_SOURCE_ID = f"{_REAL_LONG_STEM}-{_LONG_HASH12}"
+
+
+def test_write_chunk_note_shortens_filename_when_source_id_and_slug_are_long(tmp_path):
+    """A pathologically long source_id combined with a max-length section
+    slug must not prevent the note from being written -- the on-disk
+    filename shortens instead of the write failing with an oversized-path
+    `OSError`."""
+    from axial.vault import write_chunk_note
+
+    vault_dir = tmp_path / "vault"
+    slug = "b" * 80  # `_SLUG_MAX_LEN`, chunk.py's own existing cap (#94)
+    chunk_id = f"{_LONG_SOURCE_ID}_1_{slug}_001"
+    record = {**_RECORD, "chunk_id": chunk_id}
+
+    note_path = write_chunk_note(
+        record, _ENVELOPE, _SOURCE_META, vault_dir, source_id=_LONG_SOURCE_ID
+    )
+
+    assert note_path.is_file()
+    assert len(str(note_path.resolve())) < 260
+    # the filename actually got shortened, not just happened to already fit
+    assert len(note_path.name) < len(chunk_id) + len(".md")
+
+
+def test_write_chunk_note_different_sections_of_long_stemmed_source_stay_distinct(tmp_path):
+    """Two chunks from different sections of the same long-stemmed source
+    must land on two different files -- the budget must never collapse
+    on-disk uniqueness even though both filenames get shortened the same
+    way (their section-order component, preserved in full, disambiguates
+    them)."""
+    from axial.vault import write_chunk_note
+
+    vault_dir = tmp_path / "vault"
+    slug = "b" * 80
+    record_1 = {**_RECORD, "chunk_id": f"{_LONG_SOURCE_ID}_1_{slug}_001"}
+    record_2 = {**_RECORD, "chunk_id": f"{_LONG_SOURCE_ID}_2_{slug}_001"}
+
+    path_1 = write_chunk_note(
+        record_1, _ENVELOPE, _SOURCE_META, vault_dir, source_id=_LONG_SOURCE_ID
+    )
+    path_2 = write_chunk_note(
+        record_2, _ENVELOPE, _SOURCE_META, vault_dir, source_id=_LONG_SOURCE_ID
+    )
+
+    assert path_1 != path_2
+    assert path_1.is_file()
+    assert path_2.is_file()
+
+
+def test_write_chunk_note_real_longest_corpus_stem_stays_under_windows_max_path(tmp_path):
+    """The corpus's actual longest source filename (168-char stem) combined
+    with a realistic long section slug must produce a note path safely
+    under Windows' 260-char MAX_PATH, where the unshortened path would not
+    have (the exact failure mode measured live)."""
+    from axial.vault import write_chunk_note
+
+    vault_dir = tmp_path / "vault"
+    slug = "the-mandate-states-and-their-minority-communities-in-the-interwar-period"
+    assert len(slug) <= 80
+    chunk_id = f"{_REAL_LONG_SOURCE_ID}_3_{slug}_012"
+    record = {**_RECORD, "chunk_id": chunk_id}
+
+    unbudgeted_path = vault_dir / "prose" / f"{chunk_id}.md"
+    unbudgeted_len = len(str(unbudgeted_path.resolve()))
+
+    note_path = write_chunk_note(
+        record, _ENVELOPE, _SOURCE_META, vault_dir, source_id=_REAL_LONG_SOURCE_ID
+    )
+    budgeted_len = len(str(note_path.resolve()))
+
+    assert unbudgeted_len > 260, "fixture should reproduce the real overlong-path failure"
+    assert budgeted_len < 260
+    assert note_path.is_file()
+
+
+def test_write_artifact_note_shortens_filename_when_source_id_is_long(tmp_path):
+    """The artifact-note analogue: a pathologically long source_id must not
+    prevent the artifact's note from being written."""
+    from axial.vault import write_artifact_note
+
+    vault_dir = tmp_path / "vault"
+    artifact_id = f"{_LONG_SOURCE_ID}_art_1.2"
+    record = {**_ARTIFACT_RECORD, "artifact_id": artifact_id, "source_id": _LONG_SOURCE_ID}
+
+    note_path = write_artifact_note(record, vault_dir)
+
+    assert note_path.is_file()
+    assert len(str(note_path.resolve())) < 260
+    assert len(note_path.name) < len(artifact_id) + len(".md")
 
 
 # --- artifact frontmatter/note (issue #32 slice 02) --------------------------
@@ -789,7 +914,7 @@ def test_write_chunk_note_writes_given_artifact_refs_into_frontmatter(tmp_path):
 
     vault_dir = tmp_path / "vault"
     note_path = write_chunk_note(
-        _RECORD, _ENVELOPE, _SOURCE_META, vault_dir, artifact_refs=["art-1"]
+        _RECORD, _ENVELOPE, _SOURCE_META, vault_dir, artifact_refs=["art-1"], source_id=_SOURCE_ID
     )
 
     frontmatter, _ = _split_frontmatter_like_outer_test(note_path.read_text(encoding="utf-8"))
