@@ -12,7 +12,7 @@
 
 ## 0. What this is, in one paragraph
 
-Phase C is a single-operator paper author driven through the `axial` CLI. It takes a **paper brief**, which is a thesis question plus a named set of Phase-B analysis records, and returns a **paper record** plus a rendered markdown paper. The claim inventory it draws on is already grounded, marked, and banded by Phase B, so authorship is assembly and arrangement rather than fresh evidence-gathering. Phase C's own new knowledge is a bounded set of new **(b) claims**: cross-source inferences that relate claims across two or more analysis records, which is what a paper actually contributes over the analyses beneath it. Around the drafting sit three cheap gates that run on every paper and can block its release: provenance integrity, which is mechanical, plus two narrow judged checks on the grounding and the labelling of the new (b) claims. Whether the argument actually holds together is a different question, and it is not answered per paper. It is **measured offline, on a sample**, by a panel of at least three frontier-model reviewers from a different vendor than the drafter, each seeing only a sealed packet and holding no tools with which to read anything else. That panel is an instrument for measuring the system's accuracy across performance tiers and model combinations, not a checkpoint every paper waits at, and its own numbers count for nothing until it has been shown to catch deliberately planted defects. The enforced standard is unchanged from every layer beneath: **accountability to grounds, with honest confidence** (charter §0).
+Phase C is a single-operator paper author driven through the `axial` CLI. It takes a **paper brief**, which is a thesis question plus a named set of Phase-B analysis records, and returns a **paper record** plus a rendered markdown paper. The claim inventory it draws on is already grounded, marked, and banded by Phase B, so authorship is assembly and arrangement rather than fresh evidence-gathering. Phase C's own new knowledge is a bounded set of new **(b) claims**: cross-source inferences that relate claims across two or more analysis records, which is what a paper actually contributes over the analyses beneath it. Around the drafting sit four cheap gates that run on every paper and can block its release: provenance integrity and counter-position presence, both mechanical, plus two narrow judged checks on the grounding and the labelling of the new (b) claims. Where the named records argue opposite sides, that disagreement is the scholarly substance rather than a defect: both sides survive into the paper with their sources identified, and the counter-position gate holds the result to charter Principle IV. Whether the argument actually holds together is a different question, and it is not answered per paper. It is **measured offline, on a sample**, by a panel of at least three frontier-model reviewers from a different vendor than the drafter, each seeing only a sealed packet and holding no tools with which to read anything else. That panel is an instrument for measuring the system's accuracy across performance tiers and model combinations, not a checkpoint every paper waits at, and its own numbers count for nothing until it has been shown to catch deliberately planted defects. The enforced standard is unchanged from every layer beneath: **accountability to grounds, with honest confidence** (charter §0).
 
 ---
 
@@ -22,11 +22,13 @@ Phase B solved the analysis layer. Given one brief, it returns a claim graph in 
 
 The gap Phase C closes is the arc. A paper is not a concatenation of findings. It states a thesis, orders material so that each section earns the next, states the opposing school at its strongest, and carries apparatus that lets a reader check any sentence. The value the operator wants is the charter's framing at its full scale: original comparative-historical scholarship, produced rather than retrieved (charter §0).
 
-Three failure modes govern this phase, and all three are invisible in fluent prose.
+Four failure modes govern this phase, and all four are invisible in fluent prose.
 
 **Laundering by re-voicing.** The easiest way to write a paper from analyses is to restate their (a) claims in the paper's own voice. The result reads as the tool's synthesis while contributing nothing, and it erases the (b) seam the charter makes non-negotiable (Principle II). Restatement is not synthesis.
 
 **Confidence inflation across a layer boundary.** A claim disclosed as `low` in a Phase-B record, quoted into a paper's argument and surrounded by confident prose, reads as settled. Nothing in the prose carries the band forward. The band must survive the copy, and it must survive the inference built on top of it.
+
+**Collapsing a live dispute.** Comparative-historical sociology is a field of opposing arguments, and a paper built from records that argue opposite sides is the case this phase most needs to get right. The failure is to pick a side quietly: to reconcile the two records into one position, or to simply not cite the losing one, and produce a paper that reads as settled scholarship over a question the sources contest. Charter Principle IV names this exactly, as having "collapsed to one side and hidden that it did." The paper that drops its opposition looks cleaner than the paper that carries it, which is what makes this failure attractive and why a gate has to catch it (§7.14).
 
 **Coherence without an oracle.** The per-run checks in this phase are all local: this sentence traces to that claim, this band did not rise, this one inference is supported by the text it cites. None of them can tell whether section 4 follows from section 3, or whether the counter-position is a steelman or a puppet. That judgment needs a reader who was not in the room. Until 2026-07-24 the plan was a human referee. There will not be one (§9). The replacement has to be at least as adversarial as the thing it replaces, which is why it is sealed, multi-vendor, plural, and positive-controlled. It is also, like the referee it replaces, applied to a **sample** of the work rather than to every draft. Measuring whether the system writes coherent papers and deciding whether one paper may be released are different jobs, and a panel run on every draft would do neither well: it would be too slow to gate on and too narrow to measure with.
 
@@ -41,9 +43,10 @@ This PRD covers **Phase C (authorship) only**. It does not cover analysis (Phase
 3. **No claim outranks its source.** A carried claim keeps its band exactly; a new (b) claim never exceeds the weakest claim it stands on. Confidence disclosure survives the layer boundary intact (charter Principle V).
 4. **Mechanical apparatus.** In-text citation markers that resolve claim to grounds to chunk to source, and a bibliography generated from `source_meta` for exactly the sources cited. One plain format, deterministic, no style engine.
 5. **The counter-position survives into the paper.** The opposing school is stated at its strongest in the paper itself, or the paper explicitly discloses that its source records found the corpus one-sided (charter Principle IV).
-6. **Cheap gates on every paper.** The three per-run gates are one mechanical check and two narrow judged checks over the new (b) claims. Every paper passes through them, and no paper waits on anything expensive to be released (§10.1).
-7. **Coherence measured from outside, on a sample, with the judge itself tested.** A sealed-packet panel of at least three reviewers from a different vendor than the drafter, run offline across performance tiers and model combinations, reporting per-stratum numbers that count for nothing until a positive control proves the panel catches planted defects (charter Principle V, §10.2).
-8. **No dependency on human-authored referee data.** The phase builds, runs, gates, and measures end to end with no academic in the loop, permanently (§9).
+6. **Cheap gates on every paper.** The four per-run gates are two mechanical checks and two narrow judged checks over the new (b) claims. Every paper passes through them, and no paper waits on anything expensive to be released (§10.1).
+7. **Opposing positions are the substance, not a defect.** Source records that argue opposite sides are opposing arguments, never an error to adjudicate. Both sides survive into the paper with their sources identified, and charter Principle IV binds the result (§7.14).
+8. **Coherence measured from outside, on a sample, with the judge itself tested.** A sealed-packet panel of at least three reviewers from a different vendor than the drafter, run offline across performance tiers and model combinations, reporting per-stratum numbers that count for nothing until a positive control proves the panel catches planted defects (charter Principle V, §10.2).
+9. **No dependency on human-authored referee data.** The phase builds, runs, gates, and measures end to end with no academic in the loop, permanently (§9).
 
 ---
 
@@ -59,7 +62,8 @@ Each is excluded deliberately; documenting them protects the architecture.
 6. **No UI beyond the CLI.**
 7. **No human referee.** No file, gate, or acceptance criterion in this phase may depend on academic-authored data (§9).
 8. **No multi-paper orchestration or batching** in the authorship pipeline, beyond running one paper brief and inspecting it. The offline eval track (§10.2) reads a set of already-written papers, which is not orchestration: it produces no papers of its own.
-9. **No per-run coherence gating.** No paper waits on a reviewer panel to be released. The three per-run gates (§10.1) are cheap and run on every paper; the coherence panel (§10.2) is an offline measuring instrument over a sample, and it blocks nothing.
+9. **No per-run coherence gating.** No paper waits on a reviewer panel to be released. The four per-run gates (§10.1) are cheap and run on every paper; the coherence panel (§10.2) is an offline measuring instrument over a sample, and it blocks nothing.
+10. **No adjudication between contradictory source records.** Phase C does not decide which of two opposing records is right, and does not reconcile them. It carries both, identifies their sources, and holds the result to charter Principle IV (§7.14).
 
 ---
 
@@ -71,7 +75,7 @@ Two halves, and the split is the whole design. Note which noun each half takes: 
 
 **Assembly is bounded by an existing inventory.** Every claim the paper cites is either carried verbatim from a Phase-B analysis record, with its kind, grounds, and band intact, or is a new (b) claim that reasons across at least two claims drawn from at least two distinct records. The drafter cannot introduce evidence, because it has no path to any. It has no retrieval tools and no vault access: the claim inventory it is given is the whole world. This is generate-then-cite made structurally impossible rather than forbidden by instruction, which is the same move Phase B made at the tool-dispatch seam (PHASE-B §4).
 
-**Judgment of the whole comes from outside, and it comes on a sample.** Every property that is cheap to check is checked on every paper: marker resolution, grounds resolution, band non-escalation, counter-position presence, bibliography completeness, and two narrow judged checks over the new (b) claims. The one property none of those reach is whether the argument holds together. That property is **measured, not gated**. A panel that never saw the repo, the specs, the prompts, or any seeded data reads a sample of finished papers, receives only the paper plus the evidence it cites, and reports how coherent the system's output is, broken out by performance tier and model combination. The panel's isolation is enforced by the harness that constructs its calls, not by anything written in its prompt: a model with file tools reads the repository regardless of what its instructions say. Isolation you ask for is not isolation.
+**Judgment of the whole comes from outside, and it comes on a sample.** Every property that is cheap to check is checked on every paper: marker resolution, grounds resolution, band non-escalation, counter-position presence on a contested paper, bibliography completeness, and two narrow judged checks over the new (b) claims. The one property none of those reach is whether the argument holds together. That property is **measured, not gated**. A panel that never saw the repo, the specs, the prompts, or any seeded data reads a sample of finished papers, receives only the paper plus the evidence it cites, and reports how coherent the system's output is, broken out by performance tier and model combination. The panel's isolation is enforced by the harness that constructs its calls, not by anything written in its prompt: a model with file tools reads the repository regardless of what its instructions say. Isolation you ask for is not isolation.
 
 The two halves run on different clocks, and that is deliberate. Release is a per-paper decision and must stay cheap. Accuracy is a property of the system and only appears across many papers, several tiers, and more than one model combination. Collapsing the second into the first would make every paper pay for a measurement that a single paper cannot produce.
 
@@ -89,7 +93,7 @@ Like every phase beneath it, the mechanism is domain-general and the content is 
 4. **Claim assembly & citation indexing (deterministic).** Parses the drafted prose for markers, builds the citation index (§7.5), and assembles the record's `claims` list as exactly the claims cited. A marker naming an unknown claim is a hard failure here.
 5. **Apparatus & rendering (deterministic).** Generates the bibliography from `data/source_meta/` for exactly the cited sources (§7.6), renders the markdown paper (§7.10), and writes the paper record (§7.3).
 
-The pipeline ends here. A paper is releasable once the three per-run gates of §10.1 pass over its record, and none of them calls a reviewer. **Off the pipeline**, on its own cadence, sits the coherence eval track (§10.2): sealed-packet assembly (§7.7), the reviewer panel (§7.8), and the positive control that qualifies the panel before any of its numbers are trusted (§7.9), run over a stratified sample of already-written papers (§7.13).
+The pipeline ends here. A paper is releasable once the four per-run gates of §10.1 pass over its record, and none of them calls a reviewer. **Off the pipeline**, on its own cadence, sits the coherence eval track (§10.2): sealed-packet assembly (§7.7), the reviewer panel (§7.8), and the positive control that qualifies the panel before any of its numbers are trusted (§7.9), run over a stratified sample of already-written papers (§7.13).
 
 ---
 
@@ -142,6 +146,8 @@ Three intake rules, all mechanical and all blocking:
 - **No refusals.** A named record whose `interrogation.disposition` is `refuse` is rejected, naming the id. A refusal is a valid Phase-B outcome and a completed run; it is not material for a paper, because it carries no claims.
 - **Schema agreement.** Every named record must carry the same `schema_version`. A mixed set is rejected.
 
+**Records that contradict each other are not rejected, and this is not an omission from that list.** Two named records arguing opposite sides of a question are opposing arguments, which is the substance of the domain, not a defect in the input. Contradiction is handled by charter Principle IV at paper scale (§7.14), never at the intake gate. Nothing may be added to the three rejections above on the grounds that two records disagree.
+
 The **claim inventory** is the union of `claims` across the named records, keyed by `(brief_id, claim_id)`. It is the drafter's entire world.
 
 ### 7.2 The paper plan (the narrative arc) **[FIRM]**
@@ -165,7 +171,7 @@ plan: {
 Two mechanical constraints on a valid plan:
 
 - **Order is meaningful.** `sections` is an ordered list, and the rendered paper follows it exactly. Rendering never reorders.
-- **Counter-position presence.** At least one section carries `role: counter-position`, unless **every** named source record discloses `counter_position.corpus_one_sided: true` (PHASE-B §7.8), in which case the plan carries no counter-position section and the paper must render the one-sided disclosure instead. Neither present is a red flag, not a clean result (charter Principle IV), and fails intake of the plan.
+- **Counter-position presence.** At least one section carries `role: counter-position`, unless **every** named source record discloses `counter_position.corpus_one_sided: true` (PHASE-B §7.8), in which case the plan carries no counter-position section and the paper must render the one-sided disclosure instead. Neither present is a red flag, not a clean result (charter Principle IV), and fails intake of the plan. This is a cheap plan-time guard read off the source records alone; the authoritative check is the post-draft counter-position gate (§7.14, §10.1), which sees what the paper actually cited.
 
 A section may carry an empty `assigned_claims` list only when its role is `setup`. Every other section must carry at least one.
 
@@ -182,7 +188,7 @@ One JSON per run at `data/papers/<paper_brief_id>.json`, the phase's analogue of
   plan,                              # the arc (§7.2)
   claims: [ <paper_claim> ],         # §7.4; exactly the claims cited in the prose
   citations: [ <citation> ],         # §7.5, in document order
-  counter_position,                  # §7.9 of PHASE-B, carried or disclosed (below)
+  counter_position,                  # the PHASE-B §7.8 shape, reused unchanged (§7.14)
   coverage_map,                      # §7.8
   confidence: { overall_band, rationale },
   bibliography: [ <bib_entry> ],     # §7.6
@@ -192,7 +198,7 @@ One JSON per run at `data/papers/<paper_brief_id>.json`, the phase's analogue of
 }
 ```
 
-`counter_position` is either the counter-position material carried into the paper, naming the section that states it and the source claims it is built from, or the explicit one-sided disclosure permitted by §7.2, carrying the source records that reported it. It is never absent.
+`counter_position` reuses the PHASE-B §7.8 shape unchanged: `{present, stance, grounds[], corpus_one_sided, one_sided_reason}`. It is either the counter-position material carried into the paper, naming the section that states it and the source claims it is built from, or the explicit one-sided disclosure, carrying the source records that reported it. It is never absent. Where the named source records themselves argue opposite sides, this is the field that carries the opposition into the paper (§7.14).
 
 `confidence.overall_band` is one of `high` / `medium` / `low` and may not exceed the **lowest** overall band among the named source records. `confidence.rationale` states the coverage counts behind it, drawn from `coverage_map`.
 
@@ -219,6 +225,8 @@ Two kinds of entry, distinguished by `origin`.
 **A new (b) claim** is Phase C's own contribution. It carries `kind: b`, `origin: null`, non-empty `grounds`, and a `derived_from` list of at least two `paper_claim_id`s that between them come from **at least two distinct `brief_id`s**. That is what makes it cross-source rather than a restatement, and it is mechanically checkable. Its `grounds` are the union of the grounds of the claims it derives from, so it points at real vault ids without the drafter ever touching the vault.
 
 **No new (c) claims** in v0 (§3 non-goal 4). A carried (c) claim keeps `kind: c` and its origin.
+
+**A new (b) claim may characterise a disagreement between source records, and may not settle it.** Where two named records argue opposite sides, a claim that names the disagreement, locates it, or says what the two positions turn on is genuine cross-source synthesis, and it is arguably the best contribution a paper built this way can make. What it may not do is declare a winner beyond what its grounds support. "Record A's position rests on evidence B's does not engage" is a claim with grounds. "Record A is correct" is a verdict, and no grounds in the inventory carry it. The distinction is the ordinary one every (b) claim already faces, and it is enforced by the same two gates: grounding of new (b) claims, and the (b)-seam mislabel check (§10.1). Both sides of the disagreement survive into the paper regardless, each carrying its `origin` (§7.14).
 
 **The confidence ceiling.** Bands are ordered `low < medium < high`.
 
@@ -405,7 +413,36 @@ A coherence measurement run reads a **sample spec**: a committed file under `eva
 
 Sample specs carry ids and strata only. No prose, no chunk text, no paper text (DEC-23).
 
----
+### 7.14 Opposing positions across records (charter Principle IV at paper scale) **[TENTATIVE]**
+
+**Contradiction between source records is the scholarly substance, not an error.** Two analysis records that argue opposite sides of a question are opposing arguments, which is the soul of the domain this product works in. Phase C treats them as charter Principle IV already requires: the opposition is stated at its strongest, or the one-sidedness is disclosed. Nothing here is new principle. This section only lifts Principle IV from within one analysis (PHASE-B §7.8) to across a set of them.
+
+Three rules bind, and they are the whole of it.
+
+- **Contradiction is never an intake rejection.** It is not in §7.1's rejection list and must not be added to it. A paper brief naming records that disagree is a normal, valid, and arguably the most interesting input this phase takes.
+- **Contradiction is never adjudicated, resolved, or silently reconciled.** Both claims survive into the paper, each carrying its `origin` and therefore its source record (§7.4). Collapsing two contradictory records into one position without disclosure is Principle IV's exact named failure: the paper has "collapsed to one side and hidden that it did."
+- **A paper whose source records carry opposing positions is a contested paper**, and Principle IV binds it. Its `counter_position` section (§7.3, the PHASE-B §7.8 shape reused unchanged) is either present at its strongest from grounds, or discloses and attributes the one-sidedness.
+
+**The contested predicate.** This is the one place the mechanism needed real work, because PHASE-B's predicate is described in terms of retrieved chunks and Phase C has records. Stated plainly, split into what is reuse and what is new.
+
+**Reuse, and more of it than expected.** PHASE-B's predicate is already implemented over **claim grounds, not over the retrieval trajectory**: `axial.validators.counter_position._detect_contested` reads `record["claims"]`, takes the union of chunk-typed `grounds` pointers, resolves each through `get_chunk`, and inspects the `theory_school` and `role_in_argument` axes. A Phase-C paper record carries `claims` with the same `grounds` shape pointing at the same real vault ids (§7.4, §7.5), so both existing arms apply to a paper record **unmodified**:
+
+- `theory_school_spread` — the paper's cited evidence spans at least `contested_detection.min_distinct_theory_schools` distinct substantive `theory_school` primaries, with the `not-applicable` and `unlisted` sentinels excluded exactly as PHASE-B excludes them.
+- `role_counter_position` — any cited evidence chunk carries `role_in_argument: role:counter-position`.
+
+This satisfies the no-vault-access constraint by construction: the resolution happens in the validator, which already reads the vault, and never in the drafter, which has no path to it (§4).
+
+**What is genuinely new: a third arm, and it closes a real hole.** Both inherited arms read only what the paper **cited**. A drafter that simply declines to carry any opposing material produces a paper whose cited evidence spans one school, which both arms score as uncontested, which waives the counter-position requirement. That is laundering a contested question into a clean one by omission, and it is exactly the failure Principle IV names. So:
+
+- `source_record_contested` **[new]** — fires when any **named source record** carries a `counter_position` section that is present-with-grounds or discloses `corpus_one_sided: true`, or when that record's own contested predicate fired. It reads the source records under `data/analyses/`, which the paper record already names in `source_analyses`.
+
+This arm reads record fields only. **Zero vault reads and zero model calls**, and it fires from what the inputs contained rather than from what the drafter chose to keep. A paper whose sources argued both sides cannot become uncontested by dropping one side.
+
+The predicate is the disjunction of the three arms, evaluated in the order above, and the fired signal is recorded on the report exactly as PHASE-B records it, so the rule can be tuned on evidence later.
+
+**No new tunable.** The predicate reuses PHASE-B's existing `contested_detection.min_distinct_theory_schools` config key with the same default of 2, rather than introducing a Phase-C-specific one. The third arm is a boolean over fields that already exist and needs no threshold.
+
+**Why this section is [TENTATIVE], and what would settle it.** Not the principle, which is FIRM and is the charter's. What is unproven is whether the third arm earns its place. If, over the first real papers, `source_record_contested` never fires alone (never without one of the two inherited arms also firing), it is dead weight and should be dropped. If it fires alone with any regularity, each instance is a paper that dropped its opposition and would otherwise have passed, and the arm is load-bearing. That inspection is the tuning, and it follows the discipline PHASE-B §7.7 and §7.8 already set: state the rule, prove it by inspection, then settle it.
 
 ## 8. Requirements
 
@@ -475,11 +512,20 @@ Sample specs carry ids and strata only. No prose, no chunk text, no paper text (
 **P0-12 CLI surface with inspect-before-spend.**
 - [ ] `axial paper draft <paper_brief_file>` runs stages 1 through 5 and writes the record and rendered paper.
 - [ ] `axial paper examine <paper_brief_file>` runs intake and arc planning and reports the plan, the claim inventory, and the sections' assigned claims **without the drafting call**, analogous to `axial brief examine` (PHASE-B P0-9). Observable: `examine` makes zero drafting calls.
-- [ ] The three per-run gates run through the existing `axial gate run <gate>` surface. Observable: `draft` and `examine` between them expose no path that invokes the reviewer panel.
+- [ ] The four per-run gates run through the existing `axial gate run <gate>` surface. Observable: `draft` and `examine` between them expose no path that invokes the reviewer panel.
 - [ ] `axial eval coherence --sample <sample_spec>` runs the offline eval track: assembles packets, runs the panel over the sampled papers, and writes the per-stratum report with its frame. It is a separate command from `axial paper`, because it measures the system rather than producing a paper.
 
 **P0-13 Dev paper briefs landed as versioned data.**
 - [ ] At least three dev paper briefs land under `config/paper_briefs/dev/` in the §7.1 shape, each naming Phase-B dev briefs that have actually been run, so every dry-run in this phase is reproducible from the repo. Observable: the dev paper briefs drive the harnesses with no operator-local file.
+- [ ] At least one dev paper brief names **source records that argue opposite sides**, so the §7.14 path is exercised by default rather than only under a hand-built fixture.
+
+**P0-14 Opposing positions across records (charter Principle IV; §7.14).**
+- [ ] Contradiction between named source records is **never an intake rejection**. Observable: a paper brief naming two records whose claims argue opposite sides is accepted and drafted, and no error path exists for record disagreement.
+- [ ] Both sides survive into the paper with their source records identified. Observable: a paper drawn from opposing records carries claims from both, each with its `origin`, and no reconciliation step collapses them.
+- [ ] The §7.14 contested predicate reuses `axial.validators.counter_position`'s two existing arms unchanged over the paper record's claim grounds, and adds the third `source_record_contested` arm. Observable: a paper whose source records carried opposing positions is flagged contested **even when the drafter cited only one side**, which is the hole the third arm exists to close.
+- [ ] The third arm is computed with **zero vault reads and zero model calls**, from the named source records' own fields. Observable: it is produced in tests with no LLM client present and no vault directory configured.
+- [ ] A **mechanical** per-run gate blocks a contested paper carrying neither a present-with-grounds counter-position nor a one-sidedness disclosure with a reason (§10.1). An uncontested paper is excluded from the denominator, never counted as a pass. Observable: a contested paper with neither fails; an uncontested paper with neither passes.
+- [ ] A new (b) claim may characterise a disagreement and may not declare a winner beyond its grounds (§7.4). This is enforced by the existing grounding and (b)-seam gates, with no new judge seam.
 
 ### Nice-to-Have (P1)
 
@@ -506,7 +552,7 @@ Sample specs carry ids and strata only. No prose, no chunk text, no paper text (
 - **N >= 3 with reported spread** answers *a single draw is a single draw*. The mean without the spread hides a panel that could not agree.
 - **Positive-controlled** answers *judges are generous*. A panel that catches nothing is indistinguishable from a panel that stopped reading, and §7.9 makes that distinction mechanical.
 
-**It is an eval instrument, not a turnstile.** This is the founder's ruling of 2026-07-24 and it governs everywhere the panel appears in this spec. The panel is run offline, over a stratified sample of already-written papers (§7.13), to measure how accurate the system is across performance tiers and model combinations. It is not a per-run gate, it blocks no paper, and no paper's release depends on it. The three per-run gates of §10.1 are what every paper passes through, and all three are cheap.
+**It is an eval instrument, not a turnstile.** This is the founder's ruling of 2026-07-24 and it governs everywhere the panel appears in this spec. The panel is run offline, over a stratified sample of already-written papers (§7.13), to measure how accurate the system is across performance tiers and model combinations. It is not a per-run gate, it blocks no paper, and no paper's release depends on it. The four per-run gates of §10.1 are what every paper passes through, and all four are cheap.
 
 The cadence change costs nothing in integrity. Every property in §7.7 through §7.9 holds exactly as written: sealed, tool-free, different-vendor, N >= 3, structured verdicts, positive-controlled. What changed is **when the instrument runs and what it is pointed at**, not how rigorous it is. A sampled instrument with intact controls is a measurement; a per-run instrument with the same controls would be an expensive checkpoint that still could not tell you the system's accuracy, because accuracy does not live in a single paper.
 
@@ -522,18 +568,21 @@ Two instruments with two different jobs, on two different clocks. §10.1 decides
 
 These are the **rung-3 ship-blocking eval gates** for the layer Phase C builds (charter §2). Trust composes multiplicatively across layers: Phase-A's κ eval is rung 1, Phase-B's five gates sit above it, and these sit above those. A flawless paper over a mis-attributed analysis is worthless. The principles behind each gate are **FIRM**; the numeric thresholds are **TUNABLE** starting hypotheses.
 
-All three are cheap by design. One is mechanical, and the other two are narrow judged checks scoped to Phase C's own new (b) claims, which are a small fraction of any paper's claims. Every paper passes through all three.
+All four are cheap by design. Two are mechanical, and the other two are narrow judged checks scoped to Phase C's own new (b) claims, which are a small fraction of any paper's claims. Every paper passes through all four.
 
 | Gate | Charter | Metric | Starting threshold [TENTATIVE] |
 |------|---------|--------|--------------------------------|
 | **Provenance integrity** | Principle II | `provenance_completeness` = share of citation markers resolving to a record claim with resolvable grounds; plus `confidence_upgrade_count` = claims violating the §7.4 ceiling | completeness = **1.00** and upgrades = **0**; both mechanical hard gates, no sampling |
 | **Grounding of new (b) claims** | Principle I | `grounding_support_rate` over Phase C's new (b) claims, judged by the existing `axial.gates.grounding` judge anchored to resolved grounds text | **≥ 0.90** |
 | **(b)-seam mislabel rate** | Principle II | `b_seam_mislabel_rate` over the paper record's (b) claims, via the existing judged check in `axial.gates.attribution` | **≤ 0.05** |
+| **Counter-position presence** | Principle IV | `counter_position_presence_rate` = share of **contested** papers (§7.14's three-arm predicate) whose `counter_position` is present-with-grounds or discloses one-sidedness with a reason. Mechanical | **1.00**. A contested paper with neither is a red flag, not a clean result, and is blocked |
 
 **Notes that bind.**
 
 - **The two hard gates are hard.** Provenance completeness and confidence-upgrade count are mechanically checkable, so they are not sampled rates. One dangling marker fails. One upgraded band fails.
-- **Reuse, do not re-derive.** The grounding gate reuses `src/axial/gates/grounding.py`'s judge (prompt, verdict vocabulary, unresolvable-grounds error, self-grading guard) with only its claim selector changed and its guard re-anchored to Phase C's drafting pass. The (b)-seam gate reuses `src/axial/gates/attribution.py`'s judged check wholesale. No second judge seam is invented for either.
+- **Reuse, do not re-derive.** The grounding gate reuses `src/axial/gates/grounding.py`'s judge (prompt, verdict vocabulary, unresolvable-grounds error, self-grading guard) with only its claim selector changed and its guard re-anchored to Phase C's drafting pass. The (b)-seam gate reuses `src/axial/gates/attribution.py`'s judged check wholesale. The counter-position gate reuses `src/axial/validators/counter_position.py`'s presence-or-disclosure check and both inherited contested arms unchanged, adding only §7.14's third arm. No second judge seam is invented for any of them.
+- **The counter-position gate takes only the mechanical half.** This mirrors PHASE-B's own split at §7.9/§10 exactly: the presence-or-disclosure check is mechanical, so it gates per run; the model-judged steelman-quality half is a judgment about how well the opposition is stated, so it joins the eval track (§10.2). Splitting them is what keeps a per-run gate cheap without losing the quality question. `validate_counter_position` already separates the two, so the split is a call-site choice rather than a code change.
+- **A hard 1.00 here does not mean every paper needs a counter-position.** An uncontested paper is excluded from the denominator, never counted as a pass or a failure, exactly as PHASE-B's `counter_position_presence_rate` excludes an uncontested brief. The gate binds only where §7.14's predicate fires.
 - **No gate report waits on a panel.** None of the three carries a panel field, a reviewer verdict, or any trust condition a panel could satisfy. A report naming a missing panel verdict as its reason to be untrusted would be wrong by construction (§7.9).
 - **`trusted` resolves from the corpus pin alone here.** The shared harness's existing rule (`axial.gates.harness.resolve_trusted`) also requires at least one academic-authored hard case, which is correct for Phase B and is permanently unsatisfiable for Phase C: there will never be an academic case (§9). Phase C's gate reports must therefore resolve `trusted` from an unambiguous corpus pin and nothing else, or every Phase-C gate report would be untrusted forever for a reason this phase has ruled out. This is a small, named change to a shared module and belongs in the PR that builds P0-8.
 - **The vendor bar does not apply here.** The grounding and (b)-seam judges keep the existing different-model guard. Those answer a narrow question against pinned text. The stricter different-vendor bar is the panel's, because the coherence judgment is open-ended and that is where shared family priors bite (§7.7).
@@ -546,6 +595,7 @@ Coherence is **measured, not gated** (§9). This track runs on its own cadence o
 | Instrument | Charter | Metric | Reporting rule |
 |------------|---------|--------|----------------|
 | **Argument coherence** | Principles IV, V | `argument_coherence_rate` = mean per-reviewer coherence score across N ≥ 3 sealed-packet reviewers, **reported per stratum** | Reported with `reviewer_spread` (max − min) and the full frame (§7.13). **No threshold.** A measurement is not a pass/fail. |
+| **Steelman quality** | Principle IV | `steelman_quality` = share of papers carrying a present-with-grounds counter-position whose bounded steelman check verdicts `steelman` rather than `strawman`, via `axial.validators.counter_position`'s existing judge | Reported per stratum. PHASE-B's existing **0.90** bar carries over as a **reference line, not a block**: nothing in §10.2 blocks anything |
 | **Positive control** | charter §2 | `positive_control_catch_rate` = planted defects caught by ≥ ⌈N/2⌉ reviewers, over the three §7.9 plants | **Threshold = 1.00**, and it is hard. Below it, the run's coherence numbers are reported `trusted: false`. |
 
 **Where the two previously-flagged thresholds landed, and why.**
@@ -557,6 +607,7 @@ Coherence is **measured, not gated** (§9). This track runs on its own cadence o
 
 - **Report the spread, always.** The mean alone is ambiguous. Three reviewers scoring 0.5, 0.5, 0.5 and three scoring 1.0, 0.5, 0.0 both average 0.5. The first is a panel that agreed the papers have reservations. The second is a panel that could not agree at all, and its average describes none of its members. Reporting only the mean would make those two results indistinguishable.
 - **Per stratum, never pooled.** One coherence figure per stratum, plus the frame. No system-wide headline mean (§7.13, charter Principle V).
+- **The steelman judge is the existing one, re-anchored.** `axial.validators.counter_position`'s bounded check runs under its own `pass_name` with its own same-model guard, which must be re-anchored from PHASE-B's synthesis pass to Phase C's drafting pass, exactly as the grounding judge is (§10.1). It keeps the different-model bar and does not take the panel's stricter different-vendor bar: like grounding, it answers a narrow question against pinned grounds text (§7.7).
 - **A number without its frame is a different claim.** Every coherence figure travels with the sample, strata, tiers, model combinations, panel configuration, and corpus pin that produced it (§7.13).
 - **Three plants is a small n.** `positive_control_catch_rate = 1.00` over three plants is a floor, not a demonstration of sensitivity. P1-3 adds two more classes. A panel that catches three obvious plants has not proven it catches a subtle one, and the control's own limits are stated in every report it produces.
 
@@ -566,14 +617,14 @@ Coherence is **measured, not gated** (§9). This track runs on its own cadence o
 
 Bottom-up, so each layer stands on a tested one beneath it. Nothing in this ladder waits on a human.
 
-**The pipeline ladder (steps 1–6).** Phase C is shippable at the end of step 6: papers are written, and every one of them passes the three per-run gates before release.
+**The pipeline ladder (steps 1–6).** Phase C is shippable at the end of step 6: papers are written, and every one of them passes the four per-run gates before release.
 
 1. **Scaffolding, paper-brief intake, dev paper briefs.** Repo per §6; intake and the claim inventory (P0-1); land the dev paper briefs (P0-13). Deterministic, no model calls.
 2. **Arc planning (P0-2)** and the inspect-before-spend `examine` affordance (P0-12).
 3. **Drafting and new (b) claims (P0-3, P0-4)**, with the confidence ceiling enforced at assembly.
 4. **Apparatus: citation index and bibliography (P0-5, P0-6).** Both deterministic and fully testable with no LLM client.
 5. **Record, rendering, persistence (P0-7).**
-6. **The three per-run gates: provenance integrity (P0-8) and the reused grounding / (b)-seam gates (P0-9).** This closes the release path.
+6. **The four per-run gates: provenance integrity (P0-8), the reused grounding / (b)-seam gates (P0-9), and the counter-position gate (P0-14).** This closes the release path.
 
 **The eval track (steps 7–9), a separate ladder.** It measures the system built above and gates none of it. It can be built after step 6, or in parallel by a second worker once step 5 lands, because it consumes finished paper records and touches no pipeline module. It has no place in the release path and must not be sequenced as though a paper waits on it.
 
@@ -611,5 +662,5 @@ Genuinely unresolved; everything else in this document is settled.
 - **[product]** **Is the thesis operator-supplied or engine-derived?** §7.1 makes it operator-supplied, which is the smallest thing that works and keeps Phase C a pure consumer. But the operator writing the thesis is also the operator deciding what the analyses add up to, which is arguably the paper's central intellectual act and exactly the act the tool exists to perform. An engine-derived thesis, proposed from the claim inventory and confirmed or overridden by the operator, is the obvious alternative. It is not built in v0 because it would need its own gate: a thesis the corpus cannot carry is the Principle-III failure at paper scale, and nothing here interrogates it. Resolve after the first real papers show whether the operator-supplied theses were any good.
 - **[eval]** **How many papers, across which tiers and which model combinations, make a meaningful coherence number?** Now that coherence is a sampled offline measurement rather than a per-run gate (§10.2), the sample shape is the whole question, and it is three questions stacked. **How many papers per stratum**: one paper's panel is one observation, and a rate over a single paper is not a system property. **How many strata, and cut where**: §7.13 requires more than one performance tier and more than one model combination, which is a floor and not a design; the tier cut points are an explicit stated tunable with no measured basis yet. **How many reviewers per paper**: cost is linear in N and resolution improves slowly, so the answer is probably 3 or 5 rather than 10, but nothing here measures it. The three interact, and the budget is one number spread across all of them: reviewers per paper, papers per stratum, and number of strata trade directly against each other. This is the main reason §10.2 sets no threshold on `argument_coherence_rate`. A threshold over a sample whose shape is unsettled would be a number about the sample, not about the system.
 - **[design]** **May the drafter read chunk text, or only claims?** §7.4 gives it the claim inventory and no vault access, which is grounded-by-construction at its strictest and makes generate-then-cite structurally impossible. The cost is that the drafter writes from claim summaries rather than from the sources, and the prose may read thin or repetitive as a result. Allowing it to read the grounds text of claims already assigned to its section is a narrow relaxation that keeps the inventory as the boundary. Whether it is needed is an empirical question about the first drafts.
-- **[product]** **What happens when two named analysis records contradict each other?** They share a corpus pin, so they read the same corpus, but two Phase-B runs over different briefs can still produce (a) claims that conflict. v0 has no adjudication rule: the drafter sees both in the inventory and nothing forces it to notice. The candidate answers are all plausible and none is obviously right: surface the conflict as a finding, treat it as a counter-position, refuse the paper, or let the drafter choose and disclose. This deserves a founder decision before it appears in a real paper rather than after.
+- **[product]** ~~**What happens when two named analysis records contradict each other?**~~ **RESOLVED by founder ruling (recorded here 2026-07-25).** The question was mis-framed. I listed four candidate answers (surface the conflict as a finding, treat it as a counter-position, refuse the paper, let the drafter choose and disclose) and asked which adjudication rule to adopt. None of them is right, because contradiction is not a condition to adjudicate. **Contradictory records are opposite arguments, the soul of the academic domain, and are understood as opposing claims or arguments within the context.** The disagreement is the scholarly substance, not a defect in the input. The ruling is therefore not a new rule but an existing principle applied one level up: charter Principle IV, which PHASE-B §7.8 already implements within a single analysis, lifted to hold across a set of them. Contradiction is never an intake rejection, never adjudicated, and never silently reconciled; both sides survive with their sources identified; a paper over opposing records is a contested paper and Principle IV binds it; and a new (b) claim may characterise the disagreement without declaring a winner beyond its grounds. Specified at §7.14, gated at §10.1, required at P0-14. *The reasoning is kept here rather than deleted, because the mis-framing is the instructive part: an adjudication question was really a case of a principle already in the charter.*
 - **[engineering]** **What counts as a vendor?** §7.7 defines it as the lab that trained the model, not the API provider, which is correct and is the important half. The edges are unresolved: a model fine-tuned by one lab on another lab's base, a lab's model served under a partner's brand, and lab mergers all break a flat table. The static table is the right seam for now because it fails loudly on an unknown id rather than silently. Whether it needs to become something richer is a question for the first time the table cannot answer cleanly.
