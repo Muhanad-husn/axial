@@ -773,25 +773,27 @@ how close its numbers sit to the teacher's own mediocre 53.3%.
 
 ### Next actions
 
-1. **#347: redirected deliverable is done, not just proposed** — sim-gold coverage now
-   exists for all five axes. Close #347 as complete (or file the completed work against
-   it) rather than leaving it as an open prerequisite.
-2. **#350 (`field`): the strongest build candidate of the five axes** — gold-checked,
-   high coverage, CI at parity with the teacher.
-3. **#348 (`role_in_argument`): a real but weaker candidate** — gold-checked positive,
+**Done as of 2026-07-24:** #347 closed as complete; #348–#352 issue bodies rewritten and
+filed on GitHub with gold-checked verdicts; #298/#297 comments posted; PR #358 (5b
+readiness map, merged `0118f68`) and PR #365 (stray corpus-pin file, merged `461ee63`)
+both merged; worktree/branch cleanup done. Items 1, 6, 7 from the prior version of this
+list are complete — what's left is real build/decision work, not paperwork:
+
+1. **#350 (`field`): the strongest build candidate of the five axes** — gold-checked,
+   high coverage, CI at parity with the teacher. Clearest next build.
+2. **#348 (`role_in_argument`): a real but weaker candidate** — gold-checked positive,
    wide CI, moderate coverage; flag the reliability caveat before any graduation call.
-4. **#349 (`empirical_scope`): do not build as scoped, but don't flat-close either** —
+3. **#349 (`empirical_scope`): do not build as scoped, but don't flat-close either** —
    embeddings don't clear the bar; try TF-IDF (DEC-38's lift on the blind axes) before
-   ruling this axis out entirely.
-5. **#351/#352 (`claim_type`/`theory_school`): unchanged from DEC-38** — narrow
-   TF-IDF automate-if-confident slice, thin evidence base (32–40 gold chunks), founder
-   call on whether to build now.
-6. **#297/PR #358: still worth merging** — correctly implemented, real-corpus-validated,
-   and the ARI≈0 finding is itself a useful documented negative result / future
-   OOD-triage candidate, even though it no longer gates 5c.
-7. Drafts for the revised #347/#348–#352 issue bodies (and a #298 tracking comment)
-   should go to a local file for founder review before filing, per this repo's own
-   "draft before filing" practice for backlog changes.
+   ruling this axis out entirely. Cheap, same method as the blind-axis check — worth
+   doing before dispatching a build.
+4. **#351/#352 (`claim_type`/`theory_school`): unchanged from DEC-38** — narrow
+   TF-IDF automate-if-confident slice, thin evidence base (32–40 gold chunks). **Founder
+   decision needed:** is that evidence base enough to build on, or does it wait for more
+   gold coverage?
+5. Once the founder picks which axes to build, dispatch as concurrent worktrees
+   (file-disjoint, same pattern as stages 0–3's parallel lanes) — #350 first if picked,
+   since it has no open question left.
 
 ## Decisions settled during planning (a builder should know)
 
