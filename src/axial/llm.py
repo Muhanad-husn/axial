@@ -244,6 +244,11 @@ DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 BUILDING_TIER = "building"
 PRODUCTION_HIGH_TIER = "production_high"
 PRODUCTION_LOW_TIER = "production_low"
+# A fourth, narrower tier (founder-requested model-swap experiment, 2026-07):
+# `model_by_pass` needs to route the synthesis pass to a model distinct from
+# `production_high` (which `envelope` keeps using), so synthesis gets its own
+# named tier rather than repurposing an existing one two other passes share.
+PRODUCTION_SYNTHESIS_TIER = "production_synthesis"
 DEFAULT_LLM_TIER = BUILDING_TIER
 
 # Fallback model used only when secrets.toml doesn't name one for the
@@ -384,7 +389,14 @@ PREMISE_MATCH_PASS_NAME = "premise_match"
 # `_resolve_reasoning_by_pass` below) is the actual carried-per-pass source
 # of truth for a real run and can override any entry here without a code
 # change -- mirrors this default exactly today.
-DEFAULT_REASONING_BY_PASS: dict[str, bool] = {
+# Value is `True`/`False` (reasoning at OpenRouter's implicit default effort,
+# or off) or a `str` naming an explicit `reasoning.effort` level ("low",
+# "medium", "high", "xhigh", ...) -- added for the founder-requested
+# model-swap experiment (2026-07): several models (see `_post_with_deadline`)
+# only support a subset of effort levels, so a bare `enabled: true` leaves
+# OpenRouter to silently pick among them; naming the level here makes that
+# choice explicit and deliberate instead.
+DEFAULT_REASONING_BY_PASS: dict[str, bool | str] = {
     ENVELOPE_PASS_NAME: True,
     CONTENT_APPARATUS_PASS_NAME: True,
     HOLDINGS_PASS_NAME: True,
@@ -1425,7 +1437,7 @@ class OpenRouterClient:
         transport: httpx.BaseTransport | None = None,
         request_deadline_seconds: float = _REQUEST_DEADLINE_SECONDS,
         content_fallback_model: str | None = None,
-        reasoning_by_pass: dict[str, bool] | None = None,
+        reasoning_by_pass: dict[str, bool | str] | None = None,
         model_by_pass: dict[str, str] | None = None,
     ) -> None:
         self._api_key = api_key
@@ -1504,10 +1516,12 @@ class OpenRouterClient:
         project's first per-pass model override, resolved exactly as
         `reasoning_enabled` is already selected by `pass_name` below.
 
-        `pass_name` (issue #207, §7.9) also selects this call's
-        `reasoning.enabled` value from `self._reasoning_by_pass` (defaulting
-        to `False` for a pass not named there -- the safe, unchanged-since-
-        #147 default).
+        `pass_name` (issue #207, §7.9) also selects this call's reasoning
+        setting from `self._reasoning_by_pass` (defaulting to `False` for a
+        pass not named there -- the safe, unchanged-since-#147 default): a
+        `bool` sends `reasoning.enabled` (OpenRouter's implicit default
+        effort when `True`), a `str` sends `reasoning.effort` naming an
+        explicit level instead (2026-07 model-swap experiment).
 
         `tools` (issue #253 slice 01) is a purely additive payload field: it
         is included only when the caller passes a non-`None` value
@@ -1515,7 +1529,18 @@ class OpenRouterClient:
         is byte-for-byte unchanged from before this parameter existed.
         """
         target_model = model if model is not None else self.model_for_pass(pass_name)
-        reasoning_enabled = self._reasoning_by_pass.get(pass_name, False)
+        reasoning_setting = self._reasoning_by_pass.get(pass_name, False)
+        # A `str` names an explicit `reasoning.effort` level (2026-07
+        # model-swap experiment: several models only support a subset of
+        # effort levels -- e.g. "high"/"xhigh", never "medium" -- so leaving
+        # `enabled: true` to OpenRouter's implicit "medium" default means it
+        # silently picks among the model's supported levels on our behalf).
+        # A `bool` keeps the original `reasoning.enabled` shape unchanged.
+        reasoning_payload: dict[str, Any] = (
+            {"enabled": True, "effort": reasoning_setting}
+            if isinstance(reasoning_setting, str)
+            else {"enabled": reasoning_setting}
+        )
         outcome: dict[str, Any] = {}
         done = threading.Event()
         payload: dict[str, Any] = {
@@ -1527,14 +1552,14 @@ class OpenRouterClient:
             # model, and the added reasoning phase pushed large chunk-echo
             # calls (max_tokens=60000) past the 300s wall-clock request
             # deadline. Reasoning is now a PER-PASS setting
-            # (`reasoning_enabled`, resolved above from
+            # (`reasoning_payload`, resolved above from
             # `self._reasoning_by_pass`) -- ON for the envelope/content-
             # apparatus passes, OFF (unchanged) for the high-volume
             # tag/artifacts/xref calls #147 was about. Both the primary
             # model and the content_fallback_model reroute share this one
             # call site via the `model` override above, so this single
             # field covers both.
-            "reasoning": {"enabled": reasoning_enabled},
+            "reasoning": reasoning_payload,
         }
         if tools is not None:
             payload["tools"] = tools
@@ -1931,6 +1956,7 @@ TIER_TO_MODEL_KEY = {
     BUILDING_TIER: "building_model",
     PRODUCTION_HIGH_TIER: "production_high",
     PRODUCTION_LOW_TIER: "production_low",
+    PRODUCTION_SYNTHESIS_TIER: "production_synthesis",
 }
 
 
@@ -1991,13 +2017,15 @@ def _resolve_model(secrets: dict[str, Any], llm_config: dict[str, Any]) -> str:
     return _resolve_model_for_tier(secrets, llm_config, tier)
 
 
-def _resolve_reasoning_by_pass(llm_config: dict[str, Any]) -> dict[str, bool]:
+def _resolve_reasoning_by_pass(llm_config: dict[str, Any]) -> dict[str, bool | str]:
     """Per-pass model reasoning (§7.9, issue #207): `config/pipeline.yaml`'s
     `llm.reasoning_by_pass` block is the carried-per-pass source of truth --
     "never hardcoded" -- so its entries OVERRIDE `DEFAULT_REASONING_BY_PASS`
     (itself just the same defaults, in code, for a caller/test that builds
     `OpenRouterClient` directly without config plumbing). An absent block or
-    absent file leaves the code-level default entirely unchanged."""
+    absent file leaves the code-level default entirely unchanged. A value may
+    be `bool` (on/off at OpenRouter's implicit default effort) or `str` (an
+    explicit `reasoning.effort` level) -- see `_post_with_deadline`."""
     merged = dict(DEFAULT_REASONING_BY_PASS)
     configured = llm_config.get("reasoning_by_pass") or {}
     merged.update(configured)

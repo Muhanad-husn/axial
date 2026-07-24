@@ -38,10 +38,38 @@ llm:
     # Phase-B stage-4 synthesis (§7.11, issue #256): the judgment-heavy,
     # once-per-brief call every downstream validator checks. [TENTATIVE]
     # per §7.11 -- tuned on the first real briefs, not asserted here as final.
-    synthesize: true
+    # Founder-requested model-swap experiment (2026-07): an explicit "high"
+    # effort level, not a bare `true` -- glm-5.2/deepseek-v4-pro/-flash only
+    # support "high"/"xhigh" (no "medium"), so leaving it as a bool would
+    # hand OpenRouter's implicit "medium" default to its own remap-to-nearest
+    # instead of a deliberate choice (see src/axial/llm.py's
+    # `_post_with_deadline`). "high" over "xhigh" ("max reasoning" per the
+    # model cards) as the starting, unmeasured pick balancing quality against
+    # latency/cost -- not yet tuned against real briefs, like every other
+    # §7.11 tier/effort choice.
+    synthesize: high
+    # Brief-interrogation pre-pass (§7.2, issue #252): same experiment,
+    # paired with routing this pass onto production_high below -- the
+    # "does this premise's coverage-table row plausibly match" judgment call
+    # that a 2026-07-23 sim-brief run showed the flash tier (reasoning off)
+    # getting wrong (real "Syria" coverage misread as absent for a
+    # "Syria, <date range>" case string).
+    interrogate: high
+    # Stage-3 agentic retrieval loop (§7.5/§7.6, issue #253): same
+    # experiment; model stays production_low (deepseek-v4-flash, unchanged)
+    # per the founder's request, reasoning turned on for the tool-selection
+    # judgment calls within the loop.
+    retrieve: high
     tag: false
     artifacts: false
     xref: false
+  # NOTE on the three 2026-07 model-swap entries above and model_by_pass's
+  # synthesize/interrogate below: this is a founder-directed provisional
+  # pick to unblock real sim-brief runs, not a decided answer. The founder
+  # has stated a formal per-pass model/reasoning eval -- covering more
+  # combinations including frontier models, scored on output quality, cost,
+  # latency, and whatever else matters per pass -- is planned once the app
+  # is stable. Nothing here should be read as final until that eval lands.
   # Per-pass model tiering (DEC-26, issue #235): a per-pass MODEL override,
   # mirroring reasoning_by_pass's own per-pass shape (src/axial/llm.py's
   # OpenRouterClient reads this map via _resolve_model_by_pass, resolving
@@ -55,12 +83,19 @@ llm:
   # per-pass model override.
   model_by_pass:
     envelope: production_high
-    # Phase-B stage-4 synthesis (§7.11, issue #256): high tier, mirroring
-    # envelope's own once-per-run, judgment-heavy profile. The TIER this
-    # names is a stated [TENTATIVE] operational decision (§7.11) -- which
-    # concrete high-tier model backs `production_high` is out of this
-    # slice's scope, never hardcoded here.
-    synthesize: production_high
+    # Phase-B stage-4 synthesis (§7.11, issue #256): a dedicated tier,
+    # mirroring envelope's own once-per-run, judgment-heavy profile but
+    # NAMED SEPARATELY from production_high (2026-07 model-swap experiment)
+    # so synthesis can move to a different model than envelope without
+    # moving envelope too. Which concrete model backs production_synthesis
+    # is out of this slice's scope, never hardcoded here -- see
+    # secrets/secrets.toml.
+    synthesize: production_synthesis
+    # Brief-interrogation pre-pass (§7.2, issue #252): 2026-07 model-swap
+    # experiment, moved off the default (production_low/flash) tier onto
+    # production_high -- see the paired reasoning_by_pass.interrogate note
+    # above for why.
+    interrogate: production_high
   # Per-pass best-of-N voting (DEC-31, issue #294): how many times a pass
   # draws its per-unit call before majority-voting the blind axes, mirroring
   # the two per-pass blocks above (src/axial/llm.py's _resolve_votes_by_pass
