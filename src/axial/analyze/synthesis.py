@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -500,6 +501,10 @@ def synthesize(
     prompt = compose_prompt(
         brief, lens_name, evidence, vault_dir=vault_dir, config_path=config_path
     )
+    print(
+        f"synthesize: starting, lens={lens_name!r}, {len(evidence.chunk_ids)} evidence item(s)",
+        file=sys.stderr,
+    )
 
     try:
         raw = complete_json(client, prompt, pass_name=SYNTHESIZE_PASS_NAME)
@@ -507,4 +512,5 @@ def synthesize(
         raise SynthesisFailedError(f"synthesis call failed: {exc}") from exc
 
     claims = parse_synthesis_response(raw, vault_dir=vault_dir)
+    print(f"synthesize: done, {len(claims)} claim(s)", file=sys.stderr)
     return ClaimGraph(lens=lens_name, claims=claims)
