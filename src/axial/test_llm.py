@@ -1221,6 +1221,35 @@ def test_openrouter_client_request_body_disables_reasoning():
     assert body["reasoning"] == {"enabled": False}
 
 
+def test_openrouter_client_request_body_sends_explicit_reasoning_effort():
+    """A `str` value in `reasoning_by_pass` sends `reasoning.effort` (and
+    `enabled: true`) instead of the bare `reasoning.enabled` boolean --
+    2026-07 model-swap experiment: some models only support a subset of
+    effort levels, so a bare `enabled: true` leaves OpenRouter's implicit
+    "medium" default to be silently remapped; naming the level makes that
+    choice explicit."""
+    from axial.llm import OpenRouterClient
+
+    captured_requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(
+        api_key="test-key",
+        model="test-model",
+        transport=transport,
+        reasoning_by_pass={"synthesize": "high"},
+    )
+
+    client.complete("hello world", pass_name="synthesize")
+
+    body = json.loads(captured_requests[0].content)
+    assert body["reasoning"] == {"enabled": True, "effort": "high"}
+
+
 def test_openrouter_client_content_fallback_request_body_disables_reasoning(monkeypatch):
     """The content_fallback_model reroute (issue #116) must also disable
     reasoning: it shares the same `_post_with_deadline` call site, but this
@@ -1432,6 +1461,21 @@ def test_resolve_model_by_pass_resolves_each_named_tier_to_a_concrete_model():
     resolved = _resolve_model_by_pass(secrets, llm_config)
 
     assert resolved == {"envelope": "paid/high-model", "tag": "free/model"}
+
+
+def test_resolve_model_by_pass_resolves_production_synthesis_tier():
+    """`production_synthesis` (2026-07 model-swap experiment) resolves via
+    the same tier->model machinery as `production_high`/`production_low`,
+    letting the synthesis pass move to a different model than `envelope`
+    without moving `envelope` too (both previously shared production_high)."""
+    from axial.llm import _resolve_model_by_pass
+
+    secrets = {"production_synthesis": "z-ai/glm-5.2"}
+    llm_config = {"model_by_pass": {"synthesize": "production_synthesis"}}
+
+    resolved = _resolve_model_by_pass(secrets, llm_config)
+
+    assert resolved == {"synthesize": "z-ai/glm-5.2"}
 
 
 def test_resolve_model_by_pass_is_empty_when_config_names_no_overrides():
