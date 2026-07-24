@@ -1,0 +1,11 @@
+llm_cost_unpriced model='stub': no PRICE_TABLE_USD_PER_1K entry, cost for this model will be null (issue #363)
+brief_id: 84c6dd95acf41894
+disposition: proceed
+persisted: data\analyses\84c6dd95acf41894.json
+answer: data\analyses\84c6dd95acf41894.md
+EXIT: 0
+llm_cost_unpriced model='some/never-priced': no PRICE_TABLE_USD_PER_1K entry, cost for this model will be null (issue #363)
+price table: {'deepseek/deepseek-v4-pro': {'input': 0.000435, 'output': 0.00087}, 'deepseek/deepseek-v4-flash': {'input': 9.8e-05, 'output': 0.000196}, 'z-ai/glm-5.2': {'input': 0.0007826, 'output': 0.0024596}, 'nvidia/nemotron-3-ultra-550b-a55b:free': {'input': 0.0, 'output': 0.0}}
+deepseek-v4-pro 1000in/500out cost = 0.00087
+glm-5.2 2000in/800out cost = 0.0035328800000000004
+unpriced model cost = None
