@@ -1,0 +1,13 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- D:\axial\.claude\worktrees\fix-vault-write-note-fault-isolation\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial\.claude\worktrees\fix-vault-write-note-fault-isolation
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 53 items / 51 deselected / 2 selected
+
+src/axial/test_vault.py::test_run_vault_write_skips_one_failed_chunk_note_and_continues PASSED [ 50%]
+src/axial/test_vault.py::test_run_vault_write_raises_when_every_note_write_fails PASSED [100%]
+
+====================== 2 passed, 51 deselected in 5.27s =======================
+exit=0
