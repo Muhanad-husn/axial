@@ -1,0 +1,13 @@
+=== Live model routing check ===
+interrogate -> deepseek/deepseek-v4-pro | reasoning: high
+retrieve -> deepseek/deepseek-v4-flash | reasoning: high
+synthesize -> z-ai/glm-5.2 | reasoning: high
+envelope -> deepseek/deepseek-v4-pro | reasoning: True
+
+=== Real end-to-end brief run against the live vault (config/briefs/sim/P1-01.yaml) ===
+This is the exact brief that false-refused 3 times before PR #360; now proceeds through interrogation, retrieval, and synthesis with this model wiring:
+brief_id: 47f316f6fb04bba7
+disposition: proceed_bounded
+persisted: data\analyses\47f316f6fb04bba7.json
+answer: data\analyses\47f316f6fb04bba7.md
+EXIT: 0
