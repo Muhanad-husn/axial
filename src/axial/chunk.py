@@ -394,8 +394,14 @@ def _routed_section_body(
     - `prose_lines` -- ordered text of every prose-routed block (`text`,
       `section_header`, `title`, an in-body `list_item`) that is EITHER not
       flagged by the content-apparatus pre-filter, OR flagged and then
-      classified back to prose by the bounded model call below -- chunked as
-      today.
+      classified back to prose by the bounded model call below, OR flagged
+      and the classification CALL itself fails (`ContentApparatusClassif
+      icationFailedError` -- an exhausted re-ask budget or a transport
+      error): this function never raises on that failure, it fails OPEN and
+      keeps the block as prose, logging a stderr diagnostic -- the same
+      never-drop-on-uncertainty rule the prompt already applies to an
+      ambiguous model VERDICT, extended to cover a failed CALL so one flaky
+      classification never aborts chunking for the whole source.
     - `apparatus_drops` -- one router-owned skip record
       (`chunks_skips_sidecar_path`'s `{"section", "section_order", "reason"}`
       shape) per apparatus-routed block (`document_index`, `footnote`,
@@ -435,8 +441,25 @@ def _routed_section_body(
                 if not text:
                     continue
                 if is_content_apparatus_candidate(text):
-                    client = resolve_client()
-                    if _classify_content_apparatus(client, text):
+                    try:
+                        client = resolve_client()
+                        is_apparatus = _classify_content_apparatus(client, text)
+                    except ContentApparatusClassificationFailedError as exc:
+                        # Fail OPEN, never closed: a failed classification CALL is
+                        # the same "not confidently apparatus" case the prompt's own
+                        # never-drop-on-uncertainty rule already covers for an
+                        # ambiguous model VERDICT -- an exhausted re-ask budget or a
+                        # transport error must keep this one block as prose, not
+                        # abort chunking for the whole source.
+                        print(
+                            f"chunk: content-apparatus classification failed for a "
+                            f"flagged block in section {section_label!r} "
+                            f"(order {node.get('order', section_order)!r}): {exc} "
+                            f"-- keeping block as prose",
+                            file=sys.stderr,
+                        )
+                        is_apparatus = False
+                    if is_apparatus:
                         apparatus_drops.append(
                             {
                                 "section": section_label,

@@ -359,6 +359,78 @@ def test_content_apparatus_gate_makes_zero_model_calls_on_wholly_clean_prose(tmp
     )
 
 
+class _FailingClassificationClient:
+    """Fake LLMClient whose `complete()` always raises `LLMError` -- proves
+    the content-apparatus classification CALL itself failing (a persistent
+    transport error, or `complete_json`'s bounded re-ask budget exhausted on
+    unparseable JSON) is treated exactly like an unresolved/ambiguous
+    VERDICT: fail OPEN, keep the block as prose, never abort the source
+    (bug: the classification call failing used to propagate uncaught all
+    the way up through `run_chunk_recursive` and kill the whole source)."""
+
+    def __init__(self):
+        self.call_count = 0
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        from axial.llm import LLMError
+
+        raise LLMError("synthetic transport failure for regression coverage")
+
+
+def test_content_apparatus_gate_fails_open_to_prose_when_classification_call_fails(
+    tmp_path, monkeypatch, capsys
+):
+    source_path = tmp_path / "content_apparatus_call_failure_source.txt"
+    source_path.write_text(
+        "synthetic source for the content-apparatus classification call-failure regression",
+        encoding="utf-8",
+    )
+
+    tree = {
+        "children": [
+            _section(
+                "1",
+                _CHAPTER_HEADING,
+                [
+                    _leaf("1.1", "text", _CLEAN_PROSE_BODY),
+                    _leaf("1.2", "text", _DENSE_CITATION_BODY),
+                ],
+            )
+        ]
+    }
+    _patch_tree(monkeypatch, tmp_path, tree)
+
+    chunks_dir = tmp_path / "chunks"
+    client = _FailingClassificationClient()
+
+    records = run_chunk_recursive(source_path, chunks_dir=chunks_dir, client=client)
+
+    assert client.call_count == 1, (
+        f"expected the flagged dense-citation block to trigger exactly one "
+        f"(failing) classification call, got {client.call_count}"
+    )
+
+    all_text = "\n".join(r.get("text", "") for r in records)
+
+    assert _CLEAN_PROSE_BODY in all_text, (
+        "expected the unflagged clean-prose block to survive unaffected by "
+        "the OTHER block's classification-call failure"
+    )
+    assert _DENSE_CITATION_BODY in all_text, (
+        "expected the flagged block whose classification CALL failed to be "
+        "kept as PROSE (fail open, never-drop-on-uncertainty extended to a "
+        "failed call, not just an ambiguous verdict) -- got it dropped "
+        f"instead: {records!r}"
+    )
+
+    stderr = capsys.readouterr().err
+    assert "content-apparatus" in stderr and _CHAPTER_HEADING in stderr, (
+        f"expected a stderr diagnostic naming the section where the "
+        f"classification call failed, got {stderr!r}"
+    )
+
+
 # =============================================================================
 # 2. Chunk MIN-side: sub-floor chunk merges into its same-section
 #    PREDECESSOR (§8 P0-4), not left stranded as a standalone note
