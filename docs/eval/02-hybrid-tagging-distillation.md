@@ -1,6 +1,12 @@
 # Eval 2 — hybrid-tagging distillation (cost axis)
 
-**Status:** foundation stub, stages 5a–5b shipped; 5d classifiers shipped for
+**Status:** stages 5a–5e all shipped. 5e (issue #353), the outer quality-per-
+dollar verdict, is measured and recorded below: **hybrid**, mixed by
+construction (`empirical_scope` never graduated, #349) but a real win on the
+four axes that did. This is a measurement/eval artifact only, same as every
+stage before it — nothing here is wired into `axial.tag.run_tag`; whether to
+actually build the hybrid tagger is separate spec drift for the founder to
+adjudicate (DEC-32). Stages 5a–5b shipped first; 5d classifiers shipped for
 the two blind axes (#351/#352) and the two dense-embedding axes, `field`
 (#350) and `role_in_argument` (#348), both reconciled into one module
 (`src/axial/distill/classify_embedding.py`). **5d (`claim_type`/`theory_school`, issues
@@ -138,6 +144,93 @@ what teacher-label-quality intuition might suggest; flagged for 5c/5d.
 **Subject doc:** the exploration this evaluates lives at
 `docs/exploration/hybrid-tagging-classifier.md`.
 
+**5e (outer eval, issue #353): measured, verdict `hybrid`.**
+`src/axial/distill/verdict.py` (`axial distill tag-cost-probe`, `axial
+distill drift-check`, `axial distill verdict`) combines the four already-
+shipped 5d manifests, a live dollar-cost probe, and a drift-monitor dry run
+into one `data/distill/quality_per_dollar_manifest.json`. Real numbers,
+measured against the real corpus pin `sim-2026-07-23` (18,410 chunks,
+120-chunk gold set), 2026-07-24:
+
+- **Cost, live-measured, not modeled.** Issue #363/PR #367 shipped
+  `estimate_cost` + a per-pass usage accumulator the day *after* the real
+  production retag ran (2026-07-23), so there is no historical token log for
+  that run. `tag-cost-probe` fires 10 real, non-gold vault chunks through the
+  real production tag prompt against the real `deepseek/deepseek-v4-flash`
+  model at `votes=3` (production's own config) and reads the real dollar
+  cost back off the client: **$0.0015034/chunk** at votes=3 (146,982 prompt +
+  3,212 completion tokens over 30 real completions). The structural saving
+  this eval counts: `votes=3` exists *solely* to majority-vote
+  `BLIND_AXES` (`claim_type`, `theory_school`, DEC-31) — every other axis
+  already takes its first draw unvoted. Both blind axes graduate here, so a
+  hybrid pipeline handing them to their classifiers has nothing left needing
+  multi-draw voting; the remaining LLM call (still required every chunk,
+  because `empirical_scope` never graduated, #349) drops to `votes=1` —
+  **$0.0005011/chunk**, the real total divided by sample×votes, not an
+  assumed 1/3 split. Extrapolated over the real corpus's 18,410 chunks (5a's
+  own `embedding_manifest.json` chunk count): **$27.68 baseline vs. $9.23
+  hybrid, a 66.7% dollar reduction** — conservative, since it still assumes
+  the hybrid LLM call asks about every axis in one prompt (no dynamic
+  per-chunk axis trimming for confidently-classified `field`/
+  `role_in_argument`, which is itself production wiring, out of scope here).
+  **Worth flagging plainly: the absolute dollars are small.**
+  `deepseek-v4-flash` is cheap enough that one full-corpus tag pass costs
+  ~$28 either way — the 66.7% reduction is ~$18 saved per full re-tag, not a
+  budget-changing number at this corpus size. The saving is real and
+  structural, but "worth building" should weigh $18/run against the ongoing
+  cost of maintaining four classifiers (retraining on drift, monitoring),
+  not just the percentage.
+- **Quality, at the same `conf≥0.6` operating point every 5d manifest above
+  already cites.** Per axis, `hybrid_accuracy = coverage × accuracy_on_covered
+  + (1 − coverage) × teacher_gold_agreement` (the confident subset uses the
+  classifier, the low-confidence tail falls back to the LLM, assumed to
+  perform at its own overall gold agreement on that tail — a simplifying,
+  explicitly-flagged assumption, not a fresh measurement of the tail alone):
+  `claim_type` 61.3% vs. teacher 56.0% (measured); `theory_school` 59.7% vs.
+  54.3% (measured); `field` 77.8% vs. 76.7% (measured); `role_in_argument`
+  58.7% vs. 53.3% (**cited** — DEC-39's decision-log figure, not a fresh
+  gold-column comparison; this module records the source as `"cited"`,
+  never silently as `"measured"`). All four clear their teacher at this
+  operating point — unweighted mean across the four graduated axes: **64.4%
+  hybrid vs. 60.1% baseline**, i.e. the hybrid pipeline is not just cheaper
+  here, it is *more* accurate on average, because the confidence threshold
+  lets each classifier pass only its strongest predictions while ceding the
+  rest back to the LLM. `empirical_scope` (#349, never graduated) is
+  identical in both pipelines by construction and is excluded from this
+  average for that reason, not omitted from the manifest.
+  Quality-per-dollar ratio: **3.21×** (0.0698 hybrid vs. 0.0217 baseline,
+  quality/$).
+- **Drift-monitor dry run** (DEC-32/#296's own anticipated mechanism,
+  exercised here for the first time): 25 non-gold corpus chunks (seeded,
+  reproducible), each already-trained-on-the-corpus classifier's prediction
+  compared against a **fresh**, single-draw LLM tag (today's model, not the
+  historical cached tag the classifier trained on) — a dry run, not a
+  production drift monitor, and deliberately far short of the issue's own
+  "a few hundred" suggestion (DEC-32 already established no full-corpus
+  all-LLM pass is needed for this eval; 25 is enough to see a gross signal,
+  not a tight interval). One of 25 chunks hit a fresh-LLM parse error and
+  was excluded (best-effort, not fatal). Agreement: `field` 79.2%,
+  `theory_school` 79.2%, `role_in_argument` 50.0%, `claim_type` **45.8%** —
+  notably the weakest, consistent with `claim_type` also carrying the
+  lowest teacher-gold-agreement (56.0%) of the four; a single fresh draw
+  naturally disagrees with a classifier trained on the historical
+  best-of-3-voted label more often than the vote itself would. Not a gate on
+  the verdict above (a dry run, per the issue) — a real, if noisy, first
+  data point for whatever production drift-monitoring mechanism gets built
+  later.
+
+**Verdict, per axis (mixed, as expected going in):** `claim_type` **graduate**,
+`theory_school` **graduate**, `field` **graduate**, `role_in_argument`
+**graduate** (weaker margin, cited baseline), `empirical_scope` **stay-llm**
+(#349, never graduated). Overall: **hybrid** — real, measured dollar savings
+at real, measured quality parity-or-improvement on the four axes that
+graduated. As with every prior stage-5 artifact, this is a measurement
+artifact only: `verdict.py` is never called from `axial.tag.run_tag` or any
+production tagging path, and building the real hybrid tagger — routing
+`field`/`role_in_argument`/`claim_type`/`theory_school` through a classifier
+in production, with real drift-retraining — is separate spec drift for the
+founder to adjudicate, not decided by shipping this eval.
+
 ## Question
 
 Does distilling the high-frequency (head) tags off the LLM onto a cheap classifier —
@@ -182,6 +275,9 @@ all-LLM baseline on a held-out slice.
 
 The inner layer says *what* to distill; the outer layer says *whether* distilling was
 worth it at all.
+
+**Measured (issue #353):** see the "5e (outer eval...)" paragraph above the
+"## Question" heading for the real numbers — verdict `hybrid`.
 
 ## Cost model (from the exploration doc)
 

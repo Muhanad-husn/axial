@@ -32,6 +32,17 @@ from axial.distill.classify_embedding import AXES as DISTILL_CLASSIFY_EMBEDDING_
 from axial.distill.classify_embedding import ClassifyEmbeddingError, run_classify_embedding
 from axial.distill.embed import EmbedError, run_embed
 from axial.distill.readiness import ReadinessError, run_readiness
+from axial.distill.verdict import (
+    DEFAULT_COST_PROBE_SAMPLE_SIZE,
+    DEFAULT_COST_PROBE_VOTES,
+    DEFAULT_DRIFT_SAMPLE_SIZE,
+    DEFAULT_DRIFT_SEED,
+    DEFAULT_OPERATING_THRESHOLD,
+    VerdictError,
+    run_drift_check,
+    run_tag_cost_probe,
+    run_verdict,
+)
 from axial.drive import DEFAULT_SECRETS_PATH as DRIVE_SECRETS_PATH
 from axial.drive import DriveSecretsError, _load_drive_secrets, run_drive_ingest
 from axial.envelope import EnvelopeError, MissingSourceError, compute_source_id, run_envelope
@@ -572,6 +583,74 @@ def build_parser() -> argparse.ArgumentParser:
         "axis",
         choices=list(DISTILL_CLASSIFY_AXES) + list(DISTILL_CLASSIFY_EMBEDDING_AXES),
         help="the tag axis to train a classifier for",
+    )
+
+    cost_probe_parser = distill_subparsers.add_parser(
+        "tag-cost-probe",
+        help=(
+            "stage-5e outer eval: fire a small number of REAL tag-pass "
+            "completions (production's own multi-axis prompt and votes=3) "
+            "and read the real dollar cost back off the client -- issue "
+            "#363's price table, live-measured -- data/distill/"
+            "tag_cost_probe_manifest.json. Live LLM calls; costs real money."
+        ),
+    )
+    cost_probe_parser.add_argument(
+        "--domain-dir",
+        default=str(DEFAULT_DOMAIN_DIR),
+        help=f"domain config directory (default: {DEFAULT_DOMAIN_DIR})",
+    )
+    cost_probe_parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=DEFAULT_COST_PROBE_SAMPLE_SIZE,
+        help=f"number of real chunks to probe (default: {DEFAULT_COST_PROBE_SAMPLE_SIZE})",
+    )
+    cost_probe_parser.add_argument(
+        "--votes",
+        type=int,
+        default=DEFAULT_COST_PROBE_VOTES,
+        help=f"draws per chunk, mirroring production (default: {DEFAULT_COST_PROBE_VOTES})",
+    )
+
+    drift_check_parser = distill_subparsers.add_parser(
+        "drift-check",
+        help=(
+            "stage-5e drift-monitor dry run (DEC-32/#296): the graduated "
+            "classifiers predict a small sample of already-tagged, non-gold "
+            "chunks; the LLM freshly re-tags the same sample; compare -- "
+            "data/distill/drift_check_manifest.json. Live LLM calls."
+        ),
+    )
+    drift_check_parser.add_argument(
+        "--domain-dir",
+        default=str(DEFAULT_DOMAIN_DIR),
+        help=f"domain config directory (default: {DEFAULT_DOMAIN_DIR})",
+    )
+    drift_check_parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=DEFAULT_DRIFT_SAMPLE_SIZE,
+        help=f"number of chunks to spot-check (default: {DEFAULT_DRIFT_SAMPLE_SIZE})",
+    )
+    drift_check_parser.add_argument(
+        "--seed", type=int, default=DEFAULT_DRIFT_SEED, help="sampling seed (reproducibility only)"
+    )
+
+    verdict_parser = distill_subparsers.add_parser(
+        "verdict",
+        help=(
+            "stage-5e outer eval verdict: combine the 5d classify manifests, "
+            "the tag-cost probe, and the drift check into one quality-per-"
+            "dollar verdict -- data/distill/quality_per_dollar_manifest.json. "
+            "No network; reads already-written manifests only."
+        ),
+    )
+    verdict_parser.add_argument(
+        "--threshold",
+        type=float,
+        default=DEFAULT_OPERATING_THRESHOLD,
+        help=f"confidence-threshold operating point (default: {DEFAULT_OPERATING_THRESHOLD})",
     )
 
     gate_parser = subparsers.add_parser(
@@ -1354,6 +1433,64 @@ def _distill_classify(axis: str) -> int:
     return 0
 
 
+def _distill_tag_cost_probe(domain_dir: str, sample_size: int, votes: int) -> int:
+    try:
+        schema = load_schema(domain_dir)
+        codebook = load_codebook(domain_dir)
+    except (SchemaError, CodebookError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    client = get_client()
+    try:
+        result = run_tag_cost_probe(client, schema, codebook, sample_size=sample_size, votes=votes)
+    except VerdictError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"model: {result.model}")
+    print(f"sample_chunk_count: {result.sample_chunk_count}")
+    print(f"votes: {result.votes}")
+    print(f"total_cost_usd: {result.total_cost_usd}")
+    print(f"cost_per_chunk_usd_at_votes: {result.cost_per_chunk_usd_at_votes}")
+    print(f"cost_per_chunk_usd_single_draw: {result.cost_per_chunk_usd_single_draw}")
+    print(f"manifest_path: {result.manifest_path}")
+    return 0
+
+
+def _distill_drift_check(domain_dir: str, sample_size: int, seed: int) -> int:
+    try:
+        schema = load_schema(domain_dir)
+        codebook = load_codebook(domain_dir)
+    except (SchemaError, CodebookError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    client = get_client()
+    try:
+        result = run_drift_check(client, schema, codebook, sample_size=sample_size, seed=seed)
+    except VerdictError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"sample_size: {result.sample_size}")
+    print(f"per_axis_agreement: {result.per_axis_agreement}")
+    print(f"manifest_path: {result.manifest_path}")
+    return 0
+
+
+def _distill_verdict(threshold: float) -> int:
+    try:
+        result = run_verdict(threshold=threshold)
+    except VerdictError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"overall_verdict: {result.overall_verdict}")
+    print(f"manifest_path: {result.manifest_path}")
+    return 0
+
+
 def _gate_run(gate: str, records_dir: str | None, briefs_dir: str | None) -> int:
     try:
         if gate == ADVERSARIAL_GATE_NAME:
@@ -1514,6 +1651,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "distill" and args.distill_command == "classify":
         return _distill_classify(args.axis)
+
+    if args.command == "distill" and args.distill_command == "tag-cost-probe":
+        return _distill_tag_cost_probe(args.domain_dir, args.sample_size, args.votes)
+
+    if args.command == "distill" and args.distill_command == "drift-check":
+        return _distill_drift_check(args.domain_dir, args.sample_size, args.seed)
+
+    if args.command == "distill" and args.distill_command == "verdict":
+        return _distill_verdict(args.threshold)
 
     if args.command == "gate" and args.gate_command == "run":
         return _gate_run(args.gate, args.records, args.briefs)
