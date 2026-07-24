@@ -1,0 +1,126 @@
+{
+  "ingest_code_sha": "9bfc15658b0c1fa39704456b3d3a9ef4449fe244",
+  "sources": [
+    {
+      "content_hash": "b22edc40e0fc9948406f5c21ea63da14d96d80cedfa5be9c15b49fba483f7a01",
+      "source_id": "agamben-state-of-exception-b22edc40e0fc"
+    },
+    {
+      "content_hash": "16fd6a2e503f7b8df9ac8fd811e6a251695137d583665c5ad8eb17b89374e452",
+      "source_id": "ayubi-over-stating-the-arab-state-16fd6a2e503f"
+    },
+    {
+      "content_hash": "598624067df3025b8cef3f82fb691a1843bba5aa34dbff59014c8cad9c215565",
+      "source_id": "batatu-syrias-peasantry-598624067df3"
+    },
+    {
+      "content_hash": "ce6bb0643cfb12dbfcdfce752cf06ec17f3a02cc6778acfdfd2ad8a222bc59e2",
+      "source_id": "bayat-revolution-without-revolutionaries-ce6bb0643cfb"
+    },
+    {
+      "content_hash": "8410a9059300a22b883d8816d3e5104fa3a1967b5c6ffa3ed33c36dd117bc2ac",
+      "source_id": "beshara-origins-of-syrian-nationhood-8410a9059300"
+    },
+    {
+      "content_hash": "fbc0efe4fffcbeda1993da6bee97d5c49d3b639e62e3a0abb9d958eb61d7ea9a",
+      "source_id": "caspersen-unrecognized-states-fbc0efe4fffc"
+    },
+    {
+      "content_hash": "91e7fc84f05ca226ef96479ad5ae745f65385e3e5ddde274e900529fd9ba8918",
+      "source_id": "chouliaraki-wronged-weaponization-of-victimhood-91e7fc84f05c"
+    },
+    {
+      "content_hash": "ab19e646ab7dd65c9977f0bce8a0dd9b57f9bfd7714a80eda5de40326e469cfd",
+      "source_id": "decentralization-local-governance-inequality-mena-ab19e646ab7d"
+    },
+    {
+      "content_hash": "4faeb528594d25be3ac4932b53c51da7342b42c1d49a141c54825a8f97fa9088",
+      "source_id": "do-civil-wars-make-or-break-states-4faeb528594d"
+    },
+    {
+      "content_hash": "78f0cccef5b97b039471733352edbe50fd6294006dbb91eebac51839380c4974",
+      "source_id": "elcheroth-reicher-identity-violence-and-power-78f0cccef5b9"
+    },
+    {
+      "content_hash": "449559bfe4dcd5b5a23e7d6de20c65062d1c10a42910a06dda529f07a867e5c5",
+      "source_id": "hall-schroeder-anatomy-of-power-449559bfe4dc"
+    },
+    {
+      "content_hash": "72a4a9a9b3b01a8e53728a60bc7e6902af41b42684f2f494376a1c69f999c6fb",
+      "source_id": "heydemann-networks-of-privilege-72a4a9a9b3b0"
+    },
+    {
+      "content_hash": "66701ffbb36c8ffd8838c1c524431116ff92f5168c1cd99bacb437db03fe370a",
+      "source_id": "heydemann-war-institutions-social-change-66701ffbb36c"
+    },
+    {
+      "content_hash": "7eb3f39a639f79c0090b224ce6beccb3a9eef7dccd7381e278e23777ae9bf09e",
+      "source_id": "jackson-quasi-states-7eb3f39a639f"
+    },
+    {
+      "content_hash": "0b5817b2642ed71cb1a8b49bc03f9ebd6cecfcaa5403d65f99fce165aab6f252",
+      "source_id": "kalyvas-logic-of-violence-in-civil-war-0b5817b2642e"
+    },
+    {
+      "content_hash": "323a2518e61b6b83d026558598980ad5e79db691669068fef7305aba685bdcaf",
+      "source_id": "malesevic-haugaard-gellner-contemporary-social-thought-323a2518e61b"
+    },
+    {
+      "content_hash": "5d3ec1809b1282590b41d99f8daacc9d08529ae4cec10eab2ecef055a9e068e9",
+      "source_id": "malesevic-nation-states-and-nationalisms-5d3ec1809b12"
+    },
+    {
+      "content_hash": "fd2cbe41384fed633c58d5299219638d04a53c90bb48457c1c758842e8942ed1",
+      "source_id": "malesevic-sociology-of-war-and-violence-fd2cbe41384f"
+    },
+    {
+      "content_hash": "5f90ead66c9342a9f70cd6042c1fb9cd3b573a732ffa8e160e20e12183dbac28",
+      "source_id": "mann-sources-of-social-power-v1-5f90ead66c93"
+    },
+    {
+      "content_hash": "ec759675dcbd1637a462acdd93ad02c9eb1ce02c2ba2370462ac9113f95def15",
+      "source_id": "mann-sources-of-social-power-v2-ec759675dcbd"
+    },
+    {
+      "content_hash": "3e9f48ff605adb695efe80d1551717b248995c06950f1d3aead9c86b6f22fdc8",
+      "source_id": "mann-sources-of-social-power-v3-3e9f48ff605a"
+    },
+    {
+      "content_hash": "1b7e828e019949957be039f23e45d8973f7fc6db980750692650d5ffbcbe0b54",
+      "source_id": "mann-sources-of-social-power-v4-1b7e828e0199"
+    },
+    {
+      "content_hash": "cba7b6f3dfbaf895936fa7c7693647a3d9fa64bea7d063ea0d1faef782f7cded",
+      "source_id": "smith-ethno-symbolism-and-nationalism-cba7b6f3dfba"
+    },
+    {
+      "content_hash": "454c87b22e16d045ec0b532e4ded938f69d4b0e7152f8bccb92b84db3dc700b7",
+      "source_id": "state-legitimacy-capacity-syrian-conflict-454c87b22e16"
+    },
+    {
+      "content_hash": "f908c910464c572dfd4f5e72a0267b7bed6e0c07ca3859f5a313c24f7028f1e1",
+      "source_id": "tilly-from-mobilization-to-revolution-f908c910464c"
+    },
+    {
+      "content_hash": "ae5701dcc70607ab8ee8d2692e0337457cbe7354186fe7cb7cfefb8aeec1b9fa",
+      "source_id": "ugur-paramilitarism-ae5701dcc706"
+    },
+    {
+      "content_hash": "c7005c2bf8ef67c1e1c3841ab5f8eb38d1dc1998b7caf5f41bfebf328c92b90a",
+      "source_id": "vignal-war-torn-c7005c2bf8ef"
+    },
+    {
+      "content_hash": "5f35a47d9657a5b527b9af7dec5d8db255b6ae15aaebb695db8a42f4b634269e",
+      "source_id": "white-emergence-of-minorities-middle-east-5f35a47d9657"
+    },
+    {
+      "content_hash": "a67941b7794331621b9259bd13395ef0aba609351031689c75cf1b7c09a1d440",
+      "source_id": "wimmer-waves-of-war-a67941b77943"
+    },
+    {
+      "content_hash": "834d3343aa95a99b91a63e1deb6d89121d9f8a2df5838d939f82c38782f36f85",
+      "source_id": "zaum-sovereignty-paradox-834d3343aa95"
+    }
+  ],
+  "vault_snapshot_hash": "17ff89804d38025bcc8e5b0add1922157d5330f9b6a8d82a5b494675ba653ab4"
+}
