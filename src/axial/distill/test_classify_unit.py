@@ -513,6 +513,14 @@ def test_run_classify_writes_manifest_with_threshold_sweep_and_no_chunk_text(tmp
         vault_dir=vault_dir,
         gold_sheet_path=gold_sheet_path,
         manifest_path=manifest_path,
+        # Explicit, deliberately-absent path: this test's own comment below
+        # ("no eval_report.json staged") only holds when the default
+        # `DEFAULT_EVAL_REPORT_PATH` (a relative `data/gold/labels/
+        # eval_report.json`) can't resolve to a REAL file -- true in a fresh
+        # worktree, false in one where `data/` is junctioned to a real corpus
+        # (issue #353's builder worktree). Pinning it under `tmp_path`
+        # isolates this test from whatever `data/` happens to hold.
+        eval_report_path=tmp_path / "no-eval-report.json",
         evals_dir=evals_dir,
         min_class_count=6,
         thresholds=(0.5, 0.6, 0.7, 0.8),
