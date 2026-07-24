@@ -546,16 +546,17 @@ recover any tag axis (ARI≈0); a direct supervised classifier on the corpus's
 existing tags wins outright; but that classifier loses to the LLM teacher on
 both blind axes once checked against gold. See *Stage 5 — live state* below.
 
-- ✅ 5a #296 — embedding pass + vector store (LanceDB) + corpus-pin manifest convention — PR #357 merged
-- ✅ 5b #297 — HDBSCAN readiness map (PCA) + cluster-(-1) router — PR #358 merged, real-corpus-validated. **Role demoted (DEC-37): kept as a correctly-implemented diagnostic (ARI≈0 against every tag axis is itself the finding), not a gate for 5c**
-- ◐ 5c #347 — stratified teacher labels — **original scope superseded (DEC-37): existing corpus tags ARE the training set, zero new LLM spend needed.** Redirect pending: extend sim-gold coverage to the 3 head axes before any 5d graduation call. Not picked up as scoped — needs a rewritten issue body first
-- ☐ 5d #348 — head classifier: `role_in_argument` — **technique revised (DEC-37): global classifier + confidence threshold on existing tags, not a cluster-stratified sample.** Gated on 5c's redirected gold-coverage work
-- ☐ 5d #349 — head classifier: `empirical_scope` — same revision and gate as #348
-- ☐ 5d #350 — head classifier: `field` — same revision and gate as #348
-- ⛔ 5d #351 — head classifier: `claim_type` (blind axis) — **recommend stay LLM-only (DEC-37): gold-checked, classifier loses to the teacher (39.7% vs. 56.0%).** Do not build as scoped without a materially different approach
-- ⛔ 5d #352 — head classifier: `theory_school` (blind axis) — **recommend stay LLM-only (DEC-37): gold-checked, classifier loses to the teacher (41.4% vs. 54.3%).** Do not build as scoped without a materially different approach
-- ☐ 5e #353 — quality-per-dollar verdict — depends on #348–#350 now (effectively 3 axes, not 5)
-- Tracking issue: #298 (no longer taken as a PR directly; see its body) — needs a comment reflecting DEC-37
+- ◐ 5a #296 — embedding pass + vector store (LanceDB) + corpus-pin manifest convention — PR #357 merged
+- ◐ 5b #297 — HDBSCAN readiness map (PCA) + cluster-(-1) router — **PR #358 open, CI green, not yet merged** (founder approved 2026-07-24, pending). Real-corpus-validated. **Role demoted (DEC-37): kept as a correctly-implemented diagnostic (ARI≈0 against every tag axis is itself the finding), not a gate for 5c**
+- ✅ 5c #347 — stratified teacher labels — **redirected deliverable executed and issue closed 2026-07-24 (DEC-39).** Gold coverage now exists for all three head axes on the same 120-chunk sample; labels in `data/gold/labels/label_sheet.xlsx`
+- ☐ 5d #348 — head classifier: `role_in_argument` — **gold-checked (DEC-39): real but weaker candidate** (57.3% vs. teacher's 53.3%, wide overlapping CI, 62.5% coverage). Issue body updated on GitHub; build not started
+- ☐ 5d #349 — head classifier: `empirical_scope` — **gold-checked (DEC-39): does not clear the bar with embeddings** (59.1% vs. 64.2%). One lever untried: a TF-IDF check (mirrors DEC-38's method on the blind axes) before ruling this axis out. Issue body updated; not started
+- ☐ 5d #350 — head classifier: `field` — **gold-checked (DEC-39): strongest candidate of all five axes** (79.0% vs. teacher's 76.7% at 87.5% coverage, CI at parity). Issue body updated; build not started — the clearest next build
+- ◐ 5d #351 — head classifier: `claim_type` (blind axis) — **re-scoped, not closed (DEC-38): narrow TF-IDF automate-if-confident slice clears the teacher on a thin ~32-chunk evidence base.** Issue body updated; founder call on whether to build now
+- ◐ 5d #352 — head classifier: `theory_school` (blind axis) — same re-scope as #351, weaker/more marginal result (DEC-38). Issue body updated; founder call
+- ☐ 5e #353 — quality-per-dollar verdict — all five axes now have a gold verdict; unblocked once the founder picks which to build
+- Tracking issue: #298 — comment reflecting DEC-37/38/39 posted 2026-07-24
+- Also filed 2026-07-24: **PR #365** (unrelated cleanup — commits a stray `evals/corpus_pin/sim-2026-07-23.json` left untracked by an earlier brief-interrogation run), open, not yet merged
 
 ## Next action
 
