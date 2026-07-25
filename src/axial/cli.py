@@ -737,11 +737,12 @@ def build_parser() -> argparse.ArgumentParser:
     gate_run_parser.add_argument(
         "--dry-run",
         action="store_true",
-        required=True,
+        required=False,
         help=(
-            "score without the full vault or pin -- the only mode this slice "
-            "supports; `trusted` is false unless an unambiguous corpus pin "
-            "resolves (§9.2)"
+            "accepted for backward compatibility; has no effect. `trusted` "
+            "resolves from the corpus pin alone (§9.2, issue #387) -- an "
+            "unambiguous pin under evals/corpus_pin/ makes a run trusted "
+            "regardless of this flag"
         ),
     )
     gate_run_parser.add_argument(
@@ -1629,10 +1630,10 @@ def _gate_run(gate: str, records_dir: str | None, briefs_dir: str | None) -> int
 
     write_report(report)
     print(format_report(report))
-    # A dry-run number is never a trusted number (§9.2): `trusted` above is
-    # already false unless an unambiguous corpus pin resolves, regardless of
-    # this exit code. A failing metric still exits non-zero so a caller
-    # never mistakes a scaffold FAIL for a PASS.
+    # `trusted` above is already false unless an unambiguous corpus pin
+    # resolves (§9.2, issue #387), regardless of this exit code. A failing
+    # metric still exits non-zero so a caller never mistakes a scaffold FAIL
+    # for a PASS.
     return 0 if report.passed else 1
 
 
