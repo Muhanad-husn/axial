@@ -74,6 +74,17 @@ from axial.gold import (
 from axial.ingest import run_ingest
 from axial.intake import IntakeError, intake
 from axial.llm import ENVELOPE_PASS_NAME, TAG_PASS_NAME, get_client
+from axial.panel import (
+    MIN_REVIEWERS as PANEL_MIN_REVIEWERS,
+)
+from axial.panel import (
+    ControlError,
+    PacketError,
+    PanelError,
+    VendorError,
+    format_panel_run,
+    run_panel,
+)
 from axial.paths import default_analyses_dir
 from axial.pipeline_ready import PipelineReadyError, run_pipeline_ready
 from axial.polity_canonical import PolityCanonicalError, run_polity_build, run_polity_report
@@ -651,6 +662,55 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_OPERATING_THRESHOLD,
         help=f"confidence-threshold operating point (default: {DEFAULT_OPERATING_THRESHOLD})",
+    )
+
+    panel_parser = subparsers.add_parser(
+        "panel",
+        help=(
+            "sealed-packet peer-reviewer panel -- eval #1's OFFLINE "
+            "answer-quality instrument (specs/PHASE-B.md §9.4, issue #385); "
+            "never part of a brief run"
+        ),
+    )
+    panel_subparsers = panel_parser.add_subparsers(dest="panel_command")
+
+    panel_run_parser = panel_subparsers.add_parser(
+        "run",
+        help=(
+            "run the positive control, then review a sample of analysis "
+            "records; no number is trusted unless the control caught every "
+            "planted defect"
+        ),
+    )
+    panel_run_parser.add_argument(
+        "--records",
+        required=True,
+        help="directory of analysis-record JSON files to review (the sample)",
+    )
+    panel_run_parser.add_argument(
+        "--control-record",
+        required=True,
+        dest="control_record",
+        help=(
+            "path to the analysis record the positive control plants its "
+            "three defects into; it must be able to carry all three"
+        ),
+    )
+    panel_run_parser.add_argument(
+        "--reviewers",
+        type=int,
+        default=PANEL_MIN_REVIEWERS,
+        help=f"how many independent reviewers (default and minimum: {PANEL_MIN_REVIEWERS})",
+    )
+    panel_run_parser.add_argument(
+        "--out",
+        default=None,
+        help=(
+            "optional path to write the run's JSON verdicts to. Nothing is "
+            "written without it, deliberately: a reviewer's free-text note "
+            "can quote source text, and DEC-23 keeps that out of the repo -- "
+            "point this under data/ (gitignored), never at evals/"
+        ),
     )
 
     gate_parser = subparsers.add_parser(
@@ -1494,6 +1554,47 @@ def _distill_verdict(threshold: float) -> int:
     return 0
 
 
+def _panel_run(
+    records_dir: str, control_record_path: str, reviewers: int, out_path: str | None
+) -> int:
+    """Run the §9.4 panel over a sample. Offline instrument: nothing in a
+    brief run reaches this, and its verdict never lands on an analysis
+    record or a gate report."""
+    try:
+        records = load_records(Path(records_dir))
+        control_record = json.loads(Path(control_record_path).read_text(encoding="utf-8"))
+    except (GateError, OSError, json.JSONDecodeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    corpus_pin, _ = resolve_trusted()
+
+    try:
+        run = run_panel(
+            records,
+            control_record,
+            client=get_client(),
+            corpus_pin=corpus_pin,
+            n_reviewers=reviewers,
+        )
+    except (PanelError, PacketError, VendorError, ControlError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if out_path:
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(out_path).write_text(
+            json.dumps(run.to_json(), indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+    _print_encoding_safe(format_panel_run(run))
+    # A failed positive control is the one outcome that must not read as a
+    # clean run: the panel has a known blind spot, so nothing it said about
+    # the sample is trustworthy yet (§9.4 property 6).
+    return 0 if run.control.passed else 1
+
+
 def _gate_run(gate: str, records_dir: str | None, briefs_dir: str | None) -> int:
     try:
         if gate == ADVERSARIAL_GATE_NAME:
@@ -1528,10 +1629,10 @@ def _gate_run(gate: str, records_dir: str | None, briefs_dir: str | None) -> int
 
     write_report(report)
     print(format_report(report))
-    # A dry-run number is never a trusted number (§9): `trusted` above is
-    # already false unless a corpus pin AND at least one real academic case
-    # both exist, regardless of this exit code. A failing metric still
-    # exits non-zero so a caller never mistakes a scaffold FAIL for a PASS.
+    # A dry-run number is never a trusted number (§9.2): `trusted` above is
+    # already false unless an unambiguous corpus pin resolves, regardless of
+    # this exit code. A failing metric still exits non-zero so a caller
+    # never mistakes a scaffold FAIL for a PASS.
     return 0 if report.passed else 1
 
 
@@ -1663,6 +1764,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "distill" and args.distill_command == "verdict":
         return _distill_verdict(args.threshold)
+
+    if args.command == "panel" and args.panel_command == "run":
+        return _panel_run(args.records, args.control_record, args.reviewers, args.out)
 
     if args.command == "gate" and args.gate_command == "run":
         return _gate_run(args.gate, args.records, args.briefs)

@@ -378,6 +378,21 @@ CALIBRATION_PASS_NAME = "calibration"
 # exactly, one pass name per independent judge seam.
 PREMISE_MATCH_PASS_NAME = "premise_match"
 
+# Pass name each sealed-packet peer reviewer identifies itself with (see
+# src/axial/panel/, issue #385, specs/PHASE-B.md §9.4, DEC-40/DEC-43). Unlike
+# every judge pass above, this one is NOT part of any run: the panel is an
+# offline eval instrument scored on a sample, and no production brief run
+# ever dispatches it. Its guard is also strictly stronger than the
+# GROUNDING/CALIBRATION self-grading guard -- a reviewer must resolve to a
+# different VENDOR (training lab) than SYNTHESIZE_PASS_NAME, not merely a
+# different model id, because shared training priors survive within a family
+# and a family-mate's agreement is weak evidence.
+#
+# Reviewer N is routed via `model_by_pass["panel_review.<n>"]`, so a panel
+# run can put each of its N >= 3 reviewers on a different model through the
+# existing config seam without a second dispatch convention.
+PANEL_REVIEW_PASS_NAME = "panel_review"
+
 # Per-pass model reasoning (§7.9, issue #207): reasoning is ON for the
 # structural-envelope pass and the content-apparatus classification gate --
 # both small, judgment-heavy, once/rarely-per-source calls -- and OFF
@@ -608,6 +623,18 @@ STUB_INTERROGATE_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_INTERROGATE_RESPONSE_SE
 # catch nobody scripted.
 STUB_PREMISE_MATCH_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_PREMISE_MATCH_RESPONSE_SEQUENCE"
 
+# Issue #385 test/CI-only seam: a JSON array of raw reviewer verdicts for
+# the §9.4 panel, indexed by a dedicated per-process 1-indexed counter
+# (`_panel_review_pass_call_count`). One call per (packet, reviewer) pair,
+# dispatched strictly sequentially by `axial.panel.review`, so a test scripts
+# "reviewer 1 catches it, reviewers 2 and 3 do not" as an array and gets that
+# order back. (The counter race of issue #370 needs CONCURRENT dispatch
+# against one scripted sequence; this pass has none by construction.) Cycles
+# once exhausted. Unset/empty falls back to a clean verdict naming no defect
+# -- so a stub-driven positive control FAILS by default, and a test has to
+# script the catch rather than inherit one.
+STUB_PANEL_REVIEW_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_PANEL_REVIEW_RESPONSE_SEQUENCE"
+
 # Issue #258 test/CI-only seam: a JSON object mapping pass_name -> model
 # name, read fresh from the environment by `StubLLMClient`/`RecordLLMClient`'s
 # `model_for_pass` (which otherwise always answers the fixed id "stub"
@@ -677,6 +704,11 @@ _interrogate_pass_call_count = 0
 # dispatches, driving the AXIAL_STUB_PREMISE_MATCH_RESPONSE_SEQUENCE seam
 # (issue #264), mirroring `_grounding_pass_call_count` above exactly.
 _premise_match_pass_call_count = 0
+
+# Per-process, 1-indexed counter of panel-reviewer canned-response
+# dispatches, driving the AXIAL_STUB_PANEL_REVIEW_RESPONSE_SEQUENCE seam
+# (issue #385), mirroring `_premise_match_pass_call_count` above exactly.
+_panel_review_pass_call_count = 0
 
 # Guards every one of the counters above (issue #325 follow-up): a
 # bare module-global `count += 1` is not one atomic operation, and
@@ -1009,6 +1041,36 @@ def _canned_premise_match_response() -> str:
     return _CANNED_PREMISE_MATCH_RESPONSE
 
 
+# The default canned reviewer verdict (issue #385, §9.4 property 5): clean
+# bands and NO defects. Deliberately the generous answer, so a stub-driven
+# positive control fails by default and a test must script every catch --
+# inheriting a passing control from a default would defeat the one guard
+# that decides whether a panel number is reportable at all.
+_CANNED_PANEL_REVIEW_RESPONSE = json.dumps(
+    {
+        "factual_correctness": "adequate",
+        "citation_grounding": "adequate",
+        "completeness": "adequate",
+        "defects": [],
+    }
+)
+
+
+def _canned_panel_review_response() -> str:
+    """The canned response for a panel-reviewer call (identified by a
+    `pass_name` of `panel_review.<n>`, issue #385): a JSON array read fresh
+    from `STUB_PANEL_REVIEW_RESPONSE_SEQUENCE_ENV_VAR`, indexed by the fresh
+    per-process counter just advanced (see that env var's own comment)."""
+    global _panel_review_pass_call_count
+    _panel_review_pass_call_count += 1
+    sequence_raw = os.environ.get(STUB_PANEL_REVIEW_RESPONSE_SEQUENCE_ENV_VAR, "")
+    if sequence_raw:
+        sequence = json.loads(sequence_raw)
+        if sequence:
+            return sequence[(_panel_review_pass_call_count - 1) % len(sequence)]
+    return _CANNED_PANEL_REVIEW_RESPONSE
+
+
 # The default canned response for a synthesize-pass call (§7.4): a single
 # empty claim graph. Every real acceptance test drives this pass via
 # `STUB_SYNTHESIZE_RESPONSE_ENV_VAR` (an empty claims list on its own proves
@@ -1187,6 +1249,11 @@ def _canned_response_for(pass_name: str | None) -> str:
         return _canned_calibration_response()
     if pass_name == PREMISE_MATCH_PASS_NAME:
         return _canned_premise_match_response()
+    # Matched by PREFIX, not equality: each of the panel's N reviewers routes
+    # under its own `panel_review.<n>` pass name (issue #385) so a real run
+    # can put them on different models through `model_by_pass`.
+    if pass_name and pass_name.startswith(PANEL_REVIEW_PASS_NAME):
+        return _canned_panel_review_response()
     return StubLLMClient._CANNED_RESPONSE
 
 
