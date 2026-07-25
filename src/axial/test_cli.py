@@ -258,3 +258,34 @@ def test_main_brief_show_against_missing_case_is_nonzero_and_names_case(tmp_path
 
     assert exit_code != 0
     assert "case" in captured.err
+
+
+def test_build_parser_gate_run_parses_without_dry_run_flag(tmp_path):
+    """Issue #387 made `trusted` resolve from the corpus pin alone, leaving
+    `--dry-run` with no behaviour to gate -- it must not be `required`
+    anymore, or the trusted-tier invocation we are about to run and log
+    would have to pass a flag whose own help text claims the opposite of
+    what actually happened."""
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["gate", "run", "attribution-fidelity", "--records", str(tmp_path)])
+
+    assert args.command == "gate"
+    assert args.gate_command == "run"
+    assert args.gate == "attribution-fidelity"
+    assert args.records == str(tmp_path)
+    assert args.dry_run is False
+
+
+def test_build_parser_gate_run_still_accepts_dry_run_flag(tmp_path):
+    """Backward compatibility: any existing caller or doc line that still
+    passes `--dry-run` must keep parsing cleanly."""
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        ["gate", "run", "attribution-fidelity", "--dry-run", "--records", str(tmp_path)]
+    )
+
+    assert args.dry_run is True

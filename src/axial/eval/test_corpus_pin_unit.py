@@ -25,10 +25,12 @@ import pytest
 
 from axial.envelope import compute_source_id
 from axial.eval.corpus_pin import (
+    AmbiguousCorpusPinError,
     AmbiguousSourceFileError,
     GitShaUnavailableError,
     MalformedEnvelopeError,
     MalformedNoteError,
+    MissingCorpusPinError,
     MissingEnvelopesDirError,
     MissingSourceFileError,
     MissingVaultDirError,
@@ -40,6 +42,7 @@ from axial.eval.corpus_pin import (
     _default_sources_dir,
     _tag_projection,
     ingest_code_sha,
+    resolve_pin_id,
     write_pin,
 )
 from axial.vault import render_note
@@ -608,3 +611,66 @@ def test_default_sources_dir_honors_a_configured_sources_dir(tmp_path: Path):
     )
 
     assert _default_sources_dir(config_path) == Path("data/a_totally_different_dir")
+
+
+# --- resolve_pin_id: archived pins stay invisible (DEC-42) ------------------
+
+
+def test_resolve_pin_id_ignores_an_archive_subdirectory(tmp_path: Path):
+    """DEC-42: after a corpus rebuild the old pin is kept as history rather
+    than rewritten, and a fresh pin is generated alongside it. The archive
+    convention keeps `resolve_pin_id`'s "exactly one live manifest"
+    invariant intact by relocating history out of its (non-recursive) glob
+    rather than weakening the invariant: a live pin plus one or more
+    superseded pins filed under `archive/` resolves cleanly to the live
+    pin's stem, with the archived files neither ambiguating nor resolving."""
+    pin_dir = tmp_path / "corpus_pin"
+    pin_dir.mkdir()
+    (pin_dir / "sim-2026-08-01.json").write_text("{}", encoding="utf-8")
+    archive_dir = pin_dir / "archive"
+    archive_dir.mkdir()
+    (archive_dir / "sim-2026-07-23.json").write_text("{}", encoding="utf-8")
+
+    assert resolve_pin_id(pin_dir) == "sim-2026-08-01"
+
+
+def test_resolve_pin_id_ignores_multiple_archived_pins(tmp_path: Path):
+    """Several superseded pins accumulating under `archive/` over successive
+    rebuilds must never trip the ambiguity check -- only files directly
+    under `evals_dir` count."""
+    pin_dir = tmp_path / "corpus_pin"
+    pin_dir.mkdir()
+    (pin_dir / "sim-2026-08-01.json").write_text("{}", encoding="utf-8")
+    archive_dir = pin_dir / "archive"
+    archive_dir.mkdir()
+    (archive_dir / "sim-2026-07-23.json").write_text("{}", encoding="utf-8")
+    (archive_dir / "sim-2026-06-01.json").write_text("{}", encoding="utf-8")
+
+    assert resolve_pin_id(pin_dir) == "sim-2026-08-01"
+
+
+def test_resolve_pin_id_still_ambiguous_for_two_live_pins(tmp_path: Path):
+    """We are relocating history, not weakening the invariant: two `*.json`
+    manifests directly under `evals_dir` (no archiving) still raise
+    `AmbiguousCorpusPinError`, exactly as before this change."""
+    pin_dir = tmp_path / "corpus_pin"
+    pin_dir.mkdir()
+    (pin_dir / "a.json").write_text("{}", encoding="utf-8")
+    (pin_dir / "b.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(AmbiguousCorpusPinError):
+        resolve_pin_id(pin_dir)
+
+
+def test_resolve_pin_id_missing_when_only_archived_pins_exist(tmp_path: Path):
+    """A pin directory holding nothing but an `archive/` subdirectory (e.g.
+    right after the old pin was archived and before a fresh one is written)
+    is correctly reported as missing, not silently satisfied by history."""
+    pin_dir = tmp_path / "corpus_pin"
+    pin_dir.mkdir()
+    archive_dir = pin_dir / "archive"
+    archive_dir.mkdir()
+    (archive_dir / "sim-2026-07-23.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(MissingCorpusPinError):
+        resolve_pin_id(pin_dir)
