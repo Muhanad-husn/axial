@@ -53,12 +53,10 @@ from axial.gates.grounding import (
     run_grounding_gate,
 )
 from axial.gates.harness import (
-    CASES_DIR,
     REPORTS_DIR,
     GateError,
     GateReport,
     MetricResult,
-    academic_cases_present,
     format_report,
     load_records,
     resolve_corpus_pin,
@@ -125,7 +123,6 @@ __all__ = [
     "SYNTHESIS_QUALITY_GATE_NAME",
     "CALIBRATION_GATE_NAME",
     "GATE_RUNNERS",
-    "CASES_DIR",
     "REPORTS_DIR",
     "CalibrationCheckFailedError",
     "CalibrationGateError",
@@ -147,7 +144,6 @@ __all__ = [
     "SelfGradingError",
     "UnresolvableGroundsError",
     "UnknownGateError",
-    "academic_cases_present",
     "format_report",
     "load_records",
     "load_seeded_briefs",

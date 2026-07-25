@@ -679,9 +679,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         required=True,
         help=(
-            "score without the full vault/pin/academic cases -- the only mode "
-            "this slice supports; `trusted` is false unless a corpus pin AND "
-            "at least one academic case exist regardless (§9)"
+            "score without the full vault or pin -- the only mode this slice "
+            "supports; `trusted` is false unless an unambiguous corpus pin "
+            "resolves (§9.2)"
         ),
     )
     gate_run_parser.add_argument(

@@ -15,7 +15,6 @@ from axial.gates.harness import (
     GateError,
     GateReport,
     MetricResult,
-    academic_cases_present,
     build_metric_result,
     comparison_for,
     format_report,
@@ -227,50 +226,37 @@ def test_resolve_corpus_pin_none_when_ambiguous(tmp_path: Path):
     assert resolve_corpus_pin(pin_dir) is None
 
 
-def test_academic_cases_present_false_when_dir_absent(tmp_path: Path):
-    assert academic_cases_present(tmp_path / "no_such_dir") is False
-
-
-def test_academic_cases_present_false_when_only_sim_subdir_has_cases(tmp_path: Path):
-    cases_dir = tmp_path / "cases"
-    sim_dir = cases_dir / "sim"
-    sim_dir.mkdir(parents=True)
-    (sim_dir / "case-001.json").write_text("{}", encoding="utf-8")
-    assert academic_cases_present(cases_dir) is False, (
-        "simulated stand-in cases under cases/sim/ must never count as real academic hard cases"
-    )
-
-
-def test_academic_cases_present_true_for_a_direct_case_file(tmp_path: Path):
-    cases_dir = tmp_path / "cases"
-    cases_dir.mkdir()
-    (cases_dir / "case-001.json").write_text("{}", encoding="utf-8")
-    assert academic_cases_present(cases_dir) is True
-
-
-def test_resolve_trusted_requires_both_pin_and_cases(tmp_path: Path):
+def test_resolve_trusted_true_from_the_pin_alone(tmp_path: Path):
+    """Issue #380, PHASE-B §9.2: the five rung-3 gates are corpus-anchored,
+    so an unambiguous pin is the whole condition. Academic-authored cases
+    were removed as a conjunct when #250/#295 closed not-planned -- keeping
+    them would leave every gate untrusted forever."""
     pin_dir = tmp_path / "corpus_pin"
     pin_dir.mkdir()
     (pin_dir / "baseline.json").write_text("{}", encoding="utf-8")
-    cases_dir = tmp_path / "cases"
 
-    # Pin exists, cases do not -> untrusted.
-    corpus_pin, trusted = resolve_trusted(evals_dir=pin_dir, cases_dir=cases_dir)
+    corpus_pin, trusted = resolve_trusted(evals_dir=pin_dir)
     assert corpus_pin == "baseline"
-    assert trusted is False
-
-    # Both exist -> trusted.
-    cases_dir.mkdir()
-    (cases_dir / "case-001.json").write_text("{}", encoding="utf-8")
-    corpus_pin, trusted = resolve_trusted(evals_dir=pin_dir, cases_dir=cases_dir)
     assert trusted is True
 
 
-def test_resolve_trusted_false_when_pin_absent_even_with_cases(tmp_path: Path):
-    cases_dir = tmp_path / "cases"
-    cases_dir.mkdir()
-    (cases_dir / "case-001.json").write_text("{}", encoding="utf-8")
-    corpus_pin, trusted = resolve_trusted(evals_dir=tmp_path / "no_pin", cases_dir=cases_dir)
+def test_resolve_trusted_ignores_the_cases_directory_entirely(tmp_path: Path, monkeypatch):
+    """§9.2's stated observable: with a resolved pin and ZERO files under
+    `evals/cases/`, a gate reports `trusted: true`. Guards against the
+    conjunct being reintroduced under another name."""
+    pin_dir = tmp_path / "corpus_pin"
+    pin_dir.mkdir()
+    (pin_dir / "baseline.json").write_text("{}", encoding="utf-8")
+    empty_cases = tmp_path / "cases"
+    empty_cases.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    _, trusted = resolve_trusted(evals_dir=pin_dir)
+    assert trusted is True, "an empty evals/cases/ must not make a corpus-anchored gate untrusted"
+
+
+def test_resolve_trusted_false_when_pin_absent(tmp_path: Path):
+    corpus_pin, trusted = resolve_trusted(evals_dir=tmp_path / "no_pin")
     assert corpus_pin is None
     assert trusted is False
 

@@ -16,14 +16,28 @@ plan, two apiece for the synthesis-quality and calibration gates landing in
 later slices (issues #263/#264) -- this is the shape those slices plug into
 without changing this module.
 
-**`trusted` (§9).** A dry-run number is never a trusted number: `trusted` is
-`True` only when BOTH an unambiguous corpus-pin manifest exists
-(`evals/corpus_pin/*.json`, `axial.eval.corpus_pin`) AND at least one
-academic-authored hard case exists directly under `evals/cases/*.json`
-(non-recursive -- the simulated stand-in cases live one level deeper, under
-`evals/cases/sim/`, and must never be mistaken for the real referee data,
-see docs/decisions DEC-29). Building and dry-running a gate never waits on
-either.
+**`trusted` (§9.2).** A dry-run number is never a trusted number: `trusted`
+is `True` exactly when an unambiguous corpus-pin manifest resolves
+(`evals/corpus_pin/*.json`, `axial.eval.corpus_pin`). Building and
+dry-running a gate never waits on it.
+
+This used to carry a second conjunct -- at least one academic-authored hard
+case directly under `evals/cases/*.json` -- which was correct while academic
+cases were merely pending. With #250/#295 closed not-planned nothing will
+ever land there, so the conjunct was permanently false and every one of the
+five gates reported `trusted: false` forever, including the four that never
+needed academic input at all (issue #380). All five are **corpus-anchored**:
+each judgment is anchored to material the repo or vault already holds, so
+none needs a human referee (§9.1). The conjunct is deleted rather than left
+inert, along with the `evals/cases/` seam it read -- an unsatisfiable
+condition guarding a directory nothing will ever populate is dead weight
+that reads as a live requirement. `evals/cases/sim/` (DEC-29) is unaffected:
+it is sim-case input data, never a trust condition.
+
+Answer quality is not scored here at all. It is measured offline by the
+§9.4 sealed-packet reviewer panel, which carries its own trust condition (a
+passing positive control) and reports in the separate refereed tier. No
+gate report waits on a panel verdict (§9.2).
 """
 
 from __future__ import annotations
@@ -44,11 +58,6 @@ from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
 # convention: no CLI flag for a data-root path nobody needs to override, see
 # axial.eval.corpus_pin's own EVALS_DIR docstring).
 REPORTS_DIR = Path("evals") / "reports"
-
-# The academic-authored hard-case directory (§9, eval #1's referee data).
-# Deliberately non-recursive: `evals/cases/sim/`'s simulated stand-ins (DEC-29)
-# must never count as the real referee data trusted numbers require.
-CASES_DIR = Path("evals") / "cases"
 
 Comparison = Literal["gte", "lte"]
 
@@ -264,25 +273,13 @@ def resolve_corpus_pin(evals_dir: Path | None = None) -> str | None:
         return None
 
 
-def academic_cases_present(cases_dir: Path | None = None) -> bool:
-    """Whether at least one academic-authored hard case exists directly
-    under `cases_dir` (default `CASES_DIR`) -- non-recursive, so the
-    simulated stand-ins under `evals/cases/sim/` never count (module
-    docstring)."""
-    directory = cases_dir if cases_dir is not None else CASES_DIR
-    if not directory.is_dir():
-        return False
-    return any(directory.glob("*.json"))
-
-
-def resolve_trusted(
-    *, evals_dir: Path | None = None, cases_dir: Path | None = None
-) -> tuple[str | None, bool]:
-    """`(corpus_pin, trusted)`: `trusted` is `True` only when both an
-    unambiguous corpus pin AND at least one real academic case exist (§9)."""
+def resolve_trusted(*, evals_dir: Path | None = None) -> tuple[str | None, bool]:
+    """`(corpus_pin, trusted)`: `trusted` is `True` exactly when an
+    unambiguous corpus pin resolves (§9.2, issue #380). There is no second
+    condition -- see the module docstring for why the academic-case
+    conjunct was removed rather than merely left unsatisfied."""
     corpus_pin = resolve_corpus_pin(evals_dir)
-    trusted = corpus_pin is not None and academic_cases_present(cases_dir)
-    return corpus_pin, trusted
+    return corpus_pin, corpus_pin is not None
 
 
 def write_report(report: GateReport, *, reports_dir: Path | None = None) -> Path:
