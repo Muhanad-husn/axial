@@ -417,6 +417,8 @@ Every rung-3 number lands in exactly one of two tiers, and the tier travels with
 
 *Observable:* with a resolved pin over the full corpus and zero files under `evals/cases/`, all five gates report `trusted: true`.
 
+**What the trusted-tier report scores.** The four record-based gates (`attribution-fidelity`, `grounding`, `synthesis-quality`, `calibration`) score **one draw per brief**, never every draw. Repeat draws of one brief are the same question asked again, so pooling them inflates `n` with pseudo-replicates and lets a brief that happened to run more often weigh heavier than one that ran once. The fifth gate, `adversarial`, never scores these records at all: it takes seeded briefs whose `expected_disposition` is the answer key (`config/briefs/adversarial/`), so it scores its own seeds and lands in the same tier by the same two conditions. Per-brief gate scores computed across a brief's own draws are a **different artifact** owned by the benchmark sweep (issue #368); they feed its performance-tier bucketing and are not this report.
+
 **Refereed tier: answer quality, measured offline and periodically (eval #1).** Answer quality is measured by the §9.4 peer-reviewer panel, which runs **offline against a sample**, not per run. A number in this tier belongs to a **measurement run** and its stated sampling frame; it never belongs to a single analysis.
 
 Three consequences are **[FIRM]**, and each is separately observable:
