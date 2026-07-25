@@ -91,6 +91,10 @@ from axial.envelope import (
     _default_envelopes_dir,
 )
 from axial.chunk import _default_chunks_dir
+from axial.paths import (
+    artifact_note_path as _artifact_note_path,
+    chunk_note_path as _note_path,
+)
 
 # Imported as a module, not by-name: `SOURCE_META_DIR` is read at call time
 # so a test that redirects it (src/axial/conftest.py's autouse isolation
@@ -340,126 +344,16 @@ def render_note(frontmatter: dict[str, Any], body: str) -> str:
     return f"---\n{frontmatter_yaml}---\n{body}"
 
 
-# Windows' documented MAX_PATH (260 characters, including the drive letter
-# and the terminating null) -- the hard ceiling a note's absolute path must
-# stay under. A real 31-source Phase A ingestion rerun measured two
-# long-titled sources losing 165/484 (~34%) and 59/483 (~12%) of their
-# notes to `FileNotFoundError` from oversized chunk_id/artifact_id-derived
-# paths -- not a rare outlier, but most section slugs of ordinary length
-# for a long-titled source. A conservative, documented ceiling, not a
-# proven-final value -- mirrors `CHUNK_MIN`/`CHUNK_MAX`'s own "sensible
-# starting point, not proven-final" framing (`axial.chunk`).
-_WINDOWS_MAX_PATH = 260
-
-# Slack reserved below `_WINDOWS_MAX_PATH`: one char for the path separator
-# between the directory and the filename, plus a few chars of rounding
-# safety. The directory portion itself (`vault_dir` resolved to its real
-# absolute path, plus "prose"/"artifacts") is measured for real at call
-# time below, never guessed -- so this margin is the only guessed constant
-# in the budget, and it is small on purpose.
-_PATH_SAFETY_MARGIN = 10
-
-
-def _path_overage(directory: Path, filename: str) -> int:
-    """How many characters `<directory>/<filename>`'s absolute path is over
-    budget (`_WINDOWS_MAX_PATH` minus `_PATH_SAFETY_MARGIN`); zero or
-    negative means it fits."""
-    return (
-        len(str(directory.resolve()))
-        + 1
-        + len(filename)
-        - (_WINDOWS_MAX_PATH - _PATH_SAFETY_MARGIN)
-    )
-
-
-def _shrink_pieces(pieces: list[str], overage: int) -> list[str]:
-    """Trim `overage` characters off `pieces`, in order, each piece down to
-    empty before the next is touched -- used to shave a note filename's
-    purely-human-readable components (the source stem, then the section
-    slug) down to budget. The small, uniqueness-bearing components (the
-    content-hash suffix, the section order, the per-section chunk index)
-    are never passed in here at all, so they can never be shortened."""
-    shrunk = []
-    for piece in pieces:
-        if overage <= 0:
-            shrunk.append(piece)
-            continue
-        take = min(overage, len(piece))
-        shrunk.append(piece[: len(piece) - take])
-        overage -= take
-    return shrunk
-
-
-def _split_source_id(source_id: str) -> tuple[str, str]:
-    """Split `source_id` (`axial.envelope.compute_source_id`'s
-    `<stem>-<hash12>`) into its human-readable stem and its trailing
-    12-hex-char content hash -- the only two pieces a note filename ever
-    needs to tell apart, since the hash is source_id's own uniqueness
-    guarantee and the stem is purely for humans."""
-    hash12 = source_id[-12:]
-    stem = source_id[: -(len(hash12) + 1)]
-    return stem, hash12
-
-
-def _budgeted_chunk_filename(directory: Path, source_id: str, chunk_id: str) -> str:
-    """Shorten `chunk_id`'s note filename to fit under `directory`'s path
-    budget, touching only `source_id`'s readable stem prefix and (if that
-    alone is not enough) the section slug -- never the hash suffix, the
-    section order, or the per-section index, which is where chunk_id's own
-    on-disk uniqueness lives (`axial.chunk.build_chunk_records`). Relies on
-    `chunk_id`'s locked grammar (`<source_id>_<order_key>_<slug>_<NNN>`,
-    PRD §7.7): `order_key` and `slug` are guaranteed underscore-free
-    (`axial.chunk._slugify` maps every non-alphanumeric run, including
-    underscores, to a single hyphen; `order_key` is `section_order` with
-    "." replaced by "-"), so splitting the `source_id`-stripped suffix on
-    "_" is unambiguous."""
-    stem, hash12 = _split_source_id(source_id)
-    _, order_key, slug, index = chunk_id[len(source_id) :].split("_")
-
-    def build(s: str, sl: str) -> str:
-        return f"{s}-{hash12}_{order_key}_{sl}_{index}.md"
-
-    filename = build(stem, slug)
-    overage = _path_overage(directory, filename)
-    if overage > 0:
-        stem, slug = _shrink_pieces([stem, slug], overage)
-        filename = build(stem, slug)
-    return filename
-
-
-def _budgeted_artifact_filename(directory: Path, source_id: str, artifact_id: str) -> str:
-    """Shorten `artifact_id`'s note filename to fit under `directory`'s
-    path budget, touching only `source_id`'s readable stem prefix -- never
-    the hash suffix or the artifact's own dotted order
-    (`axial.artifacts.artifact_id_for_node`'s `<source_id>_art_<order>`),
-    which is where artifact_id's on-disk uniqueness lives."""
-    stem, hash12 = _split_source_id(source_id)
-    suffix = artifact_id[len(source_id) :]
-
-    def build(s: str) -> str:
-        return f"{s}-{hash12}{suffix}.md"
-
-    filename = build(stem)
-    overage = _path_overage(directory, filename)
-    if overage > 0:
-        (stem,) = _shrink_pieces([stem], overage)
-        filename = build(stem)
-    return filename
-
-
-def _note_path(vault_dir: Path, source_id: str, chunk_id: str) -> Path:
-    """The on-disk path for `chunk_id`'s note. The filename is `chunk_id`
-    verbatim whenever the resulting absolute path fits Windows' MAX_PATH
-    budget (the common case) -- only a source whose readable stem/slug
-    combination would push the path over budget gets its filename
-    shortened, via `_budgeted_chunk_filename`; `chunk_id` itself (used
-    everywhere else: tag records, xref pairs, this note's own frontmatter)
-    is never touched."""
-    directory = vault_dir / "prose"
-    filename = f"{chunk_id}.md"
-    if _path_overage(directory, filename) > 0:
-        filename = _budgeted_chunk_filename(directory, source_id, chunk_id)
-    return directory / filename
+# Note filename budgeting (Windows' 260-char MAX_PATH) is shared with the
+# read side (`axial.query.reader.get_chunk`/`get_artifact` must locate a
+# note by the SAME rule this writer used, or a budgeted note becomes
+# unreachable by its own real id) -- so `_note_path`/`_artifact_note_path`
+# and the budgeting internals they call are `axial.paths.chunk_note_path`/
+# `artifact_note_path` imported above, not defined here. A real 31-source
+# Phase A ingestion rerun measured two long-titled sources losing 165/484
+# (~34%) and 59/483 (~12%) of their notes to `FileNotFoundError` from
+# oversized chunk_id/artifact_id-derived paths -- not a rare outlier, but
+# most section slugs of ordinary length for a long-titled source.
 
 
 def write_chunk_note(
@@ -517,18 +411,6 @@ def build_artifact_frontmatter(
     if caption:
         frontmatter["caption"] = caption
     return frontmatter
-
-
-def _artifact_note_path(vault_dir: Path, source_id: str, artifact_id: str) -> Path:
-    """The on-disk path for `artifact_id`'s note -- `artifact_id` verbatim
-    whenever the path fits Windows' MAX_PATH budget (the common case),
-    mirroring `_note_path`'s filename-only fallback for the rare oversized
-    case (`_budgeted_artifact_filename`)."""
-    directory = vault_dir / "artifacts"
-    filename = f"{artifact_id}.md"
-    if _path_overage(directory, filename) > 0:
-        filename = _budgeted_artifact_filename(directory, source_id, artifact_id)
-    return directory / filename
 
 
 def write_artifact_note(

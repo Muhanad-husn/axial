@@ -370,6 +370,53 @@ def test_a_ref_id_matching_two_or_more_real_ids_by_suffix_still_raises(tmp_path:
     assert "25_introduction_001" in str(exc_info.value)
 
 
+def test_a_suffix_matching_a_budgeted_note_and_a_stale_full_length_duplicate_resolves(
+    tmp_path: Path,
+):
+    """Reproduces the second, real P1-04 failure: PR #377's filename-
+    budgeting fallback (`axial.vault._note_path`) shortens a note's ON-DISK
+    FILENAME when the full id would exceed Windows' MAX_PATH, but a
+    post-#377 re-run left a STALE note under the earlier, full-length
+    filename alongside the new budgeted-filename one -- two files, same
+    true `chunk_id` in frontmatter. Before this fix, the suffix fallback
+    returned filename STEMS, so the cited tail matched two distinct-looking
+    strings and raised `UnresolvableGroundError` even though both notes
+    agree on one real chunk_id. The fallback must dedupe to that one true
+    id from frontmatter and resolve, not raise."""
+    true_id = "Some Long Human-Readable Title - libgen.li-5f35a47d9657_26_a-section_012"
+    cited_tail = "5f35a47d9657_26_a-section_012"
+    frontmatter = _chunk_frontmatter(chunk_id=true_id, polities_touched=["Syria"])
+
+    prose_dir = tmp_path / "vault" / "prose"
+    prose_dir.mkdir(parents=True, exist_ok=True)
+    text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
+    # The stale, full-length-named note (pre-budgeting write).
+    (prose_dir / f"{true_id}.md").write_text(text, encoding="utf-8")
+    # The budgeted-named note for the SAME true chunk_id (post-#377 re-run) --
+    # only the human-readable stem is shortened; the hash/order/slug/index
+    # tail, and the frontmatter chunk_id, are identical.
+    (
+        prose_dir / "Some Long Human-Readable Title - libgen-5f35a47d9657_26_a-section_012.md"
+    ).write_text(text, encoding="utf-8")
+    vault_dir = tmp_path / "vault"
+
+    raw = _valid_response(
+        claims=[
+            {
+                "text": "A claim citing the tail shared by a stale note and its budgeted duplicate.",
+                "kind": "a",
+                "grounds": [{"ref_type": "chunk", "ref_id": cited_tail}],
+                "confidence": "medium",
+            }
+        ]
+    )
+
+    claims = parse_synthesis_response(raw, vault_dir=vault_dir)
+
+    assert claims[0].grounds == [Ground(ref_type="chunk", ref_id=true_id)]
+    assert claims[0].polities_touched == ["Syria"]
+
+
 def test_a_ref_id_matching_no_real_id_by_suffix_still_raises(vault_dir: Path):
     raw = _valid_response(
         claims=[
