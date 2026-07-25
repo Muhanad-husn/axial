@@ -91,6 +91,8 @@ src/axial/
   validate/     # attribution / counter-position / coverage validators (stage 5)
   answer/       # analysis-record + source-usage counting + markdown rendering + persistence (stage 6)
   eval/         # (existing) + the rung-3 gate harnesses (§10)
+  panel/        # the sealed-packet reviewer panel (§9.4) -- an OFFLINE eval
+                #   instrument, never reached by a brief run
 config/
   briefs/
     sim/        # the permanent dev-brief backlog (§9), versioned
@@ -474,6 +476,13 @@ Which cases and which combinations is the sampling frame's own question, set per
 - The panel consumes what a sweep already has: a rendered analysis (§7.10) plus the resolved text of the chunks its claims cite, resolvable from the record's grounds through the §7.5 tools. It needs nothing the record does not already carry.
 - It emits a structured verdict per reviewer (property 5), keyed on `brief_id` and the corpus pin, so a sweep can join a quality column onto the cost/latency/gate columns it already reports.
 - Nothing about tier bucketing, model-combination selection, or sweep reporting belongs in this spec. #362 owns its own scope.
+
+**Where it lives (issue #385, settled).** `src/axial/panel/`, invoked by `axial panel run --records <dir> --control-record <path>`. One module per property that has to hold: `packet` (assembly, the content half of the seal, never writing to disk), `vendor` (the different-training-lab bar, where an undeclared model id is a hard error rather than an assumed-distinct default), `review` (N ≥ 3 dispatch, structured verdicts, the spread), `control` (the three plants and the trust condition), and `run` (control first, and its verdict is what `trusted` means).
+
+Two implementation facts the properties imply but do not state, recorded so they are not re-litigated:
+
+- **The tool half of the seal is structural.** Reviewers dispatch through the plain completion seam (`complete_json`), which has no `tools` parameter to pass — so a reviewer cannot be handed a tool registry even by mistake. A reviewer must never be routed through `complete_with_tools`.
+- **Verdicts are not written into the repo by default.** Property 7 permits committing a verdict, but a reviewer's free-text defect `note` is model prose that can quote the source text it just read. `axial panel run` therefore writes nothing unless `--out` names a path, and that path belongs under gitignored `data/`, never `evals/`. Scores, defect kinds, claim ids, reviewer models and vendors are all safe; the note is the hazard.
 
 ---
 
