@@ -24,6 +24,7 @@ from axial.gold import (
     _axis_vocabularies,
     _is_back_matter,
     _is_substantive,
+    _read_frame,
     build_workbook,
     load_source_types,
     parse_note,
@@ -268,6 +269,52 @@ class TestParseNote:
         path = tmp_path / "not-a-note.md"
         path.write_text("just some text, no frontmatter\n", encoding="utf-8")
         assert parse_note(path) is None
+
+
+class TestReadFrameDedupesChunkId:
+    """Regression test: a budgeted-filename rewrite (#377) can leave the same
+    chunk_id on disk under two different filenames when a re-run shortens a
+    note's filename without removing the old full-length one. `_read_frame`
+    must dedupe by the authoritative frontmatter chunk_id, not by filename,
+    so `select_chunks` never draws the same chunk twice into the gold
+    frame."""
+
+    def _write_note(self, prose_dir, filename, chunk_id, section="Introduction"):
+        note = {
+            "chunk_id": chunk_id,
+            "section": section,
+            "chunk_text": (
+                "This is substantive prose long enough and alphabetic enough "
+                "to clear the minimum-substance guard for this fixture."
+            ),
+            "role_in_argument": "role:claim",
+            "field": {"primary": "state"},
+            "claim_type": {"primary": "state-formation"},
+            "theory_school": {"primary": "bellicist"},
+            "empirical_scope": {"value": "scope:general"},
+        }
+        block = yaml.safe_dump(note, sort_keys=False, allow_unicode=True)
+        (prose_dir / filename).write_text(
+            f"---\n{block}---\n# {section}\n\ntext\n", encoding="utf-8"
+        )
+
+    def test_duplicate_chunk_id_across_two_filenames_yields_one_record(self, tmp_path):
+        prose_dir = tmp_path / "prose"
+        prose_dir.mkdir()
+        cid = "src-abc-000000000001_1_intro_001"
+        # Two filenames on disk (a full-length one and a budget-shortened
+        # one from a later re-run, per PR #377) carrying the identical
+        # frontmatter chunk_id.
+        self._write_note(prose_dir, "src-abc-000000000001_1_intro_001.md", cid)
+        self._write_note(prose_dir, "src-abc-000000000001_1_in_001.md", cid)
+
+        records = _read_frame(prose_dir)
+
+        matches = [r for r in records if r["chunk_id"] == cid]
+        assert len(matches) == 1, (
+            f"expected exactly one record for duplicate chunk_id {cid!r} "
+            f"(two files on disk sharing it), got {len(matches)}"
+        )
 
 
 class TestLoadSourceTypes:

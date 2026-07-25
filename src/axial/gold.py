@@ -465,8 +465,12 @@ def parse_note(path: Path) -> dict[str, Any] | None:
 
 def _read_frame(prose_dir: Path) -> list[dict[str, Any]]:
     """Read every prose note under `prose_dir`, drop back-matter (by title)
-    and non-substantive fragments (by body, #131), and return the
-    substantive records sorted by chunk_id (a stable base order)."""
+    and non-substantive fragments (by body, #131), dedupe by frontmatter
+    chunk_id (a budgeted-filename rewrite, #377, can leave the same chunk_id
+    on disk under two filenames -- the first one in glob-sorted-path order
+    wins), and return the substantive records sorted by chunk_id (a stable
+    base order)."""
+    seen_chunk_ids: set[str] = set()
     records = []
     for path in sorted(prose_dir.glob("*.md")):
         record = parse_note(path)
@@ -474,6 +478,9 @@ def _read_frame(prose_dir: Path) -> list[dict[str, Any]]:
             continue
         if not _is_substantive(record["chunk_text"]):
             continue
+        if record["chunk_id"] in seen_chunk_ids:
+            continue
+        seen_chunk_ids.add(record["chunk_id"])
         records.append(record)
     records.sort(key=lambda r: r["chunk_id"])
     return records
