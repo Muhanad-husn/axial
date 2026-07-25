@@ -10,6 +10,34 @@ decision in `docs/DECISIONS.md` as a `DEC-` row.
 
 ---
 
+## Amendment, 2026-07-25: the operator domain gets a UI too
+
+Recorded from a design discussion, not committed scope. Everything below this
+section predates it and is otherwise unchanged.
+
+The plan as drafted says the operator world is out of scope and stays exactly as
+it is today. That is no longer the intent. The product is two domains, each with
+its own interface, over a shared foundation:
+
+- **Operator domain.** A UI that lets a non-technical operator run the corpus
+  build: ingest sources, resolve quarantines and candidate decisions, and monitor
+  pipeline performance. This is a face on capability the CLI already has, not new
+  pipeline capability.
+- **Analyst domain.** A copilot over a published, read-only corpus. This is the
+  analyst world the rest of this plan describes.
+
+**CLI-first still holds, and now covers both domains.** The rule is unchanged: the
+service is the durable part, the client is cheap and swappable, and a CLI exercises
+the service as thoroughly as a UI would. Neither UI starts before its CLI surface
+is stable.
+
+**What this does not change:** the two-worlds isolation, the read-only corpus, the
+snapshot model, and the build sequence in steps 1–7. The operator UI is not
+scheduled and gets its own plan when it starts. Until then, "Explicitly deferred"
+below still governs the analyst web UI.
+
+---
+
 ## What we're building, in one sentence
 
 A small, read-only service that lets a few invited analysts log in and query the
