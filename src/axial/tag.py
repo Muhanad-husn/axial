@@ -542,6 +542,11 @@ def reject_degenerate_tag_values(raw: str, axes_to_tag: list[str], schema: Schem
                 if isinstance(secondary, list)
                 else ([secondary] if secondary is not None else [])
             )
+            # `parse_multi_value_tag_response` already drops/collapses a
+            # blank secondary entry (quarantine-recovery fix), so this loop
+            # never actually sees one -- kept as a real check, not dead code,
+            # since it still guards a genuinely non-blank-but-malformed
+            # secondary this parser doesn't filter.
             for index, value in enumerate(secondary_values):
                 _reject_blank_tag(value, f"{axis_name}.secondary[{index}]")
             for index, value in enumerate(parsed.get("subtags") or []):
@@ -762,6 +767,13 @@ def parse_multi_value_tag_response(raw: str, axis: Axis) -> dict[str, Any]:
     cardinality, a model may still answer with a list here, so `[]` is
     normalized to `None` and a single-element list to its lone element before
     anything longer than that is rejected as a genuine cardinality violation.
+    A blank/whitespace-only secondary entry (the model's "no secondary"
+    expressed as noise instead of an omitted key) is dropped from a
+    `primary_plus_secondary` list, or collapsed to `None` for a
+    `primary_plus_optional_secondary` scalar -- never a genuine
+    out-of-vocabulary value, which still fails vocabulary validation
+    downstream unchanged.
+
     When the axis's own vocabulary structurally declares subtags at all
     (`_axis_declares_subtags`), `subtags` defaults to `[]` if the model
     omitted it, so e.g. `claim_type.subtags` is always a list."""
@@ -776,15 +788,24 @@ def parse_multi_value_tag_response(raw: str, axis: Axis) -> dict[str, Any]:
         raise TagParseError(f"expected a top-level {axis_name!r} key, got: {keys}")
 
     axis_value = data[axis_name]
-    if isinstance(axis_value, str) and axis.cardinality == "primary_plus_optional_secondary":
-        # Issue #105: a bare, unambiguous string for a
-        # primary_plus_optional_secondary axis is a known model dialect for
-        # "just the primary, no secondary" -- coerce it to the object shape
-        # BEFORE the shape check below, so it flows through the same
-        # vocabulary validation as every other value (an out-of-vocab bare
-        # string still fails vocabulary validation downstream, and still
-        # triggers the #102 correction re-ask -- coercion never bypasses
-        # that check, it only fixes the shape ahead of it).
+    if isinstance(axis_value, str) and axis.cardinality in MULTI_VALUE_CARDINALITIES:
+        # Issue #105 (extended by the quarantine-recovery fix): a bare,
+        # unambiguous string for EITHER multi-value cardinality is a known
+        # model dialect for "just the primary, no secondary" -- coerce it to
+        # the object shape BEFORE the shape check below, so it flows through
+        # the same vocabulary validation as every other value (an
+        # out-of-vocab bare string still fails vocabulary validation
+        # downstream, and still triggers the #102 correction re-ask --
+        # coercion never bypasses that check, it only fixes the shape ahead
+        # of it). Originally scoped to `primary_plus_optional_secondary`
+        # only; `primary_plus_secondary` (e.g. `field`) got no such coercion
+        # and quarantined 422/577 (73%) of one corpus-wide run's chunks on
+        # this exact shape (`"expected 'field' value to be an object with a
+        # 'primary' key, got str"`) -- the same unambiguous dialect, just on
+        # the axis's sibling cardinality. A freshly-coerced `{"primary":
+        # axis_value}` dict has no `secondary` key, which the
+        # `primary_plus_secondary` branch below already resolves to `[]`
+        # (zero secondaries) -- exactly the dialect's intended meaning.
         axis_value = {"primary": axis_value}
 
     if not isinstance(axis_value, dict) or "primary" not in axis_value:
@@ -805,6 +826,18 @@ def parse_multi_value_tag_response(raw: str, axis: Axis) -> dict[str, Any]:
         secondary: Any = raw_secondary if raw_secondary is not None else []
         if not isinstance(secondary, list):
             secondary = [secondary]
+        # Quarantine-recovery fix: a blank/whitespace-only secondary entry is
+        # the same "meant no secondary" noise `_reject_blank_tag` already
+        # treats as degenerate elsewhere -- 125 (claim_type) + 27
+        # (theory_school) of one corpus-wide run's quarantines traced to
+        # exactly this ("claim_type.secondary[0] tag value is
+        # empty/whitespace-only: ''"). Drop it silently rather than
+        # quarantining the whole chunk; a genuinely out-of-vocabulary
+        # (non-blank) entry is untouched here and still fails
+        # `validate_multi_value_tag` downstream exactly as before.
+        secondary = [
+            value for value in secondary if not (isinstance(value, str) and not value.strip())
+        ]
     else:
         secondary = raw_secondary
         if isinstance(secondary, list):
@@ -812,6 +845,12 @@ def parse_multi_value_tag_response(raw: str, axis: Axis) -> dict[str, Any]:
                 secondary = None
             elif len(secondary) == 1:
                 secondary = secondary[0]
+        if isinstance(secondary, str) and not secondary.strip():
+            # Same blank-secondary noise as above, collapsed to the
+            # cardinality's own "no secondary" representation (`None`)
+            # instead of the list's "drop the entry" -- this cardinality
+            # never carries a list of secondaries to drop from.
+            secondary = None
         if secondary is not None and not isinstance(secondary, str):
             raise TagParseError(
                 f"expected {axis_name!r}.secondary, when present, to be a "
