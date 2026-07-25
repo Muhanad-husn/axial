@@ -42,6 +42,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from axial.cli import _print_encoding_safe
 from axial.envelope import compute_source_id
 from axial.intake import SUPPORTED_EXTENSIONS
 
@@ -184,9 +185,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     reports = migrate(args.cases_dir, args.sources_dir, args.apply)
-    print(format_report(reports))
+    # Source filenames carry diacritics ("Uğur Ümit Üngör"), which crash a
+    # cp1252 stdout on Windows -- same failure PR #379 fixed for run_pass.
+    _print_encoding_safe(format_report(reports))
     if not args.apply:
-        print("\ndry run: no files written (rerun with --apply to write)")
+        _print_encoding_safe("\ndry run: no files written (rerun with --apply to write)")
     return 0
 
 

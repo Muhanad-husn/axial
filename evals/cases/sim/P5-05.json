@@ -12,10 +12,10 @@
   "answer_kind": "rubric",
   "expected_answer": "",
   "required_citation_source_ids": [
-    "agamben-state-of-exception-b22edc40e0fc",
-    "ayubi-over-stating-the-arab-state-16fd6a2e503f",
-    "batatu-syrias-peasantry-598624067df3",
-    "mann-sources-of-social-power-v2-ec759675dcbd"
+    "State of Exception -- Giorgio Agamben_ Kevin Attell -- ( WeLib.org )-b22edc40e0fc",
+    "Over-Stating the Arab State Politics and Society in the Middle East (Nazih N. Ayubi) (Z-Library)-16fd6a2e503f",
+    "Syrias Peasantry, the Descendants of Its Lesser Rural Notables, and Their Politics (Hanna Batatu) (z-library.sk, 1lib.sk, z-lib.sk)-598624067df3",
+    "The Sources of Social Power, Volume 2 - The Rise of Classes and Nation-States, 1760\u20131914 (Michael Mann)-ec759675dcbd"
   ],
   "rubric": [
     "Reconstructs Agamben's claim precisely: the exception as a suspension of law that becomes the permanent normal technique of government, producing a zone where law and its absence are indistinct.",
