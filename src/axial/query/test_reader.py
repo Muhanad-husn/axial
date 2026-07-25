@@ -449,11 +449,29 @@ def test_get_artifact_raises_not_found_naming_the_id(tmp_path):
 # again by its real, correct id -- measured on the real corpus: 399 notes
 # across the three longest source_ids (Benjamin Thomas White, Syrias
 # Peasantry, Andreas Wimmer) were unreachable this way.
+#
+# These ids are deliberately SHORT: a real budgeted id runs to ~300 chars,
+# but Linux (unlike Windows/NTFS) caps a single path COMPONENT at 255 bytes,
+# so a filename that long fails outright on write/exists() on CI (Errno 36,
+# ENAMETOOLONG) before the reader logic under test ever runs -- a test-
+# portability defect, not a product one (`axial.query.test_reader` CI
+# incident, 2026-07-25). Instead, `monkeypatch` lowers
+# `axial.paths._WINDOWS_MAX_PATH` (a module-private test seam -- no new
+# config key, env var, or CLI flag, and every production call site keeps its
+# real 260-char default) far enough below these short ids' own length that
+# the budgeting fallback is forced to trigger regardless of the OS or the
+# tmp dir's own path length, while the resulting filenames stay well under
+# 255 bytes on every OS.
 
-_LONG_HASH12 = "0123456789ab"
-_LONG_SOURCE_ID = f"{'A' * 200}-{_LONG_HASH12}"
+_BUDGET_HASH12 = "0123456789ab"
+_BUDGET_SOURCE_ID = f"{'A' * 20}-{_BUDGET_HASH12}"
+# Low enough that `path_overage` is positive even for a zero-length
+# directory and this module's short stem/slug (see the two tests below),
+# so the shrink always fully empties them -- deterministic across OSes and
+# tmp_path depths, never dependent on how long the test's own tmp dir is.
+_TEST_MAX_PATH = 25
 
-_LONG_RECORD_BASE = {
+_BUDGET_RECORD_BASE = {
     "section": "Introduction",
     "chunk_text": "Some long-source prose.",
     "role_in_argument": "role:claim",
@@ -465,26 +483,29 @@ _LONG_RECORD_BASE = {
     "claim_type": {"primary": "claim:causal", "secondary": None, "subtags": []},
     "theory_school": {"primary": "school:realism", "secondary": None, "status": "candidate"},
 }
-_LONG_ENVELOPE = {"thesis": "T", "scope": "S"}
-_LONG_SOURCE_META = {
+_BUDGET_ENVELOPE = {"thesis": "T", "scope": "S"}
+_BUDGET_SOURCE_META = {
     "author": {"value": "A", "provenance": "p"},
     "title": {"value": "Ti", "provenance": "p"},
     "date": "unavailable",
 }
 
 
-def test_get_chunk_resolves_a_note_whose_filename_was_budgeted(tmp_path):
+def test_get_chunk_resolves_a_note_whose_filename_was_budgeted(tmp_path, monkeypatch):
     """The case that is broken today: a note written under a shortened
     on-disk filename must still resolve by its true, full `chunk_id`."""
+    import axial.paths
     from axial.vault import write_chunk_note
 
-    slug = "b" * 80
-    chunk_id = f"{_LONG_SOURCE_ID}_1_{slug}_001"
-    record = {**_LONG_RECORD_BASE, "chunk_id": chunk_id}
+    monkeypatch.setattr(axial.paths, "_WINDOWS_MAX_PATH", _TEST_MAX_PATH)
+
+    slug = "b" * 20
+    chunk_id = f"{_BUDGET_SOURCE_ID}_1_{slug}_001"
+    record = {**_BUDGET_RECORD_BASE, "chunk_id": chunk_id}
     vault_dir = tmp_path / "vault"
 
     note_path = write_chunk_note(
-        record, _LONG_ENVELOPE, _LONG_SOURCE_META, vault_dir, source_id=_LONG_SOURCE_ID
+        record, _BUDGET_ENVELOPE, _BUDGET_SOURCE_META, vault_dir, source_id=_BUDGET_SOURCE_ID
     )
     # Sanity: the writer really did shorten the filename (not just happened
     # to already fit) -- otherwise this test would not exercise the fallback.
@@ -510,16 +531,19 @@ def test_get_chunk_fast_path_resolves_directly_without_needing_chunk_id_grammar(
     assert note.chunk_id == "not-shaped-like-a-real-chunk-id"
 
 
-def test_get_artifact_resolves_a_note_whose_filename_was_budgeted(tmp_path):
+def test_get_artifact_resolves_a_note_whose_filename_was_budgeted(tmp_path, monkeypatch):
     """The `get_artifact` counterpart of the budgeted-chunk-note case."""
+    import axial.paths
     from axial.vault import write_artifact_note
 
-    artifact_id = f"{_LONG_SOURCE_ID}_art_1.2"
+    monkeypatch.setattr(axial.paths, "_WINDOWS_MAX_PATH", _TEST_MAX_PATH)
+
+    artifact_id = f"{_BUDGET_SOURCE_ID}_art_1.2"
     record = {
         "artifact_id": artifact_id,
         "artifact_role": "case-study",
         "field": {"primary": "state", "secondary": []},
-        "source_id": _LONG_SOURCE_ID,
+        "source_id": _BUDGET_SOURCE_ID,
         "section": "Introduction",
     }
     vault_dir = tmp_path / "vault"
