@@ -571,7 +571,12 @@ def test_get_artifact_fast_path_resolves_directly_without_needing_artifact_id_gr
 
 # -- find_chunk_ids_ending_with / find_artifact_ids_ending_with ---------------
 # The `axial.analyze.synthesis` truncated-citation repair's lookup: a
-# filename-only suffix scan, used only when an exact match already failed.
+# suffix scan over a frontmatter-built id index, used only when an exact
+# match already failed. Candidate discovery is over TRUE ids, never
+# filenames (fix/chunk-id-index-resolution) -- a P3-02 live brief died
+# because a budgeted filename dropped the very tail the model cited (its
+# stem was chopped mid-word), so a filename-keyed scan found zero
+# candidates even though the true chunk_id ended with the cited suffix.
 
 
 def test_find_chunk_ids_ending_with_returns_the_sole_suffix_match(tmp_path):
@@ -659,6 +664,148 @@ def test_find_artifact_ids_ending_with_returns_the_sole_suffix_match(tmp_path):
     assert find_artifact_ids_ending_with("digest123_artifact_003", vault_dir=tmp_path) == [
         "Long Human Title - digest123_artifact_003"
     ]
+
+
+# -- P3-02: a budgeted filename can drop the very tail the model cited --------
+#
+# PR #394 fixed candidate discovery by resolving a filename-scan's candidates
+# to their true ids, but the scan itself was still filename-keyed: a suffix
+# that is a real chunk_id's tail but NOT also a tail of that note's
+# (separately, and differently) shortened on-disk filename never surfaced as
+# a candidate at all. `_shrink_pieces` (axial.paths) truncates the readable
+# source stem from its END, so a stem ending in a distinctive marker (here,
+# mirroring the real P3-02 failure, "libgen.li" immediately before the
+# content-hash suffix) can be chopped mid-word, dropping that marker from
+# the filename while the frontmatter chunk_id/artifact_id -- untouched by
+# budgeting -- still carries it in full.
+
+_P3_02_PREFIX = "Colin Turner (Editor) - Nationalism and the ("
+
+
+def test_find_chunk_ids_ending_with_finds_a_suffix_the_budgeted_filename_dropped(tmp_path):
+    """The P3-02 case: the cited suffix is a real tail of `chunk_id` but is
+    NOT a tail of the note's shortened on-disk filename (the filename's
+    truncated stem, "Edinb", lost "urgh University Press) - libgen.li" --
+    including the "libgen.li-" the model's citation started with)."""
+    from axial.query.reader import find_chunk_ids_ending_with
+
+    true_id = (
+        f"{_P3_02_PREFIX}Edinburgh University Press) - libgen.li-5f35a47d9657"
+        "_28_a-religious-ordering-of-society-within-a-secular-nation-state-form_010"
+    )
+    cited_tail = (
+        "libgen.li-5f35a47d9657"
+        "_28_a-religious-ordering-of-society-within-a-secular-nation-state-form_010"
+    )
+    filename = (
+        f"{_P3_02_PREFIX}Edinb-5f35a47d9657"
+        "_28_a-religious-ordering-of-society-within-a-secular-nation-state-form_010.md"
+    )
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, true_id, filename=filename)
+
+    # Sanity: this really is the broken case -- the filename does NOT end
+    # with the cited tail, only the true id does.
+    assert not filename[: -len(".md")].endswith(cited_tail)
+    assert true_id.endswith(cited_tail)
+
+    assert find_chunk_ids_ending_with(cited_tail, vault_dir=tmp_path) == [true_id]
+
+
+def test_find_artifact_ids_ending_with_finds_a_suffix_the_budgeted_filename_dropped(tmp_path):
+    """The `find_artifact_ids_ending_with` counterpart of the P3-02 case."""
+    from axial.query.reader import find_artifact_ids_ending_with
+
+    true_id = f"{_P3_02_PREFIX}Edinburgh University Press) - libgen.li-5f35a47d9657_art_3"
+    cited_tail = "libgen.li-5f35a47d9657_art_3"
+    filename = f"{_P3_02_PREFIX}Edinb-5f35a47d9657_art_3.md"
+    artifacts_dir = tmp_path / "artifacts"
+    _write_artifact_note(artifacts_dir, true_id, filename=filename)
+
+    assert not filename[: -len(".md")].endswith(cited_tail)
+    assert true_id.endswith(cited_tail)
+
+    assert find_artifact_ids_ending_with(cited_tail, vault_dir=tmp_path) == [true_id]
+
+
+def test_find_chunk_ids_ending_with_still_raises_via_two_or_more_matches(tmp_path):
+    """The existing exactly-one-else-ambiguous rule survives the switch to a
+    frontmatter-built index: `find_chunk_ids_ending_with` itself just
+    returns every match (its caller, `axial.analyze.synthesis`, is the one
+    that raises `UnresolvableGroundError` on 2+ or 0 -- see
+    test_synthesis.py's
+    `test_a_ref_id_matching_two_or_more_real_ids_by_suffix_still_raises`)."""
+    from axial.query.reader import find_chunk_ids_ending_with
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "source-one_25_introduction_001")
+    _write_chunk_note(prose_dir, "source-two_25_introduction_001")
+
+    assert find_chunk_ids_ending_with("25_introduction_001", vault_dir=tmp_path) == [
+        "source-one_25_introduction_001",
+        "source-two_25_introduction_001",
+    ]
+
+
+def test_find_chunk_ids_ending_with_still_returns_empty_for_no_match(tmp_path):
+    """The empty-match counterpart, same rationale as the test above (the
+    caller's `UnresolvableGroundError` on zero matches is pinned in
+    test_synthesis.py's
+    `test_a_ref_id_matching_no_real_id_by_suffix_still_raises`)."""
+    from axial.query.reader import find_chunk_ids_ending_with
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "source-one_25_introduction_001")
+
+    assert find_chunk_ids_ending_with("zzz_totally_invented_999", vault_dir=tmp_path) == []
+
+
+def test_get_chunk_fast_path_does_not_build_the_suffix_index(tmp_path):
+    """`get_chunk`'s direct-then-budgeted-name resolution must never build
+    the (comparatively expensive, whole-corpus) suffix index -- observable
+    here as the resolved vault_dir never gaining an entry in the module's
+    process-lifetime index cache."""
+    from axial.query import reader
+
+    _write_chunk_note(tmp_path / "prose", "c1")
+    resolved_vault_dir = tmp_path.resolve()
+    assert resolved_vault_dir not in reader._CHUNK_ID_INDEX_CACHE
+
+    note = get_chunk("c1", vault_dir=tmp_path)
+
+    assert note.chunk_id == "c1"
+    assert resolved_vault_dir not in reader._CHUNK_ID_INDEX_CACHE
+
+
+def test_chunk_id_index_is_built_at_most_once_across_repeated_suffix_lookups(tmp_path, monkeypatch):
+    """A rebuild-per-call would be pathological inside a retrieval loop over
+    the real ~18k-note corpus: the index must be cached for the process
+    lifetime and built at most once per vault_dir, observable here by
+    counting `_read_id_only` calls (one per note on the first lookup, zero
+    more on the second)."""
+    from axial.query import reader
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "source-one_25_introduction_001")
+    _write_chunk_note(prose_dir, "source-two_25_introduction_002")
+
+    calls = []
+    original = reader._read_id_only
+
+    def counting(path, id_field):
+        calls.append(path)
+        return original(path, id_field)
+
+    monkeypatch.setattr(reader, "_read_id_only", counting)
+
+    first = reader.find_chunk_ids_ending_with("introduction_001", vault_dir=tmp_path)
+    calls_after_first = len(calls)
+    second = reader.find_chunk_ids_ending_with("introduction_002", vault_dir=tmp_path)
+
+    assert first == ["source-one_25_introduction_001"]
+    assert second == ["source-two_25_introduction_002"]
+    assert calls_after_first == 2  # one _read_id_only call per note, built once
+    assert len(calls) == calls_after_first  # the second lookup did not rescan
 
 
 # -- LLM-free by construction --------------------------------------------------
