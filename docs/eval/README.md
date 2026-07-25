@@ -11,7 +11,7 @@ axes and must not be conflated:
 
 | # | Eval | Axis | Question it answers | Referee |
 |---|------|------|---------------------|---------|
-| 1 | [Answer quality](01-answer-quality.md) | output | Is the answer right? | Academic hard cases + LLM-as-judge |
+| 1 | [Answer quality](01-answer-quality.md) | output | Is the answer right? | Sealed-packet reviewer panel (PHASE-B §9.4) |
 | 2 | [Hybrid-tagging distillation](02-hybrid-tagging-distillation.md) | cost | Does distilling head tags off the LLM earn its spend? | P0-10 gold set |
 | 3 | [Agentic trajectory](03-agentic-trajectory.md) | process | Did the query agent get there *well*? | Trajectory scoring + programmatic oracles |
 
@@ -21,8 +21,9 @@ alone nor process — it measures **quality per dollar** against a baseline.
 
 ## Explicitly out of scope: re-litigating P0-10
 
-The P0-10 gold-set eval (component-level tagger scoring, shipped PR #136, blocked on
-the academic labeling pause) is **not** one of these three. But eval #2 *uses* P0-10
+The P0-10 gold-set eval (component-level tagger scoring, shipped PR #136; its label
+sheets were lost with `data/gold/` and are re-derivable by the dispatch in
+`docs/sim-academic/`, no longer by an academic) is **not** one of these three. But eval #2 *uses* P0-10
 as its measuring stick — using an instrument and evaluating that instrument are
 different acts. P0-10 is the ruler here, not the subject.
 
@@ -30,14 +31,18 @@ different acts. P0-10 is the ruler here, not the subject.
 
 1. **Freeze and version the corpus.** Scores only compare against a pinned corpus.
    Because all of `data/` is gitignored (DEC-23), the pin is a **manifest + hashes**,
-   not a commit: source list, ingest-code SHA, and a vault snapshot hash. Define this
-   format once, in [answer-quality](01-answer-quality.md), and reuse it for #2 and #3.
-2. **Keep the judge independent.** Anchor any LLM-as-judge to the academic's expected
-   answer, consider a different model family as judge, and spot-check judge-vs-human
-   agreement on a sample. The model's family does not grade its own homework.
+   not a commit: source list, ingest-code SHA, and a vault snapshot hash. Defined once
+   in [answer-quality](01-answer-quality.md), now implemented
+   (`axial pin write`, PHASE-B §7.12), and reused by #2 and #3.
+2. **Keep the judge independent.** The model's family does not grade its own
+   homework. The five rung-3 gates enforce a different model id in code; eval #1's
+   reviewer panel is stricter still — a different **vendor**, sealed from the repo by
+   tooling, N >= 3 with the spread reported as the error bar. There is no
+   judge-vs-human agreement check, because there is no human: a **positive control**
+   against planted defects replaces it (DEC-40, DEC-43).
 3. **Define the adjudication contract before collecting cases.** Per case: an expected
    answer plus the citations it should rest on, or an explicit rubric. A bare question
-   is not an eval.
+   is not an eval. Settled: the keyed `answer_kind` shape of PHASE-B §9.3, permanent.
 4. **No self-grading on softballs.** The anti-Üngör principle (see the #115
    postmortem): grade on hard cases the system cannot already ace, not on questions
    chosen because they pass.
@@ -45,26 +50,24 @@ different acts. P0-10 is the ruler here, not the subject.
 ## Sequencing — one shared gate
 
 ```
-canary #121 PASS ──▶ full 24-source cold re-run ──▶ { #1 rich corpus + academic cases
-                                                     { #2 tag distribution + P0-10
-                                                     { #3 rich corpus (distractors)
+rebuilt corpus ──▶ pin resolves ──▶ { #1 rich corpus + panel positive control
+                                    { #2 tag distribution + P0-10
+                                    { #3 rich corpus (distractors)
 ```
 
-The full re-run is the single critical-path event. Nothing meaningful *runs* before
-it. But the **harnesses for #2 and #3 can be built and dry-run now** against the
-current small state or synthetic cases — their oracles (token/step counts,
-parity-with-teacher, retrieval-hit checks) do not need the academic. Only #1's cases
-need the scarce academic, so batch that ask with the P0-10 label request rather than
-making a second round-trip.
+The corpus rebuild is the single critical-path event. Nothing meaningful *runs*
+before it, though every harness can be built and dry-run against synthetic cases
+first — no oracle here waits on a person.
 
 ## The scarce resource
 
-The academic is the bottleneck: P0-10 labels and #1's hard cases are both asks of the
-same person. Order of operations: canary PASS → full re-run → academic authors hard
-cases on the frozen rich corpus. Build #2 and #3 in parallel while that waits.
+There isn't one any more. The academic was the bottleneck for #1's hard cases and
+P0-10's labels; #250 and #295 closed *not planned* on 2026-07-24, so nothing in this
+directory waits on a human. #1's referee is now a model panel that is trusted only
+after its own positive control catches planted defects.
 
 ## Files
 
-- `01-answer-quality.md` — output axis. Also owns the shared corpus-pin format.
+- `01-answer-quality.md` — output axis. Originated the shared corpus-pin format.
 - `02-hybrid-tagging-distillation.md` — cost axis. The "exploratory process."
 - `03-agentic-trajectory.md` — process axis. The product's query agent (path *a*).

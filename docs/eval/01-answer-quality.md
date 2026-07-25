@@ -1,58 +1,99 @@
 # Eval 1 — answer quality (output axis)
 
-**Status:** foundation stub. Approved in essence; design to be deepened.
-**Depends on:** full 24-source re-run (rich corpus) + academic-authored hard cases.
+**Status:** settled. The instrument is specified in
+[`specs/PHASE-B.md` §9.4](../../specs/PHASE-B.md); building it is issue #385.
+**Depends on:** the rebuilt corpus and a resolved pin. **No academic input** —
+#250 and #295 were closed *not planned* on 2026-07-24, and none is coming.
 
 ## Question
 
-Given a hard analytical query against a rich corpus, is the product's answer correct,
-well-supported, and grounded in the right sources?
+Given a hard analytical query against a rich corpus, is the product's answer
+correct, well-supported, and grounded in the right sources?
 
-## Why "hard cases against a rich corpus" is the honest bar
+## What changed, and why this document was rewritten
 
-- Retrieval quality only manifests at corpus scale — distractors, near-duplicates, and
-  cross-source synthesis only exist when the vault is rich. So the full re-run is a
-  precondition for this eval to mean anything.
-- The academic authoring the cases removes self-grading bias: they write the question
-  and can adjudicate a good answer.
-- Anti-Üngör: no softballs the system can already answer (the #115 postmortem mistake).
+This eval was originally designed around an academic who would author hard
+cases and adjudicate good answers. That person does not exist and will not.
+DEC-40 replaced the human referee with a **sealed-packet peer-reviewer panel**;
+DEC-43 scoped that panel as an **offline eval instrument run on a sample**,
+not a referee wired into any run. Both are reflected below. The corpus-pin
+format this document used to own is now implemented and specified in PHASE-B
+§7.12.
 
-## Adjudication contract (to settle)
+Three things the earlier version said are now wrong and are corrected here:
 
-Per case, one of:
+- Academic-authored hard cases are **not** a dependency of this eval.
+- There is no **judge-vs-academic agreement sampling**. There is no academic to
+  agree with. The positive control replaces it.
+- This is **not a per-case referee**. A panel number belongs to a measurement
+  run and its stated frame, never to a single analysis.
 
-- **Expected answer + required citations** — the answer the system should give and the
-  source passages it must rest on. Judge scores both correctness and grounding.
-- **Rubric** — for open questions with no single answer, a scored checklist of what a
-  good answer must contain.
+## The bar: hard cases against a rich corpus
 
-Open: which format, or a mix keyed by question type. A bare question is not an eval.
+- Retrieval quality only manifests at corpus scale — distractors,
+  near-duplicates, and cross-source synthesis only exist when the vault is
+  rich. The full corpus is a precondition for this eval to mean anything.
+- Anti-Üngör: no softballs the system can already answer (the #115 postmortem
+  mistake).
+- Cases are sampled **across performance tiers**, not just the good ones. A
+  panel run over only strong outputs measures nothing useful.
 
-## Judge
+## The referee: a sealed-packet panel
 
-LLM-as-judge, anchored to the academic's expected answer. Constraints:
+Specified in full at PHASE-B §9.4. Its seven integrity properties are not
+restated here; the four that most change how a number may be read are:
 
-- Consider a **different model family** as judge to avoid family self-grading.
-- Spot-check **judge-vs-academic agreement** on a sample before trusting the judge at
-  scale.
-- Score dimensions separately: factual correctness, citation grounding, completeness.
+- **A stranger to the repo, sealed by tooling.** The reviewer gets the rendered
+  analysis plus the resolved text of every chunk its claims cite, and nothing
+  else — enforced by an empty tool registry, never by a prompt instruction.
+- **A different vendor**, meaning the training lab, not the API provider.
+  Stricter than the different-model-id guard the five rung-3 gates carry.
+- **N ≥ 3 reviewers, and the spread is the error bar.** A mean without a spread
+  is not reportable.
+- **A positive control before any number is trusted.** The panel must first
+  catch planted defects: a mis-grounded claim, a strawmanned counter-position,
+  and an overconfident band. LLM judges are systematically generous and are
+  moved by confident prose. No live positive control exists anywhere in this
+  repo today (#323); this is the first.
 
-## Corpus pin (shared format — owned here)
+`expected_answer` in `evals/cases/sim/` is **retired as the primary referee**
+and is **never placed in a reviewer packet** — showing a reviewer a pre-written
+answer anchors it to that answer (PHASE-B §9.3). `required_citation_source_ids`
+keeps its role as a mechanical oracle, used by eval #3 rather than here.
 
-All of `data/` is gitignored (DEC-23), so the pinned corpus is a manifest, not a
-commit. Minimum fields:
+## Where the number may be reported
 
-- **Source list** — the 24 sources, each with a content hash of the ingested input.
-- **Ingest-code SHA** — the commit the pipeline ran at.
-- **Vault snapshot hash** — a hash over the produced notes (chunk_ids + tags, never
-  chunk_text, per DEC-23).
+The refereed tier (PHASE-B §9.2). Every panel number carries a disclosed
+ceiling: that the referee is a model panel, how many reviewers ran, which
+vendors they came from, the spread across them, the sample scored, and the
+corpus pin.
 
-Reused by eval #2 and #3. Two runs are only comparable if their pins match.
+**No number here may ever be reported, aggregated, cited, or promoted as
+"measured quality against human expert judgment."** There is no human expert in
+this product's loop.
+
+No analysis record and no gate report carries a panel verdict. A brief run
+neither triggers a panel nor waits for one.
+
+## Corpus pin
+
+This document originated the format. It is now **implemented** in
+`src/axial/eval/corpus_pin.py` and written with `axial pin write <name>`; the
+field contract it carries is stated in PHASE-B §7.12. Reused by evals #2 and
+#3; two runs are only comparable if their pins match. Source filenames are part
+of a pin's identity — see DEC-42 for what that cost when the corpus was
+rebuilt.
 
 ## Open threads
 
-- Adjudication format: expected-answer+citations vs. rubric vs. keyed mix.
-- How many cases, across which strata (field × scope × role, per the gold frame).
-- Judge model choice and the agreement-sampling protocol.
-- Where cases live (safe to commit — questions + expected answers reference chunk_ids,
-  not source text).
+- How many reviewers past three buy anything measurable.
+- How panel verdicts aggregate across a sample into a headline figure without
+  hiding the spread.
+- Which cases and which model combinations make up a given run's sampling
+  frame — set per measurement run, recorded with the result, and in practice
+  driven by #362's tier bucketing.
+
+*Closed, not deferred:* the adjudication format (the keyed `answer_kind` shape
+of PHASE-B §9.3 is the permanent contract), where cases live
+(`evals/cases/sim/`, retained permanently), and the judge-vs-academic
+agreement protocol.
