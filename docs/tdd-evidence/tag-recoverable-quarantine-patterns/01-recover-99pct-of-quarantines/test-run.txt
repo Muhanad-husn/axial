@@ -1,0 +1,31 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- D:\axial\.claude\worktrees\fix-tag-quarantine-recovery\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial\.claude\worktrees\fix-tag-quarantine-recovery
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 147 items / 139 deselected / 8 selected
+
+src/axial/test_tag.py::test_parse_multi_value_tag_response_primary_plus_secondary_drops_a_blank_secondary_entry PASSED [ 12%]
+src/axial/test_tag.py::test_parse_multi_value_tag_response_primary_plus_secondary_drops_only_the_blank_entries PASSED [ 25%]
+src/axial/test_tag.py::test_parse_multi_value_tag_response_optional_secondary_blank_scalar_collapses_to_none PASSED [ 37%]
+src/axial/test_tag.py::test_parse_multi_value_tag_response_optional_secondary_blank_single_element_list_collapses_to_none PASSED [ 50%]
+src/axial/test_tag.py::test_parse_multi_value_tag_response_coerces_bare_string_to_primary_for_primary_plus_secondary_axis PASSED [ 62%]
+src/axial/test_tag.py::test_parse_multi_value_tag_response_still_rejects_a_genuinely_malformed_field_value PASSED [ 75%]
+src/axial/test_tag.py::test_run_tag_tags_successfully_when_claim_type_secondary_is_a_persistent_blank_string PASSED [ 87%]
+src/axial/test_tag.py::test_run_tag_succeeds_immediately_when_secondary_entry_is_a_blank_string PASSED [100%]
+
+====================== 8 passed, 139 deselected in 0.58s ======================
+
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- D:\axial\.claude\worktrees\fix-tag-quarantine-recovery\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial\.claude\worktrees\fix-tag-quarantine-recovery
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 52 items / 51 deselected / 1 selected
+
+src/axial/test_artifacts.py::test_reject_degenerate_artifact_values_accepts_a_blank_field_secondary_entry PASSED [100%]
+
+====================== 1 passed, 51 deselected in 5.46s =======================
+exit=0
