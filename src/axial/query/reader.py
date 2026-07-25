@@ -29,13 +29,19 @@ writes to the vault.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_vault_dir
+from axial.paths import (
+    DEFAULT_PIPELINE_CONFIG_PATH,
+    artifact_note_path,
+    chunk_note_path,
+    default_vault_dir,
+)
 
 # The §7.5 fixed axis filter set for `query_by_tag`. `polity` matches
 # `empirical_scope`'s nested `polity` sub-field, distinct from the
@@ -272,10 +278,19 @@ def _parse_artifact_note(path: Path) -> ArtifactNote:
 
 def get_chunk(chunk_id: str, vault_dir: Path | None = None) -> ChunkNote:
     """Fetch one prose note by id (§7.5). Raises `ChunkNotFoundError`,
-    naming `chunk_id`, when no note exists -- never returns `None`."""
+    naming `chunk_id`, when no note exists -- never returns `None`.
+
+    A note's on-disk filename is a display artifact, not its id: a source
+    whose readable name would push the path over Windows' MAX_PATH gets its
+    note filename shortened at write time (`axial.vault.write_chunk_note`,
+    PR #377), while `chunk_id` itself never changes. Resolution here tries
+    the direct `<chunk_id>.md` path first (correct for ~97.8% of notes,
+    measured on the real corpus), falling back to `axial.paths.chunk_note_path`
+    -- the SAME naming function the writer used -- only on a miss, so a
+    budgeted note is still reachable by its real, correct chunk_id."""
     if vault_dir is None:
         vault_dir = default_vault_dir()
-    path = Path(vault_dir) / "prose" / f"{chunk_id}.md"
+    path = _resolve_chunk_path(chunk_id, Path(vault_dir))
     if not path.is_file():
         raise ChunkNotFoundError(chunk_id, path)
     return _parse_chunk_note(path)
@@ -283,13 +298,57 @@ def get_chunk(chunk_id: str, vault_dir: Path | None = None) -> ChunkNote:
 
 def get_artifact(artifact_id: str, vault_dir: Path | None = None) -> ArtifactNote:
     """Fetch one artifact note by id (§7.5). Raises `ArtifactNotFoundError`,
-    naming `artifact_id`, when no note exists -- never returns `None`."""
+    naming `artifact_id`, when no note exists -- never returns `None`. Same
+    direct-path-then-budgeted-fallback resolution as `get_chunk` (see its
+    docstring)."""
     if vault_dir is None:
         vault_dir = default_vault_dir()
-    path = Path(vault_dir) / "artifacts" / f"{artifact_id}.md"
+    path = _resolve_artifact_path(artifact_id, Path(vault_dir))
     if not path.is_file():
         raise ArtifactNotFoundError(artifact_id, path)
     return _parse_artifact_note(path)
+
+
+def find_chunk_ids_ending_with(suffix: str, *, vault_dir: Path | None = None) -> list[str]:
+    """Every real `chunk_id` under `vault_dir` ending with `suffix`
+    (`str.endswith`). Not part of the §7.5 tool set the model or a caller
+    queries with; it exists for `axial.analyze.synthesis`'s grounds-
+    resolution fallback, which repairs a citation where the model echoed
+    only the tail of a real, long chunk id (DEC-42: `source_id` -- and so
+    `chunk_id` -- runs to ~200 chars after the corpus rebuild).
+
+    Two-step so this stays cheap: a filename-only scan finds candidate notes
+    (no frontmatter parse of the whole corpus), then only those candidates'
+    frontmatter is read to recover each note's TRUE `chunk_id` -- a
+    budgeted note's filename stem is not a real id (it is the shortened,
+    on-disk name, `axial.paths.budgeted_chunk_filename`), so returning
+    filename stems here would hand the caller a string that does not
+    resolve to anything. The true ids are deduped (a stale full-length note
+    and a budgeted note for the same chunk must not double-count as two
+    matches, see specs/PHASE-B.md §7.5) and sorted for determinism; returns
+    0, 1, or 2+ distinct ids -- the caller decides what a given count
+    means."""
+    if vault_dir is None:
+        vault_dir = default_vault_dir()
+    prose_dir = Path(vault_dir) / "prose"
+    if not prose_dir.is_dir():
+        return []
+    candidates = (path for path in prose_dir.glob("*.md") if path.stem.endswith(suffix))
+    true_ids = {_parse_chunk_note(path).chunk_id for path in candidates}
+    return sorted(true_ids)
+
+
+def find_artifact_ids_ending_with(suffix: str, *, vault_dir: Path | None = None) -> list[str]:
+    """The artifact-note counterpart of `find_chunk_ids_ending_with` -- same
+    candidate-scan-then-resolve-to-true-id rationale, same contract."""
+    if vault_dir is None:
+        vault_dir = default_vault_dir()
+    artifacts_dir = Path(vault_dir) / "artifacts"
+    if not artifacts_dir.is_dir():
+        return []
+    candidates = (path for path in artifacts_dir.glob("*.md") if path.stem.endswith(suffix))
+    true_ids = {_parse_artifact_note(path).artifact_id for path in candidates}
+    return sorted(true_ids)
 
 
 def _axis_matches(axis_value: Any, filter_value: str) -> bool:
@@ -449,6 +508,54 @@ def source_id_from_chunk_id(chunk_id: str) -> str:
     return parts[0]
 
 
+# `artifact_id`'s own `<source_id>_art_<order>` grammar
+# (`axial.artifacts.artifact_id_for_node`), with `order` locked to a
+# dotted-digits shape -- unlike `source_id_from_chunk_id`, this never raises:
+# it exists only to drive the budgeted-filename fallback below, where "this
+# id doesn't parse" and "this id parses but the note is missing" both end in
+# the same not-found outcome, so a `None` return is all a caller needs.
+_ARTIFACT_ORDER_SUFFIX = re.compile(r"_art_[0-9]+(?:\.[0-9]+)*$")
+
+
+def _source_id_from_artifact_id(artifact_id: str) -> str | None:
+    match = _ARTIFACT_ORDER_SUFFIX.search(artifact_id)
+    if not match or match.start() == 0:
+        return None
+    return artifact_id[: match.start()]
+
+
+def _resolve_chunk_path(chunk_id: str, vault_dir: Path) -> Path:
+    """The on-disk path for `chunk_id`'s note: the direct `<chunk_id>.md`
+    path when it exists (the common case), falling back to
+    `axial.paths.chunk_note_path` -- the same naming function
+    `axial.vault.write_chunk_note` used -- when it does not, so a note whose
+    filename was shortened to fit Windows' MAX_PATH is still reachable by
+    its real chunk_id. Returns the direct path unresolved when `chunk_id`
+    doesn't even parse (`MalformedChunkIdError`), so a genuinely bad id
+    still reports a sensible "expected at" path rather than raising a
+    different, unexpected error."""
+    direct = vault_dir / "prose" / f"{chunk_id}.md"
+    if direct.is_file():
+        return direct
+    try:
+        source_id = source_id_from_chunk_id(chunk_id)
+    except MalformedChunkIdError:
+        return direct
+    return chunk_note_path(vault_dir, source_id, chunk_id)
+
+
+def _resolve_artifact_path(artifact_id: str, vault_dir: Path) -> Path:
+    """The `get_artifact`/`follow_backlinks` counterpart of
+    `_resolve_chunk_path` -- same rationale, same contract."""
+    direct = vault_dir / "artifacts" / f"{artifact_id}.md"
+    if direct.is_file():
+        return direct
+    source_id = _source_id_from_artifact_id(artifact_id)
+    if source_id is None:
+        return direct
+    return artifact_note_path(vault_dir, source_id, artifact_id)
+
+
 def query_by_source(source_id: str, *, vault_dir: Path | None = None) -> list[str]:
     """Every chunk_id belonging to `source_id` (§7.5): matched on the
     chunk_id's own embedded `source_id` seam (`source_id_from_chunk_id`),
@@ -510,17 +617,20 @@ def follow_backlinks(id_: str, *, vault_dir: Path | None = None) -> list[str]:
     `artifact_refs`; an artifact id resolves to its `cited_by`. Dispatches
     on which kind of note `id_` names, by file existence -- chunk_id and
     artifact_id are both opaque strings, nothing in the id itself says
-    which kind it is. An empty link list on either side returns `[]`, not
-    an error; only an id that resolves to neither a chunk nor an artifact
-    raises `BacklinkTargetNotFoundError`. Results are sorted ascending, the
-    same determinism contract as every other tool here."""
+    which kind it is. Resolution is the same direct-then-budgeted-fallback
+    lookup as `get_chunk`/`get_artifact` (`_resolve_chunk_path`/
+    `_resolve_artifact_path`), so a budgeted note is reachable here too. An
+    empty link list on either side returns `[]`, not an error; only an id
+    that resolves to neither a chunk nor an artifact raises
+    `BacklinkTargetNotFoundError`. Results are sorted ascending, the same
+    determinism contract as every other tool here."""
     if vault_dir is None:
         vault_dir = default_vault_dir()
     vault_dir = Path(vault_dir)
-    chunk_path = vault_dir / "prose" / f"{id_}.md"
+    chunk_path = _resolve_chunk_path(id_, vault_dir)
     if chunk_path.is_file():
         return sorted(_parse_chunk_note(chunk_path).artifact_refs)
-    artifact_path = vault_dir / "artifacts" / f"{id_}.md"
+    artifact_path = _resolve_artifact_path(id_, vault_dir)
     if artifact_path.is_file():
         return sorted(_parse_artifact_note(artifact_path).cited_by)
     raise BacklinkTargetNotFoundError(id_, chunk_path, artifact_path)

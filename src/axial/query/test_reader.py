@@ -35,7 +35,12 @@ from axial.query.reader import source_id_from_chunk_id
 # -- fixture helpers ----------------------------------------------------------
 
 
-def _write_chunk_note(prose_dir, chunk_id, **overrides):
+def _write_chunk_note(prose_dir, chunk_id, *, filename=None, **overrides):
+    """Write a prose note whose FRONTMATTER `chunk_id` is `chunk_id` and
+    whose on-disk filename is `filename` (defaulting to `f"{chunk_id}.md"`,
+    the ordinary unbudgeted case). A caller passing an explicit `filename`
+    simulates a filename-budgeted note (PR #377) or a stale duplicate
+    written under a different name for the same true chunk_id."""
     prose_dir.mkdir(parents=True, exist_ok=True)
     frontmatter = {
         "chunk_id": chunk_id,
@@ -57,10 +62,12 @@ def _write_chunk_note(prose_dir, chunk_id, **overrides):
     }
     frontmatter.update(overrides)
     text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
-    (prose_dir / f"{chunk_id}.md").write_text(text, encoding="utf-8")
+    (prose_dir / (filename or f"{chunk_id}.md")).write_text(text, encoding="utf-8")
 
 
-def _write_artifact_note(artifacts_dir, artifact_id, **overrides):
+def _write_artifact_note(artifacts_dir, artifact_id, *, filename=None, **overrides):
+    """The artifact-note counterpart of `_write_chunk_note` -- same
+    filename-independent-of-id contract."""
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     frontmatter = {
         "artifact_id": artifact_id,
@@ -73,7 +80,7 @@ def _write_artifact_note(artifacts_dir, artifact_id, **overrides):
     }
     frontmatter.update(overrides)
     text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
-    (artifacts_dir / f"{artifact_id}.md").write_text(text, encoding="utf-8")
+    (artifacts_dir / (filename or f"{artifact_id}.md")).write_text(text, encoding="utf-8")
 
 
 # -- note parser: malformed frontmatter --------------------------------------
@@ -431,6 +438,227 @@ def test_get_artifact_raises_not_found_naming_the_id(tmp_path):
     with pytest.raises(ArtifactNotFoundError) as exc_info:
         get_artifact("does-not-exist", vault_dir=tmp_path)
     assert "does-not-exist" in str(exc_info.value)
+
+
+# -- get_chunk / get_artifact: filename-budgeted notes (PR #377) --------------
+#
+# `axial.vault._note_path`/`_artifact_note_path` shorten a note's ON-DISK
+# FILENAME (never `chunk_id`/`artifact_id` itself) when the full id would
+# push the path over Windows' 260-char MAX_PATH. Before this fix, `get_chunk`/
+# `get_artifact` assumed filename == id and could never find such a note
+# again by its real, correct id -- measured on the real corpus: 399 notes
+# across the three longest source_ids (Benjamin Thomas White, Syrias
+# Peasantry, Andreas Wimmer) were unreachable this way.
+#
+# These ids are deliberately SHORT: a real budgeted id runs to ~300 chars,
+# but Linux (unlike Windows/NTFS) caps a single path COMPONENT at 255 bytes,
+# so a filename that long fails outright on write/exists() on CI (Errno 36,
+# ENAMETOOLONG) before the reader logic under test ever runs -- a test-
+# portability defect, not a product one (`axial.query.test_reader` CI
+# incident, 2026-07-25). Instead, `monkeypatch` lowers
+# `axial.paths._WINDOWS_MAX_PATH` (a module-private test seam -- no new
+# config key, env var, or CLI flag, and every production call site keeps its
+# real 260-char default) far enough below these short ids' own length that
+# the budgeting fallback is forced to trigger regardless of the OS or the
+# tmp dir's own path length, while the resulting filenames stay well under
+# 255 bytes on every OS.
+
+_BUDGET_HASH12 = "0123456789ab"
+_BUDGET_SOURCE_ID = f"{'A' * 20}-{_BUDGET_HASH12}"
+# Low enough that `path_overage` is positive even for a zero-length
+# directory and this module's short stem/slug (see the two tests below),
+# so the shrink always fully empties them -- deterministic across OSes and
+# tmp_path depths, never dependent on how long the test's own tmp dir is.
+_TEST_MAX_PATH = 25
+
+_BUDGET_RECORD_BASE = {
+    "section": "Introduction",
+    "chunk_text": "Some long-source prose.",
+    "role_in_argument": "role:claim",
+    "schema_version": "1.0.0",
+    "empirical_scope": "scope:country-case",
+    "polity": "Syria",
+    "polities_touched": ["Syria"],
+    "field": {"primary": "field:political-science", "secondary": []},
+    "claim_type": {"primary": "claim:causal", "secondary": None, "subtags": []},
+    "theory_school": {"primary": "school:realism", "secondary": None, "status": "candidate"},
+}
+_BUDGET_ENVELOPE = {"thesis": "T", "scope": "S"}
+_BUDGET_SOURCE_META = {
+    "author": {"value": "A", "provenance": "p"},
+    "title": {"value": "Ti", "provenance": "p"},
+    "date": "unavailable",
+}
+
+
+def test_get_chunk_resolves_a_note_whose_filename_was_budgeted(tmp_path, monkeypatch):
+    """The case that is broken today: a note written under a shortened
+    on-disk filename must still resolve by its true, full `chunk_id`."""
+    import axial.paths
+    from axial.vault import write_chunk_note
+
+    monkeypatch.setattr(axial.paths, "_WINDOWS_MAX_PATH", _TEST_MAX_PATH)
+
+    slug = "b" * 20
+    chunk_id = f"{_BUDGET_SOURCE_ID}_1_{slug}_001"
+    record = {**_BUDGET_RECORD_BASE, "chunk_id": chunk_id}
+    vault_dir = tmp_path / "vault"
+
+    note_path = write_chunk_note(
+        record, _BUDGET_ENVELOPE, _BUDGET_SOURCE_META, vault_dir, source_id=_BUDGET_SOURCE_ID
+    )
+    # Sanity: the writer really did shorten the filename (not just happened
+    # to already fit) -- otherwise this test would not exercise the fallback.
+    assert note_path.name != f"{chunk_id}.md"
+    assert not (vault_dir / "prose" / f"{chunk_id}.md").exists()
+
+    note = get_chunk(chunk_id, vault_dir=vault_dir)
+
+    assert note.chunk_id == chunk_id
+    assert note.chunk_text == "Some long-source prose."
+
+
+def test_get_chunk_fast_path_resolves_directly_without_needing_chunk_id_grammar(tmp_path):
+    """No regression on the direct `<chunk_id>.md` path (~97.8% of real
+    notes): resolution must succeed even for an id that would raise
+    `MalformedChunkIdError` if the fallback's `source_id_from_chunk_id`
+    parse ran on it -- proving the fast, direct hit is tried FIRST and the
+    fallback is never even consulted when it exists."""
+    _write_chunk_note(tmp_path / "prose", "not-shaped-like-a-real-chunk-id")
+
+    note = get_chunk("not-shaped-like-a-real-chunk-id", vault_dir=tmp_path)
+
+    assert note.chunk_id == "not-shaped-like-a-real-chunk-id"
+
+
+def test_get_artifact_resolves_a_note_whose_filename_was_budgeted(tmp_path, monkeypatch):
+    """The `get_artifact` counterpart of the budgeted-chunk-note case."""
+    import axial.paths
+    from axial.vault import write_artifact_note
+
+    monkeypatch.setattr(axial.paths, "_WINDOWS_MAX_PATH", _TEST_MAX_PATH)
+
+    artifact_id = f"{_BUDGET_SOURCE_ID}_art_1.2"
+    record = {
+        "artifact_id": artifact_id,
+        "artifact_role": "case-study",
+        "field": {"primary": "state", "secondary": []},
+        "source_id": _BUDGET_SOURCE_ID,
+        "section": "Introduction",
+    }
+    vault_dir = tmp_path / "vault"
+
+    note_path = write_artifact_note(record, vault_dir)
+    assert note_path.name != f"{artifact_id}.md"
+    assert not (vault_dir / "artifacts" / f"{artifact_id}.md").exists()
+
+    note = get_artifact(artifact_id, vault_dir=vault_dir)
+
+    assert note.artifact_id == artifact_id
+    assert note.artifact_role == "case-study"
+
+
+def test_get_artifact_fast_path_resolves_directly_without_needing_artifact_id_grammar(tmp_path):
+    """No regression on `get_artifact`'s direct path: an id that does not
+    even carry the `_art_<order>` shape (so the fallback's source_id parse
+    can never succeed on it) still resolves via the direct hit."""
+    _write_artifact_note(tmp_path / "artifacts", "not-shaped-like-an-artifact-id")
+
+    note = get_artifact("not-shaped-like-an-artifact-id", vault_dir=tmp_path)
+
+    assert note.artifact_id == "not-shaped-like-an-artifact-id"
+
+
+# -- find_chunk_ids_ending_with / find_artifact_ids_ending_with ---------------
+# The `axial.analyze.synthesis` truncated-citation repair's lookup: a
+# filename-only suffix scan, used only when an exact match already failed.
+
+
+def test_find_chunk_ids_ending_with_returns_the_sole_suffix_match(tmp_path):
+    from axial.query.reader import find_chunk_ids_ending_with
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "Long Human Title - digest123_25_intro_001")
+    _write_chunk_note(prose_dir, "Other Source - digest456_1_conclusion_002")
+
+    assert find_chunk_ids_ending_with("digest123_25_intro_001", vault_dir=tmp_path) == [
+        "Long Human Title - digest123_25_intro_001"
+    ]
+
+
+def test_find_chunk_ids_ending_with_returns_every_match_when_ambiguous(tmp_path):
+    from axial.query.reader import find_chunk_ids_ending_with
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "srcA-digest_25_intro_001")
+    _write_chunk_note(prose_dir, "srcB-digest_25_intro_001")
+
+    assert find_chunk_ids_ending_with("digest_25_intro_001", vault_dir=tmp_path) == [
+        "srcA-digest_25_intro_001",
+        "srcB-digest_25_intro_001",
+    ]
+
+
+def test_find_chunk_ids_ending_with_returns_true_chunk_ids_not_filename_stems_for_budgeted_notes(
+    tmp_path,
+):
+    """A budgeted note's filename stem is NOT a real id -- the fallback must
+    resolve each candidate to its true `chunk_id` from frontmatter, not
+    hand back the shortened on-disk name."""
+    from axial.query.reader import find_chunk_ids_ending_with
+
+    prose_dir = tmp_path / "prose"
+    true_id = "Some Long Human-Readable Title - digest123_26_a-section_012"
+    _write_chunk_note(
+        prose_dir,
+        true_id,
+        filename="Some Short-digest123_26_a-section_012.md",
+    )
+
+    assert find_chunk_ids_ending_with("digest123_26_a-section_012", vault_dir=tmp_path) == [true_id]
+
+
+def test_find_chunk_ids_ending_with_dedupes_a_budgeted_note_and_a_stale_duplicate_to_one_true_id(
+    tmp_path,
+):
+    """Precisely the second P1-04 failure: a stale full-length-named note
+    and a budgeted-named note both carry the SAME true chunk_id in
+    frontmatter (a post-#377 re-run wrote the budgeted name without
+    removing the earlier full-length one). Two filenames match the cited
+    suffix, but they must dedupe to ONE distinct true id, not be treated as
+    an ambiguous match."""
+    from axial.query.reader import find_chunk_ids_ending_with
+
+    prose_dir = tmp_path / "prose"
+    true_id = "Some Long Human-Readable Title - digest123_26_a-section_012"
+    _write_chunk_note(prose_dir, true_id)  # stale, full-length filename
+    _write_chunk_note(
+        prose_dir,
+        true_id,
+        filename="Some Short-digest123_26_a-section_012.md",
+    )  # budgeted filename, same true chunk_id
+
+    assert find_chunk_ids_ending_with("digest123_26_a-section_012", vault_dir=tmp_path) == [true_id]
+
+
+def test_find_chunk_ids_ending_with_returns_empty_when_no_match(tmp_path):
+    from axial.query.reader import find_chunk_ids_ending_with
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "srcA-digest_25_intro_001")
+
+    assert find_chunk_ids_ending_with("not_a_real_suffix", vault_dir=tmp_path) == []
+
+
+def test_find_artifact_ids_ending_with_returns_the_sole_suffix_match(tmp_path):
+    from axial.query.reader import find_artifact_ids_ending_with
+
+    artifacts_dir = tmp_path / "artifacts"
+    _write_artifact_note(artifacts_dir, "Long Human Title - digest123_artifact_003")
+
+    assert find_artifact_ids_ending_with("digest123_artifact_003", vault_dir=tmp_path) == [
+        "Long Human Title - digest123_artifact_003"
+    ]
 
 
 # -- LLM-free by construction --------------------------------------------------
