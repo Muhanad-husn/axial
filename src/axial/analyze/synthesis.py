@@ -13,8 +13,11 @@ as a prompt-content property" pattern the #228 anti-anecdote test already
 uses for the envelope pass. `parse_synthesis_response` is the deterministic
 half: every claim's `kind` is validated against `{a, b, c}`, every (a)/(b)
 claim's `grounds` must be non-empty, every grounds entry must resolve to a
-real vault id (`axial.query.reader.get_chunk`/`get_artifact`), and
-`polities_touched` is computed here -- never trusted from the model -- as
+real vault id (`axial.query.reader.get_chunk`/`get_artifact`, exact match
+first, falling back to a unique-suffix repair of a truncated citation via
+`_resolve_truncated_ref_id` -- DEC-42 grew ids to ~200 chars and the model
+sometimes echoes only the tail), and `polities_touched` is computed here --
+never trusted from the model -- as
 the union of the claim's grounds CHUNKS' `polities_touched` facets (an
 artifact ground carries no such facet of its own, so it contributes
 nothing). `claim_id` is a deterministic hash over each claim's own parsed
@@ -46,6 +49,8 @@ from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.query.reader import (
     ArtifactNotFoundError,
     ChunkNotFoundError,
+    find_artifact_ids_ending_with,
+    find_chunk_ids_ending_with,
     get_artifact,
     get_chunk,
 )
@@ -351,14 +356,50 @@ def _dedupe_preserving_order(values: list[str]) -> list[str]:
     return ordered
 
 
+def _resolve_truncated_ref_id(
+    index: int, text: Any, ref_type: str, ref_id: str, *, vault_dir: Path | None
+) -> str:
+    """Fallback for a grounds `ref_id` that failed an exact match: after the
+    DEC-42 corpus rebuild, `chunk_id`/`artifact_id` values run to ~200
+    characters (the raw download filename plus digest, order key, slug, and
+    index), and the model sometimes echoes only the tail, dropping the long
+    human-readable prefix -- stochastic truncation, not a pipeline bug (a
+    real benchmark run's succeeding claims cited the full id correctly).
+
+    Resolves to the SOLE real id ending with `ref_id` (`str.endswith`). This
+    is not a loosening of anti-confabulation: the cited tail still carries
+    the source's 12-hex content digest plus the chunk's order key, slug, and
+    index, which is unique across the corpus in practice (verified against
+    the live vault: no real id is ever itself a suffix of another real id),
+    so a genuinely hallucinated id will not happen to suffix-match exactly
+    one real one. Zero or 2+ matches raise `UnresolvableGroundError`
+    unchanged -- ambiguity or absence is still a hard error, never guessed
+    at."""
+    finder = find_chunk_ids_ending_with if ref_type == "chunk" else find_artifact_ids_ending_with
+    matches = finder(ref_id, vault_dir=vault_dir)
+    if len(matches) != 1:
+        raise UnresolvableGroundError(index, text, ref_type, ref_id)
+
+    resolved_id = matches[0]
+    print(
+        f"synthesize: repaired truncated grounds ref_id on claim #{index}: "
+        f"{ref_id!r} -> {resolved_id!r} (unique suffix match)",
+        file=sys.stderr,
+    )
+    return resolved_id
+
+
 def _resolve_grounds(
     index: int, text: Any, raw_grounds: Any, *, vault_dir: Path | None
 ) -> tuple[list[Ground], list[str]]:
     """Validate and resolve one claim's raw `grounds` list against the
     vault: structural shape, `ref_type` in `_REF_TYPES`, and `ref_id`
-    resolving to a real note. Returns the resolved `Ground` list plus the
-    `polities_touched` union computed from resolved CHUNK grounds only (an
-    artifact ground contributes nothing -- `ArtifactNote` carries no
+    resolving to a real note -- exact match first, falling back to
+    `_resolve_truncated_ref_id`'s unique-suffix repair on a miss. The
+    `Ground` recorded always carries the resolved (full, real) id, never the
+    ref_id as the model emitted it. Returns the resolved `Ground` list plus
+    the `polities_touched` union computed from resolved CHUNK grounds only
+    (an artifact ground contributes nothing -- `ArtifactNote` carries no
     `polities_touched` facet of its own)."""
     if raw_grounds is None:
         return [], []
@@ -383,19 +424,26 @@ def _resolve_grounds(
                 f"claim #{index} ({text!r}) has a grounds entry with a missing/blank ref_id"
             )
 
+        resolved_id = ref_id
         if ref_type == "chunk":
             try:
                 note = get_chunk(ref_id, vault_dir=vault_dir)
-            except ChunkNotFoundError as exc:
-                raise UnresolvableGroundError(index, text, ref_type, ref_id) from exc
+            except ChunkNotFoundError:
+                resolved_id = _resolve_truncated_ref_id(
+                    index, text, ref_type, ref_id, vault_dir=vault_dir
+                )
+                note = get_chunk(resolved_id, vault_dir=vault_dir)
             touched.extend(note.polities_touched)
         else:
             try:
                 get_artifact(ref_id, vault_dir=vault_dir)
-            except ArtifactNotFoundError as exc:
-                raise UnresolvableGroundError(index, text, ref_type, ref_id) from exc
+            except ArtifactNotFoundError:
+                resolved_id = _resolve_truncated_ref_id(
+                    index, text, ref_type, ref_id, vault_dir=vault_dir
+                )
+                get_artifact(resolved_id, vault_dir=vault_dir)
 
-        grounds.append(Ground(ref_type=ref_type, ref_id=ref_id))
+        grounds.append(Ground(ref_type=ref_type, ref_id=resolved_id))
 
     return grounds, _dedupe_preserving_order(touched)
 

@@ -292,6 +292,34 @@ def get_artifact(artifact_id: str, vault_dir: Path | None = None) -> ArtifactNot
     return _parse_artifact_note(path)
 
 
+def find_chunk_ids_ending_with(suffix: str, *, vault_dir: Path | None = None) -> list[str]:
+    """Every prose-note chunk_id under `vault_dir` ending with `suffix`
+    (`str.endswith`) -- a filename-only scan, no frontmatter parse. Not part
+    of the §7.5 tool set the model or a caller queries with; it exists for
+    `axial.analyze.synthesis`'s grounds-resolution fallback, which repairs a
+    citation where the model echoed only the tail of a real, long chunk id
+    (DEC-42: `source_id` -- and so `chunk_id` -- runs to ~200 chars after the
+    corpus rebuild). Sorted for determinism; returns 0, 1, or 2+ matches --
+    the caller decides what a given count means."""
+    if vault_dir is None:
+        vault_dir = default_vault_dir()
+    prose_dir = Path(vault_dir) / "prose"
+    if not prose_dir.is_dir():
+        return []
+    return sorted(path.stem for path in prose_dir.glob("*.md") if path.stem.endswith(suffix))
+
+
+def find_artifact_ids_ending_with(suffix: str, *, vault_dir: Path | None = None) -> list[str]:
+    """The artifact-note counterpart of `find_chunk_ids_ending_with` -- same
+    rationale, same contract."""
+    if vault_dir is None:
+        vault_dir = default_vault_dir()
+    artifacts_dir = Path(vault_dir) / "artifacts"
+    if not artifacts_dir.is_dir():
+        return []
+    return sorted(path.stem for path in artifacts_dir.glob("*.md") if path.stem.endswith(suffix))
+
+
 def _axis_matches(axis_value: Any, filter_value: str) -> bool:
     """Match a `{primary, secondary, subtags?}`-shaped axis frontmatter
     value (`field`, `claim_type`, `theory_school`) against `filter_value`:

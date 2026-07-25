@@ -288,6 +288,123 @@ def test_an_artifact_ground_resolves(vault_dir: Path):
 
 
 # ---------------------------------------------------------------------------
+# truncated-citation repair: after DEC-42, a real chunk/artifact id runs to
+# ~200 chars (long human-readable prefix + digest + order key + slug +
+# index); the model sometimes echoes only the tail, dropping the prefix. A
+# unique suffix match repairs this without loosening anti-confabulation --
+# an ambiguous or wholly absent match still raises exactly as before.
+# ---------------------------------------------------------------------------
+
+
+def test_a_unique_suffix_match_repairs_a_truncated_chunk_ref_id_to_the_full_id(tmp_path: Path):
+    # A shortened stand-in for a real ~200-char post-DEC-42 id -- long enough
+    # to exercise a genuine prefix/tail split, short enough to stay well
+    # under Windows' MAX_PATH once combined with pytest's own tmp_path depth
+    # (the real ids' path-budget handling is `axial.vault`'s own concern,
+    # out of scope here).
+    full_id = "Some Long Human-Readable Title - libgen.li-5f35a47d9657_25_introduction_001"
+    truncated_tail = "libgen.li-5f35a47d9657_25_introduction_001"
+    chunks_fm = [_chunk_frontmatter(chunk_id=full_id, polities_touched=["Syria"])]
+    vault_dir = _write_vault(tmp_path, chunks=chunks_fm, artifacts=[])
+
+    raw = _valid_response(
+        claims=[
+            {
+                "text": "A claim citing a truncated tail of a real long chunk id.",
+                "kind": "a",
+                "grounds": [{"ref_type": "chunk", "ref_id": truncated_tail}],
+                "confidence": "medium",
+            }
+        ]
+    )
+
+    claims = parse_synthesis_response(raw, vault_dir=vault_dir)
+
+    # The stored ground carries the FULL real id, never the truncated one.
+    assert claims[0].grounds == [Ground(ref_type="chunk", ref_id=full_id)]
+    assert claims[0].polities_touched == ["Syria"]
+
+
+def test_a_unique_suffix_match_repairs_a_truncated_artifact_ref_id_to_the_full_id(tmp_path: Path):
+    full_id = "Some Long Human Title - libgen.li-abc123def456_artifact_003"
+    truncated_tail = "libgen.li-abc123def456_artifact_003"
+    artifacts_fm = [_artifact_frontmatter(artifact_id=full_id, source_id="synfix")]
+    vault_dir = _write_vault(tmp_path, chunks=[], artifacts=artifacts_fm)
+
+    raw = _valid_response(
+        claims=[
+            {
+                "text": "A claim citing a truncated tail of a real long artifact id.",
+                "kind": "a",
+                "grounds": [{"ref_type": "artifact", "ref_id": truncated_tail}],
+                "confidence": "medium",
+            }
+        ]
+    )
+
+    claims = parse_synthesis_response(raw, vault_dir=vault_dir)
+
+    assert claims[0].grounds == [Ground(ref_type="artifact", ref_id=full_id)]
+
+
+def test_a_ref_id_matching_two_or_more_real_ids_by_suffix_still_raises(tmp_path: Path):
+    chunks_fm = [
+        _chunk_frontmatter(chunk_id="source-one_25_introduction_001", polities_touched=["Syria"]),
+        _chunk_frontmatter(chunk_id="source-two_25_introduction_001", polities_touched=["Iraq"]),
+    ]
+    vault_dir = _write_vault(tmp_path, chunks=chunks_fm, artifacts=[])
+
+    raw = _valid_response(
+        claims=[
+            {
+                "text": "A claim citing an ambiguous truncated tail.",
+                "kind": "a",
+                "grounds": [{"ref_type": "chunk", "ref_id": "25_introduction_001"}],
+                "confidence": "low",
+            }
+        ]
+    )
+
+    with pytest.raises(UnresolvableGroundError) as exc_info:
+        parse_synthesis_response(raw, vault_dir=vault_dir)
+    assert "25_introduction_001" in str(exc_info.value)
+
+
+def test_a_ref_id_matching_no_real_id_by_suffix_still_raises(vault_dir: Path):
+    raw = _valid_response(
+        claims=[
+            {
+                "text": "A claim citing a wholly invented, unmatched tail.",
+                "kind": "a",
+                "grounds": [{"ref_type": "chunk", "ref_id": "zzz_totally_invented_999"}],
+                "confidence": "low",
+            }
+        ]
+    )
+    with pytest.raises(UnresolvableGroundError) as exc_info:
+        parse_synthesis_response(raw, vault_dir=vault_dir)
+    assert "zzz_totally_invented_999" in str(exc_info.value)
+
+
+def test_an_exact_match_ref_id_is_unaffected_by_the_suffix_fallback(vault_dir: Path):
+    # synfix_001_syria_a is itself a suffix of nothing else in the fixture
+    # vault, but this pins that the happy path resolves via the exact match
+    # and never even consults the suffix fallback.
+    raw = _valid_response(
+        claims=[
+            {
+                "text": "A claim with a normal, exact-match ref_id.",
+                "kind": "a",
+                "grounds": [{"ref_type": "chunk", "ref_id": "synfix_001_syria_a"}],
+                "confidence": "low",
+            }
+        ]
+    )
+    claims = parse_synthesis_response(raw, vault_dir=vault_dir)
+    assert claims[0].grounds == [Ground(ref_type="chunk", ref_id="synfix_001_syria_a")]
+
+
+# ---------------------------------------------------------------------------
 # polities_touched computed in code
 # ---------------------------------------------------------------------------
 

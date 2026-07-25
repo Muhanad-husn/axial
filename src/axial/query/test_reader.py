@@ -433,6 +433,56 @@ def test_get_artifact_raises_not_found_naming_the_id(tmp_path):
     assert "does-not-exist" in str(exc_info.value)
 
 
+# -- find_chunk_ids_ending_with / find_artifact_ids_ending_with ---------------
+# The `axial.analyze.synthesis` truncated-citation repair's lookup: a
+# filename-only suffix scan, used only when an exact match already failed.
+
+
+def test_find_chunk_ids_ending_with_returns_the_sole_suffix_match(tmp_path):
+    from axial.query.reader import find_chunk_ids_ending_with
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "Long Human Title - digest123_25_intro_001")
+    _write_chunk_note(prose_dir, "Other Source - digest456_1_conclusion_002")
+
+    assert find_chunk_ids_ending_with("digest123_25_intro_001", vault_dir=tmp_path) == [
+        "Long Human Title - digest123_25_intro_001"
+    ]
+
+
+def test_find_chunk_ids_ending_with_returns_every_match_when_ambiguous(tmp_path):
+    from axial.query.reader import find_chunk_ids_ending_with
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "srcA-digest_25_intro_001")
+    _write_chunk_note(prose_dir, "srcB-digest_25_intro_001")
+
+    assert find_chunk_ids_ending_with("digest_25_intro_001", vault_dir=tmp_path) == [
+        "srcA-digest_25_intro_001",
+        "srcB-digest_25_intro_001",
+    ]
+
+
+def test_find_chunk_ids_ending_with_returns_empty_when_no_match(tmp_path):
+    from axial.query.reader import find_chunk_ids_ending_with
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "srcA-digest_25_intro_001")
+
+    assert find_chunk_ids_ending_with("not_a_real_suffix", vault_dir=tmp_path) == []
+
+
+def test_find_artifact_ids_ending_with_returns_the_sole_suffix_match(tmp_path):
+    from axial.query.reader import find_artifact_ids_ending_with
+
+    artifacts_dir = tmp_path / "artifacts"
+    _write_artifact_note(artifacts_dir, "Long Human Title - digest123_artifact_003")
+
+    assert find_artifact_ids_ending_with("digest123_artifact_003", vault_dir=tmp_path) == [
+        "Long Human Title - digest123_artifact_003"
+    ]
+
+
 # -- LLM-free by construction --------------------------------------------------
 
 
