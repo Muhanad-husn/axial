@@ -782,15 +782,18 @@ def test_reject_degenerate_artifact_values_rejects_a_blank_field_primary():
         reject_degenerate_artifact_values(raw, _SCHEMA_WITH_FIELD)
 
 
-def test_reject_degenerate_artifact_values_rejects_a_blank_field_secondary_entry():
-    from axial.artifacts import ArtifactParseError, reject_degenerate_artifact_values
+def test_reject_degenerate_artifact_values_accepts_a_blank_field_secondary_entry():
+    """Quarantine-recovery fix: `field`'s shared parser
+    (`axial.tag.parse_multi_value_tag_response`) now drops a blank/
+    whitespace-only secondary entry itself rather than leaving it for this
+    validator to reject -- so this response is no longer degenerate."""
+    from axial.artifacts import reject_degenerate_artifact_values
 
     raw = json.dumps(
         {"artifact_role": "case-study", "field": {"primary": "state", "secondary": [""]}}
     )
 
-    with pytest.raises(ArtifactParseError):
-        reject_degenerate_artifact_values(raw, _SCHEMA_WITH_FIELD)
+    reject_degenerate_artifact_values(raw, _SCHEMA_WITH_FIELD)  # must not raise
 
 
 def test_reject_degenerate_artifact_values_ignores_field_when_schema_lacks_the_axis():

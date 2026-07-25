@@ -598,6 +598,54 @@ def test_parse_multi_value_tag_response_primary_plus_secondary_keeps_given_list(
     assert parsed["secondary"] == ["violence", "ideology"]
 
 
+def test_parse_multi_value_tag_response_primary_plus_secondary_drops_a_blank_secondary_entry():
+    """Quarantine-recovery fix: a blank/whitespace-only secondary entry is
+    the model's "no secondary" expressed as noise -- dropped from the list
+    rather than quarantining the whole chunk (real quarantine-log evidence:
+    125 claim_type + 27 theory_school quarantines carried exactly this
+    signature before this fix, though `claim_type`/`theory_school` are
+    `primary_plus_optional_secondary`; the sibling `primary_plus_secondary`
+    cardinality carries the identical noise pattern in its own list)."""
+    from axial.tag import parse_multi_value_tag_response
+
+    raw = json.dumps({"field": {"primary": "state", "secondary": [""]}})
+
+    parsed = parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["field"])
+
+    assert parsed["secondary"] == []
+
+
+def test_parse_multi_value_tag_response_primary_plus_secondary_drops_only_the_blank_entries():
+    """A blank entry is dropped even alongside real, non-blank entries in
+    the same list -- never the whole list."""
+    from axial.tag import parse_multi_value_tag_response
+
+    raw = json.dumps({"field": {"primary": "state", "secondary": ["violence", "  ", "ideology"]}})
+
+    parsed = parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["field"])
+
+    assert parsed["secondary"] == ["violence", "ideology"]
+
+
+def test_parse_multi_value_tag_response_primary_plus_secondary_keeps_a_genuine_out_of_vocab_entry():
+    """Regression guard: a non-blank out-of-vocabulary secondary entry is
+    NOT filtered here -- it must still reach `validate_multi_value_tag` and
+    raise `TagNotInSchemaError`, exactly as before this fix."""
+    from axial.tag import (
+        TagNotInSchemaError,
+        parse_multi_value_tag_response,
+        validate_multi_value_tag,
+    )
+
+    raw = json.dumps({"field": {"primary": "state", "secondary": ["not-a-real-tag"]}})
+
+    parsed = parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["field"])
+    assert parsed["secondary"] == ["not-a-real-tag"]
+
+    with pytest.raises(TagNotInSchemaError):
+        validate_multi_value_tag(_SCHEMA_WITH_MULTI_VALUE_AXES, "field", parsed)
+
+
 def test_parse_multi_value_tag_response_optional_secondary_defaults_to_none():
     from axial.tag import parse_multi_value_tag_response
 
@@ -628,6 +676,53 @@ def test_parse_multi_value_tag_response_optional_secondary_single_element_list_b
     parsed = parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["claim_type"])
 
     assert parsed["secondary"] == "state-autonomy"
+
+
+def test_parse_multi_value_tag_response_optional_secondary_blank_scalar_collapses_to_none():
+    """Quarantine-recovery fix: a blank/whitespace-only `secondary` scalar
+    (real quarantine-log evidence: `"claim_type.secondary[0] tag value is
+    empty/whitespace-only: ''"`, 125x; the same signature for
+    `theory_school`, 27x) collapses to `None` -- claim_type's own "no
+    secondary" representation -- instead of quarantining the whole chunk."""
+    from axial.tag import parse_multi_value_tag_response
+
+    raw = json.dumps({"claim_type": {"primary": "state-formation", "secondary": ""}})
+
+    parsed = parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["claim_type"])
+
+    assert parsed["secondary"] is None
+
+
+def test_parse_multi_value_tag_response_optional_secondary_blank_single_element_list_collapses_to_none():
+    """The same blank-collapse applies when the blank arrives as a
+    single-element list (the same list/scalar dialect ambiguity issue #105
+    already coerces) -- collapses to `None`, not the bare blank string."""
+    from axial.tag import parse_multi_value_tag_response
+
+    raw = json.dumps({"claim_type": {"primary": "state-formation", "secondary": [""]}})
+
+    parsed = parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["claim_type"])
+
+    assert parsed["secondary"] is None
+
+
+def test_parse_multi_value_tag_response_optional_secondary_keeps_a_genuine_out_of_vocab_scalar():
+    """Regression guard: a non-blank out-of-vocabulary secondary scalar is
+    NOT touched here -- it must still reach `validate_multi_value_tag` and
+    raise `TagNotInSchemaError`, exactly as before this fix."""
+    from axial.tag import (
+        TagNotInSchemaError,
+        parse_multi_value_tag_response,
+        validate_multi_value_tag,
+    )
+
+    raw = json.dumps({"claim_type": {"primary": "state-formation", "secondary": "not-a-real-tag"}})
+
+    parsed = parse_multi_value_tag_response(raw, _SCHEMA_WITH_MULTI_VALUE_AXES.axes["claim_type"])
+    assert parsed["secondary"] == "not-a-real-tag"
+
+    with pytest.raises(TagNotInSchemaError):
+        validate_multi_value_tag(_SCHEMA_WITH_MULTI_VALUE_AXES, "claim_type", parsed)
 
 
 def test_parse_multi_value_tag_response_optional_secondary_rejects_a_multi_element_list():
@@ -696,12 +791,40 @@ def test_parse_multi_value_tag_response_rejects_missing_axis_key():
         )
 
 
-def test_parse_multi_value_tag_response_rejects_a_bare_scalar_value():
+def test_parse_multi_value_tag_response_coerces_bare_string_to_primary_for_primary_plus_secondary_axis():
+    """Quarantine-recovery fix (extends issue #105): a bare string for a
+    `primary_plus_secondary` axis (e.g. `{"field": "state"}`) is coerced to
+    `{"primary": "state", "secondary": []}` -- the same unambiguous "just the
+    primary" dialect `primary_plus_optional_secondary` axes already
+    tolerated. Real quarantine-log evidence (corpus-wide re-tag run): this
+    exact shape ("expected 'field' value to be an object with a 'primary'
+    key, got str") was 422/577 (~73%) of all quarantined chunks before this
+    fix -- was previously a genuine shape error (locked test superseded by
+    this one), never coerced."""
+    from axial.tag import parse_multi_value_tag_response
+
+    parsed = parse_multi_value_tag_response(
+        json.dumps({"field": "state"}), _SCHEMA_WITH_MULTI_VALUE_AXES.axes["field"]
+    )
+
+    assert parsed == {"primary": "state", "secondary": []}
+
+
+def test_parse_multi_value_tag_response_still_rejects_a_genuinely_malformed_field_value():
+    """Regression guard: the coercion above is limited to a bare STRING --
+    a genuinely malformed shape (a number, or a dict with no 'primary' key)
+    for a `primary_plus_secondary` axis is still a shape error, never
+    coerced."""
     from axial.tag import TagParseError, parse_multi_value_tag_response
 
     with pytest.raises(TagParseError):
         parse_multi_value_tag_response(
-            json.dumps({"field": "state"}), _SCHEMA_WITH_MULTI_VALUE_AXES.axes["field"]
+            json.dumps({"field": 42}), _SCHEMA_WITH_MULTI_VALUE_AXES.axes["field"]
+        )
+
+    with pytest.raises(TagParseError):
+        parse_multi_value_tag_response(
+            json.dumps({"field": {"nope": "state"}}), _SCHEMA_WITH_MULTI_VALUE_AXES.axes["field"]
         )
 
 
@@ -719,19 +842,6 @@ def test_parse_multi_value_tag_response_coerces_bare_string_to_primary_for_optio
     )
 
     assert parsed == {"primary": "bellicist", "secondary": None}
-
-
-def test_parse_multi_value_tag_response_still_rejects_a_bare_scalar_for_primary_plus_secondary_axis():
-    """Issue #105 scope guard: the bare-string coercion is limited to
-    `primary_plus_optional_secondary` axes -- a bare string for a
-    `primary_plus_secondary` axis (e.g. `field`, which always requires a
-    `secondary` list) is still a genuine shape error, never coerced."""
-    from axial.tag import TagParseError, parse_multi_value_tag_response
-
-    with pytest.raises(TagParseError):
-        parse_multi_value_tag_response(
-            json.dumps({"field": "state"}), _SCHEMA_WITH_MULTI_VALUE_AXES.axes["field"]
-        )
 
 
 def test_parse_multi_value_tag_response_bare_string_coercion_feeds_vocab_validation():
@@ -2050,21 +2160,21 @@ def _valid_multi_value_response() -> str:
     )
 
 
-def test_run_tag_quarantines_a_persistently_bare_scalar_field_response(monkeypatch, tmp_path):
-    """Real 2026-07-22 failure (`mann-sources-of-social-power-v1`): a
-    `primary_plus_secondary` axis (`field`) persistently answered with a
-    bare scalar (`'state'`) instead of the required `{"primary": ...,
-    "secondary": [...]}` object is a genuine shape error -- the locked
-    `test_parse_multi_value_tag_response_still_rejects_a_bare_scalar_for_
-    primary_plus_secondary_axis` contract is untouched, this response is
-    never coerced. With a checkpoint active, `run_tag` quarantines just
-    that chunk and the source completes; every other chunk tags normally."""
+def test_run_tag_tags_successfully_when_field_response_is_a_persistent_bare_scalar(
+    monkeypatch, tmp_path
+):
+    """Quarantine-recovery fix (extends issue #105): real 2026-07-22 failure
+    (`mann-sources-of-social-power-v1`) -- a `primary_plus_secondary` axis
+    (`field`) persistently answered with a bare scalar (`'state'`) instead
+    of the `{"primary": ..., "secondary": [...]}` object used to be a
+    genuine shape error that quarantined the whole chunk (422/577, ~73% of
+    one corpus-wide run's quarantines). It is now coerced to
+    `{"primary": "state", "secondary": []}` on the FIRST call -- no
+    quarantine, no re-ask needed."""
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_multi_value_axes(tmp_path)
     chunk_records = _three_chunk_records()
-    poisoned_text = chunk_records[1]["text"]
-    survivors = [c["chunk_id"] for i, c in enumerate(chunk_records) if i != 1]
     monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
 
     bare_scalar_field = json.dumps(
@@ -2078,13 +2188,11 @@ def test_run_tag_quarantines_a_persistently_bare_scalar_field_response(monkeypat
 
     class _Client:
         def __init__(self):
-            self.calls_for_poisoned = 0
+            self.call_count = 0
 
         def complete(self, prompt, pass_name=None):
-            if poisoned_text in prompt:
-                self.calls_for_poisoned += 1
-                return bare_scalar_field
-            return _valid_multi_value_response()
+            self.call_count += 1
+            return bare_scalar_field
 
     client = _Client()
     tags_dir = tmp_path / "data" / "tags"
@@ -2099,28 +2207,26 @@ def test_run_tag_quarantines_a_persistently_bare_scalar_field_response(monkeypat
     )
 
     tagged_ids = [r["chunk_id"] for r in result]
-    assert chunk_records[1]["chunk_id"] not in tagged_ids
-    assert tagged_ids == survivors
-    assert result.quarantine_count == 1
-    # complete_json's own bounded retry (reject_degenerate_tag_values as its
-    # validate) must run to exhaustion before quarantining -- never a
-    # short-circuit on the first bad draw.
-    assert client.calls_for_poisoned == 3
+    assert tagged_ids == [c["chunk_id"] for c in chunk_records]
+    assert result.quarantine_count == 0
+    assert all(r["field"] == {"primary": "state", "secondary": []} for r in result)
+    # one call per chunk -- no re-ask needed, the bare-scalar dialect
+    # coerces cleanly on the first attempt.
+    assert client.call_count == len(chunk_records)
 
 
-def test_run_tag_quarantines_a_persistently_blank_claim_type_secondary_response(
+def test_run_tag_tags_successfully_when_claim_type_secondary_is_a_persistent_blank_string(
     monkeypatch, tmp_path
 ):
-    """Real 2026-07-22 failure signature: `claim_type.secondary[0] tag value
-    is empty/whitespace-only: ''`. With a checkpoint active, `run_tag`
-    quarantines just that chunk and the source completes; every other chunk
-    tags normally."""
+    """Quarantine-recovery fix: real 2026-07-22 failure signature
+    (`claim_type.secondary[0] tag value is empty/whitespace-only: ''`, 125x)
+    used to quarantine the whole chunk. A blank `claim_type.secondary` entry
+    is now collapsed to `None` (claim_type's own "no secondary"
+    representation) on the FIRST call -- no quarantine, no re-ask needed."""
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_multi_value_axes(tmp_path)
     chunk_records = _three_chunk_records()
-    poisoned_text = chunk_records[1]["text"]
-    survivors = [c["chunk_id"] for i, c in enumerate(chunk_records) if i != 1]
     monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
 
     blank_secondary = json.dumps(
@@ -2134,13 +2240,11 @@ def test_run_tag_quarantines_a_persistently_blank_claim_type_secondary_response(
 
     class _Client:
         def __init__(self):
-            self.calls_for_poisoned = 0
+            self.call_count = 0
 
         def complete(self, prompt, pass_name=None):
-            if poisoned_text in prompt:
-                self.calls_for_poisoned += 1
-                return blank_secondary
-            return _valid_multi_value_response()
+            self.call_count += 1
+            return blank_secondary
 
     client = _Client()
     tags_dir = tmp_path / "data" / "tags"
@@ -2155,10 +2259,10 @@ def test_run_tag_quarantines_a_persistently_blank_claim_type_secondary_response(
     )
 
     tagged_ids = [r["chunk_id"] for r in result]
-    assert chunk_records[1]["chunk_id"] not in tagged_ids
-    assert tagged_ids == survivors
-    assert result.quarantine_count == 1
-    assert client.calls_for_poisoned == 3
+    assert tagged_ids == [c["chunk_id"] for c in chunk_records]
+    assert result.quarantine_count == 0
+    assert all(r["claim_type"]["secondary"] is None for r in result)
+    assert client.call_count == len(chunk_records)
 
 
 def _read_central_quarantine_log(tags_dir):
@@ -2186,10 +2290,15 @@ def test_run_tag_quarantine_log_and_reason_for_a_parse_error(monkeypatch, tmp_pa
     chunk_records = _three_chunk_records()
     monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
 
-    bare_scalar_field = json.dumps(
+    # A number for `field` is genuinely malformed (neither the bare-string
+    # nor single-element-list coercible dialects) -- unlike the bare-string
+    # case (`"field": "state"`), this still raises `TagParseError` after the
+    # quarantine-recovery fix, so this test keeps exercising the parse-error
+    # quarantine reason/log plumbing rather than the now-fixed bug pattern.
+    malformed_field = json.dumps(
         {
             "role_in_argument": "role:claim",
-            "field": "state",
+            "field": 42,
             "claim_type": {"primary": "state-formation", "subtags": []},
             "theory_school": {"primary": "bellicist"},
         }
@@ -2198,7 +2307,7 @@ def test_run_tag_quarantine_log_and_reason_for_a_parse_error(monkeypatch, tmp_pa
     class _Client:
         def complete(self, prompt, pass_name=None):
             if chunk_records[1]["text"] in prompt:
-                return bare_scalar_field
+                return malformed_field
             return _valid_multi_value_response()
 
     tags_dir = tmp_path / "data" / "tags"
@@ -2543,10 +2652,13 @@ def test_run_tag_raises_when_every_chunk_quarantines(monkeypatch, tmp_path):
     chunk_records = _three_chunk_records()
     monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
 
-    bare_scalar_field = json.dumps(
+    # A number for `field` is genuinely malformed (unlike the now-coerced
+    # bare-string dialect, quarantine-recovery fix) -- still a persistent
+    # parse error, so this test keeps exercising the all-quarantined path.
+    malformed_field = json.dumps(
         {
             "role_in_argument": "role:claim",
-            "field": "state",
+            "field": 42,
             "claim_type": {"primary": "state-formation", "subtags": []},
             "theory_school": {"primary": "bellicist"},
         }
@@ -2554,7 +2666,7 @@ def test_run_tag_raises_when_every_chunk_quarantines(monkeypatch, tmp_path):
 
     class _Client:
         def complete(self, prompt, pass_name=None):
-            return bare_scalar_field
+            return malformed_field
 
     tags_dir = tmp_path / "data" / "tags"
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
@@ -2586,10 +2698,13 @@ def test_run_tag_stays_a_success_when_only_some_chunks_quarantine(monkeypatch, t
     survivors = [c["chunk_id"] for i, c in enumerate(chunk_records) if i != 1]
     monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
 
-    bare_scalar_field = json.dumps(
+    # A number for `field` is genuinely malformed (unlike the now-coerced
+    # bare-string dialect, quarantine-recovery fix) -- still a persistent
+    # parse error, so this test keeps exercising the mixed quarantine path.
+    malformed_field = json.dumps(
         {
             "role_in_argument": "role:claim",
-            "field": "state",
+            "field": 42,
             "claim_type": {"primary": "state-formation", "subtags": []},
             "theory_school": {"primary": "bellicist"},
         }
@@ -2598,7 +2713,7 @@ def test_run_tag_stays_a_success_when_only_some_chunks_quarantine(monkeypatch, t
     class _Client:
         def complete(self, prompt, pass_name=None):
             if poisoned_text in prompt:
-                return bare_scalar_field
+                return malformed_field
             return _valid_multi_value_response()
 
     tags_dir = tmp_path / "data" / "tags"
@@ -2789,15 +2904,17 @@ def test_run_tag_quarantines_a_cardinality_error_surfaced_by_a_correction_reask(
     )
 
 
-def test_run_tag_reasks_and_succeeds_when_secondary_entry_is_first_empty_string(
-    monkeypatch, tmp_path
-):
+def test_run_tag_succeeds_immediately_when_secondary_entry_is_a_blank_string(monkeypatch, tmp_path):
+    """Quarantine-recovery fix: a blank `field.secondary` entry is dropped
+    by `parse_multi_value_tag_response` itself, so the response is accepted
+    on the FIRST call -- no re-ask, unlike the pre-fix behavior of treating
+    it as a re-askable degenerate response."""
     import axial.tag as tag_mod
 
     domain_dir = _write_domain_with_multi_value_axes(tmp_path)
     _one_chunk_read_chunks(monkeypatch, tag_mod)
 
-    degenerate = json.dumps(
+    blank_secondary = json.dumps(
         {
             "role_in_argument": "role:claim",
             "field": {"primary": "state", "secondary": [""]},
@@ -2805,32 +2922,22 @@ def test_run_tag_reasks_and_succeeds_when_secondary_entry_is_first_empty_string(
             "theory_school": {"primary": "bellicist"},
         }
     )
-    clean = json.dumps(
-        {
-            "role_in_argument": "role:claim",
-            "field": {"primary": "state", "secondary": ["ideology"]},
-            "claim_type": {"primary": "state-formation", "subtags": []},
-            "theory_school": {"primary": "bellicist"},
-        }
-    )
 
-    class _ScriptedClient:
+    class _Client:
         def __init__(self):
-            self._responses = [degenerate, clean]
             self.call_count = 0
 
         def complete(self, prompt, pass_name=None):
-            response = self._responses[self.call_count]
             self.call_count += 1
-            return response
+            return blank_secondary
 
-    client = _ScriptedClient()
+    client = _Client()
     (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
     records = tag_mod.run_tag(tmp_path / "paper.pdf", client=client, domain_dir=domain_dir, votes=1)
 
     assert len(records) == 1
-    assert records[0]["field"] == {"primary": "state", "secondary": ["ideology"]}
-    assert client.call_count == 2
+    assert records[0]["field"] == {"primary": "state", "secondary": []}
+    assert client.call_count == 1
 
 
 def test_run_tag_reasks_and_succeeds_when_subtag_is_first_empty_string(monkeypatch, tmp_path):
