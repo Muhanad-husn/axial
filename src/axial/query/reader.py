@@ -309,6 +309,79 @@ def get_artifact(artifact_id: str, vault_dir: Path | None = None) -> ArtifactNot
     return _parse_artifact_note(path)
 
 
+def _read_id_only(path: Path, id_field: str) -> str | None:
+    """Read just enough of `path` to recover its frontmatter's `id_field`
+    value, without loading the rest of the file into memory -- a prose
+    note's `chunk_text` can make the full file large, and the suffix index
+    below reads every note under `vault_dir` (~18k notes on the real
+    corpus), so paying for a full `_read_frontmatter` parse (whole-file
+    `read_text`) per note here would be wasteful. Returns `None`, never
+    raises, on any malformed note: an index build over the whole corpus
+    must not abort on one bad note, and a lookup through this index is
+    already a repair-path fallback, not the normal read (`get_chunk`/
+    `get_artifact` still raise `MalformedNoteError` on their own reads)."""
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            if handle.readline().strip() != "---":
+                return None
+            block_lines: list[str] = []
+            for line in handle:
+                if line.strip() == "---":
+                    break
+                block_lines.append(line)
+            else:
+                return None
+    except OSError:
+        return None
+    try:
+        parsed = yaml.safe_load("".join(block_lines))
+    except yaml.YAMLError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    value = parsed.get(id_field)
+    return value if isinstance(value, str) else None
+
+
+# Process-lifetime caches for the id -> path indexes `find_chunk_ids_ending_with`
+# / `find_artifact_ids_ending_with` use, keyed by resolved vault_dir so
+# distinct vaults (real callers, and per-test tmp_path vaults) never share an
+# entry. Built lazily, at most once per vault_dir: nothing in this module
+# populates these on import or on `get_chunk`/`get_artifact`'s own fast path
+# (specs/PHASE-B.md §7.5) -- only a suffix lookup does, and a rebuild-per-call
+# would be pathological inside a retrieval loop over the ~18k-note corpus.
+_CHUNK_ID_INDEX_CACHE: dict[Path, dict[str, Path]] = {}
+_ARTIFACT_ID_INDEX_CACHE: dict[Path, dict[str, Path]] = {}
+
+
+def _chunk_id_index(vault_dir: Path) -> dict[str, Path]:
+    key = Path(vault_dir).resolve()
+    if key not in _CHUNK_ID_INDEX_CACHE:
+        prose_dir = key / "prose"
+        index: dict[str, Path] = {}
+        if prose_dir.is_dir():
+            for path in prose_dir.glob("*.md"):
+                chunk_id = _read_id_only(path, "chunk_id")
+                if chunk_id is not None:
+                    index[chunk_id] = path
+        _CHUNK_ID_INDEX_CACHE[key] = index
+    return _CHUNK_ID_INDEX_CACHE[key]
+
+
+def _artifact_id_index(vault_dir: Path) -> dict[str, Path]:
+    key = Path(vault_dir).resolve()
+    if key not in _ARTIFACT_ID_INDEX_CACHE:
+        artifacts_dir = key / "artifacts"
+        index: dict[str, Path] = {}
+        if artifacts_dir.is_dir():
+            for path in artifacts_dir.glob("*.md"):
+                artifact_id = _read_id_only(path, "artifact_id")
+                if artifact_id is not None:
+                    index[artifact_id] = path
+        _ARTIFACT_ID_INDEX_CACHE[key] = index
+    return _ARTIFACT_ID_INDEX_CACHE[key]
+
+
 def find_chunk_ids_ending_with(suffix: str, *, vault_dir: Path | None = None) -> list[str]:
     """Every real `chunk_id` under `vault_dir` ending with `suffix`
     (`str.endswith`). Not part of the §7.5 tool set the model or a caller
@@ -317,38 +390,27 @@ def find_chunk_ids_ending_with(suffix: str, *, vault_dir: Path | None = None) ->
     only the tail of a real, long chunk id (DEC-42: `source_id` -- and so
     `chunk_id` -- runs to ~200 chars after the corpus rebuild).
 
-    Two-step so this stays cheap: a filename-only scan finds candidate notes
-    (no frontmatter parse of the whole corpus), then only those candidates'
-    frontmatter is read to recover each note's TRUE `chunk_id` -- a
-    budgeted note's filename stem is not a real id (it is the shortened,
-    on-disk name, `axial.paths.budgeted_chunk_filename`), so returning
-    filename stems here would hand the caller a string that does not
-    resolve to anything. The true ids are deduped (a stale full-length note
-    and a budgeted note for the same chunk must not double-count as two
-    matches, see specs/PHASE-B.md §7.5) and sorted for determinism; returns
-    0, 1, or 2+ distinct ids -- the caller decides what a given count
-    means."""
+    Candidate discovery is over the `chunk_id` -> path index
+    (`_chunk_id_index`, built from frontmatter, cached for the process
+    lifetime), never over filenames: the budgeted-filename rule
+    (`axial.paths.budgeted_chunk_filename`) can shorten a note's on-disk
+    name anywhere, including dropping the very tail a cited suffix names,
+    so a filename-keyed scan can miss a real id a frontmatter-keyed one
+    finds. Matches are sorted for determinism; returns 0, 1, or 2+ distinct
+    ids -- the caller decides what a given count means."""
     if vault_dir is None:
         vault_dir = default_vault_dir()
-    prose_dir = Path(vault_dir) / "prose"
-    if not prose_dir.is_dir():
-        return []
-    candidates = (path for path in prose_dir.glob("*.md") if path.stem.endswith(suffix))
-    true_ids = {_parse_chunk_note(path).chunk_id for path in candidates}
-    return sorted(true_ids)
+    index = _chunk_id_index(Path(vault_dir))
+    return sorted(chunk_id for chunk_id in index if chunk_id.endswith(suffix))
 
 
 def find_artifact_ids_ending_with(suffix: str, *, vault_dir: Path | None = None) -> list[str]:
     """The artifact-note counterpart of `find_chunk_ids_ending_with` -- same
-    candidate-scan-then-resolve-to-true-id rationale, same contract."""
+    frontmatter-indexed candidate discovery, same contract."""
     if vault_dir is None:
         vault_dir = default_vault_dir()
-    artifacts_dir = Path(vault_dir) / "artifacts"
-    if not artifacts_dir.is_dir():
-        return []
-    candidates = (path for path in artifacts_dir.glob("*.md") if path.stem.endswith(suffix))
-    true_ids = {_parse_artifact_note(path).artifact_id for path in candidates}
-    return sorted(true_ids)
+    index = _artifact_id_index(Path(vault_dir))
+    return sorted(artifact_id for artifact_id in index if artifact_id.endswith(suffix))
 
 
 def _axis_matches(axis_value: Any, filter_value: str) -> bool:
