@@ -81,6 +81,11 @@ satisfy. `instant_dismissal_criteria` is what would make you reject an answer on
 
 ## 3. Gold labels — one JSON file per labeler
 
+*Superseded by the in-harness method (DEC-30, `prompts/gold-coder.md`) — kept here
+only because this is an accurate description of the original chat-model runs already
+recorded in `../README.md`'s tracker. A current gold-labelling run follows
+`gold-coder.md`'s own self-contained output format, not this section.*
+
 You are labeling the attached chunk sheet. For each row (keyed by `chunk_id`) return
 the five label fields. **Do not echo `chunk_text` back** — return labels only, keyed
 by `chunk_id`. Every value for the four codebook axes must be a valid id from the

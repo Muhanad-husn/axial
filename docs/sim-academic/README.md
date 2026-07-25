@@ -29,9 +29,20 @@ Teardown is `rm -rf data/sim config/briefs/sim evals/cases/sim`.
 | Grok 4.5 | perplexity.ai | [P4](personas/P4.md) | ✓ | ✓ | — |
 | Opus 4.8 | claude.ai (memory excluded) | [P5](personas/P5.md) | ✓ | ✓ | — |
 
-Gold labeling is restricted to GLM and GPT — two independent models on two platforms,
-which gives inter-annotator agreement. Their gold prompt is persona-neutral (a shared
-expert-coder role) so disagreement reflects coding ambiguity, not persona divergence.
+**Gold labeling moved in-harness (DEC-30, 2026-07-21) — see
+[`prompts/gold-coder.md`](prompts/gold-coder.md) for the current method** (dispatched
+Sonnet-5 subagents, no external chat model). The GLM/GPT restriction below describes
+the original design and is kept as an accurate record of the runs in the tracker; it
+is no longer how a gold-labelling run is actually done.
+
+<details>
+<summary>Original design (superseded, kept for history)</summary>
+
+Gold labeling was restricted to GLM and GPT — two independent models on two platforms,
+which gave inter-annotator agreement. Their gold prompt was persona-neutral (a shared
+expert-coder role) so disagreement reflected coding ambiguity, not persona divergence.
+
+</details>
 
 ## How to run a workstream
 
@@ -44,11 +55,12 @@ expert-coder role) so disagreement reflects coding ambiguity, not persona diverg
 4. Paste the perspective prompt. Ask for structured downloadable output.
 5. Save the outputs to the landing paths above, then record the run in the tracker.
 
-Gold input prep (once): `uv run axial gold sample` → `uv run axial gold sheet`
-produces `data/gold/label_sheet.xlsx`; export its rows (chunk_id, source, section,
-chunk_text, and the pre-filled `field`/`empirical_scope`/`polities_touched`) to a CSV
-to attach. After a labeler returns `glm.json`/`gpt.json`, run
-`python docs/sim-academic/merge_gold_labels.py <model> <labels.json>`.
+Gold labelling (current method, `prompts/gold-coder.md`): `uv run axial gold sample` →
+`uv run axial gold sheet` produces `data/gold/label_sheet.xlsx`; dispatch the 7
+in-harness Sonnet-5 subagents (3 blind-axis full-sample draws, 4 head-axis disjoint
+partitions) per that file's method; once all 7 write their output under
+`data/gold/dispatch/out/`, run `python docs/sim-academic/merge_gold_labels.py` (no
+arguments) to majority-vote and merge into the sheet's `*_gold` columns.
 
 ## Run tracker
 
@@ -61,6 +73,7 @@ to attach. After a labeler returns `glm.json`/`gpt.json`, run
 | 2026-07-21 | Opus 4.8 | P5 | briefs + hard cases | extended-thinking | `P5-01..06.yaml`, `P5-01..05.json` | ✅ landed |
 | 2026-07-21 | GLM 5.2 | (neutral coder) | gold labels | extended-thinking | `data/sim/gold/labels/glm/` | ✅ **120/120**, 0 out-of-vocab |
 | 2026-07-21 | GPT-5.6 Terra | (neutral coder) | gold labels | extended-thinking | `data/sim/gold/labels/gpt/` | ✅ **120/120** (re-run; first pass truncated at 54) |
+| 2026-07-25 | 7× Sonnet-5 (in-harness, non-forked) | (neutral coder) | gold labels — rebuilt corpus (DEC-30/31/33/39 method, #392) | n/a (in-harness, not chat) | `data/gold/label_sheet.xlsx` `*_gold` columns | ✅ `claim_type_gold` 117/120 (3 abstained) · `theory_school_gold` 105/120 (15 abstained) · head axes 120/120 |
 
 **Totals landed:** 30 briefs (5 personas × 6, all load, 30 unique `brief_id`s) · 21 hard cases (all schema-valid, all `source_id`s resolve).
 

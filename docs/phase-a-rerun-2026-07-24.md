@@ -85,4 +85,4 @@ transient collision was caught and logged cleanly instead of hanging again).
 
 ## Follow-up filed
 
-- **Issue #392** — re-run the simulated gold-set labelling (DEC-29/30/31/39's method: concurrent, non-forked Sonnet-5 subagents) against the rebuilt corpus, since `data/gold/` was lost in the same incident and the rebuilt corpus's `source_id`s shifted (DEC-42).
+- ~~**Issue #392** — re-run the simulated gold-set labelling (DEC-29/30/31/39's method: concurrent, non-forked Sonnet-5 subagents) against the rebuilt corpus, since `data/gold/` was lost in the same incident and the rebuilt corpus's `source_id`s shifted (DEC-42).~~ **Closed 2026-07-25** (DEC-46) — also surfaced and fixed two real bugs blocking `axial gold sample` on the rebuilt corpus (PRs #395, #396).
