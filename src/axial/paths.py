@@ -150,7 +150,9 @@ def _shrink_pieces(pieces: list[str], overage: int) -> list[str]:
     return shrunk
 
 
-def budgeted_chunk_filename(directory: Path, source_id: str, chunk_id: str) -> str:
+def budgeted_chunk_filename(
+    directory: Path, source_id: str, chunk_id: str, extension: str = ".md"
+) -> str:
     """Shorten `chunk_id`'s note filename to fit under `directory`'s path
     budget, touching only `source_id`'s readable stem prefix and (if that
     alone is not enough) the section slug -- never the hash suffix, the
@@ -161,12 +163,17 @@ def budgeted_chunk_filename(directory: Path, source_id: str, chunk_id: str) -> s
     (`axial.chunk._slugify` maps every non-alphanumeric run, including
     underscores, to a single hyphen; `order_key` is `section_order` with
     "." replaced by "-"), so splitting the `source_id`-stripped suffix on
-    "_" is unambiguous."""
+    "_" is unambiguous.
+
+    `extension` defaults to `.md` (the vault note case, via
+    `chunk_note_path`); `axial.gold.run_gold_sample` passes `.json` for its
+    chunk records, which live under a different directory and format but
+    share the exact same oversized-source_id problem."""
     stem, hash12 = split_source_id(source_id)
     _, order_key, slug, index = chunk_id[len(source_id) :].split("_")
 
     def build(s: str, sl: str) -> str:
-        return f"{s}-{hash12}_{order_key}_{sl}_{index}.md"
+        return f"{s}-{hash12}_{order_key}_{sl}_{index}{extension}"
 
     filename = build(stem, slug)
     overage = path_overage(directory, filename)

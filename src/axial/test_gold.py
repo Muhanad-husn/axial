@@ -393,6 +393,61 @@ class TestRunGoldSample:
                 "theory_school",
             }
 
+    def test_writes_record_when_chunk_id_pushes_chunks_path_over_windows_max_path(self, tmp_path):
+        """Same class of bug PR #377 fixed for vault notes (src/axial/vault.py):
+        a chunk_id long enough to push `<gold_dir>/chunks/<chunk_id>.json`
+        over Windows' 260-char MAX_PATH must not crash the writer with
+        `FileNotFoundError` -- the on-disk filename shortens instead
+        (`axial.paths.budgeted_chunk_filename`), while the record's own
+        `chunk_id` field (written into the JSON content, not just the
+        filename) is untouched."""
+        vault = tmp_path / "vault"
+        prose = vault / "prose"
+        prose.mkdir(parents=True)
+
+        long_source_id = f"{'A' * 200}-0123456789ab"
+        slug = "b" * 80  # `_SLUG_MAX_LEN`, chunk.py's own existing cap (#94)
+        chunk_id = f"{long_source_id}_1_{slug}_001"
+        note = {
+            "chunk_id": chunk_id,
+            "section": "Introduction",
+            "chunk_text": (
+                "This is substantive prose, long enough and alphabetic enough "
+                "to clear the minimum-substance guard."
+            ),
+            "role_in_argument": "role:claim",
+            "field": {"primary": "state"},
+            "claim_type": {"primary": "state-formation"},
+            "theory_school": {"primary": "bellicist"},
+            "empirical_scope": {"value": "scope:general"},
+        }
+        block = yaml.safe_dump(note, sort_keys=False, allow_unicode=True)
+        # The vault note itself is filed under a short, unrelated filename --
+        # `_read_frame`/`parse_note` key off the frontmatter `chunk_id`, not
+        # the filename, so only the gold writer's own path budgeting is
+        # under test here (the vault write path has its own coverage in
+        # test_vault.py).
+        (prose / "short.md").write_text(
+            f"---\n{block}---\n# Introduction\n\ntext\n", encoding="utf-8"
+        )
+
+        gold = tmp_path / "gold"
+        unbudgeted_path = gold / "chunks" / f"{chunk_id}.json"
+
+        written = run_gold_sample(vault_dir=vault, gold_dir=gold)
+
+        assert len(str(unbudgeted_path.resolve())) > 260, (
+            "fixture should reproduce the real overlong-path failure"
+        )
+        assert len(written) == 1
+        path = written[0]
+        assert path.is_file()
+        assert len(str(path.resolve())) < 260
+        # the filename actually got shortened, not just happened to already fit
+        assert len(path.name) < len(chunk_id) + len(".json")
+        record = json.loads(path.read_text(encoding="utf-8"))
+        assert record["chunk_id"] == chunk_id
+
 
 def _gold_record(chunk_id, field, scope, claim, theory):
     return {

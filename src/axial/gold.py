@@ -44,6 +44,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from axial.chunk import _BACK_MATTER_TITLES
 from axial.codebook import CodebookError, load_codebook
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
+from axial.paths import budgeted_chunk_filename, path_overage
 from axial.tag import DEFAULT_DOMAIN_DIR
 from axial.vault import _default_vault_dir
 
@@ -623,7 +624,13 @@ def run_gold_sample(
     written = []
     for record in selected:
         ordered = {key: record.get(key) for key in RECORD_FIELDS}
-        path = chunks_dir / f"{record['chunk_id']}.json"
+        chunk_id = record["chunk_id"]
+        filename = f"{chunk_id}.json"
+        if path_overage(chunks_dir, filename) > 0:
+            filename = budgeted_chunk_filename(
+                chunks_dir, source_id_of(chunk_id), chunk_id, extension=".json"
+            )
+        path = chunks_dir / filename
         path.write_text(
             json.dumps(ordered, indent=2, sort_keys=True, ensure_ascii=False), encoding="utf-8"
         )
