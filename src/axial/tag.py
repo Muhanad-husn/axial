@@ -104,7 +104,9 @@ from axial.llm import (
     ContentRefusedError,
     LLMClient,
     LLMError,
+    dispatch_slot,
     get_client,
+    reserve_tag_dispatch_slots,
     votes_for_pass,
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
@@ -1953,17 +1955,27 @@ def run_tag(
         # loop's OWN downstream processing at the first quarantine-worthy
         # draw (byte-identical outcome to before), it just no longer prevents
         # calls already in flight.
-        with ThreadPoolExecutor(max_workers=max(votes, 1)) as executor:
-            completion_futures = [
-                executor.submit(
-                    complete_json,
+        # Issue #370: each draw's place in a scripted stub response sequence
+        # is reserved HERE, in the single-threaded submitting context, and
+        # carried into its worker. Advancing a shared counter inside the
+        # worker instead hands position 1 to whichever thread wins the lock
+        # first, not to draw 1 -- so draw order and response order come apart
+        # under real thread scheduling. Invisible against a real provider (a
+        # response always pairs with its own request over HTTP), which is why
+        # this only ever showed up as a flaky test.
+        slots = reserve_tag_dispatch_slots(votes)
+
+        def _draw(slot: int) -> str:
+            with dispatch_slot(slot):
+                return complete_json(
                     client,
                     prompt,
                     pass_name=TAG_PASS_NAME,
                     validate=lambda raw: reject_degenerate_tag_values(raw, axes_to_tag, schema),
                 )
-                for _ in range(votes)
-            ]
+
+        with ThreadPoolExecutor(max_workers=max(votes, 1)) as executor:
+            completion_futures = [executor.submit(_draw, slot) for slot in slots]
 
             draws: list[
                 tuple[dict[str, str], dict[str, Any], dict[str, list[str]], str | None]
