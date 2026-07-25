@@ -114,6 +114,7 @@ it into their own typed error hierarchy instead of letting a bare
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -710,6 +711,58 @@ _premise_match_pass_call_count = 0
 # (issue #385), mirroring `_premise_match_pass_call_count` above exactly.
 _panel_review_pass_call_count = 0
 
+# Issue #370: submission-order slot for a concurrently-dispatched group of
+# calls. The counters above are advanced by the WORKER thread that executes a
+# call, so when a call site fires N calls at once against one scripted
+# response sequence, whichever thread wins the lock first takes position 1 --
+# regardless of which logical draw it is servicing. OS thread scheduling is
+# not guaranteed to match `ThreadPoolExecutor` submission order, so the Nth
+# scripted response reaches an arbitrary draw and an order-sensitive test is
+# flaky.
+#
+# The fix is to decide each call's position in the SUBMITTING thread, which
+# is single-threaded and therefore deterministic (`reserve_tag_dispatch_
+# slots`), and carry it into the worker (`dispatch_slot`). A worker running
+# with a bound slot reads its position from the slot instead of advancing the
+# shared counter.
+#
+# Invisible to a real provider: an HTTP response always pairs with its own
+# request, so `OpenRouterClient` never reads this. It costs a thread-local
+# set/reset per call and changes no production behavior.
+_dispatch_slot = threading.local()
+
+
+@contextlib.contextmanager
+def dispatch_slot(index: int | None):
+    """Bind this thread's next scripted-response dispatch to submission-order
+    position `index` (1-indexed, as reserved by `reserve_tag_dispatch_slots`).
+    Restores the previous binding on exit, so nesting and reuse of a pooled
+    worker thread are both safe. `None` restores counter-advancing behavior."""
+    previous = getattr(_dispatch_slot, "index", None)
+    _dispatch_slot.index = index
+    try:
+        yield
+    finally:
+        _dispatch_slot.index = previous
+
+
+def reserve_tag_dispatch_slots(count: int) -> list[int]:
+    """Reserve `count` consecutive tag-pass positions, in the caller's own
+    (submitting) thread, and return them in submission order.
+
+    Scoped to the tag pass deliberately: it is the only pass with a
+    concurrent call site today (`run_tag`'s best-of-N draws). A future
+    concurrent caller on another counter-backed pass adds its own reservation
+    the same way -- the latent risk is real (issue #370) but generalising
+    ahead of a second caller would be an abstraction with one implementation.
+    """
+    global _tag_pass_call_count
+    with _stub_dispatch_lock:
+        base = _tag_pass_call_count
+        _tag_pass_call_count += count
+        return [base + offset for offset in range(1, count + 1)]
+
+
 # Guards every one of the counters above (issue #325 follow-up): a
 # bare module-global `count += 1` is not one atomic operation, and
 # `run_tag`'s votes loop now fires multiple `complete()` calls against the
@@ -1212,16 +1265,20 @@ def _canned_response_for(pass_name: str | None) -> str:
             return override
         return StubLLMClient._CANNED_CHUNK_RESPONSE
     if pass_name == TAG_PASS_NAME:
-        _maybe_fail_tag_call()
-        # Issue #102: a JSON array of raw responses, indexed by the same
-        # per-process tag-pass counter `_maybe_fail_tag_call` just advanced,
-        # takes priority over the single-string override so a test can script
-        # "first answer bad, correction answer good" across calls.
+        # `position` is this call's own 1-indexed place in the tag-pass
+        # sequence: the counter it just advanced, or -- under a concurrent
+        # dispatch -- the slot reserved for it in the submitting thread
+        # (issue #370). Never the raw global, which a racing sibling may
+        # already have advanced past.
+        position = _maybe_fail_tag_call()
+        # Issue #102: a JSON array of raw responses, indexed by that
+        # position, takes priority over the single-string override so a test
+        # can script "first answer bad, correction answer good" across calls.
         sequence_raw = os.environ.get(STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, "")
         if sequence_raw:
             sequence = json.loads(sequence_raw)
             if sequence:
-                return sequence[(_tag_pass_call_count - 1) % len(sequence)]
+                return sequence[(position - 1) % len(sequence)]
         override = os.environ.get(STUB_TAG_RESPONSE_ENV_VAR, "")
         if override:
             return override
@@ -1469,17 +1526,26 @@ def _maybe_fail_tag_call() -> None:
     counter advances for every tag-pass dispatch regardless, so the "Nth tag
     call" is well-defined independent of whether the seam is armed."""
     global _tag_pass_call_count
-    _tag_pass_call_count += 1
+    slot = getattr(_dispatch_slot, "index", None)
+    if slot is None:
+        _tag_pass_call_count += 1
+        position = _tag_pass_call_count
+    else:
+        # Position was reserved in the submitting thread (issue #370); the
+        # counter already carries this call, so advancing again would
+        # double-count it and shift every later call's position.
+        position = slot
     raw = os.environ.get(STUB_TAG_FAIL_AT_ENV_VAR, "")
     try:
         fail_at = int(raw)
     except (TypeError, ValueError):
-        return
-    if fail_at > 0 and _tag_pass_call_count == fail_at:
+        return position
+    if fail_at > 0 and position == fail_at:
         raise StubInjectedTagFailureError(
             f"{STUB_TAG_FAIL_AT_ENV_VAR}={fail_at}: injected tag-pass failure "
-            f"on tag call #{_tag_pass_call_count} (issue #81 fault-injection seam)"
+            f"on tag call #{position} (issue #81 fault-injection seam)"
         )
+    return position
 
 
 # httpx's 5s default read timeout kills a real completion before it starts:
