@@ -326,6 +326,21 @@ RETRIEVE_PASS_NAME = "retrieve"
 # also named in DEFAULT_REASONING_BY_PASS below.
 SYNTHESIZE_PASS_NAME = "synthesize"
 
+# Pass name the stage-4 counter-position GENERATION call identifies itself
+# with (see src/axial/analyze/synthesis.py's `generate_counter_position`,
+# issue #399, PRD §7.8/§7.11): the second, follow-up synthesis-family call
+# that -- only on a mechanically-contested brief -- drafts the §7.8 section
+# from a whitelisted pool of the run's own opposing evidence, or discloses
+# the corpus as one-sided. Named SEPARATELY from SYNTHESIZE_PASS_NAME (rather
+# than reusing it) purely so the stub/record dispatch below can tell the two
+# calls apart -- they return differently-shaped canned JSON, and a
+# stub-driven test scripting one must never leak into the other. This is
+# still the GENERATING model, never an independent judge: it must be free to
+# resolve to the SAME model as SYNTHESIZE_PASS_NAME (config routes both to
+# `production_synthesis`), unlike COUNTER_POSITION_PASS_NAME below, which is
+# the bounded steelman-quality CHECK and must resolve to a DIFFERENT model.
+COUNTER_POSITION_GENERATE_PASS_NAME = "counter_position_generate"
+
 # Pass name the stage-5 attribution validator's bounded (b)-seam honesty
 # check identifies itself with (see src/axial/validators/attribution.py,
 # issue #258, PRD §7.9): does a claim marked "b" (tool-infers-across-sources)
@@ -574,6 +589,17 @@ STUB_ATTRIBUTION_RESPONSE_ENV_VAR = "AXIAL_STUB_ATTRIBUTION_RESPONSE"
 # "strawman"). Read at call time, like every other seam here. Never affects
 # any other pass's canned response.
 STUB_COUNTER_POSITION_RESPONSE_ENV_VAR = "AXIAL_STUB_COUNTER_POSITION_RESPONSE"
+
+# Issue #399 test/CI-only seam: mirrors STUB_SYNTHESIZE_RESPONSE_ENV_VAR
+# above, exactly, for the counter-position GENERATION call
+# (`COUNTER_POSITION_GENERATE_PASS_NAME`) instead of the primary claims call.
+# When set to a non-empty value, the stub/record clients'
+# counter_position_generate-pass response becomes this raw string verbatim
+# instead of the default canned response, letting a test script a specific
+# `{present, stance, grounds, corpus_one_sided, one_sided_reason}` combination
+# end-to-end. Read at call time, like every other seam here. Never affects
+# any other pass's canned response.
+STUB_COUNTER_POSITION_GENERATE_RESPONSE_ENV_VAR = "AXIAL_STUB_COUNTER_POSITION_GENERATE_RESPONSE"
 
 # Issue #262 test/CI-only seam: mirrors STUB_CHUNK_RESPONSE_SEQUENCE_ENV_VAR
 # above, exactly, for the rung-3 grounding gate's independent judge call
@@ -1173,6 +1199,32 @@ def _canned_counter_position_response() -> str:
     return override or _CANNED_COUNTER_POSITION_RESPONSE
 
 
+# The default canned response for a counter-position-GENERATION call (issue
+# #399): the conservative one-sided disclosure, never a fabricated stance --
+# a stub-driven run that never scripts a real opposing position must not
+# invent scholarly opposition nobody scripted, the same "never invent a flag
+# nobody scripted" convention `_canned_attribution_response` follows.
+_CANNED_COUNTER_POSITION_GENERATE_RESPONSE = json.dumps(
+    {
+        "present": False,
+        "stance": None,
+        "grounds": [],
+        "corpus_one_sided": True,
+        "one_sided_reason": "Stub client: no counter-position was scripted.",
+    }
+)
+
+
+def _canned_counter_position_generate_response() -> str:
+    """The canned response for a counter-position-GENERATION call (identified
+    by `pass_name=COUNTER_POSITION_GENERATE_PASS_NAME`, issue #399): read
+    fresh from `STUB_COUNTER_POSITION_GENERATE_RESPONSE_ENV_VAR` on every call
+    so a test can script a specific §7.8 section end-to-end; unset/"" falls
+    back to the conservative one-sided-disclosure default above."""
+    override = os.environ.get(STUB_COUNTER_POSITION_GENERATE_RESPONSE_ENV_VAR, "")
+    return override or _CANNED_COUNTER_POSITION_GENERATE_RESPONSE
+
+
 _CANNED_GROUNDING_RESPONSE = json.dumps({"verdict": "supports"})
 
 
@@ -1300,6 +1352,8 @@ def _canned_response_for(pass_name: str | None) -> str:
         return _canned_attribution_response()
     if pass_name == COUNTER_POSITION_PASS_NAME:
         return _canned_counter_position_response()
+    if pass_name == COUNTER_POSITION_GENERATE_PASS_NAME:
+        return _canned_counter_position_generate_response()
     if pass_name == GROUNDING_PASS_NAME:
         return _canned_grounding_response()
     if pass_name == CALIBRATION_PASS_NAME:
