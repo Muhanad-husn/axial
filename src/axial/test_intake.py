@@ -38,6 +38,107 @@ def test_check_extension_rejects_unsupported_extension_naming_it():
     assert ".txt" in str(exc_info.value)
 
 
+# =============================================================================
+# Source-filename length gate: PRs #377/#394/#395/#396 each independently
+# patched a downstream symptom of the same root cause -- an over-long source
+# filename stem folded into `chunk_id` produces a note filename no directory
+# depth can hold under Windows' MAX_PATH. This gate rejects it at intake,
+# before any of those call sites can ever see it.
+# =============================================================================
+
+
+def test_max_safe_source_stem_length_matches_independent_arithmetic(tmp_path):
+    """The derivation, recomputed independently (not copy-pasted from the
+    implementation) from the same constants it is documented to reuse:
+    `_WINDOWS_MAX_PATH`/`_PATH_SAFETY_MARGIN` (the budget `path_overage`
+    itself enforces), `_SLUG_MAX_LEN` (the worst-case section slug), and
+    chunk_id's own locked, fixed-width pieces -- the hyphen + 12-char hash,
+    three underscore separators, a 3-digit order key, a 3-digit index, and
+    the ".md" extension."""
+    from axial.chunk import _SLUG_MAX_LEN
+    from axial.intake import max_safe_source_stem_length
+    from axial.paths import _PATH_SAFETY_MARGIN, _WINDOWS_MAX_PATH
+
+    directory = tmp_path / "prose"
+    result = max_safe_source_stem_length((directory,))
+
+    non_stem_overhead = 1 + 12 + 3 + _SLUG_MAX_LEN + 3 + 3 + len(".md")
+    filename_budget = (_WINDOWS_MAX_PATH - _PATH_SAFETY_MARGIN) - len(str(directory.resolve())) - 1
+    expected = filename_budget - non_stem_overhead
+
+    assert result == expected
+
+
+def test_max_safe_source_stem_length_takes_the_tighter_of_several_directories(tmp_path):
+    from axial.intake import max_safe_source_stem_length
+
+    shallow = tmp_path / "a"
+    deep = tmp_path / "a" / "much" / "deeper" / "nested" / "directory" / "tree"
+
+    tightest = max_safe_source_stem_length((deep,))
+    combined = max_safe_source_stem_length((shallow, deep))
+
+    assert combined == tightest
+    assert combined < max_safe_source_stem_length((shallow,))
+
+
+def test_check_source_stem_length_accepts_a_stem_at_the_derived_limit():
+    from axial.intake import check_source_stem_length, max_safe_source_stem_length
+
+    limit = max_safe_source_stem_length()
+    path = Path(f"{'a' * limit}.pdf")
+
+    check_source_stem_length(path)  # does not raise
+
+
+def test_check_source_stem_length_rejects_a_stem_one_over_the_derived_limit():
+    from axial.intake import (
+        SourceFilenameTooLongError,
+        check_source_stem_length,
+        max_safe_source_stem_length,
+    )
+
+    limit = max_safe_source_stem_length()
+    path = Path(f"{'a' * (limit + 1)}.pdf")
+
+    with pytest.raises(SourceFilenameTooLongError) as exc_info:
+        check_source_stem_length(path)
+
+    message = str(exc_info.value)
+    assert path.name in message
+    assert str(limit) in message
+
+
+def test_intake_rejects_an_overlong_stem_before_touching_the_filesystem():
+    """The guard needs no I/O at all: a nonexistent path with an overlong
+    stem is rejected by its own error, not `MissingSourceFileError`, and
+    intake never reaches extraction, the model call, or the metadata
+    write."""
+    from axial.intake import SourceFilenameTooLongError, intake, max_safe_source_stem_length
+
+    limit = max_safe_source_stem_length()
+    overlong_path = Path(f"{'a' * (limit + 1)}.pdf")
+    client = _StubHoldingsClient()
+
+    with pytest.raises(SourceFilenameTooLongError):
+        intake(overlong_path, client=client)
+
+    assert client.calls == 0
+
+
+def test_intake_rejects_an_overlong_stem_and_writes_no_metadata_record(tmp_path):
+    from axial.intake import SourceFilenameTooLongError, intake, max_safe_source_stem_length
+
+    limit = max_safe_source_stem_length()
+    overlong_path = Path(f"{'a' * (limit + 1)}.pdf")
+    meta_dir = tmp_path / "source_meta"
+
+    with pytest.raises(SourceFilenameTooLongError):
+        intake(overlong_path, source_meta_dir=meta_dir)
+
+    assert not meta_dir.exists()
+
+
 def test_has_text_layer_true_for_text_pdf():
     from axial.intake import has_text_layer
 
