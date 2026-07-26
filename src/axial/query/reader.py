@@ -598,6 +598,18 @@ def _read_frontmatter_index_entry(path: Path) -> _FrontmatterIndexEntry:
 # threaded sweep is a near-certain pile-up -- without a lock, N threads can
 # each kick off their own ~93s cold build concurrently instead of one thread
 # building it once for all.
+#
+# Consequence of the "vault does not change within one process" assumption:
+# a cache HIT returns before `prose_dir.is_dir()` is ever re-checked, so a
+# vault whose `prose/` directory is removed mid-process (after this index
+# already built once) stops raising `MissingVaultDirError` on later calls --
+# it keeps serving the last-known-good index instead. This is the same
+# assumption `_CHUNK_ID_INDEX_CACHE`/`_ARTIFACT_ID_INDEX_CACHE` already make
+# (a "does this id now exist" recheck is exactly as stale), stated here
+# because a missing-directory check reads more like a live guard than a
+# cached lookup does -- a future caller relying on this index to detect a
+# vault disappearing out from under a long-running process should build
+# their own fresh check, not assume one hides in here.
 _FRONTMATTER_INDEX_CACHE: dict[Path, list[_FrontmatterIndexEntry]] = {}
 _FRONTMATTER_INDEX_LOCK = threading.Lock()
 

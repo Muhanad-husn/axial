@@ -1052,3 +1052,102 @@ def test_slice_02_tools_run_with_no_llm_client_configured(tmp_path, monkeypatch)
     assert get_envelope("some-source", envelopes_dir=tmp_path / "envelopes").source_id == (
         "some-source"
     )
+
+
+# -- frontmatter index caching (perf follow-up to #362's benchmark sweep) ----
+#
+# `query_by_tag`/`query_by_polity`/`coverage_count` used to each do their own
+# uncached full scan of `prose/` -- measured at ~93s/call over the real
+# ~18k-note corpus, and the dominant cost of the #362 sweep. They now share
+# one process-lifetime index (`reader._frontmatter_index`), built at most
+# once per resolved vault_dir. These cases pin the caching itself (call
+# counting), not just the query results the rest of this file already
+# covers -- a regression that reintroduces the per-call scan would leave
+# every other test in this file green.
+
+
+def _install_read_counter(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Wrap `reader._read_frontmatter_index_entry` (the per-note parse the
+    index build calls once per `.md` file) to record every path it is asked
+    to parse, then return that list -- a call count for that function is
+    exactly a count of notes actually read off disk, regardless of which
+    query function triggered the build."""
+    from axial.query import reader
+
+    calls: list = []
+    original = reader._read_frontmatter_index_entry
+
+    def counting(path):
+        calls.append(path)
+        return original(path)
+
+    monkeypatch.setattr(reader, "_read_frontmatter_index_entry", counting)
+    return calls
+
+
+def test_query_by_tag_parses_each_note_at_most_once_across_two_calls(tmp_path, monkeypatch):
+    """The entire point of the change: two successive `query_by_tag` calls
+    against the same vault must not re-read the notes the first call already
+    parsed."""
+    prose_dir = tmp_path / "prose"
+    for chunk_id in ["c1", "c2", "c3"]:
+        _write_chunk_note(prose_dir, chunk_id)
+
+    calls = _install_read_counter(monkeypatch)
+
+    first = query_by_tag(role_in_argument="role:claim", vault_dir=tmp_path)
+    calls_after_first = len(calls)
+    second = query_by_tag(field="field:political-sociology", vault_dir=tmp_path)
+
+    assert first == ["c1", "c2", "c3"]
+    assert second == ["c1", "c2", "c3"]
+    assert calls_after_first == 3  # one parse per note, built once
+    assert len(calls) == calls_after_first  # the second call triggered no further reads
+
+
+def test_frontmatter_index_is_shared_across_query_by_tag_polity_and_coverage_count(
+    tmp_path, monkeypatch
+):
+    """Once ANY of the three cached tools has warmed the index for a given
+    vault_dir, the other two read the same cached index -- zero further
+    parses, not just zero further parses of their own."""
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "c1", polities_touched=["Iraq"])
+    _write_chunk_note(prose_dir, "c2", polities_touched=["Syria"])
+
+    calls = _install_read_counter(monkeypatch)
+
+    query_by_tag(role_in_argument="role:claim", vault_dir=tmp_path)
+    calls_after_warm = len(calls)
+    assert calls_after_warm == 2
+
+    polity_result = query_by_polity("Iraq", vault_dir=tmp_path)
+    coverage_result = coverage_count(vault_dir=tmp_path)
+
+    assert polity_result == ["c1"]
+    assert coverage_result == {"Iraq": 1, "Syria": 1}
+    assert len(calls) == calls_after_warm  # neither call read a single note
+
+
+def test_frontmatter_index_is_keyed_per_vault_dir_not_shared_across_vaults(tmp_path, monkeypatch):
+    """Two distinct vault_dirs, each warmed in turn, must never contaminate
+    each other's results -- the cache is keyed by resolved vault_dir, same
+    convention as the existing chunk/artifact id index caches."""
+    vault_a = tmp_path / "vault_a"
+    vault_b = tmp_path / "vault_b"
+    _write_chunk_note(vault_a / "prose", "a1", polities_touched=["Iraq"])
+    _write_chunk_note(vault_b / "prose", "b1", polities_touched=["Lebanon"])
+    _write_chunk_note(vault_b / "prose", "b2", polities_touched=["Lebanon"])
+
+    calls = _install_read_counter(monkeypatch)
+
+    result_a = query_by_tag(role_in_argument="role:claim", vault_dir=vault_a)
+    result_b = query_by_tag(role_in_argument="role:claim", vault_dir=vault_b)
+
+    assert result_a == ["a1"]
+    assert result_b == ["b1", "b2"]
+    assert coverage_count(vault_dir=vault_a) == {"Iraq": 1}
+    assert coverage_count(vault_dir=vault_b) == {"Lebanon": 2}
+    # 1 note in vault_a + 2 notes in vault_b parsed once each; the second
+    # coverage_count call against each vault re-used its own cached index.
+    assert len(calls) == 3
