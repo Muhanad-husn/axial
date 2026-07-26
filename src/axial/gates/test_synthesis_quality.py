@@ -177,7 +177,13 @@ def test_uncontested_records_excluded_from_denominator(vault_dir: Path, tmp_path
     assert presence.value == 1.00
 
 
-def test_zero_contested_records_reports_n_0_not_vacuous_pass(vault_dir: Path, tmp_path: Path):
+def test_zero_contested_records_reports_not_scoreable(vault_dir: Path, tmp_path: Path):
+    """Issue #401: zero contested records is neither a vacuous pass nor a
+    fail -- the metric never ran, and the reason must name the CONTESTED
+    subset as empty, not misreport an empty claim set (these records do
+    carry claims). Since presence itself is not-scoreable (not a pass),
+    steelman's own silence is unaccounted for too -- also not-scoreable,
+    never not-applicable (issue #405)."""
     records = [_uncontested_record(f"UNC{i}") for i in range(5)]
     report = run_synthesis_quality_gate(
         records,
@@ -190,10 +196,20 @@ def test_zero_contested_records_reports_n_0_not_vacuous_pass(vault_dir: Path, tm
     presence = next(m for m in report.metrics if m.metric == "counter_position_presence_rate")
     assert presence.n == 0
     assert presence.value is None
-    assert presence.passed is False
+    assert presence.passed is None
+    assert "contested" in presence.detail["reason"]
+
+    steelman = next(m for m in report.metrics if m.metric == "steelman_quality")
+    assert steelman.passed is None
+    assert "not_applicable" not in steelman.detail
 
 
 def test_two_failing_contested_records_score_0_83_and_are_named(vault_dir: Path, tmp_path: Path):
+    """Issue #405, replaying #401's own slice-1 evidence: BAD1/BAD2 carry
+    `present: false, corpus_one_sided: false` -- neither present nor
+    disclosed, which presence correctly FAILS. Steelman never ran for any
+    record here, and since presence did NOT pass, that silence is
+    genuinely unmeasured -- not-scoreable, never not-applicable."""
     passing = [
         _contested_record(f"DEV{i}", counter_position=_disclosed_one_sided()) for i in range(10)
     ]
@@ -214,6 +230,10 @@ def test_two_failing_contested_records_score_0_83_and_are_named(vault_dir: Path,
     assert presence.value == pytest.approx(10 / 12)
     assert presence.passed is False
     assert set(presence.detail["failing_brief_ids"]) == {"BAD1", "BAD2"}
+
+    steelman = next(m for m in report.metrics if m.metric == "steelman_quality")
+    assert steelman.passed is None
+    assert "not_applicable" not in steelman.detail
 
 
 def test_steelman_quality_scores_the_stated_counter_position(vault_dir: Path, tmp_path: Path):
@@ -241,6 +261,13 @@ def test_steelman_quality_scores_the_stated_counter_position(vault_dir: Path, tm
 def test_steelman_check_skipped_for_one_sided_disclosure_zero_model_calls(
     vault_dir: Path, tmp_path: Path
 ):
+    """Issue #405 (a #401 follow-up): every contested record here properly
+    DISCLOSED the corpus as one-sided (§7.8's own equal-standing clean
+    outcome), so `counter_position_presence_rate` passes. Steelman has
+    nothing left to judge for a legitimate, accounted-for reason -- that is
+    **not-applicable**, a real pass (never blocking release), distinctly
+    flagged from an ordinary pass so it is never mistaken for #401's
+    original vacuous `passed: true` on a check that simply never ran."""
     records = [_contested_record("DEV1", counter_position=_disclosed_one_sided())]
     report = run_synthesis_quality_gate(
         records,
@@ -250,9 +277,36 @@ def test_steelman_check_skipped_for_one_sided_disclosure_zero_model_calls(
         trusted=False,
         config_path=tmp_path / "nonexistent.yaml",
     )
+    presence = next(m for m in report.metrics if m.metric == "counter_position_presence_rate")
+    assert presence.passed is True
+
     steelman = next(m for m in report.metrics if m.metric == "steelman_quality")
     assert steelman.n == 0
-    assert steelman.passed is True, "a legitimately empty subset is a vacuous pass, not a failure"
+    assert steelman.value is None
+    assert steelman.passed is True, "not-applicable is a real pass, never blocks release"
+    assert steelman.detail["not_applicable"] is True
+    assert "disclosed" in steelman.detail["reason"]
+
+    assert report.passed is True, "a clean, fully-disclosed gate is an overall pass"
+
+
+def test_ten_disclosed_contested_records_gate_passes_overall(vault_dir: Path, tmp_path: Path):
+    """The exact CI scenario (tests/analysis/test_synthesis_and_calibration_
+    gates.py::test_scenario1): 10 contested records, all properly disclosed
+    one-sided. `overall` must read PASS, not NOT-SCOREABLE -- disclosure at
+    scale is still a clean, complete outcome (issue #405)."""
+    records = [
+        _contested_record(f"DEV{i}", counter_position=_disclosed_one_sided()) for i in range(10)
+    ]
+    report = run_synthesis_quality_gate(
+        records,
+        client=ExplodingLLMClient(),
+        vault_dir=vault_dir,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+    )
+    assert report.passed is True
 
 
 def test_same_model_guard_propagates_from_validate_counter_position(

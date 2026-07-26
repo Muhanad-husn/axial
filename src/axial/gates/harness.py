@@ -118,15 +118,37 @@ class UnknownMetricError(GateError):
 
 @dataclass(frozen=True)
 class MetricResult:
-    """One metric's verdict: `value` is `None` only when the metric had
-    nothing to evaluate (an empty input) and is being reported as a failed,
-    named-reason gate rather than a vacuous pass (module docstring)."""
+    """One metric's verdict: `value` is `None` when the metric had nothing
+    (or not enough) to evaluate.
+
+    `passed` is tri-state (issues #401/#402): `True`/`False` are a real
+    verdict; `None` is **not-scoreable** -- the sample was empty or too small
+    to mean anything, and the metric is neither a pass nor a fail. A sample
+    too small to mean anything must say so, not manufacture a verdict in
+    either direction: a metric that vacuously "passes" on zero observations
+    reads as a green light for a check that never ran, and a metric that
+    "fails" an input it never had anything to evaluate sends a reader
+    debugging the wrong thing. Every caller that folds `passed` into an
+    aggregate (`GateReport.passed` below, `axial.brief.sweep`'s per-brief
+    console summary) must keep `None` distinguishable from both real
+    verdicts -- collapsing it back to a boolean one level up defeats the
+    whole point.
+
+    A fourth condition -- **not-applicable** (issue #405) -- is not a fourth
+    `passed` value: it is a real pass (`True`, so it never blocks release)
+    carrying `detail[NOT_APPLICABLE_DETAIL_KEY] = True`, set by
+    `not_applicable_metric` below. Use it only when a SIBLING metric's own
+    passing verdict already accounts for why this one has nothing to
+    measure (e.g. `steelman_quality` when `counter_position_presence_rate`
+    passed because every contested record was cleanly disclosed, never
+    withheld) -- never as a shortcut back to #401's plain vacuous pass.
+    `metric_verdict_text` renders it distinctly from an ordinary pass."""
 
     metric: str
     value: float | None
     threshold: float
     comparison: Comparison
-    passed: bool
+    passed: bool | None
     n: int
     detail: dict[str, Any] = field(default_factory=dict)
 
@@ -146,8 +168,12 @@ class MetricResult:
 class GateReport:
     """A gate's whole verdict: one or more `MetricResult`s, the resolved
     corpus_pin id (or `None`), and whether this run's numbers are trusted
-    (module docstring). `passed` is the conjunction of every metric's own
-    `passed` -- a gate with two metrics ships only when both do."""
+    (module docstring). `passed` is tri-state, mirroring `MetricResult.
+    passed` one level up (issues #401/#402): `False` if any metric actually
+    failed (a not-scoreable metric elsewhere never hides a real failure),
+    else `None` if any metric is not-scoreable (the gate never fully ran, so
+    it cannot report a clean pass either), else `True` only when every
+    metric ran and passed."""
 
     gate: str
     corpus_pin: str | None
@@ -155,8 +181,12 @@ class GateReport:
     metrics: list[MetricResult]
 
     @property
-    def passed(self) -> bool:
-        return all(metric.passed for metric in self.metrics)
+    def passed(self) -> bool | None:
+        if any(metric.passed is False for metric in self.metrics):
+            return False
+        if any(metric.passed is None for metric in self.metrics):
+            return None
+        return True
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -191,10 +221,26 @@ def comparison_for(metric: str) -> Comparison:
     return METRIC_COMPARISON[metric]
 
 
-def _compare(value: float, threshold: float, comparison: Comparison) -> bool:
+# A rate that lands exactly on its threshold can still miss a raw `<=`/`>=`
+# comparison by a single float ULP (issue #402: a computed 0.15000000000000002
+# reported `passed: false` against a 0.15 threshold that was, in every sense
+# that matters, exactly met -- and the observed run showed that boundary was
+# the BEST result any brief achieved, not a rare edge). `compare` absorbs
+# float-representation error only; it is many orders of magnitude below any
+# real difference this harness's rate metrics ever produce (their smallest
+# meaningful step is 1/n for whatever sample size scored them).
+_FLOAT_TOLERANCE = 1e-9
+
+
+def compare(value: float, threshold: float, comparison: Comparison) -> bool:
+    """Compare `value` against `threshold` in the direction `comparison`
+    names, tolerant of float-representation error at the boundary. The one
+    shared comparison every gate's own pass/fail check should route through,
+    including gates (like `axial.gates.calibration`) that build their
+    `MetricResult` by hand rather than through `build_metric_result`."""
     if comparison == "gte":
-        return value >= threshold
-    return value <= threshold
+        return value >= threshold - _FLOAT_TOLERANCE
+    return value <= threshold + _FLOAT_TOLERANCE
 
 
 def build_metric_result(
@@ -245,9 +291,88 @@ def build_metric_result(
         value=value,
         threshold=threshold,
         comparison=comparison,
-        passed=_compare(value, threshold, comparison),
+        passed=compare(value, threshold, comparison),
         n=denominator,
         detail=detail,
+    )
+
+
+def not_scoreable_metric(
+    metric: str,
+    *,
+    reason: str,
+    n: int = 0,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    detail: dict[str, Any] | None = None,
+) -> MetricResult:
+    """Build a **not-scoreable** `MetricResult` (issues #401/#402):
+    `value: None`, `passed: None`, a named `reason` -- distinct from both of
+    `build_metric_result`'s own empty-denominator branches (a vacuous pass,
+    or a hard fail), which stay exactly as they were for the gates that
+    already rely on that two-way choice (module docstring).
+
+    The shared seam for "this sample is empty, or too small to mean
+    anything" wherever a gate needs it: `axial.gates.synthesis_quality` at
+    `n: 0` (steelman_quality's own zero-counter-positions case, and
+    counter_position_presence_rate's zero-contested-subset case) and
+    `axial.gates.calibration` at n below the per-band minimum sample size.
+    """
+    threshold = resolve_threshold(metric, config_path)
+    comparison = comparison_for(metric)
+    merged_detail = dict(detail or {})
+    merged_detail["reason"] = reason
+    return MetricResult(
+        metric=metric,
+        value=None,
+        threshold=threshold,
+        comparison=comparison,
+        passed=None,
+        n=n,
+        detail=merged_detail,
+    )
+
+
+# A `detail` marker distinguishing "not-applicable" from an ordinary pass
+# (issue #405, a #401 follow-up): `passed` alone cannot carry the
+# distinction, since both a real pass and "nothing to measure" report
+# `True` -- a report reader (and `format_report`) checks this key instead.
+NOT_APPLICABLE_DETAIL_KEY = "not_applicable"
+
+
+def not_applicable_metric(
+    metric: str,
+    *,
+    reason: str,
+    n: int = 0,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    detail: dict[str, Any] | None = None,
+) -> MetricResult:
+    """Build a **not-applicable** `MetricResult` (issue #405, following
+    #401/#402): the check had legitimately nothing to measure -- not because
+    the sample was too small or genuinely unknown (`not_scoreable_metric`
+    above), but because a SIBLING metric's own passing verdict already
+    accounts for the absence. `steelman_quality` has nothing to judge when
+    every contested record was cleanly disclosed as one-sided
+    (specs/PHASE-B.md §7.8: disclosure is an equal-standing clean outcome,
+    not a degraded one) and `counter_position_presence_rate` already scored
+    that as a pass. `passed: True` so this never blocks release the way a
+    real failure or a not-scoreable metric would, but `reason` names the
+    disclosure that made the check unnecessary, never a success -- never to
+    be mistaken for #401's vacuous `passed: true` on a check that simply
+    never ran for no accounted reason."""
+    threshold = resolve_threshold(metric, config_path)
+    comparison = comparison_for(metric)
+    merged_detail = dict(detail or {})
+    merged_detail["reason"] = reason
+    merged_detail[NOT_APPLICABLE_DETAIL_KEY] = True
+    return MetricResult(
+        metric=metric,
+        value=None,
+        threshold=threshold,
+        comparison=comparison,
+        passed=True,
+        n=n,
+        detail=merged_detail,
     )
 
 
@@ -297,12 +422,32 @@ def write_report(report: GateReport, *, reports_dir: Path | None = None) -> Path
     return out_path
 
 
+def verdict_text(passed: bool | None) -> str:
+    """Render a tri-state `passed` (`MetricResult.passed`/`GateReport.
+    passed`) as text: `None` (not-scoreable) is never collapsed into "FAIL"
+    just because it is falsy in Python, and never into "PASS" either --
+    that collapse is the exact bug issues #401/#402 are about."""
+    if passed is None:
+        return "NOT-SCOREABLE"
+    return "PASS" if passed else "FAIL"
+
+
+def metric_verdict_text(metric: MetricResult) -> str:
+    """Render one `MetricResult`'s verdict, distinguishing a real pass from
+    "not-applicable" (issue #405) -- `verdict_text` alone cannot, since both
+    report `passed: True`. Checks `NOT_APPLICABLE_DETAIL_KEY` on top of the
+    tri-state `passed` `verdict_text` already renders."""
+    if metric.detail.get(NOT_APPLICABLE_DETAIL_KEY):
+        return "PASS (not applicable)"
+    return verdict_text(metric.passed)
+
+
 def format_report(report: GateReport) -> str:
     """Human-readable rendering for the CLI: one line per metric, naming
     value/threshold/pass-fail, then the overall verdict and trust flag."""
     lines = [f"gate: {report.gate}"]
     for metric in report.metrics:
-        verdict = "PASS" if metric.passed else "FAIL"
+        verdict = metric_verdict_text(metric)
         value_str = "n/a" if metric.value is None else f"{metric.value:.4f}"
         lines.append(
             f"  {metric.metric}: {verdict} (value={value_str}, "
@@ -320,7 +465,7 @@ def format_report(report: GateReport) -> str:
         missed_brief_ids = metric.detail.get("missed_brief_ids")
         if missed_brief_ids:
             lines.append(f"    missed brief_ids: {', '.join(missed_brief_ids)}")
-    lines.append(f"overall: {'PASS' if report.passed else 'FAIL'}")
+    lines.append(f"overall: {verdict_text(report.passed)}")
     lines.append(f"corpus_pin: {report.corpus_pin}")
     lines.append(f"trusted: {report.trusted}")
     return "\n".join(lines)

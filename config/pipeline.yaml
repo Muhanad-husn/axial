@@ -240,3 +240,14 @@ calibration:
     high: 0.85
     medium: 0.725
     low: 0.60
+  # The minimum judged-claim count a band needs before its observed rate
+  # feeds `band_reliability` at all (issue #402, PRD §7.4's own
+  # stated-TENTATIVE minimum sample size, first set here by the 2026-07-25
+  # benchmark evidence: a single high-band claim was generating a verdict
+  # with two of three bands empty). 5 is the standard rule-of-thumb minimum
+  # cell count from categorical statistics -- the same "expected count >= 5"
+  # bar a chi-square test applies -- not a number tuned to this run's own
+  # pass/fail counts. src/axial/gates/calibration.py reads this via
+  # _resolve_min_band_n, falling back to its own DEFAULT_MIN_BAND_N when
+  # this file or the key is absent.
+  min_band_n: 5

@@ -7,6 +7,7 @@ src/axial/eval/test_corpus_pin_unit.py).
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -17,11 +18,14 @@ from axial.gates.harness import (
     MetricResult,
     build_metric_result,
     comparison_for,
+    compare,
     format_report,
     load_records,
+    not_scoreable_metric,
     resolve_corpus_pin,
     resolve_threshold,
     resolve_trusted,
+    verdict_text,
     write_report,
 )
 
@@ -184,6 +188,73 @@ def test_empty_denominator_fails_false_reports_a_vacuous_pass(tmp_path: Path):
     assert result.value == 0.0
     assert result.passed is True
     assert result.n == 0
+
+
+# -- compare: float-representation tolerance at an exact boundary (#402) -----
+
+
+def test_compare_lte_survives_float_representation_error_at_the_boundary():
+    """Issue #402: `1.0 - 0.85` is mathematically exactly 0.15 but lands one
+    float ULP above it (`0.15000000000000002`, the exact value a real
+    calibration report computed) -- a raw `<=` would report this boundary
+    value as failing. `0.150..0.600` was the observed range across the
+    whole benchmark run, so this boundary is not a rare edge case."""
+    value = 1.0 - 0.85
+    assert value != 0.15  # the float-representation artifact this guards against
+    assert compare(value, 0.15, "lte") is True
+
+
+def test_compare_gte_survives_float_representation_error_at_the_boundary():
+    """The mirror case for a "gte" metric: a value one ULP BELOW its
+    threshold, purely from float representation, must still count as
+    meeting it."""
+    value = math.nextafter(0.9, 0.0)
+    assert value != 0.9
+    assert compare(value, 0.9, "gte") is True
+
+
+def test_compare_still_fails_clearly_outside_tolerance():
+    """The tolerance absorbs float-representation error only -- it must
+    never widen into a real, measurable miss."""
+    assert compare(0.20, 0.15, "lte") is False
+    assert compare(0.80, 0.90, "gte") is False
+
+
+# -- not_scoreable_metric / tri-state passed (#401/#402) ----------------------
+
+
+def test_not_scoreable_metric_has_null_value_and_passed():
+    result = not_scoreable_metric(
+        "steelman_quality", reason="no present-with-grounds counter-position to judge"
+    )
+    assert result.value is None
+    assert result.passed is None
+    assert result.n == 0
+    assert result.detail["reason"] == "no present-with-grounds counter-position to judge"
+
+
+def test_gate_report_passed_is_none_when_any_metric_not_scoreable_and_none_failed():
+    """A not-scoreable metric must not collapse into either a pass or a
+    fail one level up -- the whole point of issues #401/#402."""
+    passing = MetricResult("m1", 1.0, 1.0, "gte", True, 1)
+    not_scoreable = not_scoreable_metric("steelman_quality", reason="nothing to judge")
+    report = GateReport(gate="g", corpus_pin=None, trusted=False, metrics=[passing, not_scoreable])
+    assert report.passed is None
+
+
+def test_gate_report_passed_is_false_when_a_real_failure_coexists_with_not_scoreable():
+    """A genuine failure is never hidden behind a co-occurring not-scoreable
+    metric."""
+    failing = MetricResult("m1", 0.0, 1.0, "gte", False, 1)
+    not_scoreable = not_scoreable_metric("steelman_quality", reason="nothing to judge")
+    report = GateReport(gate="g", corpus_pin=None, trusted=False, metrics=[failing, not_scoreable])
+    assert report.passed is False
+
+
+def test_verdict_text_renders_the_three_states_distinctly():
+    assert verdict_text(True) == "PASS"
+    assert verdict_text(False) == "FAIL"
+    assert verdict_text(None) == "NOT-SCOREABLE"
 
 
 # -- load_records -------------------------------------------------------------

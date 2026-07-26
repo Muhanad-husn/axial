@@ -120,6 +120,7 @@ from axial.gates import (
     GroundingGateError,
     resolve_trusted,
     run_gate,
+    verdict_text,
     write_report,
 )
 from axial.ingest import WorklistError, read_worklist
@@ -482,7 +483,7 @@ def _score_brief_gates(
         write_report(report, reports_dir=reports_dir)
         reports[gate_name] = report
         print(
-            f"sweep: {brief_stem} gate {gate_name!r} done, passed={report.passed}",
+            f"sweep: {brief_stem} gate {gate_name!r} done, verdict={verdict_text(report.passed)}",
             file=sys.stderr,
         )
     return reports
@@ -733,7 +734,7 @@ def format_sweep_summary(summary: SweepSummary) -> str:
                 f"total_tokens={entry['total_tokens']} usd={pass_usd_str}"
             )
         for gate_name, report in result.gate_reports.items():
-            lines.append(f"  gate {gate_name}: {'PASS' if report.passed else 'FAIL'}")
+            lines.append(f"  gate {gate_name}: {verdict_text(report.passed)}")
     lines.append(
         f"sweep: briefs={len(summary.briefs)} total_draws={summary.total_draws} "
         f"ok={summary.ok_count} skipped={summary.skip_count} failed={summary.fail_count}"

@@ -118,6 +118,117 @@ def test_band_observed_rate_within_tolerance_passes(vault_dir: Path, tmp_path: P
     assert metric.passed is True
 
 
+def test_boundary_value_survives_float_representation_error(vault_dir: Path, tmp_path: Path):
+    """Issue #402, replaying the real 2026-07-25 benchmark evidence (P2-01):
+    5 high-band claims, all judged correct. The deviation `abs(1.0 - 0.85)`
+    lands at `0.15000000000000002`, one float ULP above the 0.15 threshold
+    -- a boundary the run's own observed range (0.150..0.600) shows is the
+    BEST result any brief achieved, not a rare case."""
+    client = ScriptedJudgeClient(
+        model_by_pass=DISTINCT_MODELS, responses=[json.dumps({"verdict": "correct"})] * 5
+    )
+    records = [{"claims": [_claim(f"c-{i}", confidence="high") for i in range(5)]}]
+
+    report = run_calibration_gate(
+        records,
+        client=client,
+        vault_dir=vault_dir,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+    )
+
+    metric = report.metrics[0]
+    assert metric.value == 1.0 - 0.85
+    assert metric.value != 0.15  # the float-representation artifact this guards against
+    assert metric.passed is True
+
+
+def test_band_below_minimum_sample_size_reports_not_scoreable(vault_dir: Path, tmp_path: Path):
+    """Issue #402, replaying the real 2026-07-25 benchmark evidence (P2-01):
+    a single high-band claim was generating a `band_reliability` verdict
+    with two of three bands empty. Below `min_band_n` (default 5), the band
+    contributes nothing to the score and the metric (having no other band to
+    fall back on) reports not-scoreable rather than a verdict built on one
+    claim."""
+    client = ScriptedJudgeClient(
+        model_by_pass=DISTINCT_MODELS, responses=[json.dumps({"verdict": "correct"})]
+    )
+    records = [{"claims": [_claim("c-1", confidence="high")]}]
+
+    report = run_calibration_gate(
+        records,
+        client=client,
+        vault_dir=vault_dir,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+    )
+
+    metric = report.metrics[0]
+    assert metric.value is None
+    assert metric.passed is None
+    assert metric.detail["bands"]["high"]["n"] == 1
+    assert metric.detail["bands"]["high"]["scoreable"] is False
+    assert "minimum sample size" in metric.detail["reason"]
+
+
+def test_one_band_below_minimum_still_scores_the_others(vault_dir: Path, tmp_path: Path):
+    """A band below `min_band_n` is excluded from the deviation/ordering
+    computation, but a co-occurring band that DOES meet it still scores --
+    the metric is not-scoreable only when EVERY band falls short."""
+    responses = (
+        [json.dumps({"verdict": "correct"})] * 5  # high: 5/5 = 1.0
+        + [json.dumps({"verdict": "incorrect"})]  # low: 0/1 = 0.0, below min_band_n
+    )
+    client = ScriptedJudgeClient(model_by_pass=DISTINCT_MODELS, responses=responses)
+    records = [
+        {
+            "claims": [_claim(f"h-{i}", confidence="high") for i in range(5)]
+            + [_claim("l-1", confidence="low")]
+        }
+    ]
+
+    report = run_calibration_gate(
+        records,
+        client=client,
+        vault_dir=vault_dir,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+    )
+
+    metric = report.metrics[0]
+    assert metric.detail["bands"]["low"]["scoreable"] is False
+    assert metric.detail["bands"]["high"]["scoreable"] is True
+    assert metric.value == pytest.approx(0.15)  # only "high" feeds the deviation
+    assert metric.passed is True
+
+
+def test_min_band_n_configurable(vault_dir: Path, tmp_path: Path):
+    """Overriding `calibration.min_band_n` changes which bands score, with
+    no code change -- mirrors `test_band_targets_configurable`."""
+    client = ScriptedJudgeClient(
+        model_by_pass=DISTINCT_MODELS, responses=[json.dumps({"verdict": "correct"})]
+    )
+    records = [{"claims": [_claim("c-1", confidence="high")]}]
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text(yaml.safe_dump({"calibration": {"min_band_n": 1}}), encoding="utf-8")
+
+    report = run_calibration_gate(
+        records,
+        client=client,
+        vault_dir=vault_dir,
+        corpus_pin=None,
+        trusted=False,
+        config_path=config_path,
+    )
+
+    metric = report.metrics[0]
+    assert metric.detail["bands"]["high"]["scoreable"] is True
+    assert metric.passed is not None
+
+
 def test_ordering_violation_fails_even_within_tolerance(vault_dir: Path, tmp_path: Path):
     """medium (0.90 observed) outranks high (0.80 observed) -- both bands
     individually sit within 0.15 of their own target, but the strict
@@ -202,7 +313,10 @@ def test_ordering_inversion_across_a_gap_is_still_caught(vault_dir: Path, tmp_pa
     assert metric.passed is False
 
 
-def test_empty_claim_set_reports_failed_not_vacuous(tmp_path: Path):
+def test_empty_claim_set_reports_not_scoreable(tmp_path: Path):
+    """Issue #402: an empty claim set is the degenerate case of "no band
+    reached the minimum sample size" -- not-scoreable, neither a vacuous
+    pass nor a manufactured fail."""
     report = run_calibration_gate(
         [],
         client=ExplodingLLMClient(),
@@ -212,8 +326,9 @@ def test_empty_claim_set_reports_failed_not_vacuous(tmp_path: Path):
     )
     metric = report.metrics[0]
     assert metric.value is None
-    assert metric.passed is False
+    assert metric.passed is None
     assert metric.n == 0
+    assert "reason" in metric.detail
 
 
 def test_invalid_confidence_band_raises(vault_dir: Path, tmp_path: Path):

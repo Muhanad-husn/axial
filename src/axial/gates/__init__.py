@@ -59,8 +59,12 @@ from axial.gates.harness import (
     MetricResult,
     format_report,
     load_records,
+    metric_verdict_text,
+    not_applicable_metric,
+    not_scoreable_metric,
     resolve_corpus_pin,
     resolve_trusted,
+    verdict_text,
     write_report,
 )
 from axial.gates.synthesis_quality import GATE_NAME as SYNTHESIS_QUALITY_GATE_NAME
@@ -147,6 +151,9 @@ __all__ = [
     "format_report",
     "load_records",
     "load_seeded_briefs",
+    "metric_verdict_text",
+    "not_applicable_metric",
+    "not_scoreable_metric",
     "resolve_corpus_pin",
     "resolve_trusted",
     "run_adversarial_gate",
@@ -155,5 +162,6 @@ __all__ = [
     "run_gate",
     "run_grounding_gate",
     "run_synthesis_quality_gate",
+    "verdict_text",
     "write_report",
 ]

@@ -16,8 +16,11 @@ claim's `grounds` must be non-empty, every grounds entry must resolve to a
 real vault id (`axial.query.reader.get_chunk`/`get_artifact`, exact match
 first, falling back to a unique-suffix repair of a truncated citation via
 `_resolve_truncated_ref_id` -- DEC-42 grew ids to ~200 chars and the model
-sometimes echoes only the tail), and `polities_touched` is computed here --
-never trusted from the model -- as
+sometimes echoes only the tail), every claim's `confidence` is validated
+against the closed §7.4 three-band vocabulary `CONFIDENCE_BANDS` (issue
+#402 -- a real run emitted "medium-high", a band the calibration gate
+correctly refused to score; caught here instead, at generation), and
+`polities_touched` is computed here -- never trusted from the model -- as
 the union of the claim's grounds CHUNKS' `polities_touched` facets (an
 artifact ground carries no such facet of its own, so it contributes
 nothing). `claim_id` is a deterministic hash over each claim's own parsed
@@ -25,8 +28,7 @@ content, so the same response parses to the same ids on every run.
 
 Out of scope for this slice (see plans/analysis-synthesis/02-synthesis-claim-
 graph.md): the attribution validator, the grounding check, the counter-
-position section, the coverage map, a hardcoded confidence vocabulary
-(`confidence` is carried through untyped), and persisting the claim graph.
+position section, the coverage map, and persisting the claim graph.
 """
 
 from __future__ import annotations
@@ -58,6 +60,16 @@ from axial.query.reader import (
 # The §7.4 claim-kind vocabulary -- closed, not open text: a value outside
 # this set is a named parse error, never silently accepted or coerced.
 CLAIM_KINDS = frozenset({"a", "b", "c"})
+
+# The §7.4 confidence-band vocabulary -- exactly three discrete bands, never
+# a numeric score and never a fourth invented one (issue #402: a real run
+# emitted "medium-high", which the calibration gate correctly refused to
+# score/impute -- `axial.gates.calibration.InvalidConfidenceBandError` -- but
+# that only caught it at scoring time, after the record was already
+# persisted. Caught here instead, at generation, same shape as
+# `CLAIM_KINDS` above. Mirrors (does not import) `axial.gates.calibration.
+# CONFIDENCE_BANDS` -- generation stays independent of the evaluation layer.
+CONFIDENCE_BANDS = frozenset({"high", "medium", "low"})
 
 # Kinds whose `grounds` must be non-empty (§7.4: "required non-empty for
 # every (a) and (b) claim"). A (c) claim may carry partial or empty grounds.
@@ -140,6 +152,22 @@ class InvalidClaimKindError(SynthesisParseError):
         )
 
 
+class InvalidClaimConfidenceError(SynthesisParseError):
+    """Raised when a claim's `confidence` is absent or outside the §7.4
+    three-band vocabulary `CONFIDENCE_BANDS` -- names the offending claim so
+    a fourth invented band (e.g. "medium-high") is caught at generation,
+    never silently accepted or coerced into a real band."""
+
+    def __init__(self, index: int, text: Any, confidence: Any):
+        self.index = index
+        self.text = text
+        self.confidence = confidence
+        super().__init__(
+            f"claim #{index} ({text!r}) has confidence {confidence!r}, expected "
+            f"one of {sorted(CONFIDENCE_BANDS)!r}"
+        )
+
+
 class UngroundedClaimError(SynthesisParseError):
     """Raised when an (a) or (b) claim carries absent or empty `grounds`
     (§7.4: required non-empty for both kinds) -- names the offending claim."""
@@ -217,9 +245,9 @@ class Ground:
 @dataclass(frozen=True)
 class Claim:
     """One §7.4 claim: `{claim_id, text, kind, grounds, confidence,
-    polities_touched}`. `confidence` is carried through exactly as the model
-    emitted it -- no vocabulary is enforced here (the band-vs-numeric
-    question is an open question per §7.4/plan, out of this slice's scope)."""
+    polities_touched}`. `confidence` is validated against `CONFIDENCE_BANDS`
+    (issue #402) before a `Claim` is ever constructed -- never a value
+    outside the three-band vocabulary."""
 
     claim_id: str
     text: str
@@ -342,8 +370,10 @@ For every claim you emit, mark its kind:
 
 Every (a) and (b) claim MUST carry at least one grounds pointer to a chunk_id or artifact_id listed above -- an unlisted or invented id is never acceptable.
 
+Mark every claim's confidence as exactly one of "high", "medium", or "low" -- never a numeric score and never any other value (e.g. "medium-high" is not a valid band).
+
 Return ONLY this JSON object, no prose and no code fence:
-{{"claims": [{{"text": "<claim text>", "kind": "a|b|c", "grounds": [{{"ref_type": "chunk|artifact", "ref_id": "<id>"}}], "confidence": "<your confidence>"}}]}}"""
+{{"claims": [{{"text": "<claim text>", "kind": "a|b|c", "grounds": [{{"ref_type": "chunk|artifact", "ref_id": "<id>"}}], "confidence": "high|medium|low"}}]}}"""
 
 
 def _dedupe_preserving_order(values: list[str]) -> list[str]:
@@ -499,6 +529,10 @@ def parse_synthesis_response(raw: str, *, vault_dir: Path | None = None) -> list
         if kind not in CLAIM_KINDS:
             raise InvalidClaimKindError(index, text, kind)
 
+        confidence = entry.get("confidence")
+        if confidence not in CONFIDENCE_BANDS:
+            raise InvalidClaimConfidenceError(index, text, confidence)
+
         grounds, polities_touched = _resolve_grounds(
             index, text, entry.get("grounds"), vault_dir=vault_dir
         )
@@ -512,7 +546,7 @@ def parse_synthesis_response(raw: str, *, vault_dir: Path | None = None) -> list
                 text=text,
                 kind=kind,
                 grounds=grounds,
-                confidence=entry.get("confidence"),
+                confidence=confidence,
                 polities_touched=polities_touched,
             )
         )

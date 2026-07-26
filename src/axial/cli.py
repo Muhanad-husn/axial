@@ -1633,7 +1633,12 @@ def _gate_run(gate: str, records_dir: str | None, briefs_dir: str | None) -> int
     # `trusted` above is already false unless an unambiguous corpus pin
     # resolves (§9.2, issue #387), regardless of this exit code. A failing
     # metric still exits non-zero so a caller never mistakes a scaffold FAIL
-    # for a PASS.
+    # for a PASS. `report.passed` is tri-state (issues #401/#402): `None`
+    # (not-scoreable) is falsy in Python, so this also exits non-zero for a
+    # gate that never fully ran -- the shell's own binary exit code can't
+    # carry the third state, but it must never read as the clean 0 a real
+    # pass gets. `format_report` above is where the NOT-SCOREABLE text
+    # actually distinguishes the two.
     return 0 if report.passed else 1
 
 

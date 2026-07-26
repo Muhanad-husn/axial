@@ -23,6 +23,7 @@ import yaml
 from axial.analyze.assembly import EvidenceChunk, EvidenceSet
 from axial.analyze.synthesis import (
     Ground,
+    InvalidClaimConfidenceError,
     InvalidClaimKindError,
     InvalidGroundRefTypeError,
     SynthesisParseError,
@@ -185,6 +186,61 @@ def test_rejects_a_claim_whose_kind_is_outside_a_b_c(vault_dir: Path):
     )
     with pytest.raises(InvalidClaimKindError):
         parse_synthesis_response(raw, vault_dir=vault_dir)
+
+
+# ---------------------------------------------------------------------------
+# confidence validation -- exactly the §7.4 three-band vocabulary (#402)
+# ---------------------------------------------------------------------------
+
+
+def test_rejects_a_claim_whose_confidence_is_outside_the_three_bands(vault_dir: Path):
+    """Issue #402: a real run emitted "medium-high", a fourth band §7.4
+    never defines. The calibration gate correctly refused to score/impute
+    it, but only at scoring time, after the record was already persisted --
+    caught here instead, at generation."""
+    raw = _valid_response(
+        claims=[
+            {
+                "text": "Some claim.",
+                "kind": "a",
+                "grounds": [{"ref_type": "chunk", "ref_id": "synfix_001_syria_a"}],
+                "confidence": "medium-high",
+            }
+        ]
+    )
+    with pytest.raises(InvalidClaimConfidenceError) as exc_info:
+        parse_synthesis_response(raw, vault_dir=vault_dir)
+    assert "medium-high" in str(exc_info.value)
+
+
+def test_rejects_a_claim_whose_confidence_is_absent(vault_dir: Path):
+    raw = _valid_response(
+        claims=[
+            {
+                "text": "Some claim.",
+                "kind": "a",
+                "grounds": [{"ref_type": "chunk", "ref_id": "synfix_001_syria_a"}],
+            }
+        ]
+    )
+    with pytest.raises(InvalidClaimConfidenceError):
+        parse_synthesis_response(raw, vault_dir=vault_dir)
+
+
+def test_accepts_each_of_the_three_confidence_bands(vault_dir: Path):
+    for band in ("high", "medium", "low"):
+        raw = _valid_response(
+            claims=[
+                {
+                    "text": "Some claim.",
+                    "kind": "a",
+                    "grounds": [{"ref_type": "chunk", "ref_id": "synfix_001_syria_a"}],
+                    "confidence": band,
+                }
+            ]
+        )
+        claims = parse_synthesis_response(raw, vault_dir=vault_dir)
+        assert claims[0].confidence == band
 
 
 # ---------------------------------------------------------------------------
