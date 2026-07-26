@@ -217,6 +217,50 @@ class AllNotesFailedError(VaultError):
         )
 
 
+class VaultNoteCountMismatchError(VaultError):
+    """Raised when this run's prose notes written + skipped count does not
+    equal the number of tagged records `run_vault_write` was given.
+
+    Mirrors `axial.tag.TagRecordCountMismatchError` on the vault side: a
+    real Phase A rerun completed `run_vault_write` with status=OK for a
+    source while writing 3 fewer prose notes than it had tagged records, and
+    nothing noticed, because per-note fault isolation (`_write_note_or_skip`
+    below) only accounts for a note it explicitly caught failing -- not for
+    a record that never reached the write loop at all (the likely mechanism
+    here was a resume-ordering artifact, not a live write failure). This
+    reconciliation is a coarser check than per-note fault isolation: it does
+    not care WHY a record went unaccounted for, only THAT every one is
+    either a written note or a logged skip, so a silent status=OK shortfall
+    fails loudly instead."""
+
+    def __init__(self, source_id: str, expected: int, written: int, skipped: int):
+        self.source_id = source_id
+        self.expected = expected
+        self.written = written
+        self.skipped = skipped
+        accounted_for = written + skipped
+        super().__init__(
+            f"vault write for {source_id!r} wrote {written} prose note(s) and "
+            f"skipped {skipped}, accounting for {accounted_for} of {expected} "
+            f"tagged record(s) -- {expected - accounted_for} note(s) went missing "
+            "without a write or a logged skip"
+        )
+
+
+def _check_note_accounting(source_id: str, expected: int, written: int, skipped: int) -> None:
+    """Raise `VaultNoteCountMismatchError` unless every tagged record this
+    run was given (`expected`) is accounted for by exactly one of a written
+    prose note or a logged skip. A pure helper (no write-loop state), kept
+    separate from `axial.tag._check_chunk_accounting` rather than shared:
+    the two call sites disagree on what "expected" counts (tagged records
+    here vs. chunk records there) and on error type (`VaultError` vs.
+    `TagError`), so sharing one function would mean either a foreign
+    exception type escaping one call site or an added type parameter no
+    other caller needs."""
+    if written + skipped != expected:
+        raise VaultNoteCountMismatchError(source_id, expected, written, skipped)
+
+
 # `_default_vault_dir` now lives in `axial.paths` (issue #249 F1) and is
 # imported above under its original name, so every existing caller of
 # `axial.vault._default_vault_dir` (`axial.gold`, `axial.polity_canonical`)
@@ -541,6 +585,13 @@ def run_vault_write(
     the number of notes dropped this way. A source where every attempted
     note write failed raises `AllNotesFailedError` instead of returning an
     empty success.
+
+    Once the prose-note loop finishes, a reconciliation check confirms every
+    tagged record `axial.tag.run_tag` returned is accounted for by exactly
+    one of a written prose note or a note this run's own fault isolation
+    logged as skipped; a shortfall neither of those catches (e.g. a
+    resume-ordering artifact between the tag and write steps) raises
+    `VaultNoteCountMismatchError` rather than completing with status=OK.
     """
     path = Path(source_path)
     try:
@@ -636,6 +687,7 @@ def run_vault_write(
     # many were dropped this way (mirrors `axial.tag.TaggedRecords.
     # quarantine_count`).
     skipped_count = 0
+    prose_skipped_count = 0
 
     prose_paths: list[Path] = []
     for record in records:
@@ -653,8 +705,17 @@ def run_vault_write(
         )
         if path is None:
             skipped_count += 1
+            prose_skipped_count += 1
         else:
             prose_paths.append(path)
+
+    # Reconciliation backstop: every tagged record `run_vault_write` was
+    # given must end up either a written prose note or a logged skip -- the
+    # coarser invariant per-note fault isolation above does not itself
+    # guarantee (it only ever catches a write it attempted and saw fail).
+    # Raises loudly instead of letting `run_vault_write` report status=OK
+    # with fewer prose notes than tagged records, unnoticed.
+    _check_note_accounting(source_id, len(records), len(prose_paths), prose_skipped_count)
 
     artifact_paths: list[Path] = []
     for record in artifact_records:
