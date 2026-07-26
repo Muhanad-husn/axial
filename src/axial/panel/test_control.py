@@ -29,7 +29,7 @@ def _record():
                 "claim_id": "c-1",
                 "kind": "a",
                 "text": "Bureaucratic capacity fell.",
-                "polity": "syria",
+                "polities_touched": ["syria"],
                 "confidence": "medium",
                 "grounds": [{"ref_type": "chunk", "ref_id": "chunk_a"}],
             },
@@ -37,7 +37,7 @@ def _record():
                 "claim_id": "c-2",
                 "kind": "a",
                 "text": "Militia payrolls grew.",
-                "polity": "lebanon",
+                "polities_touched": ["lebanon"],
                 "confidence": "high",
                 "grounds": [{"ref_type": "chunk", "ref_id": "chunk_b"}],
             },
@@ -86,6 +86,17 @@ def test_strawman_repoints_the_counter_position_at_the_claim_it_opposes():
 
 def test_overconfident_raises_a_thin_coverage_claim_to_high():
     mutated, plant = plant_overconfident(_record())
+    assert plant == Plant(kind=OVERCONFIDENT, claim_id="c-1")
+    assert mutated["claims"][0]["confidence"] == "high"
+
+
+def test_overconfident_matches_on_any_of_a_multi_polity_claims_polities_touched():
+    """§7.4: `polities_touched` is a list -- a claim that touches a
+    thin-coverage polity ALONGSIDE a dense one must still be caught, not
+    missed because the thin polity is not the only one it touches."""
+    record = _record()
+    record["claims"][0]["polities_touched"] = ["lebanon", "syria"]
+    mutated, plant = plant_overconfident(record)
     assert plant == Plant(kind=OVERCONFIDENT, claim_id="c-1")
     assert mutated["claims"][0]["confidence"] == "high"
 

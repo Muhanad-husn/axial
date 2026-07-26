@@ -199,6 +199,73 @@ def compute_coverage_map(
     }
 
 
+# The §7.7 coverage-band vocabulary, worst to best -- a coverage_band value
+# outside this vocabulary is treated as the worst case (`thin`) rather than
+# crashing, so a run cannot manufacture a favorable overall confidence band
+# by carrying an unrecognized coverage_band string.
+_COVERAGE_BAND_RANK = {THIN_COVERAGE_BAND: 0, "moderate": 1, "dense": 2}
+
+# The §7.4 confidence-band vocabulary, one-to-one with the §7.7 coverage-band
+# vocabulary in the same worst-to-best order -- the natural reading of "a
+# band is never rendered instead of the counts that justify it" (§7.4):
+# overall confidence can be no better than the least-covered polity a claim
+# touches.
+_CONFIDENCE_BAND_BY_COVERAGE_RANK = {0: "low", 1: "medium", 2: TOP_CONFIDENCE_BAND}
+
+
+def compute_confidence(coverage_map: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """The §7.3/§7.4 record-level `confidence` disclosure, computed
+    deterministically from `coverage_map` (§7.7) -- never asked of a model,
+    the same "computed separately and deterministically" contract §7.9
+    states for the map itself.
+
+    `overall_band` is set by the LEAST-covered polity any claim touches
+    (`dense` -> `high`, `moderate` -> `medium`, `thin` -> `low`): a run that
+    grounds part of its argument in a thin-coverage polity cannot disclose
+    high confidence overall. This satisfies `validate_coverage_and_confidence`'s
+    `confidence_exceeds_coverage` check by construction rather than by
+    coincidence -- `overall_band` is never `high` while `coverage_map`
+    carries a `thin` entry, because a `thin` entry is exactly what would
+    have produced `low`.
+
+    `rationale` names every touched polity's own coverage band and counts
+    (§7.4: "states the coverage counts that justify the band, drawn from
+    coverage_map"), in ascending polity-name order for the same determinism
+    contract `compute_coverage_map` follows.
+
+    An empty `coverage_map` (no polity touched -- a `refuse` disposition,
+    or claims whose grounds carry no `polities_touched`) still returns a
+    non-nullable disclosure (§7.3), pinned to the most conservative band
+    with a rationale that says plainly why there are no counts to cite."""
+    if not coverage_map:
+        return {
+            "overall_band": "low",
+            "rationale": (
+                "no polity is touched by any claim, so there is no coverage_map "
+                "entry to justify a higher band"
+            ),
+        }
+
+    worst_polity = min(
+        coverage_map,
+        key=lambda polity: _COVERAGE_BAND_RANK.get(coverage_map[polity].get("coverage_band"), 0),
+    )
+    worst_rank = _COVERAGE_BAND_RANK.get(coverage_map[worst_polity].get("coverage_band"), 0)
+    overall_band = _CONFIDENCE_BAND_BY_COVERAGE_RANK[worst_rank]
+
+    per_polity = "; ".join(
+        f"{polity} ({entry.get('coverage_band')}: {entry.get('corpus_chunk_count')} "
+        f"corpus chunks, {entry.get('evidence_chunk_count')} evidence chunks)"
+        for polity, entry in sorted(coverage_map.items())
+    )
+    rationale = (
+        f"overall confidence is {overall_band!r}, bounded by the least-covered "
+        f"polity touched ({worst_polity!r}, band {coverage_map[worst_polity].get('coverage_band')!r}); "
+        f"coverage by polity: {per_polity}"
+    )
+    return {"overall_band": overall_band, "rationale": rationale}
+
+
 def format_coverage_map(coverage_map: dict[str, dict[str, Any]]) -> str:
     """Render `coverage_map` as the founder-facing inspection text (`axial
     brief coverage <brief_id>`): one line per polity, its counts and band,

@@ -211,6 +211,8 @@ Computed deterministically from `polities_touched`, never asked of a model. For 
 
 A claim about a thinly-covered polity is disclosed as thin and feeds the calibration layer (Principle V): it is not stated with the confidence of a claim over a densely-covered case. The map is where the counts behind every confidence band live (§7.4): `coverage_band` and the confidence bands travel with `corpus_chunk_count` and `evidence_chunk_count`, never in place of them.
 
+**`confidence.overall_band` derivation (issue #400).** Computed deterministically from `coverage_map`, the same way the map itself is computed from `polities_touched`: the LEAST-covered polity any claim touches sets the ceiling (`dense` → `high`, `moderate` → `medium`, `thin` → `low`), and `rationale` names every touched polity's own band and counts. This satisfies the release gate's `confidence_exceeds_coverage` check (§7.9) by construction — the top band can never accompany a `thin` coverage_map entry, because a `thin` entry is exactly what would have produced `low`. An empty `coverage_map` (no polity touched, e.g. a `refuse` disposition) still discloses `low` with a plain rationale, since `confidence` is never nullable (§7.3).
+
 ### 7.8 The counter-position section (Principle IV) **[FIRM]**
 
 `{present, stance, grounds[], corpus_one_sided, one_sided_reason}`.
