@@ -27,10 +27,21 @@ not re-derived here:
   swaps in without a code change"); a steelman/strawman verdict against the
   cited grounds is the closest existing quality bar to reuse rather than
   invent a second judge seam ahead of the rubric landing. A record set with
-  zero present-with-grounds counter-positions reports `n: 0` and
-  **not-scoreable** (issue #401), not the vacuous `passed: true` this used
-  to report -- a gate that passes on zero observations reads as a green
-  light for a check that never ran.
+  zero present-with-grounds counter-positions reports `n: 0`, and one of two
+  DISTINCT states depending on what `counter_position_presence_rate` itself
+  found (issue #405, following #401):
+  - **not-applicable** when `counter_position_presence_rate` PASSED --
+    every contested record was cleanly disclosed as one-sided (§7.8:
+    disclosure is an equal-standing clean outcome, not a degraded one),
+    so there is legitimately nothing left to steelman. `passed: true`,
+    since the check is complete and clean, but flagged distinctly from an
+    ordinary pass (`axial.gates.harness.not_applicable_metric`) so it is
+    never mistaken for #401's vacuous pass on a check that simply never
+    ran for no accounted reason.
+  - **not-scoreable** when `counter_position_presence_rate` FAILED or is
+    itself not-scoreable -- the absence is unaccounted for (§401's own
+    slice-1 case: `present: false`, `corpus_one_sided: false`, neither
+    present nor disclosed), so steelman's silence is genuinely unmeasured.
 """
 
 from __future__ import annotations
@@ -41,6 +52,7 @@ from typing import Any
 from axial.gates.harness import (
     GateReport,
     build_metric_result,
+    not_applicable_metric,
     not_scoreable_metric,
 )
 from axial.llm import COUNTER_POSITION_PASS_NAME, DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
@@ -132,15 +144,33 @@ def run_synthesis_quality_gate(
         )
     # A corpus where every counter-position happens to be a one-sided
     # disclosure rather than a present stance has nothing for the steelman
-    # check to judge -- not-scoreable (issue #401), not the vacuous
-    # `passed: true` this used to report (30/30 briefs "passing" a check
-    # that never ran, reading as a green light on a summary table).
+    # check to judge -- but WHICH empty state that is depends on whether the
+    # absence is accounted for (issue #405, following #401). `presence`
+    # already did that accounting: a PASS means every contested record was
+    # cleanly disclosed (§7.8's own equal-standing clean outcome), so
+    # steelman is not-applicable, not merely unmeasured -- reporting it
+    # not-scoreable here would wrongly block a gate that has nothing wrong
+    # with it. A presence FAIL or not-scoreable means the absence was never
+    # accounted for, so steelman's silence is genuinely unmeasured (#401's
+    # own slice-1 case: present:false, corpus_one_sided:false -- neither
+    # present nor disclosed).
     if steelman_ran == 0:
-        steelman = not_scoreable_metric(
-            "steelman_quality",
-            reason="no present-with-grounds counter-position to judge",
-            config_path=config_path,
-        )
+        if presence.passed is True:
+            steelman = not_applicable_metric(
+                "steelman_quality",
+                reason=(
+                    "no present-with-grounds counter-position to judge -- every "
+                    "contested record disclosed the corpus as one-sided (§7.8), "
+                    "which counter_position_presence_rate already scored as a pass"
+                ),
+                config_path=config_path,
+            )
+        else:
+            steelman = not_scoreable_metric(
+                "steelman_quality",
+                reason="no present-with-grounds counter-position to judge",
+                config_path=config_path,
+            )
     else:
         steelman = build_metric_result(
             "steelman_quality",
