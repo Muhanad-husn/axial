@@ -1658,7 +1658,14 @@ def _log_retry(
     print(line, file=sys.stderr)
 
 
-def _log_call_request(pass_name: str | None, model: str, prompt: str, attempt: int) -> None:
+def _log_call_request(
+    pass_name: str | None,
+    model: str,
+    prompt: str,
+    attempt: int,
+    *,
+    run_id: str | None = None,
+) -> None:
     """Emit one unconditional stderr line right before `OpenRouterClient`
     issues a real outbound HTTP request (deeper visibility than PR #372's
     stage-level lines, needed to sense a hung/slow call in real time during
@@ -1668,11 +1675,16 @@ def _log_call_request(pass_name: str | None, model: str, prompt: str, attempt: i
     attempt number is included only past the first attempt: `_log_retry`
     already logs WHY a later attempt happens, right after this call's own
     outcome is known; this line is just WHEN the raw call goes out, on
-    every attempt, retried or not."""
+    every attempt, retried or not.
+
+    `run_id` (a sweep draw's `set_run_id`, `OpenRouterClient.__init__`'s
+    docstring) is appended only when given, so every pre-existing caller
+    that never sets it keeps logging the exact same line as before."""
     attempt_suffix = f" attempt={attempt}/{_MAX_ATTEMPTS}" if attempt > 1 else ""
+    run_id_suffix = f" run_id={run_id}" if run_id is not None else ""
     print(
         f"llm_call_request pass={pass_name} model={model}{attempt_suffix} "
-        f"prompt_chars={len(prompt)}",
+        f"prompt_chars={len(prompt)}{run_id_suffix}",
         file=sys.stderr,
     )
 
@@ -1686,6 +1698,7 @@ def _log_call_response(
     finish_reason: str | None = None,
     usage: dict[str, Any] | None = None,
     error: str | None = None,
+    run_id: str | None = None,
 ) -> None:
     """Emit one unconditional stderr line right after `_log_call_request`'s
     matching call returns -- the raw call's own outcome, regardless of
@@ -1696,11 +1709,13 @@ def _log_call_response(
     response came back. `finish_reason`/`usage` are best-effort: supplied
     only when the response body parsed as JSON with a `choices`/`usage`
     shape, since a non-2xx or malformed body still deserves a response line
-    (status + elapsed) without one."""
+    (status + elapsed) without one. `run_id`, same rule as
+    `_log_call_request`'s own: appended only when given."""
+    run_id_suffix = f" run_id={run_id}" if run_id is not None else ""
     if error is not None:
         print(
             f"llm_call_response pass={pass_name} model={model} outcome=error "
-            f"error={error} elapsed={elapsed_seconds:.2f}s",
+            f"error={error} elapsed={elapsed_seconds:.2f}s{run_id_suffix}",
             file=sys.stderr,
         )
         return
@@ -1716,6 +1731,7 @@ def _log_call_response(
             f" completion_tokens={usage.get('completion_tokens')}"
             f" total_tokens={usage.get('total_tokens')}"
         )
+    line += run_id_suffix
     print(line, file=sys.stderr)
 
 
@@ -1790,9 +1806,26 @@ class OpenRouterClient:
         # `_accumulate_usage` from the real `usage` object every OpenRouter
         # response carries (see `.complete()`/`.complete_with_tools()`).
         self._usage_by_pass: dict[str | None, dict[str, int]] = {}
+        # Follow-up to #362's benchmark sweep: which brief/run this client
+        # instance's calls belong to, carried on every `llm_call_request`/
+        # `llm_call_response` line (`_log_call_request`/`_log_call_response`)
+        # so per-call API time can be attributed back to a brief, not just a
+        # pass. `None` by default (every pre-existing caller/test that builds
+        # `OpenRouterClient` without it keeps logging exactly as before -- no
+        # `run_id=` field at all, see those functions' docstrings). Set via
+        # `set_run_id` rather than the constructor because the one real
+        # caller that has this identity to give (`axial.brief.sweep`,
+        # `client_factory=get_client` builds a FRESH client per draw) only
+        # knows the draw's brief_stem/index AFTER the client already exists.
+        self._run_id: str | None = None
         self._client = httpx.Client(
             base_url=base_url, transport=transport, timeout=_REQUEST_TIMEOUT
         )
+
+    def set_run_id(self, run_id: str | None) -> None:
+        """Bind this client instance's remaining calls to `run_id` (e.g.
+        `"<brief_stem>:draw<n>"`) -- see `self._run_id`'s docstring above."""
+        self._run_id = run_id
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         """The model this client targets for `pass_name` (issue #270 slice
@@ -1916,7 +1949,7 @@ class OpenRouterClient:
             finally:
                 done.set()
 
-        _log_call_request(pass_name, target_model, prompt, attempt)
+        _log_call_request(pass_name, target_model, prompt, attempt, run_id=self._run_id)
         call_started = time.monotonic()
         watchdog = threading.Thread(target=_run, daemon=True)
         watchdog.start()
@@ -1926,6 +1959,7 @@ class OpenRouterClient:
                 target_model,
                 elapsed_seconds=time.monotonic() - call_started,
                 error="deadline_exceeded",
+                run_id=self._run_id,
             )
             raise _RequestDeadlineExceeded(
                 f"attempt exceeded the {self._request_deadline_seconds}s wall-clock "
@@ -1938,6 +1972,7 @@ class OpenRouterClient:
                 target_model,
                 elapsed_seconds=elapsed_seconds,
                 error=type(outcome["error"]).__name__,
+                run_id=self._run_id,
             )
             raise outcome["error"]
         response = outcome["response"]
@@ -1962,6 +1997,7 @@ class OpenRouterClient:
             status_code=response.status_code,
             finish_reason=finish_reason,
             usage=usage,
+            run_id=self._run_id,
         )
         return response
 

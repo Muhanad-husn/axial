@@ -2162,6 +2162,101 @@ def test_retry_log_line_names_malformed_json_trigger(monkeypatch, capsys):
     assert "JSONDecodeError" in lines[0]
 
 
+# --- run_id on llm_call_request/llm_call_response (#362 sweep follow-up) ---
+# `OpenRouterClient.set_run_id` tags a client instance's remaining calls with
+# a caller-given id (e.g. a sweep draw's "<brief_stem>:draw<n>") so its
+# `llm_call_request`/`llm_call_response` lines can be attributed back to a
+# brief -- never the prompt text itself, only status/metadata (module
+# docstring's own no-content-logging rule, unchanged by this).
+
+
+def test_call_log_lines_carry_no_run_id_field_when_never_set(capsys):
+    """The default (pre-existing) behavior: a client whose `set_run_id` is
+    never called logs the exact same `llm_call_request`/`llm_call_response`
+    shape as before this feature existed -- no `run_id=` field at all."""
+    from axial.llm import OpenRouterClient
+
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        )
+    )
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    client.complete("hello world", pass_name="envelope")
+
+    stderr = capsys.readouterr().err
+    request_line = next(line for line in stderr.splitlines() if line.startswith("llm_call_request"))
+    response_line = next(
+        line for line in stderr.splitlines() if line.startswith("llm_call_response")
+    )
+    assert "run_id=" not in request_line
+    assert "run_id=" not in response_line
+
+
+def test_set_run_id_tags_both_the_request_and_response_log_lines(capsys):
+    """`set_run_id` binds a run identity that shows up on BOTH the request
+    line (before the call goes out) and the response line (after it
+    returns) -- the pair the module docstring says are always logged
+    together."""
+    from axial.llm import OpenRouterClient
+
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        )
+    )
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+    client.set_run_id("some-brief:draw0")
+
+    client.complete("hello world", pass_name="envelope")
+
+    stderr = capsys.readouterr().err
+    request_line = next(line for line in stderr.splitlines() if line.startswith("llm_call_request"))
+    response_line = next(
+        line for line in stderr.splitlines() if line.startswith("llm_call_response")
+    )
+    assert "run_id=some-brief:draw0" in request_line
+    assert "run_id=some-brief:draw0" in response_line
+    # The no-content-logging rule still holds: the prompt text itself never
+    # appears on either line.
+    assert "hello world" not in request_line
+    assert "hello world" not in response_line
+
+
+def test_set_run_id_tags_the_error_response_log_line_too(monkeypatch, capsys):
+    """A `run_id` set before a failed attempt still shows up on the
+    `outcome=error` response line, the same as a successful one."""
+    from axial.llm import OpenRouterClient
+
+    monkeypatch.setattr("axial.llm._sleep", lambda seconds: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise httpx.ReadTimeout("timed out", request=request)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+    client.set_run_id("some-brief:draw1")
+
+    client.complete("hello world", pass_name="envelope")
+
+    stderr = capsys.readouterr().err
+    error_response_lines = [
+        line
+        for line in stderr.splitlines()
+        if line.startswith("llm_call_response") and "outcome=error" in line
+    ]
+    assert len(error_response_lines) == 1
+    assert "run_id=some-brief:draw1" in error_response_lines[0]
+
+
 # --- per-pass best-of-N voting (issue #294, DEC-31) -----------------------
 
 
