@@ -838,6 +838,118 @@ def test_run_vault_write_raises_when_every_note_write_fails(monkeypatch, tmp_pat
         vault_mod.run_vault_write(source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir)
 
 
+# --- prose-note reconciliation backstop ------------------------------------
+#
+# Sibling defect to the tag-side chunk-loss fix: a real Phase A rerun
+# completed `run_vault_write` with status=OK for a source while writing 3
+# fewer prose notes than tagged records it was given -- no logged write
+# failure, no exception, just a quiet shortfall (likeliest mechanism: a
+# resume-ordering artifact, not a live write bug). Per-note fault isolation
+# (above) only accounts for a write it actually attempted and saw fail, so
+# it cannot catch a record that never reached the loop at all.
+# `_check_note_accounting` closes that gap the same way
+# `axial.tag._check_chunk_accounting` closes it on the tag side.
+
+
+def test_check_note_accounting_passes_when_every_record_is_accounted_for():
+    import axial.vault as vault_mod
+
+    # No exception: 5 written + 2 skipped accounts for all 7 tagged records.
+    vault_mod._check_note_accounting("source-a", expected=7, written=5, skipped=2)
+
+
+def test_check_note_accounting_raises_when_a_note_goes_missing():
+    """2 tagged records in, but only 1 is accounted for (written, none
+    skipped) -- the second vanished the way 3 real chunks vanished from a
+    real rerun with no logged failure. Must fail loudly, not report OK."""
+    import axial.vault as vault_mod
+
+    with pytest.raises(vault_mod.VaultNoteCountMismatchError) as excinfo:
+        vault_mod._check_note_accounting("source-a", expected=2, written=1, skipped=0)
+
+    assert excinfo.value.source_id == "source-a"
+    assert excinfo.value.expected == 2
+    assert excinfo.value.written == 1
+    assert excinfo.value.skipped == 0
+    assert "source-a" in str(excinfo.value)
+
+
+def test_run_vault_write_reconciliation_passes_on_a_normal_run(monkeypatch, tmp_path):
+    """Accounting closes on an ordinary run where every tagged record's
+    note writes successfully -- the reconciliation check is a backstop, not
+    a change to today's success path."""
+    import axial.vault as vault_mod
+
+    source_path, envelopes_dir = _arrange_stored_envelope(tmp_path)
+    vault_dir = tmp_path / "vault"
+
+    second_record = {
+        **_RECORD,
+        "chunk_id": "paper-abc123_2_comparative-cases_001",
+        "section": "Comparative Cases",
+        "chunk_text": "Second chunk's own prose text.",
+    }
+
+    monkeypatch.setattr(vault_mod, "run_tag", lambda *a, **k: [_RECORD, second_record])
+    monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [])
+    monkeypatch.setattr(vault_mod, "run_xref", lambda *a, **k: [])
+
+    written = vault_mod.run_vault_write(
+        source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir
+    )
+
+    assert len(written) == 2
+    assert written.skipped_count == 0
+
+
+def test_run_vault_write_reconciliation_passes_with_a_legitimately_skipped_note(
+    monkeypatch, tmp_path
+):
+    """A note that fails via the existing `OSError` fault-isolation path is
+    counted in `skipped_count`, so the reconciliation check still closes and
+    `run_vault_write` still returns normally -- mirrors
+    `test_run_vault_write_skips_one_failed_chunk_note_and_continues` but
+    asserts the new accounting check does not turn a legitimate, logged
+    skip into a hard failure."""
+    import axial.vault as vault_mod
+
+    source_path, envelopes_dir = _arrange_stored_envelope(tmp_path)
+    vault_dir = tmp_path / "vault"
+
+    ok_record = dict(_RECORD)
+    failing_record = {
+        **_RECORD,
+        "chunk_id": "paper-abc123_2_comparative-cases_001",
+        "section": "Comparative Cases",
+        "chunk_text": "Second chunk's own prose text.",
+    }
+
+    monkeypatch.setattr(vault_mod, "run_tag", lambda *a, **k: [ok_record, failing_record])
+    monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [])
+    monkeypatch.setattr(vault_mod, "run_xref", lambda *a, **k: [])
+
+    real_write_chunk_note = vault_mod.write_chunk_note
+
+    def _flaky_write_chunk_note(record, *args, **kwargs):
+        if record["chunk_id"] == failing_record["chunk_id"]:
+            raise FileNotFoundError(
+                f"[Errno 2] No such file or directory: "
+                f"'<synthetic overlong path for {record['chunk_id']}>'"
+            )
+        return real_write_chunk_note(record, *args, **kwargs)
+
+    monkeypatch.setattr(vault_mod, "write_chunk_note", _flaky_write_chunk_note)
+
+    # No VaultNoteCountMismatchError: 1 written + 1 (legitimately) skipped
+    # accounts for both tagged records.
+    written = vault_mod.run_vault_write(
+        source_path, envelopes_dir=envelopes_dir, vault_dir=vault_dir
+    )
+
+    assert len(written) == 1
+    assert written.skipped_count == 1
+
+
 # --- backlinks (issue #34 slice 02 -- xref-backlinks) -------------------------
 
 _XREF_PAIRS = [
