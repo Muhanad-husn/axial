@@ -1,9 +1,18 @@
 """Corpus intake: extension gate + text-layer probe (PRD §5 stage 1, §8 P0-1).
 
 Accepts only `.pdf` and `.docx`. Rejects everything else with a clear,
-typed, logged reason. Verifies a real text layer exists before anything
-downstream runs -- a scanned/image-only PDF is rejected, never silently
-passed through an OCR path (there is none in this slice).
+typed, logged reason. In the same early gate, rejects a source whose
+filename stem is long enough that a downstream chunk from it could never
+be written as a vault note filename under Windows' MAX_PATH, at any
+directory depth (`check_source_stem_length`) -- `axial.envelope.
+compute_source_id` folds `path.stem` straight into every id derived from a
+source, and a libgen/Z-Library filename routinely runs past what any
+chunk_id-based filename can survive; this is the loud, early version of
+what PRs #377/#394/#395/#396 each independently patched downstream after
+the same defect had already caused data loss. Verifies a real text layer
+exists before anything downstream runs -- a scanned/image-only PDF is
+rejected, never silently passed through an OCR path (there is none in
+this slice).
 
 Given an LLM client, intake also runs the holdings-completeness check
 (§7.11, §8 P0-1b) over the same text layer, via `axial.holdings`, which
@@ -70,6 +79,7 @@ from axial import bib_lookup, identifiers
 from axial.holdings import FRONT_MATTER_PAGES
 from axial.holdings import probe as _holdings_probe
 from axial.llm import LLMClient
+from axial.paths import VAULT_DIR, path_overage
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx"}
 
@@ -138,6 +148,37 @@ class MissingSourceFileError(IntakeError):
         super().__init__(f"missing or unreadable source file: {path}")
 
 
+class SourceFilenameTooLongError(IntakeError):
+    """Raised when a source file's stem is long enough that some chunk from
+    it could never be written as a vault note filename on Windows, at any
+    directory depth.
+
+    `axial.envelope.compute_source_id` folds `path.stem` straight into
+    `source_id` (`<stem>-<12-char hash>`), and `axial.chunk.build_chunk_records`
+    folds `source_id` into `chunk_id` (`<source_id>_<order_key>_<slug>_<NNN>`,
+    PRD §7.7). A source pulled from libgen/Z-Library routinely carries a
+    stem well past what any chunk_id-based note filename can survive under
+    Windows' 260-char MAX_PATH -- this exact defect shape was independently
+    patched at four different downstream call sites (PR #377's lost vault
+    notes, #394's unreachable notes, #395's double-counted gold sampling
+    frame, #396's oversized gold chunk writer) before this guard existed.
+    Rejected here, at intake, before any of those call sites ever see it --
+    see `max_safe_source_stem_length` for the derivation."""
+
+    def __init__(self, path: Path, stem_length: int, max_stem_length: int):
+        self.path = path
+        self.stem_length = stem_length
+        self.max_stem_length = max_stem_length
+        super().__init__(
+            f"source filename too long: {path.name!r} has a {stem_length}-char "
+            f"filename stem, but the longest chunk_id-based vault note filename "
+            f"this repo can safely write under Windows' MAX_PATH caps a source "
+            f"stem at {max_stem_length} chars (over by "
+            f"{stem_length - max_stem_length}). Rename the file to a shorter "
+            f"stem (at most {max_stem_length} chars) and re-ingest it."
+        )
+
+
 class NoTextLayerError(IntakeError):
     """Raised when a source has no extractable text layer."""
 
@@ -175,6 +216,118 @@ def check_extension(path: Path) -> str:
     if extension not in SUPPORTED_EXTENSIONS:
         raise UnsupportedExtensionError(path)
     return extension.lstrip(".")
+
+
+# =============================================================================
+# Source-filename length gate (§5 stage 1, §8 P0-1): the same early gate as
+# `check_extension`, before any extraction/model call/metadata write --
+# rejects a source whose filename stem is long enough that some downstream
+# chunk from it could never be written as a vault note filename at any
+# directory depth (see `SourceFilenameTooLongError`).
+# =============================================================================
+
+# The fixed-width pieces `compute_source_id`/`build_chunk_records` add on top
+# of a source's own filename stem, besides the section slug (bounded by
+# `axial.chunk._SLUG_MAX_LEN`, imported below) -- nothing here is hand-tuned,
+# each is either a literal already fixed by an existing format string, or a
+# real measurement of the current corpus:
+#
+# - `compute_source_id` appends a hyphen + a 12-hex-char content-hash
+#   truncation to the stem (`f"{path.stem}-{content_digest(path)[:12]}"`).
+# - `build_chunk_records`'s chunk_id grammar (`<source_id>_<order_key>_
+#   <slug>_<NNN>`, PRD §7.7) adds three underscore separators.
+# - the per-section chunk index is always exactly 3 digits (`f"{index:03d}"`).
+# - the section order key is NEVER dotted TODAY, confirmed from the code, not
+#   assumed: `extract.py._build_tree` assigns every TOP-LEVEL node (the only
+#   nodes `axial.chunk._section_nodes` ever selects, and the only ones
+#   `run_chunk_recursive` ever passes as `section_order`) a bare
+#   `str(top_index)` (`extract.py._build_tree`, the `if is_section(item):`
+#   branch) -- dotted `f"{parent_order}.{child_index}"` orders are assigned
+#   only to nodes NESTED inside a section (that same function's `else`
+#   branch), which chunk_id's `order_key` never reads. `build_chunk_records`'s
+#   own `.replace(".", "-")` is defensive for its general `section_order: str`
+#   parameter (also exercised by `axial.query.reader.source_id_from_chunk_id`'s
+#   own docstring/parse contract), not evidence a dot reaches it in
+#   production. Budgeted at the same 3-digit width as the index (i.e. up to
+#   999 top-level sections, far past any real source) since a full scan of
+#   the live corpus's `data/chunks/*.jsonl` found the longest real order key
+#   today is 3 digits ("102") and no real academic book has anywhere near
+#   999 top-level sections.
+_HASH_SUFFIX_LEN = 12  # compute_source_id's trailing content-hash truncation
+_INDEX_LEN = 3  # f"{index:03d}"
+_ORDER_KEY_BUDGET = 3  # see the block comment above
+
+# The directories a full chunk_id is ever keyed by a filename under today,
+# paired with the extension the writer at that directory actually uses --
+# `axial.paths.chunk_note_path`'s vault target (`.md`) and
+# `axial.gold.run_gold_sample`'s gold-chunks target (`.json`). Kept as
+# (directory, extension) pairs, not a directory list plus one shared
+# extension literal, so a filename-length regression here (extensions
+# differ, so a shared literal silently mis-measures whichever directory
+# does NOT use it) cannot recur. Duplicated as plain literals, not
+# imported: `axial.gold` imports `axial.vault`, which imports THIS module,
+# so importing `axial.gold` here would be a cycle. The tighter (longer-
+# resolved) pair sets the budget, exactly like `axial.paths.path_overage`
+# measures per call, never guessed.
+_CHUNK_ID_DIRECTORIES = (
+    (VAULT_DIR / "prose", ".md"),
+    (Path("data/gold/chunks"), ".json"),
+)
+
+
+def max_safe_source_stem_length(
+    directories: tuple[tuple[Path, str], ...] = _CHUNK_ID_DIRECTORIES,
+) -> int:
+    """The longest source-file filename stem intake can accept without ever
+    being able to produce a chunk_id-based filename that exceeds Windows'
+    MAX_PATH under any of `directories` (default: the two real
+    (directory, extension) pairs a chunk_id is written under today).
+
+    Reuses `axial.paths.path_overage` -- the exact budget check
+    `axial.paths.chunk_note_path` enforces at write time -- against a
+    synthetic worst-case chunk_id suffix (the fixed hash/underscore/index
+    pieces above, plus a maximal `axial.chunk._SLUG_MAX_LEN`-wide slug),
+    rather than re-deriving the same arithmetic a second time. Each pair's
+    own extension is used for its own placeholder filename -- `.md` and
+    `.json` differ by 2 characters, and a single shared extension would
+    silently mis-budget whichever directory does not use it. `directories`
+    is resolved live (`path_overage` calls `.resolve()`), so the answer
+    reflects wherever this repo actually lives on disk, not a guessed
+    directory depth.
+    """
+    from axial.chunk import _SLUG_MAX_LEN  # local import: dodges the
+    # chunk -> envelope -> extract -> intake import cycle (mirrors this
+    # module's own local `compute_source_id` import below, same reason).
+
+    # Mirrors chunk_id's own grammar char-for-char, so `path_overage` counts
+    # exactly the pieces a real worst-case filename would carry: the stem's
+    # own separating hyphen, the 12-char hash, then chunk_id's own
+    # underscore-joined `<order_key>_<slug>_<index>`, then the note
+    # extension. The underscore count falls naturally out of `"_".join`
+    # over these three pieces -- it is never a separately counted literal.
+    order_slug_index = "_".join(["o" * _ORDER_KEY_BUDGET, "s" * _SLUG_MAX_LEN, "i" * _INDEX_LEN])
+
+    def placeholder_filename(extension: str) -> str:
+        return "-" + "h" * _HASH_SUFFIX_LEN + "_" + order_slug_index + extension
+
+    return min(
+        -path_overage(directory, placeholder_filename(extension))
+        for directory, extension in directories
+    )
+
+
+def check_source_stem_length(path: Path) -> None:
+    """Reject `path` outright when its filename stem is too long to ever
+    produce a writable chunk-note filename (`max_safe_source_stem_length`) --
+    the loud, early version of what PRs #377/#394/#395/#396 each patched at
+    a different downstream call site after the same defect had already
+    caused real data loss. Called from the same early gate as
+    `check_extension`, before any extraction, model call, or metadata
+    write."""
+    max_stem_length = max_safe_source_stem_length()
+    stem_length = len(path.stem)
+    if stem_length > max_stem_length:
+        raise SourceFilenameTooLongError(path, stem_length, max_stem_length)
 
 
 def _pdf_page_texts(path: Path) -> list[str]:
@@ -784,11 +937,13 @@ def intake(
     bib_transport: httpx.BaseTransport | None = None,
     bib_cache_dir: Path | None = None,
 ) -> Source:
-    """Run intake on `path`: validate extension, verify a text layer, and --
-    when `client` is given -- run the holdings-completeness check
-    (§7.11/§8 P0-1b) and attach its flag. A raised flag is flag-only: it
-    never raises, never rejects, and the source still completes intake
-    exactly as an unflagged one would.
+    """Run intake on `path`: validate extension, reject a filename stem too
+    long to ever produce a writable chunk-note filename
+    (`check_source_stem_length`), verify a text layer, and -- when `client`
+    is given -- run the holdings-completeness check (§7.11/§8 P0-1b) and
+    attach its flag. A raised flag is flag-only: it never raises, never
+    rejects, and the source still completes intake exactly as an unflagged
+    one would.
 
     A DOCX is checked too (the earlier blanket DOCX exemption is retired,
     §7.11); it exposes no physical page count, which the check handles as
@@ -825,6 +980,12 @@ def intake(
     the ingest path can pay for it once per source and read it back after
     (`holdings_judged`, issue #303)."""
     path = Path(path)
+
+    # A pure path-string check, needing no I/O at all -- runs first, ahead
+    # of even the existence check below, so a source that can never produce
+    # a writable chunk-note filename is rejected without touching the
+    # filesystem for anything else.
+    check_source_stem_length(path)
 
     if not path.is_file():
         raise MissingSourceFileError(path)
