@@ -1,7 +1,7 @@
 """Shared non-prose input guard (issue #132): one deterministic heuristic,
-used identically by every per-item LLM-driving loop in the pipeline (xref,
-chunk, tag, artifacts) to skip oversized/OCR-garbled text BEFORE it ever
-reaches an LLM call.
+used identically by every per-item LLM-driving loop that still calls it
+(xref, chunk, artifacts -- see issue #402 below for why `tag` no longer
+does) to skip oversized/OCR-garbled text BEFORE it ever reaches an LLM call.
 
 An OCR'd index/bibliography (or any similarly garbled back-matter) becomes
 one very large, mostly-non-alphabetic block with no argumentative or
@@ -23,21 +23,35 @@ live for `axial.artifacts`, which still skips oversized/OCR-garbled artifact
 text before an LLM call.
 
 Note (issue #169, source-router slice 04): the chunk artifact `axial.tag`
-and `axial.xref` now read is prose-only and size-bounded by the router +
-chunk band (source-router slices 02-03), so `non_prose_skip_reason`'s SIZE
-arm is no longer a legitimate gate for either pass -- a large chunk reaching
-tag/xref is legitimate prose, not back-matter. Both passes now call
+and `axial.xref` read was prose-only and size-bounded by the router + chunk
+band (source-router slices 02-03), so `non_prose_skip_reason`'s SIZE arm was
+no longer a legitimate gate for either pass -- a large chunk reaching
+tag/xref is legitimate prose, not back-matter. Both passes called
 `garble_only_skip_reason` (below) instead: the SAME non-alpha arm only,
 demoting the guard from primary gate to a deliberate, logged backstop for
 prose that is genuinely garbled (slips type classification) rather than
 merely long. `non_prose_skip_reason` itself is unchanged and stays live for
 `axial.artifacts` (see above).
 
+Note (issue #402): `axial.tag` no longer calls this module at all. Measured
+on the real 17,888-chunk corpus, `garble_only_skip_reason` fired on exactly
+34 chunks at the tag call site, ratios 0.401-0.517 -- the continuous tail of
+one corpus-wide distribution, not a distinct garbled population; every
+inspected sample was legitimate scholarship (dense citations, a numeric
+passage). A skip there also left no durable trace (stderr + `continue`, no
+checkpoint write), so those 34 chunks vanished from the knowledge graph
+undetected. #169's own rationale for demoting the guard at the tag call site
+(the router + chunk band already keep that pass's input prose-only) applies
+just as well to removing it outright there; `axial.chunk` and `axial.xref`
+still call `garble_only_skip_reason` as an unmodified backstop, and
+`axial.artifacts` is unaffected -- see the two notes above.
+
 Import topology: this is a LEAF module. It must never import from
-`axial.xref`, `axial.chunk`, `axial.tag`, or `axial.artifacts` -- all four
-import FROM here, and `axial.xref` already imports from both `axial.chunk`
-and `axial.tag`, so any import back out of this module toward one of those
-four would risk a cycle.
+`axial.xref`, `axial.chunk`, `axial.tag`, or `axial.artifacts` -- the three
+remaining callers (`axial.xref`, `axial.chunk`, `axial.artifacts`) import
+FROM here, and `axial.xref` already imports from both `axial.chunk` and
+`axial.tag`, so any import back out of this module toward one of those four
+would risk a cycle.
 """
 
 from __future__ import annotations
@@ -82,8 +96,8 @@ def garble_only_skip_reason(
     band (source-router slices 02-03), not back-matter, so size alone must
     never skip it. Mirrors `axial.chunk._garbage_section_skip_reason`'s own
     "non-alpha arm ONLY" precedent (issue #154 slice 04), now lifted here so
-    `axial.chunk`, `axial.tag`, and `axial.xref` share one definition of the
-    garble-only backstop instead of three copies."""
+    `axial.chunk` and `axial.xref` share one definition of the garble-only
+    backstop (issue #402: `axial.tag` no longer calls this function at all)."""
     char_count = len(text)
     if not char_count:
         return None
