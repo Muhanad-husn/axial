@@ -1341,16 +1341,17 @@ def test_run_tag_produces_one_record_per_chunk_with_role_and_schema_version(monk
         assert record["schema_version"] == "0.1"
 
 
-def test_run_tag_no_longer_skips_a_citation_dense_chunk_above_the_former_non_alpha_threshold(
+def test_run_tag_tags_a_citation_dense_chunk_the_old_shared_threshold_would_have_skipped(
     monkeypatch, tmp_path
 ):
     """Measured on the real 17,888-chunk corpus: the tag pass's
-    `garble_only_skip_reason` call fired on 34 chunks, ratios 0.401-0.517,
-    all legitimate scholarship -- dense citation runs and numeric passages,
-    the continuous tail of one distribution, not garbled text. The guard is
-    removed from this call site entirely; a citation-dense chunk above the
-    former 0.4 threshold must now reach the model and be tagged like any
-    other chunk, not silently skipped."""
+    `garble_only_skip_reason` call, at the shared 0.4 default, fired on 34
+    chunks, ratios 0.401-0.517, all legitimate scholarship -- dense citation
+    runs and numeric passages, well under the genuinely garbled shape's
+    0.68+ (a real bimodal gap, not a continuous tail). `TAG_MAX_NON_ALPHA_
+    RATIO` (0.6) is retuned from that evidence: a citation-dense chunk in
+    that 0.401-0.517 band must reach the model and be tagged, not silently
+    skipped, even though the shared 0.4 default would still catch it."""
     import axial.tag as tag_mod
     from axial.nonprose_guard import garble_only_skip_reason
 
@@ -1360,9 +1361,16 @@ def test_run_tag_no_longer_skips_a_citation_dense_chunk_above_the_former_non_alp
         "across Sierra Leone Peru and El Salvador drawing on datasets "
         "of 1200 3400 recorded incidents between 1980 and 2000."
     )
-    # Confirms the fixture actually exercises the removed guard's former
-    # firing threshold -- otherwise this test would pass trivially.
+    # Confirms the fixture exercises exactly the gap between the two
+    # thresholds -- caught by the shared 0.4 default, cleared by the tag
+    # pass's own 0.6 -- otherwise this test would pass trivially.
     assert garble_only_skip_reason(citation_dense_text) is not None
+    assert (
+        garble_only_skip_reason(
+            citation_dense_text, max_non_alpha_ratio=tag_mod.TAG_MAX_NON_ALPHA_RATIO
+        )
+        is None
+    )
 
     domain_dir = _write_minimal_domain(tmp_path)
     chunk_records = [
@@ -1379,6 +1387,56 @@ def test_run_tag_no_longer_skips_a_citation_dense_chunk_above_the_former_non_alp
     assert len(records) == 1
     assert stub_client.call_count == 1
     assert records[0]["chunk_id"] == "src_1_body_001"
+
+
+def test_run_tag_skips_a_genuinely_garbled_chunk_and_records_it_in_the_skips_sidecar(
+    monkeypatch, tmp_path
+):
+    """The other side of the retuned threshold: a genuinely garbled chunk
+    (~69% non-alpha, an OCR'd index/reference-list shape, well past the
+    measured 0.52-0.68 gap) is still skipped before any LLM call -- and
+    unlike the pre-fix behavior, the skip is durably recorded to the
+    tag-pass skips sidecar (`tags_skips_sidecar_path`), not just printed to
+    stderr."""
+    import axial.tag as tag_mod
+
+    garbled_text = "Abbasid, 12, 45, 78; Cairo, 3, 9, 210; " * 200
+    assert (
+        sum(1 for c in garbled_text if not c.isalpha()) / len(garbled_text)
+        > tag_mod.TAG_MAX_NON_ALPHA_RATIO
+    )
+
+    domain_dir = _write_minimal_domain(tmp_path)
+    chunk_records = [
+        {"chunk_id": "src_1_index_001", "section": "Back Matter", "text": garbled_text},
+    ]
+    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
+
+    stub_client = StubLLMClient()
+    (tmp_path / "paper.pdf").write_bytes(b"fake pdf bytes")
+    tags_dir = tmp_path / "data" / "tags"
+    records = tag_mod.run_tag(
+        tmp_path / "paper.pdf",
+        client=stub_client,
+        domain_dir=domain_dir,
+        tags_dir=tags_dir,
+        votes=1,
+    )
+
+    assert records == []
+    assert stub_client.call_count == 0
+
+    source_id = tag_mod.compute_source_id(tmp_path / "paper.pdf")
+    sidecar_path = tag_mod.tags_skips_sidecar_path(source_id, tags_dir)
+    assert sidecar_path.is_file()
+    sidecar_records = [json.loads(line) for line in sidecar_path.read_text().splitlines()]
+    assert sidecar_records == [
+        {
+            "chunk_id": "src_1_index_001",
+            "reason": sidecar_records[0]["reason"],
+        }
+    ]
+    assert "high non-alpha ratio" in sidecar_records[0]["reason"]
 
 
 def test_run_tag_calls_the_client_with_the_tag_pass_name(monkeypatch, tmp_path):
@@ -3490,28 +3548,39 @@ def test_default_domain_dir_falls_back_to_syria_when_config_file_absent(tmp_path
 
 # --- run_tag: chunk-count reconciliation backstop -------------------------
 #
-# Removing the garble-only skip (above) left the tag pass with no remaining
-# silent-skip path: every chunk either becomes a tagged record or a durably
-# quarantined one. `_check_chunk_accounting` is the backstop that catches a
-# REGRESSION of that invariant -- some future skip path that once again
-# drops a chunk without a trace, the exact defect this fix addresses. It is
-# a pure function of counts (the smaller fix for the code as it stands,
-# since after the removal there is no real skip path left to log to a
-# sidecar), so it is tested directly rather than by contriving a real skip
-# scenario.
+# The garble backstop (above) is retained and retuned, not removed, so a
+# real skip path exists in the tag loop again -- but every skip is now
+# durably recorded to the skips sidecar. `_check_chunk_accounting` is a
+# further, independent backstop that catches a REGRESSION of the broader
+# invariant -- any future skip/quarantine path that drops a chunk without
+# accounting for it at all, the exact defect class this fix addresses. It
+# is a pure function of counts, tested directly rather than by contriving a
+# full `run_tag` scenario for every combination.
 
 
-def test_check_chunk_accounting_passes_when_every_chunk_is_tagged_or_quarantined():
+def test_check_chunk_accounting_passes_when_every_chunk_is_tagged_quarantined_or_skipped():
     import axial.tag as tag_mod
 
-    # No exception: 7 tagged + 3 quarantined accounts for all 10 chunks.
+    # No exception: 5 tagged + 3 quarantined + 2 skipped accounts for all 10.
+    tag_mod._check_chunk_accounting(
+        "source-a", chunk_count=10, tagged_count=5, quarantined_count=3, skipped_count=2
+    )
+
+
+def test_check_chunk_accounting_defaults_skipped_count_to_zero():
+    """`skipped_count` is optional (existing callers/tests predate the
+    garble backstop's reintroduction) -- 7 tagged + 3 quarantined + the
+    implicit 0 skipped still accounts for all 10 chunks."""
+    import axial.tag as tag_mod
+
     tag_mod._check_chunk_accounting("source-a", chunk_count=10, tagged_count=7, quarantined_count=3)
 
 
 def test_check_chunk_accounting_raises_when_a_chunk_goes_missing():
-    """3 chunks in, but only 2 are accounted for (1 tagged, 1 quarantined) --
-    the third vanished the way the removed non-alpha guard let 34 real
-    chunks vanish. Must fail loudly, never silently return the short count."""
+    """3 chunks in, but only 2 are accounted for (1 tagged, 1 quarantined,
+    0 skipped) -- the third vanished the way 34 real chunks once vanished
+    through a sidecar-less skip. Must fail loudly, never silently return
+    the short count."""
     import axial.tag as tag_mod
 
     with pytest.raises(tag_mod.TagRecordCountMismatchError) as excinfo:

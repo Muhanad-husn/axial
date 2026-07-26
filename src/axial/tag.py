@@ -110,9 +110,24 @@ from axial.llm import (
     votes_for_pass,
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
+from axial.nonprose_guard import garble_only_skip_reason
 from axial.schema import Axis, Schema, SchemaError, load_schema
 
 DEFAULT_DOMAIN_DIR = Path("config/domains/syria")
+
+# Tag-pass-only non-alpha backstop threshold, measured (not fitted) on the
+# real 17,888-chunk corpus rerun: legitimate scholarship (dense citations, a
+# numeric-statistics passage) topped out at 0.517 non-alpha (corpus p50
+# 0.191, p90 0.247, p99 0.353); the genuinely garbled fixtures this backstop
+# exists to catch (issue #132/#169 -- OCR'd index/reference soup) sit at
+# 0.68+. That is a real bimodal gap, 0.52-0.68, with nothing observed in it
+# -- not a continuous tail. 0.6 sits mid-gap, with margin on both sides, so
+# it clears every measured legitimate chunk while still catching the
+# garbled shape. This does NOT change `nonprose_guard.MAX_NON_ALPHA_RATIO`
+# (0.4): `axial.chunk` and `axial.xref` also call `garble_only_skip_reason`
+# and neither has been measured against this same evidence, so their
+# behavior must not move.
+TAG_MAX_NON_ALPHA_RATIO = 0.6
 
 
 def _default_domain_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
@@ -155,6 +170,21 @@ def tags_checkpoint_path(source_id: str, tags_dir: Path = TAGS_DIR) -> Path:
     content-hashed source_id so an edited file never reuses a stale tag set
     (issue #81 point 2)."""
     return tags_dir / f"{source_id}.jsonl"
+
+
+def tags_skips_sidecar_path(source_id: str, tags_dir: Path = TAGS_DIR) -> Path:
+    """The companion sidecar path for `source_id`'s tag-pass garble-backstop
+    skips: one `{"chunk_id", "reason"}` JSON object per line, alongside its
+    tag checkpoint (`tags_checkpoint_path`). Mirrors `axial.chunk.
+    chunks_skips_sidecar_path`'s precedent exactly -- a skip caught here
+    (`garble_only_skip_reason`, restored at the tag call site with a
+    tag-specific threshold, `TAG_MAX_NON_ALPHA_RATIO`) was previously logged
+    to stderr only, which is how 34 real chunks vanished from a completed
+    corpus rerun undetected. `run_tag` rewrites this file cleanly each run
+    (created only when this run has >= 1 skip, removed when a rerun has
+    none), since the guard is a deterministic function of chunk text and so
+    re-derives the identical skip set on every run, resumed or not."""
+    return tags_dir / f"{source_id}.skips.jsonl"
 
 
 def _heal_torn_checkpoint_tail(path: Path) -> None:
@@ -1690,9 +1720,12 @@ QUARANTINE_LOG_FILENAME = "_quarantine_log.jsonl"
 
 class AllChunksQuarantinedError(TagError):
     """Raised when every chunk this run attempted to tag (i.e. every chunk
-    that was not still pending from an earlier resumed run) ended up
-    quarantined (issue #120/#325/#326's per-chunk quarantine), leaving zero
-    tagged records for the source.
+    that was neither skipped by the garble backstop nor still pending from
+    an earlier resumed run) ended up quarantined (issue #120/#325/#326's
+    per-chunk quarantine), leaving zero tagged records for the source. A
+    source-skipped-not-quarantined case (e.g. its one chunk is garbled) is
+    NOT this error -- it is a legitimate zero-record success (see the
+    reconciliation check below, which accounts for it separately).
 
     Reconciles two otherwise-conflicting contracts: #120/#325/#326's own
     point (a single malformed chunk among many must not crash the whole
@@ -1719,17 +1752,19 @@ class AllChunksQuarantinedError(TagError):
 
 
 class TagRecordCountMismatchError(TagError):
-    """Raised when this run's tagged + quarantined chunk count does not
-    equal the number of chunks its input chunk artifact holds.
+    """Raised when this run's tagged + quarantined + skipped chunk count
+    does not equal the number of chunks its input chunk artifact holds.
 
-    Every remaining path through the per-chunk loop below either appends to
-    `tagged_records` or durably quarantines via `_quarantine_chunk` (which
-    checkpoints the reason) -- there is no silent skip left. This is the
-    reconciliation backstop for that invariant: if a future change reintroduces
-    a skip path that does not account for its chunk, this fails loudly at the
-    end of the run instead of letting the chunk vanish into stderr the way
-    the removed non-alpha guard did (34 chunks lost across the 2026-07 rerun,
-    undetected until the chunk and tag id sets were diffed)."""
+    Every path through the per-chunk loop below now either appends to
+    `tagged_records`, durably quarantines via `_quarantine_chunk` (which
+    checkpoints the reason), or is recorded to the garble-backstop skips
+    sidecar (`tags_skips_sidecar_path`) -- there is no silent, unrecorded
+    skip left. This is the reconciliation backstop for that invariant: if a
+    future change reintroduces one, this fails loudly at the end of the run
+    instead of letting the chunk vanish into stderr the way the non-alpha
+    guard's earlier, sidecar-less skip did (34 chunks lost across the
+    2026-07 rerun, undetected until the chunk and tag id sets were
+    diffed)."""
 
     def __init__(self, source_id: str, expected: int, accounted_for: int):
         self.source_id = source_id
@@ -1738,19 +1773,24 @@ class TagRecordCountMismatchError(TagError):
         super().__init__(
             f"tag pass for {source_id!r} accounted for {accounted_for} of "
             f"{expected} input chunk(s) -- {expected - accounted_for} chunk(s) "
-            "went missing without a tagged or quarantined record"
+            "went missing without a tagged, quarantined, or skipped record"
         )
 
 
 def _check_chunk_accounting(
-    source_id: str, chunk_count: int, tagged_count: int, quarantined_count: int
+    source_id: str,
+    chunk_count: int,
+    tagged_count: int,
+    quarantined_count: int,
+    skipped_count: int = 0,
 ) -> None:
     """Raise `TagRecordCountMismatchError` unless every chunk this run's
     input chunk artifact holds (`chunk_count`) is accounted for by exactly
-    one of a tagged record or a quarantined record. A pure helper (no
-    chunk-loop state) so the invariant is directly unit-testable independent
-    of any particular skip/quarantine/resume scenario."""
-    accounted_for = tagged_count + quarantined_count
+    one of a tagged record, a quarantined record, or a garble-backstop skip.
+    A pure helper (no chunk-loop state) so the invariant is directly
+    unit-testable independent of any particular skip/quarantine/resume
+    scenario."""
+    accounted_for = tagged_count + quarantined_count + skipped_count
     if accounted_for != chunk_count:
         raise TagRecordCountMismatchError(source_id, chunk_count, accounted_for)
 
@@ -1848,6 +1888,17 @@ def run_tag(
     explicit argument overrides it, exactly like `domain_dir` overrides its
     own config resolution. `votes == 1` is an exact no-op: one draw, no
     voting layer, no `abstained` key, today's record shape unchanged.
+
+    Garble backstop (issue #132/#169, retuned): a chunk whose non-alpha
+    ratio exceeds `TAG_MAX_NON_ALPHA_RATIO` (0.6, module docstring above --
+    measured from a real bimodal separation, distinct from `nonprose_guard`'s
+    shared 0.4 default, which stays untouched for `axial.chunk`/`axial.xref`)
+    is skipped before any LLM call: no tagged record, no checkpoint write.
+    Every skip is durably recorded to `tags_skips_sidecar_path`
+    (`<tags_dir>/<source_id>.skips.jsonl`, rewritten cleanly each run) as
+    well as logged to stderr, and counted in the end-of-run reconciliation
+    check (`_check_chunk_accounting`) so a chunk can never again go missing
+    without a trace.
     """
     if domain_dir is None:
         domain_dir = _default_domain_dir(config_path)
@@ -1924,6 +1975,13 @@ def run_tag(
         f"{chunk_id}: {reason} (previously quarantined)"
         for chunk_id, reason in already_quarantined.items()
     ]
+    # Durable record of every garble-backstop skip this run makes (below):
+    # written to `tags_skips_sidecar_path` at the end of the run, mirroring
+    # `axial.chunk`'s own skips-sidecar precedent, so a skip is visible and
+    # recoverable rather than vanishing into stderr (the defect that lost 34
+    # real chunks). Deterministic per chunk text, so a resumed run
+    # re-derives (and re-records) the identical skip set every time.
+    skip_records: list[dict[str, str]] = []
     for chunk_record in chunk_records:
         # Resume: a chunk already quarantined by an earlier run (issue #120)
         # is skipped outright -- no LLM call, no re-quarantine, and it never
@@ -1946,24 +2004,35 @@ def run_tag(
             tagged_records.append(checkpointed)
             continue
 
-        # No non-alpha input guard here (measured on the real 17,888-chunk
-        # corpus: this pass's `garble_only_skip_reason` call fired on
-        # exactly 34 chunks -- all legitimate scholarship (dense citation
-        # lists, a numeric-statistics passage), the continuous tail of one
-        # corpus-wide ratio distribution (0.401-0.517), not a distinct
-        # garbled population, per #169's own reasoning: the router + chunk
-        # band (source-router slices 02-03) already keep this pass's chunk
-        # artifact prose-only. A skip here left NO durable trace (stderr
-        # print + `continue`, no checkpoint write), so all 34 chunks were
-        # silently absent from every downstream artifact -- no tag record,
-        # no vault note, unresolvable as grounds -- until the chunk and tag
-        # id sets were diffed. Removed rather than re-tuned: a threshold on
-        # a continuous distribution is arbitrary, and #169's own
-        # router-based rationale for demoting this guard to a backstop
-        # applies just as well to removing it outright. The reconciliation
-        # check below is the replacement backstop: it fails loudly if this
-        # pass ever again produces fewer accounted-for records than chunks,
-        # rather than losing them silently.
+        # Input guard (issue #169, source-router slice 04: demoted from
+        # primary gate to garble-only backstop), retuned to a tag-specific
+        # threshold: measured on the real 17,888-chunk corpus, legitimate
+        # scholarship (dense citation lists, a numeric-statistics passage)
+        # topped out at 0.517 non-alpha, while the genuinely garbled shape
+        # this backstop exists to catch (an OCR'd index/reference dump) sits
+        # at 0.68+ -- a real bimodal gap, not a continuous tail, so
+        # `TAG_MAX_NON_ALPHA_RATIO` (0.6, module docstring above) sits
+        # mid-gap rather than clipping real content the way the shared
+        # 0.4 default did. Only the non-alpha arm ever applies here (never
+        # size): the chunk artifact this pass reads is prose-only and
+        # size-bounded by the router + chunk band (source-router slices
+        # 02-03), so a large chunk is legitimate prose, not back-matter.
+        # A skip here is durably recorded to `skip_records` (written to the
+        # sidecar at the end of the run) as well as logged to stderr -- no
+        # LLM call, no tagged record, no checkpoint write, but also no
+        # longer a silent loss the way the earlier sidecar-less skip was
+        # (34 chunks lost across the 2026-07 rerun, undetected until the
+        # chunk and tag id sets were diffed).
+        skip_reason = garble_only_skip_reason(
+            chunk_record["text"], max_non_alpha_ratio=TAG_MAX_NON_ALPHA_RATIO
+        )
+        if skip_reason is not None:
+            print(
+                f"tag: skipping chunk {chunk_record['chunk_id']}: {skip_reason}",
+                file=sys.stderr,
+            )
+            skip_records.append({"chunk_id": chunk_record["chunk_id"], "reason": skip_reason})
+            continue
 
         if client is None:
             try:
@@ -2339,12 +2408,38 @@ def run_tag(
     # quarantined.
     total_quarantined = quarantine_count + len(already_quarantined)
 
+    # Write this run's garble-backstop skips sidecar (issue: the earlier,
+    # sidecar-less skip lost 34 chunks undetected across the 2026-07 rerun).
+    # Resolved the same way `_theory_school_candidates_path` above resolves
+    # its own path -- the supplied `tags_dir` when checkpointing is active,
+    # else the config-resolved default -- so even a standalone `axial tag`
+    # run (no checkpoint) still gets a durable skips record. Rewritten
+    # cleanly each run, mirroring `axial.chunk`'s own sidecar contract
+    # (created only when this run has >= 1 skip, removed when a rerun has
+    # none): the guard is a deterministic function of chunk text, so every
+    # run re-derives its own identical skip set regardless of resume state.
+    skips_path = tags_skips_sidecar_path(
+        source_id, tags_dir if tags_dir is not None else _default_tags_dir(config_path)
+    )
+    if skip_records:
+        skips_path.parent.mkdir(parents=True, exist_ok=True)
+        skips_tmp_path = skips_path.with_name(skips_path.name + ".tmp")
+        skips_tmp_path.write_text(
+            "".join(json.dumps(record) + "\n" for record in skip_records), encoding="utf-8"
+        )
+        skips_tmp_path.replace(skips_path)
+    elif skips_path.exists():
+        skips_path.unlink()
+
     # Reconciliation backstop: every chunk in `chunk_records` must end up
-    # either tagged (fresh or resumed) or durably quarantined --
-    # there is no remaining silent-skip path left in this loop. If a future
-    # change reintroduces one, this fails loudly instead of letting a chunk
-    # vanish the way the removed non-alpha guard did.
-    _check_chunk_accounting(source_id, len(chunk_records), len(tagged_records), total_quarantined)
+    # tagged (fresh or resumed), durably quarantined, or durably skipped
+    # (the sidecar above) -- there is no remaining silent-skip path left in
+    # this loop. If a future change reintroduces one, this fails loudly
+    # instead of letting a chunk vanish the way the earlier, sidecar-less
+    # non-alpha skip did.
+    _check_chunk_accounting(
+        source_id, len(chunk_records), len(tagged_records), total_quarantined, len(skip_records)
+    )
 
     if not tagged_records and total_quarantined > 0:
         raise AllChunksQuarantinedError(source_id, total_quarantined, quarantine_examples)
