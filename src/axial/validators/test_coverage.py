@@ -23,6 +23,7 @@ from axial.validators.coverage import (
     REASON_CONFIDENCE_EXCEEDS_COVERAGE,
     REASON_MISSING_CONFIDENCE_DISCLOSURE,
     REASON_MISSING_COVERAGE_ENTRY,
+    compute_confidence,
     compute_coverage_map,
     coverage_band_for,
     format_coverage_map,
@@ -254,6 +255,57 @@ def test_format_coverage_map_prints_every_polity():
 
 def test_format_coverage_map_empty_is_not_blank():
     assert format_coverage_map({}) != ""
+
+
+# -- compute_confidence: derived deterministically from coverage_map ---------
+
+
+def test_all_dense_yields_high_overall_band():
+    coverage_map = {
+        "Syria": {"corpus_chunk_count": 240, "evidence_chunk_count": 5, "coverage_band": "dense"}
+    }
+    confidence = compute_confidence(coverage_map)
+    assert confidence["overall_band"] == "high"
+    assert "Syria" in confidence["rationale"]
+    assert "240" in confidence["rationale"]
+
+
+def test_thin_polity_never_yields_high_overall_band():
+    """The release gate's own `confidence_exceeds_coverage` invariant: a
+    thin polity in the map must never coexist with a top-band overall
+    confidence -- `compute_confidence` must satisfy this by construction."""
+    coverage_map = {
+        "Syria": {"corpus_chunk_count": 240, "evidence_chunk_count": 5, "coverage_band": "dense"},
+        "Yemen": {"corpus_chunk_count": 6, "evidence_chunk_count": 1, "coverage_band": "thin"},
+    }
+    confidence = compute_confidence(coverage_map)
+    assert confidence["overall_band"] != "high"
+    assert "Yemen" in confidence["rationale"]
+
+
+def test_overall_band_is_bounded_by_the_worst_touched_polity():
+    coverage_map = {
+        "Syria": {
+            "corpus_chunk_count": 50,
+            "evidence_chunk_count": 5,
+            "coverage_band": "moderate",
+        },
+        "Yemen": {"corpus_chunk_count": 6, "evidence_chunk_count": 1, "coverage_band": "thin"},
+    }
+    assert compute_confidence(coverage_map)["overall_band"] == "low"
+
+
+def test_empty_coverage_map_yields_low_band_with_a_plain_rationale():
+    confidence = compute_confidence({})
+    assert confidence["overall_band"] == "low"
+    assert confidence["rationale"]
+
+
+def test_confidence_disclosure_is_never_nullable():
+    for coverage_map in ({}, {"Syria": {"corpus_chunk_count": 1, "coverage_band": "thin"}}):
+        confidence = compute_confidence(coverage_map)
+        assert confidence["overall_band"]
+        assert confidence["rationale"]
 
 
 # -- validate_coverage_and_confidence: presence checks -----------------------

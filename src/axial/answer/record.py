@@ -16,13 +16,21 @@ an error (§7.2, §8 P0-1). This mirrors `run_examine`'s own inherited
 short-circuit (`run_planned_retrieval` itself returns an empty trajectory
 on `refuse`) and extends it one stage further to skip synthesis too.
 
-Out of this slice's scope (issue #257's own "do NOT build" list): computing
-real `counter_position` / `coverage_map` / `confidence` CONTENT -- that is
-the separate analysis-validators feature (issues #258-260). This module
-writes each of those three fields as an honest, correctly-shaped
-placeholder (`_placeholder_counter_position` / `_placeholder_confidence` /
-the empty `{}` coverage map) rather than inventing partial content ahead of
-the validators that own it.
+`coverage_map` (§7.7) and `confidence` (§7.4) ARE computed here (issue
+#400): `build_record` calls `axial.validators.coverage.compute_coverage_map`
+over the record's own claims, then derives `confidence` from that map with
+`compute_confidence` -- both zero-model-call, deterministic functions the
+analysis-validators feature (issue #260) already built and exposed. Neither
+was wired into `build_record` until #400; the coverage_map/confidence
+release gate (`validate_coverage_and_confidence`, also #260) is unaffected,
+since it reads whatever a record persists rather than recomputing it.
+
+`counter_position` remains this slice's placeholder: computing its real
+CONTENT (the contested-detection rule and the steelman check, §7.8) is
+issue #399's separate, larger synthesis-feature work -- nothing in the
+pipeline emits a counter-position at all yet. This module writes it as an
+honest, correctly-shaped placeholder (`_placeholder_counter_position`)
+rather than inventing partial content ahead of that feature.
 
 `source_usage` (§7.13/P0-13, issue #265) IS computed here: `build_record`
 assembles every other §7.3 field first, then calls
@@ -70,6 +78,7 @@ from axial.llm import (
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_analyses_dir, default_vault_dir
 from axial.query.reader import get_chunk, query_by_tag
 from axial.retrieve.loop import run_planned_retrieval
+from axial.validators.coverage import compute_confidence, compute_coverage_map
 
 
 class AnswerError(Exception):
@@ -137,23 +146,6 @@ def _placeholder_counter_position() -> dict[str, Any]:
     }
 
 
-def _placeholder_confidence() -> dict[str, Any]:
-    """The §7.4 three-band vocabulary, pinned to its most conservative
-    value (`low`) -- never a numeric score -- since no calibration has run
-    yet (issues #258-260's job); the rationale says so plainly rather than
-    inventing counts `coverage_map` (also a placeholder in this slice)
-    cannot yet back."""
-    return {
-        "overall_band": "low",
-        "rationale": (
-            "placeholder: confidence has not yet been computed by the "
-            "analysis-validators (issues #258-260), and coverage_map is "
-            "likewise a placeholder in this slice, so no real counts back "
-            "this band"
-        ),
-    }
-
-
 def _usage_and_cost_by_pass(client: LLMClient, model_by_pass: dict[str, str]) -> dict[str, Any]:
     """The §7.14 `cost` field (issue #363): per-pass token usage + computed
     dollar cost, summed to a run total -- the cost/token analogue of
@@ -213,13 +205,19 @@ def build_record(
 ) -> dict[str, Any]:
     """Assemble the §7.3 analysis record. `claims`/`trajectory` are the
     caller's already-computed stage-4/stage-3 output (empty on a `refuse`
-    disposition); `counter_position`/`coverage_map`/`confidence` are always
-    this slice's placeholders (see module docstring). `source_usage`
-    (§7.13) is computed over the record's own `claims`/`trajectory`/
-    `interrogation` -- assembled last here, once every field it reads is
-    already in the dict. `cost` (§7.14, issue #363) reads `client`'s
-    accumulated per-pass token usage (`_usage_and_cost_by_pass`) -- `client`
-    is needed only for that, never to make a completion call itself."""
+    disposition). `counter_position` is always this slice's placeholder
+    (issue #399, see module docstring); `coverage_map` (§7.7) and
+    `confidence` (§7.4) are computed for real (issue #400) from the
+    record's own claims -- `compute_coverage_map` first, then
+    `compute_confidence` over its result, both zero-model-call and
+    deterministic. `source_usage` (§7.13) is computed over the record's own
+    `claims`/`trajectory`/`interrogation` -- assembled last here, once
+    every field it reads is already in the dict. `cost` (§7.14, issue #363)
+    reads `client`'s accumulated per-pass token usage
+    (`_usage_and_cost_by_pass`) -- `client` is needed only for that, never
+    to make a completion call itself."""
+    claim_dicts = [_claim_to_dict(claim) for claim in claims]
+    coverage_map = compute_coverage_map(claim_dicts, vault_dir=vault_dir)
     record = {
         "brief_id": brief.brief_id,
         "brief": _brief_to_dict(brief),
@@ -227,10 +225,10 @@ def build_record(
         "schema_version": schema_version,
         "lens": lens,
         "interrogation": interrogation_result.to_dict(),
-        "claims": [_claim_to_dict(claim) for claim in claims],
+        "claims": claim_dicts,
         "counter_position": _placeholder_counter_position(),
-        "coverage_map": {},
-        "confidence": _placeholder_confidence(),
+        "coverage_map": coverage_map,
+        "confidence": compute_confidence(coverage_map),
         "trajectory": list(trajectory),
         "model_by_pass": dict(model_by_pass),
         "cost": _usage_and_cost_by_pass(client, model_by_pass),

@@ -174,7 +174,10 @@ def plant_strawman_counter_position(record: dict[str, Any]) -> tuple[dict[str, A
 
 def plant_overconfident(record: dict[str, Any]) -> tuple[dict[str, Any], Plant]:
     """Raise to `high` a claim over a polity the coverage map discloses as
-    thin -- the band now asserts more than the evidence behind it."""
+    thin -- the band now asserts more than the evidence behind it. Matched
+    against `polities_touched` (§7.4's own claim field, a list -- a claim
+    can touch more than one polity), not a nonexistent singular `polity`
+    field."""
     mutated = copy.deepcopy(record)
     coverage_map = mutated.get("coverage_map") or {}
     thin = {
@@ -189,7 +192,8 @@ def plant_overconfident(record: dict[str, Any]) -> tuple[dict[str, Any], Plant]:
     for index, claim in enumerate(mutated.get("claims") or [], start=1):
         if not isinstance(claim, dict):
             continue
-        if claim.get("polity") in thin and claim.get("confidence") != _HIGH_BAND:
+        touched = set(claim.get("polities_touched") or [])
+        if touched & thin and claim.get("confidence") != _HIGH_BAND:
             claim["confidence"] = _HIGH_BAND
             return mutated, Plant(kind=OVERCONFIDENT, claim_id=_claim_id_of(claim, index))
     raise PlantNotApplicableError(

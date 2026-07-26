@@ -317,6 +317,20 @@ def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path
     assert by_kind["a"]["grounds"] == [{"ref_type": "chunk", "ref_id": SYRIA_A}]
     assert by_kind["b"]["polities_touched"] == ["Syria", "Iraq"]
 
+    # Issue #400: coverage_map/confidence are computed for real, not
+    # placeholders -- the fixture vault carries exactly one chunk per
+    # polity, well under the default moderate_floor (20), so both touched
+    # polities disclose "thin" and the overall confidence is bounded to
+    # "low" by construction (never "high" while a thin polity is disclosed).
+    assert set(record["coverage_map"]) == {"Syria", "Iraq"}
+    for polity, entry in record["coverage_map"].items():
+        assert entry["coverage_band"] == "thin", polity
+        assert entry["corpus_chunk_count"] == 1
+        assert entry["evidence_chunk_count"] >= 1
+    assert record["confidence"]["overall_band"] == "low"
+    assert record["confidence"]["rationale"]
+    assert "placeholder" not in record["confidence"]["rationale"]
+
     assert isinstance(record["trajectory"], list) and record["trajectory"]
     for entry in record["trajectory"]:
         assert set(entry) == {"step", "tool", "args", "result_ids", "result_count"}
@@ -416,6 +430,12 @@ def test_brief_run_on_refuse_disposition_writes_empty_claims_and_makes_no_synthe
         == "the corpus holds no coverage for the polity this brief depends on"
     )
     assert record["trajectory"] == []
+    # Issue #400: an empty claim list touches no polity, so coverage_map is
+    # empty -- but confidence is still a non-nullable disclosure (§7.3),
+    # pinned to "low" rather than absent.
+    assert record["coverage_map"] == {}
+    assert record["confidence"]["overall_band"] == "low"
+    assert record["confidence"]["rationale"]
     assert record["model_by_pass"] == {"interrogate": "stub"}
     # Issue #363: on refuse, `cost` names only the interrogate pass, mirroring
     # `model_by_pass` -- no retrieve/synthesize entries for stages that never ran.
