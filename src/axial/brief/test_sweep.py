@@ -280,6 +280,37 @@ def test_run_one_draw_builds_exactly_one_fresh_client_via_the_factory(tmp_path, 
     assert captured_clients == built
 
 
+def test_run_one_draw_tags_a_run_id_aware_client_with_brief_stem_and_draw(tmp_path, monkeypatch):
+    """A client exposing `set_run_id` (the real `OpenRouterClient`'s shape)
+    is tagged with `"<brief_stem>:draw<n>"` before `run_brief` ever sees it
+    -- the seam #362's benchmark table needs to attribute API time back to a
+    brief. A client with no such method (every stub/record/exploding test
+    double, and a bare `object()`) is simply left alone."""
+    brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
+
+    class _FakeRunIdAwareClient:
+        def __init__(self) -> None:
+            self.run_id: str | None = None
+
+        def set_run_id(self, run_id: str) -> None:
+            self.run_id = run_id
+
+    built_client = _FakeRunIdAwareClient()
+
+    def _fake_run_brief(_brief, *, client, **_kwargs):
+        assert client.run_id == "briefstem:draw2"
+        record = {"brief_id": brief.brief_id}
+        return _FakeBriefRunResult(record=record, path=Path("x.json"), markdown_path=Path("x.md"))
+
+    monkeypatch.setattr(sweep_mod, "run_brief", _fake_run_brief)
+
+    sweep_mod._run_one_draw(
+        "briefstem.yaml", brief, 2, **_draw_kwargs(tmp_path / "sweep", lambda: built_client)
+    )
+
+    assert built_client.run_id == "briefstem:draw2"
+
+
 # --- run_sweep orchestration ---------------------------------------------------
 
 
@@ -373,3 +404,76 @@ def test_run_sweep_resume_across_two_invocations_skips_completed_pairs(tmp_path,
     )
     assert second.ok_count == 0
     assert second.skip_count == 2
+
+
+# --- summary.json persistence -------------------------------------------------
+
+
+def test_run_sweep_writes_a_machine_readable_summary_json(tmp_path, monkeypatch):
+    """`run_sweep` writes `<sweep_dir>/summary.json` on every invocation --
+    the same figures `format_sweep_summary` prints, but as data a later
+    process can read back, never only surviving in a text console log."""
+    briefs_by_path = {
+        "briefA.yaml": Brief(brief_id="idA", case="A", request="rA", lens=None),
+        "briefB.yaml": Brief(brief_id="idB", case="B", request="rB", lens=None),
+    }
+    _install_fake_pipeline(monkeypatch, tmp_path, briefs_by_path)
+    sweep_dir = tmp_path / "sweep"
+
+    summary = sweep_mod.run_sweep(
+        "wl", draws=3, sweep_dir=sweep_dir, client_factory=lambda: object()
+    )
+
+    summary_path = sweep_dir / "summary.json"
+    assert summary_path.is_file()
+    persisted = json.loads(summary_path.read_text(encoding="utf-8"))
+
+    assert persisted["total_draws"] == summary.total_draws == 6
+    assert persisted["ok_count"] == 6
+    assert persisted["fail_count"] == 0
+    assert persisted["skip_count"] == 0
+    assert len(persisted["briefs"]) == 2
+    for brief_entry in persisted["briefs"]:
+        assert len(brief_entry["draws"]) == 3
+        assert brief_entry["quorum"]["n_draws"] == 3
+        # Every gate name present, JSON-shaped via GateReport.to_json().
+        assert set(brief_entry["gate_reports"]) == set(sweep_mod.SWEEP_GATE_NAMES)
+        for outcome in brief_entry["draws"]:
+            assert outcome["status"] == sweep_mod.OK_STATUS
+            assert outcome["latency_seconds"] is not None
+
+
+def test_run_sweep_summary_json_carries_none_latency_for_a_resumed_draw(tmp_path, monkeypatch):
+    """The exact gap the issue names: a resumed pair's `latency_seconds` is
+    `None` in the persisted summary too (not fabricated), so a reader of
+    `summary.json` can tell a SKIPped draw from a freshly-timed one."""
+    briefs_by_path = {"briefA.yaml": Brief(brief_id="idA", case="A", request="rA", lens=None)}
+    _install_fake_pipeline(monkeypatch, tmp_path, briefs_by_path)
+    sweep_dir = tmp_path / "sweep"
+
+    sweep_mod.run_sweep("wl", draws=1, sweep_dir=sweep_dir, client_factory=lambda: object())
+    sweep_mod.run_sweep("wl", draws=1, sweep_dir=sweep_dir, client_factory=lambda: object())
+
+    persisted = json.loads((sweep_dir / "summary.json").read_text(encoding="utf-8"))
+    outcome = persisted["briefs"][0]["draws"][0]
+    assert outcome["status"] == sweep_mod.SKIP_STATUS
+    assert outcome["latency_seconds"] is None
+
+
+def test_write_sweep_summary_returns_the_written_path_and_creates_the_sweep_dir(tmp_path):
+    summary = sweep_mod.SweepSummary(
+        briefs=[], total_draws=0, ok_count=0, fail_count=0, skip_count=0
+    )
+    sweep_dir = tmp_path / "does-not-exist-yet"
+
+    out_path = sweep_mod.write_sweep_summary(summary, sweep_dir)
+
+    assert out_path == sweep_dir / "summary.json"
+    assert out_path.is_file()
+    assert json.loads(out_path.read_text(encoding="utf-8")) == {
+        "briefs": [],
+        "total_draws": 0,
+        "ok_count": 0,
+        "fail_count": 0,
+        "skip_count": 0,
+    }

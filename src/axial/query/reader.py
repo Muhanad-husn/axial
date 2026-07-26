@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -480,25 +481,27 @@ def query_by_tag(*, vault_dir: Path | None = None, **filters: str) -> list[str]:
 
     Results are sorted by `chunk_id` (§7.5's determinism contract) --
     directory iteration order is filesystem/OS-dependent and MUST NOT leak
-    into the result order."""
+    into the result order.
+
+    Backed by the same process-lifetime frontmatter index
+    `query_by_polity`/`coverage_count` use (`_frontmatter_index`, see its
+    docstring): the vault is assumed not to change within one process's
+    lifetime, true for every real caller here (a sweep, an agentic
+    retrieval loop, a CLI invocation)."""
     unknown_keys = set(filters) - KNOWN_FILTER_KEYS
     if unknown_keys:
         raise UnknownFilterError(unknown_keys)
 
     if vault_dir is None:
         vault_dir = default_vault_dir()
-    prose_dir = Path(vault_dir) / "prose"
-    if not prose_dir.is_dir():
-        raise MissingVaultDirError(prose_dir)
 
     matches: list[str] = []
-    for path in prose_dir.iterdir():
-        if path.suffix != ".md":
-            continue
-        frontmatter, _body = _read_frontmatter(path)
-        chunk_id = _require(frontmatter, path, "chunk_id")
+    for entry in _frontmatter_index(vault_dir):
+        if entry.chunk_id is _NO_CHUNK_ID:
+            raise MalformedNoteError(entry.path, "missing required field 'chunk_id'")
+        frontmatter = _entry_to_frontmatter_dict(entry)
         if all(_FILTER_MATCHERS[name](frontmatter, value) for name, value in filters.items()):
-            matches.append(chunk_id)
+            matches.append(entry.chunk_id)
 
     return sorted(matches)
 
@@ -509,13 +512,159 @@ def query_by_tag(*, vault_dir: Path | None = None, **filters: str) -> list[str]:
 # =============================================================================
 
 
+# Sentinel distinguishing "frontmatter has no `chunk_id` key at all" from
+# "frontmatter has `chunk_id: null`" (`dict.get`'s own default-vs-present
+# ambiguity) -- `_require`'s contract only cares about key presence, and the
+# cached index below has to reproduce that exactly without re-reading the
+# file to check.
+_NO_CHUNK_ID = object()
+
+
+@dataclass(frozen=True)
+class _FrontmatterIndexEntry:
+    """The subset of one prose note's frontmatter that `query_by_tag`,
+    `query_by_polity`, `query_by_source`, and `coverage_count` actually
+    read -- never `chunk_text`, `section`, `source_meta`, `schema_version`,
+    or `artifact_refs`, which no filter here consults and which would
+    otherwise make the process-lifetime index below hold a full copy of
+    every note's frontmatter (17,851 notes on the real corpus)."""
+
+    path: Path
+    chunk_id: Any  # `_NO_CHUNK_ID` when the note carries no `chunk_id` key.
+    field: Any
+    claim_type: Any
+    theory_school: Any
+    empirical_scope: Any
+    role_in_argument: Any
+    polities_touched: list[str]
+
+
+def _read_frontmatter_index_entry(path: Path) -> _FrontmatterIndexEntry:
+    """Parse `path`'s `---`-delimited frontmatter block only -- never its
+    body -- keeping just the `_FrontmatterIndexEntry` field set. Raises
+    `MalformedNoteError` exactly where `_read_frontmatter` would (missing
+    opening/closing delimiter, invalid YAML, non-mapping): every note under
+    `prose/` is still parsed and validated once, up front, the same
+    unconditional-per-note contract `query_by_tag`/`_iter_chunk_frontmatter`
+    already enforced before this cache existed. `chunk_id` itself is
+    deliberately not required here -- callers disagree on when a missing
+    `chunk_id` should raise (`query_by_tag` and `query_by_source` require it
+    for every note; `query_by_polity` only when a note actually matches;
+    `coverage_count` never does), so this stores `_NO_CHUNK_ID` when absent
+    and leaves the raise to each caller's own contract."""
+    with path.open("r", encoding="utf-8") as handle:
+        first_line = handle.readline()
+        if first_line.strip() != "---":
+            raise MalformedNoteError(path, "missing opening '---' frontmatter delimiter")
+        block_lines: list[str] = []
+        for line in handle:
+            if line.strip() == "---":
+                break
+            block_lines.append(line)
+        else:
+            raise MalformedNoteError(path, "missing closing '---' frontmatter delimiter")
+
+    try:
+        parsed = yaml.safe_load("".join(block_lines))
+    except yaml.YAMLError as exc:
+        raise MalformedNoteError(path, f"invalid YAML: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise MalformedNoteError(
+            path, f"frontmatter must be a mapping, got {type(parsed).__name__}"
+        )
+
+    return _FrontmatterIndexEntry(
+        path=path,
+        chunk_id=parsed.get("chunk_id", _NO_CHUNK_ID),
+        field=parsed.get("field"),
+        claim_type=parsed.get("claim_type"),
+        theory_school=parsed.get("theory_school"),
+        empirical_scope=parsed.get("empirical_scope"),
+        role_in_argument=parsed.get("role_in_argument"),
+        polities_touched=list(parsed.get("polities_touched") or []),
+    )
+
+
+# Process-lifetime cache of the frontmatter index every prose-note scan in
+# this module now reads from, keyed by resolved vault_dir (same convention
+# as `_CHUNK_ID_INDEX_CACHE`/`_ARTIFACT_ID_INDEX_CACHE` above). Measured on
+# the real corpus: an uncached scan over 17,851 notes costs ~93s; a sweep
+# that calls `query_by_tag`/`query_by_polity`/`coverage_count` repeatedly
+# against an unchanging vault (true for the lifetime of any one process --
+# nothing in this read-only module ever writes to the vault) paid that cost
+# on every call. Guarded by `_FRONTMATTER_INDEX_LOCK` (unlike the two id
+# indexes above, which have no lock): those are read on a cache hit far more
+# often than built, but this index's first caller in a freshly started, many-
+# threaded sweep is a near-certain pile-up -- without a lock, N threads can
+# each kick off their own ~93s cold build concurrently instead of one thread
+# building it once for all.
+_FRONTMATTER_INDEX_CACHE: dict[Path, list[_FrontmatterIndexEntry]] = {}
+_FRONTMATTER_INDEX_LOCK = threading.Lock()
+
+
+def _frontmatter_index(vault_dir: Path) -> list[_FrontmatterIndexEntry]:
+    key = Path(vault_dir).resolve()
+    cached = _FRONTMATTER_INDEX_CACHE.get(key)
+    if cached is not None:
+        return cached
+    with _FRONTMATTER_INDEX_LOCK:
+        # Re-check inside the lock: another thread may have finished the
+        # cold build while this one was waiting to acquire it.
+        cached = _FRONTMATTER_INDEX_CACHE.get(key)
+        if cached is not None:
+            return cached
+        prose_dir = Path(vault_dir) / "prose"
+        if not prose_dir.is_dir():
+            raise MissingVaultDirError(prose_dir)
+        entries: list[_FrontmatterIndexEntry] = []
+        for path in prose_dir.iterdir():
+            if path.suffix != ".md":
+                continue
+            entries.append(_read_frontmatter_index_entry(path))
+        _FRONTMATTER_INDEX_CACHE[key] = entries
+        return entries
+
+
+def _entry_to_frontmatter_dict(entry: _FrontmatterIndexEntry) -> dict[str, Any]:
+    """Rehydrate one cached index entry into the small frontmatter-dict
+    shape `query_by_tag`'s `_FILTER_MATCHERS` and the slice-02 tools
+    already expect -- carrying only the fields the index itself stores, and
+    omitting the `chunk_id` key entirely (rather than setting it to
+    `_NO_CHUNK_ID` or `None`) when the note had none, so `_require`'s own
+    `field_name not in frontmatter` presence check still means what it always
+    meant."""
+    frontmatter: dict[str, Any] = {
+        "field": entry.field,
+        "claim_type": entry.claim_type,
+        "theory_school": entry.theory_school,
+        "empirical_scope": entry.empirical_scope,
+        "role_in_argument": entry.role_in_argument,
+        "polities_touched": entry.polities_touched,
+    }
+    if entry.chunk_id is not _NO_CHUNK_ID:
+        frontmatter["chunk_id"] = entry.chunk_id
+    return frontmatter
+
+
 def _iter_chunk_frontmatter(vault_dir: Path) -> list[tuple[Path, dict[str, Any]]]:
-    """Every `<vault_dir>/prose/*.md` note's `(path, frontmatter)`,
+    """Every `<vault_dir>/prose/*.md` note's full `(path, frontmatter)`,
     unsorted -- every caller here sorts its own derived result, so this
     shared scan need not (and directory order is filesystem/OS-dependent
     regardless). Raises `MissingVaultDirError` when `prose/` itself is
     absent, the same rule `query_by_tag` already enforces: a missing or
-    typo'd `vault_dir` is a caller bug, not an empty corpus."""
+    typo'd `vault_dir` is a caller bug, not an empty corpus.
+
+    Deliberately uncached and NOT backed by `_frontmatter_index`: its other
+    callers here (`query_by_source`) only ever scan a vault once per
+    process, but `axial.distill.embed`/`axial.distill.classify` also import
+    this exact private function for their own one-shot, whole-corpus reads
+    and need the FULL frontmatter dict, including `chunk_text` -- the one
+    field `_frontmatter_index` deliberately excludes to keep its own,
+    repeatedly-hit process-lifetime cache small (see that function's
+    docstring). Caching a full-text copy of all ~18k notes for those single-
+    use callers would trade the memory `_frontmatter_index` was built to
+    avoid for a speed win neither of them repeats calls often enough to
+    need."""
     prose_dir = Path(vault_dir) / "prose"
     if not prose_dir.is_dir():
         raise MissingVaultDirError(prose_dir)
@@ -538,14 +687,18 @@ def query_by_polity(polity: str, *, vault_dir: Path | None = None) -> list[str]:
     *touching* another is matched here, not there.
 
     Results are sorted by chunk_id, the same determinism contract as
-    `query_by_tag`."""
+    `query_by_tag`. Backed by the same process-lifetime `_frontmatter_index`
+    cache `query_by_tag`/`coverage_count` use (see that function's
+    docstring): the vault is assumed not to change within one process's
+    lifetime."""
     if vault_dir is None:
         vault_dir = default_vault_dir()
     matches: list[str] = []
-    for path, frontmatter in _iter_chunk_frontmatter(vault_dir):
-        touched = frontmatter.get("polities_touched") or []
-        if polity in touched:
-            matches.append(_require(frontmatter, path, "chunk_id"))
+    for entry in _frontmatter_index(vault_dir):
+        if polity in entry.polities_touched:
+            if entry.chunk_id is _NO_CHUNK_ID:
+                raise MalformedNoteError(entry.path, "missing required field 'chunk_id'")
+            matches.append(entry.chunk_id)
     return sorted(matches)
 
 
@@ -708,12 +861,14 @@ def coverage_count(*, vault_dir: Path | None = None) -> dict[str, int]:
 
     Returned as a plain dict built in ascending-polity-name order -- the
     same explicit-sort determinism contract as every other tool here,
-    applied to a mapping instead of a list."""
+    applied to a mapping instead of a list.
+
+    Backed by the same process-lifetime `_frontmatter_index` cache
+    `query_by_tag`/`query_by_polity` use (see that function's docstring)."""
     if vault_dir is None:
         vault_dir = default_vault_dir()
     counts: dict[str, int] = {}
-    for _path, frontmatter in _iter_chunk_frontmatter(vault_dir):
-        touched = frontmatter.get("polities_touched") or []
-        for polity in set(touched):
+    for entry in _frontmatter_index(vault_dir):
+        for polity in set(entry.polities_touched):
             counts[polity] = counts.get(polity, 0) + 1
     return {polity: counts[polity] for polity in sorted(counts)}

@@ -385,10 +385,22 @@ def _run_one_draw(
             return outcome, record
 
     start = time.monotonic()
+    client = client_factory()
+    # Follow-up to #362's benchmark sweep: tag this draw's own client with a
+    # run_id (`OpenRouterClient.set_run_id`) so its `llm_call_request`/
+    # `llm_call_response` log lines can be attributed back to this brief/draw
+    # -- a plain `getattr` duck-type check, not a `LLMClient` Protocol
+    # method, since only the real provider client logs those lines at all
+    # (every stub/record/exploding test client, and a bare `client_factory
+    # = lambda: object()` in this module's own tests, simply has no such
+    # method and is left untouched).
+    set_run_id = getattr(client, "set_run_id", None)
+    if set_run_id is not None:
+        set_run_id(f"{brief_stem}:draw{draw_index}")
     try:
         result = run_brief(
             brief,
-            client=client_factory(),
+            client=client,
             vault_dir=vault_dir,
             envelopes_dir=envelopes_dir,
             config_path=config_path,
@@ -619,7 +631,78 @@ def run_sweep(
     skip_count = sum(1 for outcome in all_outcomes if outcome.status == SKIP_STATUS)
     fail_count = len(all_outcomes) - ok_count - skip_count
 
-    return SweepSummary(brief_results, len(all_outcomes), ok_count, fail_count, skip_count)
+    summary = SweepSummary(brief_results, len(all_outcomes), ok_count, fail_count, skip_count)
+    write_sweep_summary(summary, sweep_dir)
+    return summary
+
+
+def _draw_outcome_to_json(outcome: DrawOutcome) -> dict[str, Any]:
+    return {
+        "brief_path": outcome.brief_path,
+        "brief_stem": outcome.brief_stem,
+        "brief_id": outcome.brief_id,
+        "draw_index": outcome.draw_index,
+        "status": outcome.status,
+        "reason": outcome.reason,
+        "latency_seconds": outcome.latency_seconds,
+        "record_path": str(outcome.record_path) if outcome.record_path is not None else None,
+    }
+
+
+def _quorum_to_json(quorum: QuorumResult) -> dict[str, Any]:
+    return {
+        "n_draws": quorum.n_draws,
+        "dispositions": list(quorum.dispositions),
+        "disposition_agreement_rate": quorum.disposition_agreement_rate,
+        "claim_kind_counts": list(quorum.claim_kind_counts),
+        "claim_kind_agreement_rate": quorum.claim_kind_agreement_rate,
+    }
+
+
+def _brief_result_to_json(result: BriefSweepResult) -> dict[str, Any]:
+    return {
+        "brief_path": result.brief_path,
+        "brief_stem": result.brief_stem,
+        "brief_id": result.brief_id,
+        "draws": [_draw_outcome_to_json(outcome) for outcome in result.draws],
+        "gate_reports": {name: report.to_json() for name, report in result.gate_reports.items()},
+        "quorum": _quorum_to_json(result.quorum),
+        "cost": result.cost,
+    }
+
+
+def sweep_summary_to_json(summary: SweepSummary) -> dict[str, Any]:
+    """`summary`'s whole JSON-serializable shape -- every field
+    `format_sweep_summary` prints, plus the per-draw `latency_seconds` and
+    `record_path` its text rendering omits. `write_sweep_summary` is this
+    function's only caller in this module; it is exported separately so a
+    caller wanting just the dict (no file write) can still get it."""
+    return {
+        "briefs": [_brief_result_to_json(result) for result in summary.briefs],
+        "total_draws": summary.total_draws,
+        "ok_count": summary.ok_count,
+        "fail_count": summary.fail_count,
+        "skip_count": summary.skip_count,
+    }
+
+
+def write_sweep_summary(summary: SweepSummary, sweep_dir: Path) -> Path:
+    """Persist `summary` to `<sweep_dir>/summary.json` -- the machine-
+    readable counterpart of `format_sweep_summary`'s console text. `run_sweep`
+    calls this itself (once, at the end of every invocation, including a
+    resumed one) so the figures survive a restart: `console.log` output is
+    plain text appended across restarts and a resumed pair's `latency_seconds`
+    prints as SKIP with no number (module docstring), so the only place the
+    full, current-as-of-this-invocation summary exists as data is this file."""
+    sweep_dir = Path(sweep_dir)
+    sweep_dir.mkdir(parents=True, exist_ok=True)
+    out_path = sweep_dir / "summary.json"
+    out_path.write_text(
+        json.dumps(sweep_summary_to_json(summary), indent=2, sort_keys=True, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+    return out_path
 
 
 def format_sweep_summary(summary: SweepSummary) -> str:
