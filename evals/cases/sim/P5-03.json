@@ -12,10 +12,10 @@
   "answer_kind": "rubric",
   "expected_answer": "",
   "required_citation_source_ids": [
-    "Wronged- The Weaponization of Victimhood -- Lilie Chouliaraki -- ( WeLib.org )-91e7fc84f05c",
-    "Identity, Violence and Power Mobilising Hatred, Demobilising Dissent by Guy Elcheroth, Stephen Reicher-78f0cccef5b9",
-    "Benjamin Thomas White - The Emergence of Minorities in the Middle East_ The Politics of Community in French Mandate Syria (2011, Edinburgh University Press) - libgen.li-5f35a47d9657",
-    "Andreas Wimmer - Waves of War_ Nationalism, State Formation, and Ethnic Exclusion in the Modern World (2013, Cambridge University Press) - libgen.li-a67941b77943"
+    "chouliaraki-2024-91e7fc84f05c",
+    "elcheroth-2017-78f0cccef5b9",
+    "white-2011-5f35a47d9657",
+    "wimmer-2013-a67941b77943"
   ],
   "rubric": [
     "Treats victimhood as produced and contested in discourse (Chouliaraki), not as a fact read straight off the casualty count.",

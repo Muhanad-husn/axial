@@ -12,10 +12,10 @@
   "answer_kind": "rubric",
   "expected_answer": "",
   "required_citation_source_ids": [
-    "Over-Stating the Arab State Politics and Society in the Middle East (Nazih N. Ayubi) (Z-Library)-16fd6a2e503f",
-    "The Sources of Social Power, Volume 2 - The Rise of Classes and Nation-States, 1760\u20131914 (Michael Mann)-ec759675dcbd",
-    "Networks of Privilege in the Middle East The Politics of Economic Reform Revisited Steven Heydemann)-72a4a9a9b3b0",
-    "EXAMINING THE CENTRALITY OF STATE LEGITIMACY AND CAPACITY TO STABLE GOVERNANCE IN THE SYRIAN CONFLICT-454c87b22e16"
+    "ayubi-1995-16fd6a2e503f",
+    "mann-v2-1993-ec759675dcbd",
+    "heydemann-2004-72a4a9a9b3b0",
+    "kandiah-2018-454c87b22e16"
   ],
   "rubric": [
     "Must distinguish between despotic power (coercive capacity) and infrastructural power (institutional reach), using Mann's framework.",

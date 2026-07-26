@@ -12,10 +12,10 @@
   "answer_kind": "rubric",
   "expected_answer": "",
   "required_citation_source_ids": [
-    "Syrias Peasantry, the Descendants of Its Lesser Rural Notables, and Their Politics (Hanna Batatu) (z-library.sk, 1lib.sk, z-lib.sk)-598624067df3",
-    "Benjamin Thomas White - The Emergence of Minorities in the Middle East_ The Politics of Community in French Mandate Syria (2011, Edinburgh University Press) - libgen.li-5f35a47d9657",
-    "Andreas Wimmer - Waves of War_ Nationalism, State Formation, and Ethnic Exclusion in the Modern World (2013, Cambridge University Press) - libgen.li-a67941b77943",
-    "Ethno-Symbolism and Nationalism A Cultural Approach (Anthony D. Smith) (Z-Library)-cba7b6f3dfba"
+    "batatu-1999-598624067df3",
+    "white-2011-5f35a47d9657",
+    "wimmer-2013-a67941b77943",
+    "smith-2009-cba7b6f3dfba"
   ],
   "rubric": [
     "Must differentiate between 'sect' as a social identity and 'sect' as a political resource instrumentalized by the regime.",

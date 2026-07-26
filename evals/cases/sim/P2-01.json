@@ -12,10 +12,10 @@
   "answer_kind": "rubric",
   "expected_answer": "",
   "required_citation_source_ids": [
-    "Syrias Peasantry, the Descendants of Its Lesser Rural Notables, and Their Politics (Hanna Batatu) (z-library.sk, 1lib.sk, z-lib.sk)-598624067df3",
-    "Networks of Privilege in the Middle East The Politics of Economic Reform Revisited Steven Heydemann)-72a4a9a9b3b0",
-    "War-Torn Leila Vignal-c7005c2bf8ef",
-    "Revolution Without Revolutionar - Asef Bayat-ce6bb0643cfb"
+    "batatu-1999-598624067df3",
+    "heydemann-2004-72a4a9a9b3b0",
+    "vignal-2021-c7005c2bf8ef",
+    "bayat-2017-ce6bb0643cfb"
   ],
   "rubric": [
     "Must trace the social base of Ba'thist rule from Batatu's analysis of the peasantry and lesser rural notables.",

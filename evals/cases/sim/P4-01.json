@@ -12,10 +12,10 @@
   "answer_kind": "rubric",
   "expected_answer": "",
   "required_citation_source_ids": [
-    "Quasi-States Sovereignty, International Relations and the Third World (Robert H. Jackson)-7eb3f39a639f",
-    "Unrecognized States The Struggle for Sovereignty in the Modern International System (Nina Caspersen)-fbc0efe4fffc",
-    "Dominik Zaum - The Sovereignty Paradox_ The Norms and Politics of International Statebuilding-834d3343aa95",
-    "War-Torn Leila Vignal-c7005c2bf8ef"
+    "jackson-1990-7eb3f39a639f",
+    "caspersen-2012-fbc0efe4fffc",
+    "zaum-2007-834d3343aa95",
+    "vignal-2021-c7005c2bf8ef"
   ],
   "rubric": [
     "Separates juridical/negative sovereignty (Jackson) from empirical control and unrecognized-state criteria (Caspersen).",
