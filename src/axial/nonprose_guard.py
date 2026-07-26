@@ -1,7 +1,7 @@
 """Shared non-prose input guard (issue #132): one deterministic heuristic,
 used identically by every per-item LLM-driving loop that still calls it
-(xref, chunk, artifacts -- see issue #402 below for why `tag` no longer
-does) to skip oversized/OCR-garbled text BEFORE it ever reaches an LLM call.
+(xref, chunk, artifacts -- see the note below for why `tag` no longer does)
+to skip oversized/OCR-garbled text BEFORE it ever reaches an LLM call.
 
 An OCR'd index/bibliography (or any similarly garbled back-matter) becomes
 one very large, mostly-non-alphabetic block with no argumentative or
@@ -33,8 +33,9 @@ prose that is genuinely garbled (slips type classification) rather than
 merely long. `non_prose_skip_reason` itself is unchanged and stays live for
 `axial.artifacts` (see above).
 
-Note (issue #402): `axial.tag` no longer calls this module at all. Measured
-on the real 17,888-chunk corpus, `garble_only_skip_reason` fired on exactly
+Note (tag-loss fix, dated to the 2026-07 Phase A rerun): `axial.tag` no
+longer calls this module at all. Measured on the real 17,888-chunk corpus,
+`garble_only_skip_reason` fired on exactly
 34 chunks at the tag call site, ratios 0.401-0.517 -- the continuous tail of
 one corpus-wide distribution, not a distinct garbled population; every
 inspected sample was legitimate scholarship (dense citations, a numeric
@@ -97,7 +98,8 @@ def garble_only_skip_reason(
     never skip it. Mirrors `axial.chunk._garbage_section_skip_reason`'s own
     "non-alpha arm ONLY" precedent (issue #154 slice 04), now lifted here so
     `axial.chunk` and `axial.xref` share one definition of the garble-only
-    backstop (issue #402: `axial.tag` no longer calls this function at all)."""
+    backstop (`axial.tag` no longer calls this function at all -- see the
+    module docstring)."""
     char_count = len(text)
     if not char_count:
         return None

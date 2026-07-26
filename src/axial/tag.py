@@ -1720,7 +1720,7 @@ class AllChunksQuarantinedError(TagError):
 
 class TagRecordCountMismatchError(TagError):
     """Raised when this run's tagged + quarantined chunk count does not
-    equal the number of chunks its input chunk artifact holds (issue #402).
+    equal the number of chunks its input chunk artifact holds.
 
     Every remaining path through the per-chunk loop below either appends to
     `tagged_records` or durably quarantines via `_quarantine_chunk` (which
@@ -1747,9 +1747,9 @@ def _check_chunk_accounting(
 ) -> None:
     """Raise `TagRecordCountMismatchError` unless every chunk this run's
     input chunk artifact holds (`chunk_count`) is accounted for by exactly
-    one of a tagged record or a quarantined record (issue #402). A pure
-    helper (no chunk-loop state) so the invariant is directly unit-testable
-    independent of any particular skip/quarantine/resume scenario."""
+    one of a tagged record or a quarantined record. A pure helper (no
+    chunk-loop state) so the invariant is directly unit-testable independent
+    of any particular skip/quarantine/resume scenario."""
     accounted_for = tagged_count + quarantined_count
     if accounted_for != chunk_count:
         raise TagRecordCountMismatchError(source_id, chunk_count, accounted_for)
@@ -1946,24 +1946,24 @@ def run_tag(
             tagged_records.append(checkpointed)
             continue
 
-        # No non-alpha input guard here (issue #402: measured on the real
-        # 17,888-chunk corpus, this pass's `garble_only_skip_reason` call
-        # fired on exactly 34 chunks -- all legitimate scholarship (dense
-        # citation lists, a numeric-statistics passage), the continuous tail
-        # of one corpus-wide ratio distribution (0.401-0.517), not a
-        # distinct garbled population, per #169's own reasoning: the router
-        # + chunk band (source-router slices 02-03) already keep this pass's
-        # chunk artifact prose-only. A skip here left NO durable trace
-        # (stderr print + `continue`, no checkpoint write), so all 34 chunks
-        # were silently absent from every downstream artifact -- no tag
-        # record, no vault note, unresolvable as grounds -- until the chunk
-        # and tag id sets were diffed. Removed rather than re-tuned: a
-        # threshold on a continuous distribution is arbitrary, and #169's
-        # own router-based rationale for demoting this guard to a backstop
+        # No non-alpha input guard here (measured on the real 17,888-chunk
+        # corpus: this pass's `garble_only_skip_reason` call fired on
+        # exactly 34 chunks -- all legitimate scholarship (dense citation
+        # lists, a numeric-statistics passage), the continuous tail of one
+        # corpus-wide ratio distribution (0.401-0.517), not a distinct
+        # garbled population, per #169's own reasoning: the router + chunk
+        # band (source-router slices 02-03) already keep this pass's chunk
+        # artifact prose-only. A skip here left NO durable trace (stderr
+        # print + `continue`, no checkpoint write), so all 34 chunks were
+        # silently absent from every downstream artifact -- no tag record,
+        # no vault note, unresolvable as grounds -- until the chunk and tag
+        # id sets were diffed. Removed rather than re-tuned: a threshold on
+        # a continuous distribution is arbitrary, and #169's own
+        # router-based rationale for demoting this guard to a backstop
         # applies just as well to removing it outright. The reconciliation
-        # check below (issue #402) is the replacement backstop: it fails
-        # loudly if this pass ever again produces fewer accounted-for
-        # records than chunks, rather than losing them silently.
+        # check below is the replacement backstop: it fails loudly if this
+        # pass ever again produces fewer accounted-for records than chunks,
+        # rather than losing them silently.
 
         if client is None:
             try:
@@ -2339,8 +2339,8 @@ def run_tag(
     # quarantined.
     total_quarantined = quarantine_count + len(already_quarantined)
 
-    # Reconciliation backstop (issue #402): every chunk in `chunk_records`
-    # must end up either tagged (fresh or resumed) or durably quarantined --
+    # Reconciliation backstop: every chunk in `chunk_records` must end up
+    # either tagged (fresh or resumed) or durably quarantined --
     # there is no remaining silent-skip path left in this loop. If a future
     # change reintroduces one, this fails loudly instead of letting a chunk
     # vanish the way the removed non-alpha guard did.

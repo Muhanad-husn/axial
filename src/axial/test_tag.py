@@ -1344,7 +1344,7 @@ def test_run_tag_produces_one_record_per_chunk_with_role_and_schema_version(monk
 def test_run_tag_no_longer_skips_a_citation_dense_chunk_above_the_former_non_alpha_threshold(
     monkeypatch, tmp_path
 ):
-    """Issue #402 (measured on the real 17,888-chunk corpus): the tag pass's
+    """Measured on the real 17,888-chunk corpus: the tag pass's
     `garble_only_skip_reason` call fired on 34 chunks, ratios 0.401-0.517,
     all legitimate scholarship -- dense citation runs and numeric passages,
     the continuous tail of one distribution, not garbled text. The guard is
@@ -3488,16 +3488,17 @@ def test_default_domain_dir_falls_back_to_syria_when_config_file_absent(tmp_path
     assert tag_mod._default_domain_dir(config_path) == tag_mod.DEFAULT_DOMAIN_DIR
 
 
-# --- run_tag: chunk-count reconciliation backstop (issue #402) ------------
+# --- run_tag: chunk-count reconciliation backstop -------------------------
 #
 # Removing the garble-only skip (above) left the tag pass with no remaining
 # silent-skip path: every chunk either becomes a tagged record or a durably
 # quarantined one. `_check_chunk_accounting` is the backstop that catches a
 # REGRESSION of that invariant -- some future skip path that once again
-# drops a chunk without a trace, the exact defect #402 fixes. It is a pure
-# function of counts (issue #402's own smaller-fix choice over a skips
-# sidecar, since after the removal there is no real skip path left to log),
-# so it is tested directly rather than by contriving a real skip scenario.
+# drops a chunk without a trace, the exact defect this fix addresses. It is
+# a pure function of counts (the smaller fix for the code as it stands,
+# since after the removal there is no real skip path left to log to a
+# sidecar), so it is tested directly rather than by contriving a real skip
+# scenario.
 
 
 def test_check_chunk_accounting_passes_when_every_chunk_is_tagged_or_quarantined():
