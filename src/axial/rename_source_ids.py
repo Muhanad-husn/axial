@@ -29,11 +29,31 @@ What it touches:
     note's id from its YAML frontmatter, never from its filename (a note's
     filename may have been shortened by the MAX_PATH budget; its
     frontmatter id is always the true full id),
+  * migrates the human-labelled gold corpus under `data/gold/`: the per-chunk
+    records in `chunks/` (renamed by the `chunk_id` inside the record, never
+    parsed out of the filename, which `axial.gold.run_gold_sample` budgets
+    the same way the vault does), the dispatch and completed-labelling JSON
+    under `dispatch/` and `dispatch/out/` (whose ids are object *keys*), and
+    the `chunk_id`/`source` provenance columns of `label_sheet.xlsx`,
   * rewrites every `source_id`/`chunk_id`/`artifact_id` *inside* those
     files, plus `evals/cases/sim/*.json`'s `required_citation_source_ids`
     and the benchmark analysis logs under
     `data/logs/2026-07-25-brief-benchmark-slice1/analyses/`, whose `grounds`
     carry chunk_ids that would otherwise stop resolving against the vault.
+
+The other `data/logs/` runs are deliberately left alone. A run log records
+what was true when it ran; rewriting its ids would falsify the record. The
+benchmark `analyses/**/*.json` are the exception because their `grounds` are
+live resolvable pointers into the vault, not narrative.
+
+`label_sheet.xlsx` is a live human labelling instrument -- its `*_gold`
+columns hold the merged human labels, and its hidden `vocab` sheet feeds
+data-validation dropdowns -- so it is edited in place, cell by cell, never
+regenerated. An openpyxl load/save round-trip was measured against the real
+sheet first: both sheets, the hidden state, all four data validations with
+their exact ranges, every cell value and the zip members all survive
+unchanged (`test_label_sheet_round_trip_preserves_vocab_and_validations`
+pins this).
 
 Deliberately excludes `evals/corpus_pin/`: a pin is a point-in-time snapshot
 of a corpus, and rewriting one would produce a pin describing a corpus that
@@ -71,11 +91,20 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from openpyxl import load_workbook
 
 from axial.cli import _print_encoding_safe
 from axial.envelope import compute_source_id, content_digest
+from axial.gold import LABEL_SHEET_NAME
 from axial.intake import SUPPORTED_EXTENSIONS
-from axial.paths import artifact_note_path, chunk_note_path, default_sources_dir, default_vault_dir
+from axial.paths import (
+    artifact_note_path,
+    budgeted_chunk_filename,
+    chunk_note_path,
+    default_sources_dir,
+    default_vault_dir,
+    path_overage,
+)
 from axial.vault import render_note
 
 DATA_DIR = Path("data")
@@ -85,6 +114,11 @@ ANALYSES_LOG_DIR = Path("data") / "logs" / "2026-07-25-brief-benchmark-slice1" /
 
 # The `data/` subdirectories whose files are named `<source_id>.<ext>`.
 DERIVED_DIRS = ("trees", "envelopes", "source_meta", "chunks", "tags", "xref", "artifacts")
+
+# The two provenance columns of the gold label sheet that hold full-length ids
+# (`axial.gold.SHEET_COLUMNS`); every other column is a label or free text and
+# is left alone.
+SHEET_ID_COLUMNS = ("chunk_id", "source")
 
 # `compute_source_id`'s own shape, `{stem}-{12 hex digits}`, anchored
 # immediately before a filename's first extension (which must also handle
@@ -133,7 +167,7 @@ class DestinationExistsError(RenameMigrationError):
         self.dest = dest
 
 
-class MalformedNoteError(RenameMigrationError):
+class MalformedRecordError(RenameMigrationError):
     def __init__(self, path: Path, reason: str):
         super().__init__(f"{path}: {reason}")
         self.path = path
@@ -303,16 +337,16 @@ def split_note(path: Path, text: str) -> tuple[dict[str, Any], str]:
     keeping the body verbatim so a rewritten note differs from the original
     only in its frontmatter."""
     if not text.startswith("---\n"):
-        raise MalformedNoteError(path, "missing opening '---' frontmatter delimiter")
+        raise MalformedRecordError(path, "missing opening '---' frontmatter delimiter")
     end = text.find("\n---\n", 3)
     if end == -1:
-        raise MalformedNoteError(path, "missing closing '---' frontmatter delimiter")
+        raise MalformedRecordError(path, "missing closing '---' frontmatter delimiter")
     try:
         parsed = yaml.safe_load(text[4 : end + 1])
     except yaml.YAMLError as exc:
-        raise MalformedNoteError(path, f"invalid YAML frontmatter: {exc}") from exc
+        raise MalformedRecordError(path, f"invalid YAML frontmatter: {exc}") from exc
     if not isinstance(parsed, dict):
-        raise MalformedNoteError(path, "frontmatter is not a mapping")
+        raise MalformedRecordError(path, "frontmatter is not a mapping")
     return parsed, text[end + 5 :]
 
 
@@ -345,6 +379,7 @@ class MigrationPlan:
     id_map: dict[str, str] = field(default_factory=dict)
     files: dict[str, list[FilePlan]] = field(default_factory=dict)
     notes: dict[str, list[NotePlan]] = field(default_factory=dict)
+    label_sheet: Path | None = None
 
 
 def plan_derived_files(data_dir: Path, id_map: dict[str, str]) -> dict[str, list[FilePlan]]:
@@ -369,6 +404,31 @@ def plan_derived_files(data_dir: Path, id_map: dict[str, str]) -> dict[str, list
     return planned
 
 
+def plan_gold_chunks(gold_dir: Path, id_map: dict[str, str]) -> list[FilePlan]:
+    """Plan the renames of the sampled gold chunk records. Their filenames are
+    budgeted exactly as vault notes are (`axial.gold.run_gold_sample`, PR
+    #396), so the id is read from the record's own `chunk_id` field, and the
+    destination filename is rebuilt with the same `path_overage` /
+    `budgeted_chunk_filename` pair `run_gold_sample` uses."""
+    chunks_dir = gold_dir / "chunks"
+    entries = []
+    for path in sorted(chunks_dir.glob("*.json")):
+        record = json.loads(path.read_text(encoding="utf-8"))
+        old_id = record.get("chunk_id")
+        if not isinstance(old_id, str) or not old_id:
+            raise MalformedRecordError(path, "missing or non-string 'chunk_id'")
+        old_source_id = _owning_source_id(old_id, id_map)
+        if old_source_id is None:
+            raise MalformedRecordError(path, f"chunk_id {old_id!r} matches no known source_id")
+        new_source_id = id_map[old_source_id]
+        new_id = new_source_id + old_id[len(old_source_id) :]
+        filename = f"{new_id}.json"
+        if path_overage(chunks_dir, filename) > 0:
+            filename = budgeted_chunk_filename(chunks_dir, new_source_id, new_id, extension=".json")
+        entries.append(FilePlan(src=path, dest=chunks_dir / filename))
+    return entries
+
+
 def plan_notes(
     vault_dir: Path, subdir: str, id_field: str, note_path: Any, id_map: dict[str, str]
 ) -> list[NotePlan]:
@@ -381,10 +441,10 @@ def plan_notes(
         frontmatter, _body = split_note(path, path.read_text(encoding="utf-8"))
         old_id = frontmatter.get(id_field)
         if not isinstance(old_id, str) or not old_id:
-            raise MalformedNoteError(path, f"missing or non-string {id_field!r} in frontmatter")
+            raise MalformedRecordError(path, f"missing or non-string {id_field!r} in frontmatter")
         old_source_id = _owning_source_id(old_id, id_map)
         if old_source_id is None:
-            raise MalformedNoteError(path, f"{id_field} {old_id!r} matches no known source_id")
+            raise MalformedRecordError(path, f"{id_field} {old_id!r} matches no known source_id")
         new_source_id = id_map[old_source_id]
         new_id = new_source_id + old_id[len(old_source_id) :]
         entries.append(
@@ -403,6 +463,7 @@ def build_plan(
     sources_dir: Path,
     data_dir: Path,
     vault_dir: Path,
+    gold_dir: Path,
     cases_dir: Path,
     analyses_dir: Path,
     pin_path: Path,
@@ -416,11 +477,19 @@ def build_plan(
 
     plan = MigrationPlan(id_map=id_map)
     plan.files = plan_derived_files(data_dir, id_map)
-    for directory, pattern in ((cases_dir, "*.json"), (analyses_dir, "**/*.json")):
+    for directory, pattern in (
+        (cases_dir, "*.json"),
+        (analyses_dir, "**/*.json"),
+        (gold_dir / "dispatch", "**/*.json"),
+    ):
         if directory.is_dir():
             plan.files[str(directory)] = [
                 FilePlan(src=path, dest=path) for path in sorted(directory.glob(pattern))
             ]
+    if (gold_dir / "chunks").is_dir():
+        plan.files[str(gold_dir / "chunks")] = plan_gold_chunks(gold_dir, id_map)
+    if (gold_dir / "label_sheet.xlsx").is_file():
+        plan.label_sheet = gold_dir / "label_sheet.xlsx"
 
     for subdir, id_field, note_path in (
         ("prose", "chunk_id", chunk_note_path),
@@ -471,6 +540,34 @@ def apply_note(entry: NotePlan, id_map: dict[str, str]) -> None:
     entry.src.unlink()
 
 
+def apply_label_sheet(path: Path, id_map: dict[str, str]) -> int:
+    """Rewrite only the `chunk_id` and `source` cells of the gold label
+    sheet's `label_sheet` worksheet, in place, and return how many cells
+    changed. Every other cell -- including the `*_gold` columns holding the
+    merged human labels -- is left exactly as it was, and the workbook is
+    edited rather than rebuilt so the hidden `vocab` sheet and the axis
+    dropdowns that point at it survive."""
+    workbook = load_workbook(path)
+    if LABEL_SHEET_NAME not in workbook.sheetnames:
+        raise MalformedRecordError(path, f"no {LABEL_SHEET_NAME!r} worksheet")
+    sheet = workbook[LABEL_SHEET_NAME]
+    columns = [cell.column for cell in sheet[1] if cell.value in SHEET_ID_COLUMNS]
+    if len(columns) != len(SHEET_ID_COLUMNS):
+        raise MalformedRecordError(path, f"header row lacks one of {SHEET_ID_COLUMNS}")
+
+    changed = 0
+    for row in range(2, sheet.max_row + 1):
+        for column in columns:
+            cell = sheet.cell(row=row, column=column)
+            rewritten = remap_ids(cell.value, id_map)
+            if rewritten != cell.value:
+                cell.value = rewritten
+                changed += 1
+    if changed:
+        workbook.save(path)
+    return changed
+
+
 def apply_plan(plan: MigrationPlan) -> None:
     for entries in plan.files.values():
         for entry in entries:
@@ -478,6 +575,8 @@ def apply_plan(plan: MigrationPlan) -> None:
     for note_entries in plan.notes.values():
         for note in note_entries:
             apply_note(note, plan.id_map)
+    if plan.label_sheet is not None:
+        apply_label_sheet(plan.label_sheet, plan.id_map)
 
 
 # --------------------------------------------------------------- reporting
@@ -507,6 +606,10 @@ def format_plan(plan: MigrationPlan) -> str:
         renamed = sum(1 for note in note_entries if note.dest != note.src)
         lines.append(f"  {label}: {len(note_entries)} note(s), {renamed} renamed")
 
+    if plan.label_sheet is not None:
+        lines.append("")
+        lines.append(f"gold label sheet ({SHEET_ID_COLUMNS} columns only): {plan.label_sheet}")
+
     return "\n".join(lines)
 
 
@@ -531,6 +634,7 @@ def main(argv: list[str] | None = None) -> int:
             sources_dir=args.sources_dir,
             data_dir=args.data_dir,
             vault_dir=default_vault_dir(),
+            gold_dir=args.data_dir / "gold",
             cases_dir=CASES_DIR,
             analyses_dir=ANALYSES_LOG_DIR,
             pin_path=PIN_PATH,
