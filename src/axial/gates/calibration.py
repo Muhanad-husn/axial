@@ -18,16 +18,33 @@ observed judged-correctness rate of the claims disclosed in that band,
 compared against the band's stated target rate (§7.4: `high` >= 0.85,
 `medium` 0.60-0.85, `low` < 0.60) within a tunable tolerance, plus the
 strict-ordering requirement (observed_high > observed_medium > observed_low,
-over whichever bands carry data). Both the per-band target rates and the
-minimum sample size per band are stated TENTATIVE in §7.4/§10, tuned on the
-first judged runs -- that remaining tunability is recorded on every report's
-`note`, distinct from the (already settled) metric-choice question.
+over whichever bands carry ENOUGH data to score -- see below). Both the
+per-band target rates and the minimum sample size per band are stated
+TENTATIVE in §7.4/§10, tuned on the first judged runs -- that remaining
+tunability is recorded on every report's `note`, distinct from the (already
+settled) metric-choice question.
 
 `calibration.band_targets` (config/pipeline.yaml) is the tunable seam for
 the three per-band target rates, mirroring `coverage_bands`'s own
 config-first/code-fallback convention (src/axial/validators/coverage.py).
 The band-reliability tolerance itself is the harness's own
-`gates.band_reliability` threshold (default 0.15).
+`gates.band_reliability` threshold (default 0.15), compared via
+`axial.gates.harness.compare` so an exact-boundary value is never lost to
+float representation error (issue #402).
+
+**Minimum per-band sample size (issue #402).** A band with fewer than
+`calibration.min_band_n` (config/pipeline.yaml, default 5) judged claims is
+excluded from the deviation and strict-ordering computation -- its `n`/
+`observed` are still reported in `bands` for visibility, just flagged
+`scoreable: false`. A single claim in a band was generating a verdict (the
+observed 2026-07-25 run: `n: 1`, two of three bands empty); 5 is the
+smallest round number at which a proportion carries any real information --
+below it, one flipped verdict swings the observed rate by 20 points or more,
+which is noise, not a measurement. It is also the standard rule-of-thumb
+minimum cell count from categorical statistics (the same "expected count
+>= 5" bar a chi-square test applies), not a number tuned to this run's own
+pass/fail counts. If every band falls below it, `band_reliability` itself
+reports **not-scoreable** rather than a verdict built on nothing.
 
 The judge (`judged correctness` per claim) is an independent model call,
 anchored to the claim text and its resolved grounds text, run under its own
@@ -46,7 +63,13 @@ import httpx
 import yaml
 
 from axial.gates.grounding import _resolve_grounds_text
-from axial.gates.harness import GateReport, MetricResult, resolve_threshold
+from axial.gates.harness import (
+    GateReport,
+    MetricResult,
+    compare,
+    not_scoreable_metric,
+    resolve_threshold,
+)
 from axial.llm import (
     CALIBRATION_PASS_NAME,
     DEFAULT_PIPELINE_CONFIG_PATH,
@@ -68,6 +91,13 @@ CONFIDENCE_BANDS = ("high", "medium", "low")
 # only when `config/pipeline.yaml` (or its `calibration.band_targets` key)
 # is absent, mirroring every other per-check tunable in this codebase.
 DEFAULT_BAND_TARGETS: dict[str, float] = {"high": 0.85, "medium": 0.725, "low": 0.60}
+
+# The minimum judged-claim count a band needs before its observed rate feeds
+# `band_reliability` at all (issue #402, §7.4's own stated-TENTATIVE minimum
+# sample size) -- the code-level fallback used only when `config/
+# pipeline.yaml` (or its `calibration.min_band_n` key) is absent. See the
+# module docstring for why 5.
+DEFAULT_MIN_BAND_N = 5
 
 _CORRECT = "correct"
 _INCORRECT = "incorrect"
@@ -136,6 +166,18 @@ def _resolve_band_targets(config_path: Path) -> dict[str, float]:
     calibration_config = document.get("calibration") or {}
     targets = calibration_config.get("band_targets") or {}
     return {band: float(targets.get(band, DEFAULT_BAND_TARGETS[band])) for band in CONFIDENCE_BANDS}
+
+
+def _resolve_min_band_n(config_path: Path) -> int:
+    """Read `calibration.min_band_n` from `config/pipeline.yaml`, falling
+    back to `DEFAULT_MIN_BAND_N` when the file or key is absent -- mirrors
+    `_resolve_band_targets` exactly (issue #402)."""
+    if not config_path.is_file():
+        return DEFAULT_MIN_BAND_N
+    with config_path.open("r", encoding="utf-8") as handle:
+        document = yaml.safe_load(handle) or {}
+    calibration_config = document.get("calibration") or {}
+    return int(calibration_config.get("min_band_n", DEFAULT_MIN_BAND_N))
 
 
 def _iter_claims(records: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
@@ -232,6 +274,7 @@ def run_calibration_gate(
         verdicts_by_band[confidence].append(verdict)
 
     targets = _resolve_band_targets(config_path)
+    min_band_n = _resolve_min_band_n(config_path)
     threshold = resolve_threshold(METRIC_NAME, config_path)
 
     bands_detail: dict[str, dict[str, Any]] = {}
@@ -242,10 +285,21 @@ def run_calibration_gate(
         n = len(verdicts)
         target = targets[band]
         observed = sum(1 for v in verdicts if v == _CORRECT) / n if n else None
-        if observed is not None:
+        scoreable = n >= min_band_n
+        # A band below the minimum sample size (issue #402) is still
+        # reported -- its `n`/`observed` are real and worth showing -- but
+        # excluded from both the deviation and the strict-ordering
+        # computation below: one flipped verdict at n=1 swings the observed
+        # rate by 100 points, which is noise, not a measurement.
+        if observed is not None and scoreable:
             observed_by_band[band] = observed
             deviations.append(abs(observed - target))
-        bands_detail[band] = {"observed": observed, "target": target, "n": n}
+        bands_detail[band] = {
+            "observed": observed,
+            "target": target,
+            "n": n,
+            "scoreable": scoreable,
+        }
 
     # Compares CONSECUTIVE present bands in the filtered sequence, not
     # consecutive slots in CONFIDENCE_BANDS -- comparing only adjacent named
@@ -260,14 +314,20 @@ def run_calibration_gate(
     detail = {"bands": bands_detail, "strictly_ordered": strictly_ordered, "note": _TENTATIVE_NOTE}
 
     if not deviations:
-        metric = MetricResult(
-            metric=METRIC_NAME,
-            value=None,
-            threshold=threshold,
-            comparison="lte",
-            passed=False,
-            n=0,
-            detail={**detail, "reason": "no claims found to evaluate"},
+        # Either zero claims at all, or every band that carried claims fell
+        # below `min_band_n` -- both are "too small a sample to mean
+        # anything," reported not-scoreable rather than a manufactured
+        # pass or fail (issue #402, same treatment as #401).
+        metric = not_scoreable_metric(
+            METRIC_NAME,
+            reason=(
+                "no claims to evaluate"
+                if not claims
+                else f"no confidence band reached the minimum sample size (n>={min_band_n})"
+            ),
+            n=len(claims),
+            config_path=config_path,
+            detail=detail,
         )
     else:
         value = max(deviations)
@@ -276,7 +336,7 @@ def run_calibration_gate(
             value=value,
             threshold=threshold,
             comparison="lte",
-            passed=value <= threshold and strictly_ordered,
+            passed=compare(value, threshold, "lte") and strictly_ordered,
             n=len(claims),
             detail=detail,
         )

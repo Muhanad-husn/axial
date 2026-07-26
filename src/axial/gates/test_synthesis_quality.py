@@ -177,7 +177,11 @@ def test_uncontested_records_excluded_from_denominator(vault_dir: Path, tmp_path
     assert presence.value == 1.00
 
 
-def test_zero_contested_records_reports_n_0_not_vacuous_pass(vault_dir: Path, tmp_path: Path):
+def test_zero_contested_records_reports_not_scoreable(vault_dir: Path, tmp_path: Path):
+    """Issue #401: zero contested records is neither a vacuous pass nor a
+    fail -- the metric never ran, and the reason must name the CONTESTED
+    subset as empty, not misreport an empty claim set (these records do
+    carry claims)."""
     records = [_uncontested_record(f"UNC{i}") for i in range(5)]
     report = run_synthesis_quality_gate(
         records,
@@ -190,7 +194,8 @@ def test_zero_contested_records_reports_n_0_not_vacuous_pass(vault_dir: Path, tm
     presence = next(m for m in report.metrics if m.metric == "counter_position_presence_rate")
     assert presence.n == 0
     assert presence.value is None
-    assert presence.passed is False
+    assert presence.passed is None
+    assert "contested" in presence.detail["reason"]
 
 
 def test_two_failing_contested_records_score_0_83_and_are_named(vault_dir: Path, tmp_path: Path):
@@ -252,7 +257,11 @@ def test_steelman_check_skipped_for_one_sided_disclosure_zero_model_calls(
     )
     steelman = next(m for m in report.metrics if m.metric == "steelman_quality")
     assert steelman.n == 0
-    assert steelman.passed is True, "a legitimately empty subset is a vacuous pass, not a failure"
+    assert steelman.value is None
+    assert steelman.passed is None, (
+        "a legitimately empty subset is not-scoreable, neither a vacuous pass nor a fail "
+        "(issue #401)"
+    )
 
 
 def test_same_model_guard_propagates_from_validate_counter_position(

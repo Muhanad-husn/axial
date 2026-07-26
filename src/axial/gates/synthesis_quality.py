@@ -10,8 +10,10 @@ not re-derived here:
   subset (the same §7.8 contested predicate `validate_counter_position`
   itself computes) that is present-or-disclosed. An uncontested record is
   excluded from the denominator entirely, never counted as a pass; a record
-  set with zero contested records reports `n: 0` and does not vacuously
-  pass (mirrors `attribution_completeness`'s own empty-set rule).
+  set with zero contested records reports `n: 0` and **not-scoreable**
+  (issue #401) -- never a vacuous pass, and never the hard-gate "no claims
+  found to evaluate" failure either, since the records here may well carry
+  claims (the empty thing is the contested subset, not the claim set).
 - `steelman_quality` -- the share of records carrying a counter-position
   that is genuinely present-with-grounds (regardless of contested-ness,
   mirroring `validate_counter_position`'s own rule) whose bounded
@@ -24,7 +26,11 @@ not re-derived here:
   of this slice's scope (issue #263: "the rubric is the Academic's and
   swaps in without a code change"); a steelman/strawman verdict against the
   cited grounds is the closest existing quality bar to reuse rather than
-  invent a second judge seam ahead of the rubric landing.
+  invent a second judge seam ahead of the rubric landing. A record set with
+  zero present-with-grounds counter-positions reports `n: 0` and
+  **not-scoreable** (issue #401), not the vacuous `passed: true` this used
+  to report -- a gate that passes on zero observations reads as a green
+  light for a check that never ran.
 """
 
 from __future__ import annotations
@@ -34,10 +40,8 @@ from typing import Any
 
 from axial.gates.harness import (
     GateReport,
-    MetricResult,
     build_metric_result,
-    comparison_for,
-    resolve_threshold,
+    not_scoreable_metric,
 )
 from axial.llm import COUNTER_POSITION_PASS_NAME, DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
 from axial.validators.counter_position import (
@@ -103,31 +107,39 @@ def run_synthesis_quality_gate(
             if report.steelman.verdict == VERDICT_STEELMAN:
                 steelman_passed += 1
 
-    presence = build_metric_result(
-        "counter_position_presence_rate",
-        numerator=present_or_disclosed,
-        denominator=contested_total,
-        config_path=config_path,
-        detail={"failing_brief_ids": failing_brief_ids} if failing_brief_ids else {},
-        empty_denominator_fails=True,
-    )
-    # `build_metric_result`'s own "n == 0 is a legitimate vacuous pass"
-    # branch only produces that behaviour for an "lte" metric (value 0.0
-    # trivially clears a "no more than" threshold, e.g. b_seam_mislabel_
-    # rate). `steelman_quality` is "gte" -- a corpus where every counter-
-    # position happens to be a one-sided disclosure rather than a present
-    # stance has nothing to judge, and that must still pass, not fail a
-    # 0.0 >= 0.90 comparison it was never asked to clear. Built directly
-    # rather than forced through the numerator/denominator helper.
+    # `contested_total == 0` means every record was uncontested -- the
+    # CONTESTED subset itself is empty, never that no claims were found
+    # (issue #401: the metric was previously built through
+    # `build_metric_result`'s hard-gate `empty_denominator_fails=True`
+    # branch, which reports "no claims found to evaluate" -- wrong on
+    # records that plainly carry claims, e.g. P1-03's 5 and P2-01's 1). A
+    # sample of zero contested records is not-scoreable, not a failure: there
+    # is nothing here to judge present-or-disclosed either way.
+    if contested_total == 0:
+        presence = not_scoreable_metric(
+            "counter_position_presence_rate",
+            reason="no contested subset to evaluate (records carry claims, but none are contested)",
+            config_path=config_path,
+        )
+    else:
+        presence = build_metric_result(
+            "counter_position_presence_rate",
+            numerator=present_or_disclosed,
+            denominator=contested_total,
+            config_path=config_path,
+            detail={"failing_brief_ids": failing_brief_ids} if failing_brief_ids else {},
+            empty_denominator_fails=True,
+        )
+    # A corpus where every counter-position happens to be a one-sided
+    # disclosure rather than a present stance has nothing for the steelman
+    # check to judge -- not-scoreable (issue #401), not the vacuous
+    # `passed: true` this used to report (30/30 briefs "passing" a check
+    # that never ran, reading as a green light on a summary table).
     if steelman_ran == 0:
-        steelman = MetricResult(
-            metric="steelman_quality",
-            value=None,
-            threshold=resolve_threshold("steelman_quality", config_path),
-            comparison=comparison_for("steelman_quality"),
-            passed=True,
-            n=0,
-            detail={"reason": "no present-with-grounds counter-position to judge"},
+        steelman = not_scoreable_metric(
+            "steelman_quality",
+            reason="no present-with-grounds counter-position to judge",
+            config_path=config_path,
         )
     else:
         steelman = build_metric_result(
