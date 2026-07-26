@@ -54,19 +54,23 @@ def test_max_safe_source_stem_length_matches_independent_arithmetic(tmp_path):
     itself enforces), `_SLUG_MAX_LEN` (the worst-case section slug), and
     chunk_id's own locked, fixed-width pieces -- the hyphen + 12-char hash,
     three underscore separators, a 3-digit order key, a 3-digit index, and
-    the ".md" extension."""
+    the pair's own extension."""
     from axial.chunk import _SLUG_MAX_LEN
     from axial.intake import max_safe_source_stem_length
     from axial.paths import _PATH_SAFETY_MARGIN, _WINDOWS_MAX_PATH
 
     directory = tmp_path / "prose"
-    result = max_safe_source_stem_length((directory,))
 
-    non_stem_overhead = 1 + 12 + 3 + _SLUG_MAX_LEN + 3 + 3 + len(".md")
-    filename_budget = (_WINDOWS_MAX_PATH - _PATH_SAFETY_MARGIN) - len(str(directory.resolve())) - 1
-    expected = filename_budget - non_stem_overhead
+    for extension in (".md", ".json"):
+        result = max_safe_source_stem_length(((directory, extension),))
 
-    assert result == expected
+        non_stem_overhead = 1 + 12 + 3 + _SLUG_MAX_LEN + 3 + 3 + len(extension)
+        filename_budget = (
+            (_WINDOWS_MAX_PATH - _PATH_SAFETY_MARGIN) - len(str(directory.resolve())) - 1
+        )
+        expected = filename_budget - non_stem_overhead
+
+        assert result == expected
 
 
 def test_max_safe_source_stem_length_takes_the_tighter_of_several_directories(tmp_path):
@@ -75,11 +79,35 @@ def test_max_safe_source_stem_length_takes_the_tighter_of_several_directories(tm
     shallow = tmp_path / "a"
     deep = tmp_path / "a" / "much" / "deeper" / "nested" / "directory" / "tree"
 
-    tightest = max_safe_source_stem_length((deep,))
-    combined = max_safe_source_stem_length((shallow, deep))
+    tightest = max_safe_source_stem_length(((deep, ".md"),))
+    combined = max_safe_source_stem_length(((shallow, ".md"), (deep, ".md")))
 
     assert combined == tightest
-    assert combined < max_safe_source_stem_length((shallow,))
+    assert combined < max_safe_source_stem_length(((shallow, ".md"),))
+
+
+def test_max_safe_source_stem_length_uses_each_directorys_own_extension(tmp_path):
+    """Regression pin (founder review, PR #403): a single placeholder
+    extension shared across every directory silently mis-budgets whichever
+    directory does not actually use that extension -- exactly the shape of
+    the real bug, since `data/vault/prose` (`.md` notes) and
+    `data/gold/chunks` (`.json` records) both happen to resolve to the same
+    length. Two directories of IDENTICAL resolved length but DIFFERENT real
+    extensions must yield the tighter (longer-extension) one's limit, never
+    the shorter one's -- a test that only checks "some number comes back"
+    would have passed against the broken shared-extension version too."""
+    from axial.intake import max_safe_source_stem_length
+
+    md_dir = tmp_path / "aaaaa"
+    json_dir = tmp_path / "bbbbb"
+    assert len(str(md_dir.resolve())) == len(str(json_dir.resolve()))
+
+    md_only = max_safe_source_stem_length(((md_dir, ".md"),))
+    json_only = max_safe_source_stem_length(((json_dir, ".json"),))
+    combined = max_safe_source_stem_length(((md_dir, ".md"), (json_dir, ".json")))
+
+    assert json_only == md_only - 2  # ".json" is 2 characters longer than ".md"
+    assert combined == json_only
 
 
 def test_check_source_stem_length_accepts_a_stem_at_the_derived_limit():

@@ -237,41 +237,60 @@ def check_extension(path: Path) -> str:
 # - `build_chunk_records`'s chunk_id grammar (`<source_id>_<order_key>_
 #   <slug>_<NNN>`, PRD §7.7) adds three underscore separators.
 # - the per-section chunk index is always exactly 3 digits (`f"{index:03d}"`).
-# - the section order key is NEVER dotted: `extract.py`'s tree-builder opens
-#   a new TOP-LEVEL section node per heading without nesting (`chunk.py`'s
-#   own module docstring), so `section_order` is always a flat heading
-#   count, not a multi-level dotted path. Budgeted at the same 3-digit width
-#   as the index (i.e. up to 999 top-level sections, far past any real
-#   source) since a full scan of the live corpus's `data/chunks/*.jsonl`
-#   found the longest real order key today is 3 digits ("102") and no real
-#   academic book has anywhere near 999 top-level sections.
+# - the section order key is NEVER dotted TODAY, confirmed from the code, not
+#   assumed: `extract.py._build_tree` assigns every TOP-LEVEL node (the only
+#   nodes `axial.chunk._section_nodes` ever selects, and the only ones
+#   `run_chunk_recursive` ever passes as `section_order`) a bare
+#   `str(top_index)` (`extract.py._build_tree`, the `if is_section(item):`
+#   branch) -- dotted `f"{parent_order}.{child_index}"` orders are assigned
+#   only to nodes NESTED inside a section (that same function's `else`
+#   branch), which chunk_id's `order_key` never reads. `build_chunk_records`'s
+#   own `.replace(".", "-")` is defensive for its general `section_order: str`
+#   parameter (also exercised by `axial.query.reader.source_id_from_chunk_id`'s
+#   own docstring/parse contract), not evidence a dot reaches it in
+#   production. Budgeted at the same 3-digit width as the index (i.e. up to
+#   999 top-level sections, far past any real source) since a full scan of
+#   the live corpus's `data/chunks/*.jsonl` found the longest real order key
+#   today is 3 digits ("102") and no real academic book has anywhere near
+#   999 top-level sections.
 _HASH_SUFFIX_LEN = 12  # compute_source_id's trailing content-hash truncation
 _INDEX_LEN = 3  # f"{index:03d}"
 _ORDER_KEY_BUDGET = 3  # see the block comment above
 
-# The directories a full chunk_id is ever keyed by a filename under today --
-# `axial.paths.chunk_note_path`'s vault target and
-# `axial.gold.run_gold_sample`'s gold-chunks target (duplicated here as a
-# plain literal, not imported: `axial.gold` imports `axial.vault`, which
-# imports THIS module, so importing `axial.gold` here would be a cycle).
-# The tighter (longer-resolved) of the two sets the budget, exactly like
-# `axial.paths.path_overage` measures per call, never guessed.
-_CHUNK_ID_DIRECTORIES = (VAULT_DIR / "prose", Path("data/gold/chunks"))
+# The directories a full chunk_id is ever keyed by a filename under today,
+# paired with the extension the writer at that directory actually uses --
+# `axial.paths.chunk_note_path`'s vault target (`.md`) and
+# `axial.gold.run_gold_sample`'s gold-chunks target (`.json`). Kept as
+# (directory, extension) pairs, not a directory list plus one shared
+# extension literal, so a filename-length regression here (extensions
+# differ, so a shared literal silently mis-measures whichever directory
+# does NOT use it) cannot recur. Duplicated as plain literals, not
+# imported: `axial.gold` imports `axial.vault`, which imports THIS module,
+# so importing `axial.gold` here would be a cycle. The tighter (longer-
+# resolved) pair sets the budget, exactly like `axial.paths.path_overage`
+# measures per call, never guessed.
+_CHUNK_ID_DIRECTORIES = (
+    (VAULT_DIR / "prose", ".md"),
+    (Path("data/gold/chunks"), ".json"),
+)
 
 
 def max_safe_source_stem_length(
-    directories: tuple[Path, ...] = _CHUNK_ID_DIRECTORIES,
+    directories: tuple[tuple[Path, str], ...] = _CHUNK_ID_DIRECTORIES,
 ) -> int:
     """The longest source-file filename stem intake can accept without ever
-    being able to produce a chunk_id-based note filename that exceeds
-    Windows' MAX_PATH under any of `directories` (default: the two real
-    directories a chunk_id is written under today).
+    being able to produce a chunk_id-based filename that exceeds Windows'
+    MAX_PATH under any of `directories` (default: the two real
+    (directory, extension) pairs a chunk_id is written under today).
 
     Reuses `axial.paths.path_overage` -- the exact budget check
     `axial.paths.chunk_note_path` enforces at write time -- against a
     synthetic worst-case chunk_id suffix (the fixed hash/underscore/index
     pieces above, plus a maximal `axial.chunk._SLUG_MAX_LEN`-wide slug),
-    rather than re-deriving the same arithmetic a second time. `directories`
+    rather than re-deriving the same arithmetic a second time. Each pair's
+    own extension is used for its own placeholder filename -- `.md` and
+    `.json` differ by 2 characters, and a single shared extension would
+    silently mis-budget whichever directory does not use it. `directories`
     is resolved live (`path_overage` calls `.resolve()`), so the answer
     reflects wherever this repo actually lives on disk, not a guessed
     directory depth.
@@ -287,8 +306,14 @@ def max_safe_source_stem_length(
     # extension. The underscore count falls naturally out of `"_".join`
     # over these three pieces -- it is never a separately counted literal.
     order_slug_index = "_".join(["o" * _ORDER_KEY_BUDGET, "s" * _SLUG_MAX_LEN, "i" * _INDEX_LEN])
-    placeholder_filename = "-" + "h" * _HASH_SUFFIX_LEN + "_" + order_slug_index + ".md"
-    return min(-path_overage(directory, placeholder_filename) for directory in directories)
+
+    def placeholder_filename(extension: str) -> str:
+        return "-" + "h" * _HASH_SUFFIX_LEN + "_" + order_slug_index + extension
+
+    return min(
+        -path_overage(directory, placeholder_filename(extension))
+        for directory, extension in directories
+    )
 
 
 def check_source_stem_length(path: Path) -> None:
