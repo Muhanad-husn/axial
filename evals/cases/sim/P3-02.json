@@ -12,11 +12,11 @@
   "answer_kind": "rubric",
   "expected_answer": "",
   "required_citation_source_ids": [
-    "Benjamin Thomas White - The Emergence of Minorities in the Middle East_ The Politics of Community in French Mandate Syria (2011, Edinburgh University Press) - libgen.li-5f35a47d9657",
-    "The Origins of Syrian Nationhood- Histories, Pioneers and -- Adel Beshara_ ProQuest (Firm) -- ( WeLib.org )-8410a9059300",
-    "Andreas Wimmer - Waves of War_ Nationalism, State Formation, and Ethnic Exclusion in the Modern World (2013, Cambridge University Press) - libgen.li-a67941b77943",
-    "mann-sources-of-social-power-v3-3e9f48ff605a",
-    "Over-Stating the Arab State Politics and Society in the Middle East (Nazih N. Ayubi) (Z-Library)-16fd6a2e503f"
+    "white-2011-5f35a47d9657",
+    "beshara-2011-8410a9059300",
+    "wimmer-2013-a67941b77943",
+    "mann-v3-2012-3e9f48ff605a",
+    "ayubi-1995-16fd6a2e503f"
   ],
   "rubric": [
     "Distinguishes religious communities from politically constituted minorities",

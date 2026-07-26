@@ -12,13 +12,13 @@
   "answer_kind": "rubric",
   "expected_answer": "",
   "required_citation_source_ids": [
-    "Identity, Violence and Power Mobilising Hatred, Demobilising Dissent by Guy Elcheroth, Stephen Reicher-78f0cccef5b9",
-    "The Sociology of War and Violence -- Sinis\u030ca Males\u030cevic\u0301 -- ( WeLib.org )-fd2cbe41384f",
-    "Sinis\u030ca Males\u030cevic\u0301 - Nation-States and Nationalisms_ Organization, Ideology and Solidarity (2013, Polity) - libgen.li-5d3ec1809b12",
-    "The Logic of Violence in Civil War (Cambridge Studies in -- Stathis N. Kalyvas -- ( WeLib.org )-0b5817b2642e",
-    "U\u011fur \u00dcmit \u00dcng\u00f6r - Paramilitarism_ Mass Violence in the Shadow of the State (2020, Oxford University Press) - libgen.li-ae5701dcc706",
-    "War-Torn Leila Vignal-c7005c2bf8ef",
-    "Benjamin Thomas White - The Emergence of Minorities in the Middle East_ The Politics of Community in French Mandate Syria (2011, Edinburgh University Press) - libgen.li-5f35a47d9657"
+    "elcheroth-2017-78f0cccef5b9",
+    "malesevic-2010-fd2cbe41384f",
+    "malesevic-2013-5d3ec1809b12",
+    "kalyvas-2006-0b5817b2642e",
+    "ungor-2020-ae5701dcc706",
+    "vignal-2021-c7005c2bf8ef",
+    "white-2011-5f35a47d9657"
   ],
   "rubric": [
     "Distinguishes identification, political mobilization, violence, and territorial sorting rather than using sectarianism as a single cause",

@@ -12,13 +12,13 @@
   "answer_kind": "rubric",
   "expected_answer": "",
   "required_citation_source_ids": [
-    "Andreas Wimmer - Waves of War_ Nationalism, State Formation, and Ethnic Exclusion in the Modern World (2013, Cambridge University Press) - libgen.li-a67941b77943",
-    "mann-sources-of-social-power-v4-1b7e828e0199",
-    "The Logic of Violence in Civil War (Cambridge Studies in -- Stathis N. Kalyvas -- ( WeLib.org )-0b5817b2642e",
-    "U\u011fur \u00dcmit \u00dcng\u00f6r - Paramilitarism_ Mass Violence in the Shadow of the State (2020, Oxford University Press) - libgen.li-ae5701dcc706",
-    "Do civil wars make or break states-4faeb528594d",
-    "War-Torn Leila Vignal-c7005c2bf8ef",
-    "Unrecognized States The Struggle for Sovereignty in the Modern International System (Nina Caspersen)-fbc0efe4fffc"
+    "wimmer-2013-a67941b77943",
+    "mann-v4-2013-1b7e828e0199",
+    "kalyvas-2006-0b5817b2642e",
+    "ungor-2020-ae5701dcc706",
+    "malesevic-2026-4faeb528594d",
+    "vignal-2021-c7005c2bf8ef",
+    "caspersen-2012-fbc0efe4fffc"
   ],
   "rubric": [
     "Defines exclusion in relation to membership, rights, security, and control of institutions rather than demographic separation alone",

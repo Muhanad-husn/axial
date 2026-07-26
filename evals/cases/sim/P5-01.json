@@ -12,11 +12,11 @@
   "answer_kind": "rubric",
   "expected_answer": "",
   "required_citation_source_ids": [
-    "The Logic of Violence in Civil War (Cambridge Studies in -- Stathis N. Kalyvas -- ( WeLib.org )-0b5817b2642e",
-    "Identity, Violence and Power Mobilising Hatred, Demobilising Dissent by Guy Elcheroth, Stephen Reicher-78f0cccef5b9",
-    "U\u011fur \u00dcmit \u00dcng\u00f6r - Paramilitarism_ Mass Violence in the Shadow of the State (2020, Oxford University Press) - libgen.li-ae5701dcc706",
-    "War-Torn Leila Vignal-c7005c2bf8ef",
-    "The Sociology of War and Violence -- Sinis\u030ca Males\u030cevic\u0301 -- ( WeLib.org )-fd2cbe41384f"
+    "kalyvas-2006-0b5817b2642e",
+    "elcheroth-2017-78f0cccef5b9",
+    "ungor-2020-ae5701dcc706",
+    "vignal-2021-c7005c2bf8ef",
+    "malesevic-2010-fd2cbe41384f"
   ],
   "rubric": [
     "Uses selective and indiscriminate as Kalyvas defines them, each tied to a level of territorial control, not as loose or moral descriptors.",

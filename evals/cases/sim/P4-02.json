@@ -12,10 +12,10 @@
   "answer_kind": "rubric",
   "expected_answer": "",
   "required_citation_source_ids": [
-    "Dominik Zaum - The Sovereignty Paradox_ The Norms and Politics of International Statebuilding-834d3343aa95",
-    "Quasi-States Sovereignty, International Relations and the Third World (Robert H. Jackson)-7eb3f39a639f",
-    "EXAMINING THE CENTRALITY OF STATE LEGITIMACY AND CAPACITY TO STABLE GOVERNANCE IN THE SYRIAN CONFLICT-454c87b22e16",
-    "War-Torn Leila Vignal-c7005c2bf8ef"
+    "zaum-2007-834d3343aa95",
+    "jackson-1990-7eb3f39a639f",
+    "kandiah-2018-454c87b22e16",
+    "vignal-2021-c7005c2bf8ef"
   ],
   "rubric": [
     "Defines the paradox as external actors claiming to restore sovereignty while exercising trusteeship-like powers that hollow it.",
