@@ -27,8 +27,28 @@ nothing). `claim_id` is a deterministic hash over each claim's own parsed
 content, so the same response parses to the same ids on every run.
 
 Out of scope for this slice (see plans/analysis-synthesis/02-synthesis-claim-
-graph.md): the attribution validator, the grounding check, the counter-
-position section, the coverage map, and persisting the claim graph.
+graph.md): the attribution validator, the grounding check, the coverage map,
+and persisting the claim graph.
+
+`generate_counter_position` (issue #399, §7.8) is the counter-position
+GENERATION half this module gained after that slice: a follow-up call, made
+only when `axial.validators.counter_position._detect_contested` (reused
+verbatim, never reimplemented) reports the just-produced claim graph's own
+evidence as contested. It never asks the model to invent an opposing
+position from nothing: the candidate pool it offers is the whitelist of this
+run's own evidence chunks that are either tagged `role:counter-position` or
+carry a substantive `theory_school` distinct from the majority school among
+that evidence (`_counter_position_candidates`) -- real vault ids the model
+already has in front of it, never a fresh retrieval. A `present: true`
+response may only cite grounds from that whitelist (checked mechanically
+after resolution, `CounterPositionGroundNotOfferedError` otherwise); the
+model is told plainly that disclosing the corpus as one-sided is the
+correct, honest answer whenever the candidates do not cash out to a real
+opposing stance, never a failure -- the deliberately easier path, so a model
+under pressure to "find" a counter-position has nothing to gain by
+fabricating one. An uncontested brief (including a `refuse` disposition,
+whose empty claim list is trivially uncontested) never reaches the model
+call at all.
 """
 
 from __future__ import annotations
@@ -45,7 +65,7 @@ import yaml
 
 from axial.analyze.assembly import EvidenceSet
 from axial.brief.intake import Brief
-from axial.llm import SYNTHESIZE_PASS_NAME, LLMClient, LLMError
+from axial.llm import COUNTER_POSITION_GENERATE_PASS_NAME, SYNTHESIZE_PASS_NAME, LLMClient, LLMError
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.query.reader import (
@@ -55,6 +75,13 @@ from axial.query.reader import (
     find_chunk_ids_ending_with,
     get_artifact,
     get_chunk,
+)
+from axial.validators.counter_position import (
+    COUNTER_POSITION_ROLE_VALUE,
+    _THEORY_SCHOOL_SENTINEL_VALUES,
+    _detect_contested,
+    _evidence_chunk_ids,
+    _resolve_min_distinct_theory_schools,
 )
 
 # The §7.4 claim-kind vocabulary -- closed, not open text: a value outside
@@ -229,6 +256,58 @@ class NoLensesAvailableError(SynthesisError):
     def __init__(self, lenses_dir: Path):
         self.lenses_dir = lenses_dir
         super().__init__(f"no lens available to auto-select under {lenses_dir}")
+
+
+class CounterPositionGenerationError(SynthesisError):
+    """Base class for all counter-position GENERATION errors (§7.8, issue
+    #399) -- a separate family from the claim-graph parse errors above, but
+    the same severity: a failure here is as fatal to the run as a
+    claim-graph parse failure, never silently downgraded to an empty or
+    placeholder section."""
+
+
+class CounterPositionGenerationFailedError(CounterPositionGenerationError):
+    """Raised when the counter-position-generation model call transport-fails
+    or never returns parseable JSON within `complete_json`'s bounded re-ask
+    budget."""
+
+
+class InvalidCounterPositionResponseError(CounterPositionGenerationError):
+    """Raised when a well-formed-JSON counter-position response does not
+    match the §7.8 shape -- including naming both, or neither, of the two
+    mutually exclusive present/one-sided channels."""
+
+
+class UnresolvableCounterPositionGroundError(CounterPositionGenerationError):
+    """Raised when a `present: true` response's grounds `ref_id` does not
+    resolve to a real vault id at all (exact match nor unique-suffix
+    repair) -- a hallucinated citation never reaches the record, exactly
+    like `UnresolvableGroundError` does for a claim."""
+
+    def __init__(self, ref_id: str):
+        self.ref_id = ref_id
+        super().__init__(
+            f"counter-position cites chunk {ref_id!r}, which does not resolve to a real vault id"
+        )
+
+
+class CounterPositionGroundNotOfferedError(CounterPositionGenerationError):
+    """Raised when a `present: true` response's grounds resolve to a REAL
+    vault id that was never among the whitelisted candidate opposing-evidence
+    chunks offered in the prompt (module docstring's anti-fabrication
+    design): the model may only ground the counter-position in the
+    candidates it was given, so a well-formed but off-list citation is
+    rejected exactly as firmly as a wholly unresolvable one -- resolving is
+    necessary but not sufficient."""
+
+    def __init__(self, ref_id: str):
+        self.ref_id = ref_id
+        super().__init__(
+            f"counter-position cites chunk {ref_id!r}, which resolves to a real "
+            "vault id but was never among the opposing-evidence chunks offered "
+            "-- the model may only ground the counter-position in the candidates "
+            "it was given, never reach outside that whitelist"
+        )
 
 
 @dataclass(frozen=True)
@@ -596,3 +675,327 @@ def synthesize(
     claims = parse_synthesis_response(raw, vault_dir=vault_dir)
     print(f"synthesize: done, {len(claims)} claim(s)", file=sys.stderr)
     return ClaimGraph(lens=lens_name, claims=claims)
+
+
+# ---------------------------------------------------------------------------
+# Counter-position generation (§7.8, issue #399) -- module docstring has the
+# full design. Runs AFTER the claim graph above: contested-ness is a
+# property of the claim graph's OWN resolved evidence, so there is nothing
+# to detect until `synthesize()` has already produced one.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CounterPositionResult:
+    """`generate_counter_position`'s own return shape: the persisted §7.8
+    `section` dict, plus `model_called` -- whether the counter-position
+    GENERATION model call actually ran. `model_by_pass`/`cost` (§7.3/§7.14)
+    name a pass only when it really ran (the same "empty on `refuse`"
+    convention `run_brief` already follows for retrieve/synthesize), so the
+    caller (`axial.answer.record.build_record`) needs this explicit signal
+    to extend those two fields correctly -- inferring it from the section's
+    own shape would conflate "uncontested, never called" with "contested,
+    every grounds chunk unresolvable, never called" (both disclose,
+    differently) against "contested, model called, model itself judged
+    one-sided" (also discloses) -- three states, only one of which spent a
+    real completion call."""
+
+    section: dict[str, Any]
+    model_called: bool
+
+
+def _empty_counter_position() -> dict[str, Any]:
+    """The §7.8 shape at its emptiest, honest value -- returned whenever the
+    brief is not contested (§7.8: "an uncontested brief never requires the
+    section at all"), including a `refuse` disposition's trivially-empty
+    claim list. Identical shape to the pre-#399 placeholder; the difference
+    is this is now a genuinely correct steady state, not a stand-in for
+    unbuilt logic."""
+    return {
+        "present": False,
+        "stance": None,
+        "grounds": [],
+        "corpus_one_sided": False,
+        "one_sided_reason": None,
+    }
+
+
+def _counter_position_candidates(
+    claims: list[dict[str, Any]], *, vault_dir: Path | None
+) -> list[Any]:
+    """The whitelist of real, resolvable vault chunks (`ChunkNote`) offered
+    as candidate counter-position grounds: every chunk, among this run's own
+    evidence (`_evidence_chunk_ids` -- the same grounds union
+    `_detect_contested` itself inspects, "this run's evidence" per §7.8),
+    that either carries the counter-position role or a substantive
+    `theory_school` distinct from the MAJORITY school among that evidence.
+
+    Guaranteed non-empty whenever the caller already confirmed
+    `_detect_contested(...).contested` is `True`, by the same definition
+    that check uses (>= `min_distinct_theory_schools` distinct substantive
+    schools, or a counter-position-role chunk) -- minus whatever grounds
+    ids failed to resolve here (skipped, exactly as `_detect_contested`
+    itself skips them; a broken grounds pointer is the attribution
+    validator's job, not this one's), which is why the caller still guards
+    the empty case rather than asserting it can't happen.
+
+    Majority-school ties are broken by FIRST-SEEN order in
+    `_evidence_chunk_ids` (itself deterministic, first-seen grounds-citation
+    order) -- `dict` preserves insertion order and `max` returns the first
+    maximal item, so this never falls back to an alphabetical pick unrelated
+    to what the run actually argued."""
+    resolved: list[Any] = []
+    for chunk_id in _evidence_chunk_ids(claims):
+        try:
+            resolved.append(get_chunk(chunk_id, vault_dir=vault_dir))
+        except ChunkNotFoundError:
+            continue
+
+    school_counts: dict[str, int] = {}
+    for chunk in resolved:
+        primary = (chunk.theory_school or {}).get("primary")
+        if isinstance(primary, str) and primary not in _THEORY_SCHOOL_SENTINEL_VALUES:
+            school_counts[primary] = school_counts.get(primary, 0) + 1
+    majority_school = (
+        max(school_counts, key=lambda school: school_counts[school]) if school_counts else None
+    )
+
+    candidates: list[Any] = []
+    for chunk in resolved:
+        primary = (chunk.theory_school or {}).get("primary")
+        is_counter_role = chunk.role_in_argument == COUNTER_POSITION_ROLE_VALUE
+        is_minority_school = (
+            isinstance(primary, str)
+            and primary not in _THEORY_SCHOOL_SENTINEL_VALUES
+            and primary != majority_school
+        )
+        if is_counter_role or is_minority_school:
+            candidates.append(chunk)
+    return candidates
+
+
+def _compose_counter_position_prompt(
+    brief: Brief, claims: list[dict[str, Any]], candidates: list[Any]
+) -> str:
+    claim_lines = (
+        "\n".join(
+            f"- ({claim.get('kind')}) {claim.get('text')}"
+            for claim in claims
+            if isinstance(claim, dict) and claim.get("text")
+        )
+        or "(no claims)"
+    )
+    candidate_lines = "\n".join(
+        f"- chunk_id={chunk.chunk_id} "
+        f"theory_school={(chunk.theory_school or {}).get('primary')} "
+        f"role_in_argument={chunk.role_in_argument}\n  text: {chunk.chunk_text}"
+        for chunk in candidates
+    )
+    return f"""You are the stage-4 counter-position pass of an analysis engine (specs/PHASE-B.md §7.8). This brief has already been mechanically flagged CONTESTED: its evidence spans more than one substantive theoretical position. Your job is to state the strongest opposing position the corpus itself supports, or to say plainly that it does not -- never to invent one.
+
+Case: "{brief.case}"
+Request: "{brief.request}"
+
+The primary claims already synthesized for this brief:
+{claim_lines}
+
+Candidate opposing-evidence chunks -- cite ONLY these chunk_ids as grounds. An id not listed here is never acceptable, even if it looks like a real one:
+{candidate_lines}
+
+Decide between exactly two outcomes, never both, never neither:
+1. PRESENT -- the candidates above genuinely support a coherent position opposing the primary claims, at its STRONGEST (a steelman, not a strawman). Cite one or more candidate chunk_ids as grounds.
+2. ONE-SIDED -- the candidates above are too thin, tangential, or incidental to construct a genuine opposing position, even though the mechanical signal fired. Say so plainly and name why, attributing the gap to the CORPUS, never to your own inability to argue one side.
+
+Disclosing ONE-SIDED when the candidates do not truly ground an opposing stance is the correct, honest answer -- not a failure. Never manufacture opposition the candidates do not support.
+
+Return ONLY this JSON object, no prose and no code fence:
+{{"present": true|false, "stance": "<the opposing stance, or null>", "grounds": [{{"ref_type": "chunk", "ref_id": "<candidate chunk_id>"}}], "corpus_one_sided": true|false, "one_sided_reason": "<reason, or null>"}}"""
+
+
+def _resolve_counter_position_ground(ref_id: str, *, vault_dir: Path | None) -> str:
+    """Resolve one counter-position grounds `ref_id` against the vault --
+    exact match first, falling back to a unique-suffix repair of a
+    truncated citation (mirrors `_resolve_truncated_ref_id`'s own repair
+    exactly, DEC-42: ids run to ~200 chars and a model sometimes echoes only
+    the tail even when shown the full id, as here). Raises
+    `UnresolvableCounterPositionGroundError` -- not `UnresolvableGroundError`,
+    whose message names a "claim", misleading for a section that is not
+    one -- on zero or 2+ suffix matches, exactly as firm as an exact-match
+    miss."""
+    try:
+        get_chunk(ref_id, vault_dir=vault_dir)
+        return ref_id
+    except ChunkNotFoundError:
+        pass
+    matches = find_chunk_ids_ending_with(ref_id, vault_dir=vault_dir)
+    if len(matches) != 1:
+        raise UnresolvableCounterPositionGroundError(ref_id)
+    resolved_id = matches[0]
+    print(
+        f"generate_counter_position: repaired truncated grounds ref_id: "
+        f"{ref_id!r} -> {resolved_id!r} (unique suffix match)",
+        file=sys.stderr,
+    )
+    return resolved_id
+
+
+def _parse_counter_position_response(
+    raw: str, candidates: list[Any], *, vault_dir: Path | None
+) -> dict[str, Any]:
+    """Parse+validate one counter-position-generation response into the
+    §7.8 shape. `present` and `corpus_one_sided` must be booleans naming
+    EXACTLY one channel (never both, never neither); a `present: true`
+    response's `grounds` must be non-empty, `ref_type: "chunk"` only (the
+    candidate pool is chunks only -- artifacts carry no `theory_school`),
+    each `ref_id` resolved (`_resolve_counter_position_ground`) AND a
+    member of `candidates` (`CounterPositionGroundNotOfferedError`
+    otherwise) -- resolving is necessary but not sufficient, the whitelist
+    is what makes this generation anti-confabulation by construction rather
+    than by prompt wording alone."""
+    data = parse_model_json(raw)
+    if not isinstance(data, dict):
+        raise InvalidCounterPositionResponseError(
+            f"counter-position response must be a JSON object, got {type(data).__name__}"
+        )
+
+    present = data.get("present")
+    corpus_one_sided = data.get("corpus_one_sided")
+    if not isinstance(present, bool) or not isinstance(corpus_one_sided, bool):
+        raise InvalidCounterPositionResponseError(
+            f"counter-position response must carry boolean 'present'/'corpus_one_sided': {data!r}"
+        )
+    if present == corpus_one_sided:
+        raise InvalidCounterPositionResponseError(
+            "counter-position response must name EXACTLY ONE of present/corpus_one_sided "
+            f"(§7.8 is either/or), got present={present!r} corpus_one_sided={corpus_one_sided!r}"
+        )
+
+    if not present:
+        reason = data.get("one_sided_reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise InvalidCounterPositionResponseError(
+                f"a corpus_one_sided disclosure must carry a non-blank 'one_sided_reason': {data!r}"
+            )
+        return {
+            "present": False,
+            "stance": None,
+            "grounds": [],
+            "corpus_one_sided": True,
+            "one_sided_reason": reason.strip(),
+        }
+
+    stance = data.get("stance")
+    if not isinstance(stance, str) or not stance.strip():
+        raise InvalidCounterPositionResponseError(
+            f"a present counter-position must carry a non-blank 'stance': {data!r}"
+        )
+    raw_grounds = data.get("grounds")
+    if not isinstance(raw_grounds, list) or not raw_grounds:
+        raise InvalidCounterPositionResponseError(
+            f"a present counter-position must carry non-empty 'grounds': {data!r}"
+        )
+
+    candidate_ids = {chunk.chunk_id for chunk in candidates}
+    grounds: list[dict[str, str]] = []
+    for entry in raw_grounds:
+        if not isinstance(entry, dict):
+            raise InvalidCounterPositionResponseError(
+                f"counter-position grounds entry must be an object, got {entry!r}"
+            )
+        ref_type = entry.get("ref_type")
+        ref_id = entry.get("ref_id")
+        if ref_type != "chunk" or not isinstance(ref_id, str) or not ref_id.strip():
+            raise InvalidCounterPositionResponseError(
+                "counter-position grounds entry must be "
+                f"{{'ref_type': 'chunk', 'ref_id': <id>}}: {entry!r}"
+            )
+        resolved_id = _resolve_counter_position_ground(ref_id, vault_dir=vault_dir)
+        if resolved_id not in candidate_ids:
+            raise CounterPositionGroundNotOfferedError(resolved_id)
+        grounds.append({"ref_type": "chunk", "ref_id": resolved_id})
+
+    return {
+        "present": True,
+        "stance": stance.strip(),
+        "grounds": grounds,
+        "corpus_one_sided": False,
+        "one_sided_reason": None,
+    }
+
+
+def generate_counter_position(
+    claims: list[dict[str, Any]],
+    brief: Brief,
+    *,
+    client: LLMClient,
+    vault_dir: Path | None = None,
+    config_path: Path | None = None,
+) -> CounterPositionResult:
+    """The §7.8 counter-position section, for real. Reuses
+    `axial.validators.counter_position._detect_contested` VERBATIM to decide
+    whether this brief is contested, over the just-produced claim graph's
+    own resolved evidence -- never reimplements that predicate (issue #399's
+    explicit instruction). Zero model calls on an uncontested brief
+    (`_empty_counter_position`); on a contested brief, offers the model a
+    whitelisted pool of this run's own opposing evidence
+    (`_counter_position_candidates`) and makes ONE bounded call under
+    `pass_name=COUNTER_POSITION_GENERATE_PASS_NAME` (routable through
+    `model_by_pass`/`reasoning_by_pass` independently of
+    `SYNTHESIZE_PASS_NAME`, though it is still the GENERATING model and
+    config routes both to the same tier -- see that pass name's own
+    comment in axial.llm).
+
+    Raises `CounterPositionGenerationFailedError` when the model call
+    transport-fails or never returns parseable JSON within
+    `complete_json`'s bounded re-ask budget; raises
+    `InvalidCounterPositionResponseError`,
+    `UnresolvableCounterPositionGroundError`, or
+    `CounterPositionGroundNotOfferedError` when the response parses as JSON
+    but violates the §7.8 shape or its anti-fabrication whitelist -- all
+    immediately fatal, exactly like a claim-graph parse failure."""
+    resolved_config_path = config_path if config_path is not None else DEFAULT_PIPELINE_CONFIG_PATH
+    min_distinct = _resolve_min_distinct_theory_schools(resolved_config_path)
+    contested = _detect_contested(
+        claims, vault_dir=vault_dir, min_distinct_theory_schools=min_distinct
+    )
+    if not contested.contested:
+        return CounterPositionResult(section=_empty_counter_position(), model_called=False)
+
+    candidates = _counter_position_candidates(claims, vault_dir=vault_dir)
+    if not candidates:
+        # Guarded, not asserted-impossible (see _counter_position_candidates'
+        # own docstring): every underlying grounds chunk failed to resolve,
+        # so there is genuinely nothing to offer -- disclose, never crash or
+        # fabricate.
+        return CounterPositionResult(
+            section={
+                "present": False,
+                "stance": None,
+                "grounds": [],
+                "corpus_one_sided": True,
+                "one_sided_reason": (
+                    f"this run's evidence signalled a contested brief (signal="
+                    f"{contested.signal!r}), but none of the underlying grounds chunks "
+                    "resolved in the vault, so no opposing material is available to "
+                    "ground a counter-position"
+                ),
+            },
+            model_called=False,
+        )
+
+    prompt = _compose_counter_position_prompt(brief, claims, candidates)
+    print(
+        f"generate_counter_position: starting, signal={contested.signal!r}, "
+        f"{len(candidates)} candidate(s)",
+        file=sys.stderr,
+    )
+    try:
+        raw = complete_json(client, prompt, pass_name=COUNTER_POSITION_GENERATE_PASS_NAME)
+    except (LLMError, httpx.HTTPError, ModelJsonError) as exc:
+        raise CounterPositionGenerationFailedError(
+            f"counter-position generation call failed: {exc}"
+        ) from exc
+
+    section = _parse_counter_position_response(raw, candidates, vault_dir=vault_dir)
+    print(f"generate_counter_position: done, present={section['present']}", file=sys.stderr)
+    return CounterPositionResult(section=section, model_called=True)

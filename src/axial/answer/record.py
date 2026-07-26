@@ -25,12 +25,18 @@ was wired into `build_record` until #400; the coverage_map/confidence
 release gate (`validate_coverage_and_confidence`, also #260) is unaffected,
 since it reads whatever a record persists rather than recomputing it.
 
-`counter_position` remains this slice's placeholder: computing its real
-CONTENT (the contested-detection rule and the steelman check, §7.8) is
-issue #399's separate, larger synthesis-feature work -- nothing in the
-pipeline emits a counter-position at all yet. This module writes it as an
-honest, correctly-shaped placeholder (`_placeholder_counter_position`)
-rather than inventing partial content ahead of that feature.
+`counter_position` (§7.8) IS computed here (issue #399):
+`build_record` calls `axial.analyze.synthesis.generate_counter_position` over
+the record's own just-parsed claims, mirroring how `coverage_map`/
+`confidence` are computed from the same claims. That function reuses
+`axial.validators.counter_position._detect_contested` verbatim to decide
+whether the brief is contested (zero model calls when it is not), and, when
+it is, makes one bounded follow-up model call under its own
+`COUNTER_POSITION_GENERATE_PASS_NAME` -- grounded only in a whitelist of
+this run's own opposing evidence, never a synthesised-from-nothing stance
+(see that function's own docstring for the anti-fabrication design). A
+`refuse` disposition's empty claim list is trivially uncontested, so it
+still costs zero model calls, exactly as it did with the placeholder.
 
 `source_usage` (§7.13/P0-13, issue #265) IS computed here: `build_record`
 assembles every other §7.3 field first, then calls
@@ -62,13 +68,14 @@ from pathlib import Path
 from typing import Any
 
 from axial.analyze.assembly import assemble_evidence
-from axial.analyze.synthesis import Claim, resolve_lens, synthesize
+from axial.analyze.synthesis import Claim, generate_counter_position, resolve_lens, synthesize
 from axial.answer.render import render_markdown
 from axial.answer.source_usage import compute_source_usage
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult, interrogate
 from axial.eval.corpus_pin import resolve_pin_id
 from axial.llm import (
+    COUNTER_POSITION_GENERATE_PASS_NAME,
     INTERROGATE_PASS_NAME,
     RETRIEVE_PASS_NAME,
     SYNTHESIZE_PASS_NAME,
@@ -131,21 +138,6 @@ def _claim_to_dict(claim: Claim) -> dict[str, Any]:
     }
 
 
-def _placeholder_counter_position() -> dict[str, Any]:
-    """The §7.8 shape (`{present, stance, grounds, corpus_one_sided,
-    one_sided_reason}`), every field at its emptiest, most honest value:
-    the contested-detection rule and the steelman check are the
-    analysis-validators feature's job (issues #258-260), not this slice's --
-    nothing here guesses at whether this brief is contested."""
-    return {
-        "present": False,
-        "stance": None,
-        "grounds": [],
-        "corpus_one_sided": False,
-        "one_sided_reason": None,
-    }
-
-
 def _usage_and_cost_by_pass(client: LLMClient, model_by_pass: dict[str, str]) -> dict[str, Any]:
     """The §7.14 `cost` field (issue #363): per-pass token usage + computed
     dollar cost, summed to a run total -- the cost/token analogue of
@@ -205,19 +197,36 @@ def build_record(
 ) -> dict[str, Any]:
     """Assemble the §7.3 analysis record. `claims`/`trajectory` are the
     caller's already-computed stage-4/stage-3 output (empty on a `refuse`
-    disposition). `counter_position` is always this slice's placeholder
-    (issue #399, see module docstring); `coverage_map` (§7.7) and
-    `confidence` (§7.4) are computed for real (issue #400) from the
-    record's own claims -- `compute_coverage_map` first, then
-    `compute_confidence` over its result, both zero-model-call and
-    deterministic. `source_usage` (§7.13) is computed over the record's own
-    `claims`/`trajectory`/`interrogation` -- assembled last here, once
+    disposition). `counter_position` (§7.8) is computed for real (issue #399)
+    from the record's own claims via `generate_counter_position` -- zero
+    model calls on an uncontested brief, one bounded follow-up call
+    otherwise (see that function's own docstring). When that call actually
+    ran (`CounterPositionResult.model_called`), its pass name is folded into
+    THIS record's own `model_by_pass`/`cost` -- never the caller's
+    `model_by_pass` argument, which `run_brief` built before this generation
+    step ever ran and cannot know in advance whether it will fire (contested-
+    ness is a property of the claim graph `run_brief` doesn't inspect) --
+    mirroring the existing "a pass is named only when it really ran"
+    contract retrieve/synthesize already carry on a `refuse` disposition.
+    `coverage_map` (§7.7) and `confidence` (§7.4) are computed for real
+    (issue #400) from the record's own claims -- `compute_coverage_map`
+    first, then `compute_confidence` over its result, both zero-model-call
+    and deterministic. `source_usage` (§7.13) is computed over the record's
+    own `claims`/`trajectory`/`interrogation` -- assembled last here, once
     every field it reads is already in the dict. `cost` (§7.14, issue #363)
     reads `client`'s accumulated per-pass token usage
-    (`_usage_and_cost_by_pass`) -- `client` is needed only for that, never
-    to make a completion call itself."""
+    (`_usage_and_cost_by_pass`) -- `client` is needed for that AND for
+    `generate_counter_position`'s own possible model call."""
     claim_dicts = [_claim_to_dict(claim) for claim in claims]
     coverage_map = compute_coverage_map(claim_dicts, vault_dir=vault_dir)
+    counter_position_result = generate_counter_position(
+        claim_dicts, brief, client=client, vault_dir=vault_dir
+    )
+    record_model_by_pass = dict(model_by_pass)
+    if counter_position_result.model_called:
+        record_model_by_pass[COUNTER_POSITION_GENERATE_PASS_NAME] = client.model_for_pass(
+            COUNTER_POSITION_GENERATE_PASS_NAME
+        )
     record = {
         "brief_id": brief.brief_id,
         "brief": _brief_to_dict(brief),
@@ -226,12 +235,12 @@ def build_record(
         "lens": lens,
         "interrogation": interrogation_result.to_dict(),
         "claims": claim_dicts,
-        "counter_position": _placeholder_counter_position(),
+        "counter_position": counter_position_result.section,
         "coverage_map": coverage_map,
         "confidence": compute_confidence(coverage_map),
         "trajectory": list(trajectory),
-        "model_by_pass": dict(model_by_pass),
-        "cost": _usage_and_cost_by_pass(client, model_by_pass),
+        "model_by_pass": record_model_by_pass,
+        "cost": _usage_and_cost_by_pass(client, record_model_by_pass),
     }
     record["source_usage"] = compute_source_usage(record, vault_dir=vault_dir)
     return record

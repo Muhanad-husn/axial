@@ -60,6 +60,15 @@ llm:
     # per the founder's request, reasoning turned on for the tool-selection
     # judgment calls within the loop.
     retrieve: high
+    # Stage-4 counter-position GENERATION (§7.8/§7.11, issue #399): the
+    # follow-up call `axial.analyze.synthesis.generate_counter_position`
+    # makes only on a contested brief, drafting the §7.8 section from a
+    # whitelisted pool of this run's own opposing evidence. Same
+    # judgment-heavy, once-per-(contested)-brief profile as `synthesize`
+    # above -- it IS the generating model's own continuation of that call,
+    # just named separately (COUNTER_POSITION_GENERATE_PASS_NAME) so the
+    # stub/record dispatch can tell the two calls apart.
+    counter_position_generate: high
     tag: false
     artifacts: false
     xref: false
@@ -96,6 +105,12 @@ llm:
     # production_high -- see the paired reasoning_by_pass.interrogate note
     # above for why.
     interrogate: production_high
+    # Stage-4 counter-position generation (§7.8/§7.11, issue #399): routed
+    # to the SAME tier as `synthesize` above, on purpose -- see that
+    # pass name's own comment in reasoning_by_pass and in
+    # src/axial/llm.py (COUNTER_POSITION_GENERATE_PASS_NAME) for why this
+    # is still the generating model, never an independent judge.
+    counter_position_generate: production_synthesis
   # Per-pass best-of-N voting (DEC-31, issue #294): how many times a pass
   # draws its per-unit call before majority-voting the blind axes, mirroring
   # the two per-pass blocks above (src/axial/llm.py's _resolve_votes_by_pass
