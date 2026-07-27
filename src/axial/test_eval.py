@@ -408,7 +408,7 @@ class TestRunEval:
 
     def test_end_to_end_writes_deterministic_report(self, tmp_path):
         from axial.gold import _axis_vocabularies
-        from axial.tag import DEFAULT_DOMAIN_DIR
+        from axial.paths import DEFAULT_DOMAIN_DIR
 
         gold_dir = tmp_path / "data" / "gold"
         chunks_dir = gold_dir / "chunks"
@@ -446,7 +446,7 @@ class TestRunEval:
         import shutil
 
         from axial.gold import _axis_vocabularies
-        from axial.tag import DEFAULT_DOMAIN_DIR
+        from axial.paths import DEFAULT_DOMAIN_DIR
 
         gold_dir = tmp_path / "data" / "gold"
         chunks_dir = gold_dir / "chunks"

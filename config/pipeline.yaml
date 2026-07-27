@@ -26,8 +26,8 @@ llm:
   # the structural-envelope pass and the content-apparatus classification
   # gate (small, judgment-heavy, once/rarely-per-source calls); OFF
   # (unchanged since #147, which found reasoning blew the wall-clock on
-  # large chunk-echo tag calls) for the high-volume tag/artifacts/xref
-  # calls.
+  # large chunk-echo tag calls, now retired -- issue #414) for the
+  # high-volume artifacts calls.
   reasoning_by_pass:
     envelope: true
     content_apparatus: true
@@ -74,9 +74,7 @@ llm:
     # gate is where that default is tested -- if the sample shows the
     # answers need reasoning, turning it on is this line, not a code change.
     note_interrogate: false
-    tag: false
     artifacts: false
-    xref: false
   # NOTE on the three 2026-07 model-swap entries above and model_by_pass's
   # synthesize/interrogate below: this is a founder-directed provisional
   # pick to unblock real sim-brief runs, not a decided answer. The founder
@@ -125,15 +123,15 @@ llm:
     # the others (src/axial/llm.py, _resolve_model_by_pass).
     note_interrogate: production_interrogate
   # Per-pass best-of-N voting (DEC-31, issue #294): how many times a pass
-  # draws its per-unit call before majority-voting the blind axes, mirroring
-  # the two per-pass blocks above (src/axial/llm.py's _resolve_votes_by_pass
-  # merges this over axial.llm.DEFAULT_VOTES_BY_PASS). Absent from this map
-  # means one draw and no voting layer -- today's behavior for every pass
-  # but tag. N=3 is DEC-31's measured agreement-per-cost point (theory_school
-  # 0.757 -> 0.918, claim_type 0.796 -> 0.866); N=5 buys near-zero abstention
-  # for 5x the calls and is a config change here, not a code change.
-  votes_by_pass:
-    tag: 3
+  # draws its per-unit call before majority-voting the result, mirroring the
+  # two per-pass blocks above (src/axial/llm.py's _resolve_votes_by_pass
+  # merges `llm.votes_by_pass` here over axial.llm.DEFAULT_VOTES_BY_PASS).
+  # Absent from this map means one draw and no voting layer -- today's
+  # behavior for every pass. The tag pass was the only entry here (DEC-31's
+  # measured agreement-per-cost point, theory_school 0.757 -> 0.918,
+  # claim_type 0.796 -> 0.866 at N=3) and is retired with it (issue #414,
+  # D4: Phase A v1 is one draw, no voting layer). The mechanism itself
+  # stays live for a future pass to configure here.
 
 paths:
   envelopes_dir: data/envelopes

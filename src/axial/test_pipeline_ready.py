@@ -12,6 +12,7 @@ import pytest
 
 from axial.cli import main
 from axial.envelope import compute_source_id
+from axial.interrogate import _default_answers_dir, answers_checkpoint_path
 from axial.pipeline_ready import (
     Canary,
     CanaryResult,
@@ -21,7 +22,6 @@ from axial.pipeline_ready import (
     render_table,
     run_pipeline_ready,
 )
-from axial.tag import _default_tags_dir, tags_checkpoint_path
 
 
 def _write_manifest(path: Path, text: str) -> Path:
@@ -146,40 +146,41 @@ def test_canary_result_quarantine_fraction_zero_chunks_is_zero():
 
 
 # ---------------------------------------------------------------------------
-# Reviewer finding 1: a corrupt/unreadable tag checkpoint must fail that one
-# canary's row, never crash the whole gate run with a bare traceback.
+# Reviewer finding 1: a corrupt/unreadable answer checkpoint must fail that
+# one canary's row, never crash the whole gate run with a bare traceback.
 # ---------------------------------------------------------------------------
 
 
-def _write_corrupt_checkpoint(tags_dir: Path, source_id: str) -> None:
-    """Write a tag checkpoint whose first (non-final) line is not valid
-    JSON -- genuine corruption (mirrors `axial.tag.TagCheckpointCorruptError`'s
-    own docstring: a torn FINAL line is tolerated as a hard-kill artifact, but
-    a torn line anywhere else raises loudly)."""
-    checkpoint_path = tags_checkpoint_path(source_id, tags_dir)
+def _write_corrupt_checkpoint(answers_dir: Path, source_id: str) -> None:
+    """Write an answer checkpoint whose first (non-final) line is not valid
+    JSON -- genuine corruption (mirrors `axial.interrogate.
+    AnswerCheckpointCorruptError`'s own docstring: a torn FINAL line is
+    tolerated as a hard-kill artifact, but a torn line anywhere else raises
+    loudly)."""
+    checkpoint_path = answers_checkpoint_path(source_id, answers_dir)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_path.write_text(
-        "this is not json at all {\n"
-        + json.dumps({"chunk_id": "chunk-2", "quarantine_reason": None})
-        + "\n",
+        "this is not json at all {\n" + json.dumps({"chunk_id": "chunk-2", "answers": {}}) + "\n",
         encoding="utf-8",
     )
 
 
 def test_evaluate_canary_corrupt_checkpoint_fails_with_reason(tmp_path, monkeypatch):
-    monkeypatch.setattr("axial.pipeline_ready.run_vault_write", lambda *args, **kwargs: [])
+    import axial.interrogate as interrogate_mod
+
+    monkeypatch.setattr("axial.pipeline_ready.run_interrogate", lambda *args, **kwargs: {})
+    monkeypatch.setattr(interrogate_mod, "ANSWERS_DIR", tmp_path / "answers")
 
     source_path = tmp_path / "source.docx"
     source_path.write_bytes(b"synthetic source bytes")
     source_id = compute_source_id(source_path)
 
-    # `_default_tags_dir()` picks up src/axial/conftest.py's autouse
-    # `_isolate_checkpoint_dirs` fixture (issue #81), which redirects
-    # `axial.tag.TAGS_DIR` to a fresh per-test tmp dir regardless of cwd --
-    # so the corrupt checkpoint must be written to the SAME resolved
-    # location `evaluate_canary` will read from, not a hand-picked path.
-    tags_dir = _default_tags_dir()
-    _write_corrupt_checkpoint(tags_dir, source_id)
+    # `_default_answers_dir()` falls back to the patched `ANSWERS_DIR` above
+    # (config/pipeline.yaml declares no `answers_dir` key) -- so the corrupt
+    # checkpoint is written to the SAME resolved location `evaluate_canary`
+    # will read from, not a hand-picked path.
+    answers_dir = _default_answers_dir()
+    _write_corrupt_checkpoint(answers_dir, source_id)
 
     canary = Canary(
         source_id=source_id,
@@ -209,12 +210,12 @@ def test_run_pipeline_ready_isolates_one_canarys_crash_from_the_rest(tmp_path, m
     bad_source.write_bytes(b"a source whose evaluation blows up")
     bad_source_id = compute_source_id(bad_source)
 
-    def _fake_run_vault_write(source_path, **kwargs):
+    def _fake_run_interrogate(source_path, **kwargs):
         if Path(source_path) == bad_source:
             raise RuntimeError("boom: unexpected crash evaluating this canary")
-        return []
+        return {}
 
-    monkeypatch.setattr("axial.pipeline_ready.run_vault_write", _fake_run_vault_write)
+    monkeypatch.setattr("axial.pipeline_ready.run_interrogate", _fake_run_interrogate)
 
     manifest_path = tmp_path / "manifest.toml"
     _write_manifest(

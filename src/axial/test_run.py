@@ -37,15 +37,11 @@ from axial.run import (
     PassDescriptor,
     RunSummary,
     SKIP_STATUS,
-    THEORY_SCHOOL_RATES_COLUMNS,
     _append_ledger_row,
     _load_done_source_ids,
-    attach_theory_school_rates,
-    render_theory_school_rates,
     resolve_corpus_source_paths,
     run_pass,
 )
-from axial.tag import TheorySchoolSourceRate
 
 
 class _FakeClient:
@@ -607,7 +603,7 @@ def test_ledger_done_predicate_reports_done_iff_source_id_in_done_set():
 def test_extract_and_envelope_use_file_exists_predicate_every_other_pass_uses_ledger():
     assert run_mod.PASS_REGISTRY["extract"].done_predicate is run_mod._tree_done_predicate
     assert run_mod.PASS_REGISTRY["envelope"].done_predicate is run_mod._envelope_done_predicate
-    for name in ("chunk", "tag", "artifacts", "xref", "vault-write"):
+    for name in ("chunk", "interrogate", "artifacts", "vault-write"):
         assert run_mod.PASS_REGISTRY[name].done_predicate is run_mod._ledger_done_predicate
 
 
@@ -815,205 +811,3 @@ def test_empty_corpus_source_set_exits_zero_with_total_zero(tmp_path, monkeypatc
     assert summary.total == 0
     assert summary.outcomes == []
 
-
-# ---------------------------------------------------------------------------
-# Issue #288: not-applicable/unlisted theory_school rates report attach
-# ---------------------------------------------------------------------------
-
-
-def test_attach_theory_school_rates_computes_from_ok_and_skip_excluding_fail(tmp_path, monkeypatch):
-    worklist = _write_worklist(tmp_path, ["/fake/ok.pdf", "/fake/bad.pdf", "/fake/done.pdf"])
-    monkeypatch.setattr(run_mod, "compute_source_id", lambda path: f"id-{Path(path).stem}")
-
-    def _invoke(source_path, client, config_path, domain_dir):
-        if Path(source_path) == Path("/fake/bad.pdf"):
-            raise _DeclaredError("boom")
-
-    def _done_predicate(source_id, ledger_done_ids, config_path):
-        return source_id == "id-done"
-
-    _register_fake_pass(monkeypatch, _invoke, done_predicate=_done_predicate)
-
-    summary, _exit_code = run_pass(
-        "fake", worklist, client=_FakeClient(), ledger_path=_ledger_path(tmp_path)
-    )
-
-    received = {}
-
-    def _fake_report(source_ids, tags_dir=None, config_path=None):
-        received["source_ids"] = set(source_ids)
-        received["tags_dir"] = tags_dir
-        received["config_path"] = config_path
-        return ["canned-rate"]
-
-    monkeypatch.setattr(run_mod, "theory_school_rates_report", _fake_report)
-
-    updated = attach_theory_school_rates(summary, tags_dir=Path("some/tags"))
-
-    # A FAILed source produced no tag output this run -- excluded. OK and
-    # SKIP source_ids both go in.
-    assert received["source_ids"] == {"id-ok", "id-done"}
-    assert received["tags_dir"] == Path("some/tags")
-    assert updated.rates == ["canned-rate"]
-
-    # Every other field of the returned summary is the same summary,
-    # untouched (an immutable attach, not a rebuild).
-    assert updated.pass_name == summary.pass_name
-    assert updated.outcomes == summary.outcomes
-    assert updated.total == summary.total
-    assert updated.ok_count == summary.ok_count
-    assert updated.fail_count == summary.fail_count
-    assert updated.skip_count == summary.skip_count
-
-
-def test_attach_theory_school_rates_never_raises_on_an_unexpected_computation_failure(
-    tmp_path, monkeypatch
-):
-    # The issue's own acceptance bar: "the summary never blocks or fails the
-    # run." Even a genuinely unexpected bug in the rates computation must
-    # not propagate past this seam -- the run itself already finished.
-    worklist = _write_worklist(tmp_path, ["/fake/one.pdf"])
-    monkeypatch.setattr(run_mod, "compute_source_id", lambda path: "id-1")
-    _register_fake_pass(monkeypatch, lambda *a, **k: None)
-
-    summary, _exit_code = run_pass(
-        "fake", worklist, client=_FakeClient(), ledger_path=_ledger_path(tmp_path)
-    )
-
-    def _boom(source_ids, tags_dir=None, config_path=None):
-        raise RuntimeError("a genuinely unexpected bug in the rates computation")
-
-    monkeypatch.setattr(run_mod, "theory_school_rates_report", _boom)
-
-    updated = attach_theory_school_rates(summary)  # must not raise
-
-    assert updated.rates is None
-    assert updated.outcomes == summary.outcomes
-
-
-def test_render_theory_school_rates_returns_empty_string_for_no_rates():
-    assert render_theory_school_rates([]) == ""
-
-
-def test_render_theory_school_rates_formats_a_header_and_one_row_per_source():
-    rates = [
-        TheorySchoolSourceRate(
-            source_id="src-1",
-            total=100,
-            not_applicable_count=27,
-            not_applicable_pct=27.0,
-            unlisted_count=3,
-            unlisted_pct=3.0,
-            unlisted_schools=["pluralist"],
-        )
-    ]
-
-    rendered = render_theory_school_rates(rates)
-    lines = rendered.splitlines()
-
-    assert lines[0] == "\t".join(THEORY_SCHOOL_RATES_COLUMNS)
-    assert len(lines) == 2
-    assert "src-1" in lines[1]
-    assert "27.0%" in lines[1]
-    assert "3.0%" in lines[1]
-    assert "pluralist" in lines[1]
-
-
-# --- the registered `tag` pass threads a real tags_dir (follow-up to #325) ------
-#
-# Every other test above registers a FAKE pass (`_register_fake_pass`) to pin
-# the runner's own generic contract. This one calls the REAL registered
-# `tag` descriptor's `invoke` (`run_mod.PASS_REGISTRY["tag"].invoke`, i.e.
-# `_invoke_tag` itself) against `axial.tag.run_tag` for real: `_invoke_tag`
-# used to call `run_tag` with no `tags_dir` at all, so `run_tag`'s own #120
-# quarantine/resume checkpoint never activated through `axial run tag` --
-# only through `run_vault_write`'s internal call. This pins that `_invoke_tag`
-# now resolves and threads a real `tags_dir`, exactly mirroring
-# `run_vault_write`'s own `_default_tags_dir(config_path)` default.
-
-
-def _write_minimal_tag_domain(tmp_path: Path) -> Path:
-    domain_dir = tmp_path / "domain"
-    domain_dir.mkdir()
-    (domain_dir / "schema.yaml").write_text(
-        "version: 0.1\n"
-        "axes:\n"
-        "  role_in_argument:\n"
-        "    applies_to: [prose]\n"
-        "    cardinality: single\n"
-        "    values: [role:claim]\n",
-        encoding="utf-8",
-    )
-    (domain_dir / "codebook.yaml").write_text(
-        "axes:\n"
-        "  role_in_argument:\n"
-        "    role:claim: {definition: d, positive_example: p, negative_example: n}\n",
-        encoding="utf-8",
-    )
-    return domain_dir
-
-
-def _write_pipeline_config(tmp_path: Path, tags_dir: Path) -> Path:
-    config_path = tmp_path / "pipeline.yaml"
-    # Forward slashes: a bare Windows backslash path embedded in YAML is
-    # itself an escape-sequence hazard: this config is read back through
-    # `yaml.safe_load`, not written for a human, so there's no reason to
-    # court that. `llm.votes_by_pass.tag: 1` pins best-of-N (DEC-31) to a
-    # single draw -- this test is about tags_dir threading, not voting, so it
-    # never depends on `DEFAULT_VOTES_BY_PASS`'s own current value.
-    config_path.write_text(
-        f"paths:\n  tags_dir: {tags_dir.as_posix()!r}\nllm:\n  votes_by_pass:\n    tag: 1\n",
-        encoding="utf-8",
-    )
-    return config_path
-
-
-def test_invoke_tag_threads_a_real_tags_dir_so_the_checkpoint_activates(tmp_path, monkeypatch):
-    import axial.tag as tag_mod
-    from axial.envelope import compute_source_id
-
-    chunk_records = [
-        {"chunk_id": "src_1_body_000", "section": "Body", "text": "chunk zero"},
-        {"chunk_id": "src_1_body_001", "section": "Body", "text": "chunk one"},
-    ]
-    monkeypatch.setattr(tag_mod, "read_chunks", lambda *args, **kwargs: chunk_records)
-
-    domain_dir = _write_minimal_tag_domain(tmp_path)
-    tags_dir = tmp_path / "data" / "tags"
-    config_path = _write_pipeline_config(tmp_path, tags_dir)
-
-    source_path = tmp_path / "paper.pdf"
-    source_path.write_bytes(b"fake pdf bytes")
-    source_id = compute_source_id(source_path)
-
-    class _CountingClient:
-        def __init__(self):
-            self.call_count = 0
-
-        def complete(self, prompt, pass_name=None):
-            self.call_count += 1
-            return '{"role_in_argument": "role:claim"}'
-
-    invoke = run_mod.PASS_REGISTRY["tag"].invoke
-    client = _CountingClient()
-
-    first_records = invoke(source_path, client, config_path, domain_dir)
-
-    checkpoint_path = tags_dir / f"{source_id}.jsonl"
-    assert checkpoint_path.exists(), (
-        f"expected the registered tag pass to checkpoint per chunk under "
-        f"{tags_dir} (a real tags_dir threaded into run_tag), but no "
-        f"checkpoint file was written at all -- _invoke_tag called run_tag "
-        f"with no tags_dir"
-    )
-    assert len(list(first_records)) == 2
-    assert client.call_count == 2
-
-    # Resume: a second invocation against the SAME tags_dir must reuse every
-    # already-checkpointed chunk -- zero further LLM calls -- proving the
-    # checkpoint this pass wrote is the one it also reads back, not merely
-    # written and ignored.
-    second_records = invoke(source_path, client, config_path, domain_dir)
-
-    assert client.call_count == 2
-    assert len(list(second_records)) == 2

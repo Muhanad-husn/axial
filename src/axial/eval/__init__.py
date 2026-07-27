@@ -124,7 +124,7 @@ from axial.polity_canonical import (
     canonicalize,
     load_polity_canonical,
 )
-from axial.tag import DEFAULT_DOMAIN_DIR
+from axial.paths import DEFAULT_DOMAIN_DIR
 
 # Re-exported so callers (the CLI) don't need to import from axial.gold too.
 __all__ = [

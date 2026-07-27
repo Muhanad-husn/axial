@@ -32,11 +32,14 @@ Seam decisions
    integration test (stub LLM client for the envelope build; no network)".
    The envelope half calls `axial.envelope.run_envelope` with
    `StubLLMClient` over a monkeypatched `extract`, exactly as
-   src/axial/test_envelope.py's own run_envelope tests do; the vault half
-   calls `axial.vault.run_vault_write` with the internal tag/artifacts/xref
-   passes stubbed out, exactly as src/axial/test_vault.py's own
-   run_vault_write tests do. Those three passes are not what this slice
-   changed -- the frontmatter composition is.
+   src/axial/test_envelope.py's own run_envelope tests do. The vault half
+   originally called `axial.vault.run_vault_write` with its internal
+   tag/artifacts/xref passes stubbed out; `run_vault_write` is now itself a
+   stub that always raises (issue #414, D4/D5, pending issue #411), so this
+   test calls `axial.vault.build_frontmatter`/`read_source_meta` directly --
+   the surviving primitives that actually compose the `source_meta` block
+   this test locks. The frontmatter composition (this slice's own subject)
+   is unchanged by that move; only the pipeline that used to drive it is.
 
 2. **The filename slug is chosen to be conspicuously wrong.** The source
    file is named `ugur-paramilitarism.pdf` after the real corpus source
@@ -57,7 +60,6 @@ import json
 from pathlib import Path
 
 import pytest
-import yaml
 
 from axial.intake import (
     NOT_ATTEMPTED,
@@ -148,28 +150,18 @@ def _write_record(source: Path, meta_dir: Path, source_id: str, *, date_state) -
     write_source_meta(record, source_meta_path(source_id, meta_dir))
 
 
-def _run_vault_write(monkeypatch, source: Path, tmp_path: Path, meta_dir: Path) -> dict:
-    """Run the real `run_vault_write` with the three internal passes it
-    composes stubbed out (they are unchanged by this slice), and return the
-    written prose note's parsed frontmatter."""
+def _compose_frontmatter(source: Path, envelope: dict, tmp_path: Path, meta_dir: Path) -> dict:
+    """Read the persisted source-metadata record and compose one note's
+    frontmatter, via the same surviving primitives `write_chunk_note` calls
+    internally (`axial.vault.read_source_meta`/`build_frontmatter`) -- the
+    direct successors of the old `_run_vault_write` helper now that
+    `run_vault_write` itself is retired (module docstring, seam decision
+    1)."""
     import axial.vault as vault_mod
+    from axial.envelope import compute_source_id
 
-    monkeypatch.setattr(vault_mod, "run_tag", lambda *a, **k: [_TAGGED_RECORD])
-    monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [])
-    monkeypatch.setattr(vault_mod, "run_xref", lambda *a, **k: [])
-
-    vault_dir = tmp_path / "vault"
-    vault_mod.run_vault_write(
-        source,
-        envelopes_dir=tmp_path / "envelopes",
-        vault_dir=vault_dir,
-        source_meta_dir=meta_dir,
-    )
-
-    note_path = vault_dir / "prose" / f"{_TAGGED_RECORD['chunk_id']}.md"
-    text = note_path.read_text(encoding="utf-8")
-    frontmatter_text = text.split("---\n", 2)[1]
-    return yaml.safe_load(frontmatter_text)
+    source_meta = vault_mod.read_source_meta(compute_source_id(source), meta_dir)
+    return vault_mod.build_frontmatter(_TAGGED_RECORD, envelope, source_meta)
 
 
 def test_envelope_locked_shape_no_longer_carries_author_title_or_date(monkeypatch, tmp_path):
@@ -214,7 +206,7 @@ def test_vault_source_meta_composes_the_record_and_the_envelope(monkeypatch, tmp
         date_state={"value": PRINTED_DATE, "provenance": PROVENANCE_TITLE_PAGE},
     )
 
-    frontmatter = _run_vault_write(monkeypatch, source, tmp_path, meta_dir)
+    frontmatter = _compose_frontmatter(source, envelope, tmp_path, meta_dir)
     source_meta = frontmatter["source_meta"]
 
     assert list(source_meta) == ["author", "title", "date", "thesis", "scope"], (
@@ -240,11 +232,11 @@ def test_an_unavailable_bibliographic_field_is_written_as_unavailable(monkeypatc
     from axial.envelope import compute_source_id
 
     source = _write_source(tmp_path)
-    _build_envelope(monkeypatch, tmp_path, source)
+    envelope = _build_envelope(monkeypatch, tmp_path, source)
     meta_dir = tmp_path / "source_meta"
     _write_record(source, meta_dir, compute_source_id(source), date_state=UNAVAILABLE)
 
-    source_meta = _run_vault_write(monkeypatch, source, tmp_path, meta_dir)["source_meta"]
+    source_meta = _compose_frontmatter(source, envelope, tmp_path, meta_dir)["source_meta"]
 
     assert source_meta["date"] == UNAVAILABLE, (
         f"expected an unavailable `date` to be written as {UNAVAILABLE!r}, "
@@ -259,21 +251,13 @@ def test_an_unavailable_bibliographic_field_is_written_as_unavailable(monkeypatc
 
 
 def test_a_source_with_no_record_fails_loudly_rather_than_emitting_nulls(monkeypatch, tmp_path):
-    """§7.13: the record is the sole origin. With no record on disk the pass
+    """§7.13: the record is the sole origin. With no record on disk the read
     must say so, never silently re-emit the nulls this slice retires."""
     import axial.vault as vault_mod
+    from axial.envelope import compute_source_id
 
     source = _write_source(tmp_path)
     _build_envelope(monkeypatch, tmp_path, source)
 
-    monkeypatch.setattr(vault_mod, "run_tag", lambda *a, **k: [_TAGGED_RECORD])
-    monkeypatch.setattr(vault_mod, "run_artifacts", lambda *a, **k: [])
-    monkeypatch.setattr(vault_mod, "run_xref", lambda *a, **k: [])
-
-    with pytest.raises(vault_mod.MissingSourceMetaError):
-        vault_mod.run_vault_write(
-            source,
-            envelopes_dir=tmp_path / "envelopes",
-            vault_dir=tmp_path / "vault",
-            source_meta_dir=tmp_path / "empty_source_meta",
-        )
+    with pytest.raises(vault_mod.VaultError):
+        vault_mod.read_source_meta(compute_source_id(source), tmp_path / "empty_source_meta")

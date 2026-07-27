@@ -4,7 +4,7 @@
 Locked behavioral contract (DEC-1) -- do not edit once committed red.
 
 Given a temp data tree with a source file in data/sources/ whose derived
-      artifacts (tree, envelope, chunks, tags, artifacts, vault notes) exist
+      artifacts (tree, envelope, chunks, artifacts, vault notes) exist
       under its live source_id
 And   a set of derived artifacts under a stale source_id whose source file
       is absent from data/sources/ (a renamed/re-saved source's old id)
@@ -69,16 +69,16 @@ def _write(path: Path, text: str) -> None:
 
 def _write_flat_set(root: Path, source_id: str, secret: str | None = None) -> list[Path]:
     """Place one file per directly-source_id-named derived surface (tree,
-    envelope, chunks + its .skips sidecar, tags, artifacts, xref) for
-    `source_id`, returning every path written."""
+    envelope, chunks + its .skips sidecar, artifacts) for `source_id`,
+    returning every path written. `tags`/`xref` were two of the original
+    surfaces; both retired along with the passes that produced them (issue
+    #414, D4/D5) and dropped from `axial.reconcile`'s own scan."""
     data = root / "data"
     chunk_text = secret or f"ordinary prose for {source_id}"
     paths = [
         data / "trees" / f"{source_id}.json",
         data / "envelopes" / f"{source_id}.json",
-        data / "tags" / f"{source_id}.jsonl",
         data / "artifacts" / f"{source_id}.jsonl",
-        data / "xref" / f"{source_id}.jsonl",
     ]
     for path in paths:
         _write(path, json.dumps({"source_id": source_id}) + "\n")
@@ -138,8 +138,10 @@ def reconcile_root(tmp_path_factory):
     stale_paths += _write_vault_notes(root, STALE_ID, secret=STALE_SECRET_TEXT)
 
     # Non-source-scoped file sharing a derived dir: never attributed, never
-    # an orphan, never touched.
-    candidates_path = root / "data" / "tags" / "theory_school_candidates.jsonl"
+    # an orphan, never touched. (Originally `data/tags/theory_school_
+    # candidates.jsonl`; the tags surface is retired, issue #414 D4, so this
+    # now plants the same shape under `artifacts`, a surviving scanned dir.)
+    candidates_path = root / "data" / "artifacts" / "theory_school_candidates.jsonl"
     _write(candidates_path, "{}\n")
 
     # Unreadable vault note: no frontmatter delimiters at all -- reported

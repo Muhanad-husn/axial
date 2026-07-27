@@ -83,7 +83,7 @@ from axial.envelope import EnvelopeError, run_envelope
 from axial.extract import ExtractError, extract
 from axial.intake import check_extension, extract_text_layer
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
-from axial.tag import DEFAULT_DOMAIN_DIR
+from axial.paths import DEFAULT_DOMAIN_DIR
 from axial.vault import VaultError, run_vault_write
 
 # Deterministic language detection (issue #239, P0-11c): langdetect is not
@@ -382,9 +382,7 @@ def _run_full_ingest_chain(
     domain_dir: str | Path,
     envelopes_dir: Path | None,
     chunks_dir: Path | None,
-    tags_dir: Path | None,
     artifacts_dir: Path | None,
-    xref_dir: Path | None,
     vault_dir: Path | None,
 ) -> list[Path]:
     """Run the full source-to-vault chain for one freshly-downloaded Drive
@@ -406,9 +404,7 @@ def _run_full_ingest_chain(
         config_path=config_path,
         domain_dir=domain_dir,
         chunks_dir=chunks_dir,
-        tags_dir=tags_dir,
         artifacts_dir=artifacts_dir,
-        xref_dir=xref_dir,
     )
 
 
@@ -419,9 +415,7 @@ def _default_ingest_fn(
     domain_dir: str | Path,
     envelopes_dir: Path | None,
     chunks_dir: Path | None,
-    tags_dir: Path | None,
     artifacts_dir: Path | None,
-    xref_dir: Path | None,
     vault_dir: Path | None,
 ) -> Callable[[Path], list[Path]]:
     """Build the default `ingest_fn`: a closure over the threaded LLM
@@ -436,9 +430,7 @@ def _default_ingest_fn(
             domain_dir=domain_dir,
             envelopes_dir=envelopes_dir,
             chunks_dir=chunks_dir,
-            tags_dir=tags_dir,
             artifacts_dir=artifacts_dir,
-            xref_dir=xref_dir,
             vault_dir=vault_dir,
         )
 
@@ -459,9 +451,7 @@ def run_drive_ingest(
     domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
     envelopes_dir: Path | None = None,
     chunks_dir: Path | None = None,
-    tags_dir: Path | None = None,
     artifacts_dir: Path | None = None,
-    xref_dir: Path | None = None,
     vault_dir: Path | None = None,
 ) -> int:
     """List `folder_id` through `client` (paginated to exhaustion), filter to
@@ -533,9 +523,7 @@ def run_drive_ingest(
             domain_dir=domain_dir,
             envelopes_dir=envelopes_dir,
             chunks_dir=chunks_dir,
-            tags_dir=tags_dir,
             artifacts_dir=artifacts_dir,
-            xref_dir=xref_dir,
             vault_dir=vault_dir,
         )
 

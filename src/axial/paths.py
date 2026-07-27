@@ -43,6 +43,12 @@ SOURCES_DIR = Path("data/sources")
 # only the §7.2 interrogation result here, ahead of the full record.
 ANALYSES_DIR = Path("data/analyses")
 
+# The default domain config directory (PRD §7.1). Lived on `axial.tag`
+# (retired, issue #414) before that; every caller that only needed the bare
+# constant -- never `axial.tag`'s tagging machinery -- now reaches it here
+# instead of duplicating the literal.
+DEFAULT_DOMAIN_DIR = Path("config/domains/syria")
+
 
 def _read_configured_dir(config_path: Path, key: str, fallback: Path) -> Path:
     """Read `paths.<key>` from `config_path`, falling back to `fallback`

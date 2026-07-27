@@ -39,9 +39,7 @@ def _make_dirs(tmp_path: Path) -> DerivedDirs:
         trees=tmp_path / "data" / "trees",
         envelopes=tmp_path / "data" / "envelopes",
         chunks=tmp_path / "data" / "chunks",
-        tags=tmp_path / "data" / "tags",
         artifacts=tmp_path / "data" / "artifacts",
-        xref=tmp_path / "data" / "xref",
         vault=tmp_path / "data" / "vault",
     )
 
@@ -60,9 +58,7 @@ def _write_flat_set(dirs: DerivedDirs, source_id: str) -> list[Path]:
         dirs.envelopes / f"{source_id}.json",
         dirs.chunks / f"{source_id}.jsonl",
         dirs.chunks / f"{source_id}.skips.jsonl",
-        dirs.tags / f"{source_id}.jsonl",
         dirs.artifacts / f"{source_id}.jsonl",
-        dirs.xref / f"{source_id}.jsonl",
     ]
     for path in paths:
         _write(path, json.dumps({"source_id": source_id}) + "\n")
@@ -146,7 +142,7 @@ def test_skips_sidecar_attributed_to_same_source_id_as_main_artifact(tmp_path):
 
 def test_non_source_scoped_file_never_attributed_or_orphaned(tmp_path):
     dirs = _make_dirs(tmp_path)
-    candidates_path = dirs.tags / "theory_school_candidates.jsonl"
+    candidates_path = dirs.artifacts / "theory_school_candidates.jsonl"
     _write(candidates_path, "{}\n")
 
     result = scan_orphans(sources_dir=tmp_path / "data" / "sources", dirs=dirs)

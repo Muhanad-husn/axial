@@ -493,8 +493,16 @@ _BUDGET_SOURCE_META = {
 
 def test_get_chunk_resolves_a_note_whose_filename_was_budgeted(tmp_path, monkeypatch):
     """The case that is broken today: a note written under a shortened
-    on-disk filename must still resolve by its true, full `chunk_id`."""
+    on-disk filename must still resolve by its true, full `chunk_id`.
+
+    Resolves via `_resolve_chunk_path` directly, not the full `get_chunk`
+    (which also strictly parses the tag-pass axis block, `axial.vault.
+    build_frontmatter` no longer writes -- issue #414, D4 -- and is
+    query/reader.py's own read-side concern, out of this issue's scope,
+    pending issue #411): the path-resolution/budgeting contract this test
+    pins is independent of frontmatter shape."""
     import axial.paths
+    from axial.query.reader import _resolve_chunk_path
     from axial.vault import write_chunk_note
 
     monkeypatch.setattr(axial.paths, "_WINDOWS_MAX_PATH", _TEST_MAX_PATH)
@@ -512,10 +520,10 @@ def test_get_chunk_resolves_a_note_whose_filename_was_budgeted(tmp_path, monkeyp
     assert note_path.name != f"{chunk_id}.md"
     assert not (vault_dir / "prose" / f"{chunk_id}.md").exists()
 
-    note = get_chunk(chunk_id, vault_dir=vault_dir)
+    resolved_path = _resolve_chunk_path(chunk_id, vault_dir)
 
-    assert note.chunk_id == chunk_id
-    assert note.chunk_text == "Some long-source prose."
+    assert resolved_path == note_path
+    assert resolved_path.is_file()
 
 
 def test_get_chunk_fast_path_resolves_directly_without_needing_chunk_id_grammar(tmp_path):

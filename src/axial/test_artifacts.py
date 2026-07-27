@@ -604,14 +604,17 @@ def test_run_artifacts_raises_on_out_of_schema_role(monkeypatch, tmp_path):
         artifacts_mod.run_artifacts(source, client=_BogusClient())
 
 
-def test_artifacts_tag_not_in_schema_error_is_the_shared_tag_module_class():
-    """Issue #32 slice 02 carry-in: the locally-defined `TagNotInSchemaError`
-    is dropped; `axial.artifacts.TagNotInSchemaError` must be the exact same
-    class object as `axial.tag.TagNotInSchemaError`, not a lookalike."""
+def test_artifacts_tag_not_in_schema_error_is_the_shared_tagging_schema_class():
+    """Issue #32 slice 02 carry-in (re-pointed at `axial.tagging_schema` by
+    issue #426, which moved the shared parse/validate helpers there ahead of
+    `axial.tag`'s own retirement, issue #414): the locally-defined
+    `TagNotInSchemaError` is dropped; `axial.artifacts.TagNotInSchemaError`
+    must be the exact same class object as
+    `axial.tagging_schema.TagNotInSchemaError`, not a lookalike."""
     import axial.artifacts as artifacts_mod
-    import axial.tag as tag_mod
+    import axial.tagging_schema as tagging_schema_mod
 
-    assert artifacts_mod.TagNotInSchemaError is tag_mod.TagNotInSchemaError
+    assert artifacts_mod.TagNotInSchemaError is tagging_schema_mod.TagNotInSchemaError
 
 
 def test_run_artifacts_classifies_field_alongside_artifact_role(monkeypatch, tmp_path):

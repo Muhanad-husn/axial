@@ -33,7 +33,7 @@ from axial.gold import (
     select_chunks,
     source_id_of,
 )
-from axial.tag import DEFAULT_DOMAIN_DIR
+from axial.paths import DEFAULT_DOMAIN_DIR
 
 
 def _record(chunk_id, field, scope, role, source=None):

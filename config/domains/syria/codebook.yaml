@@ -259,6 +259,12 @@ axes:
       definition: 'Ideology school. Identity-based and psychoanalytic: ideology working through subject formation and desire.'
       positive_example: Ideology constituting the subject's sense of self.
       negative_example: Ideology determined by class position -- `materialist`.
+    # `not-applicable`/`unlisted` are struck for the interrogation pass
+    # (specs/PRODUCT.md Appendix E, D4/D9 -- D7's abstention and a verbatim
+    # answer now do those two jobs) but stay declared here: the gold-set
+    # Academic-labeling dropdown (`axial.gold._axis_vocabularies`, out of
+    # this issue's scope, PRs #286/#287) still reads them off this same
+    # shared file and its own locked test still requires them.
     not-applicable:
       definition: 'The chunk advances NO theoretical position. Decide this FIRST: does the passage do explanatory work at all? Use for tables, figures, series, chronology, transitional or purely narrative passages, and apparatus prose. Marks the absence OF THEORY, not the absence of a matching label -- if a real school applies but is missing, use `unlisted`. Never a hedge for uncertainty.'
       positive_example: A table of state finance data, or a passage narrating events without interpreting them.

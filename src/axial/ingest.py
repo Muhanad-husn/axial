@@ -12,14 +12,20 @@ guessed) already appears in the persistent results file
 (`data/gold/ingest.results.tsv` by default) with `vault_status=OK`, this pass
 logs exactly one `skip: <source> already ingested` line naming it and
 performs NO pipeline work for it at all -- it is neither re-read, re-chunked,
-re-tagged, nor re-written to the vault. Every other source is ingested via
-the existing `axial.vault.run_vault_write` (the same internal pipeline
-`axial vault write` already drives: chunk -> tag -> artifacts -> xref ->
-vault), and one new row is appended to the results file recording the
-outcome -- an APPEND, never an overwrite, so a pre-seeded row for an
-already-completed source survives byte-for-byte untouched (this is the
-locked outer test's own strongest check, tests/test_ingest.py seam decision
-6).
+nor re-written to the vault. Every other source is attempted via the
+existing `axial.vault.run_vault_write`, and one new row is appended to the
+results file recording the outcome -- an APPEND, never an overwrite, so a
+pre-seeded row for an already-completed source survives byte-for-byte
+untouched (this is the locked outer test's own strongest check,
+tests/ingestion/test_ingest.py seam decision 6).
+
+`run_vault_write` is retired pending issue #411 (issue #414, D4/D5: the tag
+and cross-reference passes it used to compose internally are gone) -- it now
+always raises `VaultWriteRetiredError`, a `VaultError` subclass, so every
+attempted source currently records `vault_status=FAIL` naming the
+retirement. The skip guard and the append-not-overwrite results-file
+contract are unaffected either way: they run before `run_vault_write` is
+ever reached.
 
 A per-source pipeline failure (any `axial.vault.VaultError`) records
 `vault_status=FAIL` for that source and the loop continues to the next
@@ -41,7 +47,7 @@ from typing import Any
 
 from axial.envelope import MissingSourceError as _EnvelopeMissingSourceError, compute_source_id
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
-from axial.tag import DEFAULT_DOMAIN_DIR
+from axial.paths import DEFAULT_DOMAIN_DIR
 from axial.vault import VaultError, run_vault_write
 
 # Persistent results file (issue #119's own contract): appended to, never
@@ -148,9 +154,7 @@ def run_ingest(
     domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
     results_path: Path | None = None,
     chunks_dir: Path | None = None,
-    tags_dir: Path | None = None,
     artifacts_dir: Path | None = None,
-    xref_dir: Path | None = None,
 ) -> int:
     """Drive `axial.vault.run_vault_write` over every source path named in
     `worklist_path`, skipping any source whose `source_id` already carries a
@@ -211,9 +215,7 @@ def run_ingest(
                 config_path=config_path,
                 domain_dir=domain_dir,
                 chunks_dir=chunks_dir,
-                tags_dir=tags_dir,
                 artifacts_dir=artifacts_dir,
-                xref_dir=xref_dir,
             )
             vault_status = OK_STATUS
             notes_count = len(written)
