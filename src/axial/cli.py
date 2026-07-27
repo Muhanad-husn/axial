@@ -69,6 +69,12 @@ from axial.llm import (
     LLMError,
     get_client,
 )
+from axial.names import (
+    NamesError,
+    examine_names,
+    format_names_report,
+    run_names,
+)
 from axial.panel import (
     MIN_REVIEWERS as PANEL_MIN_REVIEWERS,
 )
@@ -222,6 +228,41 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "path to a domain directory containing schema.yaml and codebook.yaml "
             f"(default: {DEFAULT_DOMAIN_DIR})"
+        ),
+    )
+
+    names_parser = subparsers.add_parser(
+        "names",
+        help=(
+            "Phase A v1 slice 04 (issue #415): the name inventory and "
+            "similarity view (LLM-free, D10, spec §7.16) -- 'build' collects "
+            "every distinct name surface form (names[]/citations[].cited) "
+            "out of data/answers/, writes the lossless inventory to "
+            "data/names/inventory.jsonl, embeds and clusters it, and persists "
+            "the result to data/names/embeddings.lance; 'examine' reports the "
+            "cluster-size and nearest-neighbour similarity distribution over "
+            "that persisted result (zero model/embedding calls)"
+        ),
+    )
+    names_subparsers = names_parser.add_subparsers(dest="names_command")
+    names_subparsers.add_parser(
+        "build",
+        help=(
+            "collect every distinct name surface form from data/answers/ "
+            "(names[]/citations[].cited only, §7.16), write "
+            "data/names/inventory.jsonl, embed each with the local "
+            "sentence-transformer, cluster with HDBSCAN, and persist vectors "
+            "+ cluster labels to data/names/embeddings.lance "
+            "(data/names/similarity_manifest.json)"
+        ),
+    )
+    names_subparsers.add_parser(
+        "examine",
+        help=(
+            "read the persisted name inventory back and report the cluster-"
+            "size and nearest-neighbour similarity distribution -- the "
+            "viewing aid slice 05 (Reconcile) sets its merge aggressiveness "
+            "from (D10); zero model/embedding calls"
         ),
     )
 
@@ -1398,6 +1439,34 @@ def _distill_readiness_map() -> int:
     return 0
 
 
+def _names_build() -> int:
+    try:
+        result = run_names()
+    except NamesError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"entry_count: {result.entry_count}")
+    print(f"occurrence_count: {result.occurrence_count}")
+    print(f"cluster_count: {result.cluster_count}")
+    print(f"noise_count: {result.noise_count}")
+    print(f"inventory_path: {result.inventory_path}")
+    print(f"embeddings_dir: {result.embeddings_dir}")
+    print(f"manifest_path: {result.manifest_path}")
+    return 0
+
+
+def _names_examine() -> int:
+    try:
+        stats = examine_names()
+    except NamesError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    _print_encoding_safe(format_names_report(stats))
+    return 0
+
+
 def _distill_classify(axis: str) -> int:
     try:
         if axis in DISTILL_CLASSIFY_EMBEDDING_AXES:
@@ -1547,6 +1616,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "interrogate":
         return _interrogate(args.source_path, args.domain_dir, args.data_dir, args.limit)
+
+    if args.command == "names" and args.names_command == "build":
+        return _names_build()
+
+    if args.command == "names" and args.names_command == "examine":
+        return _names_examine()
 
     if args.command == "artifacts":
         return _artifacts(args.source_path, args.domain)
