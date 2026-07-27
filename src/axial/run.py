@@ -65,7 +65,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from axial.artifacts import ArtifactsError, run_artifacts
+from axial.artifacts import ArtifactsError, _default_artifacts_dir, run_artifacts
 from axial.chunk import ChunkError, run_chunk_recursive
 from axial.envelope import (
     EnvelopeError,
@@ -87,7 +87,7 @@ from axial.tag import (
     theory_school_rates_report,
 )
 from axial.vault import VaultError, run_vault_write
-from axial.xref import XrefError, run_xref
+from axial.xref import XrefError, _default_xref_dir, run_xref
 
 OK_STATUS = "OK"
 FAIL_STATUS = "FAIL"
@@ -266,11 +266,39 @@ def _invoke_tag(source_path: str, client: LLMClient | None, config_path: Path, d
 
 
 def _invoke_artifacts(source_path: str, client: LLMClient | None, config_path: Path, domain_dir):
-    return run_artifacts(source_path, client=client, domain_dir=domain_dir, config_path=config_path)
+    # Threads a real `artifacts_dir` (issue #424, the same defect #325 fixed
+    # for `_invoke_tag` above): `run_artifacts`'s own checkpoint is OPT-IN,
+    # active only when `artifacts_dir` is supplied. Without one, every
+    # classified artifact is produced and then dropped on the floor -- the
+    # LLM calls still happen, nothing ever lands on disk, and the ledger
+    # still records OK, so a resumed run skips a source whose output was
+    # never written. `_default_artifacts_dir` is exactly what
+    # `run_vault_write` threads into its own direct `run_artifacts` call,
+    # which is why `data/artifacts/*.jsonl` exists at all today.
+    return run_artifacts(
+        source_path,
+        client=client,
+        domain_dir=domain_dir,
+        config_path=config_path,
+        artifacts_dir=_default_artifacts_dir(config_path),
+    )
 
 
 def _invoke_xref(source_path: str, client: LLMClient | None, config_path: Path, domain_dir):
-    return run_xref(source_path, client=client, domain_dir=domain_dir, config_path=config_path)
+    # Same defect as `_invoke_artifacts` above (issue #424): `run_xref` takes
+    # TWO opt-in checkpoint seams, both of which were left unthreaded here --
+    # its own `xref_dir` (per-chunk xref checkpoint) and `artifacts_dir`,
+    # which it forwards to its own internal `run_artifacts` call. Leaving
+    # either `None` means this arm made every LLM call and persisted
+    # nothing, exactly like the artifacts arm.
+    return run_xref(
+        source_path,
+        client=client,
+        domain_dir=domain_dir,
+        config_path=config_path,
+        artifacts_dir=_default_artifacts_dir(config_path),
+        xref_dir=_default_xref_dir(config_path),
+    )
 
 
 def _invoke_vault_write(source_path: str, client: LLMClient | None, config_path: Path, domain_dir):
