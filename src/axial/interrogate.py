@@ -146,6 +146,13 @@ NEAREST_EXAMPLE_AXES = {
     "position_of": "theory_school",
 }
 
+# Retired by the spec (specs/PRODUCT.md:188,890, D4/D9) for the interrogation
+# pass -- D7's abstention and a verbatim free answer now do both jobs -- but
+# still declared in the domain files for the out-of-scope gold-set dropdown
+# (`axial.gold._axis_vocabularies`), so `frame_examples` must not simply read
+# every codebook/schema entry.
+RETIRED_SENTINEL_EXAMPLE_IDS = frozenset({"not-applicable", "unlisted"})
+
 # The explicit abstention value (D7, §7.15). A field abstains when its value
 # is this bare string, or an object `{"not-in-passage": "<one-clause
 # reason>"}` -- structurally distinct from every real answer, which is a
@@ -336,16 +343,26 @@ def frame_examples(schema: Schema, codebook: Codebook) -> dict[str, list[tuple[s
     `(example_id, definition)` pairs, in the frame's own order. Loaded from
     the domain directory, never hardcoded, and never used as a vocabulary to
     validate against -- a field whose axis the frame does not declare simply
-    has no examples."""
+    has no examples. `RETIRED_SENTINEL_EXAMPLE_IDS` is filtered out of both
+    the codebook and the schema-only fallback, so a domain that still
+    declares them (for `axial.gold`) never ships them to this prompt."""
     examples: dict[str, list[tuple[str, str]]] = {}
     for field, axis_name in NEAREST_EXAMPLE_AXES.items():
         axis = schema.axes.get(axis_name)
         if axis is None:
             continue
         entries = codebook.axes.get(axis_name, {})
-        pairs = [(tag_id, entry.definition) for tag_id, entry in entries.items()]
+        pairs = [
+            (tag_id, entry.definition)
+            for tag_id, entry in entries.items()
+            if tag_id not in RETIRED_SENTINEL_EXAMPLE_IDS
+        ]
         if not pairs:
-            pairs = [(tag_id, "") for tag_id in sorted(axis.tag_ids)]
+            pairs = [
+                (tag_id, "")
+                for tag_id in sorted(axis.tag_ids)
+                if tag_id not in RETIRED_SENTINEL_EXAMPLE_IDS
+            ]
         if pairs:
             examples[field] = pairs
     return examples

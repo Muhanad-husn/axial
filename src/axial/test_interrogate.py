@@ -11,9 +11,12 @@ from pathlib import Path
 
 import pytest
 
+from axial.codebook import load_codebook
 from axial.interrogate import (
     ANSWER_FIELDS,
+    DEFAULT_DOMAIN_DIR,
     LIST_VALUED_FIELDS,
+    RETIRED_SENTINEL_EXAMPLE_IDS,
     AllNotesFailedError,
     AnswerParseError,
     abstention_rates,
@@ -21,10 +24,12 @@ from axial.interrogate import (
     collapse_rates,
     corpus_note_count,
     cost_report,
+    frame_examples,
     is_abstention,
     parse_answer_response,
     run_interrogate,
 )
+from axial.schema import load_schema
 
 EXAMPLES = {"move": [("role:claim", "asserts a claim"), ("role:evidence", "offers evidence")]}
 
@@ -197,6 +202,41 @@ def test_the_names_question_offers_joined_kinds_never_their_bare_halves():
     assert "country/state/place" in kinds
     for bare in ("country", "state", "place"):
         assert bare not in kinds
+
+
+# --- Frame examples never leak a retired sentinel ---------------------------
+
+
+def test_position_of_examples_exclude_the_retired_sentinels_but_keep_the_rest():
+    """PRD §D4/§D9 (specs/PRODUCT.md:188,890) retires `not-applicable` and
+    `unlisted` for the interrogation pass -- D7's abstention and a verbatim
+    free answer do both jobs now. `frame_examples` must not offer either id
+    as one of the `position_of` examples, even though both stay declared in
+    the schema/codebook for the gold-set dropdown (`axial.gold`)."""
+    schema = load_schema(DEFAULT_DOMAIN_DIR)
+    codebook = load_codebook(DEFAULT_DOMAIN_DIR)
+
+    examples = frame_examples(schema, codebook)
+    offered_ids = {tag_id for tag_id, _definition in examples["position_of"]}
+
+    assert offered_ids.isdisjoint(RETIRED_SENTINEL_EXAMPLE_IDS)
+    assert offered_ids == schema.axes["theory_school"].tag_ids - RETIRED_SENTINEL_EXAMPLE_IDS
+
+
+def test_frame_examples_fallback_also_filters_the_retired_sentinels():
+    """The codebook-missing fallback (line ~348) reads the schema's raw
+    `tag_ids` rather than the codebook, so it must filter independently or a
+    domain with no codebook would leak the retired ids back in."""
+    schema = load_schema(DEFAULT_DOMAIN_DIR)
+
+    empty_codebook = load_codebook(DEFAULT_DOMAIN_DIR)
+    empty_codebook.axes = {}
+
+    examples = frame_examples(schema, empty_codebook)
+    offered_ids = {tag_id for tag_id, _definition in examples["position_of"]}
+
+    assert offered_ids.isdisjoint(RETIRED_SENTINEL_EXAMPLE_IDS)
+    assert offered_ids == schema.axes["theory_school"].tag_ids - RETIRED_SENTINEL_EXAMPLE_IDS
 
 
 # --- Context assembly -------------------------------------------------------
