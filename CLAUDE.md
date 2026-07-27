@@ -36,3 +36,23 @@ decision log is in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 Plain, direct prose; no filler, no ceremony. Short sentences over long ones. At
 most two em dashes per 500 words. Code comments only where the code cannot say
 it itself.
+
+### Answering the founder
+
+Applies to every reply in a session, not just prose written into the repo.
+
+- **Lead with the answer.** No preamble, no restating the question, no recap of
+  what you just did.
+- **Default to a few sentences.** Length is earned by content the founder asked
+  for, never by thoroughness for its own sake. If the full answer is "yes, 10",
+  that is the whole reply.
+- **No jargon.** Plain words over insider terms. Name a file, symbol, or spec
+  section only when the founder needs it to act. Never make a sentence carry
+  three of them.
+- **Structure only when it does work.** Tables for comparisons, lists for real
+  lists. A heading over two sentences is noise.
+- **Cut the hedging and the throat-clearing.** No "it's worth noting", no
+  restating a finding you already stated, no closing summary of the reply.
+
+Report findings completely — brevity never means dropping a caveat, a failure,
+or a number that changes the decision. Say it in fewer words instead.
