@@ -69,6 +69,11 @@ llm:
     # just named separately (COUNTER_POSITION_GENERATE_PASS_NAME) so the
     # stub/record dispatch can tell the two calls apart.
     counter_position_generate: high
+    # Phase A v1 per-note interrogation (§7.9/§7.15, issue #419): OFF, like
+    # every other high-volume per-note pass (#147). The ~50-output sample
+    # gate is where that default is tested -- if the sample shows the
+    # answers need reasoning, turning it on is this line, not a code change.
+    note_interrogate: false
     tag: false
     artifacts: false
     xref: false
@@ -111,6 +116,14 @@ llm:
     # src/axial/llm.py (COUNTER_POSITION_GENERATE_PASS_NAME) for why this
     # is still the generating model, never an independent judge.
     counter_position_generate: production_synthesis
+    # Phase A v1 per-note interrogation (§7.9/§7.15, D14, issue #419): its
+    # own tier, resolving to z-ai/glm-5.2 in secrets.toml. Not
+    # production_high (deepseek-v4-pro, the envelope pass) and not
+    # production_synthesis (Phase B), so swapping this model never moves
+    # either of those. An operator whose secrets.toml has no
+    # production_interrogate key fails loudly on THIS pass alone, never on
+    # the others (src/axial/llm.py, _resolve_model_by_pass).
+    note_interrogate: production_interrogate
   # Per-pass best-of-N voting (DEC-31, issue #294): how many times a pass
   # draws its per-unit call before majority-voting the blind axes, mirroring
   # the two per-pass blocks above (src/axial/llm.py's _resolve_votes_by_pass
