@@ -50,7 +50,7 @@ def test_recursive_split_run_on_paragraph_falls_through_to_sentence():
     exists -- both structural levels find nothing to split on, so the
     hierarchy falls through to the sentence level."""
     sentence = "The regional survey recorded steady conditions across the district. "
-    text = (sentence * 60).strip()
+    text = (sentence * 140).strip()
     assert "\n" not in text
     assert len(text) > CHUNK_MAX
 

@@ -518,13 +518,14 @@ def build_chunk_records(
 # =============================================================================
 
 # Band constants (character counts, matching PRD §7.7's "text length"):
-# sensible STARTING POINTS anchored on PRD §7.7's "what the vault stores and
-# works downstream today (~1-3k characters per chunk)" -- NOT proven-final
-# values. Proving/tuning these is the operational `axial chunk examine` loop
+# widened by D1 (Phase A v1, issue #418) from 1000-3000 to 3500-9000, so an
+# interrogated note is large enough to hold a claim and its evidence
+# together -- see PRD §7.7 and specs/PRODUCT.md's D1-D16 contract. Proving/
+# tuning these further is still the operational `axial chunk examine` loop
 # (slice 03), which reads real corpus chunk-size distributions off the
-# on-disk artifact; this slice ships a working default, not a tuned one.
-CHUNK_MIN = 1000
-CHUNK_MAX = 3000
+# on-disk artifact; this slice ships D1's band, not a re-tuned one.
+CHUNK_MIN = 3500
+CHUNK_MAX = 9000
 
 
 class MissingTreeError(ChunkError):
