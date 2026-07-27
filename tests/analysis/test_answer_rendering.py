@@ -336,20 +336,24 @@ def test_brief_run_writes_both_json_and_markdown_and_rerun_is_byte_identical(
         {"tool": "get_chunk", "args": {"chunk_id": IRAQ_A}},
         None,
     ]
+    # Grounds cite the opaque HANDLE (issue #410), never the real chunk_id:
+    # the stub tool calls fetch SYRIA_A then IRAQ_A via `get_chunk` above,
+    # the same order `compose_prompt` then walks the assembled evidence set
+    # in, so SYRIA_A is "[c1]" and IRAQ_A is "[c2]".
     stub_synthesize_response = {
         "claims": [
             {
                 "text": "The corpus states that displacement reshaped local authority in Syria.",
                 "kind": "a",
-                "grounds": [{"ref_type": "chunk", "ref_id": SYRIA_A}],
+                "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
                 "confidence": "medium",
             },
             {
                 "text": "A cross-source inference linking Syrian and Iraqi displacement dynamics.",
                 "kind": "b",
                 "grounds": [
-                    {"ref_type": "chunk", "ref_id": SYRIA_A},
-                    {"ref_type": "chunk", "ref_id": IRAQ_A},
+                    {"ref_type": "chunk", "ref_id": "[c1]"},
+                    {"ref_type": "chunk", "ref_id": "[c2]"},
                 ],
                 "confidence": "low",
             },

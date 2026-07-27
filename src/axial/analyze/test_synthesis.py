@@ -138,13 +138,27 @@ def evidence_set() -> EvidenceSet:
     )
 
 
+# The handle map a real `compose_prompt` call over `vault_dir`'s three
+# chunks would hand out (issue #410) -- assigned in the same first-seen
+# order `compose_prompt` itself walks. Most grounds-resolution tests below
+# don't compose a real prompt (they only exercise `parse_synthesis_response`
+# in isolation), so this fixed map stands in for whatever a real call would
+# have produced, exactly the same way the old tests hardcoded the real
+# `chunk_id` string directly.
+_HANDLE_MAP = {
+    "[c1]": "synfix_001_syria_a",
+    "[c2]": "synfix_002_iraq_a",
+    "[c3]": "synfix_003_two_polities",
+}
+
+
 def _valid_response(**overrides: Any) -> str:
     body = {
         "claims": [
             {
                 "text": "The corpus states that displacement reshaped local authority.",
                 "kind": "a",
-                "grounds": [{"ref_type": "chunk", "ref_id": "synfix_001_syria_a"}],
+                "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
                 "confidence": "medium",
             }
         ]
@@ -234,12 +248,12 @@ def test_accepts_each_of_the_three_confidence_bands(vault_dir: Path):
                 {
                     "text": "Some claim.",
                     "kind": "a",
-                    "grounds": [{"ref_type": "chunk", "ref_id": "synfix_001_syria_a"}],
+                    "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
                     "confidence": band,
                 }
             ]
         )
-        claims = parse_synthesis_response(raw, vault_dir=vault_dir)
+        claims = parse_synthesis_response(raw, vault_dir=vault_dir, handle_map=_HANDLE_MAP)
         assert claims[0].confidence == band
 
 
@@ -344,41 +358,70 @@ def test_an_artifact_ground_resolves(vault_dir: Path):
 
 
 # ---------------------------------------------------------------------------
-# truncated-citation repair: after DEC-42, a real chunk/artifact id runs to
-# ~200 chars (long human-readable prefix + digest + order key + slug +
-# index); the model sometimes echoes only the tail, dropping the prefix. A
-# unique suffix match repairs this without loosening anti-confabulation --
-# an ambiguous or wholly absent match still raises exactly as before.
+# opaque-handle resolution for CHUNK grounds (issue #410): the model is never
+# shown a real chunk_id, only a short per-call handle (`compose_prompt`), so
+# a `chunk` ref_id resolves ONLY by exact lookup in `handle_map` -- no fuzzy
+# match, no suffix repair, nothing left to fuzz. Artifact grounds are
+# unaffected (artifacts are never listed under a handle) and keep the DEC-42
+# truncated-citation repair (`_resolve_truncated_ref_id`) unchanged: a real
+# id runs to ~200 chars and the model sometimes echoes only the tail.
 # ---------------------------------------------------------------------------
 
 
-def test_a_unique_suffix_match_repairs_a_truncated_chunk_ref_id_to_the_full_id(tmp_path: Path):
-    # A shortened stand-in for a real ~200-char post-DEC-42 id -- long enough
-    # to exercise a genuine prefix/tail split, short enough to stay well
-    # under Windows' MAX_PATH once combined with pytest's own tmp_path depth
-    # (the real ids' path-budget handling is `axial.vault`'s own concern,
-    # out of scope here).
-    full_id = "Some Long Human-Readable Title - libgen.li-5f35a47d9657_25_introduction_001"
-    truncated_tail = "libgen.li-5f35a47d9657_25_introduction_001"
-    chunks_fm = [_chunk_frontmatter(chunk_id=full_id, polities_touched=["Syria"])]
-    vault_dir = _write_vault(tmp_path, chunks=chunks_fm, artifacts=[])
-
+def test_a_cited_handle_that_maps_cleanly_resolves_to_the_real_chunk(vault_dir: Path):
     raw = _valid_response(
         claims=[
             {
-                "text": "A claim citing a truncated tail of a real long chunk id.",
+                "text": "A claim citing a clean handle.",
                 "kind": "a",
-                "grounds": [{"ref_type": "chunk", "ref_id": truncated_tail}],
+                "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
                 "confidence": "medium",
             }
         ]
     )
-
-    claims = parse_synthesis_response(raw, vault_dir=vault_dir)
-
-    # The stored ground carries the FULL real id, never the truncated one.
-    assert claims[0].grounds == [Ground(ref_type="chunk", ref_id=full_id)]
+    claims = parse_synthesis_response(raw, vault_dir=vault_dir, handle_map=_HANDLE_MAP)
+    # The stored ground carries the REAL chunk_id the handle stood for,
+    # never the handle token itself.
+    assert claims[0].grounds == [Ground(ref_type="chunk", ref_id="synfix_001_syria_a")]
     assert claims[0].polities_touched == ["Syria"]
+
+
+def test_a_cited_handle_absent_from_the_handle_map_still_raises(vault_dir: Path):
+    # "[c99]" was never assigned by compose_prompt -- an invented handle is
+    # exactly as unresolvable as an invented id always was.
+    raw = _valid_response(
+        claims=[
+            {
+                "text": "A claim citing an invented handle.",
+                "kind": "a",
+                "grounds": [{"ref_type": "chunk", "ref_id": "[c99]"}],
+                "confidence": "low",
+            }
+        ]
+    )
+    with pytest.raises(UnresolvableGroundError) as exc_info:
+        parse_synthesis_response(raw, vault_dir=vault_dir, handle_map=_HANDLE_MAP)
+    assert "[c99]" in str(exc_info.value)
+
+
+def test_a_real_full_chunk_id_no_longer_resolves_only_its_handle_does(vault_dir: Path):
+    # Pins the mitigation directly: even the CORRECT, real chunk_id is
+    # rejected once handles are in play, because it was never offered as a
+    # citable id in the first place -- only its handle was. There is
+    # nothing left for a model to transcribe, truncate, or blend.
+    raw = _valid_response(
+        claims=[
+            {
+                "text": "A claim citing the real id instead of its handle.",
+                "kind": "a",
+                "grounds": [{"ref_type": "chunk", "ref_id": "synfix_001_syria_a"}],
+                "confidence": "low",
+            }
+        ]
+    )
+    with pytest.raises(UnresolvableGroundError) as exc_info:
+        parse_synthesis_response(raw, vault_dir=vault_dir, handle_map=_HANDLE_MAP)
+    assert "synfix_001_syria_a" in str(exc_info.value)
 
 
 def test_a_unique_suffix_match_repairs_a_truncated_artifact_ref_id_to_the_full_id(tmp_path: Path):
@@ -403,19 +446,19 @@ def test_a_unique_suffix_match_repairs_a_truncated_artifact_ref_id_to_the_full_i
     assert claims[0].grounds == [Ground(ref_type="artifact", ref_id=full_id)]
 
 
-def test_a_ref_id_matching_two_or_more_real_ids_by_suffix_still_raises(tmp_path: Path):
-    chunks_fm = [
-        _chunk_frontmatter(chunk_id="source-one_25_introduction_001", polities_touched=["Syria"]),
-        _chunk_frontmatter(chunk_id="source-two_25_introduction_001", polities_touched=["Iraq"]),
+def test_an_artifact_ref_id_matching_two_or_more_real_ids_by_suffix_still_raises(tmp_path: Path):
+    artifacts_fm = [
+        _artifact_frontmatter(artifact_id="source-one_25_case_001", source_id="synfix"),
+        _artifact_frontmatter(artifact_id="source-two_25_case_001", source_id="synfix"),
     ]
-    vault_dir = _write_vault(tmp_path, chunks=chunks_fm, artifacts=[])
+    vault_dir = _write_vault(tmp_path, chunks=[], artifacts=artifacts_fm)
 
     raw = _valid_response(
         claims=[
             {
-                "text": "A claim citing an ambiguous truncated tail.",
+                "text": "A claim citing an ambiguous truncated artifact tail.",
                 "kind": "a",
-                "grounds": [{"ref_type": "chunk", "ref_id": "25_introduction_001"}],
+                "grounds": [{"ref_type": "artifact", "ref_id": "25_case_001"}],
                 "confidence": "low",
             }
         ]
@@ -423,63 +466,16 @@ def test_a_ref_id_matching_two_or_more_real_ids_by_suffix_still_raises(tmp_path:
 
     with pytest.raises(UnresolvableGroundError) as exc_info:
         parse_synthesis_response(raw, vault_dir=vault_dir)
-    assert "25_introduction_001" in str(exc_info.value)
+    assert "25_case_001" in str(exc_info.value)
 
 
-def test_a_suffix_matching_a_budgeted_note_and_a_stale_full_length_duplicate_resolves(
-    tmp_path: Path,
-):
-    """Reproduces the second, real P1-04 failure: PR #377's filename-
-    budgeting fallback (`axial.vault._note_path`) shortens a note's ON-DISK
-    FILENAME when the full id would exceed Windows' MAX_PATH, but a
-    post-#377 re-run left a STALE note under the earlier, full-length
-    filename alongside the new budgeted-filename one -- two files, same
-    true `chunk_id` in frontmatter. Before this fix, the suffix fallback
-    returned filename STEMS, so the cited tail matched two distinct-looking
-    strings and raised `UnresolvableGroundError` even though both notes
-    agree on one real chunk_id. The fallback must dedupe to that one true
-    id from frontmatter and resolve, not raise."""
-    true_id = "Some Long Human-Readable Title - libgen.li-5f35a47d9657_26_a-section_012"
-    cited_tail = "5f35a47d9657_26_a-section_012"
-    frontmatter = _chunk_frontmatter(chunk_id=true_id, polities_touched=["Syria"])
-
-    prose_dir = tmp_path / "vault" / "prose"
-    prose_dir.mkdir(parents=True, exist_ok=True)
-    text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
-    # The stale, full-length-named note (pre-budgeting write).
-    (prose_dir / f"{true_id}.md").write_text(text, encoding="utf-8")
-    # The budgeted-named note for the SAME true chunk_id (post-#377 re-run) --
-    # only the human-readable stem is shortened; the hash/order/slug/index
-    # tail, and the frontmatter chunk_id, are identical.
-    (
-        prose_dir / "Some Long Human-Readable Title - libgen-5f35a47d9657_26_a-section_012.md"
-    ).write_text(text, encoding="utf-8")
-    vault_dir = tmp_path / "vault"
-
+def test_an_artifact_ref_id_matching_no_real_id_by_suffix_still_raises(vault_dir: Path):
     raw = _valid_response(
         claims=[
             {
-                "text": "A claim citing the tail shared by a stale note and its budgeted duplicate.",
+                "text": "A claim citing a wholly invented, unmatched artifact tail.",
                 "kind": "a",
-                "grounds": [{"ref_type": "chunk", "ref_id": cited_tail}],
-                "confidence": "medium",
-            }
-        ]
-    )
-
-    claims = parse_synthesis_response(raw, vault_dir=vault_dir)
-
-    assert claims[0].grounds == [Ground(ref_type="chunk", ref_id=true_id)]
-    assert claims[0].polities_touched == ["Syria"]
-
-
-def test_a_ref_id_matching_no_real_id_by_suffix_still_raises(vault_dir: Path):
-    raw = _valid_response(
-        claims=[
-            {
-                "text": "A claim citing a wholly invented, unmatched tail.",
-                "kind": "a",
-                "grounds": [{"ref_type": "chunk", "ref_id": "zzz_totally_invented_999"}],
+                "grounds": [{"ref_type": "artifact", "ref_id": "zzz_totally_invented_999"}],
                 "confidence": "low",
             }
         ]
@@ -487,24 +483,6 @@ def test_a_ref_id_matching_no_real_id_by_suffix_still_raises(vault_dir: Path):
     with pytest.raises(UnresolvableGroundError) as exc_info:
         parse_synthesis_response(raw, vault_dir=vault_dir)
     assert "zzz_totally_invented_999" in str(exc_info.value)
-
-
-def test_an_exact_match_ref_id_is_unaffected_by_the_suffix_fallback(vault_dir: Path):
-    # synfix_001_syria_a is itself a suffix of nothing else in the fixture
-    # vault, but this pins that the happy path resolves via the exact match
-    # and never even consults the suffix fallback.
-    raw = _valid_response(
-        claims=[
-            {
-                "text": "A claim with a normal, exact-match ref_id.",
-                "kind": "a",
-                "grounds": [{"ref_type": "chunk", "ref_id": "synfix_001_syria_a"}],
-                "confidence": "low",
-            }
-        ]
-    )
-    claims = parse_synthesis_response(raw, vault_dir=vault_dir)
-    assert claims[0].grounds == [Ground(ref_type="chunk", ref_id="synfix_001_syria_a")]
 
 
 # ---------------------------------------------------------------------------
@@ -518,7 +496,7 @@ def test_polities_touched_computed_from_grounds_chunks_overrides_model_value(vau
             {
                 "text": "A claim the model mismarks.",
                 "kind": "a",
-                "grounds": [{"ref_type": "chunk", "ref_id": "synfix_001_syria_a"}],
+                "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
                 "confidence": "low",
                 # A model-supplied polities_touched must be discarded, never
                 # trusted -- the code recomputes it from the resolved grounds.
@@ -526,7 +504,7 @@ def test_polities_touched_computed_from_grounds_chunks_overrides_model_value(vau
             }
         ]
     )
-    claims = parse_synthesis_response(raw, vault_dir=vault_dir)
+    claims = parse_synthesis_response(raw, vault_dir=vault_dir, handle_map=_HANDLE_MAP)
     assert claims[0].polities_touched == ["Syria"]
 
 
@@ -537,16 +515,16 @@ def test_polities_touched_dedupes_across_grounds_and_is_order_stable(vault_dir: 
                 "text": "A claim spanning multiple chunks.",
                 "kind": "b",
                 "grounds": [
-                    {"ref_type": "chunk", "ref_id": "synfix_003_two_polities"},
-                    {"ref_type": "chunk", "ref_id": "synfix_001_syria_a"},
+                    {"ref_type": "chunk", "ref_id": "[c3]"},
+                    {"ref_type": "chunk", "ref_id": "[c1]"},
                 ],
                 "confidence": "low",
             }
         ]
     )
-    claims = parse_synthesis_response(raw, vault_dir=vault_dir)
-    # synfix_003 touches [Syria, Lebanon], synfix_001 touches [Syria] --
-    # first-seen order, deduped: Syria, Lebanon.
+    claims = parse_synthesis_response(raw, vault_dir=vault_dir, handle_map=_HANDLE_MAP)
+    # synfix_003 ([c3]) touches [Syria, Lebanon], synfix_001 ([c1]) touches
+    # [Syria] -- first-seen order, deduped: Syria, Lebanon.
     assert claims[0].polities_touched == ["Syria", "Lebanon"]
 
 
@@ -561,7 +539,7 @@ def test_claim_id_is_deterministic_and_unique_across_the_graph(vault_dir: Path):
             {
                 "text": "First claim.",
                 "kind": "a",
-                "grounds": [{"ref_type": "chunk", "ref_id": "synfix_001_syria_a"}],
+                "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
                 "confidence": "low",
             },
             {
@@ -572,8 +550,8 @@ def test_claim_id_is_deterministic_and_unique_across_the_graph(vault_dir: Path):
             },
         ]
     )
-    first_run = parse_synthesis_response(raw, vault_dir=vault_dir)
-    second_run = parse_synthesis_response(raw, vault_dir=vault_dir)
+    first_run = parse_synthesis_response(raw, vault_dir=vault_dir, handle_map=_HANDLE_MAP)
+    second_run = parse_synthesis_response(raw, vault_dir=vault_dir, handle_map=_HANDLE_MAP)
 
     assert [c.claim_id for c in first_run] == [c.claim_id for c in second_run]
     assert len({c.claim_id for c in first_run}) == len(first_run)
@@ -605,29 +583,101 @@ def test_resolve_lens_selects_and_returns_a_lens_when_absent():
 # ---------------------------------------------------------------------------
 
 
-def test_prompt_embeds_evidence_chunk_ids_and_text(evidence_set: EvidenceSet, vault_dir: Path):
+def test_prompt_embeds_evidence_handles_and_text_never_the_real_chunk_id(
+    evidence_set: EvidenceSet, vault_dir: Path
+):
     # evidence_set's chunk_ids (synfix_001_syria_a, synfix_002_iraq_a) are
     # also real notes under vault_dir -- assembly.py's own EvidenceChunk
     # carries no chunk_text (by design), so the prompt must re-fetch the
     # real prose via get_chunk(vault_dir=...) rather than embedding only
-    # tag facets.
+    # tag facets. Issue #410: the id LABEL the model is shown is the short
+    # opaque handle, never the real chunk_id -- there is nothing long to
+    # transcribe, truncate, or blend across two similar sources.
     brief = Brief(brief_id="synfix-brief", case="Syria", request="How?", lens="political-economy")
-    prompt = compose_prompt(brief, "political-economy", evidence_set, vault_dir=vault_dir)
-    assert "synfix_001_syria_a" in prompt
-    assert "synfix_002_iraq_a" in prompt
-    assert "SENTINEL_synfix_001_syria_a" in prompt
-    assert "SENTINEL_synfix_002_iraq_a" in prompt
-    assert "political-economy" in prompt
+    composed = compose_prompt(brief, "political-economy", evidence_set, vault_dir=vault_dir)
+    assert "chunk_id=[c1]" in composed.text
+    assert "chunk_id=[c2]" in composed.text
+    assert "chunk_id=synfix_001_syria_a" not in composed.text
+    assert "chunk_id=synfix_002_iraq_a" not in composed.text
+    assert "SENTINEL_synfix_001_syria_a" in composed.text
+    assert "SENTINEL_synfix_002_iraq_a" in composed.text
+    assert "political-economy" in composed.text
+    assert composed.handle_map == {
+        "[c1]": "synfix_001_syria_a",
+        "[c2]": "synfix_002_iraq_a",
+    }
+
+
+def test_prompt_never_contains_the_real_long_chunk_id_anywhere(tmp_path: Path):
+    # Pins the specific #410 failure shape: two similar sources' long ids
+    # (mirroring the real ayubi-1995/batatu-1999 pair) never appear ANYWHERE
+    # in the prompt -- not as a label, not embedded in prose -- so the model
+    # has nothing left to blend across them, and a response that "blends"
+    # the two the way the real failure did can no longer even be expressed
+    # as a valid citation.
+    long_id_a = "ayubi-1995-16fd6a2e503f_105_the-conflict-with-israel_002"
+    long_id_b = "batatu-1999-598624067df3_105_the-conflict-with-israel_002"
+    chunks_fm = []
+    for chunk_id in (long_id_a, long_id_b):
+        frontmatter = _chunk_frontmatter(chunk_id=chunk_id, polities_touched=["Syria"])
+        # Deliberately does NOT embed the id in the prose (unlike the
+        # SENTINEL fixture text above) -- a real chunk's prose never
+        # contains its own id, so this is what a real "the id is nowhere in
+        # the prompt" check needs.
+        frontmatter["chunk_text"] = "Generic prose about the 1948 conflict."
+        chunks_fm.append(frontmatter)
+    vault_dir = _write_vault(tmp_path, chunks=chunks_fm, artifacts=[])
+    evidence = EvidenceSet(
+        chunk_ids=[long_id_a, long_id_b],
+        chunks=[
+            EvidenceChunk(
+                chunk_id=chunk_id,
+                polities_touched=["Syria"],
+                role_in_argument="role:claim",
+                theory_school={"primary": "school:synthetic-institutionalist"},
+                claim_type={"primary": "claim:causal"},
+                empirical_scope={"value": "scope:country-case"},
+            )
+            for chunk_id in (long_id_a, long_id_b)
+        ],
+        polity_coverage={},
+    )
+    brief = Brief(
+        brief_id="synfix-brief-blend", case="Syria", request="How?", lens="political-economy"
+    )
+    composed = compose_prompt(brief, "political-economy", evidence, vault_dir=vault_dir)
+
+    assert long_id_a not in composed.text
+    assert long_id_b not in composed.text
+    assert composed.handle_map == {"[c1]": long_id_a, "[c2]": long_id_b}
+
+    # A "blended" id -- Ayubi's head, Batatu's tail, the real P2-04 shape --
+    # is simply not a handle at all, so it fails to resolve rather than
+    # silently landing on either scholar's real chunk.
+    blended_id = "ayubi-1995-598624067df3_105_the-conflict-with-israel_002"
+    raw = _valid_response(
+        claims=[
+            {
+                "text": "A claim citing a blended cross-source id.",
+                "kind": "a",
+                "grounds": [{"ref_type": "chunk", "ref_id": blended_id}],
+                "confidence": "medium",
+            }
+        ]
+    )
+    with pytest.raises(UnresolvableGroundError) as exc_info:
+        parse_synthesis_response(raw, vault_dir=vault_dir, handle_map=composed.handle_map)
+    assert blended_id in str(exc_info.value)
 
 
 def test_prompt_forbids_parametric_memory_and_marks_cross_source_inference():
     brief = Brief(brief_id="synfix-brief", case="Syria", request="How?", lens="political-economy")
     empty_evidence = EvidenceSet(chunk_ids=[], chunks=[], polity_coverage={})
-    prompt = compose_prompt(brief, "political-economy", empty_evidence)
-    lowered = prompt.lower()
+    composed = compose_prompt(brief, "political-economy", empty_evidence)
+    lowered = composed.text.lower()
     assert "parametric memory" in lowered
     assert "open web" in lowered
-    assert "(b)" in prompt
+    assert "(b)" in composed.text
 
 
 # ---------------------------------------------------------------------------
@@ -673,15 +723,18 @@ def test_compose_prompt_drops_chunks_once_the_evidence_char_budget_is_exceeded(t
         brief_id="synfix-brief-budget", case="Syria", request="How?", lens="political-economy"
     )
 
-    prompt = compose_prompt(
+    composed = compose_prompt(
         brief, "political-economy", evidence, vault_dir=vault_dir, evidence_char_budget=80
     )
 
-    assert "synfix_budget_a" in prompt
-    assert "synfix_budget_b" in prompt
-    assert "synfix_budget_c" not in prompt
+    assert composed.handle_map == {"[c1]": "synfix_budget_a", "[c2]": "synfix_budget_b"}
+    assert "[c1]" in composed.text
+    assert "[c2]" in composed.text
+    # The dropped chunk gets no handle at all -- nothing to cite it with.
+    assert "[c3]" not in composed.text
+    assert "synfix_budget_c" not in composed.text
     # The dropped chunk's full text never leaked into the prompt either.
-    assert prompt.count("X" * 40) == 2
+    assert composed.text.count("X" * 40) == 2
 
 
 def test_compose_prompt_within_budget_keeps_every_chunk(tmp_path: Path):
@@ -695,12 +748,13 @@ def test_compose_prompt_within_budget_keeps_every_chunk(tmp_path: Path):
         brief_id="synfix-brief-budget-ok", case="Syria", request="How?", lens="political-economy"
     )
 
-    prompt = compose_prompt(
+    composed = compose_prompt(
         brief, "political-economy", evidence, vault_dir=vault_dir, evidence_char_budget=1000
     )
 
-    assert "synfix_budget_a" in prompt
-    assert "synfix_budget_b" in prompt
+    assert composed.handle_map == {"[c1]": "synfix_budget_a", "[c2]": "synfix_budget_b"}
+    assert "[c1]" in composed.text
+    assert "[c2]" in composed.text
 
 
 def test_compose_prompt_evidence_budget_truncation_is_deterministic(tmp_path: Path):
@@ -721,7 +775,8 @@ def test_compose_prompt_evidence_budget_truncation_is_deterministic(tmp_path: Pa
         brief, "political-economy", evidence, vault_dir=vault_dir, evidence_char_budget=80
     )
 
-    assert prompt_1 == prompt_2
+    assert prompt_1.text == prompt_2.text
+    assert prompt_1.handle_map == prompt_2.handle_map
 
 
 def test_resolve_evidence_char_budget_reads_from_config_pipeline_yaml(tmp_path: Path):

@@ -150,22 +150,29 @@ def _three_kind_response() -> str:
     """One (a), one (b), one (c) claim -- the acceptance criterion's own
     canned response. The (b) claim draws on two chunks across two
     polities (Syria, Iraq) so `polities_touched` union/dedup is exercised
-    on a real multi-source claim, not just a single-source one."""
+    on a real multi-source claim, not just a single-source one.
+
+    Chunk grounds cite the short opaque HANDLE (issue #410), never the real
+    `chunk_id`, mirroring what a real model response now sees: the fixture's
+    own evidence set below is always assembled `[SYRIA_A, IRAQ_A]`, so
+    `compose_prompt` always hands out `"[c1]" -> SYRIA_A`, `"[c2]" ->
+    IRAQ_A` in that order. The artifact ground is unaffected -- artifacts
+    are never listed under a handle."""
     return json.dumps(
         {
             "claims": [
                 {
                     "text": "The corpus states that displacement reshaped local authority in Syria.",
                     "kind": "a",
-                    "grounds": [{"ref_type": "chunk", "ref_id": SYRIA_A}],
+                    "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
                     "confidence": "medium",
                 },
                 {
                     "text": "A cross-source inference linking Syrian and Iraqi displacement dynamics.",
                     "kind": "b",
                     "grounds": [
-                        {"ref_type": "chunk", "ref_id": SYRIA_A},
-                        {"ref_type": "chunk", "ref_id": IRAQ_A},
+                        {"ref_type": "chunk", "ref_id": "[c1]"},
+                        {"ref_type": "chunk", "ref_id": "[c2]"},
                         {"ref_type": "artifact", "ref_id": ARTIFACT_A},
                     ],
                     "confidence": "low",

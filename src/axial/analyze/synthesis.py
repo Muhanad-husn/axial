@@ -12,11 +12,24 @@ marked (b) and never voiced as a source assertion -- the same "assert this
 as a prompt-content property" pattern the #228 anti-anecdote test already
 uses for the envelope pass. `parse_synthesis_response` is the deterministic
 half: every claim's `kind` is validated against `{a, b, c}`, every (a)/(b)
-claim's `grounds` must be non-empty, every grounds entry must resolve to a
-real vault id (`axial.query.reader.get_chunk`/`get_artifact`, exact match
-first, falling back to a unique-suffix repair of a truncated citation via
-`_resolve_truncated_ref_id` -- DEC-42 grew ids to ~200 chars and the model
-sometimes echoes only the tail), every claim's `confidence` is validated
+claim's `grounds` must be non-empty, and every grounds entry must resolve to
+a real vault id. A `chunk` grounds ref_id resolves ONLY by exact lookup in
+the `handle_map` `compose_prompt` handed out alongside the same call's
+prompt (issue #410, `SynthesisPrompt`): the model is shown a short opaque
+handle (`[c3]`) per evidence chunk, never the real `<author>-<year>-
+<digest>_<n>_<slug>_<nnn>` id, so it has nothing long to transcribe,
+truncate, or blend across two similar sources -- a real benchmark run twice
+blended two similar Syria books' ~200-char ids this way, correctly raising
+`UnresolvableGroundError` both times (the issue's own analysis: a
+component-matching repair of a blended id was scoped and deliberately
+abandoned, because it would silently manufacture a claim whose prose credits
+one scholar and whose evidence is another's -- `source_id` is never fuzzed).
+An `artifact` grounds ref_id is unaffected by the handle scheme (artifacts
+are never listed under a handle -- see `compose_prompt`'s own docstring) and
+still resolves via `axial.query.reader.get_artifact`, exact match first,
+falling back to a unique-suffix repair of a truncated citation via
+`_resolve_truncated_ref_id` (DEC-42 grew ids to ~200 chars and the model
+sometimes echoes only the tail). Every claim's `confidence` is validated
 against the closed §7.4 three-band vocabulary `CONFIDENCE_BANDS` (issue
 #402 -- a real run emitted "medium-high", a band the calibration gate
 correctly refused to score; caught here instead, at generation), and
@@ -311,6 +324,26 @@ class CounterPositionGroundNotOfferedError(CounterPositionGenerationError):
 
 
 @dataclass(frozen=True)
+class SynthesisPrompt:
+    """`compose_prompt`'s return (issue #410): the composed prompt `text`
+    plus the `handle_map` assigned alongside it -- `{"[c1]": "<real chunk
+    id>", ...}` for every evidence chunk that made it into the prompt (same
+    order, same budget cutoff `compose_prompt` already applies). The model
+    is shown only the short bracketed handle, never the real
+    `<author>-<year>-<digest>_<n>_<slug>_<nnn>` id, so it has nothing long
+    to transcribe and nothing to blend across two similar sources -- the
+    opaque-handle mitigation the module docstring's `parse_synthesis_response`
+    section still needs `handle_map` to resolve a cited handle back to the
+    real id it stands for. Held in memory only for the one call it was
+    built for: never persisted, never reused across a later prompt, so a
+    stale handle from an earlier call can never resolve against this one's
+    grounds."""
+
+    text: str
+    handle_map: dict[str, str]
+
+
+@dataclass(frozen=True)
 class Ground:
     """One `{ref_type, ref_id}` grounds pointer (§7.4): `ref_type` is
     `chunk` or `artifact`, `ref_id` is a real vault id that has already been
@@ -384,10 +417,10 @@ def compose_prompt(
     vault_dir: Path | None = None,
     config_path: Path | None = None,
     evidence_char_budget: int | None = None,
-) -> str:
+) -> SynthesisPrompt:
     """Assemble the synthesis prompt (§7.4/P0-4): the brief's case/request,
-    the applied lens, and every evidence chunk's id, its real prose TEXT, and
-    its synthesis-relevant frontmatter. `EvidenceSet.chunks` (`EvidenceChunk`)
+    the applied lens, and every evidence chunk's real prose TEXT and
+    synthesis-relevant frontmatter. `EvidenceSet.chunks` (`EvidenceChunk`)
     deliberately does not carry `chunk_text` (`axial.analyze.assembly`'s own
     module docstring: "chunk_text ... stay[s] reachable via ... get_chunk when
     synthesis (slice 02) actually needs them") -- this is that need: the
@@ -399,6 +432,21 @@ def compose_prompt(
     template, so a prompt wording change is a deliberate, visible diff, not
     silent drift.
 
+    Issue #410 (opaque-handle mitigation): the model is never shown a real
+    `chunk_id` at all. Each included chunk is offered under a short, per-call
+    handle (`[c1]`, `[c2]`, ...), assigned in the same walk that composes the
+    evidence list, and returned alongside the prompt text as `SynthesisPrompt.
+    handle_map` (`{"[c1]": "<real chunk_id>", ...}`). A real synthesis run
+    logged 157k-195k prompt chars, and under that load the model twice blended
+    two similar sources' ~200-char ids into one that pointed at the wrong
+    scholar's work (`UnresolvableGroundError`, correctly, both times -- see
+    the issue). A short opaque handle removes the whole failure class rather
+    than repairing a blended id after the fact: there is no long id in the
+    prompt to transcribe, truncate, or blend in the first place.
+    `parse_synthesis_response` resolves a cited handle back to the real id by
+    exact lookup in `handle_map` alone -- no fuzzy match, no suffix repair,
+    nothing left to fuzz (`source_id` is never fuzzed, unchanged).
+
     `evidence_char_budget` (issue #358, default `_resolve_evidence_char_budget`
     off `config_path`/`DEFAULT_EVIDENCE_CHAR_BUDGET`) bounds the combined
     length of every included chunk's `chunk_text`: chunks are walked in
@@ -406,13 +454,14 @@ def compose_prompt(
     included evidence set is a deterministic PREFIX of that order -- the walk
     stops (never mid-text truncating a chunk) at the first chunk that would
     push the running total over budget, so every later chunk is dropped too.
-    A dropped chunk's id never appears in the evidence list, so the model has
-    nothing to cite it with (grounds validation already rejects an unlisted
-    id)."""
+    A dropped chunk gets no handle and never appears in the evidence list, so
+    the model has nothing to cite it with (grounds validation already rejects
+    a handle absent from `handle_map`)."""
     if evidence_char_budget is None:
         evidence_char_budget = _resolve_evidence_char_budget(config_path)
 
     lines: list[str] = []
+    handle_map: dict[str, str] = {}
     running_total = 0
     for chunk_id, chunk in zip(evidence.chunk_ids, evidence.chunks):
         note = get_chunk(chunk_id, vault_dir=vault_dir)
@@ -423,8 +472,10 @@ def compose_prompt(
             # to reason about and to reproduce.
             break
         running_total += len(note.chunk_text)
+        handle = f"[c{len(handle_map) + 1}]"
+        handle_map[handle] = chunk_id
         lines.append(
-            f"- chunk_id={chunk_id} role_in_argument={chunk.role_in_argument} "
+            f"- chunk_id={handle} role_in_argument={chunk.role_in_argument} "
             f"polities_touched={chunk.polities_touched} "
             f"theory_school={chunk.theory_school.get('primary')} "
             f"claim_type={chunk.claim_type.get('primary')} "
@@ -433,13 +484,13 @@ def compose_prompt(
         )
     evidence_lines = "\n".join(lines) or "(no evidence chunks were retrieved for this brief)"
 
-    return f"""You are the stage-4 synthesis pass of an analysis engine (specs/PHASE-B.md §7.4). Apply the lens named below and perform axial coding across ONLY the evidence chunks supplied below -- reason only over the grounds supplied here, never from your own parametric memory or the open web. Any assertion not traceable to a supplied grounds pointer is not a claim this pass may emit.
+    text = f"""You are the stage-4 synthesis pass of an analysis engine (specs/PHASE-B.md §7.4). Apply the lens named below and perform axial coding across ONLY the evidence chunks supplied below -- reason only over the grounds supplied here, never from your own parametric memory or the open web. Any assertion not traceable to a supplied grounds pointer is not a claim this pass may emit.
 
 Case: "{brief.case}"
 Request: "{brief.request}"
 Lens: "{lens_name}"
 
-Evidence chunks (cite ONLY these chunk_ids/artifact_ids as grounds):
+Evidence chunks -- cite ONLY the bracketed handle shown for each (e.g. "[cN]") as your grounds ref_id for a chunk, or an artifact_id as your grounds ref_id for an artifact. Reproduce a handle EXACTLY as shown; never invent one and never write out any other id:
 {evidence_lines}
 
 For every claim you emit, mark its kind:
@@ -447,12 +498,14 @@ For every claim you emit, mark its kind:
 - "b" (tool-infers-across-sources) -- YOUR inference drawn across two or more sources; grounds must name every source it draws on. A (b) claim is always marked as the tool's own inference and must NEVER be voiced as though a single source asserted it -- a cross-source inference is marked (b), never phrased as a source assertion.
 - "c" (speculation) -- neither of the above; may carry partial or empty grounds.
 
-Every (a) and (b) claim MUST carry at least one grounds pointer to a chunk_id or artifact_id listed above -- an unlisted or invented id is never acceptable.
+Every (a) and (b) claim MUST carry at least one grounds pointer to a chunk handle or artifact_id listed above -- an unlisted or invented one is never acceptable.
 
 Mark every claim's confidence as exactly one of "high", "medium", or "low" -- never a numeric score and never any other value (e.g. "medium-high" is not a valid band).
 
 Return ONLY this JSON object, no prose and no code fence:
-{{"claims": [{{"text": "<claim text>", "kind": "a|b|c", "grounds": [{{"ref_type": "chunk|artifact", "ref_id": "<id>"}}], "confidence": "high|medium|low"}}]}}"""
+{{"claims": [{{"text": "<claim text>", "kind": "a|b|c", "grounds": [{{"ref_type": "chunk|artifact", "ref_id": "<handle for a chunk, e.g. [cN]; a real artifact_id for an artifact>"}}], "confidence": "high|medium|low"}}]}}"""
+
+    return SynthesisPrompt(text=text, handle_map=handle_map)
 
 
 def _dedupe_preserving_order(values: list[str]) -> list[str]:
@@ -499,17 +552,31 @@ def _resolve_truncated_ref_id(
 
 
 def _resolve_grounds(
-    index: int, text: Any, raw_grounds: Any, *, vault_dir: Path | None
+    index: int,
+    text: Any,
+    raw_grounds: Any,
+    *,
+    vault_dir: Path | None,
+    handle_map: dict[str, str],
 ) -> tuple[list[Ground], list[str]]:
-    """Validate and resolve one claim's raw `grounds` list against the
-    vault: structural shape, `ref_type` in `_REF_TYPES`, and `ref_id`
-    resolving to a real note -- exact match first, falling back to
-    `_resolve_truncated_ref_id`'s unique-suffix repair on a miss. The
-    `Ground` recorded always carries the resolved (full, real) id, never the
-    ref_id as the model emitted it. Returns the resolved `Ground` list plus
-    the `polities_touched` union computed from resolved CHUNK grounds only
-    (an artifact ground contributes nothing -- `ArtifactNote` carries no
-    `polities_touched` facet of its own)."""
+    """Validate and resolve one claim's raw `grounds` list: structural
+    shape, `ref_type` in `_REF_TYPES`, and `ref_id` resolving to a real
+    note. The `Ground` recorded always carries the resolved (full, real)
+    id, never the ref_id as the model emitted it. Returns the resolved
+    `Ground` list plus the `polities_touched` union computed from resolved
+    CHUNK grounds only (an artifact ground contributes nothing --
+    `ArtifactNote` carries no `polities_touched` facet of its own).
+
+    A `chunk` ref_id is resolved against `handle_map` alone (issue #410):
+    the model was never shown a real chunk_id, only a short opaque handle
+    (`compose_prompt`), so a handle the model invents that is not an EXACT
+    key of `handle_map` is `UnresolvableGroundError`, same as an
+    unresolvable id always was -- no fuzzy match, no suffix repair, nothing
+    left to fuzz. An `artifact` ref_id is unaffected: artifacts are never
+    listed under a handle in the prompt (an artifact ground has always
+    resolved against the real vault id directly), so it still resolves via
+    exact match falling back to `_resolve_truncated_ref_id`'s unique-suffix
+    repair, unchanged."""
     if raw_grounds is None:
         return [], []
     if not isinstance(raw_grounds, list):
@@ -533,17 +600,14 @@ def _resolve_grounds(
                 f"claim #{index} ({text!r}) has a grounds entry with a missing/blank ref_id"
             )
 
-        resolved_id = ref_id
         if ref_type == "chunk":
-            try:
-                note = get_chunk(ref_id, vault_dir=vault_dir)
-            except ChunkNotFoundError:
-                resolved_id = _resolve_truncated_ref_id(
-                    index, text, ref_type, ref_id, vault_dir=vault_dir
-                )
-                note = get_chunk(resolved_id, vault_dir=vault_dir)
+            resolved_id = handle_map.get(ref_id)
+            if resolved_id is None:
+                raise UnresolvableGroundError(index, text, ref_type, ref_id)
+            note = get_chunk(resolved_id, vault_dir=vault_dir)
             touched.extend(note.polities_touched)
         else:
+            resolved_id = ref_id
             try:
                 get_artifact(ref_id, vault_dir=vault_dir)
             except ArtifactNotFoundError:
@@ -577,7 +641,9 @@ def _compute_claim_id(index: int, kind: str, text: str, grounds: list[Ground]) -
     return digest[:_CLAIM_ID_LENGTH]
 
 
-def parse_synthesis_response(raw: str, *, vault_dir: Path | None = None) -> list[Claim]:
+def parse_synthesis_response(
+    raw: str, *, vault_dir: Path | None = None, handle_map: dict[str, str] | None = None
+) -> list[Claim]:
     """Parse a raw synthesis completion into a validated `Claim` list
     (§7.4). Raises `ModelJsonError` (via `parse_model_json`) when `raw`
     isn't parseable JSON at all, `SynthesisParseError` (or a more specific
@@ -585,7 +651,16 @@ def parse_synthesis_response(raw: str, *, vault_dir: Path | None = None) -> list
     returns a partial result alongside an error, and never silently
     downgrades a malformed response into an empty claim list -- an empty
     `claims` list is only ever returned when the response itself genuinely
-    names one."""
+    names one.
+
+    `handle_map` (issue #410) is the `{"[c1]": "<real chunk_id>", ...}` map
+    `compose_prompt` handed out alongside the same call's prompt: every
+    `chunk` grounds ref_id is resolved against it by exact lookup only
+    (`_resolve_grounds`). Omitting it (the default, `None`, treated as
+    empty) means no handle resolves -- correct for a caller that never
+    offered any, never a silent pass-through to some other resolution
+    path."""
+    handle_map = handle_map or {}
     data = parse_model_json(raw)
     if not isinstance(data, dict):
         raise SynthesisParseError(
@@ -613,7 +688,7 @@ def parse_synthesis_response(raw: str, *, vault_dir: Path | None = None) -> list
             raise InvalidClaimConfidenceError(index, text, confidence)
 
         grounds, polities_touched = _resolve_grounds(
-            index, text, entry.get("grounds"), vault_dir=vault_dir
+            index, text, entry.get("grounds"), vault_dir=vault_dir, handle_map=handle_map
         )
         if kind in _GROUNDED_KINDS and not grounds:
             raise UngroundedClaimError(index, text, kind)
@@ -646,10 +721,11 @@ def synthesize(
     (`resolve_lens`), compose the grounded-by-construction prompt
     (`compose_prompt` -- including its `evidence_char_budget` cap, issue
     #358, resolved from `config_path`/`config/pipeline.yaml`'s
-    `synthesis.evidence_char_budget`), make ONE bounded model call
-    (`pass_name=SYNTHESIZE_PASS_NAME`, routable through
-    `model_by_pass`/`reasoning_by_pass`, §7.11), and parse+validate the
-    result (`parse_synthesis_response`) into a `ClaimGraph`.
+    `synthesis.evidence_char_budget`, and its `handle_map`, issue #410),
+    make ONE bounded model call (`pass_name=SYNTHESIZE_PASS_NAME`, routable
+    through `model_by_pass`/`reasoning_by_pass`, §7.11), and parse+validate
+    the result (`parse_synthesis_response`, passed that same `handle_map` to
+    resolve cited handles back to real ids) into a `ClaimGraph`.
 
     Raises `SynthesisFailedError` when the underlying model call
     transport-fails or never returns parseable JSON within
@@ -659,7 +735,7 @@ def synthesize(
     `UnknownLensError`/`NoLensesAvailableError` propagate unchanged from
     `resolve_lens` when the brief names a lens that does not exist."""
     lens_name = resolve_lens(brief.lens, lenses_dir=lenses_dir)
-    prompt = compose_prompt(
+    composed = compose_prompt(
         brief, lens_name, evidence, vault_dir=vault_dir, config_path=config_path
     )
     print(
@@ -668,11 +744,11 @@ def synthesize(
     )
 
     try:
-        raw = complete_json(client, prompt, pass_name=SYNTHESIZE_PASS_NAME)
+        raw = complete_json(client, composed.text, pass_name=SYNTHESIZE_PASS_NAME)
     except (LLMError, httpx.HTTPError, ModelJsonError) as exc:
         raise SynthesisFailedError(f"synthesis call failed: {exc}") from exc
 
-    claims = parse_synthesis_response(raw, vault_dir=vault_dir)
+    claims = parse_synthesis_response(raw, vault_dir=vault_dir, handle_map=composed.handle_map)
     print(f"synthesize: done, {len(claims)} claim(s)", file=sys.stderr)
     return ClaimGraph(lens=lens_name, claims=claims)
 
