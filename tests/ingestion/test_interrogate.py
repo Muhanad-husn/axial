@@ -328,6 +328,36 @@ def test_limit_stops_the_run_for_the_sample_gate(tmp_path, capsys):
     assert summary["complete"] is False
 
 
+def test_an_empty_list_answer_costs_one_call_and_keeps_the_note(tmp_path, monkeypatch):
+    """A list-valued field answered `[]` -- "this passage defines nothing" --
+    is an answer. It used to be read as a blank, and since the re-ask carries
+    no error feedback the model repeated the identical response until the
+    budget was spent, then the note was discarded whole over that one field.
+    Measured on a real 10-note probe: 1 note in 10 lost on the first book."""
+    source_path, data_dir, source_id = _arrange(tmp_path)
+    monkeypatch.setenv(
+        STUB_NOTE_INTERROGATE_RESPONSE_ENV_VAR,
+        json.dumps(
+            {
+                **{field: "answered from the passage" for field in ANSWER_FIELDS},
+                "defines": [],
+                "citations": [],
+            }
+        ),
+    )
+    client = StubLLMClient()
+
+    summary = run_interrogate(source_path, client=client, data_dir=data_dir)
+
+    assert summary["failed"] == 0
+    assert summary["answered"] == len(NOTE_TEXTS)
+    # One call per note: no re-ask was burned on a valid answer.
+    assert client.call_count == len(NOTE_TEXTS)
+    answers = _read_answers(data_dir, source_id)[0]["answers"]
+    assert answers["defines"] == []
+    assert answers["citations"] == []
+
+
 def test_the_pass_registers_with_the_corpus_runner(tmp_path):
     """P1-4/§8: "`interrogate` registers as a pass like any other, so the
     corpus re-run resumes rather than restarting" -- `axial run interrogate`

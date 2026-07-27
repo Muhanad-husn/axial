@@ -13,9 +13,9 @@ import pytest
 
 from axial.interrogate import (
     ANSWER_FIELDS,
+    LIST_VALUED_FIELDS,
     AllNotesFailedError,
     AnswerParseError,
-    abstention_reason,
     abstention_rates,
     chapter_for_section,
     collapse_rates,
@@ -41,17 +41,28 @@ def _answers(**overrides: object) -> dict[str, object]:
 def test_bare_sentinel_and_reasoned_object_both_abstain():
     assert is_abstention("not-in-passage")
     assert is_abstention({"not-in-passage": "cannot judge between Iraq and Egypt"})
-    assert (
-        abstention_reason({"not-in-passage": "cannot judge between Iraq and Egypt"})
-        == "cannot judge between Iraq and Egypt"
-    )
-    assert abstention_reason("not-in-passage") is None
+
+
+def test_a_multi_valued_field_abstains_inside_a_one_element_list_too():
+    """Six fields are asked for as JSON lists while the abstention rule is
+    written for a scalar, so `["not-in-passage"]` is the natural middle form.
+    Read as an answer it would under-report abstention on exactly those
+    fields, and Reconcile (§7.16) harvests `names`, so it would mint
+    `not-in-passage` as a name in the corpus."""
+    assert is_abstention(["not-in-passage"])
+    assert is_abstention([{"not-in-passage": "the passage names no one"}])
+    records = [{"answers": _answers(names=["not-in-passage"])}]
+    assert abstention_rates(records)["names"] == 1.0
 
 
 def test_a_real_answer_is_never_read_as_an_abstention():
     assert not is_abstention("the passage names no mechanism worth stating")
     assert not is_abstention({"with": "Iraq's Ba'ath", "stated": True})
     assert not is_abstention(["a", "b"])
+    # A second element makes it an answer, however malformed: an abstention
+    # is never partial.
+    assert not is_abstention(["not-in-passage", "Syria"])
+    assert not is_abstention([])
 
 
 def test_abstention_rate_is_per_field_over_answered_notes():
@@ -139,9 +150,29 @@ def test_parse_rejects_a_missing_question_and_a_blank_answer():
     with pytest.raises(AnswerParseError, match="mechanism"):
         parse_answer_response(blank, EXAMPLES)
 
-    empty_list = json.dumps(_answers(names=[]))
-    with pytest.raises(AnswerParseError, match="names"):
-        parse_answer_response(empty_list, EXAMPLES)
+    null = json.dumps(_answers(concedes=None))
+    with pytest.raises(AnswerParseError, match="concedes"):
+        parse_answer_response(null, EXAMPLES)
+
+    # An empty list on a SCALAR field is still shape noise.
+    with pytest.raises(AnswerParseError, match="mechanism"):
+        parse_answer_response(json.dumps(_answers(mechanism=[])), EXAMPLES)
+
+
+def test_an_empty_list_is_an_answer_on_a_list_valued_field_not_a_blank():
+    """`[]` is what "this passage defines nothing" looks like in JSON, and it
+    is the model's read, not a blank. Rejecting it burned the whole re-ask
+    budget on an identical repeated response and then discarded all sixteen
+    answers over one field -- permanently, since a note carrying any record is
+    never re-sent (§7.15). Measured on a real 10-note probe: `ayubi-1995`
+    note 2 lost to `defines: []`."""
+    for field in sorted(LIST_VALUED_FIELDS):
+        parsed = parse_answer_response(json.dumps(_answers(**{field: []})), EXAMPLES)
+        assert parsed[field] == [], field
+    # Recorded verbatim, never normalised onto the abstention: `[]` is a read,
+    # an abstention is a refusal to guess (§7.15's three states).
+    records = [{"answers": _answers(names=[])}]
+    assert abstention_rates(records)["names"] == 0.0
 
 
 # --- Context assembly -------------------------------------------------------
@@ -270,3 +301,47 @@ def test_a_source_whose_every_note_failed_raises_rather_than_reporting_success(t
 
     with pytest.raises(AllNotesFailedError):
         run_interrogate(source_path, client=client, data_dir=data_dir)
+
+
+def test_rerunning_after_a_total_failure_raises_again_instead_of_reporting_success(tmp_path):
+    """The path an operator actually takes after seeing the error is to run
+    it again. Every note already carries a failure record, so the second run
+    makes no call at all -- and must still raise. Reporting success here
+    would let `axial run interrogate` mark the source done with zero answers
+    on disk, and slice 04 would read an empty answer set for the whole book."""
+    source_path, data_dir = _arrange_source(tmp_path)
+    with pytest.raises(AllNotesFailedError):
+        run_interrogate(source_path, client=_ScriptedClient(["not json at all"]), data_dir=data_dir)
+
+    second = _ScriptedClient([json.dumps(_answers())])
+    with pytest.raises(AllNotesFailedError):
+        run_interrogate(source_path, client=second, data_dir=data_dir)
+    assert second.call_count == 0
+
+
+def test_a_source_whose_every_note_is_a_garble_skip_is_not_a_failure(tmp_path):
+    """Skips are not failures: a source the backstop dropped entirely has
+    zero answer records legitimately, and must not raise."""
+    source_path, data_dir = _arrange_source(tmp_path, note_count=1)
+    from axial.envelope import compute_source_id
+
+    source_id = compute_source_id(source_path)
+    (data_dir / "chunks" / f"{source_id}.jsonl").write_text(
+        json.dumps(
+            {
+                "chunk_id": f"{source_id}_1_intro_001",
+                "section": "Introduction",
+                "section_order": "1",
+                "text": "%%%% 1234 ;;;; ---- @@@@ 5678 //// ==== ++++ 9012 ****",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    client = _ScriptedClient([json.dumps(_answers())])
+
+    summary = run_interrogate(source_path, client=client, data_dir=data_dir)
+
+    assert client.call_count == 0
+    assert summary["skipped"] == 1
+    assert summary["answer_records"] == 0

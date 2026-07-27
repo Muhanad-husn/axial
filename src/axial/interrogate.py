@@ -71,11 +71,7 @@ from axial.chunk import (
     _default_chunks_dir,
     read_chunks,
 )
-from axial.checkpoint import (
-    append_checkpoint_record,
-    heal_torn_checkpoint_tail,
-    load_checkpoint_records,
-)
+from axial.checkpoint import append_checkpoint_record, load_checkpoint_records
 from axial.codebook import Codebook, CodebookError, load_codebook
 from axial.envelope import (
     MissingSourceError as _EnvelopeMissingSourceError,
@@ -127,6 +123,13 @@ ANSWER_FIELDS = (
     "uses",
     "concedes",
     "assumes",
+)
+
+# The fields the prompt asks for as JSON lists. `[]` is an ordinary answer on
+# these ("the passage names none of that kind of thing"), distinct from the
+# abstention ("the passage does not let me judge") -- see `_is_blank`.
+LIST_VALUED_FIELDS = frozenset(
+    {"about", "arguing_against", "names", "citations", "defines", "uses"}
 )
 
 # The four D8 questions that have a closed-vocabulary ancestor in the frame,
@@ -228,14 +231,19 @@ class AnswerCheckpointCorruptError(InterrogateError):
 
 
 class AllNotesFailedError(InterrogateError):
-    """Raised when every note this run attempted failed (§7.15): a source
-    that answered nothing must fail loudly, never report an empty success."""
+    """Raised when a source's answer artifact holds failures and no answers
+    at all (§7.15): a source that answered nothing must fail loudly, never
+    report an empty success. Read off the artifact rather than off this run's
+    own counters, so a rerun after a total failure -- which re-sends no note
+    and so fails nothing itself -- raises exactly the same way instead of
+    marking the source done with zero answers on disk."""
 
-    def __init__(self, source_id: str, attempted: int):
+    def __init__(self, source_id: str, failed: int):
         self.source_id = source_id
-        self.attempted = attempted
+        self.failed = failed
         super().__init__(
-            f"every one of {source_id!r}'s {attempted} attempted note(s) failed to interrogate"
+            f"{source_id!r} has {failed} failed note(s) and no answers at all; "
+            "fix the cause and delete the failure records to retry them"
         )
 
 
@@ -279,12 +287,6 @@ def load_answer_checkpoint(path: Path) -> list[dict[str, Any]]:
     return load_checkpoint_records(path, AnswerCheckpointCorruptError)
 
 
-def _heal_torn_checkpoint_tail(path: Path) -> None:
-    """Truncate a torn tail left by a hard kill mid-append -- kept as a
-    module-level name here for the same reason `axial.tag` keeps one."""
-    heal_torn_checkpoint_tail(path)
-
-
 def _default_answers_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
     """Honour `paths.answers_dir` when config declares it, else `ANSWERS_DIR`
     -- the same config-then-fallback resolution every other pipeline
@@ -305,20 +307,23 @@ def _default_domain_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Pat
 
 def is_abstention(value: Any) -> bool:
     """Whether `value` is the explicit abstention rather than an answer: the
-    bare `not-in-passage` string, or `{"not-in-passage": "<reason>"}`."""
+    bare `not-in-passage` string, `{"not-in-passage": "<reason>"}`, or either
+    of those alone inside a one-element list.
+
+    The list form exists because six fields are asked for as JSON lists and
+    the abstention rule is written for a scalar, so `["not-in-passage"]` is
+    the natural middle form for a multi-valued field. Read as an answer it
+    would under-report abstention on exactly those fields, and Reconcile
+    (§7.16) would mint `not-in-passage` as a name in the corpus. A list with
+    a second element is a real answer, however malformed -- an abstention is
+    never partial."""
     if value == NOT_IN_PASSAGE:
         return True
-    return isinstance(value, dict) and set(value) == {NOT_IN_PASSAGE}
-
-
-def abstention_reason(value: Any) -> str | None:
-    """The one-clause reason attached to an abstention, or `None` for a bare
-    abstention or a real answer. This is where "cannot judge between X and Y"
-    is read back."""
-    if isinstance(value, dict) and set(value) == {NOT_IN_PASSAGE}:
-        reason = value[NOT_IN_PASSAGE]
-        return reason if isinstance(reason, str) else None
-    return None
+    if isinstance(value, dict):
+        return set(value) == {NOT_IN_PASSAGE}
+    if isinstance(value, list) and len(value) == 1:
+        return is_abstention(value[0])
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -411,9 +416,16 @@ ABSTENTION. Every answer must come from the passage. Where the passage does \
 not support one, answer with the string "{not_in_passage}", or with \
 {{"{not_in_passage}": "<one short clause saying why>"}} when there is \
 something worth saying -- including the case where the passage bears on the \
-question but does not settle it ("cannot judge between X and Y"). An \
-abstention is an ordinary, expected answer. A guessed answer is worse than \
-an abstention, because a reader cannot tell it from one you actually read.
+question but does not settle it ("cannot judge between X and Y"). Abstain \
+that same way on a multi-valued field: the bare string, never a list \
+containing it. An abstention is an ordinary, expected answer. A guessed \
+answer is worse than an abstention, because a reader cannot tell it from one \
+you actually read.
+
+An empty list is also an ordinary answer on a multi-valued field, and it \
+says something different: you read the passage and it names none of that \
+kind of thing. Use `[]` for "there are none here" and "{not_in_passage}" for \
+"the passage does not let me judge".
 
 {examples_section}
 RESPONSE. Reply with ONLY a JSON object (no prose, no markdown fences) \
@@ -558,7 +570,7 @@ def parse_answer_response(raw: str, examples: dict[str, list[tuple[str, str]]]) 
         if field not in data:
             raise AnswerParseError(f"answer field {field!r} is missing from the response")
         value = data[field]
-        if _is_blank(value):
+        if _is_blank(value, field):
             raise AnswerParseError(
                 f"answer field {field!r} is empty: an answer or the explicit "
                 f"{NOT_IN_PASSAGE!r} abstention is required, never a blank"
@@ -570,15 +582,27 @@ def parse_answer_response(raw: str, examples: dict[str, list[tuple[str, str]]]) 
     return answers
 
 
-def _is_blank(value: Any) -> bool:
+def _is_blank(value: Any, field: str | None = None) -> bool:
     """Whether a parsed value is response noise rather than an answer: an
-    empty/whitespace-only string, an empty list, `None`, or an empty object.
-    An explicit abstention is never blank."""
+    empty/whitespace-only string, `None`, or an empty object.
+
+    An empty LIST on a list-valued field is an answer, not a blank: "this
+    passage defines nothing", "this passage cites no one" is what the
+    passage says, and it is the natural JSON for it. Rejecting it cost a real
+    note -- the re-ask carries no error feedback, so the model repeats the
+    identical response until the budget is spent and all sixteen answers are
+    discarded over one field, permanently (a note carrying any record is
+    never re-sent, §7.15). It is recorded verbatim rather than normalised
+    onto `not-in-passage`, because the two say different things: `[]` is a
+    read, an abstention is a refusal to guess (§7.15's own three states).
+    On a scalar field an empty list is still shape noise."""
     if value is None:
         return True
     if isinstance(value, str):
         return not value.strip()
-    if isinstance(value, (list, dict)):
+    if isinstance(value, list):
+        return len(value) == 0 and field not in LIST_VALUED_FIELDS
+    if isinstance(value, dict):
         return len(value) == 0
     return False
 
@@ -844,7 +868,22 @@ def run_interrogate(
     )
 
     checkpoint_path = answers_checkpoint_path(source_id, answers_dir)
-    already_done = {record["chunk_id"] for record in load_answer_checkpoint(checkpoint_path)}
+    # Split by record kind on load, not just by chunk_id: a note carrying any
+    # of the three is not re-sent to the model, but an earlier run's FAILURES
+    # must still count as failures at the end of this one -- otherwise a
+    # rerun after a total failure makes zero calls and reports success with
+    # no answers on disk (mirrors `axial.tag`'s own resumed-quarantine fold).
+    already_answered: set[str] = set()
+    already_failed: set[str] = set()
+    already_skipped: set[str] = set()
+    for record in load_answer_checkpoint(checkpoint_path):
+        if "answers" in record:
+            already_answered.add(record["chunk_id"])
+        elif "failure_reason" in record:
+            already_failed.add(record["chunk_id"])
+        else:
+            already_skipped.add(record["chunk_id"])
+    already_done = already_answered | already_failed | already_skipped
 
     answered = 0
     failed = 0
@@ -918,11 +957,18 @@ def run_interrogate(
             file=sys.stderr,
         )
 
+    records = load_answer_checkpoint(checkpoint_path)
+    answer_records = [record for record in records if "answers" in record]
+    failure_count = sum(1 for record in records if "failure_reason" in record)
+
     # A source that produced nothing fails loudly rather than reporting an
-    # empty success (§7.15). A resumed run that already has answers on disk
-    # is not that case, however many of this run's new notes failed.
-    if attempted and answered == 0 and reused == 0:
-        raise AllNotesFailedError(source_id, attempted)
+    # empty success (§7.15), and it keeps failing on every rerun until the
+    # cause is fixed -- the artifact is read here, so an earlier run's
+    # failures count even when this run made no call at all. Skips are not
+    # failures: a source whose every note is a garble skip legitimately has
+    # zero answer records and is not an error.
+    if not answer_records and failure_count:
+        raise AllNotesFailedError(source_id, failure_count)
 
     complete = limit is None or (answered + failed + skipped + reused) == total_notes
     if complete:
@@ -930,7 +976,6 @@ def run_interrogate(
         if accounted_for != total_notes:
             raise AnswerRecordCountMismatchError(source_id, total_notes, accounted_for)
 
-    records = load_answer_checkpoint(checkpoint_path)
     return {
         "source_id": source_id,
         "pass": NOTE_INTERROGATE_PASS_NAME,
@@ -941,6 +986,11 @@ def run_interrogate(
         "failed": failed,
         "skipped": skipped,
         "reused": reused,
+        # What the artifact holds in total, this run plus every earlier one:
+        # the count slice 04 will actually read, which `answered` alone does
+        # not give on a resumed run.
+        "answer_records": len(answer_records),
+        "failure_records": failure_count,
         "limit": limit,
         "complete": complete,
         "abstention_rate": abstention_rates(records),
