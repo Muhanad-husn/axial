@@ -44,8 +44,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from axial.chunk import _BACK_MATTER_TITLES
 from axial.codebook import CodebookError, load_codebook
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
-from axial.paths import budgeted_chunk_filename, path_overage
-from axial.tag import DEFAULT_DOMAIN_DIR
+from axial.paths import DEFAULT_DOMAIN_DIR, budgeted_chunk_filename, path_overage
 from axial.vault import _default_vault_dir
 
 GOLD_DIR = Path("data/gold")

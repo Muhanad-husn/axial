@@ -47,7 +47,7 @@ from typing import Any
 import yaml
 
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
-from axial.tag import DEFAULT_DOMAIN_DIR
+from axial.paths import DEFAULT_DOMAIN_DIR
 from axial.vault import _default_vault_dir
 
 CANONICAL_MAP_FILENAME = "polity_canonical.yaml"

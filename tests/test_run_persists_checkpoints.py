@@ -11,10 +11,8 @@ ledger row as "already done", a resumed run then silently skips a source
 whose output was never written -- the ledger says done, the disk says
 nothing.
 
-The same defect existed in `_invoke_xref`: `run_xref` takes two opt-in
-checkpoint seams (`xref_dir` for its own per-chunk checkpoint, and
-`artifacts_dir`, forwarded to its own internal `run_artifacts` call), and
-neither was threaded.
+The same defect existed in `_invoke_xref` (retired along with the xref pass
+itself, issue #414, `plans/phase-a-v1/README.md` D5).
 
 This test's whole point is the disk assertion, not the return value: a test
 that only checks `run_pass`'s summary/exit-code is exactly the blind spot
@@ -128,58 +126,3 @@ def test_run_artifacts_persists_checkpoint_file_to_disk(isolated_vault_root):
         assert isinstance(record.get("artifact_id"), str) and record["artifact_id"], (
             f"expected every checkpoint line to carry a non-empty 'artifact_id', got {record!r}"
         )
-
-
-def test_run_xref_persists_both_its_own_and_the_nested_artifacts_checkpoint(
-    isolated_vault_root,
-):
-    root = isolated_vault_root
-    source_id = _place_tree_fixture(MULTI_ARTIFACT_PDF, root)
-
-    # Arrange the on-disk chunk artifact `run_xref` requires (issue #154):
-    # standalone `axial chunk` always persists to data/chunks/<id>.jsonl.
-    chunk_result = _run_axial(["chunk", str(MULTI_ARTIFACT_PDF)], "stub", cwd=root)
-    _assert_not_argparse_fallback(chunk_result, "chunk")
-    assert chunk_result.returncode == 0, (
-        f"arrange step failed: expected exit 0 for `axial chunk`, got "
-        f"{chunk_result.returncode}\nstdout: {chunk_result.stdout!r}\n"
-        f"stderr: {chunk_result.stderr!r}"
-    )
-    chunks_path = root / "data" / "chunks" / f"{source_id}.jsonl"
-    assert chunks_path.exists(), "arrange step failed: no chunk artifact written"
-
-    worklist_path = root / "worklist.txt"
-    _write_worklist(worklist_path, [MULTI_ARTIFACT_PDF])
-
-    result = _run_axial(["run", "xref", "--worklist", str(worklist_path)], "stub", cwd=root)
-    _assert_not_argparse_fallback(result, "run")
-    assert result.returncode == 0, (
-        f"expected exit 0, got {result.returncode}\n"
-        f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
-    )
-    assert "total=1 ok=1" in result.stdout, (
-        f"expected the run summary to report one OK source, got: {result.stdout!r}"
-    )
-
-    xref_checkpoint = root / "data" / "xref" / f"{source_id}.jsonl"
-    assert xref_checkpoint.exists(), (
-        f"the runner reported OK but wrote no xref checkpoint at "
-        f"{xref_checkpoint} -- same defect as #424's artifacts arm"
-    )
-    assert _read_jsonl_lines(xref_checkpoint), (
-        f"expected at least one processed-chunk record in {xref_checkpoint}, got an empty file"
-    )
-
-    # `run_xref` also runs `run_artifacts` internally for the source's known
-    # artifact ids -- that nested call must reuse the SAME artifacts
-    # checkpoint seam, or it silently re-classifies (and drops) every
-    # artifact a second time.
-    artifacts_checkpoint = root / "data" / "artifacts" / f"{source_id}.jsonl"
-    assert artifacts_checkpoint.exists(), (
-        f"expected `axial run xref`'s internal `run_artifacts` call to "
-        f"persist to {artifacts_checkpoint} too, got no file"
-    )
-    assert _read_jsonl_lines(artifacts_checkpoint), (
-        f"expected at least one classified artifact record in "
-        f"{artifacts_checkpoint}, got an empty file"
-    )

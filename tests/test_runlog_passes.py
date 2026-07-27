@@ -1,7 +1,9 @@
 """Outer acceptance test for issue #270, slice 02 (run-logging seam fan-out):
-`axial.runlog.run_context` driving the `envelope`, `tag`, and `eval` passes
-end-to-end -- the three model-bearing (or, for `eval`, model-free) passes
-`extract` (slice 01, tests/test_runlog.py) did not cover.
+`axial.runlog.run_context` driving the `envelope` and `eval` passes
+end-to-end -- model-bearing (or, for `eval`, model-free) passes `extract`
+(slice 01, tests/test_runlog.py) did not cover. This file originally also
+covered the `tag` pass; that section (and `axial.cli._tag`) is retired along
+with the tag pass itself (issue #414, `plans/phase-a-v1/README.md` D4/D5).
 
 Locked behavioral contract (DEC-1) -- do not edit once committed red, except
 for the two documented deviations below (CLAUDE.local.md: tests are
@@ -41,9 +43,9 @@ this slice, not because the plan's intent was contested):
 
 In-process, not a subprocess CLI run (mirrors tests/test_runlog.py, slice
 01): this test injects `root`/`clock` directly into `axial.cli._envelope` /
-`axial.cli._tag` / `axial.cli._eval`, the same determinism seam slice 01
-established for `_extract`. Production (`axial envelope|tag|eval` from the
-real CLI) passes neither and gets the real `data/logs/<name>-<now>/`.
+`axial.cli._eval`, the same determinism seam slice 01 established for
+`_extract`. Production (`axial envelope|eval` from the real CLI) passes
+neither and gets the real `data/logs/<name>-<now>/`.
 
 Fixture reuse: tests/fixtures/envelope/thesis_paper.pdf +
 thesis_paper_tree.json (already the shared envelope/tag fixture pair --
@@ -59,16 +61,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import axial.chunk as chunk_mod
 import axial.envelope as envelope_mod
 import axial.eval as eval_mod
 import axial.extract as extract_mod
-from axial.chunk import run_chunk_recursive
-from axial.cli import _envelope, _eval, _tag
+from axial.cli import _envelope, _eval
 from axial.envelope import compute_source_id
 from axial.eval import _axis_vocabularies
 from axial.gold import RECORD_FIELDS, SHEET_COLUMNS, build_workbook
-from axial.tag import DEFAULT_DOMAIN_DIR
+from axial.paths import DEFAULT_DOMAIN_DIR
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_ENVELOPE = REPO_ROOT / "tests" / "fixtures" / "envelope"
@@ -93,14 +93,6 @@ def _place_tree_fixture(trees_dir: Path) -> str:
     tree_path.parent.mkdir(parents=True, exist_ok=True)
     tree_path.write_bytes(FIXTURE_TREE.read_bytes())
     return source_id
-
-
-def _place_chunk_fixture(chunks_dir: Path) -> None:
-    """Write the real, on-disk chunk artifact for the fixture (issue #154:
-    `run_tag` reads `data/chunks/<source_id>.jsonl` via `read_chunks`, never
-    recomputing chunks itself), via the real chunk pass -- deterministic,
-    zero-embedding, zero-LLM for this clean-prose fixture."""
-    run_chunk_recursive(str(FIXTURE_PDF), chunks_dir=chunks_dir)
 
 
 # --- eval fixture: a single tagger chunk record + a returned label sheet
@@ -208,69 +200,6 @@ def test_envelope_pass_error_path_records_status_error(monkeypatch, tmp_path):
     assert record["pass"] == "envelope"
     assert record["status"] == "error"
     assert record["error"], "expected a short, non-empty error string"
-    assert record["duration_sec"] >= 0
-
-
-# ---------------------------------------------------------------------------
-# tag
-# ---------------------------------------------------------------------------
-
-
-def test_tag_pass_writes_one_record_per_source_not_per_chunk(monkeypatch, tmp_path, capsys):
-    monkeypatch.setenv("AXIAL_LLM_PROVIDER", "stub")
-    trees_dir = tmp_path / "trees"
-    chunks_dir = tmp_path / "chunks"
-    logs_root = tmp_path / "logs"
-    monkeypatch.setattr(extract_mod, "TREES_DIR", trees_dir)
-    # `axial.chunk._resolve_chunk_inputs` calls `tree_path(source_id)` with
-    # no explicit `trees_dir` arg, so it resolves the DEFAULT parameter
-    # value bound at chunk.py's import time -- monkeypatching
-    # `extract_mod.TREES_DIR` alone does not reach it (unlike `extract()`
-    # itself, which passes `TREES_DIR` explicitly). Patch chunk.py's own
-    # `tree_path` binding directly instead.
-    monkeypatch.setattr(chunk_mod, "tree_path", lambda source_id: trees_dir / f"{source_id}.json")
-    monkeypatch.setattr(chunk_mod, "_default_chunks_dir", lambda config_path: chunks_dir)
-    source_id = _place_tree_fixture(trees_dir)
-    _place_chunk_fixture(chunks_dir)
-
-    exit_code = _tag(
-        str(FIXTURE_PDF), str(DEFAULT_DOMAIN_DIR), root=logs_root, clock=lambda: FIXED_TS
-    )
-
-    assert exit_code == 0
-
-    run_dir = logs_root / f"tag-{FIXED_TS}"
-    raw_text = (run_dir / "run.jsonl").read_text(encoding="utf-8")
-    record = _one_record(run_dir / "run.jsonl")
-    assert record["source_id"] == source_id
-    assert record["pass"] == "tag"
-    assert record["model"] == "stub"
-    assert record["status"] == "ok"
-    assert record["duration_sec"] >= 0
-    assert record["error"] is None
-
-    assert FIXTURE_PROSE_SNIPPET not in raw_text
-
-    captured = capsys.readouterr()
-    tagged = json.loads(captured.out.strip())
-    assert tagged, "expected the tag CLI's own stdout print (tagged records) to be unchanged"
-
-
-def test_tag_pass_error_path_records_status_error(monkeypatch, tmp_path):
-    monkeypatch.setenv("AXIAL_LLM_PROVIDER", "stub")
-    logs_root = tmp_path / "logs"
-    missing_source = tmp_path / "does-not-exist.pdf"
-
-    exit_code = _tag(
-        str(missing_source), str(DEFAULT_DOMAIN_DIR), root=logs_root, clock=lambda: FIXED_TS
-    )
-
-    assert exit_code == 1
-    run_dir = logs_root / f"tag-{FIXED_TS}"
-    record = _one_record(run_dir / "run.jsonl")
-    assert record["pass"] == "tag"
-    assert record["status"] == "error"
-    assert record["error"]
     assert record["duration_sec"] >= 0
 
 

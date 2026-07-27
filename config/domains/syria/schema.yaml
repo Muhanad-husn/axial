@@ -9,6 +9,20 @@
 #   tentative  -- likely to shift after the gold set
 #   contested  -- the gold set must resolve this
 #   candidate  -- provisional axis/tag, kept-or-cut by the eval
+#
+# Phase A v1 (issue #414, D4/D9; specs/PRODUCT.md Appendix G): this file is
+# UNCHANGED ON DISK except for what D4/D9 struck outright (below) -- the
+# retired off-list validator (`axial.tag`) enforced these closed lists;
+# nothing does now. `axial.interrogate.frame_examples` reads them instead as
+# D8 prompt EXAMPLES (never a menu, never validated against) for the
+# `about`/`claim`/`ranges_over`/`position_of`/`move` free questions.
+# `field` and `artifact_role` additionally stay live as `axial.artifacts`'
+# own gated axes. Struck: `empirical_scope`'s `extra_fields` (the required
+# `polity` field -- polities are names now, Appendix C) and the
+# `polities_touched` facet (same reason). `theory_school`'s
+# `not-applicable`/`unlisted` sentinels are struck for the interrogation
+# pass per the spec but stay declared here -- see the note beside them --
+# because the out-of-scope gold-set dropdown still reads them.
 
 domain: syria
 version: 0.1
@@ -111,18 +125,6 @@ axes:
       - scope:regional
       - scope:country-case
       - scope:sub-national
-    extra_fields:
-      scope:country-case: { polity: free_text }   # required non-empty; see Appendix C
-
-  # Appendix C ("Polities-touched facet") / Appendix G -- a separate,
-  # many-valued free-text facet, NOT part of empirical_scope: every polity
-  # the chunk substantively engages ("engaged, not name-dropped"). No
-  # controlled vocabulary -- `values: free_text` is a bare scalar, not a
-  # list/dict of tag entries.
-  polities_touched:
-    applies_to: [prose]
-    cardinality: many
-    values: free_text
 
   # Appendix E -- Theory-school axis [CANDIDATE]. Grouped controlled
   # vocabulary preserved by group (State / Violence / Ideology) since the
@@ -164,6 +166,12 @@ axes:
         - discursive
         - historical-sociological
         - subject-centered
+      # `not-applicable`/`unlisted` are struck for the interrogation pass
+      # (specs/PRODUCT.md Appendix E, D4/D9 -- D7's abstention and a
+      # verbatim answer now do those two jobs) but stay declared here: the
+      # gold-set Academic-labeling dropdown (`axial.gold._axis_vocabularies`,
+      # out of this issue's scope, PRs #286/#287) still reads them off this
+      # same shared file and its own locked test still requires them.
       none:
         - not-applicable
       open:

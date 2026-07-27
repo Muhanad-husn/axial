@@ -572,17 +572,15 @@ def test_chunk_min_side_merges_subfloor_chunk_into_same_section_predecessor(tmp_
 
 # =============================================================================
 # 3. Per-pass reasoning (§7.9): ON for envelope + content-apparatus gate,
-#    OFF (unchanged, #147) for tag/artifacts/xref
+#    OFF (unchanged, #147) for artifacts (tag/xref retired, issue #414)
 # =============================================================================
 
 
-def test_per_pass_reasoning_on_for_envelope_and_content_apparatus_off_for_tag_artifacts_xref():
+def test_per_pass_reasoning_on_for_envelope_and_content_apparatus_off_for_artifacts():
     from axial.llm import (
         ARTIFACTS_PASS_NAME,
         CONTENT_APPARATUS_PASS_NAME,
         ENVELOPE_PASS_NAME,
-        TAG_PASS_NAME,
-        XREF_PASS_NAME,
         OpenRouterClient,
     )
 
@@ -597,13 +595,11 @@ def test_per_pass_reasoning_on_for_envelope_and_content_apparatus_off_for_tag_ar
 
     # §7.9: ON for the envelope pass and the new content-apparatus
     # classification gate; OFF (unchanged, #147) for the high-volume
-    # tag/artifacts/xref calls.
+    # artifacts calls.
     expected_reasoning_by_pass = {
         ENVELOPE_PASS_NAME: True,
         CONTENT_APPARATUS_PASS_NAME: True,
-        TAG_PASS_NAME: False,
         ARTIFACTS_PASS_NAME: False,
-        XREF_PASS_NAME: False,
     }
 
     for pass_name in expected_reasoning_by_pass:
@@ -621,6 +617,6 @@ def test_per_pass_reasoning_on_for_envelope_and_content_apparatus_off_for_tag_ar
             f"expected pass_name={pass_name!r}'s request body to carry "
             f"reasoning.enabled={reasoning_on} (§7.9: reasoning is ON for "
             f"the envelope pass and the content-apparatus classification "
-            f"gate, OFF for tag/artifacts/xref), got "
+            f"gate, OFF for artifacts), got "
             f"{body.get('reasoning')!r} (full body: {body!r})"
         )

@@ -4,35 +4,35 @@ bar").
 
 `axial pipeline-ready --manifest <path>` loads a TOML manifest of canaries
 (`[[canary]]` entries, each carrying `source_id`, `source_path`,
-`time_envelope_sec`, `quarantine_budget`), ingests every one end-to-end via
-the existing `axial.vault.run_vault_write` in a single attempt, and
-evaluates it against the first three of the postmortem's four "pipeline
-ready" criteria (the fourth, a green unit/acceptance suite, is out of this
-command's scope -- it is checked separately, by CI):
+`time_envelope_sec`, `quarantine_budget`), runs every one end-to-end through
+the interrogation pass (`axial.interrogate.run_interrogate`) in a single
+attempt, and evaluates it against the first three of the postmortem's four
+"pipeline ready" criteria (the fourth, a green unit/acceptance suite, is out
+of this command's scope -- it is checked separately, by CI):
 
   1. Single-attempt completion: the source ingests without a fatal abort.
   2. Zero source-fatal chunk errors, and the quarantined-chunk fraction
-     (post-#120: `content_filter`/`malformed_json` quarantines recorded to
-     the tag checkpoint) stays STRICTLY UNDER the canary's own
-     `quarantine_budget`.
+     stays STRICTLY UNDER the canary's own `quarantine_budget`.
   3. Bounded wall clock: the recorded ingest duration stays within the
      canary's own `time_envelope_sec`.
 
-Quarantine bridge (module docstring, issue #121 dispatch): `run_vault_write`
-discards `run_tag`'s own `quarantine_count`, and `axial.ingest`'s results TSV
-has no quarantine column. Rather than thread a new return value through
-`run_vault_write` (touching an established, multi-caller signature), this
-module reads the tag-pass checkpoint (`axial.tag.tags_checkpoint_path`)
-directly after each canary's ingest attempt: every chunk `run_tag` processes
--- ordinary or quarantined -- is checkpointed as exactly one JSONL record
-(module docstring of `axial.tag`), so the checkpoint's own record count is
-the source's total chunk count, and the subset carrying a `quarantine_reason`
-is the quarantined count. This is the smaller, additive change: `vault.py`
-and `ingest.py` are untouched.
+Quarantine bridge (module docstring, issue #121 dispatch; re-pointed at the
+interrogation pass by issue #414, D4/D5 -- the tag pass this originally read
+is retired, and `axial.vault.run_vault_write` is itself now a stub raising
+`VaultWriteRetiredError`, so single-attempt ingest can no longer mean
+"through vault write" until issue #411 lands): `run_interrogate` already
+persists every note's outcome to its own per-source checkpoint
+(`axial.interrogate.answers_checkpoint_path`) -- one JSONL record per note,
+whether it produced a real answer, a failure (`failure_reason`), or a
+garble-backstop skip (`skip_reason`). The checkpoint's own record count is
+the source's total note count, and the subset carrying no `answers` key
+(failed or skipped, never a real interrogation) is this gate's quarantined-
+equivalent count -- the direct successor of the tag pass's own
+`quarantine_reason` records.
 
 Each canary's own `source_id` is always recomputed fresh from its
 `source_path` (`axial.envelope.compute_source_id`), mirroring
-`run_vault_write`'s own "never trust a passed-in identity" convention --
+`run_interrogate`'s own "never trust a passed-in identity" convention --
 the manifest's own `source_id` field is a display label, never consumed for
 lookups.
 """
@@ -46,9 +46,14 @@ from pathlib import Path
 from typing import Any
 
 from axial.envelope import compute_source_id
+from axial.interrogate import (
+    InterrogateError,
+    _default_answers_dir,
+    answers_checkpoint_path,
+    load_answer_checkpoint,
+    run_interrogate,
+)
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
-from axial.tag import TagError, _default_tags_dir, load_tag_checkpoint, tags_checkpoint_path
-from axial.vault import VaultError, run_vault_write
 
 PASS_VERDICT = "PASS"
 FAIL_VERDICT = "FAIL"
@@ -164,15 +169,17 @@ def load_manifest(manifest_path: str | Path) -> list[Canary]:
     return canaries
 
 
-def _count_chunks(tags_dir: Path, source_id: str) -> tuple[int, int]:
-    """Total chunk count and quarantined-chunk count for `source_id`, read
-    straight from its tag-pass checkpoint (module docstring: the quarantine
-    bridge). `(0, 0)` when no checkpoint exists yet (e.g. the ingest aborted
-    before tagging a single chunk)."""
-    checkpoint_path = tags_checkpoint_path(source_id, tags_dir)
-    records = load_tag_checkpoint(checkpoint_path)
+def _count_chunks(answers_dir: Path, source_id: str) -> tuple[int, int]:
+    """Total note count and quarantined-note count for `source_id`, read
+    straight from its interrogation-pass checkpoint (module docstring: the
+    quarantine bridge). `(0, 0)` when no checkpoint exists yet (e.g. the run
+    aborted before interrogating a single note). A record with no `answers`
+    key -- a failure (`failure_reason`) or a garble-backstop skip
+    (`skip_reason`) -- is this gate's quarantined-equivalent count."""
+    checkpoint_path = answers_checkpoint_path(source_id, answers_dir)
+    records = load_answer_checkpoint(checkpoint_path)
     total = len(records)
-    quarantined = sum(1 for record in records if record.get("quarantine_reason") is not None)
+    quarantined = sum(1 for record in records if "answers" not in record)
     return total, quarantined
 
 
@@ -181,39 +188,38 @@ def evaluate_canary(
     client: LLMClient | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
 ) -> CanaryResult:
-    """Ingest one canary end-to-end (a single `run_vault_write` attempt) and
+    """Run one canary end-to-end (a single `run_interrogate` attempt) and
     evaluate it against the three criteria this command checks (module
     docstring)."""
     source_id = compute_source_id(canary.source_path)
-    tags_dir = _default_tags_dir(config_path)
+    answers_dir = _default_answers_dir(config_path)
 
     reasons: list[str] = []
     completed = True
 
     start = time.monotonic()
     try:
-        run_vault_write(
+        run_interrogate(
             canary.source_path,
             client=client,
             config_path=config_path,
-            tags_dir=tags_dir,
         )
-    except VaultError as exc:
+    except InterrogateError as exc:
         completed = False
         reasons.append(f"source-fatal error (no single-attempt completion): {exc}")
     duration_sec = time.monotonic() - start
 
-    # A corrupt/unreadable tag checkpoint (e.g. a torn tail from a hard kill
-    # mid-write -- the exact incident that motivated this gate, issue #121
-    # reviewer finding 1) must fail THIS canary's row, not abort the whole
-    # gate run: the quarantine fraction can't be verified, so this canary
-    # fails safe rather than crashing with a bare traceback.
+    # A corrupt/unreadable answer checkpoint (e.g. a torn tail from a hard
+    # kill mid-write -- the exact incident that motivated this gate, issue
+    # #121 reviewer finding 1) must fail THIS canary's row, not abort the
+    # whole gate run: the quarantine fraction can't be verified, so this
+    # canary fails safe rather than crashing with a bare traceback.
     try:
-        total_chunks, quarantine_count = _count_chunks(tags_dir, source_id)
-    except TagError as exc:
+        total_chunks, quarantine_count = _count_chunks(answers_dir, source_id)
+    except InterrogateError as exc:
         total_chunks, quarantine_count = 0, 0
         reasons.append(
-            f"corrupt or unreadable tag checkpoint (cannot verify quarantine budget): {exc}"
+            f"corrupt or unreadable answer checkpoint (cannot verify quarantine budget): {exc}"
         )
 
     result = CanaryResult(

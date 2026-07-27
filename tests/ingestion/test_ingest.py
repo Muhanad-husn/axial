@@ -11,13 +11,23 @@ When  the user runs `axial ingest <worklist>`
 Then  the already-completed source is skipped: exactly one
       `skip: ... already ingested` line names it, and NO pipeline work (no
       prose note, no artifact note) is produced for it
-And   the other two sources are ingested via the existing vault-write path
-      (chunk->tag->artifacts->xref->vault) and each gets exactly one newly
-      appended results row recording vault_status=OK
-And   the run exits 0
+And   the other two sources are attempted -- each gets exactly one newly
+      appended results row -- and the run exits 0
 And   the results file grows by APPEND, not overwrite: the pre-seeded row
       for the skipped source is still present, byte-for-byte unchanged,
       alongside the two new rows
+
+Issue #414 (D4/D5) re-pointed `run_ingest`'s per-source outcome: it drives
+`axial.vault.run_vault_write`, which is now a stub that always raises
+`VaultWriteRetiredError` (pending issue #411, gated behind unbuilt slices
+04/05) rather than the tag/xref-composing pipeline this test originally
+locked. The skip guard and the append-not-overwrite results-file contract
+-- issue #119's own deliverable, and the actual subject of this test -- are
+untouched: they never reach `run_vault_write` at all for an already-done
+source, and the per-row appending mechanism is identical regardless of
+what status a fresh source's row carries. What changed is the fresh
+sources' own outcome: `vault_status=FAIL` (naming the retirement), no
+prose/artifact notes at all, since nothing today writes to the vault.
 
 See GitHub issue #119 ("fix(ops): ingest_worker.sh skips sources already
 ingested (vault=OK guard)") and its parent postmortem
@@ -603,17 +613,22 @@ def test_ingest_skips_already_completed_source_and_processes_the_rest(isolated_v
         f"{sorted(p.name for p in found_skipped_artifacts)}"
     )
 
-    # ---- Then: both FRESH sources were actually processed -- one prose
-    # ---- note per real chunk, one artifact note per real artifact.
+    # ---- Then: both FRESH sources were ATTEMPTED, not skipped -- but
+    # ---- `run_vault_write` is retired (issue #414/#411), so neither
+    # ---- produces any note. This is the one behavioral change from the
+    # ---- original slice-#119 contract; the skip guard above (module
+    # ---- docstring, seam decision 4a/4b) is untouched.
     for chunk_id in thesis_chunk_ids | multi_artifact_chunk_ids:
         matches = (
             [p for p in prose_dir.iterdir() if p.is_file() and p.stem == chunk_id]
             if prose_dir.exists()
             else []
         )
-        assert len(matches) == 1, (
-            f"expected exactly one prose note under {prose_dir} for chunk_id "
-            f"{chunk_id!r} (a fresh, non-skipped source), got {len(matches)}"
+        assert matches == [], (
+            f"expected no prose note under {prose_dir} for chunk_id "
+            f"{chunk_id!r} -- vault write is retired pending issue #411, so "
+            f"a fresh source is ATTEMPTED (not skipped) but writes nothing, "
+            f"got {len(matches)}"
         )
     for artifact_id in multi_artifact_artifact_ids:
         matches = (
@@ -621,10 +636,10 @@ def test_ingest_skips_already_completed_source_and_processes_the_rest(isolated_v
             if artifacts_dir.exists()
             else []
         )
-        assert len(matches) == 1, (
-            f"expected exactly one artifact note under {artifacts_dir} for "
-            f"artifact_id {artifact_id!r} (a fresh, non-skipped source), got "
-            f"{len(matches)}"
+        assert matches == [], (
+            f"expected no artifact note under {artifacts_dir} for "
+            f"artifact_id {artifact_id!r} -- vault write is retired pending "
+            f"issue #411, got {len(matches)}"
         )
 
     # ---- Then: the results file grew by APPEND, not overwrite.
@@ -660,13 +675,17 @@ def test_ingest_skips_already_completed_source_and_processes_the_rest(isolated_v
             f"{matching!r}"
         )
         row = matching[0]
-        assert row["vault_status"] == "OK", (
-            f"expected vault_status=OK for {fresh_pdf.name} (a stub-provider "
-            f"run that never fails), got {row['vault_status']!r}"
+        # `run_vault_write` always raises now (issue #414/#411), so every
+        # ATTEMPTED (non-skipped) source records FAIL -- the per-source
+        # failure-isolation path `run_ingest` already had (module docstring:
+        # "the loop continues"), not a new branch this test invents.
+        assert row["vault_status"] == "FAIL", (
+            f"expected vault_status=FAIL for {fresh_pdf.name} (vault write "
+            f"is retired pending issue #411), got {row['vault_status']!r}"
         )
-        assert row["exit_code"] == "0", (
-            f"expected exit_code=0 for {fresh_pdf.name}'s successful "
-            f"per-source pipeline run, got {row['exit_code']!r}"
+        assert row["exit_code"] == "1", (
+            f"expected exit_code=1 for {fresh_pdf.name}'s failed per-source "
+            f"pipeline run, got {row['exit_code']!r}"
         )
         assert row["source_path"].strip(), (
             f"expected a non-empty source_path column for {fresh_pdf.name}"

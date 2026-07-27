@@ -430,9 +430,7 @@ def test_default_ingest_fn_runs_the_full_chain_in_order_for_one_source(monkeypat
         domain_dir="config/domains/syria",
         envelopes_dir=None,
         chunks_dir=None,
-        tags_dir=None,
         artifacts_dir=None,
-        xref_dir=None,
         vault_dir=None,
     )
     source_path = tmp_path / "alpha.pdf"

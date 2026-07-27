@@ -4,12 +4,12 @@
 `source_id` is a content hash (`axial.envelope.compute_source_id`, `<stem>-
 <sha12>`), so renaming or re-saving a source file mints a fresh id and
 strands every derived artifact the OLD id produced -- its tree, envelope,
-chunks, tags, artifacts, xref records, and vault notes all keep living on
-disk under the dead id. Nothing else in this codebase cleans that up.
+chunks, artifacts, and vault notes all keep living on disk under the dead
+id. Nothing else in this codebase cleans that up.
 
 `axial reconcile gc` builds the **live** keep-set by running
-`compute_source_id()` over every file in `data/sources/`, scans the seven
-derived surfaces through the SAME path seam each producer already uses
+`compute_source_id()` over every file in `data/sources/`, scans the derived
+surfaces through the SAME path seam each producer already uses
 (`_default_chunks_dir` and siblings), and attributes every file it finds to
 a source_id. A file whose id is not in the keep set is an orphan. Dry run
 (no flags) is the default and removes nothing; `--apply` shows the same
@@ -20,8 +20,17 @@ confidently attributed (the vault-note wrinkle -- a note is named by
 `chunk_id`/`artifact_id`, not `source_id`) is reported *unattributed* and
 left in place -- when in doubt, keep.
 
-Six of the seven derived surfaces are named directly by source_id
-(`<source_id>.json`/`.jsonl`); the seventh, the vault, is named by
+`tags` and `xref` were two of the original seven derived surfaces; both are
+retired (issue #414, plans/phase-a-v1/README.md D4/D5) along with the
+passes that produced them, and dropped from the scan below rather than left
+pointing at directories nothing writes to anymore. `data/answers/` (the
+interrogation pass's own checkpoint) is a new derived surface this scan does
+not yet cover -- mirrors how `data/source_meta/` waited for its own field
+and scan row rather than being added speculatively; add `answers` here when
+its own reconcile need is real, not now.
+
+The surviving derived surfaces are named directly by source_id
+(`<source_id>.json`/`.jsonl`); the vault is the one exception, named by
 `chunk_id`/`artifact_id`. A vault note is attributed by its frontmatter
 `source_id` when present and readable; failing that, by the longest
 already-known source_id that prefixes its filename (every `chunk_id`/
@@ -46,17 +55,14 @@ from axial.envelope import _default_envelopes_dir, compute_source_id
 from axial.extract import TREES_DIR
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_vault_dir
 from axial.query.reader import MalformedNoteError, _read_frontmatter
-from axial.tag import _default_tags_dir
-from axial.xref import _default_xref_dir
 
 SOURCES_DIR = Path("data/sources")
 RECONCILE_LOG_DIR = Path("data/logs/reconcile")
 
 # A source_id is always `<stem>-<12 lowercase hex chars>`
 # (`axial.envelope.compute_source_id`). A derived-dir filename whose stem
-# doesn't end this way is not source-scoped at all -- e.g.
-# `data/tags/theory_school_candidates.jsonl` -- and is never attributed to
-# a source, orphan or otherwise (never even reported).
+# doesn't end this way is not source-scoped at all, and is never attributed
+# to a source, orphan or otherwise (never even reported).
 _SOURCE_ID_RE = re.compile(r".+-[0-9a-f]{12}$")
 
 # The chunk pass's skip-sidecar suffix (`axial.chunk.chunks_skips_sidecar_
@@ -101,16 +107,16 @@ class EmptyKeepSetError(ReconcileError):
 class DerivedDirs:
     """The derived-dir surfaces reconcile scans -- an explicit constant,
     one field per surface, not a plugin registry (over-engineering
-    tripwire named in the slice plan). `data/source_meta/` (issue #285)
-    becomes an eighth surface once it lands; add its field and scan row
-    then, not now."""
+    tripwire named in the slice plan). `tags` and `xref` were retired along
+    with the passes that produced them (issue #414, D4/D5); `data/answers/`
+    (the interrogation pass's checkpoint) is not yet a surface here, same as
+    `data/source_meta/` before it -- add its field and scan row when its own
+    reconcile need is real, not now."""
 
     trees: Path
     envelopes: Path
     chunks: Path
-    tags: Path
     artifacts: Path
-    xref: Path
     vault: Path
 
 
@@ -125,9 +131,7 @@ def default_derived_dirs(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> De
         trees=TREES_DIR,
         envelopes=_default_envelopes_dir(config_path),
         chunks=_default_chunks_dir(config_path),
-        tags=_default_tags_dir(config_path),
         artifacts=_default_artifacts_dir(config_path),
-        xref=_default_xref_dir(config_path),
         vault=default_vault_dir(config_path),
     )
 
@@ -219,7 +223,7 @@ def scan_orphans(
 
     keep_set = live_source_ids(sources_dir)
 
-    flat_dirs = (dirs.trees, dirs.envelopes, dirs.chunks, dirs.tags, dirs.artifacts, dirs.xref)
+    flat_dirs = (dirs.trees, dirs.envelopes, dirs.chunks, dirs.artifacts)
     known_ids = set(keep_set)
     flat_files: list[tuple[Path, str]] = []
     for directory in flat_dirs:

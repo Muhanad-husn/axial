@@ -117,11 +117,8 @@ from __future__ import annotations
 import json
 
 import axial.chunk as chunk_module
-import axial.tag as tag_module
-import axial.xref as xref_module
 from axial.chunk import run_chunk_recursive
 from axial.envelope import compute_source_id
-from axial.llm import TAG_PASS_NAME, XREF_PASS_NAME, StubLLMClient
 from axial.router import APPARATUS, ARTIFACT, PROSE, apparatus_reason, route_for
 
 # --- distinct, greppable sentinel body text for every block ----------------
@@ -358,79 +355,16 @@ def test_source_router_classifies_blocks_by_label_before_chunking(tmp_path, monk
 # ---------------------------------------------------------------------------
 # Given routed prose chunks (data/chunks/<source_id>.jsonl) and the router's
 #       recorded drops
-# When  the operator runs the downstream passes (tag, xref) and then
-#       `axial chunk examine`
-# Then  no tag/xref pass re-derives the prose/non-prose decision -- every
-#       prose chunk reaches its pass
-# And   `axial chunk examine` reports the dropped document_index / index /
+# When  the operator runs `axial chunk examine`
+# Then  `axial chunk examine` reports the dropped document_index / index /
 #       footnote blocks with the router's reasons (the single source of skip
 #       truth)
-# And   a genuinely garbled prose chunk is still caught by the retained
-#       backstop, not silently tagged
 #
-# The red lever
-# ---------------------------------------------------------------------------
-# Today (before this slice), `axial.tag.run_tag` and `axial.xref.run_xref`
-# both call `axial.nonprose_guard.non_prose_skip_reason` as their PRIMARY
-# gate on every chunk -- a heuristic with TWO independent arms: skip if
-# `len(text) > 30_000` chars, OR skip if the non-alphabetic ratio exceeds
-# 40%. The size arm alone is what this test levers: `_LARGE_LEGIT_TEXT`
-# below is ordinary, low-non-alpha English prose (~17.6% non-alpha) that is
-# nonetheless > 30,000 chars -- today's primary gate skips it (never reaches
-# an LLM call) purely because it is long, even though it is exactly the kind
-# of "legitimate prose" §7.7 says "size never triggers a skip" for. After
-# this slice demotes the primary gate to a garble-only backstop (mirroring
-# `axial.chunk._garbage_section_skip_reason`'s own "non-alpha arm ONLY"
-# precedent), this same chunk MUST reach its pass. `_GARBLED_TEXT` is the
-# control: short (well under 30,000 chars) but heavily non-alphabetic
-# (~69.2%), so it isolates the RETAINED garble arm from the RETIRED size
-# arm -- it must stay skipped both before and after this slice, proving the
-# backstop is a deliberate, logged skip, never a silent loss.
-#
-# Seam decision 1 -- real on-disk chunk artifact, real `read_chunks`, no
-# `read_chunks` monkeypatch
-# ---------------------------------------------------------------------------
-# Unlike tests/test_xref_input_guard.py and tests/test_tag_artifacts_input_
-# guard.py (which monkeypatch `read_chunks` to hand back synthetic records
-# in-memory), this test writes real chunk records to
-# `<chunks_dir>/<source_id>.jsonl` (via the real `axial.chunk.
-# build_chunk_records` + `chunks_checkpoint_path`, the same helpers `axial
-# chunk` itself uses) and a real router-owned skip sidecar to
-# `<chunks_dir>/<source_id>.skips.jsonl` (via the real `axial.chunk.
-# chunks_skips_sidecar_path`), then drives `run_tag`/`run_xref` with
-# `chunks_dir=` pointed at that directory so they go through the REAL
-# `axial.chunk.read_chunks` disk-reading path -- and `axial.chunk.
-# examine_chunks` reads the very same on-disk artifact afterward. This is
-# the "Given routed prose chunks (data/chunks/<source_id>.jsonl) and the
-# router's recorded drops" half of the Gherkin literally, not a stand-in.
-#
-# Seam decision 2 -- `run_artifacts` is monkeypatched inside `run_xref` only
-# ---------------------------------------------------------------------------
-# `run_xref` internally calls `run_artifacts`, which calls `axial.artifacts.
-# extract` on the real source path -- unrelated to this slice (artifact
-# routing/captioning is locked green from slice 03) and no real docling call
-# is warranted here, so `xref_module.run_artifacts` is monkeypatched to
-# return one fixed, known artifact id, exactly mirroring tests/
-# test_xref_input_guard.py's own `_make_env` seam.
-#
-# Seam decision 3 -- counting stub clients, keyed by chunk_id seen in the
-# prompt
-# ---------------------------------------------------------------------------
-# Mirrors tests/test_tag_artifacts_input_guard.py's `_TagCountingClient` /
-# tests/test_xref_input_guard.py's `_CountingClient` exactly: a fake client
-# that always answers with a well-formed, schema-valid canned response (so
-# no re-ask path ever fires) while recording every prompt it was called
-# with. "The guarded item's own turn never reached the LLM at all" is proven
-# directly through call counts and prompt-content membership -- the same
-# discipline the slice-02/#132 guard tests already use, now applied to
-# prove the OPPOSITE outcome for the large-legit chunk (it must be called)
-# while still proving it for the garbled chunk (it must not).
-#
-# Test hygiene: every path this test touches lives under pytest's own
-# `tmp_path`; the real `config/domains/syria` domain is loaded (the schema/
-# codebook `run_tag` requires to run at all -- the same real, git-tracked
-# domain every other in-process `run_tag` acceptance test already relies
-# on), but no real LLM/network/docling call is ever made.
+# Issue #414 (D4/D5) retired this section's own tag/xref-pass tests --
+# `_LARGE_LEGIT_TEXT`/`_GARBLED_TEXT` originally proved the retired tag and
+# xref passes' shared `non_prose_skip_reason` guard demoted correctly from a
+# primary gate to a garble-only backstop. The fixtures below still back the
+# surviving `axial chunk examine` test, which never touched tag/xref at all.
 
 _LARGE_LEGIT_SENTENCE = (
     "The council debated policy long into the night, and eventually reached a "
@@ -507,168 +441,6 @@ def _write_router_skip_sidecar(chunks_dir, source_id: str) -> None:
     with skips_path.open("w", encoding="utf-8") as handle:
         for record in skip_records:
             handle.write(json.dumps(record) + "\n")
-
-
-class _TagCountingClient:
-    """Fake LLMClient: counts every tag-pass call made, always answering with
-    the well-formed, schema-valid canned tag response (mirrors tests/
-    test_tag_artifacts_input_guard.py's `_TagCountingClient`). Must never be
-    called for a chunk the backstop is expected to still catch."""
-
-    def __init__(self):
-        self.prompts: list[str] = []
-
-    def complete(self, prompt: str, pass_name: str | None = None) -> str:
-        assert pass_name == TAG_PASS_NAME, (
-            f"expected pass_name={TAG_PASS_NAME!r}, got {pass_name!r}"
-        )
-        self.prompts.append(prompt)
-        return StubLLMClient._CANNED_TAG_RESPONSE
-
-    @property
-    def call_count(self) -> int:
-        return len(self.prompts)
-
-
-class _XrefCountingClient:
-    """Fake LLMClient: counts every xref-pass call made, always answering
-    with a reference to the one known artifact (mirrors tests/
-    test_xref_input_guard.py's `_CountingClient`). Must never be called for a
-    chunk the backstop is expected to still catch."""
-
-    def __init__(self, artifact_id: str):
-        self.prompts: list[str] = []
-        self._artifact_id = artifact_id
-
-    def complete(self, prompt: str, pass_name: str | None = None) -> str:
-        assert pass_name == XREF_PASS_NAME, (
-            f"expected pass_name={XREF_PASS_NAME!r}, got {pass_name!r}"
-        )
-        self.prompts.append(prompt)
-        return json.dumps({"referenced_artifact_ids": [self._artifact_id]})
-
-    @property
-    def call_count(self) -> int:
-        return len(self.prompts)
-
-
-_XREF_ARTIFACT_ID = "art-1"
-
-DOMAIN_DIR = "config/domains/syria"
-
-
-def test_tag_pass_no_longer_pre_skips_large_legit_chunk_but_backstop_still_catches_garble(
-    tmp_path, monkeypatch, capsys
-):
-    source_path = tmp_path / "tag_gate_retire_source.txt"
-    source_path.write_text("slice-04 tag gate-retire source", encoding="utf-8")
-    source_id = compute_source_id(source_path)
-
-    chunks_dir = tmp_path / "chunks"
-    chunk_ids = _write_routed_chunk_artifact(chunks_dir, source_id)
-
-    client = _TagCountingClient()
-    records = tag_module.run_tag(
-        source_path, client=client, domain_dir=DOMAIN_DIR, chunks_dir=chunks_dir, votes=1
-    )
-
-    assert isinstance(records, list), (
-        f"expected run_tag to return a list, got {type(records).__name__}: {records!r}"
-    )
-
-    tagged_chunk_ids = {r.get("chunk_id") for r in records}
-    assert chunk_ids["large_legit"] in tagged_chunk_ids, (
-        f"expected the large-but-legitimate prose chunk {chunk_ids['large_legit']!r} "
-        f"(> 30,000 chars, ~{_LARGE_LEGIT_NON_ALPHA_RATIO:.1%} non-alpha) to REACH the "
-        f"tag pass -- the retired size arm must no longer pre-skip it -- but it produced "
-        f"no tagged record. Tagged chunk_ids: {sorted(tagged_chunk_ids)!r}"
-    )
-    assert chunk_ids["prose_a"] in tagged_chunk_ids
-    assert chunk_ids["garbled"] not in tagged_chunk_ids, (
-        f"expected the genuinely garbled chunk {chunk_ids['garbled']!r} "
-        f"(~{_GARBLED_NON_ALPHA_RATIO:.1%} non-alpha) to STILL be caught by the "
-        f"retained backstop -- it must never be silently tagged -- but found a "
-        f"tagged record for it."
-    )
-
-    assert client.call_count == 2, (
-        f"expected exactly 2 tag-pass LLM calls (prose_a + the large-legit chunk); "
-        f"the garbled chunk must be skipped before any LLM call for its own turn, "
-        f"got {client.call_count}"
-    )
-    joined_prompts = "".join(client.prompts)
-    assert _LARGE_LEGIT_TEXT in joined_prompts, (
-        "the large-but-legitimate chunk's own text must reach a tag-pass LLM prompt "
-        "(proving it was not pre-skipped on size)"
-    )
-    assert _GARBLED_TEXT not in joined_prompts, (
-        "the garbled chunk's own text must never reach a tag-pass LLM prompt"
-    )
-
-    err = capsys.readouterr().err
-    assert chunk_ids["garbled"] in err and "skip" in err.lower(), (
-        f"expected the backstop-caught garbled chunk to be logged to stderr with a "
-        f"reason, got: {err!r}"
-    )
-    assert chunk_ids["large_legit"] not in err, (
-        f"expected the large-legit chunk to NEVER be logged as skipped, got: {err!r}"
-    )
-
-
-def test_xref_pass_no_longer_pre_skips_large_legit_chunk_but_backstop_still_catches_garble(
-    tmp_path, monkeypatch, capsys
-):
-    source_path = tmp_path / "xref_gate_retire_source.txt"
-    source_path.write_text("slice-04 xref gate-retire source", encoding="utf-8")
-    source_id = compute_source_id(source_path)
-
-    chunks_dir = tmp_path / "chunks"
-    chunk_ids = _write_routed_chunk_artifact(chunks_dir, source_id)
-
-    monkeypatch.setattr(
-        xref_module, "run_artifacts", lambda path, **kwargs: [{"artifact_id": _XREF_ARTIFACT_ID}]
-    )
-
-    client = _XrefCountingClient(_XREF_ARTIFACT_ID)
-    pairs = xref_module.run_xref(source_path, client=client, chunks_dir=chunks_dir)
-
-    referencing_chunk_ids = {pair["chunk_id"] for pair in pairs}
-    assert chunk_ids["large_legit"] in referencing_chunk_ids, (
-        f"expected the large-but-legitimate prose chunk {chunk_ids['large_legit']!r} "
-        f"(> 30,000 chars, ~{_LARGE_LEGIT_NON_ALPHA_RATIO:.1%} non-alpha) to REACH the "
-        f"xref pass -- the retired size arm must no longer pre-skip it -- but no pair "
-        f"was produced for it. Pairs: {pairs!r}"
-    )
-    assert chunk_ids["prose_a"] in referencing_chunk_ids
-    assert chunk_ids["garbled"] not in referencing_chunk_ids, (
-        f"expected the genuinely garbled chunk {chunk_ids['garbled']!r} "
-        f"(~{_GARBLED_NON_ALPHA_RATIO:.1%} non-alpha) to STILL be caught by the "
-        f"retained backstop -- it must never reach the xref LLM -- but found a pair "
-        f"for it."
-    )
-
-    assert client.call_count == 2, (
-        f"expected exactly 2 xref-pass LLM calls (prose_a + the large-legit chunk); "
-        f"the garbled chunk must be skipped before any LLM call for its own turn, "
-        f"got {client.call_count}"
-    )
-    joined_prompts = "".join(client.prompts)
-    assert _LARGE_LEGIT_TEXT in joined_prompts, (
-        "the large-but-legitimate chunk's own text must reach an xref-pass LLM prompt "
-        "(proving it was not pre-skipped on size)"
-    )
-    assert _GARBLED_TEXT not in joined_prompts, (
-        "the garbled chunk's own text must never reach an xref-pass LLM prompt"
-    )
-
-    err = capsys.readouterr().err
-    assert chunk_ids["garbled"] in err and "skip" in err.lower(), (
-        f"expected the backstop-caught garbled chunk to be logged to stderr with a "
-        f"reason, got: {err!r}"
-    )
-    assert chunk_ids["large_legit"] not in err, (
-        f"expected the large-legit chunk to NEVER be logged as skipped, got: {err!r}"
-    )
 
 
 def test_chunk_examine_reports_router_apparatus_drops_as_single_source_of_skip_truth(tmp_path):

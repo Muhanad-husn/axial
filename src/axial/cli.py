@@ -32,17 +32,6 @@ from axial.distill.classify_embedding import AXES as DISTILL_CLASSIFY_EMBEDDING_
 from axial.distill.classify_embedding import ClassifyEmbeddingError, run_classify_embedding
 from axial.distill.embed import EmbedError, run_embed
 from axial.distill.readiness import ReadinessError, run_readiness
-from axial.distill.verdict import (
-    DEFAULT_COST_PROBE_SAMPLE_SIZE,
-    DEFAULT_COST_PROBE_VOTES,
-    DEFAULT_DRIFT_SAMPLE_SIZE,
-    DEFAULT_DRIFT_SEED,
-    DEFAULT_OPERATING_THRESHOLD,
-    VerdictError,
-    run_drift_check,
-    run_tag_cost_probe,
-    run_verdict,
-)
 from axial.drive import DEFAULT_SECRETS_PATH as DRIVE_SECRETS_PATH
 from axial.drive import DriveSecretsError, _load_drive_secrets, run_drive_ingest
 from axial.envelope import EnvelopeError, MissingSourceError, compute_source_id, run_envelope
@@ -77,7 +66,6 @@ from axial.intake import IntakeError, intake
 from axial.llm import (
     ENVELOPE_PASS_NAME,
     NOTE_INTERROGATE_PASS_NAME,
-    TAG_PASS_NAME,
     LLMError,
     get_client,
 )
@@ -92,20 +80,18 @@ from axial.panel import (
     format_panel_run,
     run_panel,
 )
-from axial.paths import default_analyses_dir
+from axial.paths import DEFAULT_DOMAIN_DIR, default_analyses_dir
 from axial.pipeline_ready import PipelineReadyError, run_pipeline_ready
 from axial.polity_canonical import PolityCanonicalError, run_polity_build, run_polity_report
 from axial.query.reader import QueryError
 from axial.reconcile import ReconcileError, format_gc_report, run_gc
 from axial.run import (
     PASS_REGISTRY,
-    attach_theory_school_rates,
-    render_theory_school_rates,
     run_pass,
 )
 from axial.runlog import run_context
 from axial.schema import SchemaError, load_schema
-from axial.tag import DEFAULT_DOMAIN_DIR, TagError, run_tag
+from axial.tagging_schema import TagError
 from axial.validate import cross_validate
 from axial.validators import (
     AttributionValidatorError,
@@ -122,7 +108,6 @@ from axial.validators.coverage import (
     validate_coverage_and_confidence,
 )
 from axial.vault import VaultError, run_vault_write
-from axial.xref import XrefError, run_xref
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -184,22 +169,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    tag_parser = subparsers.add_parser(
-        "tag",
-        help="run the tagging pass, emitting tagged chunk records to stdout",
-    )
-    tag_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
-    tag_parser.add_argument(
-        "--domain",
-        dest="domain_dir",
-        default=None,
-        help=(
-            "path to a domain directory containing schema.yaml and codebook.yaml "
-            "(default: resolved from config/pipeline.yaml's paths.domain_dir, "
-            f"falling back to {DEFAULT_DOMAIN_DIR} when absent)"
-        ),
-    )
-
     interrogate_parser = subparsers.add_parser(
         "interrogate",
         help=(
@@ -248,23 +217,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     artifacts_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
     artifacts_parser.add_argument(
-        "--domain",
-        default=str(DEFAULT_DOMAIN_DIR),
-        help=(
-            "path to a domain directory containing schema.yaml and codebook.yaml "
-            f"(default: {DEFAULT_DOMAIN_DIR})"
-        ),
-    )
-
-    xref_parser = subparsers.add_parser(
-        "xref",
-        help=(
-            "run the cross-reference-detection pass, emitting (chunk_id, "
-            "artifact_id) reference pairs to stdout"
-        ),
-    )
-    xref_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
-    xref_parser.add_argument(
         "--domain",
         default=str(DEFAULT_DOMAIN_DIR),
         help=(
@@ -645,74 +597,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="the tag axis to train a classifier for",
     )
 
-    cost_probe_parser = distill_subparsers.add_parser(
-        "tag-cost-probe",
-        help=(
-            "stage-5e outer eval: fire a small number of REAL tag-pass "
-            "completions (production's own multi-axis prompt and votes=3) "
-            "and read the real dollar cost back off the client -- issue "
-            "#363's price table, live-measured -- data/distill/"
-            "tag_cost_probe_manifest.json. Live LLM calls; costs real money."
-        ),
-    )
-    cost_probe_parser.add_argument(
-        "--domain-dir",
-        default=str(DEFAULT_DOMAIN_DIR),
-        help=f"domain config directory (default: {DEFAULT_DOMAIN_DIR})",
-    )
-    cost_probe_parser.add_argument(
-        "--sample-size",
-        type=int,
-        default=DEFAULT_COST_PROBE_SAMPLE_SIZE,
-        help=f"number of real chunks to probe (default: {DEFAULT_COST_PROBE_SAMPLE_SIZE})",
-    )
-    cost_probe_parser.add_argument(
-        "--votes",
-        type=int,
-        default=DEFAULT_COST_PROBE_VOTES,
-        help=f"draws per chunk, mirroring production (default: {DEFAULT_COST_PROBE_VOTES})",
-    )
-
-    drift_check_parser = distill_subparsers.add_parser(
-        "drift-check",
-        help=(
-            "stage-5e drift-monitor dry run (DEC-32/#296): the graduated "
-            "classifiers predict a small sample of already-tagged, non-gold "
-            "chunks; the LLM freshly re-tags the same sample; compare -- "
-            "data/distill/drift_check_manifest.json. Live LLM calls."
-        ),
-    )
-    drift_check_parser.add_argument(
-        "--domain-dir",
-        default=str(DEFAULT_DOMAIN_DIR),
-        help=f"domain config directory (default: {DEFAULT_DOMAIN_DIR})",
-    )
-    drift_check_parser.add_argument(
-        "--sample-size",
-        type=int,
-        default=DEFAULT_DRIFT_SAMPLE_SIZE,
-        help=f"number of chunks to spot-check (default: {DEFAULT_DRIFT_SAMPLE_SIZE})",
-    )
-    drift_check_parser.add_argument(
-        "--seed", type=int, default=DEFAULT_DRIFT_SEED, help="sampling seed (reproducibility only)"
-    )
-
-    verdict_parser = distill_subparsers.add_parser(
-        "verdict",
-        help=(
-            "stage-5e outer eval verdict: combine the 5d classify manifests, "
-            "the tag-cost probe, and the drift check into one quality-per-"
-            "dollar verdict -- data/distill/quality_per_dollar_manifest.json. "
-            "No network; reads already-written manifests only."
-        ),
-    )
-    verdict_parser.add_argument(
-        "--threshold",
-        type=float,
-        default=DEFAULT_OPERATING_THRESHOLD,
-        help=f"confidence-threshold operating point (default: {DEFAULT_OPERATING_THRESHOLD})",
-    )
-
     panel_parser = subparsers.add_parser(
         "panel",
         help=(
@@ -1038,50 +922,6 @@ def _chunk_examine() -> int:
     return 0
 
 
-def _tag(
-    source_path: str,
-    domain_dir: str,
-    *,
-    root: Path | None = None,
-    clock: Callable[[], str] | None = None,
-) -> int:
-    """Run the tagging pass on `source_path`, wrapped in a run-logging
-    context (issue #270 slice 02): one `run.jsonl` record per CALL (per
-    source, not per chunk -- `run_tag` makes one LLM call per chunk
-    internally, but this wraps the whole invocation in a single record, so
-    `run.jsonl` stays ~one row/source, mirroring the plan's per-source
-    granularity default). `root`/`clock` mirror `_extract`/`_envelope`."""
-    with run_context("tag", root=root, clock=clock) as run:
-        start = time.monotonic()
-        client = get_client()
-        model = client.model_for_pass(TAG_PASS_NAME)
-        try:
-            records = run_tag(source_path, client=client, domain_dir=domain_dir)
-        except TagError as exc:
-            run.record(
-                source_id=_safe_source_id(source_path),
-                pass_name="tag",
-                model=model,
-                status="error",
-                duration_sec=time.monotonic() - start,
-                error=str(exc),
-            )
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
-
-        run.record(
-            source_id=_safe_source_id(source_path),
-            pass_name="tag",
-            model=model,
-            status="ok",
-            duration_sec=time.monotonic() - start,
-            error=None,
-        )
-
-    print(json.dumps(records))
-    return 0
-
-
 def _interrogate(
     source_path: str,
     domain_dir: str | None,
@@ -1145,8 +985,8 @@ def _artifacts(source_path: str, domain: str) -> int:
     try:
         records = run_artifacts(source_path, domain_dir=domain)
     except (ArtifactsError, TagError) as exc:
-        # `TagError` (specifically `axial.tag.TagNotInSchemaError`) is
-        # caught here too: `axial.artifacts` reuses that shared error for
+        # `TagError` (specifically `axial.tagging_schema.TagNotInSchemaError`)
+        # is caught here too: `axial.artifacts` reuses that shared error for
         # both the `artifact_role` and `field` axes (issue #32 slice 02's
         # carry-in convergence), and it is a `TagError`, not an
         # `ArtifactsError` -- so this CLI handler must catch both to avoid a
@@ -1155,17 +995,6 @@ def _artifacts(source_path: str, domain: str) -> int:
         return 1
 
     print(json.dumps(records))
-    return 0
-
-
-def _xref(source_path: str, domain: str) -> int:
-    try:
-        pairs = run_xref(source_path, domain_dir=domain)
-    except XrefError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    print(json.dumps(pairs))
     return 0
 
 
@@ -1321,29 +1150,13 @@ def _run(
     domain_dir: str,
     ledger_path: str | None = None,
 ) -> int:
-    summary, exit_code = run_pass(
+    _summary, exit_code = run_pass(
         pass_name,
         worklist_path,
         corpus=corpus,
         domain_dir=domain_dir,
         ledger_path=Path(ledger_path) if ledger_path is not None else None,
     )
-
-    # Issue #288: attach and print the theory_school not-applicable/unlisted
-    # rates report as a post-processing step over this run's own OK/SKIP
-    # sources -- a CONSUMER of `summary`, never reaching into `run_pass`'s
-    # own loop, and safe to call after any pass (a pass with no persisted
-    # theory_school data simply yields no rows to print). Never affects
-    # `exit_code`: the report must never block or fail the run.
-    summary = attach_theory_school_rates(summary)
-    rendered = render_theory_school_rates(summary.rates or [])
-    if rendered:
-        # Rows are keyed by source_id (module docstring), which can carry a
-        # source filename's own diacritics -- same encoding hazard `run_pass`
-        # guards against, so this print goes through the same safe path.
-        _print_encoding_safe("theory_school not-applicable/unlisted rates:")
-        _print_encoding_safe(rendered)
-
     return exit_code
 
 
@@ -1605,64 +1418,6 @@ def _distill_classify(axis: str) -> int:
     return 0
 
 
-def _distill_tag_cost_probe(domain_dir: str, sample_size: int, votes: int) -> int:
-    try:
-        schema = load_schema(domain_dir)
-        codebook = load_codebook(domain_dir)
-    except (SchemaError, CodebookError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    client = get_client()
-    try:
-        result = run_tag_cost_probe(client, schema, codebook, sample_size=sample_size, votes=votes)
-    except VerdictError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    print(f"model: {result.model}")
-    print(f"sample_chunk_count: {result.sample_chunk_count}")
-    print(f"votes: {result.votes}")
-    print(f"total_cost_usd: {result.total_cost_usd}")
-    print(f"cost_per_chunk_usd_at_votes: {result.cost_per_chunk_usd_at_votes}")
-    print(f"cost_per_chunk_usd_single_draw: {result.cost_per_chunk_usd_single_draw}")
-    print(f"manifest_path: {result.manifest_path}")
-    return 0
-
-
-def _distill_drift_check(domain_dir: str, sample_size: int, seed: int) -> int:
-    try:
-        schema = load_schema(domain_dir)
-        codebook = load_codebook(domain_dir)
-    except (SchemaError, CodebookError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    client = get_client()
-    try:
-        result = run_drift_check(client, schema, codebook, sample_size=sample_size, seed=seed)
-    except VerdictError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    print(f"sample_size: {result.sample_size}")
-    print(f"per_axis_agreement: {result.per_axis_agreement}")
-    print(f"manifest_path: {result.manifest_path}")
-    return 0
-
-
-def _distill_verdict(threshold: float) -> int:
-    try:
-        result = run_verdict(threshold=threshold)
-    except VerdictError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    print(f"overall_verdict: {result.overall_verdict}")
-    print(f"manifest_path: {result.manifest_path}")
-    return 0
-
-
 def _panel_run(
     records_dir: str, control_record_path: str, reviewers: int, out_path: str | None
 ) -> int:
@@ -1790,17 +1545,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "chunk":
         return _chunk(args.source_path)
 
-    if args.command == "tag":
-        return _tag(args.source_path, args.domain_dir)
-
     if args.command == "interrogate":
         return _interrogate(args.source_path, args.domain_dir, args.data_dir, args.limit)
 
     if args.command == "artifacts":
         return _artifacts(args.source_path, args.domain)
-
-    if args.command == "xref":
-        return _xref(args.source_path, args.domain)
 
     if args.command == "gold" and args.gold_command == "sample":
         return _gold_sample(args.min_size, args.max_size, args.seed)
@@ -1872,15 +1621,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "distill" and args.distill_command == "classify":
         return _distill_classify(args.axis)
-
-    if args.command == "distill" and args.distill_command == "tag-cost-probe":
-        return _distill_tag_cost_probe(args.domain_dir, args.sample_size, args.votes)
-
-    if args.command == "distill" and args.distill_command == "drift-check":
-        return _distill_drift_check(args.domain_dir, args.sample_size, args.seed)
-
-    if args.command == "distill" and args.distill_command == "verdict":
-        return _distill_verdict(args.threshold)
 
     if args.command == "panel" and args.panel_command == "run":
         return _panel_run(args.records, args.control_record, args.reviewers, args.out)

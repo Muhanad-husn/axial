@@ -50,17 +50,19 @@ done-predicate may consult its own checkpoints internally, but this module
 neither replaces nor reaches into them (source-level resume only); recursive
 or configurable corpus roots beyond the single `data/sources/` glob.
 
-Issue #288 (not-applicable/unlisted `theory_school` rates) has since been
-built at the bottom of this module -- `attach_theory_school_rates` and
-`render_theory_school_rates` -- as the promised CONSUMER of `RunSummary`:
-called explicitly after `run_pass` returns, never from inside its loop.
+Issue #288 (not-applicable/unlisted `theory_school` rates) built a CONSUMER
+of `RunSummary` at the bottom of this module, `attach_theory_school_rates`/
+`render_theory_school_rates`, called explicitly after `run_pass` returns.
+Retired along with the tag pass and its `theory_school` axis (issue #414,
+`plans/phase-a-v1/README.md` D4/D9) -- `RunSummary.rates` remains as an
+attachment point for a future consumer, unenriched by this module itself.
 """
 
 from __future__ import annotations
 
 import csv
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -79,16 +81,8 @@ from axial.extract import ExtractError, extract, tree_path
 from axial.ingest import WorklistError, read_worklist
 from axial.interrogate import InterrogateError, run_interrogate
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient, get_client
-from axial.tag import (
-    DEFAULT_DOMAIN_DIR,
-    TagError,
-    TheorySchoolSourceRate,
-    _default_tags_dir,
-    run_tag,
-    theory_school_rates_report,
-)
+from axial.paths import DEFAULT_DOMAIN_DIR
 from axial.vault import VaultError, run_vault_write
-from axial.xref import XrefError, _default_xref_dir, run_xref
 
 OK_STATUS = "OK"
 FAIL_STATUS = "FAIL"
@@ -247,25 +241,6 @@ def _invoke_chunk(source_path: str, client: LLMClient | None, config_path: Path,
     return run_chunk_recursive(source_path, config_path=config_path, client=client)
 
 
-def _invoke_tag(source_path: str, client: LLMClient | None, config_path: Path, domain_dir):
-    # Threads a real `tags_dir` (issue #325 follow-up): without one, `run_tag`
-    # never checkpoints a chunk, so its own #120 quarantine mechanism (and
-    # `tag.py`'s own resume logic) has nowhere durable to record a chunk and
-    # is a no-op through this call path -- exactly `run_vault_write`'s own
-    # internal `run_tag` call (`vault.py`), which resolves the identical
-    # default when its caller doesn't override it. This is the runner's own
-    # `tag` pass (`axial run tag`), not the standalone `axial tag <source>`
-    # debug command (`cli.py`'s `_tag`), which is unaffected and stays
-    # recompute-always by its own existing, documented design.
-    return run_tag(
-        source_path,
-        client=client,
-        config_path=config_path,
-        domain_dir=domain_dir,
-        tags_dir=_default_tags_dir(config_path),
-    )
-
-
 def _invoke_artifacts(source_path: str, client: LLMClient | None, config_path: Path, domain_dir):
     # Threads a real `artifacts_dir` (issue #424, the same defect #325 fixed
     # for `_invoke_tag` above): `run_artifacts`'s own checkpoint is OPT-IN,
@@ -273,32 +248,15 @@ def _invoke_artifacts(source_path: str, client: LLMClient | None, config_path: P
     # classified artifact is produced and then dropped on the floor -- the
     # LLM calls still happen, nothing ever lands on disk, and the ledger
     # still records OK, so a resumed run skips a source whose output was
-    # never written. `_default_artifacts_dir` is exactly what
-    # `run_vault_write` threads into its own direct `run_artifacts` call,
-    # which is why `data/artifacts/*.jsonl` exists at all today.
+    # never written. `_default_artifacts_dir` is the same default
+    # `axial artifacts`'s own standalone CLI path resolves, which is why
+    # `data/artifacts/*.jsonl` exists at all today.
     return run_artifacts(
         source_path,
         client=client,
         domain_dir=domain_dir,
         config_path=config_path,
         artifacts_dir=_default_artifacts_dir(config_path),
-    )
-
-
-def _invoke_xref(source_path: str, client: LLMClient | None, config_path: Path, domain_dir):
-    # Same defect as `_invoke_artifacts` above (issue #424): `run_xref` takes
-    # TWO opt-in checkpoint seams, both of which were left unthreaded here --
-    # its own `xref_dir` (per-chunk xref checkpoint) and `artifacts_dir`,
-    # which it forwards to its own internal `run_artifacts` call. Leaving
-    # either `None` means this arm made every LLM call and persisted
-    # nothing, exactly like the artifacts arm.
-    return run_xref(
-        source_path,
-        client=client,
-        domain_dir=domain_dir,
-        config_path=config_path,
-        artifacts_dir=_default_artifacts_dir(config_path),
-        xref_dir=_default_xref_dir(config_path),
     )
 
 
@@ -343,28 +301,27 @@ def _ledger_done_predicate(source_id: str, ledger_done_ids: set[str], config_pat
 
 
 # The pass registry (module docstring): a plain dict, not a plugin system --
-# eight known passes, all in this repo, each with a `(source_path, client,
+# six known passes, all in this repo, each with a `(source_path, client,
 # config_path, domain_dir)`-shaped invoker (via the `_invoke_*` adapters
 # above), the `*Error` base it declares, and its done-predicate. extract and
 # envelope declare their own persisted-output file as the done-signal; every
 # other pass -- lacking a single atomic per-source output file, since
-# chunk/tag/interrogate/artifacts/xref checkpoint per-note, a finer granularity this
+# chunk/interrogate/artifacts checkpoint per-note, a finer granularity this
 # runner does not reach into (module docstring) -- declares the runner's own
-# ledger.
+# ledger. `tag` and `xref` were retired (issue #414, plans/phase-a-v1/
+# README.md D4/D5): the interrogation pass above replaces both.
 PASS_REGISTRY: dict[str, PassDescriptor] = {
     "extract": PassDescriptor("extract", _invoke_extract, ExtractError, _tree_done_predicate),
     "envelope": PassDescriptor(
         "envelope", _invoke_envelope, EnvelopeError, _envelope_done_predicate
     ),
     "chunk": PassDescriptor("chunk", _invoke_chunk, ChunkError, _ledger_done_predicate),
-    "tag": PassDescriptor("tag", _invoke_tag, TagError, _ledger_done_predicate),
     "interrogate": PassDescriptor(
         "interrogate", _invoke_interrogate, InterrogateError, _ledger_done_predicate
     ),
     "artifacts": PassDescriptor(
         "artifacts", _invoke_artifacts, ArtifactsError, _ledger_done_predicate
     ),
-    "xref": PassDescriptor("xref", _invoke_xref, XrefError, _ledger_done_predicate),
     "vault-write": PassDescriptor(
         "vault-write", _invoke_vault_write, VaultError, _ledger_done_predicate
     ),
@@ -644,96 +601,3 @@ def run_pass(
     )
 
     return summary, 0
-
-
-# ---------------------------------------------------------------------------
-# Issue #288: not-applicable/unlisted theory_school rates report.
-#
-# A CONSUMER of `RunSummary` (module docstring, `RunSummary.rates`'s own
-# docstring): called explicitly by a caller (e.g. the CLI) after `run_pass`
-# has already returned, never by the loop itself -- attaching this report
-# never special-cases a pass by name (`PassDescriptor`'s own design note):
-# a source with no persisted theory_school data (any pass other than
-# tag/vault-write, or one this report has nothing to say about) simply
-# contributes no row, so calling it after ANY pass is always safe and never
-# needs to know which pass produced the run.
-# ---------------------------------------------------------------------------
-
-# The rendered rates table's column order (mirrors TABLE_COLUMNS's own
-# convention above: a header row + one row per source with data, columns
-# looked up by name, never by position).
-THEORY_SCHOOL_RATES_COLUMNS = (
-    "source_id",
-    "total",
-    "not_applicable_count",
-    "not_applicable_pct",
-    "unlisted_count",
-    "unlisted_pct",
-    "unlisted_schools",
-)
-
-
-def attach_theory_school_rates(
-    summary: RunSummary,
-    tags_dir: Path | None = None,
-    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
-) -> RunSummary:
-    """Fill `summary.rates` with the theory_school not-applicable/unlisted
-    report (issue #288) for every source this run produced or reused tag
-    output for: every OK or SKIP outcome's `source_id` (a FAILed source
-    produced no tag output this run, so it is excluded; an outcome whose
-    `source_id` could not be computed is also excluded -- it is always `""`
-    for that case). Returns a NEW `RunSummary` (frozen dataclass) with
-    `rates` set; every other field is `summary`'s own, unchanged.
-
-    This is deliberately a plain post-processing step, not part of
-    `run_pass`'s own loop -- see `RunSummary.rates`'s docstring. The
-    underlying computation (`axial.tag.theory_school_rates_report`) already
-    never raises for its own known failure modes (a torn checkpoint, a
-    malformed candidates-log line); the broad catch here is this seam's own
-    last line of defense for the issue's acceptance bar -- "the summary must
-    never block or fail the run" -- so a genuinely unexpected bug in the
-    computation still cannot take down an otherwise-successful run. Unlike
-    the main loop's own per-source failure isolation (which catches only a
-    pass's OWN declared error type, module docstring), this is not driving
-    a pass at all; it is an optional report over already-persisted output,
-    attached strictly after the run has already finished."""
-    source_ids = {
-        outcome.source_id
-        for outcome in summary.outcomes
-        if outcome.source_id and outcome.status != FAIL_STATUS
-    }
-    try:
-        rates = theory_school_rates_report(source_ids, tags_dir=tags_dir, config_path=config_path)
-    except Exception as exc:  # broad and deliberate -- see docstring: never block/fail the run
-        _print_encoding_safe(
-            f"warning: could not compute theory_school rates: {exc}", stream=sys.stderr
-        )
-        return summary
-    return replace(summary, rates=rates)
-
-
-def _render_theory_school_rates_row(rate: TheorySchoolSourceRate) -> str:
-    row = {
-        "source_id": rate.source_id,
-        "total": str(rate.total),
-        "not_applicable_count": str(rate.not_applicable_count),
-        "not_applicable_pct": f"{rate.not_applicable_pct}%",
-        "unlisted_count": str(rate.unlisted_count),
-        "unlisted_pct": f"{rate.unlisted_pct}%",
-        "unlisted_schools": ",".join(rate.unlisted_schools) if rate.unlisted_schools else "-",
-    }
-    return "\t".join(row[column] for column in THEORY_SCHOOL_RATES_COLUMNS)
-
-
-def render_theory_school_rates(rates: list[TheorySchoolSourceRate]) -> str:
-    """Render the theory_school not-applicable/unlisted rates report (issue
-    #288) as a tab-separated table -- header + one row per source with data
-    -- mirroring `_render_row`'s own outcome-table convention. Returns an
-    empty string for an empty report, so a caller can skip printing it
-    entirely rather than print a header with no rows under it."""
-    if not rates:
-        return ""
-    lines = ["\t".join(THEORY_SCHOOL_RATES_COLUMNS)]
-    lines.extend(_render_theory_school_rates_row(rate) for rate in rates)
-    return "\n".join(lines)

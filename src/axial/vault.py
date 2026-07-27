@@ -1,99 +1,45 @@
-"""Vault write: persists tagged prose chunks and classified artifacts as
-Obsidian notes under `data/vault/prose/` and `data/vault/artifacts/`
-respectively (PRD §5 stage 7; §7.2; §8 P0-5/P0-8) -- two separate,
-independently queryable surfaces sharing metadata conventions (see
-plans/minimal-ingestion/06-vault-write.md, plans/tag/04-tag-vault-frontmatter.md,
-and plans/artifacts/02-artifact-pool-write.md).
+"""Vault write: Obsidian note/frontmatter primitives (PRD §5 stage 7; §7.2;
+§8 P0-5/P0-8), plus `run_vault_write` itself.
 
-This pass runs the tagging pass itself, internally, via `axial.tag.run_tag`
--- exactly as `axial tag` does, which itself reads chunk records from the
-on-disk chunk artifact (`axial.chunk.read_chunks`, never recomputed -- issue
-#154) -- so chunk_id/section/chunk_text provenance and every axis tag are
-computed exactly once, in tag.py (never reimplemented here). This
-pass also reuses `axial.envelope.compute_source_id`/`envelope_path`/
-`_default_envelopes_dir` to locate and read the source's stored envelope
-(never recomputing it, PRD §10 "no recompute"). If no stored envelope
-exists yet, this pass raises its own typed `MissingEnvelopeError` telling
-the caller to run `axial envelope` first, and it raises
-`MissingSourceMetaError` the same way for an absent source-metadata record
-rather than silently emitting the null author/date and filename-slug title
-issue #278 retires.
+**`run_vault_write` is retired pending issue #411.** Phase A v1 (D4/D5,
+`plans/phase-a-v1/README.md`) deletes the tag pass and the cross-reference
+pass this module used to drive internally -- prose notes no longer have an
+axis block to carry (that was `axial.tag.run_tag`'s output) and backlinks no
+longer exist to attach (that was `axial.xref.run_xref`'s output). The
+replacement -- prose notes carrying the interrogation pass's answers as
+frontmatter, plus the name pages Reconcile's alias map drives -- is slice 06
+"Materialize" (issue #411), itself gated behind slices 04 (name inventory)
+and 05 (Reconcile), neither of which exists yet. Calling `run_vault_write`
+now raises `VaultWriteRetiredError` immediately, naming #411, rather than
+either crashing on a missing tag pass or silently writing notes with no
+per-note content.
 
-Each chunk is written to its own note at `<vault_dir>/prose/<chunk_id>.md`
--- or, when that path would exceed Windows' MAX_PATH, a filename shortened
-by `_note_path`'s budget (readable source-stem prefix first, then the
-section slug; `chunk_id` itself never changes -- see `_note_path`) --
-opening with a `---`-delimited YAML frontmatter block (PyYAML `safe_dump`)
-carrying `chunk_id`, `section`, `chunk_text`, a `source_meta` mapping
-(`author`, `title`, `date`, `thesis`, `scope`) composed from two artifacts
-(§7.13, issue #278) -- `author`/`title`/`date` from the persisted
-source-metadata record `data/source_meta/<source_id>.json` (§7.12,
-`axial.intake`), which is their sole origin, and `thesis`/`scope` from the
-envelope -- and the chunk-level axis block (`schema_version`,
-`role_in_argument`, `field`, `claim_type`, `theory_school`,
-`empirical_scope`, `polities_touched`) carried through from the tagged
-record and reshaped to match Appendix H's nesting (PRD §7.2), followed by a
-readable body containing the chunk text.
-
-The artifact pool (`<vault_dir>/artifacts/`) is a separate surface (issue
-#32 slice 02): this pass also runs the artifact-classification pass
-internally via `axial.artifacts.run_artifacts` -- exactly as it reads the
-on-disk chunk artifact for prose -- and writes one note per classified
-artifact to
-`<vault_dir>/artifacts/<artifact_id>.md`, carrying `artifact_id`,
-`artifact_role`, `field`, and source/section provenance in its frontmatter,
-plus a `retrievable` boolean that is `False` only for the `discard` role
-(PRD §8 P0-5: "discard-tagged artifacts are retained in the pool but
-flagged non-retrievable"), and (issue #168) `caption` when the artifact
-record carries one attached (omitted entirely when it does not, so a
-pre-#168 artifact note stays byte-for-byte unchanged). Any error from the
-internal artifacts pass
-(`axial.artifacts.ArtifactsError` or `axial.tag.TagError`, e.g. an
-out-of-schema `artifact_role`/`field` value) is wrapped into a
-`VaultError` subclass here too, so the CLI never renders a bare traceback.
-
-Once both note sets are known, a final backlink pass (issue #34 slice 02)
-runs the already-implemented cross-reference-detection pass internally via
-`axial.xref.run_xref` (detection itself is unchanged from slice 01) and
-materializes each detected `(chunk_id, artifact_id)` pair as bidirectional
-frontmatter: `artifact_refs` (a list of artifact_ids) on the referencing
-prose note, `cited_by` (a list of chunk_ids) on the referenced artifact
-note (PRD §7.2, §8 P0-7). Both fields are always present as a list --
-`[]` when a note carries no references, never absent/null/a dangling bare
-scalar. `build_backlink_maps` computes both directions from the xref pairs
-up front (deduping via a set, so a repeated pair never doubles an entry),
-and every note is written fresh each run with its backlink list already
-resolved -- idempotent by construction, never by patching an existing file
-on disk. Any error from the internal xref pass (`axial.xref.XrefError`) is
-wrapped into a `VaultError` subclass here too.
+The note-writing PRIMITIVES below -- `render_note`, `build_frontmatter`,
+`write_chunk_note`, `build_artifact_frontmatter`, `write_artifact_note`,
+`read_source_meta` and friends -- are untouched in kind (only the retired
+axis-tag and backlink fields are gone from the two `build_*_frontmatter`
+functions) and stay real and callable: they are the primitives #411 builds
+on, and several other modules (`axial.query.reader`'s own tests, `axial.
+distill`, `axial.eval.corpus_pin`, `axial.rename_source_ids`) already call
+`render_note`/`write_chunk_note`/`write_artifact_note` directly, independent
+of `run_vault_write`.
 """
 
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from axial.artifacts import (
-    ArtifactsError,
-    DEFAULT_DOMAIN_DIR as _ARTIFACTS_DEFAULT_DOMAIN_DIR,
-    DISCARD_ROLE,
-    _default_artifacts_dir,
-    run_artifacts,
-)
-from axial.envelope import (
-    MissingSourceError as _EnvelopeMissingSourceError,
-    compute_source_id,
-    envelope_path,
-    _default_envelopes_dir,
-)
-from axial.chunk import _default_chunks_dir
+from axial.artifacts import DISCARD_ROLE
 from axial.paths import (
+    DEFAULT_DOMAIN_DIR,
     artifact_note_path as _artifact_note_path,
     chunk_note_path as _note_path,
+    default_vault_dir as _default_vault_dir,  # noqa: F401 -- re-exported; axial.gold,
+    # axial.polity_canonical, axial.eval.corpus_pin import it from here, not axial.paths
 )
 
 # Imported as a module, not by-name: `SOURCE_META_DIR` is read at call time
@@ -102,28 +48,20 @@ from axial.paths import (
 # resolution.
 from axial import intake as _intake
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
-from axial.paths import default_vault_dir as _default_vault_dir
-from axial.tag import TagError, _default_tags_dir, run_tag
-from axial.xref import XrefError, _default_xref_dir, run_xref, xref_checkpoint_path
 
 # The five source-level frontmatter fields (PRD §7.2), excluding `fields`, a
-# schema-driven axis tag deferred to phase-3 tagging. The key set is
-# unchanged by #278; where three of the five come from is not. `author`,
-# `title` and `date` are facts about the FILE, read at intake into the
-# source-metadata record (§7.12/§7.13), which is their sole origin;
-# `thesis` and `scope` are what the model concluded about the WORK, and
-# stay in the envelope (§7.3).
+# schema-driven axis tag deferred to phase-3 tagging (issue #29) and retired
+# with the tag pass entirely (issue #414). `author`, `title` and `date` are
+# facts about the FILE, read at intake into the source-metadata record
+# (§7.12/§7.13), which is their sole origin; `thesis` and `scope` are what
+# the model concluded about the WORK, and stay in the envelope (§7.3).
 RECORD_SOURCE_META_FIELDS = ("author", "title", "date")
 ENVELOPE_SOURCE_META_FIELDS = ("thesis", "scope")
 SOURCE_META_FIELDS = RECORD_SOURCE_META_FIELDS + ENVELOPE_SOURCE_META_FIELDS
 
-# Default domain directory for the internal artifacts pass, mirroring
-# `axial.artifacts.DEFAULT_DOMAIN_DIR`, overridable via a `domain_dir`
-# argument to `run_vault_write`.
-DEFAULT_DOMAIN_DIR = _ARTIFACTS_DEFAULT_DOMAIN_DIR
-
 # Frontmatter keys reused verbatim from `axial.artifacts`' own record shape
-# (PRD §7.2) for every artifact note.
+# (PRD §7.2) for every artifact note. `cited_by` (the cross-reference pass's
+# output) is retired with `axial.xref` (issue #414, D5).
 ARTIFACT_FRONTMATTER_FIELDS = ("artifact_id", "artifact_role", "field", "source_id", "section")
 
 
@@ -131,160 +69,38 @@ class VaultError(Exception):
     """Base class for all vault-write errors."""
 
 
-class MissingSourceError(VaultError):
-    """Raised when the source path does not exist or is not a file."""
+class VaultWriteRetiredError(VaultError):
+    """Raised by every `run_vault_write` call (module docstring): the pass
+    is retired pending issue #411 "Materialize", itself gated behind slices
+    04 (name inventory) and 05 (Reconcile). Not a crash on a missing
+    dependency -- a deliberate, named stub."""
 
-    def __init__(self, cause: _EnvelopeMissingSourceError):
-        self.cause = cause
-        super().__init__(str(cause))
-
-
-class MissingEnvelopeError(VaultError):
-    """Raised when no stored envelope exists yet for the source (PRD §7.3,
-    "produced once in stage 3; consumed by stages 4 and 6") -- vault write
-    never recomputes one; the caller must run `axial envelope` first."""
-
-    def __init__(self, path: Path):
-        self.path = path
+    def __init__(self, source_path: str | Path):
+        self.source_path = Path(source_path)
         super().__init__(
-            f"no stored envelope found at {path}; run `axial envelope` on the source first"
+            f"vault write is retired pending issue #411 (Materialize): "
+            f"{self.source_path} was not processed. The tag and cross-"
+            f"reference passes this write used to depend on are gone "
+            f"(issue #414, plans/phase-a-v1/README.md D4/D5); its "
+            f"replacement -- prose notes carrying interrogation answers, "
+            f"plus name pages -- lands in slice 06, after slices 04/05."
         )
-
-
-class MissingSourceMetaError(VaultError):
-    """Raised when no source-metadata record exists yet for the source
-    (§7.12/§7.13) -- the sole origin of `author`, `title` and `date`. The
-    caller must run intake (any ingest path funnels through it) first. This
-    is deliberately loud: silently composing the block without the record
-    would re-emit exactly the nulls and filename-slug title #278 retires."""
-
-    def __init__(self, path: Path):
-        self.path = path
-        super().__init__(
-            f"no source-metadata record found at {path}; run intake on the source first "
-            f"(`axial ingest`/`axial extract` writes it)"
-        )
-
-
-class TaggingFailedError(VaultError):
-    """Raised when the underlying tagging pass (`axial.tag.run_tag`, which
-    itself runs the chunker internally) fails, so the CLI renders a clean
-    `error: ...` instead of a bare traceback (mirrors the pre-slice-04
-    `ChunkingFailedError` wrapping pattern, one level up the composition)."""
-
-    def __init__(self, cause: TagError):
-        self.cause = cause
-        super().__init__(str(cause))
-
-
-class ArtifactClassificationFailedError(VaultError):
-    """Raised when the internal artifact-classification pass fails --
-    either `axial.artifacts.ArtifactsError` (e.g. a missing schema/codebook)
-    or `axial.tag.TagError` (e.g. `TagNotInSchemaError` for an out-of-schema
-    `artifact_role`/`field` value, reused by `axial.artifacts` per issue
-    #32 slice 02's carry-in convergence). Wrapped here so the CLI always
-    renders a clean `error: ...` line, never a bare traceback."""
-
-    def __init__(self, cause: ArtifactsError | TagError):
-        self.cause = cause
-        super().__init__(str(cause))
-
-
-class XrefFailedError(VaultError):
-    """Raised when the internal cross-reference-detection pass
-    (`axial.xref.run_xref`) fails, so the CLI always renders a clean
-    `error: ...` line, never a bare traceback (issue #34 slice 02)."""
-
-    def __init__(self, cause: XrefError):
-        self.cause = cause
-        super().__init__(str(cause))
-
-
-class AllNotesFailedError(VaultError):
-    """Raised when every note write this run attempted failed (per-note
-    fault isolation below quarantines a single failed write and continues,
-    mirroring `axial.tag.TaggedRecords`'s some-succeed-some-fail-is-a-
-    success philosophy) -- but a source that attempted at least one note
-    and produced zero is a real failure worth surfacing loudly, not a
-    quiet empty success (mirrors `axial.tag.AllChunksQuarantinedError`)."""
-
-    def __init__(self, source_id: str, attempted: int):
-        self.source_id = source_id
-        self.attempted = attempted
-        super().__init__(
-            f"every note write for {source_id!r} failed ({attempted} attempted), "
-            f"leaving zero notes written -- see stderr above for each failure"
-        )
-
-
-class VaultNoteCountMismatchError(VaultError):
-    """Raised when this run's prose notes written + skipped count does not
-    equal the number of tagged records `run_vault_write` was given.
-
-    Mirrors `axial.tag.TagRecordCountMismatchError` on the vault side: a
-    real Phase A rerun completed `run_vault_write` with status=OK for a
-    source while writing 3 fewer prose notes than it had tagged records, and
-    nothing noticed, because per-note fault isolation (`_write_note_or_skip`
-    below) only accounts for a note it explicitly caught failing -- not for
-    a record that never reached the write loop at all (the likely mechanism
-    here was a resume-ordering artifact, not a live write failure). This
-    reconciliation is a coarser check than per-note fault isolation: it does
-    not care WHY a record went unaccounted for, only THAT every one is
-    either a written note or a logged skip, so a silent status=OK shortfall
-    fails loudly instead."""
-
-    def __init__(self, source_id: str, expected: int, written: int, skipped: int):
-        self.source_id = source_id
-        self.expected = expected
-        self.written = written
-        self.skipped = skipped
-        accounted_for = written + skipped
-        super().__init__(
-            f"vault write for {source_id!r} wrote {written} prose note(s) and "
-            f"skipped {skipped}, accounting for {accounted_for} of {expected} "
-            f"tagged record(s) -- {expected - accounted_for} note(s) went missing "
-            "without a write or a logged skip"
-        )
-
-
-def _check_note_accounting(source_id: str, expected: int, written: int, skipped: int) -> None:
-    """Raise `VaultNoteCountMismatchError` unless every tagged record this
-    run was given (`expected`) is accounted for by exactly one of a written
-    prose note or a logged skip. A pure helper (no write-loop state), kept
-    separate from `axial.tag._check_chunk_accounting` rather than shared:
-    the two call sites disagree on what "expected" counts (tagged records
-    here vs. chunk records there) and on error type (`VaultError` vs.
-    `TagError`), so sharing one function would mean either a foreign
-    exception type escaping one call site or an added type parameter no
-    other caller needs."""
-    if written + skipped != expected:
-        raise VaultNoteCountMismatchError(source_id, expected, written, skipped)
-
-
-# `_default_vault_dir` now lives in `axial.paths` (issue #249 F1) and is
-# imported above under its original name, so every existing caller of
-# `axial.vault._default_vault_dir` (`axial.gold`, `axial.polity_canonical`)
-# is unaffected. `VAULT_DIR` moved the same way; its own callers should now
-# import it from `axial.paths` directly.
-
-# Axis blocks carried through verbatim from the tagged record's own nested
-# shape (issue #29 slice 03), which already matches Appendix H's illustrated
-# nesting keys exactly -- no reshaping needed for these three.
-_VERBATIM_AXIS_BLOCKS = ("field", "claim_type", "theory_school")
 
 
 def read_source_meta(source_id: str, source_meta_dir: Path) -> dict[str, Any]:
     """Read `source_id`'s persisted source-metadata record (§7.12), raising
-    `MissingSourceMetaError` when it is absent or unreadable -- never
-    returning an empty stand-in, which would silently re-emit the nulls
-    #278 retires."""
+    `VaultError` when it is absent or unreadable -- never returning an empty
+    stand-in, which would silently re-emit the nulls #278 retires."""
     path = _intake.source_meta_path(source_id, source_meta_dir)
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise MissingSourceMetaError(path) from exc
+        raise VaultError(
+            f"no source-metadata record found at {path}; run intake on the source first "
+            f"(`axial ingest`/`axial extract` writes it)"
+        ) from exc
     if not isinstance(record, dict):
-        raise MissingSourceMetaError(path)
+        raise VaultError(f"source-metadata record at {path} is not a JSON object")
     return record
 
 
@@ -321,48 +137,23 @@ def build_frontmatter(
     record: dict[str, Any],
     envelope: dict[str, Any],
     source_meta: dict[str, Any],
-    artifact_refs: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Assemble a chunk note's frontmatter mapping from a tagged record
-    (`axial.tag.build_tagged_record`'s shape): `chunk_id`, `section`,
+    """Assemble a chunk note's frontmatter mapping: `chunk_id`, `section`,
     `chunk_text`, and `source_meta` (the five source-level fields, PRD §7.2,
     composed by `build_source_meta_block` from the source-metadata record
-    and the envelope), plus the chunk-level axis block --
-    `schema_version`, `role_in_argument` (flat scalar), `field`/`claim_type`/
-    `theory_school` (nested, carried through as the tagger produced them),
-    `empirical_scope` reshaped from the tagger's flat scalar + separate
-    top-level `polity` into Appendix H's nested `{value, polity}` mapping
-    (issue #31 slice 04, renamed from `country` by issue #194 slice 05), and
-    `polities_touched` (issue #194 slice 05) carried through verbatim as the
-    tagger's own list, when present. `artifact_refs` (issue #34 slice 02) is
-    the list of artifact_ids the cross-reference pass detected this chunk
-    citing -- always a list, `[]` when none, never a dangling absent/null
-    field."""
-    frontmatter: dict[str, Any] = {
+    and the envelope).
+
+    Retired (issue #414, D4/D5): the tag-pass axis block (`schema_version`,
+    `role_in_argument`, `field`/`claim_type`/`theory_school`,
+    `empirical_scope`, `polities_touched`) and `artifact_refs` (the
+    cross-reference pass's backlink list). Their replacement -- the
+    interrogation answers -- is issue #411's job, not this function's."""
+    return {
         "chunk_id": record["chunk_id"],
         "section": record["section"],
         "chunk_text": record["chunk_text"],
         "source_meta": build_source_meta_block(source_meta, envelope),
-        "schema_version": record["schema_version"],
-        "role_in_argument": record["role_in_argument"],
     }
-
-    for axis_name in _VERBATIM_AXIS_BLOCKS:
-        if axis_name in record:
-            frontmatter[axis_name] = record[axis_name]
-
-    if "empirical_scope" in record:
-        empirical_scope: dict[str, Any] = {"value": record["empirical_scope"]}
-        if record.get("polity") is not None:
-            empirical_scope["polity"] = record["polity"]
-        frontmatter["empirical_scope"] = empirical_scope
-
-    if "polities_touched" in record:
-        frontmatter["polities_touched"] = list(record["polities_touched"])
-
-    frontmatter["artifact_refs"] = list(artifact_refs) if artifact_refs else []
-
-    return frontmatter
 
 
 def render_note(frontmatter: dict[str, Any], body: str) -> str:
@@ -405,7 +196,6 @@ def write_chunk_note(
     envelope: dict[str, Any],
     source_meta: dict[str, Any],
     vault_dir: Path,
-    artifact_refs: list[str] | None = None,
     *,
     source_id: str,
 ) -> Path:
@@ -415,11 +205,10 @@ def write_chunk_note(
     MAX_PATH -- `chunk_id` itself is unchanged everywhere else). Creates
     parent directories as needed. `source_meta` is the source's persisted
     source-metadata record (§7.12), the origin of the note's
-    `author`/`title`/`date`. `artifact_refs` (issue #34 slice 02) is this
-    chunk's detected backlink list, threaded through to `build_frontmatter`
-    verbatim. `source_id` is the source's own `compute_source_id` value,
-    needed only for the filename-budget fallback."""
-    frontmatter = build_frontmatter(record, envelope, source_meta, artifact_refs=artifact_refs)
+    `author`/`title`/`date`. `source_id` is the source's own
+    `compute_source_id` value, needed only for the filename-budget
+    fallback."""
+    frontmatter = build_frontmatter(record, envelope, source_meta)
     body = f"# {record['section']}\n\n{record['chunk_text']}\n"
     note_text = render_note(frontmatter, body)
 
@@ -429,21 +218,19 @@ def write_chunk_note(
     return path
 
 
-def build_artifact_frontmatter(
-    record: dict[str, Any], cited_by: list[str] | None = None
-) -> dict[str, Any]:
+def build_artifact_frontmatter(record: dict[str, Any]) -> dict[str, Any]:
     """Assemble one artifact note's frontmatter mapping: `artifact_id`,
     `artifact_role`, `field`, `source_id`, `section` reused verbatim from
     the artifact record (`axial.artifacts.build_artifact_record`'s shape),
     plus a `retrievable` boolean that is `False` only for the `discard`
     role (PRD §8 P0-5) -- every other in-schema role is retrievable.
-    `cited_by` (issue #34 slice 02) is the list of chunk_ids the
-    cross-reference pass detected citing this artifact -- always a list,
-    `[]` when none, never a dangling absent/null field. `caption` (issue
-    #168) is included only when the record itself carries one -- see below."""
+    `caption` (issue #168) is included only when the record itself carries
+    one -- see below.
+
+    Retired (issue #414, D5): `cited_by`, the cross-reference pass's
+    backlink list."""
     frontmatter = {field: record.get(field) for field in ARTIFACT_FRONTMATTER_FIELDS}
     frontmatter["retrievable"] = record["artifact_role"] != DISCARD_ROLE
-    frontmatter["cited_by"] = list(cited_by) if cited_by else []
     # `caption` (issue #168): the text of a caption block attached to this
     # artifact by `axial.artifacts.run_artifacts`/`_attach_captions`, when
     # present -- omitted entirely (never `caption: null`) when this artifact
@@ -457,20 +244,16 @@ def build_artifact_frontmatter(
     return frontmatter
 
 
-def write_artifact_note(
-    record: dict[str, Any], vault_dir: Path, cited_by: list[str] | None = None
-) -> Path:
+def write_artifact_note(record: dict[str, Any], vault_dir: Path) -> Path:
     """Write one artifact's note under `<vault_dir>/artifacts/`, named by
     `record['artifact_id']` (shortened only on the filesystem, per
     `_artifact_note_path`, when the full artifact_id would push the path
     over Windows' MAX_PATH -- `artifact_id` itself is unchanged everywhere
     else), creating parent directories as needed -- a surface separate from
-    `<vault_dir>/prose/` (PRD §8 P0-8). `cited_by` (issue #34 slice 02) is
-    this artifact's detected backlink list, threaded through to
-    `build_artifact_frontmatter` verbatim. `record['source_id']` (always
+    `<vault_dir>/prose/` (PRD §8 P0-8). `record['source_id']` (always
     present, `axial.artifacts.build_artifact_record`'s shape) is needed
     only for the filename-budget fallback."""
-    frontmatter = build_artifact_frontmatter(record, cited_by=cited_by)
+    frontmatter = build_artifact_frontmatter(record)
     body = f"# {record['section']}\n\nArtifact `{record['artifact_id']}` ({record['artifact_role']}).\n"
     note_text = render_note(frontmatter, body)
 
@@ -478,67 +261,6 @@ def write_artifact_note(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(note_text, encoding="utf-8")
     return path
-
-
-def _write_note_or_skip(kind: str, item_id: str, write_fn) -> Path | None:
-    """Call the zero-arg `write_fn` (one note write, returning its `Path`),
-    catching `OSError` -- the filesystem-boundary failure class (a note
-    path exceeding Windows' 260-char MAX_PATH, a permission error, a full
-    disk, ...) -- so one bad note write never aborts the rest of the
-    source's notes (issue: a real 31-source ingestion rerun hit
-    `FileNotFoundError`, an `OSError` subclass, from an oversized
-    chunk_id-derived path and lost every other chunk's note for that
-    source). Prints a stderr diagnostic naming the failed `kind`/`item_id`
-    and the path, and returns `None` on failure. Anything other than
-    `OSError` (`KeyError`, `AttributeError`, ...) still propagates --
-    those indicate a real code defect, not an environmental failure."""
-    try:
-        return write_fn()
-    except OSError as exc:
-        print(
-            f"vault: failed to write {kind} note {item_id!r}: {exc} -- skipping",
-            file=sys.stderr,
-        )
-        return None
-
-
-class VaultWriteResult(list):
-    """A `list` of note paths (prose then artifact) that also surfaces
-    `skipped_count` -- how many individual note writes this run caught and
-    skipped via `_write_note_or_skip` rather than letting abort the whole
-    source, mirroring `axial.tag.TaggedRecords.quarantine_count`. Every
-    existing caller that only ever indexed, iterated, or `len()`'d the
-    returned value is unaffected."""
-
-    def __init__(self, paths: list[Path], skipped_count: int = 0):
-        super().__init__(paths)
-        self.skipped_count = skipped_count
-
-
-def build_backlink_maps(
-    pairs: list[dict[str, str]],
-) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """Build the two backlink maps from `axial.xref.run_xref`'s
-    `{"chunk_id", "artifact_id"}` pairs (issue #34 slice 02): chunk_id ->
-    sorted unique artifact_ids it references, and artifact_id -> sorted
-    unique chunk_ids that reference it. Deduping via a `set` per key before
-    sorting guarantees no run can double an entry, even if a pair repeats
-    (e.g. the stub's uniform per-run canned response) -- the source of this
-    slice's idempotency, independent of how many times `run_vault_write`
-    itself is re-run (each run rebuilds these maps from scratch and
-    overwrites the notes, never patching them in place)."""
-    chunk_to_artifacts: dict[str, set[str]] = {}
-    artifact_to_chunks: dict[str, set[str]] = {}
-    for pair in pairs:
-        chunk_id = pair["chunk_id"]
-        artifact_id = pair["artifact_id"]
-        chunk_to_artifacts.setdefault(chunk_id, set()).add(artifact_id)
-        artifact_to_chunks.setdefault(artifact_id, set()).add(chunk_id)
-
-    return (
-        {chunk_id: sorted(ids) for chunk_id, ids in chunk_to_artifacts.items()},
-        {artifact_id: sorted(ids) for artifact_id, ids in artifact_to_chunks.items()},
-    )
 
 
 def run_vault_write(
@@ -549,216 +271,24 @@ def run_vault_write(
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
     chunks_dir: Path | None = None,
-    tags_dir: Path | None = None,
     artifacts_dir: Path | None = None,
-    xref_dir: Path | None = None,
     source_meta_dir: Path | None = None,
-) -> VaultWriteResult:
-    """Run vault write on `source_path`: read the stored envelope and the
-    stored source-metadata record (never recomputing either -- `source_meta_dir`
-    defaults to `axial.intake.SOURCE_META_DIR`, and an absent record raises
-    `MissingSourceMetaError`, §7.13), run the tagging pass internally via `axial.tag.run_tag`
-    (which itself reads the pre-built chunk artifact via
-    `axial.chunk.read_chunks`, never recomputing it -- the recursive/
-    structural chunk pass, issue #191, is a separate, model-free step that
-    must already have run) and write one prose note per tagged chunk under
-    `<vault_dir>/prose/`, its frontmatter carrying the axis
-    block + `schema_version` (issue #31 slice 04); then run the
-    artifact-classification pass internally via `axial.artifacts.run_artifacts`
-    and write one note per classified artifact under `<vault_dir>/artifacts/`
-    (issue #32 slice 02) -- two separate surfaces sharing metadata conventions
-    (PRD §8 P0-8); finally, once both note sets are known, run the
-    cross-reference-detection pass internally via `axial.xref.run_xref`
-    (detection unchanged from issue #34 slice 01) and materialize each
-    detected `(chunk_id, artifact_id)` pair as bidirectional frontmatter --
-    `artifact_refs` on the referencing prose note, `cited_by` on the
-    referenced artifact note (issue #34 slice 02). Every note is written
-    fresh with its backlink list computed up front, so a rerun naturally
-    overwrites rather than accumulates -- idempotent by construction, never
-    by patching an existing file in place.
-
-    Each individual note write is fault-isolated: a write that raises
-    `OSError` (e.g. a note path exceeding Windows' 260-char MAX_PATH, a
-    permission error) is logged to stderr and skipped rather than aborting
-    every other note for the source. The returned `VaultWriteResult` (a
-    `list` of every note path actually written) carries `skipped_count`,
-    the number of notes dropped this way. A source where every attempted
-    note write failed raises `AllNotesFailedError` instead of returning an
-    empty success.
-
-    Once the prose-note loop finishes, a reconciliation check confirms every
-    tagged record `axial.tag.run_tag` returned is accounted for by exactly
-    one of a written prose note or a note this run's own fault isolation
-    logged as skipped; a shortfall neither of those catches (e.g. a
-    resume-ordering artifact between the tag and write steps) raises
-    `VaultNoteCountMismatchError` rather than completing with status=OK.
-    """
-    path = Path(source_path)
-    try:
-        source_id = compute_source_id(path)
-    except _EnvelopeMissingSourceError as exc:
-        raise MissingSourceError(exc) from exc
-
-    if envelopes_dir is None:
-        envelopes_dir = _default_envelopes_dir(config_path)
-
-    env_path = envelope_path(source_id, envelopes_dir)
-    if not env_path.exists():
-        raise MissingEnvelopeError(env_path)
-    envelope = json.loads(env_path.read_text(encoding="utf-8"))
-
-    # §7.13: author/title/date come from the source-metadata record, not the
-    # envelope. Read before any LLM pass runs, so a source that never went
-    # through intake fails on the cheap check rather than after paying for a
-    # full tag/artifacts/xref run.
-    source_meta = read_source_meta(
-        source_id, source_meta_dir if source_meta_dir is not None else _intake.SOURCE_META_DIR
+) -> None:
+    """Retired (module docstring): always raises `VaultWriteRetiredError`
+    naming issue #411. Every parameter is accepted, unused, purely so
+    existing call sites (`axial.ingest.run_ingest`, `axial.drive`,
+    `axial.run`'s `vault-write` pass, `axial vault write`) keep calling this
+    function the same way they always have and get one clear, typed error
+    back instead of an `ImportError`/`AttributeError` from a half-deleted
+    pipeline."""
+    del (
+        client,
+        envelopes_dir,
+        vault_dir,
+        config_path,
+        domain_dir,
+        chunks_dir,
+        artifacts_dir,
+        source_meta_dir,
     )
-
-    # Per-chunk / per-artifact checkpoint/resume (issue #81, extended by
-    # issue #98): scoped to vault write. Resolve every checkpoint dir here
-    # and thread them into the internal passes so the chunk-pass checkpoint
-    # is reused (zero chunking LLM calls on a resumed run), the tag-pass
-    # checkpoint drives per-chunk resume, and the artifacts-pass checkpoint
-    # drives per-artifact resume; the standalone `axial chunk`/`axial tag`/
-    # `axial artifacts`/`axial xref` passes, which never receive these, keep
-    # their existing recompute-every-run behavior.
-    if chunks_dir is None:
-        chunks_dir = _default_chunks_dir(config_path)
-    if tags_dir is None:
-        tags_dir = _default_tags_dir(config_path)
-    if artifacts_dir is None:
-        artifacts_dir = _default_artifacts_dir(config_path)
-    if xref_dir is None:
-        xref_dir = _default_xref_dir(config_path)
-
-    try:
-        records = run_tag(
-            path,
-            client=client,
-            config_path=config_path,
-            tags_dir=tags_dir,
-            chunks_dir=chunks_dir,
-        )
-    except TagError as exc:
-        raise TaggingFailedError(exc) from exc
-
-    try:
-        artifact_records = run_artifacts(
-            path,
-            client=client,
-            domain_dir=domain_dir,
-            config_path=config_path,
-            artifacts_dir=artifacts_dir,
-        )
-    except (ArtifactsError, TagError) as exc:
-        raise ArtifactClassificationFailedError(exc) from exc
-
-    # `artifacts_dir` is threaded into `run_xref` too (issue #98): `run_xref`
-    # runs `run_artifacts` internally a SECOND time for the same source in
-    # this same process (see module docstring) -- without sharing the
-    # checkpoint here, that second call would silently reclassify every
-    # artifact again (a real double-spend bug this checkpoint also fixes),
-    # even on a run that never failed at all.
-    try:
-        xref_pairs = run_xref(
-            path,
-            client=client,
-            domain_dir=domain_dir,
-            config_path=config_path,
-            chunks_dir=chunks_dir,
-            artifacts_dir=artifacts_dir,
-            xref_dir=xref_dir,
-        )
-    except XrefError as exc:
-        raise XrefFailedError(exc) from exc
-
-    chunk_to_artifacts, artifact_to_chunks = build_backlink_maps(xref_pairs)
-
-    if vault_dir is None:
-        vault_dir = _default_vault_dir(config_path)
-
-    # Per-note fault isolation (issue: a real 31-source ingestion rerun hit
-    # an uncaught `FileNotFoundError` from one oversized chunk-id-derived
-    # note path, which aborted every OTHER note for that source too). Each
-    # write is attempted independently via `_write_note_or_skip`; a failed
-    # write is logged to stderr and skipped rather than propagated, so the
-    # rest of the source's notes still land. `skipped_count` surfaces how
-    # many were dropped this way (mirrors `axial.tag.TaggedRecords.
-    # quarantine_count`).
-    skipped_count = 0
-    prose_skipped_count = 0
-
-    prose_paths: list[Path] = []
-    for record in records:
-        path = _write_note_or_skip(
-            "chunk",
-            record["chunk_id"],
-            lambda record=record: write_chunk_note(
-                record,
-                envelope,
-                source_meta,
-                vault_dir,
-                artifact_refs=chunk_to_artifacts.get(record["chunk_id"]),
-                source_id=source_id,
-            ),
-        )
-        if path is None:
-            skipped_count += 1
-            prose_skipped_count += 1
-        else:
-            prose_paths.append(path)
-
-    # Reconciliation backstop: every tagged record `run_vault_write` was
-    # given must end up either a written prose note or a logged skip -- the
-    # coarser invariant per-note fault isolation above does not itself
-    # guarantee (it only ever catches a write it attempted and saw fail).
-    # Raises loudly instead of letting `run_vault_write` report status=OK
-    # with fewer prose notes than tagged records, unnoticed.
-    _check_note_accounting(source_id, len(records), len(prose_paths), prose_skipped_count)
-
-    artifact_paths: list[Path] = []
-    for record in artifact_records:
-        path = _write_note_or_skip(
-            "artifact",
-            record["artifact_id"],
-            lambda record=record: write_artifact_note(
-                record, vault_dir, cited_by=artifact_to_chunks.get(record["artifact_id"])
-            ),
-        )
-        if path is None:
-            skipped_count += 1
-        else:
-            artifact_paths.append(path)
-
-    # A source where every attempted note write failed is a real failure
-    # (nothing usable was produced), not a quiet empty success -- mirrors
-    # `axial.tag.AllChunksQuarantinedError`'s some-succeed-some-fail-is-fine
-    # / all-fail-is-loud philosophy. A source with nothing to write at all
-    # (records and artifact_records both empty) is unaffected -- that is
-    # today's ordinary empty-source outcome, not a failure.
-    attempted = len(records) + len(artifact_records)
-    if attempted > 0 and not prose_paths and not artifact_paths:
-        raise AllNotesFailedError(source_id, attempted)
-
-    # Aggregate visibility for this source (every existing caller --
-    # `axial run vault-write`, `axial ingest`, `axial vault write` --
-    # already streams stderr, so this reaches the operator alongside the
-    # per-note diagnostics above, never only as a return-value attribute
-    # nobody happens to read).
-    if skipped_count:
-        print(
-            f"vault: {skipped_count} note(s) skipped for {source_id!r} "
-            f"(see individual diagnostics above)",
-            file=sys.stderr,
-        )
-
-    # The xref checkpoint (issue #110) is a failure-recovery journal, not a
-    # cross-run cache: now that this vault-write invocation has fully
-    # completed (xref detected AND every note materialized or explicitly
-    # skipped), clear it so an independent later run recomputes xref fresh.
-    # A run that failed before reaching here leaves the checkpoint in place,
-    # so its resume is cheap.
-    xref_checkpoint_path(source_id, xref_dir).unlink(missing_ok=True)
-
-    return VaultWriteResult(prose_paths + artifact_paths, skipped_count)
+    raise VaultWriteRetiredError(source_path)

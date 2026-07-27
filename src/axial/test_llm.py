@@ -85,15 +85,15 @@ def test_stub_client_honors_the_forced_chunk_response_env_var(monkeypatch):
 
 
 def test_stub_client_chunk_response_override_does_not_affect_other_passes(monkeypatch):
-    from axial.llm import STUB_CHUNK_RESPONSE_ENV_VAR, TAG_PASS_NAME, StubLLMClient
+    from axial.llm import ARTIFACTS_PASS_NAME, STUB_CHUNK_RESPONSE_ENV_VAR, StubLLMClient
 
     monkeypatch.setenv(STUB_CHUNK_RESPONSE_ENV_VAR, '{"chunks": [{"text": "overridden"}]}')
     client = StubLLMClient()
 
-    raw = client.complete("some tagging prompt", pass_name=TAG_PASS_NAME)
+    raw = client.complete("some artifact classification prompt", pass_name=ARTIFACTS_PASS_NAME)
     parsed = json.loads(raw)
 
-    assert "role_in_argument" in parsed
+    assert "artifact_role" in parsed
     assert "chunks" not in parsed
 
 
@@ -107,19 +107,6 @@ def test_record_client_honors_the_forced_chunk_response_env_var(monkeypatch, tmp
     raw = record.complete("some chunking prompt", pass_name=CHUNK_PASS_NAME)
 
     assert raw == override
-
-
-def test_stub_client_returns_tag_shaped_response_for_the_tag_pass_name():
-    from axial.llm import TAG_PASS_NAME, StubLLMClient
-
-    client = StubLLMClient()
-
-    raw = client.complete("some tagging prompt", pass_name=TAG_PASS_NAME)
-    parsed = json.loads(raw)
-
-    assert isinstance(parsed["role_in_argument"], str) and parsed["role_in_argument"].strip()
-    assert "chunks" not in parsed
-    assert "thesis" not in parsed
 
 
 def test_stub_client_returns_artifact_shaped_response_for_the_artifacts_pass_name():
@@ -180,8 +167,7 @@ def test_stub_client_honors_the_forced_artifact_role_env_var(monkeypatch):
 def _reset_artifact_call_counter():
     """The AXIAL_STUB_ARTIFACT_FAIL_AT counter is a per-process module
     global; reset it before every test so counts don't bleed across tests in
-    one pytest process (mirrors `test_resume.py`'s own `_tag_pass_call_count`
-    reset fixture, issue #98)."""
+    one pytest process (issue #98)."""
     import axial.llm as llm_mod
 
     llm_mod._artifact_pass_call_count = 0
@@ -256,114 +242,6 @@ def test_record_client_response_matches_stub_for_the_artifacts_pass_name(tmp_pat
     assert record.complete(prompt, pass_name=ARTIFACTS_PASS_NAME) == stub.complete(
         prompt, pass_name=ARTIFACTS_PASS_NAME
     )
-
-
-# --- tag-pass response sequence seam (issue #102) ---------------------------
-
-
-def _reset_tag_counter():
-    import axial.llm as llm_mod
-
-    llm_mod._tag_pass_call_count = 0
-
-
-def test_tag_response_sequence_cycles_by_the_shared_tag_pass_counter(monkeypatch):
-    """`AXIAL_STUB_TAG_RESPONSE_SEQUENCE` (issue #102): the Nth tag-pass call
-    returns `sequence[(N - 1) % len(sequence)]`, cycling -- driven by the same
-    per-process counter that drives AXIAL_STUB_TAG_FAIL_AT, and firing for
-    every tag-pass-family call."""
-    from axial.llm import STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, TAG_PASS_NAME, StubLLMClient
-
-    _reset_tag_counter()
-    monkeypatch.setenv(STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, json.dumps(["first", "second"]))
-    client = StubLLMClient()
-
-    assert client.complete("p", pass_name=TAG_PASS_NAME) == "first"
-    assert client.complete("p", pass_name=TAG_PASS_NAME) == "second"
-    assert client.complete("p", pass_name=TAG_PASS_NAME) == "first"
-    assert client.complete("p", pass_name=TAG_PASS_NAME) == "second"
-
-
-def test_tag_response_sequence_takes_priority_over_the_single_override(monkeypatch):
-    from axial.llm import (
-        STUB_TAG_RESPONSE_ENV_VAR,
-        STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR,
-        TAG_PASS_NAME,
-        StubLLMClient,
-    )
-
-    _reset_tag_counter()
-    monkeypatch.setenv(STUB_TAG_RESPONSE_ENV_VAR, "single-override")
-    monkeypatch.setenv(STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, json.dumps(["seq-only"]))
-    client = StubLLMClient()
-
-    assert client.complete("p", pass_name=TAG_PASS_NAME) == "seq-only"
-
-
-def test_tag_response_empty_sequence_falls_through_to_the_single_override(monkeypatch):
-    from axial.llm import (
-        STUB_TAG_RESPONSE_ENV_VAR,
-        STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR,
-        TAG_PASS_NAME,
-        StubLLMClient,
-    )
-
-    _reset_tag_counter()
-    monkeypatch.setenv(STUB_TAG_RESPONSE_ENV_VAR, "single-override")
-    monkeypatch.setenv(STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, json.dumps([]))
-    client = StubLLMClient()
-
-    assert client.complete("p", pass_name=TAG_PASS_NAME) == "single-override"
-
-
-def test_tag_response_sequence_only_affects_the_tag_pass(monkeypatch):
-    from axial.llm import (
-        CHUNK_PASS_NAME,
-        STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR,
-        StubLLMClient,
-    )
-
-    _reset_tag_counter()
-    monkeypatch.setenv(STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, json.dumps(["tag-seq"]))
-    client = StubLLMClient()
-
-    parsed = json.loads(client.complete("p", pass_name=CHUNK_PASS_NAME))
-    assert "chunks" in parsed
-
-
-def test_tag_response_sequence_is_honored_by_the_record_client(monkeypatch, tmp_path):
-    from axial.llm import STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, TAG_PASS_NAME, RecordLLMClient
-
-    _reset_tag_counter()
-    monkeypatch.setenv(STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, json.dumps(["a", "b"]))
-    client = RecordLLMClient(tmp_path / "rec.jsonl")
-
-    assert client.complete("p", pass_name=TAG_PASS_NAME) == "a"
-    assert client.complete("p", pass_name=TAG_PASS_NAME) == "b"
-
-
-def test_tag_response_sequence_shares_the_counter_with_fail_at(monkeypatch):
-    """The sequence dispatch uses the SAME per-process counter FAIL_AT
-    advances, so an injected failure still lands on the Nth tag call while the
-    sequence indexing stays 1-indexed by that counter."""
-    from axial.llm import (
-        LLMError,
-        STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR,
-        TAG_PASS_NAME,
-        StubLLMClient,
-    )
-
-    _reset_tag_counter()
-    monkeypatch.setenv(STUB_TAG_RESPONSE_SEQUENCE_ENV_VAR, json.dumps(["x", "y", "z"]))
-    monkeypatch.setenv("AXIAL_STUB_TAG_FAIL_AT", "2")
-    client = StubLLMClient()
-
-    assert client.complete("p", pass_name=TAG_PASS_NAME) == "x"
-    with pytest.raises(LLMError):
-        client.complete("p", pass_name=TAG_PASS_NAME)
-    # The counter still advanced past the failed 2nd call, so the 3rd call
-    # returns the 3rd element.
-    assert client.complete("p", pass_name=TAG_PASS_NAME) == "z"
 
 
 def test_stub_client_dispatch_is_by_pass_name_not_prompt_content():
@@ -2278,52 +2156,64 @@ def test_set_run_id_tags_the_error_response_log_line_too(monkeypatch, capsys):
 # --- per-pass best-of-N voting (issue #294, DEC-31) -----------------------
 
 
-def test_resolve_votes_by_pass_defaults_the_tag_pass_to_three():
-    """An absent `llm.votes_by_pass` block leaves the code-level default
-    untouched: the tag pass draws three times (DEC-31's measured
-    agreement-per-cost point)."""
-    from axial.llm import TAG_PASS_NAME, _resolve_votes_by_pass
+def test_resolve_votes_by_pass_defaults_to_empty_now_that_no_pass_names_itself(monkeypatch):
+    """`DEFAULT_VOTES_BY_PASS` named only the tag pass (DEC-31's measured
+    agreement-per-cost point at N=3); retired with the tag pass itself
+    (issue #414, D4: Phase A v1 is one draw, no voting layer). An absent
+    `llm.votes_by_pass` block now resolves to an empty mapping -- every
+    current pass is unnamed and draws once via `SINGLE_DRAW`."""
+    import axial.llm as llm_mod
+    from axial.llm import _resolve_votes_by_pass
 
-    assert _resolve_votes_by_pass({})[TAG_PASS_NAME] == 3
+    assert llm_mod.DEFAULT_VOTES_BY_PASS == {}
+    assert _resolve_votes_by_pass({}) == {}
 
 
-def test_resolve_votes_by_pass_lets_config_override_the_default():
+def test_resolve_votes_by_pass_lets_config_override_a_code_level_default(monkeypatch):
     """`config/pipeline.yaml` is the carried-per-pass source of truth --
     "never hardcoded" -- so its entries override `DEFAULT_VOTES_BY_PASS`
-    (mirrors `_resolve_reasoning_by_pass`)."""
-    from axial.llm import TAG_PASS_NAME, _resolve_votes_by_pass
+    (mirrors `_resolve_reasoning_by_pass`). The mechanism is generic and
+    reused by other passes' config wiring (e.g. `axial.brief.interrogate`'s
+    `votes_by_pass` seam); a fake code-level default proves the merge
+    without depending on any specific pass name."""
+    import axial.llm as llm_mod
+    from axial.llm import _resolve_votes_by_pass
 
-    merged = _resolve_votes_by_pass({"votes_by_pass": {TAG_PASS_NAME: 5}})
+    monkeypatch.setattr(llm_mod, "DEFAULT_VOTES_BY_PASS", {"some_pass": 3})
 
-    assert merged[TAG_PASS_NAME] == 5
+    assert _resolve_votes_by_pass({})["some_pass"] == 3
+
+    merged = _resolve_votes_by_pass({"votes_by_pass": {"some_pass": 5}})
+
+    assert merged["some_pass"] == 5
 
 
 def test_votes_for_pass_resolves_an_unnamed_pass_to_a_single_draw(tmp_path):
     """A pass named in neither the default nor config draws once -- no
-    voting layer at all, today's behavior for artifacts/xref/envelope."""
+    voting layer at all, today's behavior for every current pass."""
     from axial.llm import ARTIFACTS_PASS_NAME, SINGLE_DRAW, votes_for_pass
 
     config_path = tmp_path / "pipeline.yaml"
-    config_path.write_text("llm:\n  votes_by_pass:\n    tag: 3\n", encoding="utf-8")
+    config_path.write_text("llm:\n  votes_by_pass:\n    some_other_pass: 3\n", encoding="utf-8")
 
     assert votes_for_pass(ARTIFACTS_PASS_NAME, config_path) == SINGLE_DRAW
 
 
 def test_votes_for_pass_reads_the_config_file_for_a_named_pass(tmp_path):
-    """`votes_for_pass` is the seam the tag pass itself reads: config wins
-    over the code-level default, so `N` is never a literal at the call
-    site."""
-    from axial.llm import TAG_PASS_NAME, votes_for_pass
+    """`votes_for_pass` is the seam a pass's own votes loop would read:
+    config wins over the code-level default, so `N` is never a literal at
+    the call site."""
+    from axial.llm import ARTIFACTS_PASS_NAME, votes_for_pass
 
     config_path = tmp_path / "pipeline.yaml"
-    config_path.write_text("llm:\n  votes_by_pass:\n    tag: 1\n", encoding="utf-8")
+    config_path.write_text("llm:\n  votes_by_pass:\n    artifacts: 4\n", encoding="utf-8")
 
-    assert votes_for_pass(TAG_PASS_NAME, config_path) == 1
+    assert votes_for_pass(ARTIFACTS_PASS_NAME, config_path) == 4
 
 
 def test_votes_for_pass_falls_back_to_the_default_when_the_config_is_absent(tmp_path):
     """An absent config file never raises -- it yields the code-level
     default (mirrors every other config resolver in this module)."""
-    from axial.llm import TAG_PASS_NAME, votes_for_pass
+    from axial.llm import ARTIFACTS_PASS_NAME, SINGLE_DRAW, votes_for_pass
 
-    assert votes_for_pass(TAG_PASS_NAME, tmp_path / "does-not-exist.yaml") == 3
+    assert votes_for_pass(ARTIFACTS_PASS_NAME, tmp_path / "does-not-exist.yaml") == SINGLE_DRAW
