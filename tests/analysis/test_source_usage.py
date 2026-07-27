@@ -211,10 +211,49 @@ def _extract_brief_id(result: subprocess.CompletedProcess) -> str:
 
 
 def _grounded_claim(text: str, kind: str, chunk_ids: list[str]) -> dict[str, Any]:
+    """Grounds citing the REAL `chunk_id` -- correct for a hand-built,
+    already-resolved persisted record (scenarios 2-4 below, which call
+    `compute_source_usage` directly and never go through `synthesize`/
+    `compose_prompt`)."""
     return {
         "text": text,
         "kind": kind,
         "grounds": [{"ref_type": "chunk", "ref_id": chunk_id} for chunk_id in chunk_ids],
+        "confidence": "medium",
+    }
+
+
+_ALL_100_FIXTURE_CHUNK_IDS = sorted(
+    [f"tilly_0_intro_{i:03d}" for i in range(TILLY_COUNT)]
+    + [f"other_0_intro_{i:03d}" for i in range(OTHER_COUNT)]
+)
+
+
+def _handle_for_fixture_chunk(chunk_id: str) -> str:
+    """The opaque handle (issue #410) `compose_prompt` would assign
+    `chunk_id` in scenario 1's real `axial brief run`, derived rather than
+    hardcoded: `query_by_tag` sorts its result by `chunk_id` (§7.5's own
+    documented determinism contract), and `compose_prompt` assigns handles
+    `[c1]`, `[c2]`, ... in the evidence set's own order, dropping nothing
+    here (every fixture chunk's tiny SENTINEL text stays well under the
+    evidence_char_budget, so the 100-chunk evidence set is exactly this
+    fixture's 100 chunks, in sorted order, unchanged)."""
+    return f"[c{_ALL_100_FIXTURE_CHUNK_IDS.index(chunk_id) + 1}]"
+
+
+def _stub_grounded_claim(text: str, kind: str, chunk_ids: list[str]) -> dict[str, Any]:
+    """Grounds citing the HANDLE a real synthesis prompt would offer for
+    each chunk_id (issue #410) -- correct for scenario 1's canned
+    `AXIAL_STUB_SYNTHESIZE_RESPONSE`, which is parsed by the real
+    `parse_synthesis_response` behind a real `axial brief run`, exactly as
+    a real model response now must cite."""
+    return {
+        "text": text,
+        "kind": kind,
+        "grounds": [
+            {"ref_type": "chunk", "ref_id": _handle_for_fixture_chunk(chunk_id)}
+            for chunk_id in chunk_ids
+        ],
         "confidence": "medium",
     }
 
@@ -237,8 +276,10 @@ def test_source_usage_disclosed_with_denominator_via_full_brief_run(fixture_root
     other_grounds = [f"other_0_intro_{i:03d}" for i in range(OTHER_GROUNDS_COUNT)]
     stub_synthesize_response = {
         "claims": [
-            _grounded_claim("A claim grounded in the tilly chunks.", "a", tilly_grounds),
-            _grounded_claim("A cross-source inference over the other chunks.", "b", other_grounds),
+            _stub_grounded_claim("A claim grounded in the tilly chunks.", "a", tilly_grounds),
+            _stub_grounded_claim(
+                "A cross-source inference over the other chunks.", "b", other_grounds
+            ),
         ]
     }
 
@@ -290,7 +331,9 @@ def test_source_usage_exits_0_and_writes_the_record_a_second_identical_run(fixtu
         {"tool": "query_by_tag", "args": {"field": FIELD_FILTER}},
         None,
     ]
-    stub_synthesize_response = {"claims": [_grounded_claim("A claim.", "a", ["tilly_0_intro_000"])]}
+    stub_synthesize_response = {
+        "claims": [_stub_grounded_claim("A claim.", "a", ["tilly_0_intro_000"])]
+    }
 
     first = _run_brief_run_cli(
         fixture_root,

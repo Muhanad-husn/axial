@@ -202,12 +202,20 @@ def _extract_brief_id(result: subprocess.CompletedProcess) -> str:
 
 
 def _synthesize_response(*, chunk_ids: list[str]) -> dict[str, Any]:
+    # Grounds cite the opaque HANDLE each id would be offered under (issue
+    # #410), never the real chunk_id: each id here is fetched by its own
+    # `get_chunk` stub tool call, in the same order `compose_prompt` then
+    # walks the assembled evidence set, so the Nth id in `chunk_ids` is
+    # handle "[cN]". The counter-position-generation pass is unaffected --
+    # its own, separate prompt still shows real chunk ids (out of #410's
+    # scope: a smaller, already-whitelisted candidate pool).
+    handles = [f"[c{index + 1}]" for index in range(len(chunk_ids))]
     return {
         "claims": [
             {
                 "text": f"A claim grounded across the evidence chunk(s): {', '.join(chunk_ids)}.",
                 "kind": "b" if len(chunk_ids) > 1 else "a",
-                "grounds": [{"ref_type": "chunk", "ref_id": cid} for cid in chunk_ids],
+                "grounds": [{"ref_type": "chunk", "ref_id": handle} for handle in handles],
                 "confidence": "medium",
             }
         ]

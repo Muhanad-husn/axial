@@ -227,20 +227,26 @@ def _read_recorded_prompts(record_path: Path) -> list[str]:
 
 
 def _three_kind_synthesize_response() -> dict[str, Any]:
+    # Grounds cite the opaque HANDLE (issue #410), never the real chunk_id:
+    # the fixture's stub tool calls fetch SYRIA_A then IRAQ_A via `get_chunk`
+    # (below), the same order `compose_prompt` then walks the assembled
+    # evidence set in, so SYRIA_A is "[c1]" and IRAQ_A is "[c2]". The
+    # PERSISTED record's own grounds still carry the real resolved id --
+    # only what the model is shown/cites changes.
     return {
         "claims": [
             {
                 "text": "The corpus states that displacement reshaped local authority in Syria.",
                 "kind": "a",
-                "grounds": [{"ref_type": "chunk", "ref_id": SYRIA_A}],
+                "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
                 "confidence": "medium",
             },
             {
                 "text": "A cross-source inference linking Syrian and Iraqi displacement dynamics.",
                 "kind": "b",
                 "grounds": [
-                    {"ref_type": "chunk", "ref_id": SYRIA_A},
-                    {"ref_type": "chunk", "ref_id": IRAQ_A},
+                    {"ref_type": "chunk", "ref_id": "[c1]"},
+                    {"ref_type": "chunk", "ref_id": "[c2]"},
                 ],
                 "confidence": "low",
             },
