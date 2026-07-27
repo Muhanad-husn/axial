@@ -175,6 +175,30 @@ def test_an_empty_list_is_an_answer_on_a_list_valued_field_not_a_blank():
     assert abstention_rates(records)["names"] == 0.0
 
 
+# --- #431: joined kind vocabulary offered for `names` -----------------------
+
+
+def test_the_names_question_offers_joined_kinds_never_their_bare_halves():
+    """The founder's decision (#431) is to join ambiguous kind families into
+    one label -- `country/state/place`, not `country` or `place` separately --
+    so a model that picks a bare half reintroduces the collision the join was
+    meant to kill. The prompt must offer the joined label whole and must not
+    offer any of its halves as a separate kind."""
+    from axial.interrogate import _QUESTIONS
+
+    # Isolate the offered kind list itself -- the property under test is what
+    # the model is invited to pick FROM, not the surrounding prose that has to
+    # name the bare halves in order to tell the model not to use them.
+    offered = _QUESTIONS.split("kind is usually one of ", 1)[1].split(
+        " -- use the joined label whole", 1
+    )[0]
+    kinds = [k.strip() for k in offered.split(",")]
+
+    assert "country/state/place" in kinds
+    for bare in ("country", "state", "place"):
+        assert bare not in kinds
+
+
 # --- Context assembly -------------------------------------------------------
 
 

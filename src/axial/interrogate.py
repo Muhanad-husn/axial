@@ -369,8 +369,11 @@ it".
 JSON list of strings)
 8. names -- Every named thing: people, places, institutions, events, \
 movements, periods, and any figure or table the passage names. (a JSON list \
-of {"name": ..., "kind": ...} objects; kind is your own word, e.g. person, \
-place, institution, event, movement, period, figure, table)
+of {"name": ..., "kind": ...} objects; kind is usually one of person, \
+country/state/place, institution/group, movement/religion, period, event, \
+concept, work, figure, table -- use the joined label whole, e.g. \
+country/state/place rather than just country or place -- or your own word \
+if none of these fit)
 9. citations -- Who does it cite, and is each citation support, foil, or \
 authority? (a JSON list of {"cited": ..., "stance": "support"|"foil"|\
 "authority", "about": ...} objects)
