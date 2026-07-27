@@ -168,7 +168,7 @@ Develop top to bottom. One slice = one issue = one PR.
 
 | # | Slice | Issue | Goal (one line) | Status | PR |
 |---|-------|-------|-----------------|--------|----|
-| 00 | spec rewrite | #417 | `specs/PRODUCT.md` rewritten for v1: interrogation replaces tagging, the wiki layer replaces the tag index, D1–D16 land as the contract, and the retired criteria are struck rather than left dangling | ◐ in-progress | #420 |
+| 00 | spec rewrite | #417 | `specs/PRODUCT.md` rewritten for v1: interrogation replaces tagging, the wiki layer replaces the tag index, D1–D16 land as the contract, and the retired criteria are struck rather than left dangling | ✅ done | #420 |
 | 01 | re-cut the notes | #418 | Band to 3500–9000, corpus re-chunked off cached trees, distribution reported (below-floor count, short-whole-sections, notes per book), figure records confirmed to survive | ☐ todo | TBD |
 | 02 | the interrogation pass | #419 | One call per note answering D6's questions with D7 abstention and D8 answer ordering, envelope context threaded in, per-note answer records on disk, plus a cost probe and a 50-output sample gate | ☐ todo | TBD |
 | 03 | retire tagging, xref and the vote layer | #414 | Delete the tag pass, the `xref` pass, `votes_by_pass`, the off-list validator and the closed-vocabulary gates; the schema file survives only as prompt examples and the spelling list | ☐ todo | TBD |
