@@ -162,6 +162,16 @@ plus 18.8k table-reference calls) become roughly 6,000 (a 9k cap yields about a
 third as many notes, read once). Cost is to be measured by a probe in slice 02,
 not estimated here.
 
+**Measured, 2026-07-27 (slice 02's probe, `data/logs/2026-07-27-interrogate-probe/`).**
+The re-cut corpus is **6,166 notes**. Interrogation on glm-5.2 costs
+**$0.00636/note** (5,385 tokens), so a full single-draw pass is **~$39**.
+D8 held: **0% collapse** onto the nearest example on `about`, `claim`, `move`
+and `ranges_over`, over a 50-note sample drawn from the body prose of five
+books. The one leak is `position_of`, where 6% of notes answered with a v0
+sentinel (`unlisted`, `not-applicable`) carried in by the codebook's own
+labelling imperatives — the lever, if it matters, is rendering example ids
+without their definitions.
+
 ## Slices
 
 Develop top to bottom. One slice = one issue = one PR.
@@ -169,8 +179,8 @@ Develop top to bottom. One slice = one issue = one PR.
 | # | Slice | Issue | Goal (one line) | Status | PR |
 |---|-------|-------|-----------------|--------|----|
 | 00 | spec rewrite | #417 | `specs/PRODUCT.md` rewritten for v1: interrogation replaces tagging, the wiki layer replaces the tag index, D1–D16 land as the contract, and the retired criteria are struck rather than left dangling | ✅ done | #420 |
-| 01 | re-cut the notes | #418 | Band to 3500–9000, corpus re-chunked off cached trees, distribution reported (below-floor count, short-whole-sections, notes per book), figure records confirmed to survive | ☐ todo | TBD |
-| 02 | the interrogation pass | #419 | One call per note answering D6's questions with D7 abstention and D8 answer ordering, envelope context threaded in, per-note answer records on disk, plus a cost probe and a 50-output sample gate | ☐ todo | TBD |
+| 01 | re-cut the notes | #418 | Band to 3500–9000, corpus re-chunked off cached trees, distribution reported (below-floor count, short-whole-sections, notes per book), figure records confirmed to survive | ✅ done | #428 |
+| 02 | the interrogation pass | #419 | One call per note answering D6's questions with D7 abstention and D8 answer ordering, envelope context threaded in, per-note answer records on disk, plus a cost probe and a 50-output sample gate | ✅ done | #430 |
 | 03 | retire tagging, xref and the vote layer | #414 | Delete the tag pass, the `xref` pass, `votes_by_pass`, the off-list validator and the closed-vocabulary gates; the schema file survives only as prompt examples and the spelling list | ☐ todo | TBD |
 | 04 | name inventory and similarity view | #415 | Collect every name and answer from 02, embed, cluster, and report the distribution so merge aggressiveness is chosen by looking (LLM-free; reuses `src/axial/distill/embed.py`) | ☐ todo | TBD |
 | 05 | Reconcile | #416 | Model merges names with 04's clusters as hints; emits a reversible alias map plus the surviving name list, which is the index | ☐ todo | TBD |
