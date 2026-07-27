@@ -119,12 +119,16 @@ _DOMAIN_DIR_PARTS = ("config", "domains", "syria")
 _DOMAIN_FILES = ("schema.yaml", "codebook.yaml")
 
 # -----------------------------------------------------------------------
-# Fixture text-length design (seam decision 4). Six records, two sources:
+# Fixture text-length design (seam decision 4). Six records, two sources.
+# Sizes rescaled for D1 (issue #418: CHUNK_MIN/CHUNK_MAX 1000-3000 ->
+# 3500-9000) so the fixture still exercises the real band rather than the
+# retired one -- structure (which section splits, which chunk is the
+# below-min tail) is unchanged, only the character counts move:
 #
 #   source-alpha.jsonl:
-#     "Introduction" (section_order "1"):        1 record,  1200 chars
-#     "Findings"     (section_order "2"):         3 records: 1050, 1600, 900
-#                                                 (900 is the SECTION'S OWN
+#     "Introduction" (section_order "1"):        1 record,  4200 chars
+#     "Findings"     (section_order "2"):         3 records: 3700, 5600, 3200
+#                                                 (3200 is the SECTION'S OWN
 #                                                 LAST chunk -- the documented
 #                                                 below-CHUNK_MIN tail
 #                                                 exception, §7.7/§8 P0-4)
@@ -134,37 +138,37 @@ _DOMAIN_FILES = ("schema.yaml", "codebook.yaml")
 #       (73.4%)".
 #
 #   source-beta.jsonl:
-#     "Overview"          (section_order "1"): 1 record, 2000 chars
-#     "Historical Notes"  (section_order "2"): 1 record, 2850 chars
+#     "Overview"          (section_order "1"): 1 record, 6300 chars
+#     "Historical Notes"  (section_order "2"): 1 record, 8500 chars
 #
 # Totals: 6 chunks (source-alpha=4, source-beta=2).
-# sizes = [1200, 1050, 1600, 900, 2000, 2850]
-#   min    = 900
-#   max    = 2850
-#   mean   = 9600 / 6 = 1600.0
-#   median = sorted [900, 1050, 1200, 1600, 2000, 2850] -> avg(1200, 1600)
-#          = 1400.0
-# Boundary sanity: above CHUNK_MAX = 0, below CHUNK_MIN = 1 (the 900-char
+# sizes = [4200, 3700, 5600, 3200, 6300, 8500]
+#   min    = 3200
+#   max    = 8500
+#   mean   = 31500 / 6 = 5250.0
+#   median = sorted [3200, 3700, 4200, 5600, 6300, 8500] -> avg(4200, 5600)
+#          = 4900.0
+# Boundary sanity: above CHUNK_MAX = 0, below CHUNK_MIN = 1 (the 3200-char
 # "Findings" tail), sections split = 1 ("Findings"), sections skipped as
 # garbage = 1 ("Appendix Tables", with its reason).
 # -----------------------------------------------------------------------
 
-SIZE_INTRO = 1200
-SIZE_FIND_1 = 1050
-SIZE_FIND_2 = 1600
-SIZE_FIND_3 = 900  # legitimate below-CHUNK_MIN section-tail exception
-SIZE_OVERVIEW = 2000
-SIZE_HIST = 2850
+SIZE_INTRO = 4200
+SIZE_FIND_1 = 3700
+SIZE_FIND_2 = 5600
+SIZE_FIND_3 = 3200  # legitimate below-CHUNK_MIN section-tail exception
+SIZE_OVERVIEW = 6300
+SIZE_HIST = 8500
 
 ALL_SIZES = [SIZE_INTRO, SIZE_FIND_1, SIZE_FIND_2, SIZE_FIND_3, SIZE_OVERVIEW, SIZE_HIST]
 
 EXPECTED_TOTAL = 6
 EXPECTED_ALPHA_COUNT = 4
 EXPECTED_BETA_COUNT = 2
-EXPECTED_MIN = 900
-EXPECTED_MAX = 2850
-EXPECTED_MEAN = 1600
-EXPECTED_MEDIAN = 1400
+EXPECTED_MIN = 3200
+EXPECTED_MAX = 8500
+EXPECTED_MEAN = 5250
+EXPECTED_MEDIAN = 4900
 EXPECTED_ABOVE_MAX = 0
 EXPECTED_BELOW_MIN = 1
 EXPECTED_SPLIT_SECTIONS = 1
