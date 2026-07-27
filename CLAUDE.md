@@ -1,17 +1,21 @@
 # Axial
 
-Axial turns a corpus of born-digital academic sources into a tagged Obsidian
-knowledge graph, and scores the tagging against a human-labeled gold corpus. The
-full build specification is in [`specs/PRODUCT.md`](specs/PRODUCT.md); the
-decision log is in [`docs/DECISIONS.md`](docs/DECISIONS.md).
+Axial turns a corpus of born-digital academic sources into an Obsidian wiki the
+model wrote by reading. Each passage is interrogated once with open questions —
+what it claims, whose position it is, who it argues against, who it cites, what
+it names — and the passages meet each other at the names they share, on a page
+per name that says what their authors disagree about. The full build
+specification is in [`specs/PRODUCT.md`](specs/PRODUCT.md); the decision log is
+in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ## Working in this repo
 
 - **Install and test:** `uv sync`, then `uv run pytest`. Drive the pipeline
   through the `axial` CLI (`uv run axial --help`).
-- **Domain content is data, not code.** The axes, controlled vocabularies, and
-  codebook definitions live in `config/domains/<domain>/` and load at runtime.
-  No country- or corpus-specific logic belongs in `src/`.
+- **Domain content is data, not code.** The domain frame lives in
+  `config/domains/<domain>/` and loads at runtime. It reaches the model as
+  context and examples, never as a gate. No country- or corpus-specific logic
+  belongs in `src/`.
 - **A structural tree is extracted once per source**, persisted, and reused by
   every later stage. Prefer reading the cached tree to re-running extraction.
 - GitHub issues and PRs are the system of record.
