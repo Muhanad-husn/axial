@@ -27,6 +27,10 @@ from axial.names import (  # noqa: E402
     NameOccurrence,
     NoAnswersToEmbedError,
     NoNamesToClusterError,
+    TABLE_NAME,
+    _borderline_pairs,
+    _nearest_neighbour_pairs,
+    _relabel_from_tree,
     build_inventory,
     collect_occurrences,
     examine_names,
@@ -406,78 +410,229 @@ def test_run_names_is_deterministic_across_reruns(tmp_path: Path):
 # --- examine_names / format_names_report -------------------------------------
 
 
+def _write_names_table(embeddings_dir: Path, entries: list[tuple[str, list[float], int]]) -> None:
+    """Write a `names` LanceDB table directly, with CONTROLLED vectors --
+    `examine_names` always re-clusters with the real PCA+HDBSCAN pipeline
+    (no `cluster_fn` injection seam; that IS the behaviour under test), so
+    its tests need vectors whose real geometry is known, not `_fake_encoder`'s
+    arbitrary string-derived ones."""
+    rows = [
+        {
+            "surface_form": surface_form,
+            "kind": "",
+            "count": count,
+            "chunk_ids_json": "[]",
+            "cluster_label": -1,  # unused by examine_names; it re-clusters
+            "vector": vector,
+        }
+        for surface_form, vector, count in entries
+    ]
+    db = lancedb.connect(embeddings_dir)
+    db.create_table(TABLE_NAME, data=rows, mode="overwrite")
+
+
 def test_examine_names_missing_table_raises(tmp_path: Path):
     with pytest.raises(NoNamesToClusterError):
         examine_names(embeddings_dir=tmp_path / "nope.lance")
 
 
-def test_examine_names_reports_cluster_sizes_and_similarity(tmp_path: Path):
-    answers_dir = tmp_path / "answers"
-    _write_answers(
-        answers_dir,
-        "s1",
-        [
-            _answer_record(
-                "c1",
-                "s1",
-                _base_answers(
-                    names=[
-                        {"name": "Alpha", "kind": "concept"},
-                        {"name": "Alpha2", "kind": "concept"},
-                    ]
-                ),
-            ),
-            _answer_record("c2", "s1", _base_answers(names=[{"name": "Zeta", "kind": "concept"}])),
-        ],
-    )
+def _tightness_fixture_vectors() -> list[tuple[str, list[float], int]]:
+    """Two dense, well-separated (antipodal-direction) groups -- mirrors
+    `axial.distill.readiness`'s own real-pipeline unit-test fixture shape
+    (`test_default_cluster_fn_separates_two_dense_regions...`), which is
+    proven stable through this exact normalise/standardise/PCA pipeline at
+    small N, unlike a hand-picked "obviously distinct" fixture (verified
+    directly: a magnitude-only or too-small fixture collapses unpredictably
+    once StandardScaler sees near-zero per-feature variance -- small-N
+    synthetic data does not behave like the real, thousands-of-points
+    corpus this pipeline is tuned for). `min_cluster_size=2` vs `5` is an
+    empirically found (not guessed) real transition on this exact fixture:
+    both dense groups survive at 2, and BOTH collapse to noise at 5 (`leaf`
+    selection requires every surviving leaf to meet the size, so the
+    smaller 3-member group failing drags the whole tree's leaf selection
+    down) -- exactly the real, if blunt, "where this setting decides
+    something" case a founder would see in the real report."""
+    group_a = [(f"Alpha{i}", [5.0 + i * 0.01, 5.0, 5.0], 1) for i in range(6)]
+    group_b = [(f"Beta{i}", [-5.0 + i * 0.01, -5.0, -5.0], 1) for i in range(3)]
+    noise = [("Gamma", [5.0, -5.0, 5.0], 1), ("Delta", [-5.0, 5.0, -5.0], 1)]
+    return group_a + group_b + noise
+
+
+def test_examine_names_sweeps_tightness_from_one_fit(tmp_path: Path):
     embeddings_dir = tmp_path / "embeddings.lance"
+    entries = _tightness_fixture_vectors()
+    _write_names_table(embeddings_dir, entries)
 
-    def cluster_fn(vectors: list[list[float]]) -> list[int]:
-        # First two entries ("Alpha", "Alpha2") cluster together; the third
-        # ("Zeta") is noise -- exercises both branches of the report.
-        return [0, 0, -1][: len(vectors)]
+    stats = examine_names(embeddings_dir=embeddings_dir, min_cluster_sizes=[2, 5], min_samples=1)
 
-    run_names(
-        answers_dir=answers_dir,
-        inventory_path=tmp_path / "inventory.jsonl",
-        embeddings_dir=embeddings_dir,
-        manifest_path=tmp_path / "manifest.json",
-        encoder=_fake_encoder,
-        cluster_fn=cluster_fn,
+    assert stats.entry_count == len(entries)
+    assert stats.occurrence_count == len(entries)
+    assert stats.similarity_min is not None
+    assert [t.min_cluster_size for t in stats.tightness] == [2, 5]
+
+    loose, tight = stats.tightness
+    assert loose.min_samples == tight.min_samples == 1
+    # mcs=2: both dense groups form their own real cluster.
+    assert loose.cluster_count == 2
+    assert loose.noise_count == 0
+    # mcs=5: the 3-member group can no longer meet the threshold, and
+    # `leaf` selection carries that down to noise for everyone.
+    assert tight.cluster_count == 0
+    assert tight.noise_count == len(entries)
+    assert tight.noise_fraction == 1.0
+    # noise never DEcreases as min_cluster_size tightens -- a structural
+    # HDBSCAN invariant (a stricter threshold only ever demotes points to
+    # noise, never promotes noise back into a cluster).
+    assert tight.noise_count >= loose.noise_count
+
+    # At mcs=5 every entry is noise, so the highest-similarity sampled pair
+    # (within either original dense group) is a real borderline pair: a
+    # near-identical pair this tightness declined to cluster at all.
+    assert tight.borderline_pairs
+    assert tight.borderline_pairs == sorted(
+        tight.borderline_pairs, key=lambda item: item[2], reverse=True
     )
+
+    report = format_names_report(stats)
+    assert f"{len(entries)} distinct surface form(s)" in report
+    assert f"{len(entries)} total occurrence(s)" in report
+    assert "tightness sweep (2 candidate(s))" in report
+    assert "min_cluster_size=2 min_samples=1" in report
+    assert "min_cluster_size=5 min_samples=1" in report
+    assert "nearest-neighbour cosine similarity spread" in report
+    assert "borderline pairs" in report
+
+
+def test_examine_names_default_sweep_uses_module_defaults(tmp_path: Path):
+    embeddings_dir = tmp_path / "embeddings.lance"
+    _write_names_table(
+        embeddings_dir,
+        [("Alpha", [0.0, 0.0], 1), ("Alpha2", [0.01, 0.01], 1), ("Zeta", [50.0, 50.0], 1)],
+    )
+
+    from axial.names import DEFAULT_TIGHTNESS_MIN_CLUSTER_SIZES
 
     stats = examine_names(embeddings_dir=embeddings_dir)
 
-    assert stats.entry_count == 3
-    assert stats.cluster_count == 1
-    assert stats.noise_count == 1
-    assert stats.cluster_sizes == [2]
-    assert stats.top_clusters == [(0, 2, ["Alpha", "Alpha2"])]
-    assert stats.similarity_min is not None
-
-    report = format_names_report(stats)
-    assert "3 distinct surface form(s)" in report
-    assert "1 non-noise cluster(s)" in report
-    assert "1 noise" in report
-    assert "cluster 0 (2 member(s))" in report
-    assert "nearest-neighbour cosine similarity spread" in report
+    assert [t.min_cluster_size for t in stats.tightness] == sorted(
+        DEFAULT_TIGHTNESS_MIN_CLUSTER_SIZES
+    )
 
 
-def test_format_names_report_handles_empty_clusters():
+def test_format_names_report_handles_no_tightness_candidates():
     class _Stats:
         entry_count = 0
         occurrence_count = 0
-        cluster_count = 0
-        noise_count = 0
-        cluster_sizes: list[int] = []
-        top_clusters: list = []
         similarity_min = None
         similarity_max = None
         similarity_mean = None
         similarity_median = None
+        tightness: list = []
 
     report = format_names_report(_Stats())
 
-    assert "(no non-noise clusters)" in report
-    assert "(none)" in report
+    assert "tightness sweep (0 candidate(s))" in report
     assert "(fewer than 2 entries)" in report
+
+
+# --- _relabel_from_tree: cheap relabel matches a fresh fit -------------------
+
+
+def test_relabel_from_tree_matches_a_fresh_fit_at_the_same_settings():
+    import hdbscan
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    reduced = np.vstack(
+        [
+            rng.normal(loc=[0, 0], scale=0.05, size=(6, 2)),
+            rng.normal(loc=[5, 5], scale=0.05, size=(4, 2)),
+            rng.uniform(-10, 15, size=(10, 2)),
+        ]
+    )
+
+    clusterer = hdbscan.HDBSCAN(
+        min_cluster_size=2,
+        min_samples=1,
+        cluster_selection_method="leaf",
+        allow_single_cluster=True,
+    )
+    clusterer.fit(reduced)
+    slt = clusterer.single_linkage_tree_.to_numpy()
+
+    cheap_labels = _relabel_from_tree(reduced, slt, min_cluster_size=4)
+
+    fresh = hdbscan.HDBSCAN(
+        min_cluster_size=4,
+        min_samples=1,
+        cluster_selection_method="leaf",
+        allow_single_cluster=True,
+    )
+    fresh_labels = fresh.fit_predict(reduced)
+
+    def partition(labels):
+        groups: dict[int, set[int]] = {}
+        for index, label in enumerate(labels):
+            if label == -1:
+                continue
+            groups.setdefault(label, set()).add(index)
+        return sorted(frozenset(group) for group in groups.values())
+
+    assert partition(cheap_labels) == partition(list(fresh_labels))
+    assert {i for i, label in enumerate(cheap_labels) if label == -1} == {
+        i for i, label in enumerate(fresh_labels) if label == -1
+    }
+
+
+# --- _nearest_neighbour_pairs / _borderline_pairs ----------------------------
+
+
+def test_nearest_neighbour_pairs_finds_the_closest_other_row():
+    rows = [
+        {"surface_form": "a", "vector": [1.0, 0.0]},
+        {"surface_form": "b", "vector": [0.99, 0.01]},  # nearly identical to "a"
+        {"surface_form": "c", "vector": [-1.0, 0.0]},  # opposite direction
+    ]
+
+    pairs = _nearest_neighbour_pairs(rows, sample_size=3)
+
+    by_index = {i: (j, sim) for i, j, sim in pairs}
+    assert by_index[0][0] == 1  # "a"'s nearest is "b"
+    assert by_index[0][1] > 0.9
+    assert by_index[2][1] < 0  # "c" is anti-correlated with everything else
+
+
+def test_nearest_neighbour_pairs_empty_for_fewer_than_two_rows():
+    assert _nearest_neighbour_pairs([{"surface_form": "a", "vector": [1.0]}], sample_size=5) == []
+    assert _nearest_neighbour_pairs([], sample_size=5) == []
+
+
+def test_borderline_pairs_excludes_same_cluster_dedupes_and_sorts():
+    rows = [
+        {"surface_form": "a"},
+        {"surface_form": "b"},
+        {"surface_form": "c"},
+        {"surface_form": "d"},
+    ]
+    # (i, j, similarity): a-b same cluster (excluded); a-c and b-d cross
+    # clusters at different similarities; c-d both noise.
+    pairs = [(0, 1, 0.99), (0, 2, 0.5), (1, 3, 0.8), (2, 3, 0.6)]
+    labels = [0, 0, 1, -1]  # a,b in cluster 0; c in cluster 1; d is noise
+
+    result = _borderline_pairs(rows, pairs, labels, top_n=5)
+
+    assert ("b", "d", 0.8) in result
+    assert ("c", "d", 0.6) in result
+    assert not any({a, b} == {"a", "b"} for a, b, _sim in result)  # same-cluster excluded
+    assert result == sorted(result, key=lambda item: item[2], reverse=True)
+
+
+def test_borderline_pairs_respects_top_n():
+    rows = [{"surface_form": str(i)} for i in range(5)]
+    pairs = [(0, 1, 0.9), (1, 2, 0.8), (2, 3, 0.7), (3, 4, 0.6)]
+    labels = [-1, -1, -1, -1, -1]  # everything noise -> every pair qualifies
+
+    result = _borderline_pairs(rows, pairs, labels, top_n=2)
+
+    assert len(result) == 2
+    assert result[0][2] == 0.9 and result[1][2] == 0.8

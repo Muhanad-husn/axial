@@ -55,13 +55,29 @@ never makes a merge decision itself:
      shape) and `embeddings.lance` (vectors + cluster labels, LanceDB,
      `axial.distill.embed`'s own write convention: `mode="overwrite"`,
      embedded/local/no server) plus a small manifest.
-  4. `examine_names`/`format_names_report` read the persisted similarity
-     view back (zero model/embedding calls, mirroring
-     `axial.chunk.examine_chunks`'s own read-only-over-persisted-data shape)
-     and report the cluster-size and nearest-neighbour similarity
-     distribution the founder looks at before slice 05 sets its merge
-     aggressiveness (P0-12: "cluster counts and sizes ... the largest
-     clusters with members, a sample of borderline pairs").
+  4. `examine_names`/`format_names_report` read the persisted vectors back
+     (zero model/embedding calls, mirroring `axial.chunk.examine_chunks`'s
+     own read-only-over-persisted-data shape) and RE-CLUSTER them at a
+     SWEEP of candidate tightnesses -- P0-12's full ask: "cluster counts and
+     sizes at a few candidate tightnesses ... the largest clusters with
+     members, and a sample of borderline pairs" -- so merge aggressiveness
+     is chosen by comparing sections of one table, not by editing this
+     module. Never re-embeds (measured: 835s to embed the real corpus vs.
+     ~11 minutes to cluster it once -- re-embedding per candidate would make
+     a sweep unusable). The candidates sweep `min_cluster_size` only, by
+     default: measured directly against the real 78,115-entry similarity
+     view, one HDBSCAN fit at a fixed `min_samples` takes ~657s regardless
+     of `min_cluster_size` (the mutual-reachability/MST computation
+     `min_samples` controls), while re-deriving labels at a different
+     `min_cluster_size` from that SAME fit's tree (`_relabel_from_tree`,
+     reusing `hdbscan`'s own internal `_tree_to_labels`) took ~0.6s each --
+     so `min_cluster_size` is the cheap knob (swept, several values, one
+     fit total) and `min_samples` is the expensive one (exposed singly, via
+     `--min-samples`; comparing two values costs two full fits, ~22 minutes,
+     not something to default into). Candidate values are a plain round-
+     number progression (`DEFAULT_TIGHTNESS_MIN_CLUSTER_SIZES`), never
+     tuned, and CLI-overridable (`axial names examine --min-cluster-sizes`)
+     -- the founder's own dial, not a heuristic's magic number.
 
 Out of scope (this slice only): making any merge decision (05, the alias
 map), any LLM call, and touching `axial.distill.embed`'s existing
@@ -113,6 +129,26 @@ DEFAULT_MIN_SAMPLES = 1
 # reduction for the same model beats leaving PCA off entirely (see module
 # docstring's 316s-vs-49s finding) or inventing a second untested constant.
 DEFAULT_PCA_COMPONENTS = 93
+
+# `examine_names`'s default tightness sweep (founder-requested, P0-12):
+# a plain round-number progression of `min_cluster_size` -- not a tuned
+# value, the founder's own dial, overridable from the CLI
+# (`axial names examine --min-cluster-sizes`). Held at the single loosest
+# `min_samples` (=`DEFAULT_MIN_SAMPLES`) by default: measured directly
+# against this corpus's real 78,115-entry similarity view, one HDBSCAN fit
+# at fixed `min_samples` takes ~600s regardless of `min_cluster_size`
+# (the mutual-reachability/MST computation `min_samples` controls, not
+# `min_cluster_size`), while re-deriving labels at a different
+# `min_cluster_size` from that SAME fit's tree (`_relabel_from_tree`) is
+# near-instant -- so `min_cluster_size` is the cheap knob to sweep by
+# default and `min_samples` is the one that costs a full refit per value
+# (exposed too, but singly, via `--min-samples`, not swept).
+DEFAULT_TIGHTNESS_MIN_CLUSTER_SIZES: tuple[int, ...] = (2, 5, 10, 20)
+
+# How many borderline (near-miss) pairs `sweep_tightness` reports per
+# candidate tightness -- small enough that "few candidate tightnesses" x
+# this stays one readable table (P0-12: "a sample of borderline pairs").
+DEFAULT_BORDERLINE_PAIRS = 5
 
 # The two fields §7.16 names as the inventory's source: "built by reading
 # every answer record's `names` and `citations`". Nothing else is read.
@@ -346,23 +382,15 @@ def _default_encoder(model_name: str) -> Encoder:
     return encode
 
 
-def _default_cluster_fn(
-    vectors: list[list[float]],
-    *,
-    pca_components: int = DEFAULT_PCA_COMPONENTS,
-    min_cluster_size: int = DEFAULT_MIN_CLUSTER_SIZE,
-    min_samples: int = DEFAULT_MIN_SAMPLES,
-) -> list[int]:
-    """L2-normalise -> standardise -> PCA -> HDBSCAN, reusing `axial.distill.
-    readiness._default_cluster_fn`'s own measured pipeline shape (see module
-    docstring for the real timing this reduction step buys on this corpus).
-    `cluster_selection_method="leaf"`/`allow_single_cluster=True`: that
-    module measured `eom` (HDBSCAN's own implicit default) collapsing the
-    whole corpus to one blob regardless of PCA dims, for this same embedding
-    model family; `leaf` is reused for the same reason. Returns one integer
-    label per input vector, in input order, unrelabelled: `-1` is
-    `NOISE_LABEL`, real clusters start at `0`."""
-    import hdbscan
+def _reduce_vectors(vectors: list[list[float]], pca_components: int = DEFAULT_PCA_COMPONENTS):
+    """L2-normalise -> standardise -> PCA, the shared, tightness-independent
+    half of the pipeline (reusing `axial.distill.readiness`'s own measured
+    shape -- see module docstring for the real timing this step buys on this
+    corpus). Computed ONCE per embedding set: a tightness sweep clusters the
+    same reduced array at several `min_cluster_size`/`min_samples` settings
+    rather than re-running this reduction (let alone re-embedding, which the
+    real 835s-vs-~50s gap between embedding and clustering makes the one
+    cost a sweep must never repeat) once per candidate."""
     import numpy as np
     from sklearn.decomposition import PCA
     from sklearn.preprocessing import StandardScaler, normalize
@@ -372,7 +400,19 @@ def _default_cluster_fn(
     array = StandardScaler().fit_transform(array)
 
     n_components = max(1, min(pca_components, array.shape[0], array.shape[1]))
-    reduced = PCA(n_components=n_components, svd_solver="full", random_state=0).fit_transform(array)
+    return PCA(n_components=n_components, svd_solver="full", random_state=0).fit_transform(array)
+
+
+def _cluster_reduced(reduced, min_cluster_size: int, min_samples: int) -> list[int]:
+    """HDBSCAN over an already-PCA-reduced array -- the tightness-dependent
+    half of the pipeline, cheap enough to call once per sweep candidate.
+    `cluster_selection_method="leaf"`/`allow_single_cluster=True`:
+    `axial.distill.readiness` measured `eom` (HDBSCAN's own implicit
+    default) collapsing the whole corpus to one blob regardless of PCA dims,
+    for this same embedding model family; `leaf` is reused for the same
+    reason. Returns one integer label per row, in input order, unrelabelled:
+    `-1` is `NOISE_LABEL`, real clusters start at `0`."""
+    import hdbscan
 
     clusterer = hdbscan.HDBSCAN(
         min_cluster_size=min_cluster_size,
@@ -381,6 +421,51 @@ def _default_cluster_fn(
         allow_single_cluster=True,
     )
     labels = clusterer.fit_predict(reduced)
+    return [int(label) for label in labels]
+
+
+def _default_cluster_fn(
+    vectors: list[list[float]],
+    *,
+    pca_components: int = DEFAULT_PCA_COMPONENTS,
+    min_cluster_size: int = DEFAULT_MIN_CLUSTER_SIZE,
+    min_samples: int = DEFAULT_MIN_SAMPLES,
+) -> list[int]:
+    """`run_names`'s default single-setting `cluster_fn`: reduce once,
+    cluster once. `sweep_tightness` (below) calls `_reduce_vectors`/
+    `_fit_and_relabel` directly instead, to reduce once and cluster many
+    times over the same persisted vectors."""
+    reduced = _reduce_vectors(vectors, pca_components)
+    return _cluster_reduced(reduced, min_cluster_size, min_samples)
+
+
+def _relabel_from_tree(reduced, single_linkage_tree_numpy, min_cluster_size: int) -> list[int]:
+    """Re-derive HDBSCAN labels at a different `min_cluster_size` from an
+    ALREADY-FITTED clusterer's single-linkage tree, without recomputing the
+    mutual-reachability graph/minimum-spanning tree -- the expensive part a
+    fresh `HDBSCAN(...).fit_predict(...)` would redo (measured: ~600s at
+    this corpus's real 78k-entry scale, independent of `min_cluster_size`).
+    `min_cluster_size` only decides how the already-built tree is condensed
+    into clusters -- a cheap, near-instant step -- so a `min_cluster_size`
+    sweep needs exactly one fit, not one per candidate.
+
+    Reuses `hdbscan`'s own internal `_tree_to_labels` (the same function
+    `HDBSCAN.fit_predict` calls internally after building the tree) rather
+    than reimplementing tree condensation -- the public API has no
+    "relabel only" entry point, and hand-rolling one would duplicate a
+    correctness-critical piece of the library `axial.distill.readiness`
+    already trusts. Verified directly (this module's own inner unit tests)
+    to reproduce byte-for-byte the same partition a fresh fit at the same
+    `min_cluster_size`/`min_samples` produces."""
+    from hdbscan.hdbscan_ import _tree_to_labels
+
+    labels, _probabilities, _stabilities, _condensed_tree, _slt = _tree_to_labels(
+        reduced,
+        single_linkage_tree_numpy,
+        min_cluster_size=min_cluster_size,
+        cluster_selection_method="leaf",
+        allow_single_cluster=True,
+    )
     return [int(label) for label in labels]
 
 
@@ -538,28 +623,53 @@ def run_names(
 # (mirrors `axial.chunk.EXAMINE_SAMPLE_SIZE`'s own convention).
 EXAMINE_CLUSTER_SAMPLE = 5
 EXAMINE_TOP_CLUSTERS = 10
-# How many entries the nearest-neighbour similarity spread is measured over
-# -- exact pairwise cosine similarity is O(n^2) in memory, so this report
-# samples rather than computing it over the whole inventory (the same
-# sampling convention `axial.chunk.examine_chunks`'s own chunk-text sample
-# uses; the persisted table itself is complete).
+# How many entries the nearest-neighbour similarity spread (and the
+# borderline-pair search) is measured over -- exact pairwise cosine
+# similarity is O(n^2) in memory, so this report samples rather than
+# computing it over the whole inventory (the same sampling convention
+# `axial.chunk.examine_chunks`'s own chunk-text sample uses; the persisted
+# table itself is complete, and the sample is shared across every
+# tightness candidate, computed once).
 EXAMINE_SIMILARITY_SAMPLE = 500
 
 
 @dataclass(frozen=True)
+class TightnessStats:
+    """One candidate tightness's own slice of the sweep (P0-12: "cluster
+    counts and sizes at a few candidate tightnesses ... a sample of
+    borderline pairs")."""
+
+    min_cluster_size: int
+    min_samples: int
+    cluster_count: int
+    noise_count: int
+    noise_fraction: float
+    cluster_sizes: list[int]  # non-noise cluster sizes, descending
+    top_clusters: list[tuple[int, int, list[str]]]  # (label, size, sample surface forms)
+    # (surface_a, surface_b, cosine similarity) pairs NOT placed in the same
+    # cluster at this tightness, highest similarity first -- "where this
+    # setting is actually deciding something" (founder ask): a high-
+    # similarity pair split apart is exactly the near-miss a different
+    # tightness might merge.
+    borderline_pairs: list[tuple[str, str, float]]
+
+
+@dataclass(frozen=True)
 class NamesExamineStats:
-    """What `axial names examine` reports (D10's viewing aid, P0-12)."""
+    """What `axial names examine` reports (D10's viewing aid, P0-12): the
+    inventory's own size, the overall nearest-neighbour similarity spread
+    (independent of any one tightness), and the tightness sweep itself --
+    one `TightnessStats` per candidate `min_cluster_size`, all re-clustered
+    from the SAME persisted vectors and the SAME single HDBSCAN fit
+    (`min_samples` held fixed; see `sweep_tightness`)."""
 
     entry_count: int
     occurrence_count: int
-    cluster_count: int
-    noise_count: int
-    cluster_sizes: list[int]  # non-noise cluster sizes, descending
-    top_clusters: list[tuple[int, int, list[str]]]  # (label, size, sample surface forms)
     similarity_min: float | None
     similarity_max: float | None
     similarity_mean: float | None
     similarity_median: float | None
+    tightness: list[TightnessStats]
 
 
 def _load_name_rows(embeddings_dir: Path) -> list[dict[str, Any]]:
@@ -579,11 +689,16 @@ def _load_name_rows(embeddings_dir: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _nearest_neighbour_similarities(rows: list[dict[str, Any]], sample_size: int) -> list[float]:
-    """Cosine similarity from each of a sample of rows to its nearest OTHER
-    row, computed once over the full persisted vector set (so a sampled
-    row's "nearest" is still its true nearest neighbour, not just its
-    nearest within the sample). Empty input / a single row yields `[]`."""
+def _nearest_neighbour_pairs(
+    rows: list[dict[str, Any]], sample_size: int
+) -> list[tuple[int, int, float]]:
+    """For each of a sample of rows, its nearest OTHER row and their cosine
+    similarity -- `(sample_index, nearest_index, similarity)`, computed once
+    over the full persisted vector set (so a sampled row's "nearest" is
+    still its true nearest neighbour, not just its nearest within the
+    sample), and reused for both the overall similarity spread and every
+    tightness candidate's borderline-pair search. Empty input / a single
+    row yields `[]`."""
     if len(rows) < 2:
         return []
 
@@ -595,30 +710,60 @@ def _nearest_neighbour_similarities(rows: list[dict[str, Any]], sample_size: int
     normalised = vectors / norms
 
     sample_indices = list(range(min(sample_size, len(rows))))
-    similarities = []
+    pairs = []
     for index in sample_indices:
         scores = normalised @ normalised[index]
         scores[index] = -1.0  # exclude self
-        similarities.append(float(scores.max()))
-    return similarities
+        nearest = int(scores.argmax())
+        pairs.append((index, nearest, float(scores[nearest])))
+    return pairs
 
 
-def examine_names(
-    embeddings_dir: Path = DEFAULT_EMBEDDINGS_DIR,
-    similarity_sample: int = EXAMINE_SIMILARITY_SAMPLE,
-) -> NamesExamineStats:
-    """Read the persisted similarity view back (zero model/embedding calls --
-    the vectors and cluster labels are already on disk) and compute the
-    distribution the founder looks at before slice 05 sets its merge
-    aggressiveness: cluster sizes, a sample from the largest clusters, and
-    the nearest-neighbour cosine-similarity spread over a sample of
-    entries."""
-    rows = _load_name_rows(embeddings_dir)
+def _similarity_spread(
+    pairs: list[tuple[int, int, float]],
+) -> tuple[float | None, float | None, float | None, float | None]:
+    if not pairs:
+        return None, None, None, None
+    ordered = sorted(similarity for _i, _j, similarity in pairs)
+    mid = len(ordered) // 2
+    median = ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2
+    return ordered[0], ordered[-1], sum(ordered) / len(ordered), median
 
+
+def _borderline_pairs(
+    rows: list[dict[str, Any]],
+    pairs: list[tuple[int, int, float]],
+    labels: list[int],
+    top_n: int,
+) -> list[tuple[str, str, float]]:
+    """The highest-similarity sampled pairs this tightness did NOT place in
+    the same cluster (either member is noise, or the two carry different
+    cluster labels) -- deduplicated by unordered pair, highest similarity
+    first."""
+    seen: set[frozenset[int]] = set()
+    candidates = []
+    for i, j, similarity in pairs:
+        if labels[i] == NOISE_LABEL or labels[j] == NOISE_LABEL or labels[i] != labels[j]:
+            key = frozenset((i, j))
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append((rows[i]["surface_form"], rows[j]["surface_form"], similarity))
+    candidates.sort(key=lambda item: item[2], reverse=True)
+    return candidates[:top_n]
+
+
+def _tightness_stats(
+    rows: list[dict[str, Any]],
+    pairs: list[tuple[int, int, float]],
+    labels: list[int],
+    min_cluster_size: int,
+    min_samples: int,
+    borderline_pairs: int,
+) -> TightnessStats:
     cluster_members: dict[int, list[str]] = {}
     noise_count = 0
-    for row in rows:
-        label = row["cluster_label"]
+    for row, label in zip(rows, labels):
         if label == NOISE_LABEL:
             noise_count += 1
         else:
@@ -632,46 +777,95 @@ def examine_names(
         )[:EXAMINE_TOP_CLUSTERS]
     ]
 
-    similarities = _nearest_neighbour_similarities(rows, similarity_sample)
-    if similarities:
-        ordered = sorted(similarities)
-        mid = len(ordered) // 2
-        median = ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2
-        similarity_min, similarity_max = ordered[0], ordered[-1]
-        similarity_mean = sum(ordered) / len(ordered)
-    else:
-        similarity_min = similarity_max = similarity_mean = median = None
+    return TightnessStats(
+        min_cluster_size=min_cluster_size,
+        min_samples=min_samples,
+        cluster_count=len(cluster_members),
+        noise_count=noise_count,
+        noise_fraction=noise_count / len(rows) if rows else 0.0,
+        cluster_sizes=cluster_sizes,
+        top_clusters=top_clusters,
+        borderline_pairs=_borderline_pairs(rows, pairs, labels, borderline_pairs),
+    )
+
+
+def examine_names(
+    embeddings_dir: Path = DEFAULT_EMBEDDINGS_DIR,
+    min_cluster_sizes: Iterable[int] = DEFAULT_TIGHTNESS_MIN_CLUSTER_SIZES,
+    min_samples: int = DEFAULT_MIN_SAMPLES,
+    pca_components: int = DEFAULT_PCA_COMPONENTS,
+    similarity_sample: int = EXAMINE_SIMILARITY_SAMPLE,
+    borderline_pairs: int = DEFAULT_BORDERLINE_PAIRS,
+) -> NamesExamineStats:
+    """Read the persisted similarity view back and RE-CLUSTER it (zero model/
+    embedding calls -- the vectors are already on disk; this never re-embeds,
+    the one cost the founder's own performance constraint forbids repeating)
+    at every candidate `min_cluster_size` in `min_cluster_sizes`, holding
+    `min_samples` fixed: cluster counts and size distribution at each
+    tightness, plus a sample of borderline pairs, so merge aggressiveness is
+    chosen by looking (D10, P0-12) rather than by editing this module.
+
+    One HDBSCAN fit only, at the SMALLEST `min_cluster_size` -- the
+    expensive step (measured ~600s at this corpus's real 78k-entry scale,
+    independent of `min_cluster_size`). Every other candidate re-derives
+    labels from that one fit's tree (`_relabel_from_tree`), which is
+    near-instant. Sweeping `min_samples` instead requires a fresh fit per
+    value -- call this again with a different `min_samples` rather than
+    passing a list; `min_cluster_sizes` is the cheap axis to sweep by
+    default (see `DEFAULT_TIGHTNESS_MIN_CLUSTER_SIZES`)."""
+    rows = _load_name_rows(embeddings_dir)
+    vectors = [row["vector"] for row in rows]
+
+    pairs = _nearest_neighbour_pairs(rows, similarity_sample)
+    similarity_min, similarity_max, similarity_mean, similarity_median = _similarity_spread(pairs)
+
+    sizes_sorted = sorted(set(min_cluster_sizes))
+    if not sizes_sorted:
+        sizes_sorted = [DEFAULT_MIN_CLUSTER_SIZE]
+    smallest = sizes_sorted[0]
+
+    import hdbscan
+
+    reduced = _reduce_vectors(vectors, pca_components)
+    clusterer = hdbscan.HDBSCAN(
+        min_cluster_size=smallest,
+        min_samples=min_samples,
+        cluster_selection_method="leaf",
+        allow_single_cluster=True,
+    )
+    initial_labels = [int(label) for label in clusterer.fit_predict(reduced)]
+    single_linkage_tree = clusterer.single_linkage_tree_.to_numpy()
+
+    tightness = []
+    for min_cluster_size in sizes_sorted:
+        labels = (
+            initial_labels
+            if min_cluster_size == smallest
+            else _relabel_from_tree(reduced, single_linkage_tree, min_cluster_size)
+        )
+        tightness.append(
+            _tightness_stats(rows, pairs, labels, min_cluster_size, min_samples, borderline_pairs)
+        )
 
     return NamesExamineStats(
         entry_count=len(rows),
         occurrence_count=sum(row["count"] for row in rows),
-        cluster_count=len(cluster_members),
-        noise_count=noise_count,
-        cluster_sizes=cluster_sizes,
-        top_clusters=top_clusters,
         similarity_min=similarity_min,
         similarity_max=similarity_max,
         similarity_mean=similarity_mean,
-        similarity_median=median,
+        similarity_median=similarity_median,
+        tightness=tightness,
     )
 
 
-def format_names_report(stats: NamesExamineStats) -> str:
-    """Render `NamesExamineStats` into a human-readable report -- format
-    left to the implementer (mirrors `axial.chunk.format_examine_report`'s
-    own docstring), only that every listed number is present."""
-    lines: list[str] = []
-
-    lines.append(
-        f"names examine: {stats.entry_count} distinct surface form(s), "
-        f"{stats.occurrence_count} total occurrence(s)"
-    )
-    lines.append(
+def _format_tightness(stats: TightnessStats) -> list[str]:
+    lines: list[str] = [
+        f"--- min_cluster_size={stats.min_cluster_size} min_samples={stats.min_samples} ---",
         f"clusters: {stats.cluster_count} non-noise cluster(s), "
-        f"{stats.noise_count} noise (unclustered) entries"
-    )
+        f"{stats.noise_count} noise (unclustered) entries "
+        f"({stats.noise_fraction:.1%} of the inventory)",
+    ]
 
-    lines.append("")
     if stats.cluster_sizes:
         n = len(stats.cluster_sizes)
         mean_size = sum(stats.cluster_sizes) / n
@@ -688,21 +882,50 @@ def format_names_report(stats: NamesExamineStats) -> str:
     else:
         lines.append("cluster size distribution: (no non-noise clusters)")
 
-    lines.append("")
     lines.append("largest clusters:")
     if not stats.top_clusters:
         lines.append("  (none)")
     for label, size, sample in stats.top_clusters:
         lines.append(f"  cluster {label} ({size} member(s)): {sample}")
 
+    lines.append("borderline pairs (high similarity, split apart at this tightness):")
+    if not stats.borderline_pairs:
+        lines.append("  (none)")
+    for surface_a, surface_b, similarity in stats.borderline_pairs:
+        lines.append(f"  {similarity:.3f}  {surface_a!r} <-> {surface_b!r}")
+
+    return lines
+
+
+def format_names_report(stats: NamesExamineStats) -> str:
+    """Render `NamesExamineStats` into a human-readable report -- format
+    left to the implementer (mirrors `axial.chunk.format_examine_report`'s
+    own docstring), only that every listed number is present. The tightness
+    sweep table (`stats.tightness`, one section per candidate
+    `min_cluster_size`) is the deliverable this report exists for (P0-12):
+    the founder picks slice 05's merge aggressiveness by comparing sections,
+    not by reading one setting's numbers in isolation."""
+    lines: list[str] = []
+
+    lines.append(
+        f"names examine: {stats.entry_count} distinct surface form(s), "
+        f"{stats.occurrence_count} total occurrence(s)"
+    )
+
     lines.append("")
     if stats.similarity_mean is not None:
         lines.append(
-            "nearest-neighbour cosine similarity spread (sampled): "
+            "nearest-neighbour cosine similarity spread (sampled, all entries): "
             f"min={stats.similarity_min:.3f} max={stats.similarity_max:.3f} "
             f"mean={stats.similarity_mean:.3f} median={stats.similarity_median:.3f}"
         )
     else:
         lines.append("nearest-neighbour cosine similarity spread: (fewer than 2 entries)")
+
+    lines.append("")
+    lines.append(f"tightness sweep ({len(stats.tightness)} candidate(s)):")
+    for tightness_stats in stats.tightness:
+        lines.append("")
+        lines.extend(_format_tightness(tightness_stats))
 
     return "\n".join(lines)

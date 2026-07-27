@@ -70,6 +70,9 @@ from axial.llm import (
     get_client,
 )
 from axial.names import (
+    DEFAULT_MIN_CLUSTER_SIZE,
+    DEFAULT_MIN_SAMPLES,
+    DEFAULT_TIGHTNESS_MIN_CLUSTER_SIZES,
     NamesError,
     examine_names,
     format_names_report,
@@ -245,7 +248,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     names_subparsers = names_parser.add_subparsers(dest="names_command")
-    names_subparsers.add_parser(
+    names_build_parser = names_subparsers.add_parser(
         "build",
         help=(
             "collect every distinct name surface form from data/answers/ "
@@ -256,13 +259,56 @@ def build_parser() -> argparse.ArgumentParser:
             "(data/names/similarity_manifest.json)"
         ),
     )
-    names_subparsers.add_parser(
+    names_build_parser.add_argument(
+        "--min-cluster-size",
+        type=int,
+        default=None,
+        help=(
+            "HDBSCAN's min_cluster_size for the single clustering persisted "
+            f"by this build (default: {DEFAULT_MIN_CLUSTER_SIZE}, D10's "
+            "loosest -- explore tightness afterwards via `names examine`, "
+            "which re-clusters the persisted vectors instead of rebuilding)"
+        ),
+    )
+    names_build_parser.add_argument(
+        "--min-samples",
+        type=int,
+        default=None,
+        help=(
+            "HDBSCAN's min_samples for the single clustering persisted by "
+            f"this build (default: {DEFAULT_MIN_SAMPLES}, D10's loosest)"
+        ),
+    )
+    names_examine_parser = names_subparsers.add_parser(
         "examine",
         help=(
             "read the persisted name inventory back and report the cluster-"
-            "size and nearest-neighbour similarity distribution -- the "
-            "viewing aid slice 05 (Reconcile) sets its merge aggressiveness "
-            "from (D10); zero model/embedding calls"
+            "size, noise-fraction and nearest-neighbour similarity "
+            "distribution at a sweep of candidate tightnesses, plus a "
+            "borderline-pair sample per tightness -- the viewing aid slice "
+            "05 (Reconcile) sets its merge aggressiveness from (D10, P0-12); "
+            "re-clusters the persisted vectors, zero model/embedding calls"
+        ),
+    )
+    names_examine_parser.add_argument(
+        "--min-cluster-sizes",
+        default=None,
+        help=(
+            "comma-separated min_cluster_size candidates to sweep -- the "
+            "cheap axis: one HDBSCAN fit total, every other candidate is a "
+            "near-instant relabel of that fit's own tree (default: "
+            f"{','.join(str(value) for value in DEFAULT_TIGHTNESS_MIN_CLUSTER_SIZES)})"
+        ),
+    )
+    names_examine_parser.add_argument(
+        "--min-samples",
+        type=int,
+        default=None,
+        help=(
+            "HDBSCAN's min_samples, held fixed across the sweep (default: "
+            f"{DEFAULT_MIN_SAMPLES}) -- the expensive axis: changing it costs "
+            "a fresh fit, so compare it by re-running `examine` at a "
+            "different value rather than passing a list"
         ),
     )
 
@@ -1439,9 +1485,15 @@ def _distill_readiness_map() -> int:
     return 0
 
 
-def _names_build() -> int:
+def _names_build(min_cluster_size: int | None, min_samples: int | None) -> int:
+    kwargs: dict[str, int] = {}
+    if min_cluster_size is not None:
+        kwargs["min_cluster_size"] = min_cluster_size
+    if min_samples is not None:
+        kwargs["min_samples"] = min_samples
+
     try:
-        result = run_names()
+        result = run_names(**kwargs)
     except NamesError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1456,9 +1508,18 @@ def _names_build() -> int:
     return 0
 
 
-def _names_examine() -> int:
+def _parse_min_cluster_sizes(raw: str | None) -> list[int]:
+    if raw is None:
+        return list(DEFAULT_TIGHTNESS_MIN_CLUSTER_SIZES)
+    return [int(value.strip()) for value in raw.split(",") if value.strip()]
+
+
+def _names_examine(min_cluster_sizes: str | None, min_samples: int | None) -> int:
     try:
-        stats = examine_names()
+        stats = examine_names(
+            min_cluster_sizes=_parse_min_cluster_sizes(min_cluster_sizes),
+            min_samples=min_samples if min_samples is not None else DEFAULT_MIN_SAMPLES,
+        )
     except NamesError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1618,10 +1679,10 @@ def main(argv: list[str] | None = None) -> int:
         return _interrogate(args.source_path, args.domain_dir, args.data_dir, args.limit)
 
     if args.command == "names" and args.names_command == "build":
-        return _names_build()
+        return _names_build(args.min_cluster_size, args.min_samples)
 
     if args.command == "names" and args.names_command == "examine":
-        return _names_examine()
+        return _names_examine(args.min_cluster_sizes, args.min_samples)
 
     if args.command == "artifacts":
         return _artifacts(args.source_path, args.domain)

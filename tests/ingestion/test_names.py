@@ -216,9 +216,58 @@ def test_names_build_then_examine_over_real_answer_records(isolated_vault_root):
     report = examine_result.stdout
     assert "3 distinct surface form(s)" in report
     assert "4 total occurrence(s)" in report
+    assert "nearest-neighbour cosine similarity spread" in report
+    # The tightness sweep (founder ask, spec §7.16/P0-12): the default
+    # candidates all show up as their own section, re-clustered from the
+    # SAME persisted vectors -- no re-embedding.
+    assert "tightness sweep (4 candidate(s))" in report
+    for min_cluster_size in (2, 5, 10, 20):
+        assert f"min_cluster_size={min_cluster_size} min_samples=1" in report
     assert "cluster size distribution" in report
     assert "largest clusters" in report
-    assert "nearest-neighbour cosine similarity spread" in report
+    assert "borderline pairs" in report
+
+
+def test_names_examine_min_cluster_sizes_and_min_samples_are_cli_overridable(isolated_vault_root):
+    """The founder's own dial (min_cluster_size/min_samples), not a baked-in
+    tuned set -- exercised end to end through the real CLI flags, over the
+    same persisted vectors `build` already wrote."""
+    root = isolated_vault_root
+    _build_fixture_answers(root)
+    build_result = _run_axial(root, "names", "build")
+    assert build_result.returncode == 0, build_result.stderr
+
+    examine_result = _run_axial(
+        root, "names", "examine", "--min-cluster-sizes", "2,3", "--min-samples", "1"
+    )
+    assert examine_result.returncode == 0, (
+        f"expected exit 0, got {examine_result.returncode}\n"
+        f"stdout: {examine_result.stdout!r}\nstderr: {examine_result.stderr!r}"
+    )
+    report = examine_result.stdout
+    assert "tightness sweep (2 candidate(s))" in report
+    assert "min_cluster_size=2 min_samples=1" in report
+    assert "min_cluster_size=3 min_samples=1" in report
+    assert "min_cluster_size=5" not in report
+
+
+def test_names_build_min_cluster_size_and_min_samples_are_cli_overridable(isolated_vault_root):
+    root = isolated_vault_root
+    _build_fixture_answers(root)
+
+    build_result = _run_axial(
+        root, "names", "build", "--min-cluster-size", "2", "--min-samples", "1"
+    )
+
+    assert build_result.returncode == 0, (
+        f"expected exit 0, got {build_result.returncode}\n"
+        f"stdout: {build_result.stdout!r}\nstderr: {build_result.stderr!r}"
+    )
+    manifest = json.loads(
+        (root / "data" / "names" / "similarity_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["config"]["min_cluster_size"] == 2
+    assert manifest["config"]["min_samples"] == 1
 
 
 def test_names_examine_before_build_fails_loudly(isolated_vault_root):
