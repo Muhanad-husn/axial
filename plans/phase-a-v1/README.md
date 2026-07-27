@@ -164,7 +164,11 @@ not estimated here.
 
 **Measured, 2026-07-27 (slice 02's probe, `data/logs/2026-07-27-interrogate-probe/`).**
 The re-cut corpus is **6,166 notes**. Interrogation on glm-5.2 costs
-**$0.00636/note** (5,385 tokens), so a full single-draw pass is **~$39**.
+**$0.00548/note billed**, so a full single-draw pass is **~$34** (floor ~$29).
+Note the price table in `llm.py` computes $0.00636/note — 14% high against what
+OpenRouter actually billed, measured with a credits-API delta over a 5-note run.
+Treat any `PRICE_TABLE_USD_PER_1K` figure as a ceiling; the gap is prompt
+caching on the ~9k-character example prefix every call shares.
 D8 held: **0% collapse** onto the nearest example on `about`, `claim`, `move`
 and `ranges_over`, over a 50-note sample drawn from the body prose of five
 books. The one leak is `position_of`, where 6% of notes answered with a v0
