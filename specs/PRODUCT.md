@@ -492,7 +492,7 @@ One call per note (§5 stage 6). One record per note, appended to `data/answers/
 | `stops_holding` | Where does the author say it stops holding? |
 | `position_of` | Whose position is this? |
 | `arguing_against` | Who or what is it arguing against? Multi-valued. |
-| `names` | Every named thing: people, places, institutions, events, movements, periods, and any figure or table the passage names. Each is `{name, kind}`. |
+| `names` | Every named thing the passage names, each `{name, kind}`. `kind` is usually one of person, country/state/place, institution/group, movement/religion, period, event, concept, work, figure, table — offered in the prompt, not enforced; a name that fits none of them gets the model's own word. |
 | `citations` | Who does it cite, and is each citation **support**, **foil**, or **authority**? Each is `{cited, stance, about}`. |
 | `mechanism` | What causes what, in what order. |
 | `evidence` | What evidence is offered. |
@@ -532,7 +532,7 @@ A guessed answer is worse than an abstention, because nothing downstream can tel
 
 Reconcile (§5 stage 7) runs over **names, not notes** (D10). Three artifacts, under `data/names/`.
 
-**1. The inventory (`inventory.jsonl`), LLM-free.** One record per distinct surface form returned by the interrogation: `{surface, kind, count, chunk_ids[]}`. It is built by reading every answer record's `names` and `citations`, and it is the complete, lossless record of what the corpus said. Nothing is merged here.
+**1. The inventory (`inventory.jsonl`), LLM-free.** One record per distinct surface form returned by the interrogation: `{surface, kind, count, chunk_ids[]}`. It is built by reading every answer record's `names` and `citations`, and it is the complete, lossless record of what the corpus said. Nothing is merged here. If the corpus gave a surface more than one `kind`, the record keeps the most frequent one, ties broken by first occurrence: the joined vocabulary (§7.15) already removed the collisions that carried real information, so what a tie discards is a distinction the vocabulary itself declines to make.
 
 **2. The similarity view, LLM-free.** The inventory's surfaces are embedded and clustered, and the run **reports the distribution**: cluster count and size distribution at a few candidate tightnesses, the largest clusters with their members, and a sample of borderline pairs. This is a **viewing aid**, and it exists so merge aggressiveness is chosen by looking rather than guessed. It reuses the existing embedding path (`src/axial/distill/embed.py`, §12); it decides nothing.
 
@@ -868,9 +868,9 @@ In v1 these are examples for the `ranges_over` and `stops_holding` questions (§
 
 **Why the axis existed, and what serves that need now.** The axis existed so a brief like "does Mann's infrastructural power apply to post-2011 Syria" could retrieve the general statement and the country case *separately* and then synthesize. In v1 that separation comes from the `ranges_over` answer read alongside the note's names, and the two Manns and the two Hinnebusches meet at the name they share rather than in a shared bucket.
 
-> **STRUCK (D4, D9).** The single-cardinality rule, the required non-empty `polity` field, the `missing_polity` quarantine, and the many-valued `polities_touched` facet are retired with the tagging pass. Every polity a passage engages is now a **name** of `kind: place` in the interrogation's `names` answer (§7.15) — which was always the more honest shape, since a polity is a thing the corpus talks about, not an attribute of a paragraph. The per-polity coverage map the facet fed (`CHARTER.md` §3) is countable from name membership instead; wiring it is Phase B's, and the charter cross-reference is stale until then (Open Questions).
+> **STRUCK (D4, D9).** The single-cardinality rule, the required non-empty `polity` field, the `missing_polity` quarantine, and the many-valued `polities_touched` facet are retired with the tagging pass. Every polity a passage engages is now a **name** of `kind: country/state/place` in the interrogation's `names` answer (§7.15) — which was always the more honest shape, since a polity is a thing the corpus talks about, not an attribute of a paragraph. The per-polity coverage map the facet fed (`CHARTER.md` §3) is countable from name membership instead; wiring it is Phase B's, and the charter cross-reference is stale until then (Open Questions).
 
-**`polity_canonical.yaml` survives, with a job (D9).** The canonical spelling map — aliases and historical polities folded to canonical referents — becomes the **seed for Reconcile's alias map** (§7.16). It is a cleanup aid, never a gate: an unmapped name always passes through and is reconciled on its merits, exactly as that file's own header has always said. Faithful naming at read time is untouched: the model names the true referent even when it is historical, defunct, or supra-national. `polity` rather than `country` was the right word for the same reason, and the `kind: place` name inherits it.
+**`polity_canonical.yaml` survives, with a job (D9).** The canonical spelling map — aliases and historical polities folded to canonical referents — becomes the **seed for Reconcile's alias map** (§7.16). It is a cleanup aid, never a gate: an unmapped name always passes through and is reconciled on its merits, exactly as that file's own header has always said. Faithful naming at read time is untouched: the model names the true referent even when it is historical, defunct, or supra-national. `polity` rather than `country` was the right word for the same reason, and the `kind: country/state/place` name inherits it.
 
 ## Appendix D — Artifact-role axis (artifacts)
 
@@ -929,7 +929,7 @@ axes:                 # read as: one example list per question, keyed by its old
     values: [scope:general, scope:comparative, scope:regional, scope:country-case, scope:sub-national]
     extra_fields:
       scope:country-case: { polity: free_text }   # RETIRED (D4): polities are names now, Appendix C
-  polities_touched:   # RETIRED (D4): every polity engaged is a `kind: place` name, Appendix C
+  polities_touched:   # RETIRED (D4): every polity engaged is a `kind: country/state/place` name, Appendix C
     applies_to: [prose]
     cardinality: many
     values: free_text
@@ -984,9 +984,9 @@ answers:
   position_of_nearest: { example: institutionalist-state-centered, fit: close }
   arguing_against: ["readings of the Ba'ath as a primarily sectarian vehicle", "Hudson's legitimacy-deficit account"]
   names:
-    - { name: "Ba'ath Party", kind: institution }
+    - { name: "Ba'ath Party", kind: institution/group }
     - { name: "Hafez al-Assad", kind: person }
-    - { name: "Syria", kind: place }
+    - { name: "Syria", kind: country/state/place }
     - { name: "the 1963 coup", kind: event }
     - { name: "Table 3.1", kind: table }
   citations:
