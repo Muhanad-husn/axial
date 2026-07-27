@@ -157,7 +157,7 @@ axial/
     envelopes/                 # one JSON per source
     chunks/                    # one JSONL per source (persisted chunk artifact, §7.7)
     answers/                   # one JSONL per source (interrogation answer records, §7.15)
-    names/                     # inventory, similarity view, alias map, index (§7.16)
+    names/                     # inventory, similarity view, alias map, index, merge decisions (§7.16)
     vault/
       prose/                   # prose-pool notes (.md with frontmatter)
       artifacts/               # artifact-pool notes (.md with frontmatter)
@@ -299,7 +299,7 @@ At step 2b (§5), between structural extraction and the passes that consume the 
 
 ### 7.9 Per-pass model routing and reasoning
 
-Both the **model** a pass calls and whether **reasoning** (an extended chain-of-thought token budget) is on for it are **per-pass** settings carried in `config/pipeline.yaml` (`model_by_pass`, `reasoning_by_pass`), never hardcoded at a call site. A pass identifies itself by a pass-name constant in `src/axial/llm.py`; an unnamed pass silently resolves to every safe default, which is why naming a new pass is part of building it.
+The **model** a pass calls, whether **reasoning** (an extended chain-of-thought token budget) is on for it, and its **sampling temperature** are all **per-pass** settings carried in `config/pipeline.yaml` (`model_by_pass`, `reasoning_by_pass`, `temperature_by_pass`), never hardcoded at a call site. A pass identifies itself by a pass-name constant in `src/axial/llm.py`; an unnamed pass silently resolves to every safe default, which is why naming a new pass is part of building it. The three blocks share one shape and one resolution: config overrides a code-level default, and a pass absent from a block keeps the behaviour it had before that block existed. For temperature that default is **to send no `temperature` field at all**, leaving the model's own default — so a pass gains a temperature only by being named.
 
 Reasoning was disabled globally after #147, when the `production_low` model pressed into service as a reasoner blew the wall-clock on the large per-chunk calls; that fix over-generalized. The rule that replaces it: **reasoning is ON where the decision is judgment-heavy and the call count is low, OFF where volume dominates.**
 
@@ -310,7 +310,7 @@ Reasoning was disabled globally after #147, when the `production_low` model pres
 | Content-apparatus classification (§7.8) | `content_apparatus` | flagged blocks only | **ON** | tier per config |
 | Artifact classification (§5 stage 5) | `artifacts` | 1 per artifact | OFF | cheap tier |
 | **Note interrogation (§7.15 / P0-6)** | **`note_interrogate`** | **~6,000, 1 per note** | **OFF by default** | **`z-ai/glm-5.2` (D14)** |
-| **Reconcile merge (§7.16 / P0-12)** | **`reconcile`** | per cluster, low | **ON** | tier per config |
+| **Reconcile merge (§7.16 / P0-12)** | **`reconcile`** | per cluster, low | **ON, effort `high`** | tier per config |
 | **Gather (§7.18 / P0-13)** | **`gather`** | 1 per name, plus a merge call per batched name | **ON** | tier per config |
 | **Pairwise support (§7.18 / P1-5)** | **`pairwise`** | on demand | **ON** | tier per config |
 
@@ -321,6 +321,7 @@ Notes on the four new entries:
 - **`note_interrogate` reasoning is OFF by default**, matching every other high-volume per-note pass (#147). The 50-output sample gate is where that default is tested: if the sample shows the answers need it, turning reasoning on is a config change, and the sample is re-read before the corpus run proceeds. It is not turned on by assumption.
 - **`note_interrogate` must not reuse the pass name `"interrogate"`.** `INTERROGATE_PASS_NAME = "interrogate"` (`src/axial/llm.py:303`) already belongs to Phase B's brief-interrogation pre-pass (`src/axial/brief/interrogate.py`). Sharing the name would silently share this pass's model and reasoning settings with a Phase-B pass that wants neither.
 - **Model tier for `reconcile`, `gather` and `pairwise` is left to config and is not fixed here.** No measurement exists for them yet, and asserting a tier without one is how DEC-27 happened.
+- **`reconcile` samples at temperature 1 with reasoning at `high`, and it is the only pass that names a temperature.** Deciding whether two surface forms name the same thing is an underdetermined judgment, and the project's own measurement says that shape of task is won by sampling and by letting the model think, not by prompt engineering (`docs/tag-reliability-best-of-n.md` §2.11, lesson 4). The consequence is deliberate: the prompt states the judgment and stops — no rule list, no criteria, no worked examples, and no instruction to think step by step, since reasoning at `high` *is* that mechanism. Reproducibility does not come from the sampler; it comes from Reconcile persisting each decision (§7.16).
 
 > **STRUCK (D4, D5).** The `tag` and `xref` pass entries are retired with their passes, along with `votes_by_pass` and everything that read it (§7.14). The pass-name constants `TAG_PASS_NAME` and `XREF_PASS_NAME` are deleted by slice 03, not here.
 
@@ -536,9 +537,13 @@ Reconcile (§5 stage 7) runs over **names, not notes** (D10). Three artifacts, u
 
 **2. The similarity view, LLM-free.** The inventory's surfaces are embedded and clustered, and the run **reports the distribution**: cluster count and size distribution at a few candidate tightnesses, the largest clusters with their members, and a sample of borderline pairs. This is a **viewing aid**, and it exists so merge aggressiveness is chosen by looking rather than guessed. It reuses the existing embedding path (`src/axial/distill/embed.py`, §12); it decides nothing.
 
-**3. The alias map (`alias_map.json`) and the index.** The model makes the merge calls, with the clusters as hints, one call per cluster (`reconcile`, §7.9). The output is data: `{version, generated_at, nodes: [{canonical, kind, aliases: [...]}]}`, the same shape `polity_canonical.yaml` already uses, which is what seeds it (§7.1, D9). **The surviving `canonical` set is the index.** Because the map is data and the inventory is lossless, every merge is **reversible and re-runnable**: re-reconciling at a different tightness rewrites the map and the name pages, and re-reads not one source and re-interrogates not one note.
+**3. The alias map (`alias_map.json`) and the index.** The model makes the merge calls, with the clusters as hints, one call per cluster (`reconcile`, §7.9) — a cluster large enough to threaten the request is split across a few calls, which is a limit on prompt size and nothing else. The output is data: `{version, generated_at, nodes: [{canonical, kind, aliases: [...]}]}`, the same shape `polity_canonical.yaml` already uses, which is what seeds it (§7.1, D9). **The surviving `canonical` set is the index**, written alongside the map as `index.json` — the list Materialize (§7.17) writes one name page per entry for. Because the map is data and the inventory is lossless, every merge is **reversible and re-runnable**: re-reconciling at a different tightness rewrites the map and the name pages, and re-reads not one source and re-interrogates not one note. Nothing else on disk records that a merge happened, so deleting or editing one node undoes exactly that merge.
 
-**Start loose, tighten by inspection.** There is no right aggressiveness up front. "State formation through war" and "bellicist state building" must meet; two genuinely different ideas must not. The loop is: reconcile, materialize, look at the graph, tighten. That is why the inventory and the view are their own slice, separate from the merge.
+**A canonical name is always a surface form the corpus said.** The seed may fold two surfaces together whose curated spelling the corpus never used; in that case the fold stands and the canonical is still elected from the group's own members. Reconcile merges names; it never mints one.
+
+**Every decision is persisted, and that is what makes the pass reproducible.** `reconcile` samples at temperature 1 (§7.9), so the model does not repeat itself on a re-ask. Each cluster's answer is therefore written to `merge_decisions.jsonl` as it is produced, keyed by a content hash of the cluster's own member list. Re-running reproduces the same merges by reusing the same recorded decisions; moving the tightness dial re-decides exactly the clusters whose membership changed; and an interrupted run resumes rather than paying twice.
+
+**Start loose, tighten by inspection.** There is no right aggressiveness up front. "State formation through war" and "bellicist state building" must meet; two genuinely different ideas must not. The loop is: reconcile, materialize, look at the graph, tighten. That is why the inventory and the view are their own slice, separate from the merge. The dial is the clustering tightness the merge asks about — `names.merge_min_cluster_size` / `names.merge_min_samples` in `config/pipeline.yaml`, the same two settings the similarity view sweeps and reports, so the founder moves it by reading that report. It is never a value in the prompt: the prompt states the judgment and the model makes it; how much is put in front of the model at once is config's business.
 
 An unmapped surface is never dropped. A surface no cluster and no merge call folded is its own canonical node with no aliases.
 
@@ -711,8 +716,10 @@ New criteria are **appended with new numbers**; existing numbers are never reuse
 - [ ] **A complete, lossless name inventory** is built LLM-free from every answer record's `names` and `citations`: one record per distinct surface form with its `kind`, occurrence count, and the `chunk_id`s it came from (§7.16). Observable: every name in every answer record appears in the inventory; none is dropped.
 - [ ] **A similarity view is produced and reported, and it decides nothing.** Surfaces are embedded and clustered, and the run prints the distribution — cluster counts and sizes at a few candidate tightnesses, the largest clusters with members, a sample of borderline pairs — so merge aggressiveness is chosen by looking (§7.16). It reuses the existing embedding path and makes no merge.
 - [ ] **The model makes the merge calls**, one per cluster, with the clusters supplied as hints rather than as decisions.
-- [ ] **The output is data and every merge is reversible.** `alias_map.json` is `{version, generated_at, nodes: [{canonical, kind, aliases[]}]}`; the surviving `canonical` set is **the index**. Observable: re-running Reconcile at a different tightness rewrites the map and re-reads no source and re-interrogates no note.
-- [ ] **`polity_canonical.yaml` seeds the map and never gates it** (D9). An unmapped surface always survives, as its own canonical node with no aliases.
+- [ ] **The output is data and every merge is reversible.** `alias_map.json` is `{version, generated_at, nodes: [{canonical, kind, aliases[]}]}`; the surviving `canonical` set is **the index**, written as `index.json`. Observable: re-running Reconcile at a different tightness rewrites the map and re-reads no source and re-interrogates no note.
+- [ ] **The merge call samples at `temperature: 1` with reasoning `high`**, both resolved from `config/pipeline.yaml`'s per-pass blocks, and no other pass's sampling changes (§7.9). Merge aggressiveness is a config dial the founder moves after reading the similarity view's report — never a value in the prompt, which states the judgment and stops.
+- [ ] **Every decision is persisted and re-running reproduces the same merges.** Observable: a second run over unchanged input makes zero model calls and writes the same map (§7.16).
+- [ ] **`polity_canonical.yaml` seeds the map and never gates it** (D9). An unmapped surface always survives, as its own canonical node with no aliases, and a canonical name is always a surface form the corpus actually said.
 - [ ] The pass is re-runnable in place: nothing it writes is required to build the inventory again.
 
 **P0-13 Gather (D12, D13).**

@@ -74,7 +74,28 @@ llm:
     # gate is where that default is tested -- if the sample shows the
     # answers need reasoning, turning it on is this line, not a code change.
     note_interrogate: false
+    # Phase A v1 name-merge pass (§7.9/§7.16, issue #416): ON at an explicit
+    # "high" effort, founder directive. Deciding which of a cluster's name
+    # surface forms are the same thing is an underdetermined judgment call,
+    # and reasoning at high IS the "think about it" mechanism -- which is why
+    # the prompt itself stays loose and says nothing about thinking step by
+    # step. Paired with temperature_by_pass.reconcile below.
+    reconcile: high
     artifacts: false
+  # Per-pass SAMPLING TEMPERATURE (§7.9, issue #416): the third per-pass
+  # block, same shape and same resolution as the two around it
+  # (src/axial/llm.py's OpenRouterClient reads it via
+  # _resolve_temperature_by_pass, falling back to axial.llm.
+  # DEFAULT_TEMPERATURE_BY_PASS -- empty -- when this block or the file is
+  # absent). Until this block existed no request carried a `temperature`
+  # field at all, and a pass absent here still sends none, so every other
+  # pass's sampling is exactly what it was.
+  temperature_by_pass:
+    # Founder directive: the name-merge pass samples at 1. Merging names is
+    # an underdetermined generative judgment, and the project's own
+    # measurement says that shape of task is won by sampling rather than by
+    # prompt engineering (docs/tag-reliability-best-of-n.md §2.11, lesson 4).
+    reconcile: 1
   # NOTE on the three 2026-07 model-swap entries above and model_by_pass's
   # synthesize/interrogate below: this is a founder-directed provisional
   # pick to unblock real sim-brief runs, not a decided answer. The founder
@@ -136,6 +157,23 @@ llm:
 paths:
   envelopes_dir: data/envelopes
   vault_dir: data/vault
+
+# Phase A v1 Reconcile: MERGE AGGRESSIVENESS (D10, §7.16, P0-12, issue #416).
+# `axial names merge` re-clusters the persisted name vectors at this tightness
+# and asks the model about one cluster at a time, so this is the dial D10's
+# "start loose, tighten by inspection" is about -- the founder moves it after
+# reading `axial names examine`'s tightness sweep, which reports at exactly
+# these two HDBSCAN settings. It is deliberately NOT in the prompt: the prompt
+# states the judgment and the model makes it; how much gets put in front of the
+# model at once is this file's business. src/axial/merge_names.py reads it via
+# _resolve_merge_tightness, falling back to axial.names' own
+# DEFAULT_MIN_CLUSTER_SIZE / DEFAULT_MIN_SAMPLES when this block or a key is
+# absent; `--min-cluster-size` / `--min-samples` on the CLI override it for one
+# run. The seeded values are HDBSCAN's loosest, matching `axial names build`'s
+# own defaults -- D10's starting point, never a tuned number.
+names:
+  merge_min_cluster_size: 2
+  merge_min_samples: 1
 
 # Stage-3 agentic retrieval loop (issue #253, PRD §7.5/§7.6, P0-3): a
 # bounded step budget is a stated tunable, never hardcoded at the call

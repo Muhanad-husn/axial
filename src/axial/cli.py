@@ -69,6 +69,7 @@ from axial.llm import (
     LLMError,
     get_client,
 )
+from axial.merge_names import MergeNamesError, run_merge_names
 from axial.names import (
     DEFAULT_MIN_CLUSTER_SIZE,
     DEFAULT_MIN_SAMPLES,
@@ -244,7 +245,10 @@ def build_parser() -> argparse.ArgumentParser:
             "data/names/inventory.jsonl, embeds and clusters it, and persists "
             "the result to data/names/embeddings.lance; 'examine' reports the "
             "cluster-size and nearest-neighbour similarity distribution over "
-            "that persisted result (zero model/embedding calls)"
+            "that persisted result (zero model/embedding calls); 'merge' is "
+            "slice 05 (Reconcile, issue #416) -- the model's own merge calls, "
+            "one cluster at a time, into a reversible alias map. Unrelated to "
+            "`axial reconcile gc`, which is model-free orphan GC (#291)"
         ),
     )
     names_subparsers = names_parser.add_subparsers(dest="names_command")
@@ -309,6 +313,50 @@ def build_parser() -> argparse.ArgumentParser:
             f"{DEFAULT_MIN_SAMPLES}) -- the expensive axis: changing it costs "
             "a fresh fit, so compare it by re-running `examine` at a "
             "different value rather than passing a list"
+        ),
+    )
+
+    names_merge_parser = names_subparsers.add_parser(
+        "merge",
+        help=(
+            "Phase A v1 slice 05 (issue #416): Reconcile -- re-cluster the "
+            "persisted name vectors at the configured merge tightness and let "
+            "the model decide, one cluster at a time, which surface forms name "
+            "the same thing (temperature 1, reasoning high, §7.9's `reconcile` "
+            "pass). Writes the reversible alias map to data/names/alias_map.json "
+            "and the surviving-name index to data/names/index.json; every "
+            "decision is logged to data/names/merge_decisions.jsonl, so a "
+            "re-run reproduces the same merges and resumes where it stopped"
+        ),
+    )
+    names_merge_parser.add_argument(
+        "--min-cluster-size",
+        type=int,
+        default=None,
+        help=(
+            "merge aggressiveness (D10): HDBSCAN's min_cluster_size for the "
+            "clusters the model is asked about (default: config/pipeline.yaml's "
+            "names.merge_min_cluster_size) -- pick it by reading `axial names "
+            "examine`'s tightness sweep"
+        ),
+    )
+    names_merge_parser.add_argument(
+        "--min-samples",
+        type=int,
+        default=None,
+        help=(
+            "HDBSCAN's min_samples for the same clustering (default: "
+            "config/pipeline.yaml's names.merge_min_samples)"
+        ),
+    )
+    names_merge_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help=(
+            "stop after this many model calls this run, still writing the map "
+            "from every decision recorded so far -- a bounded, cheap first look "
+            "before committing to a full pass"
         ),
     )
 
@@ -1528,6 +1576,33 @@ def _names_examine(min_cluster_sizes: str | None, min_samples: int | None) -> in
     return 0
 
 
+def _names_merge(min_cluster_size: int | None, min_samples: int | None, limit: int | None) -> int:
+    try:
+        result = run_merge_names(
+            min_cluster_size=min_cluster_size, min_samples=min_samples, limit=limit
+        )
+    except (NamesError, MergeNamesError, LLMError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    for key in (
+        "surface_forms",
+        "clusters",
+        "batches",
+        "decided",
+        "reused",
+        "failed",
+        "canonical_names",
+        "merged_surface_forms",
+        "seeded_surface_forms",
+        "complete",
+        "alias_map_path",
+        "index_path",
+    ):
+        print(f"{key}: {result[key]}")
+    return 0
+
+
 def _distill_classify(axis: str) -> int:
     try:
         if axis in DISTILL_CLASSIFY_EMBEDDING_AXES:
@@ -1683,6 +1758,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "names" and args.names_command == "examine":
         return _names_examine(args.min_cluster_sizes, args.min_samples)
+
+    if args.command == "names" and args.names_command == "merge":
+        return _names_merge(args.min_cluster_size, args.min_samples, args.limit)
 
     if args.command == "artifacts":
         return _artifacts(args.source_path, args.domain)
