@@ -47,6 +47,7 @@ from axial.drive import DEFAULT_SECRETS_PATH as DRIVE_SECRETS_PATH
 from axial.drive import DriveSecretsError, _load_drive_secrets, run_drive_ingest
 from axial.envelope import EnvelopeError, MissingSourceError, compute_source_id, run_envelope
 from axial.eval import EvalError, run_eval
+from axial.interrogate import InterrogateError, run_interrogate
 from axial.eval.corpus_pin import CorpusPinError, write_pin
 from axial.extract import ExtractError, extract
 from axial.gates import (
@@ -73,7 +74,13 @@ from axial.gold import (
 )
 from axial.ingest import run_ingest
 from axial.intake import IntakeError, intake
-from axial.llm import ENVELOPE_PASS_NAME, TAG_PASS_NAME, get_client
+from axial.llm import (
+    ENVELOPE_PASS_NAME,
+    NOTE_INTERROGATE_PASS_NAME,
+    TAG_PASS_NAME,
+    LLMError,
+    get_client,
+)
 from axial.panel import (
     MIN_REVIEWERS as PANEL_MIN_REVIEWERS,
 )
@@ -183,6 +190,48 @@ def build_parser() -> argparse.ArgumentParser:
     )
     tag_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
     tag_parser.add_argument(
+        "--domain",
+        dest="domain_dir",
+        default=None,
+        help=(
+            "path to a domain directory containing schema.yaml and codebook.yaml "
+            "(default: resolved from config/pipeline.yaml's paths.domain_dir, "
+            f"falling back to {DEFAULT_DOMAIN_DIR} when absent)"
+        ),
+    )
+
+    interrogate_parser = subparsers.add_parser(
+        "interrogate",
+        help=(
+            "run the per-note interrogation pass (one open-question call per "
+            "note), appending one answer record per note to "
+            "<data>/answers/<source_id>.jsonl and printing the run summary "
+            "(collapse check, abstention rates, measured cost) to stdout"
+        ),
+    )
+    interrogate_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
+    interrogate_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help=(
+            "stop after this many notes are interrogated this run -- the "
+            "~50-output sample gate (D14): the outputs and the summary are "
+            "read before the rest of the corpus is paid for"
+        ),
+    )
+    interrogate_parser.add_argument(
+        "--data-dir",
+        dest="data_dir",
+        default=None,
+        help=(
+            "rebase the four directories this pass touches (chunks/, "
+            "envelopes/, source_meta/, answers/) onto this parent, so a probe "
+            "can be pointed at another checkout's data/ (default: each "
+            "resolved from config/pipeline.yaml)"
+        ),
+    )
+    interrogate_parser.add_argument(
         "--domain",
         dest="domain_dir",
         default=None,
@@ -1033,6 +1082,65 @@ def _tag(
     return 0
 
 
+def _interrogate(
+    source_path: str,
+    domain_dir: str | None,
+    data_dir: str | None,
+    limit: int | None,
+    *,
+    root: Path | None = None,
+    clock: Callable[[], str] | None = None,
+) -> int:
+    """Run the per-note interrogation pass on `source_path` (PRD §7.15,
+    P0-6), wrapped in a run-logging context like every other per-source pass
+    -- one `run.jsonl` record per invocation, not per note; the per-CALL
+    visibility a long run needs is already `llm.py`'s own
+    `llm_call_request`/`llm_call_response` lines plus this pass's own
+    per-note stderr line. The run summary (collapse check, abstention rates,
+    measured and extrapolated cost) is the stdout payload."""
+    resolved_data_dir = Path(data_dir) if data_dir else None
+    if root is None and resolved_data_dir is not None:
+        root = resolved_data_dir / "logs"
+    with run_context("interrogate", root=root, clock=clock) as run:
+        start = time.monotonic()
+        try:
+            client = get_client()
+        except LLMError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        try:
+            summary = run_interrogate(
+                source_path,
+                client=client,
+                data_dir=resolved_data_dir,
+                domain_dir=domain_dir,
+                limit=limit,
+            )
+        except (InterrogateError, LLMError) as exc:
+            run.record(
+                source_id=_safe_source_id(source_path),
+                pass_name=NOTE_INTERROGATE_PASS_NAME,
+                model=None,
+                status="error",
+                duration_sec=time.monotonic() - start,
+                error=str(exc),
+            )
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        run.record(
+            source_id=summary["source_id"],
+            pass_name=NOTE_INTERROGATE_PASS_NAME,
+            model=summary["model"],
+            status="ok",
+            duration_sec=time.monotonic() - start,
+            error=None,
+        )
+
+    print(json.dumps(summary))
+    return 0
+
+
 def _artifacts(source_path: str, domain: str) -> int:
     try:
         records = run_artifacts(source_path, domain_dir=domain)
@@ -1684,6 +1792,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "tag":
         return _tag(args.source_path, args.domain_dir)
+
+    if args.command == "interrogate":
+        return _interrogate(args.source_path, args.domain_dir, args.data_dir, args.limit)
 
     if args.command == "artifacts":
         return _artifacts(args.source_path, args.domain)

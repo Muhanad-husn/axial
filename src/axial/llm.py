@@ -250,6 +250,14 @@ PRODUCTION_LOW_TIER = "production_low"
 # `production_high` (which `envelope` keeps using), so synthesis gets its own
 # named tier rather than repurposing an existing one two other passes share.
 PRODUCTION_SYNTHESIS_TIER = "production_synthesis"
+# A fifth tier (Phase A v1, D14/issue #419), named for the same reason
+# `PRODUCTION_SYNTHESIS_TIER` above was: the per-note interrogation pass runs
+# on `z-ai/glm-5.2`, which is neither `production_high` (deepseek-v4-pro, the
+# envelope pass's model) nor `production_synthesis` (the Phase-B synthesis
+# model that happens to be the same model id today). Pointing the new pass at
+# either existing tier would couple it to an unrelated pass, so that a later
+# swap of one silently moves the other.
+PRODUCTION_INTERROGATE_TIER = "production_interrogate"
 DEFAULT_LLM_TIER = BUILDING_TIER
 
 # Fallback model used only when secrets.toml doesn't name one for the
@@ -301,6 +309,15 @@ HOLDINGS_PASS_NAME = "holdings"
 # its safe default (no model override, reasoning off, single draw), exactly
 # like any other pass this module does not single out.
 INTERROGATE_PASS_NAME = "interrogate"
+
+# Pass name the Phase A v1 per-NOTE interrogation pass's single per-note call
+# identifies itself with (see src/axial/interrogate.py, issue #419, PRD §7.9/
+# §7.15, D6/D14). Named separately from `INTERROGATE_PASS_NAME` immediately
+# above -- which belongs to Phase B's brief pre-pass and must not be touched,
+# renamed or repointed -- because sharing one name would silently share one
+# `model_by_pass`/`reasoning_by_pass` entry between two passes that want
+# different models and different reasoning settings (§7.9).
+NOTE_INTERROGATE_PASS_NAME = "note_interrogate"
 
 # Pass name the router's content-apparatus classification call identifies
 # itself with (see src/axial/chunk.py / src/axial/router.py, issue #207,
@@ -432,6 +449,11 @@ DEFAULT_REASONING_BY_PASS: dict[str, bool | str] = {
     CONTENT_APPARATUS_PASS_NAME: True,
     HOLDINGS_PASS_NAME: True,
     SYNTHESIZE_PASS_NAME: True,
+    # §7.9: OFF by default, matching every other high-volume per-note pass
+    # (#147). The 50-output sample gate is where that default is tested; if
+    # the sample shows the answers need reasoning, turning it on is a config
+    # change, not a code change.
+    NOTE_INTERROGATE_PASS_NAME: False,
     TAG_PASS_NAME: False,
     ARTIFACTS_PASS_NAME: False,
     XREF_PASS_NAME: False,
@@ -558,6 +580,18 @@ STUB_ARTIFACT_ROLE_ENV_VAR = "AXIAL_STUB_ARTIFACT_ROLE"
 # at call time, like every other seam here. Never affects any other pass's
 # canned response.
 STUB_INTERROGATE_RESPONSE_ENV_VAR = "AXIAL_STUB_INTERROGATE_RESPONSE"
+
+# Issue #419 test/CI-only seam: mirrors STUB_INTERROGATE_RESPONSE_ENV_VAR
+# above, exactly, for the Phase A per-NOTE interrogation pass
+# (`NOTE_INTERROGATE_PASS_NAME`) instead of Phase B's brief pre-pass. When set
+# to a non-empty value, the stub/record clients' note_interrogate-pass
+# response becomes this raw string verbatim instead of the default canned
+# answer record, letting a test drive a specific abstention, a specific
+# free/nearest pair, or a deliberate D8 collapse end-to-end. Read at call
+# time, like every other seam here. Never affects any other pass's canned
+# response -- least of all the identically-shaped-sounding but entirely
+# separate `interrogate` pass above.
+STUB_NOTE_INTERROGATE_RESPONSE_ENV_VAR = "AXIAL_STUB_NOTE_INTERROGATE_RESPONSE"
 
 # Issue #256 test/CI-only seam: mirrors STUB_INTERROGATE_RESPONSE_ENV_VAR
 # above, exactly, for the stage-4 synthesis pass instead of the interrogate
@@ -1097,6 +1131,52 @@ def _canned_interrogate_response() -> str:
     return override or _CANNED_INTERROGATE_RESPONSE
 
 
+# The default canned response for a per-note interrogation call (issue #419,
+# PRD §7.15): one plausible answer record carrying all sixteen answer fields,
+# one explicit `not-in-passage` abstention (D7 is the ordinary case, not the
+# exception), and free answers that deliberately match NO example string in
+# the domain frame -- so the D8 collapse check reads 0 unless a test scripts
+# a collapse itself, rather than inheriting one from this fixture.
+_CANNED_NOTE_INTERROGATE_RESPONSE = json.dumps(
+    {
+        "about": ["the party-state's capture of the bureaucracy"],
+        "about_nearest": {"example": "state", "fit": "close"},
+        "claim": "the party apparatus, not the army, produced durable rule",
+        "claim_nearest": {"example": "state-formation", "fit": "close"},
+        "move": "conceding the coup in order to narrow the claim to organisation",
+        "move_nearest": {"example": "role:claim", "fit": "loose"},
+        "ranges_over": "Syria between the 1963 coup and the late 1970s",
+        "ranges_over_nearest": {"example": "scope:country-case", "fit": "close"},
+        "stops_holding": "the author says it does not carry past the 1982 rupture",
+        "position_of": "the author's own",
+        "position_of_nearest": {"example": "bellicist", "fit": "loose"},
+        "arguing_against": ["readings of the party as a primarily sectarian vehicle"],
+        "names": [
+            {"name": "Ba'ath Party", "kind": "institution"},
+            {"name": "Syria", "kind": "place"},
+        ],
+        "citations": [{"cited": "Batatu", "stance": "support", "about": "the officer corps"}],
+        "mechanism": "rural recruitment -> party penetration of ministries -> elite displacement",
+        "evidence": "officer-corps origin data and the land-reform decrees",
+        "comparison": "not-in-passage",
+        "defines": ["party-state"],
+        "uses": ["infrastructural power"],
+        "concedes": "that the initial seizure of power was a conventional military coup",
+        "assumes": {"not-in-passage": "the passage states no unspoken premise"},
+    }
+)
+
+
+def _canned_note_interrogate_response() -> str:
+    """The canned response for a per-note interrogation call (identified by
+    `pass_name=NOTE_INTERROGATE_PASS_NAME`, issue #419): read fresh from
+    `STUB_NOTE_INTERROGATE_RESPONSE_ENV_VAR` on every call so a test can
+    inject any answer record end-to-end (see that env var's own comment
+    above); unset/"" falls back to the default canned record."""
+    override = os.environ.get(STUB_NOTE_INTERROGATE_RESPONSE_ENV_VAR, "")
+    return override or _CANNED_NOTE_INTERROGATE_RESPONSE
+
+
 _CANNED_PREMISE_MATCH_RESPONSE = json.dumps({"verdict": "does_not_correspond"})
 
 
@@ -1295,7 +1375,9 @@ def _canned_response_for(pass_name: str | None) -> str:
     `AXIAL_STUB_INTERROGATE_RESPONSE`/`_SEQUENCE` is set to a non-empty
     value, that raw string/sequence verbatim -- issue #252/#264), `pass_name
     == PREMISE_MATCH_PASS_NAME` gets the correspondence-verdict-shaped canned
-    response (issue #264); anything else (the envelope pass,
+    response (issue #264), `pass_name == NOTE_INTERROGATE_PASS_NAME` gets the
+    answer-record-shaped canned response (issue #419, a DIFFERENT pass from
+    `INTERROGATE_PASS_NAME` above); anything else (the envelope pass,
     `pass_name == ENVELOPE_PASS_NAME`, included) gets the original
     envelope-shaped canned response. Shared by `StubLLMClient` and
     `RecordLLMClient` so `record` is indistinguishable from `stub` for the
@@ -1346,6 +1428,8 @@ def _canned_response_for(pass_name: str | None) -> str:
         return _canned_holdings_response()
     if pass_name == INTERROGATE_PASS_NAME:
         return _canned_interrogate_response()
+    if pass_name == NOTE_INTERROGATE_PASS_NAME:
+        return _canned_note_interrogate_response()
     if pass_name == SYNTHESIZE_PASS_NAME:
         return _canned_synthesize_response()
     if pass_name == ATTRIBUTION_PASS_NAME:
@@ -1825,6 +1909,7 @@ class OpenRouterClient:
         content_fallback_model: str | None = None,
         reasoning_by_pass: dict[str, bool | str] | None = None,
         model_by_pass: dict[str, str] | None = None,
+        unresolved_model_passes: dict[str, str] | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
@@ -1856,6 +1941,13 @@ class OpenRouterClient:
         self._model_by_pass = (
             dict(DEFAULT_MODEL_BY_PASS) if model_by_pass is None else model_by_pass
         )
+        # Issue #419: passes whose configured tier names no key in this
+        # operator's secrets.toml, mapped to the reason. A pass listed here
+        # raises `LLMConfigError` when IT is called (`model_for_pass`) --
+        # never at construction, which would take every other pass down with
+        # it (see `_resolve_model_by_pass`). Empty for every caller that does
+        # not supply it.
+        self._unresolved_model_passes = dict(unresolved_model_passes or {})
         # Issue #363: per-pass accumulated token usage, folded in by
         # `_accumulate_usage` from the real `usage` object every OpenRouter
         # response carries (see `.complete()`/`.complete_with_tools()`).
@@ -1889,7 +1981,17 @@ class OpenRouterClient:
         itself applies to an ordinary (non-`model`-overridden) request --
         kept here as the single source of truth so the two can never drift,
         and exposed so a caller can learn which model a pass would use
-        without making a completion call."""
+        without making a completion call.
+
+        A pass whose configured tier could not be resolved against this
+        operator's secrets.toml raises `LLMConfigError` here (issue #419),
+        carrying the same message tier resolution itself produced -- so the
+        misconfiguration is still loud and still never falls back silently
+        to a cheaper model, but it takes down only the pass that is actually
+        misconfigured."""
+        unresolved = self._unresolved_model_passes.get(pass_name)
+        if unresolved is not None:
+            raise LLMConfigError(unresolved)
         return self._model_by_pass.get(pass_name, self._model)
 
     def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
@@ -2456,6 +2558,7 @@ TIER_TO_MODEL_KEY = {
     PRODUCTION_HIGH_TIER: "production_high",
     PRODUCTION_LOW_TIER: "production_low",
     PRODUCTION_SYNTHESIS_TIER: "production_synthesis",
+    PRODUCTION_INTERROGATE_TIER: "production_interrogate",
 }
 
 
@@ -2556,7 +2659,9 @@ def votes_for_pass(pass_name: str, config_path: Path = DEFAULT_PIPELINE_CONFIG_P
     )
 
 
-def _resolve_model_by_pass(secrets: dict[str, Any], llm_config: dict[str, Any]) -> dict[str, str]:
+def _resolve_model_by_pass(
+    secrets: dict[str, Any], llm_config: dict[str, Any]
+) -> tuple[dict[str, str], dict[str, str]]:
     """Per-pass model tiering (DEC-26, issue #235): mirrors
     `_resolve_reasoning_by_pass` exactly, except `config/pipeline.yaml`'s
     `llm.model_by_pass` block names a TIER per pass (e.g. `envelope:
@@ -2567,15 +2672,28 @@ def _resolve_model_by_pass(secrets: dict[str, Any], llm_config: dict[str, Any]) 
     An absent block or absent file yields `DEFAULT_MODEL_BY_PASS` (empty):
     no pass gets an override, and every pass keeps sending requests to the
     client's own default configured model, exactly like before this issue.
-    A named tier with no secrets.toml key for it is a misconfiguration and
-    raises `LLMConfigError` immediately (the same guard `_resolve_model`
-    already enforces for the client's own default model) -- never a silent
-    fallback to the free building model."""
+
+    Returns `(resolved, unresolved)`. A named tier with no secrets.toml key
+    for it stays a misconfiguration -- never a silent fallback to the free
+    building model -- but it is reported as `unresolved[pass_name] = reason`
+    rather than raising here (issue #419). Raising during resolution made
+    ONE pass's missing tier key fatal for EVERY pass: `config/pipeline.yaml`
+    is shared, so adding a new tiered pass (`note_interrogate` ->
+    `production_interrogate`) would break `axial envelope`, `axial brief`
+    and everything else until each operator's own gitignored secrets.toml
+    gained the key. `OpenRouterClient.model_for_pass` raises the same
+    `LLMConfigError`, unchanged, when the pass that actually needs the
+    missing tier is called -- loud, with the same message, and scoped to the
+    pass that is misconfigured."""
     configured = llm_config.get("model_by_pass") or dict(DEFAULT_MODEL_BY_PASS)
-    return {
-        pass_name: _resolve_model_for_tier(secrets, llm_config, tier)
-        for pass_name, tier in configured.items()
-    }
+    resolved: dict[str, str] = {}
+    unresolved: dict[str, str] = {}
+    for pass_name, tier in configured.items():
+        try:
+            resolved[pass_name] = _resolve_model_for_tier(secrets, llm_config, tier)
+        except LLMConfigError as exc:
+            unresolved[pass_name] = f"pass {pass_name!r}: {exc}"
+    return resolved, unresolved
 
 
 def _build_openrouter_client(llm_config: dict[str, Any]) -> OpenRouterClient:
@@ -2588,7 +2706,7 @@ def _build_openrouter_client(llm_config: dict[str, Any]) -> OpenRouterClient:
     # configured, unchanged behavior for anyone who hasn't set it up.
     content_fallback_model = secrets.get("content_fallback_model")
     reasoning_by_pass = _resolve_reasoning_by_pass(llm_config)
-    model_by_pass = _resolve_model_by_pass(secrets, llm_config)
+    model_by_pass, unresolved_model_passes = _resolve_model_by_pass(secrets, llm_config)
     return OpenRouterClient(
         api_key=api_key,
         model=model,
@@ -2596,6 +2714,7 @@ def _build_openrouter_client(llm_config: dict[str, Any]) -> OpenRouterClient:
         content_fallback_model=content_fallback_model,
         reasoning_by_pass=reasoning_by_pass,
         model_by_pass=model_by_pass,
+        unresolved_model_passes=unresolved_model_passes,
     )
 
 

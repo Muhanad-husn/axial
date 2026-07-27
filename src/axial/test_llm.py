@@ -1774,9 +1774,10 @@ def test_resolve_model_by_pass_resolves_each_named_tier_to_a_concrete_model():
     }
     llm_config = {"model_by_pass": {"envelope": "production_high", "tag": "building"}}
 
-    resolved = _resolve_model_by_pass(secrets, llm_config)
+    resolved, unresolved = _resolve_model_by_pass(secrets, llm_config)
 
     assert resolved == {"envelope": "paid/high-model", "tag": "free/model"}
+    assert unresolved == {}
 
 
 def test_resolve_model_by_pass_resolves_production_synthesis_tier():
@@ -1789,7 +1790,7 @@ def test_resolve_model_by_pass_resolves_production_synthesis_tier():
     secrets = {"production_synthesis": "z-ai/glm-5.2"}
     llm_config = {"model_by_pass": {"synthesize": "production_synthesis"}}
 
-    resolved = _resolve_model_by_pass(secrets, llm_config)
+    resolved, _unresolved = _resolve_model_by_pass(secrets, llm_config)
 
     assert resolved == {"synthesize": "z-ai/glm-5.2"}
 
@@ -1801,19 +1802,36 @@ def test_resolve_model_by_pass_is_empty_when_config_names_no_overrides():
     but empty rather than a non-trivial safe default -- DEC-26)."""
     from axial.llm import _resolve_model_by_pass
 
-    assert _resolve_model_by_pass(secrets={}, llm_config={}) == {}
+    assert _resolve_model_by_pass(secrets={}, llm_config={}) == ({}, {})
 
 
-def test_resolve_model_by_pass_raises_for_a_tier_missing_its_secrets_key():
+def test_a_tier_missing_its_secrets_key_fails_only_the_pass_that_names_it():
     """A named production tier with no secrets.toml key is a
     misconfiguration -- never a silent fallback to the free model (mirrors
-    `_resolve_model`'s own guard, DEC-26)."""
-    from axial.llm import LLMConfigError, _resolve_model_by_pass
+    `_resolve_model`'s own guard, DEC-26). Issue #419 moves WHEN it fires,
+    not WHETHER: `config/pipeline.yaml` is shared, so raising during
+    resolution made one pass's missing key fatal for every other pass in the
+    process. The error now fires, unchanged and just as loud, when the pass
+    that names the missing tier is actually called."""
+    from axial.llm import LLMConfigError, OpenRouterClient, _resolve_model_by_pass
 
-    with pytest.raises(LLMConfigError):
-        _resolve_model_by_pass(
-            secrets={}, llm_config={"model_by_pass": {"envelope": "production_high"}}
-        )
+    resolved, unresolved = _resolve_model_by_pass(
+        secrets={"building_model": "free/model"},
+        llm_config={"model_by_pass": {"envelope": "production_high", "tag": "building"}},
+    )
+
+    assert resolved == {"tag": "free/model"}
+    assert "production_high" in unresolved["envelope"]
+
+    client = OpenRouterClient(
+        api_key="sk-fixture",
+        model="free/model",
+        model_by_pass=resolved,
+        unresolved_model_passes=unresolved,
+    )
+    assert client.model_for_pass("tag") == "free/model"
+    with pytest.raises(LLMConfigError, match="production_high"):
+        client.model_for_pass("envelope")
 
 
 def test_build_openrouter_client_wires_model_by_pass_from_config(monkeypatch, tmp_path):

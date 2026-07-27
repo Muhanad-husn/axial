@@ -77,6 +77,7 @@ from axial.envelope import (
 )
 from axial.extract import ExtractError, extract, tree_path
 from axial.ingest import WorklistError, read_worklist
+from axial.interrogate import InterrogateError, run_interrogate
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient, get_client
 from axial.tag import (
     DEFAULT_DOMAIN_DIR,
@@ -301,6 +302,19 @@ def _invoke_xref(source_path: str, client: LLMClient | None, config_path: Path, 
     )
 
 
+def _invoke_interrogate(source_path: str, client: LLMClient | None, config_path: Path, domain_dir):
+    """The Phase A v1 interrogation pass (§7.15, P1-4: "`interrogate`
+    registers as a pass like any other, so the corpus re-run resumes rather
+    than restarting"). No `data_dir` override here: through this path every
+    directory resolves from config, exactly like every other registered
+    pass. Its own per-source answer artifact is the finer-grained resume;
+    the ledger is the runner's coarse one, as for every checkpointing
+    pass."""
+    return run_interrogate(
+        source_path, client=client, config_path=config_path, domain_dir=domain_dir
+    )
+
+
 def _invoke_vault_write(source_path: str, client: LLMClient | None, config_path: Path, domain_dir):
     return run_vault_write(
         source_path, client=client, config_path=config_path, domain_dir=domain_dir
@@ -329,12 +343,12 @@ def _ledger_done_predicate(source_id: str, ledger_done_ids: set[str], config_pat
 
 
 # The pass registry (module docstring): a plain dict, not a plugin system --
-# seven known passes, all in this repo, each with a `(source_path, client,
+# eight known passes, all in this repo, each with a `(source_path, client,
 # config_path, domain_dir)`-shaped invoker (via the `_invoke_*` adapters
 # above), the `*Error` base it declares, and its done-predicate. extract and
 # envelope declare their own persisted-output file as the done-signal; every
 # other pass -- lacking a single atomic per-source output file, since
-# chunk/tag/artifacts/xref checkpoint per-chunk, a finer granularity this
+# chunk/tag/interrogate/artifacts/xref checkpoint per-note, a finer granularity this
 # runner does not reach into (module docstring) -- declares the runner's own
 # ledger.
 PASS_REGISTRY: dict[str, PassDescriptor] = {
@@ -344,6 +358,9 @@ PASS_REGISTRY: dict[str, PassDescriptor] = {
     ),
     "chunk": PassDescriptor("chunk", _invoke_chunk, ChunkError, _ledger_done_predicate),
     "tag": PassDescriptor("tag", _invoke_tag, TagError, _ledger_done_predicate),
+    "interrogate": PassDescriptor(
+        "interrogate", _invoke_interrogate, InterrogateError, _ledger_done_predicate
+    ),
     "artifacts": PassDescriptor(
         "artifacts", _invoke_artifacts, ArtifactsError, _ledger_done_predicate
     ),
