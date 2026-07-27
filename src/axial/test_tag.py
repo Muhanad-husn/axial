@@ -3486,7 +3486,7 @@ def test_compose_correction_prompt_shows_the_failing_positions_vocabulary():
     and lists the controlled vocabulary legal for the failing position (issue
     #102) -- for a subtag failure, that primary's own declared subtags, not
     the axis's primary vocabulary."""
-    from axial.tag import TagNotInSchemaError, compose_correction_prompt
+    from axial.tagging_schema import TagNotInSchemaError, compose_correction_prompt
 
     exc = TagNotInSchemaError(
         "claim_type",

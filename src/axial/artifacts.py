@@ -26,11 +26,11 @@ issue #32 slice 02, which also added `field` classification here.
 
 A role returned by the model that is absent from the schema's `artifact_role`
 axis is a hard error (PRD §8 P0-5/P0-6): `TagNotInSchemaError` is reused
-verbatim from `axial.tag` (the shared tag feature is now merged on this
-branch), never redefined locally. `field` (one primary + zero-or-more
-secondary, Appendix A) is classified and validated the same way, reusing
-`axial.tag`'s shared `parse_multi_value_tag_response`/`validate_multi_value_tag`
-pair rather than reinventing a field parser here.
+verbatim from `axial.tagging_schema` (shared with `axial.tag`, issue #423),
+never redefined locally. `field` (one primary + zero-or-more secondary,
+Appendix A) is classified and validated the same way, reusing
+`axial.tagging_schema`'s shared `parse_multi_value_tag_response`/
+`validate_multi_value_tag` pair rather than reinventing a field parser here.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.nonprose_guard import non_prose_skip_reason
 from axial.router import ARTIFACT, canonical_label, route_for
 from axial.schema import Schema, SchemaError, load_schema
-from axial.tag import (
+from axial.tagging_schema import (
     TagNotInSchemaError,
     apply_correction_reask,
     parse_multi_value_tag_response,
@@ -220,11 +220,11 @@ def load_artifact_checkpoint(path: Path) -> list[dict[str, Any]]:
     return load_checkpoint_records(path, ArtifactCheckpointCorruptError)
 
 
-# `TagNotInSchemaError` is reused verbatim from `axial.tag` (imported above)
-# -- not redefined here. Its constructor is `(axis_name, tag)`. Re-exported
-# under this module's namespace (via the import above) so existing callers
-# doing `from axial.artifacts import TagNotInSchemaError` keep working
-# unchanged.
+# `TagNotInSchemaError` is reused verbatim from `axial.tagging_schema`
+# (imported above) -- not redefined here. Its constructor is `(axis_name,
+# tag)`. Re-exported under this module's namespace (via the import above) so
+# existing callers doing `from axial.artifacts import TagNotInSchemaError`
+# keep working unchanged.
 
 
 def _reject_blank_artifact_value(value: Any, field: str) -> None:
@@ -476,9 +476,9 @@ def parse_artifact_role(raw: str) -> str:
 def validate_artifact_role(role: str, schema: Schema) -> None:
     """Validate `role` against the schema's `artifact_role` axis tag_ids,
     raising `TagNotInSchemaError` (a hard error, PRD §8 P0-5/P0-6) if it is
-    absent. Reuses `axial.tag.TagNotInSchemaError`, whose constructor order
-    is `(axis_name, tag)` -- note this differs from the local class this
-    replaced, which took `(role, axis_name)`."""
+    absent. Reuses `axial.tagging_schema.TagNotInSchemaError`, whose
+    constructor order is `(axis_name, tag)` -- note this differs from the
+    local class this replaced, which took `(role, axis_name)`."""
     axis = schema.axes.get(_ARTIFACT_ROLE_AXIS)
     if axis is None or role not in axis.tag_ids:
         raise TagNotInSchemaError(
@@ -489,7 +489,8 @@ def validate_artifact_role(role: str, schema: Schema) -> None:
 def _classify_artifact_response(raw: str, schema: Schema) -> tuple[str, dict[str, Any] | None]:
     """Parse+validate one raw artifacts-pass response into its `artifact_role`
     and (when the schema declares a `field` axis) its `field` value, reusing
-    `axial.tag`'s shared primary+secondary parser/validator for `field`.
+    `axial.tagging_schema`'s shared primary+secondary parser/validator for
+    `field`.
     Raises `TagNotInSchemaError` on any schema-vocabulary miss (the signal
     `apply_correction_reask` catches for its single bounded re-ask, issue
     #102), and `ArtifactParseError` on a malformed response as before.
