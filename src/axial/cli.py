@@ -399,6 +399,16 @@ def build_parser() -> argparse.ArgumentParser:
             "them at the requested tier"
         ),
     )
+    names_merge_parser.add_argument(
+        "--decisions-path",
+        default=None,
+        help=(
+            "override data/names/merge_decisions.jsonl -- point a run at a COPY "
+            "of the real decision log (e.g. for a --confirm-reask comparison "
+            "run) so the real log is never at risk from this invocation "
+            "(default: data/names/merge_decisions.jsonl)"
+        ),
+    )
 
     names_subparsers.add_parser(
         "materialize",
@@ -1632,6 +1642,7 @@ def _names_merge(
     workers: int,
     evidence_tier: int,
     confirm_reask: bool,
+    decisions_path: str | None,
 ) -> int:
     try:
         result = run_merge_names(
@@ -1641,6 +1652,7 @@ def _names_merge(
             workers=workers,
             evidence_tier=evidence_tier,
             confirm_reask=confirm_reask,
+            decisions_path=Path(decisions_path) if decisions_path else None,
         )
     except (NamesError, MergeNamesError, LLMError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1856,6 +1868,7 @@ def main(argv: list[str] | None = None) -> int:
             args.workers,
             args.evidence_tier,
             args.confirm_reask,
+            args.decisions_path,
         )
 
     if args.command == "names" and args.names_command == "materialize":

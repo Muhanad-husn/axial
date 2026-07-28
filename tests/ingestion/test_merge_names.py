@@ -767,3 +767,84 @@ def test_confirming_the_reask_purges_the_stale_decision_and_redecides_it(isolate
     assert len(remaining) == 1, "the stale record is purged, not left alongside the new one"
     assert remaining[0]["batch_key"] != "pre-449-bare-decision"
     assert remaining[0]["evidence_tier"] == 1
+
+
+def test_a_limited_reask_purges_only_the_batches_it_actually_attempts(isolated_vault_root):
+    """Coordinator-caught defect: purging the WHOLE stale population
+    regardless of `--limit` would delete every decision behind clusters this
+    run never touches -- the log is the only copy, and `--evidence-tier 2
+    --confirm-reask --limit 200` would have wiped all ~21,050 real decisions
+    while re-asking only 200. A `--limit`-bounded run must purge (and
+    report) only the stale decisions it is actually about to re-ask, leaving
+    every other stale record -- including the acceptance measurement's own
+    bare-name baseline -- untouched on disk."""
+    root = isolated_vault_root
+    names_dir = _six_name_fixture(root)
+
+    decisions_path = names_dir / "merge_decisions.jsonl"
+    decisions_path.parent.mkdir(parents=True, exist_ok=True)
+    # Three independent bare (pre-#449) decisions, one per pair `_cluster_pairs`
+    # produces from the six-name fixture -- all stale once evidence_tier=1
+    # is requested.
+    pairs = [_ALL_SIX[0:2], _ALL_SIX[2:4], _ALL_SIX[4:6]]
+    with decisions_path.open("w", encoding="utf-8") as handle:
+        for index, members in enumerate(pairs):
+            handle.write(
+                json.dumps(
+                    {
+                        "batch_key": f"pre-449-bare-decision-{index}",
+                        "cluster_label": index,
+                        "members": sorted(members),
+                        "nodes": [{"canonical": members[0], "aliases": [members[1]]}],
+                        "model": "stub",
+                        "decided_at": "2026-01-01T00:00:00Z",
+                    }
+                )
+                + "\n"
+            )
+
+    calls: list[str] = []
+
+    class CountingClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            calls.append(prompt)
+            members = [name for name in _ALL_SIX if name in prompt]
+            canonical, *aliases = sorted(members)
+            return json.dumps({"nodes": [{"canonical": canonical, "aliases": aliases}]})
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    summary = _merge(
+        names_dir,
+        root,
+        CountingClient(),
+        evidence_tier=1,
+        confirm_reask=True,
+        limit=1,
+    )
+
+    # Only the ONE batch this run actually submitted was re-asked and
+    # reported -- not the whole stale population of 3.
+    assert len(calls) == 1
+    assert summary["decided"] == 1
+    assert summary["stale_evidence_tier_reasked"] == 1
+
+    remaining_by_key = {
+        record["batch_key"]: record
+        for record in (
+            json.loads(line) for line in decisions_path.read_text(encoding="utf-8").splitlines()
+        )
+    }
+    # Exactly one old bare record was purged (superseded by a fresh,
+    # evidence-stamped one); the other TWO, never attempted this run, are
+    # untouched -- still on disk, still bare, still there for a later run
+    # (or the acceptance measurement's baseline) to read.
+    assert len(remaining_by_key) == 3
+    untouched = [key for key in remaining_by_key if key.startswith("pre-449-bare-decision")]
+    assert len(untouched) == 2
+    for key in untouched:
+        assert "evidence_tier" not in remaining_by_key[key]
+    fresh = [key for key in remaining_by_key if not key.startswith("pre-449-bare-decision")]
+    assert len(fresh) == 1
+    assert remaining_by_key[fresh[0]]["evidence_tier"] == 1

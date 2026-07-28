@@ -1024,25 +1024,33 @@ def purge_decisions(path: Path, batch_keys: set[str]) -> int:
 
 
 def _stale_evidence_tier_reasks(
-    pending: list[MergeBatch],
+    candidates: list[MergeBatch],
     decisions: dict[str, dict[str, Any]],
     evidence_tier: int,
 ) -> tuple[list[MergeBatch], set[str]]:
-    """Which of `pending` (batches whose CURRENT key is not in `decisions`)
-    are pending ONLY because `evidence_tier` changed -- not because the
-    cluster is genuinely new.
+    """Which of `candidates` are pending ONLY because `evidence_tier`
+    changed -- not because the cluster is genuinely new.
 
     `MergeBatch.key` folds in kind+evidence (trap 3), so a batch already
     decided at a different tier gets a different key and looks, to a plain
     key lookup, exactly like a brand-new cluster. Detected instead by bare
     membership: every decision record already carries its own `members`
-    (the bare surface forms, unaffected by kind/evidence), so a pending
+    (the bare surface forms, unaffected by kind/evidence), so a candidate
     batch whose bare member set matches an existing record recorded under a
     DIFFERENT `evidence_tier` (missing entirely on any pre-#449 record,
     read as tier 0) is exactly that -- already answered once, just not
     under this tier.
 
-    Returns `(stale_batches, stale_record_keys)`: the pending batches this
+    `candidates` MUST already be `limit`-bounded (`run_merge_names` passes
+    its own `to_attempt`, never the full `pending`): the return value drives
+    BOTH the confirmation count AND what `purge_decisions` deletes, so
+    checking the unbounded set would purge every stale decision in the
+    corpus -- including the ones this run has no intention of re-asking --
+    while a `--limit` run only ever re-asks a handful. The log is the only
+    copy; a `--limit` run must leave every decision it did not re-ask
+    untouched on disk.
+
+    Returns `(stale_batches, stale_record_keys)`: the candidate batches this
     applies to, and the OLD records' own `batch_key`s (candidates for
     `purge_decisions`) -- two different key spaces, since the old and new
     keys for the same cluster never collide."""
@@ -1052,7 +1060,7 @@ def _stale_evidence_tier_reasks(
 
     stale_batches: list[MergeBatch] = []
     stale_keys: set[str] = set()
-    for batch in pending:
+    for batch in candidates:
         matches = [
             record
             for record in records_by_members.get(frozenset(batch.members), [])
@@ -1105,12 +1113,17 @@ def run_merge_names(
     moment the tier changes -- moving the whole corpus's decisions from
     "reused" to "re-asked" as a side effect of a code change, not a choice.
     `run_merge_names` detects this by bare membership
-    (`_stale_evidence_tier_reasks`) and raises
-    `MergeReaskConfirmationRequiredError`, naming the exact count, before
-    building a client or submitting a single batch -- unless `confirm_reask`
-    is `True`, in which case the superseded decisions are purged
-    (`purge_decisions`) and re-asked as part of this run, same as any other
-    pending batch.
+    (`_stale_evidence_tier_reasks`), scoped to `to_attempt` (this run's own
+    `limit`-bounded batch list, never the full `pending` set), and raises
+    `MergeReaskConfirmationRequiredError` naming the count THIS run would
+    actually re-ask -- before building a client or submitting a single
+    batch -- unless `confirm_reask` is `True`, in which case exactly those
+    superseded decisions are purged (`purge_decisions`) and re-asked as part
+    of this run. A `--limit` run purges and reports only what it is about
+    to re-ask, never the whole stale population: the decision log is the
+    only copy, and a decision this run does not touch is left untouched on
+    disk, including whatever a later, larger run (or the acceptance
+    measurement's own bare-name baseline) still needs to read.
 
     Reads slice 04's persisted similarity view, re-clusters it at the
     configured tightness, and asks the model about pending clusters
@@ -1200,11 +1213,20 @@ def run_merge_names(
     decisions = load_decisions(decisions_path)
     pending = [batch for batch in batches if batch.key not in decisions]
     reused = len(batches) - len(pending)
+    to_attempt = pending if limit is None else pending[:limit]
 
     # Issue #449's rollout hazard: a batch pending only because evidence_tier
     # changed is indistinguishable, BY KEY, from a genuinely new cluster --
     # so it must be found by bare membership before a single call goes out.
-    stale_batches, stale_keys = _stale_evidence_tier_reasks(pending, decisions, evidence_tier)
+    #
+    # Computed over `to_attempt`, NOT all of `pending`: a `--limit`-bounded
+    # run must purge (and report) only the stale decisions it is actually
+    # about to re-ask. Purging the WHOLE stale population regardless of
+    # `limit` would delete every decision behind clusters this run never
+    # touches -- the log is the only copy, and those decisions (including
+    # the acceptance measurement's own bare-name baseline) would be gone
+    # with no way back, for a spend the operator never made.
+    stale_batches, stale_keys = _stale_evidence_tier_reasks(to_attempt, decisions, evidence_tier)
     if stale_batches and not confirm_reask:
         raise MergeReaskConfirmationRequiredError(len(stale_batches), len(stale_keys))
     if stale_keys:
@@ -1212,7 +1234,6 @@ def run_merge_names(
         for key in stale_keys:
             decisions.pop(key, None)
 
-    to_attempt = pending if limit is None else pending[:limit]
     print(
         f"reconcile: {len(surface_forms)} surface form(s), {len(batches)} cluster batch(es) "
         f"({len(candidate_batches)} from candidate generation, issue #446) "
