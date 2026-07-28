@@ -227,3 +227,144 @@ def test_build_parser_gate_run_still_accepts_dry_run_flag(tmp_path):
     )
 
     assert args.dry_run is True
+
+
+# ---------------------------------------------------------------------------
+# `axial names escalations` (issue #461): read-only listing, no queue
+# ---------------------------------------------------------------------------
+
+
+def _write_jsonl(path, records):
+    import json
+
+    with path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def test_build_parser_recognises_names_escalations_subcommand(tmp_path):
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "names",
+            "escalations",
+            "--decisions-path",
+            str(tmp_path / "d.jsonl"),
+            "--inventory-path",
+            str(tmp_path / "i.jsonl"),
+            "--json",
+        ]
+    )
+
+    assert args.command == "names"
+    assert args.names_command == "escalations"
+    assert args.decisions_path == str(tmp_path / "d.jsonl")
+    assert args.inventory_path == str(tmp_path / "i.jsonl")
+    assert args.as_json is True
+
+
+def test_main_names_escalations_lists_an_escalated_surface_with_co_members_and_sources(
+    tmp_path, capsys
+):
+    from axial.cli import main
+
+    decisions_path = tmp_path / "merge_decisions.jsonl"
+    inventory_path = tmp_path / "inventory.jsonl"
+    _write_jsonl(
+        decisions_path,
+        [
+            {
+                "batch_key": "k1",
+                "cluster_label": 0,
+                "members": ["Adam Smith", "Anthony D. Smith"],
+                "nodes": [],
+                "escalated": ["Adam Smith", "Anthony D. Smith"],
+            },
+            {
+                # Fully decided, nothing escalated -- must not appear.
+                "batch_key": "k2",
+                "cluster_label": 1,
+                "members": ["Slavery", "slavery"],
+                "nodes": [{"canonical": "Slavery", "aliases": ["slavery"]}],
+                "escalated": [],
+            },
+        ],
+    )
+    _write_jsonl(
+        inventory_path,
+        [
+            {
+                "surface": "Adam Smith",
+                "kind": "person",
+                "count": 2,
+                "chunk_ids": ["book-one_1_intro_001"],
+            },
+            {
+                "surface": "Anthony D. Smith",
+                "kind": "person",
+                "count": 1,
+                "chunk_ids": ["book-two_1_intro_001"],
+            },
+        ],
+    )
+
+    exit_code = main(
+        [
+            "names",
+            "escalations",
+            "--decisions-path",
+            str(decisions_path),
+            "--inventory-path",
+            str(inventory_path),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Adam Smith" in captured.out
+    assert "Anthony D. Smith" in captured.out
+    assert "book-one" in captured.out
+    assert "book-two" in captured.out
+    assert "person: 2" in captured.out
+    assert "Slavery" not in captured.out
+
+
+def test_main_names_escalations_json_flag_emits_machine_readable_array(tmp_path, capsys):
+    import json
+
+    from axial.cli import main
+
+    decisions_path = tmp_path / "merge_decisions.jsonl"
+    _write_jsonl(
+        decisions_path,
+        [
+            {
+                "batch_key": "k1",
+                "cluster_label": 0,
+                "members": ["a", "b"],
+                "nodes": [],
+                "escalated": ["a"],
+            }
+        ],
+    )
+
+    exit_code = main(
+        [
+            "names",
+            "escalations",
+            "--decisions-path",
+            str(decisions_path),
+            "--inventory-path",
+            str(tmp_path / "no-such-inventory.jsonl"),
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload == [
+        {"surface": "a", "kind": None, "cluster_label": 0, "co_members": ["b"], "source_ids": []}
+    ]

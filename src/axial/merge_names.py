@@ -130,6 +130,17 @@ mentioned -- D10's asymmetry holds, splitting loses less than fusing, and
 `alias_map.json`'s §7.16 shape is untouched. `write_merge_manifest` gained
 one summary count (`escalated_surfaces`, corpus-wide, not just this run's)
 so the rate reads off the manifest alone.
+
+**Issue #461: the escalated count had no listing.** #456's real corpus run
+escalated 5,629 surfaces and nothing downstream read them -- an operator
+could see the rate off the manifest but not the shape of what it was a rate
+of. `list_escalations` is a read-only join of the decision log to the
+inventory: for every escalated surface it returns the co-members it was
+proposed with (that decision's own `members`, the rest of the batch) and the
+source book(s) it appears in (the inventory's `chunk_ids`, resolved to
+`source_id`s). Deliberately no queue, no resolution state, no write path --
+just enough to see whether the 5,629 are one problem or five, which is also
+the evidence issue #460 needs.
 """
 
 from __future__ import annotations
@@ -154,6 +165,7 @@ from axial.name_candidates import generate_candidate_clusters
 from axial.names import (
     ClusterFn,
     DEFAULT_EMBEDDINGS_DIR,
+    DEFAULT_INVENTORY_PATH,
     DEFAULT_MIN_CLUSTER_SIZE,
     DEFAULT_MIN_SAMPLES,
     DEFAULT_NAMES_DATA_DIR,
@@ -1065,6 +1077,149 @@ def _stale_evidence_tier_reasks(
             stale_batches.append(batch)
             stale_keys.update(record["batch_key"] for record in matches)
     return stale_batches, stale_keys
+
+
+# ---------------------------------------------------------------------------
+# Issue #461: a read-only listing over the decision log -- no queue, no
+# resolution state, no write path.
+# ---------------------------------------------------------------------------
+
+
+def _load_inventory_lookup(path: Path) -> dict[str, tuple[str | None, tuple[str, ...]]]:
+    """`{surface_form: (kind, chunk_ids)}` off the persisted inventory
+    (§7.16's `{surface, kind, count, chunk_ids[]}` shape). A decision record
+    carries no kind and no structured chunk_ids for its own escalated
+    members -- evidence rides inside the rendered prompt line, not as a
+    separate field -- so this is the escalations listing's one read of the
+    inventory. A missing file yields an empty lookup, same as a fresh corpus
+    with no inventory built yet: this listing never raises."""
+    lookup: dict[str, tuple[str | None, tuple[str, ...]]] = {}
+    if not path.is_file():
+        return lookup
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            lookup[row["surface"]] = (row.get("kind"), tuple(row.get("chunk_ids", [])))
+    return lookup
+
+
+@dataclass(frozen=True)
+class EscalationEntry:
+    """One escalated surface form, from one decision record (issue #461).
+    `co_members` is that decision's own batch membership minus the surface
+    itself; `source_ids` is which source book(s) the surface's own
+    occurrences (the inventory's `chunk_ids`) resolve to. The same surface
+    form escalated in two different batches -- a real HDBSCAN cluster and
+    issue #446's candidate generation both proposing it, say -- yields two
+    entries, since the co-members differ and that difference is exactly
+    what the operator is judging."""
+
+    surface_form: str
+    kind: str | None
+    cluster_label: int
+    co_members: tuple[str, ...]
+    source_ids: tuple[str, ...]
+
+
+def list_escalations(
+    decisions_path: Path = DEFAULT_DECISIONS_PATH,
+    inventory_path: Path = DEFAULT_INVENTORY_PATH,
+) -> list[EscalationEntry]:
+    """Every escalated surface form recorded in `decisions_path`, joined to
+    the co-members it was proposed with and the source book(s) it appears
+    in -- issue #461's minimum useful listing, so the operator can see the
+    *shape* of the escalated set (one problem or five) without a resolution
+    UI, a queue, or any write path. Deterministic: sorted by surface form,
+    then cluster label."""
+    decisions = load_decisions(decisions_path)
+    inventory = _load_inventory_lookup(inventory_path)
+
+    entries: list[EscalationEntry] = []
+    for record in decisions.values():
+        escalated = record.get("escalated") or []
+        if not escalated:
+            continue
+        members = record.get("members", [])
+        for surface_form in escalated:
+            kind, chunk_ids = inventory.get(surface_form, (None, ()))
+            source_ids: list[str] = []
+            for chunk_id in chunk_ids:
+                try:
+                    source_id = source_id_from_chunk_id(chunk_id)
+                except MalformedChunkIdError:
+                    continue
+                if source_id not in source_ids:
+                    source_ids.append(source_id)
+            entries.append(
+                EscalationEntry(
+                    surface_form=surface_form,
+                    kind=kind,
+                    cluster_label=record["cluster_label"],
+                    co_members=tuple(member for member in members if member != surface_form),
+                    source_ids=tuple(sorted(source_ids)),
+                )
+            )
+    entries.sort(key=lambda entry: (entry.surface_form, entry.cluster_label))
+    return entries
+
+
+def escalations_to_json(entries: list[EscalationEntry]) -> list[dict[str, Any]]:
+    """The machine-readable form of `list_escalations`' own output -- the
+    same data `format_escalations_report` renders as text, so a caller that
+    wants to filter or re-ask programmatically (issue #460's "re-ask exactly
+    these" option) never has to re-parse the human report."""
+    return [
+        {
+            "surface": entry.surface_form,
+            "kind": entry.kind,
+            "cluster_label": entry.cluster_label,
+            "co_members": list(entry.co_members),
+            "source_ids": list(entry.source_ids),
+        }
+        for entry in entries
+    ]
+
+
+def format_escalations_report(entries: list[EscalationEntry]) -> str:
+    """Human-readable rendering of `list_escalations`' output: a per-kind
+    count (falls out of the same data at no extra cost -- the cheapest
+    answer to "one problem or five") followed by one line per escalated
+    surface with its co-members and source book(s)."""
+    lines: list[str] = [f"names escalations: {len(entries)} escalated surface occurrence(s)"]
+
+    distinct = len({entry.surface_form for entry in entries})
+    if distinct != len(entries):
+        lines.append(
+            f"  ({distinct} distinct surface form(s) -- some escalated in more than one batch)"
+        )
+
+    by_kind: dict[str, int] = {}
+    for entry in entries:
+        key = entry.kind or "(no kind)"
+        by_kind[key] = by_kind.get(key, 0) + 1
+    lines.append("")
+    lines.append("by kind:")
+    if not by_kind:
+        lines.append("  (none)")
+    for kind, count in sorted(by_kind.items(), key=lambda item: (-item[1], item[0])):
+        lines.append(f"  {kind}: {count}")
+
+    lines.append("")
+    lines.append("escalated surfaces:")
+    if not entries:
+        lines.append("  (none)")
+    for entry in entries:
+        kind = f" ({entry.kind})" if entry.kind else ""
+        co_members = ", ".join(entry.co_members) if entry.co_members else "(none)"
+        sources = ", ".join(entry.source_ids) if entry.source_ids else "(none)"
+        lines.append(
+            f"  {entry.surface_form!r}{kind} -- proposed with: {co_members} -- source(s): {sources}"
+        )
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
