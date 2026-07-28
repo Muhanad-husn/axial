@@ -178,16 +178,24 @@ class ArtifactNote:
     `caption` is `None` when the note carries none -- mirroring the write
     side's own conditional-inclusion convention (issue #168,
     `axial.vault.build_artifact_frontmatter`), never raising for its
-    absence."""
+    absence.
+
+    `artifact_role`/`field` are retired (issue #429: the artifacts pass
+    makes no LLM call, so a note written under the current pipeline never
+    carries either key) but stay as optional fields here, defaulting to
+    `None`, rather than being removed outright: an OLDER note written before
+    #429 still carries them, and Phase B's callers (`axial.panel.packet`,
+    `axial.gates.grounding`) degrade to the artifact's own id when they are
+    absent rather than crashing on a required key that no longer exists."""
 
     artifact_id: str
-    artifact_role: str
-    field: dict[str, Any]
     source_id: str
     section: str
     retrievable: bool
     cited_by: list[str]
     caption: str | None = None
+    artifact_role: str | None = None
+    field: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -267,13 +275,15 @@ def _parse_artifact_note(path: Path) -> ArtifactNote:
     frontmatter, _body = _read_frontmatter(path)
     return ArtifactNote(
         artifact_id=_require(frontmatter, path, "artifact_id"),
-        artifact_role=_require(frontmatter, path, "artifact_role"),
-        field=_require(frontmatter, path, "field"),
         source_id=_require(frontmatter, path, "source_id"),
         section=_require(frontmatter, path, "section"),
         retrievable=_require(frontmatter, path, "retrievable"),
         cited_by=list(frontmatter.get("cited_by") or []),
         caption=frontmatter.get("caption"),
+        # `artifact_role`/`field` (issue #429): read when present (an older
+        # note), never required -- a current note carries neither key.
+        artifact_role=frontmatter.get("artifact_role"),
+        field=frontmatter.get("field"),
     )
 
 

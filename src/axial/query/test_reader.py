@@ -549,10 +549,9 @@ def test_get_artifact_resolves_a_note_whose_filename_was_budgeted(tmp_path, monk
     artifact_id = f"{_BUDGET_SOURCE_ID}_art_1.2"
     record = {
         "artifact_id": artifact_id,
-        "artifact_role": "case-study",
-        "field": {"primary": "state", "secondary": []},
         "source_id": _BUDGET_SOURCE_ID,
         "section": "Introduction",
+        "caption": "A caption.",
     }
     vault_dir = tmp_path / "vault"
 
@@ -563,7 +562,10 @@ def test_get_artifact_resolves_a_note_whose_filename_was_budgeted(tmp_path, monk
     note = get_artifact(artifact_id, vault_dir=vault_dir)
 
     assert note.artifact_id == artifact_id
-    assert note.artifact_role == "case-study"
+    # `write_artifact_note` no longer emits `artifact_role` (issue #429);
+    # this test's purpose is filename-budgeting, proven by `caption` (the
+    # field the current write path actually carries) round-tripping intact.
+    assert note.caption == "A caption."
 
 
 def test_get_artifact_fast_path_resolves_directly_without_needing_artifact_id_grammar(tmp_path):

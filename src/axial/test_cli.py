@@ -94,8 +94,10 @@ def test_main_schema_show_against_missing_domain_dir_is_nonzero_and_names_path(c
     assert "schema.yaml" in captured.err or "schema.yaml" in captured.out
 
 
-def test_build_parser_recognises_artifacts_subcommand_with_default_domain():
-    from axial.artifacts import DEFAULT_DOMAIN_DIR
+def test_build_parser_recognises_artifacts_subcommand():
+    """Issue #429: the artifacts pass makes no LLM call and needs no domain
+    frame, so `--domain` is gone from this subcommand -- it now takes only
+    the source path."""
     from axial.cli import build_parser
 
     parser = build_parser()
@@ -103,23 +105,13 @@ def test_build_parser_recognises_artifacts_subcommand_with_default_domain():
 
     assert args.command == "artifacts"
     assert args.source_path == "some-source.pdf"
-    assert args.domain == str(DEFAULT_DOMAIN_DIR)
-
-
-def test_build_parser_recognises_artifacts_domain_override():
-    from axial.cli import build_parser
-
-    parser = build_parser()
-    args = parser.parse_args(["artifacts", "some-source.pdf", "--domain", "some/other/domain"])
-
-    assert args.domain == "some/other/domain"
 
 
 def test_main_artifacts_prints_error_and_returns_nonzero_on_artifacts_error(monkeypatch, capsys):
     import axial.cli as cli_mod
     from axial.artifacts import ArtifactsError
 
-    def _boom(source_path, domain_dir=None):
+    def _boom(source_path):
         raise ArtifactsError("simulated artifacts failure")
 
     monkeypatch.setattr(cli_mod, "run_artifacts", _boom)

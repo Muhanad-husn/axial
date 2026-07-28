@@ -16,13 +16,21 @@
 # nothing does now. `axial.interrogate.frame_examples` reads them instead as
 # D8 prompt EXAMPLES (never a menu, never validated against) for the
 # `about`/`claim`/`ranges_over`/`position_of`/`move` free questions.
-# `field` and `artifact_role` additionally stay live as `axial.artifacts`'
-# own gated axes. Struck: `empirical_scope`'s `extra_fields` (the required
-# `polity` field -- polities are names now, Appendix C) and the
-# `polities_touched` facet (same reason). `theory_school`'s
+# `field` additionally stays live for `axial.gold`'s label-sheet
+# stratification/dropdown (a surviving consumer independent of prose
+# tagging, which is retired). Struck: `empirical_scope`'s `extra_fields`
+# (the required `polity` field -- polities are names now, Appendix C) and
+# the `polities_touched` facet (same reason). `theory_school`'s
 # `not-applicable`/`unlisted` sentinels are struck for the interrogation
 # pass per the spec but stay declared here -- see the note beside them --
 # because the out-of-scope gold-set dropdown still reads them.
+#
+# `artifact_role` is struck outright (issue #429): the artifacts pass made
+# no LLM call reproducibly (two independent runs disagreed on the role for
+# 48.5% of artifacts and flipped the keep/discard bit on 13.1%), so the
+# axis and the classification call are both gone. `retrievable` is now a
+# rule over caption presence, decided in code (`axial.vault.
+# build_artifact_frontmatter`), not a model judgment.
 
 domain: syria
 version: 0.1
@@ -30,7 +38,7 @@ version: 0.1
 axes:
   # Appendix A -- Field axis.
   field:
-    applies_to: [prose, artifact]
+    applies_to: [prose]
     cardinality: primary_plus_secondary
     values: [state, violence, ideology]
 
@@ -177,17 +185,9 @@ axes:
       open:
         - unlisted
 
-  # Appendix D -- Artifact-role axis.
-  artifact_role:
-    applies_to: [artifact]
-    cardinality: single
-    values:
-      - case-study
-      - framework-illustration
-      - quote-pool
-      - framework
-      - reference-material
-      - discard
+  # Appendix D -- Artifact-role axis. STRUCK (issue #429): the artifacts
+  # pass made no LLM call reproducibly, so both the axis and the
+  # classification call are gone; see the note above `axes:`.
 
   # Appendix F -- Role-in-argument axis [FIRM].
   role_in_argument:

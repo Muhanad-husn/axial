@@ -5,9 +5,15 @@ Locked behavioral contract (DEC-1) -- do not edit once committed red.
 Given the committed placeholder schema at config/domains/syria/schema.yaml
       (version 0.1)
 When  the user runs `uv run axial schema show config/domains/syria`
-Then  it exits 0 and lists the six axes (field, claim_type, empirical_scope,
-      theory_school, artifact_role, role_in_argument), each with its
-      cardinality and value count, and the schema version
+Then  it exits 0 and lists the five axes (field, claim_type, empirical_scope,
+      theory_school, role_in_argument), each with its cardinality and value
+      count, and the schema version
+
+Note (issue #429): `artifact_role` (Appendix D) was struck from
+config/domains/syria/schema.yaml -- the artifacts pass that was its sole
+consumer made no LLM call reproducibly (two independent runs disagreed on
+the role for 48.5% of artifacts), so the axis went with the call. This test
+was originally locked against six axes; it now asserts five.
 And   running it against a nonexistent directory exits nonzero with a
       message naming the missing file
 
@@ -21,13 +27,13 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# The six axes the v0.1 Syria schema.yaml must declare (Appendix G / §7.1).
+# The five axes the v0.1 Syria schema.yaml must declare (Appendix G / §7.1;
+# `artifact_role` struck, issue #429).
 EXPECTED_AXES = {
     "field": "primary_plus_secondary",
     "claim_type": "primary_plus_optional_secondary",
     "empirical_scope": "single",
     "theory_school": "primary_plus_optional_secondary",
-    "artifact_role": "single",
     "role_in_argument": "single",
 }
 
@@ -43,7 +49,7 @@ def _run_schema_show(*args: str) -> subprocess.CompletedProcess:
     )
 
 
-def test_schema_show_lists_all_six_axes_with_cardinality_count_and_version():
+def test_schema_show_lists_all_five_axes_with_cardinality_count_and_version():
     result = _run_schema_show("config/domains/syria")
 
     assert result.returncode == 0, (
@@ -56,7 +62,7 @@ def test_schema_show_lists_all_six_axes_with_cardinality_count_and_version():
     # Every axis name must be present.
     missing_axes = [axis for axis in EXPECTED_AXES if axis not in stdout]
     assert not missing_axes, (
-        f"expected all six axes in stdout, missing: {missing_axes}\nstdout: {stdout!r}"
+        f"expected all five axes in stdout, missing: {missing_axes}\nstdout: {stdout!r}"
     )
 
     # Each axis's declared cardinality token must appear somewhere "close to"

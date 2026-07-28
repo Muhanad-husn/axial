@@ -28,15 +28,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# The six axes the real, committed v0.1 Syria schema.yaml declares (mirrors
-# tests/test_schema_show.py's EXPECTED_AXES) -- used only to assert that a
-# consistent-pair report surfaces every axis, not to pin exact wording.
+# The five axes the real, committed v0.1 Syria schema.yaml declares (mirrors
+# tests/test_schema_show.py's EXPECTED_AXES; `artifact_role` struck, issue
+# #429) -- used only to assert that a consistent-pair report surfaces every
+# axis, not to pin exact wording.
 REAL_SCHEMA_AXES = [
     "field",
     "claim_type",
     "empirical_scope",
     "theory_school",
-    "artifact_role",
     "role_in_argument",
 ]
 
@@ -70,7 +70,8 @@ def test_schema_validate_against_real_syria_pair_exits_zero_and_reports_consiste
     """The committed config/domains/syria/{schema.yaml,codebook.yaml} pair is
     the end state this slice delivers: every schema tag has a codebook entry
     and vice versa. Running `schema validate` against it must exit 0 and
-    report every one of the six axes as consistent.
+    report every one of the five axes as consistent (`artifact_role` struck,
+    issue #429).
     """
     result = _run_schema_validate("config/domains/syria")
 

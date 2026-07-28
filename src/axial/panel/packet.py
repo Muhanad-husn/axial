@@ -108,7 +108,11 @@ def _resolve_reference(ref_type: str | None, ref_id: Any, claim_id: str, vault_d
             artifact = get_artifact(ref_id, vault_dir=vault_dir)
         except ArtifactNotFoundError as exc:
             raise UnresolvableGroundsError(claim_id, str(exc)) from exc
-        return artifact.caption or artifact.artifact_role
+        # `artifact_role` is retired (issue #429): the artifacts pass makes
+        # no LLM call, so most artifacts carry no role at all. Fall back to
+        # the artifact's own id -- always present, never None -- rather than
+        # a field that is usually absent now.
+        return artifact.caption or artifact.artifact_id
     raise UnresolvableGroundsError(claim_id, f"grounds entry has unknown ref_type {ref_type!r}")
 
 
