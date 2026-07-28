@@ -133,14 +133,25 @@ DEFAULT_MERGE_MANIFEST_PATH = DEFAULT_NAMES_DATA_DIR / "merge_manifest.json"
 # call that is ~11 hours; at 10s -- plausible with reasoning at `high` --
 # it is over two days) while the pool divides that by `workers`.
 #
-# 12 is a STARTING value, not a measured one: per-call latency for this pass
-# has never been observed, so no number here can be. It is the same order as
-# this project's existing concurrent-worker precedent
-# (`axial.brief.sweep.DEFAULT_WORKERS` = 3, over calls far heavier than one
-# cluster's), raised because these calls are small and independent. It is a
-# CLI flag (`--workers`), so the founder moves it after watching one real
-# run rather than editing this line.
-DEFAULT_WORKERS = 12
+# 96 is now MEASURED rather than guessed. The first real pass ran 12, then 36,
+# and the corpus said the tail is what costs: per-call latency is a median 8s
+# against a 16s mean, because ~5% of clusters send the model into a long
+# generation that holds a worker slot for 5-10x the median. Concurrency is the
+# only lever that shortens the pass without touching a judgment -- the two that
+# looked cleverer were measured against 200 already-decided real clusters and
+# both cost accuracy: packing 20 clusters per call ran 1.9x SLOWER at 85.5%
+# agreement (output tokens dominate, and packing does not reduce them), and
+# turning reasoning off ran 5.1x faster at 68% agreement with a lopsided
+# over-merge bias -- 55 clusters merged MORE against 7 less, fusing two
+# different works, an author with a co-authored byline, and a word with a Latin
+# phrase. Over-merging destroys information; D10 forbids it outright. So the
+# dumb lever is the only free one.
+#
+# 96 sits under `axial.llm`'s connection pool (128, and keep-alive now equal to
+# it -- issue #438, without which everything above 20 re-handshakes TLS per
+# call). Still a CLI flag (`--workers`): lower it if a provider pushes back.
+# Zero non-200s were seen at 36 over 19,434 calls.
+DEFAULT_WORKERS = 96
 
 # §7.16's own map shape carries a `version`; `polity_canonical.yaml`, which
 # seeds it, uses the same field for the same job.
