@@ -189,7 +189,7 @@ Develop top to bottom. One slice = one issue = one PR.
 | 04 | name inventory and similarity view | #415 | Collect every name from 02, embed, cluster, and report the distribution at a sweep of tightnesses so merge aggressiveness is chosen by looking (LLM-free; reuses `src/axial/distill/embed.py`) | ✅ done | #436 |
 | 05 | Reconcile | #416 | Model merges names with 04's clusters as hints; emits a reversible alias map plus the surviving name list, which is the index | ✅ done | #437 |
 | 06 | materialize the wiki | #411 | Code writes one file per surviving name (aliases, member notes as links) and notes carry their answers as frontmatter; **first point the founder can open the graph view and look** | ✅ done | #444 |
-| 06b | name-variant candidate generation | #446 | Found opening the vault (#411/#444): clustering's own recall gap left `C. Tilly`/`Charles Tilly` as two pages because the merge pass never saw them together. A second, deterministic, LLM-free step (`axial.name_candidates`) proposes the missing pairs — initial-vs-full forename, bare surname with exactly one candidate (both `person`), case/whitespace-only — as additional clusters for the same, unchanged merge call | ✅ done | TBD |
+| 06b | name-variant candidate generation | #446 | Found opening the vault (#411/#444): clustering's own recall gap left `C. Tilly`/`Charles Tilly` as two pages because the merge pass never saw them together. A second, deterministic, LLM-free step (`axial.name_candidates`) proposes the missing pairs — initial-vs-full forename, bare surname with exactly one candidate (both `person`), case/whitespace-only — as additional clusters for the same, unchanged merge call | ✅ done | #448 |
 | 07 | Gather | #412 | Per-name packet assembly under a hard budget with batching and merge, disagreement text written onto the name page, name-to-name links | ☐ todo | TBD |
 | 08 | pairwise verbatim support | #413 | Two-note call that supplies quoted grounds where Gather found a disagreement worth quoting — optional, last, only if 07 shows it is needed | ☐ todo | TBD |
 
@@ -208,6 +208,63 @@ Develop top to bottom. One slice = one issue = one PR.
 - **07 → 08**, and 08 may never be built.
 - 01, 04 and 06 are LLM-free by construction. 02, 05, 07 and 08 are the only
   model calls added by this feature.
+
+## Index quality — the backlog slice 06 opened
+
+Opening the vault exposed work the slice plan did not anticipate. It is not a
+slice; it is a set of fixes to the index that 07 will read. Tracked here so the
+sequencing is visible, because most of it competes for one scarce resource.
+
+| Issue | What | Lane | State |
+|-------|------|------|-------|
+| #463 | Fold case, whitespace and punctuation upstream of candidate generation — 305 groups the model refused, 489 it never saw. Absorbs #459 | A | ready |
+| #458 | `names merge` re-clusters 78k vectors on every run, silently, after `build` already did it | B | ready |
+| #457 | `DEFAULT_WORKERS = 36` rests on a measurement the corpus run contradicts (96 sustained 5.88 clusters/s, not 2.2) | B | needs the corpus run below |
+| #460 | Reinstate tier-3 passage evidence: escalation 54.3% → 15.4%, extra merges 75% correct | — | blocked, founder picks the scope |
+| #461 | 5,629 escalated surfaces are a dead end; nothing reads them | C | design first |
+| #462 | Sample the 18,034 pairs token containment proposes and the blocker never shows | D | ready, no `src/` change |
+| #447 | D15 has expired: Phase A v1 has no measure of quality | E | design, founder |
+
+### The serial spine
+
+A corpus re-decide takes ~89 min and ~$3.60 plus a vault rebuild, and two cannot
+overlap. Three of the issues above want one:
+
+1. **#463 first.** It changes which batches exist, so affected batches re-decide.
+   Partial and cheap.
+2. **#460 next, if it goes ahead at all.** It changes every batch's rendering, so
+   everything re-decides. Running it before #463 pays for a full pass over input
+   that is about to change.
+3. **#457's worker curve rides along with whichever pass runs**, rather than
+   being its own corpus run.
+
+That gives one full re-decide instead of two, and it runs on clean input. It is
+the same rule the benchmark work already learned: build the prerequisites before
+the corpus-scale run, do not footnote them alongside it.
+
+### What runs at the same time
+
+Lanes A, B and D are concurrent — separate worktrees, and D touches no code at
+all. C and E are founder design decisions, not builder dispatches. The practical
+ceiling is about three at once, and the bottleneck is review, not tooling.
+
+### Sequencing note
+
+Index quality is not the product. **07 is.** Everything in this table makes the
+meeting points cleaner and none of it produces a single disagreement, so it must
+not be allowed to crowd out the slice it exists to serve.
+
+#447 is the honest gate. Nothing currently measures whether a cleaner index
+produces better disagreements, and its own body names the trap: answering that
+question means running Gather both ways, which is the spend these fixes were
+meant to protect. Hold #460 until #447 says what "better" means — otherwise it
+buys a 75%-precision improvement to something unscoreable.
+
+Evidence for the whole table lives in
+`data/logs/2026-07-28-names-merge-evidence-redecide/`,
+`data/logs/2026-07-28-evidence-tiers-by-escalation/`,
+`data/logs/2026-07-28-cip-candidate-routing/` and
+`data/logs/2026-07-29-name-fragmentation-scaling/`.
 
 ## Out of scope (whole feature)
 
@@ -237,6 +294,16 @@ Develop top to bottom. One slice = one issue = one PR.
   through war" and "bellicist state building" must meet; two genuinely different
   ideas must not. D10 makes this a looking-and-tightening loop, which is why 04
   exists as its own slice rather than being folded into 05.
+- **Fragmentation grows with the logarithm of corpus size, not linearly**
+  (`data/logs/2026-07-29-name-fragmentation-scaling/`). Detectable splits go
+  2.67% at 31 books to ~4.7% at 1000. Spelling variants per entity saturate at
+  about two by the third book, and severity falls as attestation rises: when a
+  9+-book entity is split, its best page still holds 82% of the occurrences
+  against 64% for a one-book entity. The model's hardest case is *two* books,
+  not many. So corpus growth is not the threat to the index that the present
+  mechanical backlog is, and D10's under-merge bias stays affordable at scale.
+  Caveats travel with the curve: fitted over k=2..31 and read out to 1000, with
+  merging held fixed at the 31-book decision.
 - **Citation harvest will be partial.** Some in-text references come out of the
   scan mangled and the furniture cleaner drops some footnote markers, and most
   of what these books cite is not in our corpus. Out-of-corpus citations are
