@@ -277,3 +277,86 @@ def test_names_examine_before_build_fails_loudly(isolated_vault_root):
 
     assert result.returncode == 1
     assert "error:" in result.stderr
+
+
+def _build_locator_fixture_answers(root: Path) -> None:
+    """Issue #445: "Table 4.1" named in two unrelated books (the actual
+    bug), "Figure 9.1" named only in one (306 of 358 real locator surfaces,
+    already correct), and a non-locator surface ("Kevin Attell") spanning
+    the same two books, which must never be scoped."""
+    answers_dir = root / "data" / "answers"
+    answers_dir.mkdir(parents=True, exist_ok=True)
+
+    with (answers_dir / "src1.jsonl").open("w", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                _record(
+                    "src1_000_intro_001",
+                    "src1",
+                    names=[
+                        {"name": "Kevin Attell", "kind": "person"},
+                        {"name": "Table 4.1", "kind": "table"},
+                        {"name": "Figure 9.1", "kind": "figure"},
+                    ],
+                )
+            )
+            + "\n"
+        )
+    with (answers_dir / "src2.jsonl").open("w", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                _record(
+                    "src2_000_intro_001",
+                    "src2",
+                    names=[
+                        {"name": "Kevin Attell", "kind": "person"},
+                        {"name": "Table 4.1", "kind": "table"},
+                    ],
+                )
+            )
+            + "\n"
+        )
+
+
+def test_names_build_scopes_a_locator_shaped_surface_that_spans_two_sources(isolated_vault_root):
+    root = isolated_vault_root
+    _build_locator_fixture_answers(root)
+
+    build_result = _run_axial(root, "names", "build")
+    _assert_ran_the_real_subcommand(build_result)
+    assert build_result.returncode == 0, (
+        f"expected exit 0, got {build_result.returncode}\n"
+        f"stdout: {build_result.stdout!r}\nstderr: {build_result.stderr!r}"
+    )
+
+    inventory_path = root / "data" / "names" / "inventory.jsonl"
+    inventory = {
+        record["surface"]: record
+        for record in (json.loads(line) for line in inventory_path.read_text("utf-8").splitlines())
+    }
+
+    # The actual bug: "Table 4.1" must never survive as one entry spanning
+    # both books -- it becomes two, each scoped to its own source.
+    assert "Table 4.1" not in inventory
+    assert inventory["Table 4.1 (src1)"] == {
+        "surface": "Table 4.1 (src1)",
+        "kind": "table",
+        "count": 1,
+        "chunk_ids": ["src1_000_intro_001"],
+    }
+    assert inventory["Table 4.1 (src2)"] == {
+        "surface": "Table 4.1 (src2)",
+        "kind": "table",
+        "count": 1,
+        "chunk_ids": ["src2_000_intro_001"],
+    }
+
+    # 306 of 358 real locator surfaces are single-source already -- must
+    # keep their bare identity, no rename.
+    assert inventory["Figure 9.1"]["chunk_ids"] == ["src1_000_intro_001"]
+
+    # A genuine cross-book name is not a locator and must never be scoped.
+    assert inventory["Kevin Attell"]["chunk_ids"] == [
+        "src1_000_intro_001",
+        "src2_000_intro_001",
+    ]

@@ -29,6 +29,17 @@ never makes a merge decision itself:
      the joined kind vocabulary (§7.15, issue #431) already removed the
      collisions that carried real information, so what a tie discards here
      is a distinction the vocabulary itself declines to make.
+     **Issue #445: a locator-shaped surface form (`is_locator_shaped`) is
+     scoped by source instead of collapsed into one node.** Keying the
+     inventory by exact surface string is correct for `United States` (one
+     surface, many books, one right page) and wrong for a figure/table
+     locator, which is book-relative: `Table 4.1` in five different books is
+     five different tables, not one. `build_inventory` groups a locator's
+     occurrences per source and only renders a scoped identity
+     (`scoped_surface_form`, "Table 4.1 (source_id)") for a surface that
+     actually spans more than one source -- measured on the corpus of
+     record, 52 of 358 locator-shaped surfaces, never the 306 that are
+     already single-source.
   2. **The similarity view (LLM-free).** Every distinct surface form is
      embedded with the same local, deterministic, CPU sentence-transformer
      `axial.distill.embed` uses (`DEFAULT_MODEL_NAME`, lazy-imported --
@@ -157,6 +168,72 @@ _CITATIONS_FIELD = "citations"
 
 _WHITESPACE = re.compile(r"\s+")
 
+# Issue #445: a locator -- a figure, table, map or similar cross-reference --
+# is book-relative. "Table 4.1" in one book and another book's own "Table
+# 4.1" are not the same thing, but keying the inventory by exact surface
+# string (below) collapses them into one node by construction, exactly the
+# same shape of bug as v0's bipartite edge set. Measured on the corpus of
+# record: 358 of 78,115 inventory surfaces are locator-shaped, and 52 of
+# those actually span more than one source -- the real defect; the other 306
+# are single-source and already work.
+#
+# A shape test, not a threshold: it carries no tunable constant, and it does
+# not gate on `kind` -- a `citations[].cited` mention of a locator is exactly
+# as book-relative as a `names[]` one.
+LOCATOR_PATTERN = re.compile(
+    r"^(fig\.?|figure|table|map|chart|graph|plate|box|diagram|appendix)\b",
+    re.IGNORECASE,
+)
+
+
+def is_locator_shaped(surface_form: str) -> bool:
+    """Whether `surface_form` reads as a book-relative locator (issue #445).
+    Names not matched by this (`6.1. Aseel's displacement trajectory`,
+    `Bramall table 2.2`) are already single-source and out of this issue's
+    scope."""
+    return bool(LOCATOR_PATTERN.match(surface_form))
+
+
+# How a locator-shaped surface renders once its identity is scoped by source
+# (issue #445): the surface plus its source in parentheses. This reuses the
+# corpus's existing identifier system -- the surface-form string already IS
+# the identity everywhere downstream (inventory key, embedding text,
+# alias-map canonical, name-page title and filename) -- rather than inventing
+# a second one. Human-readable, distinct per source, and a pure function of
+# its two inputs, so it is stable across runs.
+_SOURCE_SUFFIX = re.compile(r" \((?P<source_id>[^()]+)\)$")
+
+
+def scoped_surface_form(surface_form: str, source_id: str) -> str:
+    """The source-scoped identity for a locator-shaped `surface_form` that
+    spans more than one source (`build_inventory`)."""
+    return f"{surface_form} ({source_id})"
+
+
+def unscope_surface_form(surface_form: str, source_id: str) -> str:
+    """The exact inverse of `scoped_surface_form` for one known `source_id`
+    -- what a source's own artifact caption would actually contain.
+    `axial.materialize.find_artifact_links` uses this to recover the bare
+    locator text from a source-scoped canonical/alias before matching
+    captions. A surface form that does not carry that exact suffix is
+    returned unchanged."""
+    suffix = f" ({source_id})"
+    return surface_form[: -len(suffix)] if surface_form.endswith(suffix) else surface_form
+
+
+def parse_scoped_source(surface_form: str) -> str | None:
+    """The `source_id` `scoped_surface_form` embedded in `surface_form`, or
+    `None` when it is not locator-shaped or carries no such suffix (a bare,
+    single-source locator, or anything else). `axial.merge_names.
+    build_alias_map_nodes` uses this to refuse folding two source-scoped
+    instances of the same locator into one canonical, however a cluster or
+    the model proposes it."""
+    if not is_locator_shaped(surface_form):
+        return None
+    match = _SOURCE_SUFFIX.search(surface_form)
+    return match.group("source_id") if match else None
+
+
 Encoder = Callable[[list[str]], list[list[float]]]
 ClusterFn = Callable[[list[list[float]]], list[int]]
 
@@ -201,11 +278,17 @@ class NoNamesToClusterError(NamesError):
 @dataclass(frozen=True)
 class NameOccurrence:
     """One mention of one surface form, in one note. `kind` is only ever
-    set for a `names[]` mention -- a citation is not asked for one."""
+    set for a `names[]` mention -- a citation is not asked for one.
+    `source_id` (issue #445) is the note's own source, read straight off the
+    answer record rather than parsed out of `chunk_id` -- it decides whether
+    a locator-shaped surface needs a source-scoped identity (`build_
+    inventory`), and defaults to `""` so existing 3-positional-arg call
+    sites (never locator-shaped) are unaffected."""
 
     surface_form: str
     chunk_id: str
     kind: str | None = None
+    source_id: str = ""
 
 
 def _clean(value: Any) -> str | None:
@@ -227,6 +310,7 @@ def iter_name_occurrences(record: dict[str, Any]) -> Iterator[NameOccurrence]:
     if not isinstance(answers, dict):
         return
     chunk_id = record.get("chunk_id", "")
+    source_id = record.get("source_id", "")
 
     names = answers.get(_NAMES_FIELD)
     if isinstance(names, list) and not is_abstention(names):
@@ -236,7 +320,7 @@ def iter_name_occurrences(record: dict[str, Any]) -> Iterator[NameOccurrence]:
             surface_form = _clean(entry.get("name"))
             if surface_form is None:
                 continue
-            yield NameOccurrence(surface_form, chunk_id, _clean(entry.get("kind")))
+            yield NameOccurrence(surface_form, chunk_id, _clean(entry.get("kind")), source_id)
 
     citations = answers.get(_CITATIONS_FIELD)
     if isinstance(citations, list) and not is_abstention(citations):
@@ -246,7 +330,7 @@ def iter_name_occurrences(record: dict[str, Any]) -> Iterator[NameOccurrence]:
             surface_form = _clean(entry.get("cited"))
             if surface_form is None:
                 continue
-            yield NameOccurrence(surface_form, chunk_id, None)
+            yield NameOccurrence(surface_form, chunk_id, None, source_id)
 
 
 def load_answer_records(answers_dir: Path) -> list[dict[str, Any]]:
@@ -298,14 +382,30 @@ def build_inventory(occurrences: Iterable[NameOccurrence]) -> list[InventoryEntr
     No casefolding, no fuzzy merge here -- two surface forms that differ by
     so much as case are two rows; embedding distance (not string identity)
     is this module's whole mechanism for saying two rows are close, and
-    slice 05 is where a merge is actually decided. Returned sorted by
-    surface form, for the same determinism reason `_load_chunk_records`/
-    `_load_embedding_rows` sort by chunk_id."""
-    grouped: dict[str, dict[str, Any]] = {}
+    slice 05 is where a merge is actually decided.
+
+    Issue #445: a locator-shaped surface (`is_locator_shaped`) is grouped
+    per `(surface_form, source_id)` instead, up front, since it is
+    book-relative and must not collapse across sources by construction --
+    the same shape of bug the plain per-surface grouping above has for
+    everything else. Whether that per-source grouping actually needs a
+    scoped identity is decided once every occurrence has been seen: a
+    locator mentioned in exactly one source keeps its bare surface form
+    untouched (306 of 358 real locator surfaces, already correct); one that
+    spans more than one source (52 of 358, the actual defect) is rendered
+    via `scoped_surface_form`, so `Table 4.1` becomes as many distinct
+    entries as it has sources, each with only that source's own `count`/
+    `chunk_ids`.
+
+    Returned sorted by the final (possibly scoped) surface form, for the
+    same determinism reason `_load_chunk_records`/`_load_embedding_rows`
+    sort by chunk_id."""
+    grouped: dict[tuple[str, str | None], dict[str, Any]] = {}
     order = 0
     for occurrence in occurrences:
+        scope_key = occurrence.source_id if is_locator_shaped(occurrence.surface_form) else None
         bucket = grouped.setdefault(
-            occurrence.surface_form,
+            (occurrence.surface_form, scope_key),
             {"count": 0, "kind_counts": {}, "kind_first_seen": {}, "chunk_ids": set()},
         )
         bucket["count"] += 1
@@ -317,9 +417,21 @@ def build_inventory(occurrences: Iterable[NameOccurrence]) -> list[InventoryEntr
             bucket["kind_first_seen"].setdefault(occurrence.kind, order)
         order += 1
 
+    # A locator-shaped surface needs a source-scoped identity only when it
+    # actually spans more than one source -- decided globally, so a
+    # single-source locator's bucket (scope_key not None, but the only one
+    # for that surface) still renders as its own bare surface form.
+    sources_by_surface: dict[str, set[str]] = {}
+    for surface_form, scope_key in grouped:
+        if scope_key is not None:
+            sources_by_surface.setdefault(surface_form, set()).add(scope_key)
+
     entries = []
-    for surface_form in sorted(grouped):
-        bucket = grouped[surface_form]
+    for (surface_form, scope_key), bucket in grouped.items():
+        if scope_key is not None and len(sources_by_surface[surface_form]) > 1:
+            identity = scoped_surface_form(surface_form, scope_key)
+        else:
+            identity = surface_form
         kind_counts = bucket["kind_counts"]
         if kind_counts:
             # Most frequent kind; ties broken by first occurrence (§7.16).
@@ -331,12 +443,13 @@ def build_inventory(occurrences: Iterable[NameOccurrence]) -> list[InventoryEntr
             resolved_kind = None
         entries.append(
             InventoryEntry(
-                surface_form=surface_form,
+                surface_form=identity,
                 kind=resolved_kind,
                 count=bucket["count"],
                 chunk_ids=tuple(sorted(bucket["chunk_ids"])),
             )
         )
+    entries.sort(key=lambda entry: entry.surface_form)
     return entries
 
 

@@ -435,6 +435,121 @@ def test_figure_table_name_page_links_the_matching_artifact_note(tmp_path):
     assert "[[src1_000_intro_001]]" in body
 
 
+def _build_cross_source_locator_fixture(root: Path) -> None:
+    """Issue #445: "Table 4.1" named in TWO unrelated books -- the actual
+    bug (identical locator surface strings collapsing across sources) and
+    the fix under test (each book's own "Table 4.1" gets its own name page,
+    linking only its own book's own artifact note)."""
+    for source_id, artifact_caption in (
+        ("src_a", "Table 4.1: A's own employment data"),
+        ("src_b", "Table 4.1: B's own displacement figures"),
+    ):
+        chunk_id = f"{source_id}_000_intro_001"
+        _write_jsonl(
+            root / "data" / "chunks" / f"{source_id}.jsonl",
+            [{"chunk_id": chunk_id, "section": "Introduction", "section_order": "0", "text": "x"}],
+        )
+        _write_json(
+            root / "data" / "envelopes" / f"{source_id}.json",
+            {
+                "source_id": source_id,
+                "thesis": "x",
+                "toc": [{"title": "Chapter 1", "children": ["Introduction"]}],
+                "scope": "x",
+                "stated_argument": "x",
+            },
+        )
+        _write_json(
+            root / "data" / "source_meta" / f"{source_id}.json",
+            {
+                "author": {"value": f"Author {source_id}", "provenance": "title page"},
+                "title": {"value": f"Book {source_id}", "provenance": "embedded metadata"},
+                "date": {"value": 2020, "provenance": "embedded metadata"},
+            },
+        )
+        _write_jsonl(
+            root / "data" / "answers" / f"{source_id}.jsonl",
+            [
+                _answer_record(
+                    chunk_id,
+                    source_id,
+                    "Introduction",
+                    claim="A claim.",
+                    names=[{"name": "Table 4.1", "kind": "table"}],
+                )
+            ],
+        )
+        _write_jsonl(
+            root / "data" / "artifacts" / f"{source_id}.jsonl",
+            [
+                {
+                    "artifact_id": f"{source_id}_art_4.1",
+                    "source_id": source_id,
+                    "section": "Chapter 1",
+                    "caption": artifact_caption,
+                }
+            ],
+        )
+
+    # What `axial names build` + `axial names merge` now produce for this
+    # corpus (issue #445): "Table 4.1" spans two sources, so each source
+    # gets its own scoped inventory entry and its own un-aliased node --
+    # never one node fused across both books.
+    _write_jsonl(
+        root / "data" / "names" / "inventory.jsonl",
+        [
+            {
+                "surface": "Table 4.1 (src_a)",
+                "kind": "table",
+                "count": 1,
+                "chunk_ids": ["src_a_000_intro_001"],
+            },
+            {
+                "surface": "Table 4.1 (src_b)",
+                "kind": "table",
+                "count": 1,
+                "chunk_ids": ["src_b_000_intro_001"],
+            },
+        ],
+    )
+    _write_json(
+        root / "data" / "names" / "alias_map.json",
+        {
+            "version": 1,
+            "generated_at": "2026-01-01T00:00:00Z",
+            "nodes": [
+                {"canonical": "Table 4.1 (src_a)", "kind": "table", "aliases": []},
+                {"canonical": "Table 4.1 (src_b)", "kind": "table", "aliases": []},
+            ],
+        },
+    )
+
+
+def test_source_scoped_locator_names_each_link_only_their_own_artifact(tmp_path):
+    _build_cross_source_locator_fixture(tmp_path)
+
+    result = run_materialize(**_dirs(tmp_path))
+
+    assert result["name_pages"] == 2
+    names_dir = tmp_path / "data" / "vault" / "names"
+    page_a = names_dir / "Table 4.1 (src_a).md"
+    page_b = names_dir / "Table 4.1 (src_b).md"
+    assert page_a.is_file(), sorted(p.name for p in names_dir.glob("*.md"))
+    assert page_b.is_file(), sorted(p.name for p in names_dir.glob("*.md"))
+
+    frontmatter_a, body_a = _read_note(page_a)
+    frontmatter_b, body_b = _read_note(page_b)
+
+    assert frontmatter_a["member_count"] == 1
+    assert frontmatter_b["member_count"] == 1
+    # Each book's own name page links its own artifact note, never the
+    # other book's identically-numbered one -- the whole point of scoping.
+    assert "[[src_a_art_4.1]]" in body_a
+    assert "[[src_b_art_4.1]]" not in body_a
+    assert "[[src_b_art_4.1]]" in body_b
+    assert "[[src_a_art_4.1]]" not in body_b
+
+
 def test_rerun_over_unchanged_input_is_byte_identical_and_rewrites_nothing(tmp_path):
     _build_fixture(tmp_path)
     run_materialize(**_dirs(tmp_path))

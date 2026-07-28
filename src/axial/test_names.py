@@ -35,9 +35,13 @@ from axial.names import (  # noqa: E402
     collect_occurrences,
     examine_names,
     format_names_report,
+    is_locator_shaped,
     iter_name_occurrences,
     load_answer_records,
+    parse_scoped_source,
     run_names,
+    scoped_surface_form,
+    unscope_surface_form,
     write_inventory,
 )
 
@@ -254,6 +258,134 @@ def test_build_inventory_sorted_by_surface_form():
     entries = build_inventory(occurrences)
 
     assert [entry.surface_form for entry in entries] == ["Alpha", "Zeta"]
+
+
+# --- build_inventory: locator scoping (issue #445) ---------------------------
+
+
+def test_build_inventory_scopes_a_locator_surface_spanning_multiple_sources():
+    """The actual bug: "Table 4.1" named in two different books must not
+    collapse into one node -- it becomes two, each carrying only its own
+    book's chunk_ids/count."""
+    occurrences = [
+        NameOccurrence("Table 4.1", "src1_000_intro_001", "table", "src1"),
+        NameOccurrence("Table 4.1", "src2_000_intro_001", "table", "src2"),
+    ]
+
+    entries = build_inventory(occurrences)
+
+    surface_forms = {entry.surface_form for entry in entries}
+    assert surface_forms == {"Table 4.1 (src1)", "Table 4.1 (src2)"}
+    by_form = {entry.surface_form: entry for entry in entries}
+    assert by_form["Table 4.1 (src1)"].chunk_ids == ("src1_000_intro_001",)
+    assert by_form["Table 4.1 (src2)"].chunk_ids == ("src2_000_intro_001",)
+    assert by_form["Table 4.1 (src1)"].count == 1
+    assert by_form["Table 4.1 (src1)"].kind == "table"
+
+
+def test_build_inventory_leaves_a_single_source_locator_bare():
+    """306 of 358 real locator surfaces are already single-source and must
+    keep working exactly as before -- no rename, no page churn."""
+    occurrences = [
+        NameOccurrence("Figure 2.1", "src1_000_intro_001", "figure", "src1"),
+        NameOccurrence("Figure 2.1", "src1_001_body_002", "figure", "src1"),
+    ]
+
+    entries = build_inventory(occurrences)
+
+    assert len(entries) == 1
+    assert entries[0].surface_form == "Figure 2.1"
+    assert entries[0].count == 2
+    assert entries[0].chunk_ids == ("src1_000_intro_001", "src1_001_body_002")
+
+
+def test_build_inventory_never_scopes_a_non_locator_surface_across_sources():
+    """A person/place/concept surface (`United States`, `Kevin Attell`)
+    genuinely is one thing across books -- locator scoping must not touch
+    it, however many sources it spans."""
+    occurrences = [
+        NameOccurrence("Kevin Attell", "src1_000_intro_001", "person", "src1"),
+        NameOccurrence("Kevin Attell", "src2_000_intro_001", "person", "src2"),
+    ]
+
+    entries = build_inventory(occurrences)
+
+    assert len(entries) == 1
+    assert entries[0].surface_form == "Kevin Attell"
+    assert entries[0].chunk_ids == ("src1_000_intro_001", "src2_000_intro_001")
+
+
+def test_build_inventory_scopes_a_locator_mentioned_only_as_a_citation():
+    """The shape test gates on surface text, not `kind` -- a citation mention
+    of a locator (no `kind` at all) is exactly as book-relative."""
+    occurrences = [
+        NameOccurrence("Table 4.1", "src1_000_intro_001", None, "src1"),
+        NameOccurrence("Table 4.1", "src2_000_intro_001", None, "src2"),
+    ]
+
+    entries = build_inventory(occurrences)
+
+    assert {entry.surface_form for entry in entries} == {
+        "Table 4.1 (src1)",
+        "Table 4.1 (src2)",
+    }
+
+
+# --- the locator-scoping helpers themselves ----------------------------------
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "Table 4.1",
+        "table 4.1",
+        "Fig. 2",
+        "Figure 2",
+        "fig 9",
+        "Map 1",
+        "Chart 3",
+        "Graph 1",
+        "Plate IV",
+        "Box 2",
+        "Diagram 1",
+        "Appendix A",
+    ],
+)
+def test_is_locator_shaped_matches_every_named_prefix(surface):
+    assert is_locator_shaped(surface)
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "6.1. Aseel's displacement trajectory",
+        "Bramall table 2.2",
+        "Kevin Attell",
+        "Figuratively speaking",
+    ],
+)
+def test_is_locator_shaped_rejects_names_the_prefix_does_not_match(surface):
+    assert not is_locator_shaped(surface)
+
+
+def test_scoped_and_unscope_surface_form_round_trip():
+    scoped = scoped_surface_form("Table 4.1", "huneidi-2024")
+
+    assert scoped == "Table 4.1 (huneidi-2024)"
+    assert unscope_surface_form(scoped, "huneidi-2024") == "Table 4.1"
+    # A source_id that is not actually this surface's own suffix changes
+    # nothing -- never strips a mismatched or absent suffix.
+    assert unscope_surface_form(scoped, "someone-else-2020") == scoped
+    assert unscope_surface_form("Table 4.1", "huneidi-2024") == "Table 4.1"
+
+
+def test_parse_scoped_source_reads_back_the_embedded_source():
+    assert parse_scoped_source("Table 4.1 (huneidi-2024)") == "huneidi-2024"
+    assert parse_scoped_source("Table 4.1") is None  # bare, single-source
+    assert parse_scoped_source("Kevin Attell") is None  # not locator-shaped
+    # A real surface form that happens to end in parentheses but is not
+    # locator-shaped must never be misread as source-scoped.
+    assert parse_scoped_source("Phelps-Brown and Hopkins (1956)") is None
 
 
 def test_write_inventory_matches_spec_shape(tmp_path: Path):
