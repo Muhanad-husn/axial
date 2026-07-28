@@ -43,14 +43,19 @@ were exactly this prefix collision before the rule). Confirmed here, not
 designed in the spec, exactly as the spec's own Open Questions section says
 to.
 
-**Known upstream limitation, not this module's to fix.** 54 of 385 real
-figure/table names (14%) have member notes spanning more than one source --
-Reconcile (slices 04/05) fused a locator like "Figure 4.1" across unrelated
-books, so the name's own members really do live in every one of those
-sources. This module's source-scoping cannot and must not "fix" that by
-narrowing further: the fusion is upstream, filed as its own issue, and
-weakening the scoping here would just as wrongly narrow a genuinely
-single-source name's own matches.
+**Cross-source locator collision, fixed upstream (issue #445).** 54 of 385
+real figure/table names (14%) used to have member notes spanning more than
+one source: the inventory (slice 04) keyed a locator like "Figure 4.1" by
+its exact surface string, so identical numbering from unrelated books
+collapsed into one node by construction. `axial.names.build_inventory` now
+scopes a locator-shaped surface's identity by source when it actually spans
+more than one ("Figure 4.1 (source_id)"), so a figure/table-kind node this
+module sees is, by construction, always single-source. The canonical/alias
+strings a scoped node carries no longer literally appear in that source's
+own caption text (the caption never carries the "(source_id)" suffix), so
+`materialize_names` strips it back off with `unscope_surface_form` before
+calling `find_artifact_links` below -- that function's own source-scoped
+substring match and digit-boundary rule are untouched.
 
 **Determinism and re-run cost (§7.17, P0-8).** Prose and artifact notes are
 a pure function of already-persisted upstream artifacts (chunks, envelope,
@@ -84,7 +89,7 @@ from axial.interrogate import (
 )
 from axial.intake import SOURCE_META_DIR
 from axial.merge_names import DEFAULT_ALIAS_MAP_PATH
-from axial.names import DEFAULT_INVENTORY_PATH, load_answer_records
+from axial.names import DEFAULT_INVENTORY_PATH, load_answer_records, unscope_surface_form
 from axial.paths import (
     DEFAULT_PIPELINE_CONFIG_PATH,
     _read_configured_dir,
@@ -282,6 +287,28 @@ def _load_artifacts_by_source(artifacts_dir: Path, source_ids: set[str]) -> dict
 
 def _is_figure_or_table(kind: Any) -> bool:
     return isinstance(kind, str) and kind.strip().casefold() in _FIGURE_TABLE_KINDS
+
+
+def _bare_surface_forms(
+    surface_forms: list[str], member_chunk_ids: list[str], source_id_by_chunk_id: dict[str, str]
+) -> list[str]:
+    """`surface_forms` (a node's canonical + aliases) plus, for each, the
+    bare text `unscope_surface_form` recovers for every source the node's
+    own members actually came from -- what an artifact caption would
+    contain, since a caption never carries the "(source_id)" suffix issue
+    #445's scoping adds. A form that was never scoped (the common case)
+    comes back unchanged, so this is a superset, never a narrowing, of what
+    `find_artifact_links` is asked to match."""
+    needed_sources = {
+        source_id_by_chunk_id[chunk_id]
+        for chunk_id in member_chunk_ids
+        if chunk_id in source_id_by_chunk_id
+    }
+    bare_forms = set(surface_forms)
+    for form in surface_forms:
+        for source_id in needed_sources:
+            bare_forms.add(unscope_surface_form(form, source_id))
+    return sorted(bare_forms)
 
 
 def _matches_with_digit_boundary(form: str, caption: str) -> bool:
@@ -536,7 +563,10 @@ def materialize_names(
         artifact_ids: list[str] = []
         if _is_figure_or_table(kind):
             artifact_ids = find_artifact_links(
-                [canonical, *aliases], member_ids, source_id_by_chunk_id, artifacts_by_source
+                _bare_surface_forms([canonical, *aliases], member_ids, source_id_by_chunk_id),
+                member_ids,
+                source_id_by_chunk_id,
+                artifacts_by_source,
             )
 
         frontmatter = build_name_frontmatter(canonical, kind, aliases, len(member_ids))

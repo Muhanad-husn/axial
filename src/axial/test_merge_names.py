@@ -17,6 +17,7 @@ import pytest
 from axial.merge_names import (
     DEFAULT_MEMBER_CHAR_BUDGET,
     MergeResponseError,
+    _locator_source_conflict,
     _resolve_merge_tightness,
     _seed_groups,
     build_alias_map_nodes,
@@ -204,6 +205,55 @@ def test_kind_falls_back_to_the_groups_own_most_mentioned_kind():
     assert nodes == [{"canonical": "Gellner 1992", "kind": "person", "aliases": ["Ernest Gellner"]}]
 
 
+# ---------------------------------------------------------------------------
+# The fold refuses a cross-source locator merge (issue #445)
+# ---------------------------------------------------------------------------
+
+
+def test_locator_source_conflict_only_fires_on_two_differently_scoped_locators():
+    assert _locator_source_conflict("Table 4.1 (src1)", "Table 4.1 (src2)")
+    # Same source: a legitimate same-book spelling merge, not a conflict.
+    assert not _locator_source_conflict("Table 4.1 (src1)", "Tab. 4.1 (src1)")
+    # A bare, single-source locator never conflicts with anything.
+    assert not _locator_source_conflict("Table 4.1", "Table 4.1 (src2)")
+    # Not locator-shaped at all -- a real surface that happens to end in
+    # parentheses (a citation year) is never mistaken for source scoping.
+    assert not _locator_source_conflict(
+        "Phelps-Brown and Hopkins (1956)", "Phelps-Brown and Hopkins (1957)"
+    )
+
+
+def test_refuses_to_fold_source_scoped_locators_from_different_sources():
+    """Issue #445: the whole point of scoping a locator's identity by source
+    is undone if this fold re-fuses two different sources' instances --
+    however a cluster or the model proposes it."""
+    entries = _entries("Table 4.1 (src1)", "Table 4.1 (src2)")
+
+    nodes = build_alias_map_nodes(
+        entries, [{"canonical": "Table 4.1 (src1)", "aliases": ["Table 4.1 (src2)"]}], {}
+    )
+
+    assert {node["canonical"] for node in nodes} == {"Table 4.1 (src1)", "Table 4.1 (src2)"}
+    assert all(node["aliases"] == [] for node in nodes)
+
+
+def test_still_folds_two_spellings_of_the_same_source_scoped_locator():
+    """The guard is source-specific, not locator-shape-specific -- a genuine
+    same-book spelling variant still merges normally."""
+    entries = _entries("Table 4.1 (src1)", "Tab. 4.1 (src1)")
+
+    nodes = build_alias_map_nodes(
+        entries, [{"canonical": "Table 4.1 (src1)", "aliases": ["Tab. 4.1 (src1)"]}], {}
+    )
+
+    assert len(nodes) == 1
+    assert nodes[0] == {
+        "canonical": "Table 4.1 (src1)",
+        "kind": "concept",
+        "aliases": ["Tab. 4.1 (src1)"],
+    }
+
+
 def test_seed_is_skipped_without_error_when_the_domain_file_is_absent(tmp_path):
     groups, note = _seed_groups(["anything"], tmp_path)
 
@@ -333,9 +383,7 @@ def test_case_only_variants_can_both_be_placed():
     members = ["Slavery", "slavery"]
     raw = json.dumps({"nodes": [{"canonical": "Slavery", "aliases": ["slavery"]}]})
 
-    assert parse_merge_response(raw, members) == [
-        {"canonical": "Slavery", "aliases": ["slavery"]}
-    ]
+    assert parse_merge_response(raw, members) == [{"canonical": "Slavery", "aliases": ["slavery"]}]
 
 
 def test_normalized_matching_still_absorbs_stray_whitespace_and_case():

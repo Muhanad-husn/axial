@@ -126,6 +126,7 @@ from axial.names import (
     _cluster_reduced,
     _load_name_rows,
     _reduce_vectors,
+    parse_scoped_source,
 )
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.polity_canonical import PolityCanonicalError, _normalize, load_polity_canonical
@@ -589,6 +590,19 @@ def _seed_groups(
     return grouped, f"seeded from {Path(domain_dir) / 'polity_canonical.yaml'}"
 
 
+def _locator_source_conflict(surface_a: str, surface_b: str) -> bool:
+    """Issue #445: whether `surface_a`/`surface_b` are `axial.names.
+    scoped_surface_form`'s own source-scoped instances of a locator-shaped
+    surface, from two DIFFERENT sources -- the one pair this fold must
+    refuse, however a cluster or the model proposes it. Both members must
+    carry the "(source_id)" suffix (`parse_scoped_source`) for this to fire
+    at all: a bare, single-source locator (by `build_inventory`'s own
+    construction) never conflicts with anything, and two scoped instances
+    from the SAME source are a legitimate same-book spelling merge."""
+    source_a, source_b = parse_scoped_source(surface_a), parse_scoped_source(surface_b)
+    return source_a is not None and source_b is not None and source_a != source_b
+
+
 def build_alias_map_nodes(
     entries: list[tuple[str, str | None, int]],
     decision_nodes: list[dict[str, Any]],
@@ -604,6 +618,14 @@ def build_alias_map_nodes(
     then the canonical the model chose, then the most-mentioned surface form
     -- ties broken lexicographically throughout, so the map is a pure
     function of its inputs.
+
+    Issue #445: two source-scoped instances of the same locator-shaped
+    surface (`axial.names.build_inventory`'s own "Table 4.1 (source_id)"
+    convention) are never folded together here, however a cluster or the
+    model proposes it (`_locator_source_conflict`) -- the whole point of
+    scoping their identity by source is undone if this fold re-fuses them.
+    A bare (single-source) locator, or two scoped instances from the SAME
+    source, are untouched by this check and may still be folded normally.
     """
     counts = {surface_form: count for surface_form, _kind, count in entries}
     kinds = {surface_form: kind for surface_form, kind, _count in entries}
@@ -619,7 +641,7 @@ def build_alias_map_nodes(
             continue
         model_canonical[canonical] = max(model_canonical.get(canonical, 0), len(node["aliases"]))
         for alias in node["aliases"]:
-            if alias in counts:
+            if alias in counts and not _locator_source_conflict(canonical, alias):
                 union.union(canonical, alias)
 
     seed_canonical: set[str] = set()
