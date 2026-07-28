@@ -366,6 +366,16 @@ PREMISE_MATCH_PASS_NAME = "premise_match"
 # existing config seam without a second dispatch convention.
 PANEL_REVIEW_PASS_NAME = "panel_review"
 
+# Pass name the Phase A v1 name-merge pass identifies itself with (§7.9's own
+# pass table names it `reconcile`; §7.16 / P0-12, issue #416). It shares only
+# the English word with `src/axial/reconcile.py`'s model-free orphan GC, which
+# makes no LLM call and therefore has no pass name at all. Same out-of-band
+# dispatch convention as CHUNK_PASS_NAME above -- naming this constant is what
+# routes the merge call through the `reasoning_by_pass`/`temperature_by_pass`
+# config seams, which is the whole point: this pass runs at temperature 1 with
+# reasoning high (founder directive, issue #416), and nothing else does.
+RECONCILE_PASS_NAME = "reconcile"
+
 # Per-pass model reasoning (§7.9, issue #207): reasoning is ON for the
 # structural-envelope pass and the content-apparatus classification gate --
 # both small, judgment-heavy, once/rarely-per-source calls -- and OFF
@@ -414,6 +424,20 @@ DEFAULT_REASONING_BY_PASS: dict[str, bool | str] = {
 # truth for a real run -- "never hardcoded" (DEC-26): the envelope pass's
 # `production_high` override lives there, not here.
 DEFAULT_MODEL_BY_PASS: dict[str, str] = {}
+
+# Per-pass SAMPLING TEMPERATURE (§7.9, issue #416), the third per-pass block,
+# mirroring `DEFAULT_MODEL_BY_PASS`'s shape and resolution exactly. Until now
+# no request carried a `temperature` field at all, so OpenRouter applied each
+# model's own default; the name-merge pass (`RECONCILE_PASS_NAME`) needs an
+# explicit 1 (founder directive: merging names is an underdetermined judgment,
+# won by sampling rather than by prompt engineering -- `docs/tag-reliability-
+# best-of-n.md` §2.11 lesson 4). Deliberately EMPTY here, like
+# `DEFAULT_MODEL_BY_PASS`: a pass named neither here nor in
+# `config/pipeline.yaml`'s `llm.temperature_by_pass` block sends NO
+# `temperature` field, so every other pass's request body is byte-for-byte
+# what it was before this block existed. `config/pipeline.yaml` is the
+# carried-per-pass source of truth for a real run.
+DEFAULT_TEMPERATURE_BY_PASS: dict[str, float] = {}
 
 # Minimal per-model $/1k-token price table (issue #363, benchmark-cost
 # support for #362): covers the OpenRouter model ids `config/pipeline.yaml`
@@ -530,6 +554,16 @@ STUB_INTERROGATE_RESPONSE_ENV_VAR = "AXIAL_STUB_INTERROGATE_RESPONSE"
 # response -- least of all the identically-shaped-sounding but entirely
 # separate `interrogate` pass above.
 STUB_NOTE_INTERROGATE_RESPONSE_ENV_VAR = "AXIAL_STUB_NOTE_INTERROGATE_RESPONSE"
+
+# Issue #416 test/CI-only seam: mirrors STUB_NOTE_INTERROGATE_RESPONSE_ENV_VAR
+# above, exactly, for the name-merge pass (`RECONCILE_PASS_NAME`). When set to
+# a non-empty value, the stub/record clients' reconcile-pass response becomes
+# this raw string verbatim, letting an acceptance test drive a specific set of
+# merges end-to-end through the real CLI. Unset, the merge pass gets no canned
+# response of its own: there is no honest default, since a merge answer can
+# only name surface forms the prompt actually carried, and a stub-driven run
+# that scripts nothing merges nothing. Never affects any other pass.
+STUB_RECONCILE_RESPONSE_ENV_VAR = "AXIAL_STUB_RECONCILE_RESPONSE"
 
 # Issue #256 test/CI-only seam: mirrors STUB_INTERROGATE_RESPONSE_ENV_VAR
 # above, exactly, for the stage-4 synthesis pass instead of the interrogate
@@ -1254,6 +1288,11 @@ def _canned_response_for(pass_name: str | None) -> str:
         return _canned_calibration_response()
     if pass_name == PREMISE_MATCH_PASS_NAME:
         return _canned_premise_match_response()
+    if pass_name == RECONCILE_PASS_NAME:
+        # No default of its own (see STUB_RECONCILE_RESPONSE_ENV_VAR): a merge
+        # answer can only name surface forms the prompt carried, so an
+        # unscripted stub run merges nothing rather than inventing merges.
+        return os.environ.get(STUB_RECONCILE_RESPONSE_ENV_VAR, "") or json.dumps({"nodes": []})
     # Matched by PREFIX, not equality: each of the panel's N reviewers routes
     # under its own `panel_review.<n>` pass name (issue #385) so a real run
     # can put them on different models through `model_by_pass`.
@@ -1672,6 +1711,7 @@ class OpenRouterClient:
         reasoning_by_pass: dict[str, bool | str] | None = None,
         model_by_pass: dict[str, str] | None = None,
         unresolved_model_passes: dict[str, str] | None = None,
+        temperature_by_pass: dict[str, float] | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
@@ -1710,6 +1750,17 @@ class OpenRouterClient:
         # it (see `_resolve_model_by_pass`). Empty for every caller that does
         # not supply it.
         self._unresolved_model_passes = dict(unresolved_model_passes or {})
+        # Per-pass sampling temperature (§7.9, issue #416): the third per-pass
+        # block, resolved from `config/pipeline.yaml` exactly like the two
+        # above. Defaults to `DEFAULT_TEMPERATURE_BY_PASS` (empty), so every
+        # caller/test that builds `OpenRouterClient` without it -- and every
+        # pass not named in config -- keeps sending no `temperature` field at
+        # all, which is what every request sent before this issue.
+        self._temperature_by_pass = (
+            dict(DEFAULT_TEMPERATURE_BY_PASS)
+            if temperature_by_pass is None
+            else dict(temperature_by_pass)
+        )
         # Issue #363: per-pass accumulated token usage, folded in by
         # `_accumulate_usage` from the real `usage` object every OpenRouter
         # response carries (see `.complete()`/`.complete_with_tools()`).
@@ -1804,6 +1855,11 @@ class OpenRouterClient:
         effort when `True`), a `str` sends `reasoning.effort` naming an
         explicit level instead (2026-07 model-swap experiment).
 
+        `pass_name` (issue #416, §7.9) also selects this call's sampling
+        temperature from `self._temperature_by_pass`. A pass named there sends
+        a `temperature` field; every other pass sends none at all, exactly as
+        before that block existed.
+
         `tools` (issue #253 slice 01) is a purely additive payload field: it
         is included only when the caller passes a non-`None` value
         (`complete_with_tools`), so an ordinary `complete()` call's payload
@@ -1854,6 +1910,14 @@ class OpenRouterClient:
         }
         if tools is not None:
             payload["tools"] = tools
+        # Issue #416, §7.9: purely additive, exactly like `tools` above -- a
+        # pass with no configured temperature sends no `temperature` field, so
+        # its body is unchanged and OpenRouter keeps applying the model's own
+        # default. Only a pass named in `llm.temperature_by_pass` (today: the
+        # name-merge pass, at 1) carries one.
+        temperature = self._temperature_by_pass.get(pass_name)
+        if temperature is not None:
+            payload["temperature"] = temperature
 
         def _run() -> None:
             try:
@@ -2396,6 +2460,19 @@ def _resolve_reasoning_by_pass(llm_config: dict[str, Any]) -> dict[str, bool | s
     return merged
 
 
+def _resolve_temperature_by_pass(llm_config: dict[str, Any]) -> dict[str, float]:
+    """Per-pass sampling temperature (§7.9, issue #416): mirrors
+    `_resolve_reasoning_by_pass` exactly -- `config/pipeline.yaml`'s
+    `llm.temperature_by_pass` block is the carried-per-pass source of truth,
+    so its entries OVERRIDE `DEFAULT_TEMPERATURE_BY_PASS` (empty). An absent
+    block or absent file leaves every pass sending no `temperature` field,
+    which is what every request sent before this block existed."""
+    merged = dict(DEFAULT_TEMPERATURE_BY_PASS)
+    configured = llm_config.get("temperature_by_pass") or {}
+    merged.update({name: float(value) for name, value in configured.items()})
+    return merged
+
+
 def _resolve_votes_by_pass(llm_config: dict[str, Any]) -> dict[str, int]:
     """Per-pass best-of-N voting (DEC-31, issue #294): mirrors
     `_resolve_reasoning_by_pass` exactly -- `config/pipeline.yaml`'s
@@ -2469,6 +2546,7 @@ def _build_openrouter_client(llm_config: dict[str, Any]) -> OpenRouterClient:
     content_fallback_model = secrets.get("content_fallback_model")
     reasoning_by_pass = _resolve_reasoning_by_pass(llm_config)
     model_by_pass, unresolved_model_passes = _resolve_model_by_pass(secrets, llm_config)
+    temperature_by_pass = _resolve_temperature_by_pass(llm_config)
     return OpenRouterClient(
         api_key=api_key,
         model=model,
@@ -2477,6 +2555,7 @@ def _build_openrouter_client(llm_config: dict[str, Any]) -> OpenRouterClient:
         reasoning_by_pass=reasoning_by_pass,
         model_by_pass=model_by_pass,
         unresolved_model_passes=unresolved_model_passes,
+        temperature_by_pass=temperature_by_pass,
     )
 
 

@@ -1444,6 +1444,82 @@ def test_openrouter_client_request_body_sends_explicit_reasoning_effort():
     assert body["reasoning"] == {"enabled": True, "effort": "high"}
 
 
+def test_merge_pass_request_body_carries_temperature_1_and_high_reasoning():
+    """Founder directive (issue #416, §7.9): the name-merge pass samples at
+    temperature 1 with reasoning at `high`, both resolved from
+    config/pipeline.yaml's own per-pass blocks."""
+    from axial.llm import (
+        RECONCILE_PASS_NAME,
+        OpenRouterClient,
+        _load_pipeline_llm_config,
+        _resolve_reasoning_by_pass,
+        _resolve_temperature_by_pass,
+    )
+
+    captured_requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    llm_config = _load_pipeline_llm_config()
+    client = OpenRouterClient(
+        api_key="test-key",
+        model="test-model",
+        transport=httpx.MockTransport(handler),
+        reasoning_by_pass=_resolve_reasoning_by_pass(llm_config),
+        temperature_by_pass=_resolve_temperature_by_pass(llm_config),
+    )
+
+    client.complete("hello world", pass_name=RECONCILE_PASS_NAME)
+
+    body = json.loads(captured_requests[0].content)
+    assert body["temperature"] == 1
+    assert body["reasoning"] == {"enabled": True, "effort": "high"}
+
+
+def test_every_other_pass_sends_no_temperature_field_at_all():
+    """The merge pass's sampling must not move anyone else's: a pass absent
+    from `llm.temperature_by_pass` sends the request body it sent before that
+    block existed, with no `temperature` key at all."""
+    from axial.llm import (
+        NOTE_INTERROGATE_PASS_NAME,
+        OpenRouterClient,
+        _load_pipeline_llm_config,
+        _resolve_temperature_by_pass,
+    )
+
+    captured_requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "model reply"}}]})
+
+    client = OpenRouterClient(
+        api_key="test-key",
+        model="test-model",
+        transport=httpx.MockTransport(handler),
+        temperature_by_pass=_resolve_temperature_by_pass(_load_pipeline_llm_config()),
+    )
+
+    client.complete("hello world", pass_name=NOTE_INTERROGATE_PASS_NAME)
+    client.complete("hello world", pass_name="envelope")
+    client.complete("hello world")
+
+    for request in captured_requests:
+        assert "temperature" not in json.loads(request.content)
+
+
+def test_temperature_by_pass_defaults_to_empty_so_no_request_changes():
+    from axial.llm import DEFAULT_TEMPERATURE_BY_PASS, _resolve_temperature_by_pass
+
+    assert DEFAULT_TEMPERATURE_BY_PASS == {}
+    assert _resolve_temperature_by_pass({}) == {}
+    assert _resolve_temperature_by_pass({"temperature_by_pass": {"reconcile": 1}}) == {
+        "reconcile": 1.0
+    }
+
+
 def test_openrouter_client_content_fallback_request_body_disables_reasoning(monkeypatch):
     """The content_fallback_model reroute (issue #116) must also disable
     reasoning: it shares the same `_post_with_deadline` call site, but this
