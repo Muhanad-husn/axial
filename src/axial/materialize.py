@@ -35,9 +35,22 @@ or one of its aliases appears in an artifact's caption, restricted to the
 SAME source(s) the name's own member notes came from (never cross-source --
 "Table 3" in one book must never resolve to "Table 3" in another). This is
 not a model judgment and not fuzzy matching; it is a plain, case-insensitive
-`in` check over a small, source-scoped candidate set. Confirmed here, not
+substring check over a small, source-scoped candidate set, with one boundary
+rule: a match is refused when the character right after it is another digit,
+so `"Figure 9.1"` never matches inside `"Figure 9.10"` (`_matches_with_digit_
+boundary` -- measured on the real corpus, 2026-07-28: 10 of 292 links, 3.4%,
+were exactly this prefix collision before the rule). Confirmed here, not
 designed in the spec, exactly as the spec's own Open Questions section says
 to.
+
+**Known upstream limitation, not this module's to fix.** 54 of 385 real
+figure/table names (14%) have member notes spanning more than one source --
+Reconcile (slices 04/05) fused a locator like "Figure 4.1" across unrelated
+books, so the name's own members really do live in every one of those
+sources. This module's source-scoping cannot and must not "fix" that by
+narrowing further: the fusion is upstream, filed as its own issue, and
+weakening the scoping here would just as wrongly narrow a genuinely
+single-source name's own matches.
 
 **Determinism and re-run cost (§7.17, P0-8).** Prose and artifact notes are
 a pure function of already-persisted upstream artifacts (chunks, envelope,
@@ -271,6 +284,34 @@ def _is_figure_or_table(kind: Any) -> bool:
     return isinstance(kind, str) and kind.strip().casefold() in _FIGURE_TABLE_KINDS
 
 
+def _matches_with_digit_boundary(form: str, caption: str) -> bool:
+    """Whether `form` occurs in `caption` (both already casefolded) as a
+    substring whose end is NOT immediately followed by another digit.
+
+    A plain substring match alone lets `"figure 9.1"` match inside
+    `"figure 9.10"`/`"figure 9.11"`/... -- measured on the real corpus
+    (2026-07-28): 10 of 292 real figure/table links (3.4%) were exactly this
+    prefix collision, `"Figure 9.1"` alone accounting for five and `"Map 1"`
+    matching `"Map 12: Reconstruction Programmes in Aleppo"` the rest. This
+    is a boundary rule, not a threshold: it does not soften or loosen the
+    match, it only refuses the one case where a shorter numbered locator is
+    a strict prefix of a longer, different one. Deliberately narrow -- it
+    checks ONLY the digit that would extend the matched number, not a
+    general word-boundary rule, because that is the only case actually
+    measured; whether `"Table 3"` should also refuse to match inside
+    `"Table 3 continued"` (a letter/space boundary, not a digit one) is not
+    measured and is not this rule's job to guess at."""
+    start = 0
+    while True:
+        index = caption.find(form, start)
+        if index == -1:
+            return False
+        end = index + len(form)
+        if end >= len(caption) or not caption[end].isdigit():
+            return True
+        start = index + 1  # retry: this occurrence was a numeric prefix, not a match
+
+
 def find_artifact_links(
     surface_forms: list[str],
     member_chunk_ids: list[str],
@@ -280,9 +321,11 @@ def find_artifact_links(
     """`artifact_id`s this figure/table name resolves to (module docstring):
     every artifact, in a source one of `member_chunk_ids` actually came
     from, whose caption contains one of `surface_forms` as a substring
-    (case-insensitive). Sorted, deduplicated; `[]` when no caption matches
-    -- a figure/table name with no resolvable artifact still gets a name
-    page, just with no `Artifacts:` section."""
+    (case-insensitive), refusing a match whose end is immediately followed
+    by another digit (`_matches_with_digit_boundary` -- "Figure 9.1" must
+    never match inside "Figure 9.10"). Sorted, deduplicated; `[]` when no
+    caption matches -- a figure/table name with no resolvable artifact
+    still gets a name page, just with no `Artifacts:` section."""
     needed_sources = {
         source_id_by_chunk_id[chunk_id]
         for chunk_id in member_chunk_ids
@@ -296,7 +339,7 @@ def find_artifact_links(
             if not caption:
                 continue
             folded_caption = caption.casefold()
-            if any(form in folded_caption for form in folded_forms):
+            if any(_matches_with_digit_boundary(form, folded_caption) for form in folded_forms):
                 matches.add(record["artifact_id"])
     return sorted(matches)
 

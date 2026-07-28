@@ -302,6 +302,24 @@ def test_find_artifact_links_matches_caption_substring_within_the_same_source_on
     assert matches == ["a1"]
 
 
+def test_find_artifact_links_refuses_a_numeric_prefix_collision():
+    """Real-corpus regression (2026-07-28): a plain substring match let
+    "Figure 9.1" match inside "Figure 9.10"'s caption -- 10 of 292 real
+    figure/table links (3.4%) were exactly this. The fix is a boundary rule
+    (the character right after the match must not be another digit), not a
+    threshold, and it must not touch a genuine, non-colliding match."""
+    artifacts_by_source = {
+        "src1": [
+            {"artifact_id": "a_prefix", "caption": "Figure 9.10: A completely different figure"},
+            {"artifact_id": "a_exact", "caption": "Figure 9.1: The actual figure this name means"},
+        ],
+    }
+    matches = find_artifact_links(
+        ["Figure 9.1"], ["c_src1"], {"c_src1": "src1"}, artifacts_by_source
+    )
+    assert matches == ["a_exact"]
+
+
 def test_load_alias_map_raises_when_absent(tmp_path):
     with pytest.raises(MissingAliasMapError):
         load_alias_map(tmp_path / "no_such_file.json")
