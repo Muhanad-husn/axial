@@ -156,20 +156,32 @@ class ChunkNote:
     `axial.gold.parse_note`'s flat representative-scalar projection, this is
     the general-purpose read layer every later §7.5 tool builds on, so it
     keeps each axis's whole shape: `field`/`claim_type`/`theory_school`'s
-    `{primary, secondary, ...}`, `empirical_scope`'s `{value, polity}`)."""
+    `{primary, secondary, ...}`, `empirical_scope`'s `{value, polity}`).
+
+    `schema_version`/`role_in_argument`/`field`/`claim_type`/
+    `theory_school`/`empirical_scope` are the tag pass's own retired axis
+    block (issue #414, D4/D9): a note materialized by `axial.materialize`
+    (issue #411) carries none of them at all, so these five default to
+    `None` rather than being required -- the same "keep it compiling with
+    the smallest honest change" treatment issue #429 gave `ArtifactNote`'s
+    own retired `artifact_role`/`field`. `query_by_tag` and friends read
+    these through `.get()` already and degrade to "no match" on a note that
+    carries none of them; nothing here rewrites that filtering logic, which
+    stays what #3 non-goal 7/§3 already calls degraded pending the Phase B
+    rewrite against name pages."""
 
     chunk_id: str
     section: str
     chunk_text: str
     source_meta: dict[str, Any]
-    schema_version: str
-    role_in_argument: str
-    field: dict[str, Any]
-    claim_type: dict[str, Any]
-    theory_school: dict[str, Any]
-    empirical_scope: dict[str, Any]
     polities_touched: list[str]
     artifact_refs: list[str]
+    schema_version: str | None = None
+    role_in_argument: str | None = None
+    field: dict[str, Any] | None = None
+    claim_type: dict[str, Any] | None = None
+    theory_school: dict[str, Any] | None = None
+    empirical_scope: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -260,14 +272,19 @@ def _parse_chunk_note(path: Path) -> ChunkNote:
         section=_require(frontmatter, path, "section"),
         chunk_text=_require(frontmatter, path, "chunk_text"),
         source_meta=_require(frontmatter, path, "source_meta"),
-        schema_version=_require(frontmatter, path, "schema_version"),
-        role_in_argument=_require(frontmatter, path, "role_in_argument"),
-        field=_require(frontmatter, path, "field"),
-        claim_type=_require(frontmatter, path, "claim_type"),
-        theory_school=_require(frontmatter, path, "theory_school"),
-        empirical_scope=_require(frontmatter, path, "empirical_scope"),
         polities_touched=list(frontmatter.get("polities_touched") or []),
         artifact_refs=list(frontmatter.get("artifact_refs") or []),
+        # The retired axis block (issue #414): present, required, on a
+        # pre-#411 note; absent entirely on a note `axial.materialize`
+        # wrote. `.get()`, never `_require`, so a v1 note parses instead of
+        # raising `MalformedNoteError` on a field the pipeline stopped
+        # writing (see `ChunkNote`'s own docstring).
+        schema_version=frontmatter.get("schema_version"),
+        role_in_argument=frontmatter.get("role_in_argument"),
+        field=frontmatter.get("field"),
+        claim_type=frontmatter.get("claim_type"),
+        theory_school=frontmatter.get("theory_school"),
+        empirical_scope=frontmatter.get("empirical_scope"),
     )
 
 

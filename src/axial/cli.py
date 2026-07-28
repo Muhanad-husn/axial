@@ -69,6 +69,7 @@ from axial.llm import (
     LLMError,
     get_client,
 )
+from axial.materialize import MaterializeError, run_materialize
 from axial.merge_names import DEFAULT_WORKERS as MERGE_DEFAULT_WORKERS
 from axial.merge_names import MergeNamesError, run_merge_names
 from axial.names import (
@@ -239,8 +240,11 @@ def build_parser() -> argparse.ArgumentParser:
             "cluster-size and nearest-neighbour similarity distribution over "
             "that persisted result (zero model/embedding calls); 'merge' is "
             "slice 05 (Reconcile, issue #416) -- the model's own merge calls, "
-            "one cluster at a time, into a reversible alias map. Unrelated to "
-            "`axial reconcile gc`, which is model-free orphan GC (#291)"
+            "one cluster at a time, into a reversible alias map; 'materialize' "
+            "is slice 06 (issue #411) -- writes the vault (prose notes, "
+            "artifact notes, name pages) from the alias map, zero model calls. "
+            "Unrelated to `axial reconcile gc`, which is model-free orphan GC "
+            "(#291)"
         ),
     )
     names_subparsers = names_parser.add_subparsers(dest="names_command")
@@ -363,6 +367,21 @@ def build_parser() -> argparse.ArgumentParser:
             "is I/O-bound, and serial calls project to hours for a corpus this "
             f"size) (default: {MERGE_DEFAULT_WORKERS}, a starting value -- "
             "per-call latency has not been observed on the real corpus yet)"
+        ),
+    )
+
+    names_subparsers.add_parser(
+        "materialize",
+        help=(
+            "Phase A v1 slice 06 (issue #411): Materialize -- write the vault "
+            "with zero model calls (D11, spec §7.17). (Re)writes one prose note "
+            "per interrogated chunk (interrogation-answer frontmatter, Appendix "
+            "H), one artifact note per data/artifacts/ record, and one name "
+            "page per data/names/alias_map.json node (name, kind, aliases, and "
+            "its member notes as [[chunk_id]] links -- link direction is "
+            "name-page -> note only). Re-running against an unchanged alias map "
+            "rewrites nothing; a changed one rewrites only the affected name "
+            "pages, never a prose note"
         ),
     )
 
@@ -1610,6 +1629,29 @@ def _names_merge(
     return 0
 
 
+def _names_materialize() -> int:
+    try:
+        result = run_materialize()
+    except MaterializeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    for key in (
+        "vault_dir",
+        "sources",
+        "notes_written",
+        "notes_skipped_no_answer",
+        "artifact_sources",
+        "artifact_notes_written",
+        "name_pages",
+        "name_pages_written",
+        "name_pages_unchanged",
+        "name_pages_deleted",
+    ):
+        print(f"{key}: {result[key]}")
+    return 0
+
+
 def _distill_classify(axis: str) -> int:
     try:
         if axis in DISTILL_CLASSIFY_EMBEDDING_AXES:
@@ -1768,6 +1810,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "names" and args.names_command == "merge":
         return _names_merge(args.min_cluster_size, args.min_samples, args.limit, args.workers)
+
+    if args.command == "names" and args.names_command == "materialize":
+        return _names_materialize()
 
     if args.command == "artifacts":
         return _artifacts(args.source_path)

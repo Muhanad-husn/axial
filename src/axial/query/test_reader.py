@@ -388,8 +388,13 @@ def test_query_by_tag_excludes_a_note_missing_the_filtered_axis_rather_than_rais
     thin note does not abort an otherwise-good full-vault scan. This is
     distinct from a missing `chunk_id` (F2 above), which always raises:
     `chunk_id` is the note's identity, not a filterable tag axis.
-    `get_chunk` on that same note still raises, since it promises the
-    note's full field surface (§7.5)."""
+
+    `get_chunk` on that same note no longer raises for a missing axis field
+    (issue #411, editing this test's own prior assertion here: a note
+    `axial.materialize` writes carries NONE of the six retired axis-block
+    keys at all, not just `field`, so `get_chunk` degrading to `None` on any
+    of them -- rather than raising -- is what keeps a real v1 note readable
+    at all; see `ChunkNote`'s docstring in `axial.query.reader`)."""
     prose_dir = tmp_path / "prose"
     _write_chunk_note(prose_dir, "has_field", field={"primary": "field:x", "secondary": []})
 
@@ -417,8 +422,7 @@ def test_query_by_tag_excludes_a_note_missing_the_filtered_axis_rather_than_rais
     result = query_by_tag(field="field:x", vault_dir=tmp_path)
 
     assert result == ["has_field"]
-    with pytest.raises(MalformedNoteError):
-        get_chunk("missing_field", vault_dir=tmp_path)
+    assert get_chunk("missing_field", vault_dir=tmp_path).field is None
 
 
 # -- get_chunk / get_artifact: not-found --------------------------------------

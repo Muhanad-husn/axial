@@ -1,28 +1,27 @@
 """Vault write: Obsidian note/frontmatter primitives (PRD §5 stage 7; §7.2;
 §8 P0-5/P0-8), plus `run_vault_write` itself.
 
-**`run_vault_write` is retired pending issue #411.** Phase A v1 (D4/D5,
-`plans/phase-a-v1/README.md`) deletes the tag pass and the cross-reference
-pass this module used to drive internally -- prose notes no longer have an
-axis block to carry (that was `axial.tag.run_tag`'s output) and backlinks no
-longer exist to attach (that was `axial.xref.run_xref`'s output). The
-replacement -- prose notes carrying the interrogation pass's answers as
-frontmatter, plus the name pages Reconcile's alias map drives -- is slice 06
-"Materialize" (issue #411), itself gated behind slices 04 (name inventory)
-and 05 (Reconcile), neither of which exists yet. Calling `run_vault_write`
-now raises `VaultWriteRetiredError` immediately, naming #411, rather than
-either crashing on a missing tag pass or silently writing notes with no
-per-note content.
+**`run_vault_write` stays retired.** Phase A v1 (D4/D5,
+`plans/phase-a-v1/README.md`) deleted the tag pass and the cross-reference
+pass this module used to drive internally. Its replacement -- prose notes
+carrying the interrogation pass's answers as frontmatter, artifact notes, and
+the name pages Reconcile's alias map drives -- is `axial.materialize` (slice
+06, issue #411), a fresh whole-corpus pass over `data/answers/`,
+`data/artifacts/` and `data/names/alias_map.json` rather than a per-source
+loop, so `run_vault_write` itself is not resurrected: it still raises
+`VaultWriteRetiredError` immediately, naming #411.
 
 The note-writing PRIMITIVES below -- `render_note`, `build_frontmatter`,
 `write_chunk_note`, `build_artifact_frontmatter`, `write_artifact_note`,
-`read_source_meta` and friends -- are untouched in kind (only the retired
-axis-tag and backlink fields are gone from the two `build_*_frontmatter`
-functions) and stay real and callable: they are the primitives #411 builds
-on, and several other modules (`axial.query.reader`'s own tests, `axial.
-distill`, `axial.eval.corpus_pin`, `axial.rename_source_ids`) already call
-`render_note`/`write_chunk_note`/`write_artifact_note` directly, independent
-of `run_vault_write`.
+`read_source_meta` and friends -- are what `axial.materialize` builds on.
+`build_frontmatter`/`write_chunk_note` gained an optional `answer_record`
+(plus `chapter`) parameter for #411: given one, five more keys land in a
+note's frontmatter (`source`, `chapter`, `frame_version`, `interrogated`,
+`answers`, Appendix H); omitted, the pre-#411 shape is unchanged, which is
+what keeps every other existing caller (`axial.query.reader`'s own tests,
+`axial.distill`, `axial.eval.corpus_pin`, `axial.rename_source_ids`, all of
+which call `render_note`/`write_chunk_note`/`write_artifact_note` directly,
+independent of `run_vault_write`) compiling unchanged.
 """
 
 from __future__ import annotations
@@ -140,23 +139,51 @@ def build_frontmatter(
     record: dict[str, Any],
     envelope: dict[str, Any],
     source_meta: dict[str, Any],
+    *,
+    chapter: str | None = None,
+    answer_record: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble a chunk note's frontmatter mapping: `chunk_id`, `section`,
     `chunk_text`, and `source_meta` (the five source-level fields, PRD §7.2,
     composed by `build_source_meta_block` from the source-metadata record
-    and the envelope).
+    and the envelope) -- always present, unchanged from before issue #411.
 
     Retired (issue #414, D4/D5): the tag-pass axis block (`schema_version`,
     `role_in_argument`, `field`/`claim_type`/`theory_school`,
     `empirical_scope`, `polities_touched`) and `artifact_refs` (the
-    cross-reference pass's backlink list). Their replacement -- the
-    interrogation answers -- is issue #411's job, not this function's."""
-    return {
-        "chunk_id": record["chunk_id"],
-        "section": record["section"],
-        "chunk_text": record["chunk_text"],
-        "source_meta": build_source_meta_block(source_meta, envelope),
-    }
+    cross-reference pass's backlink list).
+
+    Their replacement (issue #411, Appendix H): when `answer_record` (one
+    line of `data/answers/<source_id>.jsonl`, `axial.interrogate.
+    build_answer_record`'s shape) is given, five more keys are added --
+    `source` (a display label, `"<author> — <title>"`), `chapter` (the
+    caller's own `chapter_for_section` lookup -- passed in rather than
+    recomputed here, so this module never has to import `axial.interrogate`
+    for one lookup), `frame_version`, `interrogated` (`{pass, model, at}`),
+    and `answers` (the record's own answers dict, verbatim -- plain strings
+    and lists, never `[[wikilinks]]`: D11 keeps every link in the name page,
+    not the note). Omitted entirely, not `null`, when no answer record is
+    given -- the pre-#411 shape survives unchanged for any caller that does
+    not yet have one."""
+    source_meta_block = build_source_meta_block(source_meta, envelope)
+    frontmatter: dict[str, Any] = {"chunk_id": record["chunk_id"]}
+    if answer_record is not None:
+        frontmatter["source"] = (
+            f"{source_meta_block.get('author')} — {source_meta_block.get('title')}"
+        )
+    frontmatter["section"] = record["section"]
+    frontmatter["chunk_text"] = record["chunk_text"]
+    frontmatter["source_meta"] = source_meta_block
+    if answer_record is not None:
+        frontmatter["chapter"] = chapter
+        frontmatter["frame_version"] = answer_record.get("frame_version")
+        frontmatter["interrogated"] = {
+            "pass": answer_record.get("pass"),
+            "model": answer_record.get("model"),
+            "at": answer_record.get("answered_at"),
+        }
+        frontmatter["answers"] = answer_record.get("answers", {})
+    return frontmatter
 
 
 def render_note(frontmatter: dict[str, Any], body: str) -> str:
@@ -201,6 +228,8 @@ def write_chunk_note(
     vault_dir: Path,
     *,
     source_id: str,
+    chapter: str | None = None,
+    answer_record: dict[str, Any] | None = None,
 ) -> Path:
     """Write one chunk's note under `<vault_dir>/prose/`, named by
     `record['chunk_id']` (shortened only on the filesystem, per
@@ -210,8 +239,11 @@ def write_chunk_note(
     source-metadata record (§7.12), the origin of the note's
     `author`/`title`/`date`. `source_id` is the source's own
     `compute_source_id` value, needed only for the filename-budget
-    fallback."""
-    frontmatter = build_frontmatter(record, envelope, source_meta)
+    fallback. `chapter`/`answer_record` (issue #411) are forwarded verbatim
+    to `build_frontmatter` -- see its docstring."""
+    frontmatter = build_frontmatter(
+        record, envelope, source_meta, chapter=chapter, answer_record=answer_record
+    )
     body = f"# {record['section']}\n\n{record['chunk_text']}\n"
     note_text = render_note(frontmatter, body)
 
