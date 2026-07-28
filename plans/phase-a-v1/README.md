@@ -187,7 +187,7 @@ Develop top to bottom. One slice = one issue = one PR.
 | 02 | the interrogation pass | #419 | One call per note answering D6's questions with D7 abstention and D8 answer ordering, envelope context threaded in, per-note answer records on disk, plus a cost probe and a 50-output sample gate | ✅ done | #430 |
 | 03 | retire tagging, xref and the vote layer | #414 | Delete the tag pass, the `xref` pass, `votes_by_pass`, the off-list validator and the closed-vocabulary gates; the schema file survives only as prompt examples and the spelling list | ✅ done | #433 |
 | 04 | name inventory and similarity view | #415 | Collect every name from 02, embed, cluster, and report the distribution at a sweep of tightnesses so merge aggressiveness is chosen by looking (LLM-free; reuses `src/axial/distill/embed.py`) | ✅ done | #436 |
-| 05 | Reconcile | #416 | Model merges names with 04's clusters as hints; emits a reversible alias map plus the surviving name list, which is the index | ☐ todo | TBD |
+| 05 | Reconcile | #416 | Model merges names with 04's clusters as hints; emits a reversible alias map plus the surviving name list, which is the index | ✅ done | #437 |
 | 06 | materialize the wiki | #411 | Code writes one file per surviving name (aliases, member notes as links) and notes carry their answers as frontmatter; **first point the founder can open the graph view and look** | ☐ todo | TBD |
 | 07 | Gather | #412 | Per-name packet assembly under a hard budget with batching and merge, disagreement text written onto the name page, name-to-name links | ☐ todo | TBD |
 | 08 | pairwise verbatim support | #413 | Two-note call that supplies quoted grounds where Gather found a disagreement worth quoting — optional, last, only if 07 shows it is needed | ☐ todo | TBD |
