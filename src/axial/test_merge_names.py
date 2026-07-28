@@ -15,7 +15,11 @@ from pathlib import Path
 import pytest
 
 from axial.merge_names import (
+    DEFAULT_CLUSTERS_PER_CALL,
     DEFAULT_MEMBER_CHAR_BUDGET,
+    MergeBatch,
+    compose_call_prompt,
+    pack_batches,
     MergeResponseError,
     _resolve_merge_tightness,
     _seed_groups,
@@ -258,3 +262,72 @@ def test_the_shipped_config_pins_the_merge_tier_deliberately():
 
     llm_config = _load_pipeline_llm_config(DEFAULT_PIPELINE_CONFIG_PATH)
     assert llm_config["model_by_pass"][RECONCILE_PASS_NAME] == "production_low"
+
+
+# ---------------------------------------------------------------------------
+# Packing many clusters into one call (issue #440)
+# ---------------------------------------------------------------------------
+
+
+def _batches(count: int, members_each: int = 2) -> list[MergeBatch]:
+    return [
+        MergeBatch(label, tuple(f"s{label}_{i}" for i in range(members_each)))
+        for label in range(count)
+    ]
+
+
+def test_packing_puts_many_clusters_in_one_call():
+    """The defect this fixes: 84% of real clusters hold 2-3 surfaces, so
+    one-call-per-cluster sent a median 825-char prompt against a 20,000-char
+    budget and paid the reasoning ramp-up 19,434 times."""
+    calls = pack_batches(_batches(100), clusters_per_call=20)
+
+    assert len(calls) == 5
+    assert all(len(call) == 20 for call in calls)
+    # Every batch appears exactly once, in order: nothing dropped, nothing doubled.
+    packed = [batch for call in calls for batch in call]
+    assert packed == _batches(100)
+
+
+def test_packing_never_exceeds_the_request_size_guard():
+    """`clusters_per_call` and the char budget are two bounds and the tighter
+    one wins -- the size guard is what keeps any single request sane."""
+    fat = [MergeBatch(label, ("x" * 400, "y" * 400)) for label in range(20)]
+    calls = pack_batches(fat, clusters_per_call=20, member_char_budget=2000)
+
+    assert len(calls) > 1
+    for call in calls:
+        rendered = sum(len(s) + 1 for b in call for s in b.members)
+        assert rendered <= 2000 or len(call) == 1
+
+
+def test_a_single_batch_call_renders_the_unpacked_prompt_byte_for_byte():
+    """Packing must not quietly reword the prompt for calls that were never
+    packed -- the founder-directed loose wording is the contract."""
+    members = ("Phelps-Brown", "Phelps-Brown and Hopkins")
+    assert compose_call_prompt([members], {}) == compose_merge_prompt(members, {})
+
+
+def test_a_packed_prompt_labels_the_groups_and_says_they_are_independent():
+    """Clusters are hints, and packing must not invite the model to fuse two
+    unrelated groups just because they shared a request."""
+    prompt = compose_call_prompt([("Voltaire",), ("Upper Volta",)], {})
+
+    assert "GROUP 1" in prompt and "GROUP 2" in prompt
+    assert "independent" in prompt
+    assert "Voltaire" in prompt and "Upper Volta" in prompt
+    # Still no scaffolding (the founder directive that shaped this prompt).
+    assert "step by step" not in prompt.lower()
+
+
+def test_packing_does_not_change_a_batchs_decision_log_key():
+    """The key is per CLUSTER, not per call, so ~10,400 decisions already
+    bought one-per-call are reused rather than re-decided."""
+    batch = MergeBatch(7, ("a", "b"))
+    calls = pack_batches([batch, MergeBatch(8, ("c", "d"))], clusters_per_call=20)
+
+    assert calls[0][0].key == batch.key
+
+
+def test_the_shipped_default_packs():
+    assert DEFAULT_CLUSTERS_PER_CALL > 1

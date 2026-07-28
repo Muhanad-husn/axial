@@ -69,7 +69,7 @@ from axial.llm import (
     LLMError,
     get_client,
 )
-from axial.merge_names import DEFAULT_WORKERS as MERGE_DEFAULT_WORKERS
+from axial.merge_names import DEFAULT_CLUSTERS_PER_CALL, DEFAULT_WORKERS as MERGE_DEFAULT_WORKERS
 from axial.merge_names import MergeNamesError, run_merge_names
 from axial.names import (
     DEFAULT_MIN_CLUSTER_SIZE,
@@ -363,6 +363,18 @@ def build_parser() -> argparse.ArgumentParser:
             "is I/O-bound, and serial calls project to hours for a corpus this "
             f"size) (default: {MERGE_DEFAULT_WORKERS}, a starting value -- "
             "per-call latency has not been observed on the real corpus yet)"
+        ),
+    )
+    names_merge_parser.add_argument(
+        "--clusters-per-call",
+        type=int,
+        default=DEFAULT_CLUSTERS_PER_CALL,
+        help=(
+            "how many clusters ride in one model call (issue #440: 84%% of "
+            "clusters hold 2-3 surface forms, so one-per-call filled 4%% of the "
+            "prompt budget and paid the reasoning ramp-up once per cluster) "
+            f"(default: {DEFAULT_CLUSTERS_PER_CALL}; higher packs harder and "
+            "asks the model to track more surfaces at once)"
         ),
     )
 
@@ -1577,7 +1589,11 @@ def _names_examine(min_cluster_sizes: str | None, min_samples: int | None) -> in
 
 
 def _names_merge(
-    min_cluster_size: int | None, min_samples: int | None, limit: int | None, workers: int
+    min_cluster_size: int | None,
+    min_samples: int | None,
+    limit: int | None,
+    workers: int,
+    clusters_per_call: int,
 ) -> int:
     try:
         result = run_merge_names(
@@ -1585,6 +1601,7 @@ def _names_merge(
             min_samples=min_samples,
             limit=limit,
             workers=workers,
+            clusters_per_call=clusters_per_call,
         )
     except (NamesError, MergeNamesError, LLMError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1597,6 +1614,8 @@ def _names_merge(
         "decided",
         "reused",
         "failed",
+        "calls",
+        "clusters_per_call",
         "workers",
         "canonical_names",
         "merged_surface_forms",
@@ -1767,7 +1786,13 @@ def main(argv: list[str] | None = None) -> int:
         return _names_examine(args.min_cluster_sizes, args.min_samples)
 
     if args.command == "names" and args.names_command == "merge":
-        return _names_merge(args.min_cluster_size, args.min_samples, args.limit, args.workers)
+        return _names_merge(
+            args.min_cluster_size,
+            args.min_samples,
+            args.limit,
+            args.workers,
+            args.clusters_per_call,
+        )
 
     if args.command == "artifacts":
         return _artifacts(args.source_path)

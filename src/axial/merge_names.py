@@ -142,6 +142,20 @@ DEFAULT_MERGE_MANIFEST_PATH = DEFAULT_NAMES_DATA_DIR / "merge_manifest.json"
 # run rather than editing this line.
 DEFAULT_WORKERS = 12
 
+# How many clusters ride in one model call (issue #440). One-per-call sent a
+# median 825-character prompt against a 20,000-character budget -- 4.1% of it
+# -- because 84% of real clusters hold only two or three surface forms, and it
+# paid the per-call reasoning ramp-up once per cluster: 19,434 times for a
+# corpus of 78,115 names.
+#
+# 20 is the founder's dial, exposed as `--clusters-per-call`, not a tuned
+# constant. It trades the model's bookkeeping span (every surface must be
+# placed exactly once, which gets harder the more are in front of it) against
+# the call count, and it is deliberately well under what the character budget
+# alone would allow (~160) so the first packed run is not also the most
+# aggressive one. `DEFAULT_MEMBER_CHAR_BUDGET` still caps the request.
+DEFAULT_CLUSTERS_PER_CALL = 20
+
 # §7.16's own map shape carries a `version`; `polity_canonical.yaml`, which
 # seeds it, uses the same field for the same job.
 ALIAS_MAP_VERSION = 1
@@ -169,6 +183,32 @@ SURFACE FORMS
 {members}
 
 RESPONSE. Reply with ONLY a JSON object, no prose and no markdown fences:
+{{"nodes": [{{"canonical": "<surface form>", "aliases": ["<surface form>", ...]}}, ...]}}
+Write every surface form exactly as it appears above, and use each one exactly \
+once across all nodes.
+"""
+
+# The packed form of the same prompt, for a call carrying several clusters
+# (issue #440). Identical wording, with ONE structural sentence added -- that
+# the groups are independent -- because that is the fact the single-cluster
+# prompt got for free from there being only one group. Nothing about how to
+# judge changes: still no criteria, no examples, no instruction to think.
+_PACKED_PROMPT_TEMPLATE = """\
+Below are groups of name surface forms collected from academic passages -- \
+people, places, concepts, works, groups, arguments. Each group was put \
+together by a clustering algorithm because the wordings are similar. That \
+grouping is a hint, and it is often wrong.
+
+Decide which of them name the same thing. Where several do, pick the clearest \
+one as the canonical name and list the rest as its aliases. A surface form \
+that names something of its own stands on its own, with no aliases.
+
+The groups are independent of each other. Decide each one on its own.
+
+{groups}
+
+RESPONSE. Reply with ONLY a JSON object covering every group, no prose and no \
+markdown fences:
 {{"nodes": [{{"canonical": "<surface form>", "aliases": ["<surface form>", ...]}}, ...]}}
 Write every surface form exactly as it appears above, and use each one exactly \
 once across all nodes.
@@ -271,6 +311,45 @@ def build_batches(
     return batches
 
 
+def pack_batches(
+    batches: list[MergeBatch],
+    clusters_per_call: int = DEFAULT_CLUSTERS_PER_CALL,
+    member_char_budget: int = DEFAULT_MEMBER_CHAR_BUDGET,
+) -> list[tuple[MergeBatch, ...]]:
+    """Group per-cluster batches into CALLS (issue #440).
+
+    84% of real clusters hold two or three surface forms, so one call per
+    cluster sent a median 825-character prompt against a 20,000-character
+    budget -- 4% of it -- and paid the model's per-call reasoning ramp-up
+    19,434 times over for ~2 strings a time. Packing amortises that ramp-up
+    across `clusters_per_call` decisions instead of paying it per decision.
+
+    Each batch keeps its own identity and its own decision-log key, so this
+    changes only how many decisions share one request. A pass that already
+    decided a cluster one-per-call reuses that decision unchanged.
+
+    Two bounds, and the tighter one wins: `clusters_per_call` (the model's
+    bookkeeping span -- it must place every surface exactly once, and that
+    gets harder with more of them) and `member_char_budget` (the same request
+    size guard `build_batches` already enforces). A single batch that is
+    itself at the size guard becomes a call of one, exactly as before."""
+    calls: list[tuple[MergeBatch, ...]] = []
+    current: list[MergeBatch] = []
+    size = 0
+    for batch in batches:
+        cost = sum(len(surface_form) + 1 for surface_form in batch.members)
+        too_many = len(current) >= max(clusters_per_call, 1)
+        too_big = current and size + cost > member_char_budget
+        if too_many or too_big:
+            calls.append(tuple(current))
+            current, size = [], 0
+        current.append(batch)
+        size += cost
+    if current:
+        calls.append(tuple(current))
+    return calls
+
+
 # ---------------------------------------------------------------------------
 # The call: a loose prompt, and a parse that never invents a name
 # ---------------------------------------------------------------------------
@@ -287,6 +366,28 @@ def compose_merge_prompt(members: Iterable[str], kinds: dict[str, str | None]) -
         for surface_form in members
     )
     return _PROMPT_TEMPLATE.format(members=rendered)
+
+
+def _render_members(members: Iterable[str], kinds: dict[str, str | None]) -> str:
+    return "\n".join(
+        f"- {surface_form!r} ({kinds.get(surface_form)})"
+        if kinds.get(surface_form)
+        else f"- {surface_form!r}"
+        for surface_form in members
+    )
+
+
+def compose_call_prompt(groups: list[tuple[str, ...]], kinds: dict[str, str | None]) -> str:
+    """One CALL's prompt (issue #440). A call carrying a single group renders
+    exactly the single-cluster prompt it always did, byte for byte, so packing
+    changes nothing for a call that was not packed."""
+    if len(groups) == 1:
+        return compose_merge_prompt(groups[0], kinds)
+    rendered = "\n\n".join(
+        f"GROUP {index}\n{_render_members(members, kinds)}"
+        for index, members in enumerate(groups, start=1)
+    )
+    return _PACKED_PROMPT_TEMPLATE.format(groups=rendered)
 
 
 def parse_merge_response(raw: str, members: Iterable[str]) -> list[dict[str, Any]]:
@@ -354,61 +455,84 @@ def parse_merge_response(raw: str, members: Iterable[str]) -> list[dict[str, Any
     return nodes
 
 
-def _decide_batch(
-    batch: MergeBatch,
+def _decide_call(
+    call: tuple[MergeBatch, ...],
     kinds: dict[str, str | None],
     client: LLMClient,
-) -> tuple[MergeBatch, dict[str, Any] | None, str | None]:
-    """Decide one cluster batch. Runs on a worker thread (issue #416).
+) -> tuple[tuple[MergeBatch, ...], list[dict[str, Any]] | None, str | None]:
+    """Decide one CALL's worth of clusters. Runs on a worker thread (#416/#440).
 
-    Returns `(batch, record, failure_reason)`: `record` is the decision
-    record to persist, or `None` on a content-shaped failure (`failure_reason`
-    then carries the message). `ModelJsonError`/`MergeResponseError` are
-    caught here exactly as they were in the pre-concurrency serial loop -- a
-    bad cluster simply goes unmerged this run, not recorded as a decision, so
-    a later run retries it -- and NOTHING else is caught: a transport-level
-    failure (`LLMError`/`httpx.HTTPError`) propagates out of this function,
-    surfaces from `future.result()` in the caller, and is fatal exactly as it
-    was before this pass ran concurrently.
+    Returns `(call, records, failure_reason)`: one decision record PER BATCH,
+    or `None` on a content-shaped failure (`failure_reason` then carries the
+    message). A failure loses the whole call's clusters for this run, but none
+    is recorded, so a later run retries them.
 
-    This function NEVER writes to disk. Every worker returns its record and
+    `ModelJsonError`/`MergeResponseError` are caught here exactly as they were
+    when a call carried one cluster, and NOTHING else is: a transport-level
+    failure (`LLMError`/`httpx.HTTPError`) propagates out, surfaces from
+    `future.result()`, and stays fatal.
+
+    The response is a FLAT node list, so it is parsed once against every
+    surface the call carried and then split back per batch by which batch owns
+    each node's canonical. Batches are disjoint, so every node lands in
+    exactly one record. A node the model built ACROSS two groups -- against
+    the prompt's own instruction -- keeps its cross-group aliases and is
+    recorded under its canonical's batch: clusters are hints (D10), so a real
+    merge the model saw through the grouping is kept, not discarded.
+    `build_alias_map_nodes` reads every record's nodes as one flat list and
+    folds them order-independently, so which record carries a node never
+    changes the map.
+
+    This function NEVER writes to disk. Every worker returns its records and
     the single result-collecting thread does the checkpoint append, which is
     what keeps resumability intact under concurrency (`run_merge_names`).
 
-    ONE client is shared by every worker rather than built per batch: it is
-    the connection pool, and 19k calls through 19k fresh pools would throw
-    away keep-alive on the very workload concurrency is here to speed up.
+    ONE client is shared by every worker rather than built per call: it is the
+    connection pool, and re-establishing one per call would throw away
+    keep-alive on the very workload concurrency is here to speed up.
     `httpx.Client` is thread-safe, and every request-shaping decision this
     pass makes (temperature, reasoning, model) is per-CALL via `pass_name`,
     never per-client state.
     """
-    prompt = compose_merge_prompt(batch.members, kinds)
+    groups = [batch.members for batch in call]
+    everything = tuple(surface for members in groups for surface in members)
+    prompt = compose_call_prompt(groups, kinds)
     started = time.monotonic()
     try:
         raw = complete_json(
             client,
             prompt,
             pass_name=RECONCILE_PASS_NAME,
-            validate=lambda response: parse_merge_response(response, batch.members),
+            validate=lambda response: parse_merge_response(response, everything),
         )
-        nodes = parse_merge_response(raw, batch.members)
+        nodes = parse_merge_response(raw, everything)
     except (ModelJsonError, MergeResponseError) as exc:
-        return batch, None, str(exc)
+        return call, None, str(exc)
 
-    record = {
-        "batch_key": batch.key,
-        "cluster_label": batch.cluster_label,
-        "members": list(batch.members),
-        "nodes": nodes,
-        "model": client.model_for_pass(RECONCILE_PASS_NAME),
-        "decided_at": _utc_now(),
-    }
+    model = client.model_for_pass(RECONCILE_PASS_NAME)
+    decided_at = _utc_now()
+    owner = {surface: index for index, batch in enumerate(call) for surface in batch.members}
+    per_batch: list[list[dict[str, Any]]] = [[] for _ in call]
+    for node in nodes:
+        per_batch[owner[node["canonical"]]].append(node)
+
+    records = [
+        {
+            "batch_key": batch.key,
+            "cluster_label": batch.cluster_label,
+            "members": list(batch.members),
+            "nodes": per_batch[index],
+            "model": model,
+            "decided_at": decided_at,
+        }
+        for index, batch in enumerate(call)
+    ]
     print(
-        f"reconcile: cluster {batch.cluster_label} answered "
-        f"({len(batch.members)} member(s)) in {time.monotonic() - started:.1f}s",
+        f"reconcile: {len(call)} cluster(s), {len(everything)} surface(s) "
+        f"answered in {time.monotonic() - started:.1f}s",
         file=sys.stderr,
     )
-    return batch, record, None
+    return call, records, None
 
 
 # ---------------------------------------------------------------------------
@@ -674,6 +798,7 @@ def run_merge_names(
     member_char_budget: int = DEFAULT_MEMBER_CHAR_BUDGET,
     limit: int | None = None,
     workers: int = DEFAULT_WORKERS,
+    clusters_per_call: int = DEFAULT_CLUSTERS_PER_CALL,
     cluster_fn: ClusterFn | None = None,
 ) -> dict[str, Any]:
     """Merge the name inventory into a reversible alias map and return the
@@ -745,26 +870,26 @@ def run_merge_names(
     pending = [batch for batch in batches if batch.key not in decisions]
     reused = len(batches) - len(pending)
     to_attempt = pending if limit is None else pending[:limit]
+    calls = pack_batches(to_attempt, clusters_per_call, member_char_budget)
     print(
         f"reconcile: {len(surface_forms)} surface form(s), {len(batches)} cluster batch(es) "
         f"at min_cluster_size={min_cluster_size} min_samples={min_samples}; "
-        f"{reused} already decided, {len(to_attempt)} to decide now "
+        f"{reused} already decided, {len(to_attempt)} to decide now in {len(calls)} call(s) "
         f"({len(pending) - len(to_attempt)} more pending) across {max(workers, 1)} worker(s)",
         file=sys.stderr,
     )
 
     called = 0
     failed = 0
+    settled_calls = 0
     model: str | None = None
-    if to_attempt:
+    if calls:
         # Built once, here, and shared by every worker -- never inside the
         # pool, so a misconfigured provider fails before any thread starts.
         if client is None:
             client = get_client(config_path=config_path)
         with ThreadPoolExecutor(max_workers=max(workers, 1)) as executor:
-            futures = {
-                executor.submit(_decide_batch, batch, kinds, client): batch for batch in to_attempt
-            }
+            futures = {executor.submit(_decide_call, call, kinds, client): call for call in calls}
             # Results are collected -- and every checkpoint write happens --
             # on THIS one thread only, in whatever order calls actually
             # finish. That is exactly what makes resumability survive
@@ -772,23 +897,26 @@ def run_merge_names(
             # batch durably on disk, one line at a time, never two workers
             # racing to append to the same file.
             for future in as_completed(futures):
-                batch = futures[future]
-                _batch, record, failure_reason = future.result()
-                if record is None:
+                call = futures[future]
+                _call, records, failure_reason = future.result()
+                settled_calls += 1
+                if records is None:
                     print(
-                        f"reconcile: cluster {batch.cluster_label} failed: {failure_reason}",
+                        f"reconcile: call of {len(call)} cluster(s) failed: {failure_reason}",
                         file=sys.stderr,
                     )
-                    failed += 1
+                    failed += len(call)
                     continue
 
-                append_checkpoint_record(decisions_path, record)
-                decisions[batch.key] = record
-                model = record["model"]
-                called += 1
+                for record in records:
+                    append_checkpoint_record(decisions_path, record)
+                    decisions[record["batch_key"]] = record
+                    called += 1
+                model = records[0]["model"]
                 print(
-                    f"reconcile: cluster {batch.cluster_label} recorded "
-                    f"({called + failed}/{len(to_attempt)} settled)",
+                    f"reconcile: {len(records)} cluster(s) recorded "
+                    f"({settled_calls}/{len(calls)} calls, "
+                    f"{called + failed}/{len(to_attempt)} clusters settled)",
                     file=sys.stderr,
                 )
 
@@ -823,6 +951,8 @@ def run_merge_names(
         "reused": reused,
         "failed": failed,
         "workers": max(workers, 1),
+        "calls": len(calls),
+        "clusters_per_call": max(clusters_per_call, 1),
         "canonical_names": len(nodes),
         "merged_surface_forms": merged,
         "seed": seed_note,

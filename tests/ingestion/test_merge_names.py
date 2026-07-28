@@ -361,7 +361,7 @@ def test_clusters_are_decided_concurrently_and_the_decision_log_stays_intact(iso
         def model_for_pass(self, pass_name: str | None = None) -> str:
             return "fake"
 
-    summary = _merge(names_dir, root, ConcurrentClient(), workers=3)
+    summary = _merge(names_dir, root, ConcurrentClient(), workers=3, clusters_per_call=1)
 
     assert summary["batches"] == 3
     assert summary["decided"] == 3
@@ -405,7 +405,7 @@ def test_limit_caps_the_calls_actually_submitted(isolated_vault_root):
         def model_for_pass(self, pass_name: str | None = None) -> str:
             return "fake"
 
-    summary = _merge(names_dir, root, CountingClient(), workers=8, limit=1)
+    summary = _merge(names_dir, root, CountingClient(), workers=8, limit=1, clusters_per_call=1)
 
     assert len(calls) == 1, "workers must not outrun --limit"
     assert summary["decided"] == 1
@@ -415,3 +415,75 @@ def test_limit_caps_the_calls_actually_submitted(isolated_vault_root):
     manifest = json.loads((names_dir / "merge_manifest.json").read_text(encoding="utf-8"))
     assert manifest["complete"] is False
     assert manifest["batches_total"] == 3
+
+
+def test_one_call_decides_many_clusters_and_records_each_separately(isolated_vault_root):
+    """Issue #440. Three clusters must ride in ONE model call, and the flat
+    response must be split back into one decision record per cluster -- that
+    split is what keeps every already-bought decision reusable and every
+    cluster independently resumable."""
+    root = isolated_vault_root
+    names_dir = _six_name_fixture(root)
+
+    prompts: list[str] = []
+
+    class PackingClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            prompts.append(prompt)
+            # Fold each pair; the response is flat across all three groups.
+            nodes = [
+                {"canonical": _ALL_SIX[i], "aliases": [_ALL_SIX[i + 1]]} for i in (0, 2, 4)
+            ]
+            return json.dumps({"nodes": nodes})
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    summary = _merge(names_dir, root, PackingClient(), workers=4, clusters_per_call=20)
+
+    assert len(prompts) == 1, "three clusters must share one call"
+    assert summary["calls"] == 1
+    assert summary["batches"] == 3
+    assert summary["decided"] == 3, "one decision record per cluster, not per call"
+
+    # One line per cluster, each with its own key -- so a re-run reuses them.
+    lines = (names_dir / "merge_decisions.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 3
+    records = [json.loads(line) for line in lines]
+    assert len({r["batch_key"] for r in records}) == 3
+    for record in records:
+        assert len(record["nodes"]) == 1, "each record carries only its own cluster's node"
+        node = record["nodes"][0]
+        assert {node["canonical"], *node["aliases"]} <= set(record["members"])
+
+    # The map is the same three folds, and nothing was dropped.
+    nodes = _nodes_by_canonical(_read_alias_map(root))
+    for i in (0, 2, 4):
+        assert nodes[_ALL_SIX[i]] == [_ALL_SIX[i + 1]]
+
+
+def test_a_packed_run_is_reused_by_a_later_unpacked_one(isolated_vault_root):
+    """The decision key is per cluster, so packing is purely a request-shaping
+    choice: decisions bought at one packing are reused at any other."""
+    root = isolated_vault_root
+    names_dir = _six_name_fixture(root)
+
+    class OnceClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            self.calls += 1
+            members = [name for name in _ALL_SIX if name in prompt]
+            return json.dumps({"nodes": [{"canonical": m, "aliases": []} for m in members]})
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    _merge(names_dir, root, OnceClient(), workers=4, clusters_per_call=20)
+
+    second = OnceClient()
+    summary = _merge(names_dir, root, second, workers=4, clusters_per_call=1)
+    assert second.calls == 0, "a re-run at different packing must re-decide nothing"
+    assert summary["decided"] == 0
+    assert summary["reused"] == 3
