@@ -43,6 +43,15 @@ dev = [
 # `umap-learn` deliberately NOT added: DEC-35 named it for notebook-only
 # visualization, but #297 builds no notebook, so it would be an unused
 # dependency.
+# Mechanical name-merge experiment (PR #441 follow-up): model-free entity
+# resolution over the recorded merge decisions. Not needed by any pipeline
+# pass -- installed via `uv sync --group experiment`.
+experiment = [
+    "jellyfish>=1.2",
+    "rapidfuzz>=3.14",
+    "unidecode>=1.4",
+]
+
 distill = [
     "hdbscan>=0.8.38",
     "lancedb>=0.15",
