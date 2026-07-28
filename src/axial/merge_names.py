@@ -287,22 +287,45 @@ def build_batches(
 # ---------------------------------------------------------------------------
 
 
+def render_member(surface_form: str, kinds: dict[str, str | None]) -> str:
+    """How ONE surface form appears in the prompt.
+
+    Shared with `parse_merge_response` so the two can never drift. The prompt
+    tells the model to write each surface "exactly as it appears above", and
+    this function is what "above" means -- so the parse has to accept this
+    form back (issue #416, the 2.89% failure below).
+    """
+    kind = kinds.get(surface_form)
+    return f"{surface_form!r} ({kind})" if kind else f"{surface_form!r}"
+
+
 def compose_merge_prompt(members: Iterable[str], kinds: dict[str, str | None]) -> str:
     """One batch's prompt: the surface forms with the kind the corpus gave
     each, and the judgment being asked for. Nothing else -- no criteria, no
     examples, no instruction to think (see the module docstring)."""
-    rendered = "\n".join(
-        f"- {surface_form!r} ({kinds.get(surface_form)})"
-        if kinds.get(surface_form)
-        else f"- {surface_form!r}"
-        for surface_form in members
-    )
+    rendered = "\n".join(f"- {render_member(m, kinds)}" for m in members)
     return _PROMPT_TEMPLATE.format(members=rendered)
 
 
-def parse_merge_response(raw: str, members: Iterable[str]) -> list[dict[str, Any]]:
+def parse_merge_response(
+    raw: str,
+    members: Iterable[str],
+    kinds: dict[str, str | None] | None = None,
+) -> list[dict[str, Any]]:
     """Parse one merge response into `[{canonical, aliases[]}]` restricted to
     `members`.
+
+    `kinds`, when given, also accepts each surface back in the exact form the
+    PROMPT showed it (`render_member`) -- i.e. `'Sociology' (institution/group)`
+    as well as `Sociology`. This is not fuzzy matching: it is the one other
+    string this code itself put in front of the model. It exists because the
+    prompt says "write every surface form exactly as it appears above", and
+    2.89% of the first full corpus pass (561 of 19,434 clusters) was discarded
+    for taking that literally -- the model answered correctly, echoed the
+    rendered form, and the whole cluster was thrown away on formatting. Only
+    the exact rendered string is accepted, never a stripped-parenthetical
+    heuristic, because real surfaces end in parentheses too
+    (`Phelps-Brown and Hopkins (1956)`).
 
     A surface form the batch did not contain is dropped rather than minted:
     the inventory is the lossless record of what the corpus said (§7.16), and
@@ -322,14 +345,38 @@ def parse_merge_response(raw: str, members: Iterable[str]) -> list[dict[str, Any
     if not isinstance(data, dict) or not isinstance(data.get("nodes"), list):
         raise MergeResponseError("merge response must be a JSON object with a 'nodes' list")
 
-    known = {_normalize(surface_form): surface_form for surface_form in members}
+    members = list(members)
+
+    # EXACT match first. `_normalize` casefolds, so two members differing only
+    # by case (`Slavery`/`slavery`) collapse to one key -- and then the model's
+    # correct merge is silently dropped, because both strings resolve to the
+    # same surface and the second is refused as already-claimed. The first
+    # corpus map carried 1,514 such pairs as separate canonical names, which
+    # would have become 1,514 duplicate wiki pages.
+    exact: dict[str, str] = {surface_form: surface_form for surface_form in members}
+    if kinds:
+        # Plus the form the PROMPT showed, accepted back verbatim.
+        for surface_form in members:
+            exact.setdefault(render_member(surface_form, kinds), surface_form)
+
+    # Normalized match stays, for whitespace and stray case the model
+    # introduced -- but ONLY where it is unambiguous. A normalized key two
+    # different members share resolves nothing; those must be written exactly,
+    # which is what the model does anyway, since it is copying from the prompt.
+    buckets: dict[str, set[str]] = {}
+    for surface_form in members:
+        buckets.setdefault(_normalize(surface_form), set()).add(surface_form)
+        if kinds:
+            rendered = _normalize(render_member(surface_form, kinds))
+            buckets.setdefault(rendered, set()).add(surface_form)
+    known = {key: next(iter(group)) for key, group in buckets.items() if len(group) == 1}
     claimed: set[str] = set()
     nodes: list[dict[str, Any]] = []
 
     def resolve(value: Any) -> str | None:
         if not isinstance(value, str):
             return None
-        surface_form = known.get(_normalize(value))
+        surface_form = exact.get(value) or known.get(_normalize(value))
         if surface_form is None or surface_form in claimed:
             return None
         claimed.add(surface_form)
@@ -400,9 +447,9 @@ def _decide_batch(
             client,
             prompt,
             pass_name=RECONCILE_PASS_NAME,
-            validate=lambda response: parse_merge_response(response, batch.members),
+            validate=lambda response: parse_merge_response(response, batch.members, kinds),
         )
-        nodes = parse_merge_response(raw, batch.members)
+        nodes = parse_merge_response(raw, batch.members, kinds)
     except (ModelJsonError, MergeResponseError) as exc:
         return batch, None, str(exc)
 

@@ -22,6 +22,7 @@ from axial.merge_names import (
     build_alias_map_nodes,
     build_batches,
     compose_merge_prompt,
+    render_member,
     parse_merge_response,
     write_alias_map,
     write_index,
@@ -258,3 +259,89 @@ def test_the_shipped_config_pins_the_merge_tier_deliberately():
 
     llm_config = _load_pipeline_llm_config(DEFAULT_PIPELINE_CONFIG_PATH)
     assert llm_config["model_by_pass"][RECONCILE_PASS_NAME] == "production_low"
+
+
+def test_parse_accepts_a_surface_echoed_in_the_form_the_prompt_showed():
+    """The 2.89% failure of the first full corpus pass. The prompt renders
+    `- 'Sociology' (institution/group)` and says "write every surface form
+    exactly as it appears above", so the model writes exactly that -- and the
+    parse threw the whole cluster away because it wanted bare `Sociology`.
+    The judgment was correct; only the formatting was not."""
+    members = ["Sociology", "sociology"]
+    kinds = {"Sociology": "institution/group", "sociology": "concept"}
+    raw = json.dumps(
+        {
+            "nodes": [
+                {"canonical": "'Sociology' (institution/group)", "aliases": []},
+                {"canonical": "'sociology' (concept)", "aliases": []},
+            ]
+        }
+    )
+
+    with pytest.raises(MergeResponseError):
+        parse_merge_response(raw, members)
+
+    nodes = parse_merge_response(raw, members, kinds)
+    assert {n["canonical"] for n in nodes} == {"Sociology", "sociology"}
+
+
+def test_parse_accepts_the_rendered_form_for_a_real_merge():
+    members = ["Fifty-Three Years in Syria", "Fifty-three years in Syria"]
+    kinds = dict.fromkeys(members, "work")
+    raw = json.dumps(
+        {
+            "nodes": [
+                {
+                    "canonical": "'Fifty-Three Years in Syria' (work)",
+                    "aliases": ["'Fifty-three years in Syria' (work)"],
+                }
+            ]
+        }
+    )
+
+    nodes = parse_merge_response(raw, members, kinds)
+    assert nodes == [
+        {"canonical": "Fifty-Three Years in Syria", "aliases": ["Fifty-three years in Syria"]}
+    ]
+
+
+def test_a_real_surface_form_always_beats_another_surfaces_rendering():
+    """No stripped-parenthetical heuristic: real surfaces end in parentheses
+    too. A bare surface form must never lose to a rendered one."""
+    members = ["Phelps-Brown and Hopkins (1956)", "Phelps-Brown"]
+    kinds = {"Phelps-Brown": "person"}
+    raw = json.dumps(
+        {"nodes": [{"canonical": "Phelps-Brown and Hopkins (1956)", "aliases": ["Phelps-Brown"]}]}
+    )
+
+    nodes = parse_merge_response(raw, members, kinds)
+    assert nodes == [{"canonical": "Phelps-Brown and Hopkins (1956)", "aliases": ["Phelps-Brown"]}]
+
+
+def test_the_prompt_and_the_parse_share_one_renderer():
+    """They cannot be allowed to drift: the parse only works because it knows
+    exactly what the prompt put in front of the model."""
+    kinds = {"Mao": "person"}
+    assert f"- {render_member('Mao', kinds)}" in compose_merge_prompt(["Mao"], kinds)
+
+
+def test_case_only_variants_can_both_be_placed():
+    """`_normalize` casefolds, so `Slavery`/`slavery` shared one lookup key and
+    the model's merge was silently dropped -- both surviving as separate
+    canonical names, and later as separate wiki pages. The first corpus map
+    carried 1,514 such pairs."""
+    members = ["Slavery", "slavery"]
+    raw = json.dumps({"nodes": [{"canonical": "Slavery", "aliases": ["slavery"]}]})
+
+    assert parse_merge_response(raw, members) == [
+        {"canonical": "Slavery", "aliases": ["slavery"]}
+    ]
+
+
+def test_normalized_matching_still_absorbs_stray_whitespace_and_case():
+    """The lenient path stays wherever it is unambiguous -- it is only refused
+    when two members share the normalized key."""
+    raw = json.dumps({"nodes": [{"canonical": "  mao   zedong ", "aliases": ["MAO"]}]})
+
+    nodes = parse_merge_response(raw, ["Mao Zedong", "Mao"])
+    assert nodes == [{"canonical": "Mao Zedong", "aliases": ["Mao"]}]
