@@ -68,6 +68,10 @@ BELLICIST_ALIAS = "bellicist state building"
 DISTINCT_A = "the state is a protection racket"
 DISTINCT_B = "the state is a bureaucratic cage"
 
+# Six unrelated surfaces for the concurrency tests below: what they say does
+# not matter there, only that they cluster into three independent calls.
+_ALL_SIX = [f"concept number {index}" for index in range(6)]
+
 
 def _run_axial(root: Path, *args: str, env_extra: dict[str, str] | None = None):
     env = dict(os.environ)
@@ -295,3 +299,119 @@ def test_the_merge_pass_samples_at_temperature_1_with_high_reasoning():
     assert bodies[0]["temperature"] == 1
     assert bodies[0]["reasoning"] == {"enabled": True, "effort": "high"}
     assert "temperature" not in bodies[1]
+
+
+def _cluster_pairs(vectors) -> list[int]:
+    """Two names per cluster, in inventory order -- so a fixture with six
+    names yields three clusters and therefore three independent calls."""
+    return [index // 2 for index in range(len(vectors))]
+
+
+def _six_name_fixture(root: Path) -> Path:
+    _build_fixture_answers(root, [_ALL_SIX[:3], _ALL_SIX[3:]])
+    names_dir = root / "data" / "names"
+    from axial.names import run_names
+
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+    )
+    return names_dir
+
+
+def _merge(names_dir: Path, root: Path, client, **kwargs):
+    from axial.merge_names import run_merge_names
+
+    return run_merge_names(
+        embeddings_dir=names_dir / "embeddings.lance",
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=names_dir / "merge_decisions.jsonl",
+        manifest_path=names_dir / "merge_manifest.json",
+        domain_dir=root / "no-such-domain",
+        client=client,
+        cluster_fn=_cluster_pairs,
+        **kwargs,
+    )
+
+
+def test_clusters_are_decided_concurrently_and_the_decision_log_stays_intact(isolated_vault_root):
+    """Issue #416: a serial pass over the real corpus's ~19k clusters is a
+    ~12-hour job, so the calls run concurrently. The barrier makes that a
+    fact rather than a claim -- three clusters must be in flight at once or
+    it times out. The decision log is appended from ONE thread only, so
+    resumability survives concurrency; a per-line JSON parse is what would
+    catch two workers racing to append."""
+    import threading
+
+    root = isolated_vault_root
+    names_dir = _six_name_fixture(root)
+
+    barrier = threading.Barrier(3, timeout=30)
+
+    class ConcurrentClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            # Fails loudly (BrokenBarrierError) unless three calls overlap.
+            barrier.wait()
+            members = [name for name in _ALL_SIX if name in prompt]
+            return json.dumps({"nodes": [{"canonical": m, "aliases": []} for m in members]})
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    summary = _merge(names_dir, root, ConcurrentClient(), workers=3)
+
+    assert summary["batches"] == 3
+    assert summary["decided"] == 3
+    assert summary["failed"] == 0
+    assert summary["workers"] == 3
+    assert summary["complete"] is True
+
+    # One well-formed record per batch: no torn or interleaved append.
+    lines = (names_dir / "merge_decisions.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 3
+    assert sorted(json.loads(line)["cluster_label"] for line in lines) == [0, 1, 2]
+
+    # Nothing dropped, whatever order the workers finished in.
+    placed = [
+        surface
+        for node in _read_alias_map(root)["nodes"]
+        for surface in [node["canonical"], *node["aliases"]]
+    ]
+    assert sorted(placed) == sorted(_ALL_SIX)
+
+
+def test_limit_caps_the_calls_actually_submitted(isolated_vault_root):
+    """`--limit` is "stop after that many model calls THIS run" -- with a
+    worker pool that must mean only that many batches are handed to it, never
+    19k futures submitted and then abandoned."""
+    import threading
+
+    root = isolated_vault_root
+    names_dir = _six_name_fixture(root)
+
+    calls: list[str] = []
+    lock = threading.Lock()
+
+    class CountingClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            with lock:
+                calls.append(prompt)
+            members = [name for name in _ALL_SIX if name in prompt]
+            return json.dumps({"nodes": [{"canonical": m, "aliases": []} for m in members]})
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    summary = _merge(names_dir, root, CountingClient(), workers=8, limit=1)
+
+    assert len(calls) == 1, "workers must not outrun --limit"
+    assert summary["decided"] == 1
+    assert summary["complete"] is False
+
+    # The partial run says so on disk, where the map's own shape cannot.
+    manifest = json.loads((names_dir / "merge_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["complete"] is False
+    assert manifest["batches_total"] == 3

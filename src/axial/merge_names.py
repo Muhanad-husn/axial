@@ -43,6 +43,19 @@ How it works:
      decisions, and moving the tightness dial re-decides exactly the batches
      whose membership actually changed. It is also the resume point for a
      pass that costs real money per call.
+  4b. **Calls run concurrently, bounded by `--workers`.** A serial pass over
+     ~19k clusters is a ~12-hour job at this call's own expected latency, for
+     calls that cost a fraction of a cent each -- the work is I/O-bound
+     (network, not CPU), so a `ThreadPoolExecutor` over the pending batches
+     is the fix. One client is shared by the pool, because the client IS the
+     connection pool. Checkpoint writes stay on ONE thread (the
+     result-collection loop, never inside a worker), so resumability is
+     unchanged: a mid-run kill still leaves every already-decided batch
+     durably on disk. The fold (`build_alias_map_nodes`, via `_Union`) was
+     already order-independent by construction -- a union's winner is always
+     the lexicographically smaller root, never "whichever arrived first" --
+     so completions racing in is not a new hazard; it is pinned by a direct
+     test rather than left to that argument alone.
   5. **`polity_canonical.yaml` seeds the map and never gates it** (D9,
      §7.1). Its foldings are unioned in alongside the model's, and a
      surface it does not mention passes through untouched. Where a seed
@@ -55,12 +68,22 @@ How it works:
      call placed, and no seed mentioned survives as its own canonical node
      with no aliases (§7.16's closing sentence).
 
-Outputs, both under `data/names/` (§6): `alias_map.json` in §7.16's exact
-`{version, generated_at, nodes: [{canonical, kind, aliases[]}]}` shape, and
-`index.json`, the surviving canonical set slice 06 writes one page per entry
-for. Both are rewritten whole on every run, and nothing else on disk depends
-on the map having been applied -- deleting a node from `alias_map.json`
-undoes exactly that merge the next time slice 06 runs.
+Outputs, under `data/names/` (§6): `alias_map.json` in §7.16's exact
+`{version, generated_at, nodes: [{canonical, kind, aliases[]}]}` shape --
+never a field more, so a partial run's map is not distinguished by its own
+shape -- and `index.json`, the surviving canonical set slice 06 writes one
+page per entry for. Both are rewritten whole on every run, and nothing else
+on disk depends on the map having been applied -- deleting a node from
+`alias_map.json` undoes exactly that merge the next time slice 06 runs.
+
+A THIRD file, `merge_manifest.json`, carries what the other two cannot say
+about themselves: whether this run actually decided every cluster
+(`complete`) and the batch counts behind that. `alias_map.json`/`index.json`
+are rewritten whole from whatever decisions exist so far, on purpose (that is
+what makes the pass resumable) -- which also means a map built from 30 of
+19,434 clusters looks, by its own shape, identical to a finished one. The
+manifest is the one place that distinction is on disk rather than only in a
+run's own stdout.
 """
 
 from __future__ import annotations
@@ -69,6 +92,7 @@ import hashlib
 import json
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -101,6 +125,22 @@ from axial.polity_canonical import PolityCanonicalError, _normalize, load_polity
 DEFAULT_ALIAS_MAP_PATH = DEFAULT_NAMES_DATA_DIR / "alias_map.json"
 DEFAULT_INDEX_PATH = DEFAULT_NAMES_DATA_DIR / "index.json"
 DEFAULT_DECISIONS_PATH = DEFAULT_NAMES_DATA_DIR / "merge_decisions.jsonl"
+DEFAULT_MERGE_MANIFEST_PATH = DEFAULT_NAMES_DATA_DIR / "merge_manifest.json"
+
+# Bounded concurrent cluster-decision workers (issue #416). The work is
+# I/O-bound: ~19k independent calls that each wait on the network, so a
+# serial pass takes cluster_count x per-call latency end to end (at 2s a
+# call that is ~11 hours; at 10s -- plausible with reasoning at `high` --
+# it is over two days) while the pool divides that by `workers`.
+#
+# 12 is a STARTING value, not a measured one: per-call latency for this pass
+# has never been observed, so no number here can be. It is the same order as
+# this project's existing concurrent-worker precedent
+# (`axial.brief.sweep.DEFAULT_WORKERS` = 3, over calls far heavier than one
+# cluster's), raised because these calls are small and independent. It is a
+# CLI flag (`--workers`), so the founder moves it after watching one real
+# run rather than editing this line.
+DEFAULT_WORKERS = 12
 
 # §7.16's own map shape carries a `version`; `polity_canonical.yaml`, which
 # seeds it, uses the same field for the same job.
@@ -314,6 +354,63 @@ def parse_merge_response(raw: str, members: Iterable[str]) -> list[dict[str, Any
     return nodes
 
 
+def _decide_batch(
+    batch: MergeBatch,
+    kinds: dict[str, str | None],
+    client: LLMClient,
+) -> tuple[MergeBatch, dict[str, Any] | None, str | None]:
+    """Decide one cluster batch. Runs on a worker thread (issue #416).
+
+    Returns `(batch, record, failure_reason)`: `record` is the decision
+    record to persist, or `None` on a content-shaped failure (`failure_reason`
+    then carries the message). `ModelJsonError`/`MergeResponseError` are
+    caught here exactly as they were in the pre-concurrency serial loop -- a
+    bad cluster simply goes unmerged this run, not recorded as a decision, so
+    a later run retries it -- and NOTHING else is caught: a transport-level
+    failure (`LLMError`/`httpx.HTTPError`) propagates out of this function,
+    surfaces from `future.result()` in the caller, and is fatal exactly as it
+    was before this pass ran concurrently.
+
+    This function NEVER writes to disk. Every worker returns its record and
+    the single result-collecting thread does the checkpoint append, which is
+    what keeps resumability intact under concurrency (`run_merge_names`).
+
+    ONE client is shared by every worker rather than built per batch: it is
+    the connection pool, and 19k calls through 19k fresh pools would throw
+    away keep-alive on the very workload concurrency is here to speed up.
+    `httpx.Client` is thread-safe, and every request-shaping decision this
+    pass makes (temperature, reasoning, model) is per-CALL via `pass_name`,
+    never per-client state.
+    """
+    prompt = compose_merge_prompt(batch.members, kinds)
+    started = time.monotonic()
+    try:
+        raw = complete_json(
+            client,
+            prompt,
+            pass_name=RECONCILE_PASS_NAME,
+            validate=lambda response: parse_merge_response(response, batch.members),
+        )
+        nodes = parse_merge_response(raw, batch.members)
+    except (ModelJsonError, MergeResponseError) as exc:
+        return batch, None, str(exc)
+
+    record = {
+        "batch_key": batch.key,
+        "cluster_label": batch.cluster_label,
+        "members": list(batch.members),
+        "nodes": nodes,
+        "model": client.model_for_pass(RECONCILE_PASS_NAME),
+        "decided_at": _utc_now(),
+    }
+    print(
+        f"reconcile: cluster {batch.cluster_label} answered "
+        f"({len(batch.members)} member(s)) in {time.monotonic() - started:.1f}s",
+        file=sys.stderr,
+    )
+    return batch, record, None
+
+
 # ---------------------------------------------------------------------------
 # Folding decisions + the seed into one alias map (order-independent)
 # ---------------------------------------------------------------------------
@@ -513,6 +610,43 @@ def write_index(nodes: list[dict[str, Any]], path: Path) -> None:
     )
 
 
+def write_merge_manifest(
+    path: Path,
+    *,
+    complete: bool,
+    batches_total: int,
+    batches_decided: int,
+    batches_reused: int,
+    batches_failed: int,
+) -> None:
+    """The one place a partial run says so on disk (issue #416, founder
+    correction). `alias_map.json`/`index.json` are rewritten whole from
+    whatever decisions exist so far, on purpose -- that is what makes the
+    pass resumable -- but it also means a map built from 30 of 19,434
+    clusters is, by its own `{version, generated_at, nodes}` shape,
+    indistinguishable from a finished one. Mirrors slice 04's own sibling
+    `similarity_manifest.json` convention under `data/names/`: a reader must
+    check `complete` here before treating the map as the whole corpus's
+    answer, not just count its own nodes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at": _utc_now(),
+                "complete": complete,
+                "batches_total": batches_total,
+                "batches_decided": batches_decided,
+                "batches_reused": batches_reused,
+                "batches_failed": batches_failed,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def load_decisions(path: Path) -> dict[str, dict[str, Any]]:
     """Every recorded batch decision, keyed by `batch_key` -- the inverse of
     the append below, `{}` before the first run."""
@@ -530,6 +664,7 @@ def run_merge_names(
     alias_map_path: Path | None = None,
     index_path: Path | None = None,
     decisions_path: Path | None = None,
+    manifest_path: Path | None = None,
     domain_dir: str | Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     client: LLMClient | None = None,
@@ -538,21 +673,35 @@ def run_merge_names(
     pca_components: int = DEFAULT_PCA_COMPONENTS,
     member_char_budget: int = DEFAULT_MEMBER_CHAR_BUDGET,
     limit: int | None = None,
+    workers: int = DEFAULT_WORKERS,
     cluster_fn: ClusterFn | None = None,
 ) -> dict[str, Any]:
     """Merge the name inventory into a reversible alias map and return the
     run summary.
 
     Reads slice 04's persisted similarity view, re-clusters it at the
-    configured tightness, asks the model about one cluster at a time, and
-    writes `alias_map.json` plus `index.json`. Every batch's answer is
-    appended to the decision log as it is produced, so an interrupted run
-    resumes, a re-run reproduces the same merges, and moving the tightness
-    dial only re-decides the batches whose membership changed.
+    configured tightness, and asks the model about pending clusters
+    concurrently -- up to `workers` at once (default `DEFAULT_WORKERS`; issue
+    #416, founder correction: this pass is I/O-bound and a serial ~19k-call
+    pass costs ~12 hours of wall clock for a few cents of spend). Writes
+    `alias_map.json`, `index.json`, and `merge_manifest.json` (whether this
+    run answered every cluster). Every batch's answer is appended to the
+    decision log AS IT IS PRODUCED, on the single result-collecting thread,
+    never inside a worker -- so an interrupted run (any worker count) resumes
+    from exactly what is already on disk, a re-run reproduces the same
+    merges regardless of which worker happened to finish first (the fold is
+    order-independent by construction, see `_Union`), and moving the
+    tightness dial only re-decides the batches whose membership changed.
 
-    `limit`, when given, stops after that many model calls THIS run: the map
-    is still written from every decision recorded so far, which is what makes
-    a bounded first look on the real corpus cheap.
+    `limit`, when given, caps how many clusters this run SUBMITS, so it is
+    still "stop after that many model calls this run" with workers in play:
+    exactly `limit` batches are handed to the pool, never 19k futures that
+    are then abandoned. The map is still written from every decision recorded
+    so far, which is what makes a bounded first look on the real corpus cheap.
+
+    `client`, when given, is used by every worker; otherwise one real client
+    is built here and shared the same way (see `_decide_batch` for why one
+    client, not one per batch).
 
     `cluster_fn`, when given, replaces the HDBSCAN clustering with a caller-
     supplied labelling -- the same injection seam `axial.names.run_names`
@@ -568,6 +717,7 @@ def run_merge_names(
     alias_map_path = Path(alias_map_path or DEFAULT_ALIAS_MAP_PATH)
     index_path = Path(index_path or DEFAULT_INDEX_PATH)
     decisions_path = Path(decisions_path or DEFAULT_DECISIONS_PATH)
+    manifest_path = Path(manifest_path or DEFAULT_MERGE_MANIFEST_PATH)
     if domain_dir is None:
         domain_dir = _default_domain_dir(config_path)
 
@@ -594,58 +744,53 @@ def run_merge_names(
     decisions = load_decisions(decisions_path)
     pending = [batch for batch in batches if batch.key not in decisions]
     reused = len(batches) - len(pending)
+    to_attempt = pending if limit is None else pending[:limit]
     print(
         f"reconcile: {len(surface_forms)} surface form(s), {len(batches)} cluster batch(es) "
         f"at min_cluster_size={min_cluster_size} min_samples={min_samples}; "
-        f"{reused} already decided, {len(pending)} to decide",
+        f"{reused} already decided, {len(to_attempt)} to decide now "
+        f"({len(pending) - len(to_attempt)} more pending) across {max(workers, 1)} worker(s)",
         file=sys.stderr,
     )
 
     called = 0
     failed = 0
     model: str | None = None
-    for index, batch in enumerate(pending, start=1):
-        if limit is not None and called >= limit:
-            break
-
+    if to_attempt:
+        # Built once, here, and shared by every worker -- never inside the
+        # pool, so a misconfigured provider fails before any thread starts.
         if client is None:
             client = get_client(config_path=config_path)
-        model = client.model_for_pass(RECONCILE_PASS_NAME)
+        with ThreadPoolExecutor(max_workers=max(workers, 1)) as executor:
+            futures = {
+                executor.submit(_decide_batch, batch, kinds, client): batch for batch in to_attempt
+            }
+            # Results are collected -- and every checkpoint write happens --
+            # on THIS one thread only, in whatever order calls actually
+            # finish. That is exactly what makes resumability survive
+            # concurrency: a mid-run kill still leaves every already-decided
+            # batch durably on disk, one line at a time, never two workers
+            # racing to append to the same file.
+            for future in as_completed(futures):
+                batch = futures[future]
+                _batch, record, failure_reason = future.result()
+                if record is None:
+                    print(
+                        f"reconcile: cluster {batch.cluster_label} failed: {failure_reason}",
+                        file=sys.stderr,
+                    )
+                    failed += 1
+                    continue
 
-        prompt = compose_merge_prompt(batch.members, kinds)
-        started = time.monotonic()
-        try:
-            raw = complete_json(
-                client,
-                prompt,
-                pass_name=RECONCILE_PASS_NAME,
-                validate=lambda response: parse_merge_response(response, batch.members),
-            )
-            nodes = parse_merge_response(raw, batch.members)
-        except (ModelJsonError, MergeResponseError) as exc:
-            # Content-shaped: this cluster simply goes unmerged this run, and
-            # its members survive as their own nodes. Not recorded as a
-            # decision, so a later run retries it.
-            print(f"reconcile: cluster {batch.cluster_label} failed: {exc}", file=sys.stderr)
-            failed += 1
-            continue
-
-        record = {
-            "batch_key": batch.key,
-            "cluster_label": batch.cluster_label,
-            "members": list(batch.members),
-            "nodes": nodes,
-            "model": model,
-            "decided_at": _utc_now(),
-        }
-        append_checkpoint_record(decisions_path, record)
-        decisions[batch.key] = record
-        called += 1
-        print(
-            f"reconcile: cluster {batch.cluster_label} decided ({index}/{len(pending)}, "
-            f"{len(batch.members)} member(s)) in {time.monotonic() - started:.1f}s",
-            file=sys.stderr,
-        )
+                append_checkpoint_record(decisions_path, record)
+                decisions[batch.key] = record
+                model = record["model"]
+                called += 1
+                print(
+                    f"reconcile: cluster {batch.cluster_label} recorded "
+                    f"({called + failed}/{len(to_attempt)} settled)",
+                    file=sys.stderr,
+                )
 
     seed_groups, seed_note = _seed_groups(surface_forms, Path(domain_dir))
     decision_nodes = [node for record in decisions.values() for node in record["nodes"]]
@@ -653,6 +798,15 @@ def run_merge_names(
 
     write_alias_map(nodes, alias_map_path)
     write_index(nodes, index_path)
+    complete = all(batch.key in decisions for batch in batches)
+    write_merge_manifest(
+        manifest_path,
+        complete=complete,
+        batches_total=len(batches),
+        batches_decided=called,
+        batches_reused=reused,
+        batches_failed=failed,
+    )
 
     merged = sum(len(node["aliases"]) for node in nodes)
     return {
@@ -661,12 +815,14 @@ def run_merge_names(
         "alias_map_path": str(alias_map_path),
         "index_path": str(index_path),
         "decisions_path": str(decisions_path),
+        "manifest_path": str(manifest_path),
         "surface_forms": len(surface_forms),
         "clusters": len({label for label in labels if label != NOISE_LABEL}),
         "batches": len(batches),
         "decided": called,
         "reused": reused,
         "failed": failed,
+        "workers": max(workers, 1),
         "canonical_names": len(nodes),
         "merged_surface_forms": merged,
         "seed": seed_note,
@@ -676,5 +832,5 @@ def run_merge_names(
         "limit": limit,
         # A cluster is complete when its decision is on disk; a failed or
         # unreached one is not, and a later run picks it up.
-        "complete": all(batch.key in decisions for batch in batches),
+        "complete": complete,
     }

@@ -69,6 +69,7 @@ from axial.llm import (
     LLMError,
     get_client,
 )
+from axial.merge_names import DEFAULT_WORKERS as MERGE_DEFAULT_WORKERS
 from axial.merge_names import MergeNamesError, run_merge_names
 from axial.names import (
     DEFAULT_MIN_CLUSTER_SIZE,
@@ -321,12 +322,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Phase A v1 slice 05 (issue #416): Reconcile -- re-cluster the "
             "persisted name vectors at the configured merge tightness and let "
-            "the model decide, one cluster at a time, which surface forms name "
-            "the same thing (temperature 1, reasoning high, §7.9's `reconcile` "
-            "pass). Writes the reversible alias map to data/names/alias_map.json "
-            "and the surviving-name index to data/names/index.json; every "
-            "decision is logged to data/names/merge_decisions.jsonl, so a "
-            "re-run reproduces the same merges and resumes where it stopped"
+            "the model decide which surface forms in each cluster name the "
+            "same thing (temperature 1, reasoning high, §7.9's `reconcile` "
+            "pass), asking a bounded number of clusters at once (--workers). "
+            "Writes the reversible alias map to data/names/alias_map.json, the "
+            "surviving-name index to data/names/index.json, and whether this "
+            "run answered every cluster to data/names/merge_manifest.json; "
+            "every decision is logged to data/names/merge_decisions.jsonl, so "
+            "a re-run reproduces the same merges (regardless of which worker "
+            "finished first) and resumes where it stopped"
         ),
     )
     names_merge_parser.add_argument(
@@ -357,6 +361,17 @@ def build_parser() -> argparse.ArgumentParser:
             "stop after this many model calls this run, still writing the map "
             "from every decision recorded so far -- a bounded, cheap first look "
             "before committing to a full pass"
+        ),
+    )
+    names_merge_parser.add_argument(
+        "--workers",
+        type=int,
+        default=MERGE_DEFAULT_WORKERS,
+        help=(
+            "bounded concurrent cluster-decision workers (issue #416: this pass "
+            "is I/O-bound, and serial calls project to hours for a corpus this "
+            f"size) (default: {MERGE_DEFAULT_WORKERS}, a starting value -- "
+            "per-call latency has not been observed on the real corpus yet)"
         ),
     )
 
@@ -1576,10 +1591,15 @@ def _names_examine(min_cluster_sizes: str | None, min_samples: int | None) -> in
     return 0
 
 
-def _names_merge(min_cluster_size: int | None, min_samples: int | None, limit: int | None) -> int:
+def _names_merge(
+    min_cluster_size: int | None, min_samples: int | None, limit: int | None, workers: int
+) -> int:
     try:
         result = run_merge_names(
-            min_cluster_size=min_cluster_size, min_samples=min_samples, limit=limit
+            min_cluster_size=min_cluster_size,
+            min_samples=min_samples,
+            limit=limit,
+            workers=workers,
         )
     except (NamesError, MergeNamesError, LLMError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1592,12 +1612,14 @@ def _names_merge(min_cluster_size: int | None, min_samples: int | None, limit: i
         "decided",
         "reused",
         "failed",
+        "workers",
         "canonical_names",
         "merged_surface_forms",
         "seeded_surface_forms",
         "complete",
         "alias_map_path",
         "index_path",
+        "manifest_path",
     ):
         print(f"{key}: {result[key]}")
     return 0
@@ -1760,7 +1782,7 @@ def main(argv: list[str] | None = None) -> int:
         return _names_examine(args.min_cluster_sizes, args.min_samples)
 
     if args.command == "names" and args.names_command == "merge":
-        return _names_merge(args.min_cluster_size, args.min_samples, args.limit)
+        return _names_merge(args.min_cluster_size, args.min_samples, args.limit, args.workers)
 
     if args.command == "artifacts":
         return _artifacts(args.source_path, args.domain)
