@@ -27,6 +27,7 @@ from axial.merge_names import (
     write_index,
 )
 from axial.names import DEFAULT_MIN_CLUSTER_SIZE, DEFAULT_MIN_SAMPLES, NOISE_LABEL
+from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 
 # ---------------------------------------------------------------------------
 # The prompt (founder directive: state the judgment, then stop)
@@ -247,3 +248,13 @@ def test_member_char_budget_bounds_a_batch_not_the_prompts_wording():
     """The budget is a construction limit on request size (P0-13's own rule),
     so it never appears in the prompt as an instruction."""
     assert str(DEFAULT_MEMBER_CHAR_BUDGET) not in compose_merge_prompt(["a"], {})
+
+
+def test_the_shipped_config_pins_the_merge_tier_deliberately():
+    """§7.9's table says "tier per config" for `reconcile`. Naming it is what
+    keeps the pass off whatever `llm_tier` happens to be -- the 2026-07-28
+    30-cluster probe chose flash on judgment quality, not on cost."""
+    from axial.llm import RECONCILE_PASS_NAME, _load_pipeline_llm_config
+
+    llm_config = _load_pipeline_llm_config(DEFAULT_PIPELINE_CONFIG_PATH)
+    assert llm_config["model_by_pass"][RECONCILE_PASS_NAME] == "production_low"

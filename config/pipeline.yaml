@@ -143,6 +143,19 @@ llm:
     # production_interrogate key fails loudly on THIS pass alone, never on
     # the others (src/axial/llm.py, _resolve_model_by_pass).
     note_interrogate: production_interrogate
+    # Phase A v1 name merge (§7.9/§7.16, issue #416). production_low
+    # (deepseek-v4-flash) is a DELIBERATE pick on evidence, not the global
+    # default leaking in: a 30-cluster probe over the real corpus
+    # (2026-07-28) put flash at 1 clear error and 1 questionable canonical
+    # in 30 decisions, and it got the hardest call in the sample right --
+    # given `Aldous Huxley` / `Huxley` / `Thomas Huxley` it kept the two
+    # people apart and folded only the ambiguous bare surname. Cost did not
+    # decide this: a full pass is ~$0.55 on flash and only a few dollars on
+    # any tier above it, so this is a quality call that flash won on its own
+    # merits. Named here rather than left to `llm_tier` so the pass cannot
+    # silently move the next time that default changes -- the same reason
+    # every other entry in this block exists.
+    reconcile: production_low
   # Per-pass best-of-N voting (DEC-31, issue #294): how many times a pass
   # draws its per-unit call before majority-voting the result, mirroring the
   # two per-pass blocks above (src/axial/llm.py's _resolve_votes_by_pass
