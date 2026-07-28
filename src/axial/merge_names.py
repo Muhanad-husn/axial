@@ -13,6 +13,16 @@ derived artifacts whose source file is gone. Nothing here imports it, and
 lives on the `names` surface because all four §7.16 artifacts -- inventory,
 similarity view, alias map, index -- are one family under `data/names/`.
 
+**Issue #446: HDBSCAN clustering's own loose tightness has a recall cost.**
+Slice 04's clustering (D10, kept loose so it never fuses distinct entities --
+#442 measured why tightening it globally is the wrong lever) means a name and
+its variant routinely land in different clusters, so no merge call ever sees
+them together and both survive as separate canonical names. `_candidate_
+batches` (via `axial.name_candidates.generate_candidate_clusters`) is a
+second, deterministic, LLM-free step that proposes the missing pairs as
+additional cluster-shaped batches, fed to the exact same, unchanged merge
+call below -- it decides nothing and merges nothing itself.
+
 How it works:
 
   1. **The clusters are hints, chosen by a dial.** The persisted name
@@ -104,6 +114,7 @@ from axial.checkpoint import append_checkpoint_record, load_checkpoint_records
 from axial.interrogate import _default_domain_dir
 from axial.llm import RECONCILE_PASS_NAME, LLMClient, get_client
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
+from axial.name_candidates import generate_candidate_clusters
 from axial.names import (
     ClusterFn,
     DEFAULT_EMBEDDINGS_DIR,
@@ -169,6 +180,12 @@ ALIAS_MAP_VERSION = 1
 # of surface forms is a few thousand names, comfortably inside any model's
 # context alongside the short prompt around it.
 DEFAULT_MEMBER_CHAR_BUDGET = 20_000
+
+# Issue #446: candidate clusters (`axial.name_candidates`) get their own
+# `cluster_label` namespace, disjoint from HDBSCAN's (`NOISE_LABEL`=-1, real
+# clusters numbered from 0) -- so a candidate batch is never mistaken for a
+# real cluster in the decision log or a run's own printouts.
+_CANDIDATE_LABEL_BASE = -1_000_000
 
 _PROMPT_TEMPLATE = """\
 Below are name surface forms collected from academic passages -- people, \
@@ -250,6 +267,28 @@ class MergeBatch:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _split_into_batches(
+    label: int, members: list[str], member_char_budget: int
+) -> list[MergeBatch]:
+    """One cluster's members, split into as few batches as fit under
+    `member_char_budget` -- shared by `build_batches` (real HDBSCAN clusters)
+    and `_candidate_batches` (issue #446's proposed clusters), so both go
+    through the exact same construction limit on request size."""
+    batches: list[MergeBatch] = []
+    current: list[str] = []
+    size = 0
+    for surface_form in members:
+        cost = len(surface_form) + 1
+        if current and size + cost > member_char_budget:
+            batches.append(MergeBatch(label, tuple(current)))
+            current, size = [], 0
+        current.append(surface_form)
+        size += cost
+    if len(current) > 1:
+        batches.append(MergeBatch(label, tuple(current)))
+    return batches
+
+
 def build_batches(
     labels: Iterable[int],
     surface_forms: list[str],
@@ -272,17 +311,32 @@ def build_batches(
         members = clusters[label]
         if len(members) < 2:
             continue
-        current: list[str] = []
-        size = 0
-        for surface_form in members:
-            cost = len(surface_form) + 1
-            if current and size + cost > member_char_budget:
-                batches.append(MergeBatch(label, tuple(current)))
-                current, size = [], 0
-            current.append(surface_form)
-            size += cost
-        if len(current) > 1:
-            batches.append(MergeBatch(label, tuple(current)))
+        batches.extend(_split_into_batches(label, members, member_char_budget))
+    return batches
+
+
+def _candidate_batches(
+    entries: list[tuple[str, str | None, int]],
+    existing_keys: set[str],
+    member_char_budget: int,
+) -> list[MergeBatch]:
+    """Issue #446: propose the pairs slice 04's own clustering never put in
+    front of the merge model, as additional cluster-shaped batches.
+
+    `existing_keys` is every batch key `build_batches` already produced from
+    the real HDBSCAN clusters this run -- content-hashed on the member list
+    (`MergeBatch.key`), so a candidate whose exact member set a real cluster
+    ALREADY covers this run is skipped rather than asked twice, and (via
+    `merge_decisions.jsonl`, keyed the same way) a candidate already decided
+    on a previous run is reused untouched rather than re-decided."""
+    batches: list[MergeBatch] = []
+    for offset, members in enumerate(generate_candidate_clusters(entries)):
+        label = _CANDIDATE_LABEL_BASE - offset
+        for batch in _split_into_batches(label, list(members), member_char_budget):
+            if batch.key in existing_keys:
+                continue
+            existing_keys.add(batch.key)
+            batches.append(batch)
     return batches
 
 
@@ -803,12 +857,22 @@ def run_merge_names(
         labels = cluster_fn(vectors)
 
     batches = build_batches(labels, surface_forms, member_char_budget)
+    # Issue #446: the same corpus's variants routinely land in different
+    # HDBSCAN clusters, so no merge call ever sees them together. This is a
+    # second, deterministic candidate-generation step over the SAME
+    # inventory, proposing the missing pairs as additional cluster-shaped
+    # batches for the exact same, unchanged merge call -- it decides nothing.
+    candidate_batches = _candidate_batches(
+        entries, {batch.key for batch in batches}, member_char_budget
+    )
+    batches = batches + candidate_batches
     decisions = load_decisions(decisions_path)
     pending = [batch for batch in batches if batch.key not in decisions]
     reused = len(batches) - len(pending)
     to_attempt = pending if limit is None else pending[:limit]
     print(
         f"reconcile: {len(surface_forms)} surface form(s), {len(batches)} cluster batch(es) "
+        f"({len(candidate_batches)} from candidate generation, issue #446) "
         f"at min_cluster_size={min_cluster_size} min_samples={min_samples}; "
         f"{reused} already decided, {len(to_attempt)} to decide now "
         f"({len(pending) - len(to_attempt)} more pending) across {max(workers, 1)} worker(s)",
@@ -881,6 +945,7 @@ def run_merge_names(
         "surface_forms": len(surface_forms),
         "clusters": len({label for label in labels if label != NOISE_LABEL}),
         "batches": len(batches),
+        "candidate_batches": len(candidate_batches),
         "decided": called,
         "reused": reused,
         "failed": failed,

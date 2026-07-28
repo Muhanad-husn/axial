@@ -325,7 +325,11 @@ def build_parser() -> argparse.ArgumentParser:
             "run answered every cluster to data/names/merge_manifest.json; "
             "every decision is logged to data/names/merge_decisions.jsonl, so "
             "a re-run reproduces the same merges (regardless of which worker "
-            "finished first) and resumes where it stopped"
+            "finished first) and resumes where it stopped. Also asks about "
+            "the pairs clustering never co-located (issue #446: initial vs "
+            "full forename, bare surname vs its one full-name candidate, "
+            "case/whitespace-only variants) as additional cluster-shaped "
+            "batches, deterministically generated, never merged mechanically"
         ),
     )
     names_merge_parser.add_argument(
@@ -1613,6 +1617,7 @@ def _names_merge(
         "surface_forms",
         "clusters",
         "batches",
+        "candidate_batches",
         "decided",
         "reused",
         "failed",

@@ -546,6 +546,8 @@ Reconcile (§5 stage 7) runs over **names, not notes** (D10). Three artifacts, u
 
 An unmapped surface is never dropped. A surface no cluster and no merge call folded is its own canonical node with no aliases.
 
+**Candidate generation recovers what clustering's own looseness misses (issue #446).** Loose clustering (above) is tuned to never fuse distinct entities, and that has a recall cost: a name and its variant routinely land in different clusters, so no merge call ever sees them together and both survive as separate canonical names. A second, deterministic, LLM-free step proposes the missing pairs as additional cluster-shaped batches, fed to the exact same merge call — it decides and merges nothing itself, only widens what the model is asked about. Three rules, each an exact string shape with no similarity threshold: an initial forename against the one full forename sharing its surname and first letter (`C. Tilly` / `Charles Tilly`); a bare surname against the one full name sharing it, both `kind == person` (`Abercrombie` / `Nikolas Abercrombie`); and surface forms identical once casefolded and whitespace-collapsed but written differently. Each rule refuses outright — proposes nothing — the moment a short form has more than one candidate (`R. Cohen` against both `Robin Cohen` and `Roger Cohen`; bare `'Ali` against seven distinct people), rather than guessing.
+
 ### 7.17 Name pages and the link layer
 
 Materialize (§5 stage 8) writes the vault with **no model call** (D11). Three outputs.
@@ -720,6 +722,7 @@ New criteria are **appended with new numbers**; existing numbers are never reuse
 - [ ] **Every decision is persisted and re-running reproduces the same merges.** Observable: a second run over unchanged input makes zero model calls and writes the same map (§7.16).
 - [ ] **`polity_canonical.yaml` seeds the map and never gates it** (D9). An unmapped surface always survives, as its own canonical node with no aliases, and a canonical name is always a surface form the corpus actually said.
 - [ ] The pass is re-runnable in place: nothing it writes is required to build the inventory again.
+- [ ] **A second, deterministic candidate-generation step proposes the pairs clustering itself never co-locates** (issue #446): initial-vs-full forename, bare surname against its one full-name candidate (both `person`), and case/whitespace-only variants — each an exact string shape, no fuzzy matching, no similarity threshold, and refused outright whenever a short form has more than one candidate. Every proposal is handed to the same, unchanged merge call as any HDBSCAN cluster; this step decides nothing and merges nothing itself.
 
 **P0-13 Gather (D12, D13).**
 - [ ] **Code assembles the packet; the model never fetches.** Per member note the packet carries author, year, the one-sentence claim, whose position it is, and who it argues against — and nothing else. Gather reads no note's full text.
