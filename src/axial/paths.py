@@ -23,6 +23,8 @@ source of truth instead of two literals that happen to agree today.
 
 from __future__ import annotations
 
+import hashlib
+import re
 from pathlib import Path
 from typing import Any
 
@@ -239,3 +241,72 @@ def artifact_note_path(vault_dir: Path, source_id: str, artifact_id: str) -> Pat
     if path_overage(directory, filename) > 0:
         filename = budgeted_artifact_filename(directory, source_id, artifact_id)
     return directory / filename
+
+
+# =============================================================================
+# Name-page filenames (issue #411, Materialize) -- a canonical name, unlike
+# `chunk_id`/`artifact_id`, carries no built-in unique suffix (no source_id,
+# no dotted order) to fall back on, so this budgets AND de-duplicates in one
+# helper rather than reusing `budgeted_chunk_filename`'s shrink-only shape.
+
+# Characters Windows forbids in a filename, plus C0 control characters.
+# Real corpus names carry '/' routinely (`country/state/place`-joined kinds
+# land in `kind`, not `name`, but a name itself can still read like
+# "Israel/Palestine") and colons, quotes and the rest are common in titles
+# and citations -- each is replaced with '-', never dropped silently.
+_ILLEGAL_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _sanitize_name_filename(name: str) -> str:
+    """A canonical name, made safe as a bare filename stem: illegal
+    characters replaced with '-', trailing dots/spaces stripped (both
+    forbidden by Windows), never emptied entirely."""
+    cleaned = _ILLEGAL_FILENAME_CHARS.sub("-", name).strip().rstrip(". ")
+    return cleaned or "unnamed"
+
+
+def name_page_filename(directory: Path, canonical: str, used: set[str] | None = None) -> str:
+    """The on-disk filename for `canonical`'s name page: the sanitized name
+    verbatim (`.md`) whenever it BOTH fits Windows' MAX_PATH budget under
+    `directory` AND -- when `used` is given -- is not already claimed by an
+    earlier name this same run processed.
+
+    The second condition exists because a bare canonical name, unlike
+    `chunk_id`/`artifact_id`, carries no unique id of its own: two different
+    canonical names can sanitize to the identical filename (an illegal
+    character folded to the same '-', or two names differing only by case,
+    which Windows filenames treat as the same file). Either failure falls
+    back to the sanitized name plus an 8-hex-char content hash of the FULL
+    canonical string -- shrinking the sanitized part first, same as
+    `budgeted_chunk_filename`, only if that combination is itself over
+    budget -- which only collides on an actual hash collision.
+
+    `used`, when given, is a case-folded set of filenames already claimed
+    this run and is updated in place with whichever filename this call
+    returns. A caller processing a whole node set in one deterministic
+    order (sorted by canonical) gets a stable, collision-free filename set
+    across repeated runs over unchanged input."""
+    base = _sanitize_name_filename(canonical)
+    filename = f"{base}.md"
+    collides = used is not None and filename.casefold() in used
+    if not collides and path_overage(directory, filename) <= 0:
+        if used is not None:
+            used.add(filename.casefold())
+        return filename
+
+    hash8 = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:8]
+    suffix = f"-{hash8}.md"
+    overage = path_overage(directory, base + suffix)
+    if overage > 0:
+        (base,) = _shrink_pieces([base], overage)
+    filename = base + suffix
+    if used is not None:
+        used.add(filename.casefold())
+    return filename
+
+
+def name_page_path(vault_dir: Path, canonical: str, used: set[str] | None = None) -> Path:
+    """The on-disk path for `canonical`'s name page (§7.17):
+    `<vault_dir>/names/<budgeted filename>.md`. See `name_page_filename`."""
+    directory = Path(vault_dir) / "names"
+    return directory / name_page_filename(directory, canonical, used)
