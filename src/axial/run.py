@@ -245,19 +245,16 @@ def _invoke_artifacts(source_path: str, client: LLMClient | None, config_path: P
     # Threads a real `artifacts_dir` (issue #424, the same defect #325 fixed
     # for `_invoke_tag` above): `run_artifacts`'s own checkpoint is OPT-IN,
     # active only when `artifacts_dir` is supplied. Without one, every
-    # classified artifact is produced and then dropped on the floor -- the
-    # LLM calls still happen, nothing ever lands on disk, and the ledger
-    # still records OK, so a resumed run skips a source whose output was
-    # never written. `_default_artifacts_dir` is the same default
-    # `axial artifacts`'s own standalone CLI path resolves, which is why
-    # `data/artifacts/*.jsonl` exists at all today.
-    return run_artifacts(
-        source_path,
-        client=client,
-        domain_dir=domain_dir,
-        config_path=config_path,
-        artifacts_dir=_default_artifacts_dir(config_path),
-    )
+    # artifact record is produced and then dropped on the floor -- nothing
+    # ever lands on disk, and the ledger still records OK, so a resumed run
+    # skips a source whose output was never written. `_default_artifacts_dir`
+    # is the same default `axial artifacts`'s own standalone CLI path
+    # resolves, which is why `data/artifacts/*.jsonl` exists at all today.
+    # `client`/`domain_dir` are accepted (every registered pass shares this
+    # call signature, see `PassSpec`) but unused: the pass makes no LLM call
+    # and needs no domain frame (issue #429).
+    del client, domain_dir
+    return run_artifacts(source_path, artifacts_dir=_default_artifacts_dir(config_path))
 
 
 def _invoke_interrogate(source_path: str, client: LLMClient | None, config_path: Path, domain_dir):

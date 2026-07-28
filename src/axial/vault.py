@@ -33,7 +33,6 @@ from typing import Any
 
 import yaml
 
-from axial.artifacts import DISCARD_ROLE
 from axial.paths import (
     DEFAULT_DOMAIN_DIR,
     artifact_note_path as _artifact_note_path,
@@ -61,8 +60,12 @@ SOURCE_META_FIELDS = RECORD_SOURCE_META_FIELDS + ENVELOPE_SOURCE_META_FIELDS
 
 # Frontmatter keys reused verbatim from `axial.artifacts`' own record shape
 # (PRD §7.2) for every artifact note. `cited_by` (the cross-reference pass's
-# output) is retired with `axial.xref` (issue #414, D5).
-ARTIFACT_FRONTMATTER_FIELDS = ("artifact_id", "artifact_role", "field", "source_id", "section")
+# output) is retired with `axial.xref` (issue #414, D5). `artifact_role` and
+# `field` are retired with the artifacts pass's LLM call (issue #429): two
+# independent runs disagreed on `artifact_role` for 48.5% of artifacts and
+# flipped the keep/discard bit on 13.1% of them, so the axis is gone and
+# `retrievable` below is a rule over caption presence instead.
+ARTIFACT_FRONTMATTER_FIELDS = ("artifact_id", "source_id", "section")
 
 
 class VaultError(Exception):
@@ -220,17 +223,28 @@ def write_chunk_note(
 
 def build_artifact_frontmatter(record: dict[str, Any]) -> dict[str, Any]:
     """Assemble one artifact note's frontmatter mapping: `artifact_id`,
-    `artifact_role`, `field`, `source_id`, `section` reused verbatim from
-    the artifact record (`axial.artifacts.build_artifact_record`'s shape),
-    plus a `retrievable` boolean that is `False` only for the `discard`
-    role (PRD §8 P0-5) -- every other in-schema role is retrievable.
+    `source_id`, `section` reused verbatim from the artifact record
+    (`axial.artifacts.build_artifact_record`'s shape), plus a `retrievable`
+    boolean.
+
+    `retrievable` (issue #429) is `True` iff the record carries a non-empty
+    `caption` -- a rule over caption presence, not a model judgment. The
+    artifact record carries no content beyond ids/section/caption, so there
+    is nothing in an uncaptioned artifact note to protect by keeping it
+    retrievable; the retired `artifact_role`/`discard` axis measured 48.5%
+    disagreement across two runs and a 13.1% keep/discard flip rate, while
+    caption presence alone predicted that same bit far better (4.7% flip
+    rate on captioned artifacts vs. 19.6% on uncaptioned ones).
+
     `caption` (issue #168) is included only when the record itself carries
     one -- see below.
 
     Retired (issue #414, D5): `cited_by`, the cross-reference pass's
-    backlink list."""
+    backlink list. Retired (issue #429): `artifact_role`, `field` -- the
+    LLM classification's own output, gone with the call that produced it."""
     frontmatter = {field: record.get(field) for field in ARTIFACT_FRONTMATTER_FIELDS}
-    frontmatter["retrievable"] = record["artifact_role"] != DISCARD_ROLE
+    caption = record.get("caption")
+    frontmatter["retrievable"] = bool(caption)
     # `caption` (issue #168): the text of a caption block attached to this
     # artifact by `axial.artifacts.run_artifacts`/`_attach_captions`, when
     # present -- omitted entirely (never `caption: null`) when this artifact
@@ -238,7 +252,6 @@ def build_artifact_frontmatter(record: dict[str, Any]) -> dict[str, Any]:
     # own conditional-`caption`-inclusion pattern, so a pre-#168 artifact
     # record (no `caption` key at all) still produces a byte-for-byte
     # unchanged frontmatter.
-    caption = record.get("caption")
     if caption:
         frontmatter["caption"] = caption
     return frontmatter
@@ -254,7 +267,7 @@ def write_artifact_note(record: dict[str, Any], vault_dir: Path) -> Path:
     present, `axial.artifacts.build_artifact_record`'s shape) is needed
     only for the filename-budget fallback."""
     frontmatter = build_artifact_frontmatter(record)
-    body = f"# {record['section']}\n\nArtifact `{record['artifact_id']}` ({record['artifact_role']}).\n"
+    body = f"# {record['section']}\n\nArtifact `{record['artifact_id']}`.\n"
     note_text = render_note(frontmatter, body)
 
     path = _artifact_note_path(vault_dir, record["source_id"], record["artifact_id"])

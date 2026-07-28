@@ -1,0 +1,8 @@
+holdings/bibliographic check unavailable for prose_and_table.pdf: OpenRouter provider selected but no API key was found: set '[openrouter].api_key' in secrets/secrets.toml or the OPENROUTER_API_KEY environment variable
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  60%|######    | 464/770 [00:00<00:00, 4625.36it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 4258.31it/s]
+[{"artifact_id": "prose_and_table-8bf9b6c2a681_art_1.3", "source_id": "prose_and_table-8bf9b6c2a681", "section": "Introduction"}]
+exit=0
+--- second run (stability + no env var / no LLM key needed) ---
+holdings/bibliographic check unavailable for prose_and_table.pdf: OpenRouter provider selected but no API key was found: set '[openrouter].api_key' in secrets/secrets.toml or the OPENROUTER_API_KEY environment variable
+[{"artifact_id": "prose_and_table-8bf9b6c2a681_art_1.3", "source_id": "prose_and_table-8bf9b6c2a681", "section": "Introduction"}]
+exit=0

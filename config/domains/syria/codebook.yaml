@@ -273,31 +273,9 @@ axes:
       definition: A real school applies but none of the listed ones fits. This vocabulary came from one expert's mind-map and misses schools a source may invoke (e.g. pluralist or rational-choice theories of the state, ethno-symbolism, primordialism). Check the listed schools first. Never a hedge, and never pick `not-applicable` because the right school is missing -- that hides the gap this marker exists to surface.
       positive_example: A pluralist account of state power, which no listed school covers.
       negative_example: A passage fitting a listed school (use it), or advancing no theory at all (`not-applicable`).
-  artifact_role:
-    case-study:
-      definition: Empirical or quantitative tables; structured evidence for a case.
-      positive_example: A table of casualty counts by province.
-      negative_example: A conceptual diagram of the model -- `framework-illustration`.
-    framework-illustration:
-      definition: Conceptual diagrams expressing a framework visually.
-      positive_example: A diagram of power networks and their relations.
-      negative_example: A table of observed data -- `case-study`.
-    quote-pool:
-      definition: 'Block-quoted primary-source material: interviews, archival fragments, manifestos.'
-      positive_example: An indented block of interview testimony.
-      negative_example: The author's summary of that testimony -- not an artifact.
-    framework:
-      definition: The author's own typology, taxonomy, or model.
-      positive_example: A numbered typology of regime types.
-      negative_example: A visual rendering of that typology -- `framework-illustration`.
-    reference-material:
-      definition: Glossaries, indexes, chronologies, maps -- descriptive scaffolding.
-      positive_example: A chronology of events, or a map of territorial control.
-      negative_example: A table used as evidence for a claim -- `case-study`.
-    discard:
-      definition: Cover images, running heads, page numbers -- retained but non-retrievable.
-      positive_example: A running head or page-number fragment.
-      negative_example: A substantive table -- `case-study`.
+  # `artifact_role` is struck (issue #429): the artifacts pass made no LLM
+  # call reproducibly, so both the axis and the classification call are
+  # gone; see config/domains/syria/schema.yaml's own note.
   role_in_argument:
     role:setup:
       definition: Context, background, or state of the literature ahead of the author's claim.

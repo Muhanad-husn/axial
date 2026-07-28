@@ -102,7 +102,6 @@ from axial.run import (
 )
 from axial.runlog import run_context
 from axial.schema import SchemaError, load_schema
-from axial.tagging_schema import TagError
 from axial.validate import cross_validate
 from axial.validators import (
     AttributionValidatorError,
@@ -224,17 +223,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     artifacts_parser = subparsers.add_parser(
         "artifacts",
-        help="run the artifact-classification pass, emitting one record per artifact node to stdout",
+        help="run the artifact-collection pass, emitting one record per artifact node to stdout",
     )
     artifacts_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
-    artifacts_parser.add_argument(
-        "--domain",
-        default=str(DEFAULT_DOMAIN_DIR),
-        help=(
-            "path to a domain directory containing schema.yaml and codebook.yaml "
-            f"(default: {DEFAULT_DOMAIN_DIR})"
-        ),
-    )
 
     names_parser = subparsers.add_parser(
         "names",
@@ -1131,16 +1122,10 @@ def _interrogate(
     return 0
 
 
-def _artifacts(source_path: str, domain: str) -> int:
+def _artifacts(source_path: str) -> int:
     try:
-        records = run_artifacts(source_path, domain_dir=domain)
-    except (ArtifactsError, TagError) as exc:
-        # `TagError` (specifically `axial.tagging_schema.TagNotInSchemaError`)
-        # is caught here too: `axial.artifacts` reuses that shared error for
-        # both the `artifact_role` and `field` axes (issue #32 slice 02's
-        # carry-in convergence), and it is a `TagError`, not an
-        # `ArtifactsError` -- so this CLI handler must catch both to avoid a
-        # bare traceback.
+        records = run_artifacts(source_path)
+    except ArtifactsError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -1785,7 +1770,7 @@ def main(argv: list[str] | None = None) -> int:
         return _names_merge(args.min_cluster_size, args.min_samples, args.limit, args.workers)
 
     if args.command == "artifacts":
-        return _artifacts(args.source_path, args.domain)
+        return _artifacts(args.source_path)
 
     if args.command == "gold" and args.gold_command == "sample":
         return _gold_sample(args.min_size, args.max_size, args.seed)

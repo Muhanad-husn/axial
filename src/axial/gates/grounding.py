@@ -90,7 +90,8 @@ class GroundingCheckFailedError(GroundingGateError):
 def _resolve_grounds_text(claim: dict[str, Any], claim_id: str, *, vault_dir: Path | None) -> str:
     """The resolved text every one of `claim`'s grounds pointers anchors
     to, concatenated in order: a `chunk` ref's `chunk_text`, an `artifact`
-    ref's caption (falling back to its role when it carries none). Raises
+    ref's caption (falling back to its own id when it carries none --
+    `artifact_role` is retired, issue #429, and usually absent now). Raises
     `UnresolvableGroundsError` on the first pointer that fails to resolve or
     names an unknown `ref_type` -- never silently judged."""
     texts: list[str] = []
@@ -107,7 +108,7 @@ def _resolve_grounds_text(claim: dict[str, Any], claim_id: str, *, vault_dir: Pa
                 artifact = get_artifact(ref_id, vault_dir=vault_dir)
             except ArtifactNotFoundError as exc:
                 raise UnresolvableGroundsError(claim_id, str(exc)) from exc
-            texts.append(artifact.caption or artifact.artifact_role)
+            texts.append(artifact.caption or artifact.artifact_id)
         else:
             raise UnresolvableGroundsError(
                 claim_id, f"grounds entry has unknown ref_type {ref_type!r}"
