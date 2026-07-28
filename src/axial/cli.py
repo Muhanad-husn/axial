@@ -70,7 +70,6 @@ from axial.llm import (
     get_client,
 )
 from axial.materialize import MaterializeError, run_materialize
-from axial.merge_names import DEFAULT_EVIDENCE_TIER as MERGE_DEFAULT_EVIDENCE_TIER
 from axial.merge_names import DEFAULT_WORKERS as MERGE_DEFAULT_WORKERS
 from axial.merge_names import MergeNamesError, run_merge_names
 from axial.names import (
@@ -375,28 +374,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     names_merge_parser.add_argument(
-        "--evidence-tier",
-        type=int,
-        choices=[1, 2, 3],
-        default=MERGE_DEFAULT_EVIDENCE_TIER,
-        help=(
-            "issue #449: how much of the inventory's own chunk_id join to "
-            "attach to each surface form -- 1 which source book(s) it appears "
-            "in, 2 adds section title(s), 3 adds a short passage window "
-            "(capped at 2 mentions) "
-            f"(default: {MERGE_DEFAULT_EVIDENCE_TIER}; under measurement -- "
-            "the founder's own comparison run picks the final tier)"
-        ),
-    )
-    names_merge_parser.add_argument(
         "--confirm-reask",
         action="store_true",
         help=(
-            "issue #449's rollout gate: a batch already decided at a DIFFERENT "
-            "--evidence-tier looks, by key, exactly like an undecided one -- so "
+            "issue #449's rollout gate: a batch already decided before evidence "
+            "was attached looks, by key, exactly like an undecided one -- so "
             "the run refuses to spend on it and names the exact count instead, "
             "unless this flag confirms purging those decisions and re-asking "
-            "them at the requested tier"
+            "them with evidence attached"
         ),
     )
     names_merge_parser.add_argument(
@@ -1640,7 +1625,6 @@ def _names_merge(
     min_samples: int | None,
     limit: int | None,
     workers: int,
-    evidence_tier: int,
     confirm_reask: bool,
     decisions_path: str | None,
 ) -> int:
@@ -1650,7 +1634,6 @@ def _names_merge(
             min_samples=min_samples,
             limit=limit,
             workers=workers,
-            evidence_tier=evidence_tier,
             confirm_reask=confirm_reask,
             decisions_path=Path(decisions_path) if decisions_path else None,
         )
@@ -1866,7 +1849,6 @@ def main(argv: list[str] | None = None) -> int:
             args.min_samples,
             args.limit,
             args.workers,
-            args.evidence_tier,
             args.confirm_reask,
             args.decisions_path,
         )

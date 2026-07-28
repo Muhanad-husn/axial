@@ -619,9 +619,9 @@ def test_existing_decisions_are_reused_when_candidates_are_added(isolated_vault_
 
 
 # ---------------------------------------------------------------------------
-# Issue #449's rollout hazard: `MergeBatch.key` folds in kind+evidence, so a
+# Issue #449's rollout hazard: `MergeBatch.key` folds in evidence, so a
 # corpus already decided under a bare-name pass must not be silently
-# re-asked in full just because `--evidence-tier` was set.
+# re-asked in full just because evidence attachment turned on.
 # ---------------------------------------------------------------------------
 
 
@@ -679,7 +679,6 @@ def test_an_evidence_tier_change_refuses_to_reask_without_confirmation(isolated_
             domain_dir=root / "no-such-domain",
             client=ExplodingClient(),
             cluster_fn=lambda vectors: [0] * len(vectors),
-            evidence_tier=1,
         )
     assert "1 cluster batch" in str(excinfo.value)
 
@@ -750,7 +749,6 @@ def test_confirming_the_reask_purges_the_stale_decision_and_redecides_it(isolate
         domain_dir=root / "no-such-domain",
         client=FakeClient(),
         cluster_fn=lambda vectors: [0] * len(vectors),
-        evidence_tier=1,
         confirm_reask=True,
     )
 
@@ -784,8 +782,8 @@ def test_a_limited_reask_purges_only_the_batches_it_actually_attempts(isolated_v
     decisions_path = names_dir / "merge_decisions.jsonl"
     decisions_path.parent.mkdir(parents=True, exist_ok=True)
     # Three independent bare (pre-#449) decisions, one per pair `_cluster_pairs`
-    # produces from the six-name fixture -- all stale once evidence_tier=1
-    # is requested.
+    # produces from the six-name fixture -- all stale once evidence is
+    # attached.
     pairs = [_ALL_SIX[0:2], _ALL_SIX[2:4], _ALL_SIX[4:6]]
     with decisions_path.open("w", encoding="utf-8") as handle:
         for index, members in enumerate(pairs):
@@ -819,7 +817,6 @@ def test_a_limited_reask_purges_only_the_batches_it_actually_attempts(isolated_v
         names_dir,
         root,
         CountingClient(),
-        evidence_tier=1,
         confirm_reask=True,
         limit=1,
     )
