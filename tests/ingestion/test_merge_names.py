@@ -616,3 +616,154 @@ def test_existing_decisions_are_reused_when_candidates_are_added(isolated_vault_
     assert second["decided"] == 0
     assert second["reused"] == first["batches"]
     assert (names_dir / "merge_decisions.jsonl").read_text(encoding="utf-8") == decisions_before
+
+
+# ---------------------------------------------------------------------------
+# Issue #449's rollout hazard: `MergeBatch.key` folds in kind+evidence, so a
+# corpus already decided under a bare-name pass must not be silently
+# re-asked in full just because `--evidence-tier` was set.
+# ---------------------------------------------------------------------------
+
+
+def test_an_evidence_tier_change_refuses_to_reask_without_confirmation(isolated_vault_root):
+    """A cluster already decided (no `evidence_tier` on its record -- every
+    real pre-#449 decision) must not be silently re-asked once evidence is
+    turned on: the run refuses BEFORE making any call, naming the count."""
+    from axial.merge_names import MergeReaskConfirmationRequiredError, run_merge_names
+    from axial.names import run_names
+
+    root = isolated_vault_root
+    _build_fixture_answers(root, [[BELLICIST, DISTINCT_A], [BELLICIST_ALIAS, DISTINCT_B]])
+    names_dir = root / "data" / "names"
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+    )
+
+    decisions_path = names_dir / "merge_decisions.jsonl"
+    decisions_path.parent.mkdir(parents=True, exist_ok=True)
+    bare_members = sorted([BELLICIST, BELLICIST_ALIAS, DISTINCT_A, DISTINCT_B])
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "batch_key": "pre-449-bare-decision",
+                "cluster_label": 0,
+                "members": bare_members,
+                "nodes": [{"canonical": BELLICIST, "aliases": [BELLICIST_ALIAS]}],
+                "model": "stub",
+                "decided_at": "2026-01-01T00:00:00Z",
+                # No "evidence_tier": exactly every real decision recorded
+                # before this issue.
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class ExplodingClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            raise AssertionError("must not call the model before the reask is confirmed")
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    with pytest.raises(MergeReaskConfirmationRequiredError) as excinfo:
+        run_merge_names(
+            embeddings_dir=names_dir / "embeddings.lance",
+            alias_map_path=names_dir / "alias_map.json",
+            index_path=names_dir / "index.json",
+            decisions_path=decisions_path,
+            manifest_path=names_dir / "merge_manifest.json",
+            domain_dir=root / "no-such-domain",
+            client=ExplodingClient(),
+            cluster_fn=lambda vectors: [0] * len(vectors),
+            evidence_tier=1,
+        )
+    assert "1 cluster batch" in str(excinfo.value)
+
+    # The decision log is untouched: refusing to reask must not purge
+    # anything either.
+    assert decisions_path.read_text(encoding="utf-8").count("pre-449-bare-decision") == 1
+
+
+def test_confirming_the_reask_purges_the_stale_decision_and_redecides_it(isolated_vault_root):
+    """`confirm_reask=True` purges exactly the superseded record and lets
+    the model decide the cluster again, this time stamped with the tier
+    that made the re-ask necessary."""
+    from axial.merge_names import run_merge_names
+    from axial.names import run_names
+
+    root = isolated_vault_root
+    _build_fixture_answers(root, [[BELLICIST, DISTINCT_A], [BELLICIST_ALIAS, DISTINCT_B]])
+    names_dir = root / "data" / "names"
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+    )
+
+    decisions_path = names_dir / "merge_decisions.jsonl"
+    decisions_path.parent.mkdir(parents=True, exist_ok=True)
+    bare_members = sorted([BELLICIST, BELLICIST_ALIAS, DISTINCT_A, DISTINCT_B])
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "batch_key": "pre-449-bare-decision",
+                "cluster_label": 0,
+                "members": bare_members,
+                "nodes": [{"canonical": BELLICIST, "aliases": [BELLICIST_ALIAS]}],
+                "model": "stub",
+                "decided_at": "2026-01-01T00:00:00Z",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    prompts: list[str] = []
+
+    class FakeClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            prompts.append(prompt)
+            return json.dumps(
+                {
+                    "nodes": [
+                        {"canonical": BELLICIST, "aliases": [BELLICIST_ALIAS]},
+                        {"canonical": DISTINCT_A, "aliases": []},
+                        {"canonical": DISTINCT_B, "aliases": []},
+                    ]
+                }
+            )
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    summary = run_merge_names(
+        embeddings_dir=names_dir / "embeddings.lance",
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=decisions_path,
+        manifest_path=names_dir / "merge_manifest.json",
+        domain_dir=root / "no-such-domain",
+        client=FakeClient(),
+        cluster_fn=lambda vectors: [0] * len(vectors),
+        evidence_tier=1,
+        confirm_reask=True,
+    )
+
+    assert len(prompts) == 1, "the purged cluster is decided again, exactly once"
+    assert summary["stale_evidence_tier_reasked"] == 1
+    assert summary["decided"] == 1
+
+    manifest = json.loads((names_dir / "merge_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["stale_evidence_tier_reasked"] == 1
+
+    remaining = [
+        json.loads(line) for line in decisions_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(remaining) == 1, "the stale record is purged, not left alongside the new one"
+    assert remaining[0]["batch_key"] != "pre-449-bare-decision"
+    assert remaining[0]["evidence_tier"] == 1

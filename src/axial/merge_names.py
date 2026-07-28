@@ -94,6 +94,27 @@ what makes the pass resumable) -- which also means a map built from 30 of
 19,434 clusters looks, by its own shape, identical to a finished one. The
 manifest is the one place that distinction is on disk rather than only in a
 run's own stdout.
+
+**Issue #449: the merge call was deciding from a bare surface form and a
+kind, which does not contain the answer for `Adam Smith` vs `Anthony D.
+Smith`.** `build_evidence_index` joins each surface form to the passages the
+inventory already has a `chunk_id` for (no new extraction) and attaches one
+of three cumulative tiers, selected by `evidence_tier` -- (1) which source
+book(s) it appears in, zero file I/O because `source_id` lives inside
+`chunk_id` itself; (2) the section title(s) its mentions sit under; (3) a
+short window (<=240 chars, capped at 2 mentions -- CIP's own rule,
+`CIP_Curation_Operations_Manual.md` §2.4.2) around one or two mentions.
+Shipped default is tier 1; the founder's own measurement run picks the
+final tier and this dial's losing levels are deleted in a follow-up, not
+kept as a permanent config surface. `render_member` is still the ONE place
+that renders a member, reused by the parse (see its docstring) -- evidence
+is folded into that same rendered form, never a separate echo the model
+has to get right on its own.
+
+CIP DEC-206, "withhold the scores": whatever similarity numbers a candidate
+stage computes are for calibration logs, never for this prompt -- it carries
+no numbers today and must not gain any, because showing them anchors the
+model to the rule's own answer instead of an independent read.
 """
 
 from __future__ import annotations
@@ -111,6 +132,7 @@ from typing import Any, Iterable
 import yaml
 
 from axial.checkpoint import append_checkpoint_record, load_checkpoint_records
+from axial.chunk import MissingChunkArtifactError, read_chunks
 from axial.interrogate import _default_domain_dir
 from axial.llm import RECONCILE_PASS_NAME, LLMClient, get_client
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
@@ -129,6 +151,7 @@ from axial.names import (
 )
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.polity_canonical import PolityCanonicalError, _normalize, load_polity_canonical
+from axial.query.reader import MalformedChunkIdError, source_id_from_chunk_id
 
 # §6's `data/names/` family: the inventory and the similarity view are slice
 # 04's; these two are Reconcile's own output, plus the decision log that makes
@@ -181,6 +204,24 @@ ALIAS_MAP_VERSION = 1
 # context alongside the short prompt around it.
 DEFAULT_MEMBER_CHAR_BUDGET = 20_000
 
+# Issue #449's three cumulative evidence tiers -- 1 implies nothing, 2 implies
+# 1, 3 implies 1 and 2. Selectable because the founder's own measurement run
+# compares them against each other; the losing tiers are deleted in a
+# follow-up once that run picks a winner, not kept as a permanent dial.
+EVIDENCE_TIER_SOURCE = 1
+EVIDENCE_TIER_SECTION = 2
+EVIDENCE_TIER_WINDOW = 3
+
+# Shipped default: the cheapest tier, zero file I/O (source_id lives inside
+# chunk_id). Under measurement -- see the module docstring.
+DEFAULT_EVIDENCE_TIER = EVIDENCE_TIER_SOURCE
+
+# CIP's own rule (`CIP_Curation_Operations_Manual.md` §2.4.2): "one or two
+# short source snippets", so tier 3 never carries more than this many windows
+# per surface form, and each window is capped at this many characters.
+EVIDENCE_WINDOW_MAX_MENTIONS = 2
+EVIDENCE_WINDOW_CHARS = 240
+
 # Issue #446: candidate clusters (`axial.name_candidates`) get their own
 # `cluster_label` namespace, disjoint from HDBSCAN's (`NOISE_LABEL`=-1, real
 # clusters numbered from 0) -- so a candidate batch is never mistaken for a
@@ -222,6 +263,27 @@ class MergeDecisionsCorruptError(MergeNamesError):
         super().__init__(f"merge decision log {path} is corrupt at line {line_no}: {cause}")
 
 
+class MergeReaskConfirmationRequiredError(MergeNamesError):
+    """Raised BEFORE any model call this run would make, when re-deciding at
+    `evidence_tier` would silently re-ask clusters this exact corpus already
+    has an answer for -- just recorded under a DIFFERENT evidence_tier
+    (issue #449's rollout: `MergeBatch.key` folds in kind+evidence on
+    purpose, trap 3, so those old decisions look like brand-new clusters to
+    a plain key lookup). A real spend, so it needs an explicit `--confirm-
+    reask` (`confirm_reask=True`), not a default."""
+
+    def __init__(self, batch_count: int, decision_count: int):
+        self.batch_count = batch_count
+        self.decision_count = decision_count
+        super().__init__(
+            f"{batch_count} cluster batch(es) were already decided under a different "
+            f"evidence_tier ({decision_count} recorded decision(s) would be superseded and "
+            "purged) -- re-run with --confirm-reask (confirm_reask=True) to purge them and "
+            "let the model decide them again at this tier; this is a real spend, not a free "
+            "format change"
+        )
+
+
 # ---------------------------------------------------------------------------
 # The tightness dial (D10: chosen by looking at slice 04's report)
 # ---------------------------------------------------------------------------
@@ -245,6 +307,161 @@ def _resolve_merge_tightness(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -
 
 
 # ---------------------------------------------------------------------------
+# Evidence (issue #449): what the join over chunk_ids already has, joined to
+# each surface form ONCE, before any batch is built or any worker starts.
+# ---------------------------------------------------------------------------
+
+
+def _extract_window(text: str, surface_form: str, width: int) -> str:
+    """A <=`width`-char window of `text` centred on `surface_form`'s first
+    occurrence (case-insensitive), whitespace collapsed to single spaces so
+    the window is always one line -- a chunk's own text can carry newlines,
+    and this is folded into a single rendered member line (see
+    `render_member`). Falls back to the window's own start when the surface
+    form is not found verbatim (e.g. it was extracted from a table or a
+    caption docling reflowed): still real passage text, just not centred."""
+    collapsed = " ".join(text.split())
+    if not collapsed:
+        return ""
+    position = collapsed.casefold().find(surface_form.casefold())
+    if position == -1:
+        start = 0
+    else:
+        start = max(position - (width - len(surface_form)) // 2, 0)
+    end = min(start + width, len(collapsed))
+    start = max(end - width, 0)
+    snippet = collapsed[start:end].strip()
+    if not snippet:
+        return ""
+    return f"{'...' if start > 0 else ''}{snippet}{'...' if end < len(collapsed) else ''}"
+
+
+def build_evidence_index(
+    chunk_ids_by_surface: dict[str, tuple[str, ...]],
+    tier: int,
+    chunks_dir: Path | None = None,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+) -> dict[str, str]:
+    """One rendered evidence suffix per surface form, built ONCE here --
+    before `run_merge_names` builds a single batch or starts the worker
+    pool, because `_decide_batch` runs on worker threads and a chunk file
+    read is not something to redo per member (issue #449, trap 4).
+
+    Tier 1 (`EVIDENCE_TIER_SOURCE`) costs zero file I/O: `source_id` lives
+    inside `chunk_id` itself (`source_id_from_chunk_id`). Tiers 2/3 need a
+    chunk's own `section`/`text`, read lazily via `axial.chunk.read_chunks`
+    and cached per `source_id` -- a full pass touches ~62k surface forms, so
+    a source's chunk file is opened at most once no matter how many surface
+    forms cite it. Tiers are cumulative: tier 3's suffix carries 1 and 2's
+    evidence too.
+
+    A surface form with no chunk_ids, or none that resolve to a real source
+    or chunk record, gets no entry here -- `render_member` treats a missing
+    key exactly as "no evidence", the pre-#449 behaviour.
+    """
+    if tier < EVIDENCE_TIER_SOURCE:
+        return {}
+
+    chunk_cache: dict[str, dict[str, dict[str, Any]]] = {}
+
+    def _chunks_for(source_id: str) -> dict[str, dict[str, Any]]:
+        if source_id not in chunk_cache:
+            try:
+                records = read_chunks(source_id, chunks_dir=chunks_dir, config_path=config_path)
+            except MissingChunkArtifactError:
+                records = []
+            chunk_cache[source_id] = {record["chunk_id"]: record for record in records}
+        return chunk_cache[source_id]
+
+    index: dict[str, str] = {}
+    for surface_form, chunk_ids in chunk_ids_by_surface.items():
+        resolved: list[tuple[str, str]] = []  # (chunk_id, source_id), in order
+        for chunk_id in chunk_ids:
+            try:
+                resolved.append((chunk_id, source_id_from_chunk_id(chunk_id)))
+            except MalformedChunkIdError:
+                continue
+        if not resolved:
+            continue
+
+        sources: list[str] = []
+        for _chunk_id, source_id in resolved:
+            if source_id not in sources:
+                sources.append(source_id)
+        parts = [f"in {', '.join(sorted(sources))}"]
+
+        if tier >= EVIDENCE_TIER_SECTION:
+            sections: list[str] = []
+            for chunk_id, source_id in resolved:
+                record = _chunks_for(source_id).get(chunk_id)
+                section = record.get("section") if record else None
+                if section and section not in sections:
+                    sections.append(section)
+            if sections:
+                parts.append(f"under {', '.join(sections)}")
+
+        if tier >= EVIDENCE_TIER_WINDOW:
+            windows: list[str] = []
+            for chunk_id, source_id in resolved:
+                if len(windows) >= EVIDENCE_WINDOW_MAX_MENTIONS:
+                    break
+                record = _chunks_for(source_id).get(chunk_id)
+                text = record.get("text") if record else None
+                if not text:
+                    continue
+                window = _extract_window(text, surface_form, EVIDENCE_WINDOW_CHARS)
+                if window:
+                    windows.append(window)
+            if windows:
+                parts.append("e.g. " + " / ".join(f'"{window}"' for window in windows))
+
+        index[surface_form] = "(" + "; ".join(parts) + ")"
+    return index
+
+
+# ---------------------------------------------------------------------------
+# The call: a loose prompt, and a parse that never invents a name
+# ---------------------------------------------------------------------------
+
+
+def render_member(
+    surface_form: str,
+    kinds: dict[str, str | None],
+    evidence: dict[str, str] | None = None,
+) -> str:
+    """How ONE surface form appears in the prompt.
+
+    Shared with `parse_merge_response` so the two can never drift. The prompt
+    tells the model to write each surface "exactly as it appears above", and
+    this function is what "above" means -- so the parse has to accept this
+    form back (issue #416, the 2.89% failure below).
+
+    `evidence` (issue #449), when given, appends that surface form's
+    evidence suffix (`build_evidence_index`) to the SAME rendered line, so
+    the round-trip stays a one-renderer contract: whatever this function
+    puts in front of the model is also what the parse must accept back.
+    """
+    kind = kinds.get(surface_form)
+    rendered = f"{surface_form!r} ({kind})" if kind else f"{surface_form!r}"
+    suffix = evidence.get(surface_form) if evidence else None
+    return f"{rendered} {suffix}" if suffix else rendered
+
+
+def compose_merge_prompt(
+    members: Iterable[str],
+    kinds: dict[str, str | None],
+    evidence: dict[str, str] | None = None,
+) -> str:
+    """One batch's prompt: the surface forms with the kind the corpus gave
+    each and, where available, the evidence #449 joins in (which source
+    book(s), section(s), and/or a short passage window it was seen in) --
+    and the judgment being asked for. Nothing else -- no criteria, no
+    examples, no instruction to think (see the module docstring)."""
+    rendered = "\n".join(f"- {render_member(m, kinds, evidence)}" for m in members)
+    return _PROMPT_TEMPLATE.format(members=rendered)
+
+
+# ---------------------------------------------------------------------------
 # Batching (one call per cluster; a few only when the request would be huge)
 # ---------------------------------------------------------------------------
 
@@ -255,43 +472,63 @@ class MergeBatch:
 
     cluster_label: int
     members: tuple[str, ...]
+    # What `render_member` produced for each member at batch-build time --
+    # this, not the bare member list, is what the key and the char budget
+    # are computed from (issue #449): a kind or evidence change is a
+    # different prompt, so it must be a different decision.
+    rendered: tuple[str, ...]
 
     @property
     def key(self) -> str:
-        """Content hash of this batch's member list -- the decision log's
-        key. Content-addressed on purpose: moving the tightness dial changes
-        which surfaces sit together, so a batch whose membership is unchanged
-        reuses its recorded decision and one that changed is re-decided,
-        without anyone tracking which setting produced what."""
-        payload = json.dumps(list(self.members), ensure_ascii=False, sort_keys=False)
+        """Content hash of this batch's RENDERED member list -- the decision
+        log's key. Content-addressed on purpose: moving the tightness dial
+        changes which surfaces sit together, so a batch whose rendered
+        members are unchanged reuses its recorded decision, and one whose
+        membership OR whose kind/evidence changed is re-decided, without
+        anyone tracking which setting produced what."""
+        payload = json.dumps(list(self.rendered), ensure_ascii=False, sort_keys=False)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _split_into_batches(
-    label: int, members: list[str], member_char_budget: int
+    label: int,
+    members: list[str],
+    kinds: dict[str, str | None],
+    evidence: dict[str, str] | None,
+    member_char_budget: int,
 ) -> list[MergeBatch]:
     """One cluster's members, split into as few batches as fit under
     `member_char_budget` -- shared by `build_batches` (real HDBSCAN clusters)
     and `_candidate_batches` (issue #446's proposed clusters), so both go
-    through the exact same construction limit on request size."""
+    through the exact same construction limit on request size.
+
+    The budget counts each member's RENDERED length (issue #449), not the
+    bare surface form: with evidence attached the rendered line can run
+    ~10x longer than the surface form alone, and counting the bare form
+    would silently stop bounding the actual request."""
     batches: list[MergeBatch] = []
     current: list[str] = []
+    current_rendered: list[str] = []
     size = 0
     for surface_form in members:
-        cost = len(surface_form) + 1
+        rendered = render_member(surface_form, kinds, evidence)
+        cost = len(rendered) + 1
         if current and size + cost > member_char_budget:
-            batches.append(MergeBatch(label, tuple(current)))
-            current, size = [], 0
+            batches.append(MergeBatch(label, tuple(current), tuple(current_rendered)))
+            current, current_rendered, size = [], [], 0
         current.append(surface_form)
+        current_rendered.append(rendered)
         size += cost
     if len(current) > 1:
-        batches.append(MergeBatch(label, tuple(current)))
+        batches.append(MergeBatch(label, tuple(current), tuple(current_rendered)))
     return batches
 
 
 def build_batches(
     labels: Iterable[int],
     surface_forms: list[str],
+    kinds: dict[str, str | None] | None = None,
+    evidence: dict[str, str] | None = None,
     member_char_budget: int = DEFAULT_MEMBER_CHAR_BUDGET,
 ) -> list[MergeBatch]:
     """One batch per cluster -- §7.16's "one call per cluster" -- splitting
@@ -306,17 +543,20 @@ def build_batches(
             continue
         clusters.setdefault(label, []).append(surface_form)
 
+    kinds = kinds or {}
     batches: list[MergeBatch] = []
     for label in sorted(clusters):
         members = clusters[label]
         if len(members) < 2:
             continue
-        batches.extend(_split_into_batches(label, members, member_char_budget))
+        batches.extend(_split_into_batches(label, members, kinds, evidence, member_char_budget))
     return batches
 
 
 def _candidate_batches(
     entries: list[tuple[str, str | None, int]],
+    kinds: dict[str, str | None],
+    evidence: dict[str, str] | None,
     existing_keys: set[str],
     member_char_budget: int,
 ) -> list[MergeBatch]:
@@ -324,15 +564,16 @@ def _candidate_batches(
     front of the merge model, as additional cluster-shaped batches.
 
     `existing_keys` is every batch key `build_batches` already produced from
-    the real HDBSCAN clusters this run -- content-hashed on the member list
-    (`MergeBatch.key`), so a candidate whose exact member set a real cluster
-    ALREADY covers this run is skipped rather than asked twice, and (via
-    `merge_decisions.jsonl`, keyed the same way) a candidate already decided
-    on a previous run is reused untouched rather than re-decided."""
+    the real HDBSCAN clusters this run -- content-hashed on the RENDERED
+    member list (`MergeBatch.key`), so a candidate whose exact rendered
+    member set a real cluster ALREADY covers this run is skipped rather than
+    asked twice, and (via `merge_decisions.jsonl`, keyed the same way) a
+    candidate already decided on a previous run is reused untouched rather
+    than re-decided."""
     batches: list[MergeBatch] = []
     for offset, members in enumerate(generate_candidate_clusters(entries)):
         label = _CANDIDATE_LABEL_BASE - offset
-        for batch in _split_into_batches(label, list(members), member_char_budget):
+        for batch in _split_into_batches(label, list(members), kinds, evidence, member_char_budget):
             if batch.key in existing_keys:
                 continue
             existing_keys.add(batch.key)
@@ -340,42 +581,19 @@ def _candidate_batches(
     return batches
 
 
-# ---------------------------------------------------------------------------
-# The call: a loose prompt, and a parse that never invents a name
-# ---------------------------------------------------------------------------
-
-
-def render_member(surface_form: str, kinds: dict[str, str | None]) -> str:
-    """How ONE surface form appears in the prompt.
-
-    Shared with `parse_merge_response` so the two can never drift. The prompt
-    tells the model to write each surface "exactly as it appears above", and
-    this function is what "above" means -- so the parse has to accept this
-    form back (issue #416, the 2.89% failure below).
-    """
-    kind = kinds.get(surface_form)
-    return f"{surface_form!r} ({kind})" if kind else f"{surface_form!r}"
-
-
-def compose_merge_prompt(members: Iterable[str], kinds: dict[str, str | None]) -> str:
-    """One batch's prompt: the surface forms with the kind the corpus gave
-    each, and the judgment being asked for. Nothing else -- no criteria, no
-    examples, no instruction to think (see the module docstring)."""
-    rendered = "\n".join(f"- {render_member(m, kinds)}" for m in members)
-    return _PROMPT_TEMPLATE.format(members=rendered)
-
-
 def parse_merge_response(
     raw: str,
     members: Iterable[str],
     kinds: dict[str, str | None] | None = None,
+    evidence: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Parse one merge response into `[{canonical, aliases[]}]` restricted to
     `members`.
 
-    `kinds`, when given, also accepts each surface back in the exact form the
-    PROMPT showed it (`render_member`) -- i.e. `'Sociology' (institution/group)`
-    as well as `Sociology`. This is not fuzzy matching: it is the one other
+    `kinds`/`evidence`, when given, also accept each surface back in the
+    exact form the PROMPT showed it (`render_member`) -- i.e. `'Sociology'
+    (institution/group)`, or with issue #449's evidence suffix attached, as
+    well as bare `Sociology`. This is not fuzzy matching: it is the one other
     string this code itself put in front of the model. It exists because the
     prompt says "write every surface form exactly as it appears above", and
     2.89% of the first full corpus pass (561 of 19,434 clusters) was discarded
@@ -412,10 +630,10 @@ def parse_merge_response(
     # corpus map carried 1,514 such pairs as separate canonical names, which
     # would have become 1,514 duplicate wiki pages.
     exact: dict[str, str] = {surface_form: surface_form for surface_form in members}
-    if kinds:
+    if kinds or evidence:
         # Plus the form the PROMPT showed, accepted back verbatim.
         for surface_form in members:
-            exact.setdefault(render_member(surface_form, kinds), surface_form)
+            exact.setdefault(render_member(surface_form, kinds or {}, evidence), surface_form)
 
     # Normalized match stays, for whitespace and stray case the model
     # introduced -- but ONLY where it is unambiguous. A normalized key two
@@ -424,8 +642,8 @@ def parse_merge_response(
     buckets: dict[str, set[str]] = {}
     for surface_form in members:
         buckets.setdefault(_normalize(surface_form), set()).add(surface_form)
-        if kinds:
-            rendered = _normalize(render_member(surface_form, kinds))
+        if kinds or evidence:
+            rendered = _normalize(render_member(surface_form, kinds or {}, evidence))
             buckets.setdefault(rendered, set()).add(surface_form)
     known = {key: next(iter(group)) for key, group in buckets.items() if len(group) == 1}
     claimed: set[str] = set()
@@ -474,6 +692,7 @@ def _decide_batch(
     batch: MergeBatch,
     kinds: dict[str, str | None],
     client: LLMClient,
+    evidence: dict[str, str] | None = None,
 ) -> tuple[MergeBatch, dict[str, Any] | None, str | None]:
     """Decide one cluster batch. Runs on a worker thread (issue #416).
 
@@ -498,16 +717,18 @@ def _decide_batch(
     pass makes (temperature, reasoning, model) is per-CALL via `pass_name`,
     never per-client state.
     """
-    prompt = compose_merge_prompt(batch.members, kinds)
+    prompt = compose_merge_prompt(batch.members, kinds, evidence)
     started = time.monotonic()
     try:
         raw = complete_json(
             client,
             prompt,
             pass_name=RECONCILE_PASS_NAME,
-            validate=lambda response: parse_merge_response(response, batch.members, kinds),
+            validate=lambda response: parse_merge_response(
+                response, batch.members, kinds, evidence
+            ),
         )
-        nodes = parse_merge_response(raw, batch.members, kinds)
+        nodes = parse_merge_response(raw, batch.members, kinds, evidence)
     except (ModelJsonError, MergeResponseError) as exc:
         return batch, None, str(exc)
 
@@ -734,6 +955,7 @@ def write_merge_manifest(
     batches_decided: int,
     batches_reused: int,
     batches_failed: int,
+    stale_evidence_tier_reasked: int = 0,
 ) -> None:
     """The one place a partial run says so on disk (issue #416, founder
     correction). `alias_map.json`/`index.json` are rewritten whole from
@@ -743,7 +965,13 @@ def write_merge_manifest(
     indistinguishable from a finished one. Mirrors slice 04's own sibling
     `similarity_manifest.json` convention under `data/names/`: a reader must
     check `complete` here before treating the map as the whole corpus's
-    answer, not just count its own nodes."""
+    answer, not just count its own nodes.
+
+    `stale_evidence_tier_reasked` (issue #449's rollout) is how many of
+    THIS run's decided batches were already answered once, at a different
+    evidence_tier, before this run purged and re-asked them -- the on-disk
+    record of the invalidated count, alongside the confirmation gate that
+    already made the operator see it before the spend."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
@@ -754,6 +982,7 @@ def write_merge_manifest(
                 "batches_decided": batches_decided,
                 "batches_reused": batches_reused,
                 "batches_failed": batches_failed,
+                "stale_evidence_tier_reasked": stale_evidence_tier_reasked,
             },
             indent=2,
             ensure_ascii=False,
@@ -768,6 +997,71 @@ def load_decisions(path: Path) -> dict[str, dict[str, Any]]:
     the append below, `{}` before the first run."""
     records = load_checkpoint_records(path, MergeDecisionsCorruptError)
     return {record["batch_key"]: record for record in records}
+
+
+def purge_decisions(path: Path, batch_keys: set[str]) -> int:
+    """Remove exactly these `batch_key`s from the decision log, rewriting it
+    whole -- the targeted counterpart to `load_decisions`/`append_checkpoint_
+    record`, so a specific set of already-recorded merge decisions can be
+    forced back to "not yet decided" without touching any other line.
+
+    Issue #449's rollout: #441's own repair purged 2,032 damaged clusters
+    from `merge_decisions.jsonl` by hand before re-running; this is that
+    same move made into a reusable primitive rather than a second one-off
+    script the next repair has to reinvent. Returns how many lines were
+    actually removed; a no-op (0) when `path` doesn't exist yet or none of
+    `batch_keys` are present."""
+    if not path.is_file():
+        return 0
+    records = load_checkpoint_records(path, MergeDecisionsCorruptError)
+    kept = [record for record in records if record["batch_key"] not in batch_keys]
+    removed = len(records) - len(kept)
+    if removed:
+        with path.open("w", encoding="utf-8") as handle:
+            for record in kept:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return removed
+
+
+def _stale_evidence_tier_reasks(
+    pending: list[MergeBatch],
+    decisions: dict[str, dict[str, Any]],
+    evidence_tier: int,
+) -> tuple[list[MergeBatch], set[str]]:
+    """Which of `pending` (batches whose CURRENT key is not in `decisions`)
+    are pending ONLY because `evidence_tier` changed -- not because the
+    cluster is genuinely new.
+
+    `MergeBatch.key` folds in kind+evidence (trap 3), so a batch already
+    decided at a different tier gets a different key and looks, to a plain
+    key lookup, exactly like a brand-new cluster. Detected instead by bare
+    membership: every decision record already carries its own `members`
+    (the bare surface forms, unaffected by kind/evidence), so a pending
+    batch whose bare member set matches an existing record recorded under a
+    DIFFERENT `evidence_tier` (missing entirely on any pre-#449 record,
+    read as tier 0) is exactly that -- already answered once, just not
+    under this tier.
+
+    Returns `(stale_batches, stale_record_keys)`: the pending batches this
+    applies to, and the OLD records' own `batch_key`s (candidates for
+    `purge_decisions`) -- two different key spaces, since the old and new
+    keys for the same cluster never collide."""
+    records_by_members: dict[frozenset[str], list[dict[str, Any]]] = {}
+    for record in decisions.values():
+        records_by_members.setdefault(frozenset(record["members"]), []).append(record)
+
+    stale_batches: list[MergeBatch] = []
+    stale_keys: set[str] = set()
+    for batch in pending:
+        matches = [
+            record
+            for record in records_by_members.get(frozenset(batch.members), [])
+            if record.get("evidence_tier", 0) != evidence_tier
+        ]
+        if matches:
+            stale_batches.append(batch)
+            stale_keys.update(record["batch_key"] for record in matches)
+    return stale_batches, stale_keys
 
 
 # ---------------------------------------------------------------------------
@@ -791,9 +1085,32 @@ def run_merge_names(
     limit: int | None = None,
     workers: int = DEFAULT_WORKERS,
     cluster_fn: ClusterFn | None = None,
+    evidence_tier: int = DEFAULT_EVIDENCE_TIER,
+    chunks_dir: Path | None = None,
+    confirm_reask: bool = False,
 ) -> dict[str, Any]:
     """Merge the name inventory into a reversible alias map and return the
     run summary.
+
+    `evidence_tier` (issue #449) selects how much of the inventory's own
+    chunk_id join is attached to each surface form in the prompt: 1 (source
+    book(s), the default -- zero extra file I/O), 2 (+ section titles), or 3
+    (+ a short passage window, capped at 2 mentions). Selectable because the
+    founder's own measurement run compares the tiers against each other and
+    against the bare-name pass; this is not a permanent config surface.
+
+    `confirm_reask` guards the rollout hazard `evidence_tier` introduces:
+    `MergeBatch.key` folds in kind+evidence (trap 3), so a corpus decided
+    once at one tier looks, key-for-key, exactly like an undecided one the
+    moment the tier changes -- moving the whole corpus's decisions from
+    "reused" to "re-asked" as a side effect of a code change, not a choice.
+    `run_merge_names` detects this by bare membership
+    (`_stale_evidence_tier_reasks`) and raises
+    `MergeReaskConfirmationRequiredError`, naming the exact count, before
+    building a client or submitting a single batch -- unless `confirm_reask`
+    is `True`, in which case the superseded decisions are purged
+    (`purge_decisions`) and re-asked as part of this run, same as any other
+    pending batch.
 
     Reads slice 04's persisted similarity view, re-clusters it at the
     configured tightness, and asks the model about pending clusters
@@ -848,6 +1165,20 @@ def run_merge_names(
     surface_forms = [surface_form for surface_form, _kind, _count in entries]
     kinds = {surface_form: kind for surface_form, kind, _count in entries}
 
+    # Issue #449: the join is already in hand -- each row's own chunk_ids_json
+    # -- so no new extraction runs. The whole evidence index is built ONCE,
+    # here, before any batch is built or any worker starts (trap 4: a chunk
+    # file read is not something to redo per member on a worker thread).
+    chunk_ids_by_surface = {
+        row["surface_form"]: tuple(json.loads(row["chunk_ids_json"])) for row in rows
+    }
+    evidence = build_evidence_index(
+        chunk_ids_by_surface,
+        tier=evidence_tier,
+        chunks_dir=chunks_dir,
+        config_path=config_path,
+    )
+
     vectors = [row["vector"] for row in rows]
     if cluster_fn is None:
         labels = _cluster_reduced(
@@ -856,26 +1187,40 @@ def run_merge_names(
     else:
         labels = cluster_fn(vectors)
 
-    batches = build_batches(labels, surface_forms, member_char_budget)
+    batches = build_batches(labels, surface_forms, kinds, evidence, member_char_budget)
     # Issue #446: the same corpus's variants routinely land in different
     # HDBSCAN clusters, so no merge call ever sees them together. This is a
     # second, deterministic candidate-generation step over the SAME
     # inventory, proposing the missing pairs as additional cluster-shaped
     # batches for the exact same, unchanged merge call -- it decides nothing.
     candidate_batches = _candidate_batches(
-        entries, {batch.key for batch in batches}, member_char_budget
+        entries, kinds, evidence, {batch.key for batch in batches}, member_char_budget
     )
     batches = batches + candidate_batches
     decisions = load_decisions(decisions_path)
     pending = [batch for batch in batches if batch.key not in decisions]
     reused = len(batches) - len(pending)
+
+    # Issue #449's rollout hazard: a batch pending only because evidence_tier
+    # changed is indistinguishable, BY KEY, from a genuinely new cluster --
+    # so it must be found by bare membership before a single call goes out.
+    stale_batches, stale_keys = _stale_evidence_tier_reasks(pending, decisions, evidence_tier)
+    if stale_batches and not confirm_reask:
+        raise MergeReaskConfirmationRequiredError(len(stale_batches), len(stale_keys))
+    if stale_keys:
+        purge_decisions(decisions_path, stale_keys)
+        for key in stale_keys:
+            decisions.pop(key, None)
+
     to_attempt = pending if limit is None else pending[:limit]
     print(
         f"reconcile: {len(surface_forms)} surface form(s), {len(batches)} cluster batch(es) "
         f"({len(candidate_batches)} from candidate generation, issue #446) "
         f"at min_cluster_size={min_cluster_size} min_samples={min_samples}; "
         f"{reused} already decided, {len(to_attempt)} to decide now "
-        f"({len(pending) - len(to_attempt)} more pending) across {max(workers, 1)} worker(s)",
+        f"({len(pending) - len(to_attempt)} more pending) across {max(workers, 1)} worker(s); "
+        f"{len(stale_batches)} of those are a re-ask at evidence_tier={evidence_tier} "
+        "(purged from the decision log)",
         file=sys.stderr,
     )
 
@@ -889,7 +1234,8 @@ def run_merge_names(
             client = get_client(config_path=config_path)
         with ThreadPoolExecutor(max_workers=max(workers, 1)) as executor:
             futures = {
-                executor.submit(_decide_batch, batch, kinds, client): batch for batch in to_attempt
+                executor.submit(_decide_batch, batch, kinds, client, evidence): batch
+                for batch in to_attempt
             }
             # Results are collected -- and every checkpoint write happens --
             # on THIS one thread only, in whatever order calls actually
@@ -908,6 +1254,11 @@ def run_merge_names(
                     failed += 1
                     continue
 
+                # Persisted so a LATER run at a different tier can tell this
+                # decision apart from one already recorded here (issue #449's
+                # rollout, `_stale_evidence_tier_reasks`) without depending on
+                # the key alone.
+                record["evidence_tier"] = evidence_tier
                 append_checkpoint_record(decisions_path, record)
                 decisions[batch.key] = record
                 model = record["model"]
@@ -932,6 +1283,7 @@ def run_merge_names(
         batches_decided=called,
         batches_reused=reused,
         batches_failed=failed,
+        stale_evidence_tier_reasked=len(stale_batches),
     )
 
     merged = sum(len(node["aliases"]) for node in nodes)
@@ -957,6 +1309,8 @@ def run_merge_names(
         "min_cluster_size": min_cluster_size,
         "min_samples": min_samples,
         "limit": limit,
+        "evidence_tier": evidence_tier,
+        "stale_evidence_tier_reasked": len(stale_batches),
         # A cluster is complete when its decision is on disk; a failed or
         # unreached one is not, and a later run picks it up.
         "complete": complete,

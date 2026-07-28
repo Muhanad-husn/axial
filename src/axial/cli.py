@@ -70,6 +70,7 @@ from axial.llm import (
     get_client,
 )
 from axial.materialize import MaterializeError, run_materialize
+from axial.merge_names import DEFAULT_EVIDENCE_TIER as MERGE_DEFAULT_EVIDENCE_TIER
 from axial.merge_names import DEFAULT_WORKERS as MERGE_DEFAULT_WORKERS
 from axial.merge_names import MergeNamesError, run_merge_names
 from axial.names import (
@@ -371,6 +372,31 @@ def build_parser() -> argparse.ArgumentParser:
             "is I/O-bound, and serial calls project to hours for a corpus this "
             f"size) (default: {MERGE_DEFAULT_WORKERS}, a starting value -- "
             "per-call latency has not been observed on the real corpus yet)"
+        ),
+    )
+    names_merge_parser.add_argument(
+        "--evidence-tier",
+        type=int,
+        choices=[1, 2, 3],
+        default=MERGE_DEFAULT_EVIDENCE_TIER,
+        help=(
+            "issue #449: how much of the inventory's own chunk_id join to "
+            "attach to each surface form -- 1 which source book(s) it appears "
+            "in, 2 adds section title(s), 3 adds a short passage window "
+            "(capped at 2 mentions) "
+            f"(default: {MERGE_DEFAULT_EVIDENCE_TIER}; under measurement -- "
+            "the founder's own comparison run picks the final tier)"
+        ),
+    )
+    names_merge_parser.add_argument(
+        "--confirm-reask",
+        action="store_true",
+        help=(
+            "issue #449's rollout gate: a batch already decided at a DIFFERENT "
+            "--evidence-tier looks, by key, exactly like an undecided one -- so "
+            "the run refuses to spend on it and names the exact count instead, "
+            "unless this flag confirms purging those decisions and re-asking "
+            "them at the requested tier"
         ),
     )
 
@@ -1600,7 +1626,12 @@ def _names_examine(min_cluster_sizes: str | None, min_samples: int | None) -> in
 
 
 def _names_merge(
-    min_cluster_size: int | None, min_samples: int | None, limit: int | None, workers: int
+    min_cluster_size: int | None,
+    min_samples: int | None,
+    limit: int | None,
+    workers: int,
+    evidence_tier: int,
+    confirm_reask: bool,
 ) -> int:
     try:
         result = run_merge_names(
@@ -1608,6 +1639,8 @@ def _names_merge(
             min_samples=min_samples,
             limit=limit,
             workers=workers,
+            evidence_tier=evidence_tier,
+            confirm_reask=confirm_reask,
         )
     except (NamesError, MergeNamesError, LLMError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1622,6 +1655,8 @@ def _names_merge(
         "reused",
         "failed",
         "workers",
+        "evidence_tier",
+        "stale_evidence_tier_reasked",
         "canonical_names",
         "merged_surface_forms",
         "seeded_surface_forms",
@@ -1814,7 +1849,14 @@ def main(argv: list[str] | None = None) -> int:
         return _names_examine(args.min_cluster_sizes, args.min_samples)
 
     if args.command == "names" and args.names_command == "merge":
-        return _names_merge(args.min_cluster_size, args.min_samples, args.limit, args.workers)
+        return _names_merge(
+            args.min_cluster_size,
+            args.min_samples,
+            args.limit,
+            args.workers,
+            args.evidence_tier,
+            args.confirm_reask,
+        )
 
     if args.command == "names" and args.names_command == "materialize":
         return _names_materialize()
