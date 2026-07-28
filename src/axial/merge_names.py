@@ -133,25 +133,29 @@ DEFAULT_MERGE_MANIFEST_PATH = DEFAULT_NAMES_DATA_DIR / "merge_manifest.json"
 # call that is ~11 hours; at 10s -- plausible with reasoning at `high` --
 # it is over two days) while the pool divides that by `workers`.
 #
-# 96 is now MEASURED rather than guessed. The first real pass ran 12, then 36,
-# and the corpus said the tail is what costs: per-call latency is a median 8s
-# against a 16s mean, because ~5% of clusters send the model into a long
-# generation that holds a worker slot for 5-10x the median. Concurrency is the
-# only lever that shortens the pass without touching a judgment -- the two that
-# looked cleverer were measured against 200 already-decided real clusters and
-# both cost accuracy: packing 20 clusters per call ran 1.9x SLOWER at 85.5%
-# agreement (output tokens dominate, and packing does not reduce them), and
-# turning reasoning off ran 5.1x faster at 68% agreement with a lopsided
-# over-merge bias -- 55 clusters merged MORE against 7 less, fusing two
-# different works, an author with a co-authored byline, and a word with a Latin
-# phrase. Over-merging destroys information; D10 forbids it outright. So the
-# dumb lever is the only free one.
+# 36 is MEASURED; it is the only value with a full-corpus run behind it
+# (19,381 clusters, 1.76 clusters/s, near-zero non-200s). The old 12 was a
+# guess.
 #
-# 96 sits under `axial.llm`'s connection pool (128, and keep-alive now equal to
-# it -- issue #438, without which everything above 20 re-handshakes TLS per
-# call). Still a CLI flag (`--workers`): lower it if a provider pushes back.
-# Zero non-200s were seen at 36 over 19,434 calls.
-DEFAULT_WORKERS = 96
+# Do not raise it further without re-measuring. 96 was tried and the provider
+# saturates: ~2.2 clusters/s against 36's 1.76, so 2.7x the workers bought
+# ~25% -- and the deadline/error rate went from near-zero to ~1% of calls.
+# The bottleneck is not the pool, it is generation. Per-call latency is a
+# median 8s against a 16s MEAN, because ~5% of clusters send the model into a
+# long generation that holds a worker slot for 5-10x the median; adding
+# workers does not shorten those.
+#
+# Concurrency is still the only lever that costs no accuracy. The two that
+# looked cleverer were measured against 200 already-decided real clusters and
+# both lost: packing 20 clusters per call ran 1.9x SLOWER (output tokens
+# dominate, and packing does not reduce them), and turning reasoning off ran
+# 5.1x faster at 68% agreement with a lopsided over-merge bias -- 55 clusters
+# merged MORE against 7 less. Against an 88.9% self-agreement noise floor,
+# that 68% is a real degradation; over-merging destroys information and D10
+# forbids it.
+#
+# `--workers` still goes higher for anyone who wants to re-measure.
+DEFAULT_WORKERS = 36
 
 # §7.16's own map shape carries a `version`; `polity_canonical.yaml`, which
 # seeds it, uses the same field for the same job.
