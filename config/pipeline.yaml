@@ -80,6 +80,16 @@ llm:
     # and reasoning at high IS the "think about it" mechanism -- which is why
     # the prompt itself stays loose and says nothing about thinking step by
     # step. Paired with temperature_by_pass.reconcile below.
+    #
+    # MEASURED 2026-07-28 against 200 already-decided real clusters: turning
+    # this off runs 5.1x faster but agrees only 68% of the time, and the
+    # disagreement is lopsided -- 55 clusters merged MORE against 7 less. It
+    # fused two different works, an author with a co-authored byline, and a
+    # word with a Latin phrase. Over-merging destroys information (D10: "two
+    # genuinely different ideas must not [meet]"), so the speed is not for
+    # sale. This line is what buys it. `low` is not an option: deepseek/glm
+    # advertise only high/xhigh, and OpenRouter's remap-to-nearest measured
+    # WORSE than high -- a higher median plus a 10,017-token blowup.
     reconcile: high
     artifacts: false
   # Per-pass SAMPLING TEMPERATURE (§7.9, issue #416): the third per-pass
@@ -91,10 +101,16 @@ llm:
   # field at all, and a pass absent here still sends none, so every other
   # pass's sampling is exactly what it was.
   temperature_by_pass:
-    # Founder directive: the name-merge pass samples at 1. Merging names is
-    # an underdetermined generative judgment, and the project's own
+    # Founder directive, since MEASURED and vindicated (2026-07-28). Merging
+    # names is an underdetermined generative judgment, and the project's own
     # measurement says that shape of task is won by sampling rather than by
     # prompt engineering (docs/tag-reliability-best-of-n.md §2.11, lesson 4).
+    # Tested directly on a cluster that cost 13,845 completion tokens live:
+    # temperature 0 was WORSE on every axis -- ~2x the tokens and ~5x the
+    # latency (greedy decoding degenerates into repetitive reasoning loops;
+    # sampling is what breaks the loop) -- and it was not even deterministic,
+    # giving two distinct answers over five greedy draws. Nothing is bought by
+    # turning this down. See data/logs/2026-07-28-names-merge-full/.
     reconcile: 1
   # NOTE on the three 2026-07 model-swap entries above and model_by_pass's
   # synthesize/interrogate below: this is a founder-directed provisional
