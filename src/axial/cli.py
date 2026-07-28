@@ -1652,6 +1652,7 @@ def _names_merge(
         "workers",
         "evidence_tier",
         "stale_evidence_tier_reasked",
+        "escalated_surfaces",
         "canonical_names",
         "merged_surface_forms",
         "seeded_surface_forms",

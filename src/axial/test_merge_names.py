@@ -32,6 +32,7 @@ from axial.merge_names import (
     purge_decisions,
     write_alias_map,
     write_index,
+    write_merge_manifest,
 )
 from axial.names import DEFAULT_MIN_CLUSTER_SIZE, DEFAULT_MIN_SAMPLES, NOISE_LABEL
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
@@ -63,6 +64,15 @@ def test_prompt_carries_no_step_by_step_scaffolding():
 
     for banned in ("step by step", "step-by-step", "think carefully", "for example", "criteria"):
         assert banned not in prompt
+
+
+def test_prompt_offers_the_undecided_outcome_alongside_nodes():
+    """Issue #450: a third outcome exists in the response vocabulary, not
+    just "folded" or "stands on its own"."""
+    prompt = compose_merge_prompt(["a", "b"], {})
+
+    assert '"undecided"' in prompt
+    assert "cannot" in prompt.casefold() or "does not let you tell" in prompt.casefold()
 
 
 # ---------------------------------------------------------------------------
@@ -118,13 +128,14 @@ def test_parse_keeps_only_surface_forms_the_batch_actually_carried():
         }
     )
 
-    nodes = parse_merge_response(
+    nodes, escalated = parse_merge_response(
         raw, ["state formation through war", "bellicist state building", "civil society"]
     )
 
     assert nodes == [
         {"canonical": "state formation through war", "aliases": ["bellicist state building"]}
     ]
+    assert escalated == []
 
 
 def test_parse_places_each_surface_form_at_most_once():
@@ -132,7 +143,7 @@ def test_parse_places_each_surface_form_at_most_once():
         {"nodes": [{"canonical": "a", "aliases": ["b"]}, {"canonical": "b", "aliases": ["a"]}]}
     )
 
-    nodes = parse_merge_response(raw, ["a", "b"])
+    nodes, _escalated = parse_merge_response(raw, ["a", "b"])
 
     placed = [surface for node in nodes for surface in [node["canonical"], *node["aliases"]]]
     assert sorted(placed) == ["a", "b"]
@@ -151,6 +162,86 @@ def test_parse_rejects_a_response_that_placed_nothing():
 
 
 # ---------------------------------------------------------------------------
+# Issue #450: a third outcome -- the model says it cannot tell
+# ---------------------------------------------------------------------------
+
+
+def test_parse_reports_an_undecided_member_as_escalated_not_unplaced():
+    """The whole point: a member the model explicitly could not judge is
+    distinguishable, on the parse's own return value, from one it never
+    mentioned at all."""
+    raw = json.dumps({"nodes": [{"canonical": "a", "aliases": []}], "undecided": ["b"]})
+
+    nodes, escalated = parse_merge_response(raw, ["a", "b", "c"])
+
+    assert nodes == [{"canonical": "a", "aliases": []}]
+    assert escalated == ["b"]
+    # "c" is mentioned nowhere -- absent from both, unplaced exactly as it
+    # always has been.
+
+
+def test_a_fully_escalated_response_is_a_real_judgment_not_response_noise():
+    """A response that escalates every member of the batch, placing nothing
+    in `nodes`, must NOT be re-asked as if it were malformed -- it is a
+    genuine answer."""
+    raw = json.dumps({"nodes": [], "undecided": ["a", "b"]})
+
+    nodes, escalated = parse_merge_response(raw, ["a", "b"])
+
+    assert nodes == []
+    assert escalated == ["a", "b"]
+
+
+def test_parse_still_rejects_a_response_that_places_nothing_anywhere():
+    """Neither `nodes` nor `undecided` addressed the batch at all -- that is
+    still response noise, re-asked exactly as before."""
+    raw = json.dumps(
+        {"nodes": [{"canonical": "unknown", "aliases": []}], "undecided": ["also unknown"]}
+    )
+
+    with pytest.raises(MergeResponseError):
+        parse_merge_response(raw, ["a", "b"])
+
+
+def test_a_node_placement_wins_over_the_same_surface_also_listed_as_undecided():
+    """A contradictory response -- the model both merges a surface AND lists
+    it as undecided -- resolves in favour of the real judgment (the node),
+    not the abstention."""
+    raw = json.dumps({"nodes": [{"canonical": "a", "aliases": ["b"]}], "undecided": ["b"]})
+
+    nodes, escalated = parse_merge_response(raw, ["a", "b"])
+
+    assert nodes == [{"canonical": "a", "aliases": ["b"]}]
+    assert escalated == []
+
+
+def test_undecided_accepts_the_rendered_form_the_prompt_showed():
+    """Trap 1 generalizes to the third outcome too: whatever `render_member`
+    put in front of the model is what the parse must accept back, in
+    `undecided` exactly as in `nodes`."""
+    kinds = {"Table 4.1": "concept"}
+    rendered = render_member("Table 4.1", kinds)
+    raw = json.dumps({"nodes": [], "undecided": [rendered]})
+
+    nodes, escalated = parse_merge_response(raw, ["Table 4.1"], kinds)
+
+    assert nodes == []
+    assert escalated == ["Table 4.1"]
+
+
+def test_undecided_ignores_a_missing_or_malformed_field():
+    """A response with no `undecided` key at all (every pre-#450 stub answer
+    in the existing acceptance fixtures) must parse exactly as before --
+    escalation is a thing the model says, never a default."""
+    raw = json.dumps({"nodes": [{"canonical": "a", "aliases": ["b"]}]})
+
+    nodes, escalated = parse_merge_response(raw, ["a", "b"])
+
+    assert nodes == [{"canonical": "a", "aliases": ["b"]}]
+    assert escalated == []
+
+
+# ---------------------------------------------------------------------------
 # The fold: every surface survives, the map is a pure function of its inputs
 # ---------------------------------------------------------------------------
 
@@ -165,6 +256,27 @@ def test_an_unmapped_surface_survives_as_its_own_node():
     )
 
     assert {node["canonical"]: node["aliases"] for node in nodes} == {"a": ["b"], "alone": []}
+
+
+def test_an_escalated_member_stands_alone_exactly_like_an_unplaced_one():
+    """Issue #450, scope: `build_alias_map_nodes` needs no change for an
+    escalated member -- it never appears in `decision_nodes` (only
+    surviving as its batch's own `escalated` field, which this function
+    never reads), so it falls through to its own node exactly as any member
+    the response never mentioned does. D10's asymmetry holds: splitting
+    loses less than fusing."""
+    escalated_member_decision_nodes: list[dict] = []  # "escalated" never becomes a node
+
+    nodes = build_alias_map_nodes(
+        _entries("escalated-surface", "a", "b"),
+        escalated_member_decision_nodes + [{"canonical": "a", "aliases": ["b"]}],
+        {},
+    )
+
+    assert {node["canonical"]: node["aliases"] for node in nodes} == {
+        "a": ["b"],
+        "escalated-surface": [],
+    }
 
 
 def test_merges_chain_across_decisions_and_the_fold_is_order_independent():
@@ -283,6 +395,35 @@ def test_alias_map_and_index_have_the_spec_shape(tmp_path: Path):
     assert json.loads((tmp_path / "index.json").read_text(encoding="utf-8"))["names"] == ["a"]
 
 
+def test_manifest_carries_the_escalated_surfaces_count(tmp_path: Path):
+    """Issue #450: the rate is readable off the manifest alone, without
+    re-parsing `merge_decisions.jsonl`."""
+    path = tmp_path / "merge_manifest.json"
+
+    write_merge_manifest(
+        path,
+        complete=True,
+        batches_total=10,
+        batches_decided=10,
+        batches_reused=0,
+        batches_failed=0,
+        escalated_surfaces=3,
+    )
+
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    assert manifest["escalated_surfaces"] == 3
+
+
+def test_manifest_escalated_surfaces_defaults_to_zero(tmp_path: Path):
+    path = tmp_path / "merge_manifest.json"
+
+    write_merge_manifest(
+        path, complete=True, batches_total=1, batches_decided=1, batches_reused=0, batches_failed=0
+    )
+
+    assert json.loads(path.read_text(encoding="utf-8"))["escalated_surfaces"] == 0
+
+
 def test_merge_tightness_comes_from_config_and_falls_back_to_the_loosest(tmp_path: Path):
     configured = tmp_path / "pipeline.yaml"
     configured.write_text("names:\n  merge_min_cluster_size: 7\n  merge_min_samples: 3\n", "utf-8")
@@ -336,7 +477,7 @@ def test_parse_accepts_a_surface_echoed_in_the_form_the_prompt_showed():
     with pytest.raises(MergeResponseError):
         parse_merge_response(raw, members)
 
-    nodes = parse_merge_response(raw, members, kinds)
+    nodes, _escalated = parse_merge_response(raw, members, kinds)
     assert {n["canonical"] for n in nodes} == {"Sociology", "sociology"}
 
 
@@ -354,7 +495,7 @@ def test_parse_accepts_the_rendered_form_for_a_real_merge():
         }
     )
 
-    nodes = parse_merge_response(raw, members, kinds)
+    nodes, _escalated = parse_merge_response(raw, members, kinds)
     assert nodes == [
         {"canonical": "Fifty-Three Years in Syria", "aliases": ["Fifty-three years in Syria"]}
     ]
@@ -369,7 +510,7 @@ def test_a_real_surface_form_always_beats_another_surfaces_rendering():
         {"nodes": [{"canonical": "Phelps-Brown and Hopkins (1956)", "aliases": ["Phelps-Brown"]}]}
     )
 
-    nodes = parse_merge_response(raw, members, kinds)
+    nodes, _escalated = parse_merge_response(raw, members, kinds)
     assert nodes == [{"canonical": "Phelps-Brown and Hopkins (1956)", "aliases": ["Phelps-Brown"]}]
 
 
@@ -388,7 +529,8 @@ def test_case_only_variants_can_both_be_placed():
     members = ["Slavery", "slavery"]
     raw = json.dumps({"nodes": [{"canonical": "Slavery", "aliases": ["slavery"]}]})
 
-    assert parse_merge_response(raw, members) == [{"canonical": "Slavery", "aliases": ["slavery"]}]
+    nodes, _escalated = parse_merge_response(raw, members)
+    assert nodes == [{"canonical": "Slavery", "aliases": ["slavery"]}]
 
 
 def test_normalized_matching_still_absorbs_stray_whitespace_and_case():
@@ -396,7 +538,7 @@ def test_normalized_matching_still_absorbs_stray_whitespace_and_case():
     when two members share the normalized key."""
     raw = json.dumps({"nodes": [{"canonical": "  mao   zedong ", "aliases": ["MAO"]}]})
 
-    nodes = parse_merge_response(raw, ["Mao Zedong", "Mao"])
+    nodes, _escalated = parse_merge_response(raw, ["Mao Zedong", "Mao"])
     assert nodes == [{"canonical": "Mao Zedong", "aliases": ["Mao"]}]
 
 
@@ -481,7 +623,7 @@ def test_render_parse_round_trip_survives_evidence_attached():
     with pytest.raises(MergeResponseError):
         parse_merge_response(raw, members, kinds)  # no evidence -> doesn't match
 
-    nodes = parse_merge_response(raw, members, kinds, evidence)
+    nodes, _escalated = parse_merge_response(raw, members, kinds, evidence)
     assert nodes == [{"canonical": "Table 4.1", "aliases": ["Fig. 4.1"]}]
 
 
