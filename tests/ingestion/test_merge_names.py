@@ -86,7 +86,7 @@ def _run_axial(root: Path, *args: str, env_extra: dict[str, str] | None = None):
     )
 
 
-def _answers(names: list[str]) -> dict:
+def _answers(names: list[str], kind: str = "concept") -> dict:
     return {
         "about": ["x"],
         "claim": "x",
@@ -95,7 +95,7 @@ def _answers(names: list[str]) -> dict:
         "stops_holding": "not-in-passage",
         "position_of": "not-in-passage",
         "arguing_against": [],
-        "names": [{"name": name, "kind": "concept"} for name in names],
+        "names": [{"name": name, "kind": kind} for name in names],
         "citations": [],
         "mechanism": "not-in-passage",
         "evidence": "not-in-passage",
@@ -107,7 +107,7 @@ def _answers(names: list[str]) -> dict:
     }
 
 
-def _build_fixture_answers(root: Path, name_groups: list[list[str]]) -> None:
+def _build_fixture_answers(root: Path, name_groups: list[list[str]], kind: str = "concept") -> None:
     answers_dir = root / "data" / "answers"
     answers_dir.mkdir(parents=True, exist_ok=True)
     with (answers_dir / "src1.jsonl").open("w", encoding="utf-8") as handle:
@@ -122,7 +122,7 @@ def _build_fixture_answers(root: Path, name_groups: list[list[str]]) -> None:
                         "model": "stub",
                         "frame_version": "0.1",
                         "answered_at": "2026-01-01T00:00:00Z",
-                        "answers": _answers(names),
+                        "answers": _answers(names, kind),
                     }
                 )
                 + "\n"
@@ -415,3 +415,204 @@ def test_limit_caps_the_calls_actually_submitted(isolated_vault_root):
     manifest = json.loads((names_dir / "merge_manifest.json").read_text(encoding="utf-8"))
     assert manifest["complete"] is False
     assert manifest["batches_total"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Issue #446: candidate generation recovers the pairs clustering never sees
+# ---------------------------------------------------------------------------
+
+C_TILLY = "C. Tilly"
+CHARLES_TILLY = "Charles Tilly"
+ABERCROMBIE = "Abercrombie"
+NIKOLAS_ABERCROMBIE = "Nikolas Abercrombie"
+R_COHEN = "R. Cohen"
+ROBIN_COHEN = "Robin Cohen"
+ROGER_COHEN = "Roger Cohen"
+
+
+def _singleton_clusters(vectors) -> list[int]:
+    """Every surface form its OWN cluster -- the worst case for slice 04's
+    recall, and exactly the shape issue #446 describes: a name and its
+    variant that never land in the same HDBSCAN cluster, so no real cluster
+    batch would ever contain both."""
+    return list(range(len(vectors)))
+
+
+def test_candidate_generation_recovers_pairs_hdbscan_never_co_clusters(isolated_vault_root):
+    """Issue #446. With every surface form in its own singleton cluster
+    (simulating clustering's recall gap), `build_batches` alone would submit
+    ZERO calls -- yet `C. Tilly`/`Charles Tilly` and `Abercrombie`/`Nikolas
+    Abercrombie` still resolve to one canonical each, because candidate
+    generation proposes them as additional clusters for the SAME merge call.
+    `R. Cohen` (ambiguous against two candidates) is never even sent to the
+    model, so it and a genuinely distinct name stay apart."""
+    root = isolated_vault_root
+    _build_fixture_answers(
+        root,
+        [
+            [C_TILLY],
+            [CHARLES_TILLY],
+            [ABERCROMBIE],
+            [NIKOLAS_ABERCROMBIE],
+            [R_COHEN],
+            [ROBIN_COHEN],
+            [ROGER_COHEN],
+            [DISTINCT_A],
+        ],
+        kind="person",
+    )
+    names_dir = root / "data" / "names"
+    from axial.merge_names import run_merge_names
+    from axial.names import run_names
+
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+        cluster_fn=_singleton_clusters,
+    )
+
+    prompts: list[str] = []
+
+    class MergeEverythingClient:
+        """Merges whatever a batch hands it. Safe here only because the
+        fixture is built so the ambiguous group (R. Cohen / Robin Cohen /
+        Roger Cohen) is never proposed as one batch in the first place --
+        this asserts that directly, rather than trusting the client to
+        refuse."""
+
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            prompts.append(prompt)
+            assert not (R_COHEN in prompt and ROBIN_COHEN in prompt), (
+                "R. Cohen is ambiguous against Robin Cohen and Roger Cohen -- "
+                "must never be proposed as a merge candidate"
+            )
+            assert not (R_COHEN in prompt and ROGER_COHEN in prompt)
+            members = [
+                name
+                for name in (
+                    C_TILLY,
+                    CHARLES_TILLY,
+                    ABERCROMBIE,
+                    NIKOLAS_ABERCROMBIE,
+                    R_COHEN,
+                    ROBIN_COHEN,
+                    ROGER_COHEN,
+                    DISTINCT_A,
+                )
+                if name in prompt
+            ]
+            canonical, *aliases = sorted(members)
+            return json.dumps({"nodes": [{"canonical": canonical, "aliases": aliases}]})
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    summary = run_merge_names(
+        embeddings_dir=names_dir / "embeddings.lance",
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=names_dir / "merge_decisions.jsonl",
+        manifest_path=names_dir / "merge_manifest.json",
+        domain_dir=root / "no-such-domain",
+        client=MergeEverythingClient(),
+        cluster_fn=_singleton_clusters,
+    )
+
+    # No real HDBSCAN cluster produced a batch (every cluster is a
+    # singleton); every call made was a proposed candidate.
+    assert summary["clusters"] == 8
+    assert summary["candidate_batches"] == 2
+    assert summary["batches"] == 2
+    assert len(prompts) == 2
+
+    nodes = _nodes_by_canonical(_read_alias_map(root))
+    # The two pairs slice 04's clustering never co-located resolve to one
+    # canonical each.
+    tilly_group = sorted([C_TILLY, *nodes.get(C_TILLY, [])] + nodes.get(CHARLES_TILLY, []))
+    abercrombie_group = sorted(
+        [ABERCROMBIE, *nodes.get(ABERCROMBIE, [])] + nodes.get(NIKOLAS_ABERCROMBIE, [])
+    )
+    assert (C_TILLY in nodes and nodes[C_TILLY] == [CHARLES_TILLY]) or (
+        CHARLES_TILLY in nodes and nodes[CHARLES_TILLY] == [C_TILLY]
+    )
+    assert (ABERCROMBIE in nodes and nodes[ABERCROMBIE] == [NIKOLAS_ABERCROMBIE]) or (
+        NIKOLAS_ABERCROMBIE in nodes and nodes[NIKOLAS_ABERCROMBIE] == [ABERCROMBIE]
+    )
+    del tilly_group, abercrombie_group  # readable-by-construction above
+
+    # The ambiguous pair, and the never-related distinct name, stay apart:
+    # each survives as its own canonical with no aliases.
+    for surface in (R_COHEN, ROBIN_COHEN, ROGER_COHEN, DISTINCT_A):
+        assert nodes[surface] == []
+
+
+def test_existing_decisions_are_reused_when_candidates_are_added(isolated_vault_root):
+    """Issue #446: re-running after candidate generation is wired in must not
+    re-decide a cluster the model already settled -- only genuinely new
+    clusters (real or candidate) get a fresh call."""
+    root = isolated_vault_root
+    _build_fixture_answers(
+        root,
+        [[C_TILLY], [CHARLES_TILLY], [DISTINCT_A, DISTINCT_B]],
+        kind="person",
+    )
+    names_dir = root / "data" / "names"
+    from axial.merge_names import run_merge_names
+    from axial.names import run_names
+
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+        cluster_fn=lambda vectors: [0, 1, 2, 2],
+    )
+
+    class MergeClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            if DISTINCT_A in prompt and DISTINCT_B in prompt:
+                return json.dumps({"nodes": [{"canonical": DISTINCT_A, "aliases": [DISTINCT_B]}]})
+            return json.dumps(
+                {"nodes": [{"canonical": C_TILLY, "aliases": [CHARLES_TILLY]}]}
+                if C_TILLY in prompt
+                else {"nodes": []}
+            )
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    first = run_merge_names(
+        embeddings_dir=names_dir / "embeddings.lance",
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=names_dir / "merge_decisions.jsonl",
+        manifest_path=names_dir / "merge_manifest.json",
+        domain_dir=root / "no-such-domain",
+        client=MergeClient(),
+        cluster_fn=lambda vectors: [0, 1, 2, 2],
+    )
+    assert first["decided"] == 2  # the real cluster + the one candidate pair
+    decisions_before = (names_dir / "merge_decisions.jsonl").read_text(encoding="utf-8")
+
+    class ExplodingClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            raise AssertionError("no cluster should be re-decided on an unchanged re-run")
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    second = run_merge_names(
+        embeddings_dir=names_dir / "embeddings.lance",
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=names_dir / "merge_decisions.jsonl",
+        manifest_path=names_dir / "merge_manifest.json",
+        domain_dir=root / "no-such-domain",
+        client=ExplodingClient(),
+        cluster_fn=lambda vectors: [0, 1, 2, 2],
+    )
+    assert second["decided"] == 0
+    assert second["reused"] == first["batches"]
+    assert (names_dir / "merge_decisions.jsonl").read_text(encoding="utf-8") == decisions_before
