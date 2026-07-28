@@ -98,18 +98,17 @@ run's own stdout.
 **Issue #449: the merge call was deciding from a bare surface form and a
 kind, which does not contain the answer for `Adam Smith` vs `Anthony D.
 Smith`.** `build_evidence_index` joins each surface form to the passages the
-inventory already has a `chunk_id` for (no new extraction) and attaches one
-of three cumulative tiers, selected by `evidence_tier` -- (1) which source
-book(s) it appears in, zero file I/O because `source_id` lives inside
-`chunk_id` itself; (2) the section title(s) its mentions sit under; (3) a
-short window (<=240 chars, capped at 2 mentions -- CIP's own rule,
-`CIP_Curation_Operations_Manual.md` §2.4.2) around one or two mentions.
-Shipped default is tier 1; the founder's own measurement run picks the
-final tier and this dial's losing levels are deleted in a follow-up, not
-kept as a permanent config surface. `render_member` is still the ONE place
-that renders a member, reused by the parse (see its docstring) -- evidence
-is folded into that same rendered form, never a separate echo the model
-has to get right on its own.
+inventory already has a `chunk_id` for (no new extraction) and attaches
+which source book(s) it appears in -- zero file I/O, because `source_id`
+lives inside `chunk_id` itself. Two other cumulative tiers (+ section
+titles, + a short passage window) were built alongside this one so the
+founder's own measurement run could compare all three against the bare-name
+pass; the measurement is in and source provenance is the only one that
+survives (issue #453, `data/logs/2026-07-28-merge-evidence-tiers/summary.md`,
+DEC-51) -- the other two are deleted, not kept as a permanent dial.
+`render_member` is still the ONE place that renders a member, reused by the
+parse (see its docstring) -- evidence is folded into that same rendered
+form, never a separate echo the model has to get right on its own.
 
 CIP DEC-206, "withhold the scores": whatever similarity numbers a candidate
 stage computes are for calibration logs, never for this prompt -- it carries
@@ -132,7 +131,6 @@ from typing import Any, Iterable
 import yaml
 
 from axial.checkpoint import append_checkpoint_record, load_checkpoint_records
-from axial.chunk import MissingChunkArtifactError, read_chunks
 from axial.interrogate import _default_domain_dir
 from axial.llm import RECONCILE_PASS_NAME, LLMClient, get_client
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
@@ -205,23 +203,14 @@ ALIAS_MAP_VERSION = 1
 # context alongside the short prompt around it.
 DEFAULT_MEMBER_CHAR_BUDGET = 20_000
 
-# Issue #449's three cumulative evidence tiers -- 1 implies nothing, 2 implies
-# 1, 3 implies 1 and 2. Selectable because the founder's own measurement run
-# compares them against each other; the losing tiers are deleted in a
-# follow-up once that run picks a winner, not kept as a permanent dial.
-EVIDENCE_TIER_SOURCE = 1
-EVIDENCE_TIER_SECTION = 2
-EVIDENCE_TIER_WINDOW = 3
-
-# Shipped default: the cheapest tier, zero file I/O (source_id lives inside
-# chunk_id). Under measurement -- see the module docstring.
-DEFAULT_EVIDENCE_TIER = EVIDENCE_TIER_SOURCE
-
-# CIP's own rule (`CIP_Curation_Operations_Manual.md` §2.4.2): "one or two
-# short source snippets", so tier 3 never carries more than this many windows
-# per surface form, and each window is capped at this many characters.
-EVIDENCE_WINDOW_MAX_MENTIONS = 2
-EVIDENCE_WINDOW_CHARS = 240
+# Issue #449 stamped every decision record with the evidence tier it was
+# rendered at, while three tiers were under measurement (issue #453,
+# DEC-51). Source provenance is the only one that survived the measurement,
+# so this is now a fixed value rather than a selectable dial -- kept as a
+# named constant, not a bare literal, because `_stale_evidence_tier_reasks`
+# still has to tell a stamped record apart from a pre-#449 one that has no
+# `evidence_tier` field at all.
+EVIDENCE_TIER = 1
 
 # Issue #446: candidate clusters (`axial.name_candidates`) get their own
 # `cluster_label` namespace, disjoint from HDBSCAN's (`NOISE_LABEL`=-1, real
@@ -265,13 +254,13 @@ class MergeDecisionsCorruptError(MergeNamesError):
 
 
 class MergeReaskConfirmationRequiredError(MergeNamesError):
-    """Raised BEFORE any model call this run would make, when re-deciding at
-    `evidence_tier` would silently re-ask clusters this exact corpus already
-    has an answer for -- just recorded under a DIFFERENT evidence_tier
-    (issue #449's rollout: `MergeBatch.key` folds in kind+evidence on
-    purpose, trap 3, so those old decisions look like brand-new clusters to
-    a plain key lookup). A real spend, so it needs an explicit `--confirm-
-    reask` (`confirm_reask=True`), not a default."""
+    """Raised BEFORE any model call this run would make, when re-deciding
+    would silently re-ask clusters this exact corpus already has an answer
+    for -- just recorded before evidence was attached at all, under a
+    DIFFERENT `evidence_tier` (issue #449's rollout: `MergeBatch.key` folds
+    in evidence on purpose, trap 3, so those old decisions look like
+    brand-new clusters to a plain key lookup). A real spend, so it needs an
+    explicit `--confirm-reask` (`confirm_reask=True`), not a default."""
 
     def __init__(self, batch_count: int, decision_count: int):
         self.batch_count = batch_count
@@ -280,8 +269,8 @@ class MergeReaskConfirmationRequiredError(MergeNamesError):
             f"{batch_count} cluster batch(es) were already decided under a different "
             f"evidence_tier ({decision_count} recorded decision(s) would be superseded and "
             "purged) -- re-run with --confirm-reask (confirm_reask=True) to purge them and "
-            "let the model decide them again at this tier; this is a real spend, not a free "
-            "format change"
+            "let the model decide them again with evidence attached; this is a real spend, "
+            "not a free format change"
         )
 
 
@@ -313,110 +302,37 @@ def _resolve_merge_tightness(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -
 # ---------------------------------------------------------------------------
 
 
-def _extract_window(text: str, surface_form: str, width: int) -> str:
-    """A <=`width`-char window of `text` centred on `surface_form`'s first
-    occurrence (case-insensitive), whitespace collapsed to single spaces so
-    the window is always one line -- a chunk's own text can carry newlines,
-    and this is folded into a single rendered member line (see
-    `render_member`). Falls back to the window's own start when the surface
-    form is not found verbatim (e.g. it was extracted from a table or a
-    caption docling reflowed): still real passage text, just not centred."""
-    collapsed = " ".join(text.split())
-    if not collapsed:
-        return ""
-    position = collapsed.casefold().find(surface_form.casefold())
-    if position == -1:
-        start = 0
-    else:
-        start = max(position - (width - len(surface_form)) // 2, 0)
-    end = min(start + width, len(collapsed))
-    start = max(end - width, 0)
-    snippet = collapsed[start:end].strip()
-    if not snippet:
-        return ""
-    return f"{'...' if start > 0 else ''}{snippet}{'...' if end < len(collapsed) else ''}"
-
-
 def build_evidence_index(
     chunk_ids_by_surface: dict[str, tuple[str, ...]],
-    tier: int,
-    chunks_dir: Path | None = None,
-    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
 ) -> dict[str, str]:
-    """One rendered evidence suffix per surface form, built ONCE here --
-    before `run_merge_names` builds a single batch or starts the worker
-    pool, because `_decide_batch` runs on worker threads and a chunk file
-    read is not something to redo per member (issue #449, trap 4).
+    """One rendered evidence suffix per surface form: which source book(s)
+    it appears in, built ONCE here -- before `run_merge_names` builds a
+    single batch or starts the worker pool.
 
-    Tier 1 (`EVIDENCE_TIER_SOURCE`) costs zero file I/O: `source_id` lives
-    inside `chunk_id` itself (`source_id_from_chunk_id`). Tiers 2/3 need a
-    chunk's own `section`/`text`, read lazily via `axial.chunk.read_chunks`
-    and cached per `source_id` -- a full pass touches ~62k surface forms, so
-    a source's chunk file is opened at most once no matter how many surface
-    forms cite it. Tiers are cumulative: tier 3's suffix carries 1 and 2's
-    evidence too.
+    Zero file I/O: `source_id` lives inside `chunk_id` itself
+    (`source_id_from_chunk_id`). Issue #453 deleted the two costlier,
+    cumulative tiers (+ section titles, + a passage window) that #449 built
+    for measurement -- the founder's own comparison run against the
+    bare-name pass showed source provenance was the only one that helped
+    (`data/logs/2026-07-28-merge-evidence-tiers/summary.md`, DEC-51).
 
-    A surface form with no chunk_ids, or none that resolve to a real source
-    or chunk record, gets no entry here -- `render_member` treats a missing
-    key exactly as "no evidence", the pre-#449 behaviour.
+    A surface form with no chunk_ids, or none that resolve to a real
+    `chunk_id`, gets no entry here -- `render_member` treats a missing key
+    exactly as "no evidence", the pre-#449 behaviour.
     """
-    if tier < EVIDENCE_TIER_SOURCE:
-        return {}
-
-    chunk_cache: dict[str, dict[str, dict[str, Any]]] = {}
-
-    def _chunks_for(source_id: str) -> dict[str, dict[str, Any]]:
-        if source_id not in chunk_cache:
-            try:
-                records = read_chunks(source_id, chunks_dir=chunks_dir, config_path=config_path)
-            except MissingChunkArtifactError:
-                records = []
-            chunk_cache[source_id] = {record["chunk_id"]: record for record in records}
-        return chunk_cache[source_id]
-
     index: dict[str, str] = {}
     for surface_form, chunk_ids in chunk_ids_by_surface.items():
-        resolved: list[tuple[str, str]] = []  # (chunk_id, source_id), in order
+        sources: list[str] = []
         for chunk_id in chunk_ids:
             try:
-                resolved.append((chunk_id, source_id_from_chunk_id(chunk_id)))
+                source_id = source_id_from_chunk_id(chunk_id)
             except MalformedChunkIdError:
                 continue
-        if not resolved:
-            continue
-
-        sources: list[str] = []
-        for _chunk_id, source_id in resolved:
             if source_id not in sources:
                 sources.append(source_id)
-        parts = [f"in {', '.join(sorted(sources))}"]
-
-        if tier >= EVIDENCE_TIER_SECTION:
-            sections: list[str] = []
-            for chunk_id, source_id in resolved:
-                record = _chunks_for(source_id).get(chunk_id)
-                section = record.get("section") if record else None
-                if section and section not in sections:
-                    sections.append(section)
-            if sections:
-                parts.append(f"under {', '.join(sections)}")
-
-        if tier >= EVIDENCE_TIER_WINDOW:
-            windows: list[str] = []
-            for chunk_id, source_id in resolved:
-                if len(windows) >= EVIDENCE_WINDOW_MAX_MENTIONS:
-                    break
-                record = _chunks_for(source_id).get(chunk_id)
-                text = record.get("text") if record else None
-                if not text:
-                    continue
-                window = _extract_window(text, surface_form, EVIDENCE_WINDOW_CHARS)
-                if window:
-                    windows.append(window)
-            if windows:
-                parts.append("e.g. " + " / ".join(f'"{window}"' for window in windows))
-
-        index[surface_form] = "(" + "; ".join(parts) + ")"
+        if not sources:
+            continue
+        index[surface_form] = f"(in {', '.join(sorted(sources))})"
     return index
 
 
@@ -1048,20 +964,19 @@ def purge_decisions(path: Path, batch_keys: set[str]) -> int:
 def _stale_evidence_tier_reasks(
     candidates: list[MergeBatch],
     decisions: dict[str, dict[str, Any]],
-    evidence_tier: int,
 ) -> tuple[list[MergeBatch], set[str]]:
-    """Which of `candidates` are pending ONLY because `evidence_tier`
-    changed -- not because the cluster is genuinely new.
+    """Which of `candidates` are pending only because they were decided
+    before evidence was attached at all -- not because the cluster is
+    genuinely new.
 
-    `MergeBatch.key` folds in kind+evidence (trap 3), so a batch already
-    decided at a different tier gets a different key and looks, to a plain
-    key lookup, exactly like a brand-new cluster. Detected instead by bare
-    membership: every decision record already carries its own `members`
-    (the bare surface forms, unaffected by kind/evidence), so a candidate
-    batch whose bare member set matches an existing record recorded under a
-    DIFFERENT `evidence_tier` (missing entirely on any pre-#449 record,
-    read as tier 0) is exactly that -- already answered once, just not
-    under this tier.
+    `MergeBatch.key` folds in evidence (trap 3), so a batch already decided
+    without it gets a different key and looks, to a plain key lookup,
+    exactly like a brand-new cluster. Detected instead by bare membership:
+    every decision record already carries its own `members` (the bare
+    surface forms, unaffected by evidence), so a candidate batch whose bare
+    member set matches an existing record stamped with a DIFFERENT
+    `evidence_tier` (missing entirely on any pre-#449 record, read as tier
+    0) is exactly that -- already answered once, just not with evidence.
 
     `candidates` MUST already be `limit`-bounded (`run_merge_names` passes
     its own `to_attempt`, never the full `pending`): the return value drives
@@ -1086,7 +1001,7 @@ def _stale_evidence_tier_reasks(
         matches = [
             record
             for record in records_by_members.get(frozenset(batch.members), [])
-            if record.get("evidence_tier", 0) != evidence_tier
+            if record.get("evidence_tier", 0) != EVIDENCE_TIER
         ]
         if matches:
             stale_batches.append(batch)
@@ -1115,37 +1030,33 @@ def run_merge_names(
     limit: int | None = None,
     workers: int = DEFAULT_WORKERS,
     cluster_fn: ClusterFn | None = None,
-    evidence_tier: int = DEFAULT_EVIDENCE_TIER,
-    chunks_dir: Path | None = None,
     confirm_reask: bool = False,
 ) -> dict[str, Any]:
     """Merge the name inventory into a reversible alias map and return the
     run summary.
 
-    `evidence_tier` (issue #449) selects how much of the inventory's own
-    chunk_id join is attached to each surface form in the prompt: 1 (source
-    book(s), the default -- zero extra file I/O), 2 (+ section titles), or 3
-    (+ a short passage window, capped at 2 mentions). Selectable because the
-    founder's own measurement run compares the tiers against each other and
-    against the bare-name pass; this is not a permanent config surface.
+    Every surface form's prompt line carries source provenance (issue #449:
+    which book(s) it appears in, joined from the inventory's own `chunk_id`s
+    at zero extra file I/O). Two costlier tiers were built alongside this
+    one for measurement and are now gone (issue #453, DEC-51): this is
+    unconditional, not a dial.
 
-    `confirm_reask` guards the rollout hazard `evidence_tier` introduces:
-    `MergeBatch.key` folds in kind+evidence (trap 3), so a corpus decided
-    once at one tier looks, key-for-key, exactly like an undecided one the
-    moment the tier changes -- moving the whole corpus's decisions from
-    "reused" to "re-asked" as a side effect of a code change, not a choice.
-    `run_merge_names` detects this by bare membership
-    (`_stale_evidence_tier_reasks`), scoped to `to_attempt` (this run's own
-    `limit`-bounded batch list, never the full `pending` set), and raises
-    `MergeReaskConfirmationRequiredError` naming the count THIS run would
-    actually re-ask -- before building a client or submitting a single
-    batch -- unless `confirm_reask` is `True`, in which case exactly those
-    superseded decisions are purged (`purge_decisions`) and re-asked as part
-    of this run. A `--limit` run purges and reports only what it is about
-    to re-ask, never the whole stale population: the decision log is the
-    only copy, and a decision this run does not touch is left untouched on
-    disk, including whatever a later, larger run (or the acceptance
-    measurement's own bare-name baseline) still needs to read.
+    `confirm_reask` guards a rollout hazard evidence attachment introduces:
+    `MergeBatch.key` folds in evidence (trap 3), so a corpus decided before
+    evidence existed looks, key-for-key, exactly like an undecided one --
+    moving those decisions from "reused" to "re-asked" as a side effect of
+    the code change that turned evidence on, not a choice. `run_merge_names`
+    detects this by bare membership (`_stale_evidence_tier_reasks`), scoped
+    to `to_attempt` (this run's own `limit`-bounded batch list, never the
+    full `pending` set), and raises `MergeReaskConfirmationRequiredError`
+    naming the count THIS run would actually re-ask -- before building a
+    client or submitting a single batch -- unless `confirm_reask` is `True`,
+    in which case exactly those superseded decisions are purged
+    (`purge_decisions`) and re-asked as part of this run. A `--limit` run
+    purges and reports only what it is about to re-ask, never the whole
+    stale population: the decision log is the only copy, and a decision
+    this run does not touch is left untouched on disk, including whatever a
+    later, larger run still needs to read.
 
     Reads slice 04's persisted similarity view, re-clusters it at the
     configured tightness, and asks the model about pending clusters
@@ -1207,12 +1118,7 @@ def run_merge_names(
     chunk_ids_by_surface = {
         row["surface_form"]: tuple(json.loads(row["chunk_ids_json"])) for row in rows
     }
-    evidence = build_evidence_index(
-        chunk_ids_by_surface,
-        tier=evidence_tier,
-        chunks_dir=chunks_dir,
-        config_path=config_path,
-    )
+    evidence = build_evidence_index(chunk_ids_by_surface)
 
     vectors = [row["vector"] for row in rows]
     if cluster_fn is None:
@@ -1237,18 +1143,18 @@ def run_merge_names(
     reused = len(batches) - len(pending)
     to_attempt = pending if limit is None else pending[:limit]
 
-    # Issue #449's rollout hazard: a batch pending only because evidence_tier
-    # changed is indistinguishable, BY KEY, from a genuinely new cluster --
-    # so it must be found by bare membership before a single call goes out.
+    # Issue #449's rollout hazard: a batch pending only because it was
+    # decided before evidence existed is indistinguishable, BY KEY, from a
+    # genuinely new cluster -- so it must be found by bare membership
+    # before a single call goes out.
     #
     # Computed over `to_attempt`, NOT all of `pending`: a `--limit`-bounded
     # run must purge (and report) only the stale decisions it is actually
     # about to re-ask. Purging the WHOLE stale population regardless of
     # `limit` would delete every decision behind clusters this run never
-    # touches -- the log is the only copy, and those decisions (including
-    # the acceptance measurement's own bare-name baseline) would be gone
+    # touches -- the log is the only copy, and those decisions would be gone
     # with no way back, for a spend the operator never made.
-    stale_batches, stale_keys = _stale_evidence_tier_reasks(to_attempt, decisions, evidence_tier)
+    stale_batches, stale_keys = _stale_evidence_tier_reasks(to_attempt, decisions)
     if stale_batches and not confirm_reask:
         raise MergeReaskConfirmationRequiredError(len(stale_batches), len(stale_keys))
     if stale_keys:
@@ -1262,7 +1168,7 @@ def run_merge_names(
         f"at min_cluster_size={min_cluster_size} min_samples={min_samples}; "
         f"{reused} already decided, {len(to_attempt)} to decide now "
         f"({len(pending) - len(to_attempt)} more pending) across {max(workers, 1)} worker(s); "
-        f"{len(stale_batches)} of those are a re-ask at evidence_tier={evidence_tier} "
+        f"{len(stale_batches)} of those are a re-ask onto evidence "
         "(purged from the decision log)",
         file=sys.stderr,
     )
@@ -1297,11 +1203,10 @@ def run_merge_names(
                     failed += 1
                     continue
 
-                # Persisted so a LATER run at a different tier can tell this
-                # decision apart from one already recorded here (issue #449's
-                # rollout, `_stale_evidence_tier_reasks`) without depending on
-                # the key alone.
-                record["evidence_tier"] = evidence_tier
+                # Persisted so a LATER run can tell this decision apart from
+                # a pre-#449, evidence-free one (`_stale_evidence_tier_
+                # reasks`) without depending on the key alone.
+                record["evidence_tier"] = EVIDENCE_TIER
                 append_checkpoint_record(decisions_path, record)
                 decisions[batch.key] = record
                 model = record["model"]
@@ -1352,7 +1257,7 @@ def run_merge_names(
         "min_cluster_size": min_cluster_size,
         "min_samples": min_samples,
         "limit": limit,
-        "evidence_tier": evidence_tier,
+        "evidence_tier": EVIDENCE_TIER,
         "stale_evidence_tier_reasked": len(stale_batches),
         # A cluster is complete when its decision is on disk; a failed or
         # unreached one is not, and a later run picks it up.

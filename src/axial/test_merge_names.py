@@ -15,13 +15,8 @@ from pathlib import Path
 import pytest
 
 from axial.merge_names import (
-    DEFAULT_EVIDENCE_TIER,
     DEFAULT_MEMBER_CHAR_BUDGET,
-    EVIDENCE_TIER_SECTION,
-    EVIDENCE_TIER_SOURCE,
-    EVIDENCE_TIER_WINDOW,
-    EVIDENCE_WINDOW_CHARS,
-    EVIDENCE_WINDOW_MAX_MENTIONS,
+    EVIDENCE_TIER,
     MergeBatch,
     MergeResponseError,
     _locator_source_conflict,
@@ -406,128 +401,54 @@ def test_normalized_matching_still_absorbs_stray_whitespace_and_case():
 
 
 # ---------------------------------------------------------------------------
-# Issue #449: evidence tiers -- source, section, window
+# Issue #449/#453: evidence is unconditional source provenance
 # ---------------------------------------------------------------------------
 
 
-def _write_chunk_fixture(chunks_dir: Path, source_id: str, records: list[dict]) -> None:
-    chunks_dir.mkdir(parents=True, exist_ok=True)
-    with (chunks_dir / f"{source_id}.jsonl").open("w", encoding="utf-8") as handle:
-        for record in records:
-            handle.write(json.dumps(record) + "\n")
-
-
-def test_the_shipped_default_evidence_tier_is_the_cheapest():
-    """D10-style "start loose" applies here too: ship the tier that costs
-    zero file I/O, and let the founder's own measurement run pick further."""
-    assert DEFAULT_EVIDENCE_TIER == EVIDENCE_TIER_SOURCE
-
-
-def test_tier_1_source_provenance_costs_zero_file_io(tmp_path: Path):
-    """Tier 1 needs nothing from `data/chunks/`: source_id lives inside
-    chunk_id itself. Pointing at a chunks_dir that doesn't even exist must
-    not raise, and the source book(s) must still show up."""
+def test_source_provenance_evidence_costs_zero_file_io():
+    """`source_id` lives inside `chunk_id` itself, so evidence is built with
+    no chunks_dir and no file read at all."""
     chunk_ids_by_surface = {
         "Table 4.1": ("mann-v2-1993-ec759675dcbd_56_2-pre-1792-militarism_002",)
     }
 
-    evidence = build_evidence_index(
-        chunk_ids_by_surface, tier=EVIDENCE_TIER_SOURCE, chunks_dir=tmp_path / "no-such-dir"
-    )
+    evidence = build_evidence_index(chunk_ids_by_surface)
 
     assert evidence["Table 4.1"] == "(in mann-v2-1993-ec759675dcbd)"
 
 
-def test_tier_2_adds_section_titles_from_the_chunk_file(tmp_path: Path):
-    _write_chunk_fixture(
-        tmp_path,
-        "src1-aaaaaaaaaaaa",
-        [
-            {
-                "chunk_id": "src1-aaaaaaaaaaaa_1_intro_001",
-                "section": "Introduction",
-                "section_order": "1",
-                "text": "Adam Smith argued for free trade.",
-            }
-        ],
-    )
-    chunk_ids_by_surface = {"Adam Smith": ("src1-aaaaaaaaaaaa_1_intro_001",)}
+def test_a_surface_form_with_no_resolvable_chunk_id_gets_no_evidence_entry():
+    """A surface form whose chunk_ids never resolve to a real chunk_id (a
+    malformed one) gets no entry -- `render_member` treats a missing key
+    exactly as "no evidence", the pre-#449 behaviour."""
+    chunk_ids_by_surface = {"Ghost": ("not-a-real-chunk-id",)}
 
-    evidence = build_evidence_index(
-        chunk_ids_by_surface, tier=EVIDENCE_TIER_SECTION, chunks_dir=tmp_path
-    )
+    evidence = build_evidence_index(chunk_ids_by_surface)
 
-    assert evidence["Adam Smith"] == "(in src1-aaaaaaaaaaaa; under Introduction)"
+    assert "Ghost" not in evidence
 
 
-def test_tier_3_adds_a_capped_window_around_the_mention(tmp_path: Path):
-    long_text = ("padding " * 100) + "Anthony D. Smith wrote about nationalism." + (" more" * 100)
-    _write_chunk_fixture(
-        tmp_path,
-        "src2-bbbbbbbbbbbb",
-        [
-            {
-                "chunk_id": "src2-bbbbbbbbbbbb_1_nations_001",
-                "section": "Nations",
-                "section_order": "1",
-                "text": long_text,
-            }
-        ],
-    )
-    chunk_ids_by_surface = {"Anthony D. Smith": ("src2-bbbbbbbbbbbb_1_nations_001",)}
-
-    evidence = build_evidence_index(
-        chunk_ids_by_surface, tier=EVIDENCE_TIER_WINDOW, chunks_dir=tmp_path
-    )
-
-    rendered = evidence["Anthony D. Smith"]
-    assert "in src2-bbbbbbbbbbbb" in rendered
-    assert "under Nations" in rendered
-    assert "e.g." in rendered
-    assert "Anthony D. Smith wrote about nationalism" in rendered
-    # The window itself, quoted, never exceeds the char cap plus its own
-    # ellipsis markers.
-    window = rendered.split("e.g. ")[1].strip(")")
-    for snippet in window.split(" / "):
-        assert len(snippet.strip('"').replace("...", "")) <= EVIDENCE_WINDOW_CHARS
-
-
-def test_tier_3_never_carries_more_than_two_windows(tmp_path: Path):
-    """CIP's own rule (`CIP_Curation_Operations_Manual.md` §2.4.2): at most
-    two short snippets per entity, however many mentions the corpus has."""
-    records = [
-        {
-            "chunk_id": f"src3-cccccccccccc_{index}_section_001",
-            "section": f"Section {index}",
-            "section_order": str(index),
-            "text": f"Robin Cohen appears here, mention number {index}.",
-        }
-        for index in range(1, 6)
-    ]
-    _write_chunk_fixture(tmp_path, "src3-cccccccccccc", records)
+def test_453_rendered_prompt_is_byte_identical_to_the_old_evidence_tier_1():
+    """Issue #453 deleted tiers 2 and 3 and made tier 1's own behaviour
+    unconditional. The merge decision log is content-keyed on the rendered
+    member list (#451), so this deletion must not move a single byte of
+    what tier 1 already rendered -- pinned against a known, multi-source
+    input exactly as the old `build_evidence_index(..., tier=1)` produced
+    it."""
     chunk_ids_by_surface = {
-        "Robin Cohen": tuple(record["chunk_id"] for record in records),
+        "Table 4.1": ("mann-v2-1993-ec759675dcbd_56_2-pre-1792-militarism_002",),
+        "Fig. 4.1": (
+            "mann-v2-1993-ec759675dcbd_56_2-pre-1792-militarism_002",
+            "doe-2001-aaaaaaaaaaaa_1_intro_001",
+        ),
     }
+    kinds = {"Table 4.1": "concept", "Fig. 4.1": "concept"}
 
-    evidence = build_evidence_index(
-        chunk_ids_by_surface, tier=EVIDENCE_TIER_WINDOW, chunks_dir=tmp_path
-    )
+    evidence = build_evidence_index(chunk_ids_by_surface)
+    prompt = compose_merge_prompt(["Table 4.1", "Fig. 4.1"], kinds, evidence)
 
-    windows = evidence["Robin Cohen"].split("e.g. ")[1].strip(")").split(" / ")
-    assert len(windows) == EVIDENCE_WINDOW_MAX_MENTIONS
-
-
-def test_a_missing_chunk_artifact_degrades_to_the_tiers_it_can_still_answer(tmp_path: Path):
-    """A source whose chunk file never made it to this chunks_dir (or was
-    cleaned up) must not crash tier 2/3 -- it just contributes no section or
-    window evidence, same as #446's own "no cluster to decide" tolerance."""
-    chunk_ids_by_surface = {"Ghost Source": ("ghost-source-000000000000_1_intro_001",)}
-
-    evidence = build_evidence_index(
-        chunk_ids_by_surface, tier=EVIDENCE_TIER_WINDOW, chunks_dir=tmp_path / "empty"
-    )
-
-    assert evidence["Ghost Source"] == "(in ghost-source-000000000000)"
+    assert "- 'Table 4.1' (concept) (in mann-v2-1993-ec759675dcbd)" in prompt
+    assert "- 'Fig. 4.1' (concept) (in doe-2001-aaaaaaaaaaaa, mann-v2-1993-ec759675dcbd)" in prompt
 
 
 def test_evidence_is_folded_into_the_one_rendered_member_line():
@@ -604,16 +525,16 @@ def test_batch_key_changes_when_evidence_changes():
 
 
 # ---------------------------------------------------------------------------
-# Issue #449's rollout hazard: a bare-name decision log, an evidence-tier
-# change, and the gate that keeps the re-ask from being silent
+# Issue #449's rollout hazard: a bare-name decision log, evidence turning
+# on, and the gate that keeps the re-ask from being silent
 # ---------------------------------------------------------------------------
 
 
 def test_stale_evidence_tier_reasks_finds_a_batch_by_bare_membership_not_key():
     """The whole point: a batch whose CURRENT key is pending (never decided
-    under this exact kind/evidence rendering) is still recognizable as
-    "already decided, just at a different tier" by its bare member list,
-    which every decision record carries regardless of tier."""
+    under this exact evidence rendering) is still recognizable as "already
+    decided, just without evidence" by its bare member list, which every
+    decision record carries regardless of evidence."""
     pending = [MergeBatch(0, ("a", "b"), ("'a' (in src1)", "'b' (in src1)"))]
     decisions = {
         "old-bare-key": {
@@ -624,7 +545,7 @@ def test_stale_evidence_tier_reasks_finds_a_batch_by_bare_membership_not_key():
         }
     }
 
-    stale_batches, stale_keys = _stale_evidence_tier_reasks(pending, decisions, evidence_tier=1)
+    stale_batches, stale_keys = _stale_evidence_tier_reasks(pending, decisions)
 
     assert stale_batches == pending
     assert stale_keys == {"old-bare-key"}
@@ -644,28 +565,28 @@ def test_stale_evidence_tier_reasks_ignores_a_genuinely_new_cluster():
         }
     }
 
-    stale_batches, stale_keys = _stale_evidence_tier_reasks(pending, decisions, evidence_tier=1)
+    stale_batches, stale_keys = _stale_evidence_tier_reasks(pending, decisions)
 
     assert stale_batches == []
     assert stale_keys == set()
 
 
 def test_stale_evidence_tier_reasks_ignores_a_batch_already_decided_at_the_same_tier():
-    """A record stamped with the SAME evidence_tier this run wants is not
+    """A record already stamped with the current `evidence_tier` is not
     stale -- but note it would also already be `reused` by key in the
     normal case; this only matters for the rare case where the rendered
-    kind/evidence differ even at the same nominal tier."""
+    evidence differs even though the stamped tier is unchanged."""
     pending = [MergeBatch(0, ("a", "b"), ("'a' (in src1)", "'b' (in src1)"))]
     decisions = {
         "some-key": {
             "batch_key": "some-key",
             "members": ["a", "b"],
             "nodes": [],
-            "evidence_tier": 1,
+            "evidence_tier": EVIDENCE_TIER,
         }
     }
 
-    stale_batches, stale_keys = _stale_evidence_tier_reasks(pending, decisions, evidence_tier=1)
+    stale_batches, stale_keys = _stale_evidence_tier_reasks(pending, decisions)
 
     assert stale_batches == []
     assert stale_keys == set()
