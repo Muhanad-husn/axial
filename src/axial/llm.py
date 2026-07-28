@@ -1506,6 +1506,25 @@ _REQUEST_TIMEOUT = httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=15.0
 # slow-but-progressing real completion is never penalized by this ceiling.
 _REQUEST_DEADLINE_SECONDS = 300.0
 
+# HTTP connection-pool size. httpx's own defaults are 100 concurrent
+# connections but only 20 KEPT ALIVE, which is wrong for how every concurrent
+# pass here uses this client: one shared client, many small calls in flight
+# at once. Above 20 workers the surplus connections are torn down and TLS
+# re-handshaked on every call -- silently paying a round trip per request on
+# exactly the passes that share one client to avoid that. Measured on the
+# 2026-07-28 name-merge pass, which runs 36 workers by default request and
+# has a ceiling near 96.
+#
+# ONE number, not a tuned pair: keep-alive is set equal to the connection
+# cap, so every connection the pool opens stays warm. 128 is a ceiling above
+# any worker count this codebase asks for, not a tuning parameter -- an idle
+# slot costs nothing, so there is no trade-off to tune against.
+_POOL_CONNECTIONS = 128
+_POOL_LIMITS = httpx.Limits(
+    max_connections=_POOL_CONNECTIONS,
+    max_keepalive_connections=_POOL_CONNECTIONS,
+)
+
 
 class _RequestDeadlineExceeded(Exception):
     """Raised internally (issue #108) when a single `complete()` attempt's
@@ -1778,7 +1797,10 @@ class OpenRouterClient:
         # knows the draw's brief_stem/index AFTER the client already exists.
         self._run_id: str | None = None
         self._client = httpx.Client(
-            base_url=base_url, transport=transport, timeout=_REQUEST_TIMEOUT
+            base_url=base_url,
+            transport=transport,
+            timeout=_REQUEST_TIMEOUT,
+            limits=_POOL_LIMITS,
         )
 
     def set_run_id(self, run_id: str | None) -> None:

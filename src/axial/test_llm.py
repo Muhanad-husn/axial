@@ -2293,3 +2293,31 @@ def test_votes_for_pass_falls_back_to_the_default_when_the_config_is_absent(tmp_
     from axial.llm import ARTIFACTS_PASS_NAME, SINGLE_DRAW, votes_for_pass
 
     assert votes_for_pass(ARTIFACTS_PASS_NAME, tmp_path / "does-not-exist.yaml") == SINGLE_DRAW
+
+
+def test_the_http_pool_keeps_every_connection_it_opens_warm(monkeypatch):
+    """httpx defaults to 100 connections but only 20 keep-alive, so a pass
+    running more workers than that re-handshakes TLS on the surplus every
+    call -- on exactly the passes that share ONE client to avoid it. Pinned
+    because losing this line is silent: nothing fails, calls just get slower.
+    """
+    import httpx
+
+    from axial import llm as llm_module
+
+    captured: dict = {}
+    real_client = httpx.Client
+
+    def recording_client(*args, **kwargs):
+        captured.update(kwargs)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", recording_client)
+    llm_module.OpenRouterClient(api_key="k", model="m")
+
+    limits = captured["limits"]
+    assert limits.max_keepalive_connections == limits.max_connections, (
+        "every pooled connection must stay warm; a keep-alive cap below the "
+        "connection cap is the httpx default this test exists to override"
+    )
+    assert limits.max_connections >= 96, "must clear the name-merge worker ceiling"
