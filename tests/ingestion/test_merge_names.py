@@ -263,6 +263,81 @@ def test_worked_example_merges_the_same_idea_and_keeps_distinct_claims_apart(iso
     assert nodes[DISTINCT_B] == []
 
 
+# ---------------------------------------------------------------------------
+# Issue #450: a third outcome -- the model says it cannot tell
+# ---------------------------------------------------------------------------
+
+
+def test_an_escalated_surface_stands_alone_and_is_recorded_and_counted(isolated_vault_root):
+    """The model folds one pair, escalates one surface (says it cannot tell),
+    and places the last one as its own node. `alias_map.json` treats the
+    escalated surface exactly like an unplaced one -- it stands alone, and
+    the map's own §7.16 shape does not change -- but the decision log and
+    the manifest both make the escalation legible."""
+    from axial.merge_names import run_merge_names
+    from axial.names import run_names
+
+    root = isolated_vault_root
+    _build_fixture_answers(root, [[BELLICIST, DISTINCT_A], [BELLICIST_ALIAS, DISTINCT_B]])
+    names_dir = root / "data" / "names"
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+    )
+
+    class FakeClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            return json.dumps(
+                {
+                    "nodes": [
+                        {"canonical": BELLICIST, "aliases": [BELLICIST_ALIAS]},
+                        {"canonical": DISTINCT_B, "aliases": []},
+                    ],
+                    "undecided": [DISTINCT_A],
+                }
+            )
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    manifest_path = names_dir / "merge_manifest.json"
+    summary = run_merge_names(
+        embeddings_dir=names_dir / "embeddings.lance",
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=names_dir / "merge_decisions.jsonl",
+        manifest_path=manifest_path,
+        domain_dir=root / "no-such-domain",
+        client=FakeClient(),
+        cluster_fn=lambda vectors: [0] * len(vectors),
+    )
+
+    # §7.16's shape is untouched: an escalated surface stands alone, exactly
+    # like an unplaced one, and the map carries no new field.
+    alias_map = _read_alias_map(root)
+    assert set(alias_map) == {"version", "generated_at", "nodes"}
+    for node in alias_map["nodes"]:
+        assert set(node) == {"canonical", "kind", "aliases"}
+    nodes = _nodes_by_canonical(alias_map)
+    assert nodes[BELLICIST] == [BELLICIST_ALIAS]
+    assert nodes[DISTINCT_A] == []
+    assert nodes[DISTINCT_B] == []
+
+    # The escalation is legible in the decision log, addressable by name.
+    (decision_line,) = (
+        (names_dir / "merge_decisions.jsonl").read_text(encoding="utf-8").splitlines()
+    )
+    record = json.loads(decision_line)
+    assert record["escalated"] == [DISTINCT_A]
+
+    # And counted, off the manifest, without re-parsing the decision log.
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["escalated_surfaces"] == 1
+    assert summary["escalated_surfaces"] == 1
+
+
 def test_the_merge_pass_samples_at_temperature_1_with_high_reasoning():
     """Founder directive (issue #416, §7.9): both resolved from
     `config/pipeline.yaml`'s own per-pass blocks, and no other pass's request

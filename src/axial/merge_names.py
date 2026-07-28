@@ -114,6 +114,22 @@ CIP DEC-206, "withhold the scores": whatever similarity numbers a candidate
 stage computes are for calibration logs, never for this prompt -- it carries
 no numbers today and must not gain any, because showing them anchors the
 model to the rule's own answer instead of an independent read.
+
+**Issue #450: the merge call had exactly two outcomes -- folded, or
+unplaced -- with no way to say "I cannot tell".** An unplaced member has
+always looked identical to a confident refusal, so nothing downstream could
+tell a genuine "these are distinct" judgment apart from the model being
+forced to guess. The response vocabulary now carries a third outcome,
+`"undecided"`, alongside `"nodes"` (`parse_merge_response` returns
+`(nodes, escalated)`); every decision record persists its own `escalated`
+list, so the rate is measurable and the surfaces are addressable by name off
+`merge_decisions.jsonl` without re-asking anything. `build_alias_map_nodes`
+needs no change at all: an escalated member never appears in any decision's
+`nodes`, so it falls through exactly like a member the response never
+mentioned -- D10's asymmetry holds, splitting loses less than fusing, and
+`alias_map.json`'s §7.16 shape is untouched. `write_merge_manifest` gained
+one summary count (`escalated_surfaces`, corpus-wide, not just this run's)
+so the rate reads off the manifest alone.
 """
 
 from __future__ import annotations
@@ -226,15 +242,18 @@ hint, and it is often wrong.
 
 Decide which of them name the same thing. Where several do, pick the clearest \
 one as the canonical name and list the rest as its aliases. A surface form \
-that names something of its own stands on its own, with no aliases.
+that names something of its own stands on its own, with no aliases. Where \
+what is shown does not let you tell, say so instead of guessing.
 
 SURFACE FORMS
 {members}
 
 RESPONSE. Reply with ONLY a JSON object, no prose and no markdown fences:
-{{"nodes": [{{"canonical": "<surface form>", "aliases": ["<surface form>", ...]}}, ...]}}
+{{"nodes": [{{"canonical": "<surface form>", "aliases": ["<surface form>", ...]}}, ...], \
+"undecided": ["<surface form>", ...]}}
 Write every surface form exactly as it appears above, and use each one exactly \
-once across all nodes.
+once across "nodes" and "undecided" together: a form you cannot judge goes in \
+"undecided" rather than into a node of its own.
 """
 
 
@@ -503,9 +522,11 @@ def parse_merge_response(
     members: Iterable[str],
     kinds: dict[str, str | None] | None = None,
     evidence: dict[str, str] | None = None,
-) -> list[dict[str, Any]]:
-    """Parse one merge response into `[{canonical, aliases[]}]` restricted to
-    `members`.
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Parse one merge response into `(nodes, escalated)`, both restricted to
+    `members`: `nodes` is `[{canonical, aliases[]}]`, exactly as before, and
+    `escalated` (issue #450) is the batch's own surface forms the response
+    could not judge -- a third outcome, distinct from "unplaced".
 
     `kinds`/`evidence`, when given, also accept each surface back in the
     exact form the PROMPT showed it (`render_member`) -- i.e. `'Sociology'
@@ -523,13 +544,22 @@ def parse_merge_response(
     A surface form the batch did not contain is dropped rather than minted:
     the inventory is the lossless record of what the corpus said (§7.16), and
     a merge pass may fold names, never invent them. A member the response
-    placed twice keeps its first placement, so the result is always a
-    partition. A member the response never placed is simply absent here and
-    survives downstream as its own node.
+    placed twice keeps its first placement, so `nodes` is always a partition
+    and a member already placed in `nodes` wins over the same surface form
+    also appearing in `undecided` -- the response's own node placement is a
+    real judgment and takes priority over its abstention. A member the
+    response never placed anywhere -- not in a node, not in `undecided` -- is
+    simply absent from both lists and survives downstream exactly as it
+    always has: unplaced, standing on its own (issue #450's constraint: a
+    member the response never mentions must behave exactly as it does today,
+    since escalation is a thing the model says, not a default).
 
     Raises `MergeResponseError` on a shape failure -- no `nodes` list, or a
-    response that placed none of this batch's members -- which is response
-    noise rather than a judgment, and so is re-asked by `complete_json`.
+    response that placed none of this batch's members in EITHER `nodes` or
+    `undecided` -- which is response noise rather than a judgment, and so is
+    re-asked by `complete_json`. A response that escalates every member of
+    the batch, placing nothing in `nodes`, is a real judgment, not noise, and
+    does not raise.
     """
     try:
         data = parse_model_json(raw)
@@ -597,12 +627,24 @@ def parse_merge_response(
             canonical = aliases.pop(0)
         nodes.append({"canonical": canonical, "aliases": sorted(aliases)})
 
-    if not nodes:
+    raw_undecided = data.get("undecided")
+    escalated = sorted(
+        {
+            resolved
+            for resolved in (
+                resolve(value)
+                for value in (raw_undecided if isinstance(raw_undecided, list) else [])
+            )
+            if resolved is not None
+        }
+    )
+
+    if not nodes and not escalated:
         raise MergeResponseError(
             "merge response placed none of the batch's surface forms; expected each "
-            "one to appear exactly once across 'nodes'"
+            "one to appear exactly once across 'nodes' and 'undecided' together"
         )
-    return nodes
+    return nodes, escalated
 
 
 def _decide_batch(
@@ -645,7 +687,7 @@ def _decide_batch(
                 response, batch.members, kinds, evidence
             ),
         )
-        nodes = parse_merge_response(raw, batch.members, kinds, evidence)
+        nodes, escalated = parse_merge_response(raw, batch.members, kinds, evidence)
     except (ModelJsonError, MergeResponseError) as exc:
         return batch, None, str(exc)
 
@@ -654,6 +696,12 @@ def _decide_batch(
         "cluster_label": batch.cluster_label,
         "members": list(batch.members),
         "nodes": nodes,
+        # Issue #450: the third outcome -- members the response could not
+        # judge, distinct from a member it never mentioned at all. Kept as
+        # its own field so the escalation rate is measurable and the
+        # escalated surfaces are addressable by name straight off the
+        # decision log, without re-deriving them from `nodes`' own absence.
+        "escalated": escalated,
         "model": client.model_for_pass(RECONCILE_PASS_NAME),
         "decided_at": _utc_now(),
     }
@@ -894,6 +942,7 @@ def write_merge_manifest(
     batches_reused: int,
     batches_failed: int,
     stale_evidence_tier_reasked: int = 0,
+    escalated_surfaces: int = 0,
 ) -> None:
     """The one place a partial run says so on disk (issue #416, founder
     correction). `alias_map.json`/`index.json` are rewritten whole from
@@ -909,7 +958,15 @@ def write_merge_manifest(
     THIS run's decided batches were already answered once, at a different
     evidence_tier, before this run purged and re-asked them -- the on-disk
     record of the invalidated count, alongside the confirmation gate that
-    already made the operator see it before the spend."""
+    already made the operator see it before the spend.
+
+    `escalated_surfaces` (issue #450) is the total count of surface forms
+    marked "cannot tell" across EVERY decision currently in the log -- not
+    just the ones this run decided -- so the escalation rate is readable
+    off the manifest alone, without re-parsing the whole of
+    `merge_decisions.jsonl` to sum it. The escalated surfaces themselves are
+    addressable by name only in the decision log, which is the one copy;
+    this is a count, not a list."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
@@ -921,6 +978,7 @@ def write_merge_manifest(
                 "batches_reused": batches_reused,
                 "batches_failed": batches_failed,
                 "stale_evidence_tier_reasked": stale_evidence_tier_reasked,
+                "escalated_surfaces": escalated_surfaces,
             },
             indent=2,
             ensure_ascii=False,
@@ -1221,6 +1279,15 @@ def run_merge_names(
     decision_nodes = [node for record in decisions.values() for node in record["nodes"]]
     nodes = build_alias_map_nodes(entries, decision_nodes, seed_groups)
 
+    # Issue #450: the escalated count is summed over EVERY decision currently
+    # in the log, not just this run's own `to_attempt` -- so the manifest
+    # reads the corpus-wide rate without a caller re-parsing
+    # `merge_decisions.jsonl` line by line. `build_alias_map_nodes` needs no
+    # change: an escalated member never appears in a decision's `nodes`, so
+    # it already falls through `entries` as its own standalone canonical,
+    # same as any member the response never mentioned (D10's asymmetry).
+    escalated_surfaces = sum(len(record.get("escalated", [])) for record in decisions.values())
+
     write_alias_map(nodes, alias_map_path)
     write_index(nodes, index_path)
     complete = all(batch.key in decisions for batch in batches)
@@ -1232,6 +1299,7 @@ def run_merge_names(
         batches_reused=reused,
         batches_failed=failed,
         stale_evidence_tier_reasked=len(stale_batches),
+        escalated_surfaces=escalated_surfaces,
     )
 
     merged = sum(len(node["aliases"]) for node in nodes)
@@ -1259,6 +1327,7 @@ def run_merge_names(
         "limit": limit,
         "evidence_tier": EVIDENCE_TIER,
         "stale_evidence_tier_reasked": len(stale_batches),
+        "escalated_surfaces": escalated_surfaces,
         # A cluster is complete when its decision is on disk; a failed or
         # unreached one is not, and a later run picks it up.
         "complete": complete,
