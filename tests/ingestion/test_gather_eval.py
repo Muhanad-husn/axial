@@ -221,6 +221,51 @@ def _build_fixture(root: Path, *, member_count: int = 10) -> dict:
     return {"disagreement": disagreement_record, "null": null_record}
 
 
+def _build_large_disagreement_fixture(root: Path, *, member_count: int) -> dict:
+    """One disagreement entry with `member_count` real member notes carrying
+    a claim long enough (mirrors `axial.gather`'s own
+    `_build_large_fixture`) that its rebuilt packets exceed
+    `GATHER_PACKET_CHAR_BUDGET` and force the judge into more than one
+    batch. Overwrites `disagreements.jsonl` -- this fixture is the ONLY
+    entry on disk for the tests that use it."""
+    long_claim = (
+        "War making concentrated coercion and capital in the hands of rulers who "
+        "had to bargain with their populations for the means of war, and that "
+        "bargaining is what produced the representative institutions later read "
+        "back as the natural form of the state. "
+    )
+    chunk_ids = []
+    for index in range(member_count):
+        source_id = f"large-{index:04d}-1999"
+        chunk_id = f"{source_id}_000_intro_001"
+        _write_source(
+            root,
+            source_id,
+            f"Author {index}",
+            1999,
+            chunk_id,
+            claim=long_claim,
+            position_of="bellicist historical sociology",
+            arguing_against=["modernization theory"],
+        )
+        chunk_ids.append(chunk_id)
+
+    disagreement_record = {
+        "name_key": "large-name-key-1",
+        "canonical": "large disagreement",
+        "chunk_ids": chunk_ids,
+        "batches": [],
+        "merged": True,
+        "disagreement": "These authors disagree about the mechanism of state formation.",
+        "names": [],
+        "pass": "gather",
+        "model": "stub",
+        "gathered_at": "2026-01-01T00:00:00Z",
+    }
+    _write_jsonl(_dirs(root)["disagreements_path"], [disagreement_record])
+    return {"disagreement": disagreement_record}
+
+
 def _score(root: Path, client, **overrides):
     kwargs = {**_dirs(root), "client": client, "workers": 1, "null_sample_size": 0, "seed": 0}
     kwargs.update(overrides)
@@ -281,6 +326,55 @@ def test_a_not_grounded_judgment_is_reported_in_failures(tmp_path):
     assert failure["canonical"] == "war making"
     assert failure["attribution_grounded"] is False
     assert "invented" in failure["explanation"]
+
+
+# -- batching: reviewer-pinned. Gather itself batches large names (D12); the
+# judge must too or the 300+-member band -- 73.7% yield, the highest-value
+# entries in the corpus -- is never actually scorable at all. -----------------
+
+
+def test_a_large_name_batches_the_judge_call_and_still_yields_one_verdict(tmp_path):
+    _build_large_disagreement_fixture(tmp_path, member_count=60)
+    client = FakeJudgeClient(
+        judge_responses=[
+            _judge_response(True, True, "Batch 1 grounds it."),
+            _judge_response(False, False, "Batch 2 finds nothing."),
+        ]
+    )
+
+    result = _score(tmp_path, client)
+
+    assert len(client.judge_prompts) > 1, (
+        "a 60-member name's rebuilt packets must exceed the budget"
+    )
+    assert result["scored"] == 1
+    (judgment,) = _judgments(tmp_path)
+    assert judgment["judge_batches"] == len(client.judge_prompts)
+    # A position or a conflict grounded in ANY batch's evidence is grounded
+    # overall -- OR across batches, since a batch call carries only a slice
+    # of the name's own member packets.
+    assert judgment["attribution_grounded"] is True
+    assert judgment["conflict_grounded"] is True
+    assert judgment["grounded"] is True
+    assert result["grounding_rate"] == 1.0
+
+
+def test_a_large_name_batch_call_never_exceeds_the_gather_packet_budget(tmp_path):
+    from axial.gather import GATHER_PACKET_CHAR_BUDGET
+
+    _build_large_disagreement_fixture(tmp_path, member_count=60)
+    client = FakeJudgeClient(
+        judge_responses=[_judge_response(True, True), _judge_response(True, True)]
+    )
+
+    _score(tmp_path, client)
+
+    for prompt in client.judge_prompts:
+        members_block_chars = sum(
+            len(line) + 1
+            for line in prompt.split("PASSAGES\n")[1].split("\n\nDISAGREEMENT")[0].splitlines()
+        )
+        assert members_block_chars <= GATHER_PACKET_CHAR_BUDGET
 
 
 # -- D17: one record per judgment, content-keyed the way GatherJob.key is ----
@@ -546,6 +640,45 @@ def test_calibration_agreement_is_computed_once_a_marked_sheet_is_returned(tmp_p
     assert marks == {"war-making-key-1": True}
 
 
+def test_calibration_round_trip_from_the_file_the_sheet_command_actually_wrote(tmp_path):
+    """Reviewer-pinned: the file `run_gather_eval_sheet` writes and the file
+    `_score_calibration` reads must be the SAME basename (mirrors
+    `axial.gold`'s own round trip, `label_sheet.xlsx` on both ends). Walks
+    the real round trip -- emit, mark the actual written file in place,
+    return it unrenamed under `labels/`, then score -- rather than
+    hand-building a `labels/` workbook that never exercises the sheet
+    command's own filename at all."""
+    root = tmp_path
+    _build_fixture(root)
+    dirs = _dirs(root)
+    sheet_kwargs = {k: v for k, v in dirs.items() if k != "judgments_path"}
+
+    sheet_path = run_gather_eval_sheet(sample_size=1, seed=0, **sheet_kwargs)
+
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(sheet_path)
+    worksheet = workbook.active
+    header = [cell.value for cell in worksheet[1]]
+    grounded_col = header.index("grounded") + 1
+    worksheet.cell(row=2, column=grounded_col, value="yes")
+
+    labels_dir = dirs["calibration_dir"] / "labels"
+    labels_dir.mkdir(parents=True, exist_ok=True)
+    returned_path = labels_dir / sheet_path.name  # unrenamed, exactly as a founder would return it
+    workbook.save(returned_path)
+
+    client = FakeJudgeClient(judge_responses=[_judge_response(True, True)])
+    result = _score(root, client)
+
+    assert result["calibration"] is not None, (
+        "a marked sheet returned under the SAME name the sheet command wrote "
+        "must be found and scored, never silently read as 'not returned yet'"
+    )
+    assert result["calibration"]["joined"] == 1
+    assert result["calibration"]["agreement"] == 1.0
+
+
 # -- CLI wiring: in-process, mirroring tests/chunk/test_chunk_cli.py's own
 # seam decision (no subprocess needed; monkeypatch the client seam) --------
 
@@ -558,7 +691,7 @@ def test_gather_eval_sheet_and_score_cli_subcommands_are_wired(tmp_path, monkeyp
 
     sheet_exit = main(["gather-eval", "sheet", "--sample-size", "1"])
     assert sheet_exit == 0
-    assert (tmp_path / "data" / "gather_eval" / "calibration_sheet.xlsx").is_file()
+    assert (tmp_path / "data" / "gather_eval" / "label_sheet.xlsx").is_file()
 
     client = FakeJudgeClient(judge_responses=[_judge_response(True, True)])
     monkeypatch.setattr("axial.gather_eval.get_client", lambda config_path=None: client)

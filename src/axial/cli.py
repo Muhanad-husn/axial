@@ -578,7 +578,9 @@ def build_parser() -> argparse.ArgumentParser:
             "emit a real seeded, stratified sample of disagreement entries "
             "across the member-count bands (10-20, 20-50, 50-100, 100-300, "
             "300+) for the founder to mark grounded/not grounded, to "
-            "data/gather_eval/calibration_sheet.xlsx. Offline -- no LLM call"
+            "data/gather_eval/label_sheet.xlsx. Mark it and return the same "
+            "file, unrenamed, under data/gather_eval/labels/. Offline -- no "
+            "LLM call"
         ),
     )
     gather_eval_sheet_parser.add_argument(

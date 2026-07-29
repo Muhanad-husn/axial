@@ -17,10 +17,22 @@ questions --
 
 **No Gather re-run.** This module rebuilds the exact packet Gather saw for
 one entry from its own stored `chunk_ids`, reusing `axial.gather`'s own
-`build_packets`/`render_packet`/`MemberPacket` (and, for the null re-ask
-below, `GatherJob`/`split_into_batches`/`_gather_one` too) rather than
-re-deriving any of it. The 447 disagreement entries are a fixed,
-re-runnable set precisely because this reads what is already on disk.
+`build_packets`/`render_packet`/`MemberPacket` rather than re-deriving any
+of it. The 447 disagreement entries are a fixed, re-runnable set precisely
+because this reads what is already on disk.
+
+**The judge batches large names the same way Gather itself does (D12).**
+`_judge_one` reuses `axial.gather.split_into_batches`/
+`GATHER_PACKET_CHAR_BUDGET` verbatim -- the same path `_recheck_nulls`
+already goes through for the null re-ask, below -- rather than a second
+mechanism. Each batch is judged against the entry's full disagreement text,
+and the verdicts combine by OR across batches (grounded in ANY batch's
+evidence is grounded overall). This is not optional: a 300+-member name's
+own packets cannot fit under the budget in one call, and #477's yield curve
+puts 73.7% of that band on a real disagreement -- the highest-value entries
+in the corpus, and the entries an un-batched judge could never score at
+all. `_recheck_nulls` reuses `GatherJob`/`_gather_one` the same way, to
+re-ask a null entry exactly as a live Gather run would.
 
 **One record per judgment (D17).** Every judge call appends one record to
 `DEFAULT_JUDGMENTS_PATH` (`data/names/gather_eval.jsonl`, alongside
@@ -328,22 +340,62 @@ def eval_key(record: dict[str, Any], client: LLMClient) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _judge_one(
-    record: dict[str, Any], packets: list[MemberPacket], client: LLMClient
-) -> tuple[dict[str, Any], dict[str, Any] | None, str | None]:
-    """Judge one disagreement entry. Runs on a worker thread; never writes
-    to disk (mirrors `axial.gather._gather_one`'s own shape) -- the caller's
-    single result-collecting thread does the append."""
-    if not packets:
-        return record, None, "no member packets could be reconstructed from this record's chunk_ids"
-    prompt = compose_judge_prompt(record["canonical"], packets, record["disagreement"])
+def _judge_batch(
+    canonical: str, packets: list[MemberPacket], disagreement: str, client: LLMClient
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Judge one batch of member packets against the entry's full
+    disagreement text. Returns `(judged, None)` on success or
+    `(None, failure_reason)` on a content-shaped failure that survived
+    `complete_json`'s own bounded re-ask."""
+    prompt = compose_judge_prompt(canonical, packets, disagreement)
     try:
         raw = complete_json(
             client, prompt, pass_name=GATHER_EVAL_PASS_NAME, validate=parse_judge_response
         )
     except (ModelJsonError, GatherEvalResponseError) as exc:
-        return record, None, str(exc)
-    judged = parse_judge_response(raw)
+        return None, str(exc)
+    return parse_judge_response(raw), None
+
+
+def _judge_one(
+    record: dict[str, Any], packets: list[MemberPacket], client: LLMClient
+) -> tuple[dict[str, Any], dict[str, Any] | None, str | None]:
+    """Judge one disagreement entry. Runs on a worker thread; never writes
+    to disk (mirrors `axial.gather._gather_one`'s own shape) -- the caller's
+    single result-collecting thread does the append.
+
+    **Batches large names the same way Gather itself does (D12).** A single
+    un-batched call cannot even fit a 300+-member name's own packets under
+    `GATHER_PACKET_CHAR_BUDGET`, and #477's yield curve is exactly where the
+    corpus concentrates: 73.7% of the 300+ band carries a real disagreement.
+    Reuses `axial.gather.split_into_batches` verbatim -- the same path
+    `_recheck_nulls` already goes through -- rather than a second mechanism.
+    Each batch is judged against the SAME full disagreement text (not a
+    per-batch slice of it); the verdicts combine by OR across batches --
+    attribution or conflict grounded in ANY batch's evidence is grounded
+    overall, since a position's supporting passage, or the passages that
+    show the two sides of a conflict, can land in different batches the
+    same way a name's member notes themselves do."""
+    if not packets:
+        return record, None, "no member packets could be reconstructed from this record's chunk_ids"
+    disagreement = record["disagreement"]
+    batches = split_into_batches(packets)
+
+    judged_batches: list[dict[str, Any]] = []
+    for batch in batches:
+        judged, failure_reason = _judge_batch(
+            record["canonical"], list(batch), disagreement, client
+        )
+        if judged is None:
+            return record, None, failure_reason
+        judged_batches.append(judged)
+
+    attribution_grounded = any(judged["attribution_grounded"] for judged in judged_batches)
+    conflict_grounded = any(judged["conflict_grounded"] for judged in judged_batches)
+    explanation = " ".join(
+        judged["explanation"] for judged in judged_batches if judged["explanation"]
+    )
+
     member_count = _member_count(record)
     judgment = {
         "name_key": record["name_key"],
@@ -352,11 +404,12 @@ def _judge_one(
         "member_count": member_count,
         "band": member_count_band(member_count),
         "chunk_ids": record["chunk_ids"],
-        "disagreement": record["disagreement"],
-        "attribution_grounded": judged["attribution_grounded"],
-        "conflict_grounded": judged["conflict_grounded"],
-        "grounded": bool(judged["attribution_grounded"] and judged["conflict_grounded"]),
-        "explanation": judged["explanation"],
+        "disagreement": disagreement,
+        "judge_batches": len(batches),
+        "attribution_grounded": attribution_grounded,
+        "conflict_grounded": conflict_grounded,
+        "grounded": bool(attribution_grounded and conflict_grounded),
+        "explanation": explanation,
         "pass": GATHER_EVAL_PASS_NAME,
         "model": client.model_for_pass(GATHER_EVAL_PASS_NAME),
         "judged_at": _utc_now(),
@@ -427,12 +480,18 @@ def run_gather_eval_sheet(
     sample_size: int = CALIBRATION_SAMPLE_SIZE,
     seed: int = DEFAULT_SEED,
 ) -> Path:
-    """Emit `<calibration_dir>/calibration_sheet.xlsx`: a real seeded
-    stratified sample of `sample_size` disagreement entries across
-    `MEMBER_COUNT_BANDS`, each row carrying the entry's own evidence (the
-    member packets Gather saw, rebuilt from its `chunk_ids`) and disagreement
-    text, plus a blank `grounded` dropdown for the founder to mark. Offline
-    -- no LLM call. Returns the written path."""
+    """Emit `<calibration_dir>/label_sheet.xlsx`: a real seeded stratified
+    sample of `sample_size` disagreement entries across `MEMBER_COUNT_BANDS`,
+    each row carrying the entry's own evidence (the member packets Gather
+    saw, rebuilt from its `chunk_ids`) and disagreement text, plus a blank
+    `grounded` dropdown for the founder to mark. Offline -- no LLM call.
+    Returns the written path.
+
+    Same basename on both ends of the round trip as `axial.gold`
+    (`label_sheet.xlsx` written here, `label_sheet.xlsx` read back by
+    `_score_calibration` from `<calibration_dir>/labels/`) -- a founder who
+    returns the file under the name they were actually given must not
+    silently miss `_score_calibration`'s read path."""
     disagreements_path = (
         Path(disagreements_path) if disagreements_path is not None else DEFAULT_DISAGREEMENTS_PATH
     )
@@ -469,7 +528,7 @@ def run_gather_eval_sheet(
 
     workbook = _build_calibration_workbook(rows)
     calibration_dir.mkdir(parents=True, exist_ok=True)
-    sheet_path = calibration_dir / "calibration_sheet.xlsx"
+    sheet_path = calibration_dir / "label_sheet.xlsx"
     workbook.save(sheet_path)
     return sheet_path
 
