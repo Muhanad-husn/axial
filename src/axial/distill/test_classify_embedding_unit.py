@@ -56,13 +56,35 @@ def _row(chunk_id: str, vector: list[float], field_primary: str) -> dict:
     return {"chunk_id": chunk_id, "vector": vector, "field_primary": field_primary}
 
 
+def _stage_names_dir(names_dir: Path) -> None:
+    """A minimal, well-formed name layer (issue #486, D6): `write_pin`'s
+    vault-snapshot hash now covers it, so every `write_pin` fixture in this
+    file needs one to exist."""
+    names_dir.mkdir(parents=True, exist_ok=True)
+    (names_dir / "index.json").write_text(
+        json.dumps({"version": 1, "generated_at": "t", "names": []}), encoding="utf-8"
+    )
+    (names_dir / "alias_map.json").write_text(
+        json.dumps({"version": 1, "generated_at": "t", "nodes": []}), encoding="utf-8"
+    )
+    (names_dir / "disagreements.jsonl").write_text("", encoding="utf-8")
+
+
 def _stage_pin(tmp_path: Path, name: str = "baseline") -> Path:
     vault_dir = tmp_path / "data" / "vault"
     vault_dir.mkdir(parents=True, exist_ok=True)
     envelopes_dir = tmp_path / "data" / "envelopes"
     envelopes_dir.mkdir(parents=True, exist_ok=True)
+    names_dir = tmp_path / "data" / "names"
+    _stage_names_dir(names_dir)
     evals_dir = tmp_path / "evals" / "corpus_pin"
-    write_pin(name, vault_dir=vault_dir, envelopes_dir=envelopes_dir, evals_dir=evals_dir)
+    write_pin(
+        name,
+        vault_dir=vault_dir,
+        envelopes_dir=envelopes_dir,
+        names_dir=names_dir,
+        evals_dir=evals_dir,
+    )
     return evals_dir
 
 

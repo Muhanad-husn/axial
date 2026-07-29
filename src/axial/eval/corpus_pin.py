@@ -33,15 +33,27 @@ only, never source prose) carrying three fields:
   A repository state where the SHA cannot be read (no `git`, not a
   checkout, no commits yet) fails loudly (`GitShaUnavailableError`) rather
   than ever writing a pin with a null or placeholder SHA.
-- `vault_snapshot_hash` -- a single sha256 hex digest over every
-  `data/vault/prose/*.md` note's `(chunk_id, tags)` pair, sorted by
-  `chunk_id` so filesystem enumeration order never affects it. The tag
-  projection (`TAG_AXES`) covers exactly the schema's tag axes and
-  deliberately excludes `chunk_text` and `source_meta` (DEC-23) -- the
-  manifest is committed to the repo, so it must never be able to carry
-  source prose. Artifact notes (`data/vault/artifacts/`) are out of this
-  slice's projection (plan: "the §7.12 minimum is chunk_ids + tags; widening
-  the projection is a later, measured decision").
+- `vault_snapshot_hash` -- a single sha256 hex digest over two things, in a
+  stated order (§7.12, D6, issue #486): every `data/vault/prose/*.md`
+  note's `chunk_id`, sorted ascending; and the **name-layer index** --
+  `data/names/index.json`'s canonical name set, `data/names/alias_map.json`'s
+  `version`, and the count of non-null disagreement records in
+  `data/names/disagreements.jsonl`. The name layer belongs in the hash
+  because it is retrieval substrate now: `find_names`, `get_name`,
+  `name_neighbors`, `who_cites` and `who_argues_against` all read it, so two
+  runs over identical prose but a different alias map can reach different
+  evidence and are not comparable. The hash moves when a Gather or Reconcile
+  run changes what the engine can find -- correct behaviour, not spurious
+  invalidation. It **covers** the canonical name set without ever writing
+  the names themselves into the committed manifest: a canonical name is a
+  surface form a source wrote, so it is source-derived content and stays
+  under gitignored `data/`, exactly as DEC-23 already requires for
+  `chunk_text`. `generated_at` in either name-layer file never enters the
+  hash -- both move on every rebuild whether or not the content changed.
+  (STRUCK: the v0 projection was `(chunk_id, tags)` pairs over a fixed
+  `TAG_AXES` tuple; Phase A v1 deleted every one of those tag axes, so the
+  tags half of every pair had silently degraded to `{}` while still looking
+  like it tracked something. Retired rather than left in place.)
 
 Byte-identical reruns. `write_pin` serializes with `json.dumps(...,
 indent=2, sort_keys=True)` plus a trailing newline (the same convention
@@ -68,9 +80,11 @@ from typing import Any
 
 import yaml
 
+from axial.checkpoint import load_checkpoint_records
 from axial.envelope import content_digest, _default_envelopes_dir
 from axial.intake import SUPPORTED_EXTENSIONS
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
+from axial.paths import default_names_dir as _default_names_dir
 from axial.paths import default_sources_dir as _default_sources_dir
 from axial.vault import _default_vault_dir
 
@@ -94,22 +108,6 @@ EVALS_DIR = Path("evals") / "corpus_pin"
 # (routine -- e.g. "tilly-from-mobilization-to-revolution") is recovered
 # whole.
 _SOURCE_ID_PATTERN = re.compile(r"^(?P<stem>.+)-(?P<digest12>[0-9a-f]{12})$")
-
-# The tag-axis frontmatter keys the vault snapshot hash projects each note
-# onto (§7.12: "chunk_ids + tags, never chunk_text", DEC-23). Deliberately
-# excludes `chunk_id` itself (carried as the pair's own key, not part of the
-# tag payload), `chunk_text`, and `source_meta` -- a note frontmatter key
-# not in this tuple is silently excluded from the hash, so an unrelated
-# future frontmatter addition can't unintentionally widen what the pin
-# tracks.
-TAG_AXES = (
-    "role_in_argument",
-    "field",
-    "claim_type",
-    "theory_school",
-    "empirical_scope",
-    "polities_touched",
-)
 
 
 class CorpusPinError(Exception):
@@ -206,6 +204,82 @@ class MalformedNoteError(CorpusPinError):
         self.path = path
         detail = reason or "no closing '---' frontmatter delimiter"
         super().__init__(f"malformed vault note ({detail}): {path}")
+
+
+class MissingNamesDirError(CorpusPinError):
+    """Raised when the name-layer directory the snapshot hash reads
+    `index.json`/`alias_map.json`/`disagreements.jsonl` from does not
+    exist -- the name layer is retrieval substrate now (§7.12, D6), so a
+    missing name-layer directory is a misconfigured install, never silently
+    treated as an empty name set."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        super().__init__(
+            f"no name-layer directory found at {path}; run `axial names merge` and "
+            f"`axial names gather` first"
+        )
+
+
+class MissingNameIndexError(CorpusPinError):
+    """Raised when `<names_dir>/index.json` -- the canonical name set
+    `axial names merge` writes -- does not exist."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        super().__init__(f"no name index found at {path}; run `axial names merge` first")
+
+
+class MalformedNameIndexError(CorpusPinError):
+    """Raised when `<names_dir>/index.json` is not parseable JSON, or does
+    not parse to a mapping carrying a `names` list -- a corrupted or
+    hand-edited index, never silently treated as an empty name set."""
+
+    def __init__(self, path: Path, cause: Exception):
+        self.path = path
+        self.cause = cause
+        super().__init__(f"malformed name index at {path}: {cause}")
+
+
+class MissingAliasMapError(CorpusPinError):
+    """Raised when `<names_dir>/alias_map.json` -- Reconcile's own output --
+    does not exist."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        super().__init__(f"no alias map found at {path}; run `axial names merge` first")
+
+
+class MalformedAliasMapError(CorpusPinError):
+    """Raised when `<names_dir>/alias_map.json` is not parseable JSON, or
+    does not parse to a mapping carrying a `version` key."""
+
+    def __init__(self, path: Path, cause: Exception):
+        self.path = path
+        self.cause = cause
+        super().__init__(f"malformed alias map at {path}: {cause}")
+
+
+class MissingDisagreementsError(CorpusPinError):
+    """Raised when `<names_dir>/disagreements.jsonl` -- Gather's own
+    checkpoint of what it decided about every name -- does not exist."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        super().__init__(f"no disagreement records found at {path}; run `axial names gather` first")
+
+
+class MalformedDisagreementsError(CorpusPinError):
+    """Raised when a line of `<names_dir>/disagreements.jsonl` is not
+    parseable JSON -- a corrupted or hand-edited checkpoint file, mirroring
+    `MalformedEnvelopeError`'s identical guard on the envelope path (never
+    silently skipped)."""
+
+    def __init__(self, path: Path, line_no: int, cause: Exception):
+        self.path = path
+        self.line_no = line_no
+        self.cause = cause
+        super().__init__(f"disagreement record {path} is corrupt at line {line_no}: {cause}")
 
 
 class MissingCorpusPinError(CorpusPinError):
@@ -386,48 +460,116 @@ def _split_frontmatter(text: str, note_path: Path) -> dict[str, Any]:
     return data
 
 
-def _tag_projection(frontmatter: dict[str, Any]) -> dict[str, Any]:
-    """The snapshot-hash tag payload for one note: exactly the schema tag
-    axes present in `frontmatter` (`TAG_AXES`) -- never `chunk_text`, never
-    `source_meta` (DEC-23)."""
-    return {axis: frontmatter[axis] for axis in TAG_AXES if axis in frontmatter}
-
-
-def _collect_snapshot_pairs(vault_dir: Path) -> list[list[Any]]:
-    """Every `<vault_dir>/prose/*.md` note's `(chunk_id, tags)` pair, sorted
-    by `chunk_id` (§7.12, plan inner unit test 3) -- so filesystem
-    enumeration order never affects the result. Split out from
-    `_build_vault_snapshot_hash` as its own, directly testable seam: a unit
-    test can assert this list's own sort order without depending on
-    whichever order the filesystem happens to hand back `Path.glob` (that
-    order already happens to be alphabetical on common filesystems, which
-    would make a test that merely varies WRITE order pass regardless of
-    whether the `sort` below is even present). `<vault_dir>/prose/` absent
-    (a vault dir that exists but holds no prose notes yet, e.g. only
-    artifacts) yields the empty list; `vault_dir` itself absent is the loud
-    failure (`MissingVaultDirError`)."""
+def _collect_chunk_ids(vault_dir: Path) -> list[str]:
+    """Every `<vault_dir>/prose/*.md` note's `chunk_id`, sorted ascending
+    (§7.12, D6) -- so filesystem enumeration order never affects the
+    result. Split out from `_build_vault_snapshot_hash` as its own, directly
+    testable seam: a unit test can assert this list's own sort order
+    without depending on whichever order the filesystem happens to hand
+    back `Path.glob` (that order already happens to be alphabetical on
+    common filesystems, which would make a test that merely varies WRITE
+    order pass regardless of whether the `sort` below is even present).
+    `<vault_dir>/prose/` absent (a vault dir that exists but holds no prose
+    notes yet, e.g. only artifacts) yields the empty list; `vault_dir`
+    itself absent is the loud failure (`MissingVaultDirError`)."""
     if not vault_dir.is_dir():
         raise MissingVaultDirError(vault_dir)
 
     prose_dir = vault_dir / "prose"
-    pairs: list[list[Any]] = []
+    chunk_ids: list[str] = []
     if prose_dir.is_dir():
         for note_path in prose_dir.glob("*.md"):
             frontmatter = _split_frontmatter(note_path.read_text(encoding="utf-8"), note_path)
-            chunk_id = frontmatter.get("chunk_id") or note_path.stem
-            pairs.append([chunk_id, _tag_projection(frontmatter)])
+            chunk_ids.append(frontmatter.get("chunk_id") or note_path.stem)
 
-    pairs.sort(key=lambda pair: pair[0])
-    return pairs
+    chunk_ids.sort()
+    return chunk_ids
 
 
-def _build_vault_snapshot_hash(vault_dir: Path) -> str:
-    """A single sha256 hex digest over `_collect_snapshot_pairs(vault_dir)`,
-    canonically serialized (sorted keys, compact separators) so the digest
-    depends only on the pairs' own content and sort order, never on
-    incidental JSON formatting."""
-    pairs = _collect_snapshot_pairs(vault_dir)
-    canonical = json.dumps(pairs, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+def _require_names_dir(names_dir: Path) -> None:
+    """The one existence check every name-layer loader below shares --
+    `MissingNamesDirError` names the whole directory rather than each
+    caller independently re-deriving the same missing-file error for
+    whichever of the three files it happens to read first."""
+    if not names_dir.is_dir():
+        raise MissingNamesDirError(names_dir)
+
+
+def _load_canonical_names(names_dir: Path) -> list[str]:
+    """`<names_dir>/index.json`'s canonical name set (`axial names merge`'s
+    own output, §7.16), deduplicated and sorted ascending so list-write
+    order never affects the hash. Missing/malformed `index.json` fails
+    loudly (`MissingNameIndexError`/`MalformedNameIndexError`) rather than
+    silently degrading to an empty set."""
+    _require_names_dir(names_dir)
+    index_path = names_dir / "index.json"
+    if not index_path.is_file():
+        raise MissingNameIndexError(index_path)
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise MalformedNameIndexError(index_path, exc) from exc
+
+    if not isinstance(index, dict) or not isinstance(index.get("names"), list):
+        raise MalformedNameIndexError(
+            index_path, TypeError("expected a mapping with a 'names' list")
+        )
+    return sorted(set(index["names"]))
+
+
+def _load_alias_map_version(names_dir: Path) -> Any:
+    """`<names_dir>/alias_map.json`'s own `version` field (Reconcile's
+    output, §7.16) -- moves whenever Reconcile's decisions are re-cut over
+    an unchanged corpus, which is exactly the "what the engine can find"
+    signal §7.12/D6 wants the pin to carry."""
+    _require_names_dir(names_dir)
+    alias_map_path = names_dir / "alias_map.json"
+    if not alias_map_path.is_file():
+        raise MissingAliasMapError(alias_map_path)
+    try:
+        alias_map = json.loads(alias_map_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise MalformedAliasMapError(alias_map_path, exc) from exc
+
+    if not isinstance(alias_map, dict) or "version" not in alias_map:
+        raise MalformedAliasMapError(alias_map_path, TypeError("expected a 'version' key"))
+    return alias_map["version"]
+
+
+def _count_non_null_disagreements(names_dir: Path) -> int:
+    """The count of `<names_dir>/disagreements.jsonl` records whose own
+    `disagreement` field is non-null (Gather's output, §7.18) -- reused via
+    `axial.checkpoint.load_checkpoint_records` (the same JSONL-checkpoint
+    primitive `axial.gather.load_disagreements` itself is built on), parsed
+    directly here rather than through `axial.gather.load_disagreements`
+    itself: that function's module pulls in the whole interrogate/
+    materialize/LLM-client import chain for one dict comprehension this
+    module has no other use for."""
+    _require_names_dir(names_dir)
+    disagreements_path = names_dir / "disagreements.jsonl"
+    if not disagreements_path.is_file():
+        raise MissingDisagreementsError(disagreements_path)
+
+    records = load_checkpoint_records(disagreements_path, MalformedDisagreementsError)
+    return sum(1 for record in records if record.get("disagreement") is not None)
+
+
+def _build_vault_snapshot_hash(vault_dir: Path, names_dir: Path) -> str:
+    """A single sha256 hex digest over two things, in a stated order
+    (§7.12, D6): `_collect_chunk_ids(vault_dir)`, and the name-layer index
+    (`_load_canonical_names`, `_load_alias_map_version`,
+    `_count_non_null_disagreements`, all under `names_dir`) -- canonically
+    serialized (sorted keys, compact separators) so the digest depends only
+    on the inputs' own content, never on incidental JSON formatting or
+    dict/filesystem iteration order. `generated_at` from either name-layer
+    file is deliberately never read here, so it can never enter the hash."""
+    payload = {
+        "chunk_ids": _collect_chunk_ids(vault_dir),
+        "canonical_names": _load_canonical_names(names_dir),
+        "alias_map_version": _load_alias_map_version(names_dir),
+        "disagreement_count": _count_non_null_disagreements(names_dir),
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -436,6 +578,7 @@ def write_pin(
     vault_dir: Path | None = None,
     envelopes_dir: Path | None = None,
     sources_dir: Path | None = None,
+    names_dir: Path | None = None,
     evals_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     repo_root: Path | None = None,
@@ -443,19 +586,20 @@ def write_pin(
     """Compute and write the corpus-pin manifest to `<evals_dir>/<name>.json`
     (default `evals/corpus_pin/<name>.json`), returning the written path.
 
-    `vault_dir`/`envelopes_dir`/`sources_dir` default to
+    `vault_dir`/`envelopes_dir`/`sources_dir`/`names_dir` default to
     `config/pipeline.yaml`'s `paths.vault_dir`/`paths.envelopes_dir`/
-    `paths.sources_dir`, all three resolved through `axial.paths` (issue
-    #281 -- `_default_vault_dir`/`_default_sources_dir` from `axial.paths`,
-    `_default_envelopes_dir` from `axial.envelope`), falling back to
-    `data/vault`/`data/envelopes`/`data/sources` when the file/key is
-    absent. `evals_dir` defaults to `EVALS_DIR` -- there is no config key
-    or CLI flag for it (this codebase exposes no `--evals-dir` anywhere;
-    see the module docstring).
-
-    Deterministic and LLM-free: reruns over an unchanged vault + envelopes
-    + raw sources + git HEAD write a byte-identical file (module
+    `paths.sources_dir`/`paths.names_dir`, all four resolved through
+    `axial.paths` (issue #281 -- `_default_vault_dir`/`_default_sources_dir`/
+    `_default_names_dir` from `axial.paths`, `_default_envelopes_dir` from
+    `axial.envelope`), falling back to `data/vault`/`data/envelopes`/
+    `data/sources`/`data/names` when the file/key is absent. `evals_dir`
+    defaults to `EVALS_DIR` -- there is no config key or CLI flag for it
+    (this codebase exposes no `--evals-dir` anywhere; see the module
     docstring).
+
+    Deterministic and LLM-free: reruns over an unchanged vault + name layer
+    + envelopes + raw sources + git HEAD write a byte-identical file
+    (module docstring).
     """
     if vault_dir is None:
         vault_dir = _default_vault_dir(config_path)
@@ -463,13 +607,15 @@ def write_pin(
         envelopes_dir = _default_envelopes_dir(config_path)
     if sources_dir is None:
         sources_dir = _default_sources_dir(config_path)
+    if names_dir is None:
+        names_dir = _default_names_dir(config_path)
     if evals_dir is None:
         evals_dir = EVALS_DIR
 
     manifest = {
         "sources": _build_sources(envelopes_dir, sources_dir),
         "ingest_code_sha": ingest_code_sha(repo_root),
-        "vault_snapshot_hash": _build_vault_snapshot_hash(vault_dir),
+        "vault_snapshot_hash": _build_vault_snapshot_hash(vault_dir, names_dir),
     }
 
     evals_dir.mkdir(parents=True, exist_ok=True)
