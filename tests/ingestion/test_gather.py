@@ -462,6 +462,29 @@ def test_parse_gather_response_rejects_an_empty_disagreement_string():
         parse_gather_response(_response("", []))
 
 
+# -- literal "null" as a JSON *string*, not the JSON literal (regression) ----
+# (fix, 2026-07-29: measured live on the seeded 100-name sample after the
+# null-is-a-last-resort fix -- `Russia` (429 members), `Adrienne
+# Windhoff-Héritier` and `Müller and Weede (1990)` all carried the literal
+# 4-character string "null" as their finding, which used to pass validation
+# as a genuine disagreement and would have been written onto the page.)
+
+
+@pytest.mark.parametrize(
+    "raw_value",
+    ["null", "NULL", "  null  ", '"null"', "none", "None", "'none'"],
+)
+def test_a_bare_null_or_none_string_is_treated_as_a_structured_null(raw_value):
+    disagreement, _names = parse_gather_response(_response(raw_value, []))
+    assert disagreement is None
+
+
+def test_a_finding_that_merely_contains_the_word_null_is_left_alone():
+    text = "The authors disagree about whether the null hypothesis of no state effect holds."
+    disagreement, _names = parse_gather_response(_response(text, []))
+    assert disagreement == text
+
+
 # -- acceptance 1: under budget, one call, disagreement + name-to-name links --
 
 

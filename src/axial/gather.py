@@ -86,6 +86,16 @@ findings' own text rather than silently dropping evidence the name already
 paid for. A null disagreement can still happen, but only through the
 all-batches-null path above, where no merge call is made at all.
 
+**A finding that is only the literal word "null" or "none" is a structured
+null, not text.** The prompt's own `"disagreement": null` example primes some
+completions to echo the token back as a JSON *string* rather than the JSON
+literal (measured live on the seeded 100-name sample, on `Russia` among
+others), and a bare `"null"` string used to pass `parse_gather_response`'s
+validation as a genuine finding. Fixed at that one parse boundary
+(`_is_null_token`), which every path -- batch, merge, the single-survivor
+shortcut -- already runs through, rather than in the prompt: wording cannot
+be trusted not to re-trigger the same priming.
+
 **Every finding is persisted before it is used**, keyed by a content hash of
 the name's own rendered packets -- the same content-addressing
 `axial.merge_names` uses, and for the same two reasons: this pass costs real
@@ -384,6 +394,31 @@ def compose_merge_prompt(canonical: str, findings: list[str]) -> str:
     return _MERGE_PROMPT_TEMPLATE.format(name=repr(canonical), findings=rendered)
 
 
+# Characters `_is_null_token` strips from both ends before comparing -- plain
+# whitespace plus a stray layer of quote marks a completion sometimes wraps
+# a literal token in (e.g. the model echoing `"null"` as a JSON *string*
+# rather than emitting JSON `null`). `str.strip` removes these repeatedly
+# from each end only, so a legitimate finding that merely contains the word
+# in its middle is never touched.
+_NULL_TOKEN_STRIP_CHARS = " \t\r\n'\""
+
+
+def _is_null_token(text: str) -> bool:
+    """True when `text` is nothing but the word "null" or "none",
+    case-insensitively, once surrounding whitespace and quote marks are
+    stripped -- and only then. Fix (2026-07-29): re-run of this same fix on
+    the seeded 100-name sample measured 3 records whose `"disagreement"`
+    was the JSON *string* `"null"` rather than the JSON literal -- the
+    batch prompt's own `"disagreement": null` example priming a completion
+    to echo the token back as quoted text (`Russia` at 429 members among
+    them). `parse_gather_response` used to accept that string as a genuine
+    finding. Caught here, at the one parse boundary every path (batch,
+    merge, the single-survivor shortcut) already goes through, rather than
+    in the prompt -- wording cannot be trusted not to re-trigger the same
+    priming."""
+    return text.strip(_NULL_TOKEN_STRIP_CHARS).lower() in ("null", "none")
+
+
 def parse_gather_response(raw: str) -> tuple[str | None, list[str]]:
     """Parse one response into `(disagreement, names)`. `disagreement` is
     `None` when the finding is a structured null -- the authors gathered
@@ -394,7 +429,10 @@ def parse_gather_response(raw: str) -> tuple[str | None, list[str]]:
     `complete_json`. A `None` disagreement is never a shape failure: it is
     the one way a finding has to say "no disagreement" without prose (the
     root cause behind a merge call mistaking several "they do not disagree"
-    findings for claims to adjudicate between).
+    findings for claims to adjudicate between). A disagreement that is
+    nothing but the literal word "null" or "none" (`_is_null_token`) is
+    normalized to `None` here too -- a JSON *string* saying "null" is the
+    same judgment as JSON `null`, not a real finding.
 
     `names` is whatever the model named; it is NOT trusted as a link here.
     `resolve_links` filters it against the index at write time, so a
@@ -412,6 +450,8 @@ def parse_gather_response(raw: str) -> tuple[str | None, list[str]]:
         if not isinstance(disagreement, str) or not disagreement.strip():
             raise GatherResponseError("gather response carried an empty 'disagreement' string")
         disagreement = disagreement.strip()
+        if _is_null_token(disagreement):
+            disagreement = None
     raw_names = data.get("names")
     names = [
         name for name in (raw_names if isinstance(raw_names, list) else []) if isinstance(name, str)
