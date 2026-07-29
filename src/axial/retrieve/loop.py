@@ -1,10 +1,11 @@
 """The stage-3 tool loop: drive an `LLMClient` through the validating
 dispatcher over the vault query API, appending one §7.6 trajectory entry per
-call (specs/PHASE-B.md §7.5/§7.6, issue #253 slice 01), plus the slice-02
-planning layer above it (issue #254, §4/§7.2): `run_planned_retrieval`
-composes the step-1 prompt from the brief's case anchor and the §7.2
-interrogation result, short-circuits on a `refuse` disposition, and
-assembles the deduplicated evidence set once the loop halts.
+call (specs/PHASE-B.md §7.5/§7.6, issue #253 slice 01), plus the planning
+layer above it (issue #254, §4/§7.2, rewired onto the name layer by issue
+#488): `run_planned_retrieval` composes the step-1 prompt from the brief's
+case anchor and the §7.2 interrogation result, short-circuits on a `refuse`
+disposition, and assembles the deduplicated evidence set once the loop
+halts.
 
 `run_retrieval_loop` itself stays exactly the slice-01 executor it always
 was: `prompt` is supplied verbatim by the caller and only grows with a
@@ -14,6 +15,14 @@ slice 02 -- so the model can decide whether to broaden its next query; the
 decision itself is the model's, never forced by this loop). The model is
 expected to be scripted in every acceptance test for this slice -- see
 `axial.llm.StubLLMClient.complete_with_tools` / `AXIAL_STUB_TOOL_CALLS`.
+
+`assemble_evidence_ids` (issue #488) only collects ids from tools whose
+`ToolSpec.returns_chunk_ids` is `True` (`axial.retrieve.tools`): the name
+layer's resolution/traversal tools (`find_names`, `name_neighbors`,
+`coverage_count`) return canonical NAMES, not passages, and a name string
+has no place in the set stage 4 treats as citable grounds. The §7.6
+trajectory itself is untouched -- every call still gets its own entry with
+its own `result_ids`, whatever kind those ids are.
 """
 
 from __future__ import annotations
@@ -30,14 +39,24 @@ from axial.brief.interrogate import InterrogationResult
 from axial.llm import RETRIEVE_PASS_NAME, LLMClient
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.retrieve.dispatcher import dispatch
-from axial.retrieve.tools import tool_specs_for_provider
+from axial.retrieve.tools import TOOL_REGISTRY, tool_specs_for_provider
 
 # The stated tunable's code-level fallback (§4 "a bounded step budget, a
 # stated tunable") -- used only when `config/pipeline.yaml` (or its
 # `retrieve.step_budget` key) is absent; the file is the actual carried
 # source of truth, mirroring every other per-pass tunable in this codebase
 # (e.g. `axial.llm.DEFAULT_REASONING_BY_PASS`).
-DEFAULT_STEP_BUDGET = 10
+#
+# Raised 10 -> 20 by issue #488, and this is a PROVISIONAL headroom
+# allowance, not a re-measured bound: the old 10 was tuned against a tool
+# set where one `query_by_tag` call could return a large slice of the
+# corpus, and the name-layer surface it replaced is narrower per call --
+# resolving one name, reading one page, and following one traversal is
+# already 3 steps, so a brief comparing two scholars can need 6-10 calls
+# before any re-query. Re-proving the real bound happens on the smoke
+# briefs, which slice 06 (issue #491) carries after #492 was folded into
+# it; until then this number is stated, not asserted.
+DEFAULT_STEP_BUDGET = 20
 
 # The re-query-on-thin threshold's code-level fallback (§4/§7.6, issue
 # #254) -- mirrors DEFAULT_STEP_BUDGET's own fallback convention exactly,
@@ -81,6 +100,7 @@ def run_retrieval_loop(
     *,
     vault_dir: Path | None = None,
     envelopes_dir: Path | None = None,
+    names_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     step_budget: int | None = None,
     thin_result_floor: int | None = None,
@@ -112,6 +132,12 @@ def run_retrieval_loop(
     from `config/pipeline.yaml`'s `retrieve.step_budget`/
     `retrieve.thin_result_floor` keys (stated tunables, never hardcoded at
     the call site).
+
+    `names_dir` (issue #488) is forwarded to the dispatcher exactly like
+    `vault_dir`/`envelopes_dir`: an optional directory for the name-layer
+    tools (`find_names`, `get_name`, `name_neighbors`, `who_cites`,
+    `who_argues_against`), defaulting to `None` so a caller passing nothing
+    resolves against the query API's own default.
     """
     if step_budget is None:
         step_budget = _resolve_step_budget(config_path)
@@ -129,7 +155,13 @@ def run_retrieval_loop(
 
         tool_name = requested.get("tool")
         args = requested.get("args") or {}
-        result = dispatch(tool_name, args, vault_dir=vault_dir, envelopes_dir=envelopes_dir)
+        result = dispatch(
+            tool_name,
+            args,
+            vault_dir=vault_dir,
+            envelopes_dir=envelopes_dir,
+            names_dir=names_dir,
+        )
         print(
             f"retrieve: turn {step}/{step_budget} called {tool_name!r}, {result.count} result(s)",
             file=sys.stderr,
@@ -170,12 +202,15 @@ def run_retrieval_loop(
 
 
 def compose_retrieval_prompt(brief: Brief, interrogation_result: InterrogationResult) -> str:
-    """The slice-02 planning prompt (§4/§7.2, issue #254): the step-1
-    prompt is planned from the brief's case anchor and the interrogation
-    result's `premises_found`/`bounds_applied`, never from the raw
-    `request` alone. States case-as-anchor-not-fence (charter §3) and the
-    re-query-on-thin behaviour explicitly, so a real provider's model reads
-    the same instruction the scripted acceptance tests exercise."""
+    """The planning prompt (§4/§7.2, issue #254; rewired onto the name layer
+    by issue #488): the step-1 prompt is planned from the brief's case
+    anchor and the interrogation result's `premises_found`/`bounds_applied`,
+    never from the raw `request` alone. States case-as-anchor-not-fence
+    (charter §3, P0-3) and the re-query-on-thin behaviour explicitly, so a
+    real provider's model reads the same instruction the scripted
+    acceptance tests exercise -- plus D4's Gather-hint rule (§7.5), stated
+    plainly here because the loop is where a disagreement could otherwise
+    slip into the evidence set."""
     premises_lines = (
         "\n".join(
             f"- {p.premise} (assessment: {p.assessment})"
@@ -195,6 +230,13 @@ Premises found during interrogation:
 
 Bounds applied:
 {bounds_lines}
+
+Retrieval is traversal of the name layer, not a conjunction of filters. A good plan:
+1. Name the scholars, concepts and polities the brief is actually about, and resolve each one with find_names -- it is tiered (exact, alias, folded, embedding) and reports a genuine resolution failure as an empty result, never the nearest name to hand.
+2. For each name that resolves, read who meets there with get_name: its member notes, each with author, year and one-sentence claim.
+3. Follow what those notes say. who_argues_against and who_cites surface the author-stated opposition and citation edges those notes themselves carry -- real cross-book traversal, not a guess. name_neighbors surfaces names that co-occur with one you already have.
+
+get_name may also return a disagreement section another model wrote while reading this corpus (Gather). That text is a POINTER, never evidence: read it only to decide where to look next, then follow that page's own member chunk_ids to the real notes and retrieve those. Nothing you cite may be a disagreement, a name page, or a name string itself -- only a chunk_id or artifact_id resolves as a real ground.
 
 Call the vault-query tools to retrieve corpus evidence. When a tool result is flagged THIN (its result_count is below the configured floor), decide whether to broaden your next query before concluding -- a non-thin result does not require a further call."""
 
@@ -217,11 +259,22 @@ def assemble_evidence_ids(trajectory: list[dict[str, Any]]) -> list[str]:
     untouched -- every call, including one that returned only ids already
     seen, still has its own entry (§7.6); this is a separate, later
     reduction over it, applying **no** case-scope filter (charter §3,
-    P0-3): an id belonging to a chunk whose `polities_touched` excludes the
-    case anchor is kept exactly like any other."""
+    P0-3): an id belonging to a chunk from a source about a different
+    polity than the case anchor is kept exactly like any other.
+
+    **Only chunk/artifact-valued entries contribute (issue #488).** A
+    trajectory entry whose tool is not in `TOOL_REGISTRY`, or whose
+    `ToolSpec.returns_chunk_ids` is `False` (`find_names`, `name_neighbors`,
+    `coverage_count`, `get_envelope` -- see `axial.retrieve.tools`'s module
+    docstring), is skipped here: those tools yield canonical names or a
+    `source_id`, never a real passage, and stage 4's evidence set must only
+    ever carry ids `get_chunk`/`get_artifact` can resolve."""
     seen: set[str] = set()
     ordered: list[str] = []
     for entry in trajectory:
+        spec = TOOL_REGISTRY.get(entry.get("tool"))
+        if spec is None or not spec.returns_chunk_ids:
+            continue
         for chunk_id in entry.get("result_ids") or []:
             if chunk_id not in seen:
                 seen.add(chunk_id)
@@ -236,15 +289,20 @@ def run_planned_retrieval(
     *,
     vault_dir: Path | None = None,
     envelopes_dir: Path | None = None,
+    names_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     step_budget: int | None = None,
     thin_result_floor: int | None = None,
 ) -> RetrievalResult:
-    """The slice-02 planning entry point (issue #254, §4/§5 stage 3): plans
-    the step-1 prompt from `brief`/`interrogation_result`
-    (`compose_retrieval_prompt`), runs the stage-3 tool loop
-    (`run_retrieval_loop`, unchanged from slice 01), and assembles the
-    deduplicated evidence set (`assemble_evidence_ids`).
+    """The planning entry point (issue #254, §4/§5 stage 3; rewired onto the
+    name layer by issue #488): plans the step-1 prompt from
+    `brief`/`interrogation_result` (`compose_retrieval_prompt`), runs the
+    stage-3 tool loop (`run_retrieval_loop`), and assembles the
+    deduplicated, chunk-valued evidence set (`assemble_evidence_ids`).
+
+    `names_dir`, when given, is forwarded to every name-layer tool call the
+    same way `vault_dir`/`envelopes_dir` already are; `None` (the default)
+    resolves against the query API's own default directory.
 
     A `refuse` disposition (§7.2) short-circuits before any model or vault
     call is made: the run is already complete per §7.2's own rule, so the
@@ -260,6 +318,7 @@ def run_planned_retrieval(
         prompt,
         vault_dir=vault_dir,
         envelopes_dir=envelopes_dir,
+        names_dir=names_dir,
         config_path=config_path,
         step_budget=step_budget,
         thin_result_floor=thin_result_floor,
