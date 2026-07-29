@@ -111,15 +111,38 @@ Each is built once per process. A brief run that touches all three pays ~3.3
 minutes before the agentic loop does anything; every later call is effectively
 free. Tiers 1–3 never load the encoder, so 14 of these 17 queries cost nothing.
 
-## Next steps
+## What was decided on these numbers
 
-1. **The floor and the AANES observable need a founder decision** — the measured
-   window is too narrow to tune and the case it was written for does not exist as
-   described.
-2. **`axial brief run` cannot ship with the whole table in its prompt.** The
-   interrogation pre-pass renders every `coverage_count()` entry: 62,821 lines,
-   2.08 MB, roughly 500k tokens, plus 37–63 s to compute, on every run. It
-   rendered nothing before this slice, because the old per-polity count returned 0
-   entries. Nobody's slice owns re-basing it.
-3. **File the acronym gap** against the name layer with these numbers — it is the
-   demonstrated failure the plan's "Out of scope" note names as the trigger.
+Founder decisions, 2026-07-30, both implemented in the same branch at `d61f22f`.
+
+1. **The floor stays at `0.5` and the observable was corrected, not the constant.**
+   The (0.7062, 0.7752] window was rejected on two grounds: it is a 0.07 band
+   fitted to the two cases that produced it, and it would make the engine deny an
+   entity the corpus holds. §7.5 now carries this distribution as the floor's
+   inspection evidence and states the rejection. §8 P0-2's honest-resolution-failure
+   observable moves off `AANES` onto a query the corpus genuinely lacks — measured
+   here, cut at 0.4518. The false premise was repeated in the plan twice, in the
+   constant's own comment, in `find_names`' docstring and in three test files; all
+   corrected.
+2. **The interrogation pre-pass no longer renders the table.** It goes back to
+   what main really does today — no table — but now *says so*, naming #488 as the
+   reason, instead of promising "the corpus's REAL coverage" and showing nothing.
+   `render_coverage_section` and its table path stay live and tested, so #488
+   inherits working code when it passes a scoped map. No cap and no threshold.
+3. **The acronym gap is filed as #498**, and the measurement widened on filing:
+   301 name surfaces carry a parenthesized acronym, 260 distinct acronyms, and
+   **151 of them also exist as standalone name pages** — `AKP` beside `Justice and
+   Development Party (AKP)`, `AFL` beside `American Federation of Labor (AFL)`.
+   AANS is one instance of 151. Rescoped by the founder to the query side: two
+   deterministic string routes in `find_names` over the layer as it stands, so both
+   pages are returned and the agent reads each. Zero model calls, no corpus pass,
+   no new pin. Merging them is deferred on cost, since it would re-ask Gather and
+   re-cut the pin.
+
+## Carried forward
+
+- `validators.coverage.compute_coverage_map` and `analyze.assembly` still read the
+  whole 62,821-entry map before indexing it by the few names they need, so
+  `build_record` pays the 37–63 s read. #490 owns re-basing the map.
+- `source_usage.available_chunk_count` is 0 by construction until #491 re-bases
+  the denominator onto names. Pinned by a test so it cannot pass unnoticed.
