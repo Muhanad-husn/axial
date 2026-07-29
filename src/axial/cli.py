@@ -323,10 +323,13 @@ def build_parser() -> argparse.ArgumentParser:
     names_merge_parser = names_subparsers.add_parser(
         "merge",
         help=(
-            "Phase A v1 slice 05 (issue #416): Reconcile -- re-cluster the "
-            "persisted name vectors at the configured merge tightness and let "
-            "the model decide which surface forms in each cluster name the "
-            "same thing (temperature 1, reasoning high, §7.9's `reconcile` "
+            "Phase A v1 slice 05 (issue #416): Reconcile -- cluster the "
+            "persisted name vectors at the configured merge tightness "
+            "(reusing `axial names build`'s own persisted labels when the "
+            "tightness matches, issue #458 -- otherwise a fresh HDBSCAN fit, "
+            "--recluster to force one) and let the model decide which "
+            "surface forms in each cluster name the same thing (temperature "
+            "1, reasoning high, §7.9's `reconcile` "
             "pass), asking a bounded number of clusters at once (--workers). "
             "Writes the reversible alias map to data/names/alias_map.json, the "
             "surviving-name index to data/names/index.json, and whether this "
@@ -379,6 +382,18 @@ def build_parser() -> argparse.ArgumentParser:
             "is I/O-bound, and serial calls project to hours for a corpus this "
             f"size) (default: {MERGE_DEFAULT_WORKERS}, a starting value -- "
             "per-call latency has not been observed on the real corpus yet)"
+        ),
+    )
+    names_merge_parser.add_argument(
+        "--recluster",
+        action="store_true",
+        help=(
+            "re-fit HDBSCAN over the persisted name vectors even when this "
+            "run's own min_cluster_size/min_samples/pca_components match "
+            "data/names/similarity_manifest.json (issue #458): by default a "
+            "match reuses the cluster labels `axial names build` already "
+            "persisted, since a full-corpus re-fit at the SAME settings costs "
+            "10+ minutes for the identical answer"
         ),
     )
     names_merge_parser.add_argument(
@@ -1663,6 +1678,7 @@ def _names_merge(
     workers: int,
     confirm_reask: bool,
     decisions_path: str | None,
+    recluster: bool,
 ) -> int:
     try:
         result = run_merge_names(
@@ -1672,6 +1688,7 @@ def _names_merge(
             workers=workers,
             confirm_reask=confirm_reask,
             decisions_path=Path(decisions_path) if decisions_path else None,
+            recluster=recluster,
         )
     except (NamesError, MergeNamesError, LLMError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1905,6 +1922,7 @@ def main(argv: list[str] | None = None) -> int:
             args.workers,
             args.confirm_reask,
             args.decisions_path,
+            args.recluster,
         )
 
     if args.command == "names" and args.names_command == "materialize":

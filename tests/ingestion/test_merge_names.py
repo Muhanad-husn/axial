@@ -920,3 +920,229 @@ def test_a_limited_reask_purges_only_the_batches_it_actually_attempts(isolated_v
     fresh = [key for key in remaining_by_key if not key.startswith("pre-449-bare-decision")]
     assert len(fresh) == 1
     assert remaining_by_key[fresh[0]]["evidence_tier"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Issue #458: reuse `axial names build`'s own persisted clustering rather
+# than re-fitting HDBSCAN over the whole corpus at the start of every merge,
+# and print progress while a fit does run instead of nothing at all.
+# ---------------------------------------------------------------------------
+
+
+def _empty_client():
+    class _NoOpClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            return json.dumps({"nodes": []})
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    return _NoOpClient()
+
+
+def test_matching_settings_reuse_the_persisted_cluster_labels(isolated_vault_root, monkeypatch):
+    """A merge invocation whose requested tightness matches what `axial
+    names build` already fit must not re-run HDBSCAN at all -- it reads the
+    `cluster_label` column `run_names` already persisted."""
+    import axial.merge_names as merge_names_module
+    from axial.names import DEFAULT_MIN_CLUSTER_SIZE, DEFAULT_MIN_SAMPLES, DEFAULT_PCA_COMPONENTS
+    from axial.names import run_names
+
+    root = isolated_vault_root
+    _build_fixture_answers(root, [[BELLICIST, DISTINCT_A], [BELLICIST_ALIAS, DISTINCT_B]])
+    names_dir = root / "data" / "names"
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+    )
+
+    def _explode(*_args, **_kwargs):
+        raise AssertionError("a matching-settings merge must not re-fit HDBSCAN")
+
+    monkeypatch.setattr(merge_names_module, "_cluster_reduced", _explode)
+
+    import io
+    import contextlib
+
+    stderr = io.StringIO()
+    with contextlib.redirect_stderr(stderr):
+        summary = merge_names_module.run_merge_names(
+            embeddings_dir=names_dir / "embeddings.lance",
+            alias_map_path=names_dir / "alias_map.json",
+            index_path=names_dir / "index.json",
+            decisions_path=names_dir / "merge_decisions.jsonl",
+            manifest_path=names_dir / "merge_manifest.json",
+            similarity_manifest_path=names_dir / "similarity_manifest.json",
+            domain_dir=root / "no-such-domain",
+            client=_empty_client(),
+            min_cluster_size=DEFAULT_MIN_CLUSTER_SIZE,
+            min_samples=DEFAULT_MIN_SAMPLES,
+            pca_components=DEFAULT_PCA_COMPONENTS,
+        )
+
+    manifest = json.loads((names_dir / "similarity_manifest.json").read_text(encoding="utf-8"))
+    assert summary["clusters"] == manifest["cluster_count"]
+    assert "reusing persisted cluster labels" in stderr.getvalue()
+
+
+def test_mismatched_settings_still_trigger_a_fresh_fit(isolated_vault_root, monkeypatch):
+    """A moved tightness dial must not silently reuse a labeling fit at a
+    different setting -- it costs exactly one fresh HDBSCAN fit."""
+    import contextlib
+    import io
+
+    import axial.merge_names as merge_names_module
+    from axial.names import DEFAULT_MIN_SAMPLES, DEFAULT_PCA_COMPONENTS, run_names
+
+    root = isolated_vault_root
+    _build_fixture_answers(root, [[BELLICIST, DISTINCT_A], [BELLICIST_ALIAS, DISTINCT_B]])
+    names_dir = root / "data" / "names"
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+    )
+
+    real_cluster_reduced = merge_names_module._cluster_reduced
+    calls = []
+
+    def _spy(reduced, min_cluster_size, min_samples):
+        calls.append((min_cluster_size, min_samples))
+        return real_cluster_reduced(reduced, min_cluster_size, min_samples)
+
+    monkeypatch.setattr(merge_names_module, "_cluster_reduced", _spy)
+
+    stderr = io.StringIO()
+    with contextlib.redirect_stderr(stderr):
+        merge_names_module.run_merge_names(
+            embeddings_dir=names_dir / "embeddings.lance",
+            alias_map_path=names_dir / "alias_map.json",
+            index_path=names_dir / "index.json",
+            decisions_path=names_dir / "merge_decisions.jsonl",
+            manifest_path=names_dir / "merge_manifest.json",
+            similarity_manifest_path=names_dir / "similarity_manifest.json",
+            domain_dir=root / "no-such-domain",
+            client=_empty_client(),
+            min_cluster_size=99,  # deliberately not what `run_names` fit at
+            min_samples=DEFAULT_MIN_SAMPLES,
+            pca_components=DEFAULT_PCA_COMPONENTS,
+        )
+
+    assert len(calls) == 1, "a mismatched dial must re-fit exactly once, not skip or repeat"
+    assert calls[0] == (99, DEFAULT_MIN_SAMPLES)
+    combined = stderr.getvalue()
+    assert "clustering" in combined and "HDBSCAN" in combined
+    assert "clustering finished" in combined
+
+
+def test_recluster_flag_forces_a_refit_even_when_settings_match(isolated_vault_root, monkeypatch):
+    """`--recluster` (`recluster=True`) must re-fit even when this run's own
+    settings match the persisted manifest -- the escape hatch for "I don't
+    trust the persisted labels", not just a settings-diff."""
+    import contextlib
+    import io
+
+    import axial.merge_names as merge_names_module
+    from axial.names import DEFAULT_MIN_CLUSTER_SIZE, DEFAULT_MIN_SAMPLES, DEFAULT_PCA_COMPONENTS
+    from axial.names import run_names
+
+    root = isolated_vault_root
+    _build_fixture_answers(root, [[BELLICIST, DISTINCT_A], [BELLICIST_ALIAS, DISTINCT_B]])
+    names_dir = root / "data" / "names"
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+    )
+
+    real_cluster_reduced = merge_names_module._cluster_reduced
+    calls = []
+
+    def _spy(reduced, min_cluster_size, min_samples):
+        calls.append((min_cluster_size, min_samples))
+        return real_cluster_reduced(reduced, min_cluster_size, min_samples)
+
+    monkeypatch.setattr(merge_names_module, "_cluster_reduced", _spy)
+
+    stderr = io.StringIO()
+    with contextlib.redirect_stderr(stderr):
+        merge_names_module.run_merge_names(
+            embeddings_dir=names_dir / "embeddings.lance",
+            alias_map_path=names_dir / "alias_map.json",
+            index_path=names_dir / "index.json",
+            decisions_path=names_dir / "merge_decisions.jsonl",
+            manifest_path=names_dir / "merge_manifest.json",
+            similarity_manifest_path=names_dir / "similarity_manifest.json",
+            domain_dir=root / "no-such-domain",
+            client=_empty_client(),
+            min_cluster_size=DEFAULT_MIN_CLUSTER_SIZE,
+            min_samples=DEFAULT_MIN_SAMPLES,
+            pca_components=DEFAULT_PCA_COMPONENTS,
+            recluster=True,
+        )
+
+    assert len(calls) == 1, "--recluster must force exactly one fresh fit"
+    assert "--recluster was passed" in stderr.getvalue()
+
+
+def test_clustering_prints_a_startup_line_and_a_running_heartbeat(isolated_vault_root, monkeypatch):
+    """The silence itself was the bug (#458): a re-fit must print that it is
+    running before the fit starts, and again while it is still running, not
+    only once it returns. `_cluster_reduced` is stubbed to sleep, standing
+    in for HDBSCAN's own real multi-minute fit -- long enough, against a
+    short `cluster_heartbeat_seconds`, to force more than one heartbeat."""
+    import contextlib
+    import io
+    import time
+
+    import axial.merge_names as merge_names_module
+    from axial.names import DEFAULT_MIN_SAMPLES, DEFAULT_PCA_COMPONENTS, run_names
+
+    root = isolated_vault_root
+    _build_fixture_answers(root, [[BELLICIST, DISTINCT_A], [BELLICIST_ALIAS, DISTINCT_B]])
+    names_dir = root / "data" / "names"
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+    )
+
+    def _slow_cluster(reduced, min_cluster_size, min_samples):
+        time.sleep(0.2)
+        return [0 for _ in range(len(reduced))]
+
+    monkeypatch.setattr(merge_names_module, "_cluster_reduced", _slow_cluster)
+
+    stderr = io.StringIO()
+    with contextlib.redirect_stderr(stderr):
+        merge_names_module.run_merge_names(
+            embeddings_dir=names_dir / "embeddings.lance",
+            alias_map_path=names_dir / "alias_map.json",
+            index_path=names_dir / "index.json",
+            decisions_path=names_dir / "merge_decisions.jsonl",
+            manifest_path=names_dir / "merge_manifest.json",
+            similarity_manifest_path=names_dir / "similarity_manifest.json",
+            domain_dir=root / "no-such-domain",
+            client=_empty_client(),
+            min_cluster_size=99,  # forces the fit (mismatched), not the reuse path
+            min_samples=DEFAULT_MIN_SAMPLES,
+            pca_components=DEFAULT_PCA_COMPONENTS,
+            cluster_heartbeat_seconds=0.04,
+        )
+
+    lines = stderr.getvalue().splitlines()
+    started_lines = [line for line in lines if "clustering" in line and "HDBSCAN" in line]
+    heartbeat_lines = [line for line in lines if "clustering still running" in line]
+    finished_lines = [line for line in lines if "clustering finished" in line]
+
+    assert len(started_lines) == 1, "the clustering phase must announce itself before it runs"
+    assert len(heartbeat_lines) >= 2, (
+        "a 0.2s fit against a 0.04s heartbeat must print more than one "
+        f"heartbeat line while it is still running -- got {heartbeat_lines!r}"
+    )
+    assert len(finished_lines) == 1
