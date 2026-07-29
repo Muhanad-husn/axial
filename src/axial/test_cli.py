@@ -368,3 +368,59 @@ def test_main_names_escalations_json_flag_emits_machine_readable_array(tmp_path,
     assert payload == [
         {"surface": "a", "kind": None, "cluster_label": 0, "co_members": ["b"], "source_ids": []}
     ]
+
+
+def test_main_names_escalations_survives_non_utf8_stdout_json_and_text(tmp_path, monkeypatch):
+    """Real-corpus regression (issue #461 follow-up): surfaces in this corpus
+    are transliterated Arabic/Turkish scholarship, so a character outside
+    cp1252 (e.g. the macron in `an-Nizam` -> `an-Nizām`) is the normal
+    case. Windows' default console/redirect codec is cp1252, not UTF-8; a
+    stdout stream opened with that codec must not crash, in both --json and
+    plain-text output. This has to drive a real codec-restricted stream --
+    pytest's capsys is UTF-8 and would pass even on the broken code."""
+    import io
+    import json as json_module
+    import sys
+
+    from axial.cli import main
+
+    decisions_path = tmp_path / "merge_decisions.jsonl"
+    _write_jsonl(
+        decisions_path,
+        [
+            {
+                "batch_key": "k1",
+                "cluster_label": 0,
+                "members": ["an-Nizām", "b"],
+                "nodes": [],
+                "escalated": ["an-Nizām"],
+            }
+        ],
+    )
+
+    def run_with_cp1252_stdout(extra_args):
+        raw = io.BytesIO()
+        wrapper = io.TextIOWrapper(raw, encoding="cp1252", errors="strict", newline="")
+        monkeypatch.setattr(sys, "stdout", wrapper)
+        exit_code = main(
+            [
+                "names",
+                "escalations",
+                "--decisions-path",
+                str(decisions_path),
+                "--inventory-path",
+                str(tmp_path / "no-such-inventory.jsonl"),
+                *extra_args,
+            ]
+        )
+        wrapper.flush()
+        return exit_code, raw.getvalue()
+
+    exit_code, raw_bytes = run_with_cp1252_stdout(["--json"])
+    assert exit_code == 0
+    payload = json_module.loads(raw_bytes.decode("utf-8"))
+    assert payload[0]["surface"] == "an-Nizām"
+
+    exit_code, raw_bytes = run_with_cp1252_stdout([])
+    assert exit_code == 0
+    assert "an-Nizām" in raw_bytes.decode("utf-8")
