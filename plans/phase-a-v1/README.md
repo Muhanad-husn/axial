@@ -24,7 +24,8 @@ with their grounds attached.
 
 - **Slug:** phase-a-v1
 - **Created:** 2026-07-27
-- **Status:** planned
+- **Status:** **CLOSED 2026-07-29.** Slices 00–07 shipped; slice 08 was never
+  built, by its own condition. See "Closure" at the end of this file.
 - **New system?** no — it re-shapes the existing Phase-A pipeline. Extraction is
   untouched; every stage after it is replaced, deleted, or added.
 - **Project directory:** `.`
@@ -206,7 +207,7 @@ Develop top to bottom. One slice = one issue = one PR.
 | 06 | materialize the wiki | #411 | Code writes one file per surviving name (aliases, member notes as links) and notes carry their answers as frontmatter; **first point the founder can open the graph view and look** | ✅ done | #444 |
 | 06b | name-variant candidate generation | #446 | Found opening the vault (#411/#444): clustering's own recall gap left `C. Tilly`/`Charles Tilly` as two pages because the merge pass never saw them together. A second, deterministic, LLM-free step (`axial.name_candidates`) proposes the missing pairs — initial-vs-full forename, bare surname with exactly one candidate (both `person`), case/whitespace-only — as additional clusters for the same, unchanged merge call | ✅ done | #448 |
 | 07 | Gather | #412 | Per-name packet assembly under a hard budget with batching and merge, disagreement text written onto the name page, name-to-name links, plus a per-name disagreement record on disk (provenance for #447's undecided quality measure) | ✅ done | #468 |
-| 08 | pairwise verbatim support | #413 | Two-note call that supplies quoted grounds where Gather found a disagreement worth quoting — optional, last, only if 07 shows it is needed | ☐ todo | TBD |
+| 08 | pairwise verbatim support | #413 | Two-note call that supplies quoted grounds where Gather found a disagreement worth quoting — optional, last, only if 07 shows it is needed | ✖ not built | — |
 
 <!-- Status values: ☐ todo · ◐ in-progress · ✅ done. Update the row when a slice's PR opens. -->
 
@@ -357,3 +358,59 @@ Evidence for the whole table lives in
 - **Slice 06 is the first look.** Everything before it is invisible. It is worth
   sequencing so the founder can open the graph view as early as possible, and
   worth resisting the urge to build 07 before that look happens.
+
+## Closure
+
+**Closed 2026-07-29 by founder decision.** The feature's premise was that
+interrogation beats labelling at producing a connected graph. It did.
+
+### What shipped
+
+| | v0 | v1 |
+| --- | ---: | ---: |
+| notes | 18,761 isolated | 6,148 interrogated |
+| edges | 584, intra-book by construction | a name layer of 62,821 pages |
+| cross-book meeting points | 0 | 9,505 names, 8,769 of them cross-author |
+| stated disagreements | — | 447 |
+
+Slices 00–07 all shipped. The pipeline runs end to end: interrogate, reconcile,
+materialize, gather. The vault opens in Obsidian with a populated graph.
+
+### What was not built, and why
+
+- **Slice 08 (pairwise verbatim support, #413)** — never built, exactly as the
+  slice table allowed: "optional, last, only if 07 shows it is needed." 07 did
+  not show it. Closed not-planned rather than left hanging.
+- **A quality number.** The instrument exists (#478/#480, `axial gather-eval`)
+  and has never been run against the corpus. Nobody has read the 447
+  disagreements for correctness. The defect classes measured during the corpus
+  pass are absent, but "no measured defect" is not "verified right," and the
+  phase closes without that verification. This is a stated gap, not an
+  oversight: three days of mechanism inspection produced no change to the
+  product's output, and the founder cut it off in favour of using the thing.
+  The ship-blocking bar (#483) stays blocked until someone runs the score.
+
+### Left open as backlog, not as blockers
+
+Nobody works these until real use demands it. They are index-quality polish;
+none of them changes what the product does.
+
+| # | what |
+| --- | --- |
+| #482 | bibliography-shaped surfaces get their own pages (2,353 in the index, 37 gathered) |
+| #484 | the corpus pin's vault snapshot is stale — re-cut rather than retire |
+| #460 | tier-3 passage evidence would cut merge escalation 54.3% → 15.4% |
+| #457 | `DEFAULT_WORKERS = 36` rests on a measurement the corpus run contradicts |
+| #483 | set the ship-blocking grounding bar (blocked on a score run) |
+
+The standing rule for this list: **new issues come from using the product, not
+from auditing it.** Re-open the index only when a real answer is visibly wrong
+because of it — then the failure names which of these to fix, instead of
+guessing.
+
+### The one thing that carries forward
+
+Phase B filters on the closed vocabularies this feature retired, so `axial
+brief` is degraded by design. That was called out in "Out of scope" from the
+start and is now due. It is the next feature, not an unfinished part of this
+one.
