@@ -61,7 +61,9 @@ from axial.gather import (
     DISAGREEMENT_HEADING,
     GATHER_PACKET_CHAR_BUDGET,
     MEMBER_PACKET_CHARS,
+    GatherResponseError,
     MemberPacket,
+    parse_gather_response,
     render_packet,
     run_gather,
     split_into_batches,
@@ -423,6 +425,35 @@ def test_upsert_replaces_an_existing_section_instead_of_stacking_them():
     assert "**Member notes:**" in twice
 
 
+def test_upsert_with_a_null_disagreement_removes_an_existing_section():
+    page = "---\nname: X\n---\n# X\n\n**Member notes:**\n- [[a]]\n"
+    with_section = upsert_disagreement_section(page, "A reading.", [])
+    removed = upsert_disagreement_section(with_section, None, [])
+
+    assert DISAGREEMENT_HEADING not in removed
+    assert "A reading." not in removed
+    assert "**Member notes:**" in removed
+
+
+def test_parse_gather_response_reads_a_structured_null():
+    disagreement, names = parse_gather_response(_response(None, ["Some Name"]))
+    assert disagreement is None
+    # A null finding still carries whatever names came with it -- the
+    # caller (`_gather_one`) is what decides names are only kept for a
+    # non-null finding, not the parser.
+    assert names == ["Some Name"]
+
+
+def test_parse_gather_response_rejects_a_missing_disagreement_key():
+    with pytest.raises(GatherResponseError):
+        parse_gather_response(json.dumps({"names": []}))
+
+
+def test_parse_gather_response_rejects_an_empty_disagreement_string():
+    with pytest.raises(GatherResponseError):
+        parse_gather_response(_response("", []))
+
+
 # -- acceptance 1: under budget, one call, disagreement + name-to-name links --
 
 
@@ -500,6 +531,143 @@ def test_an_over_budget_name_runs_per_batch_then_one_merge_call(tmp_path):
     assert page.count(DISAGREEMENT_HEADING) == 1
     assert "The merged statement of the disagreement." in page
     assert "Batch finding one." not in page
+
+
+# -- structured null: a batch that found nothing says so without prose -------
+# (root cause behind both the ~15,000 empty-section pages a full pass would
+# write and the merge prompt mistaking several "no disagreement" findings
+# for readings that disagree with EACH OTHER, data/logs/
+# 2026-07-29-gather-stratified-sample/summary.md)
+
+
+def test_a_null_finding_writes_no_section(tmp_path):
+    _build_small_fixture(tmp_path)
+    _materialize(tmp_path)
+
+    client = FakeClient(batch=[_response(None, [])])
+    result = _gather(tmp_path, client)
+
+    assert result["pages_written"] == 0
+    page = _page(tmp_path, "war making")
+    assert DISAGREEMENT_HEADING not in page
+
+    # The null is still persisted -- a re-run must not re-ask it.
+    (record,) = _records(tmp_path)
+    assert record["disagreement"] is None
+
+
+def test_re_running_gather_reuses_a_recorded_null_and_calls_nothing(tmp_path):
+    _build_small_fixture(tmp_path)
+    _materialize(tmp_path)
+
+    first = FakeClient(batch=[_response(None, [])])
+    _gather(tmp_path, first)
+
+    second = FakeClient(batch=[_response("A disagreement nobody should see.", [])])
+    result = _gather(tmp_path, second)
+
+    assert second.prompts == []
+    assert result["reused"] == 1
+    assert DISAGREEMENT_HEADING not in _page(tmp_path, "war making")
+
+
+def test_a_name_whose_section_existed_loses_it_once_the_finding_turns_null(tmp_path):
+    _build_small_fixture(tmp_path)
+    _materialize(tmp_path)
+
+    first = FakeClient(batch=[_response("They used to disagree about scope.", [])])
+    _gather(tmp_path, first)
+    assert DISAGREEMENT_HEADING in _page(tmp_path, "war making")
+
+    # Change what feeds the packet (a re-run's job key is content-addressed,
+    # §7.18) so the name is genuinely re-asked, not reused.
+    _write_jsonl(
+        tmp_path / "data" / "answers" / "centeno-2002.jsonl",
+        [
+            _answer_record(
+                "centeno-2002_000_intro_001",
+                "centeno-2002",
+                claim="Limited war produced limited states in Latin America -- revised.",
+                position_of="comparative historical sociology",
+                arguing_against=["Charles Tilly"],
+                names=[{"name": "war making", "kind": "concept"}],
+            )
+        ],
+    )
+
+    second = FakeClient(batch=[_response(None, [])])
+    result = _gather(tmp_path, second)
+
+    assert result["asked"] == 1
+    page = _page(tmp_path, "war making")
+    assert DISAGREEMENT_HEADING not in page
+    assert "They used to disagree about scope." not in page
+
+
+def test_an_all_null_batched_name_makes_no_merge_call(tmp_path):
+    _build_large_fixture(tmp_path, members=60)
+    _materialize(tmp_path)
+
+    client = FakeClient(batch=[_response(None, []), _response(None, [])])
+    result = _gather(tmp_path, client)
+
+    assert result["batch_calls"] >= 2, "the fixture must actually exceed the budget"
+    assert result["merge_calls"] == 0, "an all-null name spends no merge call"
+    assert len(client.prompts) == result["batch_calls"], "no merge prompt was sent at all"
+
+    (record,) = _records(tmp_path)
+    assert record["merged"] is False
+    assert record["disagreement"] is None
+    assert DISAGREEMENT_HEADING not in _page(tmp_path, "war making")
+
+
+def test_a_single_surviving_finding_among_batches_skips_the_merge_call(tmp_path):
+    _build_large_fixture(tmp_path, members=60)
+    _materialize(tmp_path)
+
+    client = FakeClient(batch=[_response(None, []), _response("The only real finding.", [])])
+    result = _gather(tmp_path, client)
+
+    assert result["merge_calls"] == 0, "one surviving finding needs no merge call"
+    assert len(client.prompts) == result["batch_calls"]
+
+    (record,) = _records(tmp_path)
+    assert record["merged"] is False
+    assert record["disagreement"] == "The only real finding."
+    assert "The only real finding." in _page(tmp_path, "war making")
+
+
+def test_a_null_batch_never_reaches_the_merge_call(tmp_path):
+    _build_large_fixture(tmp_path, members=125)
+    _materialize(tmp_path)
+
+    client = FakeClient(
+        batch=[
+            _response(None, []),
+            _response("Finding A.", []),
+            _response("Finding B.", []),
+        ],
+        merge=_response("Merged from A and B only.", []),
+    )
+    result = _gather(tmp_path, client)
+
+    assert result["batch_calls"] == 3, "the fixture must actually produce three batches"
+    assert result["merge_calls"] == 1, "two real findings still merge"
+
+    merge_prompt = client.prompts[-1]
+    assert "Finding A." in merge_prompt
+    assert "Finding B." in merge_prompt
+    # The null batch was dropped, not merged: exactly two numbered readings
+    # reach the merge call, not three.
+    findings_block = merge_prompt.split("FINDINGS")[1].split("Write one account")[0]
+    assert [line for line in findings_block.splitlines() if line.strip()] == [
+        "1. Finding A.",
+        "2. Finding B.",
+    ]
+
+    page = _page(tmp_path, "war making")
+    assert page.count(DISAGREEMENT_HEADING) == 1
+    assert "Merged from A and B only." in page
 
 
 # -- acceptance 3: the budget never appears in a prompt (D12's risk) ----------
