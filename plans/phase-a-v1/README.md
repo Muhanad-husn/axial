@@ -390,23 +390,31 @@ materialize, gather. The vault opens in Obsidian with a populated graph.
   product's output, and the founder cut it off in favour of using the thing.
   The ship-blocking bar (#483) stays blocked until someone runs the score.
 
-### Left open as backlog, not as blockers
+### The backlog, closed out
 
-Nobody works these until real use demands it. They are index-quality polish;
-none of them changes what the product does.
+Every leftover was measured against one bar the founder set: **anything moving
+accuracy, latency or cost by less than about 5% is dropped or converted to
+future expansion.** Phase A v1 leaves zero open issues.
 
-| # | what |
-| --- | --- |
-| #482 | bibliography-shaped surfaces get their own pages (2,353 in the index, 37 gathered) |
-| #484 | the corpus pin's vault snapshot is stale — re-cut rather than retire |
-| #460 | tier-3 passage evidence would cut merge escalation 54.3% → 15.4% |
-| #457 | `DEFAULT_WORKERS = 36` rests on a measurement the corpus run contradicts |
-| #483 | set the ship-blocking grounding bar (blocked on a score run) |
+| # | measured effect | outcome |
+| --- | --- | --- |
+| #473 | metadata present in the corpus of record; 63 disagreements attribute Heydemann correctly | closed — the gap was already fixed, the issue body was stale |
+| #483 | gates a phase that is now closed | closed — a ship gate cannot be defined after the ship |
+| #457 | worker count changes pass latency, **0%** of output, and no more passes are due | closed |
+| #481 | author-vs-editor is a display distinction; Crossref already flattens it | closed |
+| #482 | 37 of 1,910 names (1.9%), 10 of 447 findings (2.2%) | future expansion — trigger: an answer wrong because an author's evidence was split across year-pages |
+| #460 | escalation 54.3% → 15.4% is large on the mechanism, but severity falls with attestation so the effect is tail-shaped, against a full merge re-run plus re-gather | future expansion — trigger: an answer wrong because two pages should have been one |
+| #484 | Phase B's sweep gates on the pin (`resolve_trusted`) | moved to Phase B, not dropped |
 
-The standing rule for this list: **new issues come from using the product, not
-from auditing it.** Re-open the index only when a real answer is visibly wrong
-because of it — then the failure names which of these to fix, instead of
-guessing.
+Two things this list is not. It is not a list of things believed unimportant:
+#460's mechanism number is real and #482's measurement stands, and both bodies
+survive as the starting point when their trigger fires. And it is not a promise
+that the index is clean. It is a statement that **no further index work starts
+without a failure from use to aim it.**
+
+The standing rule: **new issues come from using the product, not from auditing
+it.** Re-open only when a real answer is visibly wrong — then the failure names
+which one to fix, instead of leaving it to guesswork.
 
 ### The one thing that carries forward
 
