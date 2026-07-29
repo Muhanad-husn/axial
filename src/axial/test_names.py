@@ -35,6 +35,7 @@ from axial.names import (  # noqa: E402
     collect_occurrences,
     examine_names,
     format_names_report,
+    is_apparatus_pointer_shaped,
     is_locator_shaped,
     is_numeral_only_surface,
     iter_name_occurrences,
@@ -407,6 +408,56 @@ def test_is_numeral_only_surface_matches_bare_numbers_and_centuries(surface):
 )
 def test_is_numeral_only_surface_rejects_real_digit_initial_names(surface):
     assert not is_numeral_only_surface(surface)
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "Chapter 4",
+        "Chapter 21",
+        "chapter 2",
+        "Ch. 4",
+        "Chap. 3",
+        "Footnote 36",
+        "Footnote 1",
+        "Endnote 12",
+        "Appendix 2",
+        "APPENDIX 4",
+        "Table 4",
+        "Figure 2",
+        "Fig. 9",
+        "Map 3",
+        "Chapter 11 bibliography",
+        "Chapter 3 (footnote 8)",
+        "Chapter 5 (of Volume I)",
+        "Chapter 13 The Post-1970 Ba'ath",
+        "Chapter Eight: Transnational Syria",
+        "Chapter Five",
+        "Chapter One",
+    ],
+)
+def test_is_apparatus_pointer_shaped_matches_chapter_and_apparatus_pointers(surface):
+    assert is_apparatus_pointer_shaped(surface)
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "Note on the State",
+        "Chapter of Sainte-Chapelle",
+        "Chapter: A New History",
+        "Chapter VII of the UN Charter",
+        "Chapter I",
+        "Table of Ranks",
+        "Table Ronde",
+        "Appendix A",
+        "Table B.1",
+        "Charles Tilly",
+        "China",
+    ],
+)
+def test_is_apparatus_pointer_shaped_rejects_real_names_and_lettered_apparatus(surface):
+    assert not is_apparatus_pointer_shaped(surface)
 
 
 def test_scoped_and_unscope_surface_form_round_trip():

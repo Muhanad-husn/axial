@@ -777,6 +777,149 @@ def test_gather_gates_a_numeral_only_surface_before_any_model_call(tmp_path):
     assert DISAGREEMENT_HEADING not in _page(tmp_path, "13")
 
 
+def test_gather_gates_an_apparatus_pointer_surface_before_any_model_call(tmp_path):
+    """Fix (2026-07-29): a footnote pointer is apparatus residue, not a name
+    -- same family as the numeral gate above, not caught by it -- and must
+    never draw a Gather call, even with two member notes across two books."""
+    _build_small_fixture(tmp_path)
+
+    inventory_path = tmp_path / "data" / "names" / "inventory.jsonl"
+    inventory = [
+        json.loads(line) for line in inventory_path.read_text(encoding="utf-8").splitlines()
+    ]
+    inventory.append(
+        {
+            "surface": "Footnote 36",
+            "kind": None,
+            "count": 2,
+            "chunk_ids": ["tilly-1990_000_intro_001", "centeno-2002_000_intro_001"],
+        }
+    )
+    _write_jsonl(inventory_path, inventory)
+
+    alias_map_path = tmp_path / "data" / "names" / "alias_map.json"
+    alias_map = json.loads(alias_map_path.read_text(encoding="utf-8"))
+    alias_map["nodes"].append({"canonical": "Footnote 36", "kind": None, "aliases": []})
+    _write_json(alias_map_path, alias_map)
+
+    _materialize(tmp_path)
+
+    client = FakeClient(batch=[_response("Tilly and Centeno disagree about war making.", [])])
+    result = _gather(tmp_path, client)
+
+    # "Footnote 36" has two member notes across two books -- enough to clear
+    # `_MIN_MEMBERS` -- and is gated before ever reaching `build_packets`.
+    assert result["names_skipped_apparatus_pointer"] == 1
+    assert len(client.prompts) == 1, "only 'war making' should have drawn a call"
+    assert DISAGREEMENT_HEADING not in _page(tmp_path, "Footnote 36")
+
+
+def test_gather_never_hands_the_model_a_sentinel_author(tmp_path):
+    """Fix (2026-07-29): `axial.vault.bibliographic_value` renders the
+    `unavailable`/`not_attempted` sentinels as themselves for a note's own
+    frontmatter -- correct there, so a metadata gap stays visible. A Gather
+    packet is not frontmatter: 2 of 100 sampled entries named an author as
+    "the 'unavailable (2000)' author" because the sentinel reached the model
+    as if it were a person. This reproduces the real corpus's exact defect
+    shape (`data/source_meta/heydemann-2000-66701ffbb36c.json`: `author` is
+    the literal string `"unavailable"`, not `{value, provenance}`) and
+    asserts the prompt carries a real fallback derived from `source_id`
+    instead."""
+    _write_source(
+        tmp_path,
+        "smith-2010-abc123def456",
+        "Jane Smith",
+        2010,
+        ["smith-2010-abc123def456_000_intro_001"],
+    )
+    _write_source(
+        tmp_path,
+        "heydemann-2000-66701ffbb36c",
+        "Placeholder",
+        2000,
+        ["heydemann-2000-66701ffbb36c_000_intro_001"],
+    )
+    # Overwrite with the real defect's exact on-disk shape.
+    _write_json(
+        tmp_path / "data" / "source_meta" / "heydemann-2000-66701ffbb36c.json",
+        {
+            "author": "unavailable",
+            "title": "unavailable",
+            "date": {"value": 2000, "provenance": "title page"},
+        },
+    )
+    _write_jsonl(
+        tmp_path / "data" / "answers" / "smith-2010-abc123def456.jsonl",
+        [
+            _answer_record(
+                "smith-2010-abc123def456_000_intro_001",
+                "smith-2010-abc123def456",
+                claim="Upgrading is a response to genuine reform pressure.",
+                position_of="reform-from-above",
+                arguing_against=["authoritarian resilience theory"],
+                names=[{"name": "authoritarian upgrading", "kind": "concept"}],
+            )
+        ],
+    )
+    _write_jsonl(
+        tmp_path / "data" / "answers" / "heydemann-2000-66701ffbb36c.jsonl",
+        [
+            _answer_record(
+                "heydemann-2000-66701ffbb36c_000_intro_001",
+                "heydemann-2000-66701ffbb36c",
+                claim="Upgrading absorbs pressure without ceding real power.",
+                position_of="authoritarian resilience theory",
+                arguing_against=["reform-from-above"],
+                names=[{"name": "authoritarian upgrading", "kind": "concept"}],
+            )
+        ],
+    )
+    _write_jsonl(
+        tmp_path / "data" / "names" / "inventory.jsonl",
+        [
+            {
+                "surface": "authoritarian upgrading",
+                "kind": "concept",
+                "count": 2,
+                "chunk_ids": [
+                    "smith-2010-abc123def456_000_intro_001",
+                    "heydemann-2000-66701ffbb36c_000_intro_001",
+                ],
+            }
+        ],
+    )
+    _write_json(
+        tmp_path / "data" / "names" / "alias_map.json",
+        {
+            "version": 1,
+            "generated_at": "2026-01-01T00:00:00Z",
+            "nodes": [{"canonical": "authoritarian upgrading", "kind": "concept", "aliases": []}],
+        },
+    )
+
+    _materialize(tmp_path)
+
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            self.prompts.append(prompt)
+            return _response("They disagree about the mechanism.", [])
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    client = RecordingClient()
+    _gather(tmp_path, client)
+
+    assert len(client.prompts) == 1
+    prompt = client.prompts[0]
+    assert "unavailable" not in prompt.lower()
+    assert "Heydemann" in prompt
+    assert "Jane Smith" in prompt
+
+
 # -- the disagreement record: provenance for issue #447's undecided measure --
 
 

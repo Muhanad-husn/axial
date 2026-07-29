@@ -212,6 +212,7 @@ from axial.names import (
     _cluster_reduced,
     _load_name_rows,
     _reduce_vectors,
+    is_apparatus_pointer_shaped,
     is_numeral_only_surface,
     parse_scoped_source,
 )
@@ -1566,10 +1567,22 @@ def run_merge_names(
         surface_form for surface_form in all_surface_forms if is_numeral_only_surface(surface_form)
     }
 
+    # Fix (2026-07-29): a chapter/footnote/endnote/appendix/table/figure
+    # POINTER (`is_apparatus_pointer_shaped`) is the same family of residue,
+    # gated at this same point for the same reason -- see that predicate's
+    # own comment in `axial.names`.
+    apparatus_gated = {
+        surface_form
+        for surface_form in all_surface_forms
+        if is_apparatus_pointer_shaped(surface_form)
+    }
+
     rows = [
         row
         for row in rows
-        if row["surface_form"] not in folded_away and row["surface_form"] not in numeral_gated
+        if row["surface_form"] not in folded_away
+        and row["surface_form"] not in numeral_gated
+        and row["surface_form"] not in apparatus_gated
     ]
     entries = [(row["surface_form"], row["kind"] or None, int(row["count"])) for row in rows]
     surface_forms = [surface_form for surface_form, _kind, _count in entries]
@@ -1662,6 +1675,7 @@ def run_merge_names(
         f"reconcile: {len(all_surface_forms)} surface form(s), "
         f"{len(folded_groups)} case/whitespace/punctuation fold group(s) auto-merged "
         f"(issue #463, no model call), {len(numeral_gated)} numeral-only surface(s) "
+        f"and {len(apparatus_gated)} apparatus-pointer surface(s) "
         "gated out of every merge call (never a name), "
         f"{len(batches)} cluster batch(es) "
         f"({len(candidate_batches)} from candidate generation, issue #446) "
@@ -1771,6 +1785,7 @@ def run_merge_names(
         "surface_forms": len(all_surface_forms),
         "fold_groups": len(folded_groups),
         "numeral_gated_surfaces": len(numeral_gated),
+        "apparatus_gated_surfaces": len(apparatus_gated),
         "clusters": len({label for label in labels if label != NOISE_LABEL}),
         "batches": len(batches),
         "candidate_batches": len(candidate_batches),
