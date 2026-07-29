@@ -70,6 +70,32 @@ pass would touch, and the merge prompt mistaking several such findings for
 readings that disagree with EACH OTHER on four of the twenty biggest names
 in the sample, including the three largest in the corpus.
 
+**A merge handed real evidence never returns null.** #472 shipped that fix
+above and, measured on the same 100-name sample after landing, regressed it:
+`_GATHER_PROMPT_TEMPLATE`'s "respond with null instead of inventing a
+dispute" made null the cheapest available batch answer (11 of 13 lost
+findings, `data/logs/2026-07-29-gather-rerun-after-472/summary.md`), and the
+merge step itself discarded real evidence on 2 names (`Syria`, `Michael
+Mann`) by returning null even though every finding it was handed was
+non-null. The batch prompt now asks for a genuine reading before null is
+allowed; the merge step is a code invariant, not a prompt question -- when
+`_gather_one`'s merge call is handed two or more surviving findings, its
+result is validated (`complete_json`'s own bounded re-ask) and, if the model
+still insists on null after that budget, code falls back to the surviving
+findings' own text rather than silently dropping evidence the name already
+paid for. A null disagreement can still happen, but only through the
+all-batches-null path above, where no merge call is made at all.
+
+**A finding that is only the literal word "null" or "none" is a structured
+null, not text.** The prompt's own `"disagreement": null` example primes some
+completions to echo the token back as a JSON *string* rather than the JSON
+literal (measured live on the seeded 100-name sample, on `Russia` among
+others), and a bare `"null"` string used to pass `parse_gather_response`'s
+validation as a genuine finding. Fixed at that one parse boundary
+(`_is_null_token`), which every path -- batch, merge, the single-survivor
+shortcut -- already runs through, rather than in the prompt: wording cannot
+be trusted not to re-trigger the same priming.
+
 **Every finding is persisted before it is used**, keyed by a content hash of
 the name's own rendered packets -- the same content-addressing
 `axial.merge_names` uses, and for the same two reasons: this pass costs real
@@ -164,9 +190,16 @@ sentence, whose position that is, and who or what it argues against.
 PASSAGES
 {members}
 
-Say what the authors gathered here actually disagree about -- the substance \
-of it, in a few sentences, naming who holds which side. Where they do not \
-disagree, respond with "disagreement": null instead of inventing a dispute.
+Read every passage before deciding. Authors who make different claims about \
+{name}, hold different positions, or argue against different targets are \
+already in disagreement, whether or not either one names the other -- that \
+is usually there among this many passages even when no author explicitly \
+rebuts another. Say what the disagreement actually is, in a few sentences, \
+naming who holds which side. Reach for "disagreement": null only once that \
+full reading turns up no such tension anywhere -- not because the \
+disagreement takes more than one sentence to state, but because these \
+authors genuinely do not differ. null is a last resort, not the default \
+answer.
 
 RESPONSE. Reply with ONLY a JSON object, no prose and no markdown fences:
 {{"disagreement": "<a few sentences, or null if they do not disagree>", \
@@ -200,6 +233,18 @@ class GatherResponseError(GatherError):
     """Raised when a response is not usable as a disagreement finding -- a
     shape failure, so it is re-askable within `complete_json`'s own bounded
     budget."""
+
+
+class _MergeNullDespiteEvidenceError(GatherResponseError):
+    """Internal to `_gather_one`'s merge step. Raised by the merge call's own
+    `validate` when the response parses fine but is null anyway, even though
+    the merge was handed at least one real batch finding. A subclass of
+    `GatherResponseError` so `complete_json` re-asks it exactly like any
+    other content-shaped failure, but caught ONLY around the merge call
+    itself (never by the outer per-name handler) so a genuinely malformed
+    merge response still fails the whole name exactly as before -- only the
+    specific "null against real evidence" shape gets the code fallback
+    below."""
 
 
 class DisagreementRecordsCorruptError(GatherError):
@@ -349,6 +394,31 @@ def compose_merge_prompt(canonical: str, findings: list[str]) -> str:
     return _MERGE_PROMPT_TEMPLATE.format(name=repr(canonical), findings=rendered)
 
 
+# Characters `_is_null_token` strips from both ends before comparing -- plain
+# whitespace plus a stray layer of quote marks a completion sometimes wraps
+# a literal token in (e.g. the model echoing `"null"` as a JSON *string*
+# rather than emitting JSON `null`). `str.strip` removes these repeatedly
+# from each end only, so a legitimate finding that merely contains the word
+# in its middle is never touched.
+_NULL_TOKEN_STRIP_CHARS = " \t\r\n'\""
+
+
+def _is_null_token(text: str) -> bool:
+    """True when `text` is nothing but the word "null" or "none",
+    case-insensitively, once surrounding whitespace and quote marks are
+    stripped -- and only then. Fix (2026-07-29): re-run of this same fix on
+    the seeded 100-name sample measured 3 records whose `"disagreement"`
+    was the JSON *string* `"null"` rather than the JSON literal -- the
+    batch prompt's own `"disagreement": null` example priming a completion
+    to echo the token back as quoted text (`Russia` at 429 members among
+    them). `parse_gather_response` used to accept that string as a genuine
+    finding. Caught here, at the one parse boundary every path (batch,
+    merge, the single-survivor shortcut) already goes through, rather than
+    in the prompt -- wording cannot be trusted not to re-trigger the same
+    priming."""
+    return text.strip(_NULL_TOKEN_STRIP_CHARS).lower() in ("null", "none")
+
+
 def parse_gather_response(raw: str) -> tuple[str | None, list[str]]:
     """Parse one response into `(disagreement, names)`. `disagreement` is
     `None` when the finding is a structured null -- the authors gathered
@@ -359,7 +429,10 @@ def parse_gather_response(raw: str) -> tuple[str | None, list[str]]:
     `complete_json`. A `None` disagreement is never a shape failure: it is
     the one way a finding has to say "no disagreement" without prose (the
     root cause behind a merge call mistaking several "they do not disagree"
-    findings for claims to adjudicate between).
+    findings for claims to adjudicate between). A disagreement that is
+    nothing but the literal word "null" or "none" (`_is_null_token`) is
+    normalized to `None` here too -- a JSON *string* saying "null" is the
+    same judgment as JSON `null`, not a real finding.
 
     `names` is whatever the model named; it is NOT trusted as a link here.
     `resolve_links` filters it against the index at write time, so a
@@ -377,6 +450,8 @@ def parse_gather_response(raw: str) -> tuple[str | None, list[str]]:
         if not isinstance(disagreement, str) or not disagreement.strip():
             raise GatherResponseError("gather response carried an empty 'disagreement' string")
         disagreement = disagreement.strip()
+        if _is_null_token(disagreement):
+            disagreement = None
     raw_names = data.get("names")
     names = [
         name for name in (raw_names if isinstance(raw_names, list) else []) if isinstance(name, str)
@@ -509,14 +584,39 @@ def _gather_one(
             disagreement = surviving[0]["finding"]
             merged = False
         else:
-            prompt = compose_merge_prompt(
-                job.canonical, [record["finding"] for record in surviving]
-            )
-            raw = complete_json(
-                client, prompt, pass_name=GATHER_PASS_NAME, validate=parse_gather_response
-            )
-            disagreement, merge_names = parse_gather_response(raw)
-            names = merge_names or names
+            findings = [record["finding"] for record in surviving]
+            prompt = compose_merge_prompt(job.canonical, findings)
+
+            def _validate_merge(raw: str, _findings: list[str] = findings) -> None:
+                # Same shape check every response gets (`parse_gather_
+                # response` itself re-asks on a missing key or an empty
+                # string); on top of it, the invariant (§7.18, this fix):
+                # the merge was handed at least one real finding, so a null
+                # result here is never an honest reading and gets the same
+                # bounded re-ask as any other content-shaped failure.
+                merged_disagreement, _names = parse_gather_response(raw)
+                if merged_disagreement is None:
+                    raise _MergeNullDespiteEvidenceError(
+                        f"merge response was null against {len(_findings)} "
+                        "surviving batch finding(s)"
+                    )
+
+            try:
+                raw = complete_json(
+                    client, prompt, pass_name=GATHER_PASS_NAME, validate=_validate_merge
+                )
+                disagreement, merge_names = parse_gather_response(raw)
+                names = merge_names or names
+            except _MergeNullDespiteEvidenceError:
+                # complete_json already re-asked up to its own bounded
+                # budget and the model still insists real evidence merges to
+                # nothing. There is no honest reading under which two
+                # genuine disagreements combine to null, so code -- not
+                # another model call -- makes the record whole rather than
+                # silently dropping evidence this name already paid for: the
+                # surviving findings themselves, joined, become the
+                # disagreement.
+                disagreement = " ".join(findings)
             merged = True
     except (ModelJsonError, GatherResponseError) as exc:
         return job, None, str(exc)

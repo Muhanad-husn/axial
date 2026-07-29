@@ -86,13 +86,21 @@ class FakeClient:
     carries, not by its wording: a batch prompt carries the fixture's own
     member packets (and so its authors), the merge call carries only the
     batch findings. `batch` is consumed in batch order with the last entry
-    repeating, so a test that only cares about "one call" scripts one."""
+    repeating, so a test that only cares about "one call" scripts one.
+    `merge` works the same way and also accepts a single string for the
+    common one-response case; a list lets a test script a merge call that
+    keeps failing across `complete_json`'s own bounded re-ask budget."""
 
     _FIXTURE_AUTHORS = ("Charles Tilly", "Miguel Centeno")
 
-    def __init__(self, batch: list[str], merge: str | None = None):
+    def __init__(self, batch: list[str], merge: str | list[str] | None = None):
         self._batch = list(batch)
-        self._merge = merge
+        if merge is None:
+            self._merge: list[str] | None = None
+        elif isinstance(merge, str):
+            self._merge = [merge]
+        else:
+            self._merge = list(merge)
         self.prompts: list[str] = []
         self.batch_prompts: list[str] = []
         self.merge_prompts: list[str] = []
@@ -106,7 +114,7 @@ class FakeClient:
             return self._batch[min(len(self.batch_prompts) - 1, len(self._batch) - 1)]
         self.merge_prompts.append(prompt)
         assert self._merge is not None, "an unexpected merge call was made"
-        return self._merge
+        return self._merge[min(len(self.merge_prompts) - 1, len(self._merge) - 1)]
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         return "fake"
@@ -454,6 +462,29 @@ def test_parse_gather_response_rejects_an_empty_disagreement_string():
         parse_gather_response(_response("", []))
 
 
+# -- literal "null" as a JSON *string*, not the JSON literal (regression) ----
+# (fix, 2026-07-29: measured live on the seeded 100-name sample after the
+# null-is-a-last-resort fix -- `Russia` (429 members), `Adrienne
+# Windhoff-Héritier` and `Müller and Weede (1990)` all carried the literal
+# 4-character string "null" as their finding, which used to pass validation
+# as a genuine disagreement and would have been written onto the page.)
+
+
+@pytest.mark.parametrize(
+    "raw_value",
+    ["null", "NULL", "  null  ", '"null"', "none", "None", "'none'"],
+)
+def test_a_bare_null_or_none_string_is_treated_as_a_structured_null(raw_value):
+    disagreement, _names = parse_gather_response(_response(raw_value, []))
+    assert disagreement is None
+
+
+def test_a_finding_that_merely_contains_the_word_null_is_left_alone():
+    text = "The authors disagree about whether the null hypothesis of no state effect holds."
+    disagreement, _names = parse_gather_response(_response(text, []))
+    assert disagreement == text
+
+
 # -- acceptance 1: under budget, one call, disagreement + name-to-name links --
 
 
@@ -668,6 +699,69 @@ def test_a_null_batch_never_reaches_the_merge_call(tmp_path):
     page = _page(tmp_path, "war making")
     assert page.count(DISAGREEMENT_HEADING) == 1
     assert "Merged from A and B only." in page
+
+
+# -- invariant: a merge handed real evidence must not yield a null record ----
+# (fix, 2026-07-29: `data/logs/2026-07-29-gather-rerun-after-472/summary.md`
+# measured `Syria` -- 2 real batch findings out of 18 -- and `Michael Mann`
+# -- 4 of 8 -- both merging to null/"no disagreement". There is no honest
+# reading under which two genuine disagreements combine to nothing, so this
+# is enforced in code, not asked for in the prompt.)
+
+
+def test_a_merge_that_keeps_returning_null_falls_back_to_the_survivors_it_was_handed(
+    tmp_path,
+):
+    _build_large_fixture(tmp_path, members=60)
+    _materialize(tmp_path)
+
+    client = FakeClient(
+        batch=[_response("Finding A.", []), _response("Finding B.", [])],
+        # Every merge attempt -- including every re-ask -- insists on null
+        # despite two real surviving findings.
+        merge=[_response(None, [])],
+    )
+    result = _gather(tmp_path, client)
+
+    assert result["merge_calls"] == 1
+    assert len(client.merge_prompts) == 3, (
+        "the invariant is enforced through complete_json's own bounded "
+        "re-ask budget, not a new retry loop"
+    )
+
+    (record,) = _records(tmp_path)
+    assert record["disagreement"] is not None, (
+        "a merge handed non-null findings must never persist a null record"
+    )
+    assert "Finding A." in record["disagreement"]
+    assert "Finding B." in record["disagreement"]
+
+    page = _page(tmp_path, "war making")
+    assert DISAGREEMENT_HEADING in page
+    assert "Finding A." in page
+    assert "Finding B." in page
+
+
+def test_a_merge_that_finds_a_real_disagreement_on_a_later_attempt_is_not_overridden(
+    tmp_path,
+):
+    """The invariant only fires once complete_json's own re-ask budget is
+    exhausted -- a merge call that eventually returns a real finding is used
+    as-is, not replaced by the survivors' raw text."""
+    _build_large_fixture(tmp_path, members=60)
+    _materialize(tmp_path)
+
+    client = FakeClient(
+        batch=[_response("Finding A.", []), _response("Finding B.", [])],
+        merge=[_response(None, []), _response("The real merged account.", [])],
+    )
+    result = _gather(tmp_path, client)
+
+    assert result["merge_calls"] == 1
+    assert len(client.merge_prompts) == 2
+
+    (record,) = _records(tmp_path)
+    assert record["disagreement"] == "The real merged account."
 
 
 # -- acceptance 3: the budget never appears in a prompt (D12's risk) ----------
