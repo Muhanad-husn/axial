@@ -9,8 +9,11 @@ Given a source whose notes, envelope and source-metadata record are already
 When  the operator runs `axial interrogate <source> --data-dir <dir>`
 Then  every note in the chunk artifact produces exactly one answer record in
       `<dir>/answers/<source_id>.jsonl`, keyed by chunk_id
-And   each record answers all thirteen D6 questions, carries its pass name,
+And   each record answers every D6 question, carries its pass name,
       model, frame version and timestamp, and carries no vote/draws field
+And   whose position it is (`position_of`) and what that position is
+      (`position`) are two separate answers, so a passage stating the book's
+      own view yields an attribution AND a substantive stance (issue #496)
 And   the prompt carries exactly §7.15's context (note text, author/title/
       date, thesis/scope/stated argument, chapter/section, the frame as
       examples) and asks each free answer BEFORE showing that question's
@@ -36,9 +39,9 @@ Seam decisions
    the four directories it needs (`chunks/`, `envelopes/`, `source_meta/`,
    `answers/`) share one parent. One flag, not four.
 
-3. **The thirteen questions are asserted by their field names**, taken from
-   §7.15's own table, not imported from the implementation -- importing the
-   module's constant would make this test agree with whatever the code says.
+3. **The questions are asserted by their field names**, taken from §7.15's
+   own table, not imported from the implementation -- importing the module's
+   constant would make this test agree with whatever the code says.
 
 4. **The stub's canned answer is not asserted verbatim.** What is asserted
    is the record's shape and the free/nearest separation. The one place the
@@ -58,8 +61,10 @@ from axial.envelope import compute_source_id
 from axial.interrogate import ANSWERS_DIR_NAME, answers_checkpoint_path, run_interrogate
 from axial.llm import PROVIDER_ENV_VAR, STUB_NOTE_INTERROGATE_RESPONSE_ENV_VAR, StubLLMClient
 
-# specs/PRODUCT.md §7.15's own answer-field table: thirteen questions, sixteen
-# fields (three questions split in two).
+# specs/PRODUCT.md §7.15's own answer-field table: fourteen questions,
+# seventeen fields (three questions split in two). `position` joined
+# `position_of` in frame 0.2 (issue #496): the fused question answered
+# "whose" for 76% of the corpus and nothing carried what the position was.
 ANSWER_FIELDS = (
     "about",
     "claim",
@@ -67,6 +72,7 @@ ANSWER_FIELDS = (
     "ranges_over",
     "stops_holding",
     "position_of",
+    "position",
     "arguing_against",
     "names",
     "citations",
@@ -159,7 +165,48 @@ def _read_answers(data_dir: Path, source_id: str) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
-def test_one_answer_record_per_note_answering_all_thirteen_questions(tmp_path, capsys):
+def test_a_passage_stating_the_books_own_view_records_both_the_holder_and_the_position(
+    tmp_path, monkeypatch
+):
+    """Issue #496's acceptance bar. The fused `position_of` answered "the
+    author" for 76% of the corpus and carried no stance; split, the same
+    passage records both, and the two are separately readable off the
+    record. The prompt asks them as two numbered questions and `position`
+    carries the frame's own school examples, so its `_nearest` key rides
+    with it while `position_of` gets none."""
+    source_path, data_dir, source_id = _arrange(tmp_path)
+    monkeypatch.setenv(
+        STUB_NOTE_INTERROGATE_RESPONSE_ENV_VAR,
+        json.dumps(
+            {
+                **{field: "answered from the passage" for field in ANSWER_FIELDS},
+                "position_of": "the author, Raymond Hinnebusch",
+                "position": (
+                    "durable Ba'athist rule was produced by party organisation, "
+                    "not by military coercion"
+                ),
+                "position_nearest": {"example": "institutionalist-state-centered", "fit": "close"},
+            }
+        ),
+    )
+
+    assert main(["interrogate", str(source_path), "--data-dir", str(data_dir)]) == 0
+
+    answers = _read_answers(data_dir, source_id)[0]["answers"]
+    assert answers["position_of"] == "the author, Raymond Hinnebusch"
+    assert answers["position"] == (
+        "durable Ba'athist rule was produced by party organisation, not by military coercion"
+    )
+    assert answers["position_nearest"] == {
+        "example": "institutionalist-state-centered",
+        "fit": "close",
+    }
+    # No example axis exists for "whose position is this", so no `_nearest`
+    # is asked for or recorded against it.
+    assert "position_of_nearest" not in answers
+
+
+def test_one_answer_record_per_note_answering_every_question(tmp_path, capsys):
     source_path, data_dir, source_id = _arrange(tmp_path)
 
     exit_code = main(["interrogate", str(source_path), "--data-dir", str(data_dir)])

@@ -3,7 +3,8 @@
 Locked behavioral contract (DEC-1) -- do not edit once committed red.
 
 Given the committed placeholder schema at config/domains/syria/schema.yaml
-      (version 0.1)
+      (version 0.2 -- bumped from 0.1 by issue #496, which split `position`
+      out of the interrogation frame's `position_of`)
 When  the user runs `uv run axial schema show config/domains/syria`
 Then  it exits 0 and lists the five axes (field, claim_type, empirical_scope,
       theory_school, role_in_argument), each with its cardinality and value
@@ -27,7 +28,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# The five axes the v0.1 Syria schema.yaml must declare (Appendix G / §7.1;
+# The five axes the Syria schema.yaml must declare (Appendix G / §7.1;
 # `artifact_role` struck, issue #429).
 EXPECTED_AXES = {
     "field": "primary_plus_secondary",
@@ -37,7 +38,7 @@ EXPECTED_AXES = {
     "role_in_argument": "single",
 }
 
-SCHEMA_VERSION = "0.1"
+SCHEMA_VERSION = "0.2"
 
 
 def _run_schema_show(*args: str) -> subprocess.CompletedProcess:

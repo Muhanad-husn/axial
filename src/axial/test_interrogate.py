@@ -207,17 +207,17 @@ def test_the_names_question_offers_joined_kinds_never_their_bare_halves():
 # --- Frame examples never leak a retired sentinel ---------------------------
 
 
-def test_position_of_examples_exclude_the_retired_sentinels_but_keep_the_rest():
+def test_position_examples_exclude_the_retired_sentinels_but_keep_the_rest():
     """PRD §D4/§D9 (specs/PRODUCT.md:188,890) retires `not-applicable` and
     `unlisted` for the interrogation pass -- D7's abstention and a verbatim
     free answer do both jobs now. `frame_examples` must not offer either id
-    as one of the `position_of` examples, even though both stay declared in
+    as one of the `position` examples, even though both stay declared in
     the schema/codebook for the gold-set dropdown (`axial.gold`)."""
     schema = load_schema(DEFAULT_DOMAIN_DIR)
     codebook = load_codebook(DEFAULT_DOMAIN_DIR)
 
     examples = frame_examples(schema, codebook)
-    offered_ids = {tag_id for tag_id, _definition in examples["position_of"]}
+    offered_ids = {tag_id for tag_id, _definition in examples["position"]}
 
     assert offered_ids.isdisjoint(RETIRED_SENTINEL_EXAMPLE_IDS)
     assert offered_ids == schema.axes["theory_school"].tag_ids - RETIRED_SENTINEL_EXAMPLE_IDS
@@ -233,10 +233,87 @@ def test_frame_examples_fallback_also_filters_the_retired_sentinels():
     empty_codebook.axes = {}
 
     examples = frame_examples(schema, empty_codebook)
-    offered_ids = {tag_id for tag_id, _definition in examples["position_of"]}
+    offered_ids = {tag_id for tag_id, _definition in examples["position"]}
 
     assert offered_ids.isdisjoint(RETIRED_SENTINEL_EXAMPLE_IDS)
     assert offered_ids == schema.axes["theory_school"].tag_ids - RETIRED_SENTINEL_EXAMPLE_IDS
+
+
+# --- #496: whose position and what the position is are two questions --------
+
+
+def test_the_two_position_questions_are_asked_separately_and_position_of_is_unchanged():
+    """`position_of` keeps its wording and its meaning -- it answers WHOSE.
+    The new `position` answers WHAT, openly, and the prompt says so sharply
+    enough that a passage stating the book's own view is expected to yield
+    both an attribution and a substantive stance rather than one or the
+    other (76% of the fused field's answers were "the author")."""
+    from axial.interrogate import _QUESTIONS
+
+    assert "position_of -- Whose position is this?" in _QUESTIONS
+    assert "position -- What IS that position, in the passage's own terms?" in _QUESTIONS
+    # The distinction is drawn where the model can act on it: naming the
+    # holder must not be accepted as an answer to the second question.
+    assert _QUESTIONS.index("position_of --") < _QUESTIONS.index("7. position --")
+    assert '"the author\'s own" answers question 6' in _QUESTIONS
+    assert ANSWER_FIELDS.index("position") == ANSWER_FIELDS.index("position_of") + 1
+
+
+def test_the_theory_school_examples_sit_on_position_and_position_of_has_none():
+    """The school labels are what a position IS, not whose it is -- they are
+    exactly the 24% of fused answers that named a stance. There is no
+    vocabulary of position-holders, so `position_of` correctly gets no
+    example axis and no `_nearest` key is ever asked for it."""
+    schema = load_schema(DEFAULT_DOMAIN_DIR)
+    codebook = load_codebook(DEFAULT_DOMAIN_DIR)
+
+    examples = frame_examples(schema, codebook)
+
+    assert "position" in examples
+    assert "position_of" not in examples
+
+
+def test_position_is_required_and_blank_is_rejected_like_every_other_answer():
+    missing = json.dumps({field: "x" for field in ANSWER_FIELDS if field != "position"})
+    with pytest.raises(AnswerParseError, match="position"):
+        parse_answer_response(missing, EXAMPLES)
+
+    with pytest.raises(AnswerParseError, match="position"):
+        parse_answer_response(json.dumps(_answers(position="  ")), EXAMPLES)
+
+    parsed = parse_answer_response(
+        json.dumps(_answers(position_of="the author", position="war built the state")), EXAMPLES
+    )
+    assert parsed["position_of"] == "the author"
+    assert parsed["position"] == "war built the state"
+
+
+def test_a_field_a_record_does_not_carry_is_left_out_of_its_own_denominator():
+    """The corpus is a mixed frame and stays one: a record written before
+    `position` existed has no such key, and `is_abstention(None)` is False,
+    so reading over every answered note would silently report a question
+    that record was never asked as answered."""
+    old_shape = _answers()
+    del old_shape["position"]
+    records = [
+        {"answers": old_shape},
+        {"answers": _answers(position="not-in-passage")},
+    ]
+
+    rates = abstention_rates(records)
+
+    # One record carries the field, and it abstained.
+    assert rates["position"] == 1.0
+    # A field both records carry is unaffected.
+    assert rates["claim"] == 0.0
+
+
+def test_a_field_a_record_does_not_carry_is_left_out_of_the_collapse_denominator():
+    old_shape = _answers()
+    del old_shape["move"]
+    records = [{"answers": old_shape}, {"answers": _answers(move="role:claim")}]
+
+    assert collapse_rates(records, EXAMPLES)["frame_example_rate"]["move"] == 1.0
 
 
 # --- Context assembly -------------------------------------------------------
