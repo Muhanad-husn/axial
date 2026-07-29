@@ -261,6 +261,11 @@ def test_the_judge_prompt_carries_the_rebuilt_packet_and_the_disagreement_text(t
     assert result["conflict_rate"] == 1.0
     assert result["grounding_rate_by_band"]["10-20"] == 1.0
 
+    report_path = Path(result["report_path"])
+    assert report_path.is_file()
+    persisted = json.loads(report_path.read_text(encoding="utf-8"))
+    assert persisted["grounding_rate"] == 1.0
+
 
 def test_a_not_grounded_judgment_is_reported_in_failures(tmp_path):
     _build_fixture(tmp_path)
