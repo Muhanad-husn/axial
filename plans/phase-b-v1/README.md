@@ -160,7 +160,7 @@ Settled with the founder, 2026-07-29.
 | P3-01 | 181 | scholar against scholar over a densely covered question |
 | P3-04 | 183 | concept anchor at the corpus's centre of gravity |
 | P4-03 | 185 | a concept name page whose own book is in the corpus |
-| P4-04 | 198 | thin coverage, and the name-layer **fragmentation** case: the corpus holds `Autonomous Administration of North and East Syria` (2 members) plus an unmerged `AANS` node, and the acronym `AANES` a brief writes reaches neither. Its shape moved — this is no longer an honest-resolution-failure case, since the entity is there; #492 should read it as a fragmentation probe |
+| P4-04 | 198 | thin coverage, and the name-layer **fragmentation** case: the corpus holds `Autonomous Administration of North and East Syria` (2 members) plus an unmerged `AANS` node, and the acronym `AANES` a brief writes reaches neither. Its shape moved — this is no longer an honest-resolution-failure case, since the entity is there; #491 reads it as a fragmentation probe |
 | P2-02 | 248 | single-book-heavy retrieval, the source-concentration probe |
 
 No P1 or P5 brief is in this set. Both personas write long compound questions by
@@ -245,20 +245,19 @@ in **Order and concurrency** below.
 | 03 | retrieval loop rewired | #488 | Tool registry and dispatcher onto 02's tools; trajectory log unchanged; step budget re-proven | ☐ |
 | 04 | synthesis on the new evidence | #489 | Evidence assembly and the synthesis prompt rebuilt around `claim` / `position_of` / `position` / `arguing_against` / `citations`, with Gather findings as hints per D4 | ☐ |
 | 05 | coverage and counter-position | #490 | Per-name coverage map, confidence derivation, contested detection and counter-position generation per D2 and D3 | ☐ |
-| 06 | metrics and the run report | #491 | Source usage re-based, the response-quality table computed, per-pass latency captured, one report per run | ☐ |
-| 07 | smoke harness | #492 | `config/briefs/smoke/` and `axial brief smoke`: five briefs, mechanical gates plus a cost and latency budget so a spend regression shows up the day it lands | ☐ |
+| 06 | the run report, and the smoke harness that asserts on it | #491 | Source usage re-based, the response-quality table computed, per-pass latency captured, one report per run — plus `config/briefs/smoke/` and `axial brief smoke`: five briefs, mechanical checks and a cost and latency budget, built as a front end over the existing `run_sweep` | ☐ |
+| ~~07~~ | ~~smoke harness~~ | ~~#492~~ | **Absorbed into 06 on 2026-07-30.** Two of its five mechanical checks read 06's and 05's output, so it was never independent; both slices also edit `cli.py` and the record layer | — |
 | 08 | gates and the eval run | #493 | Gate fixtures re-pointed at the new record, `config/briefs/eval/` landed with the new brief and its case, the instrumented run executed and reported | ☐ |
 
 <!-- Status values: ☐ todo · ◐ in-progress · ✅ done. Update the row when a slice's PR opens. -->
 
 ## Order and concurrency
 
-Eight of the nine slices are a strict chain. There is exactly one real parallel
-pair.
+After 06 absorbed 07, every remaining slice is a strict chain. Only the optional
+00 ∥ 01 overlap is left.
 
 ```
-00 → 01 → 02 → 03 → 04 ┬→ 05 → 06 ┐
-                       └→ 07 ─────┴→ 08
+00 → 01 → 02 → 03 → 04 → 05 → 06 → 08
 ```
 
 | wave | slices | why it cannot move earlier |
@@ -268,25 +267,32 @@ pair.
 | 3 | 02 (#487) | the foundation slice — 03, 04, 05 and 06 all read its tools |
 | 4 | 03 (#488) | consumes 02's tool set |
 | 5 | 04 (#489) | consumes 03's trajectory |
-| 6 | **05 (#490) ∥ 07 (#492)** | 05 needs 04's claims; 07 needs an engine that produces a record |
-| 7 | 06 (#491) | needs 05's coverage map |
-| 8 | 08 (#493) | reports what 06 computes, over the harness 07 built |
+| 6 | 05 (#490) | needs 04's claims |
+| 7 | 06 (#491) | needs 05's coverage map, and the harness it now carries asserts on that map being non-empty |
+| 8 | 08 (#493) | reports what 06 computes, over the harness 06 built |
 
-**05 ∥ 07 is the parallel pair.** 05 touches `src/axial/validators/coverage.py`,
-`counter_position.py` and `analyze/`; 07 touches `config/briefs/smoke/`,
-`cli.py` and a smoke runner. Disjoint files, separate worktrees, no coordination
-needed. 07 degrades gracefully without 06's metrics, so it may also spill into
-wave 7 — but there it collides with 06 on `cli.py`, so keep both edits additive.
+**~~05 ∥ 07 is the parallel pair.~~ It was never real.** The plan put the smoke
+harness beside 05 on the grounds that it only needs an engine producing a record.
+Two of its five mechanical checks say otherwise: the cost and latency budget
+reads 06's per-pass figures, and the non-empty coverage check is exactly the
+regression 05 exists to fix, so it fails by construction before 05 lands. The
+"degrades gracefully without 06's metrics" clause was buying a path no ordering
+takes, and the two slices collide on `cli.py` and the record layer either way.
+They are one issue and one PR from 2026-07-30.
 
-Build 07 as early as wave 6 for a reason beyond the parallelism: it is the
-feedback loop 05, 06 and 08 are all checked against.
+**What that costs, stated.** The harness was also meant to be the feedback loop
+05, 06 and 08 are checked against. It now arrives after 05, so 05 is checked by
+its own acceptance test and the commit gate alone. In substance that was already
+true.
 
 **00 ∥ 01 is optional.** 00 writes only `specs/PHASE-B.md`; 01 is a corpus
 operation. The one condition is that 01 must not touch §7.12 — 00 already
 rewrites it. 00 is a pure `.md` change and may land straight on `main` under the
 docs-only gate exception.
 
-- 01, 02 and 07 are LLM-free by construction.
+- 01 and 02 are LLM-free by construction. 06 is not: its harness is *built and
+  tested* against the stub client, but the five smoke runs that set its budgets
+  make real calls, and two of its four accuracy numbers are judged.
 - **01 runs in the main checkout `D:/axial`, never a worktree.** `data/` is
   gitignored, so a corpus operation launched in a worktree silently operates on
   nothing. It is LLM-free and therefore cheap; there is no reason to overlap it
