@@ -6,8 +6,7 @@ Locked behavioral contract -- do not edit once committed green without a
 one-line justification in the PR body.
 
 Given a fixture name layer whose index holds "Charles Tilly",
-      "Giorgio Agamben", "Uğur Ümit Üngör", "SDF", "Rojava" and "PYD", and
-      does NOT hold "AANES"
+      "Giorgio Agamben", "Uğur Ümit Üngör", "SDF", "Rojava" and "PYD"
   And a fixture vault of name pages and prose notes carrying the
       interrogation's own answer block
   And no LLM client configured or constructible in the test process
@@ -18,7 +17,7 @@ Then  each reaches the canonical "Charles Tilly", reporting which tier and
   And no encoder is loaded for any of them
 
 Given the same fixture
-When  find_names("AANES") is called
+When  find_names(<a query the corpus does not hold>) is called
 Then  [] is returned -- a real answer, distinguishable from an error
   And find_names("SDF") is not empty
 
@@ -98,11 +97,17 @@ AGAMBEN = "Giorgio Agamben"
 UNGOR = "Uğur Ümit Üngör"
 BELLICIST = "bellicist state formation"
 
-# Present in the index; "AANES" deliberately is not.
 SDF = "SDF"
 ROJAVA = "Rojava"
 PYD = "PYD"
-ABSENT_NAME = "AANES"
+
+# A query the corpus genuinely does not hold, and the one the live-vault run
+# measured (2026-07-30): it is cut at cosine 0.4518 and returns `[]`. NOT
+# "AANES" -- that entity IS in the index under its full name
+# ("Autonomous Administration of North and East Syria", 2 members), and the
+# acronym failing to reach it is a name-layer gap filed against Phase A, not
+# an honest answer about the corpus (specs/PHASE-B.md §7.5).
+UNHELD_QUERY = "zzqqx nonexistent scholar"
 
 # Three canonicals that exercise the two distinct collisions the name layer
 # really has. `FOLD_SPACED` and `FOLD_HYPHENATED` are identical under Phase
@@ -526,22 +531,22 @@ def test_find_names_tiers_are_exhausted_in_order_not_unioned(fixture_layer: tupl
 def test_find_names_on_a_name_the_corpus_does_not_hold_returns_empty_not_an_error(
     fixture_layer: tuple[Path, Path],
 ):
-    """P0-2's own observable: `find_names("AANES")` returns `[]` against the
-    pinned vault while `find_names("SDF")` does not. An empty result is a
-    real answer the caller can report as an honest resolution failure --
-    never an exception, never a nearest-neighbour substitution that hands
-    the agent the wrong scholar."""
+    """P0-2's own observable: a query the corpus does not hold returns `[]`
+    against the pinned vault while `find_names("SDF")` does not. An empty
+    result is a real answer the caller can report as an honest resolution
+    failure -- never an exception, never a nearest-neighbour substitution that
+    hands the agent the wrong scholar."""
     from axial.query import find_names
 
     vault_dir, names_dir = fixture_layer
     absent = find_names(
-        ABSENT_NAME, 10, names_dir=names_dir, vault_dir=vault_dir, encoder=_exploding_encoder
+        UNHELD_QUERY, 10, names_dir=names_dir, vault_dir=vault_dir, encoder=_exploding_encoder
     )
     present = find_names(
         SDF, 10, names_dir=names_dir, vault_dir=vault_dir, encoder=_exploding_encoder
     )
 
-    assert absent == [], f"expected an empty list for {ABSENT_NAME!r}, got {absent!r}"
+    assert absent == [], f"expected an empty list for {UNHELD_QUERY!r}, got {absent!r}"
     assert present != []
     assert isinstance(absent, list), "the empty answer is a list, not None and not an exception"
 
@@ -658,9 +663,9 @@ def test_get_name_on_an_unknown_canonical_raises_naming_it(fixture_layer: tuple[
 
     vault_dir, _names_dir = fixture_layer
     with pytest.raises(Exception) as exc_info:
-        get_name(ABSENT_NAME, vault_dir=vault_dir)
+        get_name(UNHELD_QUERY, vault_dir=vault_dir)
 
-    assert ABSENT_NAME in str(exc_info.value)
+    assert UNHELD_QUERY in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------

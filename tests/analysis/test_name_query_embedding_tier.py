@@ -20,7 +20,7 @@ Then  the hit is mapped back through the alias map to its canonical and
       de-duplicated, so one canonical appears once
 
 Given the same store
-When  find_names("AANES") is called and no vector is near enough
+When  a query no vector is near enough to is called
 Then  [] is returned -- the honest resolution failure, never the nearest
       scholar to hand
 
@@ -61,7 +61,11 @@ lancedb = pytest.importorskip("lancedb")
 UNGOR = "Uğur Ümit Üngör"
 TILLY = "Charles Tilly"
 ROJAVA = "Rojava"
-ABSENT_NAME = "AANES"
+# A query the corpus genuinely does not hold, and the one the live-vault run
+# measured (2026-07-30): cut at cosine 0.4518. NOT "AANES" -- that entity is in
+# the real index under its full name, and the acronym failing to reach it is a
+# name-layer gap filed against Phase A (specs/PHASE-B.md §7.5).
+UNHELD_QUERY = "zzqqx nonexistent scholar"
 
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 TABLE_NAME = "names"
@@ -87,13 +91,13 @@ _ROW_VECTORS: dict[str, list[float]] = {
 # cosine similarity with each row is just that row's own component: "Ungor"
 # sits almost exactly on Üngör's axis, "Chas Tilly" exactly on Tilly's,
 # "Rojava border" on both Rojava (0.8) and Üngör (0.6) so the two are ranked,
-# and "AANES" on a fourth axis nothing else occupies -- similarity 0 with
-# every row, so nothing clears the floor.
+# and the unheld query on a fourth axis nothing else occupies -- similarity 0
+# with every row, so nothing clears the floor.
 _STUB_VECTORS: dict[str, list[float]] = {
     "Ungor": [0.99, 0.01, 0.0, 0.0],
     "Chas Tilly": [0.0, 1.0, 0.0, 0.0],
     "Rojava border": [0.6, 0.0, 0.8, 0.0],
-    ABSENT_NAME: [0.0, 0.0, 0.0, 1.0],
+    UNHELD_QUERY: [0.0, 0.0, 0.0, 1.0],
 }
 
 
@@ -183,13 +187,13 @@ def test_tier_four_maps_an_alias_surface_back_to_its_canonical_and_dedupes(names
 
 
 def test_tier_four_returns_empty_rather_than_the_nearest_wrong_name(names_dir: Path):
-    """`find_names("AANES")` returns `[]` even with the vector store present
-    and readable: a nearest neighbour that is not near enough is not an
-    answer. Handing back the closest scholar instead is the failure mode the
-    issue names explicitly."""
+    """`[]` comes back even with the vector store present and readable: a
+    nearest neighbour that is not near enough is not an answer. Handing back
+    the closest scholar instead is the failure mode the issue names
+    explicitly, and the live-vault run measured this exact cut at 0.4518."""
     from axial.query import find_names
 
-    assert find_names(ABSENT_NAME, 5, names_dir=names_dir, encoder=_stub_encoder) == []
+    assert find_names(UNHELD_QUERY, 5, names_dir=names_dir, encoder=_stub_encoder) == []
 
 
 def test_tier_four_orders_by_score_descending_and_is_deterministic(names_dir: Path):

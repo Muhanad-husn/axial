@@ -46,32 +46,28 @@ the real, shared `data/` tree -- via `uv run --project <repo>` (required,
 not bare `uv run`, since the subprocess's cwd is deliberately not the repo
 checkout).
 
-Seam decision 2 -- the fixture vault proves absence-means-absence directly,
-and the coverage assertion checks the EXACT rendered lines, not a loose
-substring
+Seam decision 2 -- no coverage table at this pin, and no fabricated row
+either
 -----------------------------------------------------------------------
-The fixture vault carries exactly one prose note, whose `polities_touched`
-names "Freedonia" only. Per axial.query.reader.coverage_count's own
-documented contract, a polity no chunk touches is simply absent from its
-result -- so this vault's real `coverage_count()` is exactly
-`{"Freedonia": 1}`; "Syria" (the brief's own `case`) and "Tunisia" are both
-absent from it.
+The pre-pass shows no coverage table (issue #487): the §7.7 map is per-name
+and scoped to the brief's own resolved names, which this pre-pass does not
+resolve -- the retrieval loop does (#488), and passes a scoped map through
+`compose_prompt`'s unchanged table path. Rendering the whole name index
+instead was measured at 62,821 rows / 2.08 MB / ~500k tokens per run; under
+the retired per-polity facet the table was empty on every real run anyway.
 
-`axial.brief.interrogate.render_coverage_section` renders ONLY what
-`coverage_count()` itself names (here, exactly "Freedonia: 1 chunks") --
-nothing is synthesized for the brief's own `case`. An earlier version
-also injected a row for the brief's raw `case` string, explicit-zero when
-the corpus was silent on it; that was dropped (root-caused 2026-07-23)
-because a real `case` almost always bundles a place with a date range the
-coverage table has no way to speak to, so the fabricated zero-row fired as
-a false "the corpus has never heard of this place" signal on nearly every
-real brief, not a rare true one. This test asserts the EXACT rendered
-coverage line for the corpus's one real polity, and asserts NEITHER
-"Syria: ..." NOR "Tunisia: ..." appears as a coverage-table line -- a
-regression back to a fabricated/mis-keyed row for either would fail it.
-"Syria" and "Tunisia" may still appear inside the case/request's own
-verbatim free text, which the recorded prompt is asserted NOT to mistake
-for a coverage line.
+So this test asserts the prompt STATES that absence and its reason rather
+than printing an empty table under a heading promising real coverage --
+absence read as zero coverage is exactly the false-refusal failure the
+fabricated-row bug produced (root-caused 2026-07-23: an earlier version
+injected the brief's raw `case` string as a zero row, and a real `case`
+bundles a place with a date range the table cannot speak to). It still
+asserts NEITHER "Syria: ..." (the brief's own `case`) NOR "Tunisia: ..."
+appears as a coverage-table line, so a regression back to a fabricated or
+mis-keyed row fails here. Both words may still appear inside the
+case/request's own verbatim free text, which the recorded prompt is asserted
+NOT to mistake for a coverage line. The table path's own rendering stays
+pinned in src/axial/brief/test_interrogate.py.
 
 Seam decision 3 -- the `record` provider observes the assembled prompt
 -----------------------------------------------------------------------
@@ -112,9 +108,9 @@ TUNISIA_PREMISE_TEXT = (
 
 
 def _write_fixture_vault(root: Path) -> None:
-    """One synthetic prose note plus one name page, "Freedonia" -- "Tunisia"
-    (and "Syria") have no name page, so `coverage_count()` never carries them
-    as keys (seam decision 2)."""
+    """One synthetic prose note, so `axial brief run` has a real vault to
+    resolve against. The pre-pass reads no coverage from it (seam decision
+    2)."""
     prose_dir = root / "data" / "vault" / "prose"
     prose_dir.mkdir(parents=True, exist_ok=True)
     frontmatter: dict[str, Any] = {
@@ -143,20 +139,6 @@ def _write_fixture_vault(root: Path) -> None:
     }
     text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
     (prose_dir / "bifix_001_intro.md").write_text(text, encoding="utf-8")
-
-    # The coverage table's counts come from a name page's own `member_count`
-    # since issue #487 (D2), not from `polities_touched`. A polity is a name
-    # whose `kind` is `country/state/place`; nothing special-cases it.
-    names_dir = root / "data" / "vault" / "names"
-    names_dir.mkdir(parents=True, exist_ok=True)
-    page = {
-        "name": "Freedonia",
-        "kind": "country/state/place",
-        "aliases": [],
-        "member_count": 1,
-    }
-    body = yaml.safe_dump(page, sort_keys=False)
-    (names_dir / "Freedonia.md").write_text(f"---\n{body}---\n", encoding="utf-8")
 
 
 def _write_brief(root: Path) -> Path:
@@ -293,22 +275,24 @@ def test_contradicted_premise_never_proceeds_clean_and_carries_real_coverage(
     assert prompts, f"expected at least one recorded prompt at {record_path}"
     combined_prompt_text = "\n".join(prompts)
 
-    # The EXACT rendered coverage line for the corpus's one real polity
-    # entry -- proof that a genuine axial.query.reader.coverage_count()
-    # value (not a fabricated or free-text-guessed one) reached the prompt.
-    assert "Freedonia: 1 chunks" in combined_prompt_text, (
-        "expected the recorded prompt to carry coverage_count()'s own real "
-        f"entry (Freedonia: 1, the fixture vault's one real chunk), got:\n"
-        f"{combined_prompt_text!r}"
+    # The prompt carries no coverage table at this pin, and says so with its
+    # reason (issue #487): the §7.7 map is per-name and scoped to the brief's
+    # own resolved names, which this pre-pass does not resolve (#488). What it
+    # must never do is promise real coverage and then show nothing -- absence
+    # read as zero coverage is the false-refusal failure this test's own
+    # fabricated-row scenarios below already guard.
+    assert "No coverage table is available" in combined_prompt_text, (
+        f"expected the recorded prompt to state the absence of a coverage "
+        f"table and its reason, got:\n{combined_prompt_text!r}"
     )
-    # The brief's own `case` ("Syria") is absent from this fixture's real
-    # coverage -- it must NOT get a fabricated coverage-table row of its
-    # own (the bug this test now guards): no "Syria: ..." coverage line at
-    # all, only the corpus's real "Freedonia: 1 chunks" entry above.
+    assert "REAL coverage" not in combined_prompt_text, (
+        "no heading may promise the corpus's real coverage when none is shown"
+    )
+    # The brief's own `case` ("Syria") must still never appear as a
+    # fabricated coverage-table row of its own (the bug this test guards).
     assert "Syria:" not in combined_prompt_text, (
         "expected no fabricated 'Syria: ...' coverage line for the brief's "
-        f"own case -- the corpus has no real coverage for it, got:\n"
-        f"{combined_prompt_text!r}"
+        f"own case, got:\n{combined_prompt_text!r}"
     )
     # "Tunisia" is neither the case nor a real corpus polity under this
     # vault, so it must never get a fabricated coverage-table entry of its
@@ -319,17 +303,17 @@ def test_contradicted_premise_never_proceeds_clean_and_carries_real_coverage(
         f"neither the case nor a real vault polity for this fixture, got:\n"
         f"{combined_prompt_text!r}"
     )
-    # The prompt must tell the model the coverage table has no time
-    # dimension, so it maps the case's place name(s) onto the table's real
-    # rows itself instead of expecting an exact string match against a
-    # date-qualified case (the fix for the false-refusal bug this test
-    # locks; see src/axial/brief/interrogate.py's compose_prompt).
-    assert (
-        "no time" in combined_prompt_text or "no time/period dimension" in combined_prompt_text
-    ), (
-        "expected the recorded prompt to carry the 'coverage table has no "
-        f"time dimension' guidance line, got:\n{combined_prompt_text!r}"
+    # With no table there is nothing to map a date-qualified case onto, so the
+    # mapping guidance is absent too -- guidance about a table that is not
+    # there is the same kind of lie as an empty table under a real-coverage
+    # heading. The guidance line's own content stays pinned, on the table
+    # path, in src/axial/brief/test_interrogate.py.
+    assert "no time/period dimension" not in combined_prompt_text, (
+        "the map-onto-the-table guidance must not appear when no table does"
     )
+    # Instead the model is told what to do with no coverage evidence: judge
+    # premises silent, never refuse for evidence it was not shown.
+    assert "silent" in combined_prompt_text
 
 
 def test_nonnull_refusal_forces_refuse_persists_and_makes_no_synthesis_call(

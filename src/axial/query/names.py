@@ -88,15 +88,27 @@ _MEMBER_LINE = re.compile(r"^- \[\[(?P<chunk_id>[^\]]+)\]\] — (?P<rest>.*)$")
 # How many hits a tool returns when the caller states no limit of its own.
 DEFAULT_LIMIT = 10
 
-# The cosine-similarity floor tier 4 will not resolve below. **A stated
-# tunable, not a measured constant.** It exists because a nearest-neighbour
-# search always has a nearest neighbour: without a floor, `find_names`
-# ("AANES") would hand back the closest scholar in the corpus instead of the
-# honest resolution failure §7.5 and P0-2 both require. 0.5 is the starting
-# hypothesis (unrelated short strings embed well below it under the store's
-# MiniLM model; a transliteration or abbreviation of the same name lands well
-# above it); what it should be is a real-corpus measurement against
-# `data/names/`, not something to hand-tune against fixtures.
+# The cosine-similarity floor tier 4 will not resolve below. A stated tunable
+# (§7.5 [TENTATIVE]), inspected on the real store rather than asserted. It
+# exists because a nearest-neighbour search always has a nearest neighbour:
+# without a floor, an unresolvable query comes back carrying the nearest name
+# in the corpus instead of the honest empty result §7.5 and P0-2 both require.
+#
+# Measured over `data/names/` (2026-07-30,
+# `data/logs/2026-07-30-name-query-487/`): an exact surface scores 1.0000 and
+# `Charles Tilly`'s own variant surfaces 0.8502-0.8345; `Ungor` reaches
+# `Uğur Ümit Üngör` at 0.7752; unrelated text tops out at 0.4518 and is cut.
+# That is the whole claim for 0.5 -- it cuts unrelated text and admits every
+# transliteration measured.
+#
+# It deliberately does NOT separate a right name from a plausible wrong one:
+# the acronym `AANES` reaches five wrong names topping out at 0.7062, and the
+# (0.7062, 0.7752] window that would cut them was REJECTED, not adopted -- a
+# 0.07 band read off two cases is a constant fitted to its own evidence, and
+# it would also deny an entity the corpus holds (`Autonomous Administration of
+# North and East Syria`, an exact hit with 2 members, which the acronym cannot
+# reach because an embedding model is not a string matcher). That is a
+# name-layer gap filed against Phase A, not a floor to tune.
 MIN_EMBEDDING_SIMILARITY = 0.5
 
 # The four tiers, in resolution order (§7.5).
@@ -797,14 +809,17 @@ def find_names(
     **Resolution is tiered, never string equality**, because exact lookup
     provably fails on the names briefs use: the index holds `Charles Tilly`,
     `Giorgio Agamben` and `Uğur Ümit Üngör` while briefs say Tilly, Agamben,
-    Ungor.
+    Ungor. Measured on the live vault (2026-07-30): `Tilly`, `Agamben`,
+    `Bayat`, `Batatu` and `Caspersen` all land through the alias map, and
+    `Ungor` reaches `Uğur Ümit Üngör` only through tier 4.
 
     **A query that resolves to nothing returns `[]`, and that is a real
-    answer.** `AANES` is absent from the index while `SDF`, `Rojava` and
-    `PYD` are present, and a caller that needs it should surface an honest
-    resolution failure -- never an exception, never silence, and never the
-    nearest scholar to hand (which is what `MIN_EMBEDDING_SIMILARITY` exists
-    to prevent).
+    answer** -- never an exception, never silence, and never the nearest name
+    to hand (which is what `MIN_EMBEDDING_SIMILARITY` exists to prevent). A
+    caller should report it as an honest resolution failure. What it does NOT
+    mean is that the corpus lacks the entity: an acronym whose expansion the
+    index carries can still reach nothing (see `MIN_EMBEDDING_SIMILARITY`),
+    which is a name-layer gap rather than an answer about the corpus.
 
     **Determinism:** tiers 1-3 are exact lookups over committed data, ordered
     by canonical ascending then by the matched surface form. Tier 4 is

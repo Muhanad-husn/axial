@@ -173,7 +173,7 @@ def test_canonical_for_surface_prefers_exact_then_alias_then_fold(tmp_path):
     _write_layer(
         names_dir,
         [
-            {"canonical": "Rojava", "kind": "country/state/place", "aliases": ["AANES-north"]},
+            {"canonical": "Rojava", "kind": "country/state/place", "aliases": ["North-East Syria"]},
             {"canonical": "PYD", "kind": "institution/group", "aliases": []},
         ],
     )
@@ -182,9 +182,9 @@ def test_canonical_for_surface_prefers_exact_then_alias_then_fold(tmp_path):
     layer = _name_layer(names_dir)
 
     assert canonical_for_surface("Rojava", layer) == "Rojava"
-    assert canonical_for_surface("AANES-north", layer) == "Rojava"
-    assert canonical_for_surface("aanes north", layer) == "Rojava"
-    assert canonical_for_surface("AANES", layer) is None
+    assert canonical_for_surface("North-East Syria", layer) == "Rojava"
+    assert canonical_for_surface("north east syria", layer) == "Rojava"
+    assert canonical_for_surface("a surface the layer never saw", layer) is None
 
 
 # -- the name-page body parse -------------------------------------------------

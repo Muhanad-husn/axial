@@ -39,9 +39,24 @@ Three further findings shaped the plan.
 **Exact name lookup fails on the names briefs actually use.** The index holds
 `Charles Tilly`, `Giorgio Agamben`, `Uğur Ümit Üngör`. Briefs say Tilly, Agamben,
 Ungor. It also holds `C. Tilly 1975` and `Charles Tilly (1964)` as separate
-pages, and `AANES` not at all while `SDF`, `Rojava` and `PYD` are all present.
-Name resolution has to go through the alias map plus the embeddings Reconcile
-already built (`data/names/embeddings.lance`), not string equality.
+pages. Name resolution has to go through the alias map plus the embeddings
+Reconcile already built (`data/names/embeddings.lance`), not string equality.
+Confirmed in slice 02 against the live vault (2026-07-30,
+`data/logs/2026-07-30-name-query-487/`): `Tilly`, `Agamben`, `Bayat`, `Batatu`
+and `Caspersen` all land through the alias map, and `Ungor` reaches
+`Uğur Ümit Üngör` only through the embeddings, at cosine 0.7752.
+
+**~~`AANES` is absent from the index.~~ It is not — the entity is there and the
+acronym cannot reach it.** Measured in the same run: `Autonomous Administration
+of North and East Syria` is an exact hit with 2 members, carrying the alias
+`Autonomous Administration of Northeast Syria (AANS)`, and a separate,
+fragmented `AANS` node with 1 member never folded into it. The acronym `AANES`
+reaches neither, because MiniLM scores an acronym against its own expansion
+below every piece of lexical noise (`Aarts` 0.7062, `AANS` 0.6716, `Aas Rustad`
+0.6200, ...) — an embedding model is not a string matcher. So this is a
+**name-layer gap filed against Phase A**, not a `find_names` behaviour and not
+a case any similarity floor can rescue: a floor tight enough to cut those five
+would also deny an entity the corpus holds.
 
 **~~The vault is missing 130 of its own disagreements.~~ It is not — the two
 numbers were never comparable.** `disagreements.jsonl` is append-only and keyed
@@ -138,7 +153,7 @@ Settled with the founder, 2026-07-29.
 | P3-01 | 181 | scholar against scholar over a densely covered question |
 | P3-04 | 183 | concept anchor at the corpus's centre of gravity |
 | P4-03 | 185 | a concept name page whose own book is in the corpus |
-| P4-04 | 198 | thin coverage, and `AANES` is absent from the index while `SDF` / `Rojava` / `PYD` are present, so it tests honest resolution failure |
+| P4-04 | 198 | thin coverage, and the name-layer **fragmentation** case: the corpus holds `Autonomous Administration of North and East Syria` (2 members) plus an unmerged `AANS` node, and the acronym `AANES` a brief writes reaches neither. Its shape moved — this is no longer an honest-resolution-failure case, since the entity is there; #492 should read it as a fragmentation probe |
 | P2-02 | 248 | single-book-heavy retrieval, the source-concentration probe |
 
 No P1 or P5 brief is in this set. Both personas write long compound questions by
