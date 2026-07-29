@@ -66,6 +66,7 @@ from axial.gather import (
     GatherResponseError,
     MemberPacket,
     _resolve_min_gather_members,
+    _select_by_canonical,
     parse_gather_response,
     render_packet,
     run_gather,
@@ -461,6 +462,47 @@ def test_upsert_with_a_null_disagreement_removes_an_existing_section():
     assert "**Member notes:**" in removed
 
 
+# -- per-canonical selection: the union of a name's whole record history -----
+# (#495 -- `disagreements.jsonl` is append-only, so one canonical can carry
+# more than one record when an upstream re-render changes its packet hash
+# without changing the canonical. The write loop selects across ALL of a
+# canonical's records, never just the one under its current key. Records are
+# written in both orders below so nothing here could pass on file order
+# alone.)
+
+
+def _disagreement_record(name_key: str, canonical: str, disagreement: str | None) -> dict:
+    return {"name_key": name_key, "canonical": canonical, "disagreement": disagreement}
+
+
+def test_select_by_canonical_keeps_an_older_finding_over_a_later_null():
+    older = _disagreement_record("key-a", "war making", "They used to disagree about scope.")
+    newer_null = _disagreement_record("key-b", "war making", None)
+
+    assert _select_by_canonical([older, newer_null])["war making"] is older
+
+
+def test_select_by_canonical_picks_whichever_non_null_record_is_physically_last():
+    first = _disagreement_record("key-a", "war making", "First reading.")
+    second = _disagreement_record("key-b", "war making", "Second reading.")
+
+    # The choice tracks file order (chronology), not some fixed content-based
+    # tie-break -- flipping which record comes last flips the winner.
+    assert _select_by_canonical([first, second])["war making"] is second
+    assert _select_by_canonical([second, first])["war making"] is first
+
+
+def test_select_by_canonical_falls_back_to_the_newest_record_when_every_one_is_null():
+    older_null = _disagreement_record("key-a", "war making", None)
+    newer_null = _disagreement_record("key-b", "war making", None)
+
+    selected = _select_by_canonical([older_null, newer_null])
+    assert selected["war making"] is newer_null
+
+    reversed_selected = _select_by_canonical([newer_null, older_null])
+    assert reversed_selected["war making"] is older_null
+
+
 def test_parse_gather_response_reads_a_structured_null():
     disagreement, names = parse_gather_response(_response(None, ["Some Name"]))
     assert disagreement is None
@@ -620,23 +662,19 @@ def test_re_running_gather_reuses_a_recorded_null_and_calls_nothing(tmp_path):
     assert DISAGREEMENT_HEADING not in _page(tmp_path, "war making")
 
 
-def test_a_name_whose_section_existed_loses_it_once_the_finding_turns_null(tmp_path):
-    _build_small_fixture(tmp_path)
-    _materialize(tmp_path)
-
-    first = FakeClient(batch=[_response("They used to disagree about scope.", [])])
-    _gather(tmp_path, first)
-    assert DISAGREEMENT_HEADING in _page(tmp_path, "war making")
-
-    # Change what feeds the packet (a re-run's job key is content-addressed,
-    # §7.18) so the name is genuinely re-asked, not reused.
+def _revise_centeno_claim(root: Path, claim: str) -> None:
+    """Re-renders `centeno-2002`'s one packet field, so the "war making" job's
+    content-addressed key (§7.18) changes and the name is genuinely re-asked
+    on the next `_gather` call, not reused from the checkpoint -- the same
+    shape PR #474 produced for 520 real names by relabelling one book's
+    author."""
     _write_jsonl(
-        tmp_path / "data" / "answers" / "centeno-2002.jsonl",
+        root / "data" / "answers" / "centeno-2002.jsonl",
         [
             _answer_record(
                 "centeno-2002_000_intro_001",
                 "centeno-2002",
-                claim="Limited war produced limited states in Latin America -- revised.",
+                claim=claim,
                 position_of="comparative historical sociology",
                 arguing_against=["Charles Tilly"],
                 names=[{"name": "war making", "kind": "concept"}],
@@ -644,13 +682,84 @@ def test_a_name_whose_section_existed_loses_it_once_the_finding_turns_null(tmp_p
         ],
     )
 
+
+def test_a_name_whose_section_existed_survives_a_later_null_re_ask(tmp_path):
+    """#495: the write loop unions a canonical's whole record history rather
+    than reading only the record under its CURRENT packet hash, so an older
+    non-null record outlives a later null one at the same name."""
+    _build_small_fixture(tmp_path)
+    _materialize(tmp_path)
+
+    first = FakeClient(batch=[_response("They used to disagree about scope.", [])])
+    _gather(tmp_path, first)
+    assert DISAGREEMENT_HEADING in _page(tmp_path, "war making")
+
+    _revise_centeno_claim(tmp_path, "Limited war produced limited states -- revised.")
+
+    second = FakeClient(batch=[_response(None, [])])
+    result = _gather(tmp_path, second)
+
+    # The resume path is unaffected: the current packets have no record of
+    # their own, so the name is asked, exactly as before this fix.
+    assert result["asked"] == 1
+    assert len(_records(tmp_path)) == 2, "both records stay on disk -- history is untouched"
+
+    page = _page(tmp_path, "war making")
+    assert DISAGREEMENT_HEADING in page
+    assert "They used to disagree about scope." in page
+
+
+def test_two_non_null_records_write_the_newer_finding(tmp_path):
+    _build_small_fixture(tmp_path)
+    _materialize(tmp_path)
+
+    first = FakeClient(batch=[_response("The original reading.", [])])
+    _gather(tmp_path, first)
+    assert "The original reading." in _page(tmp_path, "war making")
+
+    _revise_centeno_claim(tmp_path, "Limited war produced limited states -- revised.")
+
+    second = FakeClient(batch=[_response("The revised reading.", [])])
+    result = _gather(tmp_path, second)
+
+    assert result["asked"] == 1
+    assert len(_records(tmp_path)) == 2
+
+    page = _page(tmp_path, "war making")
+    assert "The revised reading." in page
+    assert "The original reading." not in page
+
+
+def test_two_null_records_still_write_no_section(tmp_path):
+    _build_small_fixture(tmp_path)
+    _materialize(tmp_path)
+
+    first = FakeClient(batch=[_response(None, [])])
+    _gather(tmp_path, first)
+    assert DISAGREEMENT_HEADING not in _page(tmp_path, "war making")
+
+    _revise_centeno_claim(tmp_path, "Limited war produced limited states -- revised.")
+
     second = FakeClient(batch=[_response(None, [])])
     result = _gather(tmp_path, second)
 
     assert result["asked"] == 1
-    page = _page(tmp_path, "war making")
-    assert DISAGREEMENT_HEADING not in page
-    assert "They used to disagree about scope." not in page
+    records = _records(tmp_path)
+    assert len(records) == 2
+    assert all(record["disagreement"] is None for record in records)
+    assert DISAGREEMENT_HEADING not in _page(tmp_path, "war making")
+
+
+def test_limit_zero_makes_no_model_calls(tmp_path):
+    _build_small_fixture(tmp_path)
+    _materialize(tmp_path)
+
+    client = FakeClient(batch=[_response("Should never be seen.", [])])
+    result = _gather(tmp_path, client, limit=0)
+
+    assert client.prompts == []
+    assert result["asked"] == 0
+    assert DISAGREEMENT_HEADING not in _page(tmp_path, "war making")
 
 
 def test_an_all_null_batched_name_makes_no_merge_call(tmp_path):

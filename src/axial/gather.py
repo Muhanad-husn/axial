@@ -58,9 +58,12 @@ findings and no packets at all, so it stays small however large the name is.
 were read and genuinely do not disagree, distinct from a shape failure
 (missing key, empty string), which is still re-asked. A `None` finding is
 never written to the page -- `upsert_disagreement_section` removes
-`DISAGREEMENT_HEADING` entirely rather than leaving an empty section, so a
-re-run can take a section away, not just add one -- but it IS persisted in
-`disagreements.jsonl`, so a re-run never re-asks it. Batched names drop null
+`DISAGREEMENT_HEADING` entirely rather than leaving an empty section -- but
+it IS persisted in `disagreements.jsonl`, so a re-run never re-asks it. The
+write loop selects the newest non-null record for a canonical name, falling
+back to the newest record only once every one of them is null (#495): a
+later null re-ask of the same name no longer takes an earlier real finding
+off the page. Batched names drop null
 batch findings before the merge call: an all-null name makes no merge call
 at all, and a name with exactly one surviving finding uses it directly
 without merging it against nothing. This is the fix for two measured
@@ -504,9 +507,13 @@ def upsert_disagreement_section(page_text: str, disagreement: str | None, links:
     second section under the first.
 
     `disagreement is None` (the authors gathered here genuinely do not
-    disagree) means no section at all -- not an empty heading. A page that
-    previously carried a section and is now null loses it entirely, so a
-    re-run can remove a section, not just add one."""
+    disagree, or no non-null record survives for this name) means no section
+    at all -- not an empty heading. This function still clears whatever it
+    is handed; it is `run_gather`'s write loop that decides what that is,
+    and it selects the newest non-null record for a canonical, falling back
+    to the newest record only once every one of them is null (#495) -- so a
+    genuine finding is no longer displaced by a later null re-ask of the
+    same name."""
     head = page_text.split(DISAGREEMENT_HEADING)[0].rstrip("\n")
     if disagreement is None:
         return head + "\n"
@@ -677,6 +684,26 @@ def load_disagreements(path: Path) -> dict[str, dict[str, Any]]:
     return {record["name_key"]: record for record in records}
 
 
+def _select_by_canonical(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Per canonical name, the record the write loop should read: the newest
+    non-null record, falling back to the newest record when every one of
+    them is null (#495). `records` must already be in file order, oldest
+    first -- `load_checkpoint_records`'s own return -- since "newest" is a
+    file-order question a dict keyed by `name_key` cannot answer: one
+    canonical can carry more than one packet hash (an upstream re-render
+    changes the hash without changing the canonical), and Python keeps a
+    key's ORIGINAL insertion position on overwrite, which throws file order
+    away entirely."""
+    newest_any: dict[str, dict[str, Any]] = {}
+    newest_non_null: dict[str, dict[str, Any]] = {}
+    for record in records:
+        canonical = record["canonical"]
+        newest_any[canonical] = record
+        if record["disagreement"] is not None:
+            newest_non_null[canonical] = record
+    return {**newest_any, **newest_non_null}
+
+
 def load_gather_context(
     answers_dir: Path, source_meta_dir: Path
 ) -> tuple[dict[str, dict[str, Any]], dict[str, tuple[Any, Any]]]:
@@ -806,6 +833,13 @@ def run_gather(
     reused = len(jobs) - len(pending)
     to_attempt = pending if limit is None else pending[:limit]
 
+    # Every record ever appended for this name, oldest first -- the write
+    # loop below selects from this per canonical, not per the current job
+    # key, so an earlier finding a later re-render re-asked as null is not
+    # lost (#495). `records` above stays keyed by `name_key`; it is the
+    # resume path's own lookup and untouched.
+    ordered_records = load_checkpoint_records(disagreements_path, DisagreementRecordsCorruptError)
+
     print(
         f"gather: {len(nodes)} name(s), {skipped_numeral_only} numeral-only surface(s) "
         f"and {skipped_apparatus_pointer} apparatus-pointer surface(s) "
@@ -840,14 +874,17 @@ def run_gather(
                     continue
                 append_checkpoint_record(disagreements_path, record)
                 records[job.key] = record
+                ordered_records.append(record)
                 model = record["model"]
                 called += 1
                 batch_calls += len(record["batches"])
                 merge_calls += 1 if record["merged"] else 0
 
+    by_canonical = _select_by_canonical(ordered_records)
+
     written = 0
     for job in jobs:
-        record = records.get(job.key)
+        record = by_canonical.get(job.canonical)
         path = page_paths.get(job.canonical)
         if record is None or path is None or not path.is_file():
             continue
