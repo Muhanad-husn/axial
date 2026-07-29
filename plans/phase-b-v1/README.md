@@ -43,10 +43,16 @@ pages, and `AANES` not at all while `SDF`, `Rojava` and `PYD` are all present.
 Name resolution has to go through the alias map plus the embeddings Reconcile
 already built (`data/names/embeddings.lance`), not string equality.
 
-**The vault is missing 130 of its own disagreements.** `disagreements.jsonl`
-holds 575 non-null findings; 445 name pages carry a section. Materialize cleared
-them and Gather was not re-run. Restoring them costs zero model calls, exactly as
-`specs/PRODUCT.md` §7.18 says it should.
+**~~The vault is missing 130 of its own disagreements.~~ It is not — the two
+numbers were never comparable.** `disagreements.jsonl` is append-only and keyed
+by a content hash of each name's rendered packets, so it holds history: 2,430
+records over 1,910 names, 520 of which carry more than one record. Of the 575
+non-null findings, 131 are superseded by a newer record for the same name, and
+575 − 131 = 444, exactly the live page count. Measured in slice 01: the free
+re-run made 0 model calls and wrote 0 pages, and every one of the 1,910 pages
+already agreed with its own newest record. Corrected here rather than left
+standing, because the residue turned out to measure something real — see
+**Notes and open questions**.
 
 **The eval oracles survived intact.** The 21 sim cases name 28 distinct
 `source_id`s across 97 references, and all 28 resolve against `data/envelopes/`
@@ -75,6 +81,16 @@ Settled with the founder, 2026-07-29.
    differ and whose `arguing_against` names the other side, or when it touches
    a name the Gather pass found a disagreement at. The corpus states the
    disagreement instead of a tag implying it.
+   **Measured before building (2026-07-29, on #490).** The two clauses are not
+   equal. `position_of` is free text with 90% singletons, and 76% of it answers
+   "the author" rather than naming a position (#496), so "positions differ" is
+   true of 99% of names and discriminates nothing; no count threshold rescues it.
+   The `arguing_against` clause does separate — 1.9x–2.4x lift over a 0.26 base
+   rate — but **only when "names the other side" is implemented literally**; read
+   loosely as "an `arguing_against` exists" it is a 1.00x no-op. Name size is the
+   dominant confound and must not be counted as independent evidence, since
+   thinness is already disclosed through `member_count` under D2. Recall caps at
+   0.35–0.59, so contestedness is a graded disclosure, never a boolean gate.
 4. **D4 — Gather findings are a retrieval hint, never a citation.** The agent
    may read a disagreement to decide where to look, then follows its own
    `chunk_ids` to the real notes and cites only those. Grounds stay anchored to
@@ -202,7 +218,7 @@ in **Order and concurrency** below.
 | # | Slice | Issue | Goal (one line) | Status |
 |---|-------|-------|-----------------|--------|
 | 00 | spec rewrite | #485 | `specs/PHASE-B.md` v2: §7.5 tool set, §7.7 per-name coverage, §7.8 contestedness from `arguing_against` and Gather, §7.12 pin, §7.13 re-based, §9 the 5+5 sets, §10 gates; retired criteria struck rather than left dangling | ✅ |
-| 01 | restore and re-pin | #486 | Re-run Gather (no model calls, records exist) so 130 findings return to their pages, then re-cut the corpus pin per D6. LLM-free | ☐ |
+| 01 | restore and re-pin | #486 | Re-cut the corpus pin per D6, its vault hash over prose ids plus the name layer. The 130 "missing" findings were superseded history, not damage: the free re-run made 0 calls and wrote 0 pages, and all 1,910 pages already agreed with their newest record. LLM-free | ✅ |
 | 02 | the name query API | #487 | `find_names`, `get_name`, `name_neighbors`, `who_cites`, `who_argues_against`, per-name `coverage_count`; deterministic, model-free, fully testable without an LLM | ☐ |
 | 03 | retrieval loop rewired | #488 | Tool registry and dispatcher onto 02's tools; trajectory log unchanged; step budget re-proven | ☐ |
 | 04 | synthesis on the new evidence | #489 | Evidence assembly and the synthesis prompt rebuilt around `claim` / `position_of` / `arguing_against` / `citations`, with Gather findings as hints per D4 | ☐ |
@@ -279,6 +295,23 @@ docs-only gate exception.
   do not meet. All three were closed against a 5% bar with no failure to aim
   them. A brief that visibly misses evidence because of one is exactly the
   trigger their bodies name.
+- **Gather's findings are 53% reproducible, which is why D4 is load-bearing
+  rather than merely cautious.** Slice 01 turned the two passes on disk into an
+  accidental experiment. PR #474 relabelled one book's author — `heydemann-2000`
+  carried the literal string `"unavailable"`, rendered into packets as *"the
+  'unavailable (2000)' author"* — and that changed the packet hash of every name
+  touching that book and no other name (520 re-asked, all of them; 1,390
+  untouched, none of them). Same model, identical `chunk_ids`, identical batches.
+  On that one-word change, **93 of the 176 names with a finding in either pass
+  reversed** — 48 lost, 45 gained, plus 83 rewritten — while the marginal rate
+  barely moved (131 → 128). Flip rate does not track the relabelled book's share
+  of the packet, which rules out "it learned something". So a single pass cannot
+  distinguish a prompt or model improvement from noise, and no Gather tuning
+  issue was filed. What was filed is #495: both answers are already on disk and
+  Gather reads only the newest key, so unioning them lifts the hint set 444 → 492
+  for zero model calls. Under D4 a coin-flip hint costs a wasted hop, and all 48
+  lost names still carry the evidence — differing positions, an `arguing_against`,
+  and (46 of 48) notes from two or more books — reachable by `get_name`.
 - **Retrieval recall has never been measured and now can be.** The five hard
   briefs have `required_citation_source_ids`. The share of those a run's grounds
   actually reach is the first real recall number this product has had, and it is
