@@ -386,6 +386,16 @@ RECONCILE_PASS_NAME = "reconcile"
 # name: they are the same judgment at two scales, not two passes.
 GATHER_PASS_NAME = "gather"
 
+# Pass name the Phase A v1 grounding-eval instrument's own judge call
+# identifies itself with (`axial.gather_eval`, issue #478, D15/D17 -- DEC-54:
+# "the reference is grounding"). Same out-of-band dispatch convention as
+# ATTRIBUTION_PASS_NAME/GROUNDING_PASS_NAME above -- naming this constant is
+# what makes the judge routable through `model_by_pass`, and it must resolve
+# to a DIFFERENT model than GATHER_PASS_NAME, since the pass that wrote a
+# disagreement must never be the pass that judges it grounded (§10, charter
+# §2, same self-grading guard as GROUNDING_PASS_NAME).
+GATHER_EVAL_PASS_NAME = "gather_eval"
+
 # Per-pass model reasoning (§7.9, issue #207): reasoning is ON for the
 # structural-envelope pass and the content-apparatus classification gate --
 # both small, judgment-heavy, once/rarely-per-source calls -- and OFF

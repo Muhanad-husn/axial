@@ -70,6 +70,13 @@ from axial.llm import (
     get_client,
 )
 from axial.gather import DEFAULT_WORKERS as GATHER_DEFAULT_WORKERS, GatherError, run_gather
+from axial.gather_eval import CALIBRATION_SAMPLE_SIZE, NULL_SAMPLE_SIZE
+from axial.gather_eval import DEFAULT_SEED as GATHER_EVAL_DEFAULT_SEED
+from axial.gather_eval import (
+    GatherEvalError,
+    run_gather_eval_score,
+    run_gather_eval_sheet,
+)
 from axial.materialize import MaterializeError, run_materialize
 from axial.merge_names import DEFAULT_WORKERS as MERGE_DEFAULT_WORKERS
 from axial.merge_names import (
@@ -551,6 +558,80 @@ def build_parser() -> argparse.ArgumentParser:
             "data/gold/labels/ against the tagger's own chunk records, "
             "writing data/gold/labels/eval_report.json"
         ),
+    )
+
+    gather_eval_parser = subparsers.add_parser(
+        "gather-eval",
+        help=(
+            "issue #478: score Gather's disagreement entries "
+            "(data/names/disagreements.jsonl) on grounding -- attribution "
+            "(is each attributed position actually present in a cited note) "
+            "and conflict (do the attributed positions actually oppose each "
+            "other) -- calibrated against the founder"
+        ),
+    )
+    gather_eval_subparsers = gather_eval_parser.add_subparsers(dest="gather_eval_command")
+
+    gather_eval_sheet_parser = gather_eval_subparsers.add_parser(
+        "sheet",
+        help=(
+            "emit a real seeded, stratified sample of disagreement entries "
+            "across the member-count bands (10-20, 20-50, 50-100, 100-300, "
+            "300+) for the founder to mark grounded/not grounded, to "
+            "data/gather_eval/calibration_sheet.xlsx. Offline -- no LLM call"
+        ),
+    )
+    gather_eval_sheet_parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=CALIBRATION_SAMPLE_SIZE,
+        help=f"target calibration sample size (default: {CALIBRATION_SAMPLE_SIZE})",
+    )
+    gather_eval_sheet_parser.add_argument(
+        "--seed",
+        type=int,
+        default=GATHER_EVAL_DEFAULT_SEED,
+        help=f"seed for deterministic, replayable sampling (default: {GATHER_EVAL_DEFAULT_SEED})",
+    )
+
+    gather_eval_score_parser = gather_eval_subparsers.add_parser(
+        "score",
+        help=(
+            "judge every disagreement entry not already recorded in "
+            "data/names/gather_eval.jsonl, score the founder-marked "
+            "calibration sheet under data/gather_eval/labels/ if one has "
+            "been returned, and re-ask a seeded sample of null entries "
+            "bypassing Gather's own checkpoint to report a flip rate"
+        ),
+    )
+    gather_eval_score_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help=(
+            "stop the main judge loop after this many entries this run -- a "
+            "cheap smoke flag, never the sampling mechanism (DEC-53): the "
+            "calibration join and the null re-ask always use their own "
+            "seeded samples"
+        ),
+    )
+    gather_eval_score_parser.add_argument(
+        "--null-sample-size",
+        type=int,
+        default=NULL_SAMPLE_SIZE,
+        help=f"how many null entries to re-ask (default: {NULL_SAMPLE_SIZE})",
+    )
+    gather_eval_score_parser.add_argument(
+        "--seed",
+        type=int,
+        default=GATHER_EVAL_DEFAULT_SEED,
+        help=f"seed for the null re-ask sample (default: {GATHER_EVAL_DEFAULT_SEED})",
+    )
+    gather_eval_score_parser.add_argument(
+        "--workers",
+        type=int,
+        default=GATHER_DEFAULT_WORKERS,
+        help=f"bounded concurrent judge workers (default: {GATHER_DEFAULT_WORKERS})",
     )
 
     vault_parser = subparsers.add_parser("vault", help="vault operations")
@@ -1298,6 +1379,57 @@ def _gold_deliver() -> int:
     return 0
 
 
+def _gather_eval_sheet(sample_size: int, seed: int) -> int:
+    try:
+        path = run_gather_eval_sheet(sample_size=sample_size, seed=seed)
+    except GatherEvalError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(str(path)))
+    return 0
+
+
+def _gather_eval_score(
+    *,
+    limit: int | None,
+    null_sample_size: int,
+    seed: int,
+    workers: int,
+    root: Path | None = None,
+    clock: Callable[[], str] | None = None,
+) -> int:
+    with run_context("gather-eval-score", root=root, clock=clock) as run:
+        start = time.monotonic()
+        try:
+            result = run_gather_eval_score(
+                limit=limit, null_sample_size=null_sample_size, seed=seed, workers=workers
+            )
+        except (GatherEvalError, LLMError) as exc:
+            run.record(
+                source_id="",
+                pass_name="gather_eval",
+                model=None,
+                status="error",
+                duration_sec=time.monotonic() - start,
+                error=str(exc),
+            )
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        run.record(
+            source_id="",
+            pass_name="gather_eval",
+            model=None,
+            status="ok",
+            duration_sec=time.monotonic() - start,
+            error=None,
+        )
+
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
 def _eval(
     *,
     root: Path | None = None,
@@ -2020,6 +2152,17 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "gold" and args.gold_command == "deliver":
         return _gold_deliver()
+
+    if args.command == "gather-eval" and args.gather_eval_command == "sheet":
+        return _gather_eval_sheet(sample_size=args.sample_size, seed=args.seed)
+
+    if args.command == "gather-eval" and args.gather_eval_command == "score":
+        return _gather_eval_score(
+            limit=args.limit,
+            null_sample_size=args.null_sample_size,
+            seed=args.seed,
+            workers=args.workers,
+        )
 
     if args.command == "eval":
         return _eval()

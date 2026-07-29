@@ -103,6 +103,12 @@ llm:
     # compared tiers on this call yet, and pinning one on no evidence would
     # read as a measured pick.
     gather: high
+    # Phase A v1 grounding eval (issue #478, D15/D17): ON, same judgment
+    # shape as `gather` above -- reading a disagreement against the passages
+    # it was written from and deciding whether it holds up. Its own pass
+    # name (not `gather`'s) so the model_by_pass entry below can route it to
+    # a different model without moving Gather itself.
+    gather_eval: high
     artifacts: false
   # Per-pass SAMPLING TEMPERATURE (§7.9, issue #416): the third per-pass
   # block, same shape and same resolution as the two around it
@@ -184,6 +190,13 @@ llm:
     # silently move the next time that default changes -- the same reason
     # every other entry in this block exists.
     reconcile: production_low
+    # Phase A v1 grounding eval (issue #478, D15/D17, §10/charter §2 self-
+    # grading guard): production_high (deepseek-v4-pro), the same tier the
+    # envelope pass uses and NOT the tier Gather itself resolves to (Gather
+    # carries no model_by_pass entry of its own, so it stays on whatever
+    # `llm_tier` names) -- the pass that wrote a disagreement must never be
+    # the pass that judges it grounded.
+    gather_eval: production_high
   # Per-pass best-of-N voting (DEC-31, issue #294): how many times a pass
   # draws its per-unit call before majority-voting the result, mirroring the
   # two per-pass blocks above (src/axial/llm.py's _resolve_votes_by_pass

@@ -677,6 +677,38 @@ def load_disagreements(path: Path) -> dict[str, dict[str, Any]]:
     return {record["name_key"]: record for record in records}
 
 
+def load_gather_context(
+    answers_dir: Path, source_meta_dir: Path
+) -> tuple[dict[str, dict[str, Any]], dict[str, tuple[Any, Any]]]:
+    """The two lookups `build_packets` needs: every note's persisted answer
+    record, keyed by `chunk_id`, and each source's author/year off slice
+    06's source metadata, keyed by `source_id`. Factored out of `run_gather`
+    (issue #478) so the grounding eval (`axial.gather_eval`) can reconstruct
+    the exact packet Gather saw from a disagreement record's own
+    `chunk_ids`, through the same lookup, rather than re-deriving it."""
+    answers_by_chunk_id = {
+        record["chunk_id"]: record
+        for record in load_answer_records(answers_dir)
+        if "answers" in record
+    }
+    author_year: dict[str, tuple[Any, Any]] = {}
+    for record in answers_by_chunk_id.values():
+        source_id = record.get("source_id")
+        if source_id is None or source_id in author_year:
+            continue
+        try:
+            source_meta = read_source_meta(source_id, source_meta_dir)
+        except VaultError as exc:
+            raise MissingNoteContextError(
+                source_id, "source-metadata record", "axial ingest"
+            ) from exc
+        author = bibliographic_value(source_meta, "author")
+        if author in (UNAVAILABLE, NOT_ATTEMPTED):
+            author = _author_fallback_from_source_id(source_id)
+        author_year[source_id] = (author, bibliographic_value(source_meta, "date"))
+    return answers_by_chunk_id, author_year
+
+
 # ---------------------------------------------------------------------------
 # The pass
 # ---------------------------------------------------------------------------
@@ -726,26 +758,7 @@ def run_gather(
     index = {node["canonical"] for node in nodes}
     page_paths = name_page_paths(vault_dir, nodes)
 
-    answers_by_chunk_id = {
-        record["chunk_id"]: record
-        for record in load_answer_records(answers_dir)
-        if "answers" in record
-    }
-    author_year: dict[str, tuple[Any, Any]] = {}
-    for record in answers_by_chunk_id.values():
-        source_id = record.get("source_id")
-        if source_id is None or source_id in author_year:
-            continue
-        try:
-            source_meta = read_source_meta(source_id, source_meta_dir)
-        except VaultError as exc:
-            raise MissingNoteContextError(
-                source_id, "source-metadata record", "axial ingest"
-            ) from exc
-        author = bibliographic_value(source_meta, "author")
-        if author in (UNAVAILABLE, NOT_ATTEMPTED):
-            author = _author_fallback_from_source_id(source_id)
-        author_year[source_id] = (author, bibliographic_value(source_meta, "date"))
+    answers_by_chunk_id, author_year = load_gather_context(answers_dir, source_meta_dir)
 
     min_gather_members = _resolve_min_gather_members(config_path)
 
