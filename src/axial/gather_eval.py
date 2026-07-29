@@ -62,6 +62,21 @@ judge-vs-founder agreement -- the same judge call and the same checkpoint,
 so scoring the calibration 30 costs nothing extra once `score` reaches the
 rest of the 447.
 
+**Evidence lives in files, not the sheet.** A large name's rebuilt member
+packets run to tens of thousands of characters -- 646,443 across a real
+30-row corpus sheet, five rows past Excel's own 32,767-character cell limit
+and silently cut mid-word with no marker (a real-corpus measurement, not a
+theoretical one; the clipped rows were exactly the highest-value 100-300 and
+300+ band entries). `run_gather_eval_sheet` now writes each row's full,
+untruncated evidence to `<calibration_dir>/evidence/<name>.md`
+(filesystem-safe, reusing `axial.paths`' own Windows-illegal-character
+handling; a `name_key` prefix disambiguates a collision rather than
+overwriting) and leaves a short preview plus the filename and passage count
+in the `evidence` cell. `_clip_for_cell` is a last-resort backstop on every
+cell this sheet writes: if a value could still exceed Excel's limit for any
+reason, it is clipped with a visible marker naming what was omitted, never
+silently.
+
 **The null re-ask bypasses the checkpoint on purpose.** `_recheck_nulls`
 samples ~50 entries whose `disagreement` is `None` and calls
 `axial.gather._gather_one` directly on a freshly rebuilt `GatherJob` --
@@ -110,7 +125,7 @@ from axial.interrogate import _default_answers_dir
 from axial.llm import GATHER_EVAL_PASS_NAME, LLMClient, get_client
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.names import DEFAULT_NAMES_DATA_DIR
-from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
+from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, _sanitize_name_filename
 
 # The judgment record AND its own resume checkpoint, one file, mirroring
 # `disagreements.jsonl`'s own convention (module docstring, D17).
@@ -137,6 +152,16 @@ CALIBRATION_SAMPLE_SIZE = 30
 NULL_SAMPLE_SIZE = 50
 
 DEFAULT_SEED = 0
+
+# Excel's own per-cell character ceiling (not this codebase's choice --
+# `openpyxl`/xlsx silently cuts anything longer, mid-word, with no marker).
+# A real 30-row corpus sheet clipped 5 rows here, on exactly the large-
+# member entries the founder most needs to judge.
+EXCEL_CELL_CHAR_LIMIT = 32_767
+
+# How much of a row's evidence stays inline in the cell, as a founder-
+# readable sense check; the full text always goes to the evidence file.
+_EVIDENCE_PREVIEW_CHARS = 1_000
 
 
 class GatherEvalError(Exception):
@@ -447,6 +472,48 @@ _NAME_KEY_COLUMN = CALIBRATION_SHEET_COLUMNS.index("name_key") + 1
 _GROUNDED_COLUMN = CALIBRATION_SHEET_COLUMNS.index("grounded") + 1
 
 
+def _clip_for_cell(value: Any, limit: int = EXCEL_CELL_CHAR_LIMIT) -> Any:
+    """A last-resort backstop, applied to every cell this sheet writes: a
+    non-string, or a string at or under `limit`, is returned unchanged.
+    Anything longer is clipped to fit, with a visible marker naming how many
+    characters were omitted -- never Excel's own silent mid-word cut, the
+    bug this module shipped with (5 of 30 real `evidence` cells, no marker,
+    no way for the founder to know they were judging clipped evidence)."""
+    if not isinstance(value, str) or len(value) <= limit:
+        return value
+    omitted = len(value) - limit
+    marker = f"\n… [clipped: {omitted} characters omitted]"
+    keep = max(limit - len(marker), 0)
+    return value[:keep].rstrip() + marker
+
+
+def _evidence_filename(canonical: str, name_key: str, used: set[str]) -> str:
+    """The on-disk filename for one row's evidence file: `canonical` made
+    filesystem-safe (reusing `axial.paths._sanitize_name_filename`, the same
+    Windows-illegal-character handling name pages use -- corpus names are
+    not path-safe, #467 was an escapes-crash of exactly this family) plus
+    `.md`. A collision within this sheet -- two entries sanitizing to the
+    same stem -- is disambiguated by prefixing the entry's own `name_key`
+    rather than overwriting the earlier file. `used` is updated in place."""
+    base = _sanitize_name_filename(canonical)
+    filename = f"{base}.md"
+    if filename.casefold() in used:
+        filename = f"{name_key}-{base}.md"
+    used.add(filename.casefold())
+    return filename
+
+
+def _evidence_cell(full_evidence: str, passage_count: int, evidence_filename: str) -> str:
+    """The `evidence` column's own value: a short preview of the full text
+    (a founder sense-check) plus the passage count and the file it was
+    written to -- always well under Excel's limit, since the preview itself
+    is capped."""
+    preview = full_evidence[:_EVIDENCE_PREVIEW_CHARS]
+    if len(full_evidence) > _EVIDENCE_PREVIEW_CHARS:
+        preview = preview.rstrip() + "…"
+    return f"{preview}\n\n[{passage_count} passages -- full evidence: evidence/{evidence_filename}]"
+
+
 def _build_calibration_workbook(rows: list[dict[str, Any]]) -> Workbook:
     workbook = Workbook()
     sheet = workbook.active
@@ -459,7 +526,7 @@ def _build_calibration_workbook(rows: list[dict[str, Any]]) -> Workbook:
         for col, name in enumerate(CALIBRATION_SHEET_COLUMNS, start=1):
             if name in _CALIBRATION_BLIND_COLUMNS:
                 continue
-            sheet.cell(row=row_index, column=col, value=row.get(name))
+            sheet.cell(row=row_index, column=col, value=_clip_for_cell(row.get(name)))
 
     validation = DataValidation(type="list", formula1='"yes,no"', allow_blank=True)
     sheet.add_data_validation(validation)
@@ -511,10 +578,21 @@ def run_gather_eval_sheet(
     sample = stratified_sample(scoreable, sample_size, seed)
     answers_by_chunk_id, author_year = load_gather_context(answers_dir, source_meta_dir)
 
+    evidence_dir = calibration_dir / "evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    used_filenames: set[str] = set()
+
     rows = []
     for record in sample:
         packets = build_packets(record["chunk_ids"], answers_by_chunk_id, author_year)
         member_count = _member_count(record)
+        full_evidence = "\n".join(render_packet(packet) for packet in packets)
+
+        filename = _evidence_filename(record["canonical"], record["name_key"], used_filenames)
+        (evidence_dir / filename).write_text(
+            f"# {record['canonical']}\n\n{full_evidence}\n", encoding="utf-8"
+        )
+
         rows.append(
             {
                 "name_key": record["name_key"],
@@ -522,7 +600,7 @@ def run_gather_eval_sheet(
                 "band": member_count_band(member_count),
                 "member_count": member_count,
                 "disagreement": record["disagreement"],
-                "evidence": "\n".join(render_packet(packet) for packet in packets),
+                "evidence": _evidence_cell(full_evidence, len(packets), filename),
             }
         )
 

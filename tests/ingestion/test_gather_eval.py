@@ -44,6 +44,9 @@ import json
 from pathlib import Path
 
 from axial.gather_eval import (
+    EXCEL_CELL_CHAR_LIMIT,
+    _build_calibration_workbook,
+    _clip_for_cell,
     eval_key,
     load_calibration_marks,
     member_count_band,
@@ -598,6 +601,159 @@ def test_the_calibration_sheet_carries_the_rebuilt_evidence_and_a_blank_grounded
     assert row_by_col["canonical"] == "war making"
     assert "Charles Tilly" in row_by_col["evidence"]
     assert row_by_col["grounded"] is None, "the founder's verdict column arrives blank"
+
+
+# -- real-corpus bug: 5 of 30 rows silently truncated at Excel's own 32,767
+# per-cell limit, cut mid-word with no marker, on exactly the large-member
+# rows the founder most needs to judge. Evidence now goes to a per-row file;
+# the cell holds a short preview and a pointer. -------------------------------
+
+
+def test_a_names_evidence_goes_to_a_file_and_the_cell_stays_under_the_excel_limit(tmp_path):
+    root = tmp_path
+    # 95 members * ~355-char rendered packets clears Excel's 32,767 limit --
+    # the real corpus rows this bug clipped had 97-675 members.
+    _build_large_disagreement_fixture(root, member_count=95)
+    dirs = _dirs(root)
+    sheet_kwargs = {k: v for k, v in dirs.items() if k != "judgments_path"}
+
+    sheet_path = run_gather_eval_sheet(sample_size=1, seed=0, **sheet_kwargs)
+
+    from openpyxl import load_workbook
+
+    worksheet = load_workbook(sheet_path).worksheets[0]
+    header = [cell.value for cell in worksheet[1]]
+    row = [cell.value for cell in worksheet[2]]
+    row_by_col = dict(zip(header, row))
+
+    evidence_cell = row_by_col["evidence"]
+    assert len(evidence_cell) < EXCEL_CELL_CHAR_LIMIT
+    assert "95" in evidence_cell, "the passage count must be surfaced in the cell"
+
+    evidence_dir = dirs["calibration_dir"] / "evidence"
+    files = list(evidence_dir.glob("*.md"))
+    assert len(files) == 1
+    assert files[0].name in evidence_cell, "the cell must point at the evidence file by name"
+
+    full_evidence = files[0].read_text(encoding="utf-8")
+    assert len(full_evidence) > EXCEL_CELL_CHAR_LIMIT, (
+        "fixture sanity check: the untruncated evidence must actually clear "
+        "the limit this bug clipped at"
+    )
+    assert "Author 0 " in full_evidence
+    assert "Author 94 " in full_evidence, (
+        "the evidence FILE must be untruncated -- nothing is silently dropped, "
+        "only moved out of the cell"
+    )
+
+
+def test_evidence_filenames_disambiguate_collisions_with_the_name_key_not_by_overwriting(tmp_path):
+    root = tmp_path
+    _write_source(
+        root,
+        "tilly-1990",
+        "Charles Tilly",
+        1990,
+        "tilly-1990_000_intro_001",
+        claim="War made the state and the state made war.",
+        position_of="bellicist historical sociology",
+        arguing_against=["modernization theory"],
+    )
+    _write_source(
+        root,
+        "centeno-2002",
+        "Miguel Centeno",
+        2002,
+        "centeno-2002_000_intro_001",
+        claim="Limited war produced limited states in Latin America.",
+        position_of="comparative historical sociology",
+        arguing_against=["Charles Tilly"],
+    )
+    chunk_ids = ["tilly-1990_000_intro_001", "centeno-2002_000_intro_001"]
+
+    def _entry(name_key: str) -> dict:
+        return {
+            "name_key": name_key,
+            "canonical": "war/making",  # same canonical for both, once sanitized
+            "chunk_ids": chunk_ids,
+            "batches": [],
+            "merged": False,
+            "disagreement": "Tilly and Centeno disagree about the mechanism.",
+            "names": [],
+            "pass": "gather",
+            "model": "stub",
+            "gathered_at": "2026-01-01T00:00:00Z",
+        }
+
+    # Both entries have the same canonical (once sanitized) and enough
+    # members (>=10) to clear the 10-20 band, so a size-2 stratified sample
+    # draws both.
+    entries = [_entry("war-making-key-a"), _entry("war-making-key-b")]
+    for entry in entries:
+        for index in range(8):
+            source_id = f"filler-{entry['name_key']}-{index:03d}-1999"
+            chunk_id = f"{source_id}_000_intro_001"
+            _write_source(
+                root,
+                source_id,
+                f"Filler Author {index}",
+                1999,
+                chunk_id,
+                claim="A filler claim.",
+                position_of="filler school",
+                arguing_against=[],
+            )
+            entry["chunk_ids"].append(chunk_id)
+    _write_jsonl(_dirs(root)["disagreements_path"], entries)
+
+    dirs = _dirs(root)
+    sheet_kwargs = {k: v for k, v in dirs.items() if k != "judgments_path"}
+    run_gather_eval_sheet(sample_size=2, seed=0, **sheet_kwargs)
+
+    evidence_dir = dirs["calibration_dir"] / "evidence"
+    files = sorted(p.name for p in evidence_dir.glob("*.md"))
+    assert len(files) == 2, "a collision must produce a second file, never overwrite the first"
+    # Both entries sanitize to the same stem ("war-making.md"); the first
+    # entry processed keeps the plain name, the second -- the actual
+    # collision -- is disambiguated by its own name_key rather than
+    # overwriting the first.
+    assert "war-making.md" in files
+    assert any(name != "war-making.md" and "war-making-key-" in name for name in files)
+
+
+def test_clip_for_cell_marks_what_was_omitted_and_never_exceeds_the_excel_limit():
+    huge = "x" * (EXCEL_CELL_CHAR_LIMIT + 5000)
+    clipped = _clip_for_cell(huge)
+    assert len(clipped) <= EXCEL_CELL_CHAR_LIMIT
+    assert "omitted" in clipped
+    assert clipped != huge[: len(clipped)], "must end with the marker, not a bare mid-word cut"
+
+
+def test_clip_for_cell_leaves_short_or_non_string_values_untouched():
+    assert _clip_for_cell("short") == "short"
+    assert _clip_for_cell(None) is None
+    assert _clip_for_cell(42) == 42
+
+
+def test_the_calibration_workbook_never_emits_a_cell_over_the_excel_limit_or_a_silent_cut():
+    rows = [
+        {
+            "name_key": "k1",
+            "canonical": "c1",
+            "band": "10-20",
+            "member_count": 10,
+            "disagreement": "d" * (EXCEL_CELL_CHAR_LIMIT + 100),
+            "evidence": "e" * (EXCEL_CELL_CHAR_LIMIT + 100),
+        }
+    ]
+    workbook = _build_calibration_workbook(rows)
+    sheet = workbook.active
+    for row in sheet.iter_rows(min_row=2):
+        for cell in row:
+            if isinstance(cell.value, str):
+                assert len(cell.value) <= EXCEL_CELL_CHAR_LIMIT
+                if len(cell.value) == EXCEL_CELL_CHAR_LIMIT:
+                    assert "omitted" in cell.value, "a clipped cell must carry a visible marker"
 
 
 def test_calibration_agreement_is_computed_once_a_marked_sheet_is_returned(tmp_path):
