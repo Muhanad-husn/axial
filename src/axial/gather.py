@@ -27,6 +27,12 @@ sha256 over the rendered packets, and `disagreements.jsonl` is keyed by it,
 so a one-byte change to an old-format render would orphan every recorded
 finding in the corpus and buy a full re-decide.
 
+`position` renders **last**, after `arguing_against`, because the cap eats
+the tail and `arguing_against` is the field that must survive it (#490
+measured it as the clause that separates contested names, and Phase B's
+contestedness derivation reads it). See `render_packet` for the measured
+numbers on both sides of that trade.
+
 **The budget is two constants, both stated by §7.18 itself.**
 `MEMBER_PACKET_CHARS` caps one rendered member (§7.18: "roughly 400
 characters"), and `GATHER_PACKET_CHAR_BUDGET` caps the whole members block
@@ -165,13 +171,22 @@ from axial.vault import VaultError, bibliographic_value, read_source_meta
 DEFAULT_DISAGREEMENTS_PATH = DEFAULT_NAMES_DATA_DIR / "disagreements.jsonl"
 
 # §7.18's own packet size: "per member note: author, year, the one-sentence
-# claim, position_of, position (frame 0.2 records only), arguing_against --
+# claim, position_of, arguing_against, position (frame 0.2 records only) --
 # roughly 400 characters". A rendered member is truncated to this, so the
 # block budget below is arithmetic rather than a hope: worst case a batch
 # holds `GATHER_PACKET_CHAR_BUDGET // MEMBER_PACKET_CHARS` members, whatever
 # a note's answers happen to contain. A new-format member carries one field
 # more, so it meets the cap more often; the cap itself does not move, and an
 # old-format member renders exactly as it always did.
+#
+# The cap truncates the TAIL, so the field order in `render_packet` decides
+# what is lost. `position` is rendered last and is therefore the field that
+# goes: measured on 120 real frame-0.2 notes, 62.5% of new-format packets
+# lose it, while only 1.7% lose `arguing_against` (93.3% did when `position`
+# sat in the middle). That is the intended trade, not a gap to close -- #490
+# measured `arguing_against` as the clause that separates contested names,
+# and Phase B reads it. Rescuing `position` with a second constant or a
+# per-field budget is a founder decision nobody has made.
 MEMBER_PACKET_CHARS = 400
 
 # The hard character budget (D12, P0-13): the largest members block one
@@ -362,11 +377,25 @@ def render_packet(packet: MemberPacket) -> str:
     `position` is emitted only when the packet carries one. A packet built
     from a pre-0.2 answer record therefore renders the exact bytes this
     function rendered before the field existed, which is what keeps every
-    recorded finding in `disagreements.jsonl` addressable by its own key."""
-    bracket = [f"position of: {packet.position_of}"]
+    recorded finding in `disagreements.jsonl` addressable by its own key.
+
+    **`position` renders LAST, and that order is load-bearing.** The cap
+    truncates the tail, so field order decides which field is lost. #490
+    measured `arguing_against` as the one clause that separates contested
+    names from uncontested ones (1.9x-2.4x lift), and Phase B's
+    contestedness derivation reads it, so it must survive. Measured on 120
+    real notes re-interrogated under frame 0.2: with `position` in the
+    middle, 93.3% of new-format packets lost `arguing against`; with
+    `position` last, 1.7% do. The trade is that `position` itself is
+    truncated away in 62.5% of those packets -- accepted, because Gather's
+    job is disagreement detection and #490 rests on `arguing_against`, not
+    on `position`. Do not reorder this back."""
+    bracket = [
+        f"position of: {packet.position_of}",
+        f"arguing against: {packet.arguing_against}",
+    ]
     if packet.position is not None:
         bracket.append(f"position: {packet.position}")
-    bracket.append(f"arguing against: {packet.arguing_against}")
     rendered = f"{packet.author} ({packet.year}): {packet.claim} [{'; '.join(bracket)}]"
     if len(rendered) > MEMBER_PACKET_CHARS:
         rendered = rendered[: MEMBER_PACKET_CHARS - 1].rstrip() + "…"

@@ -531,9 +531,43 @@ def test_a_name_mixing_both_frames_renders_the_new_field_only_on_the_members_tha
     assert render_packet(new_packet) == (
         "Miguel Centeno (2002): Limited war produced limited states in Latin America. "
         "[position of: the author's own; "
-        "position: war in Latin America was too limited to build strong states; "
-        "arguing against: Charles Tilly]"
+        "arguing against: Charles Tilly; "
+        "position: war in Latin America was too limited to build strong states]"
     )
+
+
+def test_arguing_against_is_rendered_before_position_so_the_cap_never_eats_it():
+    """Field ORDER, not just field presence. `render_packet` truncates the
+    tail at `MEMBER_PACKET_CHARS`, so whichever field sits last is the one a
+    long packet loses -- and `arguing_against` is the one clause #490
+    measured as separating contested names from uncontested ones (1.9x-2.4x
+    lift), which Phase B's contestedness derivation reads. Measured on 120
+    real frame-0.2 notes: `position` in the middle lost `arguing against`
+    from 93.3% of new-format packets; `position` last loses it from 1.7%.
+    `position` is instead truncated away in 62.5% of them, which is the
+    accepted trade. This assertion is what stops the order being "tidied"
+    back.
+    """
+    packet = MemberPacket(
+        chunk_id="centeno-2002_000_intro_001",
+        author="Miguel Centeno",
+        year=2002,
+        claim="Limited war produced limited states in Latin America.",
+        position_of="the author's own",
+        position="war in Latin America was too limited to build strong states",
+        arguing_against="Charles Tilly",
+    )
+    rendered = render_packet(packet)
+
+    assert rendered.index("arguing against:") < rendered.index("position:")
+
+    # And the order is what makes the clause survive a packet that overflows
+    # the cap: a claim long enough to truncate keeps `arguing against` whole
+    # and loses `position` instead.
+    truncated = render_packet(replace(packet, claim="W" * 300))
+    assert len(truncated) <= MEMBER_PACKET_CHARS
+    assert "arguing against: Charles Tilly" in truncated
+    assert "position: war in Latin America was too limited" not in truncated
 
 
 def test_a_position_key_holding_an_abstention_is_rendered_not_dropped():
@@ -556,9 +590,10 @@ def test_a_position_key_holding_an_abstention_is_rendered_not_dropped():
     )
 
     # Rendered as the same marker every other abstaining field gets, not
-    # dropped the way an absent key is.
+    # dropped the way an absent key is. `position` is the bracket's last
+    # clause, so it closes the bracket rather than carrying a separator.
     assert packet.position is not None
-    assert f"position: {packet.position};" in render_packet(packet)
+    assert f"position: {packet.position}]" in render_packet(packet)
 
 
 def test_a_rendered_packet_is_capped_so_the_budget_is_a_guarantee():
