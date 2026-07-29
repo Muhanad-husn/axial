@@ -47,7 +47,7 @@ from axial.brief.intake import Brief
 from axial.llm import INTERROGATE_PASS_NAME, LLMClient, LLMError
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_analyses_dir
-from axial.query.reader import coverage_count
+from axial.query.names import coverage_count
 
 # The §7.2 assessment vocabulary -- closed, not open text: a value outside
 # this set is a named parse error, never silently accepted or coerced.

@@ -51,7 +51,8 @@ from typing import Any
 import yaml
 
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
-from axial.query.reader import ChunkNotFoundError, coverage_count, get_chunk
+from axial.query.names import coverage_count
+from axial.query.reader import ChunkNotFoundError, get_chunk
 
 # The §7.4 three-band confidence vocabulary's top band -- the one a
 # `thin` polity in the coverage map may never be disclosed alongside.

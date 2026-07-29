@@ -67,12 +67,31 @@ def _write_chunk(root: Path, chunk_id: str, polities_touched: list[str]) -> None
     (prose_dir / f"{chunk_id}.md").write_text(text, encoding="utf-8")
 
 
+def _write_name_page(root: Path, name: str, member_count: int) -> None:
+    """One name page carrying the `member_count` `coverage_count` reads
+    (§7.17). `corpus_chunk_count`'s denominator moved from `polities_touched`
+    to a name page's own member count (issue #487, D2) -- a polity is a name
+    whose `kind` is `country/state/place`, so the fixture states it as one."""
+    names_dir = root / "vault" / "names"
+    names_dir.mkdir(parents=True, exist_ok=True)
+    frontmatter = {
+        "name": name,
+        "kind": "country/state/place",
+        "aliases": [],
+        "member_count": member_count,
+    }
+    body = yaml.safe_dump(frontmatter, sort_keys=False)
+    (names_dir / f"{name}.md").write_text(f"---\n{body}---\n", encoding="utf-8")
+
+
 @pytest.fixture
 def vault_dir(tmp_path: Path) -> Path:
     _write_chunk(tmp_path, SYRIA_CHUNK_1, ["Syria"])
     _write_chunk(tmp_path, SYRIA_CHUNK_2, ["Syria"])
     _write_chunk(tmp_path, YEMEN_CHUNK, ["Yemen"])
     _write_chunk(tmp_path, BOTH_CHUNK, ["Syria", "Yemen"])
+    _write_name_page(tmp_path, "Syria", 3)
+    _write_name_page(tmp_path, "Yemen", 2)
     return tmp_path / "vault"
 
 

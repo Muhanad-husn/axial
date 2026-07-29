@@ -112,9 +112,9 @@ TUNISIA_PREMISE_TEXT = (
 
 
 def _write_fixture_vault(root: Path) -> None:
-    """One synthetic prose note whose `polities_touched` names "Freedonia"
-    only -- "Tunisia" (and "Syria") are absent from every chunk, so
-    `coverage_count()` never carries them as keys (seam decision 2)."""
+    """One synthetic prose note plus one name page, "Freedonia" -- "Tunisia"
+    (and "Syria") have no name page, so `coverage_count()` never carries them
+    as keys (seam decision 2)."""
     prose_dir = root / "data" / "vault" / "prose"
     prose_dir.mkdir(parents=True, exist_ok=True)
     frontmatter: dict[str, Any] = {
@@ -143,6 +143,20 @@ def _write_fixture_vault(root: Path) -> None:
     }
     text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
     (prose_dir / "bifix_001_intro.md").write_text(text, encoding="utf-8")
+
+    # The coverage table's counts come from a name page's own `member_count`
+    # since issue #487 (D2), not from `polities_touched`. A polity is a name
+    # whose `kind` is `country/state/place`; nothing special-cases it.
+    names_dir = root / "data" / "vault" / "names"
+    names_dir.mkdir(parents=True, exist_ok=True)
+    page = {
+        "name": "Freedonia",
+        "kind": "country/state/place",
+        "aliases": [],
+        "member_count": 1,
+    }
+    body = yaml.safe_dump(page, sort_keys=False)
+    (names_dir / "Freedonia.md").write_text(f"---\n{body}---\n", encoding="utf-8")
 
 
 def _write_brief(root: Path) -> Path:

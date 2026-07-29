@@ -1,58 +1,83 @@
-"""Vault query: the read layer over the tagged Obsidian vault (Phase-B
-stage 3, specs/PHASE-B.md §7.5).
+"""Vault query: the read layer over the Obsidian vault and the name layer
+(Phase-B stage 3, specs/PHASE-B.md §7.5).
 
-Slice 01 (#249) landed the note reader and three of the §7.5 tool set:
-`get_chunk`, `get_artifact`, `query_by_tag`. Slice 02 (#251) adds the
-remaining four: `query_by_polity`, `query_by_source`, `get_envelope`,
-`follow_backlinks`, `coverage_count`.
+`axial.query.reader` is the note layer -- `get_chunk`, `get_artifact`,
+`query_by_source` / `get_envelope`, plus `all_chunk_ids`. Every one of them
+needs an id the caller already holds.
+
+`axial.query.names` is how a caller FINDS something (Phase B v1 slice 02,
+issue #487): `find_names`, `get_name`, `name_neighbors`, `who_cites`,
+`who_argues_against` and the per-name `coverage_count`. It replaces
+`query_by_tag`, `query_by_polity` and `follow_backlinks`, deleted with the
+facets they filtered (D1/D5): each returned 0 or `[]` on every call against
+the v1 vault, and a tool that silently returns nothing is worse than one that
+is absent.
 """
 
 from __future__ import annotations
 
+from axial.query.names import (
+    CitationEdge,
+    Disagreement,
+    NameHit,
+    NameMember,
+    NameNeighbor,
+    NameNotFoundError,
+    NamePage,
+    OppositionEdge,
+    coverage_count,
+    find_names,
+    get_name,
+    name_neighbors,
+    who_argues_against,
+    who_cites,
+)
 from axial.query.reader import (
     ArtifactNote,
     ArtifactNotFoundError,
-    BacklinkTargetNotFoundError,
     ChunkNote,
     ChunkNotFoundError,
     Envelope,
     EnvelopeNotFoundError,
-    KNOWN_FILTER_KEYS,
     MalformedChunkIdError,
     MalformedNoteError,
     MissingVaultDirError,
     QueryError,
-    UnknownFilterError,
-    coverage_count,
-    follow_backlinks,
+    all_chunk_ids,
     get_artifact,
     get_chunk,
     get_envelope,
-    query_by_polity,
     query_by_source,
-    query_by_tag,
 )
 
 __all__ = [
     "ArtifactNote",
     "ArtifactNotFoundError",
-    "BacklinkTargetNotFoundError",
     "ChunkNote",
     "ChunkNotFoundError",
+    "CitationEdge",
+    "Disagreement",
     "Envelope",
     "EnvelopeNotFoundError",
-    "KNOWN_FILTER_KEYS",
     "MalformedChunkIdError",
     "MalformedNoteError",
     "MissingVaultDirError",
+    "NameHit",
+    "NameMember",
+    "NameNeighbor",
+    "NameNotFoundError",
+    "NamePage",
+    "OppositionEdge",
     "QueryError",
-    "UnknownFilterError",
+    "all_chunk_ids",
     "coverage_count",
-    "follow_backlinks",
+    "find_names",
     "get_artifact",
     "get_chunk",
     "get_envelope",
-    "query_by_polity",
+    "get_name",
+    "name_neighbors",
     "query_by_source",
-    "query_by_tag",
+    "who_argues_against",
+    "who_cites",
 ]

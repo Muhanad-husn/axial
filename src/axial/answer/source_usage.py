@@ -7,17 +7,20 @@ Computed deterministically, with zero model calls, from data the record
 already holds:
 
 - `filters_observed` -- the union of the tag-filter arguments the run's
-  trajectory (§7.6) actually recorded on its `query_by_tag` / `query_by_polity`
-  calls. Every other tool in the §7.5 registry (`get_chunk`, `get_artifact`,
-  `query_by_source`, `get_envelope`, `follow_backlinks`, `coverage_count`)
-  contributes nothing -- none of them carry a tag-axis filter to union.
+  trajectory (§7.6) actually recorded. **Empty on every run since issue
+  #487**: the two tools it drew from (`query_by_tag`, `query_by_polity`) are
+  deleted with the facets they filtered (D1), so no trajectory can carry one.
 - `sources` -- one entry per distinct `source_id` appearing in the claim
   grounds (never a source that only appears in the denominator query but was
   never actually drawn on): its evidence share, plus its available share
-  under `filters_observed`, re-queried over the vault through the same §7.5
-  tools the trajectory itself used (never re-derived from the run's own
-  evidence, so a source's denominator is honest even when the run under-drew
-  on it).
+  under `filters_observed`.
+
+**`available_chunk_count` is therefore 0 by construction, and
+`usage_ratio` is `None`, until issue #491 re-bases the denominator onto the
+name layer** (`plans/phase-b-v1/README.md`: "under names the natural
+analogue is the union of member notes across the names queried", to be proven
+on the smoke set first). Disclosed here rather than papered over: the
+evidence half of §7.13 is unaffected and still real.
 
 This module never imports `axial.llm` or constructs any LLM client --
 mirroring `axial.query.reader`'s own model-free-by-construction discipline
@@ -29,10 +32,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from axial.query.reader import get_artifact, query_by_polity, query_by_tag, source_id_from_chunk_id
+from axial.query.reader import get_artifact, source_id_from_chunk_id
 
-# The two §7.5 tools whose `args` are tag-axis filters (§7.6's trajectory
-# `args` field) -- the only tools `filters_observed` draws from.
+# The tools whose `args` were tag-axis filters (§7.6's trajectory `args`
+# field) -- the only tools `filters_observed` ever drew from. Both are
+# deleted (issue #487, D1), so this set now matches nothing any real
+# trajectory carries; #491 owns what replaces it.
 _FILTER_TOOLS = frozenset({"query_by_tag", "query_by_polity"})
 
 
@@ -85,29 +90,6 @@ def _fold_evidence_grounds(
     return {source_id: len(ids) for source_id, ids in chunks_by_source.items()}
 
 
-def _count_available(
-    filters_observed: list[dict[str, Any]], *, vault_dir: Path | None
-) -> tuple[dict[str, int], int]:
-    """The denominator (§7.13): re-run every observed filter through the
-    real §7.5 query tools over the pinned vault -- never derived from this
-    run's own evidence -- and union the matched chunk ids (a chunk matching
-    more than one observed filter is counted once). Returns each source's
-    share of that union plus the union's own total size."""
-    matched_ids: set[str] = set()
-    for observed in filters_observed:
-        if observed["tool"] == "query_by_tag":
-            ids = query_by_tag(vault_dir=vault_dir, **observed["args"])
-        else:
-            ids = query_by_polity(observed["args"]["polity"], vault_dir=vault_dir)
-        matched_ids.update(ids)
-
-    counts: dict[str, int] = {}
-    for chunk_id in matched_ids:
-        source_id = source_id_from_chunk_id(chunk_id)
-        counts[source_id] = counts.get(source_id, 0) + 1
-    return counts, len(matched_ids)
-
-
 def compute_source_usage(
     record: dict[str, Any], *, vault_dir: Path | None = None
 ) -> dict[str, Any]:
@@ -118,9 +100,8 @@ def compute_source_usage(
     `sources` is empty on disposition `refuse` and on any run whose claims
     carry no grounds (§7.13), `filters_observed` still populated in both.
     `usage_ratio` is `evidence_share / available_share`, and is `None`
-    (never 0, never an error) when `available_share` is 0 -- including when
-    a source appears in the grounds but the filters this run queried
-    matched none of its chunks (a real, disclosable finding, not a bug)."""
+    (never 0, never an error) when `available_share` is 0 -- which is every
+    run until #491 re-bases the denominator (see the module docstring)."""
     trajectory = record.get("trajectory") or []
     filters_observed = derive_filters_observed(trajectory)
 
@@ -134,7 +115,14 @@ def compute_source_usage(
         return {"filters_observed": filters_observed, "sources": []}
 
     total_evidence = sum(evidence_counts.values())
-    available_counts, available_total = _count_available(filters_observed, vault_dir=vault_dir)
+    # The denominator's two filter tools are deleted with the facets they
+    # filtered (issue #487, D1), so there is nothing left to re-query and
+    # every `available_chunk_count` below is 0 by construction. #491 re-bases
+    # it onto the union of member notes across the names a run queried; the
+    # dead re-query path is removed rather than left looking like it still
+    # measures something (the same rule that deleted the tools).
+    available_counts: dict[str, int] = {}
+    available_total = 0
 
     sources: list[dict[str, Any]] = []
     for source_id in sorted(evidence_counts):
