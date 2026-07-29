@@ -36,6 +36,7 @@ from axial.names import (  # noqa: E402
     examine_names,
     format_names_report,
     is_locator_shaped,
+    is_numeral_only_surface,
     iter_name_occurrences,
     load_answer_records,
     parse_scoped_source,
@@ -366,6 +367,46 @@ def test_is_locator_shaped_matches_every_named_prefix(surface):
 )
 def test_is_locator_shaped_rejects_names_the_prefix_does_not_match(surface):
     assert not is_locator_shaped(surface)
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "13",
+        "100",
+        "1",
+        "135",
+        "10th century",
+        "11th century",
+        "1st",
+        "22nd",
+        "3rd",
+        "20TH CENTURY",
+    ],
+)
+def test_is_numeral_only_surface_matches_bare_numbers_and_centuries(surface):
+    assert is_numeral_only_surface(surface)
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "10 Downing Street",
+        "10th of Ramadan",
+        "11 September 2001",
+        "101 Facts & Figures on the Syrian Refugee Crisis",
+        "1 John 5.19",
+        "10th Congress of the Russian Communist Party",
+        "117. Jager-Division",
+        "1050-1250",
+        "1060s",
+        "1100-1750",
+        "1. Event Section",
+        "United States",
+    ],
+)
+def test_is_numeral_only_surface_rejects_real_digit_initial_names(surface):
+    assert not is_numeral_only_surface(surface)
 
 
 def test_scoped_and_unscope_surface_form_round_trip():

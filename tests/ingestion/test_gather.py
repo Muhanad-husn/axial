@@ -570,6 +570,45 @@ def test_gather_skips_a_name_with_only_one_member_note(tmp_path):
     assert DISAGREEMENT_HEADING not in _page(tmp_path, "Michael Mann")
 
 
+def test_gather_gates_a_numeral_only_surface_before_any_model_call(tmp_path):
+    """Fix (2026-07-29): a bare page number is locator residue, not a name --
+    it must never draw a Gather call, even with two member notes across two
+    books (exactly the shape that used to draw one: #452 scoped a locator by
+    source so it never merges across books, but never stopped it from being
+    asked about)."""
+    _build_small_fixture(tmp_path)
+
+    inventory_path = tmp_path / "data" / "names" / "inventory.jsonl"
+    inventory = [
+        json.loads(line) for line in inventory_path.read_text(encoding="utf-8").splitlines()
+    ]
+    inventory.append(
+        {
+            "surface": "13",
+            "kind": None,
+            "count": 2,
+            "chunk_ids": ["tilly-1990_000_intro_001", "centeno-2002_000_intro_001"],
+        }
+    )
+    _write_jsonl(inventory_path, inventory)
+
+    alias_map_path = tmp_path / "data" / "names" / "alias_map.json"
+    alias_map = json.loads(alias_map_path.read_text(encoding="utf-8"))
+    alias_map["nodes"].append({"canonical": "13", "kind": None, "aliases": []})
+    _write_json(alias_map_path, alias_map)
+
+    _materialize(tmp_path)
+
+    client = FakeClient(batch=[_response("Tilly and Centeno disagree about war making.", [])])
+    result = _gather(tmp_path, client)
+
+    # "13" has two member notes across two books -- enough to clear
+    # `_MIN_MEMBERS` -- and is gated before ever reaching `build_packets`.
+    assert result["names_skipped_numeral_only"] == 1
+    assert len(client.prompts) == 1, "only 'war making' should have drawn a call"
+    assert DISAGREEMENT_HEADING not in _page(tmp_path, "13")
+
+
 # -- the disagreement record: provenance for issue #447's undecided measure --
 
 

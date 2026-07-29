@@ -200,6 +200,7 @@ from axial.names import (
     _cluster_reduced,
     _load_name_rows,
     _reduce_vectors,
+    is_numeral_only_surface,
     parse_scoped_source,
 )
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
@@ -1491,7 +1492,26 @@ def run_merge_names(
         _representative, *duplicates = sorted(group)
         folded_away.update(duplicates)
 
-    rows = [row for row in rows if row["surface_form"] not in folded_away]
+    # Fix (2026-07-29): a bare page number or a plain century
+    # (`is_numeral_only_surface`) is locator residue, not a name -- it must
+    # never reach a merge call, on its own or as a cluster co-member. Applied
+    # here, at the same point the fold above filters `rows`, not by touching
+    # `axial names build`'s own persisted inventory/embeddings: the default
+    # reuse-persisted-labels path below reads this run's already-computed
+    # `cluster_label` column unchanged, so this takes effect on the very next
+    # `axial names merge` run with no re-embed and no re-cluster. It still
+    # survives in `full_entries` (below), so it keeps its own unmerged
+    # canonical node in the alias map -- this only ever removes it from what
+    # a merge call is asked about, never from the map itself.
+    numeral_gated = {
+        surface_form for surface_form in all_surface_forms if is_numeral_only_surface(surface_form)
+    }
+
+    rows = [
+        row
+        for row in rows
+        if row["surface_form"] not in folded_away and row["surface_form"] not in numeral_gated
+    ]
     entries = [(row["surface_form"], row["kind"] or None, int(row["count"])) for row in rows]
     surface_forms = [surface_form for surface_form, _kind, _count in entries]
 
@@ -1582,7 +1602,9 @@ def run_merge_names(
     print(
         f"reconcile: {len(all_surface_forms)} surface form(s), "
         f"{len(folded_groups)} case/whitespace/punctuation fold group(s) auto-merged "
-        f"(issue #463, no model call), {len(batches)} cluster batch(es) "
+        f"(issue #463, no model call), {len(numeral_gated)} numeral-only surface(s) "
+        "gated out of every merge call (never a name), "
+        f"{len(batches)} cluster batch(es) "
         f"({len(candidate_batches)} from candidate generation, issue #446) "
         f"at min_cluster_size={min_cluster_size} min_samples={min_samples}; "
         f"{reused} already decided, {len(to_attempt)} to decide now "
@@ -1673,6 +1695,7 @@ def run_merge_names(
         "manifest_path": str(manifest_path),
         "surface_forms": len(all_surface_forms),
         "fold_groups": len(folded_groups),
+        "numeral_gated_surfaces": len(numeral_gated),
         "clusters": len({label for label in labels if label != NOISE_LABEL}),
         "batches": len(batches),
         "candidate_batches": len(candidate_batches),

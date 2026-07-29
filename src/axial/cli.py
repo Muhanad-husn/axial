@@ -1734,6 +1734,7 @@ def _names_merge(
     for key in (
         "surface_forms",
         "fold_groups",
+        "numeral_gated_surfaces",
         "clusters",
         "batches",
         "candidate_batches",
@@ -1788,6 +1789,7 @@ def _names_gather(limit: int | None, workers: int) -> int:
 
     for key in (
         "names",
+        "names_skipped_numeral_only",
         "names_skipped_single_member",
         "names_gathered",
         "asked",
