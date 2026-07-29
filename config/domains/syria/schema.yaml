@@ -15,7 +15,7 @@
 # retired off-list validator (`axial.tag`) enforced these closed lists;
 # nothing does now. `axial.interrogate.frame_examples` reads them instead as
 # D8 prompt EXAMPLES (never a menu, never validated against) for the
-# `about`/`claim`/`ranges_over`/`position_of`/`move` free questions.
+# `about`/`claim`/`ranges_over`/`position`/`move` free questions.
 # `field` additionally stays live for `axial.gold`'s label-sheet
 # stratification/dropdown (a surviving consumer independent of prose
 # tagging, which is retired). Struck: `empirical_scope`'s `extra_fields`
@@ -33,7 +33,17 @@
 # build_artifact_frontmatter`), not a model judgment.
 
 domain: syria
-version: 0.1
+# 0.2 (issue #496): the interrogation frame splits `position_of` -- "whose
+# position is this?" -- from the new `position`, "what is that position?".
+# The old fused question answered "the author" for 76% of the corpus, so
+# nothing downstream could read what the position actually was. This value
+# lands in every answer record's `frame_version`, which makes a record
+# self-identifying about which frame produced it. Consumers must still
+# branch on KEY PRESENCE (`"position" in answers`), never on this string:
+# another domain versions its own frame independently, and the corpus is a
+# permanent mix of both shapes -- the 6,148 records written under 0.1 are
+# not being re-interrogated.
+version: 0.2
 
 axes:
   # Appendix A -- Field axis.

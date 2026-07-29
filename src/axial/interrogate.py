@@ -42,6 +42,17 @@ reports the number without asserting a threshold -- none has been measured.
 **D4 -- one draw.** No `votes_by_pass` entry, no voting layer, no vote or
 draws field on the record.
 
+**The corpus is a mixed frame (issue #496).** `position_of` used to be asked
+alone and answered both questions at once: measured over the 6,148 records
+on disk, 76% of it says some variant of "the author" and the other 24%
+names a school instead. Frame 0.2 splits it -- `position_of` still asks
+whose, and a new `position` asks what the position is. No re-run is planned,
+so records written before the split carry `position_of` and no `position`
+key at all, and records written after carry both. Every consumer branches on
+**key presence**, not on `frame_version` (another domain versions its frame
+independently), and reads `position` when it is there, `position_of`
+otherwise.
+
 Output is one durable JSONL per source (`data/answers/<source_id>.jsonl`),
 mirroring the tag pass's per-source checkpoint convention (`append_answer_
 checkpoint` / `load_answer_checkpoint` / torn-tail healing) so a later stage
@@ -102,10 +113,13 @@ DEFAULT_DOMAIN_DIR = Path("config/domains/syria")
 ANSWERS_DIR_NAME = "answers"
 ANSWERS_DIR = Path("data") / ANSWERS_DIR_NAME
 
-# The thirteen D6 questions land as sixteen fields: three questions each
-# produce two (what the claim ranges over / where it stops holding; whose
-# position / who it argues against; what is defined / what is merely used).
-# Order is the order the prompt asks them in and the order they are written.
+# The D6 questions land as seventeen fields: three questions each produce two
+# (what the claim ranges over / where it stops holding; whose position / who
+# it argues against; what is defined / what is merely used), and `position`
+# was split out of `position_of` in frame 0.2 (issue #496). Order is the order
+# the prompt asks them in and the order they are written. A record written
+# before 0.2 carries no `position` key -- see the docstring's mixed-frame
+# note; nothing here backfills one.
 ANSWER_FIELDS = (
     "about",
     "claim",
@@ -113,6 +127,7 @@ ANSWER_FIELDS = (
     "ranges_over",
     "stops_holding",
     "position_of",
+    "position",
     "arguing_against",
     "names",
     "citations",
@@ -138,12 +153,18 @@ LIST_VALUED_FIELDS = frozenset(
 # nearest example is the frame's field axis (Appendix H). An axis the loaded
 # frame does not declare is simply not shown -- a minimal domain gets fewer
 # example blocks, never an error.
+#
+# `theory_school` sits on `position` rather than `position_of` (issue #496):
+# the school labels are what the 24% of fused answers that named a stance
+# instead of a holder actually said, so they are examples of what a position
+# IS. `position_of` gets no example axis, and that is correct -- there is no
+# vocabulary of position-holders.
 NEAREST_EXAMPLE_AXES = {
     "about": "field",
     "claim": "claim_type",
     "move": "role_in_argument",
     "ranges_over": "empirical_scope",
-    "position_of": "theory_school",
+    "position": "theory_school",
 }
 
 # Retired by the spec (specs/PRODUCT.md:188,890, D4/D9) for the interrogation
@@ -381,27 +402,33 @@ your own words. (multi-valued: a JSON list of strings)
 it".
 4. ranges_over -- What does the claim range over?
 5. stops_holding -- Where does the author say it stops holding?
-6. position_of -- Whose position is this?
-7. arguing_against -- Who or what is it arguing against? (multi-valued: a \
+6. position_of -- Whose position is this? Name the holder and nothing else: \
+the author's own, a named scholar, a named school, a group the passage \
+describes. Do not say what the position claims here.
+7. position -- What IS that position, in the passage's own terms? One \
+sentence stating the stance itself, in your own words. Answer this even when \
+the holder is the author -- "the author's own" answers question 6 and is \
+never an answer to this one.
+8. arguing_against -- Who or what is it arguing against? (multi-valued: a \
 JSON list of strings)
-8. names -- Every named thing: people, places, institutions, events, \
+9. names -- Every named thing: people, places, institutions, events, \
 movements, periods, and any figure or table the passage names. (a JSON list \
 of {"name": ..., "kind": ...} objects; kind is usually one of person, \
 country/state/place, institution/group, movement/religion, period, event, \
 concept, work, figure, table -- use the joined label whole, e.g. \
 country/state/place rather than just country or place -- or your own word \
 if none of these fit)
-9. citations -- Who does it cite, and is each citation support, foil, or \
+10. citations -- Who does it cite, and is each citation support, foil, or \
 authority? (a JSON list of {"cited": ..., "stance": "support"|"foil"|\
 "authority", "about": ...} objects)
-10. mechanism -- What is the mechanism: what causes what, in what order.
-11. evidence -- What evidence is offered.
-12. comparison -- What comparison is made, stated or implied.
-13. defines -- What is defined here (a JSON list of strings), and \
+11. mechanism -- What is the mechanism: what causes what, in what order.
+12. evidence -- What evidence is offered.
+13. comparison -- What comparison is made, stated or implied.
+14. defines -- What is defined here (a JSON list of strings), and \
 separately uses -- what is merely used without being defined (a JSON list \
 of strings).
-14. concedes -- What the author concedes or hedges.
-15. assumes -- What it assumes without saying.
+15. concedes -- What the author concedes or hedges.
+16. assumes -- What it assumes without saying.
 """
 
 _PROMPT_TEMPLATE = """\
@@ -524,8 +551,8 @@ def compose_interrogation_prompt(
     envelope: dict[str, Any],
     examples: dict[str, list[tuple[str, str]]],
 ) -> str:
-    """Compose one note's interrogation prompt: §7.15's context list, the
-    thirteen D6 questions asked in the model's own words, the abstention
+    """Compose one note's interrogation prompt: §7.15's context list, the D6
+    questions asked in the model's own words, the abstention
     rule, and -- last, after every free question -- the frame's examples for
     the few fields that have them (D8)."""
     blocks = []
@@ -610,8 +637,8 @@ def _is_blank(value: Any, field: str | None = None) -> bool:
     passage defines nothing", "this passage cites no one" is what the
     passage says, and it is the natural JSON for it. Rejecting it cost a real
     note -- the re-ask carries no error feedback, so the model repeats the
-    identical response until the budget is spent and all sixteen answers are
-    discarded over one field, permanently (a note carrying any record is
+    identical response until the budget is spent and every answer on the note
+    is discarded over one field, permanently (a note carrying any record is
     never re-sent, §7.15). It is recorded verbatim rather than normalised
     onto `not-in-passage`, because the two say different things: `[]` is a
     read, an abstention is a refusal to guess (§7.15's own three states).
@@ -687,16 +714,24 @@ def _utc_now() -> str:
 def abstention_rates(records: Iterable[dict[str, Any]]) -> dict[str, float]:
     """Per answer field, the share of answered notes that abstained (D7).
     Read off the artifact, so it is the same number for a 50-note sample and
-    for a full corpus run."""
+    for a full corpus run.
+
+    **The denominator is the notes that carry the field, not every answered
+    note** (issue #496). The corpus is a mixed frame: a record written before
+    `position` existed has no such key, `answers.get("position")` is `None`,
+    and `is_abstention(None)` is `False` -- so reading over every answered
+    note would report a question that record was never asked as answered.
+    A field no record in the set carries is left out of the report entirely
+    rather than reported as 0.0."""
     answered = [record["answers"] for record in records if "answers" in record]
-    if not answered:
-        return {}
-    return {
-        field: round(
-            sum(1 for answers in answered if is_abstention(answers.get(field))) / len(answered), 4
-        )
-        for field in ANSWER_FIELDS
-    }
+    rates: dict[str, float] = {}
+    for field in ANSWER_FIELDS:
+        asked = [answers for answers in answered if field in answers]
+        if asked:
+            rates[field] = round(
+                sum(1 for answers in asked if is_abstention(answers[field])) / len(asked), 4
+            )
+    return rates
 
 
 def collapse_rates(
@@ -714,7 +749,9 @@ def collapse_rates(
     means the interrogation has rebuilt the tag list through the back door.
     No threshold is asserted and nothing here gates: the number is reported
     and read. Abstentions are excluded from both denominators -- an
-    abstention is not a collapsed answer.
+    abstention is not a collapsed answer. So is a record that does not carry
+    the field at all: the corpus is a mixed frame (issue #496), and a record
+    written before `position` existed was never asked the question.
     """
     answered = [record["answers"] for record in records if "answers" in record]
     frame_rate: dict[str, float] = {}
@@ -725,7 +762,9 @@ def collapse_rates(
         frame_hits = 0
         nearest_hits = 0
         for answers in answered:
-            value = answers.get(field)
+            if field not in answers:
+                continue
+            value = answers[field]
             if is_abstention(value):
                 continue
             considered += 1

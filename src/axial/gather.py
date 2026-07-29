@@ -11,9 +11,21 @@ batch findings. Large names are the interesting ones, so batching is a
 designed path, not an edge case."
 
 D13: "Gather itself never reads full notes." This module never opens
-`data/chunks/` and never touches a note's `chunk_text`. The five packet
-fields come from slice 02's already-persisted answer record and slice 06's
+`data/chunks/` and never touches a note's `chunk_text`. The packet fields
+come from slice 02's already-persisted answer record and slice 06's
 source-metadata read; that is the entire model input.
+
+**The packet has a sixth field only when the note has one (issue #496).**
+Frame 0.2 split `position_of` ("whose position is this?") from `position`
+("what is that position?"), and the corpus is a permanent mix: the 6,148
+records already on disk carry no `position` key and are not being
+re-interrogated. `build_packets` reads the new field on key presence alone,
+`MemberPacket.position` is `None` when the record does not carry it, and
+`render_packet` then emits **byte-for-byte** what it emitted before the
+field existed. That is load-bearing rather than tidy: `GatherJob.key` is a
+sha256 over the rendered packets, and `disagreements.jsonl` is keyed by it,
+so a one-byte change to an old-format render would orphan every recorded
+finding in the corpus and buy a full re-decide.
 
 **The budget is two constants, both stated by §7.18 itself.**
 `MEMBER_PACKET_CHARS` caps one rendered member (§7.18: "roughly 400
@@ -153,10 +165,13 @@ from axial.vault import VaultError, bibliographic_value, read_source_meta
 DEFAULT_DISAGREEMENTS_PATH = DEFAULT_NAMES_DATA_DIR / "disagreements.jsonl"
 
 # §7.18's own packet size: "per member note: author, year, the one-sentence
-# claim, position_of, arguing_against -- roughly 400 characters". A rendered
-# member is truncated to this, so the block budget below is arithmetic rather
-# than a hope: worst case a batch holds `GATHER_PACKET_CHAR_BUDGET //
-# MEMBER_PACKET_CHARS` members, whatever a note's answers happen to contain.
+# claim, position_of, position (frame 0.2 records only), arguing_against --
+# roughly 400 characters". A rendered member is truncated to this, so the
+# block budget below is arithmetic rather than a hope: worst case a batch
+# holds `GATHER_PACKET_CHAR_BUDGET // MEMBER_PACKET_CHARS` members, whatever
+# a note's answers happen to contain. A new-format member carries one field
+# more, so it meets the cap more often; the cap itself does not move, and an
+# old-format member renders exactly as it always did.
 MEMBER_PACKET_CHARS = 400
 
 # The hard character budget (D12, P0-13): the largest members block one
@@ -201,7 +216,8 @@ _GATHER_PROMPT_TEMPLATE = """\
 Below are passages from academic books that all name the same thing: {name}.
 
 Each line gives the book's author and year, what the passage claims in one \
-sentence, whose position that is, and who or what it argues against.
+sentence, whose position that is, what that position says where it was \
+recorded, and who or what it argues against.
 
 PASSAGES
 {members}
@@ -269,14 +285,15 @@ class DisagreementRecordsCorruptError(GatherError):
 
 
 # ---------------------------------------------------------------------------
-# The packet: five fields per member note, and nothing else (D13)
+# The packet: five fields per member note, six under frame 0.2, and nothing
+# else (D13)
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class MemberPacket:
     """One member note's whole contribution to a Gather call. There is no
-    sixth field, and there is deliberately no `chunk_text`."""
+    seventh field, and there is deliberately no `chunk_text`."""
 
     chunk_id: str
     author: Any
@@ -284,6 +301,14 @@ class MemberPacket:
     claim: str
     position_of: str
     arguing_against: str
+    # `None` means the note's answer record carries no `position` key at all
+    # -- it was interrogated under frame 0.1, before the split (issue #496).
+    # Structurally distinct from an abstention and from an empty answer, both
+    # of which are strings `_render_answer` produced. An absent `position`
+    # renders as nothing, so the packet hashes exactly as it did before the
+    # field existed. Last and defaulted so every existing positional
+    # construction keeps working.
+    position: str | None = None
 
 
 def _render_answer(value: Any) -> str:
@@ -332,11 +357,17 @@ def render_packet(packet: MemberPacket) -> str:
     """How ONE member note appears in the prompt, capped at
     `MEMBER_PACKET_CHARS` (§7.18's "roughly 400 characters each"). The cap
     is what makes `GATHER_PACKET_CHAR_BUDGET` a guarantee rather than an
-    average."""
-    rendered = (
-        f"{packet.author} ({packet.year}): {packet.claim} "
-        f"[position of: {packet.position_of}; arguing against: {packet.arguing_against}]"
-    )
+    average.
+
+    `position` is emitted only when the packet carries one. A packet built
+    from a pre-0.2 answer record therefore renders the exact bytes this
+    function rendered before the field existed, which is what keeps every
+    recorded finding in `disagreements.jsonl` addressable by its own key."""
+    bracket = [f"position of: {packet.position_of}"]
+    if packet.position is not None:
+        bracket.append(f"position: {packet.position}")
+    bracket.append(f"arguing against: {packet.arguing_against}")
+    rendered = f"{packet.author} ({packet.year}): {packet.claim} [{'; '.join(bracket)}]"
     if len(rendered) > MEMBER_PACKET_CHARS:
         rendered = rendered[: MEMBER_PACKET_CHARS - 1].rstrip() + "…"
     return rendered
@@ -348,8 +379,14 @@ def build_packets(
     author_year: dict[str, tuple[Any, Any]],
 ) -> list[MemberPacket]:
     """One packet per member note that actually has an interrogation answer.
-    A member with no answer record contributes nothing -- there are no five
-    fields to carry -- rather than a line of markers."""
+    A member with no answer record contributes nothing -- there are no
+    fields to carry -- rather than a line of markers.
+
+    `position` is read on KEY PRESENCE, never on truthiness or on the
+    record's `frame_version` (issue #496): a record that carries the key with
+    an abstention in it renders that abstention like any other field, and a
+    record written before the key existed gets `None`, which renders
+    nothing at all."""
     packets: list[MemberPacket] = []
     for chunk_id in member_chunk_ids:
         record = answers_by_chunk_id.get(chunk_id)
@@ -365,6 +402,7 @@ def build_packets(
                 claim=_render_answer(answers.get("claim")),
                 position_of=_render_answer(answers.get("position_of")),
                 arguing_against=_render_answer(answers.get("arguing_against")),
+                position=(_render_answer(answers["position"]) if "position" in answers else None),
             )
         )
     return packets

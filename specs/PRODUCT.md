@@ -486,7 +486,7 @@ One call per note (§5 stage 6). One record per note, appended to `data/answers/
 
 **No web, no external lookup, and no reliance on what the model knows about the book** (charter Principle I). The passage and the context above are the only inputs. The prompt says so, in the same terms §7.3's grounding rule uses for the envelope.
 
-**The questions (D6).** Thirteen, each producing one field:
+**The questions (D6).** Fourteen, each producing one field:
 
 | Field | Question |
 |---|---|
@@ -495,7 +495,8 @@ One call per note (§5 stage 6). One record per note, appended to `data/answers/
 | `move` | What is this passage *doing* in the argument? Not "evidence" but "conceding a point in order to narrow it". |
 | `ranges_over` | What does the claim range over? |
 | `stops_holding` | Where does the author say it stops holding? |
-| `position_of` | Whose position is this? |
+| `position_of` | Whose position is this? The holder only — the author's own, a named scholar, a named school. |
+| `position` | What *is* that position, in the passage's own terms? One sentence stating the stance itself. Asked even when the holder is the author. |
 | `arguing_against` | Who or what is it arguing against? Multi-valued. |
 | `names` | Every named thing the passage names, each `{name, kind}`. `kind` is usually one of person, country/state/place, institution/group, movement/religion, period, event, concept, work, figure, table — offered in the prompt, not enforced; a name that fits none of them gets the model's own word. |
 | `citations` | Who does it cite, and is each citation **support**, **foil**, or **authority**? Each is `{cited, stance, about}`. |
@@ -505,6 +506,10 @@ One call per note (§5 stage 6). One record per note, appended to `data/answers/
 | `defines` / `uses` | What is defined here, versus merely used. |
 | `concedes` | What the author concedes or hedges. |
 | `assumes` | What it assumes without saying. |
+
+**`position_of` and `position` were one question, and the corpus is a permanent mix of both frames (issue #496).** Until frame 0.2, `position_of` asked "whose position is this?" alone and got whichever of the two answers the model reached for. Measured over the 6,148 records on disk: 4,693 carry a non-trivial answer, 76% of those say some variant of "the author" (informative for attribution, useless for comparison) and the other 24% name a school instead (the reverse). Nothing downstream could tell the two cases apart. `position_of` is unchanged in name, wording and meaning; `position` is the new field, and the `theory_school` examples (Appendix E) moved onto it, since a school label is what a position *is*, not whose it is. `position_of` has no example axis, which is correct — there is no vocabulary of position-holders.
+
+**No re-run is planned, and the mix is the permanent state.** Interrogation is ~$34 a corpus pass and Phase A is closed (DEC-55); the split takes effect only for sources interrogated from now on. A record written under frame 0.1 carries `position_of` and **no `position` key at all**; a record written under 0.2 carries both. `frame_version` on each record says which frame produced it, but **a consumer branches on key presence, not on that string** — another domain versions its own frame independently. The rule for every reader is: use `position` when the key is present, fall back to `position_of` otherwise. A field a record does not carry is excluded from that record's denominator in the abstention and collapse reports, never counted as answered.
 
 `citations` is the field with no v0 ancestor and the highest expected yield. Academic prose carries explicit references to other scholars, these books cite each other, and no pass ever looked for them. They are author-stated cross-book edges available from the first reading. **The harvest will be partial and that is expected, not a failure**: some in-text references come out of the scan mangled, the furniture cleaner drops some footnote markers, and most of what these books cite is not in the corpus. An out-of-corpus citation is still a name worth keeping — it says who the author is arguing with — but it cannot become an internal link.
 
@@ -589,7 +594,8 @@ Materialize (§5 stage 8) writes the vault with **no model call** (D11). Three o
 
 **Gather (§5 stage 9, D12) cannot blow the context window, by construction.** The model never fetches, and the packet is assembled by code.
 
-- **The packet.** Per member note: author, year, the one-sentence `claim`, `position_of`, `arguing_against` — roughly 400 characters. Nothing else. Gather never reads a note's full text.
+- **The packet.** Per member note: author, year, the one-sentence `claim`, `position_of`, `position` where the note has one, `arguing_against` — roughly 400 characters. Nothing else. Gather never reads a note's full text.
+- **`position` is rendered only when the note's own record carries the key (issue #496).** The corpus is a mixed frame (§7.15) and stays one. A packet built from a pre-0.2 record renders **byte-for-byte** what it rendered before the field existed, and that is a hard requirement rather than tidiness: the disagreement record's key is a sha256 over the name's rendered packets (below), so a one-byte change to an old-format render would re-key every name in the index, orphan every recorded finding, and buy a full corpus re-decide. A new-format member carries one field more and so meets the per-member cap more often; the cap itself does not move.
 - **A metadata-gap sentinel never stands in for an author (fix, 2026-07-29).** `axial.vault.bibliographic_value` deliberately renders the `unavailable`/`not_attempted` sentinels (§7.13) as themselves in a note's own frontmatter, so a gap stays visible rather than reading like a blank answer — that behaviour is unchanged. A Gather packet is not frontmatter, and handing the model a sentinel string as if it were a person produced exactly that: two of a 100-name stratified sample (`data/logs/2026-07-29-gather-stratified-sample/`) named an author as "the 'unavailable (2000)' author". Gather now falls back to a name derived from `source_id`'s own `<author>-<year>-<hash>` shape (`axial.envelope.compute_source_id`) when the source-metadata record's `author` field is a sentinel — real and legible (`heydemann-2000-66701ffbb36c` → `Heydemann`) rather than invented, since no note reaches Gather without a source_id. The underlying metadata gap was not fixed by this, and was closed separately as a `data/` operation (#473): `heydemann-2000-66701ffbb36c.json` now carries the values printed on its own title page, which the damaged scan's watermark had cost it. The fallback stays, because the sentinel it guards against is a general state, not one book's.
 - **The budget is a constant in code, not an instruction in the prompt.** A prompt-side budget is a request; a code-side budget is a guarantee. The constant is stated in the module and inspectable. It is **two** constants, not one: a per-member cap (the "roughly 400 characters" above) and the whole-block budget. The per-member cap is what makes the block budget arithmetic rather than an average — without it a single pathological answer could exceed the block budget on its own, and the guarantee is stated over *any* name at *any* corpus size.
 - **Batching is a designed path, not an edge case.** A name whose packet would exceed the budget is split into batches; Gather runs per batch; a short final call merges the batch findings into one. Large names are the interesting ones, so this path runs often and is built first-class. The merge call carries the batch findings and no packets at all, so its own size is bounded by the batch count rather than by the size of the name. The merge synthesizes **partial evidence about one name**, never adjudicates between the batch findings as if they were competing claims — an earlier wording that told the model to do exactly that broke the merge on the corpus's biggest names (below).
@@ -783,7 +789,7 @@ New criteria are **appended with new numbers**; existing numbers are never reuse
 ### Future Considerations (P2 — design for, don't build)
 
 - **P2-1** Second domain frame (another country) proving the swap costs no code change.
-- **P2-2** ~~Theory-school promoted from candidate to first-class axis if the eval supports it.~~ **STRUCK (D4, D9, D15).** There are no axes to be promoted into, no closed vocabulary to promote from, and no gold-agreement eval to support the promotion. What the theory-school list was reaching for — whose position a passage takes — is now an open question answered in the model's own words (`position_of`, §7.15), with the old vocabulary surviving only as examples (Appendix E).
+- **P2-2** ~~Theory-school promoted from candidate to first-class axis if the eval supports it.~~ **STRUCK (D4, D9, D15).** There are no axes to be promoted into, no closed vocabulary to promote from, and no gold-agreement eval to support the promotion. What the theory-school list was reaching for — the position a passage takes — is now an open question answered in the model's own words (`position`, §7.15; `position_of` beside it says whose), with the old vocabulary surviving only as examples (Appendix E).
 - **P2-3** Re-ingestion/versioning strategy when the frame changes post-run (grandfather vs. reprocess).
 
 ---
@@ -938,7 +944,9 @@ The six retired values, for history: `case-study` (empirical/quantitative tables
 
 ## Appendix E — Theory-school examples
 
-In v1 this list is examples for the `position_of` question (§7.15): whose position the passage takes. The answer is the model's own words — often a named scholar, a named tradition, or "the author's own, against X" — and this vocabulary is shown afterwards as the domain's own map of schools.
+In v1 this list is examples for the `position` question (§7.15): what position the passage takes. The answer is the model's own words — often a stance stated in one sentence, sometimes a named tradition — and this vocabulary is shown afterwards as the domain's own map of schools.
+
+**The examples sat on `position_of` until frame 0.2 (issue #496).** That was the fused question, and these school labels are exactly the 24% of its answers that named a stance rather than a holder — so they are examples of what a position *is*. `position_of` now asks only whose the position is and has **no example axis at all**, which is right: there is no vocabulary of position-holders. Records written before the split still carry their `position_of_nearest` against this list; nothing rewrites them.
 
 > **STRUCK (D4, D9).** Everything that made this a *vocabulary* is retired: the single-primary cardinality, the `not-applicable` and `unlisted` sentinels, the candidates queue and its promotion path, the `unlisted`-rate report (#288), the best-of-3 voting and its abstention flag (DEC-31, §7.14), and the cross-field recurrence analysis that was to decide whether the axis got cut. The measured figures (0.73 single-draw ceiling, 0.918 voted — DEC-30/31) stand as history and are provisional forever, having been measured on the simulated corpus (§10). Two of the sentinels' jobs survive in better form: "no theoretical position is advanced here" is the ordinary abstention `not-in-passage` (D7), and "a real school this list misses" is simply the answer, recorded verbatim.
 
@@ -962,7 +970,7 @@ The frame file is unchanged on disk. What changed is how it is read (§7.1): the
 
 ```yaml
 domain: syria
-version: 0.1          # recorded on every note as the frame version
+version: 0.2          # recorded on every note as the frame version (0.2 split `position` out of `position_of`, §7.15)
 axes:                 # read as: one example list per question, keyed by its old axis name
   field:              # -> examples for `about`
     applies_to: [prose]
@@ -986,7 +994,7 @@ axes:                 # read as: one example list per question, keyed by its old
     applies_to: [prose]
     cardinality: many
     values: free_text
-  theory_school:      # -> examples for `position_of`
+  theory_school:      # -> examples for `position` (was `position_of` before 0.2, issue #496)
     applies_to: [prose]
     cardinality: primary_plus_optional_secondary   # IGNORED
     status: candidate                              # inert
@@ -1007,6 +1015,8 @@ polity_examples: [Syria, Turkey, Lebanon, Iraq, Rwanda]   # illustrative only; t
 
 The note carries its interrogation answers and no links (§7.2, D11). Free answers and their nearest examples are separate, adjacent, and marked (D8). `not-in-passage` is an ordinary, expected value (D7).
 
+This example is a **frame 0.2** note, so it carries both `position_of` and `position` (§7.15). A note interrogated under 0.1 — every one of the 6,148 already in the corpus — is identical except that it carries `position_of` and `position_of_nearest` and no `position` key at all. Both shapes are valid on disk indefinitely.
+
 ```yaml
 ---
 chunk_id: hinnebusch2001_ch3_004
@@ -1019,7 +1029,7 @@ source_meta:
   scope: "Syria, 1963-2000"
 section: "Chapter 3 — The Ba'athist State"
 chapter: "Part II — Building the Ba'athist State"
-frame_version: 0.1
+frame_version: 0.2
 interrogated:
   pass: note_interrogate
   model: z-ai/glm-5.2
@@ -1033,7 +1043,8 @@ answers:
   ranges_over: "Syria between the 1963 coup and the late 1970s"
   stops_holding: "the author says the account does not carry past the 1982 rupture, when the coalition narrowed"
   position_of: "the author's own"
-  position_of_nearest: { example: institutionalist-state-centered, fit: close }
+  position: "durable authoritarian rule in Syria was built by a party apparatus, not by the army"
+  position_nearest: { example: institutionalist-state-centered, fit: close }
   arguing_against: ["readings of the Ba'ath as a primarily sectarian vehicle", "Hudson's legitimacy-deficit account"]
   names:
     - { name: "Ba'ath Party", kind: institution/group }
