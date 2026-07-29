@@ -163,8 +163,8 @@ def test_render_coverage_section_renders_every_real_polity_coverage_count_names(
     names, so a polity's real (possibly large) count is never overwritten
     by a fabricated one."""
     section = render_coverage_section({"Tunisia": 200, "Freedonia": 3})
-    assert "Tunisia: 200 chunks" in section
-    assert "Freedonia: 3 chunks" in section
+    assert "Tunisia: 200 notes" in section
+    assert "Freedonia: 3 notes" in section
 
 
 def test_render_coverage_section_never_fabricates_a_row_for_an_unnamed_polity():
@@ -176,7 +176,7 @@ def test_render_coverage_section_never_fabricates_a_row_for_an_unnamed_polity():
     speak to. `render_coverage_section` now takes only `counts` and
     renders exactly its real keys, nothing else."""
     section = render_coverage_section({"Syria": 2653})
-    assert "Syria: 2653 chunks" in section
+    assert "Syria: 2653 notes" in section
     assert "Tunisia" not in section
     assert section.count("\n") == 0  # exactly one line: no synthesized second row
 
@@ -192,8 +192,8 @@ def test_compose_prompt_carries_real_coverage_counts_not_a_fabricated_one():
         request="Does Tunisia's transition follow the same broad sequence as Syria's?",
     )
     prompt = compose_prompt(brief, {"Tunisia": 200, "Syria": 7})
-    assert "Tunisia: 200 chunks" in prompt
-    assert "Syria: 7 chunks" in prompt
+    assert "Tunisia: 200 notes" in prompt
+    assert "Syria: 7 notes" in prompt
     # The request text itself legitimately contains "Does Tunisia" (verbatim
     # quoted above) -- the regression this guards is a fabricated COVERAGE
     # LINE keyed on that merged phrase, not the phrase's mere presence.
@@ -214,10 +214,70 @@ def test_compose_prompt_never_fabricates_a_row_for_a_date_qualified_case():
     counts = {"Syria": 2653, "Tunisia": 41}
     prompt = compose_prompt(brief, counts)
 
-    assert "Syria: 2653 chunks" in prompt
-    assert "Syria, 2011-2024: 0 chunks" not in prompt
+    assert "Syria: 2653 notes" in prompt
+    assert "Syria, 2011-2024: 0 notes" not in prompt
     assert "Syria, 2011-2024:" not in prompt
     assert "no time" in prompt.lower() or "no time/period" in prompt.lower()
+
+
+# -- no coverage table yet, and the prompt says so (issue #487) --------------
+
+
+def test_compose_prompt_with_no_coverage_states_the_absence_and_its_reason():
+    """The prompt must not promise the corpus's real coverage and then show
+    nothing: absence read as zero coverage is the same false-refusal failure
+    the fabricated `case` row produced. It names the reason (§7.7's map is
+    per-name and scoped to the brief's own names, unresolved until #488) and
+    tells the model to judge `silent` rather than refuse."""
+    prompt = compose_prompt(_brief(case="Syria", request="A request?"), {})
+
+    assert "No coverage table is available" in prompt
+    assert "#488" in prompt, "the prompt names why there is no table"
+    assert "silent" in prompt
+    assert "do not\nrefuse" in prompt or "do not refuse" in prompt
+    assert "REAL coverage" not in prompt, "no heading may promise real coverage when none is shown"
+    assert "no time/period dimension" not in prompt, (
+        "the map-onto-the-table guidance is meaningless with no table"
+    )
+
+
+def test_compose_prompt_keeps_the_table_path_intact_for_the_scoped_map():
+    """`render_coverage_section` and the table branch are live code, not dead:
+    #488 passes a map scoped to a brief's own resolved names straight through
+    them."""
+    prompt = compose_prompt(_brief(case="Syria", request="A request?"), {"Charles Tilly": 146})
+
+    assert "Charles Tilly: 146 notes" in prompt
+    assert "no time/period dimension" in prompt
+    assert "No coverage table is available" not in prompt
+
+
+def test_interrogate_never_reads_the_whole_name_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Measured 2026-07-30: rendering every name page's count into the prompt
+    is 62,821 rows / 2.08 MB / ~500k tokens plus a 37-63s whole-vault read on
+    every run. The pre-pass does not do it; #488 passes a scoped map."""
+    _write_minimal_vault(tmp_path)
+    prompts_seen: list[str] = []
+
+    def _explode(**_kwargs):
+        raise AssertionError("the pre-pass must not read the whole name index")
+
+    monkeypatch.setattr("axial.query.names.coverage_count", _explode)
+
+    class _RecordingClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            prompts_seen.append(prompt)
+            return json.dumps({"premises_found": [], "bounds_applied": [], "refusal": None})
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "recording"
+
+    interrogate(_brief(), client=_RecordingClient(), vault_dir=tmp_path / "vault")
+
+    assert len(prompts_seen) == 1
+    assert "No coverage table is available" in prompts_seen[0]
 
 
 # -- pass registration ------------------------------------------------------

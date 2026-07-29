@@ -12,13 +12,17 @@ checklist):
   cleanly.
 - Evidence assembly dedupes chunk ids across calls while the trajectory
   still records every call, including ones that returned only duplicates.
-- No case-scope filter strips a chunk whose `polities_touched` excludes the
-  case anchor from the assembled evidence set.
+- No case-scope filter strips a chunk from outside the case anchor from the
+  assembled evidence set.
 - A `refuse` disposition short-circuits: zero tool calls, empty trajectory.
 
 `tests/analysis/test_retrieval_planning_requery.py` covers the 3-scenario
 outer acceptance contract; this file covers the properties underneath it,
 each in isolation.
+
+The scripted tool names moved from `query_by_polity` to `query_by_source`
+(issue #487, D1): the former is deleted with the facet it filtered. Every
+property pinned here is about the loop, not about which tool it calls.
 """
 
 from __future__ import annotations
@@ -173,10 +177,15 @@ def test_thin_result_floor_falls_back_to_default_when_config_absent(tmp_path: Pa
 # --- thin result fed back with its result_count; non-thin does not force ---
 
 
+UNIT_SOURCE_ID = "unitfix-src"
+UNIT_CHUNK_ID = f"{UNIT_SOURCE_ID}_1_a_001"
+ABSENT_SOURCE_ID = "unitfix-nowhere"
+
+
 @pytest.fixture
 def one_chunk_vault(tmp_path: Path) -> Path:
     note = _chunk_frontmatter(
-        chunk_id="unitfix_001_a",
+        chunk_id=UNIT_CHUNK_ID,
         field_primary="state-formation",
         polity="Syria",
         polities_touched=["Syria"],
@@ -187,7 +196,7 @@ def one_chunk_vault(tmp_path: Path) -> Path:
 def test_thin_result_is_fed_back_to_model_with_its_result_count(one_chunk_vault: Path):
     client = _CapturingScriptedClient(
         [
-            {"tool": "query_by_polity", "args": {"polity": "Freedonia"}},  # matches nothing: thin
+            {"tool": "query_by_source", "args": {"source_id": ABSENT_SOURCE_ID}},  # thin: 0 ids
             None,
         ]
     )
@@ -202,7 +211,7 @@ def test_thin_result_is_fed_back_to_model_with_its_result_count(one_chunk_vault:
 
 def test_non_thin_result_does_not_force_a_requery(one_chunk_vault: Path):
     client = _CapturingScriptedClient(
-        [{"tool": "query_by_polity", "args": {"polity": "Syria"}}, None]
+        [{"tool": "query_by_source", "args": {"source_id": UNIT_SOURCE_ID}}, None]
     )
 
     trajectory = run_retrieval_loop(
@@ -224,7 +233,8 @@ def test_non_thin_result_does_not_force_a_requery(one_chunk_vault: Path):
 
 def test_requery_respects_step_budget_thin_result_halts_cleanly_at_budget(one_chunk_vault: Path):
     client = _CapturingScriptedClient(
-        [{"tool": "query_by_polity", "args": {"polity": "Nowhereland"}}]  # always thin, never stops
+        # always thin, never stops
+        [{"tool": "query_by_source", "args": {"source_id": ABSENT_SOURCE_ID}}]
     )
 
     trajectory = run_retrieval_loop(
@@ -239,8 +249,9 @@ def test_requery_respects_step_budget_thin_result_halts_cleanly_at_budget(one_ch
 
 
 def test_evidence_assembly_dedupes_across_calls_trajectory_keeps_every_call(tmp_path: Path):
+    shared_id = f"{UNIT_SOURCE_ID}_1_shared_001"
     shared = _chunk_frontmatter(
-        chunk_id="unitfix_shared",
+        chunk_id=shared_id,
         field_primary="state-formation",
         polity="Syria",
         polities_touched=["Syria"],
@@ -249,8 +260,9 @@ def test_evidence_assembly_dedupes_across_calls_trajectory_keeps_every_call(tmp_
 
     client = _CapturingScriptedClient(
         [
-            {"tool": "query_by_polity", "args": {"polity": "Syria"}},
-            {"tool": "query_by_polity", "args": {"polity": "Syria"}},  # same id again: a duplicate
+            {"tool": "query_by_source", "args": {"source_id": UNIT_SOURCE_ID}},
+            # same id again: a duplicate
+            {"tool": "query_by_source", "args": {"source_id": UNIT_SOURCE_ID}},
             None,
         ]
     )
@@ -260,11 +272,11 @@ def test_evidence_assembly_dedupes_across_calls_trajectory_keeps_every_call(tmp_
     assert len(trajectory) == 2, (
         "both calls -- including the duplicate-only one -- get their own entry"
     )
-    assert trajectory[0]["result_ids"] == ["unitfix_shared"]
-    assert trajectory[1]["result_ids"] == ["unitfix_shared"]
+    assert trajectory[0]["result_ids"] == [shared_id]
+    assert trajectory[1]["result_ids"] == [shared_id]
 
     evidence_ids = assemble_evidence_ids(trajectory)
-    assert evidence_ids == ["unitfix_shared"], "the assembled evidence set dedupes the repeated id"
+    assert evidence_ids == [shared_id], "the assembled evidence set dedupes the repeated id"
 
 
 # --- no case-scope filter on the assembled evidence set ---------------------
@@ -273,8 +285,10 @@ def test_evidence_assembly_dedupes_across_calls_trajectory_keeps_every_call(tmp_
 def test_no_case_scope_filter_chunk_outside_case_anchor_survives_assembly(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    egypt_source_id = "unitfix-egypt"
+    egypt_chunk_id = f"{egypt_source_id}_1_egypt_001"
     egypt_chunk = _chunk_frontmatter(
-        chunk_id="unitfix_egypt",
+        chunk_id=egypt_chunk_id,
         field_primary="state-formation",
         polity="Egypt",
         polities_touched=["Egypt"],
@@ -283,7 +297,7 @@ def test_no_case_scope_filter_chunk_outside_case_anchor_survives_assembly(
 
     monkeypatch.setenv(
         "AXIAL_STUB_TOOL_CALLS",
-        json.dumps([{"tool": "query_by_polity", "args": {"polity": "Egypt"}}, None]),
+        json.dumps([{"tool": "query_by_source", "args": {"source_id": egypt_source_id}}, None]),
     )
     client = StubLLMClient()
     brief = _brief(case="Syria")
@@ -293,7 +307,7 @@ def test_no_case_scope_filter_chunk_outside_case_anchor_survives_assembly(
         client, brief, interrogation_result, vault_dir=vault_dir, step_budget=5
     )
 
-    assert "unitfix_egypt" in result.evidence_ids
+    assert egypt_chunk_id in result.evidence_ids
 
 
 # --- refuse short-circuits: zero tool calls, empty trajectory --------------

@@ -4,20 +4,15 @@ tool set.
 
 Locked behavioral contract (DEC-1) -- do not edit once committed red.
 
-Given a fixture vault under data/vault/prose/ with four prose notes whose
-      frontmatter carries known values for field, claim_type (with subtags),
-      empirical_scope (value + polity), role_in_argument, and theory_school
-  And one artifact note under data/vault/artifacts/
-  And no LLM client configured or constructible in the test process
-When  query_by_tag(field="field:political-sociology", role_in_argument="role:claim")
-      is called
-Then  exactly the chunk_ids of the notes matching BOTH filters are returned,
-      in ascending chunk_id order
-  And an identical second call returns the identical id list in the
-      identical order
-  And zero model calls and zero embedding calls were made
+> **Scenario 1 (`query_by_tag` over two filters) was deleted with the tool
+> itself** (issue #487, D1): the axes it filtered are retired, so it returned
+> 0 on every call and there is nothing left for the scenario to pin. The name
+> layer that replaces it has its own acceptance test at
+> tests/analysis/test_name_query.py.
 
-Given the same fixture vault
+Given a fixture vault under tests/fixtures/vault_query/ with four prose notes
+  And one artifact note under its artifacts/ directory
+  And no LLM client configured or constructible in the test process
 When  get_chunk(<a known chunk_id>) is called
 Then  the result carries that chunk_id, its chunk_text, its section, its
       source_meta, its polities_touched list, and its artifact_refs list
@@ -26,15 +21,14 @@ Given the same fixture vault
 When  get_chunk("does-not-exist") is called
 Then  a clear not-found error naming the id is raised, not a None result
 
-See specs/PHASE-B.md §7.5 (the vault query API, [FIRM]: query_by_tag /
-query_by_polity / query_by_source / get_envelope / get_chunk / get_artifact /
-follow_backlinks / coverage_count, "no model and no embedding model" /
+See specs/PHASE-B.md §7.5 (the vault query API, [FIRM]: find_names /
+get_name / name_neighbors / who_cites / who_argues_against / coverage_count /
+query_by_source / get_envelope / get_chunk / get_artifact, "zero LLM calls" /
 determinism) and §8 P0-2 (the foundation slice: "the acceptance test asserts
 the full tool set is exercised in tests with no LLM client present") for the
 source of truth. See plans/vault-query/01-vault-reader-and-tag-query.md for
 this slice's own acceptance criterion (identical Gherkin) and boundary
-(`axial.query.get_chunk(chunk_id)`, `axial.query.get_artifact(artifact_id)`,
-`axial.query.query_by_tag(**filters)`).
+(`axial.query.get_chunk(chunk_id)`, `axial.query.get_artifact(artifact_id)`).
 
 Seam decision 1 -- library calls, not a CLI subprocess
 -----------------------------------------------------------------------
@@ -42,8 +36,8 @@ Unlike tests/analysis/test_brief_intake.py (whose boundary is a CLI
 subcommand), this slice's own plan names its boundary as three plain library
 entry points under `axial.query`. There is no `axial query` CLI subcommand
 in scope for this slice (out of scope: "the agentic loop that calls these
-tools", P0-3) -- so this test imports and calls `axial.query.query_by_tag`
-and `axial.query.get_chunk` directly, in-process. `axial.query` does not
+tools", P0-3) -- so this test imports and calls `axial.query.get_chunk`
+directly, in-process. `axial.query` does not
 exist yet (`src/axial/vault.py` is write-only today, per the issue), so
 every test below is expected to fail on that import alone until the reader
 is built -- that failure IS the right kind of red for an unbuilt module, not
@@ -91,10 +85,8 @@ fixture note under tests/fixtures/vault_query/ is entirely synthetic prose
 about invented polities ("Freedonia", "Ruritania"), never real source text.
 The four prose fixtures were also committed to disk in the scrambled order
 003, 001, 004, 002 -- neither alphabetical nor match-then-distractor order --
-so an implementation that merely returns `Path.iterdir()`'s raw
-(OS-dependent, not lexically sorted) enumeration order cannot coincidentally
-satisfy the ascending-`chunk_id` sort assertion below; only an
-implementation that actually sorts passes.
+so no implementation can satisfy a sort assertion by returning
+`Path.iterdir()`'s raw (OS-dependent) enumeration order.
 """
 
 from __future__ import annotations
@@ -109,15 +101,6 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 FIXTURE_VAULT_DIR = REPO_ROOT / "tests" / "fixtures" / "vault_query"
-
-EXPECTED_FIELD_FILTER = "field:political-sociology"
-EXPECTED_ROLE_FILTER = "role:claim"
-
-# Ascending chunk_id order -- the two notes satisfying BOTH filters.
-EXPECTED_MATCHING_CHUNK_IDS = ["vqfix_001_causes", "vqfix_004_uprising"]
-
-# Distractors: satisfy exactly one of the two filters, never both.
-DISTRACTOR_CHUNK_IDS = ["vqfix_002_reforms", "vqfix_003_markets"]
 
 KNOWN_CHUNK_ID = "vqfix_001_causes"
 EXPECTED_CHUNK_TEXT = (
@@ -163,45 +146,6 @@ def _field(result: object, name: str):
         f"{result!r} (type {type(result).__name__})"
     )
     return getattr(result, name)
-
-
-def test_query_by_tag_conjunction_is_ascending_deterministic_and_llm_free():
-    """Scenario 1 (issue #249): a `query_by_tag` call over two filters
-    returns exactly the chunk_ids satisfying BOTH, sorted ascending by
-    chunk_id -- never filesystem enumeration order -- and an identical
-    second call is byte-for-byte identical to the first. The autouse
-    `_no_real_llm_provider` fixture above makes any hidden LLM call crash
-    this test loudly rather than pass silently, proving the "zero model
-    calls and zero embedding calls" clause."""
-    from axial.query import query_by_tag
-
-    first_result = query_by_tag(
-        field=EXPECTED_FIELD_FILTER,
-        role_in_argument=EXPECTED_ROLE_FILTER,
-        vault_dir=FIXTURE_VAULT_DIR,
-    )
-
-    assert list(first_result) == EXPECTED_MATCHING_CHUNK_IDS, (
-        "expected exactly the chunk_ids satisfying BOTH "
-        f"field={EXPECTED_FIELD_FILTER!r} and "
-        f"role_in_argument={EXPECTED_ROLE_FILTER!r}, in ascending chunk_id "
-        f"order, i.e. {EXPECTED_MATCHING_CHUNK_IDS!r}; got {list(first_result)!r} "
-        "-- a conjunction bug (matching on only one axis) would leak one of "
-        f"{DISTRACTOR_CHUNK_IDS!r} into this list"
-    )
-
-    second_result = query_by_tag(
-        field=EXPECTED_FIELD_FILTER,
-        role_in_argument=EXPECTED_ROLE_FILTER,
-        vault_dir=FIXTURE_VAULT_DIR,
-    )
-
-    assert list(second_result) == list(first_result), (
-        "expected an identical second call over the same pinned fixture "
-        f"vault to return the identical id list in the identical order -- "
-        f"got {list(first_result)!r} then {list(second_result)!r} "
-        "(§7.5's determinism contract)"
-    )
 
 
 def test_get_chunk_returns_the_full_field_surface():

@@ -1,9 +1,12 @@
-"""Inner unit tests for the vault reader and tag-query tool set (issue #249,
-slice 01; plans/vault-query/01-vault-reader-and-tag-query.md's inner-loop
-list). Slice 02 (issue #251,
-plans/vault-query/02-facet-and-traversal-queries.md's inner-loop list) adds
-unit tests for `query_by_polity`, `query_by_source`, `get_envelope`,
-`follow_backlinks`, `coverage_count` further down this file."""
+"""Inner unit tests for the vault note reader (issues #249/#251): the note
+parser, `get_chunk`/`get_artifact` (including their budgeted-filename
+resolution), the suffix-repair lookups, `all_chunk_ids`, `query_by_source`
+and `get_envelope`.
+
+The tag-query cases that used to live here went with `query_by_tag`,
+`query_by_polity` and `follow_backlinks` (issue #487, D1/D5) -- the facets
+they filtered are deleted, so there is nothing left for them to pin. The name
+layer that replaces them is unit-tested in `test_names.py` beside it."""
 
 from __future__ import annotations
 
@@ -14,21 +17,16 @@ import yaml
 
 from axial.query import (
     ArtifactNotFoundError,
-    BacklinkTargetNotFoundError,
     ChunkNotFoundError,
     EnvelopeNotFoundError,
     MalformedChunkIdError,
     MalformedNoteError,
     MissingVaultDirError,
-    UnknownFilterError,
-    coverage_count,
-    follow_backlinks,
+    all_chunk_ids,
     get_artifact,
     get_chunk,
     get_envelope,
-    query_by_polity,
     query_by_source,
-    query_by_tag,
 )
 from axial.query.reader import source_id_from_chunk_id
 
@@ -200,229 +198,6 @@ def test_get_artifact_present_caption_reads_through(tmp_path):
     result = get_artifact("a1", vault_dir=tmp_path)
 
     assert result.caption == "A caption."
-
-
-# -- query_by_tag: per-axis filtering -----------------------------------------
-
-
-def test_field_filter_matches_primary_and_secondary(tmp_path):
-    prose_dir = tmp_path / "prose"
-    _write_chunk_note(prose_dir, "primary_match", field={"primary": "field:x", "secondary": []})
-    _write_chunk_note(
-        prose_dir, "secondary_match", field={"primary": "field:y", "secondary": ["field:x"]}
-    )
-    _write_chunk_note(prose_dir, "no_match", field={"primary": "field:z", "secondary": []})
-
-    result = query_by_tag(field="field:x", vault_dir=tmp_path)
-
-    assert result == ["primary_match", "secondary_match"]
-
-
-def test_claim_type_filter_matches_primary_secondary_and_subtags(tmp_path):
-    prose_dir = tmp_path / "prose"
-    _write_chunk_note(
-        prose_dir, "by_primary", claim_type={"primary": "claim:x", "secondary": None, "subtags": []}
-    )
-    _write_chunk_note(
-        prose_dir,
-        "by_secondary",
-        claim_type={"primary": "claim:y", "secondary": "claim:x", "subtags": []},
-    )
-    _write_chunk_note(
-        prose_dir,
-        "by_subtag",
-        claim_type={"primary": "claim:y", "secondary": None, "subtags": ["claim:x"]},
-    )
-    _write_chunk_note(
-        prose_dir, "no_match", claim_type={"primary": "claim:z", "secondary": None, "subtags": []}
-    )
-
-    result = query_by_tag(claim_type="claim:x", vault_dir=tmp_path)
-
-    assert result == ["by_primary", "by_secondary", "by_subtag"]
-
-
-def test_theory_school_filter_matches_primary_and_secondary_status_not_a_filter_key(tmp_path):
-    prose_dir = tmp_path / "prose"
-    _write_chunk_note(
-        prose_dir,
-        "by_primary",
-        theory_school={"primary": "school:x", "secondary": None, "status": "candidate"},
-    )
-    _write_chunk_note(
-        prose_dir,
-        "by_secondary",
-        theory_school={"primary": "school:y", "secondary": "school:x", "status": "confirmed"},
-    )
-
-    result = query_by_tag(theory_school="school:x", vault_dir=tmp_path)
-
-    assert result == ["by_primary", "by_secondary"]
-    # `status` is carried on the parsed result but is never itself a filter
-    # key -- querying by it must raise, not silently match.
-    with pytest.raises(UnknownFilterError):
-        query_by_tag(status="candidate", vault_dir=tmp_path)
-
-
-def test_empirical_scope_filter_matches_value_polity_filter_matches_polity_separately(tmp_path):
-    prose_dir = tmp_path / "prose"
-    _write_chunk_note(
-        prose_dir, "value_a", empirical_scope={"value": "scope:country-case", "polity": "Freedonia"}
-    )
-    _write_chunk_note(
-        prose_dir, "value_b", empirical_scope={"value": "scope:comparative", "polity": None}
-    )
-
-    assert query_by_tag(empirical_scope="scope:country-case", vault_dir=tmp_path) == ["value_a"]
-    assert query_by_tag(polity="Freedonia", vault_dir=tmp_path) == ["value_a"]
-    # A null polity never matches a polity filter, whatever the filter value.
-    assert query_by_tag(polity="None", vault_dir=tmp_path) == []
-
-
-def test_role_in_argument_filter_matches_exact_string(tmp_path):
-    prose_dir = tmp_path / "prose"
-    _write_chunk_note(prose_dir, "claim", role_in_argument="role:claim")
-    _write_chunk_note(prose_dir, "evidence", role_in_argument="role:evidence")
-
-    assert query_by_tag(role_in_argument="role:claim", vault_dir=tmp_path) == ["claim"]
-
-
-# -- query_by_tag: conjunction, unknown keys, determinism ---------------------
-
-
-def test_multiple_filters_compose_as_a_conjunction(tmp_path):
-    prose_dir = tmp_path / "prose"
-    _write_chunk_note(
-        prose_dir,
-        "both",
-        field={"primary": "field:x", "secondary": []},
-        role_in_argument="role:claim",
-    )
-    _write_chunk_note(
-        prose_dir,
-        "field_only",
-        field={"primary": "field:x", "secondary": []},
-        role_in_argument="role:evidence",
-    )
-    _write_chunk_note(
-        prose_dir,
-        "role_only",
-        field={"primary": "field:z", "secondary": []},
-        role_in_argument="role:claim",
-    )
-
-    result = query_by_tag(field="field:x", role_in_argument="role:claim", vault_dir=tmp_path)
-
-    assert result == ["both"]
-
-
-def test_a_filter_set_no_note_satisfies_returns_an_empty_list(tmp_path):
-    prose_dir = tmp_path / "prose"
-    _write_chunk_note(prose_dir, "c1", role_in_argument="role:evidence")
-
-    result = query_by_tag(role_in_argument="role:does-not-exist", vault_dir=tmp_path)
-
-    assert result == []
-
-
-def test_unknown_filter_key_raises(tmp_path):
-    prose_dir = tmp_path / "prose"
-    _write_chunk_note(prose_dir, "c1")
-
-    with pytest.raises(UnknownFilterError) as exc_info:
-        query_by_tag(not_a_real_axis="whatever", vault_dir=tmp_path)
-    assert "not_a_real_axis" in str(exc_info.value)
-
-
-def test_results_are_sorted_by_chunk_id_despite_scrambled_write_order(tmp_path):
-    prose_dir = tmp_path / "prose"
-    # Written deliberately out of lexical order.
-    for chunk_id in ["c3", "c1", "c4", "c2"]:
-        _write_chunk_note(prose_dir, chunk_id)
-
-    result = query_by_tag(role_in_argument="role:claim", vault_dir=tmp_path)
-
-    assert result == ["c1", "c2", "c3", "c4"]
-
-
-def test_query_by_tag_vault_dir_is_keyword_only():
-    """A filter value passed positionally must never be mistaken for
-    vault_dir (issue #249 F4): query_by_tag takes no positional parameters
-    at all, so a positional call raises TypeError immediately instead of
-    silently resolving `vault_dir` to a filter string and returning `[]`."""
-    with pytest.raises(TypeError):
-        query_by_tag("field:political-sociology")
-
-
-def test_query_by_tag_raises_when_the_vault_dir_does_not_exist(tmp_path):
-    """A missing or typo'd `vault_dir` is a caller bug, not an empty corpus
-    (issue #249 F3) -- every other bad input in this module raises, and a
-    silently empty result here would hide that mistake as "no matches"."""
-    missing_vault_dir = tmp_path / "no-such-vault"
-
-    with pytest.raises(MissingVaultDirError) as exc_info:
-        query_by_tag(role_in_argument="role:claim", vault_dir=missing_vault_dir)
-    assert str(missing_vault_dir / "prose") in str(exc_info.value)
-
-
-def test_query_by_tag_raises_on_a_note_missing_chunk_id(tmp_path):
-    """`query_by_tag` must never hand back a filename-derived id for a note
-    `get_chunk` would itself refuse (issue #249 F2) -- a note with no
-    `chunk_id` key at all aborts the scan with the same `MalformedNoteError`
-    `get_chunk` would raise, naming the offending file, rather than being
-    silently included (or excluded) under a guessed id."""
-    prose_dir = tmp_path / "prose"
-    prose_dir.mkdir(parents=True)
-    frontmatter = {"section": "A Section", "chunk_text": "text.", "role_in_argument": "role:claim"}
-    text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
-    (prose_dir / "no_id.md").write_text(text, encoding="utf-8")
-
-    with pytest.raises(MalformedNoteError) as exc_info:
-        query_by_tag(role_in_argument="role:claim", vault_dir=tmp_path)
-    assert "no_id.md" in str(exc_info.value)
-
-
-def test_query_by_tag_excludes_a_note_missing_the_filtered_axis_rather_than_raising(tmp_path):
-    """Stated decision (issue #249 F5): a note missing the specific axis a
-    filter targets is excluded from the match set, not an error -- so one
-    thin note does not abort an otherwise-good full-vault scan. This is
-    distinct from a missing `chunk_id` (F2 above), which always raises:
-    `chunk_id` is the note's identity, not a filterable tag axis.
-
-    `get_chunk` on that same note no longer raises for a missing axis field
-    (issue #411, editing this test's own prior assertion here: a note
-    `axial.materialize` writes carries NONE of the six retired axis-block
-    keys at all, not just `field`, so `get_chunk` degrading to `None` on any
-    of them -- rather than raising -- is what keeps a real v1 note readable
-    at all; see `ChunkNote`'s docstring in `axial.query.reader`)."""
-    prose_dir = tmp_path / "prose"
-    _write_chunk_note(prose_dir, "has_field", field={"primary": "field:x", "secondary": []})
-
-    frontmatter = {
-        "chunk_id": "missing_field",
-        "section": "A Section",
-        "chunk_text": "missing_field text.",
-        "source_meta": {"author": "A", "title": "T", "date": 2020, "thesis": "X", "scope": "Y"},
-        "schema_version": "0.1",
-        "role_in_argument": "role:claim",
-        # No `field` key at all.
-        "claim_type": {"primary": "claim:causal", "secondary": None, "subtags": []},
-        "theory_school": {
-            "primary": "school:synthetic-institutionalist",
-            "secondary": None,
-            "status": "candidate",
-        },
-        "empirical_scope": {"value": "scope:country-case", "polity": "Freedonia"},
-        "polities_touched": ["Freedonia"],
-        "artifact_refs": [],
-    }
-    text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
-    (prose_dir / "missing_field.md").write_text(text, encoding="utf-8")
-
-    result = query_by_tag(field="field:x", vault_dir=tmp_path)
-
-    assert result == ["has_field"]
-    assert get_chunk("missing_field", vault_dir=tmp_path).field is None
 
 
 # -- get_chunk / get_artifact: not-found --------------------------------------
@@ -832,13 +607,12 @@ def test_module_imports_and_runs_with_no_llm_client_configured(tmp_path, monkeyp
 
     # None of these should ever touch an LLM client; AXIAL_LLM_PROVIDER=explode
     # makes any hidden `.complete()` call crash loudly rather than pass silently.
-    assert query_by_tag(role_in_argument="role:claim", vault_dir=tmp_path) == ["c1"]
+    assert all_chunk_ids(vault_dir=tmp_path) == ["c1"]
     assert get_chunk("c1", vault_dir=tmp_path).chunk_id == "c1"
 
 
 # =============================================================================
-# Slice 02 (issue #251): query_by_polity, query_by_source / get_envelope,
-# follow_backlinks, coverage_count
+# query_by_source / get_envelope (issue #251)
 # =============================================================================
 
 
@@ -855,55 +629,6 @@ def _write_envelope(envelopes_dir, source_id, **overrides):
     (envelopes_dir / f"{source_id}.json").write_text(
         json.dumps(envelope, indent=2), encoding="utf-8"
     )
-
-
-# -- query_by_polity ----------------------------------------------------------
-
-
-def test_query_by_polity_matches_any_entry_of_the_many_valued_list(tmp_path):
-    prose_dir = tmp_path / "prose"
-    _write_chunk_note(prose_dir, "two_polities", polities_touched=["Syria", "Iraq"])
-    _write_chunk_note(prose_dir, "one_polity", polities_touched=["Iraq"])
-    _write_chunk_note(prose_dir, "no_match", polities_touched=["Lebanon"])
-    _write_chunk_note(prose_dir, "empty_list", polities_touched=[])
-
-    result = query_by_polity("Iraq", vault_dir=tmp_path)
-
-    assert result == ["one_polity", "two_polities"]
-
-
-def test_query_by_polity_is_distinct_from_empirical_scope_polity(tmp_path):
-    """A chunk scoped to one polity but touching another is returned for
-    the touched polity, not the scoped one -- the cross-case behaviour the
-    scope axis cannot serve (§7.5)."""
-    prose_dir = tmp_path / "prose"
-    _write_chunk_note(
-        prose_dir,
-        "c1",
-        empirical_scope={"value": "scope:comparative", "polity": "Syria"},
-        polities_touched=["Syria", "Iraq"],
-    )
-
-    assert query_by_polity("Iraq", vault_dir=tmp_path) == ["c1"]
-    assert query_by_tag(polity="Iraq", vault_dir=tmp_path) == [], (
-        "the empirical_scope.polity filter must NOT match on the many-valued polities_touched facet"
-    )
-
-
-def test_query_by_polity_is_exact_string_no_normalization(tmp_path):
-    prose_dir = tmp_path / "prose"
-    _write_chunk_note(prose_dir, "c1", polities_touched=["Iraq"])
-
-    assert query_by_polity("iraq", vault_dir=tmp_path) == []
-    assert query_by_polity("Iraq ", vault_dir=tmp_path) == []
-
-
-def test_query_by_polity_results_sorted_despite_scrambled_write_order(tmp_path):
-    prose_dir = tmp_path / "prose"
-    for chunk_id in ["c3", "c1", "c4", "c2"]:
-        _write_chunk_note(prose_dir, chunk_id, polities_touched=["Iraq"])
-
-    assert query_by_polity("Iraq", vault_dir=tmp_path) == ["c1", "c2", "c3", "c4"]
 
 
 # -- source_id parsing (query_by_source's seam) --------------------------------
@@ -985,183 +710,55 @@ def test_get_envelope_on_an_unknown_source_id_raises_not_found(tmp_path):
     assert "does-not-exist" in str(exc_info.value)
 
 
-# -- follow_backlinks -----------------------------------------------------------
+# -- all_chunk_ids ---------------------------------------------------------------
 
 
-def test_follow_backlinks_chunk_to_artifact_refs(tmp_path):
-    _write_chunk_note(tmp_path / "prose", "c1", artifact_refs=["a1", "a2"])
-
-    assert follow_backlinks("c1", vault_dir=tmp_path) == ["a1", "a2"]
-
-
-def test_follow_backlinks_artifact_to_cited_by_sorted(tmp_path):
-    _write_artifact_note(tmp_path / "artifacts", "a1", cited_by=["c3", "c1"])
-
-    assert follow_backlinks("a1", vault_dir=tmp_path) == ["c1", "c3"]
-
-
-def test_follow_backlinks_empty_link_list_returns_empty_not_an_error(tmp_path):
-    _write_chunk_note(tmp_path / "prose", "c1", artifact_refs=[])
-    _write_artifact_note(tmp_path / "artifacts", "a1", cited_by=[])
-
-    assert follow_backlinks("c1", vault_dir=tmp_path) == []
-    assert follow_backlinks("a1", vault_dir=tmp_path) == []
-
-
-def test_follow_backlinks_raises_on_an_id_that_is_neither_chunk_nor_artifact(tmp_path):
-    (tmp_path / "prose").mkdir(parents=True)
-    (tmp_path / "artifacts").mkdir(parents=True)
-
-    with pytest.raises(BacklinkTargetNotFoundError) as exc_info:
-        follow_backlinks("does-not-exist", vault_dir=tmp_path)
-    assert "does-not-exist" in str(exc_info.value)
-
-
-# -- coverage_count ---------------------------------------------------------------
-
-
-def test_coverage_count_counts_each_chunk_once_per_distinct_polity(tmp_path):
+def test_all_chunk_ids_returns_every_prose_id_sorted_despite_scrambled_write_order(tmp_path):
+    """The capability `query_by_tag` with no filters used to serve (issue
+    #487): every prose id in ascending `chunk_id` order."""
     prose_dir = tmp_path / "prose"
-    _write_chunk_note(prose_dir, "c1", polities_touched=["Iraq", "Syria"])
-    _write_chunk_note(prose_dir, "c2", polities_touched=["Iraq"])
-    _write_chunk_note(prose_dir, "c3", polities_touched=["Lebanon"])
-    # A chunk that lists the same polity twice must count once, not twice.
-    _write_chunk_note(prose_dir, "c4", polities_touched=["Iraq", "Iraq"])
+    for chunk_id in ("c3", "c1", "c2"):
+        _write_chunk_note(prose_dir, chunk_id)
 
-    result = coverage_count(vault_dir=tmp_path)
-
-    assert result == {"Iraq": 3, "Syria": 1, "Lebanon": 1}
+    assert all_chunk_ids(vault_dir=tmp_path) == ["c1", "c2", "c3"]
 
 
-def test_coverage_count_over_a_vault_with_no_polities_touched_returns_empty(tmp_path):
-    _write_chunk_note(tmp_path / "prose", "c1", polities_touched=[])
+def test_all_chunk_ids_raises_on_a_note_missing_chunk_id(tmp_path):
+    """Every returned id must resolve back through `get_chunk`, so a note
+    with no `chunk_id` is a malformed note, not a silent skip."""
+    prose_dir = tmp_path / "prose"
+    prose_dir.mkdir(parents=True)
+    frontmatter = {"section": "A Section", "chunk_text": "T", "source_meta": {}}
+    (prose_dir / "no_id.md").write_text(
+        "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n",
+        encoding="utf-8",
+    )
 
-    assert coverage_count(vault_dir=tmp_path) == {}
+    with pytest.raises(MalformedNoteError):
+        all_chunk_ids(vault_dir=tmp_path)
 
 
-def test_coverage_count_raises_when_vault_dir_is_missing(tmp_path):
+def test_all_chunk_ids_raises_when_the_vault_dir_does_not_exist(tmp_path):
     with pytest.raises(MissingVaultDirError):
-        coverage_count(vault_dir=tmp_path / "no-such-vault")
+        all_chunk_ids(vault_dir=tmp_path / "no-such-vault")
 
 
-# -- LLM-free by construction (slice 02 tools) -----------------------------------
+# -- LLM-free by construction (the whole surviving reader) -----------------------
 
 
-def test_slice_02_tools_run_with_no_llm_client_configured(tmp_path, monkeypatch):
+def test_every_reader_tool_runs_with_no_llm_client_configured(tmp_path, monkeypatch):
     monkeypatch.setenv("AXIAL_LLM_PROVIDER", "explode")
     prose_dir = tmp_path / "prose"
-    _write_chunk_note(
-        prose_dir,
-        "some-source_1_intro_001",
-        polities_touched=["Iraq"],
-        artifact_refs=["a1"],
-    )
+    _write_chunk_note(prose_dir, "some-source_1_intro_001")
     _write_artifact_note(tmp_path / "artifacts", "a1", cited_by=["some-source_1_intro_001"])
     _write_envelope(tmp_path / "envelopes", "some-source")
 
-    assert query_by_polity("Iraq", vault_dir=tmp_path) == ["some-source_1_intro_001"]
+    assert all_chunk_ids(vault_dir=tmp_path) == ["some-source_1_intro_001"]
     assert query_by_source("some-source", vault_dir=tmp_path) == ["some-source_1_intro_001"]
-    assert follow_backlinks("some-source_1_intro_001", vault_dir=tmp_path) == ["a1"]
-    assert coverage_count(vault_dir=tmp_path) == {"Iraq": 1}
+    assert get_chunk("some-source_1_intro_001", vault_dir=tmp_path).chunk_id == (
+        "some-source_1_intro_001"
+    )
+    assert get_artifact("a1", vault_dir=tmp_path).artifact_id == "a1"
     assert get_envelope("some-source", envelopes_dir=tmp_path / "envelopes").source_id == (
         "some-source"
     )
-
-
-# -- frontmatter index caching (perf follow-up to #362's benchmark sweep) ----
-#
-# `query_by_tag`/`query_by_polity`/`coverage_count` used to each do their own
-# uncached full scan of `prose/` -- measured at ~93s/call over the real
-# ~18k-note corpus, and the dominant cost of the #362 sweep. They now share
-# one process-lifetime index (`reader._frontmatter_index`), built at most
-# once per resolved vault_dir. These cases pin the caching itself (call
-# counting), not just the query results the rest of this file already
-# covers -- a regression that reintroduces the per-call scan would leave
-# every other test in this file green.
-
-
-def _install_read_counter(monkeypatch: pytest.MonkeyPatch) -> list:
-    """Wrap `reader._read_frontmatter_index_entry` (the per-note parse the
-    index build calls once per `.md` file) to record every path it is asked
-    to parse, then return that list -- a call count for that function is
-    exactly a count of notes actually read off disk, regardless of which
-    query function triggered the build."""
-    from axial.query import reader
-
-    calls: list = []
-    original = reader._read_frontmatter_index_entry
-
-    def counting(path):
-        calls.append(path)
-        return original(path)
-
-    monkeypatch.setattr(reader, "_read_frontmatter_index_entry", counting)
-    return calls
-
-
-def test_query_by_tag_parses_each_note_at_most_once_across_two_calls(tmp_path, monkeypatch):
-    """The entire point of the change: two successive `query_by_tag` calls
-    against the same vault must not re-read the notes the first call already
-    parsed."""
-    prose_dir = tmp_path / "prose"
-    for chunk_id in ["c1", "c2", "c3"]:
-        _write_chunk_note(prose_dir, chunk_id)
-
-    calls = _install_read_counter(monkeypatch)
-
-    first = query_by_tag(role_in_argument="role:claim", vault_dir=tmp_path)
-    calls_after_first = len(calls)
-    second = query_by_tag(field="field:political-sociology", vault_dir=tmp_path)
-
-    assert first == ["c1", "c2", "c3"]
-    assert second == ["c1", "c2", "c3"]
-    assert calls_after_first == 3  # one parse per note, built once
-    assert len(calls) == calls_after_first  # the second call triggered no further reads
-
-
-def test_frontmatter_index_is_shared_across_query_by_tag_polity_and_coverage_count(
-    tmp_path, monkeypatch
-):
-    """Once ANY of the three cached tools has warmed the index for a given
-    vault_dir, the other two read the same cached index -- zero further
-    parses, not just zero further parses of their own."""
-    prose_dir = tmp_path / "prose"
-    _write_chunk_note(prose_dir, "c1", polities_touched=["Iraq"])
-    _write_chunk_note(prose_dir, "c2", polities_touched=["Syria"])
-
-    calls = _install_read_counter(monkeypatch)
-
-    query_by_tag(role_in_argument="role:claim", vault_dir=tmp_path)
-    calls_after_warm = len(calls)
-    assert calls_after_warm == 2
-
-    polity_result = query_by_polity("Iraq", vault_dir=tmp_path)
-    coverage_result = coverage_count(vault_dir=tmp_path)
-
-    assert polity_result == ["c1"]
-    assert coverage_result == {"Iraq": 1, "Syria": 1}
-    assert len(calls) == calls_after_warm  # neither call read a single note
-
-
-def test_frontmatter_index_is_keyed_per_vault_dir_not_shared_across_vaults(tmp_path, monkeypatch):
-    """Two distinct vault_dirs, each warmed in turn, must never contaminate
-    each other's results -- the cache is keyed by resolved vault_dir, same
-    convention as the existing chunk/artifact id index caches."""
-    vault_a = tmp_path / "vault_a"
-    vault_b = tmp_path / "vault_b"
-    _write_chunk_note(vault_a / "prose", "a1", polities_touched=["Iraq"])
-    _write_chunk_note(vault_b / "prose", "b1", polities_touched=["Lebanon"])
-    _write_chunk_note(vault_b / "prose", "b2", polities_touched=["Lebanon"])
-
-    calls = _install_read_counter(monkeypatch)
-
-    result_a = query_by_tag(role_in_argument="role:claim", vault_dir=vault_a)
-    result_b = query_by_tag(role_in_argument="role:claim", vault_dir=vault_b)
-
-    assert result_a == ["a1"]
-    assert result_b == ["b1", "b2"]
-    assert coverage_count(vault_dir=vault_a) == {"Iraq": 1}
-    assert coverage_count(vault_dir=vault_b) == {"Lebanon": 2}
-    # 1 note in vault_a + 2 notes in vault_b parsed once each; the second
-    # coverage_count call against each vault re-used its own cached index.
-    assert len(calls) == 3

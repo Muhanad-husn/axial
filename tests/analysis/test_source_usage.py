@@ -2,24 +2,30 @@
 subproject (Phase B, sub:analysis-v0): the §7.13 `source_usage` field,
 disclosed on every analysis record with its denominator.
 
-Given a fixture vault holding 100 chunks matching the filter
-      field:political-science + claim_type:causal, of which 22 belong to
-      source_id "tilly" and 78 belong to other sources
+> **The denominator half of this contract is zero by construction** (issue
+> #487, D1): `filters_observed` drew only from `query_by_tag` /
+> `query_by_polity`, both deleted with the facets they filtered, so no
+> trajectory can carry one and nothing re-queries an available count. Every
+> `available_chunk_count` is 0, `available_share` 0.0 and `usage_ratio` null
+> until #491 re-bases the denominator onto the name layer. The scenarios below
+> script `query_by_source` instead and assert the disclosed zero. The evidence
+> half -- shares, dedupe, artifact resolution, the refuse case -- is unchanged
+> and still real.
+
+Given a fixture vault holding 100 chunks, of which 22 belong to source_id
+      "tilly" and 78 belong to source_id "other"
   And a fixture brief config/briefs/dev/fixture-source-usage.yaml whose
       model passes are driven by the `record` provider (a fixed-response
       stand-in for `stub`, issue #257's own seam)
-  And the run's trajectory records a query_by_tag call with exactly that
-      filter
   And the run's claims carry grounds over 10 distinct chunks, 6 of them from
       source_id "tilly"
 When  `axial brief run config/briefs/dev/fixture-source-usage.yaml` runs
 Then  the command exits 0
   And data/analyses/<brief_id>.json carries a source_usage whose
-      filters_observed contains that tag filter
+      filters_observed is empty
   And source_usage.sources entry for "tilly" is
       {evidence_chunk_count: 6, evidence_share: 0.6,
-       available_chunk_count: 22, available_share: 0.22,
-       usage_ratio: 0.6/0.22}
+       available_chunk_count: 0, available_share: 0.0, usage_ratio: null}
   And every entry carries evidence_share and available_share together
 
 Given a hand-built analysis record at data/analyses/DEV31.json whose claims'
@@ -28,7 +34,7 @@ When  the source-usage computation runs over that record and the fixture
       vault with the `explode` provider installed
 Then  zero LLM calls are made
   And source_usage.sources has exactly one entry, for "gellner", with
-      evidence_share 1.0 and its real available_share from the fixture vault
+      evidence_share 1.0 and its (currently zero) available_share
   And the record still releases -- no failure, no non-zero exit, no
       validator reason reacts to the concentration
 
@@ -132,9 +138,7 @@ def _chunk_frontmatter(chunk_id: str) -> dict[str, Any]:
 
 
 def _write_fixture_vault_100_chunks(root: Path) -> None:
-    """100 chunks all matching field:political-science + claim_type:causal
-    (the gherkin's own filter): 22 under source_id "tilly", 78 under
-    source_id "other"."""
+    """100 chunks: 22 under source_id "tilly", 78 under source_id "other"."""
     prose_dir = root / "data" / "vault" / "prose"
     prose_dir.mkdir(parents=True, exist_ok=True)
     for i in range(TILLY_COUNT):
@@ -223,22 +227,22 @@ def _grounded_claim(text: str, kind: str, chunk_ids: list[str]) -> dict[str, Any
     }
 
 
-_ALL_100_FIXTURE_CHUNK_IDS = sorted(
-    [f"tilly_0_intro_{i:03d}" for i in range(TILLY_COUNT)]
-    + [f"other_0_intro_{i:03d}" for i in range(OTHER_COUNT)]
-)
+TILLY_CHUNK_IDS = sorted(f"tilly_0_intro_{i:03d}" for i in range(TILLY_COUNT))
+OTHER_CHUNK_IDS = sorted(f"other_0_intro_{i:03d}" for i in range(OTHER_COUNT))
+
+# The evidence set's own order for scenario 1's two scripted calls:
+# `query_by_source("tilly")` then `query_by_source("other")`, each sorted by
+# chunk_id (§7.5's determinism contract), deduped first-seen.
+_EVIDENCE_ORDER = TILLY_CHUNK_IDS + OTHER_CHUNK_IDS
 
 
 def _handle_for_fixture_chunk(chunk_id: str) -> str:
     """The opaque handle (issue #410) `compose_prompt` would assign
     `chunk_id` in scenario 1's real `axial brief run`, derived rather than
-    hardcoded: `query_by_tag` sorts its result by `chunk_id` (§7.5's own
-    documented determinism contract), and `compose_prompt` assigns handles
-    `[c1]`, `[c2]`, ... in the evidence set's own order, dropping nothing
-    here (every fixture chunk's tiny SENTINEL text stays well under the
-    evidence_char_budget, so the 100-chunk evidence set is exactly this
-    fixture's 100 chunks, in sorted order, unchanged)."""
-    return f"[c{_ALL_100_FIXTURE_CHUNK_IDS.index(chunk_id) + 1}]"
+    hardcoded: `compose_prompt` assigns handles `[c1]`, `[c2]`, ... in the
+    evidence set's own order, dropping nothing here (every fixture chunk's
+    tiny SENTINEL text stays well under the evidence_char_budget)."""
+    return f"[c{_EVIDENCE_ORDER.index(chunk_id) + 1}]"
 
 
 def _stub_grounded_claim(text: str, kind: str, chunk_ids: list[str]) -> dict[str, Any]:
@@ -260,16 +264,14 @@ def _stub_grounded_claim(text: str, kind: str, chunk_ids: list[str]) -> dict[str
 
 def test_source_usage_disclosed_with_denominator_via_full_brief_run(fixture_root: Path):
     """Scenario 1 (issue #265): a real `axial brief run` over a fixture
-    vault of 100 filter-matching chunks (22 tilly / 78 other), grounds
-    citing 10 distinct chunks (6 tilly / 4 other) -- source_usage discloses
-    tilly's contribution alongside its real corpus-wide availability."""
+    vault of 100 chunks (22 tilly / 78 other), grounds citing 10 distinct
+    chunks (6 tilly / 4 other) -- source_usage discloses tilly's contribution
+    alongside its (currently zero, issue #487) availability."""
     record_path = fixture_root / "record.jsonl"
     stub_interrogate_response = {"premises_found": [], "bounds_applied": [], "refusal": None}
     stub_tool_calls = [
-        {
-            "tool": "query_by_tag",
-            "args": {"field": FIELD_FILTER, "claim_type": CLAIM_TYPE_FILTER},
-        },
+        {"tool": "query_by_source", "args": {"source_id": "tilly"}},
+        {"tool": "query_by_source", "args": {"source_id": "other"}},
         None,
     ]
     tilly_grounds = [f"tilly_0_intro_{i:03d}" for i in range(TILLY_GROUNDS_COUNT)]
@@ -302,20 +304,17 @@ def test_source_usage_disclosed_with_denominator_via_full_brief_run(fixture_root
     record = json.loads(record_file.read_text(encoding="utf-8"))
 
     source_usage = record["source_usage"]
-    assert source_usage["filters_observed"] == [
-        {
-            "tool": "query_by_tag",
-            "args": {"claim_type": CLAIM_TYPE_FILTER, "field": FIELD_FILTER},
-        }
-    ]
+    assert source_usage["filters_observed"] == [], (
+        "no surviving tool carries a tag-axis filter to union (issue #487, D1)"
+    )
 
     by_source = {s["source_id"]: s for s in source_usage["sources"]}
     tilly = by_source["tilly"]
     assert tilly["evidence_chunk_count"] == 6
     assert tilly["evidence_share"] == pytest.approx(0.6)
-    assert tilly["available_chunk_count"] == 22
-    assert tilly["available_share"] == pytest.approx(0.22)
-    assert tilly["usage_ratio"] == pytest.approx(0.6 / 0.22)
+    assert tilly["available_chunk_count"] == 0
+    assert tilly["available_share"] == 0.0
+    assert tilly["usage_ratio"] is None
 
     for entry in source_usage["sources"]:
         assert "evidence_share" in entry and "available_share" in entry
@@ -328,7 +327,7 @@ def test_source_usage_exits_0_and_writes_the_record_a_second_identical_run(fixtu
     identical-path scenario)."""
     stub_interrogate_response = {"premises_found": [], "bounds_applied": [], "refusal": None}
     stub_tool_calls = [
-        {"tool": "query_by_tag", "args": {"field": FIELD_FILTER}},
+        {"tool": "query_by_source", "args": {"source_id": "tilly"}},
         None,
     ]
     stub_synthesize_response = {
@@ -411,9 +410,10 @@ def test_source_usage_on_a_concentrated_hand_built_record_makes_zero_llm_calls(
     tmp_path: Path, monkeypatch
 ):
     """Scenario 2 (issue #265, DEV31): grounds all resolve to a single
-    source_id "gellner" -- source_usage discloses evidence_share 1.0 and
-    the sole entry's real available_share, with zero LLM calls made and no
-    failure/non-zero-exit reaction to the concentration."""
+    source_id "gellner" -- source_usage discloses evidence_share 1.0 and the
+    sole entry's available_share (0.0 since issue #487, D1), with zero LLM
+    calls made and no failure/non-zero-exit reaction to the
+    concentration."""
     monkeypatch.setenv(PROVIDER_ENV_VAR, "explode")
     from axial.llm import ExplodingLLMClient, get_client
 
@@ -434,8 +434,8 @@ def test_source_usage_on_a_concentrated_hand_built_record_makes_zero_llm_calls(
     trajectory = [
         {
             "step": 1,
-            "tool": "query_by_tag",
-            "args": {"field": FIELD_FILTER},
+            "tool": "query_by_source",
+            "args": {"source_id": "gellner"},
             "result_ids": [],
             "result_count": 0,
         }
@@ -454,8 +454,8 @@ def test_source_usage_on_a_concentrated_hand_built_record_makes_zero_llm_calls(
     gellner = source_usage["sources"][0]
     assert gellner["source_id"] == "gellner"
     assert gellner["evidence_share"] == 1.0
-    assert gellner["available_chunk_count"] == 5
-    assert gellner["available_share"] == pytest.approx(1.0)
+    assert gellner["available_chunk_count"] == 0
+    assert gellner["available_share"] == 0.0
 
 
 def test_source_usage_empty_on_refuse_disposition_with_empty_claims(tmp_path: Path):
@@ -486,16 +486,15 @@ def test_source_usage_empty_on_refuse_disposition_with_empty_claims(tmp_path: Pa
 def test_source_usage_usage_ratio_null_when_filters_match_zero_of_a_cited_sources_chunks(
     tmp_path: Path,
 ):
-    """Scenario 4 (issue #265, DEV33): the trajectory's filters match zero
-    chunks of source_id "zaum" while its grounds cite one -- available_
+    """Scenario 4 (issue #265, DEV33): nothing the run queried matched a
+    chunk of source_id "zaum" while its grounds cite one -- available_
     chunk_count 0, available_share 0, usage_ratio null (never 0, never an
-    error)."""
+    error). Since issue #487 that holds for every source, not just an
+    under-queried one; the `usage_ratio is None` branch is what this pins."""
     vault_dir = tmp_path / "vault"
     prose_dir = vault_dir / "prose"
     prose_dir.mkdir(parents=True)
-    # The vault holds real chunks that DO match the observed filter, just
-    # none of them belonging to "zaum" -- proving the denominator is a real
-    # corpus-wide re-query, not a vacuous empty vault.
+    # The vault holds real chunks, just none belonging to "zaum".
     for i in range(3):
         frontmatter = _chunk_frontmatter(f"other_0_intro_{i:03d}")
         text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"

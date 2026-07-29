@@ -5,28 +5,33 @@ result + case anchor, and re-query on thin.
 Locked behavioral contract -- do not edit once committed red/green without a
 one-line justification in the PR body.
 
-Given a fixture vault where query_by_tag{field: "state-formation",
-      empirical_scope: "polity:Syria"} returns 0 chunk ids
+> **The scripted tool names moved** (issue #487, D1/D5): `query_by_tag` and
+> `query_by_polity` are deleted with the facets they filtered, so the
+> scenarios below script surviving tools instead. What they pin -- broaden on
+> thin, the thin signal reaching the model, and no case-scope fence on
+> assembly -- is unchanged. Scenario 2's cross-case material is identified by
+> the source it comes from rather than by a `polities_touched` filter, which
+> no longer exists.
+
+Given a fixture vault where query_by_source{source_id: <an absent source>}
+      returns 0 chunk ids
   And a brief with case "Syria" and an interrogation result whose
       bounds_applied names the thin coverage
-  And a scripted model that broadens to query_by_polity{polity: "Syria"} when
-      it is handed a result with result_count 0
+  And a scripted model that broadens to a real query_by_source when it is
+      handed a result with result_count 0
 When  the retrieval loop runs with a thin-result floor of 3
 Then  the trajectory log has at least 2 entries
-  And entry 1 is the narrow query_by_tag call with result_count 0
+  And entry 1 is the narrow call with result_count 0
   And entry 2 is the broadened query, and its result_ids are non-empty
   And the recorded prompt for step 2 carries the step-1 result_count, so the
       model re-queried on the thin signal rather than by luck
 
 Given a brief whose case is "Syria"
-  And a fixture vault whose chunks include material tagged
-      polities_touched: ["Egypt"] that bears on the request
-When  the retrieval loop runs
-Then  the trajectory contains a query_by_polity call for a polity other than
-      the case anchor
-  And the assembled evidence set contains at least one chunk id whose
-      polities_touched does not include "Syria"
-  And that cross-polity chunk is not filtered out by any case-scope rule
+  And a fixture vault whose chunks include material about "Egypt" that bears
+      on the request
+When  the retrieval loop runs and retrieves that material
+Then  the assembled evidence set contains that cross-case chunk id
+  And it is not filtered out by any case-scope rule
 
 Given the same brief and the interrogation result from brief-interrogation
 When  the retrieval loop runs
@@ -70,9 +75,14 @@ from axial.brief.interrogate import InterrogationResult, PremiseAssessment, disp
 from axial.llm import STUB_TOOL_CALLS_ENV_VAR, RecordLLMClient
 from axial.retrieve.loop import run_planned_retrieval
 
-SYRIA_CHUNK_ID = "rpfix_002_syria"
-EGYPT_CHUNK_ID = "rpfix_003_egypt"
-FREEDONIA_CHUNK_ID = "rpfix_001_state_formation"
+SYRIA_SOURCE_ID = "rpfix-syria"
+EGYPT_SOURCE_ID = "rpfix-egypt"
+FREEDONIA_SOURCE_ID = "rpfix-freedonia"
+ABSENT_SOURCE_ID = "rpfix-nowhere"
+
+SYRIA_CHUNK_ID = f"{SYRIA_SOURCE_ID}_1_syria_001"
+EGYPT_CHUNK_ID = f"{EGYPT_SOURCE_ID}_1_egypt_001"
+FREEDONIA_CHUNK_ID = f"{FREEDONIA_SOURCE_ID}_1_state-formation_001"
 
 
 def _chunk_frontmatter(
@@ -109,16 +119,11 @@ def _chunk_frontmatter(
 
 
 def _write_fixture_vault(root: Path) -> Path:
-    """Three synthetic prose notes:
-    - `rpfix_001_state_formation`: field "state-formation", scoped/touching
-      "Freedonia" only -- so a narrow query_by_tag{field: "state-formation",
-      polity: "Syria"} matches nothing (proves the thin-then-broaden path).
-    - `rpfix_002_syria`: touches "Syria" only -- what the broadened
-      query_by_polity{polity: "Syria"} finds.
-    - `rpfix_003_egypt`: field "state-formation", touches "Egypt" only --
-      cross-polity material bearing on a state-formation request that a
-      case-scope fence would wrongly exclude.
-    """
+    """Three synthetic prose notes, one per source: a Freedonia source, a
+    Syria source (what the broadened `query_by_source` finds), and an Egypt
+    source -- cross-case material bearing on a state-formation request that a
+    case-scope fence would wrongly exclude. `ABSENT_SOURCE_ID` matches no note
+    at all, which is the narrow query that comes back thin."""
     prose_dir = root / "vault" / "prose"
     prose_dir.mkdir(parents=True, exist_ok=True)
 
@@ -201,14 +206,14 @@ def _read_recorded_prompts(record_path: Path) -> list[str]:
 def test_thin_first_result_triggers_broadened_requery_recorded_on_the_signal(
     fixture_vault_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """Scenario 1: a narrow query_by_tag returning 0 ids is followed by a
-    broadened query_by_polity, both entries land in the trajectory, and the
-    step-2 recorded prompt carries the step-1 result_count."""
+    """Scenario 1: a narrow query returning 0 ids is followed by a broadened
+    one, both entries land in the trajectory, and the step-2 recorded prompt
+    carries the step-1 result_count."""
     _set_scripted_tool_calls(
         monkeypatch,
         [
-            {"tool": "query_by_tag", "args": {"field": "state-formation", "polity": "Syria"}},
-            {"tool": "query_by_polity", "args": {"polity": "Syria"}},
+            {"tool": "query_by_source", "args": {"source_id": ABSENT_SOURCE_ID}},
+            {"tool": "query_by_source", "args": {"source_id": SYRIA_SOURCE_ID}},
             None,
         ],
     )
@@ -230,12 +235,12 @@ def test_thin_first_result_triggers_broadened_requery_recorded_on_the_signal(
     )
 
     entry_1 = result.trajectory[0]
-    assert entry_1["tool"] == "query_by_tag"
+    assert entry_1["tool"] == "query_by_source"
     assert entry_1["result_count"] == 0
     assert entry_1["result_ids"] == []
 
     entry_2 = result.trajectory[1]
-    assert entry_2["tool"] == "query_by_polity"
+    assert entry_2["tool"] == "query_by_source"
     assert entry_2["result_ids"] != []
     assert entry_2["result_count"] == len(entry_2["result_ids"])
 
@@ -251,12 +256,12 @@ def test_thin_first_result_triggers_broadened_requery_recorded_on_the_signal(
 def test_cross_polity_evidence_survives_assembly_uncensored_by_case_scope(
     fixture_vault_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """Scenario 2: the agent calls query_by_polity for "Egypt" (not the case
-    anchor "Syria"), and the assembled evidence set keeps that cross-polity
-    chunk -- no case-scope filter strips it."""
+    """Scenario 2: the agent retrieves the Egypt source (not the case anchor
+    "Syria"), and the assembled evidence set keeps that cross-case chunk --
+    no case-scope filter strips it."""
     _set_scripted_tool_calls(
         monkeypatch,
-        [{"tool": "query_by_polity", "args": {"polity": "Egypt"}}, None],
+        [{"tool": "query_by_source", "args": {"source_id": EGYPT_SOURCE_ID}}, None],
     )
     client, _record_path = _record_client(tmp_path)
     brief = _brief()
@@ -271,18 +276,18 @@ def test_cross_polity_evidence_survives_assembly_uncensored_by_case_scope(
         thin_result_floor=3,
     )
 
-    polity_calls = [
+    cross_case_calls = [
         entry
         for entry in result.trajectory
-        if entry["tool"] == "query_by_polity" and entry["args"].get("polity") != brief.case
+        if EGYPT_CHUNK_ID in entry["result_ids"] and brief.case not in str(entry["args"])
     ]
-    assert polity_calls, (
-        f"expected a query_by_polity call for a polity other than the case "
-        f"anchor {brief.case!r}, got {result.trajectory!r}"
+    assert cross_case_calls, (
+        f"expected a call reaching material outside the case anchor "
+        f"{brief.case!r}, got {result.trajectory!r}"
     )
 
     assert EGYPT_CHUNK_ID in result.evidence_ids, (
-        f"expected the cross-polity chunk {EGYPT_CHUNK_ID!r} in the assembled "
+        f"expected the cross-case chunk {EGYPT_CHUNK_ID!r} in the assembled "
         f"evidence set, got {result.evidence_ids!r}"
     )
 
@@ -295,7 +300,7 @@ def test_planning_prompt_for_step_1_carries_case_premises_and_bounds(
     -- retrieval is planned from them, not the raw request alone."""
     _set_scripted_tool_calls(
         monkeypatch,
-        [{"tool": "query_by_polity", "args": {"polity": "Syria"}}, None],
+        [{"tool": "query_by_source", "args": {"source_id": SYRIA_SOURCE_ID}}, None],
     )
     client, record_path = _record_client(tmp_path)
     brief = _brief()

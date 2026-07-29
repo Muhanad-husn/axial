@@ -11,7 +11,6 @@ import pytest
 import yaml
 
 from axial.answer.source_usage import compute_source_usage, derive_filters_observed
-from axial.query import reader
 
 # -- fixture helpers ----------------------------------------------------------
 
@@ -237,57 +236,27 @@ def test_evidence_share_sums_to_one_across_sources():
     assert sum(s["evidence_share"] for s in result["sources"]) == pytest.approx(1.0)
 
 
-# -- denominator: real query API, asserted by call+args ------------------------
+# -- denominator: zero by construction until #491 re-bases it ------------------
 
 
-def test_available_chunk_count_comes_from_the_query_api_not_the_runs_evidence(
-    tmp_path, monkeypatch
-):
-    prose_dir = tmp_path / "prose"
-    _write_chunk_note(prose_dir, "tilly_0_a_001")
-
-    recorded_calls = []
-    real_query_by_tag = reader.query_by_tag
-
-    def _spy_query_by_tag(*, vault_dir=None, **filters):
-        recorded_calls.append(("query_by_tag", filters))
-        return real_query_by_tag(vault_dir=vault_dir, **filters)
-
-    monkeypatch.setattr("axial.answer.source_usage.query_by_tag", _spy_query_by_tag)
-
-    trajectory = [
-        {
-            "step": 1,
-            "tool": "query_by_tag",
-            "args": {"field": "field:political-science"},
-            "result_ids": [],
-            "result_count": 0,
-        }
-    ]
-    # The run's OWN evidence names a chunk that does not even exist in the
-    # vault -- proving the denominator is never derived from it.
-    claims = [{"grounds": [_chunk_ground("tilly_0_a_001")]}]
-    record = _record(claims=claims, trajectory=trajectory)
-
-    compute_source_usage(record, vault_dir=tmp_path)
-
-    assert recorded_calls == [("query_by_tag", {"field": "field:political-science"})]
-
-
-def test_available_share_is_this_sources_count_over_the_corpus_wide_matching_count(tmp_path):
+def test_available_chunk_count_is_zero_by_construction_and_disclosed_as_such(tmp_path):
+    """The denominator's two filter tools (`query_by_tag`,
+    `query_by_polity`) are deleted with the facets they filtered (issue #487,
+    D1), so nothing re-queries an available count and every
+    `available_chunk_count` is 0 with `usage_ratio` `None`. Pinned rather
+    than left implicit: this is the state #491 re-bases onto the name layer,
+    and a silent non-zero here would mean the dead path came back."""
     prose_dir = tmp_path / "prose"
     for i in range(22):
         _write_chunk_note(prose_dir, f"tilly_0_a_{i:03d}")
-    for i in range(78):
-        _write_chunk_note(prose_dir, f"other_0_a_{i:03d}")
 
     trajectory = [
         {
             "step": 1,
-            "tool": "query_by_tag",
-            "args": {"field": "field:political-science", "claim_type": "claim:causal"},
-            "result_ids": [],
-            "result_count": 0,
+            "tool": "query_by_source",
+            "args": {"source_id": "tilly"},
+            "result_ids": ["tilly_0_a_000"],
+            "result_count": 1,
         }
     ]
     claims = [{"grounds": [_chunk_ground("tilly_0_a_000")]}]
@@ -295,8 +264,13 @@ def test_available_share_is_this_sources_count_over_the_corpus_wide_matching_cou
 
     result = compute_source_usage(record, vault_dir=tmp_path)
     tilly = result["sources"][0]
-    assert tilly["available_chunk_count"] == 22
-    assert tilly["available_share"] == pytest.approx(22 / 100)
+
+    # The evidence half of §7.13 is unaffected and still real.
+    assert tilly["evidence_chunk_count"] == 1
+    assert tilly["evidence_share"] == 1.0
+    assert tilly["available_chunk_count"] == 0
+    assert tilly["available_share"] == 0.0
+    assert tilly["usage_ratio"] is None
 
 
 # -- usage_ratio ----------------------------------------------------------------

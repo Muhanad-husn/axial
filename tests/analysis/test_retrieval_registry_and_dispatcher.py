@@ -26,18 +26,15 @@ import yaml
 from axial.retrieve.dispatcher import ToolResult, dispatch
 from axial.retrieve.tools import TOOL_REGISTRY, tool_specs_for_provider
 
-# The eight callable tools the six §7.5 bullets expose (two bullets --
-# "query_by_source / get_envelope" and "get_chunk / get_artifact" -- each
-# bundle two distinct reader.py functions, so each becomes its own tool
-# name here; see tools.py's module docstring).
+# The callable tools the registry exposes. `query_by_tag`, `query_by_polity`
+# and `follow_backlinks` were de-registered with the tools themselves (issue
+# #487, D1/D5); the name-layer tools that replace them are registered by
+# issue #488, which owns the loop's rewiring.
 EXPECTED_TOOL_NAMES = {
-    "query_by_tag",
-    "query_by_polity",
     "query_by_source",
     "get_envelope",
     "get_chunk",
     "get_artifact",
-    "follow_backlinks",
     "coverage_count",
 }
 
@@ -63,9 +60,9 @@ def test_tool_specs_for_provider_carries_every_tool_with_required_args_marked():
     assert names == EXPECTED_TOOL_NAMES
 
     by_name = {entry["function"]["name"]: entry for entry in specs}
-    polity_spec = by_name["query_by_polity"]
-    assert polity_spec["function"]["parameters"]["required"] == ["polity"]
-    assert "polity" in polity_spec["function"]["parameters"]["properties"]
+    source_spec = by_name["query_by_source"]
+    assert source_spec["function"]["parameters"]["required"] == ["source_id"]
+    assert "source_id" in source_spec["function"]["parameters"]["properties"]
 
 
 @pytest.fixture
@@ -73,7 +70,7 @@ def fixture_vault_dir(tmp_path: Path) -> Path:
     prose_dir = tmp_path / "prose"
     prose_dir.mkdir(parents=True, exist_ok=True)
     frontmatter: dict[str, Any] = {
-        "chunk_id": "rtd_001_intro",
+        "chunk_id": "rtd-src_1_intro_001",
         "section": "Synthetic Section",
         "chunk_text": "SENTINEL: synthetic prose.",
         "source_meta": {
@@ -97,26 +94,25 @@ def fixture_vault_dir(tmp_path: Path) -> Path:
         "artifact_refs": [],
     }
     text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
-    (prose_dir / "rtd_001_intro.md").write_text(text, encoding="utf-8")
+    (prose_dir / "rtd-src_1_intro_001.md").write_text(text, encoding="utf-8")
     return tmp_path
 
 
 def test_dispatch_accepts_a_known_tool_and_calls_through_with_exactly_those_args(
     fixture_vault_dir: Path,
 ):
-    """`query_by_tag` with two filter args (`field` + `polity`) is passed
-    through to `reader.query_by_tag` as exactly those two kwargs -- proving
-    the dispatcher does not drop, rename, or add args on a well-formed
-    call."""
+    """`query_by_source` with its one arg is passed through to
+    `reader.query_by_source` as exactly that kwarg -- proving the dispatcher
+    does not drop, rename, or add args on a well-formed call."""
     result = dispatch(
-        "query_by_tag",
-        {"field": "state-formation", "polity": "Syria"},
+        "query_by_source",
+        {"source_id": "rtd-src"},
         vault_dir=fixture_vault_dir,
     )
 
     assert isinstance(result, ToolResult)
     assert result.error is None
-    assert result.ids == ["rtd_001_intro"]
+    assert result.ids == ["rtd-src_1_intro_001"]
     assert result.count == 1
 
 

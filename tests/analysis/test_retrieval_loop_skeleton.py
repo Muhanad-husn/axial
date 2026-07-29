@@ -6,14 +6,19 @@ trajectory log.
 Locked behavioral contract -- do not edit once committed red/green without a
 one-line justification in the PR body.
 
+> **The scripted tool names moved** (issue #487, D1/D5): `query_by_tag` and
+> `query_by_polity` are deleted with the facets they filtered, so the scenario
+> below scripts two surviving tools instead. What it pins -- trajectory shape,
+> ordering, step increments, budget, dispatcher rejection -- is unchanged.
+
 Given a fixture vault with known chunk ids
   And a scripted model that issues exactly three tool calls in order:
-      query_by_tag{field: "state-formation"}, then
-      query_by_polity{polity: "Syria"}, then
+      query_by_source{source_id: <source A>}, then
+      query_by_source{source_id: <source B>}, then
       get_chunk{chunk_id: <a known id>}
 When  the retrieval loop runs against that vault
 Then  the trajectory log has exactly 3 entries in that order
-  And entry 1 is {step: 1, tool: "query_by_tag", args: {field: "state-formation"},
+  And entry 1 is {step: 1, tool: "query_by_source", args: {source_id: <A>},
       result_ids: [<the ids that query returns>], result_count: <their count>}
   And every entry's `result_count` equals the length of its `result_ids`
   And `step` increments 1, 2, 3 with no gaps
@@ -24,12 +29,12 @@ Then  the vault query API is never called for that step
   And the model receives a validation-error result naming the unknown tool
   And the loop continues to the next step rather than crashing
 
-Given a scripted model that requests query_by_polity with a missing required arg
+Given a scripted model that requests query_by_source with a missing required arg
 When  the retrieval loop runs
 Then  the dispatcher rejects it before calling, with a named arg error
 
 Given a step budget of 5 and a scripted model that issues an unbounded stream
-      of valid query_by_tag calls
+      of valid query_by_source calls
 When  the retrieval loop runs
 Then  the loop halts after exactly 5 tool calls
   And the trajectory log has exactly 5 entries
@@ -67,11 +72,13 @@ import pytest
 import yaml
 
 from axial.llm import STUB_TOOL_CALLS_ENV_VAR, StubLLMClient
-from axial.query import reader
+from axial.query import names, reader
 from axial.retrieve.loop import run_retrieval_loop
 
-STATE_FORMATION_CHUNK_ID = "rlfix_001_intro"
-SYRIA_CHUNK_ID = "rlfix_002_syria"
+NORTH_SOURCE_ID = "rlfix-north"
+SOUTH_SOURCE_ID = "rlfix-south"
+NORTH_CHUNK_ID = f"{NORTH_SOURCE_ID}_1_intro_001"
+SOUTH_CHUNK_ID = f"{SOUTH_SOURCE_ID}_1_syria_001"
 
 
 def _chunk_frontmatter(
@@ -107,20 +114,19 @@ def _chunk_frontmatter(
 
 
 def _write_fixture_vault(root: Path) -> Path:
-    """Two synthetic prose notes: one carries `field.primary ==
-    "state-formation"` (chunk A), the other's `polities_touched` names
-    "Syria" (chunk B) -- exactly the two facts the outer scenario's first
-    three scripted calls each need one real, distinct answer for."""
+    """Two synthetic prose notes, one per source -- so each of the outer
+    scenario's first two scripted `query_by_source` calls has one real,
+    distinct answer."""
     prose_dir = root / "vault" / "prose"
     prose_dir.mkdir(parents=True, exist_ok=True)
 
     chunk_a = _chunk_frontmatter(
-        chunk_id=STATE_FORMATION_CHUNK_ID,
+        chunk_id=NORTH_CHUNK_ID,
         field_primary="state-formation",
         polities_touched=["Freedonia"],
     )
     chunk_b = _chunk_frontmatter(
-        chunk_id=SYRIA_CHUNK_ID,
+        chunk_id=SOUTH_CHUNK_ID,
         field_primary="ideology",
         polities_touched=["Syria"],
     )
@@ -145,15 +151,15 @@ def _set_scripted_tool_calls(
 def test_scripted_three_call_sequence_produces_exact_ordered_trajectory(
     fixture_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """Scenario 1: a scripted query_by_tag -> query_by_polity -> get_chunk
+    """Scenario 1: a scripted query_by_source -> query_by_source -> get_chunk
     sequence produces exactly 3 trajectory entries, in order, entry 1 exact,
     every result_count == len(result_ids), step 1..3 with no gaps."""
     _set_scripted_tool_calls(
         monkeypatch,
         [
-            {"tool": "query_by_tag", "args": {"field": "state-formation"}},
-            {"tool": "query_by_polity", "args": {"polity": "Syria"}},
-            {"tool": "get_chunk", "args": {"chunk_id": STATE_FORMATION_CHUNK_ID}},
+            {"tool": "query_by_source", "args": {"source_id": NORTH_SOURCE_ID}},
+            {"tool": "query_by_source", "args": {"source_id": SOUTH_SOURCE_ID}},
+            {"tool": "get_chunk", "args": {"chunk_id": NORTH_CHUNK_ID}},
             None,
         ],
     )
@@ -168,15 +174,15 @@ def test_scripted_three_call_sequence_produces_exact_ordered_trajectory(
         f"expected step to increment 1, 2, 3 with no gaps, got {trajectory!r}"
     )
     assert [entry["tool"] for entry in trajectory] == [
-        "query_by_tag",
-        "query_by_polity",
+        "query_by_source",
+        "query_by_source",
         "get_chunk",
     ]
 
     entry_1 = trajectory[0]
-    assert entry_1["tool"] == "query_by_tag"
-    assert entry_1["args"] == {"field": "state-formation"}
-    assert entry_1["result_ids"] == [STATE_FORMATION_CHUNK_ID]
+    assert entry_1["tool"] == "query_by_source"
+    assert entry_1["args"] == {"source_id": NORTH_SOURCE_ID}
+    assert entry_1["result_ids"] == [NORTH_CHUNK_ID]
     assert entry_1["result_count"] == 1
 
     for entry in trajectory:
@@ -185,11 +191,11 @@ def test_scripted_three_call_sequence_produces_exact_ordered_trajectory(
         )
 
     entry_2 = trajectory[1]
-    assert entry_2["result_ids"] == [SYRIA_CHUNK_ID]
+    assert entry_2["result_ids"] == [SOUTH_CHUNK_ID]
     assert entry_2["result_count"] == 1
 
     entry_3 = trajectory[2]
-    assert entry_3["result_ids"] == [STATE_FORMATION_CHUNK_ID]
+    assert entry_3["result_ids"] == [NORTH_CHUNK_ID]
     assert entry_3["result_count"] == 1
 
 
@@ -203,17 +209,9 @@ def test_unknown_tool_never_reaches_query_api_and_loop_continues(
     def _explode(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("the vault query API must never be called for an unknown-tool step")
 
-    for name in (
-        "query_by_tag",
-        "query_by_polity",
-        "query_by_source",
-        "get_envelope",
-        "get_chunk",
-        "get_artifact",
-        "follow_backlinks",
-        "coverage_count",
-    ):
+    for name in ("query_by_source", "get_envelope", "get_chunk", "get_artifact"):
         monkeypatch.setattr(reader, name, _explode)
+    monkeypatch.setattr(names, "coverage_count", _explode)
 
     _set_scripted_tool_calls(
         monkeypatch,
@@ -251,18 +249,18 @@ def test_unknown_tool_error_names_the_unknown_tool(
 def test_missing_required_arg_is_rejected_before_calling(
     fixture_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """Scenario 3: query_by_polity with a missing required `polity` arg is
-    rejected by the dispatcher before it ever reaches reader.query_by_polity,
+    """Scenario 3: query_by_source with a missing required `source_id` arg is
+    rejected by the dispatcher before it ever reaches reader.query_by_source,
     with a named arg error, and the loop continues rather than crashing."""
 
     def _explode(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("query_by_polity must never be called with a missing required arg")
+        raise AssertionError("query_by_source must never be called with a missing required arg")
 
-    monkeypatch.setattr(reader, "query_by_polity", _explode)
+    monkeypatch.setattr(reader, "query_by_source", _explode)
 
     _set_scripted_tool_calls(
         monkeypatch,
-        [{"tool": "query_by_polity", "args": {}}, None],
+        [{"tool": "query_by_source", "args": {}}, None],
     )
     client = StubLLMClient()
 
@@ -273,27 +271,27 @@ def test_missing_required_arg_is_rejected_before_calling(
     assert len(trajectory) == 1
     entry = trajectory[0]
     assert entry["step"] == 1
-    assert entry["tool"] == "query_by_polity"
+    assert entry["tool"] == "query_by_source"
     assert entry["args"] == {}
     assert entry["result_ids"] == []
     assert entry["result_count"] == 0
 
     from axial.retrieve.dispatcher import dispatch
 
-    result = dispatch("query_by_polity", {}, vault_dir=fixture_vault_dir)
+    result = dispatch("query_by_source", {}, vault_dir=fixture_vault_dir)
     assert result.error is not None
-    assert "polity" in result.error
+    assert "source_id" in result.error
 
 
 def test_step_budget_halts_an_unbounded_valid_call_stream_cleanly(
     fixture_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """Scenario 4: a step budget of 5 halts an unbounded stream of valid
-    query_by_tag calls at exactly 5 trajectory entries, with a clean
+    query_by_source calls at exactly 5 trajectory entries, with a clean
     bounded return -- no exception."""
     _set_scripted_tool_calls(
         monkeypatch,
-        [{"tool": "query_by_tag", "args": {"field": "state-formation"}}],
+        [{"tool": "query_by_source", "args": {"source_id": NORTH_SOURCE_ID}}],
     )
     client = StubLLMClient()
 
@@ -306,6 +304,6 @@ def test_step_budget_halts_an_unbounded_valid_call_stream_cleanly(
     )
     assert [entry["step"] for entry in trajectory] == [1, 2, 3, 4, 5]
     for entry in trajectory:
-        assert entry["tool"] == "query_by_tag"
-        assert entry["result_ids"] == [STATE_FORMATION_CHUNK_ID]
+        assert entry["tool"] == "query_by_source"
+        assert entry["result_ids"] == [NORTH_CHUNK_ID]
         assert entry["result_count"] == 1

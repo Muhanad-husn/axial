@@ -83,7 +83,7 @@ from axial.llm import (
     estimate_cost,
 )
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_analyses_dir, default_vault_dir
-from axial.query.reader import get_chunk, query_by_tag
+from axial.query.reader import all_chunk_ids, get_chunk
 from axial.retrieve.loop import run_planned_retrieval
 from axial.validators.coverage import compute_confidence, compute_coverage_map
 
@@ -103,13 +103,15 @@ class MissingVaultSchemaVersionError(AnswerError):
 
 def vault_schema_version(vault_dir: Path | None = None) -> str:
     """The domain schema version the vault was tagged under (§7.3): read
-    off the first chunk in `chunk_id` order (`query_by_tag`'s own
-    determinism contract), never off `config/domains/<domain>/schema.yaml`
+    off the first chunk in `chunk_id` order (`all_chunk_ids`' own determinism
+    contract -- the capability `query_by_tag` with no filters used to serve,
+    under an honest name since issue #487), never off
+    `config/domains/<domain>/schema.yaml`
     directly -- every prose note already carries its own `schema_version`
     (`axial.tag.build_tagged_record`'s field), so this works against any
     pinned/fixture vault without depending on the calling process's cwd
     holding a real domain-config checkout."""
-    chunk_ids = query_by_tag(vault_dir=vault_dir)
+    chunk_ids = all_chunk_ids(vault_dir=vault_dir)
     if not chunk_ids:
         raise MissingVaultSchemaVersionError(
             Path(vault_dir) if vault_dir is not None else default_vault_dir()

@@ -2,20 +2,29 @@
 issue #252).
 
 A bounded model pass over a loaded `Brief` (§7.1) that surfaces the
-premises smuggled into a `case`/`request`, tests each against real corpus
-coverage read from the vault query API (`axial.query.reader`), and reports
-what the corpus can and cannot answer. The model proposes; it never decides
-disposition. `disposition_for` -- a small, pure, table-driven function -- is
-the single place that sets `disposition`, from the model's own
-`premises_found`/`bounds_applied`/`refusal` fields, discarding any
-`disposition` the model itself emitted (charter Principle III: the model is
-not trusted to grade its own answer).
+premises smuggled into a `case`/`request`, tests each against the corpus
+coverage it is shown, and reports what the corpus can and cannot answer. The
+model proposes; it never decides disposition. `disposition_for` -- a small,
+pure, table-driven function -- is the single place that sets `disposition`,
+from the model's own `premises_found`/`bounds_applied`/`refusal` fields,
+discarding any `disposition` the model itself emitted (charter Principle III:
+the model is not trusted to grade its own answer).
 
-Coverage counts come from `axial.query.reader.coverage_count()`, never from
-the model's recall of the corpus, and never from a free-text guess at which
-polities a premise names: the prompt renders `coverage_count()`'s entire
-real key set (§7.5's own small, deterministic result) and nothing else --
-no row is synthesized for the brief's `case` itself. An earlier version
+**The pre-pass shows no coverage table yet, and the prompt says so plainly
+(§7.2, issue #487).** The §7.7 coverage map is per-name and scoped to the
+brief's own resolved names; resolving them is the retrieval loop's job (issue
+#488), which passes a scoped map through `compose_prompt`'s unchanged table
+path. Rendering the whole name index instead was measured at 62,821 rows /
+2.08 MB / ~500k tokens plus a 37-63s whole-vault read on every `axial brief
+run` (`data/logs/2026-07-30-name-query-487/`), and under the retired
+per-polity facet the table was empty on every real run anyway -- so showing
+nothing is what the engine actually did, minus the cost. What must not happen
+is a prompt that promises real coverage and then shows an empty table: absence
+read as zero coverage produces false refusals, the same failure mode the
+fabricated `case` row produced below. `_NO_COVERAGE_TABLE` states the absence
+and its reason instead.
+
+A row is never synthesized for the brief's `case` itself. An earlier version
 injected the brief's raw `case` string as its own row (at `0` when it
 didn't already appear in `counts`), meaning to flag a place the corpus has
 never heard of; in practice nearly every real `case` bundles a place with a
@@ -25,7 +34,8 @@ key -- so the fabricated row fired as a false "zero coverage" signal on
 almost every real brief, producing false refusals (issue root-caused
 2026-07-23). See `render_coverage_section`'s own docstring for the current,
 simpler behavior, and `compose_prompt`'s prompt text for how the model is
-told to map a case's place name onto the table's real rows itself.
+told to map a case's name onto the table's real rows itself when there is
+one.
 
 On `refuse`, per §7.2, the run is COMPLETE: this module raises nothing
 special for a refusal -- the CLI persists the result and exits 0 exactly as
@@ -47,7 +57,6 @@ from axial.brief.intake import Brief
 from axial.llm import INTERROGATE_PASS_NAME, LLMClient, LLMError
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_analyses_dir
-from axial.query.reader import coverage_count
 
 # The §7.2 assessment vocabulary -- closed, not open text: a value outside
 # this set is a named parse error, never silently accepted or coerced.
@@ -218,11 +227,12 @@ def parse_interrogation_response(
 
 
 def render_coverage_section(counts: dict[str, int]) -> str:
-    """Render the corpus's REAL coverage as prompt text, one line per
-    polity `counts` (`axial.query.reader.coverage_count()`'s own result)
-    actually names -- nothing else. Sorted by polity name for a
-    deterministic prompt (`coverage_count` already returns ascending
-    order; re-sorting here is belt-and-suspenders).
+    """Render the corpus's REAL coverage as prompt text, one line per name
+    `counts` (`axial.query.names.coverage_count()`'s own result) actually
+    names -- nothing else. Sorted by name for a deterministic prompt
+    (`coverage_count` already returns ascending order; re-sorting here is
+    belt-and-suspenders). Live code, not dead: #488 passes it the map scoped
+    to a brief's own resolved names.
 
     Earlier versions also injected a row for the brief's raw `case`
     string, at `0` when it wasn't already one of `counts`' keys, meaning
@@ -240,40 +250,89 @@ def render_coverage_section(counts: dict[str, int]) -> str:
     table's real rows itself (`compose_prompt`'s added guidance line),
     the same kind of judgment the rest of the pipeline already trusts it
     to make."""
-    return "\n".join(f"- {polity}: {counts[polity]} chunks" for polity in sorted(counts))
+    return "\n".join(f"- {name}: {counts[name]} notes" for name in sorted(counts))
+
+
+# What the prompt says in place of a coverage table when there is none, and
+# why. **The prompt must not promise a table and then show nothing** -- an
+# empty table under a "here is the corpus's REAL coverage" heading invites the
+# model to read absence as zero coverage and refuse, which is the same false
+# signal the fabricated `case` row produced (see `render_coverage_section`).
+_NO_COVERAGE_TABLE = (
+    "No coverage table is available at this corpus pin. The table is per-name "
+    "(specs/PHASE-B.md §7.7) and is scoped to the names this brief is about, "
+    "and this pre-pass does not resolve those names yet (issue #488). Absence "
+    "of a table here says NOTHING about what the corpus holds: judge every "
+    'premise "silent" unless the brief\'s own text settles it, and do not '
+    "refuse for lack of coverage evidence you were not shown."
+)
+
+# The mapping guidance only makes sense when there are rows to map onto.
+_COVERAGE_MAPPING_GUIDANCE = (
+    "This table counts notes per name only -- it has no time/period dimension. "
+    'A date or period qualifier in the case (e.g. "2011-2024") is not something '
+    "this table can confirm or deny; map the name(s) the case and request name, "
+    "however phrased, to their corresponding row above yourself -- do not expect "
+    "an exact string match."
+)
 
 
 def compose_prompt(brief: Brief, coverage_counts: dict[str, int]) -> str:
     """Assemble the interrogation prompt (§7.2): the brief's case, request,
-    and lens, plus a coverage table of the corpus's real, full polity
-    coverage (`render_coverage_section`), read straight from
-    `coverage_counts` (the real `axial.query.reader.coverage_count()`
-    result, not model recall, and not a free-text guess at which polities
-    matter). The model is asked to surface every smuggled premise, judge it
-    against the coverage table, state what the corpus can/cannot answer,
-    and refuse only when the request cannot be answered as posed at all."""
+    and lens, plus a coverage table read straight from `coverage_counts`
+    (real counts, never model recall and never a free-text guess at which
+    names matter). The model is asked to surface every smuggled premise,
+    judge it against the coverage table, state what the corpus can/cannot
+    answer, and refuse only when the request cannot be answered as posed at
+    all.
+
+    `coverage_counts` empty is a first-class case, not a degenerate one: the
+    §7.7 map is scoped to the brief's own resolved names and this pre-pass
+    does not resolve them yet (issue #488), so the prompt says so plainly
+    (`_NO_COVERAGE_TABLE`) instead of printing an empty table under a heading
+    that promises real coverage. The table path is unchanged and stays under
+    test -- #488 passes a scoped map through it."""
     lens_line = (
         f'Lens: "{brief.lens}"'
         if brief.lens
         else "Lens: (none specified; the analysis stage will choose one)"
     )
-    coverage_section = render_coverage_section(coverage_counts)
+    if coverage_counts:
+        coverage_heading = (
+            "Known corpus coverage (note count per name, read from the vault query "
+            "API -- a count of 0 means the corpus holds no note naming that name, "
+            "not that none was checked):"
+        )
+        coverage_block = render_coverage_section(coverage_counts)
+        mapping_guidance = _COVERAGE_MAPPING_GUIDANCE
+        premise_basis = "from the coverage table above ONLY"
+        contradicts_rule = (
+            '- "contradicts" -- the coverage is too thin or absent (a 0 or near-0 '
+            "count for the name the premise depends on) to sustain the premise."
+        )
+    else:
+        coverage_heading = "Corpus coverage:"
+        coverage_block = _NO_COVERAGE_TABLE
+        mapping_guidance = ""
+        premise_basis = "from the corpus-coverage statement above ONLY"
+        contradicts_rule = (
+            '- "contradicts" -- coverage you were shown is too thin or absent to '
+            "sustain the premise. With no coverage table, this does not apply."
+        )
 
-    return f"""You are the brief-interrogation pre-pass of an analysis engine (specs/PHASE-B.md §7.2). Before any retrieval or synthesis runs, find every premise smuggled into this brief's case and request, and test each one against the corpus's REAL coverage below -- never against what you recall or assume about the world.
+    return f"""You are the brief-interrogation pre-pass of an analysis engine (specs/PHASE-B.md §7.2). Before any retrieval or synthesis runs, find every premise smuggled into this brief's case and request, and test each one against the corpus coverage stated below -- never against what you recall or assume about the world.
 
 Case: "{brief.case}"
 Request: "{brief.request}"
 {lens_line}
 
-Known corpus coverage (chunk count per polity, read from the vault query API -- a count of 0 means the corpus holds no chunk touching that polity, not that none was checked):
-{coverage_section}
-
-This table counts chunks per place only -- it has no time/period dimension. A date or period qualifier in the case (e.g. "2011-2024") is not something this table can confirm or deny; map the place name(s) the case and request name, however phrased, to their corresponding row above yourself -- do not expect an exact string match.
-
-For every premise the case or request smuggles in (an assumption the brief takes for granted rather than states as a question), decide, from the coverage table above ONLY:
+{coverage_heading}
+{coverage_block}
+{mapping_guidance}
+For every premise the case or request smuggles in (an assumption the brief takes for granted rather than states as a question), decide, {premise_basis}:
 - "supports" -- the coverage plausibly sustains the premise.
-- "contradicts" -- the coverage is too thin or absent (a 0 or near-0 count for the polity the premise depends on) to sustain the premise.
-- "silent" -- the coverage table gives no clear evidence either way.
+{contradicts_rule}
+- "silent" -- the coverage stated above gives no clear evidence either way.
 
 Also state any bound on what the corpus can/cannot answer for this brief (e.g. "covers X, not Y"), and refuse only when the request cannot be answered as posed at all given this coverage.
 
@@ -288,9 +347,21 @@ def interrogate(
     vault_dir: Path | None = None,
 ) -> InterrogationResult:
     """Run the §7.2 interrogation pre-pass over `brief`: one bounded model
-    call (`INTERROGATE_PASS_NAME`) over a prompt carrying real vault
-    coverage counts, then the deterministic wrapper (`disposition_for`) sets
-    `disposition` from the parsed fields.
+    call (`INTERROGATE_PASS_NAME`), then the deterministic wrapper
+    (`disposition_for`) sets `disposition` from the parsed fields.
+
+    **The prompt carries no coverage table yet, and says so (§7.2, issue
+    #487).** The §7.7 map is per-name and scoped to the brief's own resolved
+    names, which this pre-pass does not resolve; issue #488 does, and passes
+    a scoped map through `compose_prompt`'s unchanged table path. Feeding the
+    whole name index instead was measured at 62,821 rows / 2.08 MB / ~500k
+    tokens plus a 37-63s whole-vault read on every run
+    (`data/logs/2026-07-30-name-query-487/`), and against the tag-era vault
+    this table was empty on every real run anyway -- so passing nothing is
+    what the engine actually did, without the cost or the false precision.
+
+    `vault_dir` is kept in the signature: every caller already passes it, and
+    #488's scoped read needs it back.
 
     Raises `InterrogationFailedError` when the underlying model call
     transport-fails or never returns parseable JSON within `complete_json`'s
@@ -299,8 +370,7 @@ def interrogate(
     does not match the §7.2 shape -- both are named, immediately-fatal
     failures, never a silent `proceed`."""
     print(f"interrogate: starting for brief case={brief.case!r}", file=sys.stderr)
-    coverage_counts = coverage_count(vault_dir=vault_dir)
-    prompt = compose_prompt(brief, coverage_counts)
+    prompt = compose_prompt(brief, {})
 
     try:
         raw = complete_json(client, prompt, pass_name=INTERROGATE_PASS_NAME)

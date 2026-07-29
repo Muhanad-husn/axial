@@ -139,6 +139,20 @@ def _write_fixture_vault(root: Path) -> Path:
     for frontmatter in notes:
         text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
         (prose_dir / f"{frontmatter['chunk_id']}.md").write_text(text, encoding="utf-8")
+    # `corpus_chunk_count`'s denominator is a name page's own `member_count`
+    # since issue #487 (D2) -- a polity is a name whose `kind` is
+    # `country/state/place`, so the fixture states these two as name pages.
+    names_dir = root / "data" / "vault" / "names"
+    names_dir.mkdir(parents=True, exist_ok=True)
+    for name, member_count in (("Syria", 3), ("Iraq", 1)):
+        page = {
+            "name": name,
+            "kind": "country/state/place",
+            "aliases": [],
+            "member_count": member_count,
+        }
+        body = yaml.safe_dump(page, sort_keys=False)
+        (names_dir / f"{name}.md").write_text(f"---\n{body}---\n", encoding="utf-8")
     return root
 
 

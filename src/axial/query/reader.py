@@ -1,15 +1,23 @@
-"""Vault query: the read layer over the tagged Obsidian vault (Phase-B
+"""Vault query: the read layer over the Obsidian vault's notes (Phase-B
 stage 3, specs/PHASE-B.md §7.5, §8 P0-2).
 
 `src/axial/vault.py` is write-only: it renders notes but never reads them
-back. This module is the read side. Slice 01 (issue #249) landed the note
-parser and the first three of the §7.5 tool set -- `get_chunk`,
-`get_artifact`, `query_by_tag`. Slice 02 (issue #251) adds the remaining
-four: `query_by_polity`, `query_by_source` / `get_envelope`,
-`follow_backlinks`, `coverage_count`.
+back. This module is the read side, for the tools that take an id the caller
+already holds: `get_chunk`, `get_artifact`, `query_by_source` /
+`get_envelope`, plus `all_chunk_ids` and the two suffix-repair lookups.
+Finding a name, and everything reachable from one, is `axial.query.names`.
 
-LLM-free and embedding-free by construction (§7.5's "no model and no
-embedding model"): every path here is pure file I/O, YAML/JSON parsing, and
+`query_by_tag`, `query_by_polity` and `follow_backlinks` lived here until
+Phase B v1 slice 02 (issue #487, D1/D5) and are deleted, not repaired: the
+facets they filtered (`field`, `claim_type`, `theory_school`,
+`role_in_argument`, `empirical_scope`, `polities_touched`, `artifact_refs`,
+`cited_by`) were retired with the tag and cross-reference passes, so each
+returned 0 or `[]` on every call against the v1 vault. A tool that silently
+returns nothing is worse than one that is absent: the caller cannot tell "no
+results" from "this axis no longer exists".
+
+LLM-free by construction (§7.5's "zero LLM calls"): every path here is pure
+file I/O, YAML/JSON parsing, and
 in-memory filtering. Nothing here imports OR constructs a provider client --
 this module imports `axial.paths` for vault-dir resolution, never
 `axial.vault` (whose write-side stack pulls in `axial.llm` and the whole
@@ -30,8 +38,11 @@ from __future__ import annotations
 
 import json
 import re
-import threading
+
+# Aliased: `ChunkNote` has a (retired, still-readable) field literally named
+# `field`, which would shadow the dataclasses helper inside the class body.
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import Any
 
@@ -42,13 +53,6 @@ from axial.paths import (
     artifact_note_path,
     chunk_note_path,
     default_vault_dir,
-)
-
-# The §7.5 fixed axis filter set for `query_by_tag`. `polity` matches
-# `empirical_scope`'s nested `polity` sub-field, distinct from the
-# `empirical_scope` filter itself (which matches on `value`).
-KNOWN_FILTER_KEYS = frozenset(
-    {"field", "claim_type", "theory_school", "empirical_scope", "polity", "role_in_argument"}
 )
 
 
@@ -86,22 +90,9 @@ class ArtifactNotFoundError(QueryError):
         )
 
 
-class UnknownFilterError(QueryError):
-    """`query_by_tag` was called with a filter key outside
-    KNOWN_FILTER_KEYS -- a typo'd axis must not quietly widen a query into
-    matching everything."""
-
-    def __init__(self, unknown_keys: set[str]):
-        self.unknown_keys = unknown_keys
-        super().__init__(
-            f"unknown query_by_tag filter key(s) {sorted(unknown_keys)!r}; "
-            f"expected only {sorted(KNOWN_FILTER_KEYS)!r}"
-        )
-
-
 class MissingVaultDirError(QueryError):
-    """`query_by_tag`'s `<vault_dir>/prose/` does not exist -- a missing or
-    typo'd vault_dir is a caller bug, not an empty corpus, so it raises
+    """A whole-vault scan's `<vault_dir>/prose/` does not exist -- a missing
+    or typo'd vault_dir is a caller bug, not an empty corpus, so it raises
     rather than silently returning `[]`."""
 
     def __init__(self, prose_dir: Path):
@@ -131,51 +122,58 @@ class MalformedChunkIdError(QueryError):
         )
 
 
-class BacklinkTargetNotFoundError(QueryError):
-    """A `follow_backlinks` id resolves to neither a chunk note nor an
-    artifact note -- there is no third kind of vault id to dispatch to, so
-    this is always a caller bug (e.g. a typo'd id), distinct from a real
-    chunk/artifact whose link list is legitimately empty (`[]`, not an
-    error)."""
-
-    def __init__(self, id_: str, chunk_path: Path, artifact_path: Path):
-        self.id = id_
-        self.chunk_path = chunk_path
-        self.artifact_path = artifact_path
-        super().__init__(
-            f"id {id_!r} resolves to neither a chunk note (expected at "
-            f"{chunk_path}) nor an artifact note (expected at {artifact_path})"
-        )
-
-
 @dataclass(frozen=True)
 class ChunkNote:
     """One parsed prose note (`<vault_dir>/prose/<chunk_id>.md`): its id,
-    text, and full tag-axis frontmatter in their real nested shapes (PRD
-    §7.2 / Appendix H's nesting, unflattened -- unlike
-    `axial.gold.parse_note`'s flat representative-scalar projection, this is
-    the general-purpose read layer every later §7.5 tool builds on, so it
-    keeps each axis's whole shape: `field`/`claim_type`/`theory_school`'s
-    `{primary, secondary, ...}`, `empirical_scope`'s `{value, polity}`).
+    text, `source_meta`, and the interrogation's own answer block
+    (`specs/PRODUCT.md` §7.15, Appendix H), which is what a note's
+    frontmatter carries in place of the retired tag axes.
 
-    `schema_version`/`role_in_argument`/`field`/`claim_type`/
-    `theory_school`/`empirical_scope` are the tag pass's own retired axis
-    block (issue #414, D4/D9): a note materialized by `axial.materialize`
-    (issue #411) carries none of them at all, so these five default to
-    `None` rather than being required -- the same "keep it compiling with
-    the smallest honest change" treatment issue #429 gave `ArtifactNote`'s
-    own retired `artifact_role`/`field`. `query_by_tag` and friends read
-    these through `.get()` already and degrade to "no match" on a note that
-    carries none of them; nothing here rewrites that filtering logic, which
-    stays what #3 non-goal 7/§3 already calls degraded pending the Phase B
-    rewrite against name pages."""
+    `claim`/`move`/`position_of`/`position`/`arguing_against`/`names`/
+    `citations` are read out of the frontmatter's nested `answers` mapping
+    (issue #487): they are what `axial.query.names`' traversals and Phase B's
+    synthesis read, so the general-purpose note reader exposes them directly
+    rather than making every caller re-dig into `answers`. A note that carries
+    no `answers` block at all still parses, with all of them at their defaults
+    -- a note written before issue #411, or one whose interrogation abstained,
+    is not a malformed note.
+
+    **`position_of` and `position` are a mixed frame, and both are exposed
+    raw** (§7.5/§7.15, issue #496): frame 0.2 split "whose position is this?"
+    (`position_of`) from "what is the position?" (`position`), a note
+    interrogated before it carries only the former, a note interrogated after
+    carries both, and no re-run is planned. A consumer wanting the stated
+    position reads `position` when that KEY IS PRESENT and falls back to
+    `position_of` otherwise -- key presence, never truthiness, and never
+    `frame_version`. This reader deliberately does not resolve that for the
+    caller: it reports what the note carries, and `absent key` is information
+    a resolved single field would destroy. `axial.query.names.
+    who_argues_against` applies the rule and returns the resolved `position`;
+    it is the worked example.
+
+    `polities_touched`/`artifact_refs` and the `schema_version`/
+    `role_in_argument`/`field`/`claim_type`/`theory_school`/
+    `empirical_scope` block are all retired (issues #414/#487, D4/D9/D1): a
+    note `axial.materialize` wrote carries none of them, so every one of them
+    defaults rather than being required -- the same "keep it compiling with
+    the smallest honest change" treatment issue #429 gave `ArtifactNote`'s own
+    retired `artifact_role`/`field`. They stay readable because an OLDER note
+    still carries them and `axial.analyze.assembly` still reads
+    `polities_touched`."""
 
     chunk_id: str
     section: str
     chunk_text: str
     source_meta: dict[str, Any]
-    polities_touched: list[str]
-    artifact_refs: list[str]
+    claim: str | None = None
+    move: str | None = None
+    position_of: str | None = None
+    position: str | None = None
+    arguing_against: list[Any] = dataclass_field(default_factory=list)
+    names: list[Any] = dataclass_field(default_factory=list)
+    citations: list[Any] = dataclass_field(default_factory=list)
+    polities_touched: list[str] = dataclass_field(default_factory=list)
+    artifact_refs: list[str] = dataclass_field(default_factory=list)
     schema_version: str | None = None
     role_in_argument: str | None = None
     field: dict[str, Any] | None = None
@@ -267,11 +265,34 @@ def _require(frontmatter: dict[str, Any], path: Path, field_name: str) -> Any:
 
 def _parse_chunk_note(path: Path) -> ChunkNote:
     frontmatter, _body = _read_frontmatter(path)
+    # The interrogation answer block (issue #487, `specs/PRODUCT.md` §7.15):
+    # nested under `answers`, absent entirely on a note written before issue
+    # #411, so read with `.get()` and never `_require`.
+    answers = frontmatter.get("answers")
+    if not isinstance(answers, dict):
+        answers = {}
+    arguing_against = answers.get("arguing_against")
     return ChunkNote(
         chunk_id=_require(frontmatter, path, "chunk_id"),
         section=_require(frontmatter, path, "section"),
         chunk_text=_require(frontmatter, path, "chunk_text"),
         source_meta=_require(frontmatter, path, "source_meta"),
+        claim=answers.get("claim"),
+        move=answers.get("move"),
+        # Both halves of issue #496's mixed frame, raw: a note carrying no
+        # `position` key reads `None` here exactly as one answering
+        # `position: null` does, so a consumer that needs to tell them apart
+        # checks the block itself. See `ChunkNote`'s own docstring.
+        position_of=answers.get("position_of"),
+        position=answers.get("position"),
+        # A list on every real note, but nothing enforces that on a free-text
+        # answer, so a bare string reads as a one-item list rather than being
+        # silently dropped (`axial.query.names.as_string_list`'s own rule).
+        arguing_against=[arguing_against]
+        if isinstance(arguing_against, str)
+        else list(arguing_against or []),
+        names=list(answers.get("names") or []),
+        citations=list(answers.get("citations") or []),
         polities_touched=list(frontmatter.get("polities_touched") or []),
         artifact_refs=list(frontmatter.get("artifact_refs") or []),
         # The retired axis block (issue #414): present, required, on a
@@ -441,269 +462,23 @@ def find_artifact_ids_ending_with(suffix: str, *, vault_dir: Path | None = None)
     return sorted(artifact_id for artifact_id in index if artifact_id.endswith(suffix))
 
 
-def _axis_matches(axis_value: Any, filter_value: str) -> bool:
-    """Match a `{primary, secondary, subtags?}`-shaped axis frontmatter
-    value (`field`, `claim_type`, `theory_school`) against `filter_value`:
-    true on the primary tag, on any secondary tag (whether `secondary` is a
-    zero-or-more list -- `field`'s `primary_plus_secondary` cardinality --
-    or an optional single scalar -- `claim_type`/`theory_school`'s
-    `primary_plus_optional_secondary` cardinality, see `axial.tag`), or on
-    any declared `subtags` entry (the "incl. subtags" rule of §7.5)."""
-    if not isinstance(axis_value, dict):
-        return False
-    if axis_value.get("primary") == filter_value:
-        return True
-    secondary = axis_value.get("secondary")
-    if isinstance(secondary, list):
-        if filter_value in secondary:
-            return True
-    elif secondary == filter_value:
-        return True
-    subtags = axis_value.get("subtags")
-    if isinstance(subtags, list) and filter_value in subtags:
-        return True
-    return False
-
-
-def _match_empirical_scope(frontmatter: dict[str, Any], filter_value: str) -> bool:
-    scope = frontmatter.get("empirical_scope")
-    return isinstance(scope, dict) and scope.get("value") == filter_value
-
-
-def _match_polity(frontmatter: dict[str, Any], filter_value: str) -> bool:
-    scope = frontmatter.get("empirical_scope")
-    return isinstance(scope, dict) and scope.get("polity") == filter_value
-
-
-def _match_role_in_argument(frontmatter: dict[str, Any], filter_value: str) -> bool:
-    return frontmatter.get("role_in_argument") == filter_value
-
-
-# One matcher per §7.5 filter key, each `(frontmatter, filter_value) -> bool`.
-_FILTER_MATCHERS = {
-    "field": lambda fm, value: _axis_matches(fm.get("field"), value),
-    "claim_type": lambda fm, value: _axis_matches(fm.get("claim_type"), value),
-    "theory_school": lambda fm, value: _axis_matches(fm.get("theory_school"), value),
-    "empirical_scope": _match_empirical_scope,
-    "polity": _match_polity,
-    "role_in_argument": _match_role_in_argument,
-}
-
-
-def query_by_tag(*, vault_dir: Path | None = None, **filters: str) -> list[str]:
-    """Every chunk_id whose prose note satisfies the **conjunction** of the
-    given tag-axis filters (§7.5): `field`, `claim_type` (incl. subtags),
-    `empirical_scope` (incl. `polity`), `role_in_argument`, `theory_school`.
-    A filter set no note satisfies returns `[]`, not an error; an unknown
-    filter key raises `UnknownFilterError` instead of silently matching
-    everything. `vault_dir` is keyword-only so a filter value can never be
-    mistaken for it positionally.
-
-    A note missing the axis a given filter targets is treated as not
-    matching that filter -- excluded, not an error -- so one note with a
-    thin frontmatter does not abort an otherwise-good scan. `chunk_id`
-    itself is not optional in this sense: every note under `prose/` must
-    carry one to be scanned at all (`MalformedNoteError` otherwise), so a
-    result id always resolves back through `get_chunk`.
-
-    Results are sorted by `chunk_id` (§7.5's determinism contract) --
-    directory iteration order is filesystem/OS-dependent and MUST NOT leak
-    into the result order.
-
-    Backed by the same process-lifetime frontmatter index
-    `query_by_polity`/`coverage_count` use (`_frontmatter_index`, see its
-    docstring): the vault is assumed not to change within one process's
-    lifetime, true for every real caller here (a sweep, an agentic
-    retrieval loop, a CLI invocation)."""
-    unknown_keys = set(filters) - KNOWN_FILTER_KEYS
-    if unknown_keys:
-        raise UnknownFilterError(unknown_keys)
-
-    if vault_dir is None:
-        vault_dir = default_vault_dir()
-
-    matches: list[str] = []
-    for entry in _frontmatter_index(vault_dir):
-        if entry.chunk_id is _NO_CHUNK_ID:
-            raise MalformedNoteError(entry.path, "missing required field 'chunk_id'")
-        frontmatter = _entry_to_frontmatter_dict(entry)
-        if all(_FILTER_MATCHERS[name](frontmatter, value) for name, value in filters.items()):
-            matches.append(entry.chunk_id)
-
-    return sorted(matches)
-
-
-# =============================================================================
-# Slice 02 (issue #251): query_by_polity, query_by_source / get_envelope,
-# follow_backlinks, coverage_count
-# =============================================================================
-
-
-# Sentinel distinguishing "frontmatter has no `chunk_id` key at all" from
-# "frontmatter has `chunk_id: null`" (`dict.get`'s own default-vs-present
-# ambiguity) -- `_require`'s contract only cares about key presence, and the
-# cached index below has to reproduce that exactly without re-reading the
-# file to check.
-_NO_CHUNK_ID = object()
-
-
-@dataclass(frozen=True)
-class _FrontmatterIndexEntry:
-    """The subset of one prose note's frontmatter that `query_by_tag`,
-    `query_by_polity`, `query_by_source`, and `coverage_count` actually
-    read -- never `chunk_text`, `section`, `source_meta`, `schema_version`,
-    or `artifact_refs`, which no filter here consults and which would
-    otherwise make the process-lifetime index below hold a full copy of
-    every note's frontmatter (17,851 notes on the real corpus)."""
-
-    path: Path
-    chunk_id: Any  # `_NO_CHUNK_ID` when the note carries no `chunk_id` key.
-    field: Any
-    claim_type: Any
-    theory_school: Any
-    empirical_scope: Any
-    role_in_argument: Any
-    polities_touched: list[str]
-
-
-def _read_frontmatter_index_entry(path: Path) -> _FrontmatterIndexEntry:
-    """Parse `path`'s `---`-delimited frontmatter block only -- never its
-    body -- keeping just the `_FrontmatterIndexEntry` field set. Raises
-    `MalformedNoteError` exactly where `_read_frontmatter` would (missing
-    opening/closing delimiter, invalid YAML, non-mapping): every note under
-    `prose/` is still parsed and validated once, up front, the same
-    unconditional-per-note contract `query_by_tag`/`_iter_chunk_frontmatter`
-    already enforced before this cache existed. `chunk_id` itself is
-    deliberately not required here -- callers disagree on when a missing
-    `chunk_id` should raise (`query_by_tag` and `query_by_source` require it
-    for every note; `query_by_polity` only when a note actually matches;
-    `coverage_count` never does), so this stores `_NO_CHUNK_ID` when absent
-    and leaves the raise to each caller's own contract."""
-    with path.open("r", encoding="utf-8") as handle:
-        first_line = handle.readline()
-        if first_line.strip() != "---":
-            raise MalformedNoteError(path, "missing opening '---' frontmatter delimiter")
-        block_lines: list[str] = []
-        for line in handle:
-            if line.strip() == "---":
-                break
-            block_lines.append(line)
-        else:
-            raise MalformedNoteError(path, "missing closing '---' frontmatter delimiter")
-
-    try:
-        parsed = yaml.safe_load("".join(block_lines))
-    except yaml.YAMLError as exc:
-        raise MalformedNoteError(path, f"invalid YAML: {exc}") from exc
-    if not isinstance(parsed, dict):
-        raise MalformedNoteError(
-            path, f"frontmatter must be a mapping, got {type(parsed).__name__}"
-        )
-
-    return _FrontmatterIndexEntry(
-        path=path,
-        chunk_id=parsed.get("chunk_id", _NO_CHUNK_ID),
-        field=parsed.get("field"),
-        claim_type=parsed.get("claim_type"),
-        theory_school=parsed.get("theory_school"),
-        empirical_scope=parsed.get("empirical_scope"),
-        role_in_argument=parsed.get("role_in_argument"),
-        polities_touched=list(parsed.get("polities_touched") or []),
-    )
-
-
-# Process-lifetime cache of the frontmatter index every prose-note scan in
-# this module now reads from, keyed by resolved vault_dir (same convention
-# as `_CHUNK_ID_INDEX_CACHE`/`_ARTIFACT_ID_INDEX_CACHE` above). Measured on
-# the real corpus: an uncached scan over 17,851 notes costs ~93s; a sweep
-# that calls `query_by_tag`/`query_by_polity`/`coverage_count` repeatedly
-# against an unchanging vault (true for the lifetime of any one process --
-# nothing in this read-only module ever writes to the vault) paid that cost
-# on every call. Guarded by `_FRONTMATTER_INDEX_LOCK` (unlike the two id
-# indexes above, which have no lock): those are read on a cache hit far more
-# often than built, but this index's first caller in a freshly started, many-
-# threaded sweep is a near-certain pile-up -- without a lock, N threads can
-# each kick off their own ~93s cold build concurrently instead of one thread
-# building it once for all.
-#
-# Consequence of the "vault does not change within one process" assumption:
-# a cache HIT returns before `prose_dir.is_dir()` is ever re-checked, so a
-# vault whose `prose/` directory is removed mid-process (after this index
-# already built once) stops raising `MissingVaultDirError` on later calls --
-# it keeps serving the last-known-good index instead. This is the same
-# assumption `_CHUNK_ID_INDEX_CACHE`/`_ARTIFACT_ID_INDEX_CACHE` already make
-# (a "does this id now exist" recheck is exactly as stale), stated here
-# because a missing-directory check reads more like a live guard than a
-# cached lookup does -- a future caller relying on this index to detect a
-# vault disappearing out from under a long-running process should build
-# their own fresh check, not assume one hides in here.
-_FRONTMATTER_INDEX_CACHE: dict[Path, list[_FrontmatterIndexEntry]] = {}
-_FRONTMATTER_INDEX_LOCK = threading.Lock()
-
-
-def _frontmatter_index(vault_dir: Path) -> list[_FrontmatterIndexEntry]:
-    key = Path(vault_dir).resolve()
-    cached = _FRONTMATTER_INDEX_CACHE.get(key)
-    if cached is not None:
-        return cached
-    with _FRONTMATTER_INDEX_LOCK:
-        # Re-check inside the lock: another thread may have finished the
-        # cold build while this one was waiting to acquire it.
-        cached = _FRONTMATTER_INDEX_CACHE.get(key)
-        if cached is not None:
-            return cached
-        prose_dir = Path(vault_dir) / "prose"
-        if not prose_dir.is_dir():
-            raise MissingVaultDirError(prose_dir)
-        entries: list[_FrontmatterIndexEntry] = []
-        for path in prose_dir.iterdir():
-            if path.suffix != ".md":
-                continue
-            entries.append(_read_frontmatter_index_entry(path))
-        _FRONTMATTER_INDEX_CACHE[key] = entries
-        return entries
-
-
-def _entry_to_frontmatter_dict(entry: _FrontmatterIndexEntry) -> dict[str, Any]:
-    """Rehydrate one cached index entry into the small frontmatter-dict
-    shape `query_by_tag`'s `_FILTER_MATCHERS` and the slice-02 tools
-    already expect -- carrying only the fields the index itself stores, and
-    omitting the `chunk_id` key entirely (rather than setting it to
-    `_NO_CHUNK_ID` or `None`) when the note had none, so `_require`'s own
-    `field_name not in frontmatter` presence check still means what it always
-    meant."""
-    frontmatter: dict[str, Any] = {
-        "field": entry.field,
-        "claim_type": entry.claim_type,
-        "theory_school": entry.theory_school,
-        "empirical_scope": entry.empirical_scope,
-        "role_in_argument": entry.role_in_argument,
-        "polities_touched": entry.polities_touched,
-    }
-    if entry.chunk_id is not _NO_CHUNK_ID:
-        frontmatter["chunk_id"] = entry.chunk_id
-    return frontmatter
-
-
 def _iter_chunk_frontmatter(vault_dir: Path) -> list[tuple[Path, dict[str, Any]]]:
     """Every `<vault_dir>/prose/*.md` note's full `(path, frontmatter)`,
     unsorted -- every caller here sorts its own derived result, so this
     shared scan need not (and directory order is filesystem/OS-dependent
     regardless). Raises `MissingVaultDirError` when `prose/` itself is
-    absent, the same rule `query_by_tag` already enforces: a missing or
-    typo'd `vault_dir` is a caller bug, not an empty corpus.
+    absent: a missing or typo'd `vault_dir` is a caller bug, not an empty
+    corpus.
 
-    Deliberately uncached and NOT backed by `_frontmatter_index`: its other
-    callers here (`query_by_source`) only ever scan a vault once per
-    process, but `axial.distill.embed`/`axial.distill.classify` also import
-    this exact private function for their own one-shot, whole-corpus reads
-    and need the FULL frontmatter dict, including `chunk_text` -- the one
-    field `_frontmatter_index` deliberately excludes to keep its own,
-    repeatedly-hit process-lifetime cache small (see that function's
-    docstring). Caching a full-text copy of all ~18k notes for those single-
-    use callers would trade the memory `_frontmatter_index` was built to
-    avoid for a speed win neither of them repeats calls often enough to
-    need."""
+    Deliberately uncached. Its callers here (`query_by_source`,
+    `all_chunk_ids`) only ever scan a vault once per process, and
+    `axial.distill.embed`/`axial.distill.classify` also import this exact
+    private function for their own one-shot, whole-corpus reads and need the
+    FULL frontmatter dict, including `chunk_text`. A cache over that would
+    hold a full-text copy of every note (~6,150 on the real corpus) for a
+    speed win no caller here repeats often enough to need -- the repeatedly-
+    hit scans are the name layer's, and `axial.query.names` keeps its own
+    lean, cached projections for them."""
     prose_dir = Path(vault_dir) / "prose"
     if not prose_dir.is_dir():
         raise MissingVaultDirError(prose_dir)
@@ -714,31 +489,6 @@ def _iter_chunk_frontmatter(vault_dir: Path) -> list[tuple[Path, dict[str, Any]]
         frontmatter, _body = _read_frontmatter(path)
         notes.append((path, frontmatter))
     return notes
-
-
-def query_by_polity(polity: str, *, vault_dir: Path | None = None) -> list[str]:
-    """Every chunk_id whose `polities_touched` list includes `polity`
-    (§7.5): exact-string match against the faithful-naming values Phase A
-    wrote, no normalization or aliasing, and a chunk with an empty or
-    absent list never matches. This is the cross-case facet the
-    single-valued `empirical_scope.polity` filter (`query_by_tag`'s
-    `polity` key) cannot serve: a chunk *scoped* to one polity but
-    *touching* another is matched here, not there.
-
-    Results are sorted by chunk_id, the same determinism contract as
-    `query_by_tag`. Backed by the same process-lifetime `_frontmatter_index`
-    cache `query_by_tag`/`coverage_count` use (see that function's
-    docstring): the vault is assumed not to change within one process's
-    lifetime."""
-    if vault_dir is None:
-        vault_dir = default_vault_dir()
-    matches: list[str] = []
-    for entry in _frontmatter_index(vault_dir):
-        if polity in entry.polities_touched:
-            if entry.chunk_id is _NO_CHUNK_ID:
-                raise MalformedNoteError(entry.path, "missing required field 'chunk_id'")
-            matches.append(entry.chunk_id)
-    return sorted(matches)
 
 
 def source_id_from_chunk_id(chunk_id: str) -> str:
@@ -799,8 +549,8 @@ def _resolve_chunk_path(chunk_id: str, vault_dir: Path) -> Path:
 
 
 def _resolve_artifact_path(artifact_id: str, vault_dir: Path) -> Path:
-    """The `get_artifact`/`follow_backlinks` counterpart of
-    `_resolve_chunk_path` -- same rationale, same contract."""
+    """The `get_artifact` counterpart of `_resolve_chunk_path` -- same
+    rationale, same contract."""
     direct = vault_dir / "artifacts" / f"{artifact_id}.md"
     if direct.is_file():
         return direct
@@ -825,6 +575,27 @@ def query_by_source(source_id: str, *, vault_dir: Path | None = None) -> list[st
         if source_id_from_chunk_id(chunk_id) == source_id:
             matches.append(chunk_id)
     return sorted(matches)
+
+
+def all_chunk_ids(*, vault_dir: Path | None = None) -> list[str]:
+    """Every prose note's `chunk_id` under `vault_dir`, ascending.
+
+    This is the one capability `query_by_tag` had that outlived it: called
+    with no filters it meant "every prose id in `chunk_id` order", which
+    `axial.answer.record.vault_schema_version` uses to read the vault's own
+    schema version off its first note. The tag filters are deleted (issue
+    #487, D1); the enumeration is not, so it keeps its own honest name.
+
+    Raises `MalformedNoteError` on a note carrying no `chunk_id` -- every
+    note under `prose/` must have one to be enumerable at all, so every id
+    returned resolves back through `get_chunk` -- and `MissingVaultDirError`
+    when `prose/` itself is absent."""
+    if vault_dir is None:
+        vault_dir = default_vault_dir()
+    return sorted(
+        _require(frontmatter, path, "chunk_id")
+        for path, frontmatter in _iter_chunk_frontmatter(vault_dir)
+    )
 
 
 ENVELOPES_DIR = Path("data/envelopes")
@@ -864,50 +635,3 @@ def get_envelope(source_id: str, *, envelopes_dir: Path | None = None) -> Envelo
         scope=data["scope"],
         stated_argument=data["stated_argument"],
     )
-
-
-def follow_backlinks(id_: str, *, vault_dir: Path | None = None) -> list[str]:
-    """One-hop bidirectional traversal (§7.5): a chunk id resolves to its
-    `artifact_refs`; an artifact id resolves to its `cited_by`. Dispatches
-    on which kind of note `id_` names, by file existence -- chunk_id and
-    artifact_id are both opaque strings, nothing in the id itself says
-    which kind it is. Resolution is the same direct-then-budgeted-fallback
-    lookup as `get_chunk`/`get_artifact` (`_resolve_chunk_path`/
-    `_resolve_artifact_path`), so a budgeted note is reachable here too. An
-    empty link list on either side returns `[]`, not an error; only an id
-    that resolves to neither a chunk nor an artifact raises
-    `BacklinkTargetNotFoundError`. Results are sorted ascending, the same
-    determinism contract as every other tool here."""
-    if vault_dir is None:
-        vault_dir = default_vault_dir()
-    vault_dir = Path(vault_dir)
-    chunk_path = _resolve_chunk_path(id_, vault_dir)
-    if chunk_path.is_file():
-        return sorted(_parse_chunk_note(chunk_path).artifact_refs)
-    artifact_path = _resolve_artifact_path(id_, vault_dir)
-    if artifact_path.is_file():
-        return sorted(_parse_artifact_note(artifact_path).cited_by)
-    raise BacklinkTargetNotFoundError(id_, chunk_path, artifact_path)
-
-
-def coverage_count(*, vault_dir: Path | None = None) -> dict[str, int]:
-    """The count of substantive chunks per polity across the whole vault
-    (§7.5; the raw material of the §7.7 coverage map): each chunk counted
-    once per *distinct* polity in its own `polities_touched` -- a chunk
-    touching two polities counts toward both, never toward only one. A
-    vault where no chunk carries `polities_touched` returns `{}`, not an
-    error.
-
-    Returned as a plain dict built in ascending-polity-name order -- the
-    same explicit-sort determinism contract as every other tool here,
-    applied to a mapping instead of a list.
-
-    Backed by the same process-lifetime `_frontmatter_index` cache
-    `query_by_tag`/`query_by_polity` use (see that function's docstring)."""
-    if vault_dir is None:
-        vault_dir = default_vault_dir()
-    counts: dict[str, int] = {}
-    for entry in _frontmatter_index(vault_dir):
-        for polity in set(entry.polities_touched):
-            counts[polity] = counts.get(polity, 0) + 1
-    return {polity: counts[polity] for polity in sorted(counts)}

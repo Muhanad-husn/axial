@@ -136,6 +136,15 @@ def _write_fixture_vault(root: Path) -> None:
         text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
         (prose_dir / f"{frontmatter['chunk_id']}.md").write_text(text, encoding="utf-8")
 
+    # `corpus_chunk_count` reads a name page's own `member_count` since issue
+    # #487 (D2). A polity is a name whose `kind` is `country/state/place`.
+    names_dir = root / "data" / "vault" / "names"
+    names_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("Syria", "Iraq"):
+        page = {"name": name, "kind": "country/state/place", "aliases": [], "member_count": 1}
+        body = yaml.safe_dump(page, sort_keys=False)
+        (names_dir / f"{name}.md").write_text(f"---\n{body}---\n", encoding="utf-8")
+
 
 def _write_fixture_pin(root: Path, name: str = "baseline") -> None:
     """A corpus-pin manifest under evals/corpus_pin/<name>.json (§7.12). Its

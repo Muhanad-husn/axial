@@ -23,7 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from axial.query.reader import ChunkNotFoundError, coverage_count, get_chunk
+from axial.query.names import coverage_count
+from axial.query.reader import ChunkNotFoundError, get_chunk
 
 
 @dataclass(frozen=True)
