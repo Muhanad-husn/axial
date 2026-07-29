@@ -92,14 +92,16 @@ forms by a fold that casefolds, collapses whitespace and strips punctuation
 (hyphens to a space, everything else to nothing); a group of >= 2 is unioned
 straight into the alias map by `build_alias_map_nodes`, exactly like the
 `polity_canonical.yaml` seed, and is never proposed to the model -- widening
-the candidate net was tried first (issue #446's family 3) and measured a
-295-of-~305 refusal rate on exactly these pairs, so the fold replaces the ask
-rather than repeating it. Only ONE representative per fold group reaches
-clustering and the two remaining candidate families (`_candidate_batches`),
-so a fold-only pair is never split across an HDBSCAN batch, or proposed by
-family 1/2, alongside a genuinely different name -- the full, unfiltered
-inventory is what `build_alias_map_nodes` still runs canonical election over,
-so filtering here never drops a surface and never decides which spelling
+the candidate net was tried first (issue #446's own family 3, since retired)
+and measured a 295-of-~305 refusal rate on exactly these pairs, so the fold
+replaces the ask rather than repeating it. Only ONE representative per fold
+group reaches clustering and the candidate families (`_candidate_batches`;
+issue #498 added a third, the parenthesized-acronym pair, alongside #446's
+original two), so a fold-only pair is never split across an HDBSCAN batch, or
+proposed by family 1/2/3, alongside a genuinely different name -- the full,
+unfiltered inventory is what `build_alias_map_nodes` still runs canonical
+election over, so filtering here never drops a surface and never decides
+which spelling
 wins.
 
 Outputs, under `data/names/` (§6): `alias_map.json` in §7.16's exact
@@ -1545,7 +1547,7 @@ def run_merge_names(
     # canonical (`_elect_canonical` runs on the full, unfiltered inventory
     # below) -- goes on to clustering and candidate generation, so a
     # fold-only pair is never split into an HDBSCAN batch, or proposed by
-    # family 1/2, alongside anything else.
+    # family 1/2/3, alongside anything else.
     folded_groups = fold_groups(all_surface_forms)
     folded_away: set[str] = set()
     for group in folded_groups:

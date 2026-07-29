@@ -17,9 +17,9 @@ the model may reject, exactly like an HDBSCAN one. This module decides
 nothing and merges nothing itself (§7.16, D10); §7.16's own words: "a merge
 pass may fold names, never invent them."
 
-Two rules, both exact string shape -- no fuzzy matching and no similarity
-threshold, per #442's own finding that fuzzy matching cannot pass this
-corpus's traps at any usable precision:
+Three rules, each an exact string shape -- no fuzzy matching and no
+similarity threshold, per #442's own finding that fuzzy matching cannot pass
+this corpus's traps at any usable precision:
 
   1. **Initial vs full forename, same surname, same first letter** --
      `C. Tilly` / `Charles Tilly`. Refused whenever the initial form has more
@@ -32,9 +32,21 @@ corpus's traps at any usable precision:
      surname, both `kind == "person"`.** Refused whenever more than one
      full-name candidate exists -- bare `'Ali` against seven distinct people
      is refused entirely (#442's measured 97.8%-reliable gate).
+  3. **A parenthesized acronym against its own standalone inventory entry**
+     (issue #498, D2) -- `Autonomous Administration of Northeast Syria
+     (AANS)` against bare `AANS`. This is a candidate, never a fold
+     (`fold_groups`, below): an acronym can resolve to more than one
+     expansion depending on the corpus (`ABC` -> `Al-Ahram Beverages
+     Company` here, and need not everywhere), so the model's own evidence
+     check (#449) decides each pair exactly like any other candidate
+     cluster. Proposed only when the acronym also exists as its OWN
+     standalone surface form elsewhere in the inventory -- an acronym the
+     corpus never writes bare (`AANES`, #498's own recorded out-of-scope
+     half) has nothing to pair with and is silently skipped, never folded
+     and never proposed.
 
-**A third rule -- case-only and whitespace-only pairs -- used to live here
-and is retired (issue #463).** It proposed exactly these pairs (the 230-pair
+**A separate rule -- case-only and whitespace-only pairs -- used to live
+here and is retired (issue #463).** It proposed exactly these pairs (the 230-pair
 residual #441 left) as a candidate cluster, and measured on the corpus of
 record the model refused 295 of ~305 of them: asking whether two strings
 that differ only by case are "the same thing" is not a judgment, and
@@ -200,6 +212,50 @@ def _family_bare_surname(
     return pairs
 
 
+# A run of two or more bare uppercase ASCII letters, alone in parentheses --
+# an exact token shape (issue #498, D2), not a length or vocabulary
+# heuristic. A lowercase word, a multi-word parenthetical, a bare year, a
+# page locator, or any other punctuation inside the parentheses all fail
+# this shape and are never extracted.
+_PARENTHESIZED_ACRONYM = re.compile(r"\(([A-Z]{2,})\)")
+
+
+def _extract_parenthesized_acronym(surface: str) -> str | None:
+    """The first parenthesized acronym `_PARENTHESIZED_ACRONYM` finds in
+    `surface`, or `None` when it carries none."""
+    match = _PARENTHESIZED_ACRONYM.search(surface)
+    return match.group(1) if match else None
+
+
+def _family_parenthesized_acronym(
+    entries: Iterable[tuple[str, str | None, int]],
+) -> list[tuple[str, str]]:
+    """Family 3 (issue #498, D2): a surface form carrying a parenthesized
+    acronym against that acronym's OWN standalone inventory entry --
+    `Autonomous Administration of Northeast Syria (AANS)` against bare
+    `AANS`. Proposed only when the acronym also exists as its own surface
+    form elsewhere in the inventory; an acronym the corpus never writes bare
+    (`AANES`, out of scope -- #498 records it as the smaller half) has
+    nothing to pair with and is silently skipped, never folded and never
+    proposed.
+
+    This is a candidate, never a fold (`fold_groups`, below): an acronym can
+    resolve to more than one expansion depending on the corpus (`ABC` ->
+    `Al-Ahram Beverages Company` here, and need not everywhere), so the
+    model's own evidence check (#449) decides each pair exactly like any
+    other candidate cluster."""
+    surface_forms = [surface for surface, _kind, _count in entries]
+    standalone = set(surface_forms)
+    pairs: list[tuple[str, str]] = []
+    for surface in surface_forms:
+        acronym = _extract_parenthesized_acronym(surface)
+        if acronym is None or acronym == surface:
+            continue
+        if acronym in standalone:
+            pairs.append((acronym, surface))
+    return pairs
+
+
 def fold_groups(surface_forms: Iterable[str]) -> list[tuple[str, ...]]:
     """Issue #463: every group of >= 2 distinct surface forms identical once
     folded (`_normalize_form` -- case, whitespace and punctuation) but
@@ -223,7 +279,7 @@ def fold_groups(surface_forms: Iterable[str]) -> list[tuple[str, ...]]:
 def generate_candidate_clusters(
     entries: Iterable[tuple[str, str | None, int]],
 ) -> list[tuple[str, ...]]:
-    """Every candidate cluster the two remaining families propose, over the
+    """Every candidate cluster the three families above propose, over the
     whole name inventory (`entries`: `(surface_form, kind, count)`,
     `axial.names.InventoryEntry`'s own shape), deduplicated by member set.
 
@@ -241,6 +297,7 @@ def generate_candidate_clusters(
     candidates: list[tuple[str, ...]] = []
     candidates.extend(_family_initial_forename(surface_forms))
     candidates.extend(_family_bare_surname(entries))
+    candidates.extend(_family_parenthesized_acronym(entries))
 
     seen: set[frozenset[str]] = set()
     deduped: list[tuple[str, ...]] = []
