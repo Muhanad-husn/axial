@@ -84,6 +84,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -93,7 +94,7 @@ from pathlib import Path
 from typing import Any
 
 from axial.checkpoint import append_checkpoint_record, load_checkpoint_records
-from axial.intake import SOURCE_META_DIR
+from axial.intake import NOT_ATTEMPTED, SOURCE_META_DIR, UNAVAILABLE
 from axial.interrogate import _default_answers_dir, is_abstention
 from axial.llm import GATHER_PASS_NAME, LLMClient, get_client
 from axial.materialize import (
@@ -108,10 +109,11 @@ from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.names import (
     DEFAULT_INVENTORY_PATH,
     DEFAULT_NAMES_DATA_DIR,
+    is_apparatus_pointer_shaped,
     is_numeral_only_surface,
     load_answer_records,
 )
-from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_vault_dir
+from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_vault_dir, split_source_id
 from axial.vault import VaultError, bibliographic_value, read_source_meta
 
 # This pass's answer record AND its resume checkpoint, one file, mirroring
@@ -240,6 +242,29 @@ def _render_answer(value: Any) -> str:
     if isinstance(value, str):
         return value
     return json.dumps(value, ensure_ascii=False)
+
+
+# Fix (2026-07-29, gather stratified sample): `axial.vault.bibliographic_
+# value` deliberately renders the `unavailable`/`not_attempted` sentinels as
+# themselves -- correct for a note's own frontmatter, where a visible gap
+# beats a blank that reads like an answer. A Gather packet is not
+# frontmatter: it hands the value to the model as if it were a person, and
+# the model wrote "the 'unavailable (2000)' author" into a disagreement (2 of
+# 100 sampled entries). This is the one place that sentinel is caught before
+# it reaches a prompt.
+_SOURCE_ID_YEAR_TOKEN = re.compile(r"-\d{4}$")
+
+
+def _author_fallback_from_source_id(source_id: str) -> str:
+    """A readable stand-in for `author` when the source-metadata record's own
+    field is a sentinel. `source_id` is `<author>-<year>-<hash12>` by
+    construction (`axial.envelope.compute_source_id`), so its own stem is a
+    real, legible name -- never invented, and the one piece of provenance
+    that cannot itself be missing, since no note reaches Gather without a
+    source_id. `heydemann-2000-66701ffbb36c` -> `Heydemann`."""
+    stem, _hash12 = split_source_id(source_id)
+    stem = _SOURCE_ID_YEAR_TOKEN.sub("", stem)
+    return stem.replace("-", " ").title()
 
 
 def render_packet(packet: MemberPacket) -> str:
@@ -591,14 +616,15 @@ def run_gather(
             raise MissingNoteContextError(
                 source_id, "source-metadata record", "axial ingest"
             ) from exc
-        author_year[source_id] = (
-            bibliographic_value(source_meta, "author"),
-            bibliographic_value(source_meta, "date"),
-        )
+        author = bibliographic_value(source_meta, "author")
+        if author in (UNAVAILABLE, NOT_ATTEMPTED):
+            author = _author_fallback_from_source_id(source_id)
+        author_year[source_id] = (author, bibliographic_value(source_meta, "date"))
 
     jobs: list[GatherJob] = []
     skipped_single_member = 0
     skipped_numeral_only = 0
+    skipped_apparatus_pointer = 0
     for node in sorted(nodes, key=lambda n: n["canonical"]):
         # Fix (2026-07-29): a bare page number or a plain century
         # (`is_numeral_only_surface`) is locator residue, not a name -- a
@@ -608,6 +634,13 @@ def run_gather(
         # of the alias map or the inventory required.
         if is_numeral_only_surface(node["canonical"]):
             skipped_numeral_only += 1
+            continue
+        # Fix (2026-07-29): a chapter/footnote/endnote/appendix/table/figure
+        # POINTER (`is_apparatus_pointer_shaped`) is the same family of
+        # residue, gated the same way -- a disagreement page about "Footnote
+        # 36" is not a page anyone asked for either.
+        if is_apparatus_pointer_shaped(node["canonical"]):
+            skipped_apparatus_pointer += 1
             continue
         packets = build_packets(
             member_chunk_ids_for_node(node, inventory), answers_by_chunk_id, author_year
@@ -625,6 +658,7 @@ def run_gather(
 
     print(
         f"gather: {len(nodes)} name(s), {skipped_numeral_only} numeral-only surface(s) "
+        f"and {skipped_apparatus_pointer} apparatus-pointer surface(s) "
         "gated out (never a name), "
         f"{skipped_single_member} skipped with fewer than "
         f"{_MIN_MEMBERS} member note(s), {len(jobs)} to gather; {reused} already recorded, "
@@ -679,6 +713,7 @@ def run_gather(
         "disagreements_path": str(disagreements_path),
         "names": len(nodes),
         "names_skipped_numeral_only": skipped_numeral_only,
+        "names_skipped_apparatus_pointer": skipped_apparatus_pointer,
         "names_skipped_single_member": skipped_single_member,
         "names_gathered": len(jobs),
         "asked": called,

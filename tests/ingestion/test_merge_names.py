@@ -1057,6 +1057,67 @@ def test_a_mixed_cluster_still_asks_about_its_real_members(isolated_vault_root):
 
 
 # ---------------------------------------------------------------------------
+# Fix (2026-07-29): `is_apparatus_pointer_shaped` gates a chapter/footnote/
+# endnote/appendix/table/figure POINTER out of every merge call -- apparatus
+# residue, same family as the numeral gate above, not caught by it.
+# ---------------------------------------------------------------------------
+
+FOOTNOTE_POINTER = "Footnote 36"
+CHAPTER_POINTER = "Chapter 4"
+
+
+def test_an_apparatus_pointer_surface_never_reaches_a_merge_call(isolated_vault_root):
+    """A cluster whose only two members are apparatus residue -- a footnote
+    pointer and a chapter pointer -- must never be submitted: after both are
+    gated, nothing remains to decide."""
+    root = isolated_vault_root
+    _build_fixture_answers(root, [[FOOTNOTE_POINTER], [CHAPTER_POINTER]], kind="concept")
+    names_dir = root / "data" / "names"
+    from axial.merge_names import run_merge_names
+    from axial.names import run_names
+
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+        cluster_fn=lambda vectors: [0] * len(vectors),
+    )
+
+    class ExplodingClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            raise AssertionError("an apparatus-pointer surface must never reach a merge call")
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    summary = run_merge_names(
+        embeddings_dir=names_dir / "embeddings.lance",
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=names_dir / "merge_decisions.jsonl",
+        manifest_path=names_dir / "merge_manifest.json",
+        domain_dir=root / "no-such-domain",
+        client=ExplodingClient(),
+        cluster_fn=lambda vectors: [0] * len(vectors),
+    )
+
+    assert summary["decided"] == 0
+    assert summary["batches"] == 0
+    assert summary["apparatus_gated_surfaces"] == 2
+
+    # Neither is dropped from the map (§7.16 is lossless) -- both survive as
+    # their own unmerged canonical, just never asked about.
+    canonical_of = {
+        surface: node["canonical"]
+        for node in _read_alias_map(root)["nodes"]
+        for surface in [node["canonical"], *node["aliases"]]
+    }
+    assert canonical_of[FOOTNOTE_POINTER] == FOOTNOTE_POINTER
+    assert canonical_of[CHAPTER_POINTER] == CHAPTER_POINTER
+
+
+# ---------------------------------------------------------------------------
 # Issue #449's rollout hazard: `MergeBatch.key` folds in evidence, so a
 # corpus already decided under a bare-name pass must not be silently
 # re-asked in full just because evidence attachment turned on.

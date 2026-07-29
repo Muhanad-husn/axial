@@ -232,6 +232,53 @@ def is_numeral_only_surface(surface_form: str) -> bool:
     return bool(NUMERAL_ONLY_PATTERN.match(surface_form))
 
 
+# Fix (2026-07-29, gather stratified sample): a chapter/footnote/endnote/
+# appendix/table/figure/map/... POINTER -- "Chapter 4", "Footnote 36",
+# "Table 4.1" -- is apparatus residue in the same family as the bare numerals
+# above, not a name: it survived #445's own locator scoping and #471's
+# numeral-only gate because it carries a label word in front of the number,
+# not because it is a name. Measured on the corpus of record: 746 of 78,198
+# inventory surfaces match, 211 of those carry two or more member notes --
+# the ones a merge or gather call would otherwise spend a call on; `Chapter
+# 4` alone carries 46.
+#
+# A shape test, not a threshold, reusing `LOCATOR_PATTERN`'s own label set
+# (fig/figure/table/map/chart/graph/plate/box/diagram/appendix) plus the
+# three chapter labels it does not cover (chapter, chap., ch.) and the two
+# note-apparatus labels (footnote, endnote) -- never bare "note", which is
+# not apparatus ("Note on the State" is a real name). The label must be
+# followed directly by a digit or one of the English cardinal words one
+# through twenty -- a closed, standard vocabulary, not a corpus-tuned one;
+# real chapter/footnote counts in this corpus top out well under it -- for a
+# match, so "Chapter of Sainte-Chapelle", "Table of Ranks" and "Chapter VII
+# of the UN Charter" (a real citation to a treaty's own numbered chapter, not
+# a pointer into the book at hand -- and Roman numerals are out of scope
+# entirely, deliberately conservative rather than guessed) all survive
+# untouched, and so does any bare-letter appendix/table ("Appendix A",
+# "Table B.1").
+_APPARATUS_LABEL_ALTERNATION = (
+    r"(chapter|chap\.|ch\.|footnote|endnote|fig\.?|figure|table|map|chart|graph|plate|box|"
+    r"diagram|appendix)"
+)
+_APPARATUS_NUMBER_WORD_ALTERNATION = (
+    r"(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|"
+    r"fifteen|sixteen|seventeen|eighteen|nineteen|twenty)"
+)
+APPARATUS_POINTER_PATTERN = re.compile(
+    rf"^{_APPARATUS_LABEL_ALTERNATION}\s+([0-9]|{_APPARATUS_NUMBER_WORD_ALTERNATION}\b)",
+    re.IGNORECASE,
+)
+
+
+def is_apparatus_pointer_shaped(surface_form: str) -> bool:
+    """Whether `surface_form` reads as a pointer into a document's own
+    apparatus -- a chapter, footnote, endnote, appendix, table or figure
+    number -- rather than a name. The one place this predicate lives;
+    `axial.merge_names.run_merge_names` and `axial.gather.run_gather` both
+    import it, gated at the same point as `is_numeral_only_surface`."""
+    return bool(APPARATUS_POINTER_PATTERN.match(surface_form))
+
+
 # How a locator-shaped surface renders once its identity is scoped by source
 # (issue #445): the surface plus its source in parentheses. This reuses the
 # corpus's existing identifier system -- the surface-form string already IS
