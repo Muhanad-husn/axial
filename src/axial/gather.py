@@ -53,6 +53,23 @@ findings and no packets at all, so it stays small however large the name is.
      later eval from having to re-run the corpus pass to recover where each
      disagreement came from.
 
+**A finding can say "no disagreement" without prose.** The response's
+`disagreement` field is nullable: a `null` means the authors gathered here
+were read and genuinely do not disagree, distinct from a shape failure
+(missing key, empty string), which is still re-asked. A `None` finding is
+never written to the page -- `upsert_disagreement_section` removes
+`DISAGREEMENT_HEADING` entirely rather than leaving an empty section, so a
+re-run can take a section away, not just add one -- but it IS persisted in
+`disagreements.jsonl`, so a re-run never re-asks it. Batched names drop null
+batch findings before the merge call: an all-null name makes no merge call
+at all, and a name with exactly one surviving finding uses it directly
+without merging it against nothing. This is the fix for two measured
+defects sharing one root cause (`data/logs/2026-07-29-gather-stratified-
+sample/`): writing "the authors do not disagree" onto ~15,000 pages a full
+pass would touch, and the merge prompt mistaking several such findings for
+readings that disagree with EACH OTHER on four of the twenty biggest names
+in the sample, including the three largest in the corpus.
+
 **Every finding is persisted before it is used**, keyed by a content hash of
 the name's own rendered packets -- the same content-addressing
 `axial.merge_names` uses, and for the same two reasons: this pass costs real
@@ -147,27 +164,29 @@ PASSAGES
 
 Say what the authors gathered here actually disagree about -- the substance \
 of it, in a few sentences, naming who holds which side. Where they do not \
-disagree, say that plainly instead of inventing a dispute.
+disagree, respond with "disagreement": null instead of inventing a dispute.
 
 RESPONSE. Reply with ONLY a JSON object, no prose and no markdown fences:
-{{"disagreement": "<a few sentences>", "names": ["<other named thing the \
-disagreement runs between>", ...]}}
+{{"disagreement": "<a few sentences, or null if they do not disagree>", \
+"names": ["<other named thing the disagreement runs between>", ...]}}
 """
 
 _MERGE_PROMPT_TEMPLATE = """\
-Below are separate readings of what the authors gathered at {name} disagree \
-about. Each was written from a different part of the same set of passages, \
-so they overlap and may repeat each other.
+{name} named more passages than one call could read, so they were read in \
+separate parts. Below is what each part found. All of them describe the SAME \
+set of authors at {name} -- treat them as partial evidence about one name, \
+never as competing claims to weigh against each other.
 
-READINGS
+FINDINGS
 {findings}
 
-Combine them into one statement of what these authors disagree about. Keep \
-what genuinely differs between the readings; drop what merely repeats.
+Write one account of what these authors disagree about, drawing on all the \
+findings together. If, taken together, the findings show no real \
+disagreement among the authors, respond with "disagreement": null.
 
 RESPONSE. Reply with ONLY a JSON object, no prose and no markdown fences:
-{{"disagreement": "<a few sentences>", "names": ["<other named thing the \
-disagreement runs between>", ...]}}
+{{"disagreement": "<a few sentences, or null if they do not disagree>", \
+"names": ["<other named thing the disagreement runs between>", ...]}}
 """
 
 
@@ -305,11 +324,17 @@ def compose_merge_prompt(canonical: str, findings: list[str]) -> str:
     return _MERGE_PROMPT_TEMPLATE.format(name=repr(canonical), findings=rendered)
 
 
-def parse_gather_response(raw: str) -> tuple[str, list[str]]:
-    """Parse one response into `(disagreement, names)`. Raises
-    `GatherResponseError` on a shape failure -- not an object, or an empty
-    `disagreement` -- which is response noise rather than a judgment, and so
-    is re-asked by `complete_json`.
+def parse_gather_response(raw: str) -> tuple[str | None, list[str]]:
+    """Parse one response into `(disagreement, names)`. `disagreement` is
+    `None` when the finding is a structured null -- the authors gathered
+    here genuinely do not disagree -- and a non-empty string otherwise.
+    Raises `GatherResponseError` on a shape failure -- not an object, a
+    missing `disagreement` key, or a present-but-empty string -- which is
+    response noise rather than a judgment, and so is re-asked by
+    `complete_json`. A `None` disagreement is never a shape failure: it is
+    the one way a finding has to say "no disagreement" without prose (the
+    root cause behind a merge call mistaking several "they do not disagree"
+    findings for claims to adjudicate between).
 
     `names` is whatever the model named; it is NOT trusted as a link here.
     `resolve_links` filters it against the index at write time, so a
@@ -320,14 +345,18 @@ def parse_gather_response(raw: str) -> tuple[str, list[str]]:
         raise GatherResponseError(f"gather response was not valid JSON: {exc}") from exc
     if not isinstance(data, dict):
         raise GatherResponseError("gather response must be a JSON object")
-    disagreement = data.get("disagreement")
-    if not isinstance(disagreement, str) or not disagreement.strip():
-        raise GatherResponseError("gather response carried no 'disagreement' text")
+    if "disagreement" not in data:
+        raise GatherResponseError("gather response carried no 'disagreement' key")
+    disagreement = data["disagreement"]
+    if disagreement is not None:
+        if not isinstance(disagreement, str) or not disagreement.strip():
+            raise GatherResponseError("gather response carried an empty 'disagreement' string")
+        disagreement = disagreement.strip()
     raw_names = data.get("names")
     names = [
         name for name in (raw_names if isinstance(raw_names, list) else []) if isinstance(name, str)
     ]
-    return disagreement.strip(), names
+    return disagreement, names
 
 
 def resolve_links(names: list[str], canonical: str, index: set[str]) -> list[str]:
@@ -355,12 +384,19 @@ def render_disagreement_section(disagreement: str, links: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def upsert_disagreement_section(page_text: str, disagreement: str, links: list[str]) -> str:
+def upsert_disagreement_section(page_text: str, disagreement: str | None, links: list[str]) -> str:
     """`page_text` with Gather's section replaced (or appended when there is
     none). Everything from `DISAGREEMENT_HEADING` to the end of the page is
     Gather's own, so a re-run rewrites it in place rather than stacking a
-    second section under the first."""
+    second section under the first.
+
+    `disagreement is None` (the authors gathered here genuinely do not
+    disagree) means no section at all -- not an empty heading. A page that
+    previously carried a section and is now null loses it entirely, so a
+    re-run can remove a section, not just add one."""
     head = page_text.split(DISAGREEMENT_HEADING)[0].rstrip("\n")
+    if disagreement is None:
+        return head + "\n"
     return head + "\n\n" + render_disagreement_section(disagreement, links)
 
 
@@ -428,20 +464,35 @@ def _gather_one(
                     "finding": finding,
                 }
             )
-            names.extend(batch_names)
+            # A null finding has no names to link -- there is no disagreement
+            # for a linked name to run between.
+            if finding is not None:
+                names.extend(batch_names)
 
-        merged = len(batch_records) > 1
-        if merged:
+        # Null findings are dropped before the merge step (§7.18): a batch
+        # that found nothing carries no evidence for the merge call to read.
+        # If every batch came back null, the name itself is null and no
+        # merge call is made at all. If exactly one batch found something,
+        # that finding IS the name's disagreement -- merging a single
+        # reading against nothing is not a merge. Only two or more surviving
+        # findings are actually merged.
+        surviving = [record for record in batch_records if record["finding"] is not None]
+        if not surviving:
+            disagreement = None
+            merged = False
+        elif len(surviving) == 1:
+            disagreement = surviving[0]["finding"]
+            merged = False
+        else:
             prompt = compose_merge_prompt(
-                job.canonical, [record["finding"] for record in batch_records]
+                job.canonical, [record["finding"] for record in surviving]
             )
             raw = complete_json(
                 client, prompt, pass_name=GATHER_PASS_NAME, validate=parse_gather_response
             )
             disagreement, merge_names = parse_gather_response(raw)
             names = merge_names or names
-        else:
-            disagreement = batch_records[0]["finding"]
+            merged = True
     except (ModelJsonError, GatherResponseError) as exc:
         return job, None, str(exc)
 
