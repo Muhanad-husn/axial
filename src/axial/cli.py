@@ -1753,7 +1753,12 @@ def _names_escalations(
     entries = list_escalations(**kwargs)
 
     if as_json:
-        print(json.dumps(escalations_to_json(entries), indent=2, ensure_ascii=False))
+        # Surfaces are transliterated Arabic/Turkish scholarship -- non-Latin-1
+        # characters are the normal case, not an edge case. `ensure_ascii=False`
+        # keeps them readable, but that hands stdout characters a Windows
+        # cp1252 console/redirect can't encode; route through the same
+        # encoding-safe emission path as the text listing.
+        _print_encoding_safe(json.dumps(escalations_to_json(entries), indent=2, ensure_ascii=False))
     else:
         _print_encoding_safe(format_escalations_report(entries))
     return 0
