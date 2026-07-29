@@ -88,7 +88,12 @@ from axial.materialize import (
 )
 from axial.merge_names import DEFAULT_ALIAS_MAP_PATH
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
-from axial.names import DEFAULT_INVENTORY_PATH, DEFAULT_NAMES_DATA_DIR, load_answer_records
+from axial.names import (
+    DEFAULT_INVENTORY_PATH,
+    DEFAULT_NAMES_DATA_DIR,
+    is_numeral_only_surface,
+    load_answer_records,
+)
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_vault_dir
 from axial.vault import VaultError, bibliographic_value, read_source_meta
 
@@ -542,7 +547,17 @@ def run_gather(
 
     jobs: list[GatherJob] = []
     skipped_single_member = 0
+    skipped_numeral_only = 0
     for node in sorted(nodes, key=lambda n: n["canonical"]):
+        # Fix (2026-07-29): a bare page number or a plain century
+        # (`is_numeral_only_surface`) is locator residue, not a name -- a
+        # disagreement page about "13" is not a page anyone asked for. Gated
+        # here, at the point this pass asks the model something, so it takes
+        # effect on the very next `axial names gather` run with no rebuild
+        # of the alias map or the inventory required.
+        if is_numeral_only_surface(node["canonical"]):
+            skipped_numeral_only += 1
+            continue
         packets = build_packets(
             member_chunk_ids_for_node(node, inventory), answers_by_chunk_id, author_year
         )
@@ -558,7 +573,9 @@ def run_gather(
     to_attempt = pending if limit is None else pending[:limit]
 
     print(
-        f"gather: {len(nodes)} name(s), {skipped_single_member} skipped with fewer than "
+        f"gather: {len(nodes)} name(s), {skipped_numeral_only} numeral-only surface(s) "
+        "gated out (never a name), "
+        f"{skipped_single_member} skipped with fewer than "
         f"{_MIN_MEMBERS} member note(s), {len(jobs)} to gather; {reused} already recorded, "
         f"{len(to_attempt)} to ask now ({len(pending) - len(to_attempt)} more pending) "
         f"across {max(workers, 1)} worker(s)",
@@ -610,6 +627,7 @@ def run_gather(
         "vault_dir": str(vault_dir),
         "disagreements_path": str(disagreements_path),
         "names": len(nodes),
+        "names_skipped_numeral_only": skipped_numeral_only,
         "names_skipped_single_member": skipped_single_member,
         "names_gathered": len(jobs),
         "asked": called,

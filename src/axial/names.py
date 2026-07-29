@@ -93,6 +93,16 @@ never makes a merge decision itself:
 Out of scope (this slice only): making any merge decision (05, the alias
 map), any LLM call, and touching `axial.distill.embed`'s existing
 chunk-embedding behaviour, which this module never imports from.
+
+**Fix (2026-07-29): `is_numeral_only_surface` gates locator residue -- a
+bare page number or a plain century -- out of every model call, in both
+downstream passes.** This module still builds and persists an inventory
+entry for one (§7.16 is lossless: "the complete, lossless record of what
+the corpus said"), so nothing here changes; `axial.merge_names.
+run_merge_names` and `axial.gather.run_gather` are what filter it out, at
+the point each asks the model something, so that filter takes effect on
+the next `axial names merge`/`axial names gather` run with no rebuild of
+this module's own artifacts required.
 """
 
 from __future__ import annotations
@@ -192,6 +202,34 @@ def is_locator_shaped(surface_form: str) -> bool:
     `Bramall table 2.2`) are already single-source and out of this issue's
     scope."""
     return bool(LOCATOR_PATTERN.match(surface_form))
+
+
+# Fix (2026-07-29, first bounded `axial names gather` run): a bare page
+# number or a plain `Nth century` reads as a name to no one -- it is locator
+# residue from `citations[].cited`/`names[]` that survived #445's own
+# book-relative scoping (a locator prefix like "Table"/"Figure" never
+# matches this), not a name a merge or gather call should ever reason about.
+# Measured on the corpus of record: 620 of 78,198 inventory surfaces (0.79%)
+# match, 319 of those carry 2+ member notes -- the ones a pass would actually
+# spend a call on; `13` alone carries 18 member notes across 12 books.
+#
+# A shape test, not a threshold: ordinals and "Nth century" are in scope
+# (`10th century`, `11th`), a bare cardinal is in scope (`100`, `13`), and
+# nothing else is -- a date range (`1050-1250`, `1060s`) or anything with a
+# second token (`10 Downing Street`, `10th of Ramadan`, `1 John 5.19`) is
+# deliberately NOT matched: it is a real name that happens to start with a
+# digit, not locator residue. Measured against the corpus of record: 1,086
+# digit-initial surfaces are near-misses this pattern correctly leaves alone.
+NUMERAL_ONLY_PATTERN = re.compile(r"^[0-9]+(st|nd|rd|th)?( century)?$", re.IGNORECASE)
+
+
+def is_numeral_only_surface(surface_form: str) -> bool:
+    """Whether `surface_form` is bare locator residue -- a page number or a
+    plain century -- rather than a name. The one place this predicate lives;
+    `axial.merge_names.run_merge_names` and `axial.gather.run_gather` both
+    import it rather than re-deriving it, so neither pass can ever put one of
+    these in front of a model call on its own."""
+    return bool(NUMERAL_ONLY_PATTERN.match(surface_form))
 
 
 # How a locator-shaped surface renders once its identity is scoped by source
