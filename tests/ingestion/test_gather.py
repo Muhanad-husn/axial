@@ -56,13 +56,16 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 from axial.gather import (
+    DEFAULT_MIN_GATHER_MEMBERS,
     DISAGREEMENT_HEADING,
     GATHER_PACKET_CHAR_BUDGET,
     MEMBER_PACKET_CHARS,
     GatherResponseError,
     MemberPacket,
+    _resolve_min_gather_members,
     parse_gather_response,
     render_packet,
     run_gather,
@@ -346,12 +349,27 @@ def _disagreements_path(root: Path) -> Path:
     return root / "data" / "names" / "disagreements.jsonl"
 
 
+def _low_threshold_config_path(root: Path) -> Path:
+    """Every fixture in this file predates the founder's member-count scope
+    cut (2026-07-29) and exercises the pass at its `_MIN_MEMBERS` floor of 2
+    -- the "configured member threshold" tests below cover the real default
+    (`DEFAULT_MIN_GATHER_MEMBERS`, 10) explicitly, by name, with their own
+    `config_path` override; this keeps every other test's fixture asking
+    about its 2-member name the way it always did, unaffected by that
+    default's own value."""
+    path = root / "gather-test-config.yaml"
+    if not path.exists():
+        path.write_text(yaml.safe_dump({"gather": {"min_members": 2}}), encoding="utf-8")
+    return path
+
+
 def _gather(root: Path, client, **overrides):
     kwargs = {
         **_dirs(root),
         "disagreements_path": _disagreements_path(root),
         "client": client,
         "workers": 1,
+        "config_path": _low_threshold_config_path(root),
     }
     kwargs.update(overrides)
     return run_gather(**kwargs)
@@ -908,6 +926,88 @@ def test_gather_gates_an_apparatus_pointer_surface_before_any_model_call(tmp_pat
     assert DISAGREEMENT_HEADING not in _page(tmp_path, "Footnote 36")
 
 
+# -- the configured member threshold: a founder scope decision, not a
+# heuristic (2026-07-29) ------------------------------------------------------
+
+
+def test_gather_skips_a_name_below_the_configured_member_threshold(tmp_path):
+    """A name below `DEFAULT_MIN_GATHER_MEMBERS` (10) is skipped before a
+    packet is assembled or a model call made -- distinct from, and on top
+    of, the `_MIN_MEMBERS` (2) definitional gate: 9 members clears that gate
+    but not the configured scope threshold."""
+    _build_large_fixture(tmp_path, members=9)
+    _materialize(tmp_path)
+
+    # No config file at all -- exercises the real default, not this file's
+    # shared low-threshold fixture config (`_low_threshold_config_path`).
+    client = FakeClient(batch=[_response("Finding.", [])])
+    result = _gather(tmp_path, client, config_path=tmp_path / "no-such-config.yaml")
+
+    assert result["names_skipped_below_min_members"] == 1
+    assert result["names_skipped_single_member"] == 0
+    assert result["min_gather_members"] == DEFAULT_MIN_GATHER_MEMBERS
+    assert client.prompts == [], "a below-threshold name must never reach a model call"
+    assert DISAGREEMENT_HEADING not in _page(tmp_path, "war making")
+
+
+def test_gather_asks_a_name_at_exactly_the_member_threshold(tmp_path):
+    """A name at exactly the configured floor is asked -- the cut is
+    inclusive of the threshold itself."""
+    _build_large_fixture(tmp_path, members=DEFAULT_MIN_GATHER_MEMBERS)
+    _materialize(tmp_path)
+
+    client = FakeClient(batch=[_response("They disagree about war making.", [])])
+    result = _gather(tmp_path, client, config_path=tmp_path / "no-such-config.yaml")
+
+    assert result["names_skipped_below_min_members"] == 0
+    assert len(client.prompts) == 1
+    assert DISAGREEMENT_HEADING in _page(tmp_path, "war making")
+
+
+def test_gather_member_threshold_is_read_from_config(tmp_path):
+    """An explicit `gather.min_members` in `config/pipeline.yaml` overrides
+    the default -- lowering it to 5 lets a 5-member name through that the
+    default (10) would have skipped."""
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text(yaml.safe_dump({"gather": {"min_members": 5}}), encoding="utf-8")
+    _build_large_fixture(tmp_path, members=5)
+    _materialize(tmp_path)
+
+    client = FakeClient(batch=[_response("They disagree about war making.", [])])
+    result = _gather(tmp_path, client, config_path=config_path)
+
+    assert result["min_gather_members"] == 5
+    assert result["names_skipped_below_min_members"] == 0
+    assert len(client.prompts) == 1
+
+
+def test_gather_member_threshold_override_still_skips_below_it(tmp_path):
+    """The overridden threshold is still enforced, not just raised: a name
+    below the *configured* 5 is skipped even though it clears the
+    definitional 2-member gate."""
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text(yaml.safe_dump({"gather": {"min_members": 5}}), encoding="utf-8")
+    _build_large_fixture(tmp_path, members=4)
+    _materialize(tmp_path)
+
+    client = FakeClient(batch=[_response("Finding.", [])])
+    result = _gather(tmp_path, client, config_path=config_path)
+
+    assert result["names_skipped_below_min_members"] == 1
+    assert client.prompts == []
+
+
+def test_resolve_min_gather_members_falls_back_to_default_when_config_absent(tmp_path):
+    missing_path = tmp_path / "does-not-exist.yaml"
+    assert _resolve_min_gather_members(missing_path) == DEFAULT_MIN_GATHER_MEMBERS
+
+
+def test_resolve_min_gather_members_falls_back_to_default_when_gather_block_absent(tmp_path):
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text(yaml.safe_dump({"llm": {"provider": "openrouter"}}), encoding="utf-8")
+    assert _resolve_min_gather_members(config_path) == DEFAULT_MIN_GATHER_MEMBERS
+
+
 def test_gather_never_hands_the_model_a_sentinel_author(tmp_path):
     """Fix (2026-07-29): `axial.vault.bibliographic_value` renders the
     `unavailable`/`not_attempted` sentinels as themselves for a note's own
@@ -1075,6 +1175,14 @@ def test_names_gather_cli_subcommand_is_wired(isolated_vault_root):
     root = isolated_vault_root
     _build_small_fixture(root)
     _materialize(root)
+    # The fixture's "war making" name has 2 member notes; the real default
+    # member-count floor is 10 (`DEFAULT_MIN_GATHER_MEMBERS`), so this smoke
+    # test -- which is about the CLI wiring, not the threshold -- overrides
+    # it the same way an operator would.
+    (root / "config").mkdir(parents=True, exist_ok=True)
+    (root / "config" / "pipeline.yaml").write_text(
+        yaml.safe_dump({"gather": {"min_members": 2}}), encoding="utf-8"
+    )
 
     env = dict(os.environ)
     env[PROVIDER_ENV_VAR] = "stub"

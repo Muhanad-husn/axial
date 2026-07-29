@@ -1794,6 +1794,8 @@ def _names_gather(limit: int | None, workers: int) -> int:
         "names_skipped_numeral_only",
         "names_skipped_apparatus_pointer",
         "names_skipped_single_member",
+        "names_skipped_below_min_members",
+        "min_gather_members",
         "names_gathered",
         "asked",
         "reused",

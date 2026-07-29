@@ -119,6 +119,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from axial.checkpoint import append_checkpoint_record, load_checkpoint_records
 from axial.intake import NOT_ATTEMPTED, SOURCE_META_DIR, UNAVAILABLE
 from axial.interrogate import _default_answers_dir, is_abstention
@@ -166,6 +168,17 @@ GATHER_PACKET_CHAR_BUDGET = 20_000
 # no second author to disagree with, so no call is spent on it. Definitional,
 # not a threshold.
 _MIN_MEMBERS = 2
+
+# Founder scope decision (2026-07-29, not a tuned heuristic constant): a name
+# below this member count is skipped alongside the numeral-only/apparatus-
+# pointer/single-member gates above, before a packet is ever assembled or a
+# model call made. Measured on a seeded 100-name stratified sample and the
+# live index -- see `config/pipeline.yaml`'s `gather.min_members` comment for
+# the full yield curve this number was read off. `_MIN_MEMBERS` above stays
+# fixed at 2 (definitional); this is the separate, movable scope cut, always
+# read from config via `_resolve_min_gather_members` so it can move in one
+# line without touching this file.
+DEFAULT_MIN_GATHER_MEMBERS = 10
 
 # Bounded concurrent per-name workers. The work is I/O-bound in exactly the
 # shape `axial.merge_names` already measured on this provider (issue #416: a
@@ -644,6 +657,19 @@ def _gather_one(
     return job, record, None
 
 
+def _resolve_min_gather_members(config_path: Path) -> int:
+    """Read `gather.min_members` from `config_path`, falling back to
+    `DEFAULT_MIN_GATHER_MEMBERS` when the file or the key is absent -- the
+    same config-then-fallback shape every other pipeline tunable uses (e.g.
+    `axial.retrieve.loop._resolve_step_budget`)."""
+    if not config_path.is_file():
+        return DEFAULT_MIN_GATHER_MEMBERS
+    with config_path.open("r", encoding="utf-8") as handle:
+        document = yaml.safe_load(handle) or {}
+    gather_config = document.get("gather") or {}
+    return int(gather_config.get("min_members", DEFAULT_MIN_GATHER_MEMBERS))
+
+
 def load_disagreements(path: Path) -> dict[str, dict[str, Any]]:
     """Every recorded disagreement, keyed by `name_key` -- the inverse of
     the append, `{}` before the first run."""
@@ -721,10 +747,13 @@ def run_gather(
             author = _author_fallback_from_source_id(source_id)
         author_year[source_id] = (author, bibliographic_value(source_meta, "date"))
 
+    min_gather_members = _resolve_min_gather_members(config_path)
+
     jobs: list[GatherJob] = []
     skipped_single_member = 0
     skipped_numeral_only = 0
     skipped_apparatus_pointer = 0
+    skipped_below_min_members = 0
     for node in sorted(nodes, key=lambda n: n["canonical"]):
         # Fix (2026-07-29): a bare page number or a plain century
         # (`is_numeral_only_surface`) is locator residue, not a name -- a
@@ -748,6 +777,14 @@ def run_gather(
         if len(packets) < _MIN_MEMBERS:
             skipped_single_member += 1
             continue
+        # Founder scope decision (2026-07-29): a name below the configured
+        # member count is not asked about -- skipped here, before a packet
+        # is assembled or a model call made, same as the gates above. See
+        # `DEFAULT_MIN_GATHER_MEMBERS`'s own comment for the measured yield
+        # curve behind the cut.
+        if len(packets) < min_gather_members:
+            skipped_below_min_members += 1
+            continue
         batches = split_into_batches(packets)
         jobs.append(GatherJob(node["canonical"], tuple(tuple(batch) for batch in batches)))
 
@@ -761,7 +798,9 @@ def run_gather(
         f"and {skipped_apparatus_pointer} apparatus-pointer surface(s) "
         "gated out (never a name), "
         f"{skipped_single_member} skipped with fewer than "
-        f"{_MIN_MEMBERS} member note(s), {len(jobs)} to gather; {reused} already recorded, "
+        f"{_MIN_MEMBERS} member note(s), {skipped_below_min_members} skipped below the "
+        f"configured {min_gather_members}-member scope threshold, {len(jobs)} to gather; "
+        f"{reused} already recorded, "
         f"{len(to_attempt)} to ask now ({len(pending) - len(to_attempt)} more pending) "
         f"across {max(workers, 1)} worker(s)",
         file=sys.stderr,
@@ -815,6 +854,8 @@ def run_gather(
         "names_skipped_numeral_only": skipped_numeral_only,
         "names_skipped_apparatus_pointer": skipped_apparatus_pointer,
         "names_skipped_single_member": skipped_single_member,
+        "names_skipped_below_min_members": skipped_below_min_members,
+        "min_gather_members": min_gather_members,
         "names_gathered": len(jobs),
         "asked": called,
         "reused": reused,
