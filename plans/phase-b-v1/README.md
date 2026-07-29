@@ -196,17 +196,19 @@ its own pass name and never by the generating model.
 
 Develop top to bottom. One slice = one issue = one PR.
 
-| # | Slice | Goal (one line) | Status |
-|---|-------|-----------------|--------|
-| 00 | spec rewrite | `specs/PHASE-B.md` v2: §7.5 tool set, §7.7 per-name coverage, §7.8 contestedness from `arguing_against` and Gather, §7.12 pin, §7.13 re-based, §9 the 5+5 sets, §10 gates; retired criteria struck rather than left dangling | ☐ |
-| 01 | restore and re-pin | Re-run Gather (no model calls, records exist) so 130 findings return to their pages, then re-cut the corpus pin per D6. LLM-free | ☐ |
-| 02 | the name query API | `find_names`, `get_name`, `name_neighbors`, `who_cites`, `who_argues_against`, per-name `coverage_count`; deterministic, model-free, fully testable without an LLM | ☐ |
-| 03 | retrieval loop rewired | Tool registry and dispatcher onto 02's tools; trajectory log unchanged; step budget re-proven | ☐ |
-| 04 | synthesis on the new evidence | Evidence assembly and the synthesis prompt rebuilt around `claim` / `position_of` / `arguing_against` / `citations`, with Gather findings as hints per D4 | ☐ |
-| 05 | coverage and counter-position | Per-name coverage map, confidence derivation, contested detection and counter-position generation per D2 and D3 | ☐ |
-| 06 | metrics and the run report | Source usage re-based, the response-quality table computed, per-pass latency captured, one report per run | ☐ |
-| 07 | smoke harness | `config/briefs/smoke/` and `axial brief smoke`: five briefs, mechanical gates plus a cost and latency budget so a spend regression shows up the day it lands | ☐ |
-| 08 | gates and the eval run | Gate fixtures re-pointed at the new record, `config/briefs/eval/` landed with the new brief and its case, the instrumented run executed and reported | ☐ |
+| # | Slice | Issue | Goal (one line) | Status |
+|---|-------|-------|-----------------|--------|
+| 00 | spec rewrite | #485 | `specs/PHASE-B.md` v2: §7.5 tool set, §7.7 per-name coverage, §7.8 contestedness from `arguing_against` and Gather, §7.12 pin, §7.13 re-based, §9 the 5+5 sets, §10 gates; retired criteria struck rather than left dangling | ☐ |
+| 01 | restore and re-pin | #486 | Re-run Gather (no model calls, records exist) so 130 findings return to their pages, then re-cut the corpus pin per D6. LLM-free | ☐ |
+| 02 | the name query API | #487 | `find_names`, `get_name`, `name_neighbors`, `who_cites`, `who_argues_against`, per-name `coverage_count`; deterministic, model-free, fully testable without an LLM | ☐ |
+| 03 | retrieval loop rewired | #488 | Tool registry and dispatcher onto 02's tools; trajectory log unchanged; step budget re-proven | ☐ |
+| 04 | synthesis on the new evidence | #489 | Evidence assembly and the synthesis prompt rebuilt around `claim` / `position_of` / `arguing_against` / `citations`, with Gather findings as hints per D4 | ☐ |
+| 05 | coverage and counter-position | #490 | Per-name coverage map, confidence derivation, contested detection and counter-position generation per D2 and D3 | ☐ |
+| 06 | metrics and the run report | #491 | Source usage re-based, the response-quality table computed, per-pass latency captured, one report per run | ☐ |
+| 07 | smoke harness | #492 | `config/briefs/smoke/` and `axial brief smoke`: five briefs, mechanical gates plus a cost and latency budget so a spend regression shows up the day it lands | ☐ |
+| 08 | gates and the eval run | #493 | Gate fixtures re-pointed at the new record, `config/briefs/eval/` landed with the new brief and its case, the instrumented run executed and reported | ☐ |
+
+<!-- Status values: ☐ todo · ◐ in-progress · ✅ done. Update the row when a slice's PR opens. -->
 
 ## Dependencies
 
@@ -217,6 +219,9 @@ Develop top to bottom. One slice = one issue = one PR.
 - **04 → 07.** The smoke harness needs an engine that produces a record.
 - **06 → 08.** The eval run reports what 06 computes.
 - 01, 02 and 07 are LLM-free by construction.
+- **01 runs in the main checkout `D:/axial`, never a worktree.** `data/` is
+  gitignored, so a corpus operation launched in a worktree silently operates on
+  nothing.
 
 ## Out of scope
 
