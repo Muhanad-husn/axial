@@ -232,13 +232,36 @@ sequencing is visible, because most of it competes for one scarce resource.
 
 | Issue | What | Lane | State |
 |-------|------|------|-------|
-| #463 | Fold case, whitespace and punctuation upstream of candidate generation — 305 groups the model refused, 489 it never saw. Absorbs #459 | A | ready |
-| #458 | `names merge` re-clusters 78k vectors on every run, silently, after `build` already did it | B | ready |
-| #457 | `DEFAULT_WORKERS = 36` rests on a measurement the corpus run contradicts (96 sustained 5.88 clusters/s, not 2.2) | B | needs the corpus run below |
-| #460 | Reinstate tier-3 passage evidence: escalation 54.3% → 15.4%, extra merges 75% correct | — | blocked, founder picks the scope |
-| #461 | 5,629 escalated surfaces are a dead end; nothing reads them | C | design first |
+| #463 | Fold case, whitespace and punctuation upstream of candidate generation — 305 groups the model refused, 489 it never saw. Absorbs #459 | A | **shipped** (PR #466) |
+| #458 | `names merge` re-clusters 78k vectors on every run, silently, after `build` already did it | B | **shipped** (PR #465) |
+| #457 | `DEFAULT_WORKERS = 36` rests on a measurement the corpus run contradicts (96 sustained 5.88 clusters/s, not 2.2) | B | **blocked** — the sweep that ran was underpowered and is retracted; needs ~3,000-batch points |
+| #460 | Reinstate tier-3 passage evidence: escalation 54.3% → 15.4%, extra merges 75% correct | — | blocked, founder picks the scope — and see the escalation composition below |
+| #461 | 5,629 escalated surfaces are a dead end; nothing reads them | C | **shipped** (PR #464), listing run |
 | #462 | Sample the 18,034 pairs token containment proposes and the blocker never shows | D | ready, no `src/` change |
 | #447 | D15 has expired: Phase A v1 has no measure of quality | E | design, founder |
+| #469 | Merge parse failures scale with worker count, 6 → 17 across one sweep | B | new, from #457's sweep |
+
+### What the 2026-07-29 pass actually settled
+
+Three shipped in parallel worktrees and were validated together on one corpus
+probe: **#463 folded 3,367 mechanical groups with zero model calls** (canonical
+names 63,872 → 63,012), **#458's reuse made clustering instant** instead of 10+
+silent minutes, and **#461's listing ran**.
+
+Two results change the table above:
+
+- **#457 is not done, and its premise is untested.** A four-point sweep
+  (36/64/96/128) measured a nearly flat curve, but each point was only ~436
+  batches — too few waves to reach steady state, so ramp-up and tail-drain
+  dominated. #454's run has 50x the sample and stands. `DEFAULT_WORKERS` must not
+  move on the sweep's evidence in either direction.
+  Retraction in `data/logs/2026-07-29-merge-worker-curve/summary.md`.
+- **The escalation pile is mostly real.** 82% of the 6,141 escalations are
+  name-shaped, and **87% of those appear in only one book** — the model abstained
+  for want of a second attestation, not because the surface was junk. Bare
+  page numbers are 3.2%, not the large share a first eyeball read suggested.
+  That shrinks #460's addressable subset from 5,629 to roughly 660 multi-source
+  surfaces. `data/logs/2026-07-29-escalation-composition/summary.md`.
 
 ### The serial spine
 
@@ -251,7 +274,10 @@ overlap. Three of the issues above want one:
    everything re-decides. Running it before #463 pays for a full pass over input
    that is about to change.
 3. **#457's worker curve rides along with whichever pass runs**, rather than
-   being its own corpus run.
+   being its own corpus run. This was tried on #463's re-decide and did not
+   work: that re-decide was only 1,746 batches, which split four ways gives
+   points too short to measure. A valid curve needs points of ~3,000+ batches
+   each, so it can only ride a **full** re-decide — #460's, if it goes ahead.
 
 That gives one full re-decide instead of two, and it runs on clean input. It is
 the same rule the benchmark work already learned: build the prerequisites before
