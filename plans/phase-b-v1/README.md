@@ -201,7 +201,7 @@ in **Order and concurrency** below.
 
 | # | Slice | Issue | Goal (one line) | Status |
 |---|-------|-------|-----------------|--------|
-| 00 | spec rewrite | #485 | `specs/PHASE-B.md` v2: §7.5 tool set, §7.7 per-name coverage, §7.8 contestedness from `arguing_against` and Gather, §7.12 pin, §7.13 re-based, §9 the 5+5 sets, §10 gates; retired criteria struck rather than left dangling | ☐ |
+| 00 | spec rewrite | #485 | `specs/PHASE-B.md` v2: §7.5 tool set, §7.7 per-name coverage, §7.8 contestedness from `arguing_against` and Gather, §7.12 pin, §7.13 re-based, §9 the 5+5 sets, §10 gates; retired criteria struck rather than left dangling | ✅ |
 | 01 | restore and re-pin | #486 | Re-run Gather (no model calls, records exist) so 130 findings return to their pages, then re-cut the corpus pin per D6. LLM-free | ☐ |
 | 02 | the name query API | #487 | `find_names`, `get_name`, `name_neighbors`, `who_cites`, `who_argues_against`, per-name `coverage_count`; deterministic, model-free, fully testable without an LLM | ☐ |
 | 03 | retrieval loop rewired | #488 | Tool registry and dispatcher onto 02's tools; trajectory log unchanged; step budget re-proven | ☐ |
