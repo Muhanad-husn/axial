@@ -34,16 +34,38 @@ def _write_note(prose_dir: Path, chunk_id: str) -> Path:
     return path
 
 
+def _stage_names_dir(names_dir: Path) -> None:
+    """A minimal, well-formed name layer (issue #486, D6): `write_pin`'s
+    vault-snapshot hash now covers it, so every `write_pin` fixture in this
+    file needs one to exist."""
+    names_dir.mkdir(parents=True, exist_ok=True)
+    (names_dir / "index.json").write_text(
+        json.dumps({"version": 1, "generated_at": "t", "names": []}), encoding="utf-8"
+    )
+    (names_dir / "alias_map.json").write_text(
+        json.dumps({"version": 1, "generated_at": "t", "nodes": []}), encoding="utf-8"
+    )
+    (names_dir / "disagreements.jsonl").write_text("", encoding="utf-8")
+
+
 def _stage_pin(tmp_path: Path, name: str = "baseline") -> tuple[Path, Path]:
     """Write a minimal corpus pin (empty sources list, one vault note) and
     return `(evals_dir, vault_dir)`."""
     vault_dir = tmp_path / "data" / "vault"
     envelopes_dir = tmp_path / "data" / "envelopes"
     envelopes_dir.mkdir(parents=True, exist_ok=True)
+    names_dir = tmp_path / "data" / "names"
+    _stage_names_dir(names_dir)
     evals_dir = tmp_path / "evals" / "corpus_pin"
     _write_note(vault_dir / "prose", "c1")
 
-    write_pin(name, vault_dir=vault_dir, envelopes_dir=envelopes_dir, evals_dir=evals_dir)
+    write_pin(
+        name,
+        vault_dir=vault_dir,
+        envelopes_dir=envelopes_dir,
+        names_dir=names_dir,
+        evals_dir=evals_dir,
+    )
     return evals_dir, vault_dir
 
 
@@ -86,7 +108,14 @@ def test_check_staleness_false_when_vault_snapshot_hash_differs(tmp_path: Path):
     # Mutate a note's tag and rewrite the pin under the SAME name.
     _write_note(vault_dir / "prose", "c2")
     envelopes_dir = vault_dir.parent / "envelopes"
-    write_pin("baseline", vault_dir=vault_dir, envelopes_dir=envelopes_dir, evals_dir=evals_dir)
+    names_dir = vault_dir.parent / "names"
+    write_pin(
+        "baseline",
+        vault_dir=vault_dir,
+        envelopes_dir=envelopes_dir,
+        names_dir=names_dir,
+        evals_dir=evals_dir,
+    )
 
     assert not check_staleness(
         snapshot["corpus_pin_id"], snapshot["vault_snapshot_hash"], evals_dir

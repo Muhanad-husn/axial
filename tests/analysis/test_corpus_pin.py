@@ -2,21 +2,34 @@
 
 Locked behavioral contract (DEC-1) -- do not edit once committed red.
 
-Given a fixture vault with two prose notes under data/vault/prose/ and one
-      envelope under data/envelopes/
+**Edited for issue #486, slice 01 (D6, specs/PHASE-B.md §7.12 v2.0):** the
+contract itself changed, not just its wording -- Phase A v1 deleted every
+`TAG_AXES` tag the v0 `vault_snapshot_hash` projected onto, so that
+projection had silently degraded to ids alone. The hash now covers the
+prose note ids plus the name-layer index (`data/names/index.json`'s
+canonical name set, `data/names/alias_map.json`'s `version`, the
+non-null disagreement count in `data/names/disagreements.jsonl`) instead of
+`(chunk_id, tag)` pairs. The fixture below now stages a name layer
+alongside the vault/envelope (required input, per D6 -- `write_pin` fails
+loudly without one), the tag-mutation scenario is replaced with a
+name-layer-mutation scenario, and a name-leak check joins the existing
+chunk_text-leak check.
+
+Given a fixture vault with two prose notes under data/vault/prose/, one
+      envelope under data/envelopes/, and a name layer under data/names/
 When  `axial pin write baseline` runs
 Then  evals/corpus_pin/baseline.json is written, the command exits 0, and the
       file carries a `sources` list (one entry per envelope, each with
       `source_id` and `content_hash`), an `ingest_code_sha` equal to the
       repository's current git commit, and a `vault_snapshot_hash`
   And no value anywhere in the file contains any chunk_text from the fixture
-      notes
+      notes, nor the fixture's own canonical name
 
-Given the same unchanged fixture vault
+Given the same unchanged fixture vault and name layer
 When  `axial pin write baseline` runs a second time
 Then  the written file is byte-identical to the first run's file
 
-Given one fixture prose note whose `field.primary` tag value is then changed
+Given the fixture's disagreements.jsonl gains one more non-null record
 When  `axial pin write baseline` runs again
 Then  the `vault_snapshot_hash` differs from the previous run's hash and the
       `sources` list is unchanged
@@ -35,8 +48,9 @@ Then  the command exits non-zero, no evals/corpus_pin/baseline.json is
 
 See specs/PHASE-B.md §7.12 (the corpus-pin manifest, [FIRM]: source list +
 content hashes reusing `envelope.compute_source_id()`'s hashing path,
-ingest-code SHA, vault snapshot hash over chunk_ids + tags never chunk_text
-per DEC-23) and §8 P0-10, plus docs/eval/01-answer-quality.md's "Corpus pin"
+ingest-code SHA, vault snapshot hash over prose chunk_ids plus the
+name-layer index, never chunk_text and never the names themselves, per
+DEC-23/D6) and §8 P0-10, plus docs/eval/01-answer-quality.md's "Corpus pin"
 section (the format this slice is the sole owner of). Plan:
 plans/analysis-foundation/02-corpus-pin-manifest.md.
 
@@ -137,6 +151,10 @@ SENTINEL_BETA = (
     "prose, not a real source excerpt, written only for the corpus-pin "
     "acceptance fixture."
 )
+# Same discipline, extended to the name layer (issue #486, D6): a canonical
+# name is source-derived content too (DEC-23), so it must never leak into
+# the committed manifest either.
+SENTINEL_NAME = "SENTINEL_CANONICAL_NAME_b19d47_not_a_real_surface_form"
 
 
 def _run_pin_write(root: Path, *args: str) -> subprocess.CompletedProcess:
@@ -282,6 +300,30 @@ def _build_fixture_vault(root: Path) -> dict[str, Any]:
     note_1_path.write_text(render_note(note_1_frontmatter, note_1_body), encoding="utf-8")
     note_2_path.write_text(render_note(note_2_frontmatter, note_2_body), encoding="utf-8")
 
+    # The name layer (issue #486, D6, specs/PHASE-B.md §7.12 v2.0):
+    # `write_pin` now requires one to exist, since the vault_snapshot_hash
+    # covers it alongside the prose note ids. `index.json` carries
+    # SENTINEL_NAME so the DEC-23 leak check below has a real canonical
+    # name to look for -- mirrors SENTINEL_ALPHA/BETA's own role for
+    # chunk_text.
+    names_dir = root / "data" / "names"
+    names_dir.mkdir(parents=True, exist_ok=True)
+    (names_dir / "index.json").write_text(
+        json.dumps(
+            {"version": 1, "generated_at": "2026-01-01T00:00:00Z", "names": [SENTINEL_NAME]}
+        ),
+        encoding="utf-8",
+    )
+    (names_dir / "alias_map.json").write_text(
+        json.dumps({"version": 1, "generated_at": "2026-01-01T00:00:00Z", "nodes": []}),
+        encoding="utf-8",
+    )
+    disagreements_path = names_dir / "disagreements.jsonl"
+    disagreements_path.write_text(
+        json.dumps({"name_key": "sentinel-name-key", "disagreement": None}) + "\n",
+        encoding="utf-8",
+    )
+
     return {
         "source_id": source_id,
         "source_file": source_file,
@@ -292,6 +334,8 @@ def _build_fixture_vault(root: Path) -> dict[str, Any]:
         "note_2_path": note_2_path,
         "note_2_frontmatter": note_2_frontmatter,
         "note_2_body": note_2_body,
+        "names_dir": names_dir,
+        "disagreements_path": disagreements_path,
     }
 
 
@@ -314,8 +358,11 @@ def _assert_ran_the_real_subcommand(result: subprocess.CompletedProcess) -> None
 
 def _assert_no_chunk_text_leak(raw_pin_text: str) -> None:
     """DEC-23: no value anywhere in the serialized pin file may contain any
-    fixture note's chunk_text -- checked over the WHOLE raw file text, not
-    scoped to any particular JSON field."""
+    fixture note's chunk_text, nor the fixture's own canonical name --
+    checked over the WHOLE raw file text, not scoped to any particular JSON
+    field. The name check is D6/issue #486's extension of the same
+    guarantee: the vault_snapshot_hash now COVERS the canonical name set,
+    but the manifest must never carry the names themselves."""
     assert SENTINEL_ALPHA not in raw_pin_text, (
         "DEC-23 violation: the fixture's introduction-note chunk_text leaked "
         f"into the written pin file:\n{raw_pin_text}"
@@ -323,6 +370,10 @@ def _assert_no_chunk_text_leak(raw_pin_text: str) -> None:
     assert SENTINEL_BETA not in raw_pin_text, (
         "DEC-23 violation: the fixture's conclusion-note chunk_text leaked "
         f"into the written pin file:\n{raw_pin_text}"
+    )
+    assert SENTINEL_NAME not in raw_pin_text, (
+        "DEC-23/D6 violation: the fixture's canonical name leaked into the "
+        f"written pin file:\n{raw_pin_text}"
     )
 
 
@@ -419,13 +470,16 @@ def test_pin_write_is_byte_identical_over_an_unchanged_vault(isolated_vault_root
     )
 
 
-def test_pin_write_snapshot_hash_moves_on_a_tag_change_but_sources_list_does_not(
+def test_pin_write_snapshot_hash_moves_on_a_disagreement_change_but_sources_list_does_not(
     isolated_vault_root,
 ):
-    """Scenario 3 (issue #248): changing one fixture note's `field.primary`
-    tag and re-running moves `vault_snapshot_hash` while leaving `sources`
-    completely unchanged -- the pin tracks tagging over the vault, not the
-    envelope-derived source list, and the two are independent."""
+    """Scenario 3, rewritten for issue #486/D6: a fixture note's
+    `field.primary` tag no longer moves the hash (Phase A v1 deleted every
+    `TAG_AXES` tag, and the hash struck that projection); the name layer is
+    the substrate that now does. Recording one more non-null disagreement
+    in `data/names/disagreements.jsonl` (mirroring the real "Gather found
+    something new" case #486 itself exists to fix) and re-running moves
+    `vault_snapshot_hash` while leaving `sources` completely unchanged."""
     root = isolated_vault_root
     fixture = _build_fixture_vault(root)
     pin_path = _pin_path(root)
@@ -438,20 +492,18 @@ def test_pin_write_snapshot_hash_moves_on_a_tag_change_but_sources_list_does_not
     )
     baseline_manifest = json.loads(pin_path.read_text(encoding="utf-8"))
 
-    # Mutate ONLY note 1's field.primary tag ("state" -> "violence", both
-    # real schema values, config/domains/syria/schema.yaml's `field` axis)
-    # and rewrite the same note file in place -- everything else about the
-    # fixture (the envelope, note 2, note 1's chunk_text/chunk_id/section)
-    # is untouched.
-    mutated_frontmatter = dict(fixture["note_1_frontmatter"])
-    mutated_frontmatter["field"] = {"primary": "violence", "secondary": []}
-    fixture["note_1_path"].write_text(
-        render_note(mutated_frontmatter, fixture["note_1_body"]), encoding="utf-8"
-    )
+    # Add ONE more non-null disagreement record -- everything else about
+    # the fixture (the envelope, both notes, index.json, alias_map.json) is
+    # untouched.
+    with fixture["disagreements_path"].open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps({"name_key": "second-name-key", "disagreement": "a real disagreement"})
+            + "\n"
+        )
 
     mutated_run = _run_pin_write(root, "baseline")
     assert mutated_run.returncode == 0, (
-        f"expected exit 0 after mutating one note's field.primary tag, got "
+        f"expected exit 0 after adding one disagreement record, got "
         f"{mutated_run.returncode}\nstdout: {mutated_run.stdout!r}\nstderr: {mutated_run.stderr!r}"
     )
     mutated_raw_text = pin_path.read_text(encoding="utf-8")
@@ -461,14 +513,47 @@ def test_pin_write_snapshot_hash_moves_on_a_tag_change_but_sources_list_does_not
     assert mutated_manifest.get("vault_snapshot_hash") != baseline_manifest.get(
         "vault_snapshot_hash"
     ), (
-        "expected vault_snapshot_hash to differ after changing one note's "
-        f"field.primary tag, but it stayed {baseline_manifest.get('vault_snapshot_hash')!r} "
-        "on both runs"
+        "expected vault_snapshot_hash to differ after adding one disagreement "
+        f"record, but it stayed {baseline_manifest.get('vault_snapshot_hash')!r} on both runs"
     )
     assert mutated_manifest.get("sources") == baseline_manifest.get("sources"), (
-        "expected the 'sources' list to be completely unchanged by a vault "
-        f"tag edit (no envelope was touched), got baseline={baseline_manifest.get('sources')!r} "
+        "expected the 'sources' list to be completely unchanged by a name-layer "
+        f"edit (no envelope was touched), got baseline={baseline_manifest.get('sources')!r} "
         f"vs mutated={mutated_manifest.get('sources')!r}"
+    )
+
+
+def test_pin_write_snapshot_hash_unmoved_by_a_tag_change(isolated_vault_root):
+    """The mirror image of the pre-#486 contract (STRUCK, §7.12): Phase A
+    v1 deleted every `TAG_AXES` tag the hash used to project onto, so
+    changing one fixture note's `field.primary` tag and re-running must now
+    leave `vault_snapshot_hash` completely unchanged."""
+    root = isolated_vault_root
+    fixture = _build_fixture_vault(root)
+    pin_path = _pin_path(root)
+
+    baseline_run = _run_pin_write(root, "baseline")
+    _assert_ran_the_real_subcommand(baseline_run)
+    assert baseline_run.returncode == 0
+    baseline_manifest = json.loads(pin_path.read_text(encoding="utf-8"))
+
+    mutated_frontmatter = dict(fixture["note_1_frontmatter"])
+    mutated_frontmatter["field"] = {"primary": "violence", "secondary": []}
+    fixture["note_1_path"].write_text(
+        render_note(mutated_frontmatter, fixture["note_1_body"]), encoding="utf-8"
+    )
+
+    mutated_run = _run_pin_write(root, "baseline")
+    assert mutated_run.returncode == 0
+    mutated_manifest = json.loads(pin_path.read_text(encoding="utf-8"))
+
+    assert mutated_manifest.get("vault_snapshot_hash") == baseline_manifest.get(
+        "vault_snapshot_hash"
+    ), (
+        "expected vault_snapshot_hash to be UNCHANGED by a tag-only edit "
+        "(TAG_AXES is struck, issue #486/D6), but it moved from "
+        f"{baseline_manifest.get('vault_snapshot_hash')!r} to "
+        f"{mutated_manifest.get('vault_snapshot_hash')!r}"
     )
 
 

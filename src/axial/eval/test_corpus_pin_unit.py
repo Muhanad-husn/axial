@@ -1,5 +1,7 @@
 """Inner unit tests for the corpus-pin manifest module (issue #248, slice
-02, specs/PHASE-B.md §7.12).
+02, specs/PHASE-B.md §7.12; extended for issue #486, slice 01, D6 --
+the vault-snapshot hash now covers the name layer, not a struck tag
+projection).
 
 Co-located under src/axial/eval/ per the repo's existing test layout
 (mirrors src/axial/brief/test_intake.py for the sibling brief package).
@@ -28,19 +30,27 @@ from axial.eval.corpus_pin import (
     AmbiguousCorpusPinError,
     AmbiguousSourceFileError,
     GitShaUnavailableError,
+    MalformedAliasMapError,
+    MalformedDisagreementsError,
     MalformedEnvelopeError,
+    MalformedNameIndexError,
     MalformedNoteError,
+    MissingAliasMapError,
     MissingCorpusPinError,
+    MissingDisagreementsError,
     MissingEnvelopesDirError,
+    MissingNameIndexError,
+    MissingNamesDirError,
     MissingSourceFileError,
     MissingVaultDirError,
-    TAG_AXES,
     UnresolvableSourceIdError,
     _build_sources,
     _build_vault_snapshot_hash,
-    _collect_snapshot_pairs,
+    _collect_chunk_ids,
+    _count_non_null_disagreements,
     _default_sources_dir,
-    _tag_projection,
+    _load_alias_map_version,
+    _load_canonical_names,
     ingest_code_sha,
     resolve_pin_id,
     write_pin,
@@ -95,7 +105,11 @@ def _write_note(
     to distinguish filesystem enumeration ("glob") order from `chunk_id`
     sort order (see the F3 finding on issue #248: when filename == chunk_id,
     the two orders are textually identical and no test built on them can
-    ever catch a missing/removed sort)."""
+    ever catch a missing/removed sort). `**axis_overrides` still lets a
+    caller set the schema tag axes (`field`, `role_in_argument`, etc.) even
+    though the pin no longer reads them (D6) -- real vault notes carry them
+    regardless, and `test_snapshot_hash_unchanged_when_tag_axes_change`
+    below depends on being able to vary them."""
     prose_dir.mkdir(parents=True, exist_ok=True)
     frontmatter = {
         "chunk_id": chunk_id,
@@ -110,6 +124,45 @@ def _write_note(
     path = prose_dir / (filename or f"{chunk_id}.md")
     path.write_text(render_note(frontmatter, "# Introduction\n\nbody\n"), encoding="utf-8")
     return path
+
+
+def _stage_names_dir(
+    names_dir: Path,
+    *,
+    names: tuple[str, ...] = ("United States",),
+    alias_map_version: int = 1,
+    disagreements: tuple[tuple[str, str | None], ...] = (),
+    index_generated_at: str = "2026-01-01T00:00:00Z",
+    alias_map_generated_at: str = "2026-01-01T00:00:00Z",
+) -> None:
+    """A minimal, well-formed name layer under `names_dir`: `index.json`
+    (the canonical name set), `alias_map.json` (the version Reconcile
+    stamped), and `disagreements.jsonl` (one line per `(name_key,
+    disagreement)` pair -- `disagreement=None` mirrors the real "these
+    authors do not disagree" record). Every field this module's own
+    `write_index`/`write_pin` never reads (`generated_at` on both JSON
+    files) is included anyway, so a test that varies it can prove the pin
+    ignores it."""
+    names_dir.mkdir(parents=True, exist_ok=True)
+    (names_dir / "index.json").write_text(
+        json.dumps(
+            {"version": alias_map_version, "generated_at": index_generated_at, "names": list(names)}
+        ),
+        encoding="utf-8",
+    )
+    (names_dir / "alias_map.json").write_text(
+        json.dumps(
+            {"version": alias_map_version, "generated_at": alias_map_generated_at, "nodes": []}
+        ),
+        encoding="utf-8",
+    )
+    lines = [
+        json.dumps({"name_key": name_key, "disagreement": disagreement})
+        for name_key, disagreement in disagreements
+    ]
+    (names_dir / "disagreements.jsonl").write_text(
+        "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8"
+    )
 
 
 # --- Source list (plan inner test 1; F1: raw-source-file digest) -----------
@@ -280,7 +333,7 @@ def test_split_frontmatter_invalid_yaml_raises_malformed_note_naming_the_path(tm
     note_path.write_text("---\nchunk_id: c1\nfield: [unterminated\n---\nbody\n", encoding="utf-8")
 
     with pytest.raises(MalformedNoteError) as excinfo:
-        _build_vault_snapshot_hash(vault_dir)
+        _collect_chunk_ids(vault_dir)
 
     assert str(note_path) in str(excinfo.value)
 
@@ -294,7 +347,7 @@ def test_split_frontmatter_non_mapping_raises_malformed_note_naming_the_path(tmp
     note_path.write_text("---\n- one\n- two\n---\nbody\n", encoding="utf-8")
 
     with pytest.raises(MalformedNoteError) as excinfo:
-        _build_vault_snapshot_hash(vault_dir)
+        _collect_chunk_ids(vault_dir)
 
     assert str(note_path) in str(excinfo.value)
 
@@ -310,7 +363,7 @@ def test_split_frontmatter_missing_closing_delimiter_raises_malformed_note(tmp_p
     note_path.write_text("---\nchunk_id: c1\nno closing delimiter here\n", encoding="utf-8")
 
     with pytest.raises(MalformedNoteError) as excinfo:
-        _build_vault_snapshot_hash(vault_dir)
+        _collect_chunk_ids(vault_dir)
 
     assert str(note_path) in str(excinfo.value)
 
@@ -333,18 +386,18 @@ def test_ingest_code_sha_unreadable_repo_fails_loudly_not_a_placeholder(tmp_path
         ingest_code_sha(tmp_path)
 
 
-# --- Vault snapshot hash (plan inner tests 3-6; F3: sort order asserted directly) --
+# --- Vault chunk-id list (plan inner tests 3-6; F3: sort order asserted directly) --
 
 
-def test_collect_snapshot_pairs_is_sorted_by_chunk_id_regardless_of_write_order(tmp_path: Path):
+def test_collect_chunk_ids_is_sorted_regardless_of_write_order(tmp_path: Path):
     """F3 (re-review, issue #248): assert the sort DIRECTLY on the canonical
-    pair list, with the on-disk FILENAME deliberately decoupled from
+    id list, with the on-disk FILENAME deliberately decoupled from
     `chunk_id` (via `_write_note`'s `filename=` param) -- when filename ==
     chunk_id (the prior version of this test), `Path.glob`'s own
     alphabetical-by-filename order is textually identical to chunk_id sort
     order, so the test cannot distinguish "sorted" from "glob order,
     whatever that happens to be" and would still pass with the `sort` call
-    at `_collect_snapshot_pairs` deleted entirely. Here, glob visits
+    at `_collect_chunk_ids` deleted entirely. Here, glob visits
     `01_note.md/02_note.md/03_note.md` in that filename order, whose
     frontmatter `chunk_id`s are `zzz_chunk/aaa_chunk/mmm_chunk` -- NOT
     already sorted -- so only a real sort produces the asserted ascending
@@ -355,9 +408,8 @@ def test_collect_snapshot_pairs_is_sorted_by_chunk_id_regardless_of_write_order(
     _write_note(prose_dir, "aaa_chunk", filename="02_note.md")
     _write_note(prose_dir, "mmm_chunk", filename="03_note.md")
 
-    pairs = _collect_snapshot_pairs(vault_dir)
+    chunk_ids = _collect_chunk_ids(vault_dir)
 
-    chunk_ids = [pair[0] for pair in pairs]
     assert chunk_ids == ["aaa_chunk", "mmm_chunk", "zzz_chunk"]
 
 
@@ -365,8 +417,12 @@ def test_snapshot_hash_sorted_by_chunk_id_independent_of_enumeration_order(tmp_p
     """Companion to the test above at the hash level: two vaults whose notes
     are enumerated in different filename order (again decoupled from
     `chunk_id` via `filename=`, for the same reason) must still hash equal,
-    since the hash is computed over the sorted pair list, never raw glob
-    order."""
+    since the hash is computed over the sorted chunk-id list, never raw
+    glob order. Both vaults share the identical (stable) name layer, so
+    only the vault side of the hash is under test."""
+    names_dir = tmp_path / "names"
+    _stage_names_dir(names_dir)
+
     vault_a = tmp_path / "vault_a"
     prose_a = vault_a / "prose"
     _write_note(prose_a, "zzz_chunk", filename="01_note.md")
@@ -378,53 +434,20 @@ def test_snapshot_hash_sorted_by_chunk_id_independent_of_enumeration_order(tmp_p
     _write_note(prose_b, "aaa_chunk", filename="01_note.md")
     _write_note(prose_b, "zzz_chunk", filename="02_note.md")
 
-    assert _build_vault_snapshot_hash(vault_a) == _build_vault_snapshot_hash(vault_b)
-
-
-def test_tag_projection_covers_only_the_named_tag_axes(tmp_path: Path):
-    frontmatter = {
-        "chunk_id": "c1",
-        "chunk_text": "SENTINEL should never appear in the projection",
-        "source_meta": {"author": "A"},
-        "role_in_argument": "role:claim",
-        "field": {"primary": "state", "secondary": []},
-        "claim_type": {"primary": "x", "secondary": None, "subtags": []},
-        "theory_school": {"primary": "y", "secondary": None, "status": "candidate"},
-        "empirical_scope": {"value": "scope:country-case", "polity": "Syria"},
-        "polities_touched": ["Syria"],
-        "artifact_refs": [],
-        "schema_version": "0.1",
-        "some_future_key": "must not leak in either",
-    }
-    projection = _tag_projection(frontmatter)
-
-    assert set(projection) == set(TAG_AXES) & set(frontmatter)
-    assert "chunk_text" not in projection
-    assert "source_meta" not in projection
-    assert "artifact_refs" not in projection
-    assert "schema_version" not in projection
-    assert "some_future_key" not in projection
-
-
-def test_snapshot_hash_changes_when_a_tag_changes(tmp_path: Path):
-    vault_dir = tmp_path / "vault"
-    prose_dir = vault_dir / "prose"
-    _write_note(prose_dir, "c1", field={"primary": "state", "secondary": []})
-    baseline = _build_vault_snapshot_hash(vault_dir)
-
-    _write_note(prose_dir, "c1", field={"primary": "violence", "secondary": []})
-    mutated = _build_vault_snapshot_hash(vault_dir)
-
-    assert baseline != mutated
+    assert _build_vault_snapshot_hash(vault_a, names_dir) == _build_vault_snapshot_hash(
+        vault_b, names_dir
+    )
 
 
 def test_snapshot_hash_unchanged_when_only_chunk_text_changes(tmp_path: Path):
-    """DEC-23: the pin tracks tagging, not prose -- editing chunk_text alone
-    (tags held fixed) must not move the hash."""
+    """DEC-23: the pin tracks ids and the name layer, not prose -- editing
+    chunk_text alone (chunk_id held fixed) must not move the hash."""
+    names_dir = tmp_path / "names"
+    _stage_names_dir(names_dir)
     vault_dir = tmp_path / "vault"
     prose_dir = vault_dir / "prose"
     _write_note(prose_dir, "c1")
-    baseline = _build_vault_snapshot_hash(vault_dir)
+    baseline = _build_vault_snapshot_hash(vault_dir, names_dir)
 
     prose_dir_path = prose_dir / "c1.md"
     frontmatter = {
@@ -439,67 +462,351 @@ def test_snapshot_hash_unchanged_when_only_chunk_text_changes(tmp_path: Path):
     prose_dir_path.write_text(
         render_note(frontmatter, "# Introduction\n\nbody\n"), encoding="utf-8"
     )
-    mutated = _build_vault_snapshot_hash(vault_dir)
+    mutated = _build_vault_snapshot_hash(vault_dir, names_dir)
+
+    assert baseline == mutated
+
+
+def test_snapshot_hash_unchanged_when_tag_axes_change(tmp_path: Path):
+    """D6/STRUCK: Phase A v1 deleted every `TAG_AXES` tag axis, so the
+    vault-snapshot hash no longer projects onto them at all -- changing
+    `field.primary` (the old projection's own regression case) must NOT
+    move the hash any more, the mirror image of the pre-#486 contract."""
+    names_dir = tmp_path / "names"
+    _stage_names_dir(names_dir)
+    vault_dir = tmp_path / "vault"
+    prose_dir = vault_dir / "prose"
+    _write_note(prose_dir, "c1", field={"primary": "state", "secondary": []})
+    baseline = _build_vault_snapshot_hash(vault_dir, names_dir)
+
+    _write_note(prose_dir, "c1", field={"primary": "violence", "secondary": []})
+    mutated = _build_vault_snapshot_hash(vault_dir, names_dir)
 
     assert baseline == mutated
 
 
 def test_snapshot_hash_changes_when_a_note_is_added(tmp_path: Path):
+    names_dir = tmp_path / "names"
+    _stage_names_dir(names_dir)
     vault_dir = tmp_path / "vault"
     prose_dir = vault_dir / "prose"
     _write_note(prose_dir, "c1")
-    baseline = _build_vault_snapshot_hash(vault_dir)
+    baseline = _build_vault_snapshot_hash(vault_dir, names_dir)
 
     _write_note(prose_dir, "c2")
-    widened = _build_vault_snapshot_hash(vault_dir)
+    widened = _build_vault_snapshot_hash(vault_dir, names_dir)
 
     assert baseline != widened
 
 
 def test_snapshot_hash_changes_when_a_note_is_removed(tmp_path: Path):
+    names_dir = tmp_path / "names"
+    _stage_names_dir(names_dir)
     vault_dir = tmp_path / "vault"
     prose_dir = vault_dir / "prose"
     _write_note(prose_dir, "c1")
     _write_note(prose_dir, "c2")
-    baseline = _build_vault_snapshot_hash(vault_dir)
+    baseline = _build_vault_snapshot_hash(vault_dir, names_dir)
 
     (prose_dir / "c2.md").unlink()
-    narrowed = _build_vault_snapshot_hash(vault_dir)
+    narrowed = _build_vault_snapshot_hash(vault_dir, names_dir)
 
     assert baseline != narrowed
 
 
+def test_snapshot_hash_changes_when_a_note_id_changes(tmp_path: Path):
+    """A note whose `chunk_id` itself changes (e.g. a re-chunk under D16)
+    is neither purely an add nor purely a remove -- assert it directly
+    rather than relying on the add/remove tests to imply it."""
+    names_dir = tmp_path / "names"
+    _stage_names_dir(names_dir)
+    vault_dir = tmp_path / "vault"
+    prose_dir = vault_dir / "prose"
+    note_path = _write_note(prose_dir, "c1_old")
+    baseline = _build_vault_snapshot_hash(vault_dir, names_dir)
+
+    note_path.unlink()
+    _write_note(prose_dir, "c1_new")
+    renamed = _build_vault_snapshot_hash(vault_dir, names_dir)
+
+    assert baseline != renamed
+
+
 def test_snapshot_hash_missing_vault_dir_raises_naming_the_path(tmp_path: Path):
+    names_dir = tmp_path / "names"
+    _stage_names_dir(names_dir)
     missing = tmp_path / "no-such-vault"
     with pytest.raises(MissingVaultDirError) as excinfo:
-        _build_vault_snapshot_hash(missing)
+        _build_vault_snapshot_hash(missing, names_dir)
     assert str(missing) in str(excinfo.value)
 
 
 def test_snapshot_hash_empty_prose_dir_is_a_stable_deterministic_value(tmp_path: Path):
     """A vault dir that exists but has no prose subdir yet (e.g. only
-    artifacts so far) hashes the empty projection rather than erroring."""
+    artifacts so far) hashes the empty chunk-id list rather than
+    erroring."""
+    names_dir = tmp_path / "names"
+    _stage_names_dir(names_dir)
     vault_dir = tmp_path / "vault"
     vault_dir.mkdir()
-    first = _build_vault_snapshot_hash(vault_dir)
-    second = _build_vault_snapshot_hash(vault_dir)
+    first = _build_vault_snapshot_hash(vault_dir, names_dir)
+    second = _build_vault_snapshot_hash(vault_dir, names_dir)
     assert first == second
+
+
+# --- The name layer (issue #486, D6) ---------------------------------------
+
+
+def test_load_canonical_names_returns_sorted_deduplicated_set(tmp_path: Path):
+    names_dir = tmp_path / "names"
+    _stage_names_dir(names_dir, names=("Zebra", "Aardvark", "Zebra"))
+
+    assert _load_canonical_names(names_dir) == ["Aardvark", "Zebra"]
+
+
+def test_load_canonical_names_missing_names_dir_raises(tmp_path: Path):
+    missing = tmp_path / "no-such-names"
+    with pytest.raises(MissingNamesDirError) as excinfo:
+        _load_canonical_names(missing)
+    assert str(missing) in str(excinfo.value)
+
+
+def test_load_canonical_names_missing_index_file_raises_naming_the_path(tmp_path: Path):
+    names_dir = tmp_path / "names"
+    names_dir.mkdir()
+    (names_dir / "alias_map.json").write_text(
+        json.dumps({"version": 1, "nodes": []}), encoding="utf-8"
+    )
+    (names_dir / "disagreements.jsonl").write_text("", encoding="utf-8")
+
+    index_path = names_dir / "index.json"
+    with pytest.raises(MissingNameIndexError) as excinfo:
+        _load_canonical_names(names_dir)
+    assert str(index_path) in str(excinfo.value)
+
+
+def test_load_canonical_names_malformed_json_raises(tmp_path: Path):
+    names_dir = tmp_path / "names"
+    names_dir.mkdir()
+    (names_dir / "index.json").write_text("{not valid json", encoding="utf-8")
+
+    with pytest.raises(MalformedNameIndexError):
+        _load_canonical_names(names_dir)
+
+
+def test_load_canonical_names_missing_names_key_raises(tmp_path: Path):
+    names_dir = tmp_path / "names"
+    names_dir.mkdir()
+    (names_dir / "index.json").write_text(json.dumps({"version": 1}), encoding="utf-8")
+
+    with pytest.raises(MalformedNameIndexError):
+        _load_canonical_names(names_dir)
+
+
+def test_load_canonical_names_non_mapping_index_raises(tmp_path: Path):
+    """Mirrors `_build_sources`'s own F2 non-mapping guard: valid JSON that
+    isn't a mapping (e.g. a bare top-level list) must not escape as a bare
+    `AttributeError` from `index.get(...)`."""
+    names_dir = tmp_path / "names"
+    names_dir.mkdir()
+    (names_dir / "index.json").write_text(json.dumps(["not", "a", "mapping"]), encoding="utf-8")
+
+    with pytest.raises(MalformedNameIndexError):
+        _load_canonical_names(names_dir)
+
+
+def test_load_alias_map_version_returns_the_version_field(tmp_path: Path):
+    names_dir = tmp_path / "names"
+    _stage_names_dir(names_dir, alias_map_version=7)
+
+    assert _load_alias_map_version(names_dir) == 7
+
+
+def test_load_alias_map_version_missing_file_raises_naming_the_path(tmp_path: Path):
+    names_dir = tmp_path / "names"
+    names_dir.mkdir()
+    (names_dir / "index.json").write_text(json.dumps({"version": 1, "names": []}), encoding="utf-8")
+    (names_dir / "disagreements.jsonl").write_text("", encoding="utf-8")
+
+    alias_map_path = names_dir / "alias_map.json"
+    with pytest.raises(MissingAliasMapError) as excinfo:
+        _load_alias_map_version(names_dir)
+    assert str(alias_map_path) in str(excinfo.value)
+
+
+def test_load_alias_map_version_malformed_json_raises(tmp_path: Path):
+    names_dir = tmp_path / "names"
+    names_dir.mkdir()
+    (names_dir / "alias_map.json").write_text("{not valid json", encoding="utf-8")
+
+    with pytest.raises(MalformedAliasMapError):
+        _load_alias_map_version(names_dir)
+
+
+def test_load_alias_map_version_non_mapping_raises(tmp_path: Path):
+    names_dir = tmp_path / "names"
+    names_dir.mkdir()
+    (names_dir / "alias_map.json").write_text(json.dumps(["not", "a", "mapping"]), encoding="utf-8")
+
+    with pytest.raises(MalformedAliasMapError):
+        _load_alias_map_version(names_dir)
+
+
+def test_count_non_null_disagreements_counts_only_non_null_records(tmp_path: Path):
+    names_dir = tmp_path / "names"
+    _stage_names_dir(
+        names_dir,
+        disagreements=(
+            ("name-a", "Author X says Y, author Z says not-Y"),
+            ("name-b", None),
+            ("name-c", "Another real disagreement"),
+        ),
+    )
+
+    assert _count_non_null_disagreements(names_dir) == 2
+
+
+def test_count_non_null_disagreements_missing_file_raises_naming_the_path(tmp_path: Path):
+    names_dir = tmp_path / "names"
+    names_dir.mkdir()
+    (names_dir / "index.json").write_text(json.dumps({"version": 1, "names": []}), encoding="utf-8")
+    (names_dir / "alias_map.json").write_text(
+        json.dumps({"version": 1, "nodes": []}), encoding="utf-8"
+    )
+
+    disagreements_path = names_dir / "disagreements.jsonl"
+    with pytest.raises(MissingDisagreementsError) as excinfo:
+        _count_non_null_disagreements(names_dir)
+    assert str(disagreements_path) in str(excinfo.value)
+
+
+def test_count_non_null_disagreements_malformed_line_raises(tmp_path: Path):
+    """A torn/corrupt line that is NOT the checkpoint's last line is genuine
+    corruption (`axial.checkpoint.load_checkpoint_records`'s own healing
+    rule only forgives a torn FINAL line, the signature of a hard kill
+    mid-append) -- raises naming the file and the 1-indexed line number."""
+    names_dir = tmp_path / "names"
+    _stage_names_dir(names_dir)
+    (names_dir / "disagreements.jsonl").write_text(
+        'not json at all\n{"name_key": "a", "disagreement": null}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(MalformedDisagreementsError):
+        _count_non_null_disagreements(names_dir)
+
+
+# --- The vault-snapshot hash covers the name layer (issue #486, D6) --------
+
+
+def test_snapshot_hash_changes_when_the_disagreement_count_changes(tmp_path: Path):
+    vault_dir = tmp_path / "vault"
+    _write_note(vault_dir / "prose", "c1")
+
+    names_dir = tmp_path / "names"
+    _stage_names_dir(names_dir, disagreements=(("name-a", None),))
+    baseline = _build_vault_snapshot_hash(vault_dir, names_dir)
+
+    _stage_names_dir(names_dir, disagreements=(("name-a", "a real disagreement now"),))
+    mutated = _build_vault_snapshot_hash(vault_dir, names_dir)
+
+    assert baseline != mutated
+
+
+def test_snapshot_hash_changes_when_the_alias_map_version_changes(tmp_path: Path):
+    vault_dir = tmp_path / "vault"
+    _write_note(vault_dir / "prose", "c1")
+
+    names_dir = tmp_path / "names"
+    _stage_names_dir(names_dir, alias_map_version=1)
+    baseline = _build_vault_snapshot_hash(vault_dir, names_dir)
+
+    _stage_names_dir(names_dir, alias_map_version=2)
+    mutated = _build_vault_snapshot_hash(vault_dir, names_dir)
+
+    assert baseline != mutated
+
+
+def test_snapshot_hash_changes_when_the_canonical_name_set_changes(tmp_path: Path):
+    vault_dir = tmp_path / "vault"
+    _write_note(vault_dir / "prose", "c1")
+
+    names_dir = tmp_path / "names"
+    _stage_names_dir(names_dir, names=("United States",))
+    baseline = _build_vault_snapshot_hash(vault_dir, names_dir)
+
+    _stage_names_dir(names_dir, names=("United States", "Syria"))
+    mutated = _build_vault_snapshot_hash(vault_dir, names_dir)
+
+    assert baseline != mutated
+
+
+def test_snapshot_hash_unchanged_when_index_generated_at_moves(tmp_path: Path):
+    """`index.json`'s own `generated_at` moves on every rebuild whether or
+    not `names` changed -- it must never enter the hash."""
+    vault_dir = tmp_path / "vault"
+    _write_note(vault_dir / "prose", "c1")
+
+    names_dir = tmp_path / "names"
+    _stage_names_dir(names_dir, index_generated_at="2026-01-01T00:00:00Z")
+    baseline = _build_vault_snapshot_hash(vault_dir, names_dir)
+
+    _stage_names_dir(names_dir, index_generated_at="2099-12-31T23:59:59Z")
+    mutated = _build_vault_snapshot_hash(vault_dir, names_dir)
+
+    assert baseline == mutated
+
+
+def test_snapshot_hash_unchanged_when_alias_map_generated_at_moves(tmp_path: Path):
+    vault_dir = tmp_path / "vault"
+    _write_note(vault_dir / "prose", "c1")
+
+    names_dir = tmp_path / "names"
+    _stage_names_dir(names_dir, alias_map_generated_at="2026-01-01T00:00:00Z")
+    baseline = _build_vault_snapshot_hash(vault_dir, names_dir)
+
+    _stage_names_dir(names_dir, alias_map_generated_at="2099-12-31T23:59:59Z")
+    mutated = _build_vault_snapshot_hash(vault_dir, names_dir)
+
+    assert baseline == mutated
+
+
+def test_snapshot_hash_missing_names_dir_raises(tmp_path: Path):
+    vault_dir = tmp_path / "vault"
+    _write_note(vault_dir / "prose", "c1")
+    missing_names_dir = tmp_path / "no-such-names"
+
+    with pytest.raises(MissingNamesDirError) as excinfo:
+        _build_vault_snapshot_hash(vault_dir, missing_names_dir)
+    assert str(missing_names_dir) in str(excinfo.value)
+
+
+def test_snapshot_hash_vault_error_raised_before_names_dir_is_ever_read(tmp_path: Path):
+    """A malformed vault fails loudly on its own terms even when the name
+    layer is entirely missing -- `_collect_chunk_ids` runs first."""
+    vault_dir = tmp_path / "no-such-vault"
+    missing_names_dir = tmp_path / "also-no-such-names"
+
+    with pytest.raises(MissingVaultDirError):
+        _build_vault_snapshot_hash(vault_dir, missing_names_dir)
 
 
 # --- write_pin: field equality, diff-stable serialization (plan test 7) ----
 
 
-def _stage_fixture(root: Path) -> tuple[Path, Path, Path]:
+def _stage_fixture(root: Path) -> tuple[Path, Path, Path, Path]:
     envelopes_dir = root / "data" / "envelopes"
     vault_dir = root / "data" / "vault"
     sources_dir = root / "data" / "sources"
+    names_dir = root / "data" / "names"
     envelope_path, source_id = _write_envelope_for_source(envelopes_dir, sources_dir, "book-a")
     _write_note(vault_dir / "prose", f"{source_id}_000_intro_001")
-    return vault_dir, envelopes_dir, sources_dir
+    _stage_names_dir(names_dir)
+    return vault_dir, envelopes_dir, sources_dir, names_dir
 
 
 def test_write_pin_two_runs_compare_equal_field_by_field_and_sorted_keys(tmp_path: Path):
-    vault_dir, envelopes_dir, sources_dir = _stage_fixture(tmp_path)
+    vault_dir, envelopes_dir, sources_dir, names_dir = _stage_fixture(tmp_path)
     evals_dir = tmp_path / "evals" / "corpus_pin"
 
     first_path = write_pin(
@@ -507,6 +814,7 @@ def test_write_pin_two_runs_compare_equal_field_by_field_and_sorted_keys(tmp_pat
         vault_dir=vault_dir,
         envelopes_dir=envelopes_dir,
         sources_dir=sources_dir,
+        names_dir=names_dir,
         evals_dir=evals_dir,
     )
     first = json.loads(first_path.read_text(encoding="utf-8"))
@@ -516,6 +824,7 @@ def test_write_pin_two_runs_compare_equal_field_by_field_and_sorted_keys(tmp_pat
         vault_dir=vault_dir,
         envelopes_dir=envelopes_dir,
         sources_dir=sources_dir,
+        names_dir=names_dir,
         evals_dir=evals_dir,
     )
     second = json.loads(second_path.read_text(encoding="utf-8"))
@@ -533,7 +842,7 @@ def test_write_pin_two_runs_compare_equal_field_by_field_and_sorted_keys(tmp_pat
 
 
 def test_write_pin_creates_evals_dir_when_absent(tmp_path: Path):
-    vault_dir, envelopes_dir, sources_dir = _stage_fixture(tmp_path)
+    vault_dir, envelopes_dir, sources_dir, names_dir = _stage_fixture(tmp_path)
     evals_dir = tmp_path / "brand" / "new" / "evals" / "corpus_pin"
     assert not evals_dir.exists()
 
@@ -542,6 +851,7 @@ def test_write_pin_creates_evals_dir_when_absent(tmp_path: Path):
         vault_dir=vault_dir,
         envelopes_dir=envelopes_dir,
         sources_dir=sources_dir,
+        names_dir=names_dir,
         evals_dir=evals_dir,
     )
 
@@ -553,7 +863,7 @@ def test_write_pin_regenerating_the_envelope_does_not_move_content_hash(tmp_path
     """End-to-end F1 regression at the write_pin level: rewriting the
     envelope (simulating a routine LLM regen) with the raw source held
     fixed must not move that source's content_hash in the written pin."""
-    vault_dir, envelopes_dir, sources_dir = _stage_fixture(tmp_path)
+    vault_dir, envelopes_dir, sources_dir, names_dir = _stage_fixture(tmp_path)
     evals_dir = tmp_path / "evals" / "corpus_pin"
 
     first_path = write_pin(
@@ -561,6 +871,7 @@ def test_write_pin_regenerating_the_envelope_does_not_move_content_hash(tmp_path
         vault_dir=vault_dir,
         envelopes_dir=envelopes_dir,
         sources_dir=sources_dir,
+        names_dir=names_dir,
         evals_dir=evals_dir,
     )
     first = json.loads(first_path.read_text(encoding="utf-8"))
@@ -575,11 +886,52 @@ def test_write_pin_regenerating_the_envelope_does_not_move_content_hash(tmp_path
         vault_dir=vault_dir,
         envelopes_dir=envelopes_dir,
         sources_dir=sources_dir,
+        names_dir=names_dir,
         evals_dir=evals_dir,
     )
     second = json.loads(second_path.read_text(encoding="utf-8"))
 
     assert first["sources"] == second["sources"]
+
+
+def test_write_pin_manifest_never_contains_a_canonical_name(tmp_path: Path):
+    """§7.12/D6: the hash COVERS the canonical name set; the written
+    manifest must never carry the names themselves (DEC-23 extended to the
+    name layer -- a canonical name is a surface form a source wrote)."""
+    vault_dir, envelopes_dir, sources_dir, names_dir = _stage_fixture(tmp_path)
+    sentinel_name = "SENTINEL_CANONICAL_NAME_9f3a21_Muhanad_Test_Surface_Form"
+    _stage_names_dir(names_dir, names=(sentinel_name,))
+    evals_dir = tmp_path / "evals" / "corpus_pin"
+
+    path = write_pin(
+        "baseline",
+        vault_dir=vault_dir,
+        envelopes_dir=envelopes_dir,
+        sources_dir=sources_dir,
+        names_dir=names_dir,
+        evals_dir=evals_dir,
+    )
+
+    raw = path.read_text(encoding="utf-8")
+    assert sentinel_name not in raw
+
+
+def test_write_pin_missing_names_dir_raises_and_writes_nothing(tmp_path: Path):
+    vault_dir, envelopes_dir, sources_dir, names_dir = _stage_fixture(tmp_path)
+    evals_dir = tmp_path / "evals" / "corpus_pin"
+    missing_names_dir = tmp_path / "no-such-names"
+
+    with pytest.raises(MissingNamesDirError):
+        write_pin(
+            "baseline",
+            vault_dir=vault_dir,
+            envelopes_dir=envelopes_dir,
+            sources_dir=sources_dir,
+            names_dir=missing_names_dir,
+            evals_dir=evals_dir,
+        )
+
+    assert not (evals_dir / "baseline.json").exists()
 
 
 # --- Sources-dir resolution delegates to axial.paths (issue #281) ----------

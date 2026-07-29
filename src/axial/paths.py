@@ -79,6 +79,25 @@ def default_sources_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Pat
     return _read_configured_dir(config_path, "sources_dir", SOURCES_DIR)
 
 
+# The default location of the name layer (§7.16): `index.json`,
+# `alias_map.json`, `disagreements.jsonl` -- retrieval substrate, and (issue
+# #486, specs/PHASE-B.md §7.12, D6) part of what the corpus-pin manifest's
+# `vault_snapshot_hash` covers. `axial.names`/`axial.merge_names`/
+# `axial.gather` each already assume this same literal for their own default
+# path constants; this module doesn't import any of them (their own import
+# chains pull in the LLM/clustering stack this dependency-light module
+# exists to avoid -- see the module docstring), so the value is repeated
+# here rather than re-exported, the same way `axial.reconcile`/`axial.run`
+# already repeat `SOURCES_DIR`'s own literal.
+NAMES_DIR = Path("data/names")
+
+
+def default_names_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
+    """Read `paths.names_dir` from `config_path`, falling back to
+    `NAMES_DIR` when the file or key is absent."""
+    return _read_configured_dir(config_path, "names_dir", NAMES_DIR)
+
+
 def default_analyses_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
     """Read `paths.analyses_dir` from `config_path`, falling back to
     `ANALYSES_DIR` when the file or key is absent."""
