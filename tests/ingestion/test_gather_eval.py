@@ -304,7 +304,7 @@ def test_a_judgment_is_persisted_and_reused_without_a_second_call(tmp_path):
 
     (judgment,) = _judgments(tmp_path)
     assert judgment["name_key"] == "war-making-key-1"
-    assert judgment["eval_key"] == eval_key(fixture["disagreement"])
+    assert judgment["eval_key"] == eval_key(fixture["disagreement"], second)
 
 
 def test_the_checkpoint_re_asks_when_gather_redraws_different_text_over_unchanged_packets(tmp_path):
@@ -330,6 +330,55 @@ def test_the_checkpoint_re_asks_when_gather_redraws_different_text_over_unchange
     assert len(second.judge_prompts) == 1, "changed disagreement text must be re-asked"
     assert result["asked"] == 1
     assert len(_judgments(root)) == 2, "the stale judgment stays on disk; a new one is appended"
+
+
+def test_the_checkpoint_re_asks_when_the_judge_prompt_template_changes(tmp_path, monkeypatch):
+    """Coordinator-pinned: `eval_key` used to key on the disagreement entry
+    alone, with nothing identifying the JUDGE. Under that key, fixing a bad
+    judge prompt and re-scoring would read every verdict straight back out
+    of the checkpoint and report the OLD judge's numbers as the new one's --
+    the exact trap `merge_decisions.jsonl` fell into (DEC-51, #449: a
+    prompt/model change measured zero corpus effect because the decision log
+    was keyed on rendered members alone). An unchanged entry judged under a
+    changed template must be re-asked even though its own disagreement text
+    never moved."""
+    import axial.gather_eval as gather_eval_module
+
+    _build_fixture(tmp_path)
+    first = FakeJudgeClient(judge_responses=[_judge_response(True, True)])
+    first_result = _score(tmp_path, first)
+    assert first_result["asked"] == 1
+
+    # Simulate a judge-prompt edit without touching the disagreement entry
+    # itself -- the fingerprint is what must change, not the input side.
+    monkeypatch.setattr(
+        gather_eval_module, "_JUDGE_TEMPLATE_FINGERPRINT", "a-different-fingerprint"
+    )
+
+    second = FakeJudgeClient(judge_responses=[_judge_response(True, True)])
+    second_result = _score(tmp_path, second)
+
+    assert len(second.judge_prompts) == 1, "a changed judge prompt template must re-ask the entry"
+    assert second_result["asked"] == 1
+    assert len(_judgments(tmp_path)) == 2, "the stale judgment stays on disk; a new one is appended"
+
+
+def test_the_checkpoint_re_asks_when_the_judge_model_changes(tmp_path):
+    """Same trap, the other half of the judge fingerprint: a model swap on
+    `GATHER_EVAL_PASS_NAME` with the prompt template and the disagreement
+    text both unchanged must still be re-asked."""
+    _build_fixture(tmp_path)
+    first = FakeJudgeClient(judge_responses=[_judge_response(True, True)])
+    first_result = _score(tmp_path, first)
+    assert first_result["asked"] == 1
+
+    second = FakeJudgeClient(judge_responses=[_judge_response(True, True)])
+    second.model_for_pass = lambda pass_name=None: "a-different-model"
+    second_result = _score(tmp_path, second)
+
+    assert len(second.judge_prompts) == 1, "a changed judge model must re-ask the entry"
+    assert second_result["asked"] == 1
+    assert len(_judgments(tmp_path)) == 2
 
 
 # -- the null re-ask bypasses the checkpoint (pinned directly) ---------------

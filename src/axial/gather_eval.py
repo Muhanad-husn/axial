@@ -28,11 +28,18 @@ re-runnable set precisely because this reads what is already on disk.
 `chunk_ids` that reconstruct it), what came back (`attribution_grounded`,
 `conflict_grounded`, `explanation`), and the `name_key` that ties it back to
 the entry. That record IS the resume checkpoint -- one file, not two --
-content-keyed the way `axial.gather.GatherJob.key` is: `eval_key` hashes the
-disagreement record's own `name_key` together with its `disagreement` text,
-so an unchanged entry never re-asks and a re-run of Gather that draws a
-different text (DEC-54: `France` flipped null<->finding on identical packets
-at temperature 1) always does.
+content-keyed the way `axial.gather.GatherJob.key` is, but on BOTH sides of
+the judgment, not just the input: `eval_key` hashes the disagreement
+record's `name_key` and `disagreement` text (the input -- unchanged text
+never re-asks, and a Gather re-run that draws different text over the same
+packets, DEC-54's `France`, always does) TOGETHER WITH the judge prompt
+template's own text and the judge's resolved model (the judge itself --
+changing either always re-asks). Leaving the judge out of the key is a
+known, recorded trap here: `axial.merge_names`' own decision log is
+content-keyed on rendered members alone, so a prompt or model change does
+NOT re-decide anything (DEC-51), and #449 shipped a merge change that
+measured zero corpus effect for exactly that reason. See `eval_key`'s own
+docstring for the full list of what does and does not invalidate.
 
 **Calibration before the full run.** `run_gather_eval_sheet` emits a
 ~30-entry sheet, stratified across `MEMBER_COUNT_BANDS`, in the shape
@@ -239,6 +246,13 @@ false>, "explanation": "<one or two sentences, citing the passages where \
 useful>"}}
 """
 
+# A fingerprint of the judge prompt TEXT itself, not a hand-maintained
+# version constant -- computed once at import time, so editing
+# `_JUDGE_PROMPT_TEMPLATE` changes this automatically and nobody has to
+# remember to bump anything. `eval_key` folds this into the checkpoint key
+# (see its own docstring for why the input side alone is not enough).
+_JUDGE_TEMPLATE_FINGERPRINT = hashlib.sha256(_JUDGE_PROMPT_TEMPLATE.encode("utf-8")).hexdigest()
+
 
 def compose_judge_prompt(canonical: str, packets: list[MemberPacket], disagreement: str) -> str:
     """One entry's judge prompt: the same member packets Gather itself was
@@ -275,16 +289,42 @@ def parse_judge_response(raw: str) -> dict[str, Any]:
     }
 
 
-def eval_key(record: dict[str, Any]) -> str:
+def eval_key(record: dict[str, Any], client: LLMClient) -> str:
     """This judgment's own content-addressed checkpoint key (D17): a hash of
-    the disagreement record's `name_key` (itself a hash of the rendered
-    packets Gather saw, `axial.gather.GatherJob.key`) together with the
-    disagreement TEXT. The text alone can change across a Gather re-run over
-    unchanged packets (DEC-54: `France` flipped null<->finding on identical
-    packets at temperature 1), so `name_key` alone would under-invalidate;
-    hashing both means unchanged input never re-asks and changed input
-    always does, mirroring `GatherJob.key`'s own reasoning exactly."""
-    payload = f"{record['name_key']}\n{record['disagreement']}"
+    what was shown to the judge AND who the judge was, on both sides.
+
+    Re-asks (INPUT side): the disagreement record's `name_key` (itself a
+    hash of the rendered packets Gather saw, `axial.gather.GatherJob.key`)
+    together with the disagreement TEXT. The text alone can change across a
+    Gather re-run over unchanged packets (DEC-54: `France` flipped
+    null<->finding on identical packets at temperature 1), so `name_key`
+    alone would under-invalidate.
+
+    Re-asks (JUDGE side): the judge prompt template's own text
+    (`_JUDGE_TEMPLATE_FINGERPRINT`, hashed fresh at import time so editing
+    the template invalidates automatically -- nobody has to remember to
+    bump a version number) and `client`'s resolved model for
+    `GATHER_EVAL_PASS_NAME`. Leaving the judge out of the key is a known,
+    recorded trap in this repo: `axial.merge_names`' own decision log
+    (`merge_decisions.jsonl`) is content-keyed on rendered members alone, so
+    a prompt-template or model change does NOT re-decide anything (DEC-51),
+    and #449 shipped a merge change that measured zero corpus effect
+    because of exactly this gap. Without this half, changing the judge
+    prompt to fix a real problem would read every verdict straight back out
+    of the checkpoint and report the OLD judge's numbers as the new one's --
+    the founder would see an unchanged grounding rate and conclude the fix
+    did nothing.
+
+    Does NOT invalidate: which config file supplied the resolved model
+    (`model_by_pass` vs. `llm_tier` fallback), reasoning effort, temperature,
+    or anything else `OpenRouterClient` sends alongside the prompt -- only
+    the template text and the resolved model name are in the key. A change
+    to reasoning/temperature that is meant to move the judge's answers
+    without touching the model or the prompt text will not force a re-ask by
+    itself; deleting `gather_eval.jsonl` (or a fresh `judgments_path`) is the
+    way to force one when that is what is wanted."""
+    judge_model = client.model_for_pass(GATHER_EVAL_PASS_NAME)
+    payload = f"{record['name_key']}\n{record['disagreement']}\n{_JUDGE_TEMPLATE_FINGERPRINT}\n{judge_model}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -307,7 +347,7 @@ def _judge_one(
     member_count = _member_count(record)
     judgment = {
         "name_key": record["name_key"],
-        "eval_key": eval_key(record),
+        "eval_key": eval_key(record, client),
         "canonical": record["canonical"],
         "member_count": member_count,
         "band": member_count_band(member_count),
@@ -627,15 +667,19 @@ def run_gather_eval_score(
 
     answers_by_chunk_id, author_year = load_gather_context(answers_dir, source_meta_dir)
 
+    # `eval_key` folds in the judge's own resolved model (below), so the
+    # client is needed just to determine what is pending -- it cannot wait
+    # until `to_attempt` is known to be non-empty the way `axial.gather.
+    # run_gather`'s own lazy build does.
+    if client is None:
+        client = get_client(config_path=config_path)
+
     judgments_by_key = load_judgments(judgments_path)
-    pending = [record for record in scoreable if eval_key(record) not in judgments_by_key]
+    pending = [record for record in scoreable if eval_key(record, client) not in judgments_by_key]
     pending.sort(key=lambda r: r["canonical"])
     to_attempt = pending if limit is None else pending[:limit]
 
     null_sample = seeded_sample(null_entries, null_sample_size, seed)
-
-    if client is None and (to_attempt or null_sample):
-        client = get_client(config_path=config_path)
 
     called = 0
     failed = 0
@@ -663,16 +707,13 @@ def run_gather_eval_score(
                 judgments_by_key[judgment["eval_key"]] = judgment
                 called += 1
 
-    live_keys = {eval_key(record) for record in scoreable}
+    live_keys = {eval_key(record, client) for record in scoreable}
     scored = [
         judgment for judgment in judgments_by_key.values() if judgment["eval_key"] in live_keys
     ]
 
     grounding_rate, grounding_by_band, conflict_rate = _summarize(scored)
     calibration = _score_calibration(calibration_dir, judgments_by_key)
-    # `_recheck_nulls` returns before ever touching `client` when
-    # `null_sample` is empty, so a `None` client (never built above, because
-    # neither `to_attempt` nor `null_sample` needed one) is safe here.
     null_result = _recheck_nulls(null_sample, answers_by_chunk_id, author_year, client)
 
     failures = sorted((j for j in scored if not j["grounded"]), key=lambda j: j["canonical"])
