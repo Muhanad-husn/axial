@@ -238,7 +238,8 @@ sequencing is visible, because most of it competes for one scarce resource.
 | #460 | Reinstate tier-3 passage evidence: escalation 54.3% → 15.4%, extra merges 75% correct | — | blocked, founder picks the scope — and see the escalation composition below |
 | #461 | 5,629 escalated surfaces are a dead end; nothing reads them | C | **shipped** (PR #464), listing run |
 | #462 | Sample the 18,034 pairs token containment proposes and the blocker never shows | D | ready, no `src/` change |
-| #447 | D15 has expired: Phase A v1 has no measure of quality | E | design, founder |
+| #447 | D15 has expired: Phase A v1 has no measure of quality | E | **decided** (DEC-54) — the unit is the Gather disagreement entry, the reference is grounding against D17 provenance, calibrated once against the founder |
+| #478 | The instrument #447 chose: `axial gather-eval sheet` / `score` | E | **shipped** (PR #479), not yet run on the corpus |
 | #469 | Merge parse failures scale with worker count, 6 → 17 across one sweep | B | new, from #457's sweep |
 
 ### What the 2026-07-29 pass actually settled
