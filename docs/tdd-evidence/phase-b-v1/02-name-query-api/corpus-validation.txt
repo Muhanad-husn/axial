@@ -1,0 +1,125 @@
+# Name query API (#487) — real-corpus validation, LLM-free
+
+**Command:** `python scratchpad/validate_487.py` run from `D:/axial` (the main
+checkout, where `data/` lives) with the branch's code first on `sys.path`:
+`feat/phase-b-v1/02-name-query-api` at `19cbf8d`. Read-only; **zero model calls, $0**
+(the only model loaded is the local MiniLM encoder the store names in its own
+`similarity_manifest.json`).
+
+Raw output in `console.log`, machine-readable in `run.json`.
+
+## Corpus scale
+
+| | |
+|---|---:|
+| prose notes | 6,148 |
+| name pages | 62,821 |
+| `coverage_count()` entries | 62,821 |
+| sum of all `member_count` | 163,380 |
+| the whole table rendered one line per name | **2.08 MB** |
+
+Densest names: Syria 962, United States 903, United Kingdom 861, France 860,
+Egypt 675, Europe 651, Germany 519, Lebanon 507, World War I 496, Iraq 445.
+
+## Resolution: 14 of 17 queries land on tiers 1–3, at zero cost
+
+| query | resolves to | tier | members |
+|---|---|---|---:|
+| Tilly | Charles Tilly | alias | 146 |
+| Charles Tilly | Charles Tilly | exact | 146 |
+| Agamben | Giorgio Agamben | alias | 9 |
+| Bayat | Asef Bayat | alias | 18 |
+| Batatu | Hanna Batatu | alias | 30 |
+| Caspersen | N. Caspersen | alias | 17 |
+| Kalyvas | Kalyvas | exact | 31 |
+| SDF | SDF | exact | 7 |
+| Rojava | Rojava | exact | 3 |
+| PYD | PYD | exact | 14 |
+| state of exception | state of exception | exact | 27 |
+| bare life | bare life | exact | 1 |
+| Autonomous Administration of North and East Syria | (same) | exact | 2 |
+| Uğur Ümit Üngör | Uğur Ümit Üngör | exact | 2 |
+| **Ungor** | **Uğur Ümit Üngör** | **embedding** | 2 |
+| **AANES** | **Aarts, AANS, Aas Rustad, Rennes, AFAD** | **embedding** | 1 each |
+| zzqqx nonexistent scholar | `[]` | — | — |
+
+Only two queries reach tier 4. One of them is the reason tier 4 exists (`Ungor` →
+`Uğur Ümit Üngör`, which no string rule reaches because Phase A deliberately does
+not fold diacritics). The other is the problem below.
+
+## The 0.5 floor fails its own observable, and no floor fixes the case
+
+Raw cosine of the top 5 vectors, floor ignored:
+
+| query | top 5 (score → surface → canonical) |
+|---|---|
+| Tilly | 1.0000 `Tilly`→Charles Tilly · 0.8502 `Tilly 2006` · 0.8497 `Tilly, Richard` · 0.8457 `C. Tilly`→Charles Tilly · 0.8345 `Tilly 1985` |
+| **Ungor** | **0.7752 `Uğur Ümit Üngör`** · 0.7673 `Halil Üngör` · 0.6813 `Unger` · 0.6244 `UNSCOB` · 0.6090 `UN` |
+| **AANES** | **0.7062 `Aarts`** · 0.6716 `AANS` · 0.6200 `Aas Rustad` · 0.6140 `Rennes` · 0.6070 `AFAD` |
+| Autonomous Administration of North and East Syria | 1.0000 exact · 0.9078 `Autonomous Administration of Northeast Syria (AANS)`→same canonical · 0.7937 `Syrian administration`→Syrian government |
+| zzqqx nonexistent scholar | 0.4518 `unnamed scholar` · 0.4436 `Zizya` · 0.4180 `Z.J.` (all cut) |
+
+Two things follow.
+
+**At 0.5, `find_names("AANES")` returns five wrong names** — `Aarts` (a person),
+`Aas Rustad` (a person), `Rennes` (a place). Spec §8 P0-2 requires `[]`. The
+observable fails as written.
+
+**The only floor that satisfies both stated observables is (0.7062, 0.7752].** A
+0.07-wide window, read off exactly two cases. That is the hand-tuned constant the
+tripwire names, and #268 already paid three review rounds for one.
+
+**And the AANES premise is false: the corpus holds the entity.**
+`Autonomous Administration of North and East Syria` is an exact hit with 2 members,
+`kind: institution/group`, and it carries the alias
+`Autonomous Administration of Northeast Syria (AANS)`. There is also a *separate*,
+fragmented `AANS` node with 1 member that never folded into it. So the honest
+answer for "AANES" is that name page — not `[]`, and not `Aarts`. What actually
+fails is acronym-to-expansion: MiniLM scores `AANES` against the full phrase
+below every piece of lexical noise, because an embedding model is not a string
+matcher. That is a name-layer gap (the #460 fragmentation family), demonstrated
+here for the first time.
+
+## The graph tools work, and the graph is real
+
+| call | result |
+|---|---|
+| `get_name('Charles Tilly')` | 146 members, all parsed; disagreement present |
+| `get_name('Michael Mann')` | 378 members, all parsed; disagreement over 8 named scholars (Laitin, Trentmann, Poggi, Hall, Schroeder, Haugaard, Smith, Wimmer) |
+| `name_neighbors('Charles Tilly', 10)` | Michael Mann (44 shared notes), France (39), Europe (38), United Kingdom (24), Max Weber (21), Middle East (19), World War I (19), Theda Skocpol (17), Africa (16), nation-state (16) |
+| `who_cites('Charles Tilly')` | 58 notes, with `support`/`foil`/`authority` stance |
+| `who_argues_against('Charles Tilly')` | 2 notes, `position_of` `bellicist` / `bellicist paradigm` |
+| `who_cites('Michael Mann')` | 76 notes |
+| `who_argues_against('Michael Mann')` | 26 notes |
+
+`hall-2006` cites `Mann` as both `foil` and `support` from the same note — the
+author-stated stance is per citation, not per note, and the tool preserves that.
+
+Determinism held on every repeated call: `find_names`, `get_name` member order and
+`who_cites` order were byte-identical across two calls in one process.
+
+## Latency: three cold indexes, ~3.3 minutes, then microseconds
+
+| index | cold | warm |
+|---|---:|---:|
+| name pages (`coverage_count`) | 37–63 s | — |
+| note answers (`name_neighbors` / `who_cites` / `who_argues_against`) | 118 s | 0.10–0.14 s |
+| encoder + 78,198 vectors (tier 4 only) | 41 s | ~3 s per query |
+| tiers 1–3 | — | 0.00 s |
+
+Each is built once per process. A brief run that touches all three pays ~3.3
+minutes before the agentic loop does anything; every later call is effectively
+free. Tiers 1–3 never load the encoder, so 14 of these 17 queries cost nothing.
+
+## Next steps
+
+1. **The floor and the AANES observable need a founder decision** — the measured
+   window is too narrow to tune and the case it was written for does not exist as
+   described.
+2. **`axial brief run` cannot ship with the whole table in its prompt.** The
+   interrogation pre-pass renders every `coverage_count()` entry: 62,821 lines,
+   2.08 MB, roughly 500k tokens, plus 37–63 s to compute, on every run. It
+   rendered nothing before this slice, because the old per-polity count returned 0
+   entries. Nobody's slice owns re-basing it.
+3. **File the acronym gap** against the name layer with these numbers — it is the
+   demonstrated failure the plan's "Out of scope" note names as the trigger.
