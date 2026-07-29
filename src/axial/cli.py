@@ -69,6 +69,7 @@ from axial.llm import (
     LLMError,
     get_client,
 )
+from axial.gather import DEFAULT_WORKERS as GATHER_DEFAULT_WORKERS, GatherError, run_gather
 from axial.materialize import MaterializeError, run_materialize
 from axial.merge_names import DEFAULT_WORKERS as MERGE_DEFAULT_WORKERS
 from axial.merge_names import (
@@ -430,6 +431,42 @@ def build_parser() -> argparse.ArgumentParser:
             "name-page -> note only). Re-running against an unchanged alias map "
             "rewrites nothing; a changed one rewrites only the affected name "
             "pages, never a prose note"
+        ),
+    )
+
+    names_gather_parser = names_subparsers.add_parser(
+        "gather",
+        help=(
+            "Phase A v1 slice 07 (issue #412): Gather -- ask the model what "
+            "the authors gathered at each name actually disagree about, from a "
+            "packet code assembles per member note (author, year, the "
+            "one-sentence claim, whose position it is, who it argues against) "
+            "under a hard character budget in code (D12; a name over it is "
+            "split into batches and a short final call merges the findings). "
+            "Writes the disagreement plus name-to-name links onto each "
+            "data/vault/names/ page, and a per-name provenance record to "
+            "data/names/disagreements.jsonl, so a re-run reproduces the same "
+            "text and resumes where it stopped. Never reads a note's full "
+            "text (D13)"
+        ),
+    )
+    names_gather_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help=(
+            "stop after this many names this run, still writing every page a "
+            "record already exists for -- a bounded, cheap first look before "
+            "committing to a full pass"
+        ),
+    )
+    names_gather_parser.add_argument(
+        "--workers",
+        type=int,
+        default=GATHER_DEFAULT_WORKERS,
+        help=(
+            "bounded concurrent per-name workers (this pass is I/O-bound, like "
+            f"`names merge`) (default: {GATHER_DEFAULT_WORKERS})"
         ),
     )
 
@@ -1742,6 +1779,31 @@ def _names_materialize() -> int:
     return 0
 
 
+def _names_gather(limit: int | None, workers: int) -> int:
+    try:
+        result = run_gather(limit=limit, workers=workers)
+    except (MaterializeError, GatherError, LLMError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    for key in (
+        "names",
+        "names_skipped_single_member",
+        "names_gathered",
+        "asked",
+        "reused",
+        "failed",
+        "batch_calls",
+        "merge_calls",
+        "pages_written",
+        "workers",
+        "vault_dir",
+        "disagreements_path",
+    ):
+        print(f"{key}: {result[key]}")
+    return 0
+
+
 def _names_escalations(
     decisions_path: str | None, inventory_path: str | None, as_json: bool
 ) -> int:
@@ -1933,6 +1995,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "names" and args.names_command == "materialize":
         return _names_materialize()
+
+    if args.command == "names" and args.names_command == "gather":
+        return _names_gather(args.limit, args.workers)
 
     if args.command == "names" and args.names_command == "escalations":
         return _names_escalations(args.decisions_path, args.inventory_path, args.as_json)

@@ -425,6 +425,24 @@ def member_chunk_ids_for_node(
     return sorted(chunk_ids)
 
 
+def name_page_paths(vault_dir: Path, nodes: list[dict[str, Any]]) -> dict[str, Path]:
+    """`{canonical: name page path}` for every node, assigned in ONE
+    deterministic pass (nodes sorted by canonical, one shared `used`
+    filename set) -- because `name_page_filename`'s collision guard is
+    order-dependent: two canonicals that sanitize to the same filename get
+    resolved in the order they are processed.
+
+    Shared by `materialize_names`, which writes those pages, and by
+    `axial.gather`, which has to find the exact same file to append its
+    disagreement section to. Deriving it twice from the same node list is
+    what would let the two drift apart on a collision."""
+    used: set[str] = set()
+    return {
+        node["canonical"]: name_page_path(vault_dir, node["canonical"], used)
+        for node in sorted(nodes, key=lambda node: node["canonical"])
+    }
+
+
 def build_name_frontmatter(
     canonical: str, kind: str | None, aliases: list[str], member_count: int
 ) -> dict[str, Any]:
@@ -541,7 +559,7 @@ def materialize_names(
     names_dir.mkdir(parents=True, exist_ok=True)
     existing = {path for path in names_dir.glob("*.md")}
     kept: set[Path] = set()
-    used_filenames: set[str] = set()
+    page_paths = name_page_paths(vault_dir, nodes)
 
     written = 0
     unchanged = 0
@@ -573,7 +591,7 @@ def materialize_names(
         body = render_name_page_body(canonical, aliases, members, artifact_ids)
         text = render_note(frontmatter, body)
 
-        path = name_page_path(vault_dir, canonical, used_filenames)
+        path = page_paths[canonical]
         kept.add(path)
         if path.is_file() and path.read_text(encoding="utf-8") == text:
             unchanged += 1

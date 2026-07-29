@@ -205,7 +205,7 @@ Develop top to bottom. One slice = one issue = one PR.
 | 05 | Reconcile | #416 | Model merges names with 04's clusters as hints; emits a reversible alias map plus the surviving name list, which is the index | ✅ done | #437 |
 | 06 | materialize the wiki | #411 | Code writes one file per surviving name (aliases, member notes as links) and notes carry their answers as frontmatter; **first point the founder can open the graph view and look** | ✅ done | #444 |
 | 06b | name-variant candidate generation | #446 | Found opening the vault (#411/#444): clustering's own recall gap left `C. Tilly`/`Charles Tilly` as two pages because the merge pass never saw them together. A second, deterministic, LLM-free step (`axial.name_candidates`) proposes the missing pairs — initial-vs-full forename, bare surname with exactly one candidate (both `person`), case/whitespace-only — as additional clusters for the same, unchanged merge call | ✅ done | #448 |
-| 07 | Gather | #412 | Per-name packet assembly under a hard budget with batching and merge, disagreement text written onto the name page, name-to-name links | ☐ todo | TBD |
+| 07 | Gather | #412 | Per-name packet assembly under a hard budget with batching and merge, disagreement text written onto the name page, name-to-name links, plus a per-name disagreement record on disk (provenance for #447's undecided quality measure) | ◐ in-progress | #468 |
 | 08 | pairwise verbatim support | #413 | Two-note call that supplies quoted grounds where Gather found a disagreement worth quoting — optional, last, only if 07 shows it is needed | ☐ todo | TBD |
 
 <!-- Status values: ☐ todo · ◐ in-progress · ✅ done. Update the row when a slice's PR opens. -->

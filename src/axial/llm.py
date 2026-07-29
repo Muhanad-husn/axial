@@ -376,6 +376,16 @@ PANEL_REVIEW_PASS_NAME = "panel_review"
 # reasoning high (founder directive, issue #416), and nothing else does.
 RECONCILE_PASS_NAME = "reconcile"
 
+# Pass name the Phase A v1 disagreement pass identifies itself with (§7.9's
+# own pass table names it `gather`; §7.18 / P0-13, issue #412). Same
+# out-of-band dispatch convention as CHUNK_PASS_NAME above -- naming this
+# constant is what lets a real run route Gather through the
+# `model_by_pass`/`reasoning_by_pass`/`temperature_by_pass` config seams
+# without a code change. Both shapes of Gather call (one per batch, plus the
+# short merge call over a batched name's findings) carry this same pass
+# name: they are the same judgment at two scales, not two passes.
+GATHER_PASS_NAME = "gather"
+
 # Per-pass model reasoning (§7.9, issue #207): reasoning is ON for the
 # structural-envelope pass and the content-apparatus classification gate --
 # both small, judgment-heavy, once/rarely-per-source calls -- and OFF
@@ -564,6 +574,17 @@ STUB_NOTE_INTERROGATE_RESPONSE_ENV_VAR = "AXIAL_STUB_NOTE_INTERROGATE_RESPONSE"
 # only name surface forms the prompt actually carried, and a stub-driven run
 # that scripts nothing merges nothing. Never affects any other pass.
 STUB_RECONCILE_RESPONSE_ENV_VAR = "AXIAL_STUB_RECONCILE_RESPONSE"
+
+# Issue #412 test/CI-only seam: mirrors STUB_RECONCILE_RESPONSE_ENV_VAR
+# above, exactly, for the Gather pass (`GATHER_PASS_NAME`). When set to a
+# non-empty value, the stub/record clients' gather-pass response becomes this
+# raw string verbatim, letting an acceptance test drive a specific
+# disagreement and a specific set of name-to-name links end to end through
+# the real CLI. Unlike the merge pass, Gather HAS an honest default: a
+# disagreement statement names no surface form the prompt has to have
+# carried, so an unscripted stub run writes a fixed placeholder statement
+# with no links. Never affects any other pass.
+STUB_GATHER_RESPONSE_ENV_VAR = "AXIAL_STUB_GATHER_RESPONSE"
 
 # Issue #256 test/CI-only seam: mirrors STUB_INTERROGATE_RESPONSE_ENV_VAR
 # above, exactly, for the stage-4 synthesis pass instead of the interrogate
@@ -1293,6 +1314,10 @@ def _canned_response_for(pass_name: str | None) -> str:
         # answer can only name surface forms the prompt carried, so an
         # unscripted stub run merges nothing rather than inventing merges.
         return os.environ.get(STUB_RECONCILE_RESPONSE_ENV_VAR, "") or json.dumps({"nodes": []})
+    if pass_name == GATHER_PASS_NAME:
+        return os.environ.get(STUB_GATHER_RESPONSE_ENV_VAR, "") or json.dumps(
+            {"disagreement": "stub disagreement", "names": []}
+        )
     # Matched by PREFIX, not equality: each of the panel's N reviewers routes
     # under its own `panel_review.<n>` pass name (issue #385) so a real run
     # can put them on different models through `model_by_pass`.

@@ -91,6 +91,18 @@ llm:
     # advertise only high/xhigh, and OpenRouter's remap-to-nearest measured
     # WORSE than high -- a higher median plus a 10,017-token blowup.
     reconcile: high
+    # Phase A v1 Gather (§7.9/§7.18, issue #412): ON, as §7.9's pass table
+    # states. Reading a page's worth of claims side by side and saying what
+    # their authors disagree about is the same shape of judgment call as the
+    # merge above -- underdetermined, low-volume relative to the per-note
+    # pass, and won by letting the model think rather than by prompt
+    # engineering. An explicit "high" rather than a bare `true` for the same
+    # reason `reconcile` carries one: deepseek/glm advertise only high/xhigh,
+    # so a bool hands the choice to OpenRouter's remap-to-nearest. The MODEL
+    # is deliberately left to `llm_tier` -- unlike `reconcile`, no probe has
+    # compared tiers on this call yet, and pinning one on no evidence would
+    # read as a measured pick.
+    gather: high
     artifacts: false
   # Per-pass SAMPLING TEMPERATURE (§7.9, issue #416): the third per-pass
   # block, same shape and same resolution as the two around it

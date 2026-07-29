@@ -157,7 +157,8 @@ axial/
     envelopes/                 # one JSON per source
     chunks/                    # one JSONL per source (persisted chunk artifact, §7.7)
     answers/                   # one JSONL per source (interrogation answer records, §7.15)
-    names/                     # inventory, similarity view, alias map, index, merge decisions (§7.16)
+    names/                     # inventory, similarity view, alias map, index, merge decisions (§7.16),
+                               # disagreement records (§7.18)
     vault/
       prose/                   # prose-pool notes (.md with frontmatter)
       artifacts/               # artifact-pool notes (.md with frontmatter)
@@ -579,9 +580,13 @@ Materialize (§5 stage 8) writes the vault with **no model call** (D11). Three o
 **Gather (§5 stage 9, D12) cannot blow the context window, by construction.** The model never fetches, and the packet is assembled by code.
 
 - **The packet.** Per member note: author, year, the one-sentence `claim`, `position_of`, `arguing_against` — roughly 400 characters. Nothing else. Gather never reads a note's full text.
-- **The budget is a constant in code, not an instruction in the prompt.** A prompt-side budget is a request; a code-side budget is a guarantee. The constant is stated in the module and inspectable.
-- **Batching is a designed path, not an edge case.** A name whose packet would exceed the budget is split into batches; Gather runs per batch; a short final call merges the batch findings into one. Large names are the interesting ones, so this path runs often and is built first-class.
-- **The output** is what the authors gathered at this name actually disagree about, written onto the name page under its own heading, plus **name-to-name links** where the disagreement runs between two names the index already carries.
+- **The budget is a constant in code, not an instruction in the prompt.** A prompt-side budget is a request; a code-side budget is a guarantee. The constant is stated in the module and inspectable. It is **two** constants, not one: a per-member cap (the "roughly 400 characters" above) and the whole-block budget. The per-member cap is what makes the block budget arithmetic rather than an average — without it a single pathological answer could exceed the block budget on its own, and the guarantee is stated over *any* name at *any* corpus size.
+- **Batching is a designed path, not an edge case.** A name whose packet would exceed the budget is split into batches; Gather runs per batch; a short final call merges the batch findings into one. Large names are the interesting ones, so this path runs often and is built first-class. The merge call carries the batch findings and no packets at all, so its own size is bounded by the batch count rather than by the size of the name.
+- **A name fewer than two member notes reach is not asked about.** A disagreement needs two parties; one note has no second author to disagree with. Definitional, not a threshold, and it is what keeps the pass's call count proportional to the names that can carry a disagreement rather than to the whole index.
+- **The output** is what the authors gathered at this name actually disagree about, written onto the name page under its own heading, plus **name-to-name links** where the disagreement runs between two names the index already carries. The model names what it referred to; code keeps only the names the index actually carries, because a link to a page that does not exist is not a link.
+- **Every disagreement is also written as a record** (`data/names/disagreements.jsonl`), one per name, in the convention the per-note answer records set (§6): the name, the member-note ids that fed it, which batch produced each finding, whether the page's text survived a merge call or came straight from one under-budget call, and the text itself. It is the pass's answer artifact and its resume checkpoint at once, keyed by a content hash of the name's own rendered packets — so an interrupted run resumes, a re-run over unchanged packets makes no model call, and a changed upstream re-asks exactly the names whose packets moved. It exists because §10's replacement quality measure is still undecided: every candidate instrument needs this provenance, and writing it during the pass is what stops a later eval having to re-run the corpus to recover it.
+
+**Re-running Materialize clears the disagreement sections, and re-running Gather restores them for free.** Materialize (§7.17) rewrites a name page whose content differs from what it would write, which includes the section Gather appended. That is not a conflict to design around: Gather's records are on disk, so the restoring run makes no model call.
 
 **Pairwise verbatim support (§5 stage 10, D13)** is a separate, narrow step, built only if Gather's output shows it is needed. It reads exactly **two** notes in full — about 18k characters at the `[3500, 9000]` band, safe by construction — and returns the quoted grounds for one disagreement. Keeping it separate is what lets Gather stay cheap: one pass reads many notes shallowly, the other reads two notes deeply, and neither has to compromise for the other.
 
@@ -742,11 +747,12 @@ New criteria are **appended with new numbers**; existing numbers are never reuse
 - [ ] **`axial names escalations` lists the escalated set read-only** (issue #461): surface, kind, the co-members it was proposed with, and its source book(s), plus a per-kind count. No queue, no resolution state, no write path.
 
 **P0-13 Gather (D12, D13).**
-- [ ] **Code assembles the packet; the model never fetches.** Per member note the packet carries author, year, the one-sentence claim, whose position it is, and who it argues against — and nothing else. Gather reads no note's full text.
-- [ ] **The budget is a hard character limit enforced in code, not an instruction in the prompt.** Observable: no assembled Gather prompt exceeds the limit, for any name, at any corpus size.
-- [ ] **Batching and merge are a designed path.** A name whose packet exceeds the budget is split into batches, Gather runs per batch, and a short final call merges the batch findings into one. Observable: the largest name in the corpus produces a single coherent disagreement section, not a truncated one and not an error.
-- [ ] **The output lands on the name page** under its own heading: what the authors gathered at this name disagree about, with the positions attributed to their sources; plus **name-to-name links** where the disagreement runs between two names the index carries.
-- [ ] A name whose members genuinely do not disagree says so. Manufactured disagreement is the failure mode this bullet exists to forbid.
+- [x] **Code assembles the packet; the model never fetches.** Per member note the packet carries author, year, the one-sentence claim, whose position it is, and who it argues against — and nothing else. Gather reads no note's full text.
+- [x] **The budget is a hard character limit enforced in code, not an instruction in the prompt.** Observable: no assembled Gather prompt exceeds the limit, for any name, at any corpus size.
+- [x] **Batching and merge are a designed path.** A name whose packet exceeds the budget is split into batches, Gather runs per batch, and a short final call merges the batch findings into one. Observable: the largest name in the corpus produces a single coherent disagreement section, not a truncated one and not an error.
+- [x] **The output lands on the name page** under its own heading: what the authors gathered at this name disagree about, with the positions attributed to their sources; plus **name-to-name links** where the disagreement runs between two names the index carries.
+- [x] **Every disagreement is also a record on disk** (`data/names/disagreements.jsonl`, §7.18): the name, the member-note ids behind it, the batch each finding came from, and whether the page's text survived a merge call. Provenance for whatever §10's deferred quality measure turns out to be, written during the pass rather than recovered by re-running it.
+- [ ] A name whose members genuinely do not disagree says so. Manufactured disagreement is the failure mode this bullet exists to forbid. **Not verifiable without a real corpus run**: the prompt asks for it explicitly, but whether the model complies is a corpus observation, not something a fixture can prove.
 
 ### Nice-to-Have (P1)
 
@@ -775,6 +781,8 @@ New criteria are **appended with new numbers**; existing numbers are never reuse
 > **STRUCK (D15).** Per-axis agreement against hand labels is retired with the layer it measured. Nothing replaces it *yet*, and that is a decision, not an omission.
 
 **Why it is deferred.** Open answers cannot be scored against a closed key, so the replacement is not a swap of one metric for another — it is a new question about what "good" means for this pipeline. The answer depends on output that does not exist yet. Reconcile's index is the first artifact that reveals what is measurable: how many names the corpus actually yields, how many are junk, how sharply merged clusters separate, how many notes a typical name gathers, how often a Gather packet finds a real disagreement. Choosing a metric before seeing that is guessing, and a guessed metric that then gets built into a gate is worse than none.
+
+**Deferring the metric does not license deferring its inputs.** Every candidate instrument — founder adjudication over a sample, a model panel, self-consistency across draws — needs to know where a given disagreement came from. So Gather writes that provenance as it runs (§7.18's disagreement records: the name, the member notes behind it, the batch each finding came from, whether it survived a merge call). Not collecting it would have made the choice of metric cost a re-run of the corpus pass, which is exactly the spend the deferral was meant to protect.
 
 **What the deferral does not license.** Three things stand in the meantime.
 
