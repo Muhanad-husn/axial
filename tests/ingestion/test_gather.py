@@ -18,9 +18,14 @@ And   the budget is a code constant that is never spelled out, named, or
       hinted at inside any prompt the model sees (D12's named regression
       risk: "a hard character budget in code, not in the prompt")
 And   no assembled model input ever carries a note's full `chunk_text` --
-      only the five packet fields (author, year, one-sentence claim, whose
-      position it is, who it argues against) (D13: "Gather itself never
-      reads full notes")
+      only the packet fields (author, year, one-sentence claim, whose
+      position it is, what that position is where the note carries one, who
+      it argues against) (D13: "Gather itself never reads full notes")
+And   a member note interrogated before frame 0.2 -- which carries no
+      `position` key at all -- renders byte-for-byte what it rendered before
+      the field existed, so `GatherJob.key` is unchanged and the recorded
+      findings in `data/names/disagreements.jsonl` stay addressable
+      (issue #496)
 And   every disagreement written onto a page has a corresponding record on
       disk (`data/names/disagreements.jsonl`, the convention slice 02's
       `data/answers/` set) carrying the name, the member-note ids that fed
@@ -53,6 +58,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -63,10 +69,12 @@ from axial.gather import (
     DISAGREEMENT_HEADING,
     GATHER_PACKET_CHAR_BUDGET,
     MEMBER_PACKET_CHARS,
+    GatherJob,
     GatherResponseError,
     MemberPacket,
     _resolve_min_gather_members,
     _select_by_canonical,
+    build_packets,
     parse_gather_response,
     render_packet,
     run_gather,
@@ -148,33 +156,41 @@ def _answer_record(
     position_of: str,
     arguing_against: list[str],
     names: list[dict],
+    position: str | None = None,
 ) -> dict:
+    """One answer record in slice 02's own on-disk shape. `position` omitted
+    is the **frame 0.1** shape -- the key is absent entirely, which is what
+    every one of the corpus's 6,148 existing records looks like (issue
+    #496); passing one writes the frame 0.2 shape."""
+    answers = {
+        "about": ["state formation"],
+        "claim": claim,
+        "move": "x",
+        "ranges_over": "not-in-passage",
+        "stops_holding": "not-in-passage",
+        "position_of": position_of,
+        "arguing_against": arguing_against,
+        "names": names,
+        "citations": [],
+        "mechanism": "not-in-passage",
+        "evidence": "not-in-passage",
+        "comparison": "not-in-passage",
+        "defines": [],
+        "uses": [],
+        "concedes": "not-in-passage",
+        "assumes": "not-in-passage",
+    }
+    if position is not None:
+        answers["position"] = position
     return {
         "chunk_id": chunk_id,
         "source_id": source_id,
         "section": "Introduction",
         "pass": "note_interrogate",
         "model": "stub",
-        "frame_version": "0.1",
+        "frame_version": "0.2" if position is not None else "0.1",
         "answered_at": "2026-01-01T00:00:00Z",
-        "answers": {
-            "about": ["state formation"],
-            "claim": claim,
-            "move": "x",
-            "ranges_over": "not-in-passage",
-            "stops_holding": "not-in-passage",
-            "position_of": position_of,
-            "arguing_against": arguing_against,
-            "names": names,
-            "citations": [],
-            "mechanism": "not-in-passage",
-            "evidence": "not-in-passage",
-            "comparison": "not-in-passage",
-            "defines": [],
-            "uses": [],
-            "concedes": "not-in-passage",
-            "assumes": "not-in-passage",
-        },
+        "answers": answers,
     }
 
 
@@ -409,6 +425,177 @@ def test_a_rendered_packet_carries_the_five_fields_and_nothing_else():
     assert len(rendered) <= MEMBER_PACKET_CHARS
 
 
+# -- issue #496: the old packet format is frozen, byte for byte ---------------
+#
+# THESE TWO LITERALS ARE A PIN, NOT A FIXTURE. They are what `main` rendered
+# and hashed for a member note whose answer record carries no `position` key
+# -- the shape of all 6,148 records in the corpus, none of which are being
+# re-interrogated. `data/names/disagreements.jsonl` is keyed by exactly this
+# hash. If a change to `render_packet` moves either of them by one byte, every
+# one of the ~1,910 recorded findings is orphaned by key and the next
+# `axial names gather` pays for a full corpus re-decide. Do not "update" them
+# to match new behaviour: a diff here means the change is wrong.
+OLD_FORMAT_MEMBER_RENDER = (
+    "Charles Tilly (1990): War made the state and the state made war. "
+    "[position of: bellicist historical sociology; arguing against: modernization theory]"
+)
+OLD_FORMAT_JOB_KEY = "c04e6eccf1aef04f45c680e24b07f9bfb7fbfb981baa5e0b2d0ee6043f12cb45"
+
+
+def _old_format_packets() -> list[MemberPacket]:
+    """Two members carrying no `position` -- packets as they were built
+    before frame 0.2 existed."""
+    return [
+        MemberPacket(
+            chunk_id="tilly-1990_000_intro_001",
+            author="Charles Tilly",
+            year=1990,
+            claim="War made the state and the state made war.",
+            position_of="bellicist historical sociology",
+            arguing_against="modernization theory",
+        ),
+        MemberPacket(
+            chunk_id="centeno-2002_000_intro_001",
+            author="Miguel Centeno",
+            year=2002,
+            claim="Limited war produced limited states in Latin America.",
+            position_of="comparative historical sociology",
+            arguing_against="Charles Tilly",
+        ),
+    ]
+
+
+def test_an_old_format_member_renders_and_keys_exactly_as_it_did_before_position_existed():
+    """The one thing #496 must not break. `GatherJob.key` is a sha256 over
+    the name's rendered packets, and every recorded disagreement finding is
+    filed under it, so an old-format render is a frozen wire format."""
+    packets = _old_format_packets()
+
+    assert packets[0].position is None
+    assert render_packet(packets[0]) == OLD_FORMAT_MEMBER_RENDER
+    assert GatherJob(canonical="war making", batches=(tuple(packets),)).key == OLD_FORMAT_JOB_KEY
+
+
+def test_an_answer_record_with_no_position_key_builds_a_packet_with_no_position():
+    """The absence has to survive the read, not just the render: `position`
+    is taken on KEY PRESENCE, so a record written under frame 0.1 produces
+    `None` -- structurally distinct from an abstention, which is a string."""
+    record = _answer_record(
+        "tilly-1990_000_intro_001",
+        "tilly-1990",
+        claim="War made the state and the state made war.",
+        position_of="bellicist historical sociology",
+        arguing_against=["modernization theory"],
+        names=[],
+    )
+    assert "position" not in record["answers"]
+
+    (packet,) = build_packets(
+        ["tilly-1990_000_intro_001"],
+        {"tilly-1990_000_intro_001": record},
+        {"tilly-1990": ("Charles Tilly", 1990)},
+    )
+
+    assert packet.position is None
+    assert render_packet(packet) == OLD_FORMAT_MEMBER_RENDER
+
+
+def test_a_name_mixing_both_frames_renders_the_new_field_only_on_the_members_that_have_it():
+    """The corpus is a permanent mix: one name's members can come from a
+    book interrogated last month and a book interrogated after the split."""
+    old = _answer_record(
+        "tilly-1990_000_intro_001",
+        "tilly-1990",
+        claim="War made the state and the state made war.",
+        position_of="bellicist historical sociology",
+        arguing_against=["modernization theory"],
+        names=[],
+    )
+    new = _answer_record(
+        "centeno-2002_000_intro_001",
+        "centeno-2002",
+        claim="Limited war produced limited states in Latin America.",
+        position_of="the author's own",
+        position="war in Latin America was too limited to build strong states",
+        arguing_against=["Charles Tilly"],
+        names=[],
+    )
+
+    old_packet, new_packet = build_packets(
+        [old["chunk_id"], new["chunk_id"]],
+        {old["chunk_id"]: old, new["chunk_id"]: new},
+        {"tilly-1990": ("Charles Tilly", 1990), "centeno-2002": ("Miguel Centeno", 2002)},
+    )
+
+    assert render_packet(old_packet) == OLD_FORMAT_MEMBER_RENDER
+    assert render_packet(new_packet) == (
+        "Miguel Centeno (2002): Limited war produced limited states in Latin America. "
+        "[position of: the author's own; "
+        "arguing against: Charles Tilly; "
+        "position: war in Latin America was too limited to build strong states]"
+    )
+
+
+def test_arguing_against_is_rendered_before_position_so_the_cap_never_eats_it():
+    """Field ORDER, not just field presence. `render_packet` truncates the
+    tail at `MEMBER_PACKET_CHARS`, so whichever field sits last is the one a
+    long packet loses -- and `arguing_against` is the one clause #490
+    measured as separating contested names from uncontested ones (1.9x-2.4x
+    lift), which Phase B's contestedness derivation reads. Measured on 120
+    real frame-0.2 notes: `position` in the middle lost `arguing against`
+    from 93.3% of new-format packets; `position` last loses it from 1.7%.
+    `position` is instead truncated away in 62.5% of them, which is the
+    accepted trade. This assertion is what stops the order being "tidied"
+    back.
+    """
+    packet = MemberPacket(
+        chunk_id="centeno-2002_000_intro_001",
+        author="Miguel Centeno",
+        year=2002,
+        claim="Limited war produced limited states in Latin America.",
+        position_of="the author's own",
+        position="war in Latin America was too limited to build strong states",
+        arguing_against="Charles Tilly",
+    )
+    rendered = render_packet(packet)
+
+    assert rendered.index("arguing against:") < rendered.index("position:")
+
+    # And the order is what makes the clause survive a packet that overflows
+    # the cap: a claim long enough to truncate keeps `arguing against` whole
+    # and loses `position` instead.
+    truncated = render_packet(replace(packet, claim="W" * 300))
+    assert len(truncated) <= MEMBER_PACKET_CHARS
+    assert "arguing against: Charles Tilly" in truncated
+    assert "position: war in Latin America was too limited" not in truncated
+
+
+def test_a_position_key_holding_an_abstention_is_rendered_not_dropped():
+    """An abstention is an answer the note gave (D7). Only an ABSENT key --
+    a question the note was never asked -- renders nothing."""
+    record = _answer_record(
+        "centeno-2002_000_intro_001",
+        "centeno-2002",
+        claim="Limited war produced limited states.",
+        position_of="the author's own",
+        position="not-in-passage",
+        arguing_against=["Charles Tilly"],
+        names=[],
+    )
+
+    (packet,) = build_packets(
+        [record["chunk_id"]],
+        {record["chunk_id"]: record},
+        {"centeno-2002": ("Miguel Centeno", 2002)},
+    )
+
+    # Rendered as the same marker every other abstaining field gets, not
+    # dropped the way an absent key is. `position` is the bracket's last
+    # clause, so it closes the bracket rather than carrying a separator.
+    assert packet.position is not None
+    assert f"position: {packet.position}]" in render_packet(packet)
+
+
 def test_a_rendered_packet_is_capped_so_the_budget_is_a_guarantee():
     packet = MemberPacket(
         chunk_id="src1_000_intro_001",
@@ -419,6 +606,10 @@ def test_a_rendered_packet_is_capped_so_the_budget_is_a_guarantee():
         arguing_against="D" * 500,
     )
     assert len(render_packet(packet)) <= MEMBER_PACKET_CHARS
+    # A frame 0.2 member carries one field more, so it meets the cap more
+    # often. The cap still holds, which is what makes the block budget
+    # arithmetic rather than an average.
+    assert len(render_packet(replace(packet, position="E" * 500))) <= MEMBER_PACKET_CHARS
 
 
 def test_split_into_batches_keeps_every_batch_under_the_budget():

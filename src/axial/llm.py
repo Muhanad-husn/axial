@@ -1032,11 +1032,12 @@ def _canned_interrogate_response() -> str:
 
 
 # The default canned response for a per-note interrogation call (issue #419,
-# PRD §7.15): one plausible answer record carrying all sixteen answer fields,
-# one explicit `not-in-passage` abstention (D7 is the ordinary case, not the
-# exception), and free answers that deliberately match NO example string in
-# the domain frame -- so the D8 collapse check reads 0 unless a test scripts
-# a collapse itself, rather than inheriting one from this fixture.
+# PRD §7.15): one plausible answer record carrying every answer field frame
+# 0.2 asks for, one explicit `not-in-passage` abstention (D7 is the ordinary
+# case, not the exception), and free answers that deliberately match NO
+# example string in the domain frame -- so the D8 collapse check reads 0
+# unless a test scripts a collapse itself, rather than inheriting one from
+# this fixture.
 _CANNED_NOTE_INTERROGATE_RESPONSE = json.dumps(
     {
         "about": ["the party-state's capture of the bureaucracy"],
@@ -1049,7 +1050,8 @@ _CANNED_NOTE_INTERROGATE_RESPONSE = json.dumps(
         "ranges_over_nearest": {"example": "scope:country-case", "fit": "close"},
         "stops_holding": "the author says it does not carry past the 1982 rupture",
         "position_of": "the author's own",
-        "position_of_nearest": {"example": "bellicist", "fit": "loose"},
+        "position": "durable authoritarian rule was built by a party, not by an army",
+        "position_nearest": {"example": "bellicist", "fit": "loose"},
         "arguing_against": ["readings of the party as a primarily sectarian vehicle"],
         "names": [
             {"name": "Ba'ath Party", "kind": "institution"},

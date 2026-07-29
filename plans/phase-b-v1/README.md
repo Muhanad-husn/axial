@@ -106,6 +106,13 @@ Settled with the founder, 2026-07-29.
    dominant confound and must not be counted as independent evidence, since
    thinness is already disclosed through `member_count` under D2. Recall caps at
    0.35–0.59, so contestedness is a graded disclosure, never a boolean gate.
+   **Two follow-ups from #496.** Frame 0.2 splits the question, so sources added
+   from now on carry a separate `position` — the existing 6,148 notes never will,
+   because no re-run is planned. Independently, every old record already carries
+   `position_of_nearest`: the same answer mapped onto the 33-value theory-school
+   list, present on 90.2% of the "the author" notes. That is a countable label
+   available to this clause today, at no cost, though two thirds of it is a
+   `loose` fit and it ranks rather than proves.
 4. **D4 — Gather findings are a retrieval hint, never a citation.** The agent
    may read a disagreement to decide where to look, then follows its own
    `chunk_ids` to the real notes and cites only those. Grounds stay anchored to
@@ -236,7 +243,7 @@ in **Order and concurrency** below.
 | 01 | restore and re-pin | #486 | Re-cut the corpus pin per D6, its vault hash over prose ids plus the name layer. The 130 "missing" findings were superseded history, not damage: the free re-run made 0 calls and wrote 0 pages, and all 1,910 pages already agreed with their newest record. LLM-free | ✅ |
 | 02 | the name query API | #487 | `find_names`, `get_name`, `name_neighbors`, `who_cites`, `who_argues_against`, per-name `coverage_count`; deterministic, model-free, fully testable without an LLM | ◐ |
 | 03 | retrieval loop rewired | #488 | Tool registry and dispatcher onto 02's tools; trajectory log unchanged; step budget re-proven | ☐ |
-| 04 | synthesis on the new evidence | #489 | Evidence assembly and the synthesis prompt rebuilt around `claim` / `position_of` / `arguing_against` / `citations`, with Gather findings as hints per D4 | ☐ |
+| 04 | synthesis on the new evidence | #489 | Evidence assembly and the synthesis prompt rebuilt around `claim` / `position_of` / `position` / `arguing_against` / `citations`, with Gather findings as hints per D4 | ☐ |
 | 05 | coverage and counter-position | #490 | Per-name coverage map, confidence derivation, contested detection and counter-position generation per D2 and D3 | ☐ |
 | 06 | metrics and the run report | #491 | Source usage re-based, the response-quality table computed, per-pass latency captured, one report per run | ☐ |
 | 07 | smoke harness | #492 | `config/briefs/smoke/` and `axial brief smoke`: five briefs, mechanical gates plus a cost and latency budget so a spend regression shows up the day it lands | ☐ |
