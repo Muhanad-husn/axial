@@ -216,6 +216,40 @@ names:
   merge_min_cluster_size: 2
   merge_min_samples: 1
 
+# Phase A v1 Gather: MINIMUM MEMBER COUNT (§7.18, founder product-scope
+# decision, 2026-07-29, not a tuned heuristic constant): a name below this
+# member count is skipped before Gather assembles it into a packet -- no
+# packet, no model call, counted as `names_skipped_below_min_members` in the
+# run summary. src/axial/gather.py reads this via
+# _resolve_min_gather_members, falling back to its own
+# DEFAULT_MIN_GATHER_MEMBERS when this file or the key is absent. This is
+# separate from gather.py's own `_MIN_MEMBERS = 2` (a disagreement needs two
+# parties -- definitional, never moved into config); this is the movable
+# scope cut, exposed here precisely so it stays visible and changeable
+# without touching src/.
+#
+# Measured on a seeded 100-name stratified sample
+# (data/logs/2026-07-29-gather-stratified-sample/summary.md): the value of
+# asking is concentrated in large names -- 65% of the largest 20 names
+# produced a real disagreement, ~22% of the upper decile (10-41 members),
+# only 5-13% of a uniform-random name (median 3 members).
+#
+# And measured on the live index (20,321 eligible names, 118,963 member
+# slots):
+#
+#   min members | names  | % of pool | member slots | batches
+#   ----------- | ------ | --------- | ------------ | -------
+#   2 (was default) | 20,321 | 100%  | 118,963      | 20,834
+#   5           |  5,003 |  24.6%    |  80,935      |  5,516
+#   10          |  1,927 |   9.5%    |  61,539      |  2,440
+#   20          |    743 |   3.7%    |  45,932      |  1,256
+#   50          |    221 |   1.1%    |  30,620      |    734
+#
+# Cutting at 10 drops 90% of the pages and keeps 52% of the member evidence
+# -- the founder's chosen cut point.
+gather:
+  min_members: 10
+
 # Stage-3 agentic retrieval loop (issue #253, PRD §7.5/§7.6, P0-3): a
 # bounded step budget is a stated tunable, never hardcoded at the call
 # site (src/axial/retrieve/loop.py reads this via _resolve_step_budget,
