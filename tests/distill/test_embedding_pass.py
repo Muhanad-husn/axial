@@ -86,6 +86,20 @@ def _run_axial(root: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+def _stage_names_dir(names_dir: Path) -> None:
+    """A minimal, well-formed name layer (issue #486, D6): `write_pin`'s
+    vault-snapshot hash now covers it, so every fixture that shells `axial
+    pin write` needs one to exist first."""
+    names_dir.mkdir(parents=True, exist_ok=True)
+    (names_dir / "index.json").write_text(
+        json.dumps({"version": 1, "generated_at": "t", "names": []}), encoding="utf-8"
+    )
+    (names_dir / "alias_map.json").write_text(
+        json.dumps({"version": 1, "generated_at": "t", "nodes": []}), encoding="utf-8"
+    )
+    (names_dir / "disagreements.jsonl").write_text("", encoding="utf-8")
+
+
 def _write_chunk_note(
     prose_dir: Path,
     chunk_id: str,
@@ -130,6 +144,7 @@ def _build_fixture_vault(root: Path) -> None:
 
 def _write_corpus_pin(root: Path) -> None:
     (root / "data" / "envelopes").mkdir(parents=True, exist_ok=True)
+    _stage_names_dir(root / "data" / "names")
     result = _run_axial(root, "pin", "write", "baseline")
     assert result.returncode == 0, (
         f"fixture setup: `axial pin write baseline` failed\n"
