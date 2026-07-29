@@ -119,6 +119,18 @@ what makes the pass resumable) -- which also means a map built from 30 of
 manifest is the one place that distinction is on disk rather than only in a
 run's own stdout.
 
+A FOURTH file, `merge_failures.jsonl` (issue #469), is the durable trace of
+every batch that exhausted `complete_json`'s own re-ask budget without ever
+producing a parseable/well-shaped answer -- a CLIENT-side failure, never a
+model judgment. It is append-only and never read back by `run_merge_names`
+itself: a failed batch stays absent from `merge_decisions.jsonl`, so it is
+retried by the next run exactly as before this file existed, and its members
+never count toward `escalated_surfaces` or appear in `axial names
+escalations` -- that separation already followed from `parse_merge_response`
+only ever populating `escalated` on a response it could actually parse and
+place (see that function's own docstring); this file just keeps the record
+past the run's own stderr.
+
 **Issue #449: the merge call was deciding from a bare surface form and a
 kind, which does not contain the answer for `Adam Smith` vs `Anthony D.
 Smith`.** `build_evidence_index` joins each surface form to the passages the
@@ -213,6 +225,19 @@ DEFAULT_ALIAS_MAP_PATH = DEFAULT_NAMES_DATA_DIR / "alias_map.json"
 DEFAULT_INDEX_PATH = DEFAULT_NAMES_DATA_DIR / "index.json"
 DEFAULT_DECISIONS_PATH = DEFAULT_NAMES_DATA_DIR / "merge_decisions.jsonl"
 DEFAULT_MERGE_MANIFEST_PATH = DEFAULT_NAMES_DATA_DIR / "merge_manifest.json"
+# Issue #469: a batch `complete_json` never got a parseable/well-shaped
+# answer for, across its whole re-ask budget, is a CLIENT-side failure, not
+# a model judgment -- it is never written to `DEFAULT_DECISIONS_PATH` (so it
+# stays "pending" and is retried by the next run, exactly as before this
+# file existed) and its members never count toward `escalated_surfaces` or
+# appear in `list_escalations` (that guarantee already followed from
+# `parse_merge_response` only ever populating `escalated` on a SUCCESSFUL
+# parse -- see its own docstring). What was missing was durability: the only
+# trace of a failed batch used to be one stderr line, gone once the run
+# ends, so nobody could tell WHICH surface forms a corpus-wide run silently
+# gave up on. This is that record -- append-only, never read back by
+# `run_merge_names` itself, so it can never affect resume/completeness.
+DEFAULT_FAILURES_PATH = DEFAULT_NAMES_DATA_DIR / "merge_failures.jsonl"
 
 # Bounded concurrent cluster-decision workers (issue #416). The work is
 # I/O-bound: ~19k independent calls that each wait on the network, so a
@@ -763,9 +788,33 @@ def parse_merge_response(
     if not nodes and not escalated:
         raise MergeResponseError(
             "merge response placed none of the batch's surface forms; expected each "
-            "one to appear exactly once across 'nodes' and 'undecided' together"
+            "one to appear exactly once across 'nodes' and 'undecided' together; "
+            f"{_response_diagnostic(raw)}"
         )
     return nodes, escalated
+
+
+# Issue #469: the number of leading/trailing characters kept when a merge
+# response fails validation -- enough to tell "truncated mid-token" (a
+# ragged cutoff, no closing brace) apart from "well-formed JSON that just
+# names the wrong batch" (a clean tail) without carrying the whole body, in
+# the same spirit as `model_json._snippet`'s own bound. Named here rather
+# than reused from `model_json` because that module's own `_snippet` is a
+# PREFIX only (issue #72's original diagnosability need); this is deliberately
+# both ends, per issue #469's own ask ("length and first/last 200 chars").
+_DIAGNOSTIC_EDGE_CHARS = 200
+
+
+def _response_diagnostic(raw: str) -> str:
+    """`length=<n> head=<repr> tail=<repr>` for a response that parsed as
+    valid JSON but matched none of the batch (issue #469) -- the cheapest
+    discriminator between a client-side truncation (a ragged, incomplete
+    tail) and a well-formed answer to the wrong prompt (a clean tail that
+    simply names different surface forms), without a real corpus run's raw
+    traffic to compare against."""
+    if len(raw) <= 2 * _DIAGNOSTIC_EDGE_CHARS:
+        return f"length={len(raw)} raw={raw!r}"
+    return f"length={len(raw)} head={raw[:_DIAGNOSTIC_EDGE_CHARS]!r} tail={raw[-_DIAGNOSTIC_EDGE_CHARS:]!r}"
 
 
 def _decide_batch(
@@ -1362,6 +1411,7 @@ def run_merge_names(
     index_path: Path | None = None,
     decisions_path: Path | None = None,
     manifest_path: Path | None = None,
+    failures_path: Path | None = None,
     domain_dir: str | Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     client: LLMClient | None = None,
@@ -1451,11 +1501,20 @@ def run_merge_names(
     Raises `axial.names.NoNamesToClusterError` when the similarity view does
     not exist -- running this before `axial names build` is a misconfigured
     invocation, not an empty map.
+
+    `failures_path` (issue #469, default `DEFAULT_FAILURES_PATH`) is where a
+    batch that exhausted `complete_json`'s own re-ask budget without ever
+    producing a parseable/well-shaped answer gets a durable record -- see
+    `DEFAULT_FAILURES_PATH`'s own comment for why this is a SEPARATE,
+    write-only log rather than a new field on `merge_decisions.jsonl`: a
+    failed batch must stay retryable by the next run, exactly as before this
+    file existed, so nothing here is ever read back by this function.
     """
     embeddings_dir = Path(embeddings_dir or DEFAULT_EMBEDDINGS_DIR)
     alias_map_path = Path(alias_map_path or DEFAULT_ALIAS_MAP_PATH)
     index_path = Path(index_path or DEFAULT_INDEX_PATH)
     decisions_path = Path(decisions_path or DEFAULT_DECISIONS_PATH)
+    failures_path = Path(failures_path or DEFAULT_FAILURES_PATH)
     manifest_path = Path(manifest_path or DEFAULT_MERGE_MANIFEST_PATH)
     similarity_manifest_path = Path(similarity_manifest_path or DEFAULT_SIMILARITY_MANIFEST_PATH)
     if domain_dir is None:
@@ -1619,6 +1678,21 @@ def run_merge_names(
                         f"reconcile: cluster {batch.cluster_label} failed: {failure_reason}",
                         file=sys.stderr,
                     )
+                    # Issue #469: a durable trace of WHICH surface forms this
+                    # was, so it survives past this run's own stderr. Never
+                    # added to `decisions` -- the batch must stay pending and
+                    # be retried by a later run, exactly as before this file
+                    # existed.
+                    append_checkpoint_record(
+                        failures_path,
+                        {
+                            "batch_key": batch.key,
+                            "cluster_label": batch.cluster_label,
+                            "members": list(batch.members),
+                            "reason": failure_reason,
+                            "failed_at": _utc_now(),
+                        },
+                    )
                     failed += 1
                     continue
 
@@ -1671,6 +1745,7 @@ def run_merge_names(
         "index_path": str(index_path),
         "decisions_path": str(decisions_path),
         "manifest_path": str(manifest_path),
+        "failures_path": str(failures_path),
         "surface_forms": len(all_surface_forms),
         "fold_groups": len(folded_groups),
         "clusters": len({label for label in labels if label != NOISE_LABEL}),
