@@ -273,7 +273,8 @@ gather:
 # is narrower per call, so 10 is unlikely to be enough headroom for even a
 # two-name comparison brief. 20 is a PROVISIONAL headroom allowance, not a
 # re-measured bound -- re-proving the real number happens on the smoke
-# briefs once issue #492 exists.
+# briefs, which slice 06 (issue #491) now carries after #492 was folded
+# into it.
 retrieve:
   step_budget: 20
   # Slice 02 (issue #254, PRD §4/§7.6): the re-query-on-thin threshold. A

@@ -54,8 +54,8 @@ from axial.retrieve.tools import TOOL_REGISTRY, tool_specs_for_provider
 # resolving one name, reading one page, and following one traversal is
 # already 3 steps, so a brief comparing two scholars can need 6-10 calls
 # before any re-query. Re-proving the real bound happens on the smoke
-# briefs once issue #492 exists; until then this number is stated, not
-# asserted.
+# briefs, which slice 06 (issue #491) carries after #492 was folded into
+# it; until then this number is stated, not asserted.
 DEFAULT_STEP_BUDGET = 20
 
 # The re-query-on-thin threshold's code-level fallback (§4/§7.6, issue
