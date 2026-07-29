@@ -140,6 +140,21 @@ Settled in design discussion, 2026-07-27. Numbered so issues can cite them.
     rather than off the notes, so their descriptions should not need re-paying —
     to be confirmed, not assumed, in slice 01.
 
+17. **D17 — Every model pass records its inputs and its outcome.** Settled
+    2026-07-29, later than the rest of this list. A pass that asks a model to
+    make a judgment writes one record per judgment: what it was shown, what came
+    back, and enough identity to trace it to the passages behind it. The reason
+    is D15's own deferral. The quality measure is still undecided (#447) and
+    every candidate instrument needs the same provenance, so a pass that writes
+    only its finished prose forces a re-run of the whole pass to recover it
+    later. The record doubles as the resume checkpoint, so it costs one file
+    rather than two. Interrogate complies (`data/answers/`), merge complies
+    (`merge_decisions.jsonl`, carrying `evidence_tier` and `escalated` per
+    decision, though the oldest 267 of 22,910 rows predate both fields and a
+    whole-file read must not treat them as uniform), and Gather complies as of
+    #412 (`data/names/disagreements.jsonl`). Materialize is exempt because it
+    makes no model call. Slice 08 inherits this rather than being told again.
+
 ## What the pipeline looks like after
 
 | Run | How often | Status |
