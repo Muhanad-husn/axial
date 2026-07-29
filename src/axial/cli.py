@@ -1751,6 +1751,7 @@ def _names_merge(
         "alias_map_path",
         "index_path",
         "manifest_path",
+        "failures_path",
     ):
         print(f"{key}: {result[key]}")
     return 0

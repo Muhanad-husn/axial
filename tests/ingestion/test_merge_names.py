@@ -338,6 +338,103 @@ def test_an_escalated_surface_stands_alone_and_is_recorded_and_counted(isolated_
     assert summary["escalated_surfaces"] == 1
 
 
+# ---------------------------------------------------------------------------
+# Issue #469: a client-side parse failure is not a real "undecided"
+# ---------------------------------------------------------------------------
+
+
+def test_a_client_side_parse_failure_never_lands_in_the_escalation_pile(isolated_vault_root):
+    """A batch whose response never once places any of its own surface forms
+    -- across `complete_json`'s WHOLE re-ask budget -- is response noise
+    (issue #469's dominant merge-parse failure shape:
+    "merge response placed none of the batch's surface forms"), not a model
+    judgment. It must stay indistinguishable from noise everywhere #460
+    would look: absent from `merge_decisions.jsonl` (so a later run retries
+    it), contributing nothing to `escalated_surfaces` or `axial names
+    escalations`'s listing -- unlike a genuine escalation from a SIBLING
+    batch in the same run, which must still show up exactly as before. What
+    changes with this issue is durability: the failed batch's own surface
+    forms and reason are no longer lost to the run's stderr once it ends."""
+    from axial.merge_names import list_escalations, run_merge_names
+    from axial.names import run_names
+
+    root = isolated_vault_root
+    ok_pair = ["aaa name one", "aaa name two"]
+    noise_pair = ["zzz name three", "zzz name four"]
+    _build_fixture_answers(root, [ok_pair, noise_pair])
+    names_dir = root / "data" / "names"
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+    )
+
+    class NoiseClient:
+        """One cluster gets a genuine, whole-batch escalation; the other
+        NEVER places either of its own members, no matter how many times it
+        is asked -- exactly the "well-formed JSON, wrong batch" noise shape
+        a client-side response mixup or a garbled model answer would both
+        produce."""
+
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            if ok_pair[0] in prompt:
+                return json.dumps({"nodes": [], "undecided": ok_pair})
+            return json.dumps({"nodes": [{"canonical": "unrelated thing", "aliases": []}]})
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    decisions_path = names_dir / "merge_decisions.jsonl"
+    failures_path = names_dir / "merge_failures.jsonl"
+    manifest_path = names_dir / "merge_manifest.json"
+    inventory_path = names_dir / "inventory.jsonl"
+    summary = run_merge_names(
+        embeddings_dir=names_dir / "embeddings.lance",
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=decisions_path,
+        manifest_path=manifest_path,
+        failures_path=failures_path,
+        domain_dir=root / "no-such-domain",
+        client=NoiseClient(),
+        cluster_fn=lambda vectors: [0, 0, 1, 1],
+    )
+
+    assert summary["decided"] == 1
+    assert summary["failed"] == 1
+    assert summary["failures_path"] == str(failures_path)
+
+    # The failed batch never became a decision -- it stays retryable.
+    decision_lines = decisions_path.read_text(encoding="utf-8").splitlines()
+    assert len(decision_lines) == 1
+    decided_members = json.loads(decision_lines[0])["members"]
+    assert sorted(decided_members) == sorted(ok_pair)
+
+    # The escalation pile carries only the genuine escalation -- the noise
+    # batch's surface forms never appear in it.
+    escalated_surfaces = {
+        entry.surface_form
+        for entry in list_escalations(decisions_path=decisions_path, inventory_path=inventory_path)
+    }
+    assert escalated_surfaces == set(ok_pair)
+    assert summary["escalated_surfaces"] == len(ok_pair)
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))["escalated_surfaces"] == len(
+        ok_pair
+    )
+
+    # But it is not lost either: durably recorded, shape-distinct from a
+    # real decision (no "nodes"/"escalated" keys -- nothing here could ever
+    # be mistaken for a judgment by a reader that only checks for those).
+    failure_lines = failures_path.read_text(encoding="utf-8").splitlines()
+    assert len(failure_lines) == 1
+    failure_record = json.loads(failure_lines[0])
+    assert sorted(failure_record["members"]) == sorted(noise_pair)
+    assert "placed none of the batch's surface forms" in failure_record["reason"]
+    assert "nodes" not in failure_record
+    assert "escalated" not in failure_record
+
+
 def test_the_merge_pass_samples_at_temperature_1_with_high_reasoning():
     """Founder directive (issue #416, §7.9): both resolved from
     `config/pipeline.yaml`'s own per-pass blocks, and no other pass's request
