@@ -194,7 +194,8 @@ its own pass name and never by the generating model.
 
 ## Slices
 
-Develop top to bottom. One slice = one issue = one PR.
+One slice = one issue = one PR. Develop top to bottom, with the one exception
+in **Order and concurrency** below.
 
 | # | Slice | Issue | Goal (one line) | Status |
 |---|-------|-------|-----------------|--------|
@@ -210,18 +211,46 @@ Develop top to bottom. One slice = one issue = one PR.
 
 <!-- Status values: ☐ todo · ◐ in-progress · ✅ done. Update the row when a slice's PR opens. -->
 
-## Dependencies
+## Order and concurrency
 
-- **00 first.** The contract moves before the code, as in Phase A v1 slice 00.
-- **01 → everything.** Every later run needs a pin that resolves and a vault
-  holding all its findings.
-- **02 → 03 → 04 → 05.** Each consumes the previous one's output.
-- **04 → 07.** The smoke harness needs an engine that produces a record.
-- **06 → 08.** The eval run reports what 06 computes.
+Eight of the nine slices are a strict chain. There is exactly one real parallel
+pair.
+
+```
+00 → 01 → 02 → 03 → 04 ┬→ 05 → 06 ┐
+                       └→ 07 ─────┴→ 08
+```
+
+| wave | slices | why it cannot move earlier |
+|---|---|---|
+| 1 | 00 (#485) | the contract moves before the code, as in Phase A v1 slice 00 |
+| 2 | 01 (#486) | every later run needs a pin that resolves and a vault holding all its findings |
+| 3 | 02 (#487) | the foundation slice — 03, 04, 05 and 06 all read its tools |
+| 4 | 03 (#488) | consumes 02's tool set |
+| 5 | 04 (#489) | consumes 03's trajectory |
+| 6 | **05 (#490) ∥ 07 (#492)** | 05 needs 04's claims; 07 needs an engine that produces a record |
+| 7 | 06 (#491) | needs 05's coverage map |
+| 8 | 08 (#493) | reports what 06 computes, over the harness 07 built |
+
+**05 ∥ 07 is the parallel pair.** 05 touches `src/axial/validators/coverage.py`,
+`counter_position.py` and `analyze/`; 07 touches `config/briefs/smoke/`,
+`cli.py` and a smoke runner. Disjoint files, separate worktrees, no coordination
+needed. 07 degrades gracefully without 06's metrics, so it may also spill into
+wave 7 — but there it collides with 06 on `cli.py`, so keep both edits additive.
+
+Build 07 as early as wave 6 for a reason beyond the parallelism: it is the
+feedback loop 05, 06 and 08 are all checked against.
+
+**00 ∥ 01 is optional.** 00 writes only `specs/PHASE-B.md`; 01 is a corpus
+operation. The one condition is that 01 must not touch §7.12 — 00 already
+rewrites it. 00 is a pure `.md` change and may land straight on `main` under the
+docs-only gate exception.
+
 - 01, 02 and 07 are LLM-free by construction.
 - **01 runs in the main checkout `D:/axial`, never a worktree.** `data/` is
   gitignored, so a corpus operation launched in a worktree silently operates on
-  nothing.
+  nothing. It is LLM-free and therefore cheap; there is no reason to overlap it
+  with 02 to save time.
 
 ## Out of scope
 
