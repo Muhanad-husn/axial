@@ -26,13 +26,20 @@ call below -- it decides nothing and merges nothing itself.
 How it works:
 
   1. **The clusters are hints, chosen by a dial.** The persisted name
-     vectors (`data/names/embeddings.lance`, slice 04) are re-clustered at
-     the tightness `config/pipeline.yaml`'s `names.merge_min_cluster_size` /
+     vectors (`data/names/embeddings.lance`, slice 04) are clustered at the
+     tightness `config/pipeline.yaml`'s `names.merge_min_cluster_size` /
      `names.merge_min_samples` name -- the same two HDBSCAN settings `axial
      names examine` sweeps and reports, so the founder moves this dial by
-     reading that report (D10's "start loose, tighten by inspection"). It is
-     re-clustered rather than read off the build's persisted labels so
-     changing the dial costs one HDBSCAN fit, never a re-embed.
+     reading that report (D10's "start loose, tighten by inspection").
+     **Issue #458:** when this run's own tightness (and `pca_components`)
+     matches what `data/names/similarity_manifest.json` says `axial names
+     build` already fit, the persisted `cluster_label` column is reused
+     rather than re-fit -- a full-corpus HDBSCAN fit is 10+ minutes, paid
+     once by `build`, and paying it again on every `merge` invocation at the
+     SAME dial bought nothing. Moving the dial (or passing `--recluster`)
+     still costs exactly one fresh fit, and that fit now prints an
+     elapsed-time heartbeat to stderr while it runs rather than nothing at
+     all -- the silence was the actual bug #458 was filed over.
   2. **One call per cluster, batched only to bound the request.** A cluster
      whose rendered surface forms exceed `DEFAULT_MEMBER_CHAR_BUDGET`
      characters is split across a small number of calls. That budget is a
@@ -148,6 +155,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -166,6 +174,7 @@ from axial.names import (
     ClusterFn,
     DEFAULT_EMBEDDINGS_DIR,
     DEFAULT_INVENTORY_PATH,
+    DEFAULT_MANIFEST_PATH as DEFAULT_SIMILARITY_MANIFEST_PATH,
     DEFAULT_MIN_CLUSTER_SIZE,
     DEFAULT_MIN_SAMPLES,
     DEFAULT_NAMES_DATA_DIR,
@@ -308,6 +317,89 @@ class MergeReaskConfirmationRequiredError(MergeNamesError):
 # ---------------------------------------------------------------------------
 # The tightness dial (D10: chosen by looking at slice 04's report)
 # ---------------------------------------------------------------------------
+
+# Issue #458: HDBSCAN's own `fit_predict` has no progress callback, and a
+# full-corpus fit is 10+ minutes. Printing nothing until it returns is what
+# actually cost an abandoned experiment -- a timing probe killed at a 600s
+# tool ceiling with zero bytes of output, having never reached its first
+# call. Elapsed time is the only "how far along" signal available without
+# hacking hdbscan's internals, so the fit runs on a worker thread while this
+# one prints a heartbeat, mirroring `axial.llm.OpenRouterClient.complete`'s
+# own watchdog-thread pattern (a call already this codebase's way of getting
+# liveness out of a blocking operation).
+DEFAULT_CLUSTER_HEARTBEAT_SECONDS = 30.0
+
+
+def _read_similarity_manifest(path: Path) -> dict[str, Any] | None:
+    """`data/names/similarity_manifest.json`'s own JSON (issue #458), or
+    `None` when it does not exist or is not valid JSON -- either way this
+    run cannot tell whether its own settings match a persisted fit, so it
+    always re-clusters rather than trusting a labeling it cannot verify."""
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+def _manifest_matches_request(
+    manifest: dict[str, Any] | None,
+    min_cluster_size: int,
+    min_samples: int,
+    pca_components: int,
+) -> bool:
+    """Whether `axial names build`'s own persisted clustering (`manifest`'s
+    `config` block, `axial.names.run_names`) was fit at exactly this run's
+    tightness -- the only case where its `cluster_label` column is the same
+    answer a fresh HDBSCAN fit at these settings would give."""
+    if not manifest:
+        return False
+    config = manifest.get("config")
+    if not isinstance(config, dict):
+        return False
+    return (
+        config.get("min_cluster_size") == min_cluster_size
+        and config.get("min_samples") == min_samples
+        and config.get("pca_components") == pca_components
+    )
+
+
+def _cluster_with_heartbeat(
+    reduced: Any,
+    min_cluster_size: int,
+    min_samples: int,
+    heartbeat_seconds: float,
+) -> list[int]:
+    """Run `_cluster_reduced` on a worker thread, printing an elapsed-time
+    heartbeat to stderr every `heartbeat_seconds` while it runs (issue
+    #458). `_cluster_reduced` itself is untouched -- this only wraps the
+    call so the fit's own thread can block while this one reports liveness,
+    then re-raises any exception on the caller's thread exactly as a direct
+    call would."""
+    outcome: dict[str, Any] = {}
+    done = threading.Event()
+
+    def _run() -> None:
+        try:
+            outcome["labels"] = _cluster_reduced(reduced, min_cluster_size, min_samples)
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller's thread below
+            outcome["error"] = exc
+        finally:
+            done.set()
+
+    started = time.monotonic()
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    while not done.wait(timeout=heartbeat_seconds):
+        print(
+            f"reconcile: clustering still running ({time.monotonic() - started:.0f}s elapsed)...",
+            file=sys.stderr,
+        )
+    worker.join()
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["labels"]
 
 
 def _resolve_merge_tightness(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> tuple[int, int]:
@@ -1244,6 +1336,9 @@ def run_merge_names(
     workers: int = DEFAULT_WORKERS,
     cluster_fn: ClusterFn | None = None,
     confirm_reask: bool = False,
+    similarity_manifest_path: Path | None = None,
+    recluster: bool = False,
+    cluster_heartbeat_seconds: float = DEFAULT_CLUSTER_HEARTBEAT_SECONDS,
 ) -> dict[str, Any]:
     """Merge the name inventory into a reversible alias map and return the
     run summary.
@@ -1271,11 +1366,26 @@ def run_merge_names(
     this run does not touch is left untouched on disk, including whatever a
     later, larger run still needs to read.
 
-    Reads slice 04's persisted similarity view, re-clusters it at the
-    configured tightness, and asks the model about pending clusters
-    concurrently -- up to `workers` at once (default `DEFAULT_WORKERS`; issue
-    #416, founder correction: this pass is I/O-bound and a serial ~19k-call
-    pass costs ~12 hours of wall clock for a few cents of spend). Writes
+    Reads slice 04's persisted similarity view and asks the model about
+    pending clusters concurrently -- up to `workers` at once (default
+    `DEFAULT_WORKERS`; issue #416, founder correction: this pass is I/O-bound
+    and a serial ~19k-call pass costs ~12 hours of wall clock for a few cents
+    of spend).
+
+    **Issue #458: the clusters themselves are reused, not re-fit, whenever
+    this run's own tightness matches what `axial names build` already
+    persisted.** `similarity_manifest_path` (default `data/names/
+    similarity_manifest.json`) records the `min_cluster_size`/`min_samples`/
+    `pca_components` that produced the `cluster_label` column already
+    sitting in `embeddings_dir`; when they match this run's own settings,
+    that column is read back directly and no HDBSCAN fit runs at all. A
+    mismatch (a moved tightness dial) or `recluster=True` re-fits exactly as
+    before -- reducing the vectors once and clustering them once -- and that
+    fit prints an elapsed-time heartbeat to stderr every
+    `cluster_heartbeat_seconds` while it runs, because a full-corpus fit is
+    10+ minutes and printing nothing for that long reads as a hang (the bug
+    the founder actually hit). `cluster_fn`, when given, bypasses this
+    reuse-or-refit decision entirely (see below). Writes
     `alias_map.json`, `index.json`, and `merge_manifest.json` (whether this
     run answered every cluster). Every batch's answer is appended to the
     decision log AS IT IS PRODUCED, on the single result-collecting thread,
@@ -1310,6 +1420,7 @@ def run_merge_names(
     index_path = Path(index_path or DEFAULT_INDEX_PATH)
     decisions_path = Path(decisions_path or DEFAULT_DECISIONS_PATH)
     manifest_path = Path(manifest_path or DEFAULT_MERGE_MANIFEST_PATH)
+    similarity_manifest_path = Path(similarity_manifest_path or DEFAULT_SIMILARITY_MANIFEST_PATH)
     if domain_dir is None:
         domain_dir = _default_domain_dir(config_path)
 
@@ -1334,12 +1445,45 @@ def run_merge_names(
     evidence = build_evidence_index(chunk_ids_by_surface)
 
     vectors = [row["vector"] for row in rows]
-    if cluster_fn is None:
-        labels = _cluster_reduced(
-            _reduce_vectors(vectors, pca_components), min_cluster_size, min_samples
-        )
-    else:
+    if cluster_fn is not None:
         labels = cluster_fn(vectors)
+    else:
+        manifest = _read_similarity_manifest(similarity_manifest_path)
+        if not recluster and _manifest_matches_request(
+            manifest, min_cluster_size, min_samples, pca_components
+        ):
+            labels = [int(row["cluster_label"]) for row in rows]
+            print(
+                f"reconcile: reusing persisted cluster labels from {similarity_manifest_path} "
+                f"(min_cluster_size={min_cluster_size} min_samples={min_samples} "
+                f"pca_components={pca_components} match `axial names build`'s own fit; "
+                "pass --recluster to force a fresh HDBSCAN fit)",
+                file=sys.stderr,
+            )
+        else:
+            reason = (
+                "--recluster was passed"
+                if recluster
+                else f"no persisted fit at these settings ({similarity_manifest_path})"
+            )
+            print(
+                f"reconcile: clustering {len(vectors)} name vector(s) with HDBSCAN "
+                f"(min_cluster_size={min_cluster_size} min_samples={min_samples} "
+                f"pca_components={pca_components}; {reason}) -- this can take 10+ minutes "
+                "over the full corpus",
+                file=sys.stderr,
+            )
+            started = time.monotonic()
+            reduced = _reduce_vectors(vectors, pca_components)
+            labels = _cluster_with_heartbeat(
+                reduced, min_cluster_size, min_samples, cluster_heartbeat_seconds
+            )
+            print(
+                f"reconcile: clustering finished in {time.monotonic() - started:.1f}s "
+                f"({len({label for label in labels if label != NOISE_LABEL})} cluster(s), "
+                f"{sum(1 for label in labels if label == NOISE_LABEL)} noise)",
+                file=sys.stderr,
+            )
 
     batches = build_batches(labels, surface_forms, kinds, evidence, member_char_budget)
     # Issue #446: the same corpus's variants routinely land in different
