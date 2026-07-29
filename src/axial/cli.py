@@ -71,8 +71,16 @@ from axial.llm import (
 )
 from axial.materialize import MaterializeError, run_materialize
 from axial.merge_names import DEFAULT_WORKERS as MERGE_DEFAULT_WORKERS
-from axial.merge_names import MergeNamesError, run_merge_names
+from axial.merge_names import (
+    DEFAULT_DECISIONS_PATH,
+    MergeNamesError,
+    escalations_to_json,
+    format_escalations_report,
+    list_escalations,
+    run_merge_names,
+)
 from axial.names import (
+    DEFAULT_INVENTORY_PATH,
     DEFAULT_MIN_CLUSTER_SIZE,
     DEFAULT_MIN_SAMPLES,
     DEFAULT_TIGHTNESS_MIN_CLUSTER_SIZES,
@@ -408,6 +416,34 @@ def build_parser() -> argparse.ArgumentParser:
             "rewrites nothing; a changed one rewrites only the affected name "
             "pages, never a prose note"
         ),
+    )
+
+    names_escalations_parser = names_subparsers.add_parser(
+        "escalations",
+        help=(
+            "issue #461: list every escalated surface form -- the merge "
+            "call's third outcome, 'cannot tell' (issue #450) -- with the "
+            "co-members it was proposed with and the source book(s) it "
+            "appears in, plus a per-kind count. Read-only over "
+            "data/names/merge_decisions.jsonl and data/names/inventory.jsonl; "
+            "no resolution UI, no queue, no write path"
+        ),
+    )
+    names_escalations_parser.add_argument(
+        "--decisions-path",
+        default=None,
+        help=f"override {DEFAULT_DECISIONS_PATH} (default: that path)",
+    )
+    names_escalations_parser.add_argument(
+        "--inventory-path",
+        default=None,
+        help=f"override {DEFAULT_INVENTORY_PATH} (default: that path)",
+    )
+    names_escalations_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="as_json",
+        help="machine-readable JSON array instead of the human-readable report",
     )
 
     gold_parser = subparsers.add_parser("gold", help="gold-set (Academic labeling) operations")
@@ -1688,6 +1724,23 @@ def _names_materialize() -> int:
     return 0
 
 
+def _names_escalations(
+    decisions_path: str | None, inventory_path: str | None, as_json: bool
+) -> int:
+    kwargs: dict[str, Path] = {}
+    if decisions_path:
+        kwargs["decisions_path"] = Path(decisions_path)
+    if inventory_path:
+        kwargs["inventory_path"] = Path(inventory_path)
+    entries = list_escalations(**kwargs)
+
+    if as_json:
+        print(json.dumps(escalations_to_json(entries), indent=2, ensure_ascii=False))
+    else:
+        _print_encoding_safe(format_escalations_report(entries))
+    return 0
+
+
 def _distill_classify(axis: str) -> int:
     try:
         if axis in DISTILL_CLASSIFY_EMBEDDING_AXES:
@@ -1856,6 +1909,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "names" and args.names_command == "materialize":
         return _names_materialize()
+
+    if args.command == "names" and args.names_command == "escalations":
+        return _names_escalations(args.decisions_path, args.inventory_path, args.as_json)
 
     if args.command == "artifacts":
         return _artifacts(args.source_path)

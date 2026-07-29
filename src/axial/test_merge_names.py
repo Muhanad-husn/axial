@@ -27,6 +27,9 @@ from axial.merge_names import (
     build_batches,
     build_evidence_index,
     compose_merge_prompt,
+    escalations_to_json,
+    format_escalations_report,
+    list_escalations,
     render_member,
     parse_merge_response,
     purge_decisions,
@@ -754,3 +757,175 @@ def test_purge_decisions_removes_only_the_named_keys(tmp_path: Path):
 
 def test_purge_decisions_is_a_no_op_on_a_path_that_does_not_exist_yet(tmp_path: Path):
     assert purge_decisions(tmp_path / "no-such-file.jsonl", {"anything"}) == 0
+
+
+# ---------------------------------------------------------------------------
+# The escalations listing (issue #461): read-only, no queue, no write path
+# ---------------------------------------------------------------------------
+
+
+def _write_jsonl(path: Path, records: list[dict]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def test_an_escalated_surface_lists_with_its_co_members_and_source_books(tmp_path: Path):
+    decisions_path = tmp_path / "merge_decisions.jsonl"
+    inventory_path = tmp_path / "inventory.jsonl"
+    _write_jsonl(
+        decisions_path,
+        [
+            {
+                "batch_key": "k1",
+                "cluster_label": 3,
+                "members": ["Adam Smith", "Anthony D. Smith"],
+                "nodes": [],
+                "escalated": ["Adam Smith", "Anthony D. Smith"],
+            },
+            {
+                # A fully-decided batch: no escalation at all, must not
+                # appear in the listing.
+                "batch_key": "k2",
+                "cluster_label": 4,
+                "members": ["Slavery", "slavery"],
+                "nodes": [{"canonical": "Slavery", "aliases": ["slavery"]}],
+                "escalated": [],
+            },
+        ],
+    )
+    _write_jsonl(
+        inventory_path,
+        [
+            {
+                "surface": "Adam Smith",
+                "kind": "person",
+                "count": 4,
+                "chunk_ids": ["book-one_1_intro_001", "book-two_2_ch2_003"],
+            },
+            {
+                "surface": "Anthony D. Smith",
+                "kind": "person",
+                "count": 1,
+                "chunk_ids": ["book-two_2_ch2_003"],
+            },
+        ],
+    )
+
+    entries = list_escalations(decisions_path, inventory_path)
+
+    assert [entry.surface_form for entry in entries] == ["Adam Smith", "Anthony D. Smith"]
+
+    adam = entries[0]
+    assert adam.kind == "person"
+    assert adam.cluster_label == 3
+    assert adam.co_members == ("Anthony D. Smith",)
+    assert adam.source_ids == ("book-one", "book-two")
+
+    anthony = entries[1]
+    assert anthony.co_members == ("Adam Smith",)
+    assert anthony.source_ids == ("book-two",)
+
+    # The non-escalated decision (k2, "Slavery"/"slavery") never appears.
+    assert "Slavery" not in [entry.surface_form for entry in entries]
+    assert "slavery" not in [entry.surface_form for entry in entries]
+
+
+def test_a_surface_with_no_inventory_entry_lists_with_no_kind_or_sources(tmp_path: Path):
+    decisions_path = tmp_path / "merge_decisions.jsonl"
+    _write_jsonl(
+        decisions_path,
+        [
+            {
+                "batch_key": "k1",
+                "cluster_label": 0,
+                "members": ["a", "b"],
+                "nodes": [],
+                "escalated": ["a"],
+            }
+        ],
+    )
+
+    entries = list_escalations(decisions_path, tmp_path / "no-such-inventory.jsonl")
+
+    assert len(entries) == 1
+    assert entries[0].surface_form == "a"
+    assert entries[0].kind is None
+    assert entries[0].source_ids == ()
+    assert entries[0].co_members == ("b",)
+
+
+def test_escalations_listing_is_empty_when_the_decision_log_does_not_exist(tmp_path: Path):
+    assert (
+        list_escalations(tmp_path / "no-such-log.jsonl", tmp_path / "no-such-inventory.jsonl") == []
+    )
+
+
+def test_format_escalations_report_carries_a_per_kind_count_and_each_entry(tmp_path: Path):
+    decisions_path = tmp_path / "merge_decisions.jsonl"
+    inventory_path = tmp_path / "inventory.jsonl"
+    _write_jsonl(
+        decisions_path,
+        [
+            {
+                "batch_key": "k1",
+                "cluster_label": 0,
+                "members": ["Adam Smith", "Anthony D. Smith"],
+                "nodes": [],
+                "escalated": ["Adam Smith", "Anthony D. Smith"],
+            }
+        ],
+    )
+    _write_jsonl(
+        inventory_path,
+        [
+            {
+                "surface": "Adam Smith",
+                "kind": "person",
+                "count": 1,
+                "chunk_ids": ["book-one_1_a_001"],
+            },
+            {
+                "surface": "Anthony D. Smith",
+                "kind": "person",
+                "count": 1,
+                "chunk_ids": ["book-two_1_a_001"],
+            },
+        ],
+    )
+
+    report = format_escalations_report(list_escalations(decisions_path, inventory_path))
+
+    assert "2 escalated surface occurrence(s)" in report
+    assert "person: 2" in report
+    assert "'Adam Smith' (person)" in report
+    assert "Anthony D. Smith" in report  # as a co-member of Adam Smith's own line
+    assert "book-one" in report and "book-two" in report
+
+
+def test_escalations_to_json_is_the_same_data_the_report_renders(tmp_path: Path):
+    decisions_path = tmp_path / "merge_decisions.jsonl"
+    _write_jsonl(
+        decisions_path,
+        [
+            {
+                "batch_key": "k1",
+                "cluster_label": 7,
+                "members": ["a", "b"],
+                "nodes": [],
+                "escalated": ["a"],
+            }
+        ],
+    )
+
+    payload = escalations_to_json(list_escalations(decisions_path, tmp_path / "no-inventory.jsonl"))
+
+    assert payload == [
+        {
+            "surface": "a",
+            "kind": None,
+            "cluster_label": 7,
+            "co_members": ["b"],
+            "source_ids": [],
+        }
+    ]
