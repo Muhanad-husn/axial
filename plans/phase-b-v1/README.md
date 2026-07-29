@@ -48,10 +48,12 @@ holds 575 non-null findings; 445 name pages carry a section. Materialize cleared
 them and Gather was not re-run. Restoring them costs zero model calls, exactly as
 `specs/PRODUCT.md` §7.18 says it should.
 
-**The eval oracles survived intact.** All 31 `source_id`s still resolve against
-`data/envelopes/`, so `evals/cases/sim/`'s `required_citation_source_ids` still
-point at real sources. That is the one mechanical accuracy oracle in the phase
-and Phase A v1 did not break it.
+**The eval oracles survived intact.** The 21 sim cases name 28 distinct
+`source_id`s across 97 references, and all 28 resolve against `data/envelopes/`
+(31 envelopes; `gellner-1981`, `hall-2006` and `mann-v1-2012` are unreferenced).
+So `evals/cases/sim/`'s `required_citation_source_ids` still point at real
+sources. That is the one mechanical accuracy oracle in the phase and Phase A v1
+did not break it.
 
 ## Decisions this plan encodes
 
