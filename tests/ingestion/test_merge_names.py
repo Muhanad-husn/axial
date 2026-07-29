@@ -694,6 +694,152 @@ def test_existing_decisions_are_reused_when_candidates_are_added(isolated_vault_
 
 
 # ---------------------------------------------------------------------------
+# Issue #463: case, whitespace and punctuation fold upstream of every
+# candidate source and the HDBSCAN blocker -- so an identical-under-fold
+# group is one entity by construction and never reaches a merge call at all.
+# ---------------------------------------------------------------------------
+
+COLD_WAR = "Cold War"
+COLD_WAR_LOWER_W = "Cold war"
+COLD_WAR_LOWER = "cold war"
+ABBAS_APOSTROPHE = "'Abbas"
+ABBAS = "Abbas"
+PROTESTANT_QUOTED = '"Protestant constitution"'
+PROTESTANT_BARE = "Protestant constitution"
+
+
+def test_fold_collapses_case_whitespace_and_punctuation_with_no_model_call(isolated_vault_root):
+    """Issue #463's own worked examples: a pure case group, a pure
+    punctuation (apostrophe/quotes) group, and a distinct, untouched
+    surface -- all with every surface form in its own singleton HDBSCAN
+    cluster, so the ONLY way any of these could reach the model is through
+    a candidate family. Before this fix, family 3 (issue #446) proposed
+    exactly the case group as a batch; this asserts no batch is ever built
+    for a fold-only group at all -- the model is never even asked."""
+    root = isolated_vault_root
+    _build_fixture_answers(
+        root,
+        [
+            [COLD_WAR],
+            [COLD_WAR_LOWER_W],
+            [COLD_WAR_LOWER],
+            [ABBAS_APOSTROPHE],
+            [ABBAS],
+            [DISTINCT_A],
+        ],
+        kind="concept",
+    )
+    names_dir = root / "data" / "names"
+    from axial.merge_names import run_merge_names
+    from axial.names import run_names
+
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+        cluster_fn=_singleton_clusters,
+    )
+
+    class ExplodingClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            raise AssertionError(
+                "a case/whitespace/punctuation-only group must never reach a merge call"
+            )
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    summary = run_merge_names(
+        embeddings_dir=names_dir / "embeddings.lance",
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=names_dir / "merge_decisions.jsonl",
+        manifest_path=names_dir / "merge_manifest.json",
+        domain_dir=root / "no-such-domain",
+        client=ExplodingClient(),
+        cluster_fn=_singleton_clusters,
+    )
+
+    # No model call was made at all -- not one batch was ever submitted.
+    assert summary["decided"] == 0
+    assert summary["batches"] == 0
+    assert summary["candidate_batches"] == 0
+    assert summary["fold_groups"] == 2
+
+    canonical_of = {
+        surface: node["canonical"]
+        for node in _read_alias_map(root)["nodes"]
+        for surface in [node["canonical"], *node["aliases"]]
+    }
+    assert canonical_of[COLD_WAR] == canonical_of[COLD_WAR_LOWER_W] == canonical_of[COLD_WAR_LOWER]
+    assert canonical_of[ABBAS_APOSTROPHE] == canonical_of[ABBAS]
+    # A genuinely distinct surface is never touched by the fold.
+    assert canonical_of[DISTINCT_A] == DISTINCT_A
+
+
+def test_fold_collapses_quoted_punctuation_with_no_model_call(isolated_vault_root):
+    """The quote-mark row of the issue's own table, at the phase level.
+
+    A whitespace-ONLY pair is not exercisable at this level: `axial.names.
+    _clean` already collapses internal whitespace before a name ever
+    reaches the inventory, so two answer records naming `Nation  State` and
+    `Nation State` become ONE inventory entry before `axial.name_candidates`
+    ever sees either -- whitespace was already fully handled upstream of
+    this issue. `fold_groups`'s own whitespace-only unit coverage
+    (`src/axial/test_name_candidates.py`) pins the fold function directly."""
+    root = isolated_vault_root
+    _build_fixture_answers(
+        root,
+        [
+            [PROTESTANT_QUOTED],
+            [PROTESTANT_BARE],
+        ],
+        kind="concept",
+    )
+    names_dir = root / "data" / "names"
+    from axial.merge_names import run_merge_names
+    from axial.names import run_names
+
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+        cluster_fn=_singleton_clusters,
+    )
+
+    class ExplodingClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            raise AssertionError("a fold-only group must never reach a merge call")
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    summary = run_merge_names(
+        embeddings_dir=names_dir / "embeddings.lance",
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=names_dir / "merge_decisions.jsonl",
+        manifest_path=names_dir / "merge_manifest.json",
+        domain_dir=root / "no-such-domain",
+        client=ExplodingClient(),
+        cluster_fn=_singleton_clusters,
+    )
+
+    assert summary["decided"] == 0
+    assert summary["batches"] == 0
+    assert summary["fold_groups"] == 1
+
+    canonical_of = {
+        surface: node["canonical"]
+        for node in _read_alias_map(root)["nodes"]
+        for surface in [node["canonical"], *node["aliases"]]
+    }
+    assert canonical_of[PROTESTANT_QUOTED] == canonical_of[PROTESTANT_BARE]
+
+
+# ---------------------------------------------------------------------------
 # Issue #449's rollout hazard: `MergeBatch.key` folds in evidence, so a
 # corpus already decided under a bare-name pass must not be silently
 # re-asked in full just because evidence attachment turned on.

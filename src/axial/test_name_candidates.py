@@ -12,7 +12,7 @@ issue names.
 
 from __future__ import annotations
 
-from axial.name_candidates import generate_candidate_clusters
+from axial.name_candidates import fold_groups, generate_candidate_clusters
 
 
 def _entry(
@@ -145,11 +145,16 @@ def test_bare_surname_gated_on_both_sides_being_person():
 
 
 # ---------------------------------------------------------------------------
-# Family 3: case-only / whitespace-only pairs (the #441 residual)
+# Family 3 (case-only / whitespace-only pairs) is RETIRED (issue #463): it
+# used to propose exactly these pairs as a candidate cluster, and the model
+# refused 295 of ~305 of them on the real corpus. They are now folded
+# upstream instead (`fold_groups`, below) and must never reach this
+# function's output -- these two tests are edited, not deleted, to pin the
+# opposite of what they used to assert.
 # ---------------------------------------------------------------------------
 
 
-def test_case_only_pair_is_proposed():
+def test_case_only_pairs_are_not_a_candidate_family():
     entries = [
         _entry("Janjaweed", kind="movement/religion"),
         _entry("janjaweed", kind="movement/religion"),
@@ -157,15 +162,15 @@ def test_case_only_pair_is_proposed():
 
     clusters = generate_candidate_clusters(entries)
 
-    assert _has_pair(clusters, "Janjaweed", "janjaweed")
+    assert not _appear_together(clusters, "Janjaweed", "janjaweed")
 
 
-def test_whitespace_only_pair_is_proposed():
+def test_whitespace_only_pairs_are_not_a_candidate_family():
     entries = [_entry("Nation  State", kind="concept"), _entry("Nation State", kind="concept")]
 
     clusters = generate_candidate_clusters(entries)
 
-    assert _has_pair(clusters, "Nation  State", "Nation State")
+    assert not _appear_together(clusters, "Nation  State", "Nation State")
 
 
 # ---------------------------------------------------------------------------
@@ -194,3 +199,69 @@ def test_output_is_deduplicated():
     clusters = generate_candidate_clusters(entries)
 
     assert len(clusters) == len({frozenset(c) for c in clusters})
+
+
+# ---------------------------------------------------------------------------
+# Issue #463: the fold that replaces family 3 -- pinned directly on the
+# issue's own worked examples. `fold_groups` is never a candidate cluster; it
+# is unioned straight into the alias map (`axial.merge_names.
+# build_alias_map_nodes`) and must never reach `generate_candidate_clusters`'
+# output (covered above).
+# ---------------------------------------------------------------------------
+
+
+def test_fold_groups_case_only():
+    groups = fold_groups(["Cold War", "Cold war", "cold war"])
+
+    assert groups == [("Cold War", "Cold war", "cold war")]
+
+
+def test_fold_groups_whitespace_only():
+    groups = fold_groups(["Nation  State", "Nation State"])
+
+    assert groups == [("Nation  State", "Nation State")]
+
+
+def test_fold_groups_punctuation_apostrophe_and_quotes():
+    groups = fold_groups(
+        ["'Abbas", "Abbas", '"Protestant constitution"', "Protestant constitution"]
+    )
+
+    assert ("'Abbas", "Abbas") in groups
+    assert ('"Protestant constitution"', "Protestant constitution") in groups
+
+
+def test_fold_groups_hyphen_folds_to_a_space():
+    """Decision (issue #463): a hyphen folds to a SPACE, not to nothing --
+    this corpus's compound names and transliterations vary between
+    hyphenated and spaced spellings of the same words."""
+    groups = fold_groups(["Abd al-Rahman al-Kawakibi", "Abd al Rahman al Kawakibi"])
+
+    assert groups == [("Abd al Rahman al Kawakibi", "Abd al-Rahman al-Kawakibi")]
+
+
+def test_fold_groups_hashtag_folds_to_its_bare_word():
+    """Decision (issue #463): the fold makes this automatic, not a special
+    case -- a hashtag is a punctuation prefix, not a different name."""
+    groups = fold_groups(["#MeToo", "MeToo"])
+
+    assert groups == [("#MeToo", "MeToo")]
+
+
+def test_fold_groups_leaves_diacritics_alone():
+    """Diacritics are out of scope (issue #463, measured): folding them
+    would collide the genuinely distinct `Galilee` / `Galilée`."""
+    assert fold_groups(["Galilee", "Galilée"]) == []
+
+
+def test_fold_groups_ignores_unrelated_surfaces():
+    assert fold_groups(["Ernest Gellner", "Perry Anderson"]) == []
+
+
+def test_fold_groups_never_appear_in_generate_candidate_clusters():
+    """The fold is for candidate generation only in the sense of feeding the
+    upstream union, never in the sense of being asked about -- a fold-only
+    pair must never come back out of `generate_candidate_clusters`."""
+    entries = [_entry("Cold War", kind="concept"), _entry("cold war", kind="concept")]
+
+    assert generate_candidate_clusters(entries) == []

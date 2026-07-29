@@ -1643,6 +1643,7 @@ def _names_merge(
 
     for key in (
         "surface_forms",
+        "fold_groups",
         "clusters",
         "batches",
         "candidate_batches",

@@ -78,6 +78,23 @@ How it works:
      call placed, and no seed mentioned survives as its own canonical node
      with no aliases (§7.16's closing sentence).
 
+**Issue #463: case, whitespace and punctuation are folded upstream of every
+candidate source and of the HDBSCAN blocker, before step 1 above ever runs.**
+`fold_groups` (`axial.name_candidates`) groups the whole inventory's surface
+forms by a fold that casefolds, collapses whitespace and strips punctuation
+(hyphens to a space, everything else to nothing); a group of >= 2 is unioned
+straight into the alias map by `build_alias_map_nodes`, exactly like the
+`polity_canonical.yaml` seed, and is never proposed to the model -- widening
+the candidate net was tried first (issue #446's family 3) and measured a
+295-of-~305 refusal rate on exactly these pairs, so the fold replaces the ask
+rather than repeating it. Only ONE representative per fold group reaches
+clustering and the two remaining candidate families (`_candidate_batches`),
+so a fold-only pair is never split across an HDBSCAN batch, or proposed by
+family 1/2, alongside a genuinely different name -- the full, unfiltered
+inventory is what `build_alias_map_nodes` still runs canonical election over,
+so filtering here never drops a surface and never decides which spelling
+wins.
+
 Outputs, under `data/names/` (§6): `alias_map.json` in §7.16's exact
 `{version, generated_at, nodes: [{canonical, kind, aliases[]}]}` shape --
 never a field more, so a partial run's map is not distinguished by its own
@@ -150,7 +167,7 @@ from axial.checkpoint import append_checkpoint_record, load_checkpoint_records
 from axial.interrogate import _default_domain_dir
 from axial.llm import RECONCILE_PASS_NAME, LLMClient, get_client
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
-from axial.name_candidates import generate_candidate_clusters
+from axial.name_candidates import fold_groups, generate_candidate_clusters
 from axial.names import (
     ClusterFn,
     DEFAULT_EMBEDDINGS_DIR,
@@ -792,25 +809,36 @@ def build_alias_map_nodes(
     entries: list[tuple[str, str | None, int]],
     decision_nodes: list[dict[str, Any]],
     seed_groups: dict[str, list[str]],
+    folded_groups: Iterable[tuple[str, ...]] = (),
 ) -> list[dict[str, Any]]:
-    """Fold every model decision and every seed folding over the WHOLE
-    inventory and elect one canonical per resulting group.
+    """Fold every model decision, every seed folding and every fold group
+    over the WHOLE inventory and elect one canonical per resulting group.
 
     `entries` is `(surface_form, kind, count)` for every inventory entry, so
-    a surface no decision and no seed touched still comes out as its own node
-    with no aliases (§7.16). The canonical is elected in this order: the
-    seed's own spelling when the corpus contains it (it is the curated one),
-    then the canonical the model chose, then the most-mentioned surface form
-    -- ties broken lexicographically throughout, so the map is a pure
-    function of its inputs.
+    a surface no decision, no seed and no fold touched still comes out as
+    its own node with no aliases (§7.16). The canonical is elected in this
+    order: the seed's own spelling when the corpus contains it (it is the
+    curated one), then the canonical the model chose, then the most-mentioned
+    surface form -- ties broken lexicographically throughout, so the map is a
+    pure function of its inputs. `folded_groups` never enters that election:
+    it only says which surfaces are the same entity, never which spelling
+    wins (issue #463 -- the fold is for candidate generation, not identity).
 
     Issue #445: two source-scoped instances of the same locator-shaped
     surface (`axial.names.build_inventory`'s own "Table 4.1 (source_id)"
-    convention) are never folded together here, however a cluster or the
-    model proposes it (`_locator_source_conflict`) -- the whole point of
-    scoping their identity by source is undone if this fold re-fuses them.
-    A bare (single-source) locator, or two scoped instances from the SAME
-    source, are untouched by this check and may still be folded normally.
+    convention) are never folded together here, however a cluster, the model
+    or a fold group proposes it (`_locator_source_conflict`) -- the whole
+    point of scoping their identity by source is undone if this fold
+    re-fuses them. A bare (single-source) locator, or two scoped instances
+    from the SAME source, are untouched by this check and may still be
+    folded normally.
+
+    `folded_groups` (issue #463): surface forms identical once case,
+    whitespace and punctuation are folded (`axial.name_candidates.
+    fold_groups`), computed and unioned here -- BEFORE any candidate source
+    or the HDBSCAN blocker ever sees them, so a pure fold group is never in
+    `decision_nodes` at all; it was never proposed as a batch in the first
+    place, exactly like the `polity_canonical.yaml` seed.
     """
     counts = {surface_form: count for surface_form, _kind, count in entries}
     kinds = {surface_form: kind for surface_form, kind, _count in entries}
@@ -818,6 +846,15 @@ def build_alias_map_nodes(
     union = _Union()
     for surface_form, _kind, _count in entries:
         union.add(surface_form)
+
+    for group in folded_groups:
+        members = [member for member in group if member in counts]
+        if not members:
+            continue
+        base = members[0]
+        for member in members[1:]:
+            if not _locator_source_conflict(base, member):
+                union.union(base, member)
 
     model_canonical: dict[str, int] = {}
     for node in decision_nodes:
@@ -1165,9 +1202,32 @@ def run_merge_names(
         min_samples = configured_min_samples
 
     rows = _load_name_rows(embeddings_dir)
+    full_entries = [(row["surface_form"], row["kind"] or None, int(row["count"])) for row in rows]
+    all_surface_forms = [surface_form for surface_form, _kind, _count in full_entries]
+    kinds = {surface_form: kind for surface_form, kind, _count in full_entries}
+
+    # Issue #463: fold case, whitespace and punctuation UPSTREAM of every
+    # candidate source and the HDBSCAN blocker -- computed over the whole
+    # inventory, before anything below builds a cluster or a batch. A group
+    # identical under the fold is unioned straight into the alias map
+    # (`build_alias_map_nodes`, below), never proposed to the model: widening
+    # the candidate net does not work here (the retired family 3 measured a
+    # 295-of-~305 refusal rate on exactly these pairs). Only ONE
+    # representative per group -- the lexicographically first, an arbitrary
+    # but deterministic pick that never influences which spelling is
+    # canonical (`_elect_canonical` runs on the full, unfiltered inventory
+    # below) -- goes on to clustering and candidate generation, so a
+    # fold-only pair is never split into an HDBSCAN batch, or proposed by
+    # family 1/2, alongside anything else.
+    folded_groups = fold_groups(all_surface_forms)
+    folded_away: set[str] = set()
+    for group in folded_groups:
+        _representative, *duplicates = sorted(group)
+        folded_away.update(duplicates)
+
+    rows = [row for row in rows if row["surface_form"] not in folded_away]
     entries = [(row["surface_form"], row["kind"] or None, int(row["count"])) for row in rows]
     surface_forms = [surface_form for surface_form, _kind, _count in entries]
-    kinds = {surface_form: kind for surface_form, kind, _count in entries}
 
     # Issue #449: the join is already in hand -- each row's own chunk_ids_json
     # -- so no new extraction runs. The whole evidence index is built ONCE,
@@ -1221,7 +1281,9 @@ def run_merge_names(
             decisions.pop(key, None)
 
     print(
-        f"reconcile: {len(surface_forms)} surface form(s), {len(batches)} cluster batch(es) "
+        f"reconcile: {len(all_surface_forms)} surface form(s), "
+        f"{len(folded_groups)} case/whitespace/punctuation fold group(s) auto-merged "
+        f"(issue #463, no model call), {len(batches)} cluster batch(es) "
         f"({len(candidate_batches)} from candidate generation, issue #446) "
         f"at min_cluster_size={min_cluster_size} min_samples={min_samples}; "
         f"{reused} already decided, {len(to_attempt)} to decide now "
@@ -1275,9 +1337,9 @@ def run_merge_names(
                     file=sys.stderr,
                 )
 
-    seed_groups, seed_note = _seed_groups(surface_forms, Path(domain_dir))
+    seed_groups, seed_note = _seed_groups(all_surface_forms, Path(domain_dir))
     decision_nodes = [node for record in decisions.values() for node in record["nodes"]]
-    nodes = build_alias_map_nodes(entries, decision_nodes, seed_groups)
+    nodes = build_alias_map_nodes(full_entries, decision_nodes, seed_groups, folded_groups)
 
     # Issue #450: the escalated count is summed over EVERY decision currently
     # in the log, not just this run's own `to_attempt` -- so the manifest
@@ -1310,7 +1372,8 @@ def run_merge_names(
         "index_path": str(index_path),
         "decisions_path": str(decisions_path),
         "manifest_path": str(manifest_path),
-        "surface_forms": len(surface_forms),
+        "surface_forms": len(all_surface_forms),
+        "fold_groups": len(folded_groups),
         "clusters": len({label for label in labels if label != NOISE_LABEL}),
         "batches": len(batches),
         "candidate_batches": len(candidate_batches),
