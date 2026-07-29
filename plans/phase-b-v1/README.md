@@ -242,7 +242,7 @@ in **Order and concurrency** below.
 | 00 | spec rewrite | #485 | `specs/PHASE-B.md` v2: §7.5 tool set, §7.7 per-name coverage, §7.8 contestedness from `arguing_against` and Gather, §7.12 pin, §7.13 re-based, §9 the 5+5 sets, §10 gates; retired criteria struck rather than left dangling | ✅ |
 | 01 | restore and re-pin | #486 | Re-cut the corpus pin per D6, its vault hash over prose ids plus the name layer. The 130 "missing" findings were superseded history, not damage: the free re-run made 0 calls and wrote 0 pages, and all 1,910 pages already agreed with their newest record. LLM-free | ✅ |
 | 02 | the name query API | #487 | `find_names`, `get_name`, `name_neighbors`, `who_cites`, `who_argues_against`, per-name `coverage_count`; deterministic, model-free, fully testable without an LLM. Validated on the live corpus: 14 of 17 queries resolve on a string tier, `Ungor` reaches `Uğur Ümit Üngör` only through the embeddings. The 0.5 floor stands as a stated tunable; the AANES premise was false and is corrected here and in §7.5 | ✅ |
-| 03 | retrieval loop rewired | #488 | Tool registry and dispatcher onto 02's tools; trajectory log unchanged; step budget re-proven | ☐ |
+| 03 | retrieval loop rewired | #488 | Tool registry and dispatcher onto 02's tools; trajectory log unchanged. Ten tools registered, per-arg types so `limit` is an honest int, and a `returns_chunk_ids` flag that keeps canonical names out of the evidence set. Validated LLM-free against the live vault: `Tilly` → `Charles Tilly` → 146 members, 58 citation edges, 2 oppositions, all three rejection paths firing before the vault, 0 names leaked. **The step budget was NOT re-proven** — raised 10 → 20 as stated provisional headroom, because the name surface needs ~3 calls per name; the real bound is measured on the smoke briefs in 06 | ✅ |
 | 04 | synthesis on the new evidence | #489 | Evidence assembly and the synthesis prompt rebuilt around `claim` / `position_of` / `position` / `arguing_against` / `citations`, with Gather findings as hints per D4 | ☐ |
 | 05 | coverage and counter-position | #490 | Per-name coverage map, confidence derivation, contested detection and counter-position generation per D2 and D3 | ☐ |
 | 06 | the run report, and the smoke harness that asserts on it | #491 | Source usage re-based, the response-quality table computed, per-pass latency captured, one report per run — plus `config/briefs/smoke/` and `axial brief smoke`: five briefs, mechanical checks and a cost and latency budget, built as a front end over the existing `run_sweep` | ☐ |
@@ -340,6 +340,18 @@ docs-only gate exception.
   for zero model calls. Under D4 a coin-flip hint costs a wasted hop, and all 48
   lost names still carry the evidence — differing positions, an `arguing_against`,
   and (46 of 48) notes from two or more books — reachable by `get_name`.
+- **The retrieval planner is blind to how good a name resolution was** (found in
+  slice 03, filed on #491, 2026-07-30). The loop hands the model back each tool
+  call's `result_ids` and nothing else, so `find_names` arrives as bare name
+  strings: no `member_count`, no `kind`, no tier. An embedding hit at cosine 0.78
+  and an exact match are indistinguishable to it. This is inherited loop design
+  from Phase B slice 01, not something the rewiring introduced, and the fix is a
+  real design change — §7.6's `result_ids` shape is FIRM, so richer feedback has
+  to ride beside the trajectory rather than inside it. Measured mitigation:
+  `find_names("Tilly")` returns exactly one hit, not the `C. Tilly 1975`
+  fragments, because the alias tier resolves before the embedding tier runs. So
+  the fragmentation half of the risk is narrow; the tier-invisibility half
+  stands. Decide it on 06's smoke numbers, not on speculation.
 - **Retrieval recall has never been measured and now can be.** The five hard
   briefs have `required_citation_source_ids`. The share of those a run's grounds
   actually reach is the first real recall number this product has had, and it is
