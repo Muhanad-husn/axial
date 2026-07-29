@@ -17,7 +17,7 @@ the model may reject, exactly like an HDBSCAN one. This module decides
 nothing and merges nothing itself (§7.16, D10); §7.16's own words: "a merge
 pass may fold names, never invent them."
 
-Three rules, all exact string shape -- no fuzzy matching and no similarity
+Two rules, both exact string shape -- no fuzzy matching and no similarity
 threshold, per #442's own finding that fuzzy matching cannot pass this
 corpus's traps at any usable precision:
 
@@ -32,14 +32,30 @@ corpus's traps at any usable precision:
      surname, both `kind == "person"`.** Refused whenever more than one
      full-name candidate exists -- bare `'Ali` against seven distinct people
      is refused entirely (#442's measured 97.8%-reliable gate).
-  3. **Case-only and whitespace-only pairs.** Two surface forms whose
-     casefolded, whitespace-collapsed forms are identical but whose written
-     forms differ (the 230-pair residual #441 left, from the same casefold
-     collision that corrupted the merge parser).
 
-Casefold, never strip: this corpus's surnames carry apostrophes, hyphens and
-diacritics (`'Ammash`, `Abdo-Katsipis`, `Malešević`), and those characters are
-part of the surname's identity, not noise to remove before comparing.
+**A third rule -- case-only and whitespace-only pairs -- used to live here
+and is retired (issue #463).** It proposed exactly these pairs (the 230-pair
+residual #441 left) as a candidate cluster, and measured on the corpus of
+record the model refused 295 of ~305 of them: asking whether two strings
+that differ only by case are "the same thing" is not a judgment, and
+widening the net that reaches the model does not fix a refusal. `fold_groups`
+(below) replaces it with a pre-merge fold instead: case, whitespace **and**
+punctuation are normalized (`_normalize_form`) upstream of every candidate
+family in this module and of `axial.merge_names`' own HDBSCAN blocker, so a
+group identical under the fold is unioned directly into the alias map
+(`axial.merge_names.build_alias_map_nodes`, the same mechanism the
+`polity_canonical.yaml` seed already uses) and never reaches a merge call at
+all.
+
+This module's fold is for CANDIDATE GENERATION ONLY, never for identity.
+Nothing that decides or renders a canonical surface may casefold or strip
+punctuation -- the inventory (`axial.names.build_inventory`), canonical
+election (`axial.merge_names._elect_canonical`) and every rendered name page
+keep apostrophes, hyphens and diacritics exactly as the corpus wrote them,
+because those characters are part of a name's identity. See
+`_normalize_form`'s own docstring for the fold rules themselves (which
+punctuation folds to a space, which to nothing, and why diacritics are out
+of scope).
 """
 
 from __future__ import annotations
@@ -54,12 +70,53 @@ _WHITESPACE = re.compile(r"\s+")
 # kind == person").
 _PERSON_KIND = "person"
 
+# Issue #463's hyphen decision: a hyphen (ASCII, or one of the common
+# typographic dash substitutions a born-digital source produces) folds to a
+# SPACE, never to nothing. This corpus's compound names and transliterations
+# vary between hyphenated and spaced spellings of the same sequence of words
+# ("Abd al-Rahman al-Kawakibi" / "Abd al Rahman al Kawakibi"): a hyphen here
+# is a word-part separator, not decoration, so stripping it outright would
+# fuse "Abd-al-Rahman" into a run-together "abdalrahman" that never occurs as
+# anyone's actual written form -- folding to a space instead treats every
+# spelling as the same sequence of words, which is the real collision this
+# fold exists to catch.
+_HYPHENS = re.compile(r"[-‐‑‒–—]")
+
+# Every other punctuation/symbol character folds to NOTHING. An apostrophe or
+# quote mark sits directly against a letter with no word-boundary meaning of
+# its own ('Abbas / Abbas, "Protestant constitution" / Protestant
+# constitution), so removing it changes no word boundary. This also folds a
+# hashtag to its bare word as a side effect, not a special case (#MeToo /
+# MeToo, issue #463's own example) -- deliberate: a hashtag is a punctuation
+# prefix, not a different name.
+_PUNCTUATION = re.compile(r"[^\w\s]", re.UNICODE)
+
 
 def _normalize_form(surface: str) -> str:
-    """Casefold, collapsing internal whitespace to one space and trimming the
-    ends -- never strips accents, hyphens or apostrophes, which this corpus's
-    surnames carry as part of the name itself."""
-    return _WHITESPACE.sub(" ", surface).strip().casefold()
+    """Fold `surface` for CANDIDATE GENERATION ONLY -- never for identity
+    (issue #463). Casefolds; folds hyphens (and common typographic dash
+    substitutions, `_HYPHENS`) to a space; folds every other punctuation or
+    symbol character to nothing (`_PUNCTUATION`); then collapses whitespace
+    to one space and trims the ends.
+
+    This is not the rule for deciding or rendering a canonical surface --
+    `axial.names.build_inventory`, `axial.merge_names._elect_canonical` and
+    every rendered name page keep apostrophes, hyphens and diacritics exactly
+    as the corpus wrote them (`'Ammash`, `Abdo-Katsipis`, `Malešević`),
+    because those characters are part of a name's identity, not noise. This
+    function exists only to say, before any merge call is ever made, that
+    two surface forms are the SAME string once case, whitespace and
+    punctuation are set aside -- so that judgment never has to be asked of
+    the model at all (measured: asking gets it refused 295 times out of
+    ~305, issue #463).
+
+    Diacritics are deliberately left untouched (measured out of scope, issue
+    #463): folding them would collide `Galilee` with the genuinely distinct
+    `Galilée`.
+    """
+    folded = _HYPHENS.sub(" ", surface)
+    folded = _PUNCTUATION.sub("", folded)
+    return _WHITESPACE.sub(" ", folded).strip().casefold()
 
 
 def _is_initial_token(token: str) -> bool:
@@ -143,11 +200,20 @@ def _family_bare_surname(
     return pairs
 
 
-def _family_case_or_whitespace(surface_forms: Iterable[str]) -> list[tuple[str, ...]]:
-    """Family 3 (issue #446, #441's acknowledged residual): surface forms
-    identical once casefolded and whitespace-collapsed, but written
-    differently -- proposed as one cluster of however many variants share
-    the normalized form."""
+def fold_groups(surface_forms: Iterable[str]) -> list[tuple[str, ...]]:
+    """Issue #463: every group of >= 2 distinct surface forms identical once
+    folded (`_normalize_form` -- case, whitespace and punctuation) but
+    written differently.
+
+    This is NOT a candidate cluster and must never be handed to
+    `generate_candidate_clusters`' caller as one: it replaces the retired
+    family 3 (see module docstring), which proposed exactly these pairs as a
+    merge *ask* and measured a 295-of-~305 refusal rate. A group returned
+    here is instead unioned directly into the alias map
+    (`axial.merge_names.build_alias_map_nodes`'s `folded_groups` argument),
+    the same mechanism the `polity_canonical.yaml` seed already uses, so
+    these surfaces are one entity by construction and never reach a merge
+    call."""
     groups: dict[str, list[str]] = {}
     for surface in surface_forms:
         groups.setdefault(_normalize_form(surface), []).append(surface)
@@ -157,22 +223,24 @@ def _family_case_or_whitespace(surface_forms: Iterable[str]) -> list[tuple[str, 
 def generate_candidate_clusters(
     entries: Iterable[tuple[str, str | None, int]],
 ) -> list[tuple[str, ...]]:
-    """Every candidate cluster the three families propose, over the whole
-    name inventory (`entries`: `(surface_form, kind, count)`, `axial.names.
-    InventoryEntry`'s own shape), deduplicated by member set.
+    """Every candidate cluster the two remaining families propose, over the
+    whole name inventory (`entries`: `(surface_form, kind, count)`,
+    `axial.names.InventoryEntry`'s own shape), deduplicated by member set.
 
     Each returned tuple is >= 2 surface forms that were never handed to the
     merge model together by slice 04's own clustering. This function decides
     nothing: every returned cluster still goes to the same, unchanged merge
     call as any HDBSCAN cluster, and the model may reject it exactly as it
-    may reject any other hint (§7.16, D10)."""
+    may reject any other hint (§7.16, D10).
+
+    Case/whitespace/punctuation pairs are handled upstream instead, by
+    `fold_groups` -- never through this function (issue #463)."""
     entries = list(entries)
     surface_forms = [surface for surface, _kind, _count in entries]
 
     candidates: list[tuple[str, ...]] = []
     candidates.extend(_family_initial_forename(surface_forms))
     candidates.extend(_family_bare_surname(entries))
-    candidates.extend(_family_case_or_whitespace(surface_forms))
 
     seen: set[frozenset[str]] = set()
     deduped: list[tuple[str, ...]] = []
