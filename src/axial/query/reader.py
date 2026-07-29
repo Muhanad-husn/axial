@@ -129,14 +129,27 @@ class ChunkNote:
     (`specs/PRODUCT.md` §7.15, Appendix H), which is what a note's
     frontmatter carries in place of the retired tag axes.
 
-    `claim`/`move`/`position_of`/`arguing_against`/`names`/`citations` are
-    read out of the frontmatter's nested `answers` mapping (issue #487): they
-    are what `axial.query.names`' traversals and Phase B's synthesis read, so
-    the general-purpose note reader exposes them directly rather than making
-    every caller re-dig into `answers`. A note that carries no `answers`
-    block at all still parses, with all six at their defaults -- a note
-    written before issue #411, or one whose interrogation abstained, is not a
-    malformed note.
+    `claim`/`move`/`position_of`/`position`/`arguing_against`/`names`/
+    `citations` are read out of the frontmatter's nested `answers` mapping
+    (issue #487): they are what `axial.query.names`' traversals and Phase B's
+    synthesis read, so the general-purpose note reader exposes them directly
+    rather than making every caller re-dig into `answers`. A note that carries
+    no `answers` block at all still parses, with all of them at their defaults
+    -- a note written before issue #411, or one whose interrogation abstained,
+    is not a malformed note.
+
+    **`position_of` and `position` are a mixed frame, and both are exposed
+    raw** (§7.5/§7.15, issue #496): frame 0.2 split "whose position is this?"
+    (`position_of`) from "what is the position?" (`position`), a note
+    interrogated before it carries only the former, a note interrogated after
+    carries both, and no re-run is planned. A consumer wanting the stated
+    position reads `position` when that KEY IS PRESENT and falls back to
+    `position_of` otherwise -- key presence, never truthiness, and never
+    `frame_version`. This reader deliberately does not resolve that for the
+    caller: it reports what the note carries, and `absent key` is information
+    a resolved single field would destroy. `axial.query.names.
+    who_argues_against` applies the rule and returns the resolved `position`;
+    it is the worked example.
 
     `polities_touched`/`artifact_refs` and the `schema_version`/
     `role_in_argument`/`field`/`claim_type`/`theory_school`/
@@ -155,6 +168,7 @@ class ChunkNote:
     claim: str | None = None
     move: str | None = None
     position_of: str | None = None
+    position: str | None = None
     arguing_against: list[Any] = dataclass_field(default_factory=list)
     names: list[Any] = dataclass_field(default_factory=list)
     citations: list[Any] = dataclass_field(default_factory=list)
@@ -265,7 +279,12 @@ def _parse_chunk_note(path: Path) -> ChunkNote:
         source_meta=_require(frontmatter, path, "source_meta"),
         claim=answers.get("claim"),
         move=answers.get("move"),
+        # Both halves of issue #496's mixed frame, raw: a note carrying no
+        # `position` key reads `None` here exactly as one answering
+        # `position: null` does, so a consumer that needs to tell them apart
+        # checks the block itself. See `ChunkNote`'s own docstring.
         position_of=answers.get("position_of"),
+        position=answers.get("position"),
         # A list on every real note, but nothing enforces that on a free-text
         # answer, so a bare string reads as a one-item list rather than being
         # silently dropped (`axial.query.names.as_string_list`'s own rule).

@@ -356,9 +356,132 @@ def test_who_argues_against_accepts_a_bare_string_answer(tmp_path):
 
     edges = who_argues_against("Tilly", vault_dir=vault_dir, names_dir=names_dir)
 
-    assert [(edge.arguing_against, edge.position_of, edge.claim) for edge in edges] == [
+    assert [(edge.arguing_against, edge.position, edge.claim) for edge in edges] == [
         ("Tilly", "the author", "A claim.")
     ]
+
+
+# -- issue #496's mixed frame: `position` when the key is there, else
+#    `position_of` -----------------------------------------------------------
+
+
+def test_who_argues_against_prefers_the_frame_02_position_answer(tmp_path):
+    """A note interrogated under frame 0.2 carries both keys, and `position`
+    ("what is the position?") is the one a reader wants -- `position_of`
+    ("whose position is this?") answers a different question."""
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(names_dir, [{"canonical": "Tilly", "kind": "person", "aliases": []}])
+    _write_prose_note(
+        vault_dir,
+        "src_1_a_001",
+        {
+            "arguing_against": ["Tilly"],
+            "position_of": "the author",
+            "position": "durable rule was built by a party, not an army",
+            "claim": "A claim.",
+        },
+    )
+
+    edges = who_argues_against("Tilly", vault_dir=vault_dir, names_dir=names_dir)
+
+    assert [edge.position for edge in edges] == ["durable rule was built by a party, not an army"]
+
+
+def test_who_argues_against_falls_back_to_position_of_when_the_key_is_absent(tmp_path):
+    """Every note in the live corpus is this case: no `position` key at all,
+    and no re-run is planned."""
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(names_dir, [{"canonical": "Tilly", "kind": "person", "aliases": []}])
+    _write_prose_note(
+        vault_dir,
+        "src_1_a_001",
+        {"arguing_against": ["Tilly"], "position_of": "bellicist", "claim": "A claim."},
+    )
+
+    assert [
+        edge.position
+        for edge in who_argues_against("Tilly", vault_dir=vault_dir, names_dir=names_dir)
+    ] == ["bellicist"]
+
+
+def test_who_argues_against_reads_a_present_position_key_even_when_it_is_null(tmp_path):
+    """Key presence, not truthiness: a note that WAS asked the frame-0.2
+    question and answered nothing must not silently report the older
+    question's answer instead."""
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(names_dir, [{"canonical": "Tilly", "kind": "person", "aliases": []}])
+    _write_prose_note(
+        vault_dir,
+        "src_1_a_001",
+        {
+            "arguing_against": ["Tilly"],
+            "position_of": "the author",
+            "position": None,
+            "claim": "A claim.",
+        },
+    )
+
+    assert [
+        edge.position
+        for edge in who_argues_against("Tilly", vault_dir=vault_dir, names_dir=names_dir)
+    ] == [None]
+
+
+def test_who_argues_against_carries_both_frames_in_one_result_set(tmp_path):
+    """The corpus is genuinely mixed, and one name's members can span both
+    frames -- so one call's results carry a frame-0.2 `position` and a
+    pre-0.2 `position_of` side by side, with nothing marking which is which."""
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(names_dir, [{"canonical": "Tilly", "kind": "person", "aliases": []}])
+    _write_prose_note(
+        vault_dir,
+        "src_1_new_001",
+        {
+            "arguing_against": ["Tilly"],
+            "position_of": "the author",
+            "position": "the new frame's answer",
+            "claim": "A claim.",
+        },
+    )
+    _write_prose_note(
+        vault_dir,
+        "src_1_old_001",
+        {"arguing_against": ["Tilly"], "position_of": "the old frame's answer", "claim": "B."},
+    )
+
+    edges = who_argues_against("Tilly", vault_dir=vault_dir, names_dir=names_dir)
+
+    assert [(edge.chunk_id, edge.position) for edge in edges] == [
+        ("src_1_new_001", "the new frame's answer"),
+        ("src_1_old_001", "the old frame's answer"),
+    ]
+
+
+def test_get_chunk_exposes_both_halves_of_the_mixed_frame_raw(tmp_path):
+    """The note reader reports what the note carries and resolves nothing:
+    `absent key` is information a single resolved field would destroy."""
+    from axial.query import get_chunk
+
+    vault_dir = tmp_path / "vault"
+    _write_prose_note(
+        vault_dir,
+        "src_1_new_001",
+        {"position_of": "the author", "position": "the new frame's answer"},
+    )
+    _write_prose_note(vault_dir, "src_1_old_001", {"position_of": "the old frame's answer"})
+
+    new_frame = get_chunk("src_1_new_001", vault_dir=vault_dir)
+    assert (new_frame.position_of, new_frame.position) == (
+        "the author",
+        "the new frame's answer",
+    )
+
+    old_frame = get_chunk("src_1_old_001", vault_dir=vault_dir)
+    assert (old_frame.position_of, old_frame.position) == ("the old frame's answer", None)
 
 
 def test_a_note_with_no_answers_block_at_all_is_read_as_naming_nothing(tmp_path):

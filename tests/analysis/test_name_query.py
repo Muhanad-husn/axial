@@ -35,9 +35,12 @@ When  name_neighbors / who_cites / who_argues_against are called for
       "Charles Tilly"
 Then  the co-occurring names come back ranked by shared note count,
       the citation edges come back with the author's own stance, and the
-      opposition edges come back with `position_of` and `claim` -- each
-      matched through every surface form the alias map folds into the
-      canonical, never string equality on the canonical alone
+      opposition edges come back with the note's stated `position` and its
+      `claim` -- each matched through every surface form the alias map folds
+      into the canonical, never string equality on the canonical alone
+  And `position` is read from a note's `position` answer where that key is
+      present and from its `position_of` answer otherwise, so one result set
+      carries both of issue #496's frames
 
 Given a name page whose on-disk filename was budgeted down to a name that
       another page already claimed
@@ -133,6 +136,12 @@ TILLY_CLAIM = "Synthetic claim: coercive extraction built the fixture state."
 AGAMBEN_CLAIM = "Synthetic claim: the fixture camp is the nomos of the fixture polity."
 PYD_CLAIM = "Synthetic claim: the fixture administration governs without a fixture state."
 
+# Issue #496's frame-0.2 `position` answer ("what is the position?"), carried
+# by exactly one of the three fixture notes. The other two carry only
+# `position_of` ("whose position is this?"), which is what every note in the
+# live corpus carries -- so one `who_argues_against` call spans both frames.
+AGAMBEN_POSITION = "sovereignty is exercised through the exception, not through war"
+
 TILLY_DISAGREEMENT = (
     "Synthetic finding: the authors gathered here disagree about whether war "
     "making explains fixture state capacity at all."
@@ -219,10 +228,27 @@ def _prose_note(
     arguing_against: list[str],
     names: list[dict[str, str]],
     citations: list[dict[str, str]],
+    position: str | None = None,
 ) -> dict[str, Any]:
     """One prose note's frontmatter in Materialize's own written shape
     (`axial.vault.build_frontmatter`): the answer block nested under
-    `answers`, plain strings, never wikilinks."""
+    `answers`, plain strings, never wikilinks.
+
+    `position` given adds issue #496's frame-0.2 key alongside `position_of`;
+    omitted leaves the pre-0.2 shape, which is what every note in the live
+    corpus carries. The fixture holds both, since the corpus is a mixed frame
+    and stays one."""
+    answers: dict[str, Any] = {
+        "claim": claim,
+        "move": move,
+        "position_of": position_of,
+        "arguing_against": arguing_against,
+        "names": names,
+        "citations": citations,
+        "about": ["fixture"],
+    }
+    if position is not None:
+        answers["position"] = position
     return {
         "chunk_id": chunk_id,
         "source": f"{author} — A Synthetic Fixture Source",
@@ -238,15 +264,7 @@ def _prose_note(
         "chapter": "Synthetic Chapter",
         "frame_version": "1",
         "interrogated": {"pass": "interrogate", "model": "fixture", "at": "2026-07-29T00:00:00Z"},
-        "answers": {
-            "claim": claim,
-            "move": move,
-            "position_of": position_of,
-            "arguing_against": arguing_against,
-            "names": names,
-            "citations": citations,
-            "about": ["fixture"],
-        },
+        "answers": answers,
     }
 
 
@@ -275,7 +293,11 @@ PROSE_NOTES = [
         year=2005,
         claim=AGAMBEN_CLAIM,
         move="reframes",
-        position_of="the state of exception",
+        # Frame 0.2 (issue #496): this one note carries BOTH keys, and the
+        # other two carry only `position_of`, so the fixture is the mixed
+        # frame the corpus is.
+        position_of="the author",
+        position=AGAMBEN_POSITION,
         arguing_against=["C. Tilly 1975"],
         names=[
             {"name": AGAMBEN, "kind": "person"},
@@ -722,11 +744,19 @@ def test_who_cites_matches_every_surface_the_alias_map_folds_in(
     assert who_cites(UNGOR, vault_dir=vault_dir, names_dir=names_dir) == []
 
 
-def test_who_argues_against_carries_position_of_and_claim(fixture_layer: tuple[Path, Path]):
-    """Same alias matching, plus each note's own `position_of` and
+def test_who_argues_against_carries_the_stated_position_and_claim(
+    fixture_layer: tuple[Path, Path],
+):
+    """Same alias matching, plus each note's own stated `position` and
     one-sentence `claim`, so the opposition is legible without a second
     fetch. One note names the alias "C. Tilly 1975", the other only a folded
-    variant of the canonical."""
+    variant of the canonical.
+
+    The two edges also span issue #496's mixed frame in one result set: the
+    Agamben note carries a frame-0.2 `position` key and is read from it, the
+    PYD note carries only `position_of` and falls back to it, and nothing in
+    the result marks which is which -- key presence decides, never
+    `frame_version`."""
     from axial.query import who_argues_against
 
     vault_dir, names_dir = fixture_layer
@@ -736,7 +766,10 @@ def test_who_argues_against_carries_position_of_and_claim(fixture_layer: tuple[P
         (AGAMBEN_NOTE, "C. Tilly 1975"),
         (PYD_NOTE, "charles  tilly"),
     ]
-    assert edges[0].position_of == "the state of exception"
+    assert [e.position for e in edges] == [
+        AGAMBEN_POSITION,  # frame 0.2: the `position` key is present
+        "stateless self-administration",  # pre-0.2: `position_of` is the fallback
+    ]
     assert edges[0].claim == AGAMBEN_CLAIM
     assert edges[0].source_id == AGAMBEN_SOURCE_ID
 

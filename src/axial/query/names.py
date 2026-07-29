@@ -218,13 +218,18 @@ class CitationEdge:
 @dataclass(frozen=True)
 class OppositionEdge:
     """One author-stated opposition edge (§7.15's `arguing_against`), with
-    that note's own `position_of` and one-sentence `claim` so the opposition
-    is legible without a second fetch."""
+    that note's own stated position and one-sentence `claim` so the
+    opposition is legible without a second fetch.
+
+    `position` is the note's own `position` answer where the key is present
+    and its `position_of` answer otherwise (§7.5, issue #496's mixed frame --
+    see `_read_note_answers`, which is the one place that rule is applied
+    here)."""
 
     chunk_id: str
     source_id: str | None
     arguing_against: str
-    position_of: str | None
+    position: str | None
     claim: str | None
 
 
@@ -549,12 +554,16 @@ class _NoteAnswers:
     """The answer fields the three traversal tools read off one prose note
     (§7.15, Appendix H) -- never `chunk_text`, `section` or `source_meta`,
     which none of them consult and which would make the process-lifetime
-    index below hold a full copy of every note."""
+    index below hold a full copy of every note.
+
+    `position` is already resolved across issue #496's mixed frame (see
+    `_read_note_answers`): the index stores the answer a reader should use,
+    not both keys, since no tool here needs to tell the two frames apart."""
 
     chunk_id: str
     source_id: str | None
     claim: str | None
-    position_of: str | None
+    position: str | None
     arguing_against: list[str] = field(default_factory=list)
     names: list[tuple[str, str | None]] = field(default_factory=list)
     citations: list[tuple[str, str | None, str | None]] = field(default_factory=list)
@@ -578,7 +587,18 @@ def as_string_list(value: Any) -> list[str]:
 
 def _read_note_answers(path: Path) -> _NoteAnswers | None:
     """One prose note's answer block, or `None` on any malformed note (same
-    never-abort-a-whole-corpus-scan rule as `_read_name_page_head`)."""
+    never-abort-a-whole-corpus-scan rule as `_read_name_page_head`).
+
+    **The stated position is read across a mixed frame** (§7.5/§7.15, issue
+    #496): a note interrogated before frame 0.2 carries `position_of` and no
+    `position` key, a note interrogated after carries both, and no re-run is
+    planned. So `position` is read when the KEY IS PRESENT and `position_of`
+    is the fallback otherwise -- key presence, never truthiness (a note that
+    genuinely answered `position: null` has been asked the frame-0.2 question
+    and its answer is that null, not the older question's answer), and never
+    `frame_version` (a note's own keys say what it was asked; a version
+    string is a second source of truth that can disagree). This is the one
+    place the rule is applied in this module."""
     try:
         frontmatter, _body = _read_frontmatter(path)
     except (MalformedNoteError, OSError):
@@ -607,12 +627,12 @@ def _read_note_answers(path: Path) -> _NoteAnswers | None:
             citations.append((entry["cited"], entry.get("stance"), entry.get("about")))
 
     claim = answers.get("claim")
-    position_of = answers.get("position_of")
+    position = answers["position"] if "position" in answers else answers.get("position_of")
     return _NoteAnswers(
         chunk_id=chunk_id,
         source_id=source_id,
         claim=claim if isinstance(claim, str) else None,
-        position_of=position_of if isinstance(position_of, str) else None,
+        position=position if isinstance(position, str) else None,
         arguing_against=as_string_list(answers.get("arguing_against")),
         names=names,
         citations=citations,
@@ -1010,10 +1030,16 @@ def who_argues_against(
     canonical: str, *, vault_dir: Path | None = None, names_dir: Path | None = None
 ) -> list[OppositionEdge]:
     """Every prose note whose `arguing_against` answers name `canonical`
-    (§7.5), carrying that note's own `position_of` and one-sentence `claim`
-    so the opposition is legible without a second fetch. This is what feeds
-    contested detection and the counter-position whitelist (§7.8) -- a
+    (§7.5), carrying that note's own stated `position` and one-sentence
+    `claim` so the opposition is legible without a second fetch. This is what
+    feeds contested detection and the counter-position whitelist (§7.8) -- a
     relation the author stated, not a label a tagger picked.
+
+    `position` is the note's own `position` answer where that key is present
+    and its `position_of` answer otherwise, so one result set can carry both
+    frames (§7.15, issue #496; the rule lives in `_read_note_answers`). No
+    note in the live corpus carries a `position` key yet, so every real call
+    still falls back.
 
     Same alias-map matching as `who_cites`.
 
@@ -1027,7 +1053,7 @@ def who_argues_against(
             chunk_id=note.chunk_id,
             source_id=note.source_id,
             arguing_against=opposed,
-            position_of=note.position_of,
+            position=note.position,
             claim=note.claim,
         )
         for note in _answers_index(vault)
