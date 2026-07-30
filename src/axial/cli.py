@@ -248,9 +248,9 @@ def build_parser() -> argparse.ArgumentParser:
         "names",
         help=(
             "Phase A v1 slice 04 (issue #415): the name inventory and "
-            "similarity view (LLM-free, D10, spec §7.16) -- 'build' collects "
-            "every distinct name surface form (names[]/citations[].cited) "
-            "out of data/answers/, writes the lossless inventory to "
+            "similarity view (D10, spec §7.16) -- 'build' collects "
+            "every distinct name surface form (names[] only, issue #508) "
+            "out of data/answers/, writes the inventory to "
             "data/names/inventory.jsonl, embeds and clusters it, and persists "
             "the result to data/names/embeddings.lance; 'examine' reports the "
             "cluster-size and nearest-neighbour similarity distribution over "
@@ -268,7 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
         "build",
         help=(
             "collect every distinct name surface form from data/answers/ "
-            "(names[]/citations[].cited only, §7.16), write "
+            "(names[] only, minus §7.16's cut set), write "
             "data/names/inventory.jsonl, embed each with the local "
             "sentence-transformer, cluster with HDBSCAN, and persist vectors "
             "+ cluster labels to data/names/embeddings.lance "
@@ -1901,8 +1901,6 @@ def _names_merge(
     for key in (
         "surface_forms",
         "fold_groups",
-        "numeral_gated_surfaces",
-        "apparatus_gated_surfaces",
         "clusters",
         "batches",
         "candidate_batches",
@@ -1958,8 +1956,6 @@ def _names_gather(limit: int | None, workers: int) -> int:
 
     for key in (
         "names",
-        "names_skipped_numeral_only",
-        "names_skipped_apparatus_pointer",
         "names_skipped_single_member",
         "names_skipped_below_min_members",
         "min_gather_members",

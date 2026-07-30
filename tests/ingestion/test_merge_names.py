@@ -1176,87 +1176,51 @@ def test_fold_collapses_quoted_punctuation_with_no_model_call(isolated_vault_roo
 
 
 # ---------------------------------------------------------------------------
-# Fix (2026-07-29): `is_numeral_only_surface` gates a bare page number or a
-# plain century out of every merge call -- locator residue, not a name.
+# Issue #508: the numeral-only and apparatus-pointer gates that used to sit
+# at merge time are gone. Both predicates now cut at INVENTORY time, so the
+# residue never reaches the alias map at all -- which is what removes its
+# wiki page, the thing the old call-time gate could not do.
 # ---------------------------------------------------------------------------
 
 BARE_PAGE_NUMBER = "13"
 CENTURY = "10th century"
+FOOTNOTE_POINTER = "Footnote 36"
+CHAPTER_POINTER = "Chapter 4"
 WAR_FOOTING = "war footing"
 WARTIME_FOOTING = "wartime footing"
 
 
-def test_a_numeral_only_surface_never_reaches_a_merge_call(isolated_vault_root):
-    """A cluster whose only two members are locator residue -- a bare page
-    number and a plain century -- must never be submitted: after both are
-    gated, nothing remains to decide."""
-    root = isolated_vault_root
-    _build_fixture_answers(root, [[BARE_PAGE_NUMBER], [CENTURY]], kind="concept")
-    names_dir = root / "data" / "names"
-    from axial.merge_names import run_merge_names
-    from axial.names import run_names
-
-    run_names(
-        answers_dir=root / "data" / "answers",
-        inventory_path=names_dir / "inventory.jsonl",
-        embeddings_dir=names_dir / "embeddings.lance",
-        manifest_path=names_dir / "similarity_manifest.json",
-        cluster_fn=lambda vectors: [0] * len(vectors),
-    )
-
-    class ExplodingClient:
-        def complete(self, prompt: str, pass_name: str | None = None) -> str:
-            raise AssertionError("a numeral-only surface must never reach a merge call")
-
-        def model_for_pass(self, pass_name: str | None = None) -> str:
-            return "fake"
-
-    summary = run_merge_names(
-        embeddings_dir=names_dir / "embeddings.lance",
-        alias_map_path=names_dir / "alias_map.json",
-        index_path=names_dir / "index.json",
-        decisions_path=names_dir / "merge_decisions.jsonl",
-        manifest_path=names_dir / "merge_manifest.json",
-        domain_dir=root / "no-such-domain",
-        client=ExplodingClient(),
-        cluster_fn=lambda vectors: [0] * len(vectors),
-    )
-
-    assert summary["decided"] == 0
-    assert summary["batches"] == 0
-    assert summary["numeral_gated_surfaces"] == 2
-
-    # Neither is dropped from the map (§7.16 is lossless) -- both survive as
-    # their own unmerged canonical, just never asked about.
-    canonical_of = {
-        surface: node["canonical"]
-        for node in _read_alias_map(root)["nodes"]
-        for surface in [node["canonical"], *node["aliases"]]
-    }
-    assert canonical_of[BARE_PAGE_NUMBER] == BARE_PAGE_NUMBER
-    assert canonical_of[CENTURY] == CENTURY
-
-
-def test_a_mixed_cluster_still_asks_about_its_real_members(isolated_vault_root):
-    """A cluster HDBSCAN put a bare page number alongside two genuinely
-    similar real names must still ask about the real pair -- gating the
-    numeral must not silently cancel a real name's chance to merge, and the
-    numeral itself must never appear in what the model is shown."""
+def test_residue_surfaces_never_reach_the_inventory_or_the_alias_map(isolated_vault_root):
+    """A bare page number, a plain century and two apparatus pointers are
+    cut before the inventory is written, so no node in the alias map carries
+    one and no merge call is ever asked about one. The two real names in the
+    same cluster still merge."""
     root = isolated_vault_root
     _build_fixture_answers(
-        root, [[BARE_PAGE_NUMBER], [WAR_FOOTING], [WARTIME_FOOTING]], kind="concept"
+        root,
+        [
+            [BARE_PAGE_NUMBER],
+            [CENTURY],
+            [FOOTNOTE_POINTER],
+            [CHAPTER_POINTER],
+            [WAR_FOOTING],
+            [WARTIME_FOOTING],
+        ],
+        kind="concept",
     )
     names_dir = root / "data" / "names"
     from axial.merge_names import run_merge_names
     from axial.names import run_names
 
-    run_names(
+    result = run_names(
         answers_dir=root / "data" / "answers",
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
         cluster_fn=lambda vectors: [0] * len(vectors),
     )
+
+    assert result.entry_count == 2, "only the two real names survive the cut set"
 
     class RecordingClient:
         def __init__(self) -> None:
@@ -1282,9 +1246,17 @@ def test_a_mixed_cluster_still_asks_about_its_real_members(isolated_vault_root):
     )
 
     assert summary["decided"] == 1
-    assert summary["numeral_gated_surfaces"] == 1
+    assert summary["surface_forms"] == 2
     assert len(client.prompts) == 1
-    assert BARE_PAGE_NUMBER not in client.prompts[0]
+
+    surfaces = {
+        surface
+        for node in _read_alias_map(root)["nodes"]
+        for surface in [node["canonical"], *node["aliases"]]
+    }
+    for residue in (BARE_PAGE_NUMBER, CENTURY, FOOTNOTE_POINTER, CHAPTER_POINTER):
+        assert residue not in surfaces, f"{residue!r} should have left the name space"
+        assert residue not in client.prompts[0]
 
     canonical_of = {
         surface: node["canonical"]
@@ -1292,68 +1264,6 @@ def test_a_mixed_cluster_still_asks_about_its_real_members(isolated_vault_root):
         for surface in [node["canonical"], *node["aliases"]]
     }
     assert canonical_of[WAR_FOOTING] == canonical_of[WARTIME_FOOTING] == WAR_FOOTING
-    assert canonical_of[BARE_PAGE_NUMBER] == BARE_PAGE_NUMBER
-
-
-# ---------------------------------------------------------------------------
-# Fix (2026-07-29): `is_apparatus_pointer_shaped` gates a chapter/footnote/
-# endnote/appendix/table/figure POINTER out of every merge call -- apparatus
-# residue, same family as the numeral gate above, not caught by it.
-# ---------------------------------------------------------------------------
-
-FOOTNOTE_POINTER = "Footnote 36"
-CHAPTER_POINTER = "Chapter 4"
-
-
-def test_an_apparatus_pointer_surface_never_reaches_a_merge_call(isolated_vault_root):
-    """A cluster whose only two members are apparatus residue -- a footnote
-    pointer and a chapter pointer -- must never be submitted: after both are
-    gated, nothing remains to decide."""
-    root = isolated_vault_root
-    _build_fixture_answers(root, [[FOOTNOTE_POINTER], [CHAPTER_POINTER]], kind="concept")
-    names_dir = root / "data" / "names"
-    from axial.merge_names import run_merge_names
-    from axial.names import run_names
-
-    run_names(
-        answers_dir=root / "data" / "answers",
-        inventory_path=names_dir / "inventory.jsonl",
-        embeddings_dir=names_dir / "embeddings.lance",
-        manifest_path=names_dir / "similarity_manifest.json",
-        cluster_fn=lambda vectors: [0] * len(vectors),
-    )
-
-    class ExplodingClient:
-        def complete(self, prompt: str, pass_name: str | None = None) -> str:
-            raise AssertionError("an apparatus-pointer surface must never reach a merge call")
-
-        def model_for_pass(self, pass_name: str | None = None) -> str:
-            return "fake"
-
-    summary = run_merge_names(
-        embeddings_dir=names_dir / "embeddings.lance",
-        alias_map_path=names_dir / "alias_map.json",
-        index_path=names_dir / "index.json",
-        decisions_path=names_dir / "merge_decisions.jsonl",
-        manifest_path=names_dir / "merge_manifest.json",
-        domain_dir=root / "no-such-domain",
-        client=ExplodingClient(),
-        cluster_fn=lambda vectors: [0] * len(vectors),
-    )
-
-    assert summary["decided"] == 0
-    assert summary["batches"] == 0
-    assert summary["apparatus_gated_surfaces"] == 2
-
-    # Neither is dropped from the map (§7.16 is lossless) -- both survive as
-    # their own unmerged canonical, just never asked about.
-    canonical_of = {
-        surface: node["canonical"]
-        for node in _read_alias_map(root)["nodes"]
-        for surface in [node["canonical"], *node["aliases"]]
-    }
-    assert canonical_of[FOOTNOTE_POINTER] == FOOTNOTE_POINTER
-    assert canonical_of[CHAPTER_POINTER] == CHAPTER_POINTER
 
 
 # ---------------------------------------------------------------------------
