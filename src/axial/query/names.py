@@ -3,7 +3,8 @@
 
 `axial.query.reader` is the note layer -- a note or a source by an id the
 caller already holds. This module is the layer that lets a caller FIND
-something: the names the corpus carries, the notes that meet at each one, and
+something: the names the corpus carries, the notes that meet at each one, the
+notes at the intersection of two names (`where_names_meet`, issue #517), and
 the two traversals the interrogation actually produced (`citations[].cited`
 with its stance, and `arguing_against`). It replaces `query_by_tag`,
 `query_by_polity` and `follow_backlinks`, which returned 0 on every axis
@@ -1176,6 +1177,108 @@ def who_argues_against(
     ]
     edges = sorted(edges, key=lambda edge: (edge.chunk_id, edge.arguing_against))
     return edges[:limit], len(edges)
+
+
+# ---------------------------------------------------------------------------
+# where_names_meet
+# ---------------------------------------------------------------------------
+
+
+def where_names_meet(
+    canonical: str,
+    other: str,
+    limit: int = DEFAULT_LIMIT,
+    *,
+    vault_dir: Path | None = None,
+    names_dir: Path | None = None,
+) -> tuple[list[NameMember], int]:
+    """The notes that are members of BOTH `canonical`'s and `other`'s name
+    pages (§7.5, issue #517) -- the co-occurrence edge `name_neighbors`
+    already computes, returned as the shared notes themselves rather than as
+    a ranked name list. Exists because a brief's `case` anchor is specified
+    to be a polity and a polity page is often the largest one in the corpus:
+    intersecting it with the intellectual name a brief is actually about (a
+    concept, scholar or event) turns a huge, single-source hub read into a
+    small, source-diverse set, with no diversity heuristic needed at all --
+    the anchor filters, the intellectual name carries the query.
+
+    Both `canonical` and `other` are resolved through the same three exact
+    tiers `get_name` uses (`canonical_for_surface`: canonical, alias, fold --
+    never tier 4) before either page is read, so an alias or a folded
+    variant of either name reaches the same page as its canonical.
+
+    **Reads both pages' full, uncapped member lists and intersects on
+    `chunk_id`** -- never `get_name`, whose own `limit` would truncate a page
+    before the intersection could see the whole thing. The two helpers this
+    reuses (`_resolve_name_page`, `_parse_name_page_body`) are exactly the
+    ones `get_name` calls; nothing here re-parses a page by hand. A shared
+    member's `author`/`year`/`claim` is read off `canonical`'s own page --
+    both pages render the same note identically, so which side supplies it
+    is immaterial. This also never touches `_answers_index` (measured
+    139.7s cold over the real corpus, issue #520 item 7): reading two name
+    pages is O(pages), not O(corpus).
+
+    **A name that resolves to no page raises `NameNotFoundError`**, naming
+    whichever of the two failed first (`canonical` checked before `other`),
+    exactly like `get_name`. **An empty intersection is an honest answer**,
+    returned as `([], 0)` -- both pages existing and sharing no member is
+    real information about the corpus, never an error.
+
+    **Determinism, and why it is not `chunk_id` ascending.** The intersecting
+    members are grouped by `source_id` (a member whose `chunk_id` did not
+    parse groups under `""`, sorting first), the groups ordered by
+    `source_id` ascending, members within a group ordered by `chunk_id`
+    ascending, then emitted one member per group in rotation until every
+    group is exhausted -- a total order, fully deterministic. Plain
+    `chunk_id` ascending is not used because a `chunk_id` begins with its
+    `source_id`, so ascending order **is** alphabetical-by-source -- the
+    exact defect #517 was filed on: a 104-note intersection truncated to a
+    25-note alphabetical prefix came back drawn from 2 sources instead of
+    the 11 the true intersection spans. This tool is new, so it states its
+    own order here rather than inheriting `get_name`'s page-order contract,
+    which nothing in this function reads.
+
+    Returns `(members, total)` (issue #505's own precedent): `members` is
+    the round-robin order above, truncated at `limit`; `total` is the true,
+    uncapped intersection size."""
+    layer = _name_layer(names_dir)
+    vault = Path(vault_dir) if vault_dir is not None else default_vault_dir()
+
+    resolved_canonical = canonical_for_surface(canonical, layer) or canonical
+    entry_a = _resolve_name_page(resolved_canonical, vault)
+    if entry_a is None:
+        raise NameNotFoundError(resolved_canonical, name_page_path(vault, resolved_canonical))
+
+    resolved_other = canonical_for_surface(other, layer) or other
+    entry_b = _resolve_name_page(resolved_other, vault)
+    if entry_b is None:
+        raise NameNotFoundError(resolved_other, name_page_path(vault, resolved_other))
+
+    _frontmatter_a, body_a = _read_frontmatter(entry_a.path)
+    members_a, _disagreement_a = _parse_name_page_body(body_a)
+    _frontmatter_b, body_b = _read_frontmatter(entry_b.path)
+    members_b, _disagreement_b = _parse_name_page_body(body_b)
+
+    other_chunk_ids = {member.chunk_id for member in members_b}
+    intersecting = [member for member in members_a if member.chunk_id in other_chunk_ids]
+
+    groups: dict[str, list[NameMember]] = {}
+    for member in intersecting:
+        groups.setdefault(member.source_id or "", []).append(member)
+    for group_members in groups.values():
+        group_members.sort(key=lambda member: member.chunk_id)
+
+    group_keys = sorted(groups)
+    ordered: list[NameMember] = []
+    round_index = 0
+    while len(ordered) < len(intersecting):
+        for key in group_keys:
+            bucket = groups[key]
+            if round_index < len(bucket):
+                ordered.append(bucket[round_index])
+        round_index += 1
+
+    return ordered[:limit], len(ordered)
 
 
 # ---------------------------------------------------------------------------

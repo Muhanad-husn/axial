@@ -48,6 +48,14 @@ Then  the trajectory entry still has exactly the five §7.6 fields, with
   And a call that is both THIN (below thin_result_floor) and capped states
       both notes -- neither may silently swallow the other
 
+Given a scripted find_names call that resolves through the alias tier
+      (issue #517: planner blindness -- the loop used to hand back only a
+      bare canonical string)
+When  the retrieval loop runs
+Then  the trajectory entry still has exactly the five §7.6 fields
+  And the recorded prompt for the next step states the hit's kind and tier,
+      so the model can tell a solid resolution from a guess
+
 See specs/PHASE-B.md §4 (the agentic loop, case-as-anchor P0-3), §7.5 (the
 name-layer tools, [FIRM], and D4's Gather-hint rule) and §7.6 (the
 trajectory log, [FIRM], unchanged) for the source of truth, and
@@ -575,4 +583,54 @@ def test_a_result_that_is_both_thin_and_capped_states_both_notes(
     assert "THIN" in step_2_prompt, f"the thin signal must not be dropped, got {step_2_prompt!r}"
     assert "1 of 3 total" in step_2_prompt, (
         f"the capped signal must not be dropped, got {step_2_prompt!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scenario 6 (issue #517): find_names' own resolution detail -- kind,
+# member_count, tier -- reaches the next turn's prompt, beside the
+# trajectory, never inside it.
+# ---------------------------------------------------------------------------
+
+
+def test_find_names_detail_reaches_the_next_turns_prompt(
+    fixture: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Before this, the loop handed the model only a bare canonical string
+    for every `find_names` hit, so an exact/alias resolution and an
+    embedding guess at cosine 0.78 were indistinguishable -- the planner-
+    blindness signature #505's run 1 showed (ten find_names calls, seven
+    returning a single result). `ToolResult.detail` carries the hit's own
+    `kind`/`member_count`/`tier`, and the loop appends it to the next
+    prompt, the same way `total` already rides beside the trajectory."""
+    vault_dir, names_dir = fixture
+    _set_scripted_tool_calls(
+        monkeypatch,
+        [
+            {"tool": "find_names", "args": {"query": "Tilly"}},
+            None,
+        ],
+    )
+    record_path = tmp_path / "record.jsonl"
+    client = RecordLLMClient(record_path)
+
+    trajectory = run_retrieval_loop(
+        client, "seed prompt", vault_dir=vault_dir, names_dir=names_dir, step_budget=10
+    )
+
+    assert len(trajectory) == 1
+    assert set(trajectory[0]) == {"step", "tool", "args", "result_ids", "result_count"}, (
+        "detail rides beside the trajectory, never inside it -- the §7.6 shape is unchanged"
+    )
+
+    prompts = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
+    step_2_prompt = prompts[1]
+    assert "kind=person" in step_2_prompt, (
+        f"expected the hit's kind in the next prompt, got {step_2_prompt!r}"
+    )
+    assert "member_count=3" in step_2_prompt, (
+        f"expected the hit's member_count in the next prompt, got {step_2_prompt!r}"
+    )
+    assert "tier=alias" in step_2_prompt, (
+        f"expected which tier resolved the query in the next prompt, got {step_2_prompt!r}"
     )

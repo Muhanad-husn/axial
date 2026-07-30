@@ -36,7 +36,15 @@ canonicals in one result, holding the prompt over a million characters for 14 tu
 function itself is untouched; only its tool-facing registration is gone.
 `EXPECTED_TOOL_NAMES`/`NAME_VALUED_TOOLS` below and every assertion that
 counted it are updated accordingly, and a new test proves it is absent from
-both `TOOL_REGISTRY` and `tool_specs_for_provider()`."""
+both `TOOL_REGISTRY` and `tool_specs_for_provider()`.
+
+Issue #517 adds `where_names_meet` (two required string args, `canonical`
+and `other`, plus the same `limit`/`total` shape `get_name`/`who_cites`/
+`who_argues_against` already carry) -- a one-line justification for editing
+this locked-contract file, per the founder-approved #517 decision.
+`EXPECTED_TOOL_NAMES`/`CHUNK_VALUED_TOOLS`/the `limit`-int-arg test below are
+all updated, and new tests cover its two-required-arg schema through the
+dispatcher."""
 
 from __future__ import annotations
 
@@ -63,6 +71,7 @@ EXPECTED_TOOL_NAMES = {
     "name_neighbors",
     "who_cites",
     "who_argues_against",
+    "where_names_meet",
     "query_by_source",
     "get_envelope",
     "get_chunk",
@@ -79,6 +88,7 @@ CHUNK_VALUED_TOOLS = {
     "get_name",
     "who_cites",
     "who_argues_against",
+    "where_names_meet",
     "query_by_source",
     "get_chunk",
     "get_artifact",
@@ -106,8 +116,9 @@ def test_every_registry_entry_carries_a_name_and_a_validatable_arg_schema():
 def test_returns_chunk_ids_matches_the_issues_own_two_groups():
     """§7.5's own split, restated as a data assertion: `find_names` and
     `name_neighbors` yield names; `get_name`, `who_cites`,
-    `who_argues_against`, `query_by_source`, `get_chunk` and `get_artifact`
-    yield chunk/artifact ids; `get_envelope` yields neither."""
+    `who_argues_against`, `where_names_meet`, `query_by_source`, `get_chunk`
+    and `get_artifact` yield chunk/artifact ids; `get_envelope` yields
+    neither."""
     for name in NAME_VALUED_TOOLS:
         assert TOOL_REGISTRY[name].returns_chunk_ids is False, name
     for name in CHUNK_VALUED_TOOLS:
@@ -118,8 +129,16 @@ def test_returns_chunk_ids_matches_the_issues_own_two_groups():
 def test_limit_is_the_one_declared_int_arg_in_the_whole_tool_set():
     """Issue #505: `get_name`/`who_cites`/`who_argues_against` join
     `find_names`/`name_neighbors` in declaring `limit` as an int arg -- the
-    whole name-layer tool set is now uniform (bounded, `limit`-taking)."""
-    limit_taking = {"find_names", "name_neighbors", "get_name", "who_cites", "who_argues_against"}
+    whole name-layer tool set is now uniform (bounded, `limit`-taking).
+    Issue #517 adds `where_names_meet` to the same uniform set."""
+    limit_taking = {
+        "find_names",
+        "name_neighbors",
+        "get_name",
+        "who_cites",
+        "who_argues_against",
+        "where_names_meet",
+    }
     for name, spec in TOOL_REGISTRY.items():
         if name in limit_taking:
             assert spec.int_args == frozenset({"limit"}), name
@@ -506,3 +525,104 @@ def test_dispatch_total_is_none_for_a_tool_that_carries_no_pre_cap_total(
 
     assert result.error is None
     assert result.total is None
+
+
+# --- issue #517: where_names_meet through the dispatcher -------------------
+
+
+def test_dispatch_accepts_where_names_meet_and_returns_the_intersection(
+    fixture_tilly_vault_dir: Path,
+):
+    names_dir = fixture_tilly_vault_dir / "names"
+    shared_member = "tillyfix-1978_1_intro_001"
+    other_body = (
+        "# Iraq\n\n**Member notes:**\n"
+        f"- [[{shared_member}]] — Charles Tilly (1978): Claim of {shared_member}.\n"
+    )
+    (names_dir / "iraq.md").write_text(
+        "---\n"
+        + yaml.safe_dump(
+            {"name": "Iraq", "kind": "country/state/place", "aliases": [], "member_count": 1},
+            sort_keys=False,
+        )
+        + "---\n"
+        + other_body,
+        encoding="utf-8",
+    )
+
+    result = dispatch(
+        "where_names_meet",
+        {"canonical": "Charles Tilly", "other": "Iraq"},
+        vault_dir=fixture_tilly_vault_dir,
+    )
+
+    assert result.error is None
+    assert result.ids == [shared_member]
+    assert result.count == 1
+    assert result.total == 1, "the true, uncapped intersection size"
+
+
+def test_dispatch_rejects_where_names_meet_missing_the_other_required_arg(
+    fixture_tilly_vault_dir: Path,
+):
+    result = dispatch(
+        "where_names_meet", {"canonical": "Charles Tilly"}, vault_dir=fixture_tilly_vault_dir
+    )
+
+    assert result.ids == []
+    assert result.count == 0
+    assert result.error is not None
+    assert "other" in result.error
+
+
+def test_dispatch_rejects_where_names_meet_wrong_typed_limit(fixture_tilly_vault_dir: Path):
+    result = dispatch(
+        "where_names_meet",
+        {"canonical": "Charles Tilly", "other": "Iraq", "limit": "five"},
+        vault_dir=fixture_tilly_vault_dir,
+    )
+
+    assert result.ids == []
+    assert result.count == 0
+    assert result.error is not None
+    assert "limit" in result.error
+
+
+def test_dispatch_rejects_where_names_meet_with_an_undeclared_extra_arg(
+    fixture_tilly_vault_dir: Path,
+):
+    result = dispatch(
+        "where_names_meet",
+        {"canonical": "Charles Tilly", "other": "Iraq", "polity": "Syria"},
+        vault_dir=fixture_tilly_vault_dir,
+    )
+
+    assert result.ids == []
+    assert result.count == 0
+    assert result.error is not None
+    assert "polity" in result.error
+
+
+# --- issue #517: ToolResult.detail rides beside find_names' own result -----
+
+
+def test_dispatch_carries_detail_for_find_names(fixture_names_dir: Path, tmp_path: Path):
+    """`ToolResult.detail` carries each `find_names` hit's `kind`,
+    `member_count` and `tier` -- planner-blindness feedback that rides beside
+    the result, exactly like `total`."""
+    result = dispatch(
+        "find_names",
+        {"query": "Tilly"},
+        vault_dir=tmp_path / "empty-vault",
+        names_dir=fixture_names_dir,
+    )
+
+    assert result.error is None
+    assert result.detail is not None
+    assert "Charles Tilly" in result.detail
+    assert "tier=alias" in result.detail
+
+
+def test_dispatch_leaves_detail_none_for_every_tool_but_find_names(fixture_tilly_vault_dir: Path):
+    result = dispatch("get_name", {"canonical": "Charles Tilly"}, vault_dir=fixture_tilly_vault_dir)
+    assert result.detail is None

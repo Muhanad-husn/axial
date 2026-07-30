@@ -1,6 +1,8 @@
 """Outer acceptance test for issue #487, Phase B v1 slice 02: the name query
 API -- `find_names`, `get_name`, `name_neighbors`, `who_cites`,
-`who_argues_against`, per-name `coverage_count`.
+`who_argues_against`, per-name `coverage_count` -- joined by
+`where_names_meet` (issue #517, the intersection of two name pages' own
+member lists).
 
 Locked behavioral contract -- do not edit once committed green without a
 one-line justification in the PR body.
@@ -720,6 +722,66 @@ def test_get_name_truncates_members_at_limit_but_member_count_stays_the_true_tot
 
 
 # ---------------------------------------------------------------------------
+# where_names_meet (issue #517)
+# ---------------------------------------------------------------------------
+
+
+def test_where_names_meet_intersects_two_pages_own_member_lists(fixture_layer: tuple[Path, Path]):
+    """Tilly's fixture page holds `AGAMBEN_NOTE`/`TILLY_NOTE`; Rojava's holds
+    `PYD_NOTE`/`TILLY_NOTE` -- only `TILLY_NOTE` is a member of both."""
+    from axial.query import get_chunk, where_names_meet
+
+    vault_dir, names_dir = fixture_layer
+    members, total = where_names_meet(TILLY, ROJAVA, vault_dir=vault_dir, names_dir=names_dir)
+
+    assert [m.chunk_id for m in members] == [TILLY_NOTE]
+    assert total == 1
+    for member in members:
+        assert get_chunk(member.chunk_id, vault_dir=vault_dir).chunk_id == member.chunk_id, (
+            "every id where_names_meet returns resolves back through get_chunk"
+        )
+
+
+def test_where_names_meet_resolves_both_arguments_through_the_alias_map(
+    fixture_layer: tuple[Path, Path],
+):
+    from axial.query import where_names_meet
+
+    vault_dir, names_dir = fixture_layer
+    by_canonical, canonical_total = where_names_meet(
+        TILLY, AGAMBEN, vault_dir=vault_dir, names_dir=names_dir
+    )
+    by_alias, alias_total = where_names_meet(
+        "Tilly", "Agamben", vault_dir=vault_dir, names_dir=names_dir
+    )
+
+    assert [m.chunk_id for m in by_canonical] == [AGAMBEN_NOTE]
+    assert by_alias == by_canonical
+    assert alias_total == canonical_total == 1
+
+
+def test_where_names_meet_on_two_pages_sharing_no_member_is_empty_not_an_error(
+    fixture_layer: tuple[Path, Path],
+):
+    """Agamben's page holds only `AGAMBEN_NOTE`; SDF's holds only
+    `PYD_NOTE` -- both pages exist and share nothing, and that is a real
+    answer, never an exception."""
+    from axial.query import where_names_meet
+
+    vault_dir, names_dir = fixture_layer
+    assert where_names_meet(AGAMBEN, SDF, vault_dir=vault_dir, names_dir=names_dir) == ([], 0)
+
+
+def test_where_names_meet_raises_on_an_unresolvable_name(fixture_layer: tuple[Path, Path]):
+    from axial.query import NameNotFoundError, where_names_meet
+
+    vault_dir, names_dir = fixture_layer
+    with pytest.raises(NameNotFoundError) as exc_info:
+        where_names_meet(TILLY, UNHELD_QUERY, vault_dir=vault_dir, names_dir=names_dir)
+    assert UNHELD_QUERY in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
 # name_neighbors / who_cites / who_argues_against
 # ---------------------------------------------------------------------------
 
@@ -994,6 +1056,7 @@ def test_the_full_name_tool_set_runs_with_no_llm_client_and_no_encoder(
         find_names,
         get_name,
         name_neighbors,
+        where_names_meet,
         who_argues_against,
         who_cites,
     )
@@ -1011,4 +1074,8 @@ def test_the_full_name_tool_set_runs_with_no_llm_client_and_no_encoder(
         AGAMBEN, vault_dir=vault_dir, names_dir=names_dir
     )
     assert opposition_edges and opposition_total
+    meeting_members, meeting_total = where_names_meet(
+        TILLY, AGAMBEN, vault_dir=vault_dir, names_dir=names_dir
+    )
+    assert meeting_members and meeting_total
     assert coverage_count(vault_dir=vault_dir)

@@ -31,13 +31,19 @@ in one result), so
 it never reaches this loop or `assemble_evidence_ids` either -- there is no
 tool name for either to skip or collect.
 
-`get_name`/`who_cites`/`who_argues_against` are bounded at their own
-`limit` (issue #505: `get_name` on a hub name page returned 962 ids into one
-prompt, then got re-sent on every later turn). When a result was truncated,
-the per-step tool-result text states the true pre-cap total beside the
-capped ids -- `ToolResult.total`, carried the same way `ToolResult.error`
+`get_name`/`who_cites`/`who_argues_against`/`where_names_meet` are bounded at
+their own `limit` (issue #505: `get_name` on a hub name page returned 962 ids
+into one prompt, then got re-sent on every later turn). When a result was
+truncated, the per-step tool-result text states the true pre-cap total beside
+the capped ids -- `ToolResult.total`, carried the same way `ToolResult.error`
 already is, never a sixth §7.6 field -- so the model can deliberately widen
 `limit` instead of mistaking a window for the whole corpus.
+
+`find_names`' own hits carry a second beside-the-trajectory rider,
+`ToolResult.detail` (issue #517): each hit's `kind`, `member_count` and
+`tier`, appended to the per-step tool-result text exactly like `total` --
+the fix for a model that cannot tell an exact resolution from a weak
+embedding guess when all it sees is a bare canonical string.
 """
 
 from __future__ import annotations
@@ -227,6 +233,13 @@ def run_retrieval_loop(
                 )
             else:
                 tool_feedback = result.ids
+            # `find_names`' own resolution detail (issue #517), the same
+            # beside-the-trajectory ride `total` already gets: which tier
+            # matched, each hit's kind and member_count, so the model can
+            # tell an exact/alias hit from a weak embedding guess instead of
+            # re-asking blind.
+            if result.detail is not None:
+                tool_feedback = f"{tool_feedback} detail: {result.detail}"
         prompt = f"{prompt}\n\n[step {step} result for {tool_name!r}: {tool_feedback}]"
 
     return trajectory
@@ -241,7 +254,11 @@ def compose_retrieval_prompt(brief: Brief, interrogation_result: InterrogationRe
     real provider's model reads the same instruction the scripted
     acceptance tests exercise -- plus D4's Gather-hint rule (§7.5), stated
     plainly here because the loop is where a disagreement could otherwise
-    slip into the evidence set."""
+    slip into the evidence set. Step 4 (issue #517) tells the model to
+    intersect a large, hub-shaped name with a second name the brief is
+    about instead of reading the hub page whole -- the fix for a brief's
+    `case` anchor (a polity by spec) landing on the fattest pages in the
+    corpus by measurement."""
     premises_lines = (
         "\n".join(
             f"- {p.premise} (assessment: {p.assessment})"
@@ -266,6 +283,7 @@ Retrieval is traversal of the name layer, not a conjunction of filters. A good p
 1. Name the scholars, concepts and polities the brief is actually about, and resolve each one with find_names -- it is tiered (exact, alias, folded, embedding) and reports a genuine resolution failure as an empty result, never the nearest name to hand.
 2. For each name that resolves, read who meets there with get_name: its member notes, each with author, year and one-sentence claim.
 3. Follow what those notes say. who_argues_against and who_cites surface the author-stated opposition and citation edges those notes themselves carry -- real cross-book traversal, not a guess. name_neighbors surfaces names that co-occur with one you already have.
+4. When a resolved name is large (its member_count is in the hundreds -- a polity page commonly is), do not read it whole. Call where_names_meet(canonical, other) with a second name the brief is actually about, such as a concept, scholar or event: the polity anchors the query and the intellectual name carries it, and the notes at the intersection are already smaller and drawn from more sources than any prefix of the hub page alone.
 
 get_name may also return a disagreement section another model wrote while reading this corpus (Gather). That text is a POINTER, never evidence: read it only to decide where to look next, then follow that page's own member chunk_ids to the real notes and retrieve those. Nothing you cite may be a disagreement, a name page, or a name string itself -- only a chunk_id or artifact_id resolves as a real ground.
 

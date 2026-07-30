@@ -377,6 +377,160 @@ def test_get_name_still_raises_for_a_name_the_alias_map_does_not_carry(tmp_path)
     assert "a wholly unrelated name" in str(exc_info.value)
 
 
+# -- where_names_meet (issue #517) --------------------------------------------
+
+
+def _member_line(
+    chunk_id: str, *, author: str = "Author", year: int = 2020, claim: str = "A claim."
+) -> str:
+    return f"- [[{chunk_id}]] — {author} ({year}): {claim}"
+
+
+def _page_body(chunk_ids: list[str]) -> str:
+    return "**Member notes:**\n" + "\n".join(_member_line(cid) for cid in chunk_ids) + "\n"
+
+
+def test_where_names_meet_returns_the_shared_members_and_the_true_total(tmp_path):
+    from axial.query.names import where_names_meet
+
+    vault_dir = tmp_path / "vault"
+    _write_name_page(
+        vault_dir,
+        "Syria",
+        member_count=3,
+        body=_page_body(["src1_1_a_001", "src2_1_a_001", "src3_1_a_001"]),
+    )
+    _write_name_page(
+        vault_dir,
+        "Ottoman Empire",
+        member_count=3,
+        body=_page_body(["src2_1_a_001", "src3_1_a_001", "src4_1_a_001"]),
+    )
+
+    members, total = where_names_meet("Syria", "Ottoman Empire", 10, vault_dir=vault_dir)
+
+    assert {m.chunk_id for m in members} == {"src2_1_a_001", "src3_1_a_001"}
+    assert total == 2
+    assert all(m.author == "Author" and m.year == "2020" for m in members), (
+        "the shared member's own rendering (author/year/claim) travels with it"
+    )
+
+
+def test_where_names_meet_orders_round_robin_by_source_not_alphabetically(tmp_path):
+    """Three notes from one source and one from a lexically LATER source all
+    intersect. A `chunk_id`-ascending prefix at limit=2 would return two
+    notes from the ONE source; round-robin-by-source surfaces both."""
+    from axial.query.names import where_names_meet
+
+    vault_dir = tmp_path / "vault"
+    shared = ["aaa_1_a_001", "aaa_1_a_002", "aaa_1_a_003", "zzz_1_a_001"]
+    assert sorted(shared)[:2] == ["aaa_1_a_001", "aaa_1_a_002"], (
+        "sanity: plain chunk_id-ascending order is one source at limit=2"
+    )
+    body = _page_body(shared)
+    _write_name_page(vault_dir, "A", member_count=4, body=body)
+    _write_name_page(vault_dir, "B", member_count=4, body=body)
+
+    members, total = where_names_meet("A", "B", 2, vault_dir=vault_dir)
+
+    assert [m.chunk_id for m in members] == ["aaa_1_a_001", "zzz_1_a_001"], (
+        "round-robin surfaces both sources at limit=2, distinguishably from the alphabetical prefix"
+    )
+    assert total == 4
+
+
+def test_where_names_meet_total_is_uncapped_by_limit(tmp_path):
+    from axial.query.names import where_names_meet
+
+    vault_dir = tmp_path / "vault"
+    shared = [f"src{i}_1_a_001" for i in range(1, 5)]
+    body = _page_body(shared)
+    _write_name_page(vault_dir, "A", member_count=4, body=body)
+    _write_name_page(vault_dir, "B", member_count=4, body=body)
+
+    members, total = where_names_meet("A", "B", 2, vault_dir=vault_dir)
+
+    assert len(members) == 2
+    assert total == 4
+
+
+def test_where_names_meet_empty_intersection_is_not_an_error(tmp_path):
+    from axial.query.names import where_names_meet
+
+    vault_dir = tmp_path / "vault"
+    _write_name_page(vault_dir, "A", member_count=1, body=_page_body(["src1_1_a_001"]))
+    _write_name_page(vault_dir, "B", member_count=1, body=_page_body(["src2_1_a_001"]))
+
+    assert where_names_meet("A", "B", vault_dir=vault_dir) == ([], 0)
+
+
+def test_where_names_meet_raises_name_not_found_naming_whichever_side_fails(tmp_path):
+    from axial.query.names import NameNotFoundError, where_names_meet
+
+    vault_dir = tmp_path / "vault"
+    _write_name_page(vault_dir, "A", member_count=0, body="**Member notes:**\n(none)\n")
+
+    with pytest.raises(NameNotFoundError) as exc_info:
+        where_names_meet("A", "absent name", vault_dir=vault_dir)
+    assert "absent name" in str(exc_info.value)
+
+    with pytest.raises(NameNotFoundError) as exc_info:
+        where_names_meet("absent name", "A", vault_dir=vault_dir)
+    assert "absent name" in str(exc_info.value)
+
+
+def test_where_names_meet_resolves_an_alias_argument_on_either_side(tmp_path):
+    from axial.query.names import where_names_meet
+
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(
+        names_dir,
+        [
+            {
+                "canonical": "Syria",
+                "kind": "country/state/place",
+                "aliases": ["Syrian Arab Republic"],
+            },
+            {"canonical": "Ottoman Empire", "kind": "country/state/place", "aliases": ["Ottomans"]},
+        ],
+    )
+    shared_body = _page_body(["src1_1_a_001"])
+    _write_name_page(vault_dir, "Syria", member_count=1, body=shared_body)
+    _write_name_page(vault_dir, "Ottoman Empire", member_count=1, body=shared_body)
+
+    by_canonical, canonical_total = where_names_meet(
+        "Syria", "Ottoman Empire", vault_dir=vault_dir, names_dir=names_dir
+    )
+    by_alias, alias_total = where_names_meet(
+        "Syrian Arab Republic", "Ottomans", vault_dir=vault_dir, names_dir=names_dir
+    )
+
+    assert [m.chunk_id for m in by_alias] == [m.chunk_id for m in by_canonical] == ["src1_1_a_001"]
+    assert alias_total == canonical_total == 1
+
+
+def test_where_names_meet_never_reaches_the_whole_corpus_answers_index(tmp_path, monkeypatch):
+    """Reading two name pages is O(pages); the whole-corpus answers scan
+    `name_neighbors`/`who_cites`/`who_argues_against` pay for (measured
+    139.7s cold, issue #520) must never be touched here."""
+    from axial.query import names as names_module
+
+    def _explode(_vault_dir):
+        raise AssertionError("where_names_meet must never build the answers index")
+
+    monkeypatch.setattr(names_module, "_answers_index", _explode)
+
+    vault_dir = tmp_path / "vault"
+    body = _page_body(["src1_1_a_001"])
+    _write_name_page(vault_dir, "A", member_count=1, body=body)
+    _write_name_page(vault_dir, "B", member_count=1, body=body)
+
+    members, total = names_module.where_names_meet("A", "B", vault_dir=vault_dir)
+    assert total == 1
+    assert [m.chunk_id for m in members] == ["src1_1_a_001"]
+
+
 # -- the traversals -----------------------------------------------------------
 
 
