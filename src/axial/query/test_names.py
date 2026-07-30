@@ -326,6 +326,57 @@ def test_get_name_never_returns_a_different_pages_content_on_a_filename_collisio
     assert get_name("A/B", vault_dir=vault_dir).member_count == 2
 
 
+def test_get_name_resolves_an_alias_or_folded_argument_to_the_same_page(tmp_path):
+    """`get_name`'s own `canonical` argument must be resolved through the
+    alias map, same as `name_neighbors` already does on its argument and
+    `who_cites`/`who_argues_against` already do via `_surface_matches_
+    canonical` -- a caller passing an alias, or a case/whitespace variant
+    that only folds to the canonical, must not raise `NameNotFoundError`
+    just because it never equalled the raw canonical string exactly. Mirrors
+    PR #516's `name_neighbors` fix, the last of the four siblings to do
+    this."""
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(
+        names_dir,
+        [{"canonical": "Infrastructural power", "kind": "concept", "aliases": ["infra power"]}],
+    )
+    _write_name_page(
+        vault_dir,
+        "Infrastructural power",
+        member_count=1,
+        body="**Member notes:**\n- [[src_1_a_001]] — A (2020): A claim.\n",
+    )
+
+    by_canonical = get_name("Infrastructural power", vault_dir=vault_dir, names_dir=names_dir)
+    by_alias = get_name("infra power", vault_dir=vault_dir, names_dir=names_dir)
+    by_fold = get_name("infrastructural power", vault_dir=vault_dir, names_dir=names_dir)
+
+    assert by_canonical.canonical == "Infrastructural power"
+    assert by_alias.canonical == by_canonical.canonical
+    assert by_alias.member_count == by_canonical.member_count == 1
+    assert [m.chunk_id for m in by_alias.members] == [m.chunk_id for m in by_canonical.members]
+    assert by_fold.canonical == by_canonical.canonical
+
+
+def test_get_name_still_raises_for_a_name_the_alias_map_does_not_carry(tmp_path):
+    """The widened resolution must not turn an honest miss into a wrong
+    page: a query that resolves through none of the three exact tiers still
+    raises `NameNotFoundError`, even with a populated layer that carries
+    other names and even though tier 4 (embedding) is never reached here."""
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(
+        names_dir,
+        [{"canonical": "Infrastructural power", "kind": "concept", "aliases": ["infra power"]}],
+    )
+    _write_name_page(vault_dir, "Infrastructural power", member_count=1)
+
+    with pytest.raises(NameNotFoundError) as exc_info:
+        get_name("a wholly unrelated name", vault_dir=vault_dir, names_dir=names_dir)
+    assert "a wholly unrelated name" in str(exc_info.value)
+
+
 # -- the traversals -----------------------------------------------------------
 
 

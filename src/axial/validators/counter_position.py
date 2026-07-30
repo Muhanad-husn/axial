@@ -328,7 +328,9 @@ def opposed_grounds_notes(
     return list(opposed.values())
 
 
-def _gather_disagreement_at(names: list[str], *, vault_dir: Path | None) -> bool:
+def _gather_disagreement_at(
+    names: list[str], *, vault_dir: Path | None, names_dir: Path | None = None
+) -> bool:
     """§7.8 path 2: one of `names` carries a Gather disagreement section.
     A retrieval hint, never a citation (D4). Reads only `page.disagreement`,
     parsed off the page's whole body regardless of `limit` (issue #505) --
@@ -336,7 +338,7 @@ def _gather_disagreement_at(names: list[str], *, vault_dir: Path | None) -> bool
     `axial.validators.coverage._evidence_note_count`, which reads members."""
     for canonical in names:
         try:
-            page = get_name(canonical, vault_dir=vault_dir)
+            page = get_name(canonical, vault_dir=vault_dir, names_dir=names_dir)
         except NameNotFoundError:
             continue
         if page.disagreement is not None:
@@ -367,7 +369,7 @@ def detect_contested(
     if opposed_grounds_notes(notes, names_dir=names_dir):
         return ContestedResult(contested=True, signal=SIGNAL_OPPOSED_POSITIONS)
     scope = coverage_scope([c for c in claims if isinstance(c, dict)], trajectory or [])
-    if _gather_disagreement_at(scope, vault_dir=vault_dir):
+    if _gather_disagreement_at(scope, vault_dir=vault_dir, names_dir=names_dir):
         return ContestedResult(contested=True, signal=SIGNAL_GATHER_DISAGREEMENT)
     return ContestedResult(contested=False, signal=None)
 

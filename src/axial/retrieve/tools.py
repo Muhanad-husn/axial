@@ -71,11 +71,14 @@ from axial.query import names, reader
 
 # `(args, vault_dir, envelopes_dir, names_dir) ->
 # (result_ids, result_count, total)`. Every adapter takes all four
-# positional slots, even the three that ignore `names_dir` (the
-# pre-name-layer tools) or `envelopes_dir` (everything but `get_envelope`)
-# -- one uniform shape the dispatcher calls without branching on which tool
-# it is calling. `total` is `None` for every tool but `get_name`/
-# `who_cites`/`who_argues_against` (issue #505).
+# positional slots, even the four that ignore `names_dir` (`query_by_source`,
+# `get_envelope`, `get_chunk`, `get_artifact` -- the pre-name-layer tools) or
+# `envelopes_dir` (everything but `get_envelope`) -- one uniform shape the
+# dispatcher calls without branching on which tool it is calling. `get_name`
+# now resolves its own `canonical` through `names_dir` too, the same alias
+# resolution `find_names`/`name_neighbors`/`who_cites`/`who_argues_against`
+# already apply. `total` is `None` for every tool but `get_name`/`who_cites`/
+# `who_argues_against` (issue #505).
 ToolCall = Callable[
     [dict[str, Any], Path | None, Path | None, Path | None], tuple[list[str], int, int | None]
 ]
@@ -159,10 +162,10 @@ def _get_name(
     args: dict[str, Any],
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
-    _names_dir: Path | None,
+    names_dir: Path | None,
 ) -> tuple[list[str], int, int | None]:
     limit = args.get("limit", names.DEFAULT_LIMIT)
-    page = names.get_name(args["canonical"], limit, vault_dir=vault_dir)
+    page = names.get_name(args["canonical"], limit, vault_dir=vault_dir, names_dir=names_dir)
     ids = [member.chunk_id for member in page.members]
     return ids, len(ids), page.member_count
 
