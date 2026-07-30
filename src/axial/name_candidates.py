@@ -52,7 +52,13 @@ this corpus's traps at any usable precision:
      ever asking whether they are the same entity. `SDF` carries both
      `Marxist Social Democratic Federation (SDF)` and `Syrian Democratic
      Forces (SDF)` in this corpus -- unrelated entities a century apart --
-     and neither pair is proposed.
+     and neither pair is proposed. **Matched through the fold `fold_groups`
+     already applies upstream of every candidate family (issue #463), not
+     the literal string** -- a bare acronym is often already unioned with
+     its own dotted/spaced variant (`CIA`/`C.I.A.`) before this rule ever
+     runs, so only whichever spelling survived that fold is what gets
+     proposed against the carrying surface, never a bare string that may no
+     longer be its own entry.
 
 **A separate rule -- case-only and whitespace-only pairs -- used to live
 here and is retired (issue #463).** It proposed exactly these pairs (the 230-pair
@@ -263,22 +269,47 @@ def _family_parenthesized_acronym(
     fold of that ONE pair transitively drag in whichever other expansion a
     later decision also unions onto the same acronym, fusing two entities no
     call was ever asked to compare. Refusing here means the union never has
-    more than one candidate edge to chain through in the first place."""
+    more than one candidate edge to chain through in the first place.
+
+    **Matched through the upstream fold, not the literal string (issue
+    #498's second live-corpus measurement).** `fold_groups` runs upstream of
+    every candidate family (issue #463) and already unions a bare acronym
+    with its dotted/spaced punctuation variants (`CIA`/`C.I.A.`) before this
+    function ever sees the inventory -- only ONE representative per fold
+    group survives into `entries`, and it need not be the bare acronym
+    (`C.I.A.` sorts before `CIA`). Matching the literal extracted acronym
+    string against `entries` would then silently miss the pair, exactly as
+    it did on the first live run. Instead, every entry actually present is
+    indexed by its OWN folded form (`_normalize_form`, the same fold
+    `fold_groups` already applies -- no second normalizer, no hand-stripped
+    dots), and an extracted acronym is looked up the same way: whichever
+    surface form the run actually carries for that folded identity is what
+    gets proposed, never a bare string that may no longer exist as its own
+    entry. The multi-expansion refusal above is computed on that same
+    folded identity, so a hub whose acronym only survives in a dotted
+    spelling is refused exactly as a bare one would be."""
+    entries = list(entries)
     surface_forms = [surface for surface, _kind, _count in entries]
-    standalone = set(surface_forms)
+
+    folded_entries: dict[str, list[str]] = {}
+    for surface in surface_forms:
+        folded_entries.setdefault(_normalize_form(surface), []).append(surface)
 
     carriers: dict[str, list[str]] = {}
     for surface in surface_forms:
         acronym = _extract_parenthesized_acronym(surface)
         if acronym is None or acronym == surface:
             continue
-        carriers.setdefault(acronym, []).append(surface)
+        carriers.setdefault(_normalize_form(acronym), []).append(surface)
 
     pairs: list[tuple[str, str]] = []
-    for acronym, surfaces in carriers.items():
-        if acronym not in standalone or len(surfaces) != 1:
+    for folded_acronym, carrying_surfaces in carriers.items():
+        if len(carrying_surfaces) != 1:
             continue
-        pairs.append((acronym, surfaces[0]))
+        representatives = folded_entries.get(folded_acronym)
+        if not representatives:
+            continue
+        pairs.append((representatives[0], carrying_surfaces[0]))
     return pairs
 
 

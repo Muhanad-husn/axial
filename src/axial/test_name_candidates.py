@@ -269,6 +269,44 @@ def test_acronym_refusal_happens_at_proposal_never_a_decision():
     assert _family_parenthesized_acronym(entries) == []
 
 
+def test_acronym_matches_through_the_upstream_fold_cia():
+    """Issue #498's second live-corpus measurement: `fold_groups` runs
+    upstream of every candidate family (issue #463) and had already unioned
+    `CIA` with its dotted form `C.I.A.` before candidate generation ever ran
+    -- only the fold's own representative (`C.I.A.` sorts before `CIA`)
+    survived as an entry, so bare `CIA` was never in the inventory this
+    function actually saw. The pair must still be found through the fold,
+    using the surface form the run actually carries."""
+    entries = [
+        _entry("C.I.A.", kind="institution"),
+        _entry("Central Intelligence Agency (CIA)", kind="institution"),
+    ]
+
+    clusters = generate_candidate_clusters(entries)
+
+    assert _has_pair(clusters, "C.I.A.", "Central Intelligence Agency (CIA)")
+
+
+def test_acronym_refusal_still_holds_when_standalone_form_is_folded():
+    """The multi-expansion refusal must survive the fold too: even when the
+    acronym's only surviving standalone entry is a dotted spelling
+    (`S.D.F.`, not bare `SDF`), two distinct carrying expansions still
+    refuse the pair entirely -- the fold must never reintroduce the SDF
+    hub."""
+    marxist = "Marxist Social Democratic Federation (SDF)"
+    syrian = "Syrian Democratic Forces (SDF)"
+    entries = [
+        _entry("S.D.F.", kind="institution"),
+        _entry(marxist, kind="institution"),
+        _entry(syrian, kind="institution"),
+    ]
+
+    clusters = generate_candidate_clusters(entries)
+
+    assert not _appear_together(clusters, "S.D.F.", marxist)
+    assert not _appear_together(clusters, "S.D.F.", syrian)
+
+
 def test_acronym_candidate_generation_is_deterministic():
     """Same inventory, same candidate pairs, in the same order across
     repeated calls (issue #498's own determinism requirement)."""
