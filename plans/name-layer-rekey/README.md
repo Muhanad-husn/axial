@@ -80,6 +80,26 @@ cost per name for the same underlying problem; a per-field budget is a table of
 constants; truncating `claim` to a fixed number is D1 with a second constant
 bolted on for no gain.
 
+> **Corrected on measurement, 2026-07-30 (PR #506).** "The bracket fields are
+> short and bounded by construction" is false: measured over all 6,148 notes the
+> bracket's median is **221 characters of the 400 cap**, p90 387, max 978. The
+> cap sat below the bracket's own p90, so reserving it left **11.5% of notes
+> (707)** with no remainder for `claim` at all and took `arguing_against`'s loss
+> from 26.8% only to **8.3%**, never to zero, while truncating `claim` in
+> **59.5%** of notes.
+>
+> So **`MEMBER_PACKET_CHARS` moves 400 → 800**, and the rejection of "raise the
+> cap" is withdrawn: measured, it costs **+10.6% batch calls and +$0.23**, and it
+> removes the problem rather than relocating it. At 800 the reservation delivers
+> what D1 promised — `arguing_against` lost in **zero** notes, `claim` truncated
+> in 2.9%, degenerate path 5 notes. Still a single constant; worst-case members
+> per batch moves 50 → 25. Both changes re-key the same packets, so choosing the
+> cap now was free and choosing it after slice 03 would not have been.
+>
+> The `position` sentence above is also moot: **no live answer record carries the
+> key**, so its loss rate is 0 of 0 either way. Frame 0.2 shipped additively
+> (#496/#499) and the corpus has not been re-interrogated.
+
 ## D2 — the acronym becomes a key, through the evidence check
 
 Not a string fold. `fold_groups` unions case, whitespace and punctuation
@@ -100,13 +120,24 @@ zero.
 
 ## D3 — the re-decide, and what it actually costs (founder decision)
 
-**The money is unmeasured.** The corpus pass ran 602 batch calls plus 10 merge
-calls over 1,910 names and its cost was never written to the run log. Gather
-carries no `model_by_pass` entry, so it runs at whatever `llm_tier` names, with
-reasoning on. Slice 03 measures cost per call on a bounded run and scales it by
-602 before the full pass is authorized. Note that `--limit` takes the
-alphabetical head and does not sample: it gives a cost-per-call figure, never a
-yield figure.
+~~**The money is unmeasured.**~~ **The money is measured, 2026-07-30, and no
+bounded probe is needed.** The cost was never written to the run log, but the
+tokens were: `data/logs/2026-07-29-gather-corpus-pass/console.log` records
+**2,513 requests over 2,386 batches, 5,139,620 prompt tokens and 3,814,299
+completion tokens** on `deepseek/deepseek-v4-flash` — **$1.25 at list price** for
+a full pass, and `llm.py`'s table runs about 14% high, so nearer $1.10 real.
+
+**Two numbers in the original text were wrong.** "602 batch calls" is off by 4x:
+the real figure is 2,386 batches over 2,513 requests, and a simulation of the
+real packing over those 1,910 names reproduces 2,386 exactly, so it is not an
+artifact. And scaling anything by 602 would have understated the pass fourfold.
+The conclusion survives the error only because the per-call cost is tiny.
+
+At #500's new cap of 800 the same simulation gives 2,640 batches and 30.1M
+member characters against 22.5M, pricing the re-decide at about **$1.48**. That
+is the figure slice 03 authorizes, and a `--limit` probe would add latency
+without adding information (it takes the alphabetical head, so it gives a
+cost-per-call figure and never a yield figure).
 
 **The risk is not the money, it is the re-roll.** Gather's findings are 53%
 reproducible per item. When PR #474 relabelled one book's author, a cosmetic
@@ -128,10 +159,27 @@ lesson. Do not read the marginal non-null rate as evidence the change was good.
 
 ## Slices
 
-**01 — the bracket survives the cap** (#500, no model calls). Change
-`render_packet` per D1. Re-measure over all 6,148 notes: share losing
-`arguing_against`, share losing `position`, share hitting the degenerate
-bracket-over-cap path, before and after. Gather is **not** run in this slice.
+**01 — the bracket survives the cap** (#500). ✅ **Done, PR #506, 2026-07-30.**
+
+Shipped D1's bracket reservation **and** the cap at 800, because D1's premise
+about the bracket did not survive measurement (see the correction under D1).
+Measured over all 6,148 notes, before against `main`'s own `render_packet` rather
+than a reimplementation of it — `data/logs/2026-07-30-validate-500/`:
+
+| | before (cap 400) | after (cap 800) |
+|---|---:|---:|
+| `arguing_against` label absent | 1,650 (26.8%) | **0 (0.0%)** |
+| `arguing_against` value truncated at all | 4,362 (70.9%) | 5 (0.1%) |
+| `claim` truncated | 116 (1.9%) | 176 (2.9%) |
+| degenerate bracket-over-cap path | 704 (11.5%) | 5 (0.1%) |
+
+The filing's 22.4% reads 26.8% today: same metric, drifted inputs (#497 and #499
+landed in between). Gather was not run. `position` is unmeasurable — no live
+answer record carries the key.
+
+This slice **deliberately breaks** `render_packet`'s pre-0.2 byte-for-byte
+guarantee, which is the re-key the sprint pays for. It is stated in the module
+docstring, §7.18 and the commit, and pinned by a test named for it.
 
 **02 — the acronym becomes a lookup key** (#498). ✅ **Done, PR #502, 2026-07-30.**
 
@@ -186,12 +234,24 @@ The pin has not moved. The `$0.55` figure below is wrong for this pass by an
 order of magnitude: reconcile runs on `deepseek-v4-flash`, and all three runs
 together cost **$0.074**.
 
-**03 — one re-decide, one pin.** Bounded cost probe, founder authorizes, then
-the full Gather pass. Diff the flipped entries. Re-cut the corpus pin once, whose
-vault hash covers the name-layer index per D6. Run log under
-`data/logs/2026-07-30-name-layer-rekey/`.
+**03 — one re-decide, one pin.** ☐ **Next; 01 and 02 are both merged.** No
+bounded probe: the cost is measured at about **$1.48** (D3, from the real pass
+log). Founder authorizes, then the full Gather pass, then Materialize — which
+slice 02 deferred to here so the 117 folded pages render once, after the
+re-decide, rather than twice with stale disagreement sections in between. Diff
+the flipped entries and report the count of findings whose text changed. Re-cut
+the corpus pin once, whose vault hash covers the name-layer index per D6. Run log
+under `data/logs/2026-07-30-name-layer-rekey/`.
 
-Slice 01 and 02 are independent and can be built in parallel worktrees. Slice 03
+**Land #504 before this slice, or pay for a second re-decide.** #504 folds 11
+more names (`WHO`, `WB`, `NRC`, `TCC`, `VDC`, `UTICA`, `AMITH`, `EPR`, `INDH`,
+`OLA`, `SPS`) whose merge response said one entity while the pipeline split them.
+It is a **re-read** of the existing content-keyed decision log, so it costs no
+model call and no money — but it moves membership on those 11 names, which
+re-keys their packets. Inside this slice's pass that is free; after it, it is
+another $1.48 and a second pin.
+
+Slice 01 and 02 were independent and were built in parallel worktrees. Slice 03
 needs both merged and runs from the main checkout, since `data/` does not exist
 in a worktree.
 
