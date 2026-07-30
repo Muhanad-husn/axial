@@ -924,13 +924,21 @@ def find_names(
 # ---------------------------------------------------------------------------
 
 
-def get_name(canonical: str, *, vault_dir: Path | None = None) -> NamePage:
+def get_name(
+    canonical: str, limit: int = DEFAULT_LIMIT, *, vault_dir: Path | None = None
+) -> NamePage:
     """One name page by its real name (§7.5): its `kind`, `aliases`,
     `member_count`, its member notes with each one's own author, year and
     one-sentence claim, and any Gather disagreement section.
 
     Members come back in the page's own written order, which is the order
-    Materialize wrote and is itself deterministic -- never re-sorted here.
+    Materialize wrote and is itself deterministic -- never re-sorted here --
+    **truncated at `limit`** (issue #505: a hub name page can carry hundreds
+    of members -- `Syria` has 962 -- and an uncapped `members` list is what
+    flooded a real retrieval loop's prompt to ~72,000 characters over twelve
+    re-sent turns). `member_count` is deliberately left UNCAPPED: it is the
+    page's own frontmatter total regardless of `limit`, so a caller sees both
+    the window (`len(members)`) and the true size it is a window onto.
     `disagreement` is `None` when the page carries no Gather section, which
     is distinguishable from a section whose text is present.
 
@@ -944,15 +952,15 @@ def get_name(canonical: str, *, vault_dir: Path | None = None) -> NamePage:
         raise NameNotFoundError(canonical, name_page_path(vault, canonical))
 
     frontmatter, body = _read_frontmatter(entry.path)
-    members, disagreement = _parse_name_page_body(body)
+    all_members, disagreement = _parse_name_page_body(body)
     member_count = frontmatter.get("member_count")
     aliases = [alias for alias in (frontmatter.get("aliases") or []) if isinstance(alias, str)]
     return NamePage(
         canonical=frontmatter.get("name") or canonical,
         kind=frontmatter.get("kind"),
         aliases=aliases,
-        member_count=member_count if isinstance(member_count, int) else len(members),
-        members=members,
+        member_count=member_count if isinstance(member_count, int) else len(all_members),
+        members=all_members[:limit],
         disagreement=disagreement,
     )
 
@@ -1008,8 +1016,12 @@ def name_neighbors(
 
 
 def who_cites(
-    canonical: str, *, vault_dir: Path | None = None, names_dir: Path | None = None
-) -> list[CitationEdge]:
+    canonical: str,
+    limit: int = DEFAULT_LIMIT,
+    *,
+    vault_dir: Path | None = None,
+    names_dir: Path | None = None,
+) -> tuple[list[CitationEdge], int]:
     """Every prose note whose `citations[].cited` resolves to `canonical`
     (§7.5), carrying the author's own stance (`support`/`foil`/`authority`)
     and the `about` clause. These are **author-stated cross-book edges** and
@@ -1021,7 +1033,15 @@ def who_cites(
 
     **Determinism:** sorted by `chunk_id` ascending, then by the cited
     surface form, stance and `about` -- one note can carry two citations of
-    the same name, so `chunk_id` alone is not a total order."""
+    the same name, so `chunk_id` alone is not a total order. Truncated at
+    `limit`, so the returned prefix is the head of that same total order.
+
+    **Returns `(edges, total)`** (issue #505), not a bare list: `Max Weber`
+    carries 165 citation edges on the real vault, so a caller capped at
+    `limit` still needs the true pre-cap count to know it saw a window and
+    widen `limit` deliberately rather than mistake 10 edges for all of them.
+    `total` is `len(edges)` before truncation -- equal to `len(edges)` after
+    it when nothing was capped."""
     layer = _name_layer(names_dir)
     vault = Path(vault_dir) if vault_dir is not None else default_vault_dir()
 
@@ -1037,14 +1057,19 @@ def who_cites(
         for cited, stance, about in note.citations
         if _surface_matches_canonical(cited, canonical, layer)
     ]
-    return sorted(
+    edges = sorted(
         edges, key=lambda edge: (edge.chunk_id, edge.cited, edge.stance or "", edge.about or "")
     )
+    return edges[:limit], len(edges)
 
 
 def who_argues_against(
-    canonical: str, *, vault_dir: Path | None = None, names_dir: Path | None = None
-) -> list[OppositionEdge]:
+    canonical: str,
+    limit: int = DEFAULT_LIMIT,
+    *,
+    vault_dir: Path | None = None,
+    names_dir: Path | None = None,
+) -> tuple[list[OppositionEdge], int]:
     """Every prose note whose `arguing_against` answers name `canonical`
     (§7.5), carrying that note's own stated `position` and one-sentence
     `claim` so the opposition is legible without a second fetch. This is what
@@ -1060,7 +1085,12 @@ def who_argues_against(
     Same alias-map matching as `who_cites`.
 
     **Determinism:** sorted by `chunk_id` ascending, then by the matched
-    `arguing_against` string (one note can name two surfaces of one name)."""
+    `arguing_against` string (one note can name two surfaces of one name).
+    Truncated at `limit`, so the returned prefix is the head of that same
+    total order.
+
+    **Returns `(edges, total)`**, same shape and same reason as `who_cites`
+    (issue #505): `total` is `len(edges)` before truncation."""
     layer = _name_layer(names_dir)
     vault = Path(vault_dir) if vault_dir is not None else default_vault_dir()
 
@@ -1076,7 +1106,8 @@ def who_argues_against(
         for opposed in note.arguing_against
         if _surface_matches_canonical(opposed, canonical, layer)
     ]
-    return sorted(edges, key=lambda edge: (edge.chunk_id, edge.arguing_against))
+    edges = sorted(edges, key=lambda edge: (edge.chunk_id, edge.arguing_against))
+    return edges[:limit], len(edges)
 
 
 # ---------------------------------------------------------------------------

@@ -37,6 +37,17 @@ Then  the first trajectory entry is thin (result_count 0)
   And the recorded prompt for step 2 carries the step-1 result_count, so the
       re-query happened on the thin signal, not by luck
 
+Given a scripted get_name call capped with limit=1 against the fixture's
+      3-member Tilly page (issue #505)
+When  the retrieval loop runs
+Then  the trajectory entry still has exactly the five §7.6 fields, with
+      result_count 1
+  And the recorded prompt for the next step states "1 of 3 total" and invites
+      a larger limit
+  And the same call with no limit (3 of 3, uncapped) adds no such text at all
+  And a call that is both THIN (below thin_result_floor) and capped states
+      both notes -- neither may silently swallow the other
+
 See specs/PHASE-B.md §4 (the agentic loop, case-as-anchor P0-3), §7.5 (the
 name-layer tools, [FIRM], and D4's Gather-hint rule) and §7.6 (the
 trajectory log, [FIRM], unchanged) for the source of truth, and
@@ -441,4 +452,127 @@ def test_thin_first_find_names_call_triggers_a_different_broadened_call(
     step_2_prompt = prompts[1]
     assert "result_count=0" in step_2_prompt, (
         f"the re-query must be recorded as happening ON the thin signal, got {step_2_prompt!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scenario 5 (issue #505): a capped result states its true total in the next
+# prompt, and an uncapped one adds no such noise. The trajectory entry stays
+# exactly the five §7.6 fields either way.
+# ---------------------------------------------------------------------------
+
+
+def test_capped_get_name_result_states_the_true_total_in_the_next_prompt(
+    fixture: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Tilly's fixture page has 3 members (issue #505's own worst real case
+    is `Syria` at 962). `limit=1` returns 1 of 3, and the next turn's prompt
+    must say so -- the load-bearing half of the fix: a cap the model cannot
+    see is a lie about the corpus."""
+    vault_dir, names_dir = fixture
+    _set_scripted_tool_calls(
+        monkeypatch,
+        [
+            {"tool": "get_name", "args": {"canonical": TILLY, "limit": 1}},
+            None,
+        ],
+    )
+    record_path = tmp_path / "record.jsonl"
+    client = RecordLLMClient(record_path)
+
+    trajectory = run_retrieval_loop(
+        client,
+        "seed prompt",
+        vault_dir=vault_dir,
+        names_dir=names_dir,
+        step_budget=10,
+        thin_result_floor=1,
+    )
+
+    assert len(trajectory) == 1
+    entry = trajectory[0]
+    assert set(entry) == {"step", "tool", "args", "result_ids", "result_count"}, (
+        "the §7.6 trajectory shape stays exactly these five fields -- total is not a sixth"
+    )
+    assert entry["result_count"] == 1, "result_count is the honest count of ids returned"
+    assert entry["result_ids"] == [EGYPT_CHUNK_ID]
+
+    prompts = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
+    step_2_prompt = prompts[1]
+    assert "1 of 3 total" in step_2_prompt, (
+        f"expected the true pre-cap total stated in the next prompt, got {step_2_prompt!r}"
+    )
+    assert "larger limit" in step_2_prompt
+
+
+def test_an_uncapped_result_adds_no_total_noise_to_the_next_prompt(
+    fixture: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The same page, called with the default `limit` (10): 3 of 3 members
+    come back, nothing was capped, and the next prompt must not mention a
+    total at all -- a capped-result notice on an uncapped call would be
+    exactly the noise a real provider's model has no reason to see."""
+    vault_dir, names_dir = fixture
+    _set_scripted_tool_calls(
+        monkeypatch,
+        [
+            {"tool": "get_name", "args": {"canonical": TILLY}},
+            None,
+        ],
+    )
+    record_path = tmp_path / "record.jsonl"
+    client = RecordLLMClient(record_path)
+
+    trajectory = run_retrieval_loop(
+        client,
+        "seed prompt",
+        vault_dir=vault_dir,
+        names_dir=names_dir,
+        step_budget=10,
+        thin_result_floor=1,
+    )
+
+    assert trajectory[0]["result_count"] == 3
+
+    prompts = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
+    step_2_prompt = prompts[1]
+    assert "total" not in step_2_prompt, (
+        f"an uncapped result must not mention a total at all, got {step_2_prompt!r}"
+    )
+
+
+def test_a_result_that_is_both_thin_and_capped_states_both_notes(
+    fixture: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A small caller-chosen `limit` can be below `thin_result_floor` AND
+    capped below `result.total` at once: `limit=1` against Tilly's 3-member
+    page, with the default `thin_result_floor` (3), is both. Neither signal
+    may silently swallow the other."""
+    vault_dir, names_dir = fixture
+    _set_scripted_tool_calls(
+        monkeypatch,
+        [
+            {"tool": "get_name", "args": {"canonical": TILLY, "limit": 1}},
+            None,
+        ],
+    )
+    record_path = tmp_path / "record.jsonl"
+    client = RecordLLMClient(record_path)
+
+    trajectory = run_retrieval_loop(
+        client,
+        "seed prompt",
+        vault_dir=vault_dir,
+        names_dir=names_dir,
+        step_budget=10,
+        thin_result_floor=3,
+    )
+
+    assert trajectory[0]["result_count"] == 1
+
+    prompts = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
+    step_2_prompt = prompts[1]
+    assert "THIN" in step_2_prompt, f"the thin signal must not be dropped, got {step_2_prompt!r}"
+    assert "1 of 3 total" in step_2_prompt, (
+        f"the capped signal must not be dropped, got {step_2_prompt!r}"
     )

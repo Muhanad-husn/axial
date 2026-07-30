@@ -23,6 +23,14 @@ layer's resolution/traversal tools (`find_names`, `name_neighbors`,
 has no place in the set stage 4 treats as citable grounds. The §7.6
 trajectory itself is untouched -- every call still gets its own entry with
 its own `result_ids`, whatever kind those ids are.
+
+`get_name`/`who_cites`/`who_argues_against` are bounded at their own
+`limit` (issue #505: `get_name` on a hub name page returned 962 ids into one
+prompt, then got re-sent on every later turn). When a result was truncated,
+the per-step tool-result text states the true pre-cap total beside the
+capped ids -- `ToolResult.total`, carried the same way `ToolResult.error`
+already is, never a sixth §7.6 field -- so the model can deliberately widen
+`limit` instead of mistaking a window for the whole corpus.
 """
 
 from __future__ import annotations
@@ -162,8 +170,11 @@ def run_retrieval_loop(
             envelopes_dir=envelopes_dir,
             names_dir=names_dir,
         )
+        capped = result.total is not None and result.total > result.count
+        progress_suffix = f" ({result.count} of {result.total} total)" if capped else ""
         print(
-            f"retrieve: turn {step}/{step_budget} called {tool_name!r}, {result.count} result(s)",
+            f"retrieve: turn {step}/{step_budget} called {tool_name!r}, "
+            f"{result.count} result(s){progress_suffix}",
             file=sys.stderr,
         )
 
@@ -181,21 +192,34 @@ def run_retrieval_loop(
         # provider's model can see what happened -- the scripted client
         # ignores prompt content entirely for its OWN choice of next call,
         # but a `record`-provider test can still observe this text (issue
-        # #254's own seam). A dispatch error is surfaced verbatim; a THIN
-        # result (§4, `is_thin_result`) is flagged explicitly with its
-        # `result_count` so the re-query decision is made on that signal,
-        # never forced by this loop; a non-thin result carries just its ids,
-        # same as slice 01.
+        # #254's own seam). A dispatch error is surfaced verbatim. Otherwise
+        # up to two independent notes are appended, since a small caller-
+        # chosen `limit` can be BOTH below `thin_result_floor` AND capped
+        # below `result.total` at once: a THIN note (§4, `is_thin_result`)
+        # flags a low `result_count` so the model considers a broadened
+        # re-query, and a CAPPED note (issue #505) states the true total
+        # beside the ids so the model can deliberately re-ask with a larger
+        # `limit` instead of mistaking a window for the whole corpus. A
+        # plain result with neither note carries just its ids, same as
+        # slice 01.
         if result.error is not None:
             tool_feedback = result.error
-        elif is_thin_result(result.count, thin_result_floor):
-            tool_feedback = (
-                f"result_ids={result.ids} result_count={result.count} "
-                f"(THIN: below the floor of {thin_result_floor} -- consider "
-                "a broadened re-query)"
-            )
         else:
-            tool_feedback = result.ids
+            notes: list[str] = []
+            if is_thin_result(result.count, thin_result_floor):
+                notes.append(
+                    f"THIN: below the floor of {thin_result_floor} -- consider a broadened re-query"
+                )
+            if capped:
+                notes.append(
+                    f"{result.count} of {result.total} total -- re-ask with a larger limit for more"
+                )
+            if notes:
+                tool_feedback = (
+                    f"result_ids={result.ids} result_count={result.count} ({'; '.join(notes)})"
+                )
+            else:
+                tool_feedback = result.ids
         prompt = f"{prompt}\n\n[step {step} result for {tool_name!r}: {tool_feedback}]"
 
     return trajectory

@@ -330,7 +330,10 @@ def opposed_grounds_notes(
 
 def _gather_disagreement_at(names: list[str], *, vault_dir: Path | None) -> bool:
     """§7.8 path 2: one of `names` carries a Gather disagreement section.
-    A retrieval hint, never a citation (D4)."""
+    A retrieval hint, never a citation (D4). Reads only `page.disagreement`,
+    parsed off the page's whole body regardless of `limit` (issue #505) --
+    the default `get_name` cap on `members` is irrelevant here, unlike
+    `axial.validators.coverage._evidence_note_count`, which reads members."""
     for canonical in names:
         try:
             page = get_name(canonical, vault_dir=vault_dir)
