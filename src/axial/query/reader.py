@@ -54,6 +54,7 @@ from axial.paths import (
     chunk_note_path,
     default_vault_dir,
 )
+from axial.yaml_loader import SAFE_LOADER
 
 
 # The explicit abstention value (`specs/PRODUCT.md` §7.15, D7) and the
@@ -335,7 +336,7 @@ def _read_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
 
     block = "\n".join(lines[1:end_index])
     try:
-        parsed = yaml.safe_load(block)
+        parsed = yaml.load(block, Loader=SAFE_LOADER)
     except yaml.YAMLError as exc:
         raise MalformedNoteError(path, f"invalid YAML: {exc}") from exc
 
@@ -482,7 +483,7 @@ def _read_id_only(path: Path, id_field: str) -> str | None:
     except OSError:
         return None
     try:
-        parsed = yaml.safe_load("".join(block_lines))
+        parsed = yaml.load("".join(block_lines), Loader=SAFE_LOADER)
     except yaml.YAMLError:
         return None
     if not isinstance(parsed, dict):
@@ -713,7 +714,7 @@ def _default_envelopes_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> 
     if not config_path.is_file():
         return ENVELOPES_DIR
     with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
+        document = yaml.load(handle, Loader=SAFE_LOADER) or {}
     paths_config = document.get("paths", {}) or {}
     configured = paths_config.get("envelopes_dir")
     return Path(configured) if configured else ENVELOPES_DIR

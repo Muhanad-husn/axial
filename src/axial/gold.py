@@ -46,6 +46,7 @@ from axial.codebook import CodebookError, load_codebook
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.paths import DEFAULT_DOMAIN_DIR, budgeted_chunk_filename, path_overage
 from axial.vault import _default_vault_dir
+from axial.yaml_loader import SAFE_LOADER
 
 GOLD_DIR = Path("data/gold")
 
@@ -215,7 +216,7 @@ def _default_gold_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
     if not config_path.is_file():
         return GOLD_DIR
     with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
+        document = yaml.load(handle, Loader=SAFE_LOADER) or {}
     paths_config = document.get("paths", {}) or {}
     configured = paths_config.get("gold_dir")
     return Path(configured) if configured else GOLD_DIR
@@ -423,7 +424,7 @@ def _split_frontmatter(text: str) -> dict[str, Any] | None:
     for index in range(1, len(lines)):
         if lines[index].strip() == "---":
             block = "\n".join(lines[1:index])
-            parsed = yaml.safe_load(block)
+            parsed = yaml.load(block, Loader=SAFE_LOADER)
             return parsed if isinstance(parsed, dict) else None
     return None
 
@@ -492,7 +493,7 @@ def load_source_types(sources_path: Path) -> dict[str, str]:
     if not sources_path.is_file():
         return {}
     with sources_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
+        document = yaml.load(handle, Loader=SAFE_LOADER) or {}
     return {str(key): str(value) for key, value in document.items()}
 
 

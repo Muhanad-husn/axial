@@ -20,6 +20,8 @@ from typing import Any
 
 import yaml
 
+from axial.yaml_loader import SAFE_LOADER
+
 
 class CodebookError(Exception):
     """Base class for all domain codebook loading errors."""
@@ -91,7 +93,7 @@ def load_codebook(domain_dir: str | Path) -> Codebook:
 
     with codebook_path.open("r", encoding="utf-8") as f:
         try:
-            raw = yaml.safe_load(f) or {}
+            raw = yaml.load(f, Loader=SAFE_LOADER) or {}
         except yaml.YAMLError as exc:
             raise MalformedCodebookError(codebook_path, str(exc)) from exc
 

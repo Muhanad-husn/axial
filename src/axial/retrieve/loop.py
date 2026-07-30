@@ -74,6 +74,7 @@ from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.query.reader import MalformedChunkIdError, source_id_from_chunk_id
 from axial.retrieve.dispatcher import dispatch
 from axial.retrieve.tools import TOOL_REGISTRY, tool_specs_for_provider
+from axial.yaml_loader import SAFE_LOADER
 
 # The stated tunable's code-level fallback (§4 "a bounded step budget, a
 # stated tunable") -- used only when `config/pipeline.yaml` (or its
@@ -105,7 +106,7 @@ def _resolve_step_budget(config_path: Path) -> int:
     if not config_path.is_file():
         return DEFAULT_STEP_BUDGET
     with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
+        document = yaml.load(handle, Loader=SAFE_LOADER) or {}
     retrieve_config = document.get("retrieve") or {}
     return int(retrieve_config.get("step_budget", DEFAULT_STEP_BUDGET))
 
@@ -114,7 +115,7 @@ def _resolve_thin_result_floor(config_path: Path) -> int:
     if not config_path.is_file():
         return DEFAULT_THIN_RESULT_FLOOR
     with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
+        document = yaml.load(handle, Loader=SAFE_LOADER) or {}
     retrieve_config = document.get("retrieve") or {}
     return int(retrieve_config.get("thin_result_floor", DEFAULT_THIN_RESULT_FLOOR))
 

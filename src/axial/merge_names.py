@@ -236,6 +236,7 @@ from axial.names import (
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.polity_canonical import PolityCanonicalError, _normalize, load_polity_canonical
 from axial.query.reader import MalformedChunkIdError, source_id_from_chunk_id
+from axial.yaml_loader import SAFE_LOADER
 
 # §6's `data/names/` family: the inventory and the similarity view are slice
 # 04's; these two are Reconcile's own output, plus the decision log that makes
@@ -472,7 +473,7 @@ def _resolve_merge_tightness(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -
     if not config_path.is_file():
         return DEFAULT_MIN_CLUSTER_SIZE, DEFAULT_MIN_SAMPLES
     with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
+        document = yaml.load(handle, Loader=SAFE_LOADER) or {}
     block = document.get("names") or {}
     return (
         int(block.get("merge_min_cluster_size", DEFAULT_MIN_CLUSTER_SIZE)),

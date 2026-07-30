@@ -52,6 +52,7 @@ from axial.llm import (
     LLMError,
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
+from axial.yaml_loader import SAFE_LOADER
 
 GATE_NAME = "adversarial"
 
@@ -195,7 +196,7 @@ def load_seeded_brief(path: str | Path) -> SeededBrief:
         raise AdversarialGateError(f"missing seeded brief file: {path}")
 
     with path.open("r", encoding="utf-8") as handle:
-        raw = yaml.safe_load(handle)
+        raw = yaml.load(handle, Loader=SAFE_LOADER)
     if raw is None:
         raw = {}
     if not isinstance(raw, dict):

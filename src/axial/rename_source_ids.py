@@ -106,6 +106,7 @@ from axial.paths import (
     path_overage,
 )
 from axial.vault import render_note
+from axial.yaml_loader import SAFE_LOADER
 
 DATA_DIR = Path("data")
 CASES_DIR = Path("evals") / "cases" / "sim"
@@ -342,7 +343,7 @@ def split_note(path: Path, text: str) -> tuple[dict[str, Any], str]:
     if end == -1:
         raise MalformedRecordError(path, "missing closing '---' frontmatter delimiter")
     try:
-        parsed = yaml.safe_load(text[4 : end + 1])
+        parsed = yaml.load(text[4 : end + 1], Loader=SAFE_LOADER)
     except yaml.YAMLError as exc:
         raise MalformedRecordError(path, f"invalid YAML frontmatter: {exc}") from exc
     if not isinstance(parsed, dict):

@@ -59,6 +59,7 @@ import yaml
 
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.query.names import NameNotFoundError, coverage_count, get_name
+from axial.yaml_loader import SAFE_LOADER
 
 # The §7.4 three-band confidence vocabulary's top band -- the one a
 # `thin` name in the coverage map may never be disclosed alongside.
@@ -112,7 +113,7 @@ def _resolve_coverage_bands(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) ->
     if not config_path.is_file():
         return DEFAULT_MODERATE_FLOOR, DEFAULT_DENSE_FLOOR
     with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
+        document = yaml.load(handle, Loader=SAFE_LOADER) or {}
     bands_config = document.get("coverage_bands") or {}
     moderate_floor = int(bands_config.get("moderate_floor", DEFAULT_MODERATE_FLOOR))
     dense_floor = int(bands_config.get("dense_floor", DEFAULT_DENSE_FLOOR))

@@ -77,6 +77,7 @@ from axial.query.reader import (
     get_chunk,
 )
 from axial.retrieve.tools import TOOL_REGISTRY
+from axial.yaml_loader import SAFE_LOADER
 
 SMOKE_BRIEFS_DIR = Path("config/briefs/smoke")
 
@@ -177,7 +178,7 @@ def resolve_budgets(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Budgets
     if not config_path.is_file():
         return Budgets(None, None)
     with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
+        document = yaml.load(handle, Loader=SAFE_LOADER) or {}
     block = document.get("smoke") or {}
     usd = block.get("max_usd_per_brief")
     seconds = block.get("max_seconds_per_brief")

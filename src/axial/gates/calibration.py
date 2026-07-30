@@ -78,6 +78,7 @@ from axial.llm import (
     LLMError,
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
+from axial.yaml_loader import SAFE_LOADER
 
 GATE_NAME = "calibration"
 METRIC_NAME = "band_reliability"
@@ -162,7 +163,7 @@ def _resolve_band_targets(config_path: Path) -> dict[str, float]:
     if not config_path.is_file():
         return dict(DEFAULT_BAND_TARGETS)
     with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
+        document = yaml.load(handle, Loader=SAFE_LOADER) or {}
     calibration_config = document.get("calibration") or {}
     targets = calibration_config.get("band_targets") or {}
     return {band: float(targets.get(band, DEFAULT_BAND_TARGETS[band])) for band in CONFIDENCE_BANDS}
@@ -175,7 +176,7 @@ def _resolve_min_band_n(config_path: Path) -> int:
     if not config_path.is_file():
         return DEFAULT_MIN_BAND_N
     with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
+        document = yaml.load(handle, Loader=SAFE_LOADER) or {}
     calibration_config = document.get("calibration") or {}
     return int(calibration_config.get("min_band_n", DEFAULT_MIN_BAND_N))
 
