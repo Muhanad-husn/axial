@@ -1,14 +1,26 @@
 """The validating dispatcher -- the hard gate between a model's requested
 tool call and the deterministic §7.5 query API (specs/PHASE-B.md §4, issue
-#253 slice 01).
+#253 slice 01, extended to the name layer by issue #488).
 
 Checks the requested tool name against `TOOL_REGISTRY` and its args against
-that tool's signature BEFORE calling: an unknown name, or missing/extra/
-wrong-typed args, returns a structured `ToolResult` error instead of ever
-reaching `axial.query.reader` -- never raises for a caller-supplied bad
-call. A real query-API failure (e.g. a well-formed but nonexistent id) is
-caught the same way, so a bad tool call can never crash the retrieval loop;
-only a bug in this module's own code would.
+that tool's declared schema BEFORE calling: an unknown name, or missing/
+extra/wrong-typed args, returns a structured `ToolResult` error instead of
+ever reaching `axial.query.names`/`axial.query.reader` -- never raises for a
+caller-supplied bad call. A real query-API failure (e.g. a well-formed but
+nonexistent id or canonical) is caught the same way, so a bad tool call can
+never crash the retrieval loop; only a bug in this module's own code would.
+
+Arg types are validated against each tool's own declared `int_args`
+(`axial.retrieve.tools.ToolSpec`): an arg named there must be an `int`
+(never a `bool`, which Python's `isinstance(x, int)` would otherwise let
+through), every other allowed arg must be a `str`.
+
+`names_dir` is threaded through the call exactly like `vault_dir`/
+`envelopes_dir`: an optional caller-supplied directory for the name-layer
+tools (`find_names`, `get_name`, `name_neighbors`, `who_cites`,
+`who_argues_against`), defaulting to `None` so a caller passing nothing
+resolves against the query API's own default (`axial.paths.
+default_names_dir`), exactly as `vault_dir`/`envelopes_dir` already do.
 """
 
 from __future__ import annotations
@@ -18,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from axial.query import reader
-from axial.retrieve.tools import TOOL_REGISTRY
+from axial.retrieve.tools import TOOL_REGISTRY, ToolSpec
 
 
 @dataclass(frozen=True)
@@ -36,12 +48,21 @@ class ToolResult:
     error: str | None = None
 
 
+def _declared_type_ok(spec: ToolSpec, key: str, value: Any) -> bool:
+    """Whether `value` matches `key`'s declared type on `spec`: `int` (never
+    `bool`) when `key` is in `spec.int_args`, `str` otherwise."""
+    if key in spec.int_args:
+        return isinstance(value, int) and not isinstance(value, bool)
+    return isinstance(value, str)
+
+
 def dispatch(
     tool: str,
     args: dict[str, Any],
     *,
     vault_dir: Path | None = None,
     envelopes_dir: Path | None = None,
+    names_dir: Path | None = None,
 ) -> ToolResult:
     spec = TOOL_REGISTRY.get(tool)
     if spec is None:
@@ -63,7 +84,7 @@ def dispatch(
     wrong_typed = {
         key
         for key, value in args.items()
-        if key in spec.allowed_args and not isinstance(value, str)
+        if key in spec.allowed_args and not _declared_type_ok(spec, key, value)
     }
 
     if missing or extra or wrong_typed:
@@ -73,13 +94,15 @@ def dispatch(
         if extra:
             problems.append(f"unexpected arg(s) {sorted(extra)!r}")
         if wrong_typed:
-            problems.append(f"wrong-typed arg(s) {sorted(wrong_typed)!r} (expected str)")
+            expected = {key: ("int" if key in spec.int_args else "str") for key in wrong_typed}
+            detail = ", ".join(f"{key!r} (expected {expected[key]})" for key in sorted(wrong_typed))
+            problems.append(f"wrong-typed arg(s): {detail}")
         return ToolResult(
             ids=[], count=0, error=f"invalid args for tool {tool!r}: {'; '.join(problems)}"
         )
 
     try:
-        ids, count = spec.call(args, vault_dir, envelopes_dir)
+        ids, count = spec.call(args, vault_dir, envelopes_dir, names_dir)
     except reader.QueryError as exc:
         return ToolResult(ids=[], count=0, error=f"tool {tool!r} query failed: {exc}")
     return ToolResult(ids=ids, count=count)
