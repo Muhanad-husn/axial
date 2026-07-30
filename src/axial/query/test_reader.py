@@ -443,6 +443,93 @@ def test_find_chunk_ids_ending_with_returns_empty_when_no_match(tmp_path):
     assert find_chunk_ids_ending_with("not_a_real_suffix", vault_dir=tmp_path) == []
 
 
+# -- find_chunk_ids_starting_with / find_artifact_ids_starting_with -----------
+# The mirror image of the suffix lookups (issue #524): the model emitted the
+# HEAD of a long id and dropped the slug and index. S-05 died on
+# `caspersen-2012-fbc0efe4fffc_18`, whose real note is
+# `caspersen-2012-fbc0efe4fffc_18_unrecognized-states-...-system_001`. Same
+# index, same 0/1/2+ contract; the caller supplies the trailing `_` that makes
+# the boundary a component separator.
+
+
+def test_find_chunk_ids_starting_with_returns_the_sole_prefix_match(tmp_path):
+    from axial.query.reader import find_chunk_ids_starting_with
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "caspersen-2012-fbc0efe4fffc_18_unrecognized-states_001")
+    _write_chunk_note(prose_dir, "caspersen-2012-fbc0efe4fffc_19_frozen-conflicts_001")
+
+    assert find_chunk_ids_starting_with("caspersen-2012-fbc0efe4fffc_18_", vault_dir=tmp_path) == [
+        "caspersen-2012-fbc0efe4fffc_18_unrecognized-states_001"
+    ]
+
+
+def test_find_chunk_ids_starting_with_does_not_match_a_longer_section_number(tmp_path):
+    """The boundary case the trailing `_` exists for: section 18 and section
+    180 share a numeric prefix, and only the separator keeps `_18` from
+    reaching `_180`."""
+    from axial.query.reader import find_chunk_ids_starting_with
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "src-digest_18_a-section_001")
+    _write_chunk_note(prose_dir, "src-digest_180_another-section_001")
+
+    assert find_chunk_ids_starting_with("src-digest_18_", vault_dir=tmp_path) == [
+        "src-digest_18_a-section_001"
+    ]
+
+
+def test_find_chunk_ids_starting_with_returns_every_match_when_ambiguous(tmp_path):
+    """One section usually holds several chunks, so a head-truncated id is
+    genuinely ambiguous more often than a tail-truncated one. The lookup
+    reports both and lets the caller refuse."""
+    from axial.query.reader import find_chunk_ids_starting_with
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "src-digest_18_a-section_001")
+    _write_chunk_note(prose_dir, "src-digest_18_a-section_002")
+
+    assert find_chunk_ids_starting_with("src-digest_18_", vault_dir=tmp_path) == [
+        "src-digest_18_a-section_001",
+        "src-digest_18_a-section_002",
+    ]
+
+
+def test_find_chunk_ids_starting_with_returns_empty_when_no_match(tmp_path):
+    from axial.query.reader import find_chunk_ids_starting_with
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "src-digest_18_a-section_001")
+
+    assert find_chunk_ids_starting_with("not-a-real-prefix_", vault_dir=tmp_path) == []
+
+
+def test_find_chunk_ids_starting_with_returns_true_chunk_ids_not_filename_stems(tmp_path):
+    """Same reason as the suffix lookup: a budgeted filename is a display
+    artifact, so candidate discovery reads frontmatter ids."""
+    from axial.query.reader import find_chunk_ids_starting_with
+
+    prose_dir = tmp_path / "prose"
+    true_id = "Some Long Human-Readable Title - digest123_26_a-section_012"
+    _write_chunk_note(prose_dir, true_id, filename="Some Short-digest123_26.md")
+
+    assert find_chunk_ids_starting_with(
+        "Some Long Human-Readable Title - digest123_26_", vault_dir=tmp_path
+    ) == [true_id]
+
+
+def test_find_artifact_ids_starting_with_returns_the_sole_prefix_match(tmp_path):
+    from axial.query.reader import find_artifact_ids_starting_with
+
+    artifacts_dir = tmp_path / "artifacts"
+    _write_artifact_note(artifacts_dir, "Long Human Title - digest123_art_3")
+    _write_artifact_note(artifacts_dir, "Other Source - digest456_art_1")
+
+    assert find_artifact_ids_starting_with("Long Human Title - digest123_", vault_dir=tmp_path) == [
+        "Long Human Title - digest123_art_3"
+    ]
+
+
 def test_find_artifact_ids_ending_with_returns_the_sole_suffix_match(tmp_path):
     from axial.query.reader import find_artifact_ids_ending_with
 

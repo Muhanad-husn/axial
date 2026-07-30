@@ -491,12 +491,12 @@ def _read_id_only(path: Path, id_field: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
-# Process-lifetime caches for the id -> path indexes `find_chunk_ids_ending_with`
-# / `find_artifact_ids_ending_with` use, keyed by resolved vault_dir so
-# distinct vaults (real callers, and per-test tmp_path vaults) never share an
-# entry. Built lazily, at most once per vault_dir: nothing in this module
-# populates these on import or on `get_chunk`/`get_artifact`'s own fast path
-# (specs/PHASE-B.md §7.5) -- only a suffix lookup does, and a rebuild-per-call
+# Process-lifetime caches for the id -> path indexes the four truncated-id
+# repair lookups below use, keyed by resolved vault_dir so distinct vaults
+# (real callers, and per-test tmp_path vaults) never share an entry. Built
+# lazily, at most once per vault_dir: nothing in this module populates these
+# on import or on `get_chunk`/`get_artifact`'s own fast path
+# (specs/PHASE-B.md §7.5) -- only a repair lookup does, and a rebuild-per-call
 # would be pathological inside a retrieval loop over the ~18k-note corpus.
 _CHUNK_ID_INDEX_CACHE: dict[Path, dict[str, Path]] = {}
 _ARTIFACT_ID_INDEX_CACHE: dict[Path, dict[str, Path]] = {}
@@ -559,6 +559,32 @@ def find_artifact_ids_ending_with(suffix: str, *, vault_dir: Path | None = None)
         vault_dir = default_vault_dir()
     index = _artifact_id_index(Path(vault_dir))
     return sorted(artifact_id for artifact_id in index if artifact_id.endswith(suffix))
+
+
+def find_chunk_ids_starting_with(prefix: str, *, vault_dir: Path | None = None) -> list[str]:
+    """The mirror image of `find_chunk_ids_ending_with` (issue #524): every
+    real `chunk_id` under `vault_dir` STARTING with `prefix`. Same index,
+    same 0/1/2+ contract, and it exists for the same
+    `axial.analyze.synthesis` repair -- the other truncation the model makes,
+    emitting the head of a long id and dropping the slug and index. A live
+    brief died on `caspersen-2012-fbc0efe4fffc_18`, whose real note is
+    `caspersen-2012-fbc0efe4fffc_18_unrecognized-states-...-system_001`.
+
+    The caller supplies a `prefix` ending in the component separator `_`, so
+    a head naming section 18 can never reach section 180."""
+    if vault_dir is None:
+        vault_dir = default_vault_dir()
+    index = _chunk_id_index(Path(vault_dir))
+    return sorted(chunk_id for chunk_id in index if chunk_id.startswith(prefix))
+
+
+def find_artifact_ids_starting_with(prefix: str, *, vault_dir: Path | None = None) -> list[str]:
+    """The artifact-note counterpart of `find_chunk_ids_starting_with` --
+    same frontmatter-indexed candidate discovery, same contract."""
+    if vault_dir is None:
+        vault_dir = default_vault_dir()
+    index = _artifact_id_index(Path(vault_dir))
+    return sorted(artifact_id for artifact_id in index if artifact_id.startswith(prefix))
 
 
 def _iter_chunk_frontmatter(vault_dir: Path) -> list[tuple[Path, dict[str, Any]]]:

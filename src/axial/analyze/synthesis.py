@@ -27,9 +27,9 @@ one scholar and whose evidence is another's -- `source_id` is never fuzzed).
 An `artifact` grounds ref_id is unaffected by the handle scheme (artifacts
 are never listed under a handle -- see `compose_prompt`'s own docstring) and
 still resolves via `axial.query.reader.get_artifact`, exact match first,
-falling back to a unique-suffix repair of a truncated citation via
-`_resolve_truncated_ref_id` (DEC-42 grew ids to ~200 chars and the model
-sometimes echoes only the tail). Every claim's `confidence` is validated
+falling back to a unique-suffix then unique-prefix repair of a truncated
+citation via `_resolve_truncated_ref_id` (DEC-42 grew ids to ~200 chars and
+the model drops either end). Every claim's `confidence` is validated
 against the closed §7.4 three-band vocabulary `CONFIDENCE_BANDS` (issue
 #402 -- a real run emitted "medium-high", a band the calibration gate
 correctly refused to score; caught here instead, at generation), and
@@ -106,7 +106,9 @@ from axial.query.reader import (
     ChunkNotFoundError,
     ChunkNote,
     find_artifact_ids_ending_with,
+    find_artifact_ids_starting_with,
     find_chunk_ids_ending_with,
+    find_chunk_ids_starting_with,
     get_artifact,
     get_chunk,
 )
@@ -640,28 +642,41 @@ def _resolve_truncated_ref_id(
     """Fallback for a grounds `ref_id` that failed an exact match: after the
     DEC-42 corpus rebuild, `chunk_id`/`artifact_id` values run to ~200
     characters (the raw download filename plus digest, order key, slug, and
-    index), and the model sometimes echoes only the tail, dropping the long
-    human-readable prefix -- stochastic truncation, not a pipeline bug (a
-    real benchmark run's succeeding claims cited the full id correctly).
+    index), and the model sometimes echoes only part of one -- stochastic
+    truncation, not a pipeline bug (a real benchmark run's succeeding claims
+    cited the full id correctly).
 
-    Resolves to the SOLE real id ending with `ref_id` (`str.endswith`). This
-    is not a loosening of anti-confabulation: the cited tail still carries
-    the source's 12-hex content digest plus the chunk's order key, slug, and
-    index, which is unique across the corpus in practice (verified against
-    the live vault: no real id is ever itself a suffix of another real id),
-    so a genuinely hallucinated id will not happen to suffix-match exactly
-    one real one. Zero or 2+ matches raise `UnresolvableGroundError`
-    unchanged -- ambiguity or absence is still a hard error, never guessed
-    at."""
-    finder = find_chunk_ids_ending_with if ref_type == "chunk" else find_artifact_ids_ending_with
-    matches = finder(ref_id, vault_dir=vault_dir)
+    Two symmetric repairs, tried in that order: the SOLE real id ending with
+    `ref_id` (the model dropped the long human-readable head), then the SOLE
+    real id starting with `f"{ref_id}_"` (issue #524: the model kept the head
+    and dropped the slug and index). Neither is a loosening of
+    anti-confabulation. A cited tail carries the source's 12-hex content
+    digest plus the chunk's order key, slug and index, unique across the
+    corpus in practice; a cited head carries the digest and order key, and
+    the trailing separator makes the boundary a component boundary, so a head
+    naming section 18 can never reach section 180. A genuinely hallucinated
+    id will not happen to match exactly one real id at either end. Zero or 2+
+    matches raise `UnresolvableGroundError` unchanged -- ambiguity or absence
+    is still a hard error, never guessed at."""
+    if ref_type == "chunk":
+        suffix_finder, prefix_finder = find_chunk_ids_ending_with, find_chunk_ids_starting_with
+    else:
+        suffix_finder, prefix_finder = (
+            find_artifact_ids_ending_with,
+            find_artifact_ids_starting_with,
+        )
+    matches = suffix_finder(ref_id, vault_dir=vault_dir)
+    kind = "suffix"
+    if len(matches) != 1:
+        matches = prefix_finder(f"{ref_id}_", vault_dir=vault_dir)
+        kind = "prefix"
     if len(matches) != 1:
         raise UnresolvableGroundError(index, text, ref_type, ref_id)
 
     resolved_id = matches[0]
     print(
         f"synthesize: repaired truncated grounds ref_id on claim #{index}: "
-        f"{ref_id!r} -> {resolved_id!r} (unique suffix match)",
+        f"{ref_id!r} -> {resolved_id!r} (unique {kind} match)",
         file=sys.stderr,
     )
     return resolved_id
@@ -1113,26 +1128,32 @@ Return ONLY this JSON object, no prose and no code fence:
 
 def _resolve_counter_position_ground(ref_id: str, *, vault_dir: Path | None) -> str:
     """Resolve one counter-position grounds `ref_id` against the vault --
-    exact match first, falling back to a unique-suffix repair of a
-    truncated citation (mirrors `_resolve_truncated_ref_id`'s own repair
-    exactly, DEC-42: ids run to ~200 chars and a model sometimes echoes only
-    the tail even when shown the full id, as here). Raises
+    exact match first, then the two truncated-citation repairs (mirrors
+    `_resolve_truncated_ref_id`'s own pair exactly, DEC-42: ids run to ~200
+    chars and a model drops either end even when shown the full id, as here).
+    The head-truncation repair is what issue #524 added, after a live brief
+    died at this line after 998.6s of paid work on
+    `caspersen-2012-fbc0efe4fffc_18`. Raises
     `UnresolvableCounterPositionGroundError` -- not `UnresolvableGroundError`,
     whose message names a "claim", misleading for a section that is not
-    one -- on zero or 2+ suffix matches, exactly as firm as an exact-match
-    miss."""
+    one -- on zero or 2+ matches at either end, exactly as firm as an
+    exact-match miss."""
     try:
         get_chunk(ref_id, vault_dir=vault_dir)
         return ref_id
     except ChunkNotFoundError:
         pass
     matches = find_chunk_ids_ending_with(ref_id, vault_dir=vault_dir)
+    kind = "suffix"
+    if len(matches) != 1:
+        matches = find_chunk_ids_starting_with(f"{ref_id}_", vault_dir=vault_dir)
+        kind = "prefix"
     if len(matches) != 1:
         raise UnresolvableCounterPositionGroundError(ref_id)
     resolved_id = matches[0]
     print(
         f"generate_counter_position: repaired truncated grounds ref_id: "
-        f"{ref_id!r} -> {resolved_id!r} (unique suffix match)",
+        f"{ref_id!r} -> {resolved_id!r} (unique {kind} match)",
         file=sys.stderr,
     )
     return resolved_id

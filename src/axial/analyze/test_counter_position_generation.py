@@ -666,6 +666,102 @@ def test_a_truncated_ref_id_is_repaired_to_the_full_candidate_id(tmp_path: Path,
     assert result.section["grounds"] == [{"ref_type": "chunk", "ref_id": full_counter_id}]
 
 
+# ---------------------------------------------------------------------------
+# Head-truncated citation repair (issue #524): the mirror image of the tail
+# case above. S-05 died after 998.6s of real spend on
+# `caspersen-2012-fbc0efe4fffc_18` -- the model emitted the head of a real id
+# and dropped the slug and index. The prefix carries a component separator, so
+# `_18` can never reach `_180`.
+# ---------------------------------------------------------------------------
+
+HEAD = "caspersen-2012-fbc0efe4fffc_18"
+FULL_HEAD_ID = f"{HEAD}_unrecognized-states-in-the-modern-international-system_001"
+
+
+def _present_response(ref_id: str) -> str:
+    return json.dumps(
+        {
+            "present": True,
+            "stance": "The opposing account.",
+            "grounds": [{"ref_type": "chunk", "ref_id": ref_id}],
+            "corpus_one_sided": False,
+            "one_sided_reason": None,
+        }
+    )
+
+
+def test_a_head_truncated_ref_id_is_repaired_to_the_full_candidate_id(
+    tmp_path: Path, names_dir: Path
+):
+    vault_dir = _write_vault(tmp_path, [_tilly(), _skocpol(chunk_id=FULL_HEAD_ID)])
+    claims = [_claim("c1", MAIN_CHUNK, FULL_HEAD_ID)]
+    client = _ScriptedClient(_present_response(HEAD))
+
+    result = generate_counter_position(
+        claims, _brief(), client=client, vault_dir=vault_dir, names_dir=names_dir
+    )
+
+    assert result.section["grounds"] == [{"ref_type": "chunk", "ref_id": FULL_HEAD_ID}]
+
+
+def test_a_head_truncated_ref_id_never_reaches_a_longer_section_number(
+    tmp_path: Path, names_dir: Path
+):
+    """The `_18` vs `_180` boundary: both sections exist, and the repair
+    still resolves to section 18's note rather than raising on a spurious
+    second match."""
+    sibling_id = "caspersen-2012-fbc0efe4fffc_180_a-much-later-section_001"
+    vault_dir = _write_vault(
+        tmp_path,
+        [_tilly(), _skocpol(chunk_id=FULL_HEAD_ID), _skocpol(chunk_id=sibling_id)],
+    )
+    claims = [_claim("c1", MAIN_CHUNK, FULL_HEAD_ID)]
+    client = _ScriptedClient(_present_response(HEAD))
+
+    result = generate_counter_position(
+        claims, _brief(), client=client, vault_dir=vault_dir, names_dir=names_dir
+    )
+
+    assert result.section["grounds"] == [{"ref_type": "chunk", "ref_id": FULL_HEAD_ID}]
+
+
+def test_a_head_truncated_ref_id_matching_two_real_ids_still_raises(
+    tmp_path: Path, names_dir: Path
+):
+    """Two chunks of the SAME section share the head, so the citation is
+    genuinely ambiguous. Ambiguity stays as fatal as it is for the tail
+    repair -- never guessed at."""
+    second_chunk = f"{HEAD}_unrecognized-states-in-the-modern-international-system_002"
+    vault_dir = _write_vault(
+        tmp_path,
+        [_tilly(), _skocpol(chunk_id=FULL_HEAD_ID), _skocpol(chunk_id=second_chunk)],
+    )
+    claims = [_claim("c1", MAIN_CHUNK, FULL_HEAD_ID, second_chunk)]
+    client = _ScriptedClient(_present_response(HEAD))
+
+    with pytest.raises(UnresolvableCounterPositionGroundError) as exc_info:
+        generate_counter_position(
+            claims, _brief(), client=client, vault_dir=vault_dir, names_dir=names_dir
+        )
+    assert HEAD in str(exc_info.value)
+
+
+def test_an_exact_match_wins_over_a_note_that_extends_it(tmp_path: Path, names_dir: Path):
+    """Resolution order is exact -> suffix -> prefix. A cited id that is
+    itself a real note AND the head of a longer one resolves to the note
+    that matches exactly, never to its extension."""
+    extension_id = f"{COUNTER_CHUNK}_a-longer-tail_002"
+    vault_dir = _write_vault(tmp_path, [_tilly(), _skocpol(), _skocpol(chunk_id=extension_id)])
+    claims = [_claim("c1", MAIN_CHUNK, COUNTER_CHUNK, extension_id)]
+    client = _ScriptedClient(_present_response(COUNTER_CHUNK))
+
+    result = generate_counter_position(
+        claims, _brief(), client=client, vault_dir=vault_dir, names_dir=names_dir
+    )
+
+    assert result.section["grounds"] == [{"ref_type": "chunk", "ref_id": COUNTER_CHUNK}]
+
+
 def test_counter_position_generate_pass_name_is_the_stable_dispatch_key():
     # Pins the pass_name literal itself -- model_by_pass/reasoning_by_pass
     # config routing (config/pipeline.yaml) depends on this string never
