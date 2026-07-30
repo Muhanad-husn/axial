@@ -140,8 +140,8 @@ def _record() -> dict[str, Any]:
             "grounds": [{"ref_type": "chunk", "ref_id": CHUNK_IDS[2]}],
         },
         "coverage_map": {
-            "syria": {"coverage_band": "thin", "corpus_chunk_count": 3},
-            "lebanon": {"coverage_band": "rich", "corpus_chunk_count": 400},
+            "syria": {"coverage_band": "thin", "corpus_note_count": 3},
+            "lebanon": {"coverage_band": "rich", "corpus_note_count": 400},
         },
         "confidence": {"overall_band": "medium", "rationale": "Thin on one polity."},
     }

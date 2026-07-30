@@ -95,11 +95,13 @@ def run_synthesis_quality_gate(
     steelman_passed = 0
 
     for index, record in enumerate(records, start=1):
+        # `config_path` here is the GATE's own threshold file, never the
+        # validator's: contested detection lost its config knob with the tag
+        # axes it counted (issue #490, D3).
         report = validate_counter_position(
             record,
             client=client,
             vault_dir=vault_dir,
-            config_path=config_path,
             steelman_pass_name=steelman_pass_name,
         )
 

@@ -1,49 +1,61 @@
 """Stage-5 counter-position validator (specs/PHASE-B.md §7.8, §7.9, §5 stage
-5, issue #259).
+5, issues #259 and #490).
 
 Reads a persisted §7.3 analysis record and reports pass/fail, never editing
 it -- same "never edits the record" contract as the attribution validator
 (src/axial/validators/attribution.py). Two checks, run in this order:
 
-1. **Contested predicate (mechanical).** Whether the brief is contested is
-   determined from corpus signal, never the brief's wording (§7.8): the
-   union of chunk-typed grounds cited across every claim ("this run's
-   evidence", the same source of truth §7.7's coverage map reads) is
-   resolved via the query API and its `theory_school`/`role_in_argument`
-   axes inspected. Contested when either fires, checked in this order:
-   - **theory_school_spread** -- the evidence spans at least
-     `contested_detection.min_distinct_theory_schools` (a stated tunable,
-     default 2) distinct *substantive* `theory_school` primaries. The
-     `not-applicable`/`unlisted` sentinels are excluded from this count
-     (§7.8: neither is a position, so neither can oppose another value or
-     itself).
-   - **role_counter_position** -- any evidence chunk carries
-     `role_in_argument: "role:counter-position"`.
+1. **Contested predicate (mechanical), from what the notes say (D3).**
+   Whether the brief is contested is determined from corpus signal, never
+   the brief's wording (§7.8). The union of chunk-typed grounds cited across
+   every claim ("this run's evidence", the same union §7.7's coverage map
+   reads) is resolved through the query API and its interrogation answers
+   inspected. Contested when either fires, checked in this order:
+   - **opposed_positions** -- two grounds notes state different positions
+     and one of them NAMES the other's side in its `arguing_against`: the
+     other's stated position, the other's author, or a name the other note
+     itself names. Matching is literal, through the alias map alone.
+   - **gather_disagreement** -- a name this run both retrieved on and
+     grounded a claim in carries a Gather disagreement section
+     (`specs/PRODUCT.md` §7.18). A hint only, per D4: it decides that the
+     brief is contested, never what gets cited.
    The fired signal (or `None` on an uncontested brief) is always recorded
-   on the report, so the tunable rule can be tuned on evidence later
-   (explicitly out of this slice's own scope).
+   on the report.
 2. **Presence-or-disclosure check (mechanical), on a contested brief only.**
    The record's `counter_position` section (§7.8, locked shape) must be
    either `present: true` with non-empty `grounds`, or `corpus_one_sided:
    true` with a non-empty `one_sided_reason`. Neither fails with
-   `REASON_CONTESTED_WITHOUT_COUNTER_POSITION` and blocks release -- the
-   whole point of this validator (§7.8: "a red flag, not a clean result").
-   An uncontested brief never requires the section at all.
+   `REASON_CONTESTED_WITHOUT_COUNTER_POSITION` and blocks release (§7.8: "a
+   red flag, not a clean result").
+
+**Why the `arguing_against` half carries the predicate, measured (#490,
+2026-07-29).** The two clauses D3 names are not equal. `position_of` is free
+text with 90% singletons and 76% of it answers "the author", so "positions
+differ" is true of 99% of names and discriminates nothing; no count
+threshold rescues it. `arguing_against` separates at 1.9x-2.4x over a 0.26
+base rate, but **only when "names the other side" is implemented
+literally** -- read loosely as "an `arguing_against` exists" it is a 1.00x
+no-op. So the differing-positions clause is a guard against a note counting
+as arguing with itself, and the literal naming is what fires.
+
+**Two abstentions must never compare as different positions.** `[]` is an
+answer and 19.3% of notes give it on `arguing_against`; only 4.9% abstain
+there, and 23.6% abstain on `position_of`. The predicate applies
+`axial.query.reader.is_abstention` -- 04's one shared predicate, imported,
+never reimplemented -- before reading any answer.
+
+**Recall is capped and that is a stated limit, not a bug.** The measurement
+puts this predicate's recall at 0.35-0.59: a disagreement the corpus states
+only implicitly is not seen. Contested stays a boolean anyway (two contracts
+block on it, this validator's own presence check and #405's one-sided
+outcome), so the validator requires a counter-position exactly where it sees
+the disagreement, and nowhere else.
 
 A **bounded model steelman-quality check**, anchored to the counter-position
 `grounds` text and run under its own `pass_name` (never the generating
 model), runs whenever the section itself is genuinely present (`present:
-true` with non-empty `grounds`) -- independent of whether the brief is
-contested, since judging an existing section's quality is a different
-question from whether one was required. In this slice the check only
-reports (`SteelmanCheck.verdict`); it never blocks release (§7.9, plan
-02's "out of scope").
-
-Out of scope for this slice (plans/analysis-validators/02-counter-position-
-validator.md): making the steelman check blocking, the counter-position
-presence *rate* over the contested-brief subset (§10), retrieving or
-generating a counter-position when one is missing, tuning the contested
-rule against the real dev briefs, and any change to the §7.8 section shape.
+true` with non-empty `grounds`). It only reports (`SteelmanCheck.verdict`);
+it never blocks release (§7.9).
 """
 
 from __future__ import annotations
@@ -53,41 +65,23 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-import yaml
 
 from axial.llm import COUNTER_POSITION_PASS_NAME, SYNTHESIZE_PASS_NAME, LLMClient, LLMError
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
-from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
-from axial.query.reader import ChunkNotFoundError, get_chunk
-
-# The §7.8/Appendix E sentinel `theory_school` values excluded from the
-# contested-spread comparison: neither is a position, so neither counts as
-# opposing another value, including another instance of itself. Named
-# locally (rather than imported from `axial.tag`, the Phase-A tagging
-# module) to keep this Phase-B validator decoupled from Phase-A's
-# LLM-backed tagging stack -- these two strings are the whole of the
-# schema's `theory_school` sentinel vocabulary (config/domains/*/schema.yaml
-# `groups.none`/`groups.open`), not something either side will drift on
-# independently.
-_THEORY_SCHOOL_SENTINEL_VALUES = frozenset({"not-applicable", "unlisted"})
-
-# The role_in_argument value marking a chunk as opposing material (§7.5's
-# `role_in_argument` axis; config/domains/*/schema.yaml Appendix F).
-COUNTER_POSITION_ROLE_VALUE = "role:counter-position"
-
-# The stated tunable's code-level fallback (§7.8 "a stated tunable, proven
-# on the dev briefs") -- used only when `config/pipeline.yaml` (or its
-# `contested_detection.min_distinct_theory_schools` key) is absent, mirroring
-# every other per-pass/per-check tunable in this codebase (e.g.
-# `axial.retrieve.loop.DEFAULT_STEP_BUDGET`). 2 is the starting hypothesis
-# stated directly in the spec text; tuning it against the real dev briefs is
-# explicitly out of this slice's scope.
-DEFAULT_MIN_DISTINCT_THEORY_SCHOOLS = 2
+from axial.query.names import (
+    NameNotFoundError,
+    as_string_list,
+    canonical_name_for_surface,
+    fold_surface_form,
+    get_name,
+)
+from axial.query.reader import ChunkNotFoundError, ChunkNote, get_chunk, is_abstention
+from axial.validators.coverage import coverage_scope
 
 # The two contested signals this validator ever persists -- a fixed, small
 # vocabulary (mirrors attribution.py's REASON_* constants), never open text.
-SIGNAL_THEORY_SCHOOL_SPREAD = "theory_school_spread"
-SIGNAL_ROLE_COUNTER_POSITION = "role_counter_position"
+SIGNAL_OPPOSED_POSITIONS = "opposed_positions"
+SIGNAL_GATHER_DISAGREEMENT = "gather_disagreement"
 
 # The one blocking reason this validator ever reports.
 REASON_CONTESTED_WITHOUT_COUNTER_POSITION = "contested_without_counter_position"
@@ -132,7 +126,7 @@ class SamePassModelError(CounterPositionValidatorError):
 class ContestedResult:
     """Whether the brief is contested (§7.8), and which signal fired
     (`None` when uncontested). Persisted on the report regardless of
-    pass/fail so the tunable rule can be tuned on evidence."""
+    pass/fail so the rule can be tuned on evidence."""
 
     contested: bool
     signal: str | None
@@ -160,8 +154,8 @@ class CounterPositionFailure:
 @dataclass(frozen=True)
 class CounterPositionReport:
     """The validator's whole verdict. `passed` is `True` only when
-    `failures` is empty -- the steelman check never contributes a failure
-    in this slice, it only informs `steelman`."""
+    `failures` is empty -- the steelman check never contributes a failure,
+    it only informs `steelman`."""
 
     passed: bool
     contested: ContestedResult
@@ -169,22 +163,11 @@ class CounterPositionReport:
     steelman: SteelmanCheck
 
 
-def _resolve_min_distinct_theory_schools(config_path: Path) -> int:
-    if not config_path.is_file():
-        return DEFAULT_MIN_DISTINCT_THEORY_SCHOOLS
-    with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
-    contested_config = document.get("contested_detection") or {}
-    return int(
-        contested_config.get("min_distinct_theory_schools", DEFAULT_MIN_DISTINCT_THEORY_SCHOOLS)
-    )
-
-
 def _evidence_chunk_ids(claims: list[Any]) -> list[str]:
     """The deduplicated, ordered set of chunk ids ("this run's evidence")
     cited across every claim's `grounds` -- the same union §7.7's coverage
-    map reads to compute `evidence_chunk_count`. Artifact grounds are
-    skipped: artifacts carry no `theory_school`/`role_in_argument`."""
+    map reads to compute `evidence_note_count`. Artifact grounds are
+    skipped: an artifact note carries no interrogation answers."""
     seen: dict[str, None] = {}
     for claim in claims:
         if not isinstance(claim, dict):
@@ -199,31 +182,190 @@ def _evidence_chunk_ids(claims: list[Any]) -> list[str]:
     return list(seen)
 
 
-def _detect_contested(
-    claims: list[Any], *, vault_dir: Path | None, min_distinct_theory_schools: int
-) -> ContestedResult:
-    """The §7.8 contested predicate, over the evidence resolved from the
-    record's own claims -- never the brief's wording. A chunk id that fails
-    to resolve is skipped here: grounds-resolution failures are the
+def resolve_grounds_notes(claims: list[Any], *, vault_dir: Path | None) -> list[ChunkNote]:
+    """This run's grounds notes, in first-seen citation order. A chunk id
+    that fails to resolve is skipped: grounds-resolution failures are the
     attribution validator's own job (§7.9), not this one's."""
-    schools: set[str] = set()
-    has_counter_position_role = False
-
+    notes: list[ChunkNote] = []
     for chunk_id in _evidence_chunk_ids(claims):
         try:
-            chunk = get_chunk(chunk_id, vault_dir=vault_dir)
+            notes.append(get_chunk(chunk_id, vault_dir=vault_dir))
         except ChunkNotFoundError:
             continue
-        primary = (chunk.theory_school or {}).get("primary")
-        if isinstance(primary, str) and primary not in _THEORY_SCHOOL_SENTINEL_VALUES:
-            schools.add(primary)
-        if chunk.role_in_argument == COUNTER_POSITION_ROLE_VALUE:
-            has_counter_position_role = True
+    return notes
 
-    if len(schools) >= min_distinct_theory_schools:
-        return ContestedResult(contested=True, signal=SIGNAL_THEORY_SCHOOL_SPREAD)
-    if has_counter_position_role:
-        return ContestedResult(contested=True, signal=SIGNAL_ROLE_COUNTER_POSITION)
+
+def stated_position(note: ChunkNote) -> str | None:
+    """A note's own stated position, across issue #496's mixed frame: its
+    `position` answer where it has one, its `position_of` answer otherwise
+    (§7.5/§7.15). An abstention (all three forms) is not an answer and never
+    stands in for one, so two abstaining notes never compare as two
+    different positions -- the manufactured-disagreement failure D3's own
+    measurement warns about. `None` when the note states no position at
+    all."""
+    for value in (note.position, note.position_of):
+        if value is None or is_abstention(value):
+            continue
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _opposition_surfaces(note: ChunkNote) -> list[str]:
+    """The surface forms a note says it argues against (§7.15's
+    `arguing_against`), abstentions dropped. `[]` -- the answer that the
+    passage names no opponent, given by 19.3% of the corpus -- yields no
+    surfaces, exactly as it should, and is never read as an abstention."""
+    if is_abstention(note.arguing_against):
+        return []
+    return as_string_list(note.arguing_against)
+
+
+def _side_of(note: ChunkNote, *, names_dir: Path | None) -> tuple[set[str], set[str]]:
+    """What names this note's side, as §7.8 puts it: "the other's position,
+    its author, or a name that side is a member of".
+
+    Returns `(folded_literals, canonicals)` -- the folded strings that name
+    the side directly (its stated position and its source's author) and the
+    canonical names the note itself names, which are the pages the note is a
+    member of. Canonical resolution is through the alias map alone
+    (`canonical_name_for_surface`), never `find_names`' embedding tier: a
+    nearest-neighbour hit here would manufacture an opposition the corpus
+    never stated, the same rule §7.4 applies to `names_touched`."""
+    literals: set[str] = set()
+    position = stated_position(note)
+    if position:
+        literals.add(fold_surface_form(position))
+    author = (note.source_meta or {}).get("author")
+    if isinstance(author, str) and author.strip():
+        literals.add(fold_surface_form(author))
+        canonical = canonical_name_for_surface(author.strip(), names_dir=names_dir)
+        if canonical:
+            literals.add(fold_surface_form(canonical))
+
+    canonicals: set[str] = set()
+    if not is_abstention(note.names):
+        for entry in note.names if isinstance(note.names, list) else []:
+            surface = entry.get("name") if isinstance(entry, dict) else entry
+            if not isinstance(surface, str) or not surface.strip():
+                continue
+            resolved = canonical_name_for_surface(surface.strip(), names_dir=names_dir)
+            if resolved:
+                canonicals.add(resolved)
+    return literals, canonicals
+
+
+def _names_the_other_side(arguer: ChunkNote, other: ChunkNote, *, names_dir: Path | None) -> bool:
+    """Whether `arguer`'s `arguing_against` LITERALLY names `other`'s side.
+    Loose reading -- "an `arguing_against` exists" -- is a measured 1.00x
+    no-op, so nothing here settles for one."""
+    literals, canonicals = _side_of(other, names_dir=names_dir)
+    for surface in _opposition_surfaces(arguer):
+        folded = fold_surface_form(surface)
+        if folded in literals:
+            return True
+        resolved = canonical_name_for_surface(surface, names_dir=names_dir)
+        if resolved is not None and (
+            resolved in canonicals or fold_surface_form(resolved) in literals
+        ):
+            return True
+    return False
+
+
+def _different_sides(first: ChunkNote, second: ChunkNote) -> bool:
+    """Whether two grounds notes are two sides at all, rather than one
+    passage's argument with itself.
+
+    Two notes are different sides when their stated positions differ, or
+    when they come from different sources. The second disjunct is what makes
+    the first usable on the real corpus: 76% of notes answer `position_of`
+    with "the author", and "the author" of one book is a different person
+    from "the author" of another, so comparing those two strings for
+    inequality would throw away the corpus's most common disagreement
+    shape."""
+    if first.chunk_id == second.chunk_id:
+        return False
+    first_position = stated_position(first)
+    second_position = stated_position(second)
+    if first_position and second_position and first_position != second_position:
+        return True
+    return _source_of(first) != _source_of(second)
+
+
+def _source_of(note: ChunkNote) -> str:
+    """A note's source, for the different-sides test. `source_meta`'s own
+    author/title, not a chunk-id parse: the id's `source_id` seam and the
+    author are the same fact here, and `source_meta` is what a name page's
+    member lines already show."""
+    meta = note.source_meta or {}
+    return f"{meta.get('author')}|{meta.get('title')}"
+
+
+def opposed_grounds_notes(
+    notes: list[ChunkNote], *, names_dir: Path | None = None
+) -> list[ChunkNote]:
+    """§7.8 path 1, as a list rather than a verdict: every grounds note on
+    either side of a stated opposition -- the note whose `arguing_against`
+    names another's side, and the note it names -- in first-seen citation
+    order, deduplicated.
+
+    Both sides are returned because both are the disagreement. The
+    counter-position whitelist (`axial.analyze.synthesis`) offers them to the
+    model, which decides which one opposes the primary claims; the predicate
+    below only needs to know the list is non-empty. One function, so the
+    generator and the gate that checks it can never disagree about what a
+    stated opposition is (issue #399)."""
+    opposed: dict[str, ChunkNote] = {}
+    for arguer in notes:
+        if not _opposition_surfaces(arguer):
+            continue
+        for other in notes:
+            if not _different_sides(arguer, other):
+                continue
+            if _names_the_other_side(arguer, other, names_dir=names_dir):
+                opposed.setdefault(arguer.chunk_id, arguer)
+                opposed.setdefault(other.chunk_id, other)
+    return list(opposed.values())
+
+
+def _gather_disagreement_at(names: list[str], *, vault_dir: Path | None) -> bool:
+    """§7.8 path 2: one of `names` carries a Gather disagreement section.
+    A retrieval hint, never a citation (D4)."""
+    for canonical in names:
+        try:
+            page = get_name(canonical, vault_dir=vault_dir)
+        except NameNotFoundError:
+            continue
+        if page.disagreement is not None:
+            return True
+    return False
+
+
+def detect_contested(
+    claims: list[Any],
+    trajectory: list[dict[str, Any]] | None = None,
+    *,
+    vault_dir: Path | None = None,
+    names_dir: Path | None = None,
+) -> ContestedResult:
+    """The §7.8 contested predicate over the record's own resolved evidence
+    -- never the brief's wording. Public because
+    `axial.analyze.synthesis.generate_counter_position` reuses it VERBATIM
+    (issue #399): two implementations of "is this contested" would let the
+    generator and the gate that checks it disagree.
+
+    Path 2's name set is the §7.7 coverage scope (`coverage_scope`): the
+    names this run retrieved on that a claim's grounds note is a member of.
+    Not every name in `names_touched` -- a real evidence set's notes name
+    423 distinct canonicals on average, mostly one-off mentions, and a Gather
+    finding at a name the answer merely brushed past says nothing about
+    whether the answer is contested."""
+    notes = resolve_grounds_notes(claims, vault_dir=vault_dir)
+    if opposed_grounds_notes(notes, names_dir=names_dir):
+        return ContestedResult(contested=True, signal=SIGNAL_OPPOSED_POSITIONS)
+    scope = coverage_scope([c for c in claims if isinstance(c, dict)], trajectory or [])
+    if _gather_disagreement_at(scope, vault_dir=vault_dir):
+        return ContestedResult(contested=True, signal=SIGNAL_GATHER_DISAGREEMENT)
     return ContestedResult(contested=False, signal=None)
 
 
@@ -332,7 +474,7 @@ def validate_counter_position(
     *,
     client: LLMClient,
     vault_dir: Path | None = None,
-    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    names_dir: Path | None = None,
     steelman_pass_name: str = COUNTER_POSITION_PASS_NAME,
 ) -> CounterPositionReport:
     """Validate `record`'s §7.8 counter-position section against its own
@@ -340,7 +482,8 @@ def validate_counter_position(
     more.
 
     1. Detects contested-ness (`ContestedResult`) from the evidence resolved
-       out of `record["claims"]`'s grounds.
+       out of `record["claims"]`'s grounds and the names its
+       `record["trajectory"]` retrieved on.
     2. On a contested brief only, checks the section is present-with-grounds
        or disclosed-one-sided-with-reason; failing both is
        `REASON_CONTESTED_WITHOUT_COUNTER_POSITION` and blocks release.
@@ -349,9 +492,11 @@ def validate_counter_position(
        zero model calls otherwise.
     """
     claims = record.get("claims") or []
-    min_distinct = _resolve_min_distinct_theory_schools(config_path)
-    contested = _detect_contested(
-        claims, vault_dir=vault_dir, min_distinct_theory_schools=min_distinct
+    contested = detect_contested(
+        claims,
+        record.get("trajectory") or [],
+        vault_dir=vault_dir,
+        names_dir=names_dir,
     )
 
     counter_position = record.get("counter_position") or {}

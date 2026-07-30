@@ -266,7 +266,7 @@ def test_examine_reports_evidence_coverage_and_interrogation_writes_nothing(
     assert "Syria: 2" in names_block, stdout
     assert "Iraq: 1" in names_block, stdout
     assert "coverage_band" not in stdout
-    assert "corpus_chunk_count" not in stdout
+    assert "corpus_note_count" not in stdout
 
     # Every note abstained on `arguing_against`, so it appears nowhere as an
     # answer -- not the field, not the sentinel.

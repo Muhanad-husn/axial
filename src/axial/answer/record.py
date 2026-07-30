@@ -29,7 +29,7 @@ since it reads whatever a record persists rather than recomputing it.
 `build_record` calls `axial.analyze.synthesis.generate_counter_position` over
 the record's own just-parsed claims, mirroring how `coverage_map`/
 `confidence` are computed from the same claims. That function reuses
-`axial.validators.counter_position._detect_contested` verbatim to decide
+`axial.validators.counter_position.detect_contested` verbatim to decide
 whether the brief is contested (zero model calls when it is not), and, when
 it is, makes one bounded follow-up model call under its own
 `COUNTER_POSITION_GENERATE_PASS_NAME` -- grounded only in a whitelist of
@@ -211,18 +211,20 @@ def build_record(
     mirroring the existing "a pass is named only when it really ran"
     contract retrieve/synthesize already carry on a `refuse` disposition.
     `coverage_map` (§7.7) and `confidence` (§7.4) are computed for real
-    (issue #400) from the record's own claims -- `compute_coverage_map`
-    first, then `compute_confidence` over its result, both zero-model-call
-    and deterministic. `source_usage` (§7.13) is computed over the record's
+    (issues #400 and #490) from the record's own claims AND trajectory --
+    `compute_coverage_map` first, then `compute_confidence` over its result,
+    both zero-model-call and deterministic. The trajectory is what scopes the
+    map to the names this brief is about rather than every name its evidence
+    mentions (see `axial.validators.coverage`). `source_usage` (§7.13) is computed over the record's
     own `claims`/`trajectory`/`interrogation` -- assembled last here, once
     every field it reads is already in the dict. `cost` (§7.14, issue #363)
     reads `client`'s accumulated per-pass token usage
     (`_usage_and_cost_by_pass`) -- `client` is needed for that AND for
     `generate_counter_position`'s own possible model call."""
     claim_dicts = [_claim_to_dict(claim) for claim in claims]
-    coverage_map = compute_coverage_map(claim_dicts, vault_dir=vault_dir)
+    coverage_map = compute_coverage_map(claim_dicts, trajectory=trajectory, vault_dir=vault_dir)
     counter_position_result = generate_counter_position(
-        claim_dicts, brief, client=client, vault_dir=vault_dir
+        claim_dicts, brief, client=client, trajectory=trajectory, vault_dir=vault_dir
     )
     record_model_by_pass = dict(model_by_pass)
     if counter_position_result.model_called:

@@ -425,10 +425,12 @@ Three rules bind, and they are the whole of it.
 
 **The contested predicate.** This is the one place the mechanism needed real work, because PHASE-B's predicate is described in terms of retrieved chunks and Phase C has records. Stated plainly, split into what is reuse and what is new.
 
-**Reuse, and more of it than expected.** PHASE-B's predicate is already implemented over **claim grounds, not over the retrieval trajectory**: `axial.validators.counter_position._detect_contested` reads `record["claims"]`, takes the union of chunk-typed `grounds` pointers, resolves each through `get_chunk`, and inspects the `theory_school` and `role_in_argument` axes. A Phase-C paper record carries `claims` with the same `grounds` shape pointing at the same real vault ids (§7.4, §7.5), so both existing arms apply to a paper record **unmodified**:
+**Reuse, and more of it than expected.** PHASE-B's predicate is already implemented over **claim grounds, not over the retrieval trajectory**: `axial.validators.counter_position.detect_contested` reads `record["claims"]`, takes the union of chunk-typed `grounds` pointers, resolves each through `get_chunk`, and inspects what those notes say. A Phase-C paper record carries `claims` with the same `grounds` shape pointing at the same real vault ids (§7.4, §7.5), so both existing arms apply to a paper record **unmodified**:
 
-- `theory_school_spread` — the paper's cited evidence spans at least `contested_detection.min_distinct_theory_schools` distinct substantive `theory_school` primaries, with the `not-applicable` and `unlisted` sentinels excluded exactly as PHASE-B excludes them.
-- `role_counter_position` — any cited evidence chunk carries `role_in_argument: role:counter-position`.
+- `opposed_positions` — two of the paper's cited notes are different sides and one names the other's side in its `arguing_against` answer.
+- `gather_disagreement` — a name the paper both rests on and cites evidence from carries a Gather disagreement section.
+
+> **CORRECTED (Phase B v1 slice 05, issue #490, D3).** This paragraph was written against PHASE-B's v0 arms, `theory_school_spread` and `role_counter_position`, which counted tag axes Phase A v1 deleted and matched nothing against the v1 vault; the `contested_detection.min_distinct_theory_schools` knob went with them. The two arms above are what PHASE-B §7.8 now specifies. Nothing structural changes for Phase C — both arms still read a record's own `claims[].grounds` and resolve them through the vault, which is the property this section depends on — but the second arm additionally reads `record["trajectory"]`, which a Phase-C paper record must therefore carry or forgo.
 
 This satisfies the no-vault-access constraint by construction: the resolution happens in the validator, which already reads the vault, and never in the drafter, which has no path to it (§4).
 

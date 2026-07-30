@@ -48,8 +48,8 @@ def _record():
             "grounds": [{"ref_type": "chunk", "ref_id": "chunk_c"}],
         },
         "coverage_map": {
-            "syria": {"coverage_band": "thin", "corpus_chunk_count": 3},
-            "lebanon": {"coverage_band": "rich", "corpus_chunk_count": 400},
+            "syria": {"coverage_band": "thin", "corpus_note_count": 3},
+            "lebanon": {"coverage_band": "rich", "corpus_note_count": 400},
         },
     }
 

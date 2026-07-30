@@ -832,7 +832,7 @@ def build_parser() -> argparse.ArgumentParser:
             "#258/#259/#260) -- exits 0 only when every claim is marked, "
             "every (a)/(b) grounds pointer resolves, a contested brief's "
             "§7.8 counter-position section is present or explicitly "
-            "disclosed one-sided, every polity the claims touch has a "
+            "disclosed one-sided, every name the answer is about has a "
             "coverage_map entry, and a confidence disclosure is present and "
             "not overconfident"
         ),
@@ -844,10 +844,11 @@ def build_parser() -> argparse.ArgumentParser:
     brief_coverage_parser = brief_subparsers.add_parser(
         "coverage",
         help=(
-            "print the §7.7 per-polity coverage map (corpus/evidence chunk "
+            "print the §7.7 per-name coverage map (corpus/evidence note "
             "counts and coverage_band) computed from a persisted record's "
-            "claims -- the inspection affordance for the coverage_bands "
-            "config, LLM-free (specs/PHASE-B.md §7.7, issue #260)"
+            "claims and trajectory -- the inspection affordance for the "
+            "coverage_bands config, LLM-free (specs/PHASE-B.md §7.7, "
+            "issues #260 and #490)"
         ),
     )
     brief_coverage_parser.add_argument(
@@ -1718,7 +1719,7 @@ def _brief_validate(brief_id: str) -> int:
     # One encoding-safe block, byte-identical to the per-line prints it
     # replaces. Every part of it can carry non-cp1252 text: a counter-position
     # stance and one_sided_reason are model prose, and the coverage map is
-    # keyed by the names the claims touch -- the live index holds
+    # keyed by the names the answer is about -- the live index holds
     # `Uğur Ümit Üngör`. The last part is the record's own persisted
     # coverage_map alongside the gate's verdict (§7.7: "a band is never
     # rendered instead of the counts that justify it") -- the same rendering
@@ -1755,7 +1756,7 @@ def _brief_coverage(brief_id: str) -> int:
     record, _record_path = loaded
 
     claims = record.get("claims") or []
-    coverage_map = compute_coverage_map(claims)
+    coverage_map = compute_coverage_map(claims, trajectory=record.get("trajectory") or [])
 
     # Encoding-safe for the same reason as `brief validate`'s copy: the map is
     # keyed by the names a claim touches.

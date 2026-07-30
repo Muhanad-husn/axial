@@ -1,25 +1,28 @@
-"""Outer acceptance test for issue #260, slice 03 of the analysis-validators
-subproject (Phase B, sub:analysis-v0): the coverage/confidence validator.
+"""Outer acceptance test for the per-name coverage map and its release gate
+(issues #260 and #490, Phase B, sub:analysis-v0).
 
-Given a vault in which coverage_count reports 240 chunks for polity "Syria"
-      and 6 chunks for polity "Yemen"
-  And an analysis record at data/analyses/DEV20.json whose claims carry
-      polities_touched ["Syria", "Yemen"] across their grounds
+Given a fixture vault whose name page for "Charles Tilly" carries
+      member_count 240 and whose page for "Asef Bayat" carries 6
+  And an analysis record at data/analyses/DEV25.json whose claims touch both
+      and whose trajectory retrieved on both
   And config coverage_bands of {thin: <20, moderate: 20-99, dense: >=100}
-When  `axial brief validate DEV20` runs
-Then  the command exits 0
-  And coverage_map["Syria"].coverage_band is "dense" with
-      corpus_chunk_count 240
-  And coverage_map["Yemen"].coverage_band is "thin" with corpus_chunk_count 6
-  And zero LLM calls were made building the map (the `explode` provider
-      never fires)
+When  `axial brief coverage DEV25` runs
+Then  the map is computed for real from the name layer: Tilly is `dense` with
+      corpus_note_count 240, Bayat is `thin` with corpus_note_count 6, each
+      alongside its evidence_note_count
+  And zero LLM calls were made building it (the `explode` provider never
+      fires)
 
-Given an analysis record at data/analyses/DEV21.json whose claims touch
-      "Yemen"
-  And whose coverage_map has no "Yemen" entry
+Given an analysis record at data/analyses/DEV20.json disclosing that same map
+When  `axial brief validate DEV20` runs
+Then  the command exits 0 and no `high` band accompanies the `thin` entry
+
+Given an analysis record at data/analyses/DEV21.json whose claims touch a
+      name the run retrieved on
+  And whose coverage_map has no entry for it
 When  `axial brief validate DEV21` runs
 Then  the command exits non-zero, the report reason is
-      "missing_coverage_entry" naming "Yemen", and no answer is released
+      "missing_coverage_entry" naming it, and no answer is released
 
 Given an analysis record at data/analyses/DEV22.json with a complete
       coverage_map
@@ -28,36 +31,35 @@ When  `axial brief validate DEV22` runs
 Then  the command exits non-zero with reason "missing_confidence_disclosure"
 
 Given an analysis record at data/analyses/DEV23.json whose coverage_map
-      contains a "thin" polity and whose confidence.overall_band is the top
+      contains a "thin" name and whose confidence.overall_band is the top
       band
 When  `axial brief validate DEV23` runs
 Then  the command exits non-zero with reason "confidence_exceeds_coverage"
-      naming the thin polity
+      naming the thin name
 
-See specs/PHASE-B.md §7.7 (the coverage map) and §7.9 (the validators) for
-the source of truth, and issue #260 /
-plans/analysis-validators/03-coverage-and-confidence.md for this slice's own
-acceptance criterion (identical Gherkin).
+See specs/PHASE-B.md §7.7 (the per-name coverage map) and §7.9 (the
+validators) for the source of truth.
 
 Seam decisions
 --------------
 Runs the CLI via subprocess with cwd set to an isolated `tmp_path` staging
-root, mirroring tests/analysis/test_attribution_validator.py exactly (`axial
-brief validate <brief_id>` reads an already-persisted record; it never loads
-or re-interrogates a brief). Every claim here is `kind: "c"` (speculation,
-empty grounds) -- the coverage/confidence checks are driven entirely by
-`polities_touched` and the persisted `coverage_map`/`confidence` fields, so
-no fixture vault or grounds resolution is needed, and the attribution
-validator (which also runs inside `brief validate`) passes vacuously on
-every claim here, isolating each scenario's assertion to the
-coverage/confidence reason under test.
+root, mirroring tests/analysis/test_attribution_validator.py exactly (both
+`axial brief validate` and `axial brief coverage` read an already-persisted
+record; neither loads or re-interrogates a brief).
+
+The four `brief validate` scenarios use `kind: "c"` claims with empty
+grounds: those checks read only the record's own `claims`/`trajectory` and
+its persisted `coverage_map`/`confidence`, so no fixture vault is needed and
+the attribution validator (which also runs inside `brief validate`) passes
+vacuously, isolating each scenario's assertion to the reason under test. The
+`brief coverage` scenario is the opposite by design -- it computes the map
+for real, so it needs real name pages and real grounds.
 
 `AXIAL_LLM_PROVIDER=explode` is used for every scenario (not `stub`, unlike
 the attribution acceptance test): the coverage/confidence validator takes no
-LLM client at all, and no fixture claim here is `kind: b`, so a real
-poison-client crash would surface immediately if anything on this path ever
-attempted a model call -- directly proving the acceptance criterion's "the
-explode provider is installed in tests and never fires."
+LLM client at all and `compute_coverage_map` is model-free by construction,
+so a real poison-client crash would surface immediately if anything on this
+path ever attempted a model call.
 """
 
 from __future__ import annotations
@@ -69,25 +71,61 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 
+TILLY = "Charles Tilly"
+BAYAT = "Asef Bayat"
 
-def _speculative_claim(claim_id: str, *, polities_touched: list[str]) -> dict[str, Any]:
+TILLY_CHUNK = "tilly-1978_001_intro_001"
+BAYAT_CHUNK = "bayat-2017_001_intro_001"
+
+
+def _speculative_claim(claim_id: str, *, names_touched: list[str]) -> dict[str, Any]:
     """A minimally-shaped §7.4 claim: kind "c" (speculation) carries no
     grounds requirement, so these fixtures need no fixture vault at all --
-    only `polities_touched` (the coverage/confidence checks' own input) and
-    the fields the attribution validator's mechanical checks read."""
+    only `names_touched` (half the coverage scope's own input) and the
+    fields the attribution validator's mechanical checks read."""
     return {
         "claim_id": claim_id,
         "text": f"Speculative claim text for {claim_id}.",
         "kind": "c",
         "grounds": [],
         "confidence": "medium",
-        "polities_touched": polities_touched,
+        "names_touched": names_touched,
     }
+
+
+def _grounded_claim(
+    claim_id: str, *, names_touched: list[str], chunk_ids: list[str]
+) -> dict[str, Any]:
+    return {
+        "claim_id": claim_id,
+        "text": f"Grounded claim text for {claim_id}.",
+        "kind": "a",
+        "grounds": [{"ref_type": "chunk", "ref_id": chunk_id} for chunk_id in chunk_ids],
+        "confidence": "medium",
+        "names_touched": names_touched,
+    }
+
+
+def _retrieved(*canonicals: str) -> list[dict[str, Any]]:
+    """A §7.6 trajectory that retrieved on each name -- the other half of the
+    §7.7 scope. Without it the map covers nothing, which is the honest
+    outcome for a run that never resolved a name at all."""
+    return [
+        {
+            "step": index,
+            "tool": "get_name",
+            "args": {"canonical": canonical},
+            "result_ids": [],
+            "result_count": 0,
+        }
+        for index, canonical in enumerate(canonicals, start=1)
+    ]
 
 
 def _write_record(
@@ -97,6 +135,7 @@ def _write_record(
     claims: list[dict[str, Any]],
     coverage_map: dict[str, Any],
     confidence: dict[str, Any],
+    trajectory: list[dict[str, Any]] | None = None,
 ) -> Path:
     analyses_dir = root / "data" / "analyses"
     analyses_dir.mkdir(parents=True, exist_ok=True)
@@ -122,7 +161,7 @@ def _write_record(
         },
         "coverage_map": coverage_map,
         "confidence": confidence,
-        "trajectory": [],
+        "trajectory": trajectory or [],
         "model_by_pass": {},
     }
     path = analyses_dir / f"{brief_id}.json"
@@ -130,21 +169,63 @@ def _write_record(
     return path
 
 
+def _write_chunk(root: Path, chunk_id: str) -> None:
+    prose_dir = root / "data" / "vault" / "prose"
+    prose_dir.mkdir(parents=True, exist_ok=True)
+    frontmatter = {
+        "chunk_id": chunk_id,
+        "section": "Synthetic Section",
+        "chunk_text": f"SENTINEL_{chunk_id}: synthetic prose.",
+        "source_meta": {"author": "A", "title": "T", "date": 2020, "thesis": "X", "scope": "Y"},
+        "schema_version": "0.1",
+        "frame_version": "0.1",
+        "answers": {"claim": f"Claim of {chunk_id}.", "position_of": "the author"},
+    }
+    text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
+    (prose_dir / f"{chunk_id}.md").write_text(text, encoding="utf-8")
+
+
+def _write_name_page(root: Path, name: str, *, member_ids: list[str], member_count: int) -> None:
+    """A name page as Materialize writes one (§7.17): `member_count` is the
+    §7.7 denominator, and the member list is what `evidence_note_count`
+    intersects this run's grounds with. The two differ here exactly as they
+    do on the real corpus, where a dense name's page holds far more members
+    than any one run cites."""
+    names_dir = root / "data" / "vault" / "names"
+    names_dir.mkdir(parents=True, exist_ok=True)
+    frontmatter = {"name": name, "kind": "person", "aliases": [], "member_count": member_count}
+    lines = ["**Member notes:**"]
+    lines += [f"- [[{chunk_id}]] — An Author (1978): A claim." for chunk_id in member_ids]
+    body = yaml.safe_dump(frontmatter, sort_keys=False)
+    (names_dir / f"{name}.md").write_text(
+        "---\n" + body + "---\n" + "\n".join(lines) + "\n", encoding="utf-8"
+    )
+
+
 @pytest.fixture
 def fixture_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _run_brief_validate_cli(root: Path, brief_id: str) -> subprocess.CompletedProcess:
-    """Forces `AXIAL_LLM_PROVIDER=explode`: the coverage/confidence
-    validator never calls a client, and every fixture claim here is kind
-    "c" (so the attribution validator's bounded (b)-seam check never fires
-    either) -- a real model call anywhere on this path would crash the
+@pytest.fixture
+def vault_root(tmp_path: Path) -> Path:
+    _write_chunk(tmp_path, TILLY_CHUNK)
+    _write_chunk(tmp_path, BAYAT_CHUNK)
+    _write_name_page(tmp_path, TILLY, member_ids=[TILLY_CHUNK], member_count=240)
+    _write_name_page(tmp_path, BAYAT, member_ids=[BAYAT_CHUNK], member_count=6)
+    return tmp_path
+
+
+def _run_cli(root: Path, *args: str) -> subprocess.CompletedProcess:
+    """Forces `AXIAL_LLM_PROVIDER=explode`: nothing on the coverage path
+    takes an LLM client, and every `brief validate` fixture claim here is
+    kind "c" (so the attribution validator's bounded (b)-seam check never
+    fires either) -- a real model call anywhere on this path would crash the
     process instead of passing quietly."""
     env = dict(os.environ)
     env[PROVIDER_ENV_VAR] = "explode"
     return subprocess.run(
-        ["uv", "run", "--project", str(REPO_ROOT), "axial", "brief", "validate", brief_id],
+        ["uv", "run", "--project", str(REPO_ROOT), "axial", "brief", *args],
         cwd=root,
         capture_output=True,
         text=True,
@@ -156,44 +237,100 @@ def _assert_not_argparse_fallback(result: subprocess.CompletedProcess) -> None:
     combined = result.stdout + result.stderr
     for marker in ("invalid choice", "unrecognized arguments"):
         assert marker not in combined, (
-            "expected a real `brief validate` behavior path, not an "
-            f"argparse fallback (found {marker!r}):\nstdout: {result.stdout!r}\n"
-            f"stderr: {result.stderr!r}"
+            "expected a real behavior path, not an argparse fallback "
+            f"(found {marker!r}):\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
         )
 
 
+_DENSE_MAP = {
+    TILLY: {"corpus_note_count": 240, "evidence_note_count": 1, "coverage_band": "dense"},
+    BAYAT: {"corpus_note_count": 6, "evidence_note_count": 1, "coverage_band": "thin"},
+}
+
+
+def test_the_map_is_computed_for_real_and_a_thin_name_is_disclosed_thin(vault_root: Path):
+    """The headline of #490: `coverage_count` returned 0 entries against the
+    v1 vault, so the map was empty on every run. Here it is computed from the
+    live name layer, and the thinly-covered name the claims touch is
+    disclosed as thin, with the counts that justify the band beside it
+    (§7.4/§7.10: a band is never rendered bare)."""
+    _write_record(
+        vault_root,
+        "DEV25",
+        claims=[
+            _grounded_claim(
+                "c-1", names_touched=[TILLY, BAYAT], chunk_ids=[TILLY_CHUNK, BAYAT_CHUNK]
+            )
+        ],
+        coverage_map={},
+        confidence={"overall_band": "low", "rationale": "recomputed by this command"},
+        trajectory=_retrieved(TILLY, BAYAT),
+    )
+
+    result = _run_cli(vault_root, "coverage", "DEV25")
+
+    _assert_not_argparse_fallback(result)
+    assert result.returncode == 0, (
+        f"expected exit 0, got {result.returncode}\n"
+        f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+    )
+    lines = {
+        line.strip().split(":", 1)[0]: line.strip()
+        for line in result.stdout.splitlines()
+        if ":" in line
+    }
+    assert TILLY in lines, result.stdout
+    assert "corpus_note_count=240" in lines[TILLY]
+    assert "evidence_note_count=1" in lines[TILLY]
+    assert "coverage_band='dense'" in lines[TILLY]
+
+    assert BAYAT in lines, result.stdout
+    assert "corpus_note_count=6" in lines[BAYAT]
+    assert "coverage_band='thin'" in lines[BAYAT]
+
+
+def test_a_name_the_run_never_retrieved_on_stays_out_of_the_computed_map(vault_root: Path):
+    """Measured on the real corpus: a 24-note evidence set's grounds notes
+    name 423 distinct canonicals on average, so keying the map on
+    `names_touched` alone makes it several hundred rows and pins overall
+    confidence to `low` on every brief."""
+    _write_record(
+        vault_root,
+        "DEV26",
+        claims=[
+            _grounded_claim(
+                "c-1", names_touched=[TILLY, BAYAT], chunk_ids=[TILLY_CHUNK, BAYAT_CHUNK]
+            )
+        ],
+        coverage_map={},
+        confidence={"overall_band": "low", "rationale": "recomputed by this command"},
+        trajectory=_retrieved(TILLY),
+    )
+
+    result = _run_cli(vault_root, "coverage", "DEV26")
+
+    assert result.returncode == 0, result.stderr
+    assert TILLY in result.stdout
+    assert BAYAT not in result.stdout
+
+
 def test_scenario1_complete_map_and_valid_confidence_passes(fixture_root: Path):
-    """Scenario 1 (DEV20): a vault where coverage_count would report 240
-    Syria chunks and 6 Yemen chunks -- here disclosed directly via the
-    persisted coverage_map (mirroring what `compute_coverage_map` would
-    produce over such a vault, unit-tested separately in
-    src/axial/validators/test_coverage.py). Both touched polities have a
-    complete entry, confidence is disclosed with a non-empty rationale, and
-    confidence is not the top band -- exit 0, zero LLM calls (the `explode`
-    provider is never invoked)."""
+    """DEV20: both names in scope have a complete entry, confidence is
+    disclosed with a non-empty rationale, and confidence is not the top band
+    -- exit 0, zero LLM calls (the `explode` provider is never invoked)."""
     _write_record(
         fixture_root,
         "DEV20",
-        claims=[_speculative_claim("c-1", polities_touched=["Syria", "Yemen"])],
-        coverage_map={
-            "Syria": {
-                "corpus_chunk_count": 240,
-                "evidence_chunk_count": 1,
-                "coverage_band": "dense",
-            },
-            "Yemen": {
-                "corpus_chunk_count": 6,
-                "evidence_chunk_count": 1,
-                "coverage_band": "thin",
-            },
-        },
+        claims=[_speculative_claim("c-1", names_touched=[TILLY, BAYAT])],
+        coverage_map=_DENSE_MAP,
         confidence={
-            "overall_band": "medium",
-            "rationale": "240 corpus chunks on Syria, 6 on Yemen; disclosed accordingly.",
+            "overall_band": "low",
+            "rationale": f"{TILLY} (dense: 240 corpus notes); {BAYAT} (thin: 6 corpus notes)",
         },
+        trajectory=_retrieved(TILLY, BAYAT),
     )
 
-    result = _run_brief_validate_cli(fixture_root, "DEV20")
+    result = _run_cli(fixture_root, "validate", "DEV20")
 
     _assert_not_argparse_fallback(result)
     assert result.returncode == 0, (
@@ -208,50 +345,47 @@ def test_scenario1_complete_map_and_valid_confidence_passes(fixture_root: Path):
 
 
 def test_scenario2_missing_coverage_entry_blocks_release(fixture_root: Path):
-    """Scenario 2 (DEV21): claims touch "Yemen" but coverage_map carries no
-    Yemen entry at all -- exit non-zero, reason "missing_coverage_entry"
-    naming "Yemen", no answer file appears (this command never writes any
-    file)."""
+    """DEV21: the claims touch a name the run retrieved on, but coverage_map
+    carries no entry for it -- exit non-zero, reason
+    "missing_coverage_entry" naming it, no file written."""
     _write_record(
         fixture_root,
         "DEV21",
-        claims=[_speculative_claim("c-1", polities_touched=["Yemen"])],
+        claims=[_speculative_claim("c-1", names_touched=[BAYAT])],
         coverage_map={},
         confidence={"overall_band": "medium", "rationale": "no coverage entry was computed"},
+        trajectory=_retrieved(BAYAT),
     )
     analyses_dir = fixture_root / "data" / "analyses"
     before = set(analyses_dir.iterdir())
 
-    result = _run_brief_validate_cli(fixture_root, "DEV21")
+    result = _run_cli(fixture_root, "validate", "DEV21")
 
     _assert_not_argparse_fallback(result)
     assert result.returncode != 0, f"expected non-zero exit, got 0\nstdout: {result.stdout!r}"
     assert "missing_coverage_entry" in result.stdout
-    assert "Yemen" in result.stdout
+    assert BAYAT in result.stdout
 
     after = set(analyses_dir.iterdir())
     assert after == before, "the validator must never write/edit any file -- no answer released"
 
 
 def test_scenario3_missing_confidence_disclosure_blocks_release(fixture_root: Path):
-    """Scenario 3 (DEV22): a complete coverage_map, but confidence is
+    """DEV22: a complete coverage_map, but confidence is
     `{overall_band: null, rationale: ""}` -- exit non-zero, reason
     "missing_confidence_disclosure"."""
     _write_record(
         fixture_root,
         "DEV22",
-        claims=[_speculative_claim("c-1", polities_touched=["Syria"])],
+        claims=[_speculative_claim("c-1", names_touched=[TILLY])],
         coverage_map={
-            "Syria": {
-                "corpus_chunk_count": 240,
-                "evidence_chunk_count": 1,
-                "coverage_band": "dense",
-            }
+            TILLY: {"corpus_note_count": 240, "evidence_note_count": 1, "coverage_band": "dense"}
         },
         confidence={"overall_band": None, "rationale": ""},
+        trajectory=_retrieved(TILLY),
     )
 
-    result = _run_brief_validate_cli(fixture_root, "DEV22")
+    result = _run_cli(fixture_root, "validate", "DEV22")
 
     _assert_not_argparse_fallback(result)
     assert result.returncode != 0, f"expected non-zero exit, got 0\nstdout: {result.stdout!r}"
@@ -259,43 +393,35 @@ def test_scenario3_missing_confidence_disclosure_blocks_release(fixture_root: Pa
 
 
 def test_scenario4_confidence_exceeds_coverage_blocks_release(fixture_root: Path):
-    """Scenario 4 (DEV23): coverage_map contains a "thin" polity (Yemen)
-    while confidence.overall_band is the top band ("high") -- exit
-    non-zero, reason "confidence_exceeds_coverage" naming "Yemen"."""
+    """DEV23: coverage_map contains a `thin` name while
+    confidence.overall_band is the top band -- exit non-zero, reason
+    "confidence_exceeds_coverage" naming the thin name. This is the
+    acceptance bar's "no `high` band accompanies a `thin` entry", enforced
+    at release rather than trusted."""
     _write_record(
         fixture_root,
         "DEV23",
-        claims=[_speculative_claim("c-1", polities_touched=["Syria", "Yemen"])],
-        coverage_map={
-            "Syria": {
-                "corpus_chunk_count": 240,
-                "evidence_chunk_count": 1,
-                "coverage_band": "dense",
-            },
-            "Yemen": {
-                "corpus_chunk_count": 6,
-                "evidence_chunk_count": 1,
-                "coverage_band": "thin",
-            },
-        },
+        claims=[_speculative_claim("c-1", names_touched=[TILLY, BAYAT])],
+        coverage_map=_DENSE_MAP,
         confidence={
             "overall_band": "high",
-            "rationale": "240 corpus chunks on Syria, 6 on Yemen.",
+            "rationale": f"{TILLY} 240 corpus notes; {BAYAT} 6 corpus notes.",
         },
+        trajectory=_retrieved(TILLY, BAYAT),
     )
 
-    result = _run_brief_validate_cli(fixture_root, "DEV23")
+    result = _run_cli(fixture_root, "validate", "DEV23")
 
     _assert_not_argparse_fallback(result)
     assert result.returncode != 0, f"expected non-zero exit, got 0\nstdout: {result.stdout!r}"
     assert "confidence_exceeds_coverage" in result.stdout
-    assert "Yemen" in result.stdout
+    assert BAYAT in result.stdout
 
 
 def test_refuse_disposition_empty_claims_passes_vacuously(fixture_root: Path):
     """§7.2: a `refuse` disposition carries an empty `claims` list -- the
-    coverage-entry check passes vacuously (no touched polities); confidence
-    is still required and disclosed here, so the whole command exits 0."""
+    coverage-entry check passes vacuously (nothing in scope); confidence is
+    still required and disclosed here, so the whole command exits 0."""
     _write_record(
         fixture_root,
         "DEV24",
@@ -304,7 +430,7 @@ def test_refuse_disposition_empty_claims_passes_vacuously(fixture_root: Path):
         confidence={"overall_band": "low", "rationale": "refused; no synthesis was attempted"},
     )
 
-    result = _run_brief_validate_cli(fixture_root, "DEV24")
+    result = _run_cli(fixture_root, "validate", "DEV24")
 
     _assert_not_argparse_fallback(result)
     assert result.returncode == 0, (

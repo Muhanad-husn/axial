@@ -76,13 +76,13 @@ def _base_record(**overrides: Any) -> dict[str, Any]:
         },
         "coverage_map": {
             "Syria": {
-                "corpus_chunk_count": 150,
-                "evidence_chunk_count": 1,
+                "corpus_note_count": 150,
+                "evidence_note_count": 1,
                 "coverage_band": "dense",
             },
             "Iraq": {
-                "corpus_chunk_count": 5,
-                "evidence_chunk_count": 1,
+                "corpus_note_count": 5,
+                "evidence_note_count": 1,
                 "coverage_band": "thin",
             },
         },
@@ -95,7 +95,7 @@ def _base_record(**overrides: Any) -> dict[str, Any]:
             "sources": [
                 {
                     "source_id": "syr_001",
-                    "evidence_chunk_count": 1,
+                    "evidence_note_count": 1,
                     "evidence_share": 0.5,
                     "available_chunk_count": 10,
                     "available_share": 0.8,
@@ -177,14 +177,14 @@ def test_absent_counter_position_renders_a_stated_none_line():
     assert "(none disclosed)" in markdown
 
 
-def test_coverage_map_rows_are_emitted_in_deterministic_polity_order():
+def test_coverage_map_rows_are_emitted_in_deterministic_name_order():
     record = _base_record()
     # Rebuild coverage_map with keys inserted in the OPPOSITE order to what
     # a correct alphabetical render would need, proving the renderer sorts
     # rather than trusting dict insertion order.
     record["coverage_map"] = {
-        "Zanzibar": {"corpus_chunk_count": 3, "evidence_chunk_count": 1, "coverage_band": "thin"},
-        "Iraq": {"corpus_chunk_count": 5, "evidence_chunk_count": 1, "coverage_band": "thin"},
+        "Zanzibar": {"corpus_note_count": 3, "evidence_note_count": 1, "coverage_band": "thin"},
+        "Iraq": {"corpus_note_count": 5, "evidence_note_count": 1, "coverage_band": "thin"},
     }
     markdown = render_markdown(record)
     idx_iraq = markdown.index("Iraq:")
@@ -203,7 +203,7 @@ def test_coverage_map_entries_carry_both_counts_and_the_band():
 def test_empty_coverage_map_renders_a_stated_none_line():
     record = _base_record(coverage_map={})
     markdown = render_markdown(record)
-    assert "(none -- no name touched by any claim)" in markdown
+    assert "(none -- no name both retrieved on and touched by a claim)" in markdown
 
 
 def test_confidence_section_renders_band_and_rationale():
