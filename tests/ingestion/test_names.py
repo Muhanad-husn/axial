@@ -27,9 +27,11 @@ And   each surface form is embedded with a local sentence-transformer and
 And   `axial names examine` reads that persisted result back and reports the
       cluster-size and nearest-neighbour similarity distribution, with zero
       further model/embedding calls
-And   a name seen only in a bibliography section still gets its page --
-      issue #508's row B is re-scoped to its own issue and is deliberately
-      NOT applied here
+And   a name seen only in the source's back-matter run -- the sections at or
+      after the boundary its own cached structural tree puts the
+      bibliography/index at -- never becomes a page (issue #511, row B),
+      while a name in the endnotes, which sit before that boundary, keeps
+      its page
 And   zero LLM (text-generation) calls happen anywhere in this pass
       (`AXIAL_LLM_PROVIDER=explode` poisons any such call)
 
@@ -121,15 +123,35 @@ def _record(chunk_id: str, source_id: str, section: str = "Introduction", **over
 
 
 #: What the fixture's inventory holds once the cut set has run: the two
-#: ordinary names, the lowercase concept, and the name the bibliography note
-#: carries. Row B -- cutting a bibliography section -- is re-scoped out of
-#: this change and has its own issue, so `Hanna Batatu` is a survivor here.
+#: ordinary names and the lowercase concept. `Hanna Batatu` is named only in
+#: src2's bibliography section, which sits inside that source's back-matter
+#: run, so row B (issue #511) takes it.
 _SURVIVING_SURFACES = {
     "Kevin Attell",
     "University of Chicago Press",
     "negative sovereignty",
-    "Hanna Batatu",
 }
+
+
+def _build_fixture_trees(root: Path) -> None:
+    """src2's cached structural tree (`axial.extract`'s own shape): the
+    endnotes sit before the bibliography, so the back-matter boundary is the
+    `Bibliography` section and the endnote section is outside it. src1 has no
+    tree at all -- a source whose tree is missing is simply not cut."""
+    trees_dir = root / "data" / "trees"
+    trees_dir.mkdir(parents=True, exist_ok=True)
+    tree = {
+        "children": [
+            {
+                "order": order,
+                "text": heading,
+                "label": "section_header",
+                "children": [{"type": "prose", "text": "body"}],
+            }
+            for order, heading in (("000", "N O T E S"), ("001", "Bibliography"))
+        ]
+    }
+    (trees_dir / "src2.json").write_text(json.dumps(tree), encoding="utf-8")
 
 
 def _build_fixture_answers(root: Path) -> None:
@@ -202,6 +224,7 @@ def _assert_ran_the_real_subcommand(result: subprocess.CompletedProcess) -> None
 def test_names_build_then_examine_over_real_answer_records(isolated_vault_root):
     root = isolated_vault_root
     _build_fixture_answers(root)
+    _build_fixture_trees(root)
 
     build_result = _run_axial(root, "names", "build")
     _assert_ran_the_real_subcommand(build_result)
@@ -213,11 +236,12 @@ def test_names_build_then_examine_over_real_answer_records(isolated_vault_root):
     manifest_path = root / "data" / "names" / "similarity_manifest.json"
     assert manifest_path.is_file(), f"expected a manifest at {manifest_path}"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    # Four distinct surface forms survive the cut set; the SENTINEL clauses
+    # Three distinct surface forms survive the cut set; the SENTINEL clauses
     # (uses/defines/arguing_against/position_of) were never collected at
-    # all, and five more surfaces are cut by rows A, D, F, H and S.
-    assert manifest["entry_count"] == 4
-    assert manifest["occurrence_count"] == 5  # every surviving names[] mention
+    # all, five more surfaces are cut by rows A, D, F, H and S, and one by
+    # row B.
+    assert manifest["entry_count"] == 3
+    assert manifest["occurrence_count"] == 4  # every surviving names[] mention
     assert isinstance(manifest["embedding_dim"], int) and manifest["embedding_dim"] > 0
 
     inventory_path = root / "data" / "names" / "inventory.jsonl"
@@ -242,9 +266,13 @@ def test_names_build_then_examine_over_real_answer_records(isolated_vault_root):
         assert cut not in inventory, f"{cut!r} should have left the name space"
     # ...and the lowercase concept the issue deliberately refuses to cut.
     assert inventory["negative sovereignty"]["kind"] == "concept"
-    # Row B is re-scoped out of this change: nothing reads a section, so the
-    # name only the bibliography note carries still gets its page.
-    assert "Hanna Batatu" in inventory
+    # Row B (issue #511): `Hanna Batatu` is named only in src2's
+    # `Bibliography` section, which its cached tree puts inside the
+    # back-matter run, so the surface never reaches the inventory. The
+    # `N O T E S` section in the same book sits before that boundary, so the
+    # name it carries (`Kevin Attell`, above) keeps both its occurrences.
+    assert "Hanna Batatu" not in inventory
+    assert "src2_000_intro_001" in inventory["Kevin Attell"]["chunk_ids"]
 
     embeddings_dir = root / "data" / "names" / "embeddings.lance"
     db = lancedb.connect(embeddings_dir)
@@ -262,8 +290,8 @@ def test_names_build_then_examine_over_real_answer_records(isolated_vault_root):
         f"stdout: {examine_result.stdout!r}\nstderr: {examine_result.stderr!r}"
     )
     report = examine_result.stdout
-    assert "4 distinct surface form(s)" in report
-    assert "5 total occurrence(s)" in report
+    assert "3 distinct surface form(s)" in report
+    assert "4 total occurrence(s)" in report
     assert "nearest-neighbour cosine similarity spread" in report
     # The tightness sweep (founder ask, spec §7.16/P0-12): the default
     # candidates all show up as their own section, re-clustered from the
@@ -282,6 +310,7 @@ def test_names_examine_min_cluster_sizes_and_min_samples_are_cli_overridable(iso
     same persisted vectors `build` already wrote."""
     root = isolated_vault_root
     _build_fixture_answers(root)
+    _build_fixture_trees(root)
     build_result = _run_axial(root, "names", "build")
     assert build_result.returncode == 0, build_result.stderr
 
@@ -302,6 +331,7 @@ def test_names_examine_min_cluster_sizes_and_min_samples_are_cli_overridable(iso
 def test_names_build_min_cluster_size_and_min_samples_are_cli_overridable(isolated_vault_root):
     root = isolated_vault_root
     _build_fixture_answers(root)
+    _build_fixture_trees(root)
 
     build_result = _run_axial(
         root, "names", "build", "--min-cluster-size", "2", "--min-samples", "1"
