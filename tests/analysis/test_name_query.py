@@ -728,23 +728,124 @@ def test_name_neighbors_ranks_co_occurring_names_by_shared_note_count(
     fixture_layer: tuple[Path, Path],
 ):
     """The cheapest real edge the interrogation produced: two names on one
-    note are two things one author discussed together. `bellicist state
-    formation` shares two notes with Tilly; Agamben and Rojava share one
-    each and tie-break on canonical ascending."""
+    note are two things one author discussed together. `shared_note_count`
+    itself is unaffected by idf weighting -- `bellicist state formation`
+    still shares two notes with Tilly and `Giorgio Agamben`/`Rojava` still
+    share one each -- but the RESULT ORDER changes (one-line justification
+    for editing this locked test, issue #521): Agamben's page has only 1
+    member against Bellicist's 2, so Agamben's lower df outweighs
+    Bellicist's higher raw count and it now ranks first."""
     from axial.query import name_neighbors
 
     vault_dir, names_dir = fixture_layer
     neighbors = name_neighbors(TILLY, 10, vault_dir=vault_dir, names_dir=names_dir)
 
     assert [(n.canonical, n.shared_note_count) for n in neighbors] == [
-        (BELLICIST, 2),
         (AGAMBEN, 1),
+        (BELLICIST, 2),
         (ROJAVA, 1),
     ]
-    assert neighbors[0].kind == "concept"
+    assert neighbors[0].kind == "person"
     assert TILLY not in [n.canonical for n in neighbors], "a name is never its own neighbour"
 
     assert name_neighbors(TILLY, 1, vault_dir=vault_dir, names_dir=names_dir) == neighbors[:1]
+
+
+def test_name_neighbors_weighs_by_idf_so_a_specific_neighbour_outranks_a_hub(
+    tmp_path: Path,
+) -> None:
+    """Issue #521: raw `shared_note_count` alone put a corpus hub -- a name
+    that turns up on almost every page -- ahead of a name specific to the
+    anchor, even when the anchor shares fewer notes with the hub. Weighting
+    each neighbour's count by `ln(N / df)` (`df` the neighbour's own
+    `member_count`, `N` the corpus's prose-note count) inverts that: a
+    neighbour whose page says it is on 9 of the corpus's 10 notes counts for
+    almost nothing next to one on just 1, even though the anchor shares 3
+    notes with the former and only 1 with the latter."""
+    import yaml
+
+    from axial.query import name_neighbors
+
+    names_dir = tmp_path / "names"
+    vault_dir = tmp_path / "vault"
+    names_dir.mkdir()
+    (vault_dir / "prose").mkdir(parents=True)
+    (vault_dir / "names").mkdir(parents=True)
+
+    anchor, hub, specific = "Anchor Scholar", "Hub Concept", "Specific Concept"
+    names_dir.joinpath("index.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "generated_at": "2026-07-30T00:00:00Z",
+                "names": [anchor, hub, specific],
+            }
+        ),
+        encoding="utf-8",
+    )
+    names_dir.joinpath("alias_map.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "generated_at": "2026-07-30T00:00:00Z",
+                "nodes": [
+                    {"canonical": anchor, "kind": "person", "aliases": []},
+                    {"canonical": hub, "kind": "concept", "aliases": []},
+                    {"canonical": specific, "kind": "concept", "aliases": []},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _write_page(canonical: str, kind: str, member_count: int) -> None:
+        path = vault_dir / "names" / f"{canonical.replace(' ', '-')}.md"
+        path.write_text(
+            "---\n"
+            + yaml.safe_dump(
+                {"name": canonical, "kind": kind, "aliases": [], "member_count": member_count},
+                sort_keys=False,
+            )
+            + "---\n**Member notes:**\n(none)\n",
+            encoding="utf-8",
+        )
+
+    _write_page(anchor, "person", 4)
+    _write_page(hub, "concept", 9)  # on 9 of the corpus's 10 prose notes
+    _write_page(specific, "concept", 1)  # on just the 1 note it shares with the anchor
+
+    def _write_note(chunk_id: str, names: list[str]) -> None:
+        frontmatter = {
+            "chunk_id": chunk_id,
+            "answers": {"names": [{"name": n, "kind": None} for n in names]},
+        }
+        (vault_dir / "prose" / f"{chunk_id}.md").write_text(
+            "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n",
+            encoding="utf-8",
+        )
+
+    # The anchor shares 3 notes with the hub and only 1 with the specific
+    # neighbour -- raw shared_note_count alone would rank the hub first.
+    _write_note("note-00", [anchor, hub])
+    _write_note("note-01", [anchor, hub])
+    _write_note("note-02", [anchor, hub])
+    _write_note("note-03", [anchor, specific])
+    # Padding: six more notes carrying a `names` answer that never mentions
+    # the anchor, so N (prose notes carrying a `names` answer at all) is 10 --
+    # the denominator `_idf` uses is corpus-wide, not scoped to the anchor.
+    for i in range(4, 10):
+        _write_note(f"note-{i:02d}", [f"Filler {i}"])
+
+    neighbors = name_neighbors(anchor, 10, vault_dir=vault_dir, names_dir=names_dir)
+
+    assert [n.canonical for n in neighbors] == [specific, hub], (
+        "the specific neighbour (1 shared note, on 1 of 10 corpus notes) "
+        "outranks the hub (3 shared notes, on 9 of 10) once idf weights the "
+        f"count, got {neighbors!r}"
+    )
+    assert [n.shared_note_count for n in neighbors] == [1, 3], (
+        "shared_note_count itself is untouched by the weighting -- only the order changes"
+    )
 
 
 def test_who_cites_matches_every_surface_the_alias_map_folds_in(
