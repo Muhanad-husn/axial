@@ -185,6 +185,11 @@ class DrawOutcome:
     reason: str
     latency_seconds: float | None
     record_path: Path | None
+    # The §7.15 run report written alongside the record (issue #491). Its
+    # path is derived, not measured: `run_brief` writes it under this draw's
+    # own directory keyed on the same `brief_id`, so a RESUMED draw's report
+    # is found the same way a fresh one's is.
+    report_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -233,6 +238,15 @@ def draw_dir(sweep_dir: Path, brief_stem: str, draw_index: int) -> Path:
     return Path(sweep_dir) / "analyses" / brief_stem / f"draw{draw_index}"
 
 
+def runs_dir(sweep_dir: Path, brief_stem: str, draw_index: int) -> Path:
+    """Where one `(brief, draw)` pair's §7.15 run report lands: a `runs/`
+    directory inside that draw's own output directory. Same no-clobbering
+    rule as `draw_dir` above, for the same reason -- the report is keyed on
+    `brief_id` alone, so a shared directory would have draw 2 overwrite draw
+    1's report."""
+    return draw_dir(sweep_dir, brief_stem, draw_index) / "runs"
+
+
 def gates_dir(sweep_dir: Path, brief_stem: str) -> Path:
     """Where one brief's own 4 gate reports are written -- deliberately NOT
     the shared `evals/reports/<gate>.json` default `write_report` would
@@ -243,6 +257,10 @@ def gates_dir(sweep_dir: Path, brief_stem: str) -> Path:
 
 def _record_path(sweep_dir: Path, brief_stem: str, draw_index: int, brief_id: str) -> Path:
     return draw_dir(sweep_dir, brief_stem, draw_index) / f"{brief_id}.json"
+
+
+def _report_path(sweep_dir: Path, brief_stem: str, draw_index: int, brief_id: str) -> Path:
+    return runs_dir(sweep_dir, brief_stem, draw_index) / f"{brief_id}.json"
 
 
 def _claim_kind_counts(record: dict[str, Any]) -> dict[str, int]:
@@ -355,6 +373,7 @@ def _run_one_draw(
     config_path: Path,
     evals_dir: Path | None,
     lenses_dir: Path | None,
+    cases_dir: Path | None,
     step_budget: int | None,
     thin_result_floor: int | None,
 ) -> tuple[DrawOutcome, dict[str, Any] | None]:
@@ -363,6 +382,7 @@ def _run_one_draw(
     brief_stem = Path(brief_path).stem
     analyses_dir = draw_dir(sweep_dir, brief_stem, draw_index)
     record_file = _record_path(sweep_dir, brief_stem, draw_index, brief.brief_id)
+    report_file = _report_path(sweep_dir, brief_stem, draw_index, brief.brief_id)
 
     print(f"sweep: {brief_stem} draw {draw_index} starting", file=sys.stderr)
 
@@ -382,6 +402,7 @@ def _run_one_draw(
                 "",
                 None,
                 record_file,
+                report_file if report_file.is_file() else None,
             )
             return outcome, record
 
@@ -406,8 +427,14 @@ def _run_one_draw(
             envelopes_dir=envelopes_dir,
             config_path=config_path,
             analyses_dir=analyses_dir,
+            runs_dir=runs_dir(sweep_dir, brief_stem, draw_index),
             evals_dir=evals_dir,
             lenses_dir=lenses_dir,
+            cases_dir=cases_dir,
+            # The brief file's own stem is the join to `evals/cases/sim/`
+            # (§9.3), so a swept brief scores the mechanical retrieval-hit
+            # oracle exactly as `axial brief run` does.
+            case_id=brief_stem,
             step_budget=step_budget,
             thin_result_floor=thin_result_floor,
         )
@@ -426,6 +453,7 @@ def _run_one_draw(
             str(exc),
             elapsed,
             None,
+            None,
         )
         return outcome, None
 
@@ -440,6 +468,7 @@ def _run_one_draw(
         "",
         elapsed,
         result.path,
+        result.report_path,
     )
     return outcome, result.record
 
@@ -500,9 +529,11 @@ def run_sweep(
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     evals_dir: Path | None = None,
     lenses_dir: Path | None = None,
+    cases_dir: Path | None = None,
     step_budget: int | None = None,
     thin_result_floor: int | None = None,
     workers: int = DEFAULT_WORKERS,
+    score_gates: bool = True,
 ) -> SweepSummary:
     """Run every brief in `worklist_path` `draws` times each, bounded to
     `workers` concurrent `(brief, draw)` attempts (module docstring), then
@@ -512,6 +543,15 @@ def run_sweep(
     `client_factory` builds ONE fresh client per draw (default:
     `axial.llm.get_client`) -- see the module docstring for why sharing one
     client instance across draws would corrupt per-draw cost accounting.
+
+    `score_gates=False` (issue #491) skips the four rung-3 gates entirely
+    and makes ZERO gate calls: the grounding gate calls an independent
+    model per (a) claim, which is a quality judgment and a bill, and
+    `axial brief smoke` -- a mechanical smoke alarm running under a cost
+    budget -- would otherwise measure that bill instead of the run's. One
+    boolean seam rather than a second driver: everything else here (resume,
+    one fresh client per draw, per-draw latency, cost aggregation,
+    `summary.json`) is exactly what a smoke run needs.
 
     Raises `SweepError` before any draw is attempted for an unreadable
     worklist or `draws < 1`. A brief that fails to load (`BriefError`) gets
@@ -562,6 +602,7 @@ def run_sweep(
                 config_path=config_path,
                 evals_dir=evals_dir,
                 lenses_dir=lenses_dir,
+                cases_dir=cases_dir,
                 step_budget=step_budget,
                 thin_result_floor=thin_result_floor,
             ): (brief_path, draw_index)
@@ -573,9 +614,11 @@ def run_sweep(
             outcomes_by_key[key] = outcome
             records_by_key[key] = record
 
-    # Post-processing (module docstring): per brief, never pooled.
+    # Post-processing (module docstring): per brief, never pooled. With
+    # `score_gates=False` no gate client is ever constructed, so a gate-free
+    # sweep cannot make a model call by accident.
     corpus_pin, trusted = resolve_trusted(evals_dir=evals_dir)
-    gate_client = client_factory()
+    gate_client = client_factory() if score_gates else None
 
     brief_results: list[BriefSweepResult] = []
     for brief_path, brief, load_reason in loaded:
@@ -583,7 +626,7 @@ def run_sweep(
 
         if brief is None:
             failed_load = DrawOutcome(
-                brief_path, brief_stem, None, -1, FAIL_STATUS, load_reason, None, None
+                brief_path, brief_stem, None, -1, FAIL_STATUS, load_reason, None, None, None
             )
             brief_results.append(
                 BriefSweepResult(
@@ -615,7 +658,7 @@ def run_sweep(
                 trusted=trusted,
                 reports_dir=gates_dir(sweep_dir, brief_stem),
             )
-            if available_records
+            if (available_records and gate_client is not None)
             else {}
         )
         quorum = compute_quorum(available_records)
@@ -647,6 +690,7 @@ def _draw_outcome_to_json(outcome: DrawOutcome) -> dict[str, Any]:
         "reason": outcome.reason,
         "latency_seconds": outcome.latency_seconds,
         "record_path": str(outcome.record_path) if outcome.record_path is not None else None,
+        "report_path": str(outcome.report_path) if outcome.report_path is not None else None,
     }
 
 

@@ -160,7 +160,7 @@ def _fixture_record() -> dict[str, Any]:
                 "chunks on the dense polity and 4 on the thin one"
             ),
         },
-        "source_usage": {"filters_observed": [], "sources": []},
+        "source_usage": {"names_queried": [], "sources": []},
         "trajectory": [],
         "model_by_pass": {"interrogate": "stub", "retrieve": "stub", "synthesize": "stub"},
     }

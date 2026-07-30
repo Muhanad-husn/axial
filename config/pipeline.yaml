@@ -345,6 +345,21 @@ coverage_bands:
   moderate_floor: 20
   dense_floor: 100
 
+# The smoke set's per-brief cost and latency budgets (specs/PHASE-B.md §9.0,
+# issue #491): `axial brief smoke` compares each brief's run-report figures
+# against these, so a spend or slowdown regression shows the day it lands.
+#
+# BOTH ARE DELIBERATELY UNSET. §9.0 states these are "set from the first five
+# real runs, never guessed in advance", and those runs happen after #517
+# changes the retrieval path -- a budget measured against a path that is about
+# to move buys a number that expires. src/axial/brief/smoke.py reads this via
+# `resolve_budgets`, and there is NO code-level fallback on purpose: an unset
+# budget SKIPS its check and prints UNMEASURED, so it can neither pass
+# vacuously nor fail a run for a number nobody measured.
+smoke:
+  max_usd_per_brief: null
+  max_seconds_per_brief: null
+
 # Rung-3 eval-gate thresholds (issues #262, #264, PRD §10, §8 P0-12): one
 # starting threshold per named metric, read by src/axial/gates/harness.py via
 # resolve_threshold, falling back to that module's own

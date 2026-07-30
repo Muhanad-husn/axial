@@ -2,15 +2,14 @@
 subproject (Phase B, sub:analysis-v0): the §7.13 `source_usage` field,
 disclosed on every analysis record with its denominator.
 
-> **The denominator half of this contract is zero by construction** (issue
-> #487, D1): `filters_observed` drew only from `query_by_tag` /
-> `query_by_polity`, both deleted with the facets they filtered, so no
-> trajectory can carry one and nothing re-queries an available count. Every
-> `available_chunk_count` is 0, `available_share` 0.0 and `usage_ratio` null
-> until #491 re-bases the denominator onto the name layer. The scenarios below
-> script `query_by_source` instead and assert the disclosed zero. The evidence
-> half -- shares, dedupe, artifact resolution, the refuse case -- is unchanged
-> and still real.
+> **The denominator half of this contract is now real** (issue #491):
+> `filters_observed` is struck with the two tools it drew from (D1), and
+> `names_queried` replaces it -- the denominator is the union of member notes
+> across the names a run queried, re-read over the pinned vault. The scenarios
+> below script `query_by_source`, which is not a name query, so their
+> denominator is legitimately empty and `usage_ratio` null; the re-based
+> denominator's own arithmetic is pinned in src/axial/answer/test_source_usage.py
+> and end to end in tests/analysis/test_run_report.py.
 
 Given a fixture vault holding 100 chunks, of which 22 belong to source_id
       "tilly" and 78 belong to source_id "other"
@@ -22,7 +21,7 @@ Given a fixture vault holding 100 chunks, of which 22 belong to source_id
 When  `axial brief run config/briefs/dev/fixture-source-usage.yaml` runs
 Then  the command exits 0
   And data/analyses/<brief_id>.json carries a source_usage whose
-      filters_observed is empty
+      names_queried is empty (no name-layer tool was called)
   And source_usage.sources entry for "tilly" is
       {evidence_chunk_count: 6, evidence_share: 0.6,
        available_chunk_count: 0, available_share: 0.0, usage_ratio: null}
@@ -41,7 +40,7 @@ Then  zero LLM calls are made
 Given a hand-built analysis record at data/analyses/DEV32.json with
       disposition "refuse" and empty claims
 When  the source-usage computation runs over that record
-Then  source_usage is present with filters_observed from the trajectory and
+Then  source_usage is present with names_queried from the trajectory and
       an empty sources list
 
 Given a hand-built analysis record at data/analyses/DEV33.json whose
@@ -53,7 +52,7 @@ Then  the "zaum" entry has available_chunk_count 0, available_share 0, and
 
 See specs/PHASE-B.md §7.13 (the source-usage disclosure), §7.3 (the record
 shape, locked -- this slice only adds the field), and §7.6 (the trajectory
-log `filters_observed` reads from) for the source of truth, and issue #265
+log `names_queried` reads from) for the source of truth, and issue #265
 for this slice's own acceptance criterion (identical Gherkin).
 
 Seam decisions
@@ -304,8 +303,9 @@ def test_source_usage_disclosed_with_denominator_via_full_brief_run(fixture_root
     record = json.loads(record_file.read_text(encoding="utf-8"))
 
     source_usage = record["source_usage"]
-    assert source_usage["filters_observed"] == [], (
-        "no surviving tool carries a tag-axis filter to union (issue #487, D1)"
+    assert "filters_observed" not in source_usage, "the struck field must be gone (§7.13, D1)"
+    assert source_usage["names_queried"] == [], (
+        "this run called query_by_source only, which is not a name query (issue #491)"
     )
 
     by_source = {s["source_id"]: s for s in source_usage["sources"]}
@@ -459,15 +459,16 @@ def test_source_usage_on_a_concentrated_hand_built_record_makes_zero_llm_calls(
 
 
 def test_source_usage_empty_on_refuse_disposition_with_empty_claims(tmp_path: Path):
-    """Scenario 3 (issue #265, DEV32): disposition "refuse" and empty
-    claims -- source_usage is present, filters_observed comes from the
-    trajectory, sources is empty."""
+    """Scenario 3 (issue #265, DEV32, re-pointed by #491): disposition
+    "refuse" and empty claims -- source_usage is present, names_queried comes
+    from the trajectory, sources is empty. What the run LOOKED at is a fact
+    about the run whether or not it then cited anything."""
     analyses_dir = tmp_path / "data" / "analyses"
     trajectory = [
         {
             "step": 1,
-            "tool": "query_by_tag",
-            "args": {"field": FIELD_FILTER},
+            "tool": "find_names",
+            "args": {"query": "Tilly"},
             "result_ids": [],
             "result_count": 0,
         }
@@ -478,9 +479,7 @@ def test_source_usage_empty_on_refuse_disposition_with_empty_claims(tmp_path: Pa
 
     source_usage = compute_source_usage(record, vault_dir=None)
     assert source_usage["sources"] == []
-    assert source_usage["filters_observed"] == [
-        {"tool": "query_by_tag", "args": {"field": FIELD_FILTER}}
-    ]
+    assert source_usage["names_queried"] == [{"tool": "find_names", "args": {"query": "Tilly"}}]
 
 
 def test_source_usage_usage_ratio_null_when_filters_match_zero_of_a_cited_sources_chunks(
@@ -489,8 +488,7 @@ def test_source_usage_usage_ratio_null_when_filters_match_zero_of_a_cited_source
     """Scenario 4 (issue #265, DEV33): nothing the run queried matched a
     chunk of source_id "zaum" while its grounds cite one -- available_
     chunk_count 0, available_share 0, usage_ratio null (never 0, never an
-    error). Since issue #487 that holds for every source, not just an
-    under-queried one; the `usage_ratio is None` branch is what this pins."""
+    error). The `usage_ratio is None` branch is what this pins."""
     vault_dir = tmp_path / "vault"
     prose_dir = vault_dir / "prose"
     prose_dir.mkdir(parents=True)

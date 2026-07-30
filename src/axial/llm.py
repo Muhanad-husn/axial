@@ -338,6 +338,17 @@ GROUNDING_PASS_NAME = "grounding"
 # DIFFERENT model than SYNTHESIZE_PASS_NAME.
 CALIBRATION_PASS_NAME = "calibration"
 
+# Pass name the instant-dismissal judge identifies itself with (see
+# src/axial/answer/dismissal.py, issue #491, specs/PHASE-B.md §10.0/§9.3):
+# did the rendered answer do a thing the case declares disqualifying on
+# sight. NOT a sixth rung-3 gate -- §10.0 measures and reports it, and
+# promotes it only under §7.13's stated discipline -- but it carries the
+# same self-grading guard as GROUNDING_PASS_NAME above and for the same
+# reason: it must resolve to a DIFFERENT model than SYNTHESIZE_PASS_NAME,
+# since the model that wrote the answer must never rule on whether the
+# answer is disqualified.
+INSTANT_DISMISSAL_PASS_NAME = "instant_dismissal"
+
 # Pass name the rung-3 adversarial-brief red-teaming gate's independent
 # premise-correspondence judge call identifies itself with (see
 # src/axial/gates/adversarial.py, issue #264, PRD §10): does a premise the
@@ -650,6 +661,14 @@ STUB_COUNTER_POSITION_GENERATE_RESPONSE_ENV_VAR = "AXIAL_STUB_COUNTER_POSITION_G
 # environment on every call.
 STUB_GROUNDING_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_GROUNDING_RESPONSE_SEQUENCE"
 
+# Issue #491 test/CI-only seam: mirrors STUB_GROUNDING_RESPONSE_SEQUENCE_ENV_VAR
+# above, exactly, for the instant-dismissal judge call (§10.0) instead of the
+# grounding gate. A JSON-encoded array of raw response strings (each
+# `{"verdict": "violation"|"no_violation"}`), indexed by a fresh, dedicated,
+# per-process 1-indexed counter -- one call per dismissal criterion judged.
+# An unset/empty value falls back to the default "no_violation".
+STUB_INSTANT_DISMISSAL_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_INSTANT_DISMISSAL_RESPONSE_SEQUENCE"
+
 # Issue #263 test/CI-only seam: mirrors STUB_GROUNDING_RESPONSE_SEQUENCE_ENV_VAR
 # above, exactly, for the rung-3 calibration gate's independent judge call
 # instead of the grounding pass. A JSON-encoded array of raw calibration-pass
@@ -740,6 +759,11 @@ _grounding_pass_call_count = 0
 # dispatches, driving the AXIAL_STUB_CALIBRATION_RESPONSE_SEQUENCE seam
 # (issue #263), mirroring `_grounding_pass_call_count` above exactly.
 _calibration_pass_call_count = 0
+
+# Per-process, 1-indexed counter of instant-dismissal-pass canned-response
+# dispatches, driving the AXIAL_STUB_INSTANT_DISMISSAL_RESPONSE_SEQUENCE seam
+# (issue #491), mirroring `_grounding_pass_call_count` above exactly.
+_instant_dismissal_pass_call_count = 0
 
 # Per-process, 1-indexed counter of interrogate-pass canned-response
 # dispatches, driving the AXIAL_STUB_INTERROGATE_RESPONSE_SEQUENCE seam
@@ -1229,6 +1253,28 @@ def _canned_grounding_response() -> str:
     return _CANNED_GROUNDING_RESPONSE
 
 
+_CANNED_INSTANT_DISMISSAL_RESPONSE = json.dumps({"verdict": "no_violation"})
+
+
+def _canned_instant_dismissal_response() -> str:
+    """The canned response for an instant-dismissal judge call (identified
+    by `pass_name=INSTANT_DISMISSAL_PASS_NAME`, issue #491): a JSON array
+    read fresh from `STUB_INSTANT_DISMISSAL_RESPONSE_SEQUENCE_ENV_VAR`,
+    indexed by the fresh per-process counter just advanced (mirrors
+    `_canned_grounding_response` exactly -- one call per dismissal criterion
+    judged, so a test scripts a verdict sequence across calls); unset/empty
+    falls back to the conservative default `"no_violation"` -- a stub-driven
+    run never invents a violation nobody scripted."""
+    global _instant_dismissal_pass_call_count
+    _instant_dismissal_pass_call_count += 1
+    sequence_raw = os.environ.get(STUB_INSTANT_DISMISSAL_RESPONSE_SEQUENCE_ENV_VAR, "")
+    if sequence_raw:
+        sequence = json.loads(sequence_raw)
+        if sequence:
+            return sequence[(_instant_dismissal_pass_call_count - 1) % len(sequence)]
+    return _CANNED_INSTANT_DISMISSAL_RESPONSE
+
+
 _CANNED_CALIBRATION_RESPONSE = json.dumps({"verdict": "correct"})
 
 
@@ -1319,6 +1365,8 @@ def _canned_response_for(pass_name: str | None) -> str:
         return _canned_grounding_response()
     if pass_name == CALIBRATION_PASS_NAME:
         return _canned_calibration_response()
+    if pass_name == INSTANT_DISMISSAL_PASS_NAME:
+        return _canned_instant_dismissal_response()
     if pass_name == PREMISE_MATCH_PASS_NAME:
         return _canned_premise_match_response()
     if pass_name == RECONCILE_PASS_NAME:

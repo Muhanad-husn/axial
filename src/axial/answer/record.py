@@ -70,6 +70,7 @@ from typing import Any
 from axial.analyze.assembly import assemble_evidence
 from axial.analyze.synthesis import Claim, generate_counter_position, resolve_lens, synthesize
 from axial.answer.render import render_markdown
+from axial.answer.run_report import PassClock, build_run_report, persist_run_report
 from axial.answer.source_usage import compute_source_usage
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult, interrogate
@@ -176,12 +177,17 @@ def _usage_and_cost_by_pass(client: LLMClient, model_by_pass: dict[str, str]) ->
 @dataclass(frozen=True)
 class BriefRunResult:
     """`run_brief`'s own return shape: the persisted §7.3 record, the path
-    it was written to, and the path of the rendered markdown answer written
-    alongside it (§7.10)."""
+    it was written to, the path of the rendered markdown answer written
+    alongside it (§7.10), and the §7.15 run report plus the path IT was
+    written to (issue #491). The report is a separate artifact rather than a
+    field on the record, because §7.3's shape is locked and the report is a
+    derived view of it."""
 
     record: dict[str, Any]
     path: Path
     markdown_path: Path
+    report: dict[str, Any]
+    report_path: Path
 
 
 def build_record(
@@ -196,6 +202,7 @@ def build_record(
     model_by_pass: dict[str, str],
     client: LLMClient,
     vault_dir: Path | None = None,
+    clock: PassClock | None = None,
 ) -> dict[str, Any]:
     """Assemble the §7.3 analysis record. `claims`/`trajectory` are the
     caller's already-computed stage-4/stage-3 output (empty on a `refuse`
@@ -221,11 +228,18 @@ def build_record(
     reads `client`'s accumulated per-pass token usage
     (`_usage_and_cost_by_pass`) -- `client` is needed for that AND for
     `generate_counter_position`'s own possible model call."""
+    clock = clock if clock is not None else PassClock()
     claim_dicts = [_claim_to_dict(claim) for claim in claims]
     coverage_map = compute_coverage_map(claim_dicts, trajectory=trajectory, vault_dir=vault_dir)
-    counter_position_result = generate_counter_position(
-        claim_dicts, brief, client=client, trajectory=trajectory, vault_dir=vault_dir
-    )
+    # The counter-position pass is timed here rather than in `run_brief`
+    # because only this function knows whether it fired at all: contestedness
+    # is a property of the claim graph, and an uncontested brief makes zero
+    # calls under that pass name (§7.8). A caller that passed no clock gets a
+    # throwaway one, so this reads the same either way.
+    with clock.time(COUNTER_POSITION_GENERATE_PASS_NAME):
+        counter_position_result = generate_counter_position(
+            claim_dicts, brief, client=client, trajectory=trajectory, vault_dir=vault_dir
+        )
     record_model_by_pass = dict(model_by_pass)
     if counter_position_result.model_called:
         record_model_by_pass[COUNTER_POSITION_GENERATE_PASS_NAME] = client.model_for_pass(
@@ -299,13 +313,30 @@ def run_brief(
     envelopes_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     analyses_dir: Path | None = None,
+    runs_dir: Path | None = None,
     evals_dir: Path | None = None,
     lenses_dir: Path | None = None,
+    cases_dir: Path | None = None,
+    case_id: str | None = None,
     step_budget: int | None = None,
     thin_result_floor: int | None = None,
 ) -> BriefRunResult:
     """Run the full engine (stages 1-6) over `brief` and persist the §7.3
-    analysis record to `<analyses_dir>/<brief_id>.json`, returning both.
+    analysis record to `<analyses_dir>/<brief_id>.json` plus the §7.15 run
+    report to `<runs_dir>/<brief_id>.json`, returning both.
+
+    **Per-pass wall clock is captured here and nowhere else** (§7.15): only
+    the running process holds it, so each stage is timed as it is driven and
+    the report's total is the sum of those figures rather than a second
+    stopwatch around the whole call.
+
+    `case_id` joins this run to its §9.3 sim case (`evals/cases/sim/
+    <case_id>.json`) so the report can score the mechanical retrieval-hit
+    oracle. It is the brief file's own stem at every call site, since that
+    is the join the case set uses; a brief with no case file simply has no
+    oracle and the report says so. The report makes NO model call: the two
+    judged accuracy numbers are left not-scored here and are run separately
+    by a caller that wants to pay for them.
 
     The corpus pin (§7.12) and the vault's `schema_version` are resolved
     FIRST, before any model call -- both are configuration-level
@@ -320,8 +351,10 @@ def run_brief(
     normally; translating that into exit 0 is the CLI's job."""
     corpus_pin = resolve_pin_id(evals_dir)
     schema_version = vault_schema_version(vault_dir)
+    clock = PassClock()
 
-    interrogation_result = interrogate(brief, client=client, vault_dir=vault_dir)
+    with clock.time(INTERROGATE_PASS_NAME):
+        interrogation_result = interrogate(brief, client=client, vault_dir=vault_dir)
     model_by_pass: dict[str, str] = {
         INTERROGATE_PASS_NAME: client.model_for_pass(INTERROGATE_PASS_NAME)
     }
@@ -331,27 +364,33 @@ def run_brief(
         claims: list[Claim] = []
         trajectory: list[dict[str, Any]] = []
     else:
-        retrieval_result = run_planned_retrieval(
-            client,
-            brief,
-            interrogation_result,
-            vault_dir=vault_dir,
-            envelopes_dir=envelopes_dir,
-            config_path=config_path,
-            step_budget=step_budget,
-            thin_result_floor=thin_result_floor,
-        )
+        with clock.time(RETRIEVE_PASS_NAME):
+            retrieval_result = run_planned_retrieval(
+                client,
+                brief,
+                interrogation_result,
+                vault_dir=vault_dir,
+                envelopes_dir=envelopes_dir,
+                config_path=config_path,
+                step_budget=step_budget,
+                thin_result_floor=thin_result_floor,
+            )
         model_by_pass[RETRIEVE_PASS_NAME] = client.model_for_pass(RETRIEVE_PASS_NAME)
 
-        evidence = assemble_evidence(retrieval_result.evidence_ids, vault_dir=vault_dir)
-        claim_graph = synthesize(
-            evidence,
-            brief,
-            client=client,
-            vault_dir=vault_dir,
-            lenses_dir=lenses_dir,
-            config_path=config_path,
-        )
+        # Evidence assembly is timed under the synthesis pass it feeds: it
+        # makes no model call of its own and has no pass name to report
+        # under, and leaving it untimed would make the per-pass figures sum
+        # to less than the run really took.
+        with clock.time(SYNTHESIZE_PASS_NAME):
+            evidence = assemble_evidence(retrieval_result.evidence_ids, vault_dir=vault_dir)
+            claim_graph = synthesize(
+                evidence,
+                brief,
+                client=client,
+                vault_dir=vault_dir,
+                lenses_dir=lenses_dir,
+                config_path=config_path,
+            )
         model_by_pass[SYNTHESIZE_PASS_NAME] = client.model_for_pass(SYNTHESIZE_PASS_NAME)
 
         lens = claim_graph.lens
@@ -369,6 +408,7 @@ def run_brief(
         model_by_pass=model_by_pass,
         client=client,
         vault_dir=vault_dir,
+        clock=clock,
     )
     path = persist_record(
         brief.brief_id, record, analyses_dir=analyses_dir, config_path=config_path
@@ -376,4 +416,21 @@ def run_brief(
     markdown_path = persist_markdown(
         brief.brief_id, record, analyses_dir=analyses_dir, config_path=config_path
     )
-    return BriefRunResult(record=record, path=path, markdown_path=markdown_path)
+    report = build_run_report(
+        record,
+        latency_by_pass=clock.seconds_by_pass(),
+        vault_dir=vault_dir,
+        case_id=case_id,
+        cases_dir=cases_dir,
+        config_path=config_path,
+    )
+    report_path = persist_run_report(
+        brief.brief_id, report, runs_dir=runs_dir, config_path=config_path
+    )
+    return BriefRunResult(
+        record=record,
+        path=path,
+        markdown_path=markdown_path,
+        report=report,
+        report_path=report_path,
+    )

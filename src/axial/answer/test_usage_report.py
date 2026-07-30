@@ -1,6 +1,10 @@
-"""Inner unit tests for the §7.13 cross-run usage report (issue #266,
-plans/source-usage/02-cross-run-usage-report.md's inner-loop list). The
-outer acceptance test lives at tests/analysis/test_usage_report.py.
+"""Inner unit tests for the §7.13 cross-run usage report (issues #266 and
+#491). The outer acceptance test lives at tests/analysis/test_usage_report.py.
+
+The join moved from `filters_observed` to `names_queried` (§7.13's own STRUCK
+note): the two tools the tag filters came from are deleted, so those rows
+could never appear again. The grouping RULE is unchanged and still pinned
+below -- an entry's identity is `(tool, sorted args)`, never args alone.
 """
 
 from __future__ import annotations
@@ -13,12 +17,12 @@ from axial.answer.usage_report import (
 )
 
 
-def _record(brief_id: str, *, corpus_pin: str, filters_observed=None, sources=None) -> dict:
+def _record(brief_id: str, *, corpus_pin: str, names_queried=None, sources=None) -> dict:
     return {
         "brief_id": brief_id,
         "corpus_pin": corpus_pin,
         "source_usage": {
-            "filters_observed": filters_observed or [],
+            "names_queried": names_queried or [],
             "sources": sources or [],
         },
     }
@@ -60,7 +64,7 @@ def test_no_records_at_all_yields_a_pinless_empty_report():
     assert report.pin_id is None
     assert report.included_record_count == 0
     assert report.sources == []
-    assert report.filters == []
+    assert report.names == []
 
 
 # -- per-source pooling -------------------------------------------------------
@@ -100,58 +104,41 @@ def test_records_with_empty_sources_contribute_nothing_and_raise_nothing():
     assert report.included_record_count == 2
 
 
-# -- per-(source, filter) pooling --------------------------------------------
+# -- per-(source, name) pooling ------------------------------------------------
 
 
-def test_per_filter_pooling_only_includes_records_whose_filters_observed_matches():
-    world_systems = {"tool": "query_by_tag", "args": {"theory_school": "world-systems"}}
-    other = {"tool": "query_by_tag", "args": {"field": "political-science"}}
+def test_per_name_pooling_only_includes_records_whose_names_queried_matches():
+    tilly = {"tool": "get_name", "args": {"canonical": "Charles Tilly"}}
+    bayat = {"tool": "get_name", "args": {"canonical": "Asef Bayat"}}
+    records = [
+        _record("a1", corpus_pin="PIN-A", names_queried=[tilly], sources=[_source("tilly", 3.0)]),
+        _record("a2", corpus_pin="PIN-A", names_queried=[bayat], sources=[_source("tilly", 1.0)]),
+    ]
+    report = build_usage_report(records)
+    assert len(report.names) == 2
+    by_label = {entry.name_label: entry for entry in report.names}
+    assert by_label["get_name(canonical=Charles Tilly)"].pooled_usage_ratio == 3.0
+    assert by_label["get_name(canonical=Charles Tilly)"].record_count == 1
+    assert by_label["get_name(canonical=Asef Bayat)"].pooled_usage_ratio == 1.0
+
+
+def test_the_same_canonical_reached_by_two_tools_stays_two_pooled_rows():
+    """§7.13's #265 rule, unchanged under names: the four name-layer tools
+    take a canonical under the same arg key and are different queries, so
+    they must not collapse into one pooled row."""
+    read_page = {"tool": "get_name", "args": {"canonical": "Freedonia"}}
+    who_cites = {"tool": "who_cites", "args": {"canonical": "Freedonia"}}
     records = [
         _record(
-            "a1",
-            corpus_pin="PIN-A",
-            filters_observed=[world_systems],
-            sources=[_source("tilly", 3.0)],
+            "a1", corpus_pin="PIN-A", names_queried=[read_page], sources=[_source("tilly", 2.0)]
         ),
         _record(
-            "a2",
-            corpus_pin="PIN-A",
-            filters_observed=[other],
-            sources=[_source("tilly", 1.0)],
+            "a2", corpus_pin="PIN-A", names_queried=[who_cites], sources=[_source("tilly", 5.0)]
         ),
     ]
     report = build_usage_report(records)
-    assert len(report.filters) == 2
-    by_label = {entry.filter_label: entry for entry in report.filters}
-    assert by_label["theory_school:world-systems"].pooled_usage_ratio == 3.0
-    assert by_label["theory_school:world-systems"].record_count == 1
-    assert by_label["field:political-science"].pooled_usage_ratio == 1.0
-
-
-def test_query_by_tag_and_query_by_polity_polity_filters_stay_distinct():
-    """§7.13: `query_by_tag`'s own `polity` filter key and `query_by_polity`'s
-    `polity` arg share a key name but are different queries -- they must not
-    collapse into one pooled row."""
-    tag_polity = {"tool": "query_by_tag", "args": {"polity": "Freedonia"}}
-    query_polity = {"tool": "query_by_polity", "args": {"polity": "Freedonia"}}
-    records = [
-        _record(
-            "a1",
-            corpus_pin="PIN-A",
-            filters_observed=[tag_polity],
-            sources=[_source("tilly", 2.0)],
-        ),
-        _record(
-            "a2",
-            corpus_pin="PIN-A",
-            filters_observed=[query_polity],
-            sources=[_source("tilly", 5.0)],
-        ),
-    ]
-    report = build_usage_report(records)
-    assert len(report.filters) == 2
-    ratios = sorted(entry.pooled_usage_ratio for entry in report.filters)
-    assert ratios == [2.0, 5.0]
+    assert len(report.names) == 2
+    assert sorted(entry.pooled_usage_ratio for entry in report.names) == [2.0, 5.0]
 
 
 # -- ordering / determinism ---------------------------------------------------

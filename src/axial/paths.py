@@ -45,6 +45,12 @@ SOURCES_DIR = Path("data/sources")
 # only the §7.2 interrogation result here, ahead of the full record.
 ANALYSES_DIR = Path("data/analyses")
 
+# The default location of Phase-B run reports, one JSON per brief run,
+# `<brief_id>.json` (specs/PHASE-B.md §7.15, §8 P0-14). A separate artifact
+# from the record above rather than a field on it: §7.3's record shape is
+# locked and the report is a derived view of it.
+RUNS_DIR = Path("data/runs")
+
 # The default domain config directory (PRD §7.1). Lived on `axial.tag`
 # (retired, issue #414) before that; every caller that only needed the bare
 # constant -- never `axial.tag`'s tagging machinery -- now reaches it here
@@ -102,6 +108,12 @@ def default_analyses_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Pa
     """Read `paths.analyses_dir` from `config_path`, falling back to
     `ANALYSES_DIR` when the file or key is absent."""
     return _read_configured_dir(config_path, "analyses_dir", ANALYSES_DIR)
+
+
+def default_runs_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
+    """Read `paths.runs_dir` from `config_path`, falling back to `RUNS_DIR`
+    when the file or key is absent."""
+    return _read_configured_dir(config_path, "runs_dir", RUNS_DIR)
 
 
 # =============================================================================
