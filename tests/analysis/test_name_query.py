@@ -844,7 +844,15 @@ def test_coverage_count_is_per_name_and_ascending(fixture_layer: tuple[Path, Pat
     """§7.7's denominator: `{canonical: member_count}` read off the name
     pages' own `member_count`, for every name page in the vault, built in
     ascending-canonical order. A polity is a name whose `kind` is
-    `country/state/place`; nothing special-cases it."""
+    `country/state/place`; nothing special-cases it.
+
+    Issue #505's own follow-up de-registered `coverage_count` as a
+    model-facing retrieval TOOL (a paid corpus run flooded a prompt past a
+    million characters by calling it), but the query-API function itself is
+    untouched -- this test is the proof. Its real, deterministic, zero-
+    model-call consumer is `axial.validators.coverage.compute_coverage_map`
+    (`src/axial/validators/test_coverage.py::
+    test_corpus_note_count_comes_from_coverage_count_not_a_recount`)."""
     from axial.query import coverage_count
 
     vault_dir, _names_dir = fixture_layer

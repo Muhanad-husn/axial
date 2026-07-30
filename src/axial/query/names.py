@@ -1136,7 +1136,16 @@ def coverage_count(*, vault_dir: Path | None = None) -> dict[str, int]:
 
     Returned as a plain dict built in ascending-canonical order -- the same
     explicit-sort determinism contract as every other tool here, applied to a
-    mapping instead of a list. A vault with no name pages returns `{}`."""
+    mapping instead of a list. A vault with no name pages returns `{}`.
+
+    **Deliberately NOT a model-facing retrieval tool (issue #505's own
+    follow-up).** It stays a query-API function, called only from
+    `axial.validators.coverage` (§7.7's coverage map, deterministic, zero
+    model calls). A paid corpus run scripted the model calling it as a
+    retrieval tool and got all 49,674 canonicals back in one result, holding
+    the prompt at over a million characters for 14 turns -- the same whole-
+    index-dump hazard §7.2 already ruled out for the interrogation pre-pass.
+    Do not re-register this in `axial.retrieve.tools.TOOL_REGISTRY`."""
     vault = Path(vault_dir) if vault_dir is not None else default_vault_dir()
     index = _name_page_index(vault)
     return {canonical: index[canonical].member_count for canonical in sorted(index)}

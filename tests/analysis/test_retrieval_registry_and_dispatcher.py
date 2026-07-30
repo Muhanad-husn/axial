@@ -27,7 +27,16 @@ on a hub name page returned 962 ids). `test_limit_is_the_one_declared_int_arg_
 in_the_whole_tool_set` is updated to the new five-tool set (a locked-contract
 edit, justified by the founder-approved #505 decision), and new tests below
 prove the dispatcher's `int_args` wiring actually rejects/accepts `limit` on
-all three."""
+all three.
+
+Issue #505's own follow-up: `coverage_count` is REMOVED from the registry
+entirely (a deliberate contract change, not an oversight -- a paid corpus
+run scripted the model calling it and it returned all 49,674 canonicals in
+one result, holding the prompt over a million characters for 14 turns). The
+function itself is untouched; only its tool-facing registration is gone.
+`EXPECTED_TOOL_NAMES`/`NAME_VALUED_TOOLS` below and every assertion that
+counted it are updated accordingly, and a new test proves it is absent from
+both `TOOL_REGISTRY` and `tool_specs_for_provider()`."""
 
 from __future__ import annotations
 
@@ -42,8 +51,12 @@ from axial.retrieve.tools import TOOL_REGISTRY, tool_specs_for_provider
 
 # The callable tools the registry exposes. `query_by_tag`, `query_by_polity`
 # and `follow_backlinks` were de-registered with the tools themselves (issue
-# #487, D1/D5); the name-layer tools that replace them are registered here
-# (issue #488, which owns the loop's rewiring).
+# #487, D1/D5) for returning nothing useful; the name-layer tools that
+# replace them are registered here (issue #488, which owns the loop's
+# rewiring). `coverage_count` is the mirror case (issue #505's own
+# follow-up): de-registered for returning far too much -- see
+# `test_coverage_count_is_not_a_registered_tool` below. The function itself
+# is untouched (`axial.query.names.coverage_count`, §7.7's real consumer).
 EXPECTED_TOOL_NAMES = {
     "find_names",
     "get_name",
@@ -54,7 +67,6 @@ EXPECTED_TOOL_NAMES = {
     "get_envelope",
     "get_chunk",
     "get_artifact",
-    "coverage_count",
 }
 
 # The tools whose result_ids are canonical NAMES, never chunk/artifact ids
@@ -62,7 +74,7 @@ EXPECTED_TOOL_NAMES = {
 # yields a `source_id`, which is neither -- it belongs in this "not
 # chunk-valued" bucket too, but is asserted separately below since it is not
 # a name-layer tool.
-NAME_VALUED_TOOLS = {"find_names", "name_neighbors", "coverage_count"}
+NAME_VALUED_TOOLS = {"find_names", "name_neighbors"}
 CHUNK_VALUED_TOOLS = {
     "get_name",
     "who_cites",
@@ -92,10 +104,10 @@ def test_every_registry_entry_carries_a_name_and_a_validatable_arg_schema():
 
 
 def test_returns_chunk_ids_matches_the_issues_own_two_groups():
-    """§7.5's own split, restated as a data assertion: `find_names`,
-    `name_neighbors` and `coverage_count` yield names; `get_name`,
-    `who_cites`, `who_argues_against`, `query_by_source`, `get_chunk` and
-    `get_artifact` yield chunk/artifact ids; `get_envelope` yields neither."""
+    """§7.5's own split, restated as a data assertion: `find_names` and
+    `name_neighbors` yield names; `get_name`, `who_cites`,
+    `who_argues_against`, `query_by_source`, `get_chunk` and `get_artifact`
+    yield chunk/artifact ids; `get_envelope` yields neither."""
     for name in NAME_VALUED_TOOLS:
         assert TOOL_REGISTRY[name].returns_chunk_ids is False, name
     for name in CHUNK_VALUED_TOOLS:
@@ -106,14 +118,34 @@ def test_returns_chunk_ids_matches_the_issues_own_two_groups():
 def test_limit_is_the_one_declared_int_arg_in_the_whole_tool_set():
     """Issue #505: `get_name`/`who_cites`/`who_argues_against` join
     `find_names`/`name_neighbors` in declaring `limit` as an int arg -- the
-    whole name-layer tool set is now uniform (bounded, `limit`-taking) except
-    for `coverage_count`, which the issue explicitly left untouched."""
+    whole name-layer tool set is now uniform (bounded, `limit`-taking)."""
     limit_taking = {"find_names", "name_neighbors", "get_name", "who_cites", "who_argues_against"}
     for name, spec in TOOL_REGISTRY.items():
         if name in limit_taking:
             assert spec.int_args == frozenset({"limit"}), name
         else:
             assert spec.int_args == frozenset(), name
+
+
+def test_coverage_count_is_not_a_registered_tool():
+    """Issue #505's own follow-up: `coverage_count` is de-registered, the
+    mirror of D1/D5 (struck for returning nothing useful) -- this one is
+    struck for returning far too much. A paid corpus run scripted the model
+    calling it and it returned all 49,674 canonicals in one result, holding
+    the prompt over a million characters for 14 turns. Absent from both the
+    registry the dispatcher validates against and the schema a real
+    provider's model would see."""
+    assert "coverage_count" not in TOOL_REGISTRY
+
+    provider_names = {entry["function"]["name"] for entry in tool_specs_for_provider()}
+    assert "coverage_count" not in provider_names
+
+    result = dispatch("coverage_count", {}, vault_dir=Path("/nonexistent"))
+    assert result.error is not None
+    assert "coverage_count" in result.error, (
+        "an unregistered tool is rejected exactly like any other unknown name, "
+        "structured and non-raising -- never reaches axial.query.names"
+    )
 
 
 def test_tool_specs_for_provider_carries_every_tool_with_required_args_marked():

@@ -18,11 +18,17 @@ expected to be scripted in every acceptance test for this slice -- see
 
 `assemble_evidence_ids` (issue #488) only collects ids from tools whose
 `ToolSpec.returns_chunk_ids` is `True` (`axial.retrieve.tools`): the name
-layer's resolution/traversal tools (`find_names`, `name_neighbors`,
-`coverage_count`) return canonical NAMES, not passages, and a name string
-has no place in the set stage 4 treats as citable grounds. The §7.6
-trajectory itself is untouched -- every call still gets its own entry with
-its own `result_ids`, whatever kind those ids are.
+layer's resolution/traversal tools (`find_names`, `name_neighbors`) return
+canonical NAMES, not passages, and a name string has no place in the set
+stage 4 treats as citable grounds. The §7.6 trajectory itself is untouched
+-- every call still gets its own entry with its own `result_ids`, whatever
+kind those ids are.
+
+`coverage_count` is not in `TOOL_REGISTRY` at all (issue #505's own
+follow-up: a scripted call flooded a real corpus run's prompt past a
+million characters by returning all 49,674 canonicals in one result), so
+it never reaches this loop or `assemble_evidence_ids` either -- there is no
+tool name for either to skip or collect.
 
 `get_name`/`who_cites`/`who_argues_against` are bounded at their own
 `limit` (issue #505: `get_name` on a hub name page returned 962 ids into one
@@ -287,10 +293,11 @@ def assemble_evidence_ids(trajectory: list[dict[str, Any]]) -> list[str]:
     polity than the case anchor is kept exactly like any other.
 
     **Only chunk/artifact-valued entries contribute (issue #488).** A
-    trajectory entry whose tool is not in `TOOL_REGISTRY`, or whose
+    trajectory entry whose tool is not in `TOOL_REGISTRY` (which includes
+    `coverage_count`, not registered at all as of issue #505 -- see
+    `axial.retrieve.tools`'s module docstring), or whose
     `ToolSpec.returns_chunk_ids` is `False` (`find_names`, `name_neighbors`,
-    `coverage_count`, `get_envelope` -- see `axial.retrieve.tools`'s module
-    docstring), is skipped here: those tools yield canonical names or a
+    `get_envelope`), is skipped here: those yield canonical names or a
     `source_id`, never a real passage, and stage 4's evidence set must only
     ever carry ids `get_chunk`/`get_artifact` can resolve."""
     seen: set[str] = set()

@@ -12,8 +12,25 @@ LLM calls, per §7.5) and normalizes that function's return value into
 with the tools themselves (issue #487, D1/D5): each returned 0 or `[]` on
 every call against the v1 vault. The name-layer tools that replace them --
 `find_names`, `get_name`, `name_neighbors`, `who_cites`,
-`who_argues_against` -- are registered here (issue #488), alongside the
-per-name `coverage_count` slice 02 already re-pointed.
+`who_argues_against` -- are registered here (issue #488).
+
+**`coverage_count` is NOT registered here (issue #505's own follow-up).**
+It is the mirror case of D1/D5: not de-registered for returning nothing
+useful, but for returning far too much. A paid corpus run scripted the
+model calling it and got all 49,674 canonical names back in one result,
+jumping the prompt from 3,862 to 1,204,509 characters (350,923 prompt
+tokens) and holding it there for 14 turns -- 4,947,176 prompt tokens for
+that run alone, thirteen times the flood #505 itself fixed. §7.2 already
+ruled out this exact shape for the interrogation pre-pass ("rendering the
+whole index instead is out of the question: measured 2026-07-30 at 62,821
+rows, 2.08 MB, ~500k tokens"); the retrieval tool carried the identical
+hazard, unguarded. A `limit` would bound the tokens without making the
+tool useful -- the alphabetical head of 49,674 names answers no retrieval
+question -- and the model already gets `member_count` per name, the count
+it can actually act on, from `find_names` and `get_name`. The function
+itself (`axial.query.names.coverage_count`) is untouched: §7.7's coverage
+map is its real, deterministic, model-free consumer
+(`axial.validators.coverage`).
 
 Two mechanical facts this registry states explicitly, because the model and
 the dispatcher both need them and neither is free to assume the answer:
@@ -27,14 +44,13 @@ the dispatcher both need them and neither is free to assume the answer:
   names the subset of a tool's `allowed_args` that are int-typed; every
   other allowed arg is str. Two types total -- no JSON-schema library is
   pulled in for that.
-- **What kind of id a tool yields.** `find_names`, `name_neighbors` and
-  `coverage_count` return CANONICAL NAMES. `get_name`, `who_cites`,
-  `who_argues_against`, `query_by_source`, `get_chunk` and `get_artifact`
-  return CHUNK/ARTIFACT ids -- real vault ids a claim's grounds may cite.
-  `get_envelope` returns a `source_id`, neither. `returns_chunk_ids` marks
-  the second group; `axial.retrieve.loop.assemble_evidence_ids` reads it so
-  a name string can never land in the evidence set stage 4 treats as
-  citable passages.
+- **What kind of id a tool yields.** `find_names` and `name_neighbors`
+  return CANONICAL NAMES. `get_name`, `who_cites`, `who_argues_against`,
+  `query_by_source`, `get_chunk` and `get_artifact` return CHUNK/ARTIFACT
+  ids -- real vault ids a claim's grounds may cite. `get_envelope` returns a
+  `source_id`, neither. `returns_chunk_ids` marks the second group;
+  `axial.retrieve.loop.assemble_evidence_ids` reads it so a name string can
+  never land in the evidence set stage 4 treats as citable passages.
 
 Every adapter now returns `(result_ids, result_count, total)` (issue #505):
 `total` is the true pre-cap count for `get_name`/`who_cites`/
@@ -124,17 +140,6 @@ def _get_artifact(
 ) -> tuple[list[str], int, int | None]:
     artifact = reader.get_artifact(args["artifact_id"], vault_dir=vault_dir)
     return [artifact.artifact_id], 1, None
-
-
-def _coverage_count(
-    _args: dict[str, Any],
-    vault_dir: Path | None,
-    _envelopes_dir: Path | None,
-    _names_dir: Path | None,
-) -> tuple[list[str], int, int | None]:
-    counts = names.coverage_count(vault_dir=vault_dir)
-    canonicals = sorted(counts)
-    return canonicals, len(canonicals), None
 
 
 def _find_names(
@@ -310,15 +315,6 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         int_args=frozenset(),
         returns_chunk_ids=True,
         call=_get_artifact,
-    ),
-    "coverage_count": ToolSpec(
-        name="coverage_count",
-        description="The member-note count of every name page in the vault, per name.",
-        required_args=frozenset(),
-        optional_args=frozenset(),
-        int_args=frozenset(),
-        returns_chunk_ids=False,
-        call=_coverage_count,
     ),
 }
 
