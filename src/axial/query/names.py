@@ -45,6 +45,7 @@ one-shared-copy discipline exists to prevent).
 from __future__ import annotations
 
 import json
+import math
 import re
 import threading
 from dataclasses import dataclass, field
@@ -985,6 +986,27 @@ def get_name(
 # ---------------------------------------------------------------------------
 
 
+def _idf(df: int, n: int) -> float:
+    """`ln(N / df)`, the inverse-document-frequency weight `name_neighbors`
+    ranks by (issue #521): `df` is a neighbour's own `member_count` (how many
+    notes in the WHOLE corpus carry that name at all), `n` is the number of
+    prose notes carrying a `names` answer. A neighbour that turns up
+    everywhere -- a hub like `Syria` or `the state` -- gets a weight near
+    zero; a neighbour specific to this anchor gets a weight close to `ln(n)`.
+
+    Two degenerate cases are guarded rather than left to raise or return NaN.
+    `df == 0`: a neighbour `canonical_for_surface` folds a note's own surface
+    onto can carry no materialized page of its own and still be a real
+    neighbour (§7.16, nothing is dropped) -- floored to `df=1`, the one
+    occurrence the note itself attests, rather than dividing by zero.
+    `df >= n`: a name at least as common as the note count is not rare, and
+    `math.log` returns a finite, non-positive weight for it, not an error --
+    it just ranks low, which is the honest answer for a name that common."""
+    if n <= 0:
+        return 0.0
+    return math.log(n / max(df, 1))
+
+
 def name_neighbors(
     canonical: str,
     limit: int = DEFAULT_LIMIT,
@@ -993,10 +1015,11 @@ def name_neighbors(
     names_dir: Path | None = None,
 ) -> list[NameNeighbor]:
     """The names that co-occur with `canonical` in some note's own `names`
-    answers, ranked by how many notes they share (§7.5). This is the cheapest
-    real edge the interrogation produced: two names on one note are two
-    things one author discussed together -- and it is the traversal
-    `follow_backlinks` used to be, over a facet that exists (D5).
+    answers, ranked by shared note count weighted by each neighbour's
+    inverse document frequency (§7.5, issue #521). This is the cheapest real
+    edge the interrogation produced: two names on one note are two things one
+    author discussed together -- and it is the traversal `follow_backlinks`
+    used to be, over a facet that exists (D5).
 
     A note counts once per neighbour however many times it names it, and a
     name is never its own neighbour. Every surface form on a note is mapped
@@ -1012,7 +1035,18 @@ def name_neighbors(
     embedding match here would invent a neighbour list for a name the caller
     never actually asked about.
 
-    **Determinism:** `shared_note_count` descending, ties by canonical
+    **Ranked by count * idf, not raw count (issue #521).** Raw
+    `shared_note_count` puts the corpus's hub names -- the ones that
+    co-occur with almost anything -- at the top of every anchor's neighbour
+    list, answering "what is this corpus about" instead of "what does this
+    author discuss alongside `canonical`". Each neighbour's count is
+    multiplied by `_idf(df, n)`, `df` the neighbour's own `member_count`
+    (read off the already-loaded name-page index) and `n` the number of
+    prose notes carrying a `names` answer at all. `shared_note_count` on the
+    returned `NameNeighbor` is untouched -- the true count, never the
+    weighted one; only the order changes.
+
+    **Determinism:** `shared_note_count * idf` descending, ties by canonical
     ascending, truncated at `limit`."""
     layer = _name_layer(names_dir)
     vault = Path(vault_dir) if vault_dir is not None else default_vault_dir()
@@ -1020,7 +1054,10 @@ def name_neighbors(
 
     counts: dict[str, int] = {}
     kinds: dict[str, str | None] = {}
+    total_notes = 0
     for note in _answers_index(vault):
+        if note.names:
+            total_notes += 1
         resolved = [
             (canonical_for_surface(surface, layer) or surface, kind) for surface, kind in note.names
         ]
@@ -1032,7 +1069,14 @@ def name_neighbors(
             counts[name] = counts.get(name, 0) + 1
             kinds.setdefault(name, layer.kind_by_canonical.get(name) or kind)
 
-    ordered = sorted(counts, key=lambda name: (-counts[name], name))[:limit]
+    page_index = _name_page_index(vault)
+
+    def weight(name: str) -> float:
+        entry = page_index.get(name)
+        df = entry.member_count if entry is not None else 0
+        return counts[name] * _idf(df, total_notes)
+
+    ordered = sorted(counts, key=lambda name: (-weight(name), name))[:limit]
     return [
         NameNeighbor(canonical=name, kind=kinds.get(name), shared_note_count=counts[name])
         for name in ordered
