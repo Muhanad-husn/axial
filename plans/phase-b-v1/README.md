@@ -305,12 +305,26 @@ only 05 reads as well. `reader.py` is shared substrate on a strict chain, and
 opening it twice is the collision the chain exists to prevent.
 
 **The abstention predicate is 04's, in one place.** `not-in-passage` in its three
-forms (§7.15) is implemented on the write side only (`interrogate.NOT_IN_PASSAGE`);
-no reader applies it. It is not a corner case: **24% of notes abstain on
-`arguing_against`** (4,651 of 6,119 substantive) and 23% on `position_of`. 05
-imports 04's predicate instead of writing a second one, because two abstentions
-comparing as "different positions" would manufacture a disagreement, which is
-the failure D3's own measurement warns about.
+forms (§7.15) is implemented on the write side only (`interrogate.is_abstention`);
+no reader applies it. 05 imports 04's rather than writing a second one, because
+two abstentions comparing as "different positions" would manufacture a
+disagreement, which is the failure D3's own measurement warns about.
+
+Measured over the 6,148 answer records, correcting a figure this section first
+carried:
+
+| field | explicit abstention | `[]`, an answer | named answer |
+|---|---:|---:|---:|
+| `position_of` | 1,451 (23.6%) | 0 | 4,697 (76.4%) |
+| `arguing_against` | 301 (4.9%) | 1,184 (19.3%) | 4,663 (75.8%) |
+| `position_of_nearest` | 11 | — | 5,882 (95.7%) |
+
+The first draft of this section said "24% of notes abstain on `arguing_against`",
+which fused two states that §7.15 keeps apart: `[]` is an answer, and it says
+the passage names no opponent. Only 4.9% abstain. **05 must not read those 1,184
+`[]` notes as abstentions**, or it discards a fifth of that field's real
+answers. The parse also reported 29 unreadable notes; the real number is 0, and
+the 29 were an artifact of splitting frontmatter on `---`.
 
 **`polities_touched` → `names_touched` is 04's, whole.** Blast radius:
 `analyze/assembly.py`, `analyze/synthesis.py:608` where the union is computed,
@@ -353,11 +367,16 @@ recover a disagreement the predicate never saw. The cap is a stated limit of the
 validator: it requires a counter-position only where the predicate sees the
 disagreement. Recorded here, not reopened.
 
-Two adjacent items belong to neither slice. `usage_report.py`'s display relabel
+One adjacent item belongs to neither slice. `usage_report.py`'s display relabel
 for the deleted `query_by_polity` tool is dead code, and it goes with 06's
-source-usage re-base. 29 of 6,148 prose notes fail to parse as YAML, which the
-query layer already absorbs by design (`_read_note_answers` returns `None` rather
-than aborting a corpus scan), so it is noted and not filed.
+source-usage re-base.
+
+**Found while building 04, and fixed there.** The reader coerced `names`,
+`citations` and `arguing_against` with `list(value or [])`, which turned a
+bare-string abstention into a list of its own 14 characters: an abstention read
+as fourteen one-letter names. It also made an absent key indistinguishable from
+a real `[]`. Both break the contract 04 implements, so those three are raw now,
+with `None` for absent. Nothing else read them off `ChunkNote`.
 
 **00 ∥ 01 is optional.** 00 writes only `specs/PHASE-B.md`; 01 is a corpus
 operation. The one condition is that 01 must not touch §7.12 — 00 already
