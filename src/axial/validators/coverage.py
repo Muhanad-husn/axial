@@ -212,11 +212,22 @@ def _evidence_note_count(canonical: str, grounds: set[str], *, vault_dir: Path |
     members of `canonical`'s page (§7.7). The intersection of the run's
     grounds with the page's own member list, never a re-query and never a
     recount off the notes' `names` answers. A name with no page has no
-    member list, so the intersection is empty."""
+    member list, so the intersection is empty.
+
+    `get_name`'s `members` is capped at its own `limit` (issue #505's own
+    default), which this correctness-critical intersection cannot accept: a
+    grounds note that is a real member past the cap would silently read as
+    uncovered. So a first call at the default cap is only ever used when it
+    already proves uncapped (`member_count <= len(members)`); a page over
+    the cap pays one extra `get_name` call, at its own true `member_count` as
+    `limit`, to see every member. This is the one caller of `get_name` that
+    needs the whole page rather than a bounded window."""
     try:
         page = get_name(canonical, vault_dir=vault_dir)
     except NameNotFoundError:
         return 0
+    if page.member_count > len(page.members):
+        page = get_name(canonical, page.member_count, vault_dir=vault_dir)
     return len({member.chunk_id for member in page.members} & grounds)
 
 

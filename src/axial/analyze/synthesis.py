@@ -1002,7 +1002,11 @@ def _counter_position_candidates(
        with "the author" and so no position differs from the majority.
     2. **The notes `who_argues_against` returns** for a name the run touched
        (the §7.7 coverage scope) -- real vault ids reached deterministically
-       from the name layer, never a fresh model-driven retrieval.
+       from the name layer, never a fresh model-driven retrieval. Called with
+       `limit=MAX_COUNTER_POSITION_CANDIDATES` (issue #505): this whitelist
+       never keeps more than that many candidates in total, so it never needs
+       more than that many from any one name either, and no new constant is
+       introduced to state that.
     3. **The member notes of a Gather finding** at such a name (D4). The
        finding itself is a pointer and is never offered, quoted or cited; its
        page's own member notes are, because they are the passages the finding
@@ -1028,7 +1032,10 @@ def _counter_position_candidates(
 
     scope = coverage_scope([c for c in claims if isinstance(c, dict)], trajectory or [])
     for canonical in scope:
-        for edge in who_argues_against_name(canonical, vault_dir=vault_dir, names_dir=names_dir):
+        edges, _total = who_argues_against_name(
+            canonical, MAX_COUNTER_POSITION_CANDIDATES, vault_dir=vault_dir, names_dir=names_dir
+        )
+        for edge in edges:
             if edge.chunk_id in candidates:
                 continue
             try:
@@ -1037,7 +1044,7 @@ def _counter_position_candidates(
                 continue
     for canonical in scope:
         try:
-            page = get_name(canonical, vault_dir=vault_dir)
+            page = get_name(canonical, MAX_COUNTER_POSITION_CANDIDATES, vault_dir=vault_dir)
         except NameNotFoundError:
             continue
         if page.disagreement is None:

@@ -7,6 +7,12 @@ two traversals share, and the lazy per-directory indexes.
 Tier 4 needs a persisted lancedb table and is exercised in
 tests/analysis/test_name_query_embedding_tier.py; nothing here loads an
 encoder or a vector store.
+
+Issue #505: `who_cites`/`who_argues_against` now return `(edges, total)`
+instead of a bare list, and `get_name` takes a `limit`. Every existing call
+site below is updated to unpack the new return shape -- a one-line
+justification for editing a locked contract, per the founder-approved #505
+decision moving these three tools' signatures.
 """
 
 from __future__ import annotations
@@ -278,6 +284,34 @@ def test_get_name_raises_naming_the_canonical_when_no_page_exists(tmp_path):
     assert "absent name" in str(exc_info.value)
 
 
+def test_get_name_truncates_members_at_limit_but_not_member_count(tmp_path):
+    """issue #505: `Syria` returns 962 members with no `limit` at all, and
+    re-sending that list on every later turn flooded a real retrieval-loop
+    prompt to ~72,000 characters. `members` is capped; `member_count` is the
+    page's own frontmatter total and must stay the true count regardless, so
+    a caller can see both the window and the whole it is a window onto."""
+    vault_dir = tmp_path / "vault"
+    body = "**Member notes:**\n" + "\n".join(
+        f"- [[m{i}]] — A ({2000 + i}): claim {i}." for i in range(1, 5)
+    )
+    _write_name_page(vault_dir, "a concept", member_count=4, body=body + "\n")
+
+    capped = get_name("a concept", 2, vault_dir=vault_dir)
+    assert [m.chunk_id for m in capped.members] == ["m1", "m2"], (
+        "the truncated prefix is the head of the page's own written order"
+    )
+    assert capped.member_count == 4, "member_count is the true total, never capped"
+
+    uncapped = get_name("a concept", 10, vault_dir=vault_dir)
+    assert [m.chunk_id for m in uncapped.members] == ["m1", "m2", "m3", "m4"]
+    assert uncapped.member_count == 4
+
+    default = get_name("a concept", vault_dir=vault_dir)
+    assert [m.chunk_id for m in default.members] == ["m1", "m2", "m3", "m4"], (
+        "DEFAULT_LIMIT (10) does not truncate a 4-member page"
+    )
+
+
 def test_get_name_never_returns_a_different_pages_content_on_a_filename_collision(tmp_path):
     """Two canonicals sanitizing to one filename: the second is
     hash-suffixed by the writer, and resolving by filename alone would hand
@@ -304,9 +338,10 @@ def test_who_cites_matches_a_folded_variant_of_the_canonical(tmp_path):
         {"citations": [{"cited": "charles-tilly", "stance": "foil", "about": "war"}]},
     )
 
-    edges = who_cites("Charles Tilly", vault_dir=vault_dir, names_dir=names_dir)
+    edges, total = who_cites("Charles Tilly", vault_dir=vault_dir, names_dir=names_dir)
 
     assert [(edge.cited, edge.stance) for edge in edges] == [("charles-tilly", "foil")]
+    assert total == 1
 
 
 def test_who_cites_orders_two_citations_from_one_note_totally(tmp_path):
@@ -326,9 +361,40 @@ def test_who_cites_orders_two_citations_from_one_note_totally(tmp_path):
         },
     )
 
-    edges = who_cites("Tilly", vault_dir=vault_dir, names_dir=names_dir)
+    edges, total = who_cites("Tilly", vault_dir=vault_dir, names_dir=names_dir)
     assert [edge.cited for edge in edges] == ["C. Tilly", "Tilly"]
-    assert who_cites("Tilly", vault_dir=vault_dir, names_dir=names_dir) == edges
+    assert total == 2
+    assert who_cites("Tilly", vault_dir=vault_dir, names_dir=names_dir) == (edges, total)
+
+
+def test_who_cites_truncates_at_limit_and_reports_the_true_total(tmp_path):
+    """issue #505: `who_cites` had no `limit` at all and returned every
+    matching row -- `Max Weber` reaches 165 on the real vault. The truncated
+    prefix is the head of the same `chunk_id`-ascending order an uncapped
+    call returns, and `total` is the honest pre-cap count."""
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(names_dir, [{"canonical": "Tilly", "kind": "person", "aliases": []}])
+    for i in range(1, 5):
+        _write_prose_note(
+            vault_dir,
+            f"src_{i}_a_001",
+            {"citations": [{"cited": "Tilly", "stance": "support", "about": f"point {i}"}]},
+        )
+
+    uncapped, uncapped_total = who_cites("Tilly", 10, vault_dir=vault_dir, names_dir=names_dir)
+    assert len(uncapped) == 4
+    assert uncapped_total == 4
+
+    capped, capped_total = who_cites("Tilly", 2, vault_dir=vault_dir, names_dir=names_dir)
+    assert [edge.chunk_id for edge in capped] == [edge.chunk_id for edge in uncapped[:2]], (
+        "the capped prefix is the head of the uncapped order, deterministically"
+    )
+    assert capped_total == 4, "the true pre-cap total, not the returned count"
+
+    default, default_total = who_cites("Tilly", vault_dir=vault_dir, names_dir=names_dir)
+    assert len(default) == 4, "DEFAULT_LIMIT (10) does not truncate 4 edges"
+    assert default_total == 4
 
 
 def test_who_cites_ignores_a_malformed_citation_entry_rather_than_raising(tmp_path):
@@ -339,7 +405,7 @@ def test_who_cites_ignores_a_malformed_citation_entry_rather_than_raising(tmp_pa
         vault_dir, "src_1_a_001", {"citations": ["a bare string", {"stance": "support"}]}
     )
 
-    assert who_cites("Tilly", vault_dir=vault_dir, names_dir=names_dir) == []
+    assert who_cites("Tilly", vault_dir=vault_dir, names_dir=names_dir) == ([], 0)
 
 
 def test_who_argues_against_accepts_a_bare_string_answer(tmp_path):
@@ -354,11 +420,38 @@ def test_who_argues_against_accepts_a_bare_string_answer(tmp_path):
         {"arguing_against": "Tilly", "position_of": "the author", "claim": "A claim."},
     )
 
-    edges = who_argues_against("Tilly", vault_dir=vault_dir, names_dir=names_dir)
+    edges, total = who_argues_against("Tilly", vault_dir=vault_dir, names_dir=names_dir)
 
     assert [(edge.arguing_against, edge.position, edge.claim) for edge in edges] == [
         ("Tilly", "the author", "A claim.")
     ]
+    assert total == 1
+
+
+def test_who_argues_against_truncates_at_limit_and_reports_the_true_total(tmp_path):
+    """Same shape as `who_cites` (issue #505): `who_argues_against` had no
+    `limit` at all before this and returned every matching row."""
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(names_dir, [{"canonical": "Tilly", "kind": "person", "aliases": []}])
+    for i in range(1, 5):
+        _write_prose_note(
+            vault_dir,
+            f"src_{i}_a_001",
+            {"arguing_against": ["Tilly"], "position_of": "the author", "claim": f"claim {i}."},
+        )
+
+    uncapped, uncapped_total = who_argues_against(
+        "Tilly", 10, vault_dir=vault_dir, names_dir=names_dir
+    )
+    assert len(uncapped) == 4
+    assert uncapped_total == 4
+
+    capped, capped_total = who_argues_against("Tilly", 2, vault_dir=vault_dir, names_dir=names_dir)
+    assert [edge.chunk_id for edge in capped] == [edge.chunk_id for edge in uncapped[:2]], (
+        "the capped prefix is the head of the uncapped order, deterministically"
+    )
+    assert capped_total == 4
 
 
 # -- issue #496's mixed frame: `position` when the key is there, else
@@ -383,7 +476,7 @@ def test_who_argues_against_prefers_the_frame_02_position_answer(tmp_path):
         },
     )
 
-    edges = who_argues_against("Tilly", vault_dir=vault_dir, names_dir=names_dir)
+    edges, _total = who_argues_against("Tilly", vault_dir=vault_dir, names_dir=names_dir)
 
     assert [edge.position for edge in edges] == ["durable rule was built by a party, not an army"]
 
@@ -400,10 +493,8 @@ def test_who_argues_against_falls_back_to_position_of_when_the_key_is_absent(tmp
         {"arguing_against": ["Tilly"], "position_of": "bellicist", "claim": "A claim."},
     )
 
-    assert [
-        edge.position
-        for edge in who_argues_against("Tilly", vault_dir=vault_dir, names_dir=names_dir)
-    ] == ["bellicist"]
+    edges, _total = who_argues_against("Tilly", vault_dir=vault_dir, names_dir=names_dir)
+    assert [edge.position for edge in edges] == ["bellicist"]
 
 
 def test_who_argues_against_reads_a_present_position_key_even_when_it_is_null(tmp_path):
@@ -424,10 +515,8 @@ def test_who_argues_against_reads_a_present_position_key_even_when_it_is_null(tm
         },
     )
 
-    assert [
-        edge.position
-        for edge in who_argues_against("Tilly", vault_dir=vault_dir, names_dir=names_dir)
-    ] == [None]
+    edges, _total = who_argues_against("Tilly", vault_dir=vault_dir, names_dir=names_dir)
+    assert [edge.position for edge in edges] == [None]
 
 
 def test_who_argues_against_carries_both_frames_in_one_result_set(tmp_path):
@@ -453,12 +542,13 @@ def test_who_argues_against_carries_both_frames_in_one_result_set(tmp_path):
         {"arguing_against": ["Tilly"], "position_of": "the old frame's answer", "claim": "B."},
     )
 
-    edges = who_argues_against("Tilly", vault_dir=vault_dir, names_dir=names_dir)
+    edges, total = who_argues_against("Tilly", vault_dir=vault_dir, names_dir=names_dir)
 
     assert [(edge.chunk_id, edge.position) for edge in edges] == [
         ("src_1_new_001", "the new frame's answer"),
         ("src_1_old_001", "the old frame's answer"),
     ]
+    assert total == 2
 
 
 def test_get_chunk_exposes_both_halves_of_the_mixed_frame_raw(tmp_path):
@@ -492,8 +582,11 @@ def test_a_note_with_no_answers_block_at_all_is_read_as_naming_nothing(tmp_path)
     rendered = yaml.safe_dump(frontmatter, sort_keys=False)
     (prose_dir / "src_1_a_001.md").write_text(f"---\n{rendered}---\nBody.\n", encoding="utf-8")
 
-    assert who_cites("Tilly", vault_dir=vault_dir, names_dir=tmp_path / "names") == []
-    assert who_argues_against("Tilly", vault_dir=vault_dir, names_dir=tmp_path / "names") == []
+    assert who_cites("Tilly", vault_dir=vault_dir, names_dir=tmp_path / "names") == ([], 0)
+    assert who_argues_against("Tilly", vault_dir=vault_dir, names_dir=tmp_path / "names") == (
+        [],
+        0,
+    )
     assert name_neighbors("Tilly", 10, vault_dir=vault_dir, names_dir=tmp_path / "names") == []
 
 

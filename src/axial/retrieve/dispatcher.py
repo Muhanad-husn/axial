@@ -41,11 +41,21 @@ class ToolResult:
     the model -- deliberately NOT one of the §7.6 trajectory fields, since
     that log's shape is fixed to exactly `{step, tool, args, result_ids,
     result_count}` ([FIRM]); the caller (the loop) is responsible for
-    surfacing `error` to the model through its own conversation channel."""
+    surfacing `error` to the model through its own conversation channel.
+
+    `total`, when set (issue #505), is the true pre-cap count for a tool
+    truncated at its `limit` -- currently `get_name`/`who_cites`/
+    `who_argues_against`, `None` for every other tool. It rides beside the
+    trajectory exactly the way `error` does, for the same reason: a capped
+    result the model cannot see is a lie about the corpus (`get_name` on
+    `Syria` returns 10 members out of 962), so the loop surfaces `total`
+    through its own conversation channel rather than smuggling a sixth field
+    into the [FIRM] trajectory shape."""
 
     ids: list[str]
     count: int
     error: str | None = None
+    total: int | None = None
 
 
 def _declared_type_ok(spec: ToolSpec, key: str, value: Any) -> bool:
@@ -102,7 +112,7 @@ def dispatch(
         )
 
     try:
-        ids, count = spec.call(args, vault_dir, envelopes_dir, names_dir)
+        ids, count, total = spec.call(args, vault_dir, envelopes_dir, names_dir)
     except reader.QueryError as exc:
         return ToolResult(ids=[], count=0, error=f"tool {tool!r} query failed: {exc}")
-    return ToolResult(ids=ids, count=count)
+    return ToolResult(ids=ids, count=count, total=total)

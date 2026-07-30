@@ -18,11 +18,26 @@ expected to be scripted in every acceptance test for this slice -- see
 
 `assemble_evidence_ids` (issue #488) only collects ids from tools whose
 `ToolSpec.returns_chunk_ids` is `True` (`axial.retrieve.tools`): the name
-layer's resolution/traversal tools (`find_names`, `name_neighbors`,
-`coverage_count`) return canonical NAMES, not passages, and a name string
-has no place in the set stage 4 treats as citable grounds. The §7.6
-trajectory itself is untouched -- every call still gets its own entry with
-its own `result_ids`, whatever kind those ids are.
+layer's resolution/traversal tools (`find_names`, `name_neighbors`) return
+canonical NAMES, not passages, and a name string has no place in the set
+stage 4 treats as citable grounds. The §7.6 trajectory itself is untouched
+-- every call still gets its own entry with its own `result_ids`, whatever
+kind those ids are.
+
+`coverage_count` is not in `TOOL_REGISTRY` at all (issue #505's own
+follow-up: a real corpus run's own model chose to call it and flooded that
+run's prompt past a million characters by returning all 49,674 canonicals
+in one result), so
+it never reaches this loop or `assemble_evidence_ids` either -- there is no
+tool name for either to skip or collect.
+
+`get_name`/`who_cites`/`who_argues_against` are bounded at their own
+`limit` (issue #505: `get_name` on a hub name page returned 962 ids into one
+prompt, then got re-sent on every later turn). When a result was truncated,
+the per-step tool-result text states the true pre-cap total beside the
+capped ids -- `ToolResult.total`, carried the same way `ToolResult.error`
+already is, never a sixth §7.6 field -- so the model can deliberately widen
+`limit` instead of mistaking a window for the whole corpus.
 """
 
 from __future__ import annotations
@@ -162,8 +177,11 @@ def run_retrieval_loop(
             envelopes_dir=envelopes_dir,
             names_dir=names_dir,
         )
+        capped = result.total is not None and result.total > result.count
+        progress_suffix = f" ({result.count} of {result.total} total)" if capped else ""
         print(
-            f"retrieve: turn {step}/{step_budget} called {tool_name!r}, {result.count} result(s)",
+            f"retrieve: turn {step}/{step_budget} called {tool_name!r}, "
+            f"{result.count} result(s){progress_suffix}",
             file=sys.stderr,
         )
 
@@ -181,21 +199,34 @@ def run_retrieval_loop(
         # provider's model can see what happened -- the scripted client
         # ignores prompt content entirely for its OWN choice of next call,
         # but a `record`-provider test can still observe this text (issue
-        # #254's own seam). A dispatch error is surfaced verbatim; a THIN
-        # result (§4, `is_thin_result`) is flagged explicitly with its
-        # `result_count` so the re-query decision is made on that signal,
-        # never forced by this loop; a non-thin result carries just its ids,
-        # same as slice 01.
+        # #254's own seam). A dispatch error is surfaced verbatim. Otherwise
+        # up to two independent notes are appended, since a small caller-
+        # chosen `limit` can be BOTH below `thin_result_floor` AND capped
+        # below `result.total` at once: a THIN note (§4, `is_thin_result`)
+        # flags a low `result_count` so the model considers a broadened
+        # re-query, and a CAPPED note (issue #505) states the true total
+        # beside the ids so the model can deliberately re-ask with a larger
+        # `limit` instead of mistaking a window for the whole corpus. A
+        # plain result with neither note carries just its ids, same as
+        # slice 01.
         if result.error is not None:
             tool_feedback = result.error
-        elif is_thin_result(result.count, thin_result_floor):
-            tool_feedback = (
-                f"result_ids={result.ids} result_count={result.count} "
-                f"(THIN: below the floor of {thin_result_floor} -- consider "
-                "a broadened re-query)"
-            )
         else:
-            tool_feedback = result.ids
+            notes: list[str] = []
+            if is_thin_result(result.count, thin_result_floor):
+                notes.append(
+                    f"THIN: below the floor of {thin_result_floor} -- consider a broadened re-query"
+                )
+            if capped:
+                notes.append(
+                    f"{result.count} of {result.total} total -- re-ask with a larger limit for more"
+                )
+            if notes:
+                tool_feedback = (
+                    f"result_ids={result.ids} result_count={result.count} ({'; '.join(notes)})"
+                )
+            else:
+                tool_feedback = result.ids
         prompt = f"{prompt}\n\n[step {step} result for {tool_name!r}: {tool_feedback}]"
 
     return trajectory
@@ -263,10 +294,11 @@ def assemble_evidence_ids(trajectory: list[dict[str, Any]]) -> list[str]:
     polity than the case anchor is kept exactly like any other.
 
     **Only chunk/artifact-valued entries contribute (issue #488).** A
-    trajectory entry whose tool is not in `TOOL_REGISTRY`, or whose
+    trajectory entry whose tool is not in `TOOL_REGISTRY` (which includes
+    `coverage_count`, not registered at all as of issue #505 -- see
+    `axial.retrieve.tools`'s module docstring), or whose
     `ToolSpec.returns_chunk_ids` is `False` (`find_names`, `name_neighbors`,
-    `coverage_count`, `get_envelope` -- see `axial.retrieve.tools`'s module
-    docstring), is skipped here: those tools yield canonical names or a
+    `get_envelope`), is skipped here: those yield canonical names or a
     `source_id`, never a real passage, and stage 4's evidence set must only
     ever carry ids `get_chunk`/`get_artifact` can resolve."""
     seen: set[str] = set()

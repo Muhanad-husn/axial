@@ -4,32 +4,61 @@
 
 Every entry is a thin adapter: it calls exactly one query-API function (zero
 LLM calls, per §7.5) and normalizes that function's return value into
-`(ids, count)`, the shape the §7.6 trajectory log and the dispatcher's
-`ToolResult` both carry.
+`(ids, count, total)`, the shape the dispatcher's `ToolResult` carries --
+`ids`/`count` are exactly the §7.6 trajectory log's `result_ids`/
+`result_count`; `total` (issue #505) rides beside it, never inside it.
 
 `query_by_tag`, `query_by_polity` and `follow_backlinks` were de-registered
 with the tools themselves (issue #487, D1/D5): each returned 0 or `[]` on
 every call against the v1 vault. The name-layer tools that replace them --
 `find_names`, `get_name`, `name_neighbors`, `who_cites`,
-`who_argues_against` -- are registered here (issue #488), alongside the
-per-name `coverage_count` slice 02 already re-pointed.
+`who_argues_against` -- are registered here (issue #488).
+
+**`coverage_count` is NOT registered here (issue #505's own follow-up).**
+It is the mirror case of D1/D5: not de-registered for returning nothing
+useful, but for returning far too much. On a paid corpus run a real
+provider's model chose to call it unprompted -- nothing scripted the call --
+and got all 49,674 canonical names back in one result,
+jumping the prompt from 3,862 to 1,204,509 characters (350,923 prompt
+tokens) and holding it there for 14 turns -- 4,947,176 prompt tokens for
+that run alone, thirteen times the flood #505 itself fixed. §7.2 already
+ruled out this exact shape for the interrogation pre-pass ("rendering the
+whole index instead is out of the question: measured 2026-07-30 at 62,821
+rows, 2.08 MB, ~500k tokens"); the retrieval tool carried the identical
+hazard, unguarded. A `limit` would bound the tokens without making the
+tool useful -- the alphabetical head of 49,674 names answers no retrieval
+question -- and the model already gets `member_count` per name, the count
+it can actually act on, from `find_names` and `get_name`. The function
+itself (`axial.query.names.coverage_count`) is untouched: §7.7's coverage
+map is its real, deterministic, model-free consumer
+(`axial.validators.coverage`).
 
 Two mechanical facts this registry states explicitly, because the model and
 the dispatcher both need them and neither is free to assume the answer:
 
 - **Arg types.** Every arg in the §7.5 tool set is a plain string EXCEPT
-  `find_names`'/`name_neighbors`' `limit`, which is an int. `int_args`
+  `limit`, which is an int wherever it appears -- `find_names`,
+  `name_neighbors`, and, as of issue #505, `get_name`, `who_cites` and
+  `who_argues_against` too (all five were unbounded or capless before; the
+  last three used to return every matching row, and one `get_name` on a
+  hub name page returned 962 ids into a retrieval loop's prompt). `int_args`
   names the subset of a tool's `allowed_args` that are int-typed; every
   other allowed arg is str. Two types total -- no JSON-schema library is
   pulled in for that.
-- **What kind of id a tool yields.** `find_names`, `name_neighbors` and
-  `coverage_count` return CANONICAL NAMES. `get_name`, `who_cites`,
-  `who_argues_against`, `query_by_source`, `get_chunk` and `get_artifact`
-  return CHUNK/ARTIFACT ids -- real vault ids a claim's grounds may cite.
-  `get_envelope` returns a `source_id`, neither. `returns_chunk_ids` marks
-  the second group; `axial.retrieve.loop.assemble_evidence_ids` reads it so
-  a name string can never land in the evidence set stage 4 treats as
-  citable passages.
+- **What kind of id a tool yields.** `find_names` and `name_neighbors`
+  return CANONICAL NAMES. `get_name`, `who_cites`, `who_argues_against`,
+  `query_by_source`, `get_chunk` and `get_artifact` return CHUNK/ARTIFACT
+  ids -- real vault ids a claim's grounds may cite. `get_envelope` returns a
+  `source_id`, neither. `returns_chunk_ids` marks the second group;
+  `axial.retrieve.loop.assemble_evidence_ids` reads it so a name string can
+  never land in the evidence set stage 4 treats as citable passages.
+
+Every adapter now returns `(result_ids, result_count, total)` (issue #505):
+`total` is the true pre-cap count for `get_name`/`who_cites`/
+`who_argues_against`, `None` for every other tool -- carried straight
+through to `axial.retrieve.dispatcher.ToolResult.total`, never part of the
+§7.6 trajectory entry (which stays exactly `{step, tool, args, result_ids,
+result_count}`).
 """
 
 from __future__ import annotations
@@ -40,12 +69,16 @@ from typing import Any, Callable
 
 from axial.query import names, reader
 
-# `(args, vault_dir, envelopes_dir, names_dir) -> (result_ids, result_count)`.
-# Every adapter takes all four positional slots, even the three that ignore
-# `names_dir` (the pre-name-layer tools) or `envelopes_dir` (everything but
-# `get_envelope`) -- one uniform shape the dispatcher calls without
-# branching on which tool it is calling.
-ToolCall = Callable[[dict[str, Any], Path | None, Path | None, Path | None], tuple[list[str], int]]
+# `(args, vault_dir, envelopes_dir, names_dir) ->
+# (result_ids, result_count, total)`. Every adapter takes all four
+# positional slots, even the three that ignore `names_dir` (the
+# pre-name-layer tools) or `envelopes_dir` (everything but `get_envelope`)
+# -- one uniform shape the dispatcher calls without branching on which tool
+# it is calling. `total` is `None` for every tool but `get_name`/
+# `who_cites`/`who_argues_against` (issue #505).
+ToolCall = Callable[
+    [dict[str, Any], Path | None, Path | None, Path | None], tuple[list[str], int, int | None]
+]
 
 
 @dataclass(frozen=True)
@@ -75,9 +108,9 @@ def _query_by_source(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     _names_dir: Path | None,
-) -> tuple[list[str], int]:
+) -> tuple[list[str], int, int | None]:
     ids = reader.query_by_source(args["source_id"], vault_dir=vault_dir)
-    return ids, len(ids)
+    return ids, len(ids), None
 
 
 def _get_envelope(
@@ -85,9 +118,9 @@ def _get_envelope(
     _vault_dir: Path | None,
     envelopes_dir: Path | None,
     _names_dir: Path | None,
-) -> tuple[list[str], int]:
+) -> tuple[list[str], int, int | None]:
     envelope = reader.get_envelope(args["source_id"], envelopes_dir=envelopes_dir)
-    return [envelope.source_id], 1
+    return [envelope.source_id], 1, None
 
 
 def _get_chunk(
@@ -95,9 +128,9 @@ def _get_chunk(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     _names_dir: Path | None,
-) -> tuple[list[str], int]:
+) -> tuple[list[str], int, int | None]:
     chunk = reader.get_chunk(args["chunk_id"], vault_dir=vault_dir)
-    return [chunk.chunk_id], 1
+    return [chunk.chunk_id], 1, None
 
 
 def _get_artifact(
@@ -105,20 +138,9 @@ def _get_artifact(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     _names_dir: Path | None,
-) -> tuple[list[str], int]:
+) -> tuple[list[str], int, int | None]:
     artifact = reader.get_artifact(args["artifact_id"], vault_dir=vault_dir)
-    return [artifact.artifact_id], 1
-
-
-def _coverage_count(
-    _args: dict[str, Any],
-    vault_dir: Path | None,
-    _envelopes_dir: Path | None,
-    _names_dir: Path | None,
-) -> tuple[list[str], int]:
-    counts = names.coverage_count(vault_dir=vault_dir)
-    canonicals = sorted(counts)
-    return canonicals, len(canonicals)
+    return [artifact.artifact_id], 1, None
 
 
 def _find_names(
@@ -126,11 +148,11 @@ def _find_names(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     names_dir: Path | None,
-) -> tuple[list[str], int]:
+) -> tuple[list[str], int, int | None]:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     hits = names.find_names(args["query"], limit, names_dir=names_dir, vault_dir=vault_dir)
     canonicals = [hit.canonical for hit in hits]
-    return canonicals, len(canonicals)
+    return canonicals, len(canonicals), None
 
 
 def _get_name(
@@ -138,10 +160,11 @@ def _get_name(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     _names_dir: Path | None,
-) -> tuple[list[str], int]:
-    page = names.get_name(args["canonical"], vault_dir=vault_dir)
+) -> tuple[list[str], int, int | None]:
+    limit = args.get("limit", names.DEFAULT_LIMIT)
+    page = names.get_name(args["canonical"], limit, vault_dir=vault_dir)
     ids = [member.chunk_id for member in page.members]
-    return ids, len(ids)
+    return ids, len(ids), page.member_count
 
 
 def _name_neighbors(
@@ -149,13 +172,13 @@ def _name_neighbors(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     names_dir: Path | None,
-) -> tuple[list[str], int]:
+) -> tuple[list[str], int, int | None]:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     neighbors = names.name_neighbors(
         args["canonical"], limit, vault_dir=vault_dir, names_dir=names_dir
     )
     canonicals = [neighbor.canonical for neighbor in neighbors]
-    return canonicals, len(canonicals)
+    return canonicals, len(canonicals), None
 
 
 def _who_cites(
@@ -163,10 +186,13 @@ def _who_cites(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     names_dir: Path | None,
-) -> tuple[list[str], int]:
-    edges = names.who_cites(args["canonical"], vault_dir=vault_dir, names_dir=names_dir)
+) -> tuple[list[str], int, int | None]:
+    limit = args.get("limit", names.DEFAULT_LIMIT)
+    edges, total = names.who_cites(
+        args["canonical"], limit, vault_dir=vault_dir, names_dir=names_dir
+    )
     ids = [edge.chunk_id for edge in edges]
-    return ids, len(ids)
+    return ids, len(ids), total
 
 
 def _who_argues_against(
@@ -174,10 +200,13 @@ def _who_argues_against(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     names_dir: Path | None,
-) -> tuple[list[str], int]:
-    edges = names.who_argues_against(args["canonical"], vault_dir=vault_dir, names_dir=names_dir)
+) -> tuple[list[str], int, int | None]:
+    limit = args.get("limit", names.DEFAULT_LIMIT)
+    edges, total = names.who_argues_against(
+        args["canonical"], limit, vault_dir=vault_dir, names_dir=names_dir
+    )
     ids = [edge.chunk_id for edge in edges]
-    return ids, len(ids)
+    return ids, len(ids), total
 
 
 TOOL_REGISTRY: dict[str, ToolSpec] = {
@@ -200,13 +229,14 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="get_name",
         description=(
             "One name page by its canonical name: its member notes (chunk_id, author, "
-            "year, one-sentence claim) in the page's own order, and any Gather "
-            "disagreement section. A disagreement is a retrieval hint, never a citation "
-            "(D4) -- follow its member chunk_ids to the real notes and cite only those."
+            "year, one-sentence claim) in the page's own order, up to limit, and any "
+            "Gather disagreement section. A disagreement is a retrieval hint, never a "
+            "citation (D4) -- follow its member chunk_ids to the real notes and cite "
+            "only those."
         ),
         required_args=frozenset({"canonical"}),
-        optional_args=frozenset(),
-        int_args=frozenset(),
+        optional_args=frozenset({"limit"}),
+        int_args=frozenset({"limit"}),
         returns_chunk_ids=True,
         call=_get_name,
     ),
@@ -228,11 +258,11 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         description=(
             "Every prose note whose citations[].cited resolves to this name, carrying "
             "the author's own stance (support/foil/authority) and what the citation is "
-            "about -- an author-stated cross-book edge."
+            "about -- an author-stated cross-book edge, up to limit."
         ),
         required_args=frozenset({"canonical"}),
-        optional_args=frozenset(),
-        int_args=frozenset(),
+        optional_args=frozenset({"limit"}),
+        int_args=frozenset({"limit"}),
         returns_chunk_ids=True,
         call=_who_cites,
     ),
@@ -241,11 +271,11 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         description=(
             "Every prose note whose arguing_against answers name this name, carrying "
             "that note's own stated position and one-sentence claim -- an author-stated "
-            "opposition edge."
+            "opposition edge, up to limit."
         ),
         required_args=frozenset({"canonical"}),
-        optional_args=frozenset(),
-        int_args=frozenset(),
+        optional_args=frozenset({"limit"}),
+        int_args=frozenset({"limit"}),
         returns_chunk_ids=True,
         call=_who_argues_against,
     ),
@@ -286,15 +316,6 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         int_args=frozenset(),
         returns_chunk_ids=True,
         call=_get_artifact,
-    ),
-    "coverage_count": ToolSpec(
-        name="coverage_count",
-        description="The member-note count of every name page in the vault, per name.",
-        required_args=frozenset(),
-        optional_args=frozenset(),
-        int_args=frozenset(),
-        returns_chunk_ids=False,
-        call=_coverage_count,
     ),
 }
 

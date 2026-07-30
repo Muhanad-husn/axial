@@ -248,6 +248,27 @@ def test_evidence_note_count_dedupes_the_same_chunk_cited_by_two_claims(vault_di
     assert coverage_map[TILLY]["evidence_note_count"] == 1
 
 
+def test_evidence_note_count_sees_a_member_past_get_names_own_cap(tmp_path: Path):
+    """issue #505: `get_name` now defaults to a `limit` of 10. This
+    intersection is correctness-critical -- unlike a retrieval-loop caller
+    that can deliberately re-ask, `_evidence_note_count` must never silently
+    undercount a real member past the cap, or a run's own grounds would read
+    as uncovered. Twelve real members, and the grounds note is the 11th."""
+    member_ids = [f"tilly-1978_{i:03d}_intro_001" for i in range(1, 13)]
+    for chunk_id in member_ids:
+        _write_chunk(tmp_path, chunk_id)
+    _write_name_page(tmp_path, TILLY, member_ids=member_ids, member_count=len(member_ids))
+    vault = tmp_path / "vault"
+
+    eleventh = member_ids[10]
+    claims = [_claim("c-1", names_touched=[TILLY], grounds=_chunk_grounds(eleventh))]
+    coverage_map = compute_coverage_map(claims, trajectory=[_get_name_call(TILLY)], vault_dir=vault)
+
+    assert coverage_map[TILLY]["evidence_note_count"] == 1, (
+        "a member past get_name's default cap must still be found, not silently undercounted"
+    )
+
+
 def test_artifact_grounds_never_contribute_to_evidence_count(vault_dir: Path):
     claims = [
         _claim(

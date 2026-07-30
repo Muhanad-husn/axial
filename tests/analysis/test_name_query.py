@@ -56,6 +56,14 @@ See specs/PHASE-B.md §7.5 (the name layer tools, [FIRM]), §7.7 (the per-name
 coverage map) and §8 P0-2 (the observables) for the source of truth, and
 plans/phase-b-v1/README.md D1/D2/D5/D10.
 
+Issue #505 (justification for the locked-contract edits below): `get_name`
+gains a `limit` arg, and `who_cites`/`who_argues_against` gain `limit` and
+now return `(edges, total)` instead of a bare list -- all three were
+previously unbounded and returned every matching row (`get_name` on `Syria`
+returned 962). Every existing call site is updated to the new signatures and
+return shape; new tests below cover truncation, determinism of the truncated
+prefix, and the true total.
+
 Seam decisions
 --------------
 Library calls, not a CLI subprocess: this slice's boundary is the plain
@@ -690,6 +698,27 @@ def test_get_name_on_an_unknown_canonical_raises_naming_it(fixture_layer: tuple[
     assert UNHELD_QUERY in str(exc_info.value)
 
 
+def test_get_name_truncates_members_at_limit_but_member_count_stays_the_true_total(
+    fixture_layer: tuple[Path, Path],
+):
+    """issue #505: `get_name` had no `limit` at all before this -- one call
+    on `Syria` (962 members) is what flooded a real retrieval-loop prompt.
+    `Charles Tilly`'s fixture page has 2 members; `limit=1` returns the head
+    of the page's own written order, and `member_count` is unaffected."""
+    from axial.query import get_name
+
+    vault_dir, _names_dir = fixture_layer
+
+    uncapped = get_name(TILLY, 10, vault_dir=vault_dir)
+    capped = get_name(TILLY, 1, vault_dir=vault_dir)
+
+    assert [m.chunk_id for m in capped.members] == [uncapped.members[0].chunk_id]
+    assert capped.member_count == uncapped.member_count == 2
+
+    default = get_name(TILLY, vault_dir=vault_dir)
+    assert len(default.members) == 2, "DEFAULT_LIMIT (10) does not truncate a 2-member page"
+
+
 # ---------------------------------------------------------------------------
 # name_neighbors / who_cites / who_argues_against
 # ---------------------------------------------------------------------------
@@ -727,21 +756,23 @@ def test_who_cites_matches_every_surface_the_alias_map_folds_in(
     from axial.query import get_chunk, who_cites
 
     vault_dir, names_dir = fixture_layer
-    edges = who_cites(TILLY, vault_dir=vault_dir, names_dir=names_dir)
+    edges, total = who_cites(TILLY, vault_dir=vault_dir, names_dir=names_dir)
 
     assert [(e.chunk_id, e.cited, e.stance) for e in edges] == [
         (AGAMBEN_NOTE, "Tilly", "authority"),
         (PYD_NOTE, "C. Tilly 1975", "support"),
     ], f"expected both alias-cited edges sorted by chunk_id, got {edges!r}"
+    assert total == 2, "the true pre-cap total, matching the returned count here"
     assert edges[0].source_id == AGAMBEN_SOURCE_ID
     assert edges[0].about == "war making"
     for edge in edges:
         assert get_chunk(edge.chunk_id, vault_dir=vault_dir).chunk_id == edge.chunk_id
 
-    assert who_cites(AGAMBEN, vault_dir=vault_dir, names_dir=names_dir)[0].stance == "foil", (
+    agamben_edges, _agamben_total = who_cites(AGAMBEN, vault_dir=vault_dir, names_dir=names_dir)
+    assert agamben_edges[0].stance == "foil", (
         "the author's own stance vocabulary (support/foil/authority) survives"
     )
-    assert who_cites(UNGOR, vault_dir=vault_dir, names_dir=names_dir) == []
+    assert who_cites(UNGOR, vault_dir=vault_dir, names_dir=names_dir) == ([], 0)
 
 
 def test_who_argues_against_carries_the_stated_position_and_claim(
@@ -760,12 +791,13 @@ def test_who_argues_against_carries_the_stated_position_and_claim(
     from axial.query import who_argues_against
 
     vault_dir, names_dir = fixture_layer
-    edges = who_argues_against(TILLY, vault_dir=vault_dir, names_dir=names_dir)
+    edges, total = who_argues_against(TILLY, vault_dir=vault_dir, names_dir=names_dir)
 
     assert [(e.chunk_id, e.arguing_against) for e in edges] == [
         (AGAMBEN_NOTE, "C. Tilly 1975"),
         (PYD_NOTE, "charles  tilly"),
     ]
+    assert total == 2
     assert [e.position for e in edges] == [
         AGAMBEN_POSITION,  # frame 0.2: the `position` key is present
         "stateless self-administration",  # pre-0.2: `position_of` is the fallback
@@ -773,9 +805,34 @@ def test_who_argues_against_carries_the_stated_position_and_claim(
     assert edges[0].claim == AGAMBEN_CLAIM
     assert edges[0].source_id == AGAMBEN_SOURCE_ID
 
-    assert [
-        e.chunk_id for e in who_argues_against(AGAMBEN, vault_dir=vault_dir, names_dir=names_dir)
-    ] == [TILLY_NOTE]
+    agamben_edges, _agamben_total = who_argues_against(
+        AGAMBEN, vault_dir=vault_dir, names_dir=names_dir
+    )
+    assert [e.chunk_id for e in agamben_edges] == [TILLY_NOTE]
+
+
+def test_who_cites_and_who_argues_against_truncate_at_limit_deterministically(
+    fixture_layer: tuple[Path, Path],
+):
+    """issue #505: both tools had no `limit` at all before this and returned
+    every matching row -- `who_cites` reaches 165 edges for `Max Weber` on
+    the real vault. `limit=1` returns the head of the same order the
+    uncapped call returns, and `total` still reports 2."""
+    from axial.query import who_argues_against, who_cites
+
+    vault_dir, names_dir = fixture_layer
+
+    uncapped_citations, _ = who_cites(TILLY, 10, vault_dir=vault_dir, names_dir=names_dir)
+    capped_citations, citations_total = who_cites(
+        TILLY, 1, vault_dir=vault_dir, names_dir=names_dir
+    )
+    assert [e.chunk_id for e in capped_citations] == [uncapped_citations[0].chunk_id]
+    assert citations_total == 2
+
+    uncapped_opp, _ = who_argues_against(TILLY, 10, vault_dir=vault_dir, names_dir=names_dir)
+    capped_opp, opp_total = who_argues_against(TILLY, 1, vault_dir=vault_dir, names_dir=names_dir)
+    assert [e.chunk_id for e in capped_opp] == [uncapped_opp[0].chunk_id]
+    assert opp_total == 2
 
 
 # ---------------------------------------------------------------------------
@@ -787,7 +844,15 @@ def test_coverage_count_is_per_name_and_ascending(fixture_layer: tuple[Path, Pat
     """§7.7's denominator: `{canonical: member_count}` read off the name
     pages' own `member_count`, for every name page in the vault, built in
     ascending-canonical order. A polity is a name whose `kind` is
-    `country/state/place`; nothing special-cases it."""
+    `country/state/place`; nothing special-cases it.
+
+    Issue #505's own follow-up de-registered `coverage_count` as a
+    model-facing retrieval TOOL (a paid corpus run flooded a prompt past a
+    million characters by calling it), but the query-API function itself is
+    untouched -- this test is the proof. Its real, deterministic, zero-
+    model-call consumer is `axial.validators.coverage.compute_coverage_map`
+    (`src/axial/validators/test_coverage.py::
+    test_corpus_note_count_comes_from_coverage_count_not_a_recount`)."""
     from axial.query import coverage_count
 
     vault_dir, _names_dir = fixture_layer
@@ -839,6 +904,10 @@ def test_the_full_name_tool_set_runs_with_no_llm_client_and_no_encoder(
     )
     assert get_name(AGAMBEN, vault_dir=vault_dir).canonical == AGAMBEN
     assert name_neighbors(AGAMBEN, 10, vault_dir=vault_dir, names_dir=names_dir)
-    assert who_cites(AGAMBEN, vault_dir=vault_dir, names_dir=names_dir)
-    assert who_argues_against(AGAMBEN, vault_dir=vault_dir, names_dir=names_dir)
+    citation_edges, citation_total = who_cites(AGAMBEN, vault_dir=vault_dir, names_dir=names_dir)
+    assert citation_edges and citation_total
+    opposition_edges, opposition_total = who_argues_against(
+        AGAMBEN, vault_dir=vault_dir, names_dir=names_dir
+    )
+    assert opposition_edges and opposition_total
     assert coverage_count(vault_dir=vault_dir)
