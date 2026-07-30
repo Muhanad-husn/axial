@@ -425,16 +425,20 @@ def test_a_rendered_packet_carries_the_five_fields_and_nothing_else():
     assert len(rendered) <= MEMBER_PACKET_CHARS
 
 
-# -- issue #496: the old packet format is frozen, byte for byte ---------------
+# -- issue #496: the old packet format is frozen, byte for byte -- ONLY when
+# it fits under the cap untouched ---------------------------------------------
 #
 # THESE TWO LITERALS ARE A PIN, NOT A FIXTURE. They are what `main` rendered
-# and hashed for a member note whose answer record carries no `position` key
-# -- the shape of all 6,148 records in the corpus, none of which are being
-# re-interrogated. `data/names/disagreements.jsonl` is keyed by exactly this
-# hash. If a change to `render_packet` moves either of them by one byte, every
-# one of the ~1,910 recorded findings is orphaned by key and the next
-# `axial names gather` pays for a full corpus re-decide. Do not "update" them
-# to match new behaviour: a diff here means the change is wrong.
+# and hashed for a member note whose answer record carries no `position` key,
+# short enough that neither `main`'s tail truncation nor #500/D1's
+# claim-remainder truncation ever engages. That untruncated case is still
+# frozen after D1: nothing was truncated either way, so there is nothing for
+# the render order to change. A packet old OR new format that DOES hit the
+# cap is a different story -- see
+# `test_a_packet_over_the_cap_no_longer_renders_byte_for_byte_this_is_the_500_re_key`
+# below, which pins that #500 deliberately breaks the byte-for-byte guarantee
+# once truncation is in play. Do not "update" the two literals below to match
+# new behaviour: a diff in an UNTRUNCATED case means the change is wrong.
 OLD_FORMAT_MEMBER_RENDER = (
     "Charles Tilly (1990): War made the state and the state made war. "
     "[position of: bellicist historical sociology; arguing against: modernization theory]"
@@ -536,18 +540,50 @@ def test_a_name_mixing_both_frames_renders_the_new_field_only_on_the_members_tha
     )
 
 
-def test_arguing_against_is_rendered_before_position_so_the_cap_never_eats_it():
-    """Field ORDER, not just field presence. `render_packet` truncates the
-    tail at `MEMBER_PACKET_CHARS`, so whichever field sits last is the one a
-    long packet loses -- and `arguing_against` is the one clause #490
-    measured as separating contested names from uncontested ones (1.9x-2.4x
-    lift), which Phase B's contestedness derivation reads. Measured on 120
-    real frame-0.2 notes: `position` in the middle lost `arguing against`
-    from 93.3% of new-format packets; `position` last loses it from 1.7%.
-    `position` is instead truncated away in 62.5% of them, which is the
-    accepted trade. This assertion is what stops the order being "tidied"
-    back.
+def test_the_bracket_survives_the_cap_and_claim_is_truncated_into_the_remainder():
+    """Issue #500, D1, the accepted fix. Before: the whole line was rendered
+    then the TAIL truncated, so whichever field sat last (`position`, or
+    `arguing_against` in the old field order) was what a long packet lost --
+    measured live, 22.4% of all rendered packets lost `arguing_against`
+    entirely. After: the bracket (`position_of`, `arguing_against`,
+    `position`) is reserved whole and `claim` -- the field that actually
+    runs long -- is truncated into whatever is left of `MEMBER_PACKET_CHARS`.
+    This is the acceptance case: a `claim` long enough to blow the cap on its
+    own must not cost the bracket anything.
     """
+    # Padded to `MEMBER_PACKET_CHARS` itself -- guaranteed longer than any
+    # possible remainder left after the bracket, whatever the cap is set to,
+    # so this test does not silently stop exercising truncation if the cap
+    # moves again (#500's own cap correction, 400 -> 800, is exactly why
+    # this is derived rather than a hard-coded literal).
+    packet = MemberPacket(
+        chunk_id="centeno-2002_000_intro_001",
+        author="Miguel Centeno",
+        year=2002,
+        claim="W" * MEMBER_PACKET_CHARS,
+        position_of="the author's own",
+        position="war in Latin America was too limited to build strong states",
+        arguing_against="Charles Tilly",
+    )
+    rendered = render_packet(packet)
+
+    assert len(rendered) <= MEMBER_PACKET_CHARS
+    # Every bracket field survives in full -- this is the whole fix.
+    assert "position of: the author's own" in rendered
+    assert "arguing against: Charles Tilly" in rendered
+    assert "position: war in Latin America was too limited to build strong states" in rendered
+    # `claim` is the field that gave way, truncated with the same ellipsis
+    # marker the old tail truncation used.
+    assert rendered.count("W") < MEMBER_PACKET_CHARS
+    assert (
+        rendered.rstrip("]").endswith("…") is False
+    )  # ellipsis sits before the bracket, not at EOL
+    assert "…" in rendered
+
+
+def test_a_packet_that_fits_the_cap_untouched_renders_every_field_verbatim():
+    """Boundary: nothing to truncate. All three bracket fields and the whole
+    `claim` appear, and the render is well under `MEMBER_PACKET_CHARS`."""
     packet = MemberPacket(
         chunk_id="centeno-2002_000_intro_001",
         author="Miguel Centeno",
@@ -559,15 +595,51 @@ def test_arguing_against_is_rendered_before_position_so_the_cap_never_eats_it():
     )
     rendered = render_packet(packet)
 
-    assert rendered.index("arguing against:") < rendered.index("position:")
+    assert rendered == (
+        "Miguel Centeno (2002): Limited war produced limited states in Latin America. "
+        "[position of: the author's own; "
+        "arguing against: Charles Tilly; "
+        "position: war in Latin America was too limited to build strong states]"
+    )
+    assert "…" not in rendered
+    assert len(rendered) < MEMBER_PACKET_CHARS
 
-    # And the order is what makes the clause survive a packet that overflows
-    # the cap: a claim long enough to truncate keeps `arguing against` whole
-    # and loses `position` instead.
-    truncated = render_packet(replace(packet, claim="W" * 300))
-    assert len(truncated) <= MEMBER_PACKET_CHARS
-    assert "arguing against: Charles Tilly" in truncated
-    assert "position: war in Latin America was too limited" not in truncated
+
+def test_a_packet_over_the_cap_no_longer_renders_byte_for_byte_this_is_the_500_re_key():
+    """The pre-0.2 byte-for-byte render contract (#496) is DELIBERATELY
+    broken by #500/D1 for any packet that hits the cap, old format or new.
+    `main`'s tail truncation used to cut into the bracket -- `arguing
+    against` here loses its own value entirely, down to "modernization" with
+    no closing bracket. D1 truncates `claim` instead and the bracket comes
+    through whole. That means `GatherJob.key` changes for this exact
+    old-format packet the moment it crosses the cap, which is the corpus
+    re-key issue #500 pays for (see `plans/name-layer-rekey/README.md`,
+    slice 03) -- not an accidental drift.
+    """
+    # Padded to `MEMBER_PACKET_CHARS` itself, same reasoning as the sibling
+    # test above -- guaranteed to force truncation whatever the cap is set
+    # to.
+    packet = MemberPacket(
+        chunk_id="tilly-1990_000_intro_001",
+        author="Charles Tilly",
+        year=1990,
+        claim="W" * MEMBER_PACKET_CHARS,
+        position_of="bellicist historical sociology",
+        arguing_against="modernization theory",
+        # No `position` -- this is the pre-0.2 record shape (#496).
+    )
+    assert packet.position is None
+
+    rendered = render_packet(packet)
+
+    assert len(rendered) <= MEMBER_PACKET_CHARS
+    # The bracket survives whole under D1 -- unlike `main`'s tail truncation,
+    # which would have cut "arguing against: modernization theory]" down to
+    # an unterminated "arguing against: modernization".
+    assert "arguing against: modernization theory]" in rendered
+    assert "position of: bellicist historical sociology" in rendered
+    # `claim` is what gave way instead.
+    assert rendered.count("W") < MEMBER_PACKET_CHARS
 
 
 def test_a_position_key_holding_an_abstention_is_rendered_not_dropped():
@@ -597,6 +669,10 @@ def test_a_position_key_holding_an_abstention_is_rendered_not_dropped():
 
 
 def test_a_rendered_packet_is_capped_so_the_budget_is_a_guarantee():
+    """Everything oversized at once -- author, claim, and the whole
+    bracket. However pathological the inputs, the cap holds; this is the
+    arithmetic guarantee `GATHER_PACKET_CHAR_BUDGET //
+    MEMBER_PACKET_CHARS` rests on."""
     packet = MemberPacket(
         chunk_id="src1_000_intro_001",
         author="A" * 500,
@@ -610,6 +686,31 @@ def test_a_rendered_packet_is_capped_so_the_budget_is_a_guarantee():
     # often. The cap still holds, which is what makes the block budget
     # arithmetic rather than an average.
     assert len(render_packet(replace(packet, position="E" * 500))) <= MEMBER_PACKET_CHARS
+
+
+def test_the_one_degenerate_case_a_bracket_alone_over_the_cap_falls_back_to_tail_truncation():
+    """Issue #500, D1's named degenerate case: `position_of` and
+    `arguing_against` together already exceed `MEMBER_PACKET_CHARS` before
+    `claim` gets a single character of remainder. There is no split to make
+    -- `render_packet` falls back to `main`'s pre-D1 whole-line-then-tail
+    truncation, which is not new behaviour and needs no new constant. The
+    cap still holds; that is the one thing this path is not allowed to give
+    up."""
+    # Each bracket field alone is padded to `MEMBER_PACKET_CHARS`, so the two
+    # together always exceed the cap regardless of its value -- the
+    # degenerate condition by construction, not by a literal tuned to 400.
+    packet = MemberPacket(
+        chunk_id="src1_000_intro_001",
+        author="Charles Tilly",
+        year=1990,
+        claim="short claim",
+        position_of="C" * MEMBER_PACKET_CHARS,
+        arguing_against="D" * MEMBER_PACKET_CHARS,
+    )
+    rendered = render_packet(packet)
+
+    assert len(rendered) <= MEMBER_PACKET_CHARS
+    assert rendered.endswith("…")
 
 
 def test_split_into_batches_keeps_every_batch_under_the_budget():
