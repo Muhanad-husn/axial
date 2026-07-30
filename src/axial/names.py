@@ -388,10 +388,9 @@ def is_source_pointer_shaped(surface_form: str) -> bool:
 
 def is_cut_from_name_space(surface_form: str) -> bool:
     """Whether `surface_form` leaves the name space on shape alone -- rows
-    C, D, E, F, G, H, P and S of issue #508's cut set, unioned. The two
-    remaining rows are not shapes: A is the `citations[].cited` channel,
-    dropped in `iter_name_occurrences` below, and B is which section the
-    surface was seen in (`axial.name_sections`).
+    C, D, E, F, G, H, P and S of issue #508's cut set, unioned. Row A, the
+    ninth, is not a shape: it is the `citations[].cited` channel, dropped in
+    `iter_name_occurrences` below.
 
     Row S is the interrogation's own abstention sentinel, which reached the
     inventory as a name once, with 24 member notes. `axial.interrogate.
@@ -515,23 +514,19 @@ def _clean(value: Any) -> str | None:
     return cleaned or None
 
 
-def iter_name_occurrences(
-    record: dict[str, Any],
-    *,
-    is_back_matter_section: Callable[[str], bool] | None = None,
-) -> Iterator[NameOccurrence]:
+def iter_name_occurrences(record: dict[str, Any]) -> Iterator[NameOccurrence]:
     """Every `NameOccurrence` one answer record contributes, from `names[]`
     only (§7.16) -- skips failure/skip records (no `answers` key) and the D7
     abstention on the field.
 
     **This is the one place issue #508's cut set is enforced.** Row A is the
     absence of a `citations[].cited` arm here: the field keeps being
-    recorded, it just stops being read into the name space. Row B is
-    `is_back_matter_section`, which the caller supplies (`run_names` builds
-    it from `axial.name_sections`) -- absent, the rule does not apply and
-    every section is kept, since cutting a section on a guess is the one
-    error this set cannot afford. Rows C through H, P and S are
-    `is_cut_from_name_space`.
+    recorded, it just stops being read into the name space. Rows C through
+    H, P and S are `is_cut_from_name_space`. Row B -- a surface seen only in
+    a bibliography, index, front matter or appendix -- is NOT applied: it
+    needs a judgment about what a section heading means, it failed
+    measurement twice, and it was re-scoped to its own issue. This pass
+    makes no model call.
 
     A page falls out of the vault only when EVERY surface that would have
     been its member is cut, which this per-occurrence filter gives for free:
@@ -542,14 +537,6 @@ def iter_name_occurrences(
         return
     chunk_id = record.get("chunk_id", "")
     source_id = record.get("source_id", "")
-
-    section = record.get("section")
-    if (
-        is_back_matter_section is not None
-        and isinstance(section, str)
-        and is_back_matter_section(section)
-    ):
-        return
 
     names = answers.get(_NAMES_FIELD)
     if isinstance(names, list) and not is_abstention(names):
@@ -581,14 +568,10 @@ def load_answer_records(answers_dir: Path) -> list[dict[str, Any]]:
     return records
 
 
-def collect_occurrences(
-    records: Iterable[dict[str, Any]],
-    *,
-    is_back_matter_section: Callable[[str], bool] | None = None,
-) -> Iterator[NameOccurrence]:
+def collect_occurrences(records: Iterable[dict[str, Any]]) -> Iterator[NameOccurrence]:
     """Flat-map `iter_name_occurrences` over every record."""
     for record in records:
-        yield from iter_name_occurrences(record, is_back_matter_section=is_back_matter_section)
+        yield from iter_name_occurrences(record)
 
 
 # ---------------------------------------------------------------------------
@@ -840,12 +823,10 @@ def run_names(
     inventory_path: Path | None = None,
     embeddings_dir: Path | None = None,
     manifest_path: Path | None = None,
-    section_classes_path: Path | None = None,
     model_name: str = DEFAULT_MODEL_NAME,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     encoder: Encoder | None = None,
     cluster_fn: ClusterFn | None = None,
-    client: Any | None = None,
     pca_components: int = DEFAULT_PCA_COMPONENTS,
     min_cluster_size: int = DEFAULT_MIN_CLUSTER_SIZE,
     min_samples: int = DEFAULT_MIN_SAMPLES,
@@ -864,21 +845,15 @@ def run_names(
     clustering run, mirroring `axial.distill.embed`'s own `encoder`
     injection seam.
 
-    **This pass is no longer LLM-free (issue #508 row B).** The corpus's
-    distinct `section` headings are classified once, cached to
-    `section_classes_path` (default `axial.name_sections.
-    DEFAULT_SECTION_CLASSES_PATH`), and a run whose headings are all cached
-    makes no call and builds no client -- which is every run after the
-    first, and every rebuild the issue's own path describes. The cut is
-    applied here rather than in a separate pass so a newly ingested source
-    is filtered by construction, with no incremental-specific code.
+    **Still LLM-free**, as it has always been: issue #508's cut set filters
+    the surfaces this pass reads, and every rule that survived measurement
+    is a shape test. Row B, the one that needed a model call, was re-scoped
+    to its own issue.
 
     Raises `NoAnswersToEmbedError` when no answer records are found, or none
     of them name anything -- a loud failure rather than a silently empty
     inventory.
     """
-    from axial.name_sections import back_matter_sections
-
     if answers_dir is None:
         answers_dir = _default_answers_dir(config_path)
     answers_dir = Path(answers_dir)
@@ -896,18 +871,7 @@ def run_names(
     if not records:
         raise NoAnswersToEmbedError(answers_dir)
 
-    headings = {
-        record["section"]
-        for record in records
-        if isinstance(record.get("section"), str) and record["section"].strip()
-    }
-    back_matter = back_matter_sections(
-        headings, client=client, classes_path=section_classes_path, config_path=config_path
-    )
-
-    occurrences = list(
-        collect_occurrences(records, is_back_matter_section=back_matter.__contains__)
-    )
+    occurrences = list(collect_occurrences(records))
     entries = build_inventory(occurrences)
     if not entries:
         raise NoAnswersToEmbedError(answers_dir)

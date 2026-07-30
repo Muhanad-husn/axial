@@ -27,13 +27,11 @@ And   each surface form is embedded with a local sentence-transformer and
 And   `axial names examine` reads that persisted result back and reports the
       cluster-size and nearest-neighbour similarity distribution, with zero
       further model/embedding calls
-And   a heading the section-class cache already carries costs zero LLM
-      (text-generation) calls, everywhere in this pass
+And   a name seen only in a bibliography section still gets its page --
+      issue #508's row B is re-scoped to its own issue and is deliberately
+      NOT applied here
+And   zero LLM (text-generation) calls happen anywhere in this pass
       (`AXIAL_LLM_PROVIDER=explode` poisons any such call)
-And   a heading the cache has never seen is classified once, and a section
-      the classification calls bibliography/index/front matter/appendix
-      takes its surfaces out of the name space (issue #508 row B) -- never
-      endnotes
 
 Seam decisions
 -----------------------------------------------------------------------
@@ -74,10 +72,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 
 
-def _run_axial(root: Path, *args: str, **env_overrides: str) -> subprocess.CompletedProcess:
+def _run_axial(root: Path, *args: str) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env[PROVIDER_ENV_VAR] = "explode"  # poison: any text-gen LLM call crashes the run
-    env.update(env_overrides)
     return subprocess.run(
         ["uv", "run", "--project", str(REPO_ROOT), "axial", *args],
         cwd=root,
@@ -85,19 +82,6 @@ def _run_axial(root: Path, *args: str, **env_overrides: str) -> subprocess.Compl
         text=True,
         env=env,
     )
-
-
-def _seed_section_classes(root: Path, classes: dict[str, str]) -> Path:
-    """Pre-seed the back-matter classification cache (issue #508 row B).
-
-    A heading already in the cache is never re-asked, which is what keeps
-    this pass's zero-LLM-call assertion intact under `explode` -- and it is
-    also the real steady state, since the classification is paid for once
-    per distinct heading and reused by every later build."""
-    path = root / "data" / "names" / "section_classes.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"version": 1, "sections": classes}), encoding="utf-8")
-    return path
 
 
 def _answers(**overrides) -> dict:
@@ -136,14 +120,10 @@ def _record(chunk_id: str, source_id: str, section: str = "Introduction", **over
     }
 
 
-#: The fixture's own headings. `N O T E S` is docling's per-glyph spacing of
-#: an endnote heading, which issue #508 keeps on purpose; `Bibliography` is
-#: the one row-B heading.
-_FIXTURE_SECTIONS = ("Bibliography", "Introduction", "N O T E S")
-
-#: What the fixture's inventory holds once the cut set has run with every
-#: section treated as body: the two ordinary names, the lowercase concept,
-#: and the name only the bibliography note carries.
+#: What the fixture's inventory holds once the cut set has run: the two
+#: ordinary names, the lowercase concept, and the name the bibliography note
+#: carries. Row B -- cutting a bibliography section -- is re-scoped out of
+#: this change and has its own issue, so `Hanna Batatu` is a survivor here.
 _SURVIVING_SURFACES = {
     "Kevin Attell",
     "University of Chicago Press",
@@ -222,7 +202,6 @@ def _assert_ran_the_real_subcommand(result: subprocess.CompletedProcess) -> None
 def test_names_build_then_examine_over_real_answer_records(isolated_vault_root):
     root = isolated_vault_root
     _build_fixture_answers(root)
-    _seed_section_classes(root, {section: "body" for section in _FIXTURE_SECTIONS})
 
     build_result = _run_axial(root, "names", "build")
     _assert_ran_the_real_subcommand(build_result)
@@ -263,6 +242,9 @@ def test_names_build_then_examine_over_real_answer_records(isolated_vault_root):
         assert cut not in inventory, f"{cut!r} should have left the name space"
     # ...and the lowercase concept the issue deliberately refuses to cut.
     assert inventory["negative sovereignty"]["kind"] == "concept"
+    # Row B is re-scoped out of this change: nothing reads a section, so the
+    # name only the bibliography note carries still gets its page.
+    assert "Hanna Batatu" in inventory
 
     embeddings_dir = root / "data" / "names" / "embeddings.lance"
     db = lancedb.connect(embeddings_dir)
@@ -300,7 +282,6 @@ def test_names_examine_min_cluster_sizes_and_min_samples_are_cli_overridable(iso
     same persisted vectors `build` already wrote."""
     root = isolated_vault_root
     _build_fixture_answers(root)
-    _seed_section_classes(root, {section: "body" for section in _FIXTURE_SECTIONS})
     build_result = _run_axial(root, "names", "build")
     assert build_result.returncode == 0, build_result.stderr
 
@@ -321,7 +302,6 @@ def test_names_examine_min_cluster_sizes_and_min_samples_are_cli_overridable(iso
 def test_names_build_min_cluster_size_and_min_samples_are_cli_overridable(isolated_vault_root):
     root = isolated_vault_root
     _build_fixture_answers(root)
-    _seed_section_classes(root, {section: "body" for section in _FIXTURE_SECTIONS})
 
     build_result = _run_axial(
         root, "names", "build", "--min-cluster-size", "2", "--min-samples", "1"
@@ -396,7 +376,6 @@ def test_names_build_drops_every_locator_shaped_surface(isolated_vault_root):
     simply means nothing reaches it."""
     root = isolated_vault_root
     _build_locator_fixture_answers(root)
-    _seed_section_classes(root, {"Introduction": "body"})
 
     build_result = _run_axial(root, "names", "build")
     _assert_ran_the_real_subcommand(build_result)
@@ -420,55 +399,3 @@ def test_names_build_drops_every_locator_shaped_surface(isolated_vault_root):
         "src1_000_intro_001",
         "src2_000_intro_001",
     ]
-
-
-def test_names_build_classifies_a_new_heading_once_and_cuts_its_back_matter(isolated_vault_root):
-    """Issue #508 row B, end to end through the real CLI with the model call
-    stubbed: `Bibliography` is classified as back matter, so the name only
-    that section carries leaves the name space, while the glyph-spaced
-    endnote heading `N O T E S` keeps its own."""
-    root = isolated_vault_root
-    _build_fixture_answers(root)
-
-    # `_FIXTURE_SECTIONS` is sorted, and `classify_sections` numbers the
-    # headings it asks about in that same order -- so `Bibliography` is 1
-    # and the glyph-spaced endnote heading is 3.
-    scripted = json.dumps(
-        {
-            "back_matter": [
-                {"n": 1, "class": "bibliography"},
-                {"n": 3, "class": "endnotes"},
-            ]
-        }
-    )
-    build_result = _run_axial(
-        root,
-        "names",
-        "build",
-        AXIAL_LLM_PROVIDER="stub",
-        AXIAL_STUB_NAME_SECTIONS_RESPONSE=scripted,
-    )
-    _assert_ran_the_real_subcommand(build_result)
-    assert build_result.returncode == 0, (
-        f"expected exit 0, got {build_result.returncode}\n"
-        f"stdout: {build_result.stdout!r}\nstderr: {build_result.stderr!r}"
-    )
-
-    inventory_path = root / "data" / "names" / "inventory.jsonl"
-    inventory = {
-        json.loads(line)["surface"] for line in inventory_path.read_text("utf-8").splitlines()
-    }
-    assert "Hanna Batatu" not in inventory, "a bibliography-only name is not a page"
-    assert "Kevin Attell" in inventory, "endnotes are deliberately NOT back matter"
-    assert inventory == _SURVIVING_SURFACES - {"Hanna Batatu"}
-
-    classes = json.loads(
-        (root / "data" / "names" / "section_classes.json").read_text(encoding="utf-8")
-    )
-    # `endnotes` is a label of its own, recorded rather than flattened onto
-    # `body`, and it does not cut.
-    assert classes["sections"] == {
-        "Bibliography": "bibliography",
-        "Introduction": "body",
-        "N O T E S": "endnotes",
-    }

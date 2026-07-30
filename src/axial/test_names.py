@@ -187,9 +187,9 @@ def _names_record(*surfaces: str, section: str = "") -> dict:
     )
 
 
-def _collected(*surfaces: str, section: str = "", **kwargs) -> set[str]:
+def _collected(*surfaces: str, section: str = "") -> set[str]:
     record = _names_record(*surfaces, section=section)
-    return {occ.surface_form for occ in iter_name_occurrences(record, **kwargs)}
+    return {occ.surface_form for occ in iter_name_occurrences(record)}
 
 
 def test_cut_a_citation_channel_leaves_the_name_space():
@@ -210,28 +210,13 @@ def test_cut_a_citation_channel_leaves_the_name_space():
     assert {occ.surface_form for occ in iter_name_occurrences(record)} == {"Charles Tilly"}
 
 
-def test_cut_b_back_matter_sections_leave_the_name_space():
-    """Class B, 5,771 surfaces: a name seen only in a bibliography goes.
-    Endnotes are deliberately NOT back matter -- the historiographical
-    quarrel happens there -- so the same name in `N O T E S` survives."""
-    back_matter = {"Bibliography"}
-
-    def is_back_matter(section: str) -> bool:
-        return section in back_matter
-
-    assert (
-        _collected("Hanna Batatu", section="Bibliography", is_back_matter_section=is_back_matter)
-        == set()
-    )
-    assert _collected(
-        "Hanna Batatu", section="N O T E S", is_back_matter_section=is_back_matter
-    ) == {"Hanna Batatu"}
-
-
-def test_cut_b_is_not_applied_when_no_classifier_is_supplied():
-    """Without a section classification the rule fails open -- the surface
-    is kept, never cut on a guess (the source router's own rule, §7.8)."""
+def test_row_b_is_not_applied_and_a_back_matter_name_survives():
+    """Row B -- cutting a surface seen only in a bibliography, index, front
+    matter or appendix -- is re-scoped out of this change and has its own
+    issue. Nothing here reads a section, so a bibliography name keeps its
+    page, and this pass makes no model call."""
     assert _collected("Hanna Batatu", section="Bibliography") == {"Hanna Batatu"}
+    assert _collected("Hanna Batatu", section="N O T E S") == {"Hanna Batatu"}
 
 
 def test_cut_c_bare_numeral_leaves_the_name_space():
@@ -314,13 +299,11 @@ def test_legitimate_names_survive_the_whole_cut_set():
         section="N O T E S",
     )
 
-    def is_back_matter(section: str) -> bool:
-        return section in {"Bibliography", "Index"}
-
-    assert {
-        occ.surface_form
-        for occ in iter_name_occurrences(record, is_back_matter_section=is_back_matter)
-    } == {"The Great Transformation", "negative sovereignty", "Hanna Batatu"}
+    assert {occ.surface_form for occ in iter_name_occurrences(record)} == {
+        "The Great Transformation",
+        "negative sovereignty",
+        "Hanna Batatu",
+    }
 
 
 def test_a_name_survives_when_only_its_citation_shaped_alias_is_cut():
@@ -920,10 +903,16 @@ def test_run_names_persists_inventory_vectors_and_cluster_labels(tmp_path: Path)
     assert manifest["inventory_path"] == str(inventory_path)
 
 
-def test_run_names_drops_the_surfaces_a_back_matter_section_contributed(tmp_path: Path):
-    """Issue #508 row B, end to end through the pass: the heading
-    classification is cached to `section_classes_path`, the bibliography's
-    names never reach the inventory, and the endnote's do."""
+def test_run_names_makes_no_model_call(tmp_path: Path):
+    """The inventory pass is LLM-free, as it was before issue #508: every
+    surviving cut-set row is a shape test, and row B -- the one that needed
+    a judgment about a section heading -- is re-scoped to its own issue. A
+    poisoned client here would never be reached, so the assertion is on the
+    real seam: `run_names` takes no client at all."""
+    import inspect
+
+    assert "client" not in inspect.signature(run_names).parameters
+
     answers_dir = tmp_path / "answers"
     _write_answers(
         answers_dir,
@@ -943,16 +932,6 @@ def test_run_names_drops_the_surfaces_a_back_matter_section_contributed(tmp_path
             ),
         ],
     )
-    classes_path = tmp_path / "section_classes.json"
-    classes_path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "sections": {"B I B L I O G R A P H Y": "bibliography", "N O T E S": "body"},
-            }
-        ),
-        encoding="utf-8",
-    )
     inventory_path = tmp_path / "inventory.jsonl"
 
     result = run_names(
@@ -960,54 +939,17 @@ def test_run_names_drops_the_surfaces_a_back_matter_section_contributed(tmp_path
         inventory_path=inventory_path,
         embeddings_dir=tmp_path / "embeddings.lance",
         manifest_path=tmp_path / "manifest.json",
-        section_classes_path=classes_path,
         encoder=_fake_encoder,
         cluster_fn=_fake_cluster_fn,
     )
 
-    assert result.entry_count == 1
+    # Both survive: no section is read, so a bibliography name keeps its page.
+    assert result.entry_count == 2
     surfaces = {
         json.loads(line)["surface"]
         for line in inventory_path.read_text(encoding="utf-8").splitlines()
     }
-    assert surfaces == {"Charles Tilly"}
-
-
-def test_run_names_needs_no_model_call_when_every_heading_is_cached(tmp_path: Path):
-    class _ExplodingClient:
-        def complete(self, prompt: str, pass_name: str | None = None) -> str:
-            raise AssertionError("run_names must not re-ask a heading the cache already carries")
-
-    answers_dir = tmp_path / "answers"
-    _write_answers(
-        answers_dir,
-        "s1",
-        [
-            _answer_record(
-                "c1",
-                "s1",
-                _base_answers(names=[{"name": "Charles Tilly", "kind": "person"}]),
-                section="Introduction",
-            )
-        ],
-    )
-    classes_path = tmp_path / "section_classes.json"
-    classes_path.write_text(
-        json.dumps({"version": 1, "sections": {"Introduction": "body"}}), encoding="utf-8"
-    )
-
-    result = run_names(
-        answers_dir=answers_dir,
-        inventory_path=tmp_path / "inventory.jsonl",
-        embeddings_dir=tmp_path / "embeddings.lance",
-        manifest_path=tmp_path / "manifest.json",
-        section_classes_path=classes_path,
-        encoder=_fake_encoder,
-        cluster_fn=_fake_cluster_fn,
-        client=_ExplodingClient(),
-    )
-
-    assert result.entry_count == 1
+    assert surfaces == {"Charles Tilly", "Hanna Batatu"}
 
 
 def test_run_names_is_deterministic_across_reruns(tmp_path: Path):

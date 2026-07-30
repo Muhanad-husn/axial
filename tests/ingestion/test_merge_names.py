@@ -110,13 +110,6 @@ def _answers(names: list[str], kind: str = "concept") -> dict:
 def _build_fixture_answers(root: Path, name_groups: list[list[str]], kind: str = "concept") -> None:
     answers_dir = root / "data" / "answers"
     answers_dir.mkdir(parents=True, exist_ok=True)
-    # Issue #508 row B: every `run_names` below reads this cache instead of
-    # classifying `Introduction` with a model call. One heading, body.
-    names_dir = root / "data" / "names"
-    names_dir.mkdir(parents=True, exist_ok=True)
-    (names_dir / "section_classes.json").write_text(
-        json.dumps({"version": 1, "sections": {"Introduction": "body"}}), encoding="utf-8"
-    )
     with (answers_dir / "src1.jsonl").open("w", encoding="utf-8") as handle:
         for index, names in enumerate(name_groups):
             handle.write(
@@ -230,7 +223,6 @@ def test_worked_example_merges_the_same_idea_and_keeps_distinct_claims_apart(iso
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
     )
 
     prompts: list[str] = []
@@ -293,7 +285,6 @@ def test_an_escalated_surface_stands_alone_and_is_recorded_and_counted(isolated_
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
     )
 
     class FakeClient:
@@ -475,7 +466,6 @@ def test_a_client_side_parse_failure_never_lands_in_the_escalation_pile(isolated
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
     )
 
     class NoiseClient:
@@ -597,7 +587,6 @@ def _six_name_fixture(root: Path) -> Path:
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
     )
     return names_dir
 
@@ -751,7 +740,6 @@ def test_candidate_generation_recovers_pairs_hdbscan_never_co_clusters(isolated_
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
         cluster_fn=_singleton_clusters,
     )
 
@@ -849,7 +837,6 @@ def test_existing_decisions_are_reused_when_candidates_are_added(isolated_vault_
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
         cluster_fn=lambda vectors: [0, 1, 2, 2],
     )
 
@@ -942,7 +929,6 @@ def test_acronym_candidate_folds_onto_the_spelled_out_canonical(isolated_vault_r
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
         cluster_fn=lambda vectors: [0, 0],
     )
 
@@ -987,7 +973,6 @@ def test_acronym_candidate_folds_onto_the_spelled_out_canonical(isolated_vault_r
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
         # sorted surface order: AANS, AANES_CANONICAL, AANS_ALIAS_SURFACE
         cluster_fn=lambda vectors: [1, 0, 0],
     )
@@ -1089,7 +1074,6 @@ def test_fold_collapses_case_whitespace_and_punctuation_with_no_model_call(isola
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
         cluster_fn=_singleton_clusters,
     )
 
@@ -1158,7 +1142,6 @@ def test_fold_collapses_quoted_punctuation_with_no_model_call(isolated_vault_roo
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
         cluster_fn=_singleton_clusters,
     )
 
@@ -1234,7 +1217,6 @@ def test_residue_surfaces_never_reach_the_inventory_or_the_alias_map(isolated_va
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
         cluster_fn=lambda vectors: [0] * len(vectors),
     )
 
@@ -1306,7 +1288,6 @@ def test_an_evidence_tier_change_refuses_to_reask_without_confirmation(isolated_
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
     )
 
     decisions_path = names_dir / "merge_decisions.jsonl"
@@ -1369,7 +1350,6 @@ def test_confirming_the_reask_purges_the_stale_decision_and_redecides_it(isolate
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
     )
 
     decisions_path = names_dir / "merge_decisions.jsonl"
@@ -1549,7 +1529,6 @@ def test_matching_settings_reuse_the_persisted_cluster_labels(isolated_vault_roo
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
     )
 
     def _explode(*_args, **_kwargs):
@@ -1598,7 +1577,6 @@ def test_mismatched_settings_still_trigger_a_fresh_fit(isolated_vault_root, monk
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
     )
 
     real_cluster_reduced = merge_names_module._cluster_reduced
@@ -1652,7 +1630,6 @@ def test_recluster_flag_forces_a_refit_even_when_settings_match(isolated_vault_r
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
     )
 
     real_cluster_reduced = merge_names_module._cluster_reduced
@@ -1706,7 +1683,6 @@ def test_clustering_prints_a_startup_line_and_a_running_heartbeat(isolated_vault
         inventory_path=names_dir / "inventory.jsonl",
         embeddings_dir=names_dir / "embeddings.lance",
         manifest_path=names_dir / "similarity_manifest.json",
-        section_classes_path=names_dir / "section_classes.json",
     )
 
     def _slow_cluster(reduced, min_cluster_size, min_samples):

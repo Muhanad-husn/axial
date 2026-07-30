@@ -14,12 +14,13 @@ trick: it is read off the artifacts. "After" re-derives the inventory from
 the same answer records through THIS WORKTREE's `axial.names`, then asks
 which of the live layer's own nodes still have a surviving member surface.
 
-**Row B is only measured when `data/names/section_classes.json` exists.**
-Classifying a heading is one flash call and this script makes none, so a
-run with no cache present reports the other nine rows and says so. To
-include row B, build the cache first with one real inventory run
-(`uv run axial names build`) and re-run this script; it will pick the cache
-up. Either way, the report states which rows are in the number.
+**Row B is not in this measurement, and not in the change.** Cutting a
+surface because of the section it was seen in needs a judgment about what a
+heading means; it was built, measured twice against the live corpus and
+withdrawn (whole-batch contamination: front-matter labels ran 0.0%, 1.6%,
+15.8%, 3.5%, 2.5%, 3.5% across six batches, taking chapter titles of the
+argument with them). It has its own issue. The nine rows below are what
+this PR ships.
 
 Run it from the orchestrator's main checkout, where `data/` actually
 exists (it does not exist inside a worktree):
@@ -51,7 +52,6 @@ sys.path.insert(0, str(_WORKTREE_ROOT / "src"))
 
 from axial.interrogate import _default_answers_dir  # noqa: E402
 from axial.materialize import load_inventory, member_chunk_ids_for_node  # noqa: E402
-from axial.name_sections import BACK_MATTER_CLASSES, load_section_classes  # noqa: E402
 from axial.names import (  # noqa: E402
     build_inventory,
     carries_author_year_citation,
@@ -118,25 +118,8 @@ def main() -> None:
     )
 
     # --- after: this branch's own inventory over the same answer records ----
-    section_classes = load_section_classes(NAMES_DIR / "section_classes.json")
-    back_matter = {
-        heading for heading, label in section_classes.items() if label in BACK_MATTER_CLASSES
-    }
-    row_b_measured = bool(section_classes)
-    # The class breakdown is what caught the first run's defect: 11 endnote
-    # headings and 15 pieces of argument prose had landed in `front matter`.
-    # Every cut heading goes into the report verbatim so the next reader can
-    # check the label set by eye rather than by re-deriving it.
-    class_counts = Counter(section_classes.values())
-    headings_by_class: dict[str, list[str]] = {}
-    for heading, label in sorted(section_classes.items()):
-        if label != "body":
-            headings_by_class.setdefault(label, []).append(heading)
-
     records = load_answer_records(answers_dir)
-    entries_after = build_inventory(
-        collect_occurrences(records, is_back_matter_section=back_matter.__contains__)
-    )
+    entries_after = build_inventory(collect_occurrences(records))
     surfaces_after = {entry.surface_form for entry in entries_after}
     inventory_after = {
         entry.surface_form: {"chunk_ids": list(entry.chunk_ids)} for entry in entries_after
@@ -156,7 +139,7 @@ def main() -> None:
                 row_counts[row] += 1
                 matched = True
         if not matched:
-            row_counts["A/B citation channel or back-matter section"] += 1
+            row_counts["A citation channel"] += 1
 
     # --- pages: which of the live layer's own nodes survive -----------------
     removed_pages = 0
@@ -199,11 +182,7 @@ def main() -> None:
     report: dict[str, Any] = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "answers_dir": str(answers_dir.resolve()),
-        "row_b_measured": row_b_measured,
-        "distinct_section_headings_classified": len(section_classes),
-        "back_matter_headings": len(back_matter),
-        "heading_class_counts": dict(class_counts.most_common()),
-        "non_body_headings_by_class": headings_by_class,
+        "rows_measured": "A, C, D, E, F, G, H, P, S (row B is re-scoped out)",
         "surfaces_before": len(surfaces_before),
         "surfaces_after": len(surfaces_after),
         "surfaces_dropped": len(dropped),
@@ -237,22 +216,7 @@ def main() -> None:
 
     print("issue #508 -- the cut set, measured over the live name layer")
     print("-" * 78)
-    if not row_b_measured:
-        print(
-            "NOTE: data/names/section_classes.json is absent, so ROW B IS NOT IN THESE\n"
-            "      NUMBERS. Nine of the ten rows are. Run `uv run axial names build` once\n"
-            "      to pay for the heading classification, then re-run this script.\n"
-        )
-    else:
-        print(
-            f"row B included: {len(section_classes)} distinct heading(s) classified, "
-            f"{len(back_matter)} back matter"
-        )
-        print(
-            "  by class: "
-            + ", ".join(f"{label}={count}" for label, count in class_counts.most_common())
-        )
-        print("  (every non-body heading is listed verbatim in the JSON report)\n")
+    print("rows A, C, D, E, F, G, H, P and S. Row B is re-scoped out of this change.\n")
     for label, key in [
         ("surfaces before", "surfaces_before"),
         ("surfaces after", "surfaces_after"),
