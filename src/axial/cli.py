@@ -1606,15 +1606,20 @@ def _brief_interrogate(brief_path: str) -> int:
 
     path = persist_interrogation(brief, result)
 
-    print(f"brief_id: {brief.brief_id}")
-    print(f"disposition: {result.disposition}")
+    # Emitted as one encoding-safe block: the premise, bound and refusal lines
+    # are model prose that echoes the brief's own names, so a diacritic in one
+    # would kill the command on a narrow stdout codec after the interrogation
+    # call was already paid for. Byte-for-byte the same report as the per-line
+    # prints it replaces.
+    lines = [f"brief_id: {brief.brief_id}", f"disposition: {result.disposition}"]
     for premise in result.premises_found:
-        print(f"  premise ({premise.assessment}): {premise.premise}")
+        lines.append(f"  premise ({premise.assessment}): {premise.premise}")
     for bound in result.bounds_applied:
-        print(f"  bound: {bound}")
+        lines.append(f"  bound: {bound}")
     if result.refusal is not None:
-        print(f"refusal: {result.refusal['reason']}")
-    print(f"persisted: {path}")
+        lines.append(f"refusal: {result.refusal['reason']}")
+    lines.append(f"persisted: {path}")
+    _print_encoding_safe("\n".join(lines))
     # §7.2: a `refuse` disposition is a completed, valid run -- exit 0 on
     # every disposition, never just the non-refusing ones.
     return 0
@@ -1634,7 +1639,14 @@ def _brief_examine(brief_path: str) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    print(format_brief_examine_report(brief, result))
+    # `_print_encoding_safe`, never a bare `print` (issue #489): the report
+    # now carries corpus prose -- each note's own `claim` -- and a real
+    # `brief examine` run against the live corpus crashed with
+    # `UnicodeEncodeError` on a transliterated Arabic ayn (U+02BF) once stdout
+    # was redirected and picked up Windows' cp1252, after every retrieval call
+    # had already been paid for. Same class as `chunk examine` (#153 fix) and
+    # `names examine`; same one-line remedy.
+    _print_encoding_safe(format_brief_examine_report(brief, result))
     # P0-9 inspect-before-spend: examine makes no stage-4 synthesis call, so
     # a `refuse` disposition -- like every other disposition -- is a
     # completed run, exit 0 (mirrors `_brief_interrogate`'s own §7.2 rule).
@@ -1703,15 +1715,26 @@ def _brief_validate(brief_id: str) -> int:
     # `explode` provider.
     coverage_report = validate_coverage_and_confidence(record)
 
-    print(f"brief_id: {brief_id}")
-    print(format_attribution_report(attribution_report))
-    print(format_counter_position_report(counter_position_report))
-    print(format_coverage_confidence_report(coverage_report))
-    # Prints the record's own persisted coverage_map alongside the gate's
-    # verdict (§7.7: "a band is never rendered instead of the counts that
-    # justify it") -- the same rendering `_brief_coverage` uses for its
-    # freshly-computed map, reused here over the record's AS-PERSISTED one.
-    print(format_coverage_map(record.get("coverage_map") or {}))
+    # One encoding-safe block, byte-identical to the per-line prints it
+    # replaces. Every part of it can carry non-cp1252 text: a counter-position
+    # stance and one_sided_reason are model prose, and the coverage map is
+    # keyed by the names the claims touch -- the live index holds
+    # `Uğur Ümit Üngör`. The last part is the record's own persisted
+    # coverage_map alongside the gate's verdict (§7.7: "a band is never
+    # rendered instead of the counts that justify it") -- the same rendering
+    # `_brief_coverage` uses for its freshly-computed map, reused here over
+    # the record's AS-PERSISTED one.
+    _print_encoding_safe(
+        "\n".join(
+            [
+                f"brief_id: {brief_id}",
+                format_attribution_report(attribution_report),
+                format_counter_position_report(counter_position_report),
+                format_coverage_confidence_report(coverage_report),
+                format_coverage_map(record.get("coverage_map") or {}),
+            ]
+        )
+    )
     # A failure blocks release (§7.9): no answer is emitted on a non-zero
     # exit, and this command never writes to the record either way -- every
     # validator here only ever reports (README.md: "it never edits the
@@ -1734,8 +1757,9 @@ def _brief_coverage(brief_id: str) -> int:
     claims = record.get("claims") or []
     coverage_map = compute_coverage_map(claims)
 
-    print(f"brief_id: {brief_id}")
-    print(format_coverage_map(coverage_map))
+    # Encoding-safe for the same reason as `brief validate`'s copy: the map is
+    # keyed by the names a claim touches.
+    _print_encoding_safe("\n".join([f"brief_id: {brief_id}", format_coverage_map(coverage_map)]))
     return 0
 
 
@@ -1743,7 +1767,9 @@ def _brief_usage(pin: str | None) -> int:
     analyses_dir = default_analyses_dir()
     records, unreadable_count = load_analysis_records(analyses_dir)
     report = build_usage_report(records, pin=pin, unreadable_count=unreadable_count)
-    print(format_usage_report(report))
+    # Encoding-safe: the per-filter rows are labelled with the tool args a run
+    # actually queried, which under the name tool set are canonical names.
+    _print_encoding_safe(format_usage_report(report))
     # P0-13: the report gates nothing -- no ratio value drives the exit
     # code, mirroring `chunk examine`'s own inspect-before-spend contract.
     return 0
@@ -1756,7 +1782,9 @@ def _brief_sweep(worklist_path: str, draws: int, sweep_dir: str, workers: int) -
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    print(format_sweep_summary(summary))
+    # Encoding-safe: a draw's failure reason quotes the underlying error, which
+    # can carry model or corpus text.
+    _print_encoding_safe(format_sweep_summary(summary))
     # Every declared per-(brief, draw) failure is already isolated and
     # recorded (issue #368) -- a sweep that ran to completion with some
     # FAILed draws is still a successful invocation of the loop itself,
