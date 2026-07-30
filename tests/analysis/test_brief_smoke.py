@@ -60,7 +60,10 @@ STUB_INTERROGATE_RESPONSE_ENV_VAR = "AXIAL_STUB_INTERROGATE_RESPONSE"
 TILLY = "Charles Tilly"
 TILLY_CHUNK = "tilly-1978_001_intro_001"
 
-EXPECTED_SMOKE_BRIEFS = ("P2-02", "P3-01", "P3-04", "P4-03", "P4-04")
+# The set was rebuilt 2026-07-30 (§9.0): five Syria briefs out, five
+# measured-anchor briefs in, P3-04 retained as the one hub anchor §7.13's
+# denominator inspection needs.
+EXPECTED_SMOKE_BRIEFS = ("P3-04", "S-01", "S-02", "S-03", "S-04", "S-05")
 
 
 def _write_chunk(root: Path) -> None:

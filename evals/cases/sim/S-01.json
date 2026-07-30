@@ -1,0 +1,34 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "GPT-5.6 Pro",
+    "persona": "smoke-v2",
+    "reasoning_mode_confirmed": "reasoning",
+    "date": "2026-07-30",
+    "path_version": "sim-v1"
+  },
+  "case_id": "S-01",
+  "question": "Does Michael Mann's distinction between infrastructural and despotic power overturn Charles Tilly's war-centred account of European nation-state formation, or merely specify its mechanisms?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "hall-2006-449559bfe4dc",
+    "mann-v2-1993-ec759675dcbd",
+    "tilly-1978-f908c910464c",
+    "malesevic-2010-fd2cbe41384f",
+    "malesevic-2013-5d3ec1809b12"
+  ],
+  "rubric": [
+    "distinguishes Mann's infrastructural and despotic power from Tilly's war-centred account rather than treating the vocabularies as interchangeable",
+    "identifies at least one genuine causal disagreement and at least one plausible point of complementarity between the two scholars",
+    "uses attributed evidence from several books, including works that interpret or criticize Mann and Tilly rather than relying only on an originating text",
+    "tests the competing accounts against European nation-state formation within the stated historical period"
+  ],
+  "instant_dismissal_criteria": [
+    "collapses infrastructural power into despotic power",
+    "describes Mann and Tilly as holding the same position without identifying a contested mechanism",
+    "grounds the answer in only one book or presents unattributed synthesis",
+    "discusses war in general without connecting it to nation-state formation"
+  ],
+  "notes": "The central disagreement concerns whether coercive competition and mobilization provide the primary explanatory sequence, or whether distinct organizational networks and capacities must be analyzed on their own terms. A strong answer may find complementarity, but only after establishing the real difference. Citation ids derived from the live index 2026-07-30: the four anchors (Michael Mann, Charles Tilly, Infrastructural power, despotic power) are carried most heavily by hall-2006 (224 notes), then malesevic-2010, mann-v2-1993, malesevic-2013."
+}

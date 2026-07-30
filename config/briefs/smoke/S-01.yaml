@@ -1,0 +1,9 @@
+# origin: simulated
+# model: GPT-5.6 Pro
+# persona: smoke-v2
+# reasoning_mode_confirmed: reasoning
+# date: 2026-07-30
+# path_version: sim-v1
+# shape: scholar against scholar, densely covered
+case: "Comparative: European nation-state formation, 1760-1914"
+request: "Does Michael Mann's distinction between infrastructural and despotic power overturn Charles Tilly's war-centred account of European nation-state formation, or merely specify its mechanisms?"

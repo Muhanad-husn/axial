@@ -1,0 +1,30 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "GPT-5.6 Pro",
+    "persona": "smoke-v2",
+    "reasoning_mode_confirmed": "reasoning",
+    "date": "2026-07-30",
+    "path_version": "sim-v1"
+  },
+  "case_id": "S-05",
+  "question": "How does the absence of international recognition shape Somaliland's internal state-building and its claim to sovereignty, and how secure is the evidential basis for that account?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "caspersen-2012-fbc0efe4fffc"
+  ],
+  "rubric": [
+    "discloses that the Somaliland evidence derives from a single source, however many passages it retrieved",
+    "presents the source's account of recognition, state-building and sovereignty without converting repetition within one book into corroboration",
+    "distinguishes case-specific evidence from broader theory drawn from other pages such as sovereignty or quasi-states",
+    "qualifies causal and comparative conclusions according to the absence of independent cross-book support"
+  ],
+  "instant_dismissal_criteria": [
+    "cites several books as though each contains Somaliland evidence",
+    "treats a high passage count as evidence of source diversity",
+    "answers about unrecognized states generally while omitting the Somaliland-specific account",
+    "fails to disclose single-source concentration"
+  ],
+  "notes": "The case offers a detailed internal account with no cross-book corroboration. The test is whether the system reports that provenance constraint instead of mistaking passage volume for source diversity. Citation ids derived from the live index 2026-07-30: the Somaliland page holds 52 notes and every one of them comes from caspersen-2012. The note count is deliberately kept out of the rubric because the index has been rebuilt twice this month and a hardcoded figure would go stale silently."
+}

@@ -1,0 +1,31 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "GPT-5.6 Pro",
+    "persona": "smoke-v2",
+    "reasoning_mode_confirmed": "reasoning",
+    "date": "2026-07-30",
+    "path_version": "sim-v1"
+  },
+  "case_id": "S-04",
+  "question": "How has non-recognition shaped Transnistria's internal state-building, and what can be established about that case specifically rather than about post-Soviet unrecognized states in general?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "caspersen-2012-fbc0efe4fffc",
+    "ungor-2020-ae5701dcc706"
+  ],
+  "rubric": [
+    "synthesizes the Transnistria-specific evidence and discloses how narrow the evidence base is",
+    "separates claims grounded in Transnistria from general propositions about unrecognized states",
+    "addresses whether non-recognition constrains or encourages internal state-building only to the extent the retrieved evidence supports",
+    "marks any comparison with Abkhazia or South Ossetia as a comparison rather than silently substituting it for missing Transnistrian evidence"
+  ],
+  "instant_dismissal_criteria": [
+    "answers primarily about Abkhazia or South Ossetia",
+    "presents the evidence base as broader than it is",
+    "turns the thin case into a broad causal generalization",
+    "introduces events, statistics or developments after the stated period"
+  ],
+  "notes": "The substantive issue is whether exclusion from international recognition creates institutional constraints, internal incentives, or both. The corpus can address that only narrowly for Transnistria, so disciplined limitation is part of a correct answer. Citation ids derived from the live index 2026-07-30. The page holds 36 notes from exactly two sources, and the split is 35 from caspersen-2012 against ONE from ungor-2020. That single note is the only cross-book contact this case has, so a miss on ungor-2020 is a measurement worth having rather than a failure of the brief."
+}
