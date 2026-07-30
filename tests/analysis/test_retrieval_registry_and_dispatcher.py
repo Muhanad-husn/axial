@@ -30,9 +30,9 @@ prove the dispatcher's `int_args` wiring actually rejects/accepts `limit` on
 all three.
 
 Issue #505's own follow-up: `coverage_count` is REMOVED from the registry
-entirely (a deliberate contract change, not an oversight -- a paid corpus
-run scripted the model calling it and it returned all 49,674 canonicals in
-one result, holding the prompt over a million characters for 14 turns). The
+entirely (a deliberate contract change, not an oversight -- on a paid corpus run a real
+provider's model chose to call it unprompted and it returned all 49,674
+canonicals in one result, holding the prompt over a million characters for 14 turns). The
 function itself is untouched; only its tool-facing registration is gone.
 `EXPECTED_TOOL_NAMES`/`NAME_VALUED_TOOLS` below and every assertion that
 counted it are updated accordingly, and a new test proves it is absent from
@@ -130,8 +130,8 @@ def test_limit_is_the_one_declared_int_arg_in_the_whole_tool_set():
 def test_coverage_count_is_not_a_registered_tool():
     """Issue #505's own follow-up: `coverage_count` is de-registered, the
     mirror of D1/D5 (struck for returning nothing useful) -- this one is
-    struck for returning far too much. A paid corpus run scripted the model
-    calling it and it returned all 49,674 canonicals in one result, holding
+    struck for returning far too much. On a paid corpus run a real provider's model
+    chose to call it unprompted and it returned all 49,674 canonicals, holding
     the prompt over a million characters for 14 turns. Absent from both the
     registry the dispatcher validates against and the schema a real
     provider's model would see."""

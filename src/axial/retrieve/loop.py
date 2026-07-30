@@ -25,8 +25,9 @@ stage 4 treats as citable grounds. The §7.6 trajectory itself is untouched
 kind those ids are.
 
 `coverage_count` is not in `TOOL_REGISTRY` at all (issue #505's own
-follow-up: a scripted call flooded a real corpus run's prompt past a
-million characters by returning all 49,674 canonicals in one result), so
+follow-up: a real corpus run's own model chose to call it and flooded that
+run's prompt past a million characters by returning all 49,674 canonicals
+in one result), so
 it never reaches this loop or `assemble_evidence_ids` either -- there is no
 tool name for either to skip or collect.
 

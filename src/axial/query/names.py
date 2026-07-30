@@ -1141,8 +1141,8 @@ def coverage_count(*, vault_dir: Path | None = None) -> dict[str, int]:
     **Deliberately NOT a model-facing retrieval tool (issue #505's own
     follow-up).** It stays a query-API function, called only from
     `axial.validators.coverage` (§7.7's coverage map, deterministic, zero
-    model calls). A paid corpus run scripted the model calling it as a
-    retrieval tool and got all 49,674 canonicals back in one result, holding
+    model calls). On a paid corpus run a real provider's model chose
+    to call it unprompted and got all 49,674 canonicals back in one result, holding
     the prompt at over a million characters for 14 turns -- the same whole-
     index-dump hazard §7.2 already ruled out for the interrogation pre-pass.
     Do not re-register this in `axial.retrieve.tools.TOOL_REGISTRY`."""

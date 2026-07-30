@@ -16,8 +16,9 @@ every call against the v1 vault. The name-layer tools that replace them --
 
 **`coverage_count` is NOT registered here (issue #505's own follow-up).**
 It is the mirror case of D1/D5: not de-registered for returning nothing
-useful, but for returning far too much. A paid corpus run scripted the
-model calling it and got all 49,674 canonical names back in one result,
+useful, but for returning far too much. On a paid corpus run a real
+provider's model chose to call it unprompted -- nothing scripted the call --
+and got all 49,674 canonical names back in one result,
 jumping the prompt from 3,862 to 1,204,509 characters (350,923 prompt
 tokens) and holding it there for 14 turns -- 4,947,176 prompt tokens for
 that run alone, thirteen times the flood #505 itself fixed. §7.2 already
