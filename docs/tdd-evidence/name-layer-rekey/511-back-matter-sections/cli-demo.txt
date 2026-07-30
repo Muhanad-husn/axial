@@ -1,0 +1,87 @@
+axial.names resolved from: D:\axial\.claude\worktrees\511-back-matter-sections\src\axial\names.py
+issue #511 row B -- the back-matter boundary, measured over the live name layer
+----------------------------------------------------------------------------------
+surfaces before                                    61612
+surfaces after                                     53502
+surfaces dropped                                    8110
+notes in cut sections                                234
+notes total                                         6166
+sources with a boundary                               31
+sources total                                         31
+index before (pages)                               49674
+index after (pages)                                44382
+pages removed entirely                              5292
+pages losing members (Gather re-key)                2539
+pages untouched (Gather reuse)                     41843
+pages at 10+ member notes before                    1824
+  of those, removed entirely                           2
+  of those, still at 10+                            1631
+  of those, fell below 10                            191
+  of those, member set changed (re-decide)           946
+surfaces dropped, share                            13.2%
+notes cut, share                                    3.8%
+index change                                      -10.7%
+
+per source (31), by surfaces lost corpus-wide:
+  source                              cut  surfaces   lost
+  kalyvas-2006-0b5817b2642e            11      3550   2744
+  tilly-1978-f908c910464c              10      1772   1243
+  beshara-2011-8410a9059300            10      1564    866
+  heydemann-2004-72a4a9a9b3b0          11      1327    575
+  batatu-1999-598624067df3             10       857    548
+  white-2011-5f35a47d9657              12       900    493
+  vignal-2021-c7005c2bf8ef             13       756    481
+  zaum-2007-834d3343aa95               11      1008    397
+  chouliaraki-2024-91e7fc84f05c        33      1341    322
+  wimmer-2013-a67941b77943              4       427    302
+  agamben-2005-b22edc40e0fc             4       190    157
+  hall-2006-449559bfe4dc                7       189    109
+  gellner-1981-a8b0206cb566            25       178     90
+  kao-2025-ab19e646ab7d                22       219     71
+  heydemann-2000-66701ffbb36c           2       102     46
+  caspersen-2012-fbc0efe4fffc           3        60     41
+  bayat-2017-ce6bb0643cfb               4        70     40
+  jackson-1990-7eb3f39a639f             6        13      9
+  ungor-2020-ae5701dcc706               4        19      9
+  malesevic-2010-fd2cbe41384f           6        14      8
+  mann-v2-1993-ec759675dcbd            19        20      6
+  ayubi-1995-16fd6a2e503f               3         0      0
+  elcheroth-2017-78f0cccef5b9           2         0      0
+  kandiah-2018-454c87b22e16             1         0      0
+  malesevic-2007-323a2518e61b           3         0      0
+  malesevic-2013-5d3ec1809b12          31         0      0
+  malesevic-2026-4faeb528594d           1         0      0
+  mann-v1-2012-5f90ead66c93             3         0      0
+  mann-v3-2012-3e9f48ff605a             2         0      0
+  mann-v4-2013-1b7e828e0199            10         0      0
+  smith-2009-cba7b6f3dfba               5         0      0
+
+the 191 pages that fall below Gather's floor of 10 (top 25):
+    36 -> 8    'Yale University Press'
+    29 -> 8    'The American Political Science Review'
+    25 -> 6    'I.B. Tauris'
+    25 -> 7    'Penguin Books'
+    24 -> 7    'Basil Blackwell'
+    24 -> 5    'New Haven'
+    23 -> 9    'Clarendon Press'
+    22 -> 8    'Westview Press'
+    20 -> 9    'Middle Eastern Studies'
+    19 -> 8    'Ithaca, NY'
+    19 -> 8    'Sage'
+    19 -> 3    "St. Martin's Press"
+    18 -> 7    'American Journal of Sociology'
+    18 -> 8    'Baltimore'
+    18 -> 5    'Brill'
+    18 -> 7    'Journal of Peace Research'
+    18 -> 7    'Nadine Méouchy'
+    17 -> 3    'American Sociological Review'
+    17 -> 3    'Harper & Row'
+    17 -> 8    'University of Michigan'
+    17 -> 6    'Verso'
+    16 -> 5    'Duke University Press'
+    16 -> 8    'Gershoni'
+    16 -> 5    'Ithaca'
+    16 -> 8    'Johns Hopkins University Press'
+
+wrote D:\axial\data\logs\2026-07-30-validate-511\report.json
+wrote D:\axial\data\logs\2026-07-30-validate-511\cut_sections.txt
