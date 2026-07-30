@@ -87,6 +87,7 @@ import yaml
 
 from axial.answer.record import persist_record
 from axial.answer.source_usage import compute_source_usage
+from axial.retrieve.loop import assemble_evidence_ids
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURE_BRIEF_PATH = REPO_ROOT / "config" / "briefs" / "dev" / "fixture-source-usage.yaml"
@@ -229,10 +230,34 @@ def _grounded_claim(text: str, kind: str, chunk_ids: list[str]) -> dict[str, Any
 TILLY_CHUNK_IDS = sorted(f"tilly_0_intro_{i:03d}" for i in range(TILLY_COUNT))
 OTHER_CHUNK_IDS = sorted(f"other_0_intro_{i:03d}" for i in range(OTHER_COUNT))
 
-# The evidence set's own order for scenario 1's two scripted calls:
+# The evidence set's own order for scenario 1's two scripted calls --
 # `query_by_source("tilly")` then `query_by_source("other")`, each sorted by
-# chunk_id (§7.5's determinism contract), deduped first-seen.
-_EVIDENCE_ORDER = TILLY_CHUNK_IDS + OTHER_CHUNK_IDS
+# chunk_id (§7.5's determinism contract) -- run through the REAL
+# `assemble_evidence_ids` (issue #517 slice 2: dedup first-seen, then
+# reordered source round-robin) rather than hand-concatenated, so this
+# fixture cannot drift out of sync with the production function again the
+# way a literal `TILLY_CHUNK_IDS + OTHER_CHUNK_IDS` silently did. With two
+# sources this interleaves: `other`'s chunk_id sorts before `tilly`'s, so
+# the assembled order is other[0], tilly[0], other[1], tilly[1], ..., then
+# (once the 22-chunk tilly group is exhausted) the rest of `other` alone.
+_EVIDENCE_ORDER = assemble_evidence_ids(
+    [
+        {
+            "step": 1,
+            "tool": "query_by_source",
+            "args": {"source_id": "tilly"},
+            "result_ids": TILLY_CHUNK_IDS,
+            "result_count": len(TILLY_CHUNK_IDS),
+        },
+        {
+            "step": 2,
+            "tool": "query_by_source",
+            "args": {"source_id": "other"},
+            "result_ids": OTHER_CHUNK_IDS,
+            "result_count": len(OTHER_CHUNK_IDS),
+        },
+    ]
+)
 
 
 def _handle_for_fixture_chunk(chunk_id: str) -> str:

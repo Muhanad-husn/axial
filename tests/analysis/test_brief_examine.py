@@ -194,10 +194,12 @@ def _read_recorded_prompts(record_path: Path) -> list[str]:
 def test_examine_reports_evidence_coverage_and_interrogation_writes_nothing(
     fixture_root: Path,
 ):
-    """Scenario 1 (issue #255): the retrieved chunk_ids print in retrieval
-    order, the per-polity raw coverage counts are reported (corpus vs.
-    evidence), the interrogation result's disposition/premises_found/
-    bounds_applied are reported, and data/analyses/ stays untouched."""
+    """Scenario 1 (issue #255): the retrieved chunk_ids print in
+    `assemble_evidence_ids`' own source-round-robin order (issue #517 slice
+    2 moved this from plain retrieval order), the per-polity raw coverage
+    counts are reported (corpus vs. evidence), the interrogation result's
+    disposition/premises_found/bounds_applied are reported, and
+    data/analyses/ stays untouched."""
     record_path = fixture_root / "record.jsonl"
     stub_interrogate_response = {
         "premises_found": [
@@ -211,9 +213,15 @@ def test_examine_reports_evidence_coverage_and_interrogation_writes_nothing(
         ],
         "refusal": None,
     }
-    # get_chunk calls returned in a deliberately non-alphabetical order --
-    # B then A then Iraq -- so "retrieval order" is a real, checkable claim,
-    # not an accidental sort. asfix/exfix_003 (Syria C) is never called.
+    # get_chunk calls made in a deliberately non-alphabetical order -- B
+    # then A then Iraq -- so the round-robin assembly's own reordering
+    # (issue #517 slice 2) is a real, checkable claim, not an accidental
+    # sort. IRAQ_A's chunk_id ("exfix_004_iraq") does not match the
+    # <source_id>_<order>_<slug>_<NNN> shape, so `assemble_evidence_ids`
+    # groups it under its own "" source bucket, which sorts before "exfix"
+    # and moves it to the head of the assembled list -- even though it was
+    # the last of the three called. asfix/exfix_003 (Syria C) is never
+    # called.
     stub_tool_calls = [
         {"tool": "get_chunk", "args": {"chunk_id": SYRIA_B}},
         {"tool": "get_chunk", "args": {"chunk_id": SYRIA_A}},
@@ -243,16 +251,25 @@ def test_examine_reports_evidence_coverage_and_interrogation_writes_nothing(
         in stdout
     )
 
-    # The retrieved chunk_ids, in exact retrieval order, each with its own
-    # one-sentence `claim` answer.
+    # The retrieved chunk_ids, in `assemble_evidence_ids`' source-round-robin
+    # order (issue #517 slice 2), each with its own one-sentence `claim`
+    # answer.
     retrieved_index = stdout.index("retrieved chunk_ids")
     names_index = stdout.index("names in the assembled evidence")
     retrieved_block = stdout[retrieved_index:names_index]
-    assert (
-        retrieved_block.index(SYRIA_B)
-        < retrieved_block.index(SYRIA_A)
-        < retrieved_block.index(IRAQ_A)
-    ), f"expected chunk_ids in retrieval order (B, A, Iraq) in:\n{retrieved_block!r}"
+    # Assert the ROTATION, not a bare literal triple, so the order is
+    # checkable against the rule that produces it rather than pinned as an
+    # opaque fact: IRAQ_A is the sole member of its own "" source group, so
+    # it moves to the head ahead of both Syria ids despite being called
+    # last; SYRIA_B and SYRIA_A share the "exfix" group, so their own
+    # first-seen (call) order survives untouched inside it.
+    assert retrieved_block.index(IRAQ_A) < retrieved_block.index(SYRIA_B), (
+        f"IRAQ_A's own single-member source group sorts before exfix's, got:\n{retrieved_block!r}"
+    )
+    assert retrieved_block.index(SYRIA_B) < retrieved_block.index(SYRIA_A), (
+        f"within one source, first-seen (call) order survives the round-robin, "
+        f"got:\n{retrieved_block!r}"
+    )
     assert SYRIA_C not in retrieved_block, (
         f"chunk {SYRIA_C!r} was never retrieved and must not appear, got:\n{retrieved_block!r}"
     )
