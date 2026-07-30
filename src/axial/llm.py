@@ -396,7 +396,6 @@ GATHER_PASS_NAME = "gather"
 # §2, same self-grading guard as GROUNDING_PASS_NAME).
 GATHER_EVAL_PASS_NAME = "gather_eval"
 
-
 # Per-pass model reasoning (§7.9, issue #207): reasoning is ON for the
 # structural-envelope pass and the content-apparatus classification gate --
 # both small, judgment-heavy, once/rarely-per-source calls -- and OFF
@@ -596,7 +595,6 @@ STUB_RECONCILE_RESPONSE_ENV_VAR = "AXIAL_STUB_RECONCILE_RESPONSE"
 # carried, so an unscripted stub run writes a fixed placeholder statement
 # with no links. Never affects any other pass.
 STUB_GATHER_RESPONSE_ENV_VAR = "AXIAL_STUB_GATHER_RESPONSE"
-
 
 # Issue #256 test/CI-only seam: mirrors STUB_INTERROGATE_RESPONSE_ENV_VAR
 # above, exactly, for the stage-4 synthesis pass instead of the interrogate
