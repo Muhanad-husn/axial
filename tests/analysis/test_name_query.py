@@ -624,8 +624,8 @@ def test_get_name_returns_the_pages_own_members_in_the_pages_own_order(
 ):
     from axial.query import get_chunk, get_name
 
-    vault_dir, _names_dir = fixture_layer
-    page = get_name(TILLY, vault_dir=vault_dir)
+    vault_dir, names_dir = fixture_layer
+    page = get_name(TILLY, vault_dir=vault_dir, names_dir=names_dir)
 
     assert page.canonical == TILLY
     assert page.kind == "person"
@@ -654,16 +654,16 @@ def test_get_name_disagreement_present_is_distinguishable_from_absent(
 ):
     from axial.query import get_name
 
-    vault_dir, _names_dir = fixture_layer
+    vault_dir, names_dir = fixture_layer
 
-    with_finding = get_name(TILLY, vault_dir=vault_dir)
+    with_finding = get_name(TILLY, vault_dir=vault_dir, names_dir=names_dir)
     assert with_finding.disagreement is not None
     assert with_finding.disagreement.text == TILLY_DISAGREEMENT
     assert with_finding.disagreement.names == [AGAMBEN, BELLICIST], (
         "the `Runs between:` wikilinks are the disagreement's own names[]"
     )
 
-    without_finding = get_name(AGAMBEN, vault_dir=vault_dir)
+    without_finding = get_name(AGAMBEN, vault_dir=vault_dir, names_dir=names_dir)
     assert without_finding.disagreement is None, (
         "a null finding writes no section at all, and `None` is how that is "
         "reported -- never an empty-string text that reads like a finding"
@@ -679,10 +679,13 @@ def test_get_name_finds_a_page_whose_filename_was_budgeted_down(
     fact). The `name` frontmatter is the sole authoritative id."""
     from axial.query import get_name
 
-    vault_dir, _names_dir = fixture_layer
+    vault_dir, names_dir = fixture_layer
 
-    assert get_name(FOLD_HYPHENATED, vault_dir=vault_dir).canonical == FOLD_HYPHENATED
-    page = get_name(BUDGETED_NAME, vault_dir=vault_dir)
+    assert (
+        get_name(FOLD_HYPHENATED, vault_dir=vault_dir, names_dir=names_dir).canonical
+        == FOLD_HYPHENATED
+    )
+    page = get_name(BUDGETED_NAME, vault_dir=vault_dir, names_dir=names_dir)
     assert page.canonical == BUDGETED_NAME, (
         "resolving by the un-suffixed filename would return the OTHER page, "
         "whose `name` frontmatter says a different canonical"
@@ -693,9 +696,9 @@ def test_get_name_finds_a_page_whose_filename_was_budgeted_down(
 def test_get_name_on_an_unknown_canonical_raises_naming_it(fixture_layer: tuple[Path, Path]):
     from axial.query import get_name
 
-    vault_dir, _names_dir = fixture_layer
+    vault_dir, names_dir = fixture_layer
     with pytest.raises(Exception) as exc_info:
-        get_name(UNHELD_QUERY, vault_dir=vault_dir)
+        get_name(UNHELD_QUERY, vault_dir=vault_dir, names_dir=names_dir)
 
     assert UNHELD_QUERY in str(exc_info.value)
 
@@ -709,15 +712,15 @@ def test_get_name_truncates_members_at_limit_but_member_count_stays_the_true_tot
     of the page's own written order, and `member_count` is unaffected."""
     from axial.query import get_name
 
-    vault_dir, _names_dir = fixture_layer
+    vault_dir, names_dir = fixture_layer
 
-    uncapped = get_name(TILLY, 10, vault_dir=vault_dir)
-    capped = get_name(TILLY, 1, vault_dir=vault_dir)
+    uncapped = get_name(TILLY, 10, vault_dir=vault_dir, names_dir=names_dir)
+    capped = get_name(TILLY, 1, vault_dir=vault_dir, names_dir=names_dir)
 
     assert [m.chunk_id for m in capped.members] == [uncapped.members[0].chunk_id]
     assert capped.member_count == uncapped.member_count == 2
 
-    default = get_name(TILLY, vault_dir=vault_dir)
+    default = get_name(TILLY, vault_dir=vault_dir, names_dir=names_dir)
     assert len(default.members) == 2, "DEFAULT_LIMIT (10) does not truncate a 2-member page"
 
 
@@ -1066,7 +1069,7 @@ def test_the_full_name_tool_set_runs_with_no_llm_client_and_no_encoder(
     assert find_names(
         "Agamben", 10, names_dir=names_dir, vault_dir=vault_dir, encoder=_exploding_encoder
     )
-    assert get_name(AGAMBEN, vault_dir=vault_dir).canonical == AGAMBEN
+    assert get_name(AGAMBEN, vault_dir=vault_dir, names_dir=names_dir).canonical == AGAMBEN
     assert name_neighbors(AGAMBEN, 10, vault_dir=vault_dir, names_dir=names_dir)
     citation_edges, citation_total = who_cites(AGAMBEN, vault_dir=vault_dir, names_dir=names_dir)
     assert citation_edges and citation_total
