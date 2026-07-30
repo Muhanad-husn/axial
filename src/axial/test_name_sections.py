@@ -14,6 +14,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from axial.name_sections import (
     BODY_CLASS,
     DEFAULT_SECTION_CLASSES_PATH,
@@ -89,13 +91,125 @@ def test_endnotes_are_not_back_matter_and_survive_the_glyph_spacing(tmp_path: Pa
     assert "letter" in prompt.lower() or "glyph" in prompt.lower()
 
 
-def test_back_matter_sections_returns_only_the_four_cut_classes(tmp_path: Path):
+# --- the first live run's two failure modes, pinned --------------------------
+#
+# The classifier's first pass over the real 2,813 headings offered four
+# back-matter labels and `body`, and put 11 endnote headings and 15 pieces of
+# argument prose into `front matter`. Both are cuts, and both are wrong.
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "NOTES",
+        "Notes",
+        "Notes:",
+        "N O T E S",
+        "NOTES TO PAGES 85-93",
+        "Notes to p. 190",
+        "Notes to pages 13-22",
+        "Notes to pages 162- 70",
+        "Notes on Fiscal Change in Syria: The Importance of Middle-Range Policies",
+    ],
+)
+def test_an_endnote_heading_the_model_labels_endnotes_is_never_cut(tmp_path: Path, heading: str):
+    """`endnotes` is a label the model may answer with, and answering it
+    keeps the heading. The last case is a real chapter title that merely
+    starts with the word, and it survives either way."""
+    client = _FakeClient({heading: "endnotes"})
+
+    cut = back_matter_sections(
+        [heading], client=client, classes_path=tmp_path / "section_classes.json"
+    )
+
+    assert cut == frozenset()
+
+
+def test_the_endnotes_label_is_recorded_rather_than_flattened_onto_body(tmp_path: Path):
+    """The cache says `endnotes`, not `body`, so an operator can count what
+    the classification actually found without re-asking."""
+    classes = classify_sections(
+        ["NOTES", "Chapter One"],
+        client=_FakeClient({"NOTES": "endnotes"}),
+        classes_path=tmp_path / "section_classes.json",
+    )
+
+    assert classes == {"NOTES": "endnotes", "Chapter One": BODY_CLASS}
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "CONCLUSION",
+        "Epilogue",
+        "PROLOGUE",
+        "OUTLINE OF THE ARGUMENT",
+        "The Structure of the Book",
+        "WHAT YOU WILL FIND HERE",
+        "Part III",
+        "P A R T I",
+        "Civil-Military Relations",
+        "EVOLUTION, RESTORATION, OR INNOVATION?",
+    ],
+)
+def test_argument_prose_the_model_leaves_unlisted_is_never_cut(tmp_path: Path, heading: str):
+    """A conclusion is argument. The prompt names each of these as body
+    outright, so the model has no reason to reach for `front matter`."""
+    client = _FakeClient()
+
+    cut = back_matter_sections(
+        [heading], client=client, classes_path=tmp_path / "section_classes.json"
+    )
+
+    assert cut == frozenset()
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "This page intentionally left blank",
+        "Copyright",
+        "Cambridge Studies in Comparative Politics",
+        "Acknowledgements",
+        "Contents",
+    ],
+)
+def test_real_front_matter_is_still_cut(tmp_path: Path, heading: str):
+    """Tightening `front matter` must not empty it: the copyright line, the
+    series page and the dedication are what it is for."""
+    client = _FakeClient({heading: "front matter"})
+
+    cut = back_matter_sections(
+        [heading], client=client, classes_path=tmp_path / "section_classes.json"
+    )
+
+    assert cut == frozenset({heading})
+
+
+def test_the_prompt_offers_endnotes_as_a_class_and_names_the_body_cases(tmp_path: Path):
+    """The vocabulary is the fix. A prompt that only tells the model what
+    NOT to list is what produced 11 miscut endnote headings on the first
+    live run."""
+    client = _FakeClient()
+    classify_sections(
+        ["Chapter One"], client=client, classes_path=tmp_path / "section_classes.json"
+    )
+
+    prompt = client.prompts[0]
+    assert '"endnotes"' in prompt
+    for body_case in ("conclusion", "epilogue", "prologue", "part divider", "chapter"):
+        assert body_case in prompt.lower(), f"the prompt should name {body_case!r} as body"
+    assert "before the argument begins" in prompt.lower()
+
+
+def test_back_matter_sections_returns_only_the_four_cut_classes_never_endnotes(tmp_path: Path):
     client = _FakeClient(
         {
             "Bibliography": "bibliography",
             "Index": "index",
             "Acknowledgements": "front matter",
             "Appendix B": "appendix",
+            "N O T E S": "endnotes",
         }
     )
 
@@ -183,18 +297,18 @@ def test_an_index_the_batch_never_carried_is_ignored(tmp_path: Path):
     assert classes == {"Bibliography": "bibliography", "Chapter One": BODY_CLASS}
 
 
-def test_a_class_outside_the_four_is_read_as_body(tmp_path: Path):
-    """Fail open: an answer naming something that is not one of the four cut
-    classes keeps the heading, it never invents a fifth reason to cut."""
-    client = _FakeClient({"N O T E S": "endnotes", "Chapter One": "chapter"})
+def test_a_class_outside_the_five_is_read_as_body(tmp_path: Path):
+    """Fail open: an answer naming something that is not one of the five
+    classes keeps the heading, it never invents a sixth reason to cut."""
+    client = _FakeClient({"Foreword": "prelims", "Chapter One": "chapter"})
 
     classes = classify_sections(
-        ["N O T E S", "Chapter One"],
+        ["Foreword", "Chapter One"],
         client=client,
         classes_path=tmp_path / "section_classes.json",
     )
 
-    assert classes == {"N O T E S": BODY_CLASS, "Chapter One": BODY_CLASS}
+    assert classes == {"Foreword": BODY_CLASS, "Chapter One": BODY_CLASS}
 
 
 def test_headings_are_split_across_calls_to_bound_the_request(tmp_path: Path):

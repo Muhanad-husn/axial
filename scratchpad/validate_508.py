@@ -109,8 +109,10 @@ def main() -> None:
     inventory_before = load_inventory(inventory_path)
     surfaces_before = set(inventory_before)
     nodes = json.loads(alias_map_path.read_text(encoding="utf-8")).get("nodes", [])
+    # `index.json` is `{version, generated_at, names: [...]}` -- the page count
+    # is the length of `names`, never of the wrapper object.
     index_before = (
-        len(json.loads(index_path.read_text(encoding="utf-8")))
+        len(json.loads(index_path.read_text(encoding="utf-8"))["names"])
         if index_path.is_file()
         else len(nodes)
     )
@@ -121,6 +123,15 @@ def main() -> None:
         heading for heading, label in section_classes.items() if label in BACK_MATTER_CLASSES
     }
     row_b_measured = bool(section_classes)
+    # The class breakdown is what caught the first run's defect: 11 endnote
+    # headings and 15 pieces of argument prose had landed in `front matter`.
+    # Every cut heading goes into the report verbatim so the next reader can
+    # check the label set by eye rather than by re-deriving it.
+    class_counts = Counter(section_classes.values())
+    headings_by_class: dict[str, list[str]] = {}
+    for heading, label in sorted(section_classes.items()):
+        if label != "body":
+            headings_by_class.setdefault(label, []).append(heading)
 
     records = load_answer_records(answers_dir)
     entries_after = build_inventory(
@@ -191,6 +202,8 @@ def main() -> None:
         "row_b_measured": row_b_measured,
         "distinct_section_headings_classified": len(section_classes),
         "back_matter_headings": len(back_matter),
+        "heading_class_counts": dict(class_counts.most_common()),
+        "non_body_headings_by_class": headings_by_class,
         "surfaces_before": len(surfaces_before),
         "surfaces_after": len(surfaces_after),
         "surfaces_dropped": len(dropped),
@@ -233,8 +246,13 @@ def main() -> None:
     else:
         print(
             f"row B included: {len(section_classes)} distinct heading(s) classified, "
-            f"{len(back_matter)} back matter\n"
+            f"{len(back_matter)} back matter"
         )
+        print(
+            "  by class: "
+            + ", ".join(f"{label}={count}" for label, count in class_counts.most_common())
+        )
+        print("  (every non-body heading is listed verbatim in the JSON report)\n")
     for label, key in [
         ("surfaces before", "surfaces_before"),
         ("surfaces after", "surfaces_after"),

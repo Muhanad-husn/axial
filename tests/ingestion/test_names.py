@@ -431,8 +431,16 @@ def test_names_build_classifies_a_new_heading_once_and_cuts_its_back_matter(isol
     _build_fixture_answers(root)
 
     # `_FIXTURE_SECTIONS` is sorted, and `classify_sections` numbers the
-    # headings it asks about in that same order -- so `Bibliography` is 1.
-    scripted = json.dumps({"back_matter": [{"n": 1, "class": "bibliography"}]})
+    # headings it asks about in that same order -- so `Bibliography` is 1
+    # and the glyph-spaced endnote heading is 3.
+    scripted = json.dumps(
+        {
+            "back_matter": [
+                {"n": 1, "class": "bibliography"},
+                {"n": 3, "class": "endnotes"},
+            ]
+        }
+    )
     build_result = _run_axial(
         root,
         "names",
@@ -457,8 +465,10 @@ def test_names_build_classifies_a_new_heading_once_and_cuts_its_back_matter(isol
     classes = json.loads(
         (root / "data" / "names" / "section_classes.json").read_text(encoding="utf-8")
     )
+    # `endnotes` is a label of its own, recorded rather than flattened onto
+    # `body`, and it does not cut.
     assert classes["sections"] == {
         "Bibliography": "bibliography",
         "Introduction": "body",
-        "N O T E S": "body",
+        "N O T E S": "endnotes",
     }
