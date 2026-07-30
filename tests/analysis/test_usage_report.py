@@ -4,10 +4,10 @@ aggregation affordance of §7.13 ("Design for the aggregate") / §8 P0-13.
 
 Given a fixture data/analyses/ holding five analysis records on corpus_pin
       "PIN-A" and one on corpus_pin "PIN-B"
-  And in three of the PIN-A records, filters_observed contains
-      theory_school:world-systems, and in those three source_id "tilly"
+  And in three of the PIN-A records, names_queried contains
+      get_name(canonical=Charles Tilly), and in those three source_id "tilly"
       shows usage_ratio 3.1, 2.8, and 3.4
-  And in the other two PIN-A records, which do not query that filter,
+  And in the other two PIN-A records, which do not query that name,
       "tilly" shows usage_ratio 1.0 and 0.9
 When  `axial brief usage` runs
 Then  the command exits 0
@@ -15,8 +15,8 @@ Then  the command exits 0
       on PIN-B was excluded as not comparable
   And "tilly" is named among the heaviest-weighing sources, with the
       record count behind its pooled ratio
-  And the per-filter breakdown shows "tilly" against
-      theory_school:world-systems at a pooled ratio near 3 over 3 records,
+  And the per-name breakdown shows "tilly" against
+      get_name(canonical=Charles Tilly) at a pooled ratio near 3 over 3 records,
       distinctly above its pooled ratio across all five
   And zero LLM calls were made (the `explode` provider never fires)
 
@@ -88,15 +88,16 @@ def _source_entry(source_id: str, usage_ratio: float | None) -> dict[str, Any]:
     }
 
 
-WORLD_SYSTEMS_FILTER = {"tool": "query_by_tag", "args": {"theory_school": "world-systems"}}
-OTHER_FILTER = {"tool": "query_by_tag", "args": {"field": "political-science"}}
+TILLY_QUERY = {"tool": "get_name", "args": {"canonical": "Charles Tilly"}}
+OTHER_QUERY = {"tool": "get_name", "args": {"canonical": "Asef Bayat"}}
+TILLY_QUERY_LABEL = "get_name(canonical=Charles Tilly)"
 
 
 def _record(
     brief_id: str,
     *,
     corpus_pin: str,
-    filters_observed: list[dict[str, Any]],
+    names_queried: list[dict[str, Any]],
     sources: list[dict[str, Any]],
     disposition: str = "proceed",
 ) -> dict[str, Any]:
@@ -124,7 +125,7 @@ def _record(
         "confidence": {"overall_band": "low", "rationale": "placeholder"},
         "trajectory": [],
         "model_by_pass": {"interrogate": "stub"},
-        "source_usage": {"filters_observed": filters_observed, "sources": sources},
+        "source_usage": {"names_queried": names_queried, "sources": sources},
     }
 
 
@@ -176,37 +177,37 @@ def five_and_one_fixture_root(tmp_path: Path) -> Path:
         _record(
             "A1",
             corpus_pin="PIN-A",
-            filters_observed=[WORLD_SYSTEMS_FILTER],
+            names_queried=[TILLY_QUERY],
             sources=[_source_entry("tilly", 3.1)],
         ),
         _record(
             "A2",
             corpus_pin="PIN-A",
-            filters_observed=[WORLD_SYSTEMS_FILTER],
+            names_queried=[TILLY_QUERY],
             sources=[_source_entry("tilly", 2.8)],
         ),
         _record(
             "A3",
             corpus_pin="PIN-A",
-            filters_observed=[WORLD_SYSTEMS_FILTER],
+            names_queried=[TILLY_QUERY],
             sources=[_source_entry("tilly", 3.4)],
         ),
         _record(
             "A4",
             corpus_pin="PIN-A",
-            filters_observed=[OTHER_FILTER],
+            names_queried=[OTHER_QUERY],
             sources=[_source_entry("tilly", 1.0)],
         ),
         _record(
             "A5",
             corpus_pin="PIN-A",
-            filters_observed=[OTHER_FILTER],
+            names_queried=[OTHER_QUERY],
             sources=[_source_entry("tilly", 0.9)],
         ),
         _record(
             "B1",
             corpus_pin="PIN-B",
-            filters_observed=[OTHER_FILTER],
+            names_queried=[OTHER_QUERY],
             sources=[_source_entry("tilly", 1.0)],
         ),
     ]
@@ -214,7 +215,7 @@ def five_and_one_fixture_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_usage_report_pools_pin_a_names_tilly_and_shows_filter_skew(five_and_one_fixture_root):
+def test_usage_report_pools_pin_a_names_tilly_and_shows_per_name_skew(five_and_one_fixture_root):
     result = _run_brief_usage(five_and_one_fixture_root)
     combined = result.stdout + result.stderr
 
@@ -233,20 +234,20 @@ def test_usage_report_pools_pin_a_names_tilly_and_shows_filter_skew(five_and_one
     assert re.search(r"tilly.{0,20}over 5 record", combined), combined
 
     # pooled ratio across all five PIN-A records = (3.1+2.8+3.4+1.0+0.9)/5 = 2.24,
-    # located near "tilly" but away from the per-filter breakdown row.
-    ratio_all = _find_ratio_near(combined, required=("tilly",), forbidden=("world-systems",))
+    # located near "tilly" but away from the per-name breakdown row.
+    ratio_all = _find_ratio_near(combined, required=("tilly",), forbidden=("Charles Tilly",))
     assert ratio_all is not None, combined
     assert abs(ratio_all - 2.24) < 0.1, (ratio_all, combined)
 
-    # per-filter breakdown: tilly @ theory_school:world-systems = (3.1+2.8+3.4)/3 = 3.1,
+    # per-name breakdown: tilly @ get_name(canonical=Charles Tilly) = (3.1+2.8+3.4)/3 = 3.1,
     # over 3 records, distinctly above its pooled ratio across all five.
-    assert "theory_school:world-systems" in combined
-    assert re.search(r"theory_school:world-systems.{0,40}over 3 record", combined), combined
-    ratio_filter = _find_ratio_near(combined, required=("tilly", "world-systems"), forbidden=())
+    assert TILLY_QUERY_LABEL in combined
+    assert re.search(re.escape(TILLY_QUERY_LABEL) + r".{0,40}over 3 record", combined), combined
+    ratio_filter = _find_ratio_near(combined, required=("tilly", "Charles Tilly"), forbidden=())
     assert ratio_filter is not None, combined
     assert abs(ratio_filter - 3.1) < 0.1, (ratio_filter, combined)
     assert ratio_filter > ratio_all + 0.5, (
-        f"expected the theory_school:world-systems pooled ratio ({ratio_filter}) to sit "
+        f"expected the {TILLY_QUERY_LABEL} pooled ratio ({ratio_filter}) to sit "
         f"distinctly above tilly's pooled ratio across all five records ({ratio_all})"
     )
 
@@ -267,14 +268,14 @@ def test_usage_report_refusals_only_reports_no_source_rows(tmp_path: Path):
         _record(
             "R1",
             corpus_pin="PIN-A",
-            filters_observed=[],
+            names_queried=[],
             sources=[],
             disposition="refuse",
         ),
         _record(
             "R2",
             corpus_pin="PIN-A",
-            filters_observed=[],
+            names_queried=[],
             sources=[],
             disposition="refuse",
         ),

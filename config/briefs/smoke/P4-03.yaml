@@ -1,0 +1,8 @@
+# origin: simulated
+# model: Grok 4.5
+# persona: P4
+# reasoning_mode_confirmed: extended
+# date: 2026-07-21
+# path_version: sim-v1
+case: "Syrian Arab Republic, emergency law and wartime rule, 1963–2024"
+request: "Was the state of exception a temporary wartime measure or a durable mode of rule? How does Agamben’s frame sit against Syrian institutional history of emergency and security governance?"

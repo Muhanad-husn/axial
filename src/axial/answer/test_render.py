@@ -91,7 +91,7 @@ def _base_record(**overrides: Any) -> dict[str, Any]:
             "rationale": "medium confidence, grounded in 2 evidence chunks against 155 corpus chunks",
         },
         "source_usage": {
-            "filters_observed": [],
+            "names_queried": [],
             "sources": [
                 {
                     "source_id": "syr_001",

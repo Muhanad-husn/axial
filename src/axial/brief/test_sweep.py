@@ -29,6 +29,10 @@ class _FakeBriefRunResult:
     record: dict
     path: Path
     markdown_path: Path
+    # The §7.15 run report `run_brief` now writes alongside the record
+    # (issue #491); the sweep carries its path onto each DrawOutcome.
+    report: dict | None = None
+    report_path: Path | None = None
 
 
 def _record(disposition: str, kinds: list[str]) -> dict:
@@ -197,6 +201,7 @@ def _draw_kwargs(sweep_dir: Path, client_factory) -> dict:
         config_path=Path("config/pipeline.yaml"),
         evals_dir=None,
         lenses_dir=None,
+        cases_dir=None,
         step_budget=None,
         thin_result_floor=None,
     )

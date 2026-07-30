@@ -12,10 +12,12 @@ from axial.analyze import format_examine_report as format_brief_examine_report
 from axial.analyze import run_examine
 from axial.analyze.synthesis import SynthesisError
 from axial.answer import AnswerError, run_brief
+from axial.answer.run_report import format_run_report
 from axial.answer.usage_report import build_usage_report, format_usage_report, load_analysis_records
 from axial.artifacts import ArtifactsError, run_artifacts
 from axial.brief import BriefError, load_brief
 from axial.brief.interrogate import InterrogationError, interrogate, persist_interrogation
+from axial.brief.smoke import SMOKE_BRIEFS_DIR, format_smoke_summary, run_smoke
 from axial.brief.sweep import DEFAULT_WORKERS as SWEEP_DEFAULT_WORKERS
 from axial.brief.sweep import SweepError, format_sweep_summary, run_sweep
 from axial.chunk import (
@@ -860,7 +862,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "read analysis records under data/analyses/ and report per-source "
             "usage ratios pooled across runs sharing a corpus pin, broken down "
-            "by tag filter (specs/PHASE-B.md §7.13, §8 P0-13, issue #266) -- "
+            "by name query (specs/PHASE-B.md §7.13, §8 P0-13, issues #266/#491) -- "
             "makes ZERO model calls and gates nothing"
         ),
     )
@@ -897,6 +899,35 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=SWEEP_DEFAULT_WORKERS,
         help=f"bounded concurrent (brief, draw) workers (default: {SWEEP_DEFAULT_WORKERS})",
+    )
+
+    brief_smoke_parser = brief_subparsers.add_parser(
+        "smoke",
+        help=(
+            "run the five-brief smoke set once each and report pass/fail on "
+            "MECHANICAL checks plus a per-brief cost and latency budget "
+            "(specs/PHASE-B.md §9.0, §8 P0-11, issue #491) -- a smoke alarm, "
+            "not an eval: exits NON-ZERO on any mechanical failure, and scores "
+            "no rung-3 gate"
+        ),
+    )
+    brief_smoke_parser.add_argument(
+        "--briefs-dir",
+        dest="briefs_dir",
+        default=None,
+        help=f"directory of smoke brief YAML files (default: {SMOKE_BRIEFS_DIR})",
+    )
+    brief_smoke_parser.add_argument(
+        "--sweep-dir",
+        dest="sweep_dir",
+        default="data/runs/smoke",
+        help="root directory for this smoke run's per-brief output (default: data/runs/smoke)",
+    )
+    brief_smoke_parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="bounded concurrent brief workers (default: 1, so latency is uncontended)",
     )
 
     pin_parser = subparsers.add_parser(
@@ -1663,7 +1694,10 @@ def _brief_run(brief_path: str) -> int:
 
     client = get_client()
     try:
-        result = run_brief(brief, client=client)
+        # `case_id` is the brief file's own stem: that is the join
+        # `evals/cases/sim/` uses (§9.3), and a brief with no case file of
+        # that name simply has no mechanical retrieval-hit oracle.
+        result = run_brief(brief, client=client, case_id=Path(brief_path).stem)
     except (InterrogationError, QueryError, SynthesisError, CorpusPinError, AnswerError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1672,6 +1706,12 @@ def _brief_run(brief_path: str) -> int:
     print(f"disposition: {result.record['interrogation']['disposition']}")
     print(f"persisted: {result.path}")
     print(f"answer: {result.markdown_path}")
+    print(f"run report: {result.report_path}")
+    # §7.14: nothing renders `cost` in the markdown answer -- "a human-readable
+    # cost report is the run report's job". Encoding-safe because the report
+    # names the passes and the counts, and a coverage band travels with names
+    # the live index holds (`Uğur Ümit Üngör`).
+    _print_encoding_safe(format_run_report(result.report))
     # §7.2: a `refuse` disposition is a completed, valid run -- exit 0 on
     # every disposition (mirrors `_brief_interrogate`/`_brief_examine`).
     return 0
@@ -1791,6 +1831,28 @@ def _brief_sweep(worklist_path: str, draws: int, sweep_dir: str, workers: int) -
     # FAILed draws is still a successful invocation of the loop itself,
     # mirroring `axial run`'s own exit-code rule (`axial.run.run_pass`).
     return 0
+
+
+def _brief_smoke(briefs_dir: str | None, sweep_dir: str, workers: int) -> int:
+    try:
+        summary = run_smoke(
+            sweep_dir=Path(sweep_dir),
+            briefs_dir=Path(briefs_dir) if briefs_dir is not None else None,
+            workers=workers,
+        )
+    except SweepError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    # Encoding-safe: the names a run queried are canonical names, and the
+    # live index holds `Uğur Ümit Üngör`.
+    _print_encoding_safe(format_smoke_summary(summary))
+    # DELIBERATELY the opposite of `_brief_sweep` above, which returns 0 even
+    # with FAILed draws (issue #368, mirroring `axial run`'s loop rule).
+    # Smoke is a GATE, not a loop: it exists to make a regression loud the
+    # day it lands, so any mechanical failure exits non-zero. This is not a
+    # copied bug.
+    return 0 if summary.passed else 1
 
 
 def _pin_write(name: str) -> int:
@@ -2244,6 +2306,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "brief" and args.brief_command == "sweep":
         return _brief_sweep(args.worklist_path, args.draws, args.sweep_dir, args.workers)
+
+    if args.command == "brief" and args.brief_command == "smoke":
+        return _brief_smoke(args.briefs_dir, args.sweep_dir, args.workers)
 
     if args.command == "pin" and args.pin_command == "write":
         return _pin_write(args.name)

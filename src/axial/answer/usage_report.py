@@ -12,13 +12,23 @@ slice-02 plan):
   are not comparable. Records on other pins are counted and named, never
   silently dropped. The pin defaults to whichever pin the most records
   share; `--pin` overrides it.
-- **Keyed on `source_id`, joined on `filters_observed`.** Per source, a
-  pooled `usage_ratio` across every included record; per
-  `(source_id, tag_filter)` pair, a pooled `usage_ratio` across only the
-  records whose `filters_observed` contains that filter. A record whose
-  `usage_ratio` is `None` (available_share 0, §7.13) is excluded from the
-  pool it would otherwise join -- the record count travelling with each
-  pooled figure always reflects only the observations actually pooled.
+- **Keyed on `source_id`, joined on `names_queried`.** Per source, a pooled
+  `usage_ratio` across every included record; per `(source_id, name query)`
+  pair, a pooled `usage_ratio` across only the records whose
+  `names_queried` contains that query. A record whose `usage_ratio` is
+  `None` (available_share 0, §7.13) is excluded from the pool it would
+  otherwise join -- the record count travelling with each pooled figure
+  always reflects only the observations actually pooled.
+
+  **The join moved from tag filters to names** (issue #491): `query_by_tag`
+  and `query_by_polity` are struck with the facets they filtered (D1), so
+  `filters_observed` could never carry a row again. The grouping rule is
+  unchanged -- an entry's identity is still `(tool, sorted args)`, never
+  args alone, because `get_name`, `name_neighbors`, `who_cites` and
+  `who_argues_against` all take a canonical name under the same arg key and
+  are different queries. This is what makes "a source that draws several
+  times its available share whenever queries touch a given name" visible
+  (P0-13).
 
 Pooling is a plain arithmetic mean of the per-run `usage_ratio` values --
 the simplest mechanism that makes the promotion-condition inspection
@@ -47,12 +57,12 @@ class PooledSource:
 
 
 @dataclass(frozen=True)
-class PooledSourceFilter:
-    """One `(source_id, tag_filter)` pair's usage_ratio, pooled across only
-    the included records whose `filters_observed` contains that filter."""
+class PooledSourceName:
+    """One `(source_id, name query)` pair's usage_ratio, pooled across only
+    the included records whose `names_queried` contains that query."""
 
     source_id: str
-    filter_label: str
+    name_label: str
     pooled_usage_ratio: float
     record_count: int
 
@@ -67,7 +77,7 @@ class UsageReport:
     excluded_pin_counts: dict[str, int]
     unreadable_count: int
     sources: list[PooledSource]
-    filters: list[PooledSourceFilter]
+    names: list[PooledSourceName]
 
 
 def load_analysis_records(analyses_dir: Path) -> tuple[list[dict[str, Any]], int]:
@@ -94,30 +104,26 @@ def load_analysis_records(analyses_dir: Path) -> tuple[list[dict[str, Any]], int
     return records, unreadable
 
 
-def _filter_identity(entry: dict[str, Any]) -> tuple[str, tuple[tuple[str, str], ...]]:
-    """The exact identity a `filters_observed` entry is grouped on:
+def _name_identity(entry: dict[str, Any]) -> tuple[str, tuple[tuple[str, str], ...]]:
+    """The exact identity a `names_queried` entry is grouped on:
     `(tool, sorted args items)` -- never args alone. Mirrors
-    `axial.answer.source_usage.derive_filters_observed`'s own dedup key,
-    since `query_by_tag`'s `polity` filter and `query_by_polity`'s `polity`
-    arg share a key name but are different queries (§7.13)."""
+    `axial.answer.source_usage.derive_names_queried`'s own dedup key, since
+    the four name-layer traversals all take a canonical name under the same
+    arg key and are different queries (§7.13)."""
     tool = entry.get("tool", "")
     args = entry.get("args") or {}
-    return (tool, tuple(sorted(args.items())))
+    return (tool, tuple(sorted((str(k), str(v)) for k, v in args.items())))
 
 
-def _filter_label(entry: dict[str, Any]) -> str:
-    """A human-readable label for one observed filter, e.g.
-    `theory_school:world-systems`. `query_by_polity`'s `polity` arg is
-    relabeled `polities_touched` in display only, so it never reads as
-    `query_by_tag`'s own, differently-scoped `polity` filter (§7.13) --
-    grouping itself uses `_filter_identity`, not this label."""
+def _name_label(entry: dict[str, Any]) -> str:
+    """A human-readable label for one name query, e.g.
+    `get_name(canonical=Charles Tilly)`. The tool is part of the label
+    because it is part of the identity: reaching a name through `who_cites`
+    is a different query from reading its page."""
     tool = entry.get("tool", "")
     args = entry.get("args") or {}
-    parts = []
-    for key, value in sorted(args.items()):
-        display_key = "polities_touched" if (tool == "query_by_polity" and key == "polity") else key
-        parts.append(f"{display_key}:{value}")
-    return ",".join(parts) if parts else "(no filter)"
+    rendered = ",".join(f"{key}={value}" for key, value in sorted(args.items()))
+    return f"{tool}({rendered})" if rendered else f"{tool}()"
 
 
 def _select_pin(pin_counts: dict[str, int], requested: str | None) -> str | None:
@@ -156,28 +162,28 @@ def build_usage_report(
             excluded_pin_counts={},
             unreadable_count=unreadable_count,
             sources=[],
-            filters=[],
+            names=[],
         )
 
     included = [record for record in records if record.get("corpus_pin") == selected_pin]
     excluded_pin_counts = {p: c for p, c in pin_counts.items() if p != selected_pin}
 
     ratios_by_source: dict[str, list[float]] = {}
-    ratios_by_source_filter: dict[
+    ratios_by_source_name: dict[
         tuple[str, tuple[str, tuple[tuple[str, str], ...]]], list[float]
     ] = {}
-    label_by_filter_key: dict[tuple[str, tuple[tuple[str, str], ...]], str] = {}
+    label_by_name_key: dict[tuple[str, tuple[tuple[str, str], ...]], str] = {}
 
     for record in included:
         source_usage = record.get("source_usage") or {}
         source_entries = source_usage.get("sources") or []
-        filters_observed = source_usage.get("filters_observed") or []
+        names_queried = source_usage.get("names_queried") or []
 
-        filter_keys = []
-        for entry in filters_observed:
-            key = _filter_identity(entry)
-            label_by_filter_key[key] = _filter_label(entry)
-            filter_keys.append(key)
+        name_keys = []
+        for entry in names_queried:
+            key = _name_identity(entry)
+            label_by_name_key[key] = _name_label(entry)
+            name_keys.append(key)
 
         for source_entry in source_entries:
             ratio = source_entry.get("usage_ratio")
@@ -185,8 +191,8 @@ def build_usage_report(
                 continue
             source_id = source_entry["source_id"]
             ratios_by_source.setdefault(source_id, []).append(ratio)
-            for filter_key in filter_keys:
-                ratios_by_source_filter.setdefault((source_id, filter_key), []).append(ratio)
+            for name_key in name_keys:
+                ratios_by_source_name.setdefault((source_id, name_key), []).append(ratio)
 
     sources = [
         PooledSource(
@@ -198,16 +204,16 @@ def build_usage_report(
     ]
     sources.sort(key=lambda entry: (-entry.pooled_usage_ratio, entry.source_id))
 
-    filters = [
-        PooledSourceFilter(
+    names = [
+        PooledSourceName(
             source_id=source_id,
-            filter_label=label_by_filter_key[filter_key],
+            name_label=label_by_name_key[name_key],
             pooled_usage_ratio=sum(ratios) / len(ratios),
             record_count=len(ratios),
         )
-        for (source_id, filter_key), ratios in ratios_by_source_filter.items()
+        for (source_id, name_key), ratios in ratios_by_source_name.items()
     ]
-    filters.sort(key=lambda entry: (-entry.pooled_usage_ratio, entry.source_id, entry.filter_label))
+    names.sort(key=lambda entry: (-entry.pooled_usage_ratio, entry.source_id, entry.name_label))
 
     return UsageReport(
         pin_id=selected_pin,
@@ -215,7 +221,7 @@ def build_usage_report(
         excluded_pin_counts=excluded_pin_counts,
         unreadable_count=unreadable_count,
         sources=sources,
-        filters=filters,
+        names=names,
     )
 
 
@@ -254,12 +260,12 @@ def format_usage_report(report: UsageReport) -> str:
         )
 
     lines.append("")
-    lines.append("pooled usage_ratio by source, per observed tag filter:")
-    if not report.filters:
-        lines.append("  (no filter rows)")
-    for entry in report.filters:
+    lines.append("pooled usage_ratio by source, per name query:")
+    if not report.names:
+        lines.append("  (no name rows)")
+    for entry in report.names:
         lines.append(
-            f"  {entry.source_id} @ {entry.filter_label}: "
+            f"  {entry.source_id} @ {entry.name_label}: "
             f"usage_ratio={entry.pooled_usage_ratio:.2f} over {entry.record_count} record(s)"
         )
 
