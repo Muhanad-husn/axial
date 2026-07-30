@@ -27,6 +27,7 @@ import yaml
 from axial.paths import name_page_filename
 from axial.query.names import (
     DISAGREEMENT_HEADING,
+    NameNeighbor,
     NameNotFoundError,
     _name_page_index,
     _parse_name_page_body,
@@ -626,6 +627,44 @@ def test_name_neighbors_of_a_name_no_note_names_is_empty(tmp_path):
     _write_prose_note(vault_dir, "src_1_a_001", {"names": [{"name": "Z", "kind": "person"}]})
 
     assert name_neighbors("A", 10, vault_dir=vault_dir, names_dir=names_dir) == []
+
+
+def test_name_neighbors_resolves_an_alias_or_folded_argument_to_the_same_result(tmp_path):
+    """The `canonical` argument itself must be resolved through the alias map,
+    same as the note side already is -- a caller passing an alias, or a
+    case/whitespace variant that only folds to the canonical, must not reach
+    zero neighbours just because it never equalled the raw canonical string."""
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(
+        names_dir,
+        [
+            {"canonical": "Infrastructural power", "kind": "concept", "aliases": ["infra power"]},
+            {"canonical": "Nationalism", "kind": "concept", "aliases": []},
+        ],
+    )
+    _write_prose_note(
+        vault_dir,
+        "src_1_a_001",
+        {
+            "names": [
+                {"name": "Infrastructural power", "kind": "concept"},
+                {"name": "Nationalism", "kind": "concept"},
+            ]
+        },
+    )
+
+    by_canonical = name_neighbors(
+        "Infrastructural power", 10, vault_dir=vault_dir, names_dir=names_dir
+    )
+    by_alias = name_neighbors("infra power", 10, vault_dir=vault_dir, names_dir=names_dir)
+    by_fold = name_neighbors("infrastructural power", 10, vault_dir=vault_dir, names_dir=names_dir)
+
+    assert by_canonical == [
+        NameNeighbor(canonical="Nationalism", kind="concept", shared_note_count=1)
+    ]
+    assert by_alias == by_canonical
+    assert by_fold == by_canonical
 
 
 # -- coverage_count -----------------------------------------------------------

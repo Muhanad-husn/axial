@@ -52,6 +52,7 @@ from pathlib import Path
 
 import pytest
 
+import axial.runlog as _runlog_mod
 from axial.llm import PROVIDER_ENV_VAR
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -193,6 +194,35 @@ def _offline_llm_provider_by_default(monkeypatch):
     live provider. Tests that exercise provider resolution itself set or
     clear `AXIAL_LLM_PROVIDER` explicitly and are unaffected."""
     monkeypatch.setenv(PROVIDER_ENV_VAR, "stub")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_runlog_root(tmp_path_factory, monkeypatch):
+    """Set `AXIAL_LOGS_ROOT` to a fresh temp directory for every test in
+    this suite, so a test that drives the CLI through `main()`/its own
+    `_extract`/`_envelope`/`_interrogate`/`_gather_eval_score`/`_eval`
+    wrapper with no injected `root` can never write a real timestamped run
+    directory into the operator's own `data/logs/` (see
+    `src/axial/conftest.py`'s twin fixture for the full rationale and the
+    measured 79-directory leak this closes). Only the `root=None` default
+    path is affected: a test that injects its own `root=`
+    (`tests/test_runlog_passes.py`, a DEC-1 locked contract) never reads
+    this env var and is untouched.
+
+    **Reaches subprocess-spawned CLI tests too, unlike a direct
+    `axial.runlog.LOGS_ROOT` patch.** `tests/ingestion/test_envelope.py` and
+    `tests/ingestion/test_extract.py` shell out to a real
+    `uv run axial envelope|extract ...` with `cwd=REPO_ROOT` and no
+    `--data-dir`; a subprocess inherits the parent's environment (the same
+    property `_offline_llm_provider_by_default` above already relies on for
+    `AXIAL_LLM_PROVIDER`), so setting the env var here -- read fresh by the
+    child's own `axial.runlog._resolve_logs_root()` -- reaches those two
+    real leak sources that a same-process `monkeypatch.setattr` on the
+    module global could not. `test_envelope.py`'s own subprocess helper
+    builds its `env=` as `dict(os.environ)` (a snapshot taken after this
+    fixture has already set the var) rather than inheriting implicitly, so
+    it carries the override through as well."""
+    monkeypatch.setenv(_runlog_mod.LOGS_ROOT_ENV_VAR, str(tmp_path_factory.mktemp("runlog")))
 
 
 @pytest.fixture(autouse=True)

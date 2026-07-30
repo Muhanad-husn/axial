@@ -11,9 +11,37 @@ import logging
 
 import pytest
 
-from axial.runlog import run_context
+from axial.runlog import LOGS_ROOT_ENV_VAR, run_context
 
 FIXED_TS = "20260721T000000Z"
+
+
+def test_run_context_falls_back_to_the_env_var_when_root_is_not_given(tmp_path, monkeypatch):
+    """`AXIAL_LOGS_ROOT` is the resolution seam `run_context` reads when a
+    caller passes no `root` -- the same explicit-argument -> env var ->
+    default order `axial.llm`'s own `AXIAL_SECRETS_PATH`/`_secrets_path()`
+    already uses (issue #23, requirement 4). This is what lets both
+    conftests redirect a subprocess `axial` invocation's default run-log
+    root, not only an in-process one, with a single `monkeypatch.setenv`."""
+    monkeypatch.setenv(LOGS_ROOT_ENV_VAR, str(tmp_path))
+
+    with run_context("demo", clock=lambda: FIXED_TS) as run:
+        assert run.run_dir == tmp_path / f"demo-{FIXED_TS}"
+
+
+def test_run_context_explicit_root_wins_over_the_env_var(tmp_path, monkeypatch):
+    """The env var is only the fallback for a caller that passes no `root`
+    at all -- an explicit `root` argument (the seam every existing test in
+    this file uses) must still win, so a caller that deliberately chose a
+    directory is never silently redirected."""
+    env_root = tmp_path / "env-root"
+    explicit_root = tmp_path / "explicit-root"
+    monkeypatch.setenv(LOGS_ROOT_ENV_VAR, str(env_root))
+
+    with run_context("demo", root=explicit_root, clock=lambda: FIXED_TS) as run:
+        assert run.run_dir == explicit_root / f"demo-{FIXED_TS}"
+
+    assert not env_root.exists()
 
 
 def test_run_context_creates_run_dir_under_injected_root_with_fixed_clock(tmp_path):

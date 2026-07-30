@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -39,6 +40,24 @@ from typing import Callable
 # Repo-root/cwd-relative constant, mirroring axial.extract.TREES_DIR /
 # axial.paths.VAULT_DIR's convention.
 LOGS_ROOT = Path("data/logs")
+
+# Env-var override for LOGS_ROOT, read by `run_context` only when a caller
+# passes no `root` -- the same explicit-argument -> env var -> default
+# resolution order `axial.llm`'s `AXIAL_SECRETS_PATH`/`_secrets_path()`
+# already uses (issue #23, requirement 4). A house pattern, not a one-off:
+# it is what lets both `conftest.py`s redirect every test's default run-log
+# root, in-process AND in a subprocess `axial` invocation, with one
+# `monkeypatch.setenv` rather than patching this module's global directly
+# (which a subprocess never inherits).
+LOGS_ROOT_ENV_VAR = "AXIAL_LOGS_ROOT"
+
+
+def _resolve_logs_root() -> Path:
+    """`AXIAL_LOGS_ROOT` when set/non-empty, else `LOGS_ROOT`. Read fresh on
+    every call, never cached, so a test's `monkeypatch.setenv`/`setattr`
+    takes effect for that test alone."""
+    override = os.environ.get(LOGS_ROOT_ENV_VAR, "")
+    return Path(override) if override else LOGS_ROOT
 
 
 def _default_clock() -> str:
@@ -109,9 +128,13 @@ def run_context(
     01-run-logging-seam.md): a test injects both to get a known, fixed-name
     run directory; production passes neither and gets
     `data/logs/<name>-<real-timestamp>/`.
+
+    Resolution order when `root` is not given: the `AXIAL_LOGS_ROOT` env var
+    (`_resolve_logs_root`), then the module-level `LOGS_ROOT` default. An
+    explicit `root` argument always wins over both.
     """
     if root is None:
-        root = LOGS_ROOT
+        root = _resolve_logs_root()
     if clock is None:
         clock = _default_clock
 
