@@ -153,7 +153,6 @@ def _write_record(root: Path, brief_id: str, claims: list[dict[str, Any]]) -> Pa
         "brief_id": brief_id,
         "brief": {"brief_id": brief_id, "case": "Syria", "request": "A request.", "lens": None},
         "corpus_pin": "baseline",
-        "schema_version": "0.1",
         "lens": "political-economy",
         "interrogation": {
             "premises_found": [],

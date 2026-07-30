@@ -1,7 +1,7 @@
 """Inner unit tests for the vault note reader (issues #249/#251): the note
 parser, `get_chunk`/`get_artifact` (including their budgeted-filename
-resolution), the suffix-repair lookups, `all_chunk_ids`, `query_by_source`
-and `get_envelope`.
+resolution), the truncated-id repair lookups, `query_by_source` and
+`get_envelope`.
 
 The tag-query cases that used to live here went with `query_by_tag`,
 `query_by_polity` and `follow_backlinks` (issue #487, D1/D5) -- the facets
@@ -22,7 +22,6 @@ from axial.query import (
     MalformedChunkIdError,
     MalformedNoteError,
     MissingVaultDirError,
-    all_chunk_ids,
     get_artifact,
     get_chunk,
     get_envelope,
@@ -444,6 +443,93 @@ def test_find_chunk_ids_ending_with_returns_empty_when_no_match(tmp_path):
     assert find_chunk_ids_ending_with("not_a_real_suffix", vault_dir=tmp_path) == []
 
 
+# -- find_chunk_ids_starting_with / find_artifact_ids_starting_with -----------
+# The mirror image of the suffix lookups (issue #524): the model emitted the
+# HEAD of a long id and dropped the slug and index. S-05 died on
+# `caspersen-2012-fbc0efe4fffc_18`, whose real note is
+# `caspersen-2012-fbc0efe4fffc_18_unrecognized-states-...-system_001`. Same
+# index, same 0/1/2+ contract; the caller supplies the trailing `_` that makes
+# the boundary a component separator.
+
+
+def test_find_chunk_ids_starting_with_returns_the_sole_prefix_match(tmp_path):
+    from axial.query.reader import find_chunk_ids_starting_with
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "caspersen-2012-fbc0efe4fffc_18_unrecognized-states_001")
+    _write_chunk_note(prose_dir, "caspersen-2012-fbc0efe4fffc_19_frozen-conflicts_001")
+
+    assert find_chunk_ids_starting_with("caspersen-2012-fbc0efe4fffc_18_", vault_dir=tmp_path) == [
+        "caspersen-2012-fbc0efe4fffc_18_unrecognized-states_001"
+    ]
+
+
+def test_find_chunk_ids_starting_with_does_not_match_a_longer_section_number(tmp_path):
+    """The boundary case the trailing `_` exists for: section 18 and section
+    180 share a numeric prefix, and only the separator keeps `_18` from
+    reaching `_180`."""
+    from axial.query.reader import find_chunk_ids_starting_with
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "src-digest_18_a-section_001")
+    _write_chunk_note(prose_dir, "src-digest_180_another-section_001")
+
+    assert find_chunk_ids_starting_with("src-digest_18_", vault_dir=tmp_path) == [
+        "src-digest_18_a-section_001"
+    ]
+
+
+def test_find_chunk_ids_starting_with_returns_every_match_when_ambiguous(tmp_path):
+    """One section usually holds several chunks, so a head-truncated id is
+    genuinely ambiguous more often than a tail-truncated one. The lookup
+    reports both and lets the caller refuse."""
+    from axial.query.reader import find_chunk_ids_starting_with
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "src-digest_18_a-section_001")
+    _write_chunk_note(prose_dir, "src-digest_18_a-section_002")
+
+    assert find_chunk_ids_starting_with("src-digest_18_", vault_dir=tmp_path) == [
+        "src-digest_18_a-section_001",
+        "src-digest_18_a-section_002",
+    ]
+
+
+def test_find_chunk_ids_starting_with_returns_empty_when_no_match(tmp_path):
+    from axial.query.reader import find_chunk_ids_starting_with
+
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "src-digest_18_a-section_001")
+
+    assert find_chunk_ids_starting_with("not-a-real-prefix_", vault_dir=tmp_path) == []
+
+
+def test_find_chunk_ids_starting_with_returns_true_chunk_ids_not_filename_stems(tmp_path):
+    """Same reason as the suffix lookup: a budgeted filename is a display
+    artifact, so candidate discovery reads frontmatter ids."""
+    from axial.query.reader import find_chunk_ids_starting_with
+
+    prose_dir = tmp_path / "prose"
+    true_id = "Some Long Human-Readable Title - digest123_26_a-section_012"
+    _write_chunk_note(prose_dir, true_id, filename="Some Short-digest123_26.md")
+
+    assert find_chunk_ids_starting_with(
+        "Some Long Human-Readable Title - digest123_26_", vault_dir=tmp_path
+    ) == [true_id]
+
+
+def test_find_artifact_ids_starting_with_returns_the_sole_prefix_match(tmp_path):
+    from axial.query.reader import find_artifact_ids_starting_with
+
+    artifacts_dir = tmp_path / "artifacts"
+    _write_artifact_note(artifacts_dir, "Long Human Title - digest123_art_3")
+    _write_artifact_note(artifacts_dir, "Other Source - digest456_art_1")
+
+    assert find_artifact_ids_starting_with("Long Human Title - digest123_", vault_dir=tmp_path) == [
+        "Long Human Title - digest123_art_3"
+    ]
+
+
 def test_find_artifact_ids_ending_with_returns_the_sole_suffix_match(tmp_path):
     from axial.query.reader import find_artifact_ids_ending_with
 
@@ -607,7 +693,6 @@ def test_module_imports_and_runs_with_no_llm_client_configured(tmp_path, monkeyp
 
     # None of these should ever touch an LLM client; AXIAL_LLM_PROVIDER=explode
     # makes any hidden `.complete()` call crash loudly rather than pass silently.
-    assert all_chunk_ids(vault_dir=tmp_path) == ["c1"]
     assert get_chunk("c1", vault_dir=tmp_path).chunk_id == "c1"
 
 
@@ -661,6 +746,13 @@ def test_query_by_source_returns_only_that_sources_chunks(tmp_path):
     assert result == ["srcA_1_intro_001", "srcA_1_intro_002"]
 
 
+def test_query_by_source_raises_when_the_vault_dir_does_not_exist(tmp_path):
+    """A missing or typo'd `vault_dir` is a caller bug, not an empty corpus
+    (`_iter_chunk_frontmatter`'s own contract)."""
+    with pytest.raises(MissingVaultDirError):
+        query_by_source("srcA", vault_dir=tmp_path / "no-such-vault")
+
+
 # -- get_envelope ---------------------------------------------------------------
 
 
@@ -710,39 +802,6 @@ def test_get_envelope_on_an_unknown_source_id_raises_not_found(tmp_path):
     assert "does-not-exist" in str(exc_info.value)
 
 
-# -- all_chunk_ids ---------------------------------------------------------------
-
-
-def test_all_chunk_ids_returns_every_prose_id_sorted_despite_scrambled_write_order(tmp_path):
-    """The capability `query_by_tag` with no filters used to serve (issue
-    #487): every prose id in ascending `chunk_id` order."""
-    prose_dir = tmp_path / "prose"
-    for chunk_id in ("c3", "c1", "c2"):
-        _write_chunk_note(prose_dir, chunk_id)
-
-    assert all_chunk_ids(vault_dir=tmp_path) == ["c1", "c2", "c3"]
-
-
-def test_all_chunk_ids_raises_on_a_note_missing_chunk_id(tmp_path):
-    """Every returned id must resolve back through `get_chunk`, so a note
-    with no `chunk_id` is a malformed note, not a silent skip."""
-    prose_dir = tmp_path / "prose"
-    prose_dir.mkdir(parents=True)
-    frontmatter = {"section": "A Section", "chunk_text": "T", "source_meta": {}}
-    (prose_dir / "no_id.md").write_text(
-        "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(MalformedNoteError):
-        all_chunk_ids(vault_dir=tmp_path)
-
-
-def test_all_chunk_ids_raises_when_the_vault_dir_does_not_exist(tmp_path):
-    with pytest.raises(MissingVaultDirError):
-        all_chunk_ids(vault_dir=tmp_path / "no-such-vault")
-
-
 # -- LLM-free by construction (the whole surviving reader) -----------------------
 
 
@@ -753,7 +812,6 @@ def test_every_reader_tool_runs_with_no_llm_client_configured(tmp_path, monkeypa
     _write_artifact_note(tmp_path / "artifacts", "a1", cited_by=["some-source_1_intro_001"])
     _write_envelope(tmp_path / "envelopes", "some-source")
 
-    assert all_chunk_ids(vault_dir=tmp_path) == ["some-source_1_intro_001"]
     assert query_by_source("some-source", vault_dir=tmp_path) == ["some-source_1_intro_001"]
     assert get_chunk("some-source_1_intro_001", vault_dir=tmp_path).chunk_id == (
         "some-source_1_intro_001"

@@ -4,7 +4,7 @@ stage 3, specs/PHASE-B.md §7.5, §8 P0-2).
 `src/axial/vault.py` is write-only: it renders notes but never reads them
 back. This module is the read side, for the tools that take an id the caller
 already holds: `get_chunk`, `get_artifact`, `query_by_source` /
-`get_envelope`, plus `all_chunk_ids` and the two suffix-repair lookups.
+`get_envelope`, plus the truncated-id repair lookups.
 Finding a name, and everything reachable from one, is `axial.query.names`.
 
 `query_by_tag`, `query_by_polity` and `follow_backlinks` lived here until
@@ -491,12 +491,12 @@ def _read_id_only(path: Path, id_field: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
-# Process-lifetime caches for the id -> path indexes `find_chunk_ids_ending_with`
-# / `find_artifact_ids_ending_with` use, keyed by resolved vault_dir so
-# distinct vaults (real callers, and per-test tmp_path vaults) never share an
-# entry. Built lazily, at most once per vault_dir: nothing in this module
-# populates these on import or on `get_chunk`/`get_artifact`'s own fast path
-# (specs/PHASE-B.md §7.5) -- only a suffix lookup does, and a rebuild-per-call
+# Process-lifetime caches for the id -> path indexes the four truncated-id
+# repair lookups below use, keyed by resolved vault_dir so distinct vaults
+# (real callers, and per-test tmp_path vaults) never share an entry. Built
+# lazily, at most once per vault_dir: nothing in this module populates these
+# on import or on `get_chunk`/`get_artifact`'s own fast path
+# (specs/PHASE-B.md §7.5) -- only a repair lookup does, and a rebuild-per-call
 # would be pathological inside a retrieval loop over the ~18k-note corpus.
 _CHUNK_ID_INDEX_CACHE: dict[Path, dict[str, Path]] = {}
 _ARTIFACT_ID_INDEX_CACHE: dict[Path, dict[str, Path]] = {}
@@ -561,6 +561,32 @@ def find_artifact_ids_ending_with(suffix: str, *, vault_dir: Path | None = None)
     return sorted(artifact_id for artifact_id in index if artifact_id.endswith(suffix))
 
 
+def find_chunk_ids_starting_with(prefix: str, *, vault_dir: Path | None = None) -> list[str]:
+    """The mirror image of `find_chunk_ids_ending_with` (issue #524): every
+    real `chunk_id` under `vault_dir` STARTING with `prefix`. Same index,
+    same 0/1/2+ contract, and it exists for the same
+    `axial.analyze.synthesis` repair -- the other truncation the model makes,
+    emitting the head of a long id and dropping the slug and index. A live
+    brief died on `caspersen-2012-fbc0efe4fffc_18`, whose real note is
+    `caspersen-2012-fbc0efe4fffc_18_unrecognized-states-...-system_001`.
+
+    The caller supplies a `prefix` ending in the component separator `_`, so
+    a head naming section 18 can never reach section 180."""
+    if vault_dir is None:
+        vault_dir = default_vault_dir()
+    index = _chunk_id_index(Path(vault_dir))
+    return sorted(chunk_id for chunk_id in index if chunk_id.startswith(prefix))
+
+
+def find_artifact_ids_starting_with(prefix: str, *, vault_dir: Path | None = None) -> list[str]:
+    """The artifact-note counterpart of `find_chunk_ids_starting_with` --
+    same frontmatter-indexed candidate discovery, same contract."""
+    if vault_dir is None:
+        vault_dir = default_vault_dir()
+    index = _artifact_id_index(Path(vault_dir))
+    return sorted(artifact_id for artifact_id in index if artifact_id.startswith(prefix))
+
+
 def _iter_chunk_frontmatter(vault_dir: Path) -> list[tuple[Path, dict[str, Any]]]:
     """Every `<vault_dir>/prose/*.md` note's full `(path, frontmatter)`,
     unsorted -- every caller here sorts its own derived result, so this
@@ -569,8 +595,8 @@ def _iter_chunk_frontmatter(vault_dir: Path) -> list[tuple[Path, dict[str, Any]]
     absent: a missing or typo'd `vault_dir` is a caller bug, not an empty
     corpus.
 
-    Deliberately uncached. Its callers here (`query_by_source`,
-    `all_chunk_ids`) only ever scan a vault once per process, and
+    Deliberately uncached. Its caller here (`query_by_source`) only ever
+    scans a vault once per process, and
     `axial.distill.embed`/`axial.distill.classify` also import this exact
     private function for their own one-shot, whole-corpus reads and need the
     FULL frontmatter dict, including `chunk_text`. A cache over that would
@@ -674,27 +700,6 @@ def query_by_source(source_id: str, *, vault_dir: Path | None = None) -> list[st
         if source_id_from_chunk_id(chunk_id) == source_id:
             matches.append(chunk_id)
     return sorted(matches)
-
-
-def all_chunk_ids(*, vault_dir: Path | None = None) -> list[str]:
-    """Every prose note's `chunk_id` under `vault_dir`, ascending.
-
-    This is the one capability `query_by_tag` had that outlived it: called
-    with no filters it meant "every prose id in `chunk_id` order", which
-    `axial.answer.record.vault_schema_version` uses to read the vault's own
-    schema version off its first note. The tag filters are deleted (issue
-    #487, D1); the enumeration is not, so it keeps its own honest name.
-
-    Raises `MalformedNoteError` on a note carrying no `chunk_id` -- every
-    note under `prose/` must have one to be enumerable at all, so every id
-    returned resolves back through `get_chunk` -- and `MissingVaultDirError`
-    when `prose/` itself is absent."""
-    if vault_dir is None:
-        vault_dir = default_vault_dir()
-    return sorted(
-        _require(frontmatter, path, "chunk_id")
-        for path, frontmatter in _iter_chunk_frontmatter(vault_dir)
-    )
 
 
 ENVELOPES_DIR = Path("data/envelopes")

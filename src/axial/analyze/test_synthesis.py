@@ -514,6 +514,53 @@ def test_an_artifact_ref_id_matching_no_real_id_by_suffix_still_raises(vault_dir
     assert "zzz_totally_invented_999" in str(exc_info.value)
 
 
+def test_a_unique_prefix_match_repairs_a_head_truncated_artifact_ref_id(tmp_path: Path):
+    """The mirror image of the tail case (issue #524): the model emitted the
+    head of a long id and dropped the order segment."""
+    full_id = "Some Long Human Title - libgen.li-abc123def456_art_3"
+    truncated_head = "Some Long Human Title - libgen.li-abc123def456"
+    artifacts_fm = [_artifact_frontmatter(artifact_id=full_id, source_id="synfix")]
+    vault_dir = _write_vault(tmp_path, chunks=[], artifacts=artifacts_fm)
+
+    raw = _valid_response(
+        claims=[
+            {
+                "text": "A claim citing the head of a real long artifact id.",
+                "kind": "a",
+                "grounds": [{"ref_type": "artifact", "ref_id": truncated_head}],
+                "confidence": "medium",
+            }
+        ]
+    )
+
+    claims = parse_synthesis_response(raw, vault_dir=vault_dir)
+
+    assert claims[0].grounds == [Ground(ref_type="artifact", ref_id=full_id)]
+
+
+def test_an_artifact_ref_id_matching_two_or_more_real_ids_by_prefix_still_raises(tmp_path: Path):
+    artifacts_fm = [
+        _artifact_frontmatter(artifact_id="src-digest_art_3", source_id="synfix"),
+        _artifact_frontmatter(artifact_id="src-digest_art_4", source_id="synfix"),
+    ]
+    vault_dir = _write_vault(tmp_path, chunks=[], artifacts=artifacts_fm)
+
+    raw = _valid_response(
+        claims=[
+            {
+                "text": "A claim citing an ambiguous truncated artifact head.",
+                "kind": "a",
+                "grounds": [{"ref_type": "artifact", "ref_id": "src-digest"}],
+                "confidence": "low",
+            }
+        ]
+    )
+
+    with pytest.raises(UnresolvableGroundError) as exc_info:
+        parse_synthesis_response(raw, vault_dir=vault_dir)
+    assert "src-digest" in str(exc_info.value)
+
+
 # ---------------------------------------------------------------------------
 # names_touched computed in code, through the alias map alone (issue #489)
 # ---------------------------------------------------------------------------
@@ -562,9 +609,7 @@ def test_names_touched_computed_from_grounds_overrides_a_model_supplied_value(
     assert claims[0].names_touched == ["Charles Tilly"]
 
 
-def test_names_touched_drops_a_surface_the_index_does_not_carry(
-    vault_dir: Path, names_dir: Path
-):
+def test_names_touched_drops_a_surface_the_index_does_not_carry(vault_dir: Path, names_dir: Path):
     """§7.4: a surface the index does not carry is DROPPED rather than
     invented. synfix_003 names "Absurdistan", which no node carries -- and
     nothing here falls back to the embedding tier, which would land the claim
@@ -585,9 +630,7 @@ def test_names_touched_drops_a_surface_the_index_does_not_carry(
     assert claims[0].names_touched == ["Charles Tilly", "Ibn Khaldun"]
 
 
-def test_names_touched_dedupes_across_grounds_and_is_order_stable(
-    vault_dir: Path, names_dir: Path
-):
+def test_names_touched_dedupes_across_grounds_and_is_order_stable(vault_dir: Path, names_dir: Path):
     raw = _valid_response(
         claims=[
             {

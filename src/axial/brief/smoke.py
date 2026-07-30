@@ -87,7 +87,6 @@ REQUIRED_RECORD_KEYS = (
     "brief_id",
     "brief",
     "corpus_pin",
-    "schema_version",
     "lens",
     "interrogation",
     "claims",

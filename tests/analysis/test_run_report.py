@@ -277,7 +277,6 @@ def _record(claims: list[dict[str, Any]]) -> dict[str, Any]:
         "brief_id": "DEV91",
         "brief": {"brief_id": "DEV91", "case": "Syria", "request": "R?", "lens": None},
         "corpus_pin": "baseline",
-        "schema_version": "0.1",
         "lens": "political-economy",
         "interrogation": {
             "premises_found": [],

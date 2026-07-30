@@ -701,20 +701,46 @@ def resolve_encoder_model_name(names_dir: Path | None = None) -> str | None:
     return model_name if isinstance(model_name, str) else None
 
 
+# Process-lifetime cache of the loaded sentence-transformer, keyed by model
+# name: a retrieval loop reaching tier 4 repeatedly would otherwise construct
+# a fresh one per call, and each construction round-trips to huggingface.co to
+# check for a newer revision of weights already on disk (2.9s online against
+# 0.28s offline, measured 2026-07-30, issue #524). Keyed by name rather than
+# held as a single slot because the vector store names which model wrote it,
+# and two stores can name two.
+_ENCODER_CACHE: dict[str, Encoder] = {}
+_ENCODER_LOCK = threading.Lock()
+
+
 def _default_encoder(model_name: str) -> Encoder:
     """The real local sentence-transformer, imported HERE and never at module
     level (D10: tiers 1-3 must run with no encoder loaded at all). A
     deliberate small duplicate of `axial.names._default_encoder`, which
     cannot be imported without pulling the whole interrogation/LLM stack into
-    this LLM-free module."""
-    from sentence_transformers import SentenceTransformer
+    this LLM-free module.
 
-    model = SentenceTransformer(model_name)
+    Built at most once per model name for the process lifetime, and
+    `local_files_only` so construction never reaches the network: §7.5 is a
+    zero-LLM-call, zero-network read path, and the weights are already on disk
+    by the time a query runs -- building the vector table is what downloads
+    them."""
+    cached = _ENCODER_CACHE.get(model_name)
+    if cached is not None:
+        return cached
+    with _ENCODER_LOCK:
+        cached = _ENCODER_CACHE.get(model_name)
+        if cached is not None:
+            return cached
 
-    def encode(texts: list[str]) -> list[list[float]]:
-        return model.encode(texts, convert_to_numpy=True).tolist()
+        from sentence_transformers import SentenceTransformer
 
-    return encode
+        model = SentenceTransformer(model_name, local_files_only=True)
+
+        def encode(texts: list[str]) -> list[list[float]]:
+            return model.encode(texts, convert_to_numpy=True).tolist()
+
+        _ENCODER_CACHE[model_name] = encode
+        return encode
 
 
 # Process-lifetime cache of the persisted vector table, keyed by resolved

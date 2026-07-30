@@ -83,41 +83,13 @@ from axial.llm import (
     LLMClient,
     estimate_cost,
 )
-from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_analyses_dir, default_vault_dir
-from axial.query.reader import all_chunk_ids, get_chunk
+from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_analyses_dir
 from axial.retrieve.loop import run_planned_retrieval
 from axial.validators.coverage import compute_confidence, compute_coverage_map
 
 
 class AnswerError(Exception):
     """Base class for all stage-6 (analysis-record) errors."""
-
-
-class MissingVaultSchemaVersionError(AnswerError):
-    """Raised when the vault named by `vault_dir` holds no chunk at all --
-    the record's `schema_version` field (§7.3) has nothing real to read."""
-
-    def __init__(self, vault_dir: Path):
-        self.vault_dir = vault_dir
-        super().__init__(f"cannot determine schema_version: no chunks found under {vault_dir}")
-
-
-def vault_schema_version(vault_dir: Path | None = None) -> str:
-    """The domain schema version the vault was tagged under (§7.3): read
-    off the first chunk in `chunk_id` order (`all_chunk_ids`' own determinism
-    contract -- the capability `query_by_tag` with no filters used to serve,
-    under an honest name since issue #487), never off
-    `config/domains/<domain>/schema.yaml`
-    directly -- every prose note already carries its own `schema_version`
-    (`axial.tag.build_tagged_record`'s field), so this works against any
-    pinned/fixture vault without depending on the calling process's cwd
-    holding a real domain-config checkout."""
-    chunk_ids = all_chunk_ids(vault_dir=vault_dir)
-    if not chunk_ids:
-        raise MissingVaultSchemaVersionError(
-            Path(vault_dir) if vault_dir is not None else default_vault_dir()
-        )
-    return get_chunk(chunk_ids[0], vault_dir=vault_dir).schema_version
 
 
 def _brief_to_dict(brief: Brief) -> dict[str, Any]:
@@ -195,7 +167,6 @@ def build_record(
     interrogation_result: InterrogationResult,
     *,
     corpus_pin: str,
-    schema_version: str,
     lens: str,
     claims: list[Claim],
     trajectory: list[dict[str, Any]],
@@ -249,7 +220,6 @@ def build_record(
         "brief_id": brief.brief_id,
         "brief": _brief_to_dict(brief),
         "corpus_pin": corpus_pin,
-        "schema_version": schema_version,
         "lens": lens,
         "interrogation": interrogation_result.to_dict(),
         "claims": claim_dicts,
@@ -338,11 +308,10 @@ def run_brief(
     judged accuracy numbers are left not-scored here and are run separately
     by a caller that wants to pay for them.
 
-    The corpus pin (§7.12) and the vault's `schema_version` are resolved
-    FIRST, before any model call -- both are configuration-level
-    preconditions of the run (a missing pin, an empty vault), not something
-    the brief's own content affects, so a misconfigured install fails fast
-    rather than after spending an interrogation call.
+    The corpus pin (§7.12) is resolved FIRST, before any model call -- it is
+    a configuration-level precondition of the run, not something the brief's
+    own content affects, so a misconfigured install fails fast rather than
+    after spending an interrogation call.
 
     On a `refuse` disposition (§7.2), stages 3 (retrieval) and 4
     (synthesis) never run: `claims` and `trajectory` are both empty and
@@ -350,7 +319,6 @@ def run_brief(
     run -- the record is still written and this function still returns
     normally; translating that into exit 0 is the CLI's job."""
     corpus_pin = resolve_pin_id(evals_dir)
-    schema_version = vault_schema_version(vault_dir)
     clock = PassClock()
 
     with clock.time(INTERROGATE_PASS_NAME):
@@ -401,7 +369,6 @@ def run_brief(
         brief,
         interrogation_result,
         corpus_pin=corpus_pin,
-        schema_version=schema_version,
         lens=lens,
         claims=claims,
         trajectory=trajectory,

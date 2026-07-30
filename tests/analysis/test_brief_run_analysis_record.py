@@ -11,8 +11,8 @@ Then  the command exits 0
   And data/analyses/<brief_id>.json exists, where <brief_id> is the id the
       brief loader computes for that brief
   And the record carries every §7.3 key: brief_id, brief, corpus_pin,
-      schema_version, lens, interrogation, claims, counter_position,
-      coverage_map, confidence, trajectory, model_by_pass
+      lens, interrogation, claims, counter_position, coverage_map,
+      confidence, trajectory, model_by_pass
   And record["brief"] equals the loaded brief verbatim
   And record["corpus_pin"] equals the pin id under evals/corpus_pin/
   And record["claims"] equals the claim graph the synthesis pass emitted
@@ -99,8 +99,9 @@ TILLY = "Charles Tilly"
 def _chunk_frontmatter(*, chunk_id: str, surfaces: list[str]) -> dict[str, Any]:
     """A prose note in the shape `axial.materialize` writes today: source
     metadata plus the nested interrogation `answers` block (§7.15). It keeps
-    `schema_version`, which the record's own `schema_version` field is read
-    off (§7.3).
+    the retired-but-readable `schema_version` frontmatter key, which
+    `ChunkNote` still parses (issue #524 cut the record field that read it,
+    not the reader).
 
     `surfaces` are the names the note itself named. Each note names one
     surface the fixture's alias map DOES carry (so §7.4's `names_touched` and
@@ -324,7 +325,6 @@ def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path
         "brief_id",
         "brief",
         "corpus_pin",
-        "schema_version",
         "lens",
         "interrogation",
         "claims",
@@ -344,7 +344,6 @@ def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path
         "lens": None,
     }
     assert record["corpus_pin"] == "baseline"
-    assert record["schema_version"] == "0.1"
     assert record["interrogation"]["disposition"] == "proceed"
 
     claim_texts = {claim["text"] for claim in record["claims"]}

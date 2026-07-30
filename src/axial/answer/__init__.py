@@ -16,12 +16,10 @@ from __future__ import annotations
 from axial.answer.record import (
     AnswerError,
     BriefRunResult,
-    MissingVaultSchemaVersionError,
     build_record,
     persist_markdown,
     persist_record,
     run_brief,
-    vault_schema_version,
 )
 from axial.answer.render import render_markdown
 from axial.answer.run_report import (
@@ -41,7 +39,6 @@ from axial.answer.usage_report import (
 __all__ = [
     "AnswerError",
     "BriefRunResult",
-    "MissingVaultSchemaVersionError",
     "PassClock",
     "UsageReport",
     "build_record",
@@ -57,5 +54,4 @@ __all__ = [
     "persist_run_report",
     "render_markdown",
     "run_brief",
-    "vault_schema_version",
 ]

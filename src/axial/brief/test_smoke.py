@@ -34,7 +34,6 @@ def _record(**overrides) -> dict:
         "brief_id": "DEV90",
         "brief": {"case": "c", "request": "r"},
         "corpus_pin": "baseline",
-        "schema_version": "0.1",
         "lens": "political-economy",
         "interrogation": {"disposition": "proceed"},
         "claims": [],

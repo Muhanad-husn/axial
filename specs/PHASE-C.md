@@ -140,11 +140,12 @@ The phase's input, supplied as a versioned file. Shape:
 - `title` — optional working title for the rendered paper. When absent, the renderer uses the thesis.
 - `paper_brief_id` — a stable, deterministic id over the brief's content, no randomness and no timestamps, so re-running the same paper brief is traceable.
 
-Three intake rules, all mechanical and all blocking:
+Two intake rules, both mechanical and both blocking:
 
 - **Pin agreement.** Every named record must carry the same `corpus_pin` (PHASE-B §7.12). A mixed-pin set is rejected, naming the disagreeing ids. Records produced against different corpora are not comparable, so a paper across them is not defensible.
 - **No refusals.** A named record whose `interrogation.disposition` is `refuse` is rejected, naming the id. A refusal is a valid Phase-B outcome and a completed run; it is not material for a paper, because it carries no claims.
-- **Schema agreement.** Every named record must carry the same `schema_version`. A mixed set is rejected.
+
+> **A third rule, schema agreement, was struck (issue #524).** It required every named record to carry the same `schema_version`. That field was cut from the Phase-B record because it was read off a note field zero live prose notes carry, so every record wrote `null` (PHASE-B §7.3). Pin agreement already subsumes it and is strictly stronger: a `corpus_pin` resolves to a manifest carrying `vault_snapshot_hash`, an exact content hash of the vault, so two records sharing a pin were produced against a byte-identical vault. DEC-45 names this rejection in passing among the existing three; its own substance — that contradiction is never an intake rejection — is untouched.
 
 **Records that contradict each other are not rejected, and this is not an omission from that list.** Two named records arguing opposite sides of a question are opposing arguments, which is the substance of the domain, not a defect in the input. Contradiction is handled by charter Principle IV at paper scale (§7.14), never at the intake gate. Nothing may be added to the three rejections above on the grounds that two records disagree.
 
@@ -183,7 +184,6 @@ One JSON per run at `data/papers/<paper_brief_id>.json`, the phase's analogue of
 {
   paper_brief_id, paper_brief,       # the brief (§7.1), verbatim
   corpus_pin,                        # the single shared pin of the source records
-  schema_version,
   source_analyses: [ brief_id ],     # the records drawn on, in brief order
   plan,                              # the arc (§7.2)
   claims: [ <paper_claim> ],         # §7.4; exactly the claims cited in the prose
@@ -452,7 +452,7 @@ The predicate is the disjunction of the three arms, evaluated in the order above
 
 **P0-1 Paper-brief intake and the claim inventory (charter Principle II).**
 - [ ] Reads a versioned paper brief (§7.1), resolves every `analysis_ids` entry against `data/analyses/`, and builds the claim inventory keyed by `(brief_id, claim_id)`.
-- [ ] Rejects, naming the offending id: an unresolvable record, a record whose disposition is `refuse`, a mixed `corpus_pin` set, and a mixed `schema_version` set.
+- [ ] Rejects, naming the offending id: an unresolvable record, a record whose disposition is `refuse`, and a mixed `corpus_pin` set. (A mixed `schema_version` set was a fourth rejection until issue #524 cut that field from the Phase-B record; the pin subsumes it — see §7.1.)
 - [ ] **Zero Phase-B invocations.** Observable: intake makes no call into the Phase-B brief pipeline, and a paper brief naming an un-run brief fails with an error telling the operator to run it through Phase B first.
 
 **P0-2 Arc planning before prose (charter Principle II).**
