@@ -1044,7 +1044,9 @@ def _counter_position_candidates(
                 continue
     for canonical in scope:
         try:
-            page = get_name(canonical, MAX_COUNTER_POSITION_CANDIDATES, vault_dir=vault_dir)
+            page = get_name(
+                canonical, MAX_COUNTER_POSITION_CANDIDATES, vault_dir=vault_dir, names_dir=names_dir
+            )
         except NameNotFoundError:
             continue
         if page.disagreement is None:

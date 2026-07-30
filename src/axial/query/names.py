@@ -925,11 +925,24 @@ def find_names(
 
 
 def get_name(
-    canonical: str, limit: int = DEFAULT_LIMIT, *, vault_dir: Path | None = None
+    canonical: str,
+    limit: int = DEFAULT_LIMIT,
+    *,
+    vault_dir: Path | None = None,
+    names_dir: Path | None = None,
 ) -> NamePage:
     """One name page by its real name (§7.5): its `kind`, `aliases`,
     `member_count`, its member notes with each one's own author, year and
     one-sentence claim, and any Gather disagreement section.
+
+    `canonical` is itself resolved through the same three exact tiers
+    (`canonical_for_surface`) before the page lookup, the same shape
+    `name_neighbors` uses on its own argument: an alias or a folded variant
+    (case, whitespace, punctuation) must land the same page as its canonical,
+    matching the alias-map matching `who_cites` and `who_argues_against`
+    already apply on the note side. Never tier 4 -- an embedding match here
+    would hand back a DIFFERENT name's page for a query the index does not
+    carry, which is worse than the honest `NameNotFoundError` below.
 
     Members come back in the page's own written order, which is the order
     Materialize wrote and is itself deterministic -- never re-sorted here --
@@ -942,10 +955,12 @@ def get_name(
     `disagreement` is `None` when the page carries no Gather section, which
     is distinguishable from a section whose text is present.
 
-    Raises `NameNotFoundError`, naming `canonical`, when no page exists --
-    never returns `None`. A page whose filename was budgeted down or
-    hash-suffixed is still reachable by its real name (§7.5: the `name`
+    Raises `NameNotFoundError`, naming the resolved canonical, when no page
+    exists -- never returns `None`. A page whose filename was budgeted down
+    or hash-suffixed is still reachable by its real name (§7.5: the `name`
     frontmatter is the sole authoritative id, never the filename)."""
+    layer = _name_layer(names_dir)
+    canonical = canonical_for_surface(canonical, layer) or canonical
     vault = Path(vault_dir) if vault_dir is not None else default_vault_dir()
     entry = _resolve_name_page(canonical, vault)
     if entry is None:
