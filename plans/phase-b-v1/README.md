@@ -285,6 +285,80 @@ They are one issue and one PR from 2026-07-30.
 its own acceptance test and the commit gate alone. In substance that was already
 true.
 
+### 04 and 05 stay two slices, and this is the seam
+
+Reconciled 2026-07-30 against the shipped code rather than the two issue bodies.
+Their scopes do not overlap: 04 keeps evidence assembly, the synthesis prompt and
+the claim contract; 05 keeps the coverage map, confidence, contested detection
+and counter-position generation. What they share is substrate neither issue
+claims, and the chain would have surfaced it as 05 reopening a file 04 had just
+closed.
+
+**The reader is short of both slices, so 04 extends it once, for both.** A live
+prose note carries 21 answer keys. `ChunkNote` (`src/axial/query/reader.py`)
+exposes seven: `claim`, `move`, `position_of`, `position`, `arguing_against`,
+`names`, `citations`. Every other field #489 names is unreachable today
+(`ranges_over`, `stops_holding`, `mechanism`, `evidence`, `comparison`,
+`defines`, `uses`, `concedes`, `assumes`), and so is `position_of_nearest`, which
+D3 wants and 95.7% of notes carry (5,857 of 6,119 parsed). 04 adds the fields
+only 05 reads as well. `reader.py` is shared substrate on a strict chain, and
+opening it twice is the collision the chain exists to prevent.
+
+**The abstention predicate is 04's, in one place.** `not-in-passage` in its three
+forms (§7.15) is implemented on the write side only (`interrogate.NOT_IN_PASSAGE`);
+no reader applies it. It is not a corner case: **24% of notes abstain on
+`arguing_against`** (4,651 of 6,119 substantive) and 23% on `position_of`. 05
+imports 04's predicate instead of writing a second one, because two abstentions
+comparing as "different positions" would manufacture a disagreement, which is
+the failure D3's own measurement warns about.
+
+**`polities_touched` → `names_touched` is 04's, whole.** Blast radius:
+`analyze/assembly.py`, `analyze/synthesis.py:608` where the union is computed,
+`answer/record.py`, `answer/render.py`, and their tests. `validators/coverage.py`
+reads the old key, so after 04 it reads a key that is not there,
+`compute_coverage_map` returns `{}`, and `validate_coverage_and_confidence` check
+1 passes **vacuously**. That is today's state exactly: the map is already empty at
+0 entries and confidence is already pinned `low`. So the interim is honest and
+green, 04 must not take on 05's job to keep the map alive, and 05 inherits a
+vacuous pass rather than a real one. Surface forms resolve through the alias map
+alone (`canonical_for_surface`, which needs a public wrapper), never through
+`find_names`' embedding tier: §7.4 drops a surface the index does not carry
+instead of inventing one, and a fuzzy match here would fabricate coverage.
+
+**`EvidenceSet.polity_coverage` dies with 04; the §7.7 map is 05's alone.**
+`assembly.py` carries a second coverage roll-up (`PolityCoverage`,
+`_roll_up_polity_coverage`) reading the field 04 deletes, and neither issue names
+it. Under §7.7 the map is computed from `names_touched` over the claim graph,
+which is post-synthesis, so the pre-synthesis roll-up has no contract left. 04
+deletes it and leaves `brief examine` a plain per-name count of assembled notes:
+no bands, no corpus denominator, no confidence. One banded map, one inspection
+count. Otherwise this feature ships two per-name coverage computations with
+different denominators.
+
+**05 follows §7.8, not its own body, and owes the spec one clause.** #490
+restates D3 as it read before the measurement; the contract is §7.8, which
+absorbed it. One real gap survives. Contested can fire on path 2, a Gather
+disagreement at a touched name, while the whitelist rule in
+`_counter_position_candidates` finds nothing, and the empty-candidates guard then
+writes `one_sided_reason: "none of the underlying grounds chunks resolved in the
+vault"`. That is false: they resolved, and simply carry no opposing position. The
+issue's whitelist is right and §7.8's is a clause short, since the Gather
+finding's own member notes belong on it. 05's PR adds the clause and re-derives
+that reason.
+
+**Contested stays a boolean.** The measurement caps recall at 0.35–0.59 and
+argues for a graded disclosure. Two contracts block on the boolean, the
+counter-position validator and #405's one-sided outcome, and grading it would not
+recover a disagreement the predicate never saw. The cap is a stated limit of the
+validator: it requires a counter-position only where the predicate sees the
+disagreement. Recorded here, not reopened.
+
+Two adjacent items belong to neither slice. `usage_report.py`'s display relabel
+for the deleted `query_by_polity` tool is dead code, and it goes with 06's
+source-usage re-base. 29 of 6,148 prose notes fail to parse as YAML, which the
+query layer already absorbs by design (`_read_note_answers` returns `None` rather
+than aborting a corpus scan), so it is noted and not filed.
+
 **00 ∥ 01 is optional.** 00 writes only `specs/PHASE-B.md`; 01 is a corpus
 operation. The one condition is that 01 must not touch §7.12 — 00 already
 rewrites it. 00 is a pure `.md` change and may land straight on `main` under the
