@@ -244,10 +244,10 @@ in **Order and concurrency** below.
 | 02 | the name query API | #487 | `find_names`, `get_name`, `name_neighbors`, `who_cites`, `who_argues_against`, per-name `coverage_count`; deterministic, model-free, fully testable without an LLM. Validated on the live corpus: 14 of 17 queries resolve on a string tier, `Ungor` reaches `Uğur Ümit Üngör` only through the embeddings. The 0.5 floor stands as a stated tunable; the AANES premise was false and is corrected here and in §7.5 | ✅ |
 | 03 | retrieval loop rewired | #488 | Tool registry and dispatcher onto 02's tools; trajectory log unchanged. Ten tools registered, per-arg types so `limit` is an honest int, and a `returns_chunk_ids` flag that keeps canonical names out of the evidence set. Validated LLM-free against the live vault: `Tilly` → `Charles Tilly` → 146 members, 58 citation edges, 2 oppositions, all three rejection paths firing before the vault, 0 names leaked. **The step budget was NOT re-proven** — raised 10 → 20 as stated provisional headroom, because the name surface needs ~3 calls per name; the real bound is measured on the smoke briefs in 06 | ✅ |
 | 04 | synthesis on the new evidence | #489 | Evidence assembly and the synthesis prompt rebuilt around `claim` / `position_of` / `position` / `arguing_against` / `citations`. `ChunkNote` now exposes all 21 answer keys instead of 7, the abstention predicate moved into the read path as one shared function, and `names_touched` resolves through the alias map alone (99.9% of 9,434 real surfaces; the 8 drops are locator-shaped). **Gather findings are NOT plumbed into the prompt** — D4 permits rather than requires it and nothing carries one into stage 4, so the prompt states the never-cite rule and no finding-as-context path was built. Two shared-substrate bugs fixed: the reader read a bare-string abstention as fourteen one-letter names, and `brief examine` crashed writing its own report | ✅ |
-| 05 | coverage and counter-position | #490 | Per-name coverage map, confidence derivation, contested detection and counter-position generation per D2 and D3 | ☐ |
+| 05 | coverage and counter-position | #490 | Per-name coverage map, confidence derivation, contested detection and counter-position generation per D2 and D3. **The map is keyed on the names the answer is about, not on `names_touched`** — the literal reading gives a 423-row map and a constant `low` band, which is the bug this slice exists to fix. Bands stay at 20/100, proven on 32 live queries; contested fires on 4 of 10 real evidence sets and both Gather-path hits produce a non-empty whitelist | ✅ |
 | 06 | the run report, and the smoke harness that asserts on it | #491 | Source usage re-based, the response-quality table computed, per-pass latency captured, one report per run — plus `config/briefs/smoke/` and `axial brief smoke`: five briefs, mechanical checks and a cost and latency budget, built as a front end over the existing `run_sweep` | ☐ |
 | ~~07~~ | ~~smoke harness~~ | ~~#492~~ | **Absorbed into 06 on 2026-07-30.** Two of its five mechanical checks read 06's and 05's output, so it was never independent; both slices also edit `cli.py` and the record layer | — |
-| 08 | gates and the eval run | #493 | Gate fixtures re-pointed at the new record, `config/briefs/eval/` landed with the new brief and its case, the instrumented run executed and reported | ☐ |
+| 08 | gates and the eval run | #493 | Gate fixtures re-pointed at the new record, `config/briefs/eval/` landed with the new brief and its case, the instrumented run executed and reported. **Blocked on `plans/name-layer-rekey/` slice 03** — it pins its figures to a vault hash, and that sprint moves the pin | ☐ |
 
 <!-- Status values: ☐ todo · ◐ in-progress · ✅ done. Update the row when a slice's PR opens. -->
 
@@ -377,6 +377,51 @@ bare-string abstention into a list of its own 14 characters: an abstention read
 as fourteen one-letter names. It also made an absent key indistinguishable from
 a real `[]`. Both break the contract 04 implements, so those three are raw now,
 with `None` for absent. Nothing else read them off `ChunkNote`.
+
+**Found while building 05, and decided there.** D2 says the coverage map is
+keyed on `names_touched`. Read literally that reproduces the failure the slice
+exists to fix. A live note's `names` answer lists every person, place, date and
+organisation the passage mentions, median 21 per note, so a real 24-note evidence
+set touches **423 distinct canonical names on average** — 663 for Charles Tilly,
+810 for Hanna Batatu. `confidence.overall_band` came out `low` on **10 of 10**
+sets at every cut point tried, and only a fitted pair of band constants plus a
+fitted mention threshold moved it, which is the tripwire.
+
+So the map is keyed on the names the answer is *about*: retrieved on by this
+run's own trajectory, and touched by a claim's grounds. That is D2's own worked
+example and what §7.2 already calls "the names this brief is about", so it reads
+as the intended sense rather than a departure. It cost `compute_coverage_map` and
+`detect_contested` a `trajectory` argument, and it re-bases §7.9 check 1 onto the
+same scope. The same scoping gates contested path 2, which is the wider
+consequence.
+
+Four smaller decisions the plan did not settle:
+
+- **One new constant, `MAX_COUNTER_POSITION_CANDIDATES = 20`.** A tripwire, kept
+  deliberately: `who_argues_against` over a dense name and a Gather page's member
+  list are both unbounded (`Syria` has 962 members), and #505 already blew a
+  prompt to 72,000 characters on exactly that shape. The run's own grounds notes
+  sort first, so the cap only drops the vault-wide tail.
+- **"Different sides" is positions-differ OR different-sources.** Without the
+  second disjunct the clause dies on the real corpus, where 76% of notes answer
+  `position_of` with "the author": the same string, a different person per book.
+- **`position_of_nearest` is not used.** It ranks rather than proves, and nothing
+  in a boolean predicate ranks. Using it would add a mechanism without changing
+  an outcome.
+- **A touched name with no vault page** — `Revolution` is a real case in the live
+  index — gets `corpus_note_count: null` and the most conservative band, never a
+  fabricated `0`.
+
+`specs/PHASE-C.md` described Phase B's predicate in terms of the deleted tag
+axes. Corrected in the same PR rather than left factually wrong.
+
+**05's numbers sit on a name layer that is about to move.** The 20/100 band cuts
+and the 15 thin / 9 moderate / 6 dense split over 32 live queries were measured
+against the layer as it stands. #504 folds 913 canonical pages into others, and
+#508 cuts thousands more out of the name space entirely. Both change
+`member_count`, which is the coverage denominator. The cut points are a stated
+tunable rather than a fitted constant, so this is not a defect: 06's smoke run
+re-checks them against the post-re-key layer instead of inheriting them.
 
 **00 ∥ 01 is optional.** 00 writes only `specs/PHASE-B.md`; 01 is a corpus
 operation. The one condition is that 01 must not touch §7.12 — 00 already

@@ -7,9 +7,11 @@ runs them as one change with one re-decide and one pin.
 
 - **Slug:** name-layer-rekey
 - **Created:** 2026-07-30
-- **Status:** proposed, awaiting founder decisions D1 and D3 below
+- **Status:** 01 and 02 shipped, D1 and D3 settled on measurement. 03 is next and
+  now waits on #508 as well as #504.
 - **Issues:** #500 (the 400-char cap eats `arguing_against`), #498 (151 entities
-  split from their own acronym)
+  split from their own acronym). Two more joined the door after filing: #504
+  (merged) and #508 (in flight).
 - **Project directory:** `.`
 - **Blocks:** #493's instrumented eval run, which pins its figures to a vault
   hash. Land this first or those numbers are stale on arrival.
@@ -234,22 +236,46 @@ The pin has not moved. The `$0.55` figure below is wrong for this pass by an
 order of magnitude: reconcile runs on `deepseek-v4-flash`, and all three runs
 together cost **$0.074**.
 
-**03 — one re-decide, one pin.** ☐ **Next; 01 and 02 are both merged.** No
-bounded probe: the cost is measured at about **$1.48** (D3, from the real pass
-log). Founder authorizes, then the full Gather pass, then Materialize — which
-slice 02 deferred to here so the 117 folded pages render once, after the
+**03 — one re-decide, one pin.** ☐ **Not yet; the door gained two more
+occupants.** Founder authorizes, then the full Gather pass, then Materialize —
+which slice 02 deferred to here so the folded pages render once, after the
 re-decide, rather than twice with stale disagreement sections in between. Diff
 the flipped entries and report the count of findings whose text changed. Re-cut
 the corpus pin once, whose vault hash covers the name-layer index per D6. Run log
 under `data/logs/2026-07-30-name-layer-rekey/`.
 
-**Land #504 before this slice, or pay for a second re-decide.** #504 folds 11
-more names (`WHO`, `WB`, `NRC`, `TCC`, `VDC`, `UTICA`, `AMITH`, `EPR`, `INDH`,
-`OLA`, `SPS`) whose merge response said one entity while the pipeline split them.
-It is a **re-read** of the existing content-keyed decision log, so it costs no
-model call and no money — but it moves membership on those 11 names, which
-re-keys their packets. Inside this slice's pass that is free; after it, it is
-another $1.48 and a second pin.
+**~~Land #504 before this slice.~~ Done: PR #509, 2026-07-30 — and it was 83x
+the issue's own headline.** #504 read a one-node merge response that omits a
+member as an alias rather than leaving it to split. The issue named 11 surfaces.
+Measured over the live log before merge
+(`data/logs/2026-07-30-fix-504/run-summary.md`, LLM-free, $0):
+
+| | |
+|---|---:|
+| recorded decisions carrying the shape | **940** of 23,988 |
+| from candidate-generation batches | 29 (3%) |
+| from real HDBSCAN clusters | **911 (97%)** |
+| canonical pages folded away | **913** (62,704 → 61,791) |
+
+The eleven named surfaces were the acronym subset #498 happened to make
+countable. The rest are ordinary cluster batches: Unicode variants of one
+author's name, citation-form variants, author-only against author-plus-year. The
+fold applies on the next merge run with no model call, because
+`merge_decisions.jsonl` is content-keyed and this is a re-read.
+
+**Land #508 before this slice too, for the same reason.** #508 cuts the citation
+channel and nine residue shapes at inventory time: 13,661 surfaces that exist
+only via `citations[].cited`, plus date, locator, numeral and apparatus classes.
+Thousands of pages leave the name space, 96 of them carrying 10+ notes. That is
+membership movement, so it re-keys packets exactly as #500 and #498 do. It is the
+same expensive door this sprint was written to open once.
+
+**The $1.48 no longer holds and must be re-derived before the pass.** D3 priced
+the re-decide by simulating the real packing over **1,910 gathered names** at the
+new 800-char cap. Both #504 and #508 move member counts in opposite directions,
+and Gather only takes names at or above the configured minimum of 10 members, so
+the gathered set itself moves. Re-run that simulation against the post-#508 layer
+and bring the number. It is LLM-free, so this costs nothing but the run.
 
 Slice 01 and 02 were independent and were built in parallel worktrees. Slice 03
 needs both merged and runs from the main checkout, since `data/` does not exist
@@ -262,8 +288,9 @@ in a worktree.
 - The 151 pairs are decided by the evidence check, and the count still split is
   reported with reasons.
 - `find_names` by acronym reaches the spelled-out page for every decided pair.
-- The re-decide's cost is measured on a bounded run and approved before the full
-  pass, and the count of findings whose text changed is reported.
+- The re-decide's cost is re-derived by simulating the real packing over the
+  post-#508 gathered set, not a bounded probe, and approved before the full pass.
+  The count of findings whose text changed is reported.
 - The pin moves exactly once, and its vault hash changes.
 
 ## Out of scope
