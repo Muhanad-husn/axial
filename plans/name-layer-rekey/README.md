@@ -133,11 +133,58 @@ lesson. Do not read the marginal non-null rate as evidence the change was good.
 `arguing_against`, share losing `position`, share hitting the degenerate
 bracket-over-cap path, before and after. Gather is **not** run in this slice.
 
-**02 — the acronym becomes a lookup key** (#498). Extract parenthesized acronyms
-into the candidate stream per D2, run the 151 pairs, rewrite the alias map and
-index, re-run Materialize for the affected pages. Report decided, split and the
-reasons. Verify the worked case: `find_names("AANS")` and the full spelled-out
-string reach one page.
+**02 — the acronym becomes a lookup key** (#498). ✅ **Done, PR #502, 2026-07-30.**
+
+Three parts shipped, not one: the shape test, a **refusal** when more than one
+surface carries the same acronym, and matching on the **upstream fold**. The last
+two exist only because real-corpus runs produced defects the fixtures could not
+see, and both are worth remembering, since either would have shipped a wrong
+corpus on a green suite:
+
+- Without the refusal, an acronym node is a hub and the alias-map union chains
+  its expansions together with no call ever asked to compare them. Run 1 fused
+  `Marxist Social Democratic Federation (SDF)` into `Syrian Democratic Forces`,
+  and Rwanda's `CDR` into Lebanon's, and gave `LECS` a paper title as its page
+  name. 26 of 165 acronyms carried several expansions; 15 collapsed to one group.
+  The evidence check *did* reject `LSE` and `MAD`, which is why the fix is a
+  refusal at proposal time and not a better prompt — the failure is the union,
+  not the call. Cost: 13 benign hub folds (`GATT`, `USAID`, `YPG`), accepted.
+- Without the fold match, the eight most-cited acronyms were proposed and
+  silently dropped: `CIA`, `PLO`, `UN`, `USA`, `IRA`, `FLN`, `PFLP`, `SLA`.
+  `fold_groups` runs upstream of every candidate family and had already unioned
+  each with its dotted form, and only one representative per group reaches the
+  families. This hid itself twice because the validation script read the raw
+  inventory and reported 139 pairs where the run saw 131.
+
+Measured, three runs, `data/logs/2026-07-30-acronym-merge-498-run3/summary.md`:
+
+| | run 1 | run 2 | run 3 |
+|---|---:|---:|---:|
+| pairs proposed | 196 | 139 | **140** |
+| folded / newly folded | 153 / 143 | 109 / 99 | **117 / 107** |
+| still split | 43 | 30 | **23** |
+| wrong entity fusions | **2** | 0 | **0** |
+| cost, list price | $0.041 | $0.030 | $0.003 |
+
+Name pages 62,821 → **62,704**. The worked case is exact: `AANS` and
+`Autonomous Administration of Northeast Syria (AANS)` are both aliases of
+`Autonomous Administration of North and East Syria`, one `kind`, three notes.
+
+**The 151 in this plan was never the operative number.** It counted a looser
+mixed-case parenthetical shape over the raw inventory; after the upstream fold
+the rule sees 140 pairs. Of the 23 still split, 11 are genuine declines (`ABC`
+against `Al-Ahram beverages` among them) and **11 are not a judgment at all** —
+the model returned a single node and omitted the acronym from its `aliases`, so
+it was left unmapped. Filed as #504, since it lives in `parse_merge_response` and
+affects every candidate family.
+
+**Materialize was deliberately not run here**, against this slice's original
+wording. Rendering the 117 folded pages now and again after slice 03's re-decide
+renders them twice, and the first render would carry stale disagreement sections.
+Nothing reads the vault before slice 03, so the pages are rendered once, there.
+The pin has not moved. The `$0.55` figure below is wrong for this pass by an
+order of magnitude: reconcile runs on `deepseek-v4-flash`, and all three runs
+together cost **$0.074**.
 
 **03 — one re-decide, one pin.** Bounded cost probe, founder authorizes, then
 the full Gather pass. Diff the flipped entries. Re-cut the corpus pin once, whose
