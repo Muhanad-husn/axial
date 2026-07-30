@@ -978,3 +978,40 @@ def test_as_string_list_normalizes_every_shape_a_free_text_answer_takes():
 
 def test_resolve_encoder_model_name_is_none_without_a_manifest(tmp_path):
     assert resolve_encoder_model_name(tmp_path / "absent") is None
+
+
+def test_the_default_encoder_is_built_once_per_model_and_never_reaches_the_hub(monkeypatch):
+    """Issue #524: a fresh `SentenceTransformer` per semantic `find_names`
+    carried a live, unauthenticated round-trip to huggingface.co on a
+    retrieval code path (2.9s online against 0.28s offline, for weights
+    already on disk). One construction per model name, local files only."""
+    import sys
+    import types
+
+    from axial.query import names as names_module
+
+    constructions: list[tuple[str, dict[str, Any]]] = []
+
+    class _FakeTransformer:
+        def __init__(self, model_name: str, **kwargs: Any):
+            constructions.append((model_name, kwargs))
+
+        def encode(self, texts, convert_to_numpy=True):
+            import numpy
+
+            return numpy.zeros((len(texts), 3), dtype=numpy.float32)
+
+    stub = types.ModuleType("sentence_transformers")
+    stub.SentenceTransformer = _FakeTransformer
+    monkeypatch.setitem(sys.modules, "sentence_transformers", stub)
+    monkeypatch.setattr(names_module, "_ENCODER_CACHE", {})
+
+    first = names_module._default_encoder("fake-model")
+    second = names_module._default_encoder("fake-model")
+    other = names_module._default_encoder("another-fake-model")
+
+    assert first is second, "a second call must reuse the cached encoder, not rebuild one"
+    assert first is not other, "the cache is per model_name: the store names which one to use"
+    assert [model for model, _kwargs in constructions] == ["fake-model", "another-fake-model"]
+    assert all(kwargs.get("local_files_only") is True for _model, kwargs in constructions)
+    assert first(["a query"]) == [[0.0, 0.0, 0.0]]
