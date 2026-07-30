@@ -4,15 +4,18 @@
 
 Every entry is a thin adapter: it calls exactly one query-API function (zero
 LLM calls, per §7.5) and normalizes that function's return value into
-`(ids, count, total)`, the shape the dispatcher's `ToolResult` carries --
-`ids`/`count` are exactly the §7.6 trajectory log's `result_ids`/
-`result_count`; `total` (issue #505) rides beside it, never inside it.
+`(ids, count, total, detail)`, the shape the dispatcher's `ToolResult`
+carries -- `ids`/`count` are exactly the §7.6 trajectory log's `result_ids`/
+`result_count`; `total` (issue #505) and `detail` (issue #517) both ride
+beside it, never inside it.
 
 `query_by_tag`, `query_by_polity` and `follow_backlinks` were de-registered
 with the tools themselves (issue #487, D1/D5): each returned 0 or `[]` on
 every call against the v1 vault. The name-layer tools that replace them --
 `find_names`, `get_name`, `name_neighbors`, `who_cites`,
-`who_argues_against` -- are registered here (issue #488).
+`who_argues_against` -- are registered here (issue #488), joined by
+`where_names_meet` (issue #517), the intersection of two name pages'
+members.
 
 **`coverage_count` is NOT registered here (issue #505's own follow-up).**
 It is the mirror case of D1/D5: not de-registered for returning nothing
@@ -47,18 +50,35 @@ the dispatcher both need them and neither is free to assume the answer:
   pulled in for that.
 - **What kind of id a tool yields.** `find_names` and `name_neighbors`
   return CANONICAL NAMES. `get_name`, `who_cites`, `who_argues_against`,
-  `query_by_source`, `get_chunk` and `get_artifact` return CHUNK/ARTIFACT
-  ids -- real vault ids a claim's grounds may cite. `get_envelope` returns a
-  `source_id`, neither. `returns_chunk_ids` marks the second group;
-  `axial.retrieve.loop.assemble_evidence_ids` reads it so a name string can
-  never land in the evidence set stage 4 treats as citable passages.
+  `where_names_meet`, `query_by_source`, `get_chunk` and `get_artifact`
+  return CHUNK/ARTIFACT ids -- real vault ids a claim's grounds may cite.
+  `get_envelope` returns a `source_id`, neither. `returns_chunk_ids` marks
+  the second group; `axial.retrieve.loop.assemble_evidence_ids` reads it so
+  a name string can never land in the evidence set stage 4 treats as
+  citable passages.
 
-Every adapter now returns `(result_ids, result_count, total)` (issue #505):
-`total` is the true pre-cap count for `get_name`/`who_cites`/
-`who_argues_against`, `None` for every other tool -- carried straight
-through to `axial.retrieve.dispatcher.ToolResult.total`, never part of the
-§7.6 trajectory entry (which stays exactly `{step, tool, args, result_ids,
-result_count}`).
+Every adapter now returns `(result_ids, result_count, total, detail)`
+(issues #505 and #517): `total` is the true pre-cap count for `get_name`/
+`who_cites`/`who_argues_against`/`where_names_meet`, `None` for every other
+tool. `detail` is set by three tools, each a planner-blindness fix (§4,
+issue #517) -- `find_names` carries each hit's `kind`, `member_count` and
+`tier` so a model can tell an exact resolution from a guess; `get_name` and
+`where_names_meet` carry `_source_span_detail`'s `"<N> notes across <M>
+sources"` over the members actually returned, so a model can tell a large
+page (or intersection) is one book from many without re-reading it. Every
+other adapter passes `None`. Both `total` and `detail` ride straight through
+to `axial.retrieve.dispatcher.ToolResult`, never part of the §7.6 trajectory
+entry (which stays exactly `{step, tool, args, result_ids, result_count}`).
+
+**A live corpus run measured why `get_name`/`where_names_meet` need this
+too, not just `find_names` (issue #517's own follow-up).** A model told to
+call `where_names_meet` only on a "large" resolved name avoided it entirely
+by resolving narrow names instead -- `Syrian nationalism` (24 members) is
+83.3% one source because only the one book about Syrian nationalism uses
+that phrase. Narrowing felt like precision and produced a one-book answer;
+`_source_span_detail` makes the number of sources a result actually spans
+checkable in the next prompt rather than something the model has to infer
+from how specific a name sounds.
 """
 
 from __future__ import annotations
@@ -70,17 +90,19 @@ from typing import Any, Callable
 from axial.query import names, reader
 
 # `(args, vault_dir, envelopes_dir, names_dir) ->
-# (result_ids, result_count, total)`. Every adapter takes all four
+# (result_ids, result_count, total, detail)`. Every adapter takes all four
 # positional slots, even the four that ignore `names_dir` (`query_by_source`,
 # `get_envelope`, `get_chunk`, `get_artifact` -- the pre-name-layer tools) or
 # `envelopes_dir` (everything but `get_envelope`) -- one uniform shape the
 # dispatcher calls without branching on which tool it is calling. `get_name`
 # now resolves its own `canonical` through `names_dir` too, the same alias
-# resolution `find_names`/`name_neighbors`/`who_cites`/`who_argues_against`
-# already apply. `total` is `None` for every tool but `get_name`/`who_cites`/
-# `who_argues_against` (issue #505).
+# resolution `find_names`/`name_neighbors`/`who_cites`/`who_argues_against`/
+# `where_names_meet` already apply. `total` is `None` for every tool but
+# `get_name`/`who_cites`/`who_argues_against`/`where_names_meet` (issues
+# #505, #517); `detail` is `None` for every tool but `find_names` (#517).
 ToolCall = Callable[
-    [dict[str, Any], Path | None, Path | None, Path | None], tuple[list[str], int, int | None]
+    [dict[str, Any], Path | None, Path | None, Path | None],
+    tuple[list[str], int, int | None, str | None],
 ]
 
 
@@ -106,14 +128,26 @@ class ToolSpec:
         return self.required_args | self.optional_args
 
 
+def _source_span_detail(members: list[names.NameMember]) -> str | None:
+    """`"<N> notes across <M> sources"` over the members a tool actually
+    returned (never the pre-cap total) -- `get_name`/`where_names_meet`'s own
+    `detail`, counting DISTINCT `source_id` values so a model can tell a
+    large page or intersection is one book from several without re-reading
+    it. `None` only when there is nothing to describe (an empty result)."""
+    if not members:
+        return None
+    source_count = len({member.source_id for member in members})
+    return f"{len(members)} notes across {source_count} sources"
+
+
 def _query_by_source(
     args: dict[str, Any],
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     _names_dir: Path | None,
-) -> tuple[list[str], int, int | None]:
+) -> tuple[list[str], int, int | None, str | None]:
     ids = reader.query_by_source(args["source_id"], vault_dir=vault_dir)
-    return ids, len(ids), None
+    return ids, len(ids), None, None
 
 
 def _get_envelope(
@@ -121,9 +155,9 @@ def _get_envelope(
     _vault_dir: Path | None,
     envelopes_dir: Path | None,
     _names_dir: Path | None,
-) -> tuple[list[str], int, int | None]:
+) -> tuple[list[str], int, int | None, str | None]:
     envelope = reader.get_envelope(args["source_id"], envelopes_dir=envelopes_dir)
-    return [envelope.source_id], 1, None
+    return [envelope.source_id], 1, None, None
 
 
 def _get_chunk(
@@ -131,9 +165,9 @@ def _get_chunk(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     _names_dir: Path | None,
-) -> tuple[list[str], int, int | None]:
+) -> tuple[list[str], int, int | None, str | None]:
     chunk = reader.get_chunk(args["chunk_id"], vault_dir=vault_dir)
-    return [chunk.chunk_id], 1, None
+    return [chunk.chunk_id], 1, None, None
 
 
 def _get_artifact(
@@ -141,9 +175,9 @@ def _get_artifact(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     _names_dir: Path | None,
-) -> tuple[list[str], int, int | None]:
+) -> tuple[list[str], int, int | None, str | None]:
     artifact = reader.get_artifact(args["artifact_id"], vault_dir=vault_dir)
-    return [artifact.artifact_id], 1, None
+    return [artifact.artifact_id], 1, None, None
 
 
 def _find_names(
@@ -151,11 +185,22 @@ def _find_names(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     names_dir: Path | None,
-) -> tuple[list[str], int, int | None]:
+) -> tuple[list[str], int, int | None, str | None]:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     hits = names.find_names(args["query"], limit, names_dir=names_dir, vault_dir=vault_dir)
     canonicals = [hit.canonical for hit in hits]
-    return canonicals, len(canonicals), None
+    # Issue #517's planner-blindness fix: a bare canonical string cannot tell
+    # the model an exact hit apart from an embedding guess. `detail` carries
+    # what `find_names` already computed per hit -- no new lookup, no LLM
+    # call -- so the next turn's prompt can show it.
+    detail = (
+        "; ".join(
+            f"{hit.canonical} (kind={hit.kind}, member_count={hit.member_count}, tier={hit.tier})"
+            for hit in hits
+        )
+        or None
+    )
+    return canonicals, len(canonicals), None, detail
 
 
 def _get_name(
@@ -163,11 +208,11 @@ def _get_name(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     names_dir: Path | None,
-) -> tuple[list[str], int, int | None]:
+) -> tuple[list[str], int, int | None, str | None]:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     page = names.get_name(args["canonical"], limit, vault_dir=vault_dir, names_dir=names_dir)
     ids = [member.chunk_id for member in page.members]
-    return ids, len(ids), page.member_count
+    return ids, len(ids), page.member_count, _source_span_detail(page.members)
 
 
 def _name_neighbors(
@@ -175,13 +220,13 @@ def _name_neighbors(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     names_dir: Path | None,
-) -> tuple[list[str], int, int | None]:
+) -> tuple[list[str], int, int | None, str | None]:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     neighbors = names.name_neighbors(
         args["canonical"], limit, vault_dir=vault_dir, names_dir=names_dir
     )
     canonicals = [neighbor.canonical for neighbor in neighbors]
-    return canonicals, len(canonicals), None
+    return canonicals, len(canonicals), None, None
 
 
 def _who_cites(
@@ -189,13 +234,13 @@ def _who_cites(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     names_dir: Path | None,
-) -> tuple[list[str], int, int | None]:
+) -> tuple[list[str], int, int | None, str | None]:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     edges, total = names.who_cites(
         args["canonical"], limit, vault_dir=vault_dir, names_dir=names_dir
     )
     ids = [edge.chunk_id for edge in edges]
-    return ids, len(ids), total
+    return ids, len(ids), total, None
 
 
 def _who_argues_against(
@@ -203,13 +248,27 @@ def _who_argues_against(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     names_dir: Path | None,
-) -> tuple[list[str], int, int | None]:
+) -> tuple[list[str], int, int | None, str | None]:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     edges, total = names.who_argues_against(
         args["canonical"], limit, vault_dir=vault_dir, names_dir=names_dir
     )
     ids = [edge.chunk_id for edge in edges]
-    return ids, len(ids), total
+    return ids, len(ids), total, None
+
+
+def _where_names_meet(
+    args: dict[str, Any],
+    vault_dir: Path | None,
+    _envelopes_dir: Path | None,
+    names_dir: Path | None,
+) -> tuple[list[str], int, int | None, str | None]:
+    limit = args.get("limit", names.DEFAULT_LIMIT)
+    members, total = names.where_names_meet(
+        args["canonical"], args["other"], limit, vault_dir=vault_dir, names_dir=names_dir
+    )
+    ids = [member.chunk_id for member in members]
+    return ids, len(ids), total, _source_span_detail(members)
 
 
 TOOL_REGISTRY: dict[str, ToolSpec] = {
@@ -281,6 +340,21 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         int_args=frozenset({"limit"}),
         returns_chunk_ids=True,
         call=_who_argues_against,
+    ),
+    "where_names_meet": ToolSpec(
+        name="where_names_meet",
+        description=(
+            "The notes that are members of BOTH of two name pages -- e.g. a polity "
+            "intersected with a concept, scholar or event -- so the anchor filters and "
+            "the intellectual name carries the query, up to limit. An empty intersection "
+            "is a real, honest answer, not an error. Reach for this instead of reading a "
+            "large name's page whole."
+        ),
+        required_args=frozenset({"canonical", "other"}),
+        optional_args=frozenset({"limit"}),
+        int_args=frozenset({"limit"}),
+        returns_chunk_ids=True,
+        call=_where_names_meet,
     ),
     "query_by_source": ToolSpec(
         name="query_by_source",

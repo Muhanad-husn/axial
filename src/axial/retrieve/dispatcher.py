@@ -18,8 +18,8 @@ through), every other allowed arg must be a `str`.
 `names_dir` is threaded through the call exactly like `vault_dir`/
 `envelopes_dir`: an optional caller-supplied directory for the name-layer
 tools (`find_names`, `get_name`, `name_neighbors`, `who_cites`,
-`who_argues_against`), defaulting to `None` so a caller passing nothing
-resolves against the query API's own default (`axial.paths.
+`who_argues_against`, `where_names_meet`), defaulting to `None` so a caller
+passing nothing resolves against the query API's own default (`axial.paths.
 default_names_dir`), exactly as `vault_dir`/`envelopes_dir` already do.
 """
 
@@ -45,17 +45,29 @@ class ToolResult:
 
     `total`, when set (issue #505), is the true pre-cap count for a tool
     truncated at its `limit` -- currently `get_name`/`who_cites`/
-    `who_argues_against`, `None` for every other tool. It rides beside the
-    trajectory exactly the way `error` does, for the same reason: a capped
-    result the model cannot see is a lie about the corpus (`get_name` on
-    `Syria` returns 10 members out of 962), so the loop surfaces `total`
-    through its own conversation channel rather than smuggling a sixth field
-    into the [FIRM] trajectory shape."""
+    `who_argues_against`/`where_names_meet`, `None` for every other tool. It
+    rides beside the trajectory exactly the way `error` does, for the same
+    reason: a capped result the model cannot see is a lie about the corpus
+    (`get_name` on `Syria` returns 10 members out of 962), so the loop
+    surfaces `total` through its own conversation channel rather than
+    smuggling a sixth field into the [FIRM] trajectory shape.
+
+    `detail`, when set (issue #517), is the same kind of beside-the-
+    trajectory rider, populated by three tools: `find_names` states each
+    hit's `kind`, `member_count` and `tier`, so a model can tell an
+    exact/alias resolution apart from an embedding guess -- a bare canonical
+    string cannot. `get_name` and `where_names_meet` state how many distinct
+    sources the returned members span (`"<N> notes across <M> sources"`) --
+    a live corpus run showed a model avoiding a large page or intersection
+    entirely by resolving a narrow, one-book name instead, because it could
+    not see that the "large" result it was told to avoid was actually the
+    cross-book one. Every other tool leaves `detail` `None`."""
 
     ids: list[str]
     count: int
     error: str | None = None
     total: int | None = None
+    detail: str | None = None
 
 
 def _declared_type_ok(spec: ToolSpec, key: str, value: Any) -> bool:
@@ -112,7 +124,7 @@ def dispatch(
         )
 
     try:
-        ids, count, total = spec.call(args, vault_dir, envelopes_dir, names_dir)
+        ids, count, total, detail = spec.call(args, vault_dir, envelopes_dir, names_dir)
     except reader.QueryError as exc:
         return ToolResult(ids=[], count=0, error=f"tool {tool!r} query failed: {exc}")
-    return ToolResult(ids=ids, count=count, total=total)
+    return ToolResult(ids=ids, count=count, total=total, detail=detail)

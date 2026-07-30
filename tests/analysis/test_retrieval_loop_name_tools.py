@@ -48,6 +48,24 @@ Then  the trajectory entry still has exactly the five §7.6 fields, with
   And a call that is both THIN (below thin_result_floor) and capped states
       both notes -- neither may silently swallow the other
 
+Given a scripted find_names call that resolves through the alias tier
+      (issue #517: planner blindness -- the loop used to hand back only a
+      bare canonical string)
+When  the retrieval loop runs
+Then  the trajectory entry still has exactly the five §7.6 fields
+  And the recorded prompt for the next step states the hit's kind and tier,
+      so the model can tell a solid resolution from a guess
+
+Given a scripted get_name call, and separately a scripted where_names_meet
+      call, each against members drawn from a known number of sources
+      (issue #517's own follow-up: a live corpus run showed a model told to
+      intersect only a "large" name avoiding the tool by resolving narrow,
+      one-book names instead)
+When  the retrieval loop runs
+Then  each trajectory entry still has exactly the five §7.6 fields
+  And the recorded prompt for the next step states how many distinct
+      sources the returned members actually span
+
 See specs/PHASE-B.md §4 (the agentic loop, case-as-anchor P0-3), §7.5 (the
 name-layer tools, [FIRM], and D4's Gather-hint rule) and §7.6 (the
 trajectory log, [FIRM], unchanged) for the source of truth, and
@@ -575,4 +593,139 @@ def test_a_result_that_is_both_thin_and_capped_states_both_notes(
     assert "THIN" in step_2_prompt, f"the thin signal must not be dropped, got {step_2_prompt!r}"
     assert "1 of 3 total" in step_2_prompt, (
         f"the capped signal must not be dropped, got {step_2_prompt!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scenario 6 (issue #517): find_names' own resolution detail -- kind,
+# member_count, tier -- reaches the next turn's prompt, beside the
+# trajectory, never inside it.
+# ---------------------------------------------------------------------------
+
+
+def test_find_names_detail_reaches_the_next_turns_prompt(
+    fixture: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Before this, the loop handed the model only a bare canonical string
+    for every `find_names` hit, so an exact/alias resolution and an
+    embedding guess at cosine 0.78 were indistinguishable -- the planner-
+    blindness signature #505's run 1 showed (ten find_names calls, seven
+    returning a single result). `ToolResult.detail` carries the hit's own
+    `kind`/`member_count`/`tier`, and the loop appends it to the next
+    prompt, the same way `total` already rides beside the trajectory."""
+    vault_dir, names_dir = fixture
+    _set_scripted_tool_calls(
+        monkeypatch,
+        [
+            {"tool": "find_names", "args": {"query": "Tilly"}},
+            None,
+        ],
+    )
+    record_path = tmp_path / "record.jsonl"
+    client = RecordLLMClient(record_path)
+
+    trajectory = run_retrieval_loop(
+        client, "seed prompt", vault_dir=vault_dir, names_dir=names_dir, step_budget=10
+    )
+
+    assert len(trajectory) == 1
+    assert set(trajectory[0]) == {"step", "tool", "args", "result_ids", "result_count"}, (
+        "detail rides beside the trajectory, never inside it -- the §7.6 shape is unchanged"
+    )
+
+    prompts = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
+    step_2_prompt = prompts[1]
+    assert "kind=person" in step_2_prompt, (
+        f"expected the hit's kind in the next prompt, got {step_2_prompt!r}"
+    )
+    assert "member_count=3" in step_2_prompt, (
+        f"expected the hit's member_count in the next prompt, got {step_2_prompt!r}"
+    )
+    assert "tier=alias" in step_2_prompt, (
+        f"expected which tier resolved the query in the next prompt, got {step_2_prompt!r}"
+    )
+
+
+def test_get_name_detail_reaches_the_next_turns_prompt(
+    fixture: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """issue #517's own follow-up: a live corpus run showed a model cannot
+    tell a large page is one book from a bare chunk_id list. All three of
+    Tilly's fixture member notes share one `source_id`, so `detail` states
+    a one-source span the model can check directly."""
+    vault_dir, names_dir = fixture
+    _set_scripted_tool_calls(
+        monkeypatch,
+        [
+            {"tool": "get_name", "args": {"canonical": TILLY}},
+            None,
+        ],
+    )
+    record_path = tmp_path / "record.jsonl"
+    client = RecordLLMClient(record_path)
+
+    trajectory = run_retrieval_loop(
+        client, "seed prompt", vault_dir=vault_dir, names_dir=names_dir, step_budget=10
+    )
+
+    assert set(trajectory[0]) == {"step", "tool", "args", "result_ids", "result_count"}, (
+        "detail rides beside the trajectory, never inside it"
+    )
+
+    prompts = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
+    step_2_prompt = prompts[1]
+    assert "3 notes across 1 sources" in step_2_prompt, (
+        f"expected the source-span detail in the next prompt, got {step_2_prompt!r}"
+    )
+
+
+def test_where_names_meet_detail_reaches_the_next_turns_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Same fix, for the intersection itself: two notes from two different
+    sources report as spanning two sources, not just as two notes."""
+    vault_dir = tmp_path / "vault"
+    names_dir = vault_dir / "names"
+    names_dir.mkdir(parents=True, exist_ok=True)
+
+    def _write_page(name: str, filename: str, chunk_ids: list[str]) -> None:
+        member_lines = "\n".join(
+            f"- [[{chunk_id}]] — Author (2020): A claim." for chunk_id in chunk_ids
+        )
+        body = f"# {name}\n\n**Member notes:**\n{member_lines}\n"
+        (names_dir / filename).write_text(
+            "---\n"
+            + yaml.safe_dump(
+                {"name": name, "kind": "concept", "aliases": [], "member_count": len(chunk_ids)},
+                sort_keys=False,
+            )
+            + "---\n"
+            + body,
+            encoding="utf-8",
+        )
+
+    shared = ["srcA_1_a_001", "srcB_1_a_001"]
+    _write_page("A", "a.md", shared)
+    _write_page("B", "b.md", shared)
+
+    _set_scripted_tool_calls(
+        monkeypatch,
+        [
+            {"tool": "where_names_meet", "args": {"canonical": "A", "other": "B"}},
+            None,
+        ],
+    )
+    record_path = tmp_path / "record.jsonl"
+    client = RecordLLMClient(record_path)
+
+    trajectory = run_retrieval_loop(
+        client, "seed prompt", vault_dir=vault_dir, names_dir=names_dir, step_budget=10
+    )
+
+    assert set(trajectory[0]) == {"step", "tool", "args", "result_ids", "result_count"}
+
+    prompts = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
+    step_2_prompt = prompts[1]
+    assert "2 notes across 2 sources" in step_2_prompt, (
+        f"expected the source-span detail in the next prompt, got {step_2_prompt!r}"
     )

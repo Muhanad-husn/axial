@@ -7,7 +7,8 @@ needs an id the caller already holds.
 
 `axial.query.names` is how a caller FINDS something (Phase B v1 slice 02,
 issue #487): `find_names`, `get_name`, `name_neighbors`, `who_cites`,
-`who_argues_against` and the per-name `coverage_count`. It replaces
+`who_argues_against`, `where_names_meet` (issue #517) and the per-name
+`coverage_count`. It replaces
 `query_by_tag`, `query_by_polity` and `follow_backlinks`, deleted with the
 facets they filtered (D1/D5): each returned 0 or `[]` on every call against
 the v1 vault, and a tool that silently returns nothing is worse than one that
@@ -29,6 +30,7 @@ from axial.query.names import (
     find_names,
     get_name,
     name_neighbors,
+    where_names_meet,
     who_argues_against,
     who_cites,
 )
@@ -78,6 +80,7 @@ __all__ = [
     "get_name",
     "name_neighbors",
     "query_by_source",
+    "where_names_meet",
     "who_argues_against",
     "who_cites",
 ]

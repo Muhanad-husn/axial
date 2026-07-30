@@ -279,6 +279,128 @@ def test_evidence_assembly_dedupes_across_calls_trajectory_keeps_every_call(tmp_
     assert evidence_ids == [shared_id], "the assembled evidence set dedupes the repeated id"
 
 
+# --- issue #517 slice 2: the assembled set is source round-robin, not
+#     first-seen -- pure unit tests over a hand-built trajectory, since
+#     assemble_evidence_ids needs no vault, no client and no loop run at all.
+# ---------------------------------------------------------------------------
+
+
+def _entry(tool: str, result_ids: list[str]) -> dict[str, Any]:
+    return {
+        "step": 1,
+        "tool": tool,
+        "args": {},
+        "result_ids": result_ids,
+        "result_count": len(result_ids),
+    }
+
+
+def test_single_source_entries_produce_a_source_round_robin_assembly():
+    """The measured failure shape: a model reads two single-source `get_name`
+    pages before a later, genuinely cross-source call. First-seen order would
+    let the first entry's one book own the head of the set; round-robin
+    interleaves by source from the first id on."""
+    trajectory = [
+        _entry("get_name", ["aaa_1_a_001", "aaa_1_a_002"]),
+        _entry("get_name", ["bbb_1_a_001", "bbb_1_a_002"]),
+        _entry("where_names_meet", ["ccc_1_a_001"]),
+    ]
+
+    assert assemble_evidence_ids(trajectory) == [
+        "aaa_1_a_001",
+        "bbb_1_a_001",
+        "ccc_1_a_001",
+        "aaa_1_a_002",
+        "bbb_1_a_002",
+    ]
+
+
+def test_dedup_and_first_seen_order_within_a_source_both_survive():
+    """A duplicate id is still dropped at its second occurrence, and a
+    single source's own ids keep the order they were FIRST SEEN in -- never
+    re-sorted by chunk_id (which would put aaa_1_a_001 ahead of
+    aaa_1_a_002 here)."""
+    trajectory = [
+        _entry("get_name", ["aaa_1_a_002", "aaa_1_a_001"]),
+        _entry("who_cites", ["aaa_1_a_001", "aaa_1_a_003"]),  # aaa_1_a_001 is a duplicate
+    ]
+
+    assert assemble_evidence_ids(trajectory) == ["aaa_1_a_002", "aaa_1_a_001", "aaa_1_a_003"]
+
+
+def test_empty_trajectory_assembles_to_an_empty_list():
+    assert assemble_evidence_ids([]) == []
+
+
+def test_single_source_trajectory_is_unchanged_by_the_round_robin():
+    trajectory = [_entry("get_name", ["aaa_1_a_001", "aaa_1_a_002", "aaa_1_a_003"])]
+
+    assert assemble_evidence_ids(trajectory) == ["aaa_1_a_001", "aaa_1_a_002", "aaa_1_a_003"]
+
+
+def test_ids_from_non_chunk_valued_tools_are_still_skipped_by_the_round_robin():
+    """The round-robin reorders the surviving ids; it must not resurrect an
+    id `find_names` returned (a canonical name, not a chunk id) just because
+    that id now sorts into its own source-shaped group."""
+    trajectory = [
+        _entry("find_names", ["Charles Tilly"]),
+        _entry("get_name", ["aaa_1_a_001"]),
+    ]
+
+    assert assemble_evidence_ids(trajectory) == ["aaa_1_a_001"]
+
+
+def test_a_chunk_id_that_does_not_parse_groups_under_empty_source_and_sorts_first():
+    """Same fallback `where_names_meet` uses for its own round-robin: an id
+    that fails to parse groups under `""`, which sorts before any real
+    source_id -- no second convention for "which source is this"."""
+    trajectory = [_entry("get_name", ["not-a-real-chunk-id", "zzz_1_a_001"])]
+
+    assert assemble_evidence_ids(trajectory) == ["not-a-real-chunk-id", "zzz_1_a_001"]
+
+
+def _first_seen_dedup(trajectory: list[dict[str, Any]]) -> list[str]:
+    """An independent, minimal oracle for "dedup only, no reordering" --
+    what `assemble_evidence_ids` returned before issue #517 slice 2 -- used
+    only to state the permutation invariant below. Every entry here uses a
+    `returns_chunk_ids=True` tool, so it needs no `TOOL_REGISTRY` filter of
+    its own to match `assemble_evidence_ids`'s real first pass."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for entry in trajectory:
+        for chunk_id in entry["result_ids"]:
+            if chunk_id not in seen:
+                seen.add(chunk_id)
+                ordered.append(chunk_id)
+    return ordered
+
+
+def test_assemble_evidence_ids_is_a_permutation_of_first_seen_dedup():
+    """The regression this whole scare was about (issue #517 slice 2, CI on
+    PR #523): a reorder is a permutation, and must never change WHICH ids
+    survive or how many -- only their order. A downstream stage that counts
+    (rather than orders) the evidence set, like `source_usage`'s per-source
+    `evidence_chunk_count`, therefore cannot see its own total move because
+    of this reduction; if a count changes, the cause is downstream of
+    assembly, never here."""
+    trajectory = [
+        _entry("get_name", ["aaa_1_a_001", "aaa_1_a_002", "aaa_1_a_003"]),
+        _entry("who_cites", ["bbb_1_a_001", "aaa_1_a_002"]),  # aaa_1_a_002 is a duplicate
+        _entry("where_names_meet", ["ccc_1_a_001", "bbb_1_a_002"]),
+    ]
+
+    first_seen = _first_seen_dedup(trajectory)
+    round_robin = assemble_evidence_ids(trajectory)
+
+    assert set(round_robin) == set(first_seen), "same set of surviving ids"
+    assert len(round_robin) == len(first_seen), "same length -- nothing dropped, nothing added"
+    assert sorted(round_robin) == sorted(first_seen), "a permutation, not a different set"
+    assert round_robin != first_seen, (
+        "the fixture is chosen so the two orders actually differ -- otherwise this "
+        "test could pass by the round-robin degenerating to a no-op"
+    )
+
+
 # --- no case-scope filter on the assembled evidence set ---------------------
 
 
