@@ -22,7 +22,13 @@ layer's resolution/traversal tools (`find_names`, `name_neighbors`) return
 canonical NAMES, not passages, and a name string has no place in the set
 stage 4 treats as citable grounds. The §7.6 trajectory itself is untouched
 -- every call still gets its own entry with its own `result_ids`, whatever
-kind those ids are.
+kind those ids are. The deduplicated set it assembles is then ordered
+source round-robin, not first-seen (issue #517 slice 2): a first-seen order
+lets whichever tool the model happened to call first own the evidence set's
+own char-budget prefix, which is exactly what let two single-source
+`get_name` calls crowd out a later, genuinely cross-source
+`where_names_meet` call on a live run. `get_name`'s own page order stays
+untouched; only this later reduction reorders.
 
 `coverage_count` is not in `TOOL_REGISTRY` at all (issue #505's own
 follow-up: a real corpus run's own model chose to call it and flooded that
@@ -65,6 +71,7 @@ from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult
 from axial.llm import RETRIEVE_PASS_NAME, LLMClient
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
+from axial.query.reader import MalformedChunkIdError, source_id_from_chunk_id
 from axial.retrieve.dispatcher import dispatch
 from axial.retrieve.tools import TOOL_REGISTRY, tool_specs_for_provider
 
@@ -310,14 +317,56 @@ class RetrievalResult:
     evidence_ids: list[str]
 
 
+def _source_id_or_empty(chunk_id: str) -> str:
+    """`source_id_from_chunk_id(chunk_id)`, or `""` when `chunk_id` does not
+    parse -- the same fallback `axial.query.names.where_names_meet` groups
+    its own round-robin by (a member whose id fails to parse groups under
+    `""`, sorting first): one convention for "which source does this id
+    belong to", not a second one invented here."""
+    try:
+        return source_id_from_chunk_id(chunk_id)
+    except MalformedChunkIdError:
+        return ""
+
+
+def _round_robin_by_source(ids: list[str]) -> list[str]:
+    """`ids`, grouped by `_source_id_or_empty`, the groups ordered by
+    `source_id` ascending, each group's OWN ids kept in their existing
+    relative order, then emitted one id per group in rotation until every
+    group is exhausted -- the same rotation shape
+    `axial.query.names.where_names_meet` already writes, kept as a separate,
+    smaller helper rather than a shared one: that function additionally
+    sorts each group by `chunk_id`, because a name page's member order is
+    not itself meaningful evidence-order, while this reduction must instead
+    PRESERVE each id's first-seen call order within its source (see
+    `assemble_evidence_ids`) -- sharing the helper would have to bend one of
+    the two rules, so it stays two small functions instead of one bent one."""
+    groups: dict[str, list[str]] = {}
+    for chunk_id in ids:
+        groups.setdefault(_source_id_or_empty(chunk_id), []).append(chunk_id)
+
+    group_keys = sorted(groups)
+    rotated: list[str] = []
+    round_index = 0
+    while len(rotated) < len(ids):
+        for key in group_keys:
+            bucket = groups[key]
+            if round_index < len(bucket):
+                rotated.append(bucket[round_index])
+        round_index += 1
+    return rotated
+
+
 def assemble_evidence_ids(trajectory: list[dict[str, Any]]) -> list[str]:
     """Deduplicate chunk/artifact ids across every trajectory entry's
-    `result_ids`, preserving first-seen order. The trajectory itself is
-    untouched -- every call, including one that returned only ids already
-    seen, still has its own entry (§7.6); this is a separate, later
-    reduction over it, applying **no** case-scope filter (charter §3,
-    P0-3): an id belonging to a chunk from a source about a different
-    polity than the case anchor is kept exactly like any other.
+    `result_ids`, preserving first-seen order, THEN reorder the deduplicated
+    set source round-robin rather than leaving it first-seen (issue #517
+    slice 2). The trajectory itself is untouched -- every call, including
+    one that returned only ids already seen, still has its own entry (§7.6)
+    in its own call order; this is a separate, later reduction over it,
+    applying **no** case-scope filter (charter §3, P0-3): an id belonging to
+    a chunk from a source about a different polity than the case anchor is
+    kept exactly like any other.
 
     **Only chunk/artifact-valued entries contribute (issue #488).** A
     trajectory entry whose tool is not in `TOOL_REGISTRY` (which includes
@@ -326,7 +375,23 @@ def assemble_evidence_ids(trajectory: list[dict[str, Any]]) -> list[str]:
     `ToolSpec.returns_chunk_ids` is `False` (`find_names`, `name_neighbors`,
     `get_envelope`), is skipped here: those yield canonical names or a
     `source_id`, never a real passage, and stage 4's evidence set must only
-    ever carry ids `get_chunk`/`get_artifact` can resolve."""
+    ever carry ids `get_chunk`/`get_artifact` can resolve.
+
+    **Round-robin, not first-seen (issue #517 slice 2, `_round_robin_by_
+    source`).** Measured on a live P3-01 run: the model's 5 `where_names_
+    meet` calls assembled 137 notes across 12 sources, but it read two
+    single-source `get_name` pages (24 members each, one book) at turns 6
+    and 9, before its first intersection at turn 10 -- so a first-seen
+    assembly put those 44 one-book notes at the head of the set, and the
+    first 25 notes synthesis actually reads (the char-budget prefix) spanned
+    3 sources, not 12. Ids are grouped by `source_id`, the groups ordered
+    ascending, each group's own ids kept in their existing first-seen order,
+    then emitted one id per group in rotation until every group is
+    exhausted -- a total order over the deduplicated set. **`get_name`'s own
+    page order (§7.5, [FIRM]) and the §7.6 trajectory are both untouched**:
+    this reorders only the later, separate reduction over already-
+    deduplicated ids, never the page a `get_name` call itself returns or the
+    trajectory entries' own `result_ids`."""
     seen: set[str] = set()
     ordered: list[str] = []
     for entry in trajectory:
@@ -337,7 +402,7 @@ def assemble_evidence_ids(trajectory: list[dict[str, Any]]) -> list[str]:
             if chunk_id not in seen:
                 seen.add(chunk_id)
                 ordered.append(chunk_id)
-    return ordered
+    return _round_robin_by_source(ordered)
 
 
 def run_planned_retrieval(
