@@ -243,7 +243,7 @@ in **Order and concurrency** below.
 | 01 | restore and re-pin | #486 | Re-cut the corpus pin per D6, its vault hash over prose ids plus the name layer. The 130 "missing" findings were superseded history, not damage: the free re-run made 0 calls and wrote 0 pages, and all 1,910 pages already agreed with their newest record. LLM-free | ✅ |
 | 02 | the name query API | #487 | `find_names`, `get_name`, `name_neighbors`, `who_cites`, `who_argues_against`, per-name `coverage_count`; deterministic, model-free, fully testable without an LLM. Validated on the live corpus: 14 of 17 queries resolve on a string tier, `Ungor` reaches `Uğur Ümit Üngör` only through the embeddings. The 0.5 floor stands as a stated tunable; the AANES premise was false and is corrected here and in §7.5 | ✅ |
 | 03 | retrieval loop rewired | #488 | Tool registry and dispatcher onto 02's tools; trajectory log unchanged. Ten tools registered, per-arg types so `limit` is an honest int, and a `returns_chunk_ids` flag that keeps canonical names out of the evidence set. Validated LLM-free against the live vault: `Tilly` → `Charles Tilly` → 146 members, 58 citation edges, 2 oppositions, all three rejection paths firing before the vault, 0 names leaked. **The step budget was NOT re-proven** — raised 10 → 20 as stated provisional headroom, because the name surface needs ~3 calls per name; the real bound is measured on the smoke briefs in 06 | ✅ |
-| 04 | synthesis on the new evidence | #489 | Evidence assembly and the synthesis prompt rebuilt around `claim` / `position_of` / `position` / `arguing_against` / `citations`, with Gather findings as hints per D4 | ☐ |
+| 04 | synthesis on the new evidence | #489 | Evidence assembly and the synthesis prompt rebuilt around `claim` / `position_of` / `position` / `arguing_against` / `citations`. `ChunkNote` now exposes all 21 answer keys instead of 7, the abstention predicate moved into the read path as one shared function, and `names_touched` resolves through the alias map alone (99.9% of 9,434 real surfaces; the 8 drops are locator-shaped). **Gather findings are NOT plumbed into the prompt** — D4 permits rather than requires it and nothing carries one into stage 4, so the prompt states the never-cite rule and no finding-as-context path was built. Two shared-substrate bugs fixed: the reader read a bare-string abstention as fourteen one-letter names, and `brief examine` crashed writing its own report | ✅ |
 | 05 | coverage and counter-position | #490 | Per-name coverage map, confidence derivation, contested detection and counter-position generation per D2 and D3 | ☐ |
 | 06 | the run report, and the smoke harness that asserts on it | #491 | Source usage re-based, the response-quality table computed, per-pass latency captured, one report per run — plus `config/briefs/smoke/` and `axial brief smoke`: five briefs, mechanical checks and a cost and latency budget, built as a front end over the existing `run_sweep` | ☐ |
 | ~~07~~ | ~~smoke harness~~ | ~~#492~~ | **Absorbed into 06 on 2026-07-30.** Two of its five mechanical checks read 06's and 05's output, so it was never independent; both slices also edit `cli.py` and the record layer | — |
@@ -445,6 +445,16 @@ docs-only gate exception.
   fragments, because the alias tier resolves before the embedding tier runs. So
   the fragmentation half of the risk is narrow; the tier-invisibility half
   stands. Decide it on 06's smoke numbers, not on speculation.
+- **The first real `brief examine` run cost more than the plan assumed, and #505
+  says why** (2026-07-30, slice 04's evidence run, `config/briefs/sim/P3-01.yaml`).
+  One `get_name` returned 962 members, the trajectory re-sent that id list for
+  twelve turns, and the prompt went from 4,172 to 72,000 characters and stayed
+  there: 21 calls and 374,083 prompt tokens for one examine, most of it the same
+  list. The loop also ran to 20 of 20 turns without converging, so slice 03's
+  "provisional headroom" hit its ceiling on its first real brief rather than
+  settling under it. The assembled evidence set came out at **964 notes**, which
+  is what would reach a synthesis prompt. Decide the shape of the fix on 06's
+  smoke numbers; the measurement is on #505 so it is not relearned.
 - **Retrieval recall has never been measured and now can be.** The five hard
   briefs have `required_citation_source_ids`. The share of those a run's grounds
   actually reach is the first real recall number this product has had, and it is
