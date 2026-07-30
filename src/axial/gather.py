@@ -17,21 +17,33 @@ source-metadata read; that is the entire model input.
 
 **The packet has a sixth field only when the note has one (issue #496).**
 Frame 0.2 split `position_of` ("whose position is this?") from `position`
-("what is that position?"), and the corpus is a permanent mix: the 6,148
-records already on disk carry no `position` key and are not being
-re-interrogated. `build_packets` reads the new field on key presence alone,
-`MemberPacket.position` is `None` when the record does not carry it, and
-`render_packet` then emits **byte-for-byte** what it emitted before the
-field existed. That is load-bearing rather than tidy: `GatherJob.key` is a
-sha256 over the rendered packets, and `disagreements.jsonl` is keyed by it,
-so a one-byte change to an old-format render would orphan every recorded
-finding in the corpus and buy a full re-decide.
+("what is that position?"), and the corpus is a permanent mix: 6,148
+records were already on disk when the split shipped and are not being
+re-interrogated. `build_packets` reads the new field on key presence alone;
+`MemberPacket.position` is `None` when the record does not carry it. That
+part of the contract is unchanged.
 
-`position` renders **last**, after `arguing_against`, because the cap eats
-the tail and `arguing_against` is the field that must survive it (#490
-measured it as the clause that separates contested names, and Phase B's
-contestedness derivation reads it). See `render_packet` for the measured
-numbers on both sides of that trade.
+**Issue #500, D1: the bracket is reserved first, and `claim` takes whatever
+is left of `MEMBER_PACKET_CHARS`.** The earlier render truncated the whole
+line's tail, so whichever field sat last was the one a long packet lost --
+measured live, that cost 22.4% of all rendered packets `arguing_against`
+entirely, the one clause #490 measured as separating contested names from
+uncontested ones. `claim` is the field that actually runs long (median 245
+of a 483-char untruncated packet); the bracket fields are short and bounded
+by construction. Reserving the bracket and truncating `claim` into the
+remainder means every bracket field survives whenever the packet fits at
+all -- `position_of`, `arguing_against` and `position` alike -- and the
+loss moves to `claim` instead. See `render_packet` for the arithmetic and
+the one degenerate case (a bracket that alone exceeds the cap).
+
+**This deliberately breaks the pre-0.2 byte-for-byte render guarantee** the
+paragraph above used to make: a packet that hits the cap now renders
+differently than it did before D1, whether or not it carries `position`,
+because the truncation point moved. `GatherJob.key` changes for every
+packet that used to be truncated, which is the corpus re-key issue #500
+exists to pay for -- see `plans/name-layer-rekey/README.md`. A packet that
+never hit the cap is untouched, since there was nothing to truncate either
+way.
 
 **The budget is two constants, both stated by §7.18 itself.**
 `MEMBER_PACKET_CHARS` caps one rendered member (§7.18: "roughly 400
@@ -172,21 +184,21 @@ DEFAULT_DISAGREEMENTS_PATH = DEFAULT_NAMES_DATA_DIR / "disagreements.jsonl"
 
 # §7.18's own packet size: "per member note: author, year, the one-sentence
 # claim, position_of, arguing_against, position (frame 0.2 records only) --
-# roughly 400 characters". A rendered member is truncated to this, so the
-# block budget below is arithmetic rather than a hope: worst case a batch
-# holds `GATHER_PACKET_CHAR_BUDGET // MEMBER_PACKET_CHARS` members, whatever
-# a note's answers happen to contain. A new-format member carries one field
-# more, so it meets the cap more often; the cap itself does not move, and an
-# old-format member renders exactly as it always did.
+# roughly 400 characters". A rendered member is capped at this, so the block
+# budget below is arithmetic rather than a hope: worst case a batch holds
+# `GATHER_PACKET_CHAR_BUDGET // MEMBER_PACKET_CHARS` members, whatever a
+# note's answers happen to contain.
 #
-# The cap truncates the TAIL, so the field order in `render_packet` decides
-# what is lost. `position` is rendered last and is therefore the field that
-# goes: measured on 120 real frame-0.2 notes, 62.5% of new-format packets
-# lose it, while only 1.7% lose `arguing_against` (93.3% did when `position`
-# sat in the middle). That is the intended trade, not a gap to close -- #490
-# measured `arguing_against` as the clause that separates contested names,
-# and Phase B reads it. Rescuing `position` with a second constant or a
-# per-field budget is a founder decision nobody has made.
+# Issue #500, D1: `render_packet` reserves `position_of`, `arguing_against`
+# and `position` first and truncates `claim` into whatever is left, rather
+# than truncating the whole line's tail. Measured live, the old tail
+# truncation cost `arguing_against` entirely in 22.4% of all rendered
+# packets -- the one clause #490 measured as separating contested names from
+# uncontested ones. Under this render every bracket field survives whenever
+# the packet fits under the cap at all; the one degenerate case (a bracket
+# that alone exceeds the cap) falls back to the old tail truncation, which
+# is unchanged. Still a single constant: `claim`'s share is computed as the
+# remainder, not a second tunable.
 MEMBER_PACKET_CHARS = 400
 
 # The hard character budget (D12, P0-13): the largest members block one
@@ -374,29 +386,61 @@ def render_packet(packet: MemberPacket) -> str:
     is what makes `GATHER_PACKET_CHAR_BUDGET` a guarantee rather than an
     average.
 
-    `position` is emitted only when the packet carries one. A packet built
-    from a pre-0.2 answer record therefore renders the exact bytes this
-    function rendered before the field existed, which is what keeps every
-    recorded finding in `disagreements.jsonl` addressable by its own key.
+    `position` is emitted only when the packet carries one -- read on KEY
+    PRESENCE (issue #496), never on truthiness or `frame_version`. That part
+    of the pre-0.2 contract is unchanged.
 
-    **`position` renders LAST, and that order is load-bearing.** The cap
-    truncates the tail, so field order decides which field is lost. #490
-    measured `arguing_against` as the one clause that separates contested
-    names from uncontested ones (1.9x-2.4x lift), and Phase B's
-    contestedness derivation reads it, so it must survive. Measured on 120
-    real notes re-interrogated under frame 0.2: with `position` in the
-    middle, 93.3% of new-format packets lost `arguing against`; with
-    `position` last, 1.7% do. The trade is that `position` itself is
-    truncated away in 62.5% of those packets -- accepted, because Gather's
-    job is disagreement detection and #490 rests on `arguing_against`, not
-    on `position`. Do not reorder this back."""
+    **The bracket is reserved first; `claim` takes whatever is left (issue
+    #500, D1).** Measured over the live corpus, the old tail-truncation
+    render (whichever field fell last in the string lost the most) cost
+    22.4% of all rendered packets `arguing_against` entirely -- the one
+    clause #490 measured as separating contested names from uncontested
+    ones (1.9x-2.4x lift), which Phase B's contestedness derivation reads.
+    `claim` is the field that actually runs long (median 245 of a 483-char
+    untruncated packet); `position_of`, `arguing_against` and `position` are
+    short and bounded by construction. So every bracket field is rendered in
+    full and `claim` alone is truncated into the remainder of
+    `MEMBER_PACKET_CHARS`. This is a single arithmetic split, not a second
+    tunable: no per-field budget is stated anywhere, only `claim`'s share is
+    computed as what is left after the fixed parts.
+
+    **The one degenerate case:** a bracket long enough that, combined with
+    `author`/`year`, it alone meets or exceeds the cap -- there is no
+    remainder to give `claim` at all. That falls back to the pre-D1 render
+    (the whole line assembled, then the tail truncated), which introduces
+    nothing new.
+
+    This deliberately breaks the pre-0.2 byte-for-byte guarantee this
+    docstring used to state: a packet that hits the cap now renders
+    different bytes than it used to, whether or not it carries `position`,
+    because the truncation point moved from the end of the bracket to
+    inside `claim`. That is the corpus re-key issue #500 exists to pay for,
+    not an accident -- `GatherJob.key` changes for every packet that used to
+    be truncated, and `disagreements.jsonl` is re-decided once, in slice 03
+    of the name-layer-rekey sprint. A packet that never hit the cap renders
+    the same bytes it always did, because there was nothing to truncate
+    either way."""
     bracket = [
         f"position of: {packet.position_of}",
         f"arguing against: {packet.arguing_against}",
     ]
     if packet.position is not None:
         bracket.append(f"position: {packet.position}")
-    rendered = f"{packet.author} ({packet.year}): {packet.claim} [{'; '.join(bracket)}]"
+    head = f"{packet.author} ({packet.year}): "
+    tail = f" [{'; '.join(bracket)}]"
+
+    claim_budget = MEMBER_PACKET_CHARS - len(head) - len(tail)
+    if claim_budget < 1:
+        # Degenerate: the bracket (plus author/year) alone leaves no room
+        # for any of `claim`. Fall back to the pre-D1 whole-line render, tail
+        # truncated -- unchanged from before this issue.
+        rendered = f"{head}{packet.claim}{tail}"
+    else:
+        claim = packet.claim
+        if len(claim) > claim_budget:
+            claim = claim[: claim_budget - 1].rstrip() + "…"
+        rendered = f"{head}{claim}{tail}"
+
     if len(rendered) > MEMBER_PACKET_CHARS:
         rendered = rendered[: MEMBER_PACKET_CHARS - 1].rstrip() + "…"
     return rendered
