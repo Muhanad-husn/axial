@@ -481,6 +481,15 @@ def _routed_section_body(
     return prose_lines, apparatus_drops
 
 
+def section_order_key(section_order: str) -> str:
+    """The section's own `order` as it is rendered into `chunk_id` -- dots
+    turned into hyphens, empty falling back to `"0"`. Shared with
+    `axial.names.back_matter_section_orders` (issue #511), which locates a
+    section by the key inside an answer record's `chunk_id` and would
+    silently match nothing if the two ever drifted apart."""
+    return section_order.replace(".", "-") if section_order else "0"
+
+
 def build_chunk_records(
     source_id: str, section_order: str, section_label: str, chunks: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -499,7 +508,7 @@ def build_chunk_records(
     real multi-chapter source.
     """
     slug = _slugify(section_label)
-    order_key = section_order.replace(".", "-") if section_order else "0"
+    order_key = section_order_key(section_order)
     records = []
     for index, chunk in enumerate(chunks, start=1):
         records.append(

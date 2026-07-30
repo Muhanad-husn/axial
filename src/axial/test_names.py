@@ -31,9 +31,12 @@ from axial.names import (  # noqa: E402
     _borderline_pairs,
     _nearest_neighbour_pairs,
     _relabel_from_tree,
+    back_matter_anchor,
+    back_matter_section_orders,
     build_inventory,
     carries_author_year_citation,
     collect_occurrences,
+    load_back_matter_sections,
     examine_names,
     format_names_report,
     is_apparatus_pointer_shaped,
@@ -210,13 +213,234 @@ def test_cut_a_citation_channel_leaves_the_name_space():
     assert {occ.surface_form for occ in iter_name_occurrences(record)} == {"Charles Tilly"}
 
 
-def test_row_b_is_not_applied_and_a_back_matter_name_survives():
-    """Row B -- cutting a surface seen only in a bibliography, index, front
-    matter or appendix -- is re-scoped out of this change and has its own
-    issue. Nothing here reads a section, so a bibliography name keeps its
-    page, and this pass makes no model call."""
-    assert _collected("Hanna Batatu", section="Bibliography") == {"Hanna Batatu"}
-    assert _collected("Hanna Batatu", section="N O T E S") == {"Hanna Batatu"}
+# --- issue #511, row B: the back-matter run off the cached tree --------------
+#
+# Every heading below is verbatim from a real `data/trees/*.json`. A book's
+# back matter is WHERE it sits, not what it is called, so the unit is the
+# per-source boundary, never the heading on its own.
+
+
+def _tree(*sections: tuple[str, str]) -> dict:
+    """A cached structural tree the way `axial.extract` writes one: a
+    top-level section node carries both a verbatim `text` heading and a
+    `children` list (`axial.chunk._section_nodes`)."""
+    return {
+        "children": [
+            {
+                "order": order,
+                "text": heading,
+                "label": "section_header",
+                "children": [{"type": "prose", "text": "body"}],
+            }
+            for order, heading in sections
+        ]
+    }
+
+
+@pytest.mark.parametrize(
+    "heading,expected",
+    [
+        ("Index", "index"),
+        ("INDEX", "index"),
+        ("I N D E X", "index"),  # docling per-glyph spacing (jackson-1990)
+        ("I NDEX", "index"),  # OCR split (jackson-1990)
+        ("I N D E X I I: P E R S O N A L N A M E S", "index"),  # batatu-1999
+        ("Name index", "index"),
+        ("330 ● Index", "index"),  # running header (heydemann-2004)
+        ("Index 476", "index"),  # running header (mann-v4-2013)
+        ("Bibliography", "bibliography"),
+        ("BIBLIOGRAPHY", "bibliography"),
+        ("Select Bibliography", "bibliography"),
+        ("Selected Bibliography", "bibliography"),  # heydemann-2000
+        ("S E L E C T B I B L I O G R A P H Y", "bibliography"),  # batatu-1999
+        ("Bibliography Z 231", "bibliography"),  # running header (chouliaraki-2024)
+        ("218 Y Bibliography", "bibliography"),  # running header (chouliaraki-2024)
+        ("90 References", "bibliography"),  # running header (agamben-2005)
+        ("References", "bibliography"),
+        ("REFERENCES", "bibliography"),
+        ("Bibliography of Michael Mann's Writings", "bibliography"),  # hall-2006
+        ("Works Cited", "bibliography"),
+    ],
+)
+def test_back_matter_anchor_survives_docling_damage_and_running_headers(heading, expected):
+    assert back_matter_anchor(heading) == expected
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        # Endnotes are kept: in this genre the historiographical quarrel
+        # happens there, and no anchor word reaches them.
+        "NOTES",
+        "Notes",
+        "Notes:",
+        "NOTES TO PAGES 85-93",
+        "Notes to p. 190",
+        # Argument prose the two withdrawn heading classifiers miscut.
+        "CONCLUSION",
+        "PROLOGUE",
+        "EXPLAINING THE EXPANSION",
+        "The Structure of the Book",
+        "Part III",
+        "DURKHEIM",
+        "Fohn A. Hall",
+        # Near misses on the anchor vocabulary itself.
+        "Reference Works",
+        "Frames of Reference",
+        "Appendix C: Timeline of Conflicts",
+        "Contents",
+        "",
+    ],
+)
+def test_back_matter_anchor_is_none_for_endnotes_and_argument_headings(heading):
+    assert back_matter_anchor(heading) is None
+
+
+def test_back_matter_section_orders_cuts_from_the_bibliography_to_the_end():
+    """batatu-1999's real tail. The clean anchor is still in the tree even
+    though the sections that reach the name space are garbled or index-entry
+    fragments, and everything at or after it goes -- including the
+    bibliography's own subsections, which carry no anchor word."""
+    tree = _tree(
+        ("157", "Chapter 24 Fat ● h and the P.L.O."),
+        ("158", "Chapter 25 Epilogue"),
+        ("159", "S E L E C T B I B L I O G R A P H Y"),
+        ("160", "Documents of the Syrian Government"),
+        ("161", "Sources in Other Languages"),
+        ("162", "I N D E X I I: P E R S O N A L N A M E S"),
+        ("163", "Peres, Shimon, 318-19"),
+    )
+
+    assert back_matter_section_orders(tree) == frozenset({"159", "160", "161", "162", "163"})
+
+
+def test_back_matter_section_orders_extends_back_over_a_contiguous_anchor_run():
+    """chouliaraki-2024: a running header turned every bibliography page into
+    its own section, so the boundary is the start of that run, not its end."""
+    tree = _tree(
+        ("75", "4. How Can Victimhood Be Reclaimed?"),
+        ("76", "BIBLIOGRAPHY"),
+        ("77", "202 Y Bibliography"),
+        ("78", "Bibliography Z 203"),
+        ("79", "INDEX"),
+        ("80", "PAC. See Public Accounts Committee"),
+    )
+
+    assert back_matter_section_orders(tree) == frozenset({"76", "77", "78", "79", "80"})
+
+
+def test_back_matter_section_orders_ignores_a_per_chapter_reference_list():
+    """hall-2006/elcheroth-2017: an edited volume ends every chapter with its
+    own `References`, so an interior anchor is not a boundary. The LAST
+    bibliography anchor is, which is why chapter 16's prose survives."""
+    tree = _tree(
+        ("1", "Introduction"),
+        ("2", "References"),
+        ("3", "Explaining murderous ethnic cleansing"),
+        ("4", "Conclusion"),
+        ("5", "Notes"),
+        ("6", "References"),
+        ("7", "Bibliography of Michael Mann's Writings"),
+        ("8", "Index"),
+        ("9", "Dahrendorf, Ralf, 38, 41"),
+    )
+
+    assert back_matter_section_orders(tree) == frozenset({"6", "7", "8", "9"})
+
+
+def test_back_matter_section_orders_keeps_an_endnote_run_before_the_boundary():
+    """bayat-2017: the notes are chapter-named sections sitting between the
+    last body chapter and the index. A boundary rule cannot reach them."""
+    tree = _tree(
+        ("86", "11 Revolution and Hope"),
+        ("87", "Notes"),
+        ("88", "Chapter 1"),
+        ("89", "Chapter 11"),
+        ("90", "Index"),
+        ("91", "97, 143"),
+        ("92", "Joel Beinin, Editor"),
+    )
+
+    assert back_matter_section_orders(tree) == frozenset({"90", "91", "92"})
+
+
+def test_back_matter_section_orders_empty_when_no_anchor_survived_extraction():
+    tree = _tree(("1", "Introduction"), ("2", "Conclusions"), ("3", "lad ex"))
+
+    assert back_matter_section_orders(tree) == frozenset()
+
+
+def test_back_matter_section_orders_reads_a_dotted_order_the_way_chunk_id_does():
+    """`build_chunk_records` renders a section's `order` into chunk_id with
+    dots turned into hyphens, so the boundary must key the same way or row B
+    silently matches nothing."""
+    tree = _tree(("5.1", "Explaining ethnic politics"), ("5.2", "References"))
+
+    assert back_matter_section_orders(tree) == frozenset({"5-2"})
+
+
+def test_row_b_cuts_a_surface_seen_only_in_the_back_matter_run():
+    """The cut is per occurrence: a name the bibliography alone carries loses
+    its only occurrence and never reaches the inventory, while the endnote
+    section in the same book is untouched."""
+    back_matter = {"s1": frozenset({"9", "10"})}
+    bibliography_note = _answer_record(
+        "s1_9_books_001", "s1", _base_answers(names=[{"name": "Hanna Batatu", "kind": "person"}])
+    )
+    endnote = _answer_record(
+        "s1_8_notes_001", "s1", _base_answers(names=[{"name": "Ernest Gellner", "kind": "person"}])
+    )
+
+    assert list(iter_name_occurrences(bibliography_note, back_matter)) == []
+    assert {occ.surface_form for occ in iter_name_occurrences(endnote, back_matter)} == {
+        "Ernest Gellner"
+    }
+    # Nothing is cut when the caller has no boundary for that source.
+    assert {occ.surface_form for occ in iter_name_occurrences(bibliography_note)} == {
+        "Hanna Batatu"
+    }
+    assert {
+        occ.surface_form for occ in iter_name_occurrences(bibliography_note, {"s2": {"9"}})
+    } == {"Hanna Batatu"}
+
+
+def test_row_b_keeps_a_surface_the_body_also_names():
+    """A page disappears only when EVERY occurrence is cut."""
+    back_matter = {"s1": frozenset({"9"})}
+    records = [
+        _answer_record(
+            "s1_2_body_001",
+            "s1",
+            _base_answers(names=[{"name": "Charles Tilly", "kind": "person"}]),
+        ),
+        _answer_record(
+            "s1_9_books_001",
+            "s1",
+            _base_answers(names=[{"name": "Charles Tilly", "kind": "person"}]),
+        ),
+    ]
+
+    occurrences = list(collect_occurrences(records, back_matter))
+
+    assert [occ.chunk_id for occ in occurrences] == ["s1_2_body_001"]
+
+
+def test_load_back_matter_sections_reads_every_cached_tree(tmp_path: Path):
+    trees_dir = tmp_path / "trees"
+    trees_dir.mkdir()
+    (trees_dir / "src1.json").write_text(
+        json.dumps(_tree(("1", "Introduction"), ("2", "Bibliography"))), encoding="utf-8"
+    )
+    (trees_dir / "src2.json").write_text(json.dumps(_tree(("1", "Introduction"))), encoding="utf-8")
+
+    assert load_back_matter_sections(trees_dir) == {
+        "src1": frozenset({"2"}),
+        "src2": frozenset(),
+    }
+
+
+def test_load_back_matter_sections_missing_dir_returns_empty(tmp_path: Path):
+    assert load_back_matter_sections(tmp_path / "nope") == {}
 
 
 def test_cut_c_bare_numeral_leaves_the_name_space():
@@ -819,6 +1043,7 @@ def test_run_names_missing_answers_dir_raises(tmp_path: Path):
             inventory_path=tmp_path / "inventory.jsonl",
             embeddings_dir=tmp_path / "embeddings.lance",
             manifest_path=tmp_path / "manifest.json",
+            trees_dir=tmp_path / "trees",  # absent: row B cuts nothing here
             encoder=_fake_encoder,
             cluster_fn=_fake_cluster_fn,
         )
@@ -834,6 +1059,7 @@ def test_run_names_no_names_in_any_note_raises(tmp_path: Path):
             inventory_path=tmp_path / "inventory.jsonl",
             embeddings_dir=tmp_path / "embeddings.lance",
             manifest_path=tmp_path / "manifest.json",
+            trees_dir=tmp_path / "trees",  # absent: row B cuts nothing here
             encoder=_fake_encoder,
             cluster_fn=_fake_cluster_fn,
         )
@@ -867,6 +1093,7 @@ def test_run_names_persists_inventory_vectors_and_cluster_labels(tmp_path: Path)
         inventory_path=inventory_path,
         embeddings_dir=embeddings_dir,
         manifest_path=manifest_path,
+        trees_dir=tmp_path / "trees",  # absent: row B cuts nothing here
         encoder=_fake_encoder,
         cluster_fn=_fake_cluster_fn,
     )
@@ -903,10 +1130,69 @@ def test_run_names_persists_inventory_vectors_and_cluster_labels(tmp_path: Path)
     assert manifest["inventory_path"] == str(inventory_path)
 
 
+def test_run_names_cuts_the_back_matter_run_off_the_cached_tree(tmp_path: Path):
+    """Row B end to end (issue #511): `run_names` reads each source's cached
+    tree, finds the back-matter boundary, and the name only a bibliography
+    section carries never reaches the inventory. Still zero model calls."""
+    answers_dir = tmp_path / "answers"
+    trees_dir = tmp_path / "trees"
+    trees_dir.mkdir()
+    (trees_dir / "s1.json").write_text(
+        json.dumps(
+            _tree(
+                ("1", "Introduction"),
+                ("2", "Notes"),
+                ("3", "Bibliography"),
+                ("4", "Books and Articles"),
+                ("5", "Index"),
+            )
+        ),
+        encoding="utf-8",
+    )
+    _write_answers(
+        answers_dir,
+        "s1",
+        [
+            _answer_record(
+                "s1_1_introduction_001",
+                "s1",
+                _base_answers(names=[{"name": "Charles Tilly", "kind": "person"}]),
+            ),
+            _answer_record(
+                "s1_2_notes_001",
+                "s1",
+                _base_answers(names=[{"name": "Ernest Gellner", "kind": "person"}]),
+            ),
+            _answer_record(
+                "s1_4_books-and-articles_001",
+                "s1",
+                _base_answers(names=[{"name": "Yale University Press", "kind": "institution"}]),
+            ),
+        ],
+    )
+
+    result = run_names(
+        answers_dir=answers_dir,
+        inventory_path=tmp_path / "inventory.jsonl",
+        embeddings_dir=tmp_path / "embeddings.lance",
+        manifest_path=tmp_path / "manifest.json",
+        trees_dir=trees_dir,
+        encoder=_fake_encoder,
+        cluster_fn=_fake_cluster_fn,
+    )
+
+    surfaces = {
+        json.loads(line)["surface"]
+        for line in (tmp_path / "inventory.jsonl").read_text(encoding="utf-8").splitlines()
+    }
+    assert surfaces == {"Charles Tilly", "Ernest Gellner"}
+    assert result.entry_count == 2
+    assert result.occurrence_count == 2
+
+
 def test_run_names_makes_no_model_call(tmp_path: Path):
-    """The inventory pass is LLM-free, as it was before issue #508: every
-    surviving cut-set row is a shape test, and row B -- the one that needed
-    a judgment about a section heading -- is re-scoped to its own issue. A
+    """The inventory pass is LLM-free: every cut-set row is either a shape
+    test or, for row B, a position read off a cached structural tree. A
     poisoned client here would never be reached, so the assertion is on the
     real seam: `run_names` takes no client at all."""
     import inspect
@@ -939,11 +1225,14 @@ def test_run_names_makes_no_model_call(tmp_path: Path):
         inventory_path=inventory_path,
         embeddings_dir=tmp_path / "embeddings.lance",
         manifest_path=tmp_path / "manifest.json",
+        trees_dir=tmp_path / "trees",  # absent: row B cuts nothing here
         encoder=_fake_encoder,
         cluster_fn=_fake_cluster_fn,
     )
 
-    # Both survive: no section is read, so a bibliography name keeps its page.
+    # Both survive: this fixture has no cached tree, so there is no boundary
+    # to apply and row B cuts nothing. The record's own `section` field is
+    # not the mechanism -- position in the tree is.
     assert result.entry_count == 2
     surfaces = {
         json.loads(line)["surface"]
@@ -975,6 +1264,7 @@ def test_run_names_is_deterministic_across_reruns(tmp_path: Path):
         inventory_path=tmp_path / "inventory.jsonl",
         embeddings_dir=tmp_path / "embeddings.lance",
         manifest_path=tmp_path / "manifest.json",
+        trees_dir=tmp_path / "trees",  # absent: row B cuts nothing here
         encoder=_fake_encoder,
         cluster_fn=_fake_cluster_fn,
     )

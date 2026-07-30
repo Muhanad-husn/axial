@@ -12,9 +12,13 @@ never makes a merge decision itself:
   1. **The inventory (LLM-free).** One record per distinct name SURFACE FORM
      out of slice 02's per-note answer records
      (`data/answers/<source_id>.jsonl`, `axial.interrogate`), read from
-     exactly the two fields §7.16 names -- `names[]` (which carries its own
-     `kind`) and `citations[].cited` -- "the complete, lossless record of
-     what the corpus said." `uses`, `defines`, `arguing_against` and
+     `names[]` alone (which carries its own `kind`) and filtered by §7.16's
+     cut set -- rows A and C-S by surface shape, row B by the note's
+     position in its own source's structural tree. `citations[].cited` used
+     to seed a surface too, and the inventory used to be described as "the
+     complete, lossless record of what the corpus said"; issue #508 ended
+     both (a citation is not a name page). `uses`, `defines`,
+     `arguing_against` and
      `position_of` are deliberately NOT read here, even though an earlier
      draft of this slice's brief listed them: verified directly against the
      real 6,148-note corpus, `arguing_against`/`position_of` are
@@ -109,10 +113,14 @@ from __future__ import annotations
 
 import json
 import re
+import sys
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
 
+from axial.chunk import _section_nodes, section_order_key
+from axial.extract import TREES_DIR
 from axial.interrogate import _default_answers_dir, is_abstention
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 
@@ -514,18 +522,164 @@ def _clean(value: Any) -> str | None:
     return cleaned or None
 
 
-def iter_name_occurrences(record: dict[str, Any]) -> Iterator[NameOccurrence]:
+# ---------------------------------------------------------------------------
+# Row B: the back-matter run, located per source off the cached tree
+# (issue #511, §7.16)
+# ---------------------------------------------------------------------------
+#
+# A book's back matter is WHERE it sits, not what it is called. Two attempts
+# to decide row B by classifying the corpus's 2,813 distinct section headings
+# failed on whole-batch contamination, taking chapter titles of the argument
+# with them (issue #508's write-up). The boundary below cannot reach an
+# interior heading by construction: `CONCLUSION`, `PROLOGUE` and `DURKHEIM`
+# all sit before it, and so do the endnotes, which interleave per chapter
+# mid-book and are deliberately kept.
+
+#: Anchor vocabulary, split into the two families whose positions mean
+#: different things: an index anchor is always terminal in this corpus (every
+#: one of the 31 cached trees puts its first one past 91% of the way through),
+#: while a bibliography anchor is routinely interior -- an edited volume ends
+#: every chapter with its own `References`, and Mann's volumes end every
+#: chapter with a `Bibliography`.
+#: The vocabulary is `axial.chunk._BACK_MATTER_TITLES`' own back-boundary
+#: subset -- that list's front-matter members (`contents`, `list of figures`,
+#: `copyright`) must never move a back boundary. Of these, only
+#: `bibliography` (109 sections), `index` (71) and `references` (54) fire on
+#: the corpus of record; the three phrases are carried across from that list
+#: rather than invented here.
+_INDEX_ANCHOR_WORDS = ("index",)
+_BIBLIOGRAPHY_ANCHOR_WORDS = ("bibliography", "references")
+_BIBLIOGRAPHY_ANCHOR_PHRASES = ("works cited", "cited works", "reference list")
+
+_ANCHOR_FAMILIES = (
+    ("index", _INDEX_ANCHOR_WORDS, ()),
+    ("bibliography", _BIBLIOGRAPHY_ANCHOR_WORDS, _BIBLIOGRAPHY_ANCHOR_PHRASES),
+)
+
+_NON_LETTERS = re.compile(r"[^a-z]+")
+
+
+def back_matter_anchor(heading: str) -> str | None:
+    """`"index"`, `"bibliography"` or `None` for one section heading.
+
+    Digits and punctuation are dropped before matching, so a running header
+    docling folded into the heading (`90 References`, `330 ● Index`,
+    `Bibliography Z 231`, `Index 476`) reads as its anchor. Three matches are
+    tried, in order, against what is left:
+
+    1. a whole token (`Select Bibliography`, `Name index`, `218 Y
+       Bibliography`);
+    2. the tokens joined, as a prefix -- `I NDEX`, where OCR split one word
+       into two;
+    3. the tokens joined, anywhere, but only for a heading that is entirely
+       single characters, which is docling's per-glyph spacing (`I N D E X`,
+       `S E L E C T B I B L I O G R A P H Y`): glyph spacing destroys word
+       boundaries, so containment is the only test left, and restricting it
+       to that case keeps it away from an ordinary heading.
+
+    Endnote headings (`NOTES`, `Notes to p. 190`) carry no anchor word and so
+    are never anchors. Neither is `Reference Works` or `Frames of Reference`:
+    the singular is not in the vocabulary, which is what keeps a bibliography
+    subsection heading from moving a boundary the plural already set.
+    """
+    tokens = [token for token in _NON_LETTERS.sub(" ", heading.lower()).split() if token]
+    if not tokens:
+        return None
+    joined = "".join(tokens)
+    phrase = " ".join(tokens)
+    glyph_spaced = all(len(token) == 1 for token in tokens)
+    for family, words, phrases in _ANCHOR_FAMILIES:
+        if any(token in words for token in tokens):
+            return family
+        if any(joined.startswith(word) for word in words):
+            return family
+        if glyph_spaced and any(word in joined for word in words):
+            return family
+        if any(candidate in phrase for candidate in phrases):
+            return family
+    return None
+
+
+def back_matter_section_orders(tree: dict[str, Any]) -> frozenset[str]:
+    """The `section_order` keys (in `chunk_id`'s own rendering) of one
+    source's back-matter run, read off its cached structural tree.
+
+    The run starts at the earlier of the **first** index anchor and the
+    **last** bibliography anchor, then extends backwards over the contiguous
+    anchors before it, and reaches the end of the book. Each half of that
+    earns its asymmetry from the corpus: an index anchor is terminal, so the
+    first one found is the boundary; a bibliography anchor is often
+    per-chapter, so only the last one can be. Extending backwards is what
+    catches a bibliography a running header split into thirty consecutive
+    one-page sections.
+
+    Everything at or after the boundary goes, anchor or not -- that is the
+    point. The sections that actually mint fake person pages carry no anchor
+    word at all: bibliography subsections (`Books`, `Sources in Other
+    Languages`, `IV. Books and Book Chapters`), running-header fragments
+    (`304 ●`), index entries promoted to headings (`Peres, Shimon, 318-19`),
+    contributor lists and publisher series ads.
+
+    An empty result means no anchor survived extraction (a garbled `lad ex`,
+    a journal article with neither), and nothing is cut for that source.
+    """
+    sections = _section_nodes(tree)
+    anchors = [back_matter_anchor(node.get("text", "")) for node in sections]
+    first_index = next((i for i, anchor in enumerate(anchors) if anchor == "index"), None)
+    last_bibliography = next(
+        (i for i in reversed(range(len(anchors))) if anchors[i] == "bibliography"), None
+    )
+    candidates = [i for i in (first_index, last_bibliography) if i is not None]
+    if not candidates:
+        return frozenset()
+    start = min(candidates)
+    while start > 0 and anchors[start - 1] is not None:
+        start -= 1
+    return frozenset(section_order_key(str(node.get("order", ""))) for node in sections[start:])
+
+
+def load_back_matter_sections(trees_dir: Path = TREES_DIR) -> dict[str, frozenset[str]]:
+    """`back_matter_section_orders` for every cached tree under `trees_dir`,
+    keyed by `source_id` (the tree filename's own stem, `axial.extract.
+    tree_path`). Empty when the dir does not exist -- a corpus with no
+    extracted trees cuts nothing rather than failing, the same direction
+    `axial.chunk._is_back_matter` errs in."""
+    if not trees_dir.is_dir():
+        return {}
+    return {
+        path.stem: back_matter_section_orders(json.loads(path.read_text(encoding="utf-8")))
+        for path in sorted(trees_dir.glob("*.json"))
+    }
+
+
+def _section_order_of(chunk_id: str, source_id: str) -> str:
+    """The section order key inside a `chunk_id`
+    (`<source_id>_<order key>_<section slug>_<NNN>`, `axial.chunk.
+    build_chunk_records`). `""` for anything not shaped that way, which cuts
+    nothing."""
+    prefix = f"{source_id}_"
+    if not source_id or not chunk_id.startswith(prefix):
+        return ""
+    return chunk_id[len(prefix) :].split("_", 1)[0]
+
+
+def iter_name_occurrences(
+    record: dict[str, Any],
+    back_matter_sections: Mapping[str, Collection[str]] | None = None,
+) -> Iterator[NameOccurrence]:
     """Every `NameOccurrence` one answer record contributes, from `names[]`
     only (§7.16) -- skips failure/skip records (no `answers` key) and the D7
     abstention on the field.
 
-    **This is the one place issue #508's cut set is enforced.** Row A is the
+    **This is the one place the whole cut set is enforced.** Row A is the
     absence of a `citations[].cited` arm here: the field keeps being
     recorded, it just stops being read into the name space. Rows C through
-    H, P and S are `is_cut_from_name_space`. Row B -- a surface seen only in
-    a bibliography, index, front matter or appendix -- is NOT applied: it
-    needs a judgment about what a section heading means, it failed
-    measurement twice, and it was re-scoped to its own issue. This pass
+    H, P and S are `is_cut_from_name_space`. Row B is `back_matter_sections`,
+    a `source_id -> back-matter section order keys` map from
+    `load_back_matter_sections`: a note whose section sits at or after its
+    own book's back-matter boundary contributes nothing. Absent that map, or
+    for a source it has no entry for, nothing is cut on that ground -- a
+    corpus with no extracted trees keeps every surface. This pass still
     makes no model call.
 
     A page falls out of the vault only when EVERY surface that would have
@@ -537,6 +691,11 @@ def iter_name_occurrences(record: dict[str, Any]) -> Iterator[NameOccurrence]:
         return
     chunk_id = record.get("chunk_id", "")
     source_id = record.get("source_id", "")
+
+    if back_matter_sections:
+        cut_orders = back_matter_sections.get(source_id)
+        if cut_orders and _section_order_of(chunk_id, source_id) in cut_orders:
+            return
 
     names = answers.get(_NAMES_FIELD)
     if isinstance(names, list) and not is_abstention(names):
@@ -568,10 +727,13 @@ def load_answer_records(answers_dir: Path) -> list[dict[str, Any]]:
     return records
 
 
-def collect_occurrences(records: Iterable[dict[str, Any]]) -> Iterator[NameOccurrence]:
+def collect_occurrences(
+    records: Iterable[dict[str, Any]],
+    back_matter_sections: Mapping[str, Collection[str]] | None = None,
+) -> Iterator[NameOccurrence]:
     """Flat-map `iter_name_occurrences` over every record."""
     for record in records:
-        yield from iter_name_occurrences(record)
+        yield from iter_name_occurrences(record, back_matter_sections)
 
 
 # ---------------------------------------------------------------------------
@@ -823,6 +985,7 @@ def run_names(
     inventory_path: Path | None = None,
     embeddings_dir: Path | None = None,
     manifest_path: Path | None = None,
+    trees_dir: Path | None = None,
     model_name: str = DEFAULT_MODEL_NAME,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     encoder: Encoder | None = None,
@@ -845,10 +1008,12 @@ def run_names(
     clustering run, mirroring `axial.distill.embed`'s own `encoder`
     injection seam.
 
-    **Still LLM-free**, as it has always been: issue #508's cut set filters
-    the surfaces this pass reads, and every rule that survived measurement
-    is a shape test. Row B, the one that needed a model call, was re-scoped
-    to its own issue.
+    **Still LLM-free**, as it has always been: the cut set filters the
+    surfaces this pass reads, and every rule is either a shape test or, for
+    row B, a position read off the structural tree `axial.extract` already
+    cached (`trees_dir`, default `axial.extract.TREES_DIR` -- the same bare
+    constant `axial.reconcile` mirrors, since trees have no config override
+    anywhere in this codebase).
 
     Raises `NoAnswersToEmbedError` when no answer records are found, or none
     of them name anything -- a loud failure rather than a silently empty
@@ -866,12 +1031,32 @@ def run_names(
     if manifest_path is None:
         manifest_path = DEFAULT_MANIFEST_PATH
     manifest_path = Path(manifest_path)
+    if trees_dir is None:
+        trees_dir = TREES_DIR
+    trees_dir = Path(trees_dir)
 
     records = load_answer_records(answers_dir)
     if not records:
         raise NoAnswersToEmbedError(answers_dir)
 
-    occurrences = list(collect_occurrences(records))
+    back_matter_sections = load_back_matter_sections(trees_dir)
+    if not back_matter_sections:
+        # Row B is the one rule that needs an artifact from an earlier stage,
+        # so its no-op case says so rather than looking like a clean run.
+        print(
+            f"names: no cached structural trees under {trees_dir} -- back-matter "
+            f"sections are NOT cut from this inventory (row B, §7.16)",
+            file=sys.stderr,
+        )
+    else:
+        cut_sections = sum(len(orders) for orders in back_matter_sections.values())
+        print(
+            f"names: back-matter boundary read from {len(back_matter_sections)} cached "
+            f"tree(s), {cut_sections} section(s) cut",
+            file=sys.stderr,
+        )
+
+    occurrences = list(collect_occurrences(records, back_matter_sections))
     entries = build_inventory(occurrences)
     if not entries:
         raise NoAnswersToEmbedError(answers_dir)
