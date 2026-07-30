@@ -32,12 +32,17 @@ from axial.names import (  # noqa: E402
     _nearest_neighbour_pairs,
     _relabel_from_tree,
     build_inventory,
+    carries_author_year_citation,
     collect_occurrences,
     examine_names,
     format_names_report,
     is_apparatus_pointer_shaped,
+    is_cut_from_name_space,
+    is_date_shaped,
     is_locator_shaped,
     is_numeral_only_surface,
+    is_reference_pointer_shaped,
+    is_source_pointer_shaped,
     iter_name_occurrences,
     load_answer_records,
     parse_scoped_source,
@@ -79,10 +84,11 @@ def _write_answers(answers_dir: Path, source_id: str, records: list[dict]) -> Pa
     return path
 
 
-def _answer_record(chunk_id: str, source_id: str, answers: dict) -> dict:
+def _answer_record(chunk_id: str, source_id: str, answers: dict, section: str = "") -> dict:
     return {
         "chunk_id": chunk_id,
         "source_id": source_id,
+        "section": section,
         "pass": "note_interrogate",
         "answers": answers,
     }
@@ -114,7 +120,10 @@ def _base_answers(**overrides) -> dict:
 # --- iter_name_occurrences ---------------------------------------------------
 
 
-def test_iter_name_occurrences_collects_names_and_citations_only():
+def test_iter_name_occurrences_collects_names_only():
+    """Issue #508 class A: `citations[].cited` no longer seeds the name
+    space. The field keeps being recorded on the answer record; nothing
+    reads it into an inventory surface any more."""
     record = _answer_record(
         "c1",
         "s1",
@@ -131,11 +140,10 @@ def test_iter_name_occurrences_collects_names_and_citations_only():
     occurrences = list(iter_name_occurrences(record))
     surface_forms = {occ.surface_form for occ in occurrences}
 
-    assert surface_forms == {"Kevin Attell", "Gellner 1992"}
+    assert surface_forms == {"Kevin Attell"}
     assert not any("SENTINEL" in form for form in surface_forms)
     by_form = {occ.surface_form: occ for occ in occurrences}
     assert by_form["Kevin Attell"].kind == "person"
-    assert by_form["Gellner 1992"].kind is None
     assert all(occ.chunk_id == "c1" for occ in occurrences)
 
 
@@ -155,14 +163,169 @@ def test_iter_name_occurrences_skips_malformed_entries_without_crashing():
         "s1",
         _base_answers(
             names=[{"name": "Real Name", "kind": "person"}, {"kind": "person"}, "not-a-dict"],
-            citations=[{"cited": ""}, {"about": "no cited key"}, {"cited": "Real Cite"}],
         ),
     )
 
     occurrences = list(iter_name_occurrences(record))
     surface_forms = {occ.surface_form for occ in occurrences}
 
-    assert surface_forms == {"Real Name", "Real Cite"}
+    assert surface_forms == {"Real Name"}
+
+
+# --- issue #508: the cut set, enforced at inventory time ---------------------
+#
+# One test per row of the issue's own table, each naming a real surface the
+# rule removes and a real surface it must not.
+
+
+def _names_record(*surfaces: str, section: str = "") -> dict:
+    return _answer_record(
+        "c1",
+        "s1",
+        _base_answers(names=[{"name": surface, "kind": "person"} for surface in surfaces]),
+        section=section,
+    )
+
+
+def _collected(*surfaces: str, section: str = "", **kwargs) -> set[str]:
+    record = _names_record(*surfaces, section=section)
+    return {occ.surface_form for occ in iter_name_occurrences(record, **kwargs)}
+
+
+def test_cut_a_citation_channel_leaves_the_name_space():
+    """Class A, 13,661 surfaces: an author-plus-title citation string is not
+    a name page. `Charles Tilly`, named in the same note's `names[]`, is."""
+    record = _answer_record(
+        "c1",
+        "s1",
+        _base_answers(
+            names=[{"name": "Charles Tilly", "kind": "person"}],
+            citations=[
+                {"cited": "Philip S. Khoury, Syria and the French Mandate", "stance": "support"},
+                {"cited": "Marx and Engels", "stance": "authority"},
+            ],
+        ),
+    )
+
+    assert {occ.surface_form for occ in iter_name_occurrences(record)} == {"Charles Tilly"}
+
+
+def test_cut_b_back_matter_sections_leave_the_name_space():
+    """Class B, 5,771 surfaces: a name seen only in a bibliography goes.
+    Endnotes are deliberately NOT back matter -- the historiographical
+    quarrel happens there -- so the same name in `N O T E S` survives."""
+    back_matter = {"Bibliography"}
+
+    def is_back_matter(section: str) -> bool:
+        return section in back_matter
+
+    assert (
+        _collected("Hanna Batatu", section="Bibliography", is_back_matter_section=is_back_matter)
+        == set()
+    )
+    assert _collected(
+        "Hanna Batatu", section="N O T E S", is_back_matter_section=is_back_matter
+    ) == {"Hanna Batatu"}
+
+
+def test_cut_b_is_not_applied_when_no_classifier_is_supplied():
+    """Without a section classification the rule fails open -- the surface
+    is kept, never cut on a guess (the source router's own rule, §7.8)."""
+    assert _collected("Hanna Batatu", section="Bibliography") == {"Hanna Batatu"}
+
+
+def test_cut_c_bare_numeral_leaves_the_name_space():
+    """Class C, 623 surfaces: `13` (18 member notes across 12 books) goes;
+    `10 Downing Street` stays."""
+    assert _collected("13", "10 Downing Street") == {"10 Downing Street"}
+
+
+def test_cut_d_apparatus_pointer_leaves_the_name_space():
+    """Class D, 746 surfaces: `Chapter 5` (52 member notes) goes;
+    `Chapter VII of the UN Charter` stays."""
+    assert _collected("Chapter 5", "Chapter VII of the UN Charter") == {
+        "Chapter VII of the UN Charter"
+    }
+
+
+def test_cut_e_locator_leaves_the_name_space():
+    """Class E, 441 surfaces: `Table 4.1` goes; `Bramall table 2.2` stays."""
+    assert _collected("Table 4.1", "Bramall table 2.2") == {"Bramall table 2.2"}
+
+
+def test_cut_f_dates_leave_the_name_space():
+    """Class F, 1,012 surfaces: `1917-1918`, `6 June 1975` and `March 1963`
+    go; `10th of Ramadan` and `1948 War` stay."""
+    assert _collected("1917-1918", "6 June 1975", "March 1963", "10th of Ramadan", "1948 War") == {
+        "10th of Ramadan",
+        "1948 War",
+    }
+
+
+def test_cut_g_reference_pointer_leaves_the_name_space():
+    """Class G, 140 surfaces: `p. 34`, `vol. 2`, `ibid.` and `op. cit.` go;
+    `Volume One` and the surname `Page` stay."""
+    assert _collected("p. 34", "vol. 2", "ibid.", "op. cit.", "Volume One", "Page") == {
+        "Volume One",
+        "Page",
+    }
+
+
+def test_cut_h_author_year_citation_leaves_the_name_space():
+    """Class H, 5,995 surfaces: a name carrying its own citation year or
+    `et al` goes; the bare person and a parenthesized acronym stay."""
+    assert _collected(
+        "Gellner (1983)",
+        "Tilly, 1990",
+        "Bourdieu et al",
+        "Ernest Gellner",
+        "Autonomous Administration of Northeast Syria (AANS)",
+    ) == {"Ernest Gellner", "Autonomous Administration of Northeast Syria (AANS)"}
+
+
+def test_cut_p_source_pointer_leaves_the_name_space():
+    """Class P, 661 surfaces: `source 26`, `reference 12` and a bare
+    bracketed `[34]` go; `Sources of Social Power` stays."""
+    assert _collected("source 26", "reference 12", "[34]", "Sources of Social Power") == {
+        "Sources of Social Power"
+    }
+
+
+def test_cut_s_the_abstention_sentinel_leaves_the_name_space():
+    """Class S, 1 surface with 24 member notes: the interrogation's own
+    `not-in-passage` sentinel, minted as a name when a model wrote it inside
+    a list rather than as the list. `Not in Passage Press` is not it."""
+    assert _collected("not-in-passage", "Not in Passage Press") == {"Not in Passage Press"}
+
+
+def test_legitimate_names_survive_the_whole_cut_set():
+    """The acceptance's own survivor list: a `work` title, a lowercase
+    concept, and an endnote-only name."""
+    record = _answer_record(
+        "c1",
+        "s1",
+        _base_answers(
+            names=[
+                {"name": "The Great Transformation", "kind": "work"},
+                {"name": "negative sovereignty", "kind": "concept"},
+                {"name": "Hanna Batatu", "kind": "person"},
+            ]
+        ),
+        section="N O T E S",
+    )
+
+    def is_back_matter(section: str) -> bool:
+        return section in {"Bibliography", "Index"}
+
+    assert {
+        occ.surface_form
+        for occ in iter_name_occurrences(record, is_back_matter_section=is_back_matter)
+    } == {"The Great Transformation", "negative sovereignty", "Hanna Batatu"}
+
+
+def test_a_name_survives_when_only_its_citation_shaped_alias_is_cut():
+    """The page stays; only the alias that carried a year leaves it."""
+    assert _collected("Ernest Gellner", "Gellner (1983)") == {"Ernest Gellner"}
 
 
 # --- load_answer_records / collect_occurrences -------------------------------
@@ -237,8 +400,8 @@ def test_build_inventory_kind_tie_broken_by_first_occurrence():
     assert entries[0].kind == "concept"  # first-seen kind wins a 1-1 tie
 
 
-def test_build_inventory_citation_only_surface_has_no_kind():
-    entries = build_inventory([NameOccurrence("Gellner 1992", "c1", None)])
+def test_build_inventory_surface_the_corpus_gave_no_kind_keeps_none():
+    entries = build_inventory([NameOccurrence("Gellner", "c1", None)])
 
     assert entries[0].kind is None
 
@@ -460,6 +623,167 @@ def test_is_apparatus_pointer_shaped_rejects_real_names_and_lettered_apparatus(s
     assert not is_apparatus_pointer_shaped(surface)
 
 
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "1917-1918",
+        "1917–1918",
+        "1990/91",
+        "1050-1250",
+        "1060s",
+        "1950s-1960s",
+        "6 June 1975",
+        "June 6, 1975",
+        "March 1963",
+        "MARCH 1963",
+    ],
+)
+def test_is_date_shaped_matches_dates_and_date_ranges(surface):
+    assert is_date_shaped(surface)
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "1948 War",
+        "June 1967 War",
+        "March on Washington",
+        "March",
+        "10th of Ramadan",
+        "Six-Day War",
+        "1917 Balfour Declaration",
+        "Charles Tilly",
+    ],
+)
+def test_is_date_shaped_rejects_names_that_merely_carry_a_date(surface):
+    assert not is_date_shaped(surface)
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "p. 34",
+        "pp. 34-56",
+        "page 12",
+        "pages 12-14",
+        "vol. 2",
+        "Volume 3",
+        "no. 3",
+        "nos. 1-2",
+        "ibid",
+        "ibid.",
+        "Ibid.",
+        "op. cit.",
+        "loc. cit.",
+        "passim",
+    ],
+)
+def test_is_reference_pointer_shaped_matches_page_volume_and_ibid(surface):
+    assert is_reference_pointer_shaped(surface)
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "Page",
+        "Volume One",
+        "P. Anderson",
+        "Ibn Khaldun",
+        "Nos Ancetres les Gaulois",
+        "Pages from a Syrian Notebook",
+        "Number Nine",
+    ],
+)
+def test_is_reference_pointer_shaped_rejects_real_names(surface):
+    assert not is_reference_pointer_shaped(surface)
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "Gellner (1983)",
+        "Anderson (1983a)",
+        "Tilly, 1990",
+        "Khoury, 1987, p. 12",
+        "Bourdieu et al",
+        "Bourdieu et al.",
+        "Wallerstein (2004)",
+    ],
+)
+def test_carries_author_year_citation_matches_citation_shaped_names(surface):
+    assert carries_author_year_citation(surface)
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "Charles Tilly",
+        "Autonomous Administration of Northeast Syria (AANS)",
+        "The 1948 War",
+        "Israel/Palestine",
+        "Etat, pouvoir et societe",
+        "negative sovereignty",
+    ],
+)
+def test_carries_author_year_citation_rejects_ordinary_names(surface):
+    assert not carries_author_year_citation(surface)
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "source 26",
+        "Source 3",
+        "sources 4",
+        "reference 12",
+        "References 7",
+        "[34]",
+        "[ 23 ]",
+    ],
+)
+def test_is_source_pointer_shaped_matches_pointers(surface):
+    assert is_source_pointer_shaped(surface)
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "Sources of Social Power",
+        "Reference Group Theory",
+        "[Damascus]",
+        "Source",
+        "source of legitimacy",
+    ],
+)
+def test_is_source_pointer_shaped_rejects_real_names(surface):
+    assert not is_source_pointer_shaped(surface)
+
+
+def test_is_cut_from_name_space_unions_every_shape_rule():
+    """The one predicate `iter_name_occurrences` calls: rows C, D, E, F, G,
+    H, P and S of the cut set, and nothing else."""
+    cut = [
+        "13",  # C
+        "Chapter 5",  # D
+        "Table 4.1",  # E
+        "1917-1918",  # F
+        "ibid.",  # G
+        "Gellner (1983)",  # H
+        "[34]",  # P
+        "not-in-passage",  # S
+    ]
+    kept = [
+        "Charles Tilly",
+        "negative sovereignty",
+        "The Great Transformation",
+        "Autonomous Administration of Northeast Syria (AANS)",
+        "10 Downing Street",
+    ]
+
+    assert [surface for surface in cut if not is_cut_from_name_space(surface)] == []
+    assert [surface for surface in kept if is_cut_from_name_space(surface)] == []
+
+
 def test_scoped_and_unscope_surface_form_round_trip():
     scoped = scoped_surface_form("Table 4.1", "huneidi-2024")
 
@@ -547,7 +871,7 @@ def test_run_names_persists_inventory_vectors_and_cluster_labels(tmp_path: Path)
             _answer_record(
                 "c2",
                 "s1",
-                _base_answers(citations=[{"cited": "Gellner 1992", "stance": "authority"}]),
+                _base_answers(names=[{"name": "Gellner"}]),
             ),
         ],
     )
@@ -575,13 +899,13 @@ def test_run_names_persists_inventory_vectors_and_cluster_labels(tmp_path: Path)
         "count": 1,
         "chunk_ids": ["c1"],
     }
-    assert inventory["Gellner 1992"]["kind"] is None
+    assert inventory["Gellner"]["kind"] is None
 
     db = lancedb.connect(embeddings_dir)
     rows = db.open_table("names").to_arrow().to_pylist()
     by_form = {row["surface_form"]: row for row in rows}
     assert by_form["Kevin Attell"]["kind"] == "person"
-    assert by_form["Gellner 1992"]["kind"] == ""
+    assert by_form["Gellner"]["kind"] == ""
     assert json.loads(by_form["Kevin Attell"]["chunk_ids_json"]) == ["c1"]
     for row in rows:
         assert isinstance(row["vector"], list) and row["vector"]
@@ -594,6 +918,96 @@ def test_run_names_persists_inventory_vectors_and_cluster_labels(tmp_path: Path)
     assert manifest["config"]["min_cluster_size"] == 2
     assert manifest["config"]["min_samples"] == 1
     assert manifest["inventory_path"] == str(inventory_path)
+
+
+def test_run_names_drops_the_surfaces_a_back_matter_section_contributed(tmp_path: Path):
+    """Issue #508 row B, end to end through the pass: the heading
+    classification is cached to `section_classes_path`, the bibliography's
+    names never reach the inventory, and the endnote's do."""
+    answers_dir = tmp_path / "answers"
+    _write_answers(
+        answers_dir,
+        "s1",
+        [
+            _answer_record(
+                "c1",
+                "s1",
+                _base_answers(names=[{"name": "Hanna Batatu", "kind": "person"}]),
+                section="B I B L I O G R A P H Y",
+            ),
+            _answer_record(
+                "c2",
+                "s1",
+                _base_answers(names=[{"name": "Charles Tilly", "kind": "person"}]),
+                section="N O T E S",
+            ),
+        ],
+    )
+    classes_path = tmp_path / "section_classes.json"
+    classes_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "sections": {"B I B L I O G R A P H Y": "bibliography", "N O T E S": "body"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    inventory_path = tmp_path / "inventory.jsonl"
+
+    result = run_names(
+        answers_dir=answers_dir,
+        inventory_path=inventory_path,
+        embeddings_dir=tmp_path / "embeddings.lance",
+        manifest_path=tmp_path / "manifest.json",
+        section_classes_path=classes_path,
+        encoder=_fake_encoder,
+        cluster_fn=_fake_cluster_fn,
+    )
+
+    assert result.entry_count == 1
+    surfaces = {
+        json.loads(line)["surface"]
+        for line in inventory_path.read_text(encoding="utf-8").splitlines()
+    }
+    assert surfaces == {"Charles Tilly"}
+
+
+def test_run_names_needs_no_model_call_when_every_heading_is_cached(tmp_path: Path):
+    class _ExplodingClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            raise AssertionError("run_names must not re-ask a heading the cache already carries")
+
+    answers_dir = tmp_path / "answers"
+    _write_answers(
+        answers_dir,
+        "s1",
+        [
+            _answer_record(
+                "c1",
+                "s1",
+                _base_answers(names=[{"name": "Charles Tilly", "kind": "person"}]),
+                section="Introduction",
+            )
+        ],
+    )
+    classes_path = tmp_path / "section_classes.json"
+    classes_path.write_text(
+        json.dumps({"version": 1, "sections": {"Introduction": "body"}}), encoding="utf-8"
+    )
+
+    result = run_names(
+        answers_dir=answers_dir,
+        inventory_path=tmp_path / "inventory.jsonl",
+        embeddings_dir=tmp_path / "embeddings.lance",
+        manifest_path=tmp_path / "manifest.json",
+        section_classes_path=classes_path,
+        encoder=_fake_encoder,
+        cluster_fn=_fake_cluster_fn,
+        client=_ExplodingClient(),
+    )
+
+    assert result.entry_count == 1
 
 
 def test_run_names_is_deterministic_across_reruns(tmp_path: Path):

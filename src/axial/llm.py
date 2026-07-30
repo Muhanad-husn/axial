@@ -396,6 +396,16 @@ GATHER_PASS_NAME = "gather"
 # §2, same self-grading guard as GROUNDING_PASS_NAME).
 GATHER_EVAL_PASS_NAME = "gather_eval"
 
+# Pass name the back-matter section classification identifies itself with
+# (issue #508 class B, §7.16). One cached call classifies the corpus's
+# distinct section headings once -- the source router's classify-once shape
+# (#164), which this pass is the model-backed half of. Same out-of-band
+# dispatch convention as CHUNK_PASS_NAME above; it carries no
+# `model_by_pass`/`reasoning_by_pass` entry of its own on purpose, so it runs
+# on whatever `llm_tier` names (flash) with reasoning off, which is what a
+# heading-shaped classification needs.
+NAME_SECTIONS_PASS_NAME = "name_sections"
+
 # Per-pass model reasoning (§7.9, issue #207): reasoning is ON for the
 # structural-envelope pass and the content-apparatus classification gate --
 # both small, judgment-heavy, once/rarely-per-source calls -- and OFF
@@ -595,6 +605,13 @@ STUB_RECONCILE_RESPONSE_ENV_VAR = "AXIAL_STUB_RECONCILE_RESPONSE"
 # carried, so an unscripted stub run writes a fixed placeholder statement
 # with no links. Never affects any other pass.
 STUB_GATHER_RESPONSE_ENV_VAR = "AXIAL_STUB_GATHER_RESPONSE"
+
+# Issue #508 test/CI-only seam: mirrors STUB_GATHER_RESPONSE_ENV_VAR above,
+# exactly, for the back-matter section classification
+# (`NAME_SECTIONS_PASS_NAME`). Unset, the stub answers "nothing here is back
+# matter" -- the same fail-open the real path takes on an unclassifiable
+# heading, so an unscripted stub run cuts no page it was not told to.
+STUB_NAME_SECTIONS_RESPONSE_ENV_VAR = "AXIAL_STUB_NAME_SECTIONS_RESPONSE"
 
 # Issue #256 test/CI-only seam: mirrors STUB_INTERROGATE_RESPONSE_ENV_VAR
 # above, exactly, for the stage-4 synthesis pass instead of the interrogate
@@ -1326,6 +1343,10 @@ def _canned_response_for(pass_name: str | None) -> str:
         # answer can only name surface forms the prompt carried, so an
         # unscripted stub run merges nothing rather than inventing merges.
         return os.environ.get(STUB_RECONCILE_RESPONSE_ENV_VAR, "") or json.dumps({"nodes": []})
+    if pass_name == NAME_SECTIONS_PASS_NAME:
+        return os.environ.get(STUB_NAME_SECTIONS_RESPONSE_ENV_VAR, "") or json.dumps(
+            {"back_matter": []}
+        )
     if pass_name == GATHER_PASS_NAME:
         return os.environ.get(STUB_GATHER_RESPONSE_ENV_VAR, "") or json.dumps(
             {"disagreement": "stub disagreement", "names": []}

@@ -184,8 +184,6 @@ from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.names import (
     DEFAULT_INVENTORY_PATH,
     DEFAULT_NAMES_DATA_DIR,
-    is_apparatus_pointer_shaped,
-    is_numeral_only_surface,
     load_answer_records,
 )
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_vault_dir, split_source_id
@@ -239,9 +237,8 @@ GATHER_PACKET_CHAR_BUDGET = 20_000
 _MIN_MEMBERS = 2
 
 # Founder scope decision (2026-07-29, not a tuned heuristic constant): a name
-# below this member count is skipped alongside the numeral-only/apparatus-
-# pointer/single-member gates above, before a packet is ever assembled or a
-# model call made. Measured on a seeded 100-name stratified sample and the
+# below this member count is skipped alongside the single-member gate above,
+# before a packet is ever assembled or a model call made. Measured on a seeded 100-name stratified sample and the
 # live index -- see `config/pipeline.yaml`'s `gather.min_members` comment for
 # the full yield curve this number was read off. `_MIN_MEMBERS` above stays
 # fixed at 2 (definitional); this is the separate, movable scope cut, always
@@ -929,26 +926,12 @@ def run_gather(
 
     jobs: list[GatherJob] = []
     skipped_single_member = 0
-    skipped_numeral_only = 0
-    skipped_apparatus_pointer = 0
     skipped_below_min_members = 0
     for node in sorted(nodes, key=lambda n: n["canonical"]):
-        # Fix (2026-07-29): a bare page number or a plain century
-        # (`is_numeral_only_surface`) is locator residue, not a name -- a
-        # disagreement page about "13" is not a page anyone asked for. Gated
-        # here, at the point this pass asks the model something, so it takes
-        # effect on the very next `axial names gather` run with no rebuild
-        # of the alias map or the inventory required.
-        if is_numeral_only_surface(node["canonical"]):
-            skipped_numeral_only += 1
-            continue
-        # Fix (2026-07-29): a chapter/footnote/endnote/appendix/table/figure
-        # POINTER (`is_apparatus_pointer_shaped`) is the same family of
-        # residue, gated the same way -- a disagreement page about "Footnote
-        # 36" is not a page anyone asked for either.
-        if is_apparatus_pointer_shaped(node["canonical"]):
-            skipped_apparatus_pointer += 1
-            continue
+        # Issue #508: the numeral-only and apparatus-pointer gates that used
+        # to sit here are gone. Both predicates now cut at inventory time
+        # (`axial.names.iter_name_occurrences`), so no such surface reaches
+        # the alias map and no such node reaches this loop.
         packets = build_packets(
             member_chunk_ids_for_node(node, inventory), answers_by_chunk_id, author_year
         )
@@ -979,9 +962,7 @@ def run_gather(
     ordered_records = load_checkpoint_records(disagreements_path, DisagreementRecordsCorruptError)
 
     print(
-        f"gather: {len(nodes)} name(s), {skipped_numeral_only} numeral-only surface(s) "
-        f"and {skipped_apparatus_pointer} apparatus-pointer surface(s) "
-        "gated out (never a name), "
+        f"gather: {len(nodes)} name(s), "
         f"{skipped_single_member} skipped with fewer than "
         f"{_MIN_MEMBERS} member note(s), {skipped_below_min_members} skipped below the "
         f"configured {min_gather_members}-member scope threshold, {len(jobs)} to gather; "
@@ -1039,8 +1020,6 @@ def run_gather(
         "vault_dir": str(vault_dir),
         "disagreements_path": str(disagreements_path),
         "names": len(nodes),
-        "names_skipped_numeral_only": skipped_numeral_only,
-        "names_skipped_apparatus_pointer": skipped_apparatus_pointer,
         "names_skipped_single_member": skipped_single_member,
         "names_skipped_below_min_members": skipped_below_min_members,
         "min_gather_members": min_gather_members,

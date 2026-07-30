@@ -273,10 +273,140 @@ APPARATUS_POINTER_PATTERN = re.compile(
 def is_apparatus_pointer_shaped(surface_form: str) -> bool:
     """Whether `surface_form` reads as a pointer into a document's own
     apparatus -- a chapter, footnote, endnote, appendix, table or figure
-    number -- rather than a name. The one place this predicate lives;
-    `axial.merge_names.run_merge_names` and `axial.gather.run_gather` both
-    import it, gated at the same point as `is_numeral_only_surface`."""
+    number -- rather than a name. Row D of issue #508's cut set: 746
+    surfaces, 677 pages, and the 17 of them at 10+ member notes (`Chapter 5`
+    at 52, `Chapter 4` at 50) are the point of the cut, not its risk."""
     return bool(APPARATUS_POINTER_PATTERN.match(surface_form))
+
+
+# Issue #508 row F: a date or a date range is not a name. 1,012 inventory
+# surfaces, 959 pages, 16 of them at 10+ member notes. Twelve month names is
+# a closed, standard vocabulary in the same sense as the cardinal words
+# `APPARATUS_POINTER_PATTERN` above already carries -- not a corpus-tuned
+# list.
+#
+# A shape test, not a threshold: the WHOLE surface has to be the date. A
+# year range (`1917-1918`, `1917–18`, `1990/91`), a decade (`1060s`,
+# `1950s-1960s`) and a day/month/year in either order (`6 June 1975`,
+# `June 6, 1975`, `March 1963`) match; a name that merely carries a date
+# (`1948 War`, `June 1967 War`, `1917 Balfour Declaration`, `10th of
+# Ramadan`) and a bare month (`March`, which is also a protest) do not.
+# A bare year (`1963`) is already row C's, so nothing here matches one.
+# Rows C and F deliberately overlap in subject and not in shape: C's own
+# stated near-misses `1050-1250` and `1060s` -- left alone in 2026-07-29 as
+# "a real name that happens to start with a digit" -- are exactly what F
+# now cuts, and C's pattern is unchanged.
+_MONTH_ALTERNATION = (
+    r"(january|february|march|april|may|june|july|august|september|october|november|december)"
+)
+DATE_PATTERN = re.compile(
+    r"^(?:"
+    r"[0-9]{4}s?\s*[-‐-―/]\s*[0-9]{2,4}s?"
+    r"|[0-9]{4}s"
+    rf"|[0-9]{{1,2}}\s+{_MONTH_ALTERNATION}\s+[0-9]{{4}}"
+    rf"|{_MONTH_ALTERNATION}\s+[0-9]{{1,2}},\s*[0-9]{{4}}"
+    rf"|{_MONTH_ALTERNATION}\s+[0-9]{{4}}"
+    r")$",
+    re.IGNORECASE,
+)
+
+
+def is_date_shaped(surface_form: str) -> bool:
+    """Whether `surface_form` is wholly a date or a date range (row F)."""
+    return bool(DATE_PATTERN.match(surface_form))
+
+
+# Issue #508 row G: a page, volume or number reference, and the Latin
+# reference words a footnote uses instead of repeating a citation. 140
+# surfaces, 98 pages, none at 10+ member notes -- the smallest row in the
+# set, kept because what it catches is unambiguous.
+#
+# A shape test, not a threshold: the label must be followed by a digit, so
+# the surname `Page`, the title `Pages from a Syrian Notebook` and
+# `Volume One` all survive, and `P. Anderson` survives because an initial is
+# not a page number. The Latin words match only as the whole surface, so
+# `Ibn Khaldun` and `Nos Ancetres les Gaulois` are untouched.
+_REFERENCE_LABEL_ALTERNATION = r"(pp?\.|pages?|vols?\.|volumes?|nos?\.|numbers?)"
+_REFERENCE_WORD_ALTERNATION = r"(ibid|op\.?\s*cit|loc\.?\s*cit|passim|et\s+seq)"
+REFERENCE_POINTER_PATTERN = re.compile(
+    rf"^(?:{_REFERENCE_LABEL_ALTERNATION}\s*[0-9]|{_REFERENCE_WORD_ALTERNATION}\.?$)",
+    re.IGNORECASE,
+)
+
+
+def is_reference_pointer_shaped(surface_form: str) -> bool:
+    """Whether `surface_form` is a page/volume/number reference or one of
+    the Latin reference words (row G)."""
+    return bool(REFERENCE_POINTER_PATTERN.match(surface_form))
+
+
+# Issue #508 row H, the largest shape row: 5,995 surfaces, 3,787 pages, 4 of
+# them at 10+ member notes. A surface that carries its own citation year or
+# `et al` is a reference, not a name -- the entity it refers to already
+# holds its own page under its own name, which is why the collateral here is
+# small however large the row is.
+#
+# A shape test, not a threshold: a parenthesized four-digit year with an
+# optional disambiguating letter (`(1983)`, `(1983a)`), a comma followed by
+# a four-digit year (`Tilly, 1990`), or `et al`. A parenthesized acronym
+# (`Autonomous Administration of Northeast Syria (AANS)`, §7.16's own
+# candidate rule) carries no year and is untouched, and so is a title or an
+# event that merely contains a year without a comma or parentheses
+# (`The 1948 War`).
+AUTHOR_YEAR_PATTERN = re.compile(
+    r"\((1[0-9]{3}|20[0-9]{2})[a-z]?\)|,\s*(1[0-9]{3}|20[0-9]{2})\b|\bet\s+al\b",
+    re.IGNORECASE,
+)
+
+
+def carries_author_year_citation(surface_form: str) -> bool:
+    """Whether `surface_form` carries an author-year citation (row H)."""
+    return bool(AUTHOR_YEAR_PATTERN.search(surface_form))
+
+
+# Issue #508 row P: a bare pointer into a source list or a bracketed
+# reference marker. 661 surfaces. `Chapter 5` and `Footnote 36` are row D's
+# and a bare `34` is row C's; what is left is `source 26`, `reference 12`
+# and `[34]`.
+#
+# A shape test, not a threshold: the label must be followed by a digit
+# (`Sources of Social Power` and `Reference Group Theory` survive), and the
+# bracketed form must contain nothing but a number (`[Damascus]` survives).
+# Bare `note` is deliberately absent for the same reason row D excludes it:
+# `Note on the State` is a real name.
+SOURCE_POINTER_PATTERN = re.compile(
+    r"^(?:(sources?|references?)\s+[0-9]|\[\s*[0-9]+\s*\]$)",
+    re.IGNORECASE,
+)
+
+
+def is_source_pointer_shaped(surface_form: str) -> bool:
+    """Whether `surface_form` is a `source N` / `reference N` / `[N]`
+    pointer (row P)."""
+    return bool(SOURCE_POINTER_PATTERN.match(surface_form))
+
+
+def is_cut_from_name_space(surface_form: str) -> bool:
+    """Whether `surface_form` leaves the name space on shape alone -- rows
+    C, D, E, F, G, H, P and S of issue #508's cut set, unioned. The two
+    remaining rows are not shapes: A is the `citations[].cited` channel,
+    dropped in `iter_name_occurrences` below, and B is which section the
+    surface was seen in (`axial.name_sections`).
+
+    Row S is the interrogation's own abstention sentinel, which reached the
+    inventory as a name once, with 24 member notes. `axial.interrogate.
+    is_abstention` is reused rather than re-derived, so a change to what
+    counts as an abstention never has to be made twice."""
+    return (
+        is_numeral_only_surface(surface_form)
+        or is_apparatus_pointer_shaped(surface_form)
+        or is_locator_shaped(surface_form)
+        or is_date_shaped(surface_form)
+        or is_reference_pointer_shaped(surface_form)
+        or carries_author_year_citation(surface_form)
+        or is_source_pointer_shaped(surface_form)
+        or is_abstention(surface_form)
+    )
 
 
 # How a locator-shaped surface renders once its identity is scoped by source
@@ -385,17 +515,41 @@ def _clean(value: Any) -> str | None:
     return cleaned or None
 
 
-def iter_name_occurrences(record: dict[str, Any]) -> Iterator[NameOccurrence]:
+def iter_name_occurrences(
+    record: dict[str, Any],
+    *,
+    is_back_matter_section: Callable[[str], bool] | None = None,
+) -> Iterator[NameOccurrence]:
     """Every `NameOccurrence` one answer record contributes, from `names[]`
-    and `citations[].cited` only (§7.16) -- skips failure/skip records (no
-    `answers` key) and the D7 abstention on each field. `is_abstention`
-    (`axial.interrogate`) is reused rather than re-derived, so a change to
-    what counts as an abstention never has to be made twice."""
+    only (§7.16) -- skips failure/skip records (no `answers` key) and the D7
+    abstention on the field.
+
+    **This is the one place issue #508's cut set is enforced.** Row A is the
+    absence of a `citations[].cited` arm here: the field keeps being
+    recorded, it just stops being read into the name space. Row B is
+    `is_back_matter_section`, which the caller supplies (`run_names` builds
+    it from `axial.name_sections`) -- absent, the rule does not apply and
+    every section is kept, since cutting a section on a guess is the one
+    error this set cannot afford. Rows C through H, P and S are
+    `is_cut_from_name_space`.
+
+    A page falls out of the vault only when EVERY surface that would have
+    been its member is cut, which this per-occurrence filter gives for free:
+    a surface with one surviving occurrence keeps its inventory entry, and
+    a canonical node with one surviving member keeps its page."""
     answers = record.get("answers")
     if not isinstance(answers, dict):
         return
     chunk_id = record.get("chunk_id", "")
     source_id = record.get("source_id", "")
+
+    section = record.get("section")
+    if (
+        is_back_matter_section is not None
+        and isinstance(section, str)
+        and is_back_matter_section(section)
+    ):
+        return
 
     names = answers.get(_NAMES_FIELD)
     if isinstance(names, list) and not is_abstention(names):
@@ -403,19 +557,9 @@ def iter_name_occurrences(record: dict[str, Any]) -> Iterator[NameOccurrence]:
             if not isinstance(entry, dict):
                 continue
             surface_form = _clean(entry.get("name"))
-            if surface_form is None:
+            if surface_form is None or is_cut_from_name_space(surface_form):
                 continue
             yield NameOccurrence(surface_form, chunk_id, _clean(entry.get("kind")), source_id)
-
-    citations = answers.get(_CITATIONS_FIELD)
-    if isinstance(citations, list) and not is_abstention(citations):
-        for entry in citations:
-            if not isinstance(entry, dict):
-                continue
-            surface_form = _clean(entry.get("cited"))
-            if surface_form is None:
-                continue
-            yield NameOccurrence(surface_form, chunk_id, None, source_id)
 
 
 def load_answer_records(answers_dir: Path) -> list[dict[str, Any]]:
@@ -437,10 +581,14 @@ def load_answer_records(answers_dir: Path) -> list[dict[str, Any]]:
     return records
 
 
-def collect_occurrences(records: Iterable[dict[str, Any]]) -> Iterator[NameOccurrence]:
+def collect_occurrences(
+    records: Iterable[dict[str, Any]],
+    *,
+    is_back_matter_section: Callable[[str], bool] | None = None,
+) -> Iterator[NameOccurrence]:
     """Flat-map `iter_name_occurrences` over every record."""
     for record in records:
-        yield from iter_name_occurrences(record)
+        yield from iter_name_occurrences(record, is_back_matter_section=is_back_matter_section)
 
 
 # ---------------------------------------------------------------------------
@@ -692,10 +840,12 @@ def run_names(
     inventory_path: Path | None = None,
     embeddings_dir: Path | None = None,
     manifest_path: Path | None = None,
+    section_classes_path: Path | None = None,
     model_name: str = DEFAULT_MODEL_NAME,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     encoder: Encoder | None = None,
     cluster_fn: ClusterFn | None = None,
+    client: Any | None = None,
     pca_components: int = DEFAULT_PCA_COMPONENTS,
     min_cluster_size: int = DEFAULT_MIN_CLUSTER_SIZE,
     min_samples: int = DEFAULT_MIN_SAMPLES,
@@ -714,10 +864,21 @@ def run_names(
     clustering run, mirroring `axial.distill.embed`'s own `encoder`
     injection seam.
 
+    **This pass is no longer LLM-free (issue #508 row B).** The corpus's
+    distinct `section` headings are classified once, cached to
+    `section_classes_path` (default `axial.name_sections.
+    DEFAULT_SECTION_CLASSES_PATH`), and a run whose headings are all cached
+    makes no call and builds no client -- which is every run after the
+    first, and every rebuild the issue's own path describes. The cut is
+    applied here rather than in a separate pass so a newly ingested source
+    is filtered by construction, with no incremental-specific code.
+
     Raises `NoAnswersToEmbedError` when no answer records are found, or none
     of them name anything -- a loud failure rather than a silently empty
     inventory.
     """
+    from axial.name_sections import back_matter_sections
+
     if answers_dir is None:
         answers_dir = _default_answers_dir(config_path)
     answers_dir = Path(answers_dir)
@@ -735,7 +896,18 @@ def run_names(
     if not records:
         raise NoAnswersToEmbedError(answers_dir)
 
-    occurrences = list(collect_occurrences(records))
+    headings = {
+        record["section"]
+        for record in records
+        if isinstance(record.get("section"), str) and record["section"].strip()
+    }
+    back_matter = back_matter_sections(
+        headings, client=client, classes_path=section_classes_path, config_path=config_path
+    )
+
+    occurrences = list(
+        collect_occurrences(records, is_back_matter_section=back_matter.__contains__)
+    )
     entries = build_inventory(occurrences)
     if not entries:
         raise NoAnswersToEmbedError(answers_dir)

@@ -1,17 +1,21 @@
 """Outer acceptance test for issue #415 (Phase A v1 slice 04 -- the name
 inventory and similarity view, spec §7.16, P0-12's first two bullets).
 
-Locked behavioural contract, read off `specs/PRODUCT.md` §7.16/§6 and D10
-(`docs/DECISIONS.md`):
+Locked behavioural contract, read off `specs/PRODUCT.md` §7.16/§6, D10
+(`docs/DECISIONS.md`) and issue #508's cut set:
 
 Given slice 02's per-note interrogation answers on disk
       (`data/answers/<source_id>.jsonl`)
 When  the operator runs `axial names build`
-Then  every distinct name surface form is collected from exactly `names[]`
-      (with its own `kind`) and `citations[].cited` -- §7.16's own field
-      list -- with its occurrence count and the chunk_ids it came from,
-      written losslessly to `data/names/inventory.jsonl` in the exact
+Then  every distinct name surface form is collected from `names[]` alone
+      (with its own `kind`), with its occurrence count and the chunk_ids it
+      came from, written to `data/names/inventory.jsonl` in the exact
       `{surface, kind, count, chunk_ids[]}` shape
+And   `citations[].cited` contributes NOTHING to the name space (issue #508
+      row A) -- the field keeps being recorded on the answer record, and a
+      citation string never becomes a page
+And   a surface matching the cut set's shape rows (issue #508 rows C-H, P,
+      S) never appears as an inventory entry either
 And   `uses`/`defines`/`arguing_against`/`position_of` values never appear
       as an inventory entry -- they carry argumentative clauses, not name
       surface forms (module docstring, `axial.names`)
@@ -23,8 +27,13 @@ And   each surface form is embedded with a local sentence-transformer and
 And   `axial names examine` reads that persisted result back and reports the
       cluster-size and nearest-neighbour similarity distribution, with zero
       further model/embedding calls
-And   zero LLM (text-generation) calls happen anywhere in this pass
+And   a heading the section-class cache already carries costs zero LLM
+      (text-generation) calls, everywhere in this pass
       (`AXIAL_LLM_PROVIDER=explode` poisons any such call)
+And   a heading the cache has never seen is classified once, and a section
+      the classification calls bibliography/index/front matter/appendix
+      takes its surfaces out of the name space (issue #508 row B) -- never
+      endnotes
 
 Seam decisions
 -----------------------------------------------------------------------
@@ -65,9 +74,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 
 
-def _run_axial(root: Path, *args: str) -> subprocess.CompletedProcess:
+def _run_axial(root: Path, *args: str, **env_overrides: str) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env[PROVIDER_ENV_VAR] = "explode"  # poison: any text-gen LLM call crashes the run
+    env.update(env_overrides)
     return subprocess.run(
         ["uv", "run", "--project", str(REPO_ROOT), "axial", *args],
         cwd=root,
@@ -75,6 +85,19 @@ def _run_axial(root: Path, *args: str) -> subprocess.CompletedProcess:
         text=True,
         env=env,
     )
+
+
+def _seed_section_classes(root: Path, classes: dict[str, str]) -> Path:
+    """Pre-seed the back-matter classification cache (issue #508 row B).
+
+    A heading already in the cache is never re-asked, which is what keeps
+    this pass's zero-LLM-call assertion intact under `explode` -- and it is
+    also the real steady state, since the classification is paid for once
+    per distinct heading and reused by every later build."""
+    path = root / "data" / "names" / "section_classes.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"version": 1, "sections": classes}), encoding="utf-8")
+    return path
 
 
 def _answers(**overrides) -> dict:
@@ -100,17 +123,33 @@ def _answers(**overrides) -> dict:
     return base
 
 
-def _record(chunk_id: str, source_id: str, **overrides) -> dict:
+def _record(chunk_id: str, source_id: str, section: str = "Introduction", **overrides) -> dict:
     return {
         "chunk_id": chunk_id,
         "source_id": source_id,
-        "section": "Introduction",
+        "section": section,
         "pass": "note_interrogate",
         "model": "stub",
         "frame_version": "0.1",
         "answered_at": "2026-01-01T00:00:00Z",
         "answers": _answers(**overrides),
     }
+
+
+#: The fixture's own headings. `N O T E S` is docling's per-glyph spacing of
+#: an endnote heading, which issue #508 keeps on purpose; `Bibliography` is
+#: the one row-B heading.
+_FIXTURE_SECTIONS = ("Bibliography", "Introduction", "N O T E S")
+
+#: What the fixture's inventory holds once the cut set has run with every
+#: section treated as body: the two ordinary names, the lowercase concept,
+#: and the name only the bibliography note carries.
+_SURVIVING_SURFACES = {
+    "Kevin Attell",
+    "University of Chicago Press",
+    "negative sovereignty",
+    "Hanna Batatu",
+}
 
 
 def _build_fixture_answers(root: Path) -> None:
@@ -135,19 +174,38 @@ def _build_fixture_answers(root: Path) -> None:
             "src1_001_body_002",
             "src1",
             defines=["SENTINEL_CLAUSE_never_a_name -- defines is not collected (§7.16)"],
+            # A lowercase concept survives (deliberately NOT cut, issue
+            # #508); the four beside it are one cut-set row each.
+            names=[
+                {"name": "negative sovereignty", "kind": "concept"},
+                {"name": "Chapter 5", "kind": "concept"},  # row D
+                {"name": "Gellner (1983)", "kind": "person"},  # row H
+                {"name": "1917-1918", "kind": "period"},  # row F
+                {"name": "not-in-passage", "kind": "concept"},  # row S
+            ],
+            # Row A: the citation channel contributes nothing to the name
+            # space, however well-formed the citation is.
             citations=[{"cited": "Gellner 1992", "stance": "authority", "about": "nationalism"}],
         ),
         _record(
             "src2_000_intro_001",
             "src2",
+            section="N O T E S",
             names=[{"name": "Kevin Attell", "kind": "person"}],
+        ),
+        _record(
+            "src2_001_back_003",
+            "src2",
+            section="Bibliography",
+            names=[{"name": "Hanna Batatu", "kind": "person"}],
         ),
     ]
     with (answers_dir / "src1.jsonl").open("w", encoding="utf-8") as handle:
         for record in records[:2]:
             handle.write(json.dumps(record) + "\n")
     with (answers_dir / "src2.jsonl").open("w", encoding="utf-8") as handle:
-        handle.write(json.dumps(records[2]) + "\n")
+        for record in records[2:]:
+            handle.write(json.dumps(record) + "\n")
 
 
 def _assert_ran_the_real_subcommand(result: subprocess.CompletedProcess) -> None:
@@ -164,6 +222,7 @@ def _assert_ran_the_real_subcommand(result: subprocess.CompletedProcess) -> None
 def test_names_build_then_examine_over_real_answer_records(isolated_vault_root):
     root = isolated_vault_root
     _build_fixture_answers(root)
+    _seed_section_classes(root, {section: "body" for section in _FIXTURE_SECTIONS})
 
     build_result = _run_axial(root, "names", "build")
     _assert_ran_the_real_subcommand(build_result)
@@ -175,20 +234,20 @@ def test_names_build_then_examine_over_real_answer_records(isolated_vault_root):
     manifest_path = root / "data" / "names" / "similarity_manifest.json"
     assert manifest_path.is_file(), f"expected a manifest at {manifest_path}"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    # Distinct surface forms: "Kevin Attell", "University of Chicago Press",
-    # "Gellner 1992" -- three, never the four SENTINEL clauses
-    # (uses/defines/arguing_against/position_of).
-    assert manifest["entry_count"] == 3
-    assert manifest["occurrence_count"] == 4  # every raw names[]/citations[] mention
+    # Four distinct surface forms survive the cut set; the SENTINEL clauses
+    # (uses/defines/arguing_against/position_of) were never collected at
+    # all, and five more surfaces are cut by rows A, D, F, H and S.
+    assert manifest["entry_count"] == 4
+    assert manifest["occurrence_count"] == 5  # every surviving names[] mention
     assert isinstance(manifest["embedding_dim"], int) and manifest["embedding_dim"] > 0
 
     inventory_path = root / "data" / "names" / "inventory.jsonl"
-    assert inventory_path.is_file(), f"expected a lossless inventory at {inventory_path}"
+    assert inventory_path.is_file(), f"expected an inventory at {inventory_path}"
     inventory = {
         record["surface"]: record
         for record in (json.loads(line) for line in inventory_path.read_text("utf-8").splitlines())
     }
-    assert set(inventory) == {"Kevin Attell", "University of Chicago Press", "Gellner 1992"}
+    assert set(inventory) == _SURVIVING_SURFACES
     assert not any("SENTINEL_CLAUSE_never_a_name" in surface for surface in inventory)
     assert inventory["Kevin Attell"] == {
         "surface": "Kevin Attell",
@@ -196,7 +255,14 @@ def test_names_build_then_examine_over_real_answer_records(isolated_vault_root):
         "count": 2,
         "chunk_ids": ["src1_000_intro_001", "src2_000_intro_001"],
     }
-    assert inventory["Gellner 1992"]["kind"] is None
+    # Issue #508 row A: the one citation the fixture carries is recorded on
+    # the answer record and is not a name.
+    assert "Gellner 1992" not in inventory
+    # Rows D, F, H and S, each named by the issue's own cut-set table.
+    for cut in ("Chapter 5", "1917-1918", "Gellner (1983)", "not-in-passage"):
+        assert cut not in inventory, f"{cut!r} should have left the name space"
+    # ...and the lowercase concept the issue deliberately refuses to cut.
+    assert inventory["negative sovereignty"]["kind"] == "concept"
 
     embeddings_dir = root / "data" / "names" / "embeddings.lance"
     db = lancedb.connect(embeddings_dir)
@@ -214,8 +280,8 @@ def test_names_build_then_examine_over_real_answer_records(isolated_vault_root):
         f"stdout: {examine_result.stdout!r}\nstderr: {examine_result.stderr!r}"
     )
     report = examine_result.stdout
-    assert "3 distinct surface form(s)" in report
-    assert "4 total occurrence(s)" in report
+    assert "4 distinct surface form(s)" in report
+    assert "5 total occurrence(s)" in report
     assert "nearest-neighbour cosine similarity spread" in report
     # The tightness sweep (founder ask, spec §7.16/P0-12): the default
     # candidates all show up as their own section, re-clustered from the
@@ -234,6 +300,7 @@ def test_names_examine_min_cluster_sizes_and_min_samples_are_cli_overridable(iso
     same persisted vectors `build` already wrote."""
     root = isolated_vault_root
     _build_fixture_answers(root)
+    _seed_section_classes(root, {section: "body" for section in _FIXTURE_SECTIONS})
     build_result = _run_axial(root, "names", "build")
     assert build_result.returncode == 0, build_result.stderr
 
@@ -254,6 +321,7 @@ def test_names_examine_min_cluster_sizes_and_min_samples_are_cli_overridable(iso
 def test_names_build_min_cluster_size_and_min_samples_are_cli_overridable(isolated_vault_root):
     root = isolated_vault_root
     _build_fixture_answers(root)
+    _seed_section_classes(root, {section: "body" for section in _FIXTURE_SECTIONS})
 
     build_result = _run_axial(
         root, "names", "build", "--min-cluster-size", "2", "--min-samples", "1"
@@ -280,10 +348,10 @@ def test_names_examine_before_build_fails_loudly(isolated_vault_root):
 
 
 def _build_locator_fixture_answers(root: Path) -> None:
-    """Issue #445: "Table 4.1" named in two unrelated books (the actual
-    bug), "Figure 9.1" named only in one (306 of 358 real locator surfaces,
-    already correct), and a non-locator surface ("Kevin Attell") spanning
-    the same two books, which must never be scoped."""
+    """Issue #445's own fixture, kept: "Table 4.1" named in two unrelated
+    books, "Figure 9.1" named only in one, and a non-locator surface
+    ("Kevin Attell") spanning the same two books. Issue #508 row E changed
+    what happens to the first two -- see the test below."""
     answers_dir = root / "data" / "answers"
     answers_dir.mkdir(parents=True, exist_ok=True)
 
@@ -295,6 +363,8 @@ def _build_locator_fixture_answers(root: Path) -> None:
                     "src1",
                     names=[
                         {"name": "Kevin Attell", "kind": "person"},
+                        {"name": "Charles Tilly", "kind": "person"},
+                        {"name": "negative sovereignty", "kind": "concept"},
                         {"name": "Table 4.1", "kind": "table"},
                         {"name": "Figure 9.1", "kind": "figure"},
                     ],
@@ -318,9 +388,15 @@ def _build_locator_fixture_answers(root: Path) -> None:
         )
 
 
-def test_names_build_scopes_a_locator_shaped_surface_that_spans_two_sources(isolated_vault_root):
+def test_names_build_drops_every_locator_shaped_surface(isolated_vault_root):
+    """Issue #508 row E supersedes #445's source-scoping outcome: a locator
+    is not a name at all, so neither the scoped nor the bare form reaches
+    the inventory. 441 surfaces and 431 pages on the corpus of record. The
+    scoping rule itself is untouched in `axial.names.build_inventory`; row E
+    simply means nothing reaches it."""
     root = isolated_vault_root
     _build_locator_fixture_answers(root)
+    _seed_section_classes(root, {"Introduction": "body"})
 
     build_result = _run_axial(root, "names", "build")
     _assert_ran_the_real_subcommand(build_result)
@@ -335,28 +411,54 @@ def test_names_build_scopes_a_locator_shaped_surface_that_spans_two_sources(isol
         for record in (json.loads(line) for line in inventory_path.read_text("utf-8").splitlines())
     }
 
-    # The actual bug: "Table 4.1" must never survive as one entry spanning
-    # both books -- it becomes two, each scoped to its own source.
-    assert "Table 4.1" not in inventory
-    assert inventory["Table 4.1 (src1)"] == {
-        "surface": "Table 4.1 (src1)",
-        "kind": "table",
-        "count": 1,
-        "chunk_ids": ["src1_000_intro_001"],
-    }
-    assert inventory["Table 4.1 (src2)"] == {
-        "surface": "Table 4.1 (src2)",
-        "kind": "table",
-        "count": 1,
-        "chunk_ids": ["src2_000_intro_001"],
-    }
+    assert set(inventory) == {"Kevin Attell", "Charles Tilly", "negative sovereignty"}
+    for cut in ("Table 4.1", "Table 4.1 (src1)", "Table 4.1 (src2)", "Figure 9.1"):
+        assert cut not in inventory, f"{cut!r} should have left the name space"
 
-    # 306 of 358 real locator surfaces are single-source already -- must
-    # keep their bare identity, no rename.
-    assert inventory["Figure 9.1"]["chunk_ids"] == ["src1_000_intro_001"]
-
-    # A genuine cross-book name is not a locator and must never be scoped.
+    # A genuine cross-book name is not a locator and is untouched.
     assert inventory["Kevin Attell"]["chunk_ids"] == [
         "src1_000_intro_001",
         "src2_000_intro_001",
     ]
+
+
+def test_names_build_classifies_a_new_heading_once_and_cuts_its_back_matter(isolated_vault_root):
+    """Issue #508 row B, end to end through the real CLI with the model call
+    stubbed: `Bibliography` is classified as back matter, so the name only
+    that section carries leaves the name space, while the glyph-spaced
+    endnote heading `N O T E S` keeps its own."""
+    root = isolated_vault_root
+    _build_fixture_answers(root)
+
+    # `_FIXTURE_SECTIONS` is sorted, and `classify_sections` numbers the
+    # headings it asks about in that same order -- so `Bibliography` is 1.
+    scripted = json.dumps({"back_matter": [{"n": 1, "class": "bibliography"}]})
+    build_result = _run_axial(
+        root,
+        "names",
+        "build",
+        AXIAL_LLM_PROVIDER="stub",
+        AXIAL_STUB_NAME_SECTIONS_RESPONSE=scripted,
+    )
+    _assert_ran_the_real_subcommand(build_result)
+    assert build_result.returncode == 0, (
+        f"expected exit 0, got {build_result.returncode}\n"
+        f"stdout: {build_result.stdout!r}\nstderr: {build_result.stderr!r}"
+    )
+
+    inventory_path = root / "data" / "names" / "inventory.jsonl"
+    inventory = {
+        json.loads(line)["surface"] for line in inventory_path.read_text("utf-8").splitlines()
+    }
+    assert "Hanna Batatu" not in inventory, "a bibliography-only name is not a page"
+    assert "Kevin Attell" in inventory, "endnotes are deliberately NOT back matter"
+    assert inventory == _SURVIVING_SURFACES - {"Hanna Batatu"}
+
+    classes = json.loads(
+        (root / "data" / "names" / "section_classes.json").read_text(encoding="utf-8")
+    )
+    assert classes["sections"] == {
+        "Bibliography": "bibliography",
+        "Introduction": "body",
+        "N O T E S": "body",
+    }
