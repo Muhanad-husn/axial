@@ -119,6 +119,10 @@ def test_batch_key_is_content_addressed():
 
 
 def test_parse_keeps_only_surface_forms_the_batch_actually_carried():
+    """The bogus second node is dropped, not invented into the map -- a real
+    second node (`civil society`, standing on its own) is what keeps this a
+    two-node response, so issue #504's single-node fold (below) does not
+    apply here and "civil society" is not swept into the first node."""
     raw = json.dumps(
         {
             "nodes": [
@@ -126,6 +130,7 @@ def test_parse_keeps_only_surface_forms_the_batch_actually_carried():
                     "canonical": "state formation through war",
                     "aliases": ["bellicist state building"],
                 },
+                {"canonical": "civil society", "aliases": []},
                 {"canonical": "a name the corpus never said", "aliases": ["nor this one"]},
             ]
         }
@@ -136,7 +141,8 @@ def test_parse_keeps_only_surface_forms_the_batch_actually_carried():
     )
 
     assert nodes == [
-        {"canonical": "state formation through war", "aliases": ["bellicist state building"]}
+        {"canonical": "state formation through war", "aliases": ["bellicist state building"]},
+        {"canonical": "civil society", "aliases": []},
     ]
     assert escalated == []
 
@@ -172,12 +178,18 @@ def test_parse_rejects_a_response_that_placed_nothing():
 def test_parse_reports_an_undecided_member_as_escalated_not_unplaced():
     """The whole point: a member the model explicitly could not judge is
     distinguishable, on the parse's own return value, from one it never
-    mentioned at all."""
-    raw = json.dumps({"nodes": [{"canonical": "a", "aliases": []}], "undecided": ["b"]})
+    mentioned at all. TWO nodes here (issue #504's single-node fold is
+    scoped to exactly one -- see the tests below), so "c" stays unplaced."""
+    raw = json.dumps(
+        {
+            "nodes": [{"canonical": "a", "aliases": []}, {"canonical": "d", "aliases": []}],
+            "undecided": ["b"],
+        }
+    )
 
-    nodes, escalated = parse_merge_response(raw, ["a", "b", "c"])
+    nodes, escalated = parse_merge_response(raw, ["a", "b", "c", "d"])
 
-    assert nodes == [{"canonical": "a", "aliases": []}]
+    assert nodes == [{"canonical": "a", "aliases": []}, {"canonical": "d", "aliases": []}]
     assert escalated == ["b"]
     # "c" is mentioned nowhere -- absent from both, unplaced exactly as it
     # always has been.
@@ -236,6 +248,61 @@ def test_undecided_ignores_a_missing_or_malformed_field():
     """A response with no `undecided` key at all (every pre-#450 stub answer
     in the existing acceptance fixtures) must parse exactly as before --
     escalation is a thing the model says, never a default."""
+    raw = json.dumps({"nodes": [{"canonical": "a", "aliases": ["b"]}]})
+
+    nodes, escalated = parse_merge_response(raw, ["a", "b"])
+
+    assert nodes == [{"canonical": "a", "aliases": ["b"]}]
+    assert escalated == []
+
+
+# ---------------------------------------------------------------------------
+# Issue #504: exactly one node returned, some members omitted -- read as
+# aliases, not as unplaced.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_folds_an_omitted_member_into_the_sole_node_returned():
+    """The worked case from the issue: a two-member batch, the model returns
+    one node naming the spelled-out form, and never mentions the acronym at
+    all. One node is the model saying "this batch is a single entity" -- the
+    omitted member is read as that node's alias, not left to split off as
+    its own page."""
+    raw = json.dumps({"nodes": [{"canonical": "World Health Organization (WHO)", "aliases": []}]})
+
+    nodes, escalated = parse_merge_response(raw, ["WHO", "World Health Organization (WHO)"])
+
+    assert nodes == [{"canonical": "World Health Organization (WHO)", "aliases": ["WHO"]}]
+    assert escalated == []
+
+
+def test_single_node_fold_never_absorbs_an_explicitly_escalated_member():
+    """A member the model marked "cannot tell" is a real judgment, distinct
+    from one it simply never named -- the fold must not sweep it in even
+    though the response reduces to one node."""
+    raw = json.dumps({"nodes": [{"canonical": "a", "aliases": []}], "undecided": ["b"]})
+
+    nodes, escalated = parse_merge_response(raw, ["a", "b", "c"])
+
+    assert nodes == [{"canonical": "a", "aliases": ["c"]}]
+    assert escalated == ["b"]
+
+
+def test_two_or_more_nodes_never_absorbs_an_omitted_member():
+    """Two (or more) nodes is a real partition the model drew -- an omitted
+    member there stays exactly as unplaced as it always has been; only the
+    single-node shape is unambiguous enough to fold."""
+    raw = json.dumps(
+        {"nodes": [{"canonical": "a", "aliases": []}, {"canonical": "c", "aliases": []}]}
+    )
+
+    nodes, escalated = parse_merge_response(raw, ["a", "b", "c"])
+
+    assert nodes == [{"canonical": "a", "aliases": []}, {"canonical": "c", "aliases": []}]
+    assert escalated == []
+
+
+def test_single_node_fold_is_a_no_op_when_nothing_is_omitted():
     raw = json.dumps({"nodes": [{"canonical": "a", "aliases": ["b"]}]})
 
     nodes, escalated = parse_merge_response(raw, ["a", "b"])

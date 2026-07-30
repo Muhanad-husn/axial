@@ -179,6 +179,23 @@ source book(s) it appears in (the inventory's `chunk_ids`, resolved to
 `source_id`s). Deliberately no queue, no resolution state, no write path --
 just enough to see whether the 5,629 are one problem or five, which is also
 the evidence issue #460 needs.
+
+**Issue #504: a response that reduces to exactly one node, omitting some of
+the batch's own members from that node's `aliases`, was read as "unplaced"
+-- exactly like a member the model never mentioned -- so the pipeline split
+what the model's own one-node answer said was a single entity.** The
+neighbouring failure mode (a response that places NONE of the batch) was
+already strict, rejected into `merge_failures.jsonl` for a re-ask; placing
+*some* was accepted and silently lost the rest, the strictness on the wrong
+side of the line. `_fold_omitted_into_single_node` reads an omitted member
+as an alias of the sole node whenever `parse_merge_response` resolves to
+exactly one -- never when two or more nodes come back, which is a real
+partition and stays exactly as unplaced as before. `run_merge_names` also
+runs every ALREADY-persisted decision through the same fold when building
+`decision_nodes`: `merge_decisions.jsonl` is content-keyed on rendered
+members (trap 3, above), so this is a re-READ of the existing log, never a
+re-decision -- no batch's `batch_key` changes, no model call is made, and a
+record a post-fix run already folded is untouched (idempotent).
 """
 
 from __future__ import annotations
@@ -702,7 +719,9 @@ def parse_merge_response(
     simply absent from both lists and survives downstream exactly as it
     always has: unplaced, standing on its own (issue #450's constraint: a
     member the response never mentions must behave exactly as it does today,
-    since escalation is a thing the model says, not a default).
+    since escalation is a thing the model says, not a default) -- UNLESS the
+    response reduced to exactly one node, see `_fold_omitted_into_single_
+    node` below (issue #504).
 
     Raises `MergeResponseError` on a shape failure -- no `nodes` list, or a
     response that placed none of this batch's members in EITHER `nodes` or
@@ -795,7 +814,48 @@ def parse_merge_response(
             "one to appear exactly once across 'nodes' and 'undecided' together; "
             f"{_response_diagnostic(raw)}"
         )
+    nodes = _fold_omitted_into_single_node(members, nodes, escalated)
     return nodes, escalated
+
+
+def _fold_omitted_into_single_node(
+    members: list[str],
+    nodes: list[dict[str, Any]],
+    escalated: list[str],
+) -> list[dict[str, Any]]:
+    """Issue #504: a response that reduces to exactly ONE node is the model
+    saying "this batch is a single entity" -- so a member neither placed in
+    that node nor escalated is not a member the response stayed silent
+    about, it is an alias the response simply forgot to name (the prompt's
+    own contract asks for every member "exactly once across 'nodes' and
+    'undecided' together"; one node covering only part of the batch, with
+    the rest mentioned nowhere, is that contract half-followed, not a
+    considered "these are different" judgment).
+
+    Scoped tight to the unambiguous shape: exactly one node in `nodes`. Two
+    or more nodes is a real partition the model drew, and an omission there
+    is untouched -- it stays what it has always been, unplaced (D10's
+    asymmetry: splitting loses less than fusing). An explicitly escalated
+    member is also untouched -- "cannot tell" is a real judgment, never
+    swept into the sole node alongside it.
+
+    Pure, and reused twice: `parse_merge_response` calls it on a freshly
+    parsed response (so a NEW decision is written to `merge_decisions.jsonl`
+    already folded), and `run_merge_names` calls it again on every ALREADY
+    -persisted record when building `decision_nodes` for the fold -- same
+    three inputs (`members`, `nodes`, `escalated`), already sitting on every
+    recorded decision, so re-reading the log through this function costs no
+    model call and re-decides nothing. Idempotent: a record already folded
+    (nothing left omitted) passes through unchanged.
+    """
+    if len(nodes) != 1:
+        return nodes
+    node = nodes[0]
+    placed = {node["canonical"], *node["aliases"], *escalated}
+    omitted = [member for member in members if member not in placed]
+    if not omitted:
+        return nodes
+    return [{"canonical": node["canonical"], "aliases": sorted([*node["aliases"], *omitted])}]
 
 
 # Issue #469: the number of leading/trailing characters kept when a merge
@@ -1749,7 +1809,20 @@ def run_merge_names(
                 )
 
     seed_groups, seed_note = _seed_groups(all_surface_forms, Path(domain_dir))
-    decision_nodes = [node for record in decisions.values() for node in record["nodes"]]
+    # Issue #504: re-fold every decision -- including ones already recorded
+    # by an earlier run, under the pre-fix parse -- through the same
+    # single-node fold `parse_merge_response` now applies to a fresh
+    # response. Pure function of fields already on the record (`members`,
+    # `nodes`, `escalated`); no model call, no rewrite of the decision log
+    # itself. A record a fresh run's own `parse_merge_response` already
+    # folded passes through unchanged (idempotent).
+    decision_nodes = [
+        node
+        for record in decisions.values()
+        for node in _fold_omitted_into_single_node(
+            record["members"], record["nodes"], record.get("escalated") or []
+        )
+    ]
     nodes = build_alias_map_nodes(full_entries, decision_nodes, seed_groups, folded_groups)
 
     # Issue #450: the escalated count is summed over EVERY decision currently
