@@ -3,12 +3,26 @@
 `axial.query.test_reader`'s own `_WINDOWS_MAX_PATH` monkeypatch seam for
 `budgeted_chunk_filename`/`budgeted_artifact_filename`, so the over-budget
 path is exercised deterministically regardless of the OS or the test's own
-tmp dir depth."""
+tmp dir depth.
+
+Also pins the pipeline-config memo behind every `default_*_dir` helper
+(issue #541)."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import yaml
+
 import axial.paths
-from axial.paths import name_page_filename, name_page_path
+from axial.paths import (
+    NAMES_DIR,
+    VAULT_DIR,
+    default_names_dir,
+    default_vault_dir,
+    name_page_filename,
+    name_page_path,
+)
 
 # Low enough that `path_overage` is positive for any real name under a real
 # tmp_path -- same convention `axial.query.test_reader` uses.
@@ -82,3 +96,74 @@ def test_name_page_path_joins_the_vault_names_directory(tmp_path):
     vault_dir = tmp_path / "vault"
     path = name_page_path(vault_dir, "Kevin Attell")
     assert path == vault_dir / "names" / "Kevin Attell.md"
+
+
+# --- The pipeline-config memo (issue #541) ---------------------------------
+
+
+def _write_config(path: Path, names_dir: str) -> None:
+    path.write_text(f"paths:\n  names_dir: {names_dir}\n", encoding="utf-8")
+
+
+def test_the_pipeline_config_is_parsed_once_per_path_not_once_per_call(tmp_path, monkeypatch):
+    """Every `default_*_dir` helper re-read and re-parsed the whole pipeline
+    config on every call, which measured 28.7ms a call against the real
+    26.6KB `config/pipeline.yaml` -- and `canonical_name_for_surface` pays
+    it per surface per pair, ~4,000 times in one counter-position check
+    (issue #541). Parse count, not wall clock, is the thing to pin: it is
+    the cost, and it is deterministic."""
+    config = tmp_path / "pipeline.yaml"
+    _write_config(config, "data/other_names")
+
+    parses = 0
+    real_load = yaml.load
+
+    def counting_load(stream, *args, **kwargs):
+        nonlocal parses
+        parses += 1
+        return real_load(stream, *args, **kwargs)
+
+    monkeypatch.setattr(axial.paths.yaml, "load", counting_load)
+
+    for _ in range(5):
+        assert default_names_dir(config) == Path("data/other_names")
+        assert default_vault_dir(config) == VAULT_DIR
+
+    assert parses == 1
+
+
+def test_an_edited_pipeline_config_is_re_read(tmp_path):
+    """The memo notices a changed file rather than needing to be told to
+    forget one: an operator editing `config/pipeline.yaml` between runs, and
+    any test that rewrites its own config, must see the new value."""
+    config = tmp_path / "pipeline.yaml"
+    _write_config(config, "data/first_names")
+    assert default_names_dir(config) == Path("data/first_names")
+
+    _write_config(config, "data/a_completely_different_names_dir")
+    assert default_names_dir(config) == Path("data/a_completely_different_names_dir")
+
+
+def test_a_deleted_pipeline_config_falls_back(tmp_path):
+    config = tmp_path / "pipeline.yaml"
+    _write_config(config, "data/other_names")
+    assert default_names_dir(config) == Path("data/other_names")
+
+    config.unlink()
+    assert default_names_dir(config) == NAMES_DIR
+
+
+def test_the_config_memo_does_not_leak_across_working_directories(tmp_path, monkeypatch):
+    """`DEFAULT_PIPELINE_CONFIG_PATH` is the RELATIVE path
+    `config/pipeline.yaml`, and several suites `monkeypatch.chdir` inside one
+    process, so two cwds mean two different files under one identical
+    relative path. The memo must key on where the path actually points."""
+    for root, names_dir in ((tmp_path / "first", "data/aaa"), (tmp_path / "second", "data/bbb")):
+        (root / "config").mkdir(parents=True)
+        _write_config(root / "config" / "pipeline.yaml", names_dir)
+
+    monkeypatch.chdir(tmp_path / "first")
+    assert default_names_dir() == Path("data/aaa")
+
+    monkeypatch.chdir(tmp_path / "second")
+    assert default_names_dir() == Path("data/bbb")

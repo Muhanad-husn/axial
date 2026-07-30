@@ -85,6 +85,7 @@ from axial.intake import check_extension, extract_text_layer
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
 from axial.paths import DEFAULT_DOMAIN_DIR
 from axial.vault import VaultError, run_vault_write
+from axial.yaml_loader import SAFE_LOADER
 
 # Deterministic language detection (issue #239, P0-11c): langdetect is not
 # seeded by default (it draws pseudo-random n-gram samples internally), so
@@ -316,7 +317,7 @@ def _language_gate_config(config_path: Path) -> tuple[int, float]:
         return probe_chars, accept_threshold
 
     with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
+        document = yaml.load(handle, Loader=SAFE_LOADER) or {}
     drive_config = document.get("drive", {}) or {}
     probe_chars = drive_config.get("language_probe_chars", probe_chars)
     accept_threshold = drive_config.get("language_accept_threshold", accept_threshold)

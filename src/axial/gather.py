@@ -188,6 +188,7 @@ from axial.names import (
 )
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_vault_dir, split_source_id
 from axial.vault import VaultError, bibliographic_value, read_source_meta
+from axial.yaml_loader import SAFE_LOADER
 
 # This pass's answer record AND its resume checkpoint, one file, mirroring
 # `data/answers/<source_id>.jsonl` (slice 02) exactly -- see the module
@@ -807,7 +808,7 @@ def _resolve_min_gather_members(config_path: Path) -> int:
     if not config_path.is_file():
         return DEFAULT_MIN_GATHER_MEMBERS
     with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
+        document = yaml.load(handle, Loader=SAFE_LOADER) or {}
     gather_config = document.get("gather") or {}
     return int(gather_config.get("min_members", DEFAULT_MIN_GATHER_MEMBERS))
 

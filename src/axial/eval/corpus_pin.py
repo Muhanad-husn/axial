@@ -87,6 +87,7 @@ from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.paths import default_names_dir as _default_names_dir
 from axial.paths import default_sources_dir as _default_sources_dir
 from axial.vault import _default_vault_dir
+from axial.yaml_loader import SAFE_LOADER
 
 # The default write location (§7.12: "committed under evals/corpus_pin/").
 # Deliberately a plain cwd-relative path -- like every other data/config
@@ -447,7 +448,7 @@ def _split_frontmatter(text: str, note_path: Path) -> dict[str, Any]:
 
     frontmatter_text = "\n".join(lines[1:closing_index])
     try:
-        data = yaml.safe_load(frontmatter_text)
+        data = yaml.load(frontmatter_text, Loader=SAFE_LOADER)
     except yaml.YAMLError as exc:
         raise MalformedNoteError(note_path, f"invalid frontmatter YAML: {exc}") from exc
 

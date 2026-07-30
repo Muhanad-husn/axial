@@ -24,11 +24,16 @@ source of truth instead of two literals that happen to agree today.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import stat
+import threading
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from axial.yaml_loader import SAFE_LOADER
 
 DEFAULT_PIPELINE_CONFIG_PATH = Path("config/pipeline.yaml")
 
@@ -58,16 +63,62 @@ RUNS_DIR = Path("data/runs")
 DEFAULT_DOMAIN_DIR = Path("config/domains/syria")
 
 
+# The parsed pipeline config, per file, for the process lifetime -- the same
+# shape as `axial.query.names._NAME_LAYER_CACHE` and
+# `axial.query.reader._CHUNK_ID_INDEX_CACHE`. Without it every
+# `default_*_dir()` call re-read and re-parsed the whole 26.6KB
+# `config/pipeline.yaml` (28.7ms a call, measured), and
+# `canonical_name_for_surface` resolves `default_names_dir()` per surface per
+# pair -- ~4,000 times inside one counter-position check (issue #541).
+#
+# Keyed on the ABSOLUTE path, because `DEFAULT_PIPELINE_CONFIG_PATH` is
+# relative and several suites `monkeypatch.chdir` inside one process, plus
+# (mtime, size) so an edited config is noticed rather than needing a reset
+# hook the product would have to remember to call. That is the same
+# staleness check CPython's own bytecode cache uses, and it inherits the same
+# limit: on Windows the filesystem clock ticks every ~15.6ms, so an edit that
+# leaves the byte count unchanged AND lands within one tick of the previous
+# read is not seen. Nothing operational edits this file mid-process.
+_CONFIG_CACHE: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
+_CONFIG_CACHE_LOCK = threading.Lock()
+
+
+def _load_pipeline_config(config_path: Path) -> dict[str, Any] | None:
+    """`config_path`, parsed and memoized. `None` when it is not a readable
+    regular file. The returned mapping is shared between callers -- read it,
+    never mutate it."""
+    key = os.path.abspath(config_path)
+    try:
+        info = os.stat(key)
+    except OSError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        return None
+    stamp = (info.st_mtime_ns, info.st_size)
+
+    cached = _CONFIG_CACHE.get(key)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    with _CONFIG_CACHE_LOCK:
+        cached = _CONFIG_CACHE.get(key)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+        with open(key, "r", encoding="utf-8") as handle:
+            parsed = yaml.load(handle, Loader=SAFE_LOADER)
+        document: dict[str, Any] = parsed if isinstance(parsed, dict) else {}
+        _CONFIG_CACHE[key] = (stamp, document)
+        return document
+
+
 def _read_configured_dir(config_path: Path, key: str, fallback: Path) -> Path:
     """Read `paths.<key>` from `config_path`, falling back to `fallback`
     when the file or key is absent -- the one config-then-fallback
     resolution every `default_*_dir` helper in this module shares (issue
     #281: a third module independently re-deriving this same read/parse/
     fallback shape is the hazard `axial.paths` exists to close)."""
-    if not config_path.is_file():
+    document = _load_pipeline_config(config_path)
+    if document is None:
         return fallback
-    with config_path.open("r", encoding="utf-8") as handle:
-        document: dict[str, Any] = yaml.safe_load(handle) or {}
     paths_config = document.get("paths", {}) or {}
     configured = paths_config.get(key)
     return Path(configured) if configured else fallback

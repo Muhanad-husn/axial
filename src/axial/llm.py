@@ -128,6 +128,7 @@ import httpx
 import yaml
 
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
+from axial.yaml_loader import SAFE_LOADER
 
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
@@ -2448,7 +2449,7 @@ def _load_pipeline_llm_config(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) 
     if not config_path.is_file():
         return {}
     with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
+        document = yaml.load(handle, Loader=SAFE_LOADER) or {}
     return document.get("llm", {}) or {}
 
 

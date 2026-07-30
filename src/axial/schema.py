@@ -15,6 +15,8 @@ from typing import Any
 
 import yaml
 
+from axial.yaml_loader import SAFE_LOADER
+
 # Cardinality vocabulary the loader recognises (PRD §7.1 / Appendices A-F).
 # "many" (Appendix G's `polities_touched`) is a many-valued FREE-TEXT axis:
 # it has no controlled vocabulary at all (`values: free_text`, a bare scalar
@@ -177,7 +179,7 @@ def load_schema(domain_dir: str | Path) -> Schema:
 
     with schema_path.open("r", encoding="utf-8") as f:
         try:
-            raw = yaml.safe_load(f) or {}
+            raw = yaml.load(f, Loader=SAFE_LOADER) or {}
         except yaml.YAMLError as exc:
             raise MalformedSchemaError(schema_path, str(exc)) from exc
 

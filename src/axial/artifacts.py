@@ -59,6 +59,7 @@ from axial.chunk import _is_back_matter
 from axial.extract import ExtractError, extract
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.router import ARTIFACT, canonical_label, route_for
+from axial.yaml_loader import SAFE_LOADER
 
 # Default artifacts-pass checkpoint directory, mirroring `axial.tag.TAGS_DIR`
 # exactly (issue #98) -- now doubling as the pass's only real output store,
@@ -76,7 +77,7 @@ def _default_artifacts_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> 
     if not config_path.is_file():
         return ARTIFACTS_DIR
     with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
+        document = yaml.load(handle, Loader=SAFE_LOADER) or {}
     paths_config = document.get("paths", {}) or {}
     configured = paths_config.get("artifacts_dir")
     return Path(configured) if configured else ARTIFACTS_DIR

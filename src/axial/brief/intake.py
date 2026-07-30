@@ -22,6 +22,8 @@ from typing import Any
 
 import yaml
 
+from axial.yaml_loader import SAFE_LOADER
+
 # The only top-level keys a brief file may declare (§7.1 minus `brief_id`,
 # which is computed, never read from the file). An unrecognised key is
 # rejected rather than silently dropped, so a typo'd field is caught at
@@ -209,7 +211,7 @@ def load_brief(path: str | Path) -> Brief:
 
     with path.open("r", encoding="utf-8") as f:
         try:
-            raw = yaml.safe_load(f)
+            raw = yaml.load(f, Loader=SAFE_LOADER)
         except yaml.YAMLError as exc:
             raise MalformedBriefError(path, str(exc)) from exc
 

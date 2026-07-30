@@ -64,6 +64,7 @@ from axial.query.reader import (
     _read_frontmatter,
     source_id_from_chunk_id,
 )
+from axial.yaml_loader import SAFE_LOADER
 
 # Reconcile's own artifact filenames under `names_dir`
 # (`axial.merge_names.DEFAULT_INDEX_PATH`/`DEFAULT_ALIAS_MAP_PATH`,
@@ -427,7 +428,7 @@ def _read_name_page_head(path: Path) -> tuple[str, str | None, int] | None:
     except OSError:
         return None
     try:
-        parsed = yaml.safe_load("".join(block_lines))
+        parsed = yaml.load("".join(block_lines), Loader=SAFE_LOADER)
     except yaml.YAMLError:
         return None
     if not isinstance(parsed, dict):

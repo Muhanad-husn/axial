@@ -49,6 +49,7 @@ import yaml
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.paths import DEFAULT_DOMAIN_DIR
 from axial.vault import _default_vault_dir
+from axial.yaml_loader import SAFE_LOADER
 
 CANONICAL_MAP_FILENAME = "polity_canonical.yaml"
 
@@ -181,7 +182,7 @@ def load_polity_canonical(domain_dir: str | Path) -> PolityCanonical:
 
     with path.open("r", encoding="utf-8") as handle:
         try:
-            raw = yaml.safe_load(handle)
+            raw = yaml.load(handle, Loader=SAFE_LOADER)
         except yaml.YAMLError as exc:
             raise MalformedPolityCanonicalError(path, str(exc)) from exc
 
@@ -239,7 +240,7 @@ def _split_frontmatter(text: str) -> dict[str, Any] | None:
     for index in range(1, len(lines)):
         if lines[index].strip() == "---":
             block = "\n".join(lines[1:index])
-            parsed = yaml.safe_load(block)
+            parsed = yaml.load(block, Loader=SAFE_LOADER)
             return parsed if isinstance(parsed, dict) else None
     return None
 

@@ -121,6 +121,7 @@ from axial.validators.counter_position import (
     stated_position,
 )
 from axial.validators.coverage import coverage_scope
+from axial.yaml_loader import SAFE_LOADER
 
 # The §7.4 claim-kind vocabulary -- closed, not open text: a value outside
 # this set is a named parse error, never silently accepted or coerced.
@@ -184,7 +185,7 @@ def _resolve_evidence_char_budget(config_path: Path | None = None) -> int:
     if not config_path.is_file():
         return DEFAULT_EVIDENCE_CHAR_BUDGET
     with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
+        document = yaml.load(handle, Loader=SAFE_LOADER) or {}
     synthesis_config = document.get("synthesis") or {}
     return int(synthesis_config.get("evidence_char_budget", DEFAULT_EVIDENCE_CHAR_BUDGET))
 

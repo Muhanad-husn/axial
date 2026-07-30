@@ -85,6 +85,7 @@ from axial.router import (
     is_content_apparatus_candidate,
     iter_routed_blocks,
 )
+from axial.yaml_loader import SAFE_LOADER
 
 CHUNKS_DIR = Path("data/chunks")
 
@@ -101,7 +102,7 @@ def _default_chunks_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Pat
     if not config_path.is_file():
         return CHUNKS_DIR
     with config_path.open("r", encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
+        document = yaml.load(handle, Loader=SAFE_LOADER) or {}
     paths_config = document.get("paths", {}) or {}
     configured = paths_config.get("chunks_dir")
     return Path(configured) if configured else CHUNKS_DIR

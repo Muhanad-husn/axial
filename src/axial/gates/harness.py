@@ -52,6 +52,7 @@ import yaml
 from axial.eval.corpus_pin import EVALS_DIR as CORPUS_PIN_DIR
 from axial.eval.corpus_pin import CorpusPinError, resolve_pin_id
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
+from axial.yaml_loader import SAFE_LOADER
 
 # Where a gate report lands in dry-run mode (§10: "evals/reports/<run>.json"),
 # named after the gate itself -- there is no `--run` flag (this codebase's
@@ -208,7 +209,7 @@ def resolve_threshold(metric: str, config_path: Path = DEFAULT_PIPELINE_CONFIG_P
     configured: dict[str, Any] = {}
     if config_path.is_file():
         with config_path.open("r", encoding="utf-8") as handle:
-            document = yaml.safe_load(handle) or {}
+            document = yaml.load(handle, Loader=SAFE_LOADER) or {}
         configured = document.get("gates", {}) or {}
     if metric in configured:
         return float(configured[metric])
