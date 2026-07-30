@@ -52,6 +52,7 @@ from pathlib import Path
 
 import pytest
 
+import axial.runlog as _runlog_mod
 from axial.llm import PROVIDER_ENV_VAR
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -193,6 +194,30 @@ def _offline_llm_provider_by_default(monkeypatch):
     live provider. Tests that exercise provider resolution itself set or
     clear `AXIAL_LLM_PROVIDER` explicitly and are unaffected."""
     monkeypatch.setenv(PROVIDER_ENV_VAR, "stub")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_runlog_root(tmp_path_factory, monkeypatch):
+    """Redirect `axial.runlog.LOGS_ROOT` to a fresh temp directory for every
+    in-process test in this suite, so a test that drives the CLI through
+    `main()`/its own `_extract`/`_envelope`/`_interrogate`/
+    `_gather_eval_score`/`_eval` wrapper with no injected `root` can never
+    write a real timestamped run directory into the operator's own
+    `data/logs/` (see `src/axial/conftest.py`'s twin fixture for the full
+    rationale and the measured 79-directory leak this closes). Only the
+    `root=None` default path is affected: a test that injects its own
+    `root=` (`tests/test_runlog_passes.py`, a DEC-1 locked contract) never
+    reads this global and is untouched.
+
+    **Does not reach subprocess-spawned CLI tests.** Several outer tests
+    (e.g. `tests/ingestion/test_envelope.py`, `tests/ingestion/test_extract.py`)
+    shell out to a real `uv run axial envelope|extract ...` with
+    `cwd=REPO_ROOT` and no `--data-dir`; that child process reads its own
+    fresh copy of `LOGS_ROOT`, which this in-process monkeypatch cannot
+    touch. Those are a separate, known gap -- closing it needs an env-var or
+    CLI-flag seam `runlog.py` does not have today, out of scope for this
+    fix."""
+    monkeypatch.setattr(_runlog_mod, "LOGS_ROOT", tmp_path_factory.mktemp("runlog"))
 
 
 @pytest.fixture(autouse=True)

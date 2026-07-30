@@ -989,10 +989,19 @@ def name_neighbors(
     name are one neighbour; a surface the layer does not carry stands as its
     own canonical (§7.16: nothing is dropped).
 
+    `canonical` itself is resolved through the same three exact tiers
+    (`canonical_for_surface`) before it is compared -- an alias or a folded
+    variant (case, whitespace, punctuation) must land the same result as its
+    canonical, matching the alias-map matching `who_cites` and
+    `who_argues_against` already apply on their side. Never tier 4: an
+    embedding match here would invent a neighbour list for a name the caller
+    never actually asked about.
+
     **Determinism:** `shared_note_count` descending, ties by canonical
     ascending, truncated at `limit`."""
     layer = _name_layer(names_dir)
     vault = Path(vault_dir) if vault_dir is not None else default_vault_dir()
+    canonical = canonical_for_surface(canonical, layer) or canonical
 
     counts: dict[str, int] = {}
     kinds: dict[str, str | None] = {}
