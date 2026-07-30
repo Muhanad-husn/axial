@@ -86,9 +86,11 @@ def is_abstention(value: Any) -> bool:
 
     Every reader applies this before showing an answer to a model: an
     abstention rendered as an answer is indistinguishable downstream from a
-    read one, which is the exact failure D7 exists to prevent. 24% of the
-    live corpus's notes abstain on `arguing_against` and 23% on
-    `position_of`, so this is the common path, not a corner case."""
+    read one, which is the exact failure D7 exists to prevent. Measured over
+    the live corpus's 6,148 answer records: 1,451 notes (23.6%) abstain on
+    `position_of`, and on `arguing_against` 301 (4.9%) abstain while 1,184
+    (19.3%) answer `[]`. So this is the common path on one field and a fifth
+    of the corpus turns on the `[]` distinction on the other."""
     if value == NOT_IN_PASSAGE:
         return True
     if isinstance(value, dict):

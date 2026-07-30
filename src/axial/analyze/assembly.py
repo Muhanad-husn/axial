@@ -14,8 +14,8 @@ comparison, what it defines versus uses, what it concedes, what it assumes,
 and every name it names.
 
 **An abstention is not an answer and never reaches the model as one.** Every
-one of those fields can instead be §7.15's explicit abstention, and 24% of the
-live corpus abstains on `arguing_against` alone. `assemble_evidence` applies
+one of those fields can instead be §7.15's explicit abstention, and 23.6% of the
+live corpus abstains on `position_of` alone. `assemble_evidence` applies
 `axial.query.reader.is_abstention` once, here, and an abstained field is simply
 absent from the assembled `EvidenceChunk.answers` -- so nothing downstream can
 mistake "the passage does not support an answer" for one. `[]` is an ANSWER
