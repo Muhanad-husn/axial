@@ -603,7 +603,7 @@ def test_dispatch_rejects_where_names_meet_with_an_undeclared_extra_arg(
     assert "polity" in result.error
 
 
-# --- issue #517: ToolResult.detail rides beside find_names' own result -----
+# --- issue #517: ToolResult.detail rides beside three tools' own results ---
 
 
 def test_dispatch_carries_detail_for_find_names(fixture_names_dir: Path, tmp_path: Path):
@@ -623,6 +623,65 @@ def test_dispatch_carries_detail_for_find_names(fixture_names_dir: Path, tmp_pat
     assert "tier=alias" in result.detail
 
 
-def test_dispatch_leaves_detail_none_for_every_tool_but_find_names(fixture_tilly_vault_dir: Path):
+def test_dispatch_carries_detail_for_get_name(fixture_tilly_vault_dir: Path):
+    """issue #517's own follow-up: a live corpus run showed a model cannot
+    tell a large page is one book from a bare chunk_id list -- `detail`
+    states how many distinct sources the returned members span. All three
+    of Tilly's fixture members share one `source_id`."""
     result = dispatch("get_name", {"canonical": "Charles Tilly"}, vault_dir=fixture_tilly_vault_dir)
+
+    assert result.error is None
+    assert result.detail == "3 notes across 1 sources"
+
+
+def test_dispatch_carries_detail_for_where_names_meet(tmp_path: Path):
+    """Same fix, for the intersection itself: two shared notes from two
+    different sources report as spanning two sources, not just two notes."""
+    vault_dir = tmp_path / "vault"
+    names_dir = vault_dir / "names"
+    names_dir.mkdir(parents=True, exist_ok=True)
+
+    def _write_page(name: str, filename: str, chunk_ids: list[str]) -> None:
+        member_lines = "\n".join(
+            f"- [[{chunk_id}]] — Author (2020): A claim." for chunk_id in chunk_ids
+        )
+        body = f"# {name}\n\n**Member notes:**\n{member_lines}\n"
+        (names_dir / filename).write_text(
+            "---\n"
+            + yaml.safe_dump(
+                {"name": name, "kind": "concept", "aliases": [], "member_count": len(chunk_ids)},
+                sort_keys=False,
+            )
+            + "---\n"
+            + body,
+            encoding="utf-8",
+        )
+
+    shared = ["srcA_1_a_001", "srcB_1_a_001"]
+    _write_page("A", "a.md", shared)
+    _write_page("B", "b.md", shared)
+
+    result = dispatch("where_names_meet", {"canonical": "A", "other": "B"}, vault_dir=vault_dir)
+
+    assert result.error is None
+    assert result.count == 2
+    assert result.detail == "2 notes across 2 sources"
+
+
+@pytest.mark.parametrize(
+    "tool,args",
+    [
+        ("name_neighbors", {"canonical": "Charles Tilly"}),
+        ("who_cites", {"canonical": "Charles Tilly"}),
+        ("who_argues_against", {"canonical": "Charles Tilly"}),
+        ("get_chunk", {"chunk_id": "tillyfix-1978_1_intro_001"}),
+        ("query_by_source", {"source_id": "tillyfix-1978"}),
+    ],
+)
+def test_dispatch_leaves_detail_none_for_tools_with_no_source_span_concept(
+    tool: str, args: dict[str, str], fixture_tilly_vault_dir: Path
+):
+    """Only `find_names`, `get_name` and `where_names_meet` populate
+    `detail` (issue #517) -- every other tool leaves it `None`."""
+    result = dispatch(tool, args, vault_dir=fixture_tilly_vault_dir)
     assert result.detail is None

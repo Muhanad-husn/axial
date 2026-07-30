@@ -39,11 +39,17 @@ the capped ids -- `ToolResult.total`, carried the same way `ToolResult.error`
 already is, never a sixth §7.6 field -- so the model can deliberately widen
 `limit` instead of mistaking a window for the whole corpus.
 
-`find_names`' own hits carry a second beside-the-trajectory rider,
-`ToolResult.detail` (issue #517): each hit's `kind`, `member_count` and
-`tier`, appended to the per-step tool-result text exactly like `total` --
-the fix for a model that cannot tell an exact resolution from a weak
-embedding guess when all it sees is a bare canonical string.
+`find_names`, `get_name` and `where_names_meet` each carry a second
+beside-the-trajectory rider, `ToolResult.detail` (issue #517), appended to
+the per-step tool-result text exactly like `total`. `find_names` states each
+hit's `kind`, `member_count` and `tier` -- the fix for a model that cannot
+tell an exact resolution from a weak embedding guess when all it sees is a
+bare canonical string. `get_name`/`where_names_meet` state how many distinct
+sources the returned members span (`"<N> notes across <M> sources"`): a live
+corpus run showed a model told to intersect only a "large" name avoiding the
+tool entirely by resolving narrow, one-book names instead, so `compose_
+retrieval_prompt`'s step 4 now points at source diversity directly and
+`detail` makes it checkable rather than inferred from a name's specificity.
 """
 
 from __future__ import annotations
@@ -255,10 +261,12 @@ def compose_retrieval_prompt(brief: Brief, interrogation_result: InterrogationRe
     acceptance tests exercise -- plus D4's Gather-hint rule (§7.5), stated
     plainly here because the loop is where a disagreement could otherwise
     slip into the evidence set. Step 4 (issue #517) tells the model to
-    intersect a large, hub-shaped name with a second name the brief is
-    about instead of reading the hub page whole -- the fix for a brief's
-    `case` anchor (a polity by spec) landing on the fattest pages in the
-    corpus by measurement."""
+    intersect the case anchor with a BROAD intellectual name, never a narrow
+    one, because a live corpus run showed the first wording of this step
+    (trigger on page size) fail: told to intersect only a "large" name, the
+    model avoided the tool by resolving narrow, one-book names instead --
+    `Syrian nationalism` (24 members) is 83.3% one source because only the
+    book about Syrian nationalism uses that phrase."""
     premises_lines = (
         "\n".join(
             f"- {p.premise} (assessment: {p.assessment})"
@@ -283,7 +291,7 @@ Retrieval is traversal of the name layer, not a conjunction of filters. A good p
 1. Name the scholars, concepts and polities the brief is actually about, and resolve each one with find_names -- it is tiered (exact, alias, folded, embedding) and reports a genuine resolution failure as an empty result, never the nearest name to hand.
 2. For each name that resolves, read who meets there with get_name: its member notes, each with author, year and one-sentence claim.
 3. Follow what those notes say. who_argues_against and who_cites surface the author-stated opposition and citation edges those notes themselves carry -- real cross-book traversal, not a guess. name_neighbors surfaces names that co-occur with one you already have.
-4. When a resolved name is large (its member_count is in the hundreds -- a polity page commonly is), do not read it whole. Call where_names_meet(canonical, other) with a second name the brief is actually about, such as a concept, scholar or event: the polity anchors the query and the intellectual name carries it, and the notes at the intersection are already smaller and drawn from more sources than any prefix of the hub page alone.
+4. Narrowing the name feels like precision but produces a one-book answer: a name only one author uses returns only that author. Intersect the case anchor with a BROAD intellectual name the brief is about -- a concept, period, institution or scholar, never a narrow phrase -- using where_names_meet(canonical, other): that is where more than one book actually meets. Every result's detail now states how many sources it spans (e.g. "24 notes across 2 sources"); a result drawn from one source cannot support a comparison, so check that number instead of assuming it from how specific the name felt.
 
 get_name may also return a disagreement section another model wrote while reading this corpus (Gather). That text is a POINTER, never evidence: read it only to decide where to look next, then follow that page's own member chunk_ids to the real notes and retrieve those. Nothing you cite may be a disagreement, a name page, or a name string itself -- only a chunk_id or artifact_id resolves as a real ground.
 

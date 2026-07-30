@@ -53,10 +53,15 @@ class ToolResult:
     smuggling a sixth field into the [FIRM] trajectory shape.
 
     `detail`, when set (issue #517), is the same kind of beside-the-
-    trajectory rider: `find_names` alone populates it, with each hit's
-    `kind`, `member_count` and `tier`, so a model can tell an exact/alias
-    resolution apart from an embedding guess -- a bare canonical string
-    cannot. Every other tool leaves it `None`."""
+    trajectory rider, populated by three tools: `find_names` states each
+    hit's `kind`, `member_count` and `tier`, so a model can tell an
+    exact/alias resolution apart from an embedding guess -- a bare canonical
+    string cannot. `get_name` and `where_names_meet` state how many distinct
+    sources the returned members span (`"<N> notes across <M> sources"`) --
+    a live corpus run showed a model avoiding a large page or intersection
+    entirely by resolving a narrow, one-book name instead, because it could
+    not see that the "large" result it was told to avoid was actually the
+    cross-book one. Every other tool leaves `detail` `None`."""
 
     ids: list[str]
     count: int

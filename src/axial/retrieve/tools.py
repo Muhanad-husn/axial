@@ -60,12 +60,25 @@ the dispatcher both need them and neither is free to assume the answer:
 Every adapter now returns `(result_ids, result_count, total, detail)`
 (issues #505 and #517): `total` is the true pre-cap count for `get_name`/
 `who_cites`/`who_argues_against`/`where_names_meet`, `None` for every other
-tool. `detail` is set only by `find_names`, carrying each hit's `kind`,
-`member_count` and `tier` so a model can tell an exact resolution from a
-guess (§4's planner-blindness fix, issue #517) -- every other adapter passes
-`None`. Both ride straight through to `axial.retrieve.dispatcher.ToolResult`,
-never part of the §7.6 trajectory entry (which stays exactly `{step, tool,
-args, result_ids, result_count}`).
+tool. `detail` is set by three tools, each a planner-blindness fix (§4,
+issue #517) -- `find_names` carries each hit's `kind`, `member_count` and
+`tier` so a model can tell an exact resolution from a guess; `get_name` and
+`where_names_meet` carry `_source_span_detail`'s `"<N> notes across <M>
+sources"` over the members actually returned, so a model can tell a large
+page (or intersection) is one book from many without re-reading it. Every
+other adapter passes `None`. Both `total` and `detail` ride straight through
+to `axial.retrieve.dispatcher.ToolResult`, never part of the §7.6 trajectory
+entry (which stays exactly `{step, tool, args, result_ids, result_count}`).
+
+**A live corpus run measured why `get_name`/`where_names_meet` need this
+too, not just `find_names` (issue #517's own follow-up).** A model told to
+call `where_names_meet` only on a "large" resolved name avoided it entirely
+by resolving narrow names instead -- `Syrian nationalism` (24 members) is
+83.3% one source because only the one book about Syrian nationalism uses
+that phrase. Narrowing felt like precision and produced a one-book answer;
+`_source_span_detail` makes the number of sources a result actually spans
+checkable in the next prompt rather than something the model has to infer
+from how specific a name sounds.
 """
 
 from __future__ import annotations
@@ -113,6 +126,18 @@ class ToolSpec:
     @property
     def allowed_args(self) -> frozenset[str]:
         return self.required_args | self.optional_args
+
+
+def _source_span_detail(members: list[names.NameMember]) -> str | None:
+    """`"<N> notes across <M> sources"` over the members a tool actually
+    returned (never the pre-cap total) -- `get_name`/`where_names_meet`'s own
+    `detail`, counting DISTINCT `source_id` values so a model can tell a
+    large page or intersection is one book from several without re-reading
+    it. `None` only when there is nothing to describe (an empty result)."""
+    if not members:
+        return None
+    source_count = len({member.source_id for member in members})
+    return f"{len(members)} notes across {source_count} sources"
 
 
 def _query_by_source(
@@ -187,7 +212,7 @@ def _get_name(
     limit = args.get("limit", names.DEFAULT_LIMIT)
     page = names.get_name(args["canonical"], limit, vault_dir=vault_dir, names_dir=names_dir)
     ids = [member.chunk_id for member in page.members]
-    return ids, len(ids), page.member_count, None
+    return ids, len(ids), page.member_count, _source_span_detail(page.members)
 
 
 def _name_neighbors(
@@ -243,7 +268,7 @@ def _where_names_meet(
         args["canonical"], args["other"], limit, vault_dir=vault_dir, names_dir=names_dir
     )
     ids = [member.chunk_id for member in members]
-    return ids, len(ids), total, None
+    return ids, len(ids), total, _source_span_detail(members)
 
 
 TOOL_REGISTRY: dict[str, ToolSpec] = {
