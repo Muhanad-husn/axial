@@ -97,7 +97,6 @@ def _fixture_record() -> dict[str, Any]:
             "lens": None,
         },
         "corpus_pin": "baseline",
-        "schema_version": "0.1",
         "lens": "lens:default",
         "interrogation": {
             "premises_found": [],

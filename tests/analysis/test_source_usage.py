@@ -406,7 +406,6 @@ def _persist_hand_built_record(
         "brief_id": brief_id,
         "brief": {"brief_id": brief_id, "case": "Test", "request": "Test?", "lens": None},
         "corpus_pin": "baseline",
-        "schema_version": "0.1",
         "lens": "default",
         "interrogation": {
             "premises_found": [],

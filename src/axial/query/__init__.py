@@ -2,8 +2,8 @@
 (Phase-B stage 3, specs/PHASE-B.md §7.5).
 
 `axial.query.reader` is the note layer -- `get_chunk`, `get_artifact`,
-`query_by_source` / `get_envelope`, plus `all_chunk_ids`. Every one of them
-needs an id the caller already holds.
+`query_by_source` / `get_envelope`. Every one of them needs an id the caller
+already holds.
 
 `axial.query.names` is how a caller FINDS something (Phase B v1 slice 02,
 issue #487): `find_names`, `get_name`, `name_neighbors`, `who_cites`,
@@ -45,7 +45,6 @@ from axial.query.reader import (
     MalformedNoteError,
     MissingVaultDirError,
     QueryError,
-    all_chunk_ids,
     get_artifact,
     get_chunk,
     get_envelope,
@@ -71,7 +70,6 @@ __all__ = [
     "NamePage",
     "OppositionEdge",
     "QueryError",
-    "all_chunk_ids",
     "coverage_count",
     "find_names",
     "get_artifact",

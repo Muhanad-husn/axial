@@ -41,7 +41,6 @@ def _base_record(**overrides: Any) -> dict[str, Any]:
             "lens": None,
         },
         "corpus_pin": "baseline",
-        "schema_version": "0.1",
         "lens": "lens:default",
         "interrogation": {
             "premises_found": [],

@@ -4,7 +4,7 @@ stage 3, specs/PHASE-B.md §7.5, §8 P0-2).
 `src/axial/vault.py` is write-only: it renders notes but never reads them
 back. This module is the read side, for the tools that take an id the caller
 already holds: `get_chunk`, `get_artifact`, `query_by_source` /
-`get_envelope`, plus `all_chunk_ids` and the two suffix-repair lookups.
+`get_envelope`, plus the truncated-id repair lookups.
 Finding a name, and everything reachable from one, is `axial.query.names`.
 
 `query_by_tag`, `query_by_polity` and `follow_backlinks` lived here until
@@ -569,8 +569,8 @@ def _iter_chunk_frontmatter(vault_dir: Path) -> list[tuple[Path, dict[str, Any]]
     absent: a missing or typo'd `vault_dir` is a caller bug, not an empty
     corpus.
 
-    Deliberately uncached. Its callers here (`query_by_source`,
-    `all_chunk_ids`) only ever scan a vault once per process, and
+    Deliberately uncached. Its caller here (`query_by_source`) only ever
+    scans a vault once per process, and
     `axial.distill.embed`/`axial.distill.classify` also import this exact
     private function for their own one-shot, whole-corpus reads and need the
     FULL frontmatter dict, including `chunk_text`. A cache over that would
@@ -674,27 +674,6 @@ def query_by_source(source_id: str, *, vault_dir: Path | None = None) -> list[st
         if source_id_from_chunk_id(chunk_id) == source_id:
             matches.append(chunk_id)
     return sorted(matches)
-
-
-def all_chunk_ids(*, vault_dir: Path | None = None) -> list[str]:
-    """Every prose note's `chunk_id` under `vault_dir`, ascending.
-
-    This is the one capability `query_by_tag` had that outlived it: called
-    with no filters it meant "every prose id in `chunk_id` order", which
-    `axial.answer.record.vault_schema_version` uses to read the vault's own
-    schema version off its first note. The tag filters are deleted (issue
-    #487, D1); the enumeration is not, so it keeps its own honest name.
-
-    Raises `MalformedNoteError` on a note carrying no `chunk_id` -- every
-    note under `prose/` must have one to be enumerable at all, so every id
-    returned resolves back through `get_chunk` -- and `MissingVaultDirError`
-    when `prose/` itself is absent."""
-    if vault_dir is None:
-        vault_dir = default_vault_dir()
-    return sorted(
-        _require(frontmatter, path, "chunk_id")
-        for path, frontmatter in _iter_chunk_frontmatter(vault_dir)
-    )
 
 
 ENVELOPES_DIR = Path("data/envelopes")

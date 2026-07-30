@@ -40,7 +40,6 @@ def _build(model_by_pass: dict[str, str], client: _FakeUsageClient) -> dict:
         _brief(),
         _interrogation_result(),
         corpus_pin="baseline",
-        schema_version="0.1",
         lens="default",
         claims=[],
         trajectory=[],
