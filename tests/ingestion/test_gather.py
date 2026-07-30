@@ -551,11 +551,16 @@ def test_the_bracket_survives_the_cap_and_claim_is_truncated_into_the_remainder(
     This is the acceptance case: a `claim` long enough to blow the cap on its
     own must not cost the bracket anything.
     """
+    # Padded to `MEMBER_PACKET_CHARS` itself -- guaranteed longer than any
+    # possible remainder left after the bracket, whatever the cap is set to,
+    # so this test does not silently stop exercising truncation if the cap
+    # moves again (#500's own cap correction, 400 -> 800, is exactly why
+    # this is derived rather than a hard-coded literal).
     packet = MemberPacket(
         chunk_id="centeno-2002_000_intro_001",
         author="Miguel Centeno",
         year=2002,
-        claim="W" * 300,
+        claim="W" * MEMBER_PACKET_CHARS,
         position_of="the author's own",
         position="war in Latin America was too limited to build strong states",
         arguing_against="Charles Tilly",
@@ -569,7 +574,7 @@ def test_the_bracket_survives_the_cap_and_claim_is_truncated_into_the_remainder(
     assert "position: war in Latin America was too limited to build strong states" in rendered
     # `claim` is the field that gave way, truncated with the same ellipsis
     # marker the old tail truncation used.
-    assert rendered.count("W") < 300
+    assert rendered.count("W") < MEMBER_PACKET_CHARS
     assert (
         rendered.rstrip("]").endswith("…") is False
     )  # ellipsis sits before the bracket, not at EOL
@@ -611,11 +616,14 @@ def test_a_packet_over_the_cap_no_longer_renders_byte_for_byte_this_is_the_500_r
     re-key issue #500 pays for (see `plans/name-layer-rekey/README.md`,
     slice 03) -- not an accidental drift.
     """
+    # Padded to `MEMBER_PACKET_CHARS` itself, same reasoning as the sibling
+    # test above -- guaranteed to force truncation whatever the cap is set
+    # to.
     packet = MemberPacket(
         chunk_id="tilly-1990_000_intro_001",
         author="Charles Tilly",
         year=1990,
-        claim="W" * 300,
+        claim="W" * MEMBER_PACKET_CHARS,
         position_of="bellicist historical sociology",
         arguing_against="modernization theory",
         # No `position` -- this is the pre-0.2 record shape (#496).
@@ -631,7 +639,7 @@ def test_a_packet_over_the_cap_no_longer_renders_byte_for_byte_this_is_the_500_r
     assert "arguing against: modernization theory]" in rendered
     assert "position of: bellicist historical sociology" in rendered
     # `claim` is what gave way instead.
-    assert rendered.count("W") < 300
+    assert rendered.count("W") < MEMBER_PACKET_CHARS
 
 
 def test_a_position_key_holding_an_abstention_is_rendered_not_dropped():
@@ -688,13 +696,16 @@ def test_the_one_degenerate_case_a_bracket_alone_over_the_cap_falls_back_to_tail
     truncation, which is not new behaviour and needs no new constant. The
     cap still holds; that is the one thing this path is not allowed to give
     up."""
+    # Each bracket field alone is padded to `MEMBER_PACKET_CHARS`, so the two
+    # together always exceed the cap regardless of its value -- the
+    # degenerate condition by construction, not by a literal tuned to 400.
     packet = MemberPacket(
         chunk_id="src1_000_intro_001",
         author="Charles Tilly",
         year=1990,
         claim="short claim",
-        position_of="C" * 300,
-        arguing_against="D" * 300,
+        position_of="C" * MEMBER_PACKET_CHARS,
+        arguing_against="D" * MEMBER_PACKET_CHARS,
     )
     rendered = render_packet(packet)
 

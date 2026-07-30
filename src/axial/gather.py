@@ -4,7 +4,7 @@ actually disagree about (`specs/PRODUCT.md` §7.18, P0-13).
 D12: "Gather cannot blow the context window, by construction. The model
 never fetches. Code assembles a fixed packet per name (per member note:
 author, year, the one-sentence claim, whose position, who it argues
-against -- roughly 400 characters each) under a **hard character budget in
+against -- roughly 800 characters each) under a **hard character budget in
 code, not in the prompt**. A name whose packet would exceed the budget is
 split into batches, Gather runs per batch, and a short final call merges the
 batch findings. Large names are the interesting ones, so batching is a
@@ -28,13 +28,27 @@ is left of `MEMBER_PACKET_CHARS`.** The earlier render truncated the whole
 line's tail, so whichever field sat last was the one a long packet lost --
 measured live, that cost 22.4% of all rendered packets `arguing_against`
 entirely, the one clause #490 measured as separating contested names from
-uncontested ones. `claim` is the field that actually runs long (median 245
-of a 483-char untruncated packet); the bracket fields are short and bounded
-by construction. Reserving the bracket and truncating `claim` into the
-remainder means every bracket field survives whenever the packet fits at
-all -- `position_of`, `arguing_against` and `position` alike -- and the
-loss moves to `claim` instead. See `render_packet` for the arithmetic and
-the one degenerate case (a bracket that alone exceeds the cap).
+uncontested ones. Reserving the bracket (`position_of`; `arguing_against`;
+`position`, where present) whole and truncating `claim` into the remainder
+means every bracket field survives whenever the packet fits under the cap
+at all, and the loss moves to `claim` instead. See `render_packet` for the
+arithmetic and the one degenerate case (a bracket that alone exceeds the
+cap).
+
+**D1's own premise was wrong at cap 400, and the cap moved to correct it,
+same day.** "The bracket fields are short and bounded by construction" was
+not measured before D1 shipped, and it is false: over the whole corpus the
+bracket alone (`position_of`; `arguing_against`; `position` where present)
+runs a median 221 characters against a 400 cap, p90 387, max 978. At 400,
+707 notes (11.5%) hit the degenerate fallback -- the bracket alone met or
+exceeded the cap before `claim` saw any remainder -- so the fix only took
+`arguing_against`'s loss rate from 26.8% to 8.3%, not to zero, and every one
+of that remaining 8.3% sits inside the 11.5% degenerate set; outside it,
+zero. `MEMBER_PACKET_CHARS` moves to **800** to actually deliver what D1
+promised: at 800 the degenerate rate is 0.1% (5 notes) and `arguing_against`
+is lost nowhere outside it. The mechanism is unchanged -- reserve the
+bracket, `claim` takes the remainder, the degenerate case falls back to
+tail truncation -- only the number moves, and it stays one constant.
 
 **This deliberately breaks the pre-0.2 byte-for-byte render guarantee** the
 paragraph above used to make: a packet that hits the cap now renders
@@ -46,7 +60,7 @@ never hit the cap is untouched, since there was nothing to truncate either
 way.
 
 **The budget is two constants, both stated by §7.18 itself.**
-`MEMBER_PACKET_CHARS` caps one rendered member (§7.18: "roughly 400
+`MEMBER_PACKET_CHARS` caps one rendered member (§7.18: "roughly 800
 characters"), and `GATHER_PACKET_CHAR_BUDGET` caps the whole members block
 of one call. The per-member cap is what makes the whole-block budget a
 guarantee rather than a hope: without it a single pathological claim could
@@ -184,7 +198,7 @@ DEFAULT_DISAGREEMENTS_PATH = DEFAULT_NAMES_DATA_DIR / "disagreements.jsonl"
 
 # §7.18's own packet size: "per member note: author, year, the one-sentence
 # claim, position_of, arguing_against, position (frame 0.2 records only) --
-# roughly 400 characters". A rendered member is capped at this, so the block
+# roughly 800 characters". A rendered member is capped at this, so the block
 # budget below is arithmetic rather than a hope: worst case a batch holds
 # `GATHER_PACKET_CHAR_BUDGET // MEMBER_PACKET_CHARS` members, whatever a
 # note's answers happen to contain.
@@ -199,14 +213,24 @@ DEFAULT_DISAGREEMENTS_PATH = DEFAULT_NAMES_DATA_DIR / "disagreements.jsonl"
 # that alone exceeds the cap) falls back to the old tail truncation, which
 # is unchanged. Still a single constant: `claim`'s share is computed as the
 # remainder, not a second tunable.
-MEMBER_PACKET_CHARS = 400
+#
+# The 400 this shipped with first was wrong (2026-07-30 correction, same
+# day): the bracket is not "short and bounded" in practice -- measured over
+# the whole corpus it runs a median 221 characters, p90 387, max 978 -- so
+# at 400 the bracket alone met or exceeded the cap on 11.5% of notes (707),
+# and D1 only took `arguing_against`'s loss rate from 26.8% to 8.3%, not to
+# zero. 800 clears the measured p90 with room, and takes the degenerate
+# share to 0.1% (5 notes). Still one constant; only the number moved.
+MEMBER_PACKET_CHARS = 800
 
 # The hard character budget (D12, P0-13): the largest members block one
 # Gather call may carry. A construction limit on request size, exactly like
 # `axial.merge_names.DEFAULT_MEMBER_CHAR_BUDGET` -- not a quality knob, not
-# tuned, and deliberately never stated in the prompt. 20k characters is 50
-# member packets, comfortably inside any model's context alongside the short
-# prompt around it.
+# tuned, and deliberately never stated in the prompt. 20k characters is 25
+# member packets at the current `MEMBER_PACKET_CHARS` (was 50 at 400;
+# #500's cap correction halves the worst-case member count, not the
+# guarantee itself), comfortably inside any model's context alongside the
+# short prompt around it.
 GATHER_PACKET_CHAR_BUDGET = 20_000
 
 # A disagreement needs two parties. A name only one note ever mentions has
@@ -382,7 +406,7 @@ def _author_fallback_from_source_id(source_id: str) -> str:
 
 def render_packet(packet: MemberPacket) -> str:
     """How ONE member note appears in the prompt, capped at
-    `MEMBER_PACKET_CHARS` (§7.18's "roughly 400 characters each"). The cap
+    `MEMBER_PACKET_CHARS` (§7.18's "roughly 800 characters each"). The cap
     is what makes `GATHER_PACKET_CHAR_BUDGET` a guarantee rather than an
     average.
 
@@ -397,18 +421,21 @@ def render_packet(packet: MemberPacket) -> str:
     clause #490 measured as separating contested names from uncontested
     ones (1.9x-2.4x lift), which Phase B's contestedness derivation reads.
     `claim` is the field that actually runs long (median 245 of a 483-char
-    untruncated packet); `position_of`, `arguing_against` and `position` are
-    short and bounded by construction. So every bracket field is rendered in
-    full and `claim` alone is truncated into the remainder of
-    `MEMBER_PACKET_CHARS`. This is a single arithmetic split, not a second
-    tunable: no per-field budget is stated anywhere, only `claim`'s share is
-    computed as what is left after the fixed parts.
+    untruncated packet), and the bracket is NOT reliably short: measured
+    live it runs a median 221 characters, p90 387, max 978. So every
+    bracket field is rendered in full and `claim` alone is truncated into
+    the remainder of `MEMBER_PACKET_CHARS`. This is a single arithmetic
+    split, not a second tunable: no per-field budget is stated anywhere,
+    only `claim`'s share is computed as what is left after the fixed parts.
 
     **The one degenerate case:** a bracket long enough that, combined with
     `author`/`year`, it alone meets or exceeds the cap -- there is no
     remainder to give `claim` at all. That falls back to the pre-D1 render
     (the whole line assembled, then the tail truncated), which introduces
-    nothing new.
+    nothing new. At the cap this shipped with first, 400, that path fired
+    on 11.5% of the corpus (the bracket's own p90 sits close to 400), which
+    is why the cap moved to 800 the same day: it clears the measured p90
+    with room, taking the degenerate share to 0.1%.
 
     This deliberately breaks the pre-0.2 byte-for-byte guarantee this
     docstring used to state: a packet that hits the cap now renders
