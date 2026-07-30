@@ -101,13 +101,13 @@ def _render_counter_position(counter_position: dict[str, Any]) -> list[str]:
 def _render_coverage_map(coverage_map: dict[str, dict[str, Any]]) -> list[str]:
     lines = ["", "## Coverage map", ""]
     if not coverage_map:
-        lines.append("(none -- no name touched by any claim)")
+        lines.append("(none -- no name both retrieved on and touched by a claim)")
         return lines
     for name in sorted(coverage_map):
         entry = coverage_map[name]
         lines.append(
-            f"- {name}: corpus={entry.get('corpus_chunk_count')} "
-            f"evidence={entry.get('evidence_chunk_count')} "
+            f"- {name}: corpus={entry.get('corpus_note_count')} "
+            f"evidence={entry.get('evidence_note_count')} "
             f"band={entry.get('coverage_band')}"
         )
     return lines

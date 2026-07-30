@@ -3,15 +3,16 @@ GENERATED for real by `axial brief run`, not left at the pre-#399
 placeholder (`present: false, corpus_one_sided: false` regardless of
 whether the brief is contested).
 
-Given a fixture vault whose two chunks carry two distinct substantive
-      theory_school values (a contested brief, `_detect_contested`'s
-      theory_school_spread signal)
-  And a scripted synthesis response citing both chunks across its claims
-  And a scripted counter-position-generation response naming the
-      minority-school chunk as PRESENT grounds
+Given a fixture vault whose two notes state opposed positions, each naming
+      the other side in its own `arguing_against` answer (a contested brief,
+      `detect_contested`'s `opposed_positions` signal, D3 -- and not one tag
+      axis anywhere in the fixture)
+  And a scripted synthesis response citing both notes across its claims
+  And a scripted counter-position-generation response naming the opposing
+      note as PRESENT grounds
 When  `axial brief run` runs
 Then  the persisted record's `counter_position` is `present: true` with
-      `grounds` resolving to the minority-school chunk id
+      `grounds` resolving to that note's chunk id
   And `model_by_pass`/`cost` both name the counter_position_generate pass,
       alongside interrogate/retrieve/synthesize
 
@@ -22,16 +23,15 @@ When  `axial brief run` runs
 Then  the persisted record's `counter_position` is `corpus_one_sided: true`
       with a non-blank `one_sided_reason`, `present: false`
 
-Given a fixture vault whose evidence carries only ONE substantive
-      theory_school (uncontested) and a scripted synthesis response citing
-      only it
+Given a fixture vault whose one evidence note names no opponent
+      (uncontested) and a scripted synthesis response citing only it
 When  `axial brief run` runs
 Then  the persisted record's `counter_position` is the empty §7.8 shape
   And `model_by_pass`/`cost` name only interrogate/retrieve/synthesize --
       no counter-position-generation call was ever made
 
-See specs/PHASE-B.md §7.8 (the counter-position section) and issue #399 for
-this slice's own acceptance criterion.
+See specs/PHASE-B.md §7.8 (the counter-position section) and issues #399 and
+#490 for this slice's own acceptance criterion.
 
 Seam decisions
 --------------
@@ -68,39 +68,38 @@ STUB_COUNTER_POSITION_GENERATE_RESPONSE_ENV_VAR = "AXIAL_STUB_COUNTER_POSITION_G
 
 _BRIEF_ID_PATTERN = re.compile(r"brief_id:\s*(\S+)")
 
-MAIN_CHUNK = "cpgenacc_001_bellicist_a"
-COUNTER_CHUNK = "cpgenacc_002_marxist_a"
+MAIN_CHUNK = "tilly-1978_001_intro_001"
+COUNTER_CHUNK = "skocpol-1979_001_intro_001"
+
+TILLY_AUTHOR = "Charles Tilly"
+SKOCPOL_AUTHOR = "Theda Skocpol"
 
 
-def _chunk_frontmatter(
-    *, chunk_id: str, theory_school_primary: str, polities_touched: list[str]
-) -> dict[str, Any]:
+def _chunk_frontmatter(*, chunk_id: str, author: str, arguing_against: list[str]) -> dict[str, Any]:
+    """A prose note as `axial.materialize` writes one today: source metadata
+    plus the §7.15 answer block. The contested predicate reads what the notes
+    say (D3), so the fixture states an opposition rather than carrying a
+    `theory_school` no live note has any more."""
     return {
         "chunk_id": chunk_id,
         "section": "Synthetic Section",
         "chunk_text": f"SENTINEL_{chunk_id}: synthetic prose.",
         "source_meta": {
-            "author": "A. Synthetic Author",
-            "title": "A Synthetic Fixture Source",
+            "author": author,
+            "title": f"A Synthetic Fixture Source by {author}",
             "date": 2021,
             "thesis": "Synthetic thesis.",
             "scope": "Synthetic scope.",
         },
         "schema_version": "0.1",
-        "role_in_argument": "role:claim",
-        "field": {"primary": "field:political-sociology", "secondary": []},
-        "claim_type": {"primary": "claim:causal", "secondary": None, "subtags": []},
-        "theory_school": {
-            "primary": theory_school_primary,
-            "secondary": None,
-            "status": "candidate",
+        "frame_version": "0.1",
+        "answers": {
+            "claim": f"Claim of {chunk_id}.",
+            "move": "stating a mechanism",
+            "position_of": "the author",
+            "arguing_against": arguing_against,
+            "names": [],
         },
-        "empirical_scope": {
-            "value": "scope:country-case",
-            "polity": polities_touched[0] if polities_touched else None,
-        },
-        "polities_touched": polities_touched,
-        "artifact_refs": [],
     }
 
 
@@ -110,17 +109,13 @@ def _write_fixture_vault(root: Path, *, contested: bool) -> None:
     notes = [
         _chunk_frontmatter(
             chunk_id=MAIN_CHUNK,
-            theory_school_primary="school:bellicist",
-            polities_touched=["Syria"],
+            author=TILLY_AUTHOR,
+            arguing_against=[SKOCPOL_AUTHOR] if contested else [],
         )
     ]
     if contested:
         notes.append(
-            _chunk_frontmatter(
-                chunk_id=COUNTER_CHUNK,
-                theory_school_primary="school:marxist-political-economy",
-                polities_touched=["Syria"],
-            )
+            _chunk_frontmatter(chunk_id=COUNTER_CHUNK, author=SKOCPOL_AUTHOR, arguing_against=[])
         )
     for frontmatter in notes:
         text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
@@ -233,7 +228,7 @@ def test_contested_brief_with_scripted_present_response_yields_present_counter_p
     ]
     stub_counter_position_generate_response = {
         "present": True,
-        "stance": "The marxist-political-economy material argues war eroded state capacity.",
+        "stance": "Skocpol's material argues structural crisis, not organization, converts.",
         "grounds": [{"ref_type": "chunk", "ref_id": COUNTER_CHUNK}],
         "corpus_one_sided": False,
         "one_sided_reason": None,
@@ -286,7 +281,7 @@ def test_contested_brief_with_scripted_one_sided_response_yields_disclosure(
         "stance": None,
         "grounds": [],
         "corpus_one_sided": True,
-        "one_sided_reason": "the marxist-tagged chunk is a passing aside, not a developed "
+        "one_sided_reason": "the opposing note is a passing aside, not a developed "
         "opposing argument",
     }
 

@@ -92,45 +92,48 @@ STUB_MODEL_BY_PASS_ENV_VAR = "AXIAL_STUB_MODEL_BY_PASS"
 STUB_COUNTER_POSITION_RESPONSE_ENV_VAR = "AXIAL_STUB_COUNTER_POSITION_RESPONSE"
 STUB_CALIBRATION_RESPONSE_SEQUENCE_ENV_VAR = "AXIAL_STUB_CALIBRATION_RESPONSE_SEQUENCE"
 
-CHUNK_A = "gate_sq_bellicist"  # theory_school: bellicist
-CHUNK_B = "gate_sq_marxist"  # theory_school: marxist-political-economy (the 2nd school)
+CHUNK_A = "gate_sq_arguer"  # names the other note's author in arguing_against
+CHUNK_B = "gate_sq_opposed"  # the side it names
 
 
-def _chunk_frontmatter(chunk_id: str, *, theory_school_primary: str) -> dict[str, Any]:
+def _chunk_frontmatter(chunk_id: str, *, author: str, arguing_against: list[str]) -> dict[str, Any]:
+    """A prose note as `axial.materialize` writes one today: the §7.15 answer
+    block, no tag axis. Contested detection reads what the notes say (D3,
+    issue #490), so the fixture states the opposition."""
     return {
         "chunk_id": chunk_id,
         "section": "Synthetic Section",
         "chunk_text": f"SENTINEL_{chunk_id}: synthetic prose supporting the claim.",
         "source_meta": {
-            "author": "A. Synthetic Author",
-            "title": "A Synthetic Fixture Source",
+            "author": author,
+            "title": f"A Synthetic Fixture Source by {author}",
             "date": 2021,
             "thesis": "Synthetic thesis.",
             "scope": "Synthetic scope.",
         },
         "schema_version": "0.1",
-        "role_in_argument": "role:claim",
-        "field": {"primary": "field:political-sociology", "secondary": []},
-        "claim_type": {"primary": "claim:causal", "secondary": None, "subtags": []},
-        "theory_school": {
-            "primary": theory_school_primary,
-            "secondary": None,
-            "status": "candidate",
+        "frame_version": "0.1",
+        "answers": {
+            "claim": f"Claim of {chunk_id}.",
+            "position_of": "the author",
+            "arguing_against": arguing_against,
+            "names": [],
         },
-        "empirical_scope": {"value": "scope:country-case", "polity": "Syria"},
-        "polities_touched": ["Syria"],
-        "artifact_refs": [],
     }
 
 
 def _write_fixture_vault(root: Path) -> None:
     prose_dir = root / "data" / "vault" / "prose"
     prose_dir.mkdir(parents=True, exist_ok=True)
-    for chunk_id, school in ((CHUNK_A, "bellicist"), (CHUNK_B, "marxist-political-economy")):
+    for chunk_id, author, arguing_against in (
+        (CHUNK_A, "Charles Tilly", ["Theda Skocpol"]),
+        (CHUNK_B, "Theda Skocpol", []),
+    ):
         text = (
             "---\n"
             + yaml.safe_dump(
-                _chunk_frontmatter(chunk_id, theory_school_primary=school), sort_keys=False
+                _chunk_frontmatter(chunk_id, author=author, arguing_against=arguing_against),
+                sort_keys=False,
             )
             + "---\nBody.\n"
         )

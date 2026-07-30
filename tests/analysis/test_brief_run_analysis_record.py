@@ -93,20 +93,19 @@ _BRIEF_ID_PATTERN = re.compile(r"brief_id:\s*(\S+)")
 
 SYRIA_A = "brfix_001_syria_a"
 IRAQ_A = "brfix_002_iraq_a"
+TILLY = "Charles Tilly"
 
 
-def _chunk_frontmatter(*, chunk_id: str, surface: str) -> dict[str, Any]:
+def _chunk_frontmatter(*, chunk_id: str, surfaces: list[str]) -> dict[str, Any]:
     """A prose note in the shape `axial.materialize` writes today: source
     metadata plus the nested interrogation `answers` block (§7.15). It keeps
     `schema_version`, which the record's own `schema_version` field is read
     off (§7.3).
 
-    `surface` is a deliberately unresolvable name: no alias map is configured
-    for a `run_brief` call, and no real index carries this string either, so
-    the persisted `names_touched` is `[]` on any machine -- the §7.4 rule that
-    an unknown surface is DROPPED rather than invented, seen at the record
-    layer. The union rule itself is pinned in test_synthesis_claim_graph.py,
-    which controls the name layer."""
+    `surfaces` are the names the note itself named. Each note names one
+    surface the fixture's alias map DOES carry (so §7.4's `names_touched` and
+    the §7.7 map are exercised end to end) and one it does not (so §7.4's
+    drop-rather-than-invent rule is exercised at the record layer too)."""
     return {
         "chunk_id": chunk_id,
         "section": "Synthetic Section",
@@ -124,7 +123,7 @@ def _chunk_frontmatter(*, chunk_id: str, surface: str) -> dict[str, Any]:
             "claim": f"Claim of {chunk_id}.",
             "move": "stating a mechanism",
             "position_of": "the author",
-            "names": [{"name": surface, "kind": "country/state/place"}],
+            "names": [{"name": surface, "kind": "person"} for surface in surfaces],
         },
     }
 
@@ -133,21 +132,37 @@ def _write_fixture_vault(root: Path) -> None:
     prose_dir = root / "data" / "vault" / "prose"
     prose_dir.mkdir(parents=True, exist_ok=True)
     notes = [
-        _chunk_frontmatter(chunk_id=SYRIA_A, surface="Fixture-Syria-Unindexed"),
-        _chunk_frontmatter(chunk_id=IRAQ_A, surface="Fixture-Iraq-Unindexed"),
+        _chunk_frontmatter(chunk_id=SYRIA_A, surfaces=["Tilly", "Fixture-Syria-Unindexed"]),
+        _chunk_frontmatter(chunk_id=IRAQ_A, surfaces=["Tilly", "Fixture-Iraq-Unindexed"]),
     ]
     for frontmatter in notes:
         text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
         (prose_dir / f"{frontmatter['chunk_id']}.md").write_text(text, encoding="utf-8")
 
-    # `corpus_chunk_count` reads a name page's own `member_count` since issue
-    # #487 (D2). A polity is a name whose `kind` is `country/state/place`.
+    # Reconcile's alias map and index (§7.16): the ONLY tier `names_touched`
+    # resolves a surface through. "Tilly" is an alias of "Charles Tilly".
+    names_layer = root / "data" / "names"
+    names_layer.mkdir(parents=True, exist_ok=True)
+    (names_layer / "alias_map.json").write_text(
+        json.dumps({"nodes": [{"canonical": TILLY, "kind": "person", "aliases": ["Tilly"]}]}),
+        encoding="utf-8",
+    )
+    (names_layer / "index.json").write_text(json.dumps({"names": [TILLY]}), encoding="utf-8")
+
+    # The §7.7 denominator is the name page's own `member_count` (D2): 50
+    # here, so the band is `moderate` under the default cut points and the
+    # overall confidence disclosure is `medium` -- not the `low` that an
+    # empty map pinned it to on every v1 run.
     names_dir = root / "data" / "vault" / "names"
     names_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("Syria", "Iraq"):
-        page = {"name": name, "kind": "country/state/place", "aliases": [], "member_count": 1}
-        body = yaml.safe_dump(page, sort_keys=False)
-        (names_dir / f"{name}.md").write_text(f"---\n{body}---\n", encoding="utf-8")
+    page = {"name": TILLY, "kind": "person", "aliases": ["Tilly"], "member_count": 50}
+    body = yaml.safe_dump(page, sort_keys=False)
+    members = "\n".join(
+        f"- [[{chunk_id}]] — A. Synthetic Author (2021): A claim." for chunk_id in (SYRIA_A, IRAQ_A)
+    )
+    (names_dir / f"{TILLY}.md").write_text(
+        f"---\n{body}---\n**Member notes:**\n{members}\n", encoding="utf-8"
+    )
 
 
 def _write_fixture_pin(root: Path, name: str = "baseline") -> None:
@@ -276,6 +291,11 @@ def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path
     stub_tool_calls = [
         {"tool": "get_chunk", "args": {"chunk_id": SYRIA_A}},
         {"tool": "get_chunk", "args": {"chunk_id": IRAQ_A}},
+        # A name-layer call, so this run really did retrieve on a name and
+        # the §7.7 map has a scope (issue #490). It comes last so the
+        # assembled evidence order -- and therefore the [c1]/[c2] handle
+        # assignment the scripted synthesis response cites -- is unchanged.
+        {"tool": "get_name", "args": {"canonical": TILLY}},
         None,
     ]
     stub_synthesize_response = _three_kind_synthesize_response()
@@ -334,29 +354,37 @@ def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path
     }
     by_kind = {claim["kind"]: claim for claim in record["claims"]}
     assert by_kind["a"]["grounds"] == [{"ref_type": "chunk", "ref_id": SYRIA_A}]
-    # §7.4's renamed field is what the record carries now (issue #489). It is
-    # empty here because neither grounds note's surface form resolves through
-    # any alias map -- dropped, never invented.
-    assert by_kind["b"]["names_touched"] == []
+    # §7.4's renamed field is what the record carries now (issue #489): the
+    # resolvable surface lands on its canonical, the unindexed one is dropped
+    # rather than invented.
+    assert by_kind["b"]["names_touched"] == [TILLY]
     assert "polities_touched" not in by_kind["b"]
 
-    # `coverage_map` is EMPTY here, and that is this slice's stated interim
-    # state (issue #489, reconciled against #490). `compute_coverage_map`
-    # still folds the retired `polities_touched`, which no note and no claim
-    # carries any more, so it returns `{}` and `confidence.overall_band` is
-    # pinned `low` by §7.7's own derivation rule -- which is the live vault's
-    # state today too (0 coverage entries, `low` on every run), not a
-    # regression this test is hiding. Re-pointing the map at `names_touched`
-    # is #490's whole job, and it re-asserts the real bands here.
-    assert record["coverage_map"] == {}
-    assert record["confidence"]["overall_band"] == "low"
-    assert record["confidence"]["rationale"]
-    assert "placeholder" not in record["confidence"]["rationale"]
+    # The §7.7 map is computed for real (issue #490): one entry for the name
+    # this run both retrieved on and grounded a claim in, carrying the page's
+    # own `member_count` as the denominator and this run's own two grounds
+    # notes as the numerator. `confidence` follows from it deterministically,
+    # and is no longer the `low` that an empty map pinned every v1 run to.
+    assert record["coverage_map"] == {
+        TILLY: {
+            "corpus_note_count": 50,
+            "evidence_note_count": 2,
+            "coverage_band": "moderate",
+        }
+    }
+    assert record["confidence"]["overall_band"] == "medium"
+    rationale = record["confidence"]["rationale"]
+    assert TILLY in rationale and "50" in rationale, rationale
+    assert "placeholder" not in rationale
 
     assert isinstance(record["trajectory"], list) and record["trajectory"]
     for entry in record["trajectory"]:
         assert set(entry) == {"step", "tool", "args", "result_ids", "result_count"}
-    assert [entry["tool"] for entry in record["trajectory"]] == ["get_chunk", "get_chunk"]
+    assert [entry["tool"] for entry in record["trajectory"]] == [
+        "get_chunk",
+        "get_chunk",
+        "get_name",
+    ]
 
     assert record["model_by_pass"] == {
         "interrogate": "stub",
@@ -375,11 +403,11 @@ def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path
         assert entry["usd"] is None, f"{pass_name}: 'stub' is not in the real price table"
     assert record["cost"]["total_usd"] is None
 
-    # 1 interrogate call + 3 retrieval-loop turns (2 tool calls, then a
+    # 1 interrogate call + 4 retrieval-loop turns (3 tool calls, then a
     # final turn with no tool call to end the loop cleanly) + 1 synthesize
     # call -- every one of the three passes actually ran and is observable.
     prompts = _read_recorded_prompts(record_path)
-    assert len(prompts) == 5, f"expected interrogate+retrieve+synthesize calls, got {prompts!r}"
+    assert len(prompts) == 6, f"expected interrogate+retrieve+synthesize calls, got {prompts!r}"
 
 
 def test_brief_run_writes_the_identical_path_on_a_second_run(fixture_root: Path):

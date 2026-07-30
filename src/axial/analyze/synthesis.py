@@ -62,14 +62,15 @@ and persisting the claim graph.
 
 `generate_counter_position` (issue #399, §7.8) is the counter-position
 GENERATION half this module gained after that slice: a follow-up call, made
-only when `axial.validators.counter_position._detect_contested` (reused
+only when `axial.validators.counter_position.detect_contested` (reused
 verbatim, never reimplemented) reports the just-produced claim graph's own
 evidence as contested. It never asks the model to invent an opposing
-position from nothing: the candidate pool it offers is the whitelist of this
-run's own evidence chunks that are either tagged `role:counter-position` or
-carry a substantive `theory_school` distinct from the majority school among
-that evidence (`_counter_position_candidates`) -- real vault ids the model
-already has in front of it, never a fresh retrieval. A `present: true`
+position from nothing: the candidate pool it offers is a whitelist of real
+vault notes already in hand (`_counter_position_candidates`, issue #490) --
+this run's own grounds notes whose stated position differs from the majority
+among that evidence, the notes `who_argues_against` returns for a name the
+run touched, and the member notes of a Gather finding at such a name -- never
+a fresh retrieval. A `present: true`
 response may only cite grounds from that whitelist (checked mechanically
 after resolution, `CounterPositionGroundNotOfferedError` otherwise); the
 model is told plainly that disclosing the corpus as one-sided is the
@@ -98,22 +99,26 @@ from axial.brief.intake import Brief
 from axial.llm import COUNTER_POSITION_GENERATE_PASS_NAME, SYNTHESIZE_PASS_NAME, LLMClient, LLMError
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
-from axial.query.names import canonical_name_for_surface
+from axial.query.names import NameNotFoundError, canonical_name_for_surface, get_name
+from axial.query.names import who_argues_against as who_argues_against_name
 from axial.query.reader import (
     ArtifactNotFoundError,
     ChunkNotFoundError,
+    ChunkNote,
     find_artifact_ids_ending_with,
     find_chunk_ids_ending_with,
     get_artifact,
     get_chunk,
 )
 from axial.validators.counter_position import (
-    COUNTER_POSITION_ROLE_VALUE,
-    _THEORY_SCHOOL_SENTINEL_VALUES,
-    _detect_contested,
-    _evidence_chunk_ids,
-    _resolve_min_distinct_theory_schools,
+    SIGNAL_GATHER_DISAGREEMENT,
+    _opposition_surfaces,
+    detect_contested,
+    opposed_grounds_notes,
+    resolve_grounds_notes,
+    stated_position,
 )
+from axial.validators.coverage import coverage_scope
 
 # The §7.4 claim-kind vocabulary -- closed, not open text: a value outside
 # this set is a named parse error, never silently accepted or coerced.
@@ -950,62 +955,122 @@ def _empty_counter_position() -> dict[str, Any]:
     }
 
 
+# The most candidate notes one counter-position prompt ever carries. A
+# whitelist that reaches beyond this run's own grounds (`who_argues_against`
+# over a dense name, a Gather finding's member list) is unbounded on the real
+# corpus -- `Syria` alone has 962 member notes -- and the first real
+# `brief examine` already blew a prompt to 72,000 characters by re-sending one
+# such list (issue #505). This is a bound on prompt size, not a quality knob:
+# the ordering below puts the run's OWN grounds notes first, so what a cap
+# ever drops is the vault-wide tail, never evidence the answer already cites.
+MAX_COUNTER_POSITION_CANDIDATES = 20
+
+
+def _majority_position(notes: list[ChunkNote]) -> str | None:
+    """The stated position most of this run's grounds notes carry (§7.8).
+    Ties break by FIRST-SEEN citation order -- `dict` preserves insertion
+    order and `max` returns the first maximal item -- so this never falls
+    back to an alphabetical pick unrelated to what the run actually argued."""
+    counts: dict[str, int] = {}
+    for note in notes:
+        position = stated_position(note)
+        if position:
+            counts[position] = counts.get(position, 0) + 1
+    if not counts:
+        return None
+    return max(counts, key=lambda position: counts[position])
+
+
 def _counter_position_candidates(
-    claims: list[dict[str, Any]], *, vault_dir: Path | None
-) -> list[Any]:
-    """The whitelist of real, resolvable vault chunks (`ChunkNote`) offered
-    as candidate counter-position grounds: every chunk, among this run's own
-    evidence (`_evidence_chunk_ids` -- the same grounds union
-    `_detect_contested` itself inspects, "this run's evidence" per §7.8),
-    that either carries the counter-position role or a substantive
-    `theory_school` distinct from the MAJORITY school among that evidence.
+    claims: list[dict[str, Any]],
+    trajectory: list[dict[str, Any]] | None,
+    *,
+    vault_dir: Path | None,
+    names_dir: Path | None = None,
+) -> list[ChunkNote]:
+    """The whitelist of real, resolvable vault notes (`ChunkNote`) offered as
+    candidate counter-position grounds (§7.8, issue #490). Three sources, in
+    this order, deduplicated on `chunk_id` and truncated at
+    `MAX_COUNTER_POSITION_CANDIDATES`:
 
-    Guaranteed non-empty whenever the caller already confirmed
-    `_detect_contested(...).contested` is `True`, by the same definition
-    that check uses (>= `min_distinct_theory_schools` distinct substantive
-    schools, or a counter-position-role chunk) -- minus whatever grounds
-    ids failed to resolve here (skipped, exactly as `_detect_contested`
-    itself skips them; a broken grounds pointer is the attribution
-    validator's job, not this one's), which is why the caller still guards
-    the empty case rather than asserting it can't happen.
+    1. **Both sides of every stated opposition among this run's own grounds
+       notes** (`opposed_grounds_notes` -- the same function the contested
+       predicate reads), plus any grounds note whose stated position differs
+       from the majority among that evidence. This is the opposing material
+       the answer already cites. The majority clause alone would come up
+       empty on the real corpus, where 76% of notes answer `position_of`
+       with "the author" and so no position differs from the majority.
+    2. **The notes `who_argues_against` returns** for a name the run touched
+       (the §7.7 coverage scope) -- real vault ids reached deterministically
+       from the name layer, never a fresh model-driven retrieval.
+    3. **The member notes of a Gather finding** at such a name (D4). The
+       finding itself is a pointer and is never offered, quoted or cited; its
+       page's own member notes are, because they are the passages the finding
+       is about. Without this clause a brief that fires contested on path 2
+       alone can reach the empty-candidates guard, whose disclosure would
+       then say the grounds chunks did not resolve -- which is false: they
+       resolved and simply carry no opposing position.
 
-    Majority-school ties are broken by FIRST-SEEN order in
-    `_evidence_chunk_ids` (itself deterministic, first-seen grounds-citation
-    order) -- `dict` preserves insertion order and `max` returns the first
-    maximal item, so this never falls back to an alphabetical pick unrelated
-    to what the run actually argued."""
-    resolved: list[Any] = []
-    for chunk_id in _evidence_chunk_ids(claims):
+    Not guaranteed non-empty even on a contested brief, which is why the
+    caller still guards that case: a grounds id can fail to resolve here
+    exactly as it does in `detect_contested` (skipped -- a broken grounds
+    pointer is the attribution validator's job)."""
+    grounds_notes = resolve_grounds_notes(claims, vault_dir=vault_dir)
+    majority = _majority_position(grounds_notes)
+
+    candidates: dict[str, ChunkNote] = {}
+    for note in opposed_grounds_notes(grounds_notes, names_dir=names_dir):
+        candidates[note.chunk_id] = note
+    for note in grounds_notes:
+        position = stated_position(note)
+        if position and position != majority:
+            candidates[note.chunk_id] = note
+
+    scope = coverage_scope([c for c in claims if isinstance(c, dict)], trajectory or [])
+    for canonical in scope:
+        for edge in who_argues_against_name(canonical, vault_dir=vault_dir, names_dir=names_dir):
+            if edge.chunk_id in candidates:
+                continue
+            try:
+                candidates[edge.chunk_id] = get_chunk(edge.chunk_id, vault_dir=vault_dir)
+            except ChunkNotFoundError:
+                continue
+    for canonical in scope:
         try:
-            resolved.append(get_chunk(chunk_id, vault_dir=vault_dir))
-        except ChunkNotFoundError:
+            page = get_name(canonical, vault_dir=vault_dir)
+        except NameNotFoundError:
             continue
+        if page.disagreement is None:
+            continue
+        for member in page.members:
+            if member.chunk_id in candidates:
+                continue
+            try:
+                candidates[member.chunk_id] = get_chunk(member.chunk_id, vault_dir=vault_dir)
+            except ChunkNotFoundError:
+                continue
 
-    school_counts: dict[str, int] = {}
-    for chunk in resolved:
-        primary = (chunk.theory_school or {}).get("primary")
-        if isinstance(primary, str) and primary not in _THEORY_SCHOOL_SENTINEL_VALUES:
-            school_counts[primary] = school_counts.get(primary, 0) + 1
-    majority_school = (
-        max(school_counts, key=lambda school: school_counts[school]) if school_counts else None
+    return list(candidates.values())[:MAX_COUNTER_POSITION_CANDIDATES]
+
+
+def _describe_candidate(note: ChunkNote) -> str:
+    """One candidate's line in the prompt: the ids and answers that make its
+    opposition legible (§7.15's own words), then its prose. No tag axis is
+    named -- every one of them was deleted with the tag pass."""
+    position = stated_position(note) or "(the passage does not state one)"
+    opposes = _opposition_surfaces(note)
+    author = (note.source_meta or {}).get("author")
+    return (
+        f"- chunk_id={note.chunk_id}\n"
+        f"  author: {author}\n"
+        f"  stated position: {position}\n"
+        f"  arguing against: {', '.join(opposes) if opposes else '(nothing named)'}\n"
+        f"  text: {note.chunk_text}"
     )
-
-    candidates: list[Any] = []
-    for chunk in resolved:
-        primary = (chunk.theory_school or {}).get("primary")
-        is_counter_role = chunk.role_in_argument == COUNTER_POSITION_ROLE_VALUE
-        is_minority_school = (
-            isinstance(primary, str)
-            and primary not in _THEORY_SCHOOL_SENTINEL_VALUES
-            and primary != majority_school
-        )
-        if is_counter_role or is_minority_school:
-            candidates.append(chunk)
-    return candidates
 
 
 def _compose_counter_position_prompt(
-    brief: Brief, claims: list[dict[str, Any]], candidates: list[Any]
+    brief: Brief, claims: list[dict[str, Any]], candidates: list[ChunkNote]
 ) -> str:
     claim_lines = (
         "\n".join(
@@ -1015,13 +1080,8 @@ def _compose_counter_position_prompt(
         )
         or "(no claims)"
     )
-    candidate_lines = "\n".join(
-        f"- chunk_id={chunk.chunk_id} "
-        f"theory_school={(chunk.theory_school or {}).get('primary')} "
-        f"role_in_argument={chunk.role_in_argument}\n  text: {chunk.chunk_text}"
-        for chunk in candidates
-    )
-    return f"""You are the stage-4 counter-position pass of an analysis engine (specs/PHASE-B.md §7.8). This brief has already been mechanically flagged CONTESTED: its evidence spans more than one substantive theoretical position. Your job is to state the strongest opposing position the corpus itself supports, or to say plainly that it does not -- never to invent one.
+    candidate_lines = "\n".join(_describe_candidate(note) for note in candidates)
+    return f"""You are the stage-4 counter-position pass of an analysis engine (specs/PHASE-B.md §7.8). This brief has already been mechanically flagged CONTESTED: the corpus itself states a disagreement here -- one passage names another's position, author or subject as what it argues against, or a name this answer rests on carries a recorded disagreement. Your job is to state the strongest opposing position the corpus itself supports, or to say plainly that it does not -- never to invent one.
 
 Case: "{brief.case}"
 Request: "{brief.request}"
@@ -1076,7 +1136,8 @@ def _parse_counter_position_response(
     §7.8 shape. `present` and `corpus_one_sided` must be booleans naming
     EXACTLY one channel (never both, never neither); a `present: true`
     response's `grounds` must be non-empty, `ref_type: "chunk"` only (the
-    candidate pool is chunks only -- artifacts carry no `theory_school`),
+    candidate pool is prose notes only -- an artifact note carries no
+    interrogation answers and states no position),
     each `ref_id` resolved (`_resolve_counter_position_ground`) AND a
     member of `candidates` (`CounterPositionGroundNotOfferedError`
     otherwise) -- resolving is necessary but not sufficient, the whitelist
@@ -1158,22 +1219,28 @@ def generate_counter_position(
     brief: Brief,
     *,
     client: LLMClient,
+    trajectory: list[dict[str, Any]] | None = None,
     vault_dir: Path | None = None,
-    config_path: Path | None = None,
+    names_dir: Path | None = None,
 ) -> CounterPositionResult:
     """The §7.8 counter-position section, for real. Reuses
-    `axial.validators.counter_position._detect_contested` VERBATIM to decide
+    `axial.validators.counter_position.detect_contested` VERBATIM to decide
     whether this brief is contested, over the just-produced claim graph's
     own resolved evidence -- never reimplements that predicate (issue #399's
     explicit instruction). Zero model calls on an uncontested brief
     (`_empty_counter_position`); on a contested brief, offers the model a
-    whitelisted pool of this run's own opposing evidence
-    (`_counter_position_candidates`) and makes ONE bounded call under
+    whitelisted pool of real opposing notes (`_counter_position_candidates`)
+    and makes ONE bounded call under
     `pass_name=COUNTER_POSITION_GENERATE_PASS_NAME` (routable through
     `model_by_pass`/`reasoning_by_pass` independently of
     `SYNTHESIZE_PASS_NAME`, though it is still the GENERATING model and
     config routes both to the same tier -- see that pass name's own
     comment in axial.llm).
+
+    `trajectory` is the run's own §7.6 log. Both the contested predicate's
+    path 2 and the whitelist's name-layer sources read the §7.7 coverage
+    scope off it, so a caller that omits it gets the grounds-only halves of
+    both -- honest, and never a crash.
 
     Raises `CounterPositionGenerationFailedError` when the model call
     transport-fails or never returns parseable JSON within
@@ -1183,32 +1250,41 @@ def generate_counter_position(
     `CounterPositionGroundNotOfferedError` when the response parses as JSON
     but violates the §7.8 shape or its anti-fabrication whitelist -- all
     immediately fatal, exactly like a claim-graph parse failure."""
-    resolved_config_path = config_path if config_path is not None else DEFAULT_PIPELINE_CONFIG_PATH
-    min_distinct = _resolve_min_distinct_theory_schools(resolved_config_path)
-    contested = _detect_contested(
-        claims, vault_dir=vault_dir, min_distinct_theory_schools=min_distinct
-    )
+    contested = detect_contested(claims, trajectory, vault_dir=vault_dir, names_dir=names_dir)
     if not contested.contested:
         return CounterPositionResult(section=_empty_counter_position(), model_called=False)
 
-    candidates = _counter_position_candidates(claims, vault_dir=vault_dir)
+    candidates = _counter_position_candidates(
+        claims, trajectory, vault_dir=vault_dir, names_dir=names_dir
+    )
     if not candidates:
         # Guarded, not asserted-impossible (see _counter_position_candidates'
-        # own docstring): every underlying grounds chunk failed to resolve,
-        # so there is genuinely nothing to offer -- disclose, never crash or
-        # fabricate.
+        # own docstring). The disclosure names what is actually true of each
+        # path: on `opposed_positions` the grounds notes are what failed to
+        # resolve; on `gather_disagreement` they resolved fine and simply
+        # carry no opposing position, and saying otherwise would be a false
+        # reason in the record (§7.8, issue #490).
+        if contested.signal == SIGNAL_GATHER_DISAGREEMENT:
+            reason = (
+                "a name this answer rests on carries a recorded disagreement, but none of "
+                "this run's grounds notes states an opposing position and the name's own "
+                "member notes are not reachable as candidates, so the corpus offers no "
+                "opposing material to ground a counter-position here"
+            )
+        else:
+            reason = (
+                "this run's evidence signalled a contested brief (signal="
+                f"{contested.signal!r}), but none of the underlying grounds chunks "
+                "resolved in the vault, so no opposing material is available to "
+                "ground a counter-position"
+            )
         return CounterPositionResult(
             section={
                 "present": False,
                 "stance": None,
                 "grounds": [],
                 "corpus_one_sided": True,
-                "one_sided_reason": (
-                    f"this run's evidence signalled a contested brief (signal="
-                    f"{contested.signal!r}), but none of the underlying grounds chunks "
-                    "resolved in the vault, so no opposing material is available to "
-                    "ground a counter-position"
-                ),
+                "one_sided_reason": reason,
             },
             model_called=False,
         )

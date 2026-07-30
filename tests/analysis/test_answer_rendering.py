@@ -143,13 +143,13 @@ def _fixture_record() -> dict[str, Any]:
         },
         "coverage_map": {
             "Syria": {
-                "corpus_chunk_count": 150,
-                "evidence_chunk_count": 2,
+                "corpus_note_count": 150,
+                "evidence_note_count": 2,
                 "coverage_band": "dense",
             },
             "Iraq": {
-                "corpus_chunk_count": 4,
-                "evidence_chunk_count": 1,
+                "corpus_note_count": 4,
+                "evidence_note_count": 1,
                 "coverage_band": "thin",
             },
         },

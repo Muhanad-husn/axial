@@ -1,17 +1,18 @@
 """Outer acceptance test for issue #259, slice 02 of the analysis-validators
 subproject (Phase B, sub:analysis-v0): the counter-position validator.
 
-Given an analysis record at data/analyses/DEV10.json whose evidence chunks carry
-      two distinct theory_school values
+Given an analysis record at data/analyses/DEV10.json whose two evidence notes
+      state opposed positions, one naming the other's author in its own
+      `arguing_against` answer (§7.8 path 1, D3 -- no tag axis is read)
   And its counter_position is
       {present: true, stance: "...", grounds: [{ref_type: "chunk",
        ref_id: "syr-0042"}], corpus_one_sided: false, one_sided_reason: null}
 When  `axial brief validate DEV10` runs
 Then  the command exits 0, the report records the brief as contested with signal
-      "theory_school_spread", and the counter-position validator reports pass
+      "opposed_positions", and the counter-position validator reports pass
 
-Given an analysis record at data/analyses/DEV11.json whose evidence chunks carry
-      two distinct theory_school values
+Given an analysis record at data/analyses/DEV11.json whose evidence states the
+      same opposition
   And its counter_position is {present: false, stance: null, grounds: [],
       corpus_one_sided: false, one_sided_reason: null}
 When  `axial brief validate DEV11` runs
@@ -26,8 +27,8 @@ When  `axial brief validate DEV12` runs
 Then  the command exits 0 and the validator reports pass by explicit one-sided
       disclosure
 
-Given an analysis record at data/analyses/DEV13.json whose evidence chunks carry
-      a single theory_school and no role_in_argument counter-position
+Given an analysis record at data/analyses/DEV13.json whose evidence names no
+      opponent, over names carrying no Gather disagreement
 When  `axial brief validate DEV13` runs
 Then  the command exits 0, the report records the brief as uncontested, and the
       counter-position section is not required
@@ -41,10 +42,10 @@ Seam decisions
 --------------
 Runs the CLI via subprocess with cwd set to an isolated `tmp_path` staging
 root, mirroring tests/analysis/test_attribution_validator.py exactly (same
-`axial brief validate <brief_id>` boundary). No `config/pipeline.yaml` exists
-under the staging root, so `contested_detection.min_distinct_theory_schools`
-falls back to its code-level default of 2 -- exactly the threshold every
-scenario here is written against.
+`axial brief validate <brief_id>` boundary). Contested detection has no
+config knob any more (issue #490, D3): the rule reads what the notes say and
+either fires or it does not, so no `config/pipeline.yaml` is needed under the
+staging root for these scenarios to be well-defined.
 
 The steelman-quality check (DEV10, DEV12: `present: true` with grounds) needs
 `AXIAL_STUB_MODEL_BY_PASS` to make `counter_position` resolve to a different
@@ -69,52 +70,52 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 STUB_MODEL_BY_PASS_ENV_VAR = "AXIAL_STUB_MODEL_BY_PASS"
 
-CHUNK_MAIN = "syr-0001"  # theory_school: bellicist
-CHUNK_COUNTER = "syr-0042"  # theory_school: marxist-political-economy (the 2nd school)
+CHUNK_MAIN = "syr-0001"  # argues against the other note's author, by name
+CHUNK_COUNTER = "syr-0042"  # the side it names
 
 DISTINCT_MODELS_ENV = {
     STUB_MODEL_BY_PASS_ENV_VAR: json.dumps({"synthesize": "model-a", "counter_position": "model-b"})
 }
 
 
-def _chunk_frontmatter(chunk_id: str, *, theory_school_primary: str) -> dict[str, Any]:
+def _chunk_frontmatter(chunk_id: str, *, author: str, arguing_against: list[str]) -> dict[str, Any]:
+    """A prose note as `axial.materialize` writes one today: source metadata
+    plus the §7.15 answer block, and not one tag axis -- every axis the v0
+    contested rule counted was deleted with the tag pass (D3)."""
     return {
         "chunk_id": chunk_id,
         "section": "Synthetic Section",
         "chunk_text": f"SENTINEL_{chunk_id}: synthetic prose.",
         "source_meta": {
-            "author": "A. Synthetic Author",
-            "title": "A Synthetic Fixture Source",
+            "author": author,
+            "title": f"A Synthetic Fixture Source by {author}",
             "date": 2021,
             "thesis": "Synthetic thesis.",
             "scope": "Synthetic scope.",
         },
         "schema_version": "0.1",
-        "role_in_argument": "role:claim",
-        "field": {"primary": "field:political-sociology", "secondary": []},
-        "claim_type": {"primary": "claim:causal", "secondary": None, "subtags": []},
-        "theory_school": {
-            "primary": theory_school_primary,
-            "secondary": None,
-            "status": "candidate",
+        "frame_version": "0.1",
+        "answers": {
+            "claim": f"Claim of {chunk_id}.",
+            "position_of": "the author",
+            "arguing_against": arguing_against,
+            "names": [],
         },
-        "empirical_scope": {"value": "scope:country-case", "polity": "Syria"},
-        "polities_touched": ["Syria"],
-        "artifact_refs": [],
     }
 
 
 def _write_fixture_vault(root: Path) -> None:
     prose_dir = root / "data" / "vault" / "prose"
     prose_dir.mkdir(parents=True, exist_ok=True)
-    for chunk_id, school in (
-        (CHUNK_MAIN, "bellicist"),
-        (CHUNK_COUNTER, "marxist-political-economy"),
+    for chunk_id, author, arguing_against in (
+        (CHUNK_MAIN, "Charles Tilly", ["Theda Skocpol"]),
+        (CHUNK_COUNTER, "Theda Skocpol", []),
     ):
         text = (
             "---\n"
             + yaml.safe_dump(
-                _chunk_frontmatter(chunk_id, theory_school_primary=school), sort_keys=False
+                _chunk_frontmatter(chunk_id, author=author, arguing_against=arguing_against),
+                sort_keys=False,
             )
             + "---\nBody.\n"
         )
@@ -128,7 +129,7 @@ def _claim(claim_id: str, *chunk_ids: str) -> dict[str, Any]:
         "kind": "a",
         "grounds": [{"ref_type": "chunk", "ref_id": chunk_id} for chunk_id in chunk_ids],
         "confidence": "medium",
-        "polities_touched": ["Syria"],
+        "names_touched": [],
     }
 
 
@@ -151,18 +152,12 @@ def _write_record(
         },
         "claims": claims,
         "counter_position": counter_position,
-        # A complete coverage_map for "Syria" (the only polity every claim
-        # here touches) and a non-top-band confidence disclosure -- since
-        # #260, `_brief_validate` also runs the coverage/confidence
-        # validator, so these fixtures must satisfy it too, not just the
-        # counter-position validator under test.
-        "coverage_map": {
-            "Syria": {
-                "corpus_chunk_count": 50,
-                "evidence_chunk_count": 1,
-                "coverage_band": "moderate",
-            }
-        },
+        # An empty coverage_map beside an empty trajectory: no name is both
+        # retrieved on and touched here, so the §7.9 coverage check passes
+        # vacuously and each scenario's assertion isolates the
+        # counter-position reason under test. `brief validate` has run all
+        # three validators since #260.
+        "coverage_map": {},
         "confidence": {"overall_band": "low", "rationale": "fixture"},
         "trajectory": [],
         "model_by_pass": {},
@@ -206,10 +201,11 @@ def _assert_not_argparse_fallback(result: subprocess.CompletedProcess) -> None:
 
 
 def test_scenario_dev10_contested_with_grounds_passes(fixture_root: Path):
-    """DEV10: evidence spans two distinct theory_school values (contested,
-    signal theory_school_spread); the counter_position section is present
-    with non-empty grounds -- exit 0, report names the fired signal, the
-    counter-position validator reports pass."""
+    """DEV10: two notes from two books, one naming the other's author in
+    `arguing_against` (contested, signal opposed_positions, zero reference to
+    any tag axis); the counter_position section is present with non-empty
+    grounds -- exit 0, report names the fired signal, the counter-position
+    validator reports pass."""
     _write_record(
         fixture_root,
         "DEV10",
@@ -231,12 +227,12 @@ def test_scenario_dev10_contested_with_grounds_passes(fixture_root: Path):
         f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
     assert "contested=True" in result.stdout
-    assert "theory_school_spread" in result.stdout
+    assert "opposed_positions" in result.stdout
     assert "PASS" in result.stdout
 
 
 def test_scenario_dev11_contested_without_counter_position_blocks_release(fixture_root: Path):
-    """DEV11: same contested evidence as DEV10, but counter_position is
+    """DEV11: the same stated opposition as DEV10, but counter_position is
     entirely absent/false -- exit non-zero, reason
     contested_without_counter_position, no answer released."""
     _write_record(
@@ -292,9 +288,9 @@ def test_scenario_dev12_one_sided_disclosure_passes(fixture_root: Path):
 
 
 def test_scenario_dev13_uncontested_brief_does_not_require_the_section(fixture_root: Path):
-    """DEV13: evidence carries a single theory_school and no
-    role_in_argument counter-position -- uncontested, exit 0, the section is
-    not required (absent/false is fine)."""
+    """DEV13: one note, naming no opponent among this run's evidence --
+    uncontested, exit 0, the section is not required (absent/false is
+    fine)."""
     _write_record(
         fixture_root,
         "DEV13",

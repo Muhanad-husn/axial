@@ -44,31 +44,39 @@ class FakeClient:
         raise NotImplementedError("the synthesis-quality gate never calls this")
 
 
-def _chunk_frontmatter(chunk_id: str, *, theory_school_primary: str) -> dict[str, Any]:
+def _chunk_frontmatter(chunk_id: str, *, author: str, arguing_against: list[str]) -> dict[str, Any]:
+    """A prose note in the shape `axial.materialize` writes today: source
+    metadata plus the §7.15 answer block. Contested detection reads what the
+    notes say (D3, issue #490), so the fixture states an opposition instead
+    of carrying a `theory_school` no live note has any more."""
     return {
         "chunk_id": chunk_id,
         "section": "Synthetic Section",
         "chunk_text": f"SENTINEL: synthetic prose for {chunk_id}.",
-        "source_meta": {"author": "A", "title": "T", "date": 2020, "thesis": "X", "scope": "Y"},
-        "schema_version": "0.1",
-        "role_in_argument": "role:claim",
-        "field": {"primary": "field:political-sociology", "secondary": []},
-        "claim_type": {"primary": "claim:causal", "secondary": None, "subtags": []},
-        "theory_school": {
-            "primary": theory_school_primary,
-            "secondary": None,
-            "status": "candidate",
+        "source_meta": {
+            "author": author,
+            "title": f"A Book by {author}",
+            "date": 2020,
+            "thesis": "X",
+            "scope": "Y",
         },
-        "empirical_scope": {"value": "scope:country-case", "polity": "Syria"},
-        "polities_touched": ["Syria"],
-        "artifact_refs": [],
+        "schema_version": "0.1",
+        "frame_version": "0.1",
+        "answers": {
+            "claim": f"Claim of {chunk_id}.",
+            "position_of": "the author",
+            "arguing_against": arguing_against,
+            "names": [],
+        },
     }
 
 
-def _write_chunk(vault_dir: Path, chunk_id: str, *, theory_school_primary: str) -> None:
+def _write_chunk(
+    vault_dir: Path, chunk_id: str, *, author: str, arguing_against: list[str]
+) -> None:
     prose_dir = vault_dir / "prose"
     prose_dir.mkdir(parents=True, exist_ok=True)
-    frontmatter = _chunk_frontmatter(chunk_id, theory_school_primary=theory_school_primary)
+    frontmatter = _chunk_frontmatter(chunk_id, author=author, arguing_against=arguing_against)
     text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
     (prose_dir / f"{chunk_id}.md").write_text(text, encoding="utf-8")
 
@@ -76,8 +84,8 @@ def _write_chunk(vault_dir: Path, chunk_id: str, *, theory_school_primary: str) 
 @pytest.fixture
 def vault_dir(tmp_path: Path) -> Path:
     vault = tmp_path / "vault"
-    _write_chunk(vault, CHUNK_A, theory_school_primary="bellicist")
-    _write_chunk(vault, CHUNK_B, theory_school_primary="marxist-political-economy")
+    _write_chunk(vault, CHUNK_A, author="Charles Tilly", arguing_against=["Theda Skocpol"])
+    _write_chunk(vault, CHUNK_B, author="Theda Skocpol", arguing_against=[])
     return vault
 
 

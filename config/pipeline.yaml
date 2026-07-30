@@ -304,18 +304,12 @@ retrieve:
 synthesis:
   evidence_char_budget: 100000
 
-# Stage-5 counter-position validator's contested-detection rule (issue #259,
-# PRD §7.8/§7.9): a brief is contested when its evidence spans at least this
-# many distinct *substantive* `theory_school` primaries (the `not-applicable`/
-# `unlisted` sentinels excluded), OR when any evidence chunk carries
-# `role_in_argument: role:counter-position` (not a numeric knob -- either it
-# fired or it didn't). src/axial/validators/counter_position.py reads this via
-# _resolve_min_distinct_theory_schools, falling back to its own
-# DEFAULT_MIN_DISTINCT_THEORY_SCHOOLS when this file or key is absent. 2 is
-# the spec's own stated starting hypothesis (§7.8), proven on the dev briefs
-# separately -- tuning it is explicitly out of this slice's scope.
-contested_detection:
-  min_distinct_theory_schools: 2
+# Contested detection has no numeric knob any more (issue #490, D3). The
+# `contested_detection.min_distinct_theory_schools` block that lived here
+# counted distinct `theory_school` primaries, an axis Phase A v1 deleted; the
+# §7.8 rule now reads what the notes themselves say (`arguing_against` naming
+# the other side, or a Gather disagreement at a name the answer rests on) and
+# either fires or it doesn't.
 
 # Google Drive connector tunables (issue #239, PRD §7.10 "Language-gate
 # tunables" paragraph / §8 P0-11c): the English-only language gate's
@@ -334,15 +328,19 @@ drive:
   # (non-English let through) pollutes the corpus and the eval.
   language_accept_threshold: 0.9
 
-# Per-polity coverage-band cut points (issue #260, PRD §7.7): a stated,
-# tunable hypothesis over the ~17k-chunk vault, in the spirit of the
-# Phase-A chunk band (PRODUCT.md §7.7) -- src/axial/validators/coverage.py
-# reads this via _resolve_coverage_bands, falling back to its own
-# DEFAULT_MODERATE_FLOOR/DEFAULT_DENSE_FLOOR when this file or either key
-# is absent. `thin` is corpus_chunk_count below moderate_floor, `moderate`
-# is [moderate_floor, dense_floor), `dense` is dense_floor and above.
-# Proven by inspection (`axial brief coverage <brief_id>`) against the real
-# corpus before it gates anything -- tuning it is out of this slice's scope.
+# Per-NAME coverage-band cut points (issues #260 and #490, PRD §7.7):
+# src/axial/validators/coverage.py reads this via _resolve_coverage_bands,
+# falling back to its own DEFAULT_MODERATE_FLOOR/DEFAULT_DENSE_FLOOR when
+# this file or either key is absent. `thin` is corpus_note_count below
+# moderate_floor, `moderate` is [moderate_floor, dense_floor), `dense` is
+# dense_floor and above.
+#
+# Proven by inspection against the real corpus (2026-07-30,
+# data/logs/2026-07-30-slice-05-coverage/): over the 30 real brief-shaped
+# names that resolve against the live index these cut points split 15 thin /
+# 9 moderate / 6 dense, from `bare life` (1 note) through `state of
+# exception` (27) to `Syria` (962). Unchanged from #260's starting
+# hypothesis because the measurement supports them.
 coverage_bands:
   moderate_floor: 20
   dense_floor: 100
