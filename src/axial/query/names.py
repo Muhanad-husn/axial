@@ -359,6 +359,22 @@ def canonical_for_surface(surface: str, layer: _NameLayer) -> str | None:
     return None
 
 
+def canonical_name_for_surface(surface: str, *, names_dir: Path | None = None) -> str | None:
+    """The canonical name `surface` belongs to, resolved **through the alias
+    map alone** -- `canonical_for_surface`'s three exact tiers (canonical,
+    alias, fold), with the name layer resolved from `names_dir` for a caller
+    that holds a surface form and no layer. `None` when the index carries no
+    such surface.
+
+    The public wrapper exists for §7.4's `names_touched` (issue #489), which
+    resolves a grounds note's own `names` answers to canonicals so the §7.7
+    coverage map is computable from the claim graph. It deliberately does NOT
+    reach `find_names`' fourth, embedding tier: §7.4 drops a surface the index
+    does not carry rather than inventing one, and a nearest-neighbour match
+    here would fabricate coverage of a name the passage never named."""
+    return canonical_for_surface(surface, _name_layer(names_dir))
+
+
 def _surface_matches_canonical(surface: str, canonical: str, layer: _NameLayer) -> bool:
     """Whether `surface` is one of the surface forms the alias map folds into
     `canonical` (§7.5: "never string equality against the canonical alone").

@@ -80,9 +80,15 @@ def format_examine_report(brief: Brief, result: ExamineResult) -> str:
     examine` prints (mirroring `axial.chunk.format_examine_report`'s own
     separation of stats from rendering): the §7.2 interrogation result
     (disposition, premises_found, bounds_applied, refusal), the retrieved
-    `chunk_id`s in retrieval order, and the raw per-polity coverage counts
-    -- exactly the three things this slice's acceptance criterion requires,
-    nothing about a claim graph or an analysis record."""
+    `chunk_id`s in retrieval order with each note's own one-sentence `claim`,
+    and a plain count of assembled notes per name.
+
+    That count is an INSPECTION count, not the §7.7 coverage map (issue
+    #489): no band, no corpus denominator, no confidence. The banded map is
+    computed from `names_touched` over the claim graph, which does not exist
+    before the synthesis call this command exists to precede. An abstained
+    field never appears here, because `assemble_evidence` already dropped
+    it."""
     lines: list[str] = []
 
     lines.append(f"brief_id: {brief.brief_id}")
@@ -95,15 +101,12 @@ def format_examine_report(brief: Brief, result: ExamineResult) -> str:
         lines.append(f"refusal: {result.interrogation.refusal['reason']}")
 
     lines.append(f"retrieved chunk_ids (retrieval order): {len(result.evidence.chunk_ids)}")
-    for chunk_id in result.evidence.chunk_ids:
-        lines.append(f"  {chunk_id}")
+    for chunk in result.evidence.chunks:
+        claim = chunk.answers.get("claim")
+        lines.append(f"  {chunk.chunk_id}" + (f" | claim: {claim}" if claim else ""))
 
-    lines.append("polity coverage:")
-    for polity in sorted(result.evidence.polity_coverage):
-        coverage = result.evidence.polity_coverage[polity]
-        lines.append(
-            f"  {polity}: corpus_chunk_count={coverage.corpus_chunk_count} "
-            f"evidence_chunk_count={coverage.evidence_chunk_count}"
-        )
+    lines.append("names in the assembled evidence (notes per name):")
+    for name, count in result.evidence.name_counts.items():
+        lines.append(f"  {name}: {count}")
 
     return "\n".join(lines)

@@ -8,14 +8,13 @@ issue #256.
 
 from __future__ import annotations
 
-from axial.analyze.assembly import EvidenceChunk, EvidenceSet, PolityCoverage, assemble_evidence
+from axial.analyze.assembly import EvidenceChunk, EvidenceSet, assemble_evidence
 from axial.analyze.examine import ExamineResult, format_examine_report, run_examine
 
 __all__ = [
     "EvidenceChunk",
     "EvidenceSet",
     "ExamineResult",
-    "PolityCoverage",
     "assemble_evidence",
     "format_examine_report",
     "run_examine",

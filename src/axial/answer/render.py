@@ -13,7 +13,7 @@ how the record dict was built or round-tripped through JSON:
 
 - **Claims render in the record's own `claims` order.** No re-sorting, no
   set iteration -- the plan's own inner-loop rule.
-- **Every other multi-entry section (`coverage_map`'s polities,
+- **Every other multi-entry section (`coverage_map`'s names,
   `source_usage`'s sources) is sorted explicitly by this module**, rather
   than trusting insertion order, so a record assembled by a different code
   path (or hand-built by a test) still renders the same way.
@@ -101,12 +101,12 @@ def _render_counter_position(counter_position: dict[str, Any]) -> list[str]:
 def _render_coverage_map(coverage_map: dict[str, dict[str, Any]]) -> list[str]:
     lines = ["", "## Coverage map", ""]
     if not coverage_map:
-        lines.append("(none -- no polity touched by any claim)")
+        lines.append("(none -- no name touched by any claim)")
         return lines
-    for polity in sorted(coverage_map):
-        entry = coverage_map[polity]
+    for name in sorted(coverage_map):
+        entry = coverage_map[name]
         lines.append(
-            f"- {polity}: corpus={entry.get('corpus_chunk_count')} "
+            f"- {name}: corpus={entry.get('corpus_chunk_count')} "
             f"evidence={entry.get('evidence_chunk_count')} "
             f"band={entry.get('coverage_band')}"
         )

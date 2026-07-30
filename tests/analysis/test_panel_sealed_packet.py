@@ -113,7 +113,7 @@ def _write_fixture_vault(root: Path) -> None:
 def _record() -> dict[str, Any]:
     """An analysis record that can carry all three plants: two claims with
     different grounds, a present counter-position, and a thin-coverage
-    polity carrying a below-high claim."""
+    name carrying a below-high claim."""
     return {
         "brief_id": "panel-b-001",
         "claims": [
@@ -121,7 +121,7 @@ def _record() -> dict[str, Any]:
                 "claim_id": "c-1",
                 "kind": "a",
                 "text": "Bureaucratic capacity fell.",
-                "polities_touched": ["syria"],
+                "names_touched": ["syria"],
                 "confidence": "medium",
                 "grounds": [{"ref_type": "chunk", "ref_id": CHUNK_IDS[0]}],
             },
@@ -129,7 +129,7 @@ def _record() -> dict[str, Any]:
                 "claim_id": "c-2",
                 "kind": "a",
                 "text": "Militia payrolls grew.",
-                "polities_touched": ["lebanon"],
+                "names_touched": ["lebanon"],
                 "confidence": "high",
                 "grounds": [{"ref_type": "chunk", "ref_id": CHUNK_IDS[1]}],
             },

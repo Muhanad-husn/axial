@@ -56,6 +56,50 @@ from axial.paths import (
 )
 
 
+# The explicit abstention value (`specs/PRODUCT.md` §7.15, D7) and the
+# predicate that reads it. It lives HERE, in the dependency-light read path,
+# rather than in `axial.interrogate` where the interrogation prompt writes it:
+# `axial.interrogate` pulls in `axial.llm`, `axial.envelope` and the whole
+# generation stack, which no reader may import (see the module docstring), and
+# a second copy of the predicate on the read side is how two consumers end up
+# disagreeing about what an abstention is. `axial.interrogate` re-exports both
+# names unchanged, so its own callers (`axial.gather`, `axial.materialize`,
+# `axial.names`) are unaffected.
+NOT_IN_PASSAGE = "not-in-passage"
+
+
+def is_abstention(value: Any) -> bool:
+    """Whether `value` is §7.15's explicit abstention rather than an answer:
+    the bare `not-in-passage` string, `{"not-in-passage": "<reason>"}`, or
+    either of those alone inside a one-element list.
+
+    The list form exists because six fields are asked for as JSON lists and
+    the abstention rule is written for a scalar, so `["not-in-passage"]` is
+    the natural middle form for a multi-valued field. A list with a second
+    element is a real answer, however malformed -- an abstention is never
+    partial.
+
+    **`[]` is an answer, not an abstention** (§7.15): on a multi-valued field
+    it says the passage names none of that kind of thing. So is `None` --
+    which means the record carries no such key, the third state, a failure
+    rather than a refusal. Neither is ever normalised onto an abstention here.
+
+    Every reader applies this before showing an answer to a model: an
+    abstention rendered as an answer is indistinguishable downstream from a
+    read one, which is the exact failure D7 exists to prevent. Measured over
+    the live corpus's 6,148 answer records: 1,451 notes (23.6%) abstain on
+    `position_of`, and on `arguing_against` 301 (4.9%) abstain while 1,184
+    (19.3%) answer `[]`. So this is the common path on one field and a fifth
+    of the corpus turns on the `[]` distinction on the other."""
+    if value == NOT_IN_PASSAGE:
+        return True
+    if isinstance(value, dict):
+        return set(value) == {NOT_IN_PASSAGE}
+    if isinstance(value, list) and len(value) == 1:
+        return is_abstention(value[0])
+    return False
+
+
 class QueryError(Exception):
     """Base class for all vault-query errors."""
 
@@ -129,14 +173,46 @@ class ChunkNote:
     (`specs/PRODUCT.md` §7.15, Appendix H), which is what a note's
     frontmatter carries in place of the retired tag axes.
 
-    `claim`/`move`/`position_of`/`position`/`arguing_against`/`names`/
-    `citations` are read out of the frontmatter's nested `answers` mapping
-    (issue #487): they are what `axial.query.names`' traversals and Phase B's
-    synthesis read, so the general-purpose note reader exposes them directly
-    rather than making every caller re-dig into `answers`. A note that carries
-    no `answers` block at all still parses, with all of them at their defaults
-    -- a note written before issue #411, or one whose interrogation abstained,
-    is not a malformed note.
+    **Every one of §7.15's answer fields is exposed** (issue #489): a live
+    prose note's `answers` block carries 21 keys and this reader used to reach
+    seven of them, which left `ranges_over`, `stops_holding`, `mechanism`,
+    `evidence`, `comparison`, `about`, `defines`, `uses`, `concedes`,
+    `assumes` and `position_of_nearest` unreachable through the note layer at
+    all. They are read out of the frontmatter's nested `answers` mapping: they
+    are what `axial.query.names`' traversals and Phase B's evidence assembly
+    read, so the general-purpose note reader exposes them directly rather than
+    making every caller re-dig into `answers`. A note that carries no
+    `answers` block at all still parses, with all of them at their defaults --
+    a note written before issue #411, or one whose interrogation abstained, is
+    not a malformed note.
+
+    **The answers are exposed RAW, and that is the contract.** Every field is
+    in exactly one of §7.15's three states -- an answer, the explicit
+    abstention (`not-in-passage`, bare or as `{"not-in-passage": "<reason>"}`,
+    or either alone in a one-element list), or absent -- and the three are
+    distinguishable only by reading the value as given. So nothing here
+    coerces, defaults or normalises an abstention into an answer's shape;
+    `is_abstention` (this module) is the one predicate that tells them apart,
+    and every consumer applies it before showing an answer to a model. `[]` on
+    a multi-valued field is an answer ("the passage names none of that"),
+    never rewritten onto an abstention.
+
+    That is why `arguing_against`/`names`/`citations` are `None` rather than
+    `[]` when the note carries no such key, and why a non-list value on one of
+    them is passed through untouched (issue #489). Both halves used to be
+    coerced with `list(value or [])`, which conflated the absent state with a
+    real `[]` answer, and turned a bare-string abstention into a list of its
+    own 14 CHARACTERS -- an abstention silently read as fourteen one-letter
+    names. A consumer wanting a list applies `is_abstention` first and then
+    `axial.query.names.as_string_list`, which accepts a bare string as a
+    one-item list.
+
+    `position_of_nearest` is the §7.15 D8 secondary field: the model's own
+    nearest example off the frame's theory-school list, `{example, fit}`. It
+    is a marked example, NEVER the answer, and code never bridges the two in
+    either direction -- it is exposed for a consumer that wants to rank on a
+    countable label (D3), never to fill in a `position`/`position_of` the
+    passage did not support.
 
     **`position_of` and `position` are a mixed frame, and both are exposed
     raw** (§7.5/§7.15, issue #496): frame 0.2 split "whose position is this?"
@@ -169,9 +245,24 @@ class ChunkNote:
     move: str | None = None
     position_of: str | None = None
     position: str | None = None
-    arguing_against: list[Any] = dataclass_field(default_factory=list)
-    names: list[Any] = dataclass_field(default_factory=list)
-    citations: list[Any] = dataclass_field(default_factory=list)
+    arguing_against: Any = None
+    names: Any = None
+    citations: Any = None
+    # The rest of §7.15's answer set (issue #489), raw. Typed `Any`, not
+    # `str`/`list`, because any of them can carry the abstention object or
+    # the one-element abstention list instead of an answer -- a narrower type
+    # here would be a lie about what a real note holds.
+    about: Any = None
+    ranges_over: Any = None
+    stops_holding: Any = None
+    mechanism: Any = None
+    evidence: Any = None
+    comparison: Any = None
+    defines: Any = None
+    uses: Any = None
+    concedes: Any = None
+    assumes: Any = None
+    position_of_nearest: Any = None
     polities_touched: list[str] = dataclass_field(default_factory=list)
     artifact_refs: list[str] = dataclass_field(default_factory=list)
     schema_version: str | None = None
@@ -271,7 +362,6 @@ def _parse_chunk_note(path: Path) -> ChunkNote:
     answers = frontmatter.get("answers")
     if not isinstance(answers, dict):
         answers = {}
-    arguing_against = answers.get("arguing_against")
     return ChunkNote(
         chunk_id=_require(frontmatter, path, "chunk_id"),
         section=_require(frontmatter, path, "section"),
@@ -285,14 +375,23 @@ def _parse_chunk_note(path: Path) -> ChunkNote:
         # checks the block itself. See `ChunkNote`'s own docstring.
         position_of=answers.get("position_of"),
         position=answers.get("position"),
-        # A list on every real note, but nothing enforces that on a free-text
-        # answer, so a bare string reads as a one-item list rather than being
-        # silently dropped (`axial.query.names.as_string_list`'s own rule).
-        arguing_against=[arguing_against]
-        if isinstance(arguing_against, str)
-        else list(arguing_against or []),
-        names=list(answers.get("names") or []),
-        citations=list(answers.get("citations") or []),
+        # Raw, uncoerced (issue #489): an abstention on any of these must stay
+        # readable as one, and an absent key must stay distinguishable from a
+        # real `[]` answer -- see `ChunkNote`'s own docstring.
+        arguing_against=answers.get("arguing_against"),
+        names=answers.get("names"),
+        citations=answers.get("citations"),
+        about=answers.get("about"),
+        ranges_over=answers.get("ranges_over"),
+        stops_holding=answers.get("stops_holding"),
+        mechanism=answers.get("mechanism"),
+        evidence=answers.get("evidence"),
+        comparison=answers.get("comparison"),
+        defines=answers.get("defines"),
+        uses=answers.get("uses"),
+        concedes=answers.get("concedes"),
+        assumes=answers.get("assumes"),
+        position_of_nearest=answers.get("position_of_nearest"),
         polities_touched=list(frontmatter.get("polities_touched") or []),
         artifact_refs=list(frontmatter.get("artifact_refs") or []),
         # The retired axis block (issue #414): present, required, on a

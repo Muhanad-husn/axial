@@ -4,7 +4,7 @@ repo's existing test layout (mirrors src/axial/analyze/test_assembly.py).
 
 Covers plans/analysis-synthesis/02-synthesis-claim-graph.md's inner-loop
 checklist: kind validation, grounds non-empty for a/b, ref_type/ref_id
-resolution against a fixture vault, `polities_touched` computed in code
+resolution against a fixture vault, `names_touched` computed in code
 (never trusted from the model), `claim_id` determinism/uniqueness, lens
 resolution (named/unknown/absent), the prompt embedding evidence chunks, the
 pass's own `pass_name` for `model_by_pass`/`reasoning_by_pass` routing, and
@@ -40,8 +40,21 @@ from axial.model_json import ModelJsonError
 
 
 def _chunk_frontmatter(
-    *, chunk_id: str, polities_touched: list[str], role_in_argument: str = "role:claim"
+    *, chunk_id: str, names: list[str] | None = None, answers: dict[str, Any] | None = None
 ) -> dict[str, Any]:
+    """A prose note in the shape `axial.materialize` writes today: source
+    metadata plus the nested interrogation `answers` block (§7.15, Appendix H).
+    `names` is the shorthand every test here needs -- the surface forms this
+    note named, which is what `names_touched` resolves through the alias
+    map."""
+    note_answers: dict[str, Any] = {
+        "claim": f"Claim of {chunk_id}.",
+        "move": "stating a mechanism",
+        "position_of": "the author",
+        "names": [{"name": surface, "kind": "person"} for surface in (names or [])],
+    }
+    if answers is not None:
+        note_answers.update(answers)
     return {
         "chunk_id": chunk_id,
         "section": "Synthetic Section",
@@ -53,22 +66,37 @@ def _chunk_frontmatter(
             "thesis": "Synthetic thesis.",
             "scope": "Synthetic scope.",
         },
-        "schema_version": "0.1",
-        "role_in_argument": role_in_argument,
-        "field": {"primary": "field:political-sociology", "secondary": []},
-        "claim_type": {"primary": "claim:causal", "secondary": None, "subtags": []},
-        "theory_school": {
-            "primary": "school:synthetic-institutionalist",
-            "secondary": None,
-            "status": "candidate",
-        },
-        "empirical_scope": {
-            "value": "scope:country-case",
-            "polity": polities_touched[0] if polities_touched else None,
-        },
-        "polities_touched": polities_touched,
-        "artifact_refs": [],
+        "frame_version": "0.1",
+        "answers": note_answers,
     }
+
+
+def _write_name_layer(root: Path) -> Path:
+    """Reconcile's alias map and index (§7.16) -- what `names_touched`
+    resolves a surface form through, and the only tier it is allowed to use.
+    "Tilly" is an ALIAS of "Charles Tilly", so a real alias-map hop is
+    exercised rather than string equality."""
+    names_dir = root / "names"
+    names_dir.mkdir(parents=True, exist_ok=True)
+    (names_dir / "alias_map.json").write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    {
+                        "canonical": "Charles Tilly",
+                        "kind": "person",
+                        "aliases": ["Tilly", "C. Tilly 1975"],
+                    },
+                    {"canonical": "Ibn Khaldun", "kind": "person", "aliases": []},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (names_dir / "index.json").write_text(
+        json.dumps({"names": ["Charles Tilly", "Ibn Khaldun"]}), encoding="utf-8"
+    )
+    return names_dir
 
 
 def _artifact_frontmatter(*, artifact_id: str, source_id: str) -> dict[str, Any]:
@@ -102,10 +130,10 @@ def _write_vault(
 @pytest.fixture
 def vault_dir(tmp_path: Path) -> Path:
     chunks = [
-        _chunk_frontmatter(chunk_id="synfix_001_syria_a", polities_touched=["Syria"]),
-        _chunk_frontmatter(chunk_id="synfix_002_iraq_a", polities_touched=["Iraq"]),
+        _chunk_frontmatter(chunk_id="synfix_001_syria_a", names=["Tilly"]),
+        _chunk_frontmatter(chunk_id="synfix_002_iraq_a", names=["Ibn Khaldun"]),
         _chunk_frontmatter(
-            chunk_id="synfix_003_two_polities", polities_touched=["Syria", "Lebanon"]
+            chunk_id="synfix_003_two_names", names=["Tilly", "Ibn Khaldun", "Absurdistan"]
         ),
     ]
     artifacts = [_artifact_frontmatter(artifact_id="synfix_004_artifact", source_id="synfix")]
@@ -113,28 +141,30 @@ def vault_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def names_dir(tmp_path: Path) -> Path:
+    return _write_name_layer(tmp_path)
+
+
+def _evidence_chunk(chunk_id: str, **answers: Any) -> EvidenceChunk:
+    """An `EvidenceChunk` as `assemble_evidence` would have built it: source
+    metadata plus the substantive answers only (an abstention never gets this
+    far -- assembly dropped it)."""
+    return EvidenceChunk(
+        chunk_id=chunk_id,
+        source_meta={"author": "A. Synthetic Author", "title": "A Synthetic Fixture Source"},
+        answers=answers,
+    )
+
+
+@pytest.fixture
 def evidence_set() -> EvidenceSet:
     return EvidenceSet(
         chunk_ids=["synfix_001_syria_a", "synfix_002_iraq_a"],
         chunks=[
-            EvidenceChunk(
-                chunk_id="synfix_001_syria_a",
-                polities_touched=["Syria"],
-                role_in_argument="role:claim",
-                theory_school={"primary": "school:synthetic-institutionalist"},
-                claim_type={"primary": "claim:causal"},
-                empirical_scope={"value": "scope:country-case"},
-            ),
-            EvidenceChunk(
-                chunk_id="synfix_002_iraq_a",
-                polities_touched=["Iraq"],
-                role_in_argument="role:claim",
-                theory_school={"primary": "school:synthetic-institutionalist"},
-                claim_type={"primary": "claim:causal"},
-                empirical_scope={"value": "scope:country-case"},
-            ),
+            _evidence_chunk("synfix_001_syria_a", claim="Claim of synfix_001_syria_a."),
+            _evidence_chunk("synfix_002_iraq_a", claim="Claim of synfix_002_iraq_a."),
         ],
-        polity_coverage={},
+        name_counts={},
     )
 
 
@@ -148,7 +178,7 @@ def evidence_set() -> EvidenceSet:
 _HANDLE_MAP = {
     "[c1]": "synfix_001_syria_a",
     "[c2]": "synfix_002_iraq_a",
-    "[c3]": "synfix_003_two_polities",
+    "[c3]": "synfix_003_two_names",
 }
 
 
@@ -301,7 +331,7 @@ def test_accepts_a_c_claim_with_empty_grounds(vault_dir: Path):
     assert len(claims) == 1
     assert claims[0].kind == "c"
     assert claims[0].grounds == []
-    assert claims[0].polities_touched == []
+    assert claims[0].names_touched == []
 
 
 # ---------------------------------------------------------------------------
@@ -353,8 +383,8 @@ def test_an_artifact_ground_resolves(vault_dir: Path):
     )
     claims = parse_synthesis_response(raw, vault_dir=vault_dir)
     assert claims[0].grounds == [Ground(ref_type="artifact", ref_id="synfix_004_artifact")]
-    # An artifact ground carries no polities_touched facet of its own.
-    assert claims[0].polities_touched == []
+    # An artifact ground names nothing of its own, so it contributes nothing.
+    assert claims[0].names_touched == []
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +413,6 @@ def test_a_cited_handle_that_maps_cleanly_resolves_to_the_real_chunk(vault_dir: 
     # The stored ground carries the REAL chunk_id the handle stood for,
     # never the handle token itself.
     assert claims[0].grounds == [Ground(ref_type="chunk", ref_id="synfix_001_syria_a")]
-    assert claims[0].polities_touched == ["Syria"]
 
 
 def test_a_cited_handle_absent_from_the_handle_map_still_raises(vault_dir: Path):
@@ -486,11 +515,34 @@ def test_an_artifact_ref_id_matching_no_real_id_by_suffix_still_raises(vault_dir
 
 
 # ---------------------------------------------------------------------------
-# polities_touched computed in code
+# names_touched computed in code, through the alias map alone (issue #489)
 # ---------------------------------------------------------------------------
 
 
-def test_polities_touched_computed_from_grounds_chunks_overrides_model_value(vault_dir: Path):
+def test_names_touched_resolves_a_surface_form_through_the_alias_map(
+    vault_dir: Path, names_dir: Path
+):
+    """synfix_001's own `names` answer says "Tilly", which the index carries
+    only as an ALIAS of "Charles Tilly". The claim touches the canonical."""
+    raw = _valid_response(
+        claims=[
+            {
+                "text": "A claim grounded in a note naming Tilly.",
+                "kind": "a",
+                "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
+                "confidence": "low",
+            }
+        ]
+    )
+    claims = parse_synthesis_response(
+        raw, vault_dir=vault_dir, handle_map=_HANDLE_MAP, names_dir=names_dir
+    )
+    assert claims[0].names_touched == ["Charles Tilly"]
+
+
+def test_names_touched_computed_from_grounds_overrides_a_model_supplied_value(
+    vault_dir: Path, names_dir: Path
+):
     raw = _valid_response(
         claims=[
             {
@@ -498,17 +550,44 @@ def test_polities_touched_computed_from_grounds_chunks_overrides_model_value(vau
                 "kind": "a",
                 "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
                 "confidence": "low",
-                # A model-supplied polities_touched must be discarded, never
+                # A model-supplied names_touched must be discarded, never
                 # trusted -- the code recomputes it from the resolved grounds.
-                "polities_touched": ["Definitely Not Syria"],
+                "names_touched": ["Definitely Not Tilly"],
             }
         ]
     )
-    claims = parse_synthesis_response(raw, vault_dir=vault_dir, handle_map=_HANDLE_MAP)
-    assert claims[0].polities_touched == ["Syria"]
+    claims = parse_synthesis_response(
+        raw, vault_dir=vault_dir, handle_map=_HANDLE_MAP, names_dir=names_dir
+    )
+    assert claims[0].names_touched == ["Charles Tilly"]
 
 
-def test_polities_touched_dedupes_across_grounds_and_is_order_stable(vault_dir: Path):
+def test_names_touched_drops_a_surface_the_index_does_not_carry(
+    vault_dir: Path, names_dir: Path
+):
+    """§7.4: a surface the index does not carry is DROPPED rather than
+    invented. synfix_003 names "Absurdistan", which no node carries -- and
+    nothing here falls back to the embedding tier, which would land the claim
+    on a plausible neighbour and fabricate coverage."""
+    raw = _valid_response(
+        claims=[
+            {
+                "text": "A claim grounded in a note naming an unknown surface.",
+                "kind": "a",
+                "grounds": [{"ref_type": "chunk", "ref_id": "[c3]"}],
+                "confidence": "low",
+            }
+        ]
+    )
+    claims = parse_synthesis_response(
+        raw, vault_dir=vault_dir, handle_map=_HANDLE_MAP, names_dir=names_dir
+    )
+    assert claims[0].names_touched == ["Charles Tilly", "Ibn Khaldun"]
+
+
+def test_names_touched_dedupes_across_grounds_and_is_order_stable(
+    vault_dir: Path, names_dir: Path
+):
     raw = _valid_response(
         claims=[
             {
@@ -522,10 +601,34 @@ def test_polities_touched_dedupes_across_grounds_and_is_order_stable(vault_dir: 
             }
         ]
     )
-    claims = parse_synthesis_response(raw, vault_dir=vault_dir, handle_map=_HANDLE_MAP)
-    # synfix_003 ([c3]) touches [Syria, Lebanon], synfix_001 ([c1]) touches
-    # [Syria] -- first-seen order, deduped: Syria, Lebanon.
-    assert claims[0].polities_touched == ["Syria", "Lebanon"]
+    claims = parse_synthesis_response(
+        raw, vault_dir=vault_dir, handle_map=_HANDLE_MAP, names_dir=names_dir
+    )
+    # [c3] names Tilly + Ibn Khaldun (+ one unknown, dropped), [c1] names
+    # Tilly -- first-seen order, deduped.
+    assert claims[0].names_touched == ["Charles Tilly", "Ibn Khaldun"]
+
+
+def test_names_touched_is_empty_when_the_vault_has_no_name_layer(vault_dir: Path, tmp_path: Path):
+    """An empty/absent alias map resolves nothing, so every surface drops.
+    Honest: the index carries no such name, so the claim touches none."""
+    raw = _valid_response(
+        claims=[
+            {
+                "text": "A claim over a vault with no name layer.",
+                "kind": "a",
+                "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
+                "confidence": "low",
+            }
+        ]
+    )
+    claims = parse_synthesis_response(
+        raw,
+        vault_dir=vault_dir,
+        handle_map=_HANDLE_MAP,
+        names_dir=tmp_path / "no-name-layer",
+    )
+    assert claims[0].names_touched == []
 
 
 # ---------------------------------------------------------------------------
@@ -595,10 +698,14 @@ def test_prompt_embeds_evidence_handles_and_text_never_the_real_chunk_id(
     # transcribe, truncate, or blend across two similar sources.
     brief = Brief(brief_id="synfix-brief", case="Syria", request="How?", lens="political-economy")
     composed = compose_prompt(brief, "political-economy", evidence_set, vault_dir=vault_dir)
-    assert "chunk_id=[c1]" in composed.text
-    assert "chunk_id=[c2]" in composed.text
-    assert "chunk_id=synfix_001_syria_a" not in composed.text
-    assert "chunk_id=synfix_002_iraq_a" not in composed.text
+    assert "chunk=[c1]" in composed.text
+    assert "chunk=[c2]" in composed.text
+    # The id LABEL is the handle; the real id is never offered as a citable
+    # one. (That no real id appears ANYWHERE is the stronger property, pinned
+    # by test_prompt_never_contains_the_real_long_chunk_id_anywhere below,
+    # whose fixture prose does not embed its own id the way SENTINEL does.)
+    assert "chunk=synfix_001_syria_a" not in composed.text
+    assert "chunk=synfix_002_iraq_a" not in composed.text
     assert "SENTINEL_synfix_001_syria_a" in composed.text
     assert "SENTINEL_synfix_002_iraq_a" in composed.text
     assert "political-economy" in composed.text
@@ -619,7 +726,7 @@ def test_prompt_never_contains_the_real_long_chunk_id_anywhere(tmp_path: Path):
     long_id_b = "batatu-1999-598624067df3_105_the-conflict-with-israel_002"
     chunks_fm = []
     for chunk_id in (long_id_a, long_id_b):
-        frontmatter = _chunk_frontmatter(chunk_id=chunk_id, polities_touched=["Syria"])
+        frontmatter = _chunk_frontmatter(chunk_id=chunk_id, names=["Tilly"])
         # Deliberately does NOT embed the id in the prose (unlike the
         # SENTINEL fixture text above) -- a real chunk's prose never
         # contains its own id, so this is what a real "the id is nowhere in
@@ -629,18 +736,8 @@ def test_prompt_never_contains_the_real_long_chunk_id_anywhere(tmp_path: Path):
     vault_dir = _write_vault(tmp_path, chunks=chunks_fm, artifacts=[])
     evidence = EvidenceSet(
         chunk_ids=[long_id_a, long_id_b],
-        chunks=[
-            EvidenceChunk(
-                chunk_id=chunk_id,
-                polities_touched=["Syria"],
-                role_in_argument="role:claim",
-                theory_school={"primary": "school:synthetic-institutionalist"},
-                claim_type={"primary": "claim:causal"},
-                empirical_scope={"value": "scope:country-case"},
-            )
-            for chunk_id in (long_id_a, long_id_b)
-        ],
-        polity_coverage={},
+        chunks=[_evidence_chunk(chunk_id) for chunk_id in (long_id_a, long_id_b)],
+        name_counts={},
     )
     brief = Brief(
         brief_id="synfix-brief-blend", case="Syria", request="How?", lens="political-economy"
@@ -672,7 +769,7 @@ def test_prompt_never_contains_the_real_long_chunk_id_anywhere(tmp_path: Path):
 
 def test_prompt_forbids_parametric_memory_and_marks_cross_source_inference():
     brief = Brief(brief_id="synfix-brief", case="Syria", request="How?", lens="political-economy")
-    empty_evidence = EvidenceSet(chunk_ids=[], chunks=[], polity_coverage={})
+    empty_evidence = EvidenceSet(chunk_ids=[], chunks=[], name_counts={})
     composed = compose_prompt(brief, "political-economy", empty_evidence)
     lowered = composed.text.lower()
     assert "parametric memory" in lowered
@@ -688,7 +785,7 @@ def test_prompt_forbids_parametric_memory_and_marks_cross_source_inference():
 
 
 def _budget_chunk_frontmatter(*, chunk_id: str, text_len: int) -> dict[str, Any]:
-    frontmatter = _chunk_frontmatter(chunk_id=chunk_id, polities_touched=["Syria"])
+    frontmatter = _chunk_frontmatter(chunk_id=chunk_id, names=["Tilly"])
     frontmatter["chunk_text"] = "X" * text_len
     return frontmatter
 
@@ -696,18 +793,8 @@ def _budget_chunk_frontmatter(*, chunk_id: str, text_len: int) -> dict[str, Any]
 def _budget_evidence_set(chunk_ids: list[str]) -> EvidenceSet:
     return EvidenceSet(
         chunk_ids=chunk_ids,
-        chunks=[
-            EvidenceChunk(
-                chunk_id=chunk_id,
-                polities_touched=["Syria"],
-                role_in_argument="role:claim",
-                theory_school={"primary": "school:synthetic-institutionalist"},
-                claim_type={"primary": "claim:causal"},
-                empirical_scope={"value": "scope:country-case"},
-            )
-            for chunk_id in chunk_ids
-        ],
-        polity_coverage={},
+        chunks=[_evidence_chunk(chunk_id) for chunk_id in chunk_ids],
+        name_counts={},
     )
 
 

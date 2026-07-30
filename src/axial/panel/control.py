@@ -173,32 +173,33 @@ def plant_strawman_counter_position(record: dict[str, Any]) -> tuple[dict[str, A
 
 
 def plant_overconfident(record: dict[str, Any]) -> tuple[dict[str, Any], Plant]:
-    """Raise to `high` a claim over a polity the coverage map discloses as
+    """Raise to `high` a claim over a name the coverage map discloses as
     thin -- the band now asserts more than the evidence behind it. Matched
-    against `polities_touched` (§7.4's own claim field, a list -- a claim
-    can touch more than one polity), not a nonexistent singular `polity`
-    field."""
+    against `names_touched` (§7.4's own claim field, a list -- a claim can
+    touch more than one name; `polities_touched` was its v0 name and its v0
+    substrate, retired with the tag pass, issue #489), not a nonexistent
+    singular field."""
     mutated = copy.deepcopy(record)
     coverage_map = mutated.get("coverage_map") or {}
     thin = {
-        polity
-        for polity, entry in coverage_map.items()
+        name
+        for name, entry in coverage_map.items()
         if isinstance(entry, dict) and entry.get("coverage_band") in _THIN_COVERAGE_BANDS
     }
     if not thin:
         raise PlantNotApplicableError(
-            OVERCONFIDENT, "the coverage map discloses no thin-coverage polity"
+            OVERCONFIDENT, "the coverage map discloses no thin-coverage name"
         )
     for index, claim in enumerate(mutated.get("claims") or [], start=1):
         if not isinstance(claim, dict):
             continue
-        touched = set(claim.get("polities_touched") or [])
+        touched = set(claim.get("names_touched") or [])
         if touched & thin and claim.get("confidence") != _HIGH_BAND:
             claim["confidence"] = _HIGH_BAND
             return mutated, Plant(kind=OVERCONFIDENT, claim_id=_claim_id_of(claim, index))
     raise PlantNotApplicableError(
         OVERCONFIDENT,
-        "no claim sits over a thin-coverage polity at a band below 'high'",
+        "no claim sits over a thin-coverage name at a band below 'high'",
     )
 
 

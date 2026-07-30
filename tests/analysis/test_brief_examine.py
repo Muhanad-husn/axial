@@ -9,8 +9,8 @@ Given a fixture vault and brief file config/briefs/dev/fixture-syria-displacemen
 When  `axial brief examine config/briefs/dev/fixture-syria-displacement.yaml` runs
 Then  the command exits 0
   And stdout lists exactly the retrieved chunk_ids, in retrieval order
-  And stdout reports corpus_chunk_count + evidence_chunk_count for every
-      polity the evidence set touches
+  And stdout reports a plain count of assembled notes per name (issue #489:
+      an inspection count, never the §7.7 banded coverage map)
   And stdout reports the interrogation result's disposition/premises_found/
       bounds_applied
   And no file is written under data/analyses/
@@ -31,8 +31,8 @@ Then  the command exits 0
   And exactly one LLM call was made (the interrogation call itself -- proof
       that no retrieval and no synthesis call followed the refusal)
 
-See specs/PHASE-B.md §5 stage 4, §7.5 (the vault query API), §7.7 (the raw
-per-polity coverage counts), §7.2 (the interrogation result), and §8
+See specs/PHASE-B.md §5 stage 4, §7.5 (the vault query API), §7.15 (the
+interrogation answers each note carries), §7.2 (the interrogation result), and §8
 P0-4/P0-9 (inspect-before-spend) for the source of truth, and
 plans/analysis-synthesis/01-evidence-assembly-and-examine.md for this
 slice's own acceptance criterion (identical Gherkin).
@@ -93,7 +93,12 @@ SYRIA_C = "exfix_003_syria_c"  # never retrieved -- proves corpus != evidence co
 IRAQ_A = "exfix_004_iraq"
 
 
-def _chunk_frontmatter(*, chunk_id: str, polities_touched: list[str]) -> dict[str, Any]:
+def _chunk_frontmatter(*, chunk_id: str, names: list[str], claim: str) -> dict[str, Any]:
+    """A prose note in the shape `axial.materialize` writes today (§7.15,
+    Appendix H): source metadata plus the nested interrogation `answers`
+    block. `arguing_against` abstains on every note here, in the object form
+    that carries a reason -- 24% of the live corpus does, and the examine
+    report must never show it as an answer."""
     return {
         "chunk_id": chunk_id,
         "section": "Synthetic Section",
@@ -105,54 +110,32 @@ def _chunk_frontmatter(*, chunk_id: str, polities_touched: list[str]) -> dict[st
             "thesis": "Synthetic thesis.",
             "scope": "Synthetic scope.",
         },
-        "schema_version": "0.1",
-        "role_in_argument": "role:claim",
-        "field": {"primary": "field:political-sociology", "secondary": []},
-        "claim_type": {"primary": "claim:causal", "secondary": None, "subtags": []},
-        "theory_school": {
-            "primary": "school:synthetic-institutionalist",
-            "secondary": None,
-            "status": "candidate",
+        "frame_version": "0.1",
+        "answers": {
+            "claim": claim,
+            "move": "stating a mechanism",
+            "position_of": "the author",
+            "arguing_against": {"not-in-passage": "the passage names no opponent"},
+            "names": [{"name": name, "kind": "country/state/place"} for name in names],
         },
-        "empirical_scope": {
-            "value": "scope:country-case",
-            "polity": polities_touched[0] if polities_touched else None,
-        },
-        "polities_touched": polities_touched,
-        "artifact_refs": [],
     }
 
 
 def _write_fixture_vault(root: Path) -> Path:
-    """Four synthetic prose notes: three touch "Syria" (only two of them are
-    ever retrieved, so corpus_chunk_count=3 must differ from
-    evidence_chunk_count=2), one touches "Iraq" (retrieved, so its counts
-    are equal)."""
+    """Four synthetic prose notes: three name "Syria" (only two of them are
+    ever retrieved, so the assembled per-name count is 2, not the corpus's 3),
+    one names "Iraq"."""
     prose_dir = root / "data" / "vault" / "prose"
     prose_dir.mkdir(parents=True, exist_ok=True)
     notes = [
-        _chunk_frontmatter(chunk_id=SYRIA_A, polities_touched=["Syria"]),
-        _chunk_frontmatter(chunk_id=SYRIA_B, polities_touched=["Syria"]),
-        _chunk_frontmatter(chunk_id=SYRIA_C, polities_touched=["Syria"]),
-        _chunk_frontmatter(chunk_id=IRAQ_A, polities_touched=["Iraq"]),
+        _chunk_frontmatter(chunk_id=SYRIA_A, names=["Syria"], claim="Displacement reshaped it."),
+        _chunk_frontmatter(chunk_id=SYRIA_B, names=["Syria"], claim="Notables lost the tax base."),
+        _chunk_frontmatter(chunk_id=SYRIA_C, names=["Syria"], claim="Never retrieved."),
+        _chunk_frontmatter(chunk_id=IRAQ_A, names=["Iraq"], claim="The party centralised power."),
     ]
     for frontmatter in notes:
         text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
         (prose_dir / f"{frontmatter['chunk_id']}.md").write_text(text, encoding="utf-8")
-    # `corpus_chunk_count`'s denominator is a name page's own `member_count`
-    # since issue #487 (D2) -- a polity is a name whose `kind` is
-    # `country/state/place`, so the fixture states these two as name pages.
-    names_dir = root / "data" / "vault" / "names"
-    names_dir.mkdir(parents=True, exist_ok=True)
-    for name, member_count in (("Syria", 3), ("Iraq", 1)):
-        page = {
-            "name": name,
-            "kind": "country/state/place",
-            "aliases": [],
-            "member_count": member_count,
-        }
-        body = yaml.safe_dump(page, sort_keys=False)
-        (names_dir / f"{name}.md").write_text(f"---\n{body}---\n", encoding="utf-8")
     return root
 
 
@@ -260,10 +243,11 @@ def test_examine_reports_evidence_coverage_and_interrogation_writes_nothing(
         in stdout
     )
 
-    # The retrieved chunk_ids, in exact retrieval order.
+    # The retrieved chunk_ids, in exact retrieval order, each with its own
+    # one-sentence `claim` answer.
     retrieved_index = stdout.index("retrieved chunk_ids")
-    coverage_index = stdout.index("polity coverage:")
-    retrieved_block = stdout[retrieved_index:coverage_index]
+    names_index = stdout.index("names in the assembled evidence")
+    retrieved_block = stdout[retrieved_index:names_index]
     assert (
         retrieved_block.index(SYRIA_B)
         < retrieved_block.index(SYRIA_A)
@@ -272,11 +256,22 @@ def test_examine_reports_evidence_coverage_and_interrogation_writes_nothing(
     assert SYRIA_C not in retrieved_block, (
         f"chunk {SYRIA_C!r} was never retrieved and must not appear, got:\n{retrieved_block!r}"
     )
+    assert "claim: Notables lost the tax base." in retrieved_block, retrieved_block
 
-    # Raw per-polity coverage: Syria's corpus count (3) must differ from its
-    # evidence count (2, only A and B retrieved); Iraq's are equal (1 and 1).
-    assert "Syria: corpus_chunk_count=3 evidence_chunk_count=2" in stdout, stdout
-    assert "Iraq: corpus_chunk_count=1 evidence_chunk_count=1" in stdout, stdout
+    # A plain per-name count of the ASSEMBLED notes (issue #489): Syria is 2,
+    # not the corpus's 3, because only A and B were retrieved. No band, no
+    # corpus denominator, no confidence -- the §7.7 banded map is computed
+    # after synthesis, which this command exists to precede.
+    names_block = stdout[names_index:]
+    assert "Syria: 2" in names_block, stdout
+    assert "Iraq: 1" in names_block, stdout
+    assert "coverage_band" not in stdout
+    assert "corpus_chunk_count" not in stdout
+
+    # Every note abstained on `arguing_against`, so it appears nowhere as an
+    # answer -- not the field, not the sentinel.
+    assert "not-in-passage" not in stdout
+    assert "arguing_against" not in stdout
 
     analyses_dir = fixture_root / "data" / "analyses"
     assert not analyses_dir.exists() or not any(analyses_dir.iterdir()), (

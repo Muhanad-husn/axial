@@ -95,7 +95,18 @@ SYRIA_A = "brfix_001_syria_a"
 IRAQ_A = "brfix_002_iraq_a"
 
 
-def _chunk_frontmatter(*, chunk_id: str, polities_touched: list[str]) -> dict[str, Any]:
+def _chunk_frontmatter(*, chunk_id: str, surface: str) -> dict[str, Any]:
+    """A prose note in the shape `axial.materialize` writes today: source
+    metadata plus the nested interrogation `answers` block (§7.15). It keeps
+    `schema_version`, which the record's own `schema_version` field is read
+    off (§7.3).
+
+    `surface` is a deliberately unresolvable name: no alias map is configured
+    for a `run_brief` call, and no real index carries this string either, so
+    the persisted `names_touched` is `[]` on any machine -- the §7.4 rule that
+    an unknown surface is DROPPED rather than invented, seen at the record
+    layer. The union rule itself is pinned in test_synthesis_claim_graph.py,
+    which controls the name layer."""
     return {
         "chunk_id": chunk_id,
         "section": "Synthetic Section",
@@ -108,20 +119,13 @@ def _chunk_frontmatter(*, chunk_id: str, polities_touched: list[str]) -> dict[st
             "scope": "Synthetic scope.",
         },
         "schema_version": "0.1",
-        "role_in_argument": "role:claim",
-        "field": {"primary": "field:political-sociology", "secondary": []},
-        "claim_type": {"primary": "claim:causal", "secondary": None, "subtags": []},
-        "theory_school": {
-            "primary": "school:synthetic-institutionalist",
-            "secondary": None,
-            "status": "candidate",
+        "frame_version": "0.1",
+        "answers": {
+            "claim": f"Claim of {chunk_id}.",
+            "move": "stating a mechanism",
+            "position_of": "the author",
+            "names": [{"name": surface, "kind": "country/state/place"}],
         },
-        "empirical_scope": {
-            "value": "scope:country-case",
-            "polity": polities_touched[0] if polities_touched else None,
-        },
-        "polities_touched": polities_touched,
-        "artifact_refs": [],
     }
 
 
@@ -129,8 +133,8 @@ def _write_fixture_vault(root: Path) -> None:
     prose_dir = root / "data" / "vault" / "prose"
     prose_dir.mkdir(parents=True, exist_ok=True)
     notes = [
-        _chunk_frontmatter(chunk_id=SYRIA_A, polities_touched=["Syria"]),
-        _chunk_frontmatter(chunk_id=IRAQ_A, polities_touched=["Iraq"]),
+        _chunk_frontmatter(chunk_id=SYRIA_A, surface="Fixture-Syria-Unindexed"),
+        _chunk_frontmatter(chunk_id=IRAQ_A, surface="Fixture-Iraq-Unindexed"),
     ]
     for frontmatter in notes:
         text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
@@ -330,18 +334,21 @@ def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path
     }
     by_kind = {claim["kind"]: claim for claim in record["claims"]}
     assert by_kind["a"]["grounds"] == [{"ref_type": "chunk", "ref_id": SYRIA_A}]
-    assert by_kind["b"]["polities_touched"] == ["Syria", "Iraq"]
+    # §7.4's renamed field is what the record carries now (issue #489). It is
+    # empty here because neither grounds note's surface form resolves through
+    # any alias map -- dropped, never invented.
+    assert by_kind["b"]["names_touched"] == []
+    assert "polities_touched" not in by_kind["b"]
 
-    # Issue #400: coverage_map/confidence are computed for real, not
-    # placeholders -- the fixture vault carries exactly one chunk per
-    # polity, well under the default moderate_floor (20), so both touched
-    # polities disclose "thin" and the overall confidence is bounded to
-    # "low" by construction (never "high" while a thin polity is disclosed).
-    assert set(record["coverage_map"]) == {"Syria", "Iraq"}
-    for polity, entry in record["coverage_map"].items():
-        assert entry["coverage_band"] == "thin", polity
-        assert entry["corpus_chunk_count"] == 1
-        assert entry["evidence_chunk_count"] >= 1
+    # `coverage_map` is EMPTY here, and that is this slice's stated interim
+    # state (issue #489, reconciled against #490). `compute_coverage_map`
+    # still folds the retired `polities_touched`, which no note and no claim
+    # carries any more, so it returns `{}` and `confidence.overall_band` is
+    # pinned `low` by §7.7's own derivation rule -- which is the live vault's
+    # state today too (0 coverage entries, `low` on every run), not a
+    # regression this test is hiding. Re-pointing the map at `names_touched`
+    # is #490's whole job, and it re-asserts the real bands here.
+    assert record["coverage_map"] == {}
     assert record["confidence"]["overall_band"] == "low"
     assert record["confidence"]["rationale"]
     assert "placeholder" not in record["confidence"]["rationale"]
