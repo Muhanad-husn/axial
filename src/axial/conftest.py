@@ -46,21 +46,28 @@ def _isolate_checkpoint_dirs(tmp_path_factory, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _isolate_runlog_root(tmp_path_factory, monkeypatch):
-    """Redirect `axial.runlog.LOGS_ROOT` to a fresh temp directory for every
-    in-process test. `run_context(name, root=None, ...)` -- the shape every
-    CLI subcommand's own call site uses (`_extract`, `_envelope`,
-    `_interrogate` when `--data-dir` is absent, `_gather_eval_score`,
-    `_eval`) -- falls back to this module global, so a test that drives the
-    CLI through `main()` with no injected root (e.g. `cli_mod.main(["eval"])`)
-    would otherwise create a real timestamped run directory in the operator's
-    own `data/logs/` on every run of this suite. Confirmed: 79 such
-    directories accumulated there between 2026-07-25 and 2026-07-30, one per
-    commit-gate run, all carrying `model: "stub"` and a fixture `source_id`.
+    """Set `AXIAL_LOGS_ROOT` to a fresh temp directory for every test in this
+    suite. `run_context(name, root=None, ...)` -- the shape every CLI
+    subcommand's own call site uses (`_extract`, `_envelope`, `_interrogate`
+    when `--data-dir` is absent, `_gather_eval_score`, `_eval`) -- resolves
+    this env var when `root` is not given (`axial.runlog._resolve_logs_root`,
+    mirroring `axial.llm`'s own `AXIAL_SECRETS_PATH` seam), so a test that
+    drives the CLI through `main()` with no injected root (e.g.
+    `cli_mod.main(["eval"])`) would otherwise create a real timestamped run
+    directory in the operator's own `data/logs/` on every run of this suite.
+    Confirmed: 79 such directories accumulated there between 2026-07-25 and
+    2026-07-30, one per commit-gate run, all carrying `model: "stub"` and a
+    fixture `source_id`.
+
+    The env var, not `monkeypatch.setattr(_runlog_mod, "LOGS_ROOT", ...)`:
+    one seam that reaches an in-process call AND a subprocess `axial` child
+    (`tests/conftest.py`'s twin fixture covers the latter) beats two that
+    each cover only one.
 
     Only the `root=None` default path is affected: a test that injects its
     own `root=` (`src/axial/test_runlog.py`, `tests/test_runlog_passes.py`)
-    never reads this global and is untouched."""
-    monkeypatch.setattr(_runlog_mod, "LOGS_ROOT", tmp_path_factory.mktemp("runlog"))
+    never reads this env var and is untouched."""
+    monkeypatch.setenv(_runlog_mod.LOGS_ROOT_ENV_VAR, str(tmp_path_factory.mktemp("runlog")))
 
 
 @pytest.fixture(autouse=True)

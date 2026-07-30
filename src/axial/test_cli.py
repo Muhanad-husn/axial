@@ -149,32 +149,34 @@ def test_main_eval_prints_error_and_returns_nonzero_on_malformed_polity_canonica
     assert "Traceback" not in captured.err
 
 
-def test_main_eval_with_no_injected_root_writes_its_run_dir_only_under_logs_root(
+def test_main_eval_with_no_injected_root_writes_its_run_dir_only_under_the_env_override(
     tmp_path, monkeypatch
 ):
     """Regression test for the conftest guard (`_isolate_runlog_root` in
-    both `src/axial/conftest.py` and `tests/conftest.py`, which redirect
-    `axial.runlog.LOGS_ROOT` to a fresh temp directory for every test).
+    both `src/axial/conftest.py` and `tests/conftest.py`, which set
+    `AXIAL_LOGS_ROOT` to a fresh temp directory for every test).
 
-    `cli_mod.main(["eval"])` -- exactly how this file's own test above drives
-    it, and how every CLI test that never passes `--data-dir` or injects
-    `root` drives `extract`/`envelope`/`gather-eval score`/`eval` -- must
-    write its run directory under `axial.runlog.LOGS_ROOT`'s OWN current
-    value, resolved dynamically at call time, never a path this test
-    hardcodes. Proven by patching that module attribute directly (the exact
-    seam the conftest fixture uses) to a location only this test owns, then
+    `cli_mod.main(["eval"])` -- exactly how this file's own test above
+    drives it, and how every CLI test that never passes `--data-dir` or
+    injects `root` drives `extract`/`envelope`/`gather-eval score`/`eval` --
+    must write its run directory under wherever `AXIAL_LOGS_ROOT` currently
+    points (`axial.runlog._resolve_logs_root`), resolved dynamically at call
+    time, never a path this test hardcodes. Proven by setting that env var
+    directly (the exact seam the conftest fixture uses, and the one that
+    also reaches a subprocess `axial` invocation, unlike patching the
+    `LOGS_ROOT` module attribute) to a location only this test owns, then
     asserting the run directory landed there and nowhere else was touched --
     which is what makes the conftest-level guard effective: since every
-    subcommand's own `root=None` default resolves through this one
-    attribute, redirecting it once (as the autouse fixture already does for
-    every test in this suite) is enough to keep any test from ever reaching
-    the operator's real `data/logs/` (measured: 79 such directories leaked
-    there between 2026-07-25 and 2026-07-30 before this guard existed)."""
+    subcommand's own `root=None` default resolves through this one env var,
+    setting it once (as the autouse fixture already does for every test in
+    this suite) is enough to keep any test from ever reaching the operator's
+    real `data/logs/` (measured: 79 such directories leaked there between
+    2026-07-25 and 2026-07-30 before this guard existed)."""
     import axial.cli as cli_mod
-    import axial.runlog as runlog_mod
+    from axial.runlog import LOGS_ROOT_ENV_VAR
 
     logs_root = tmp_path / "logs"
-    monkeypatch.setattr(runlog_mod, "LOGS_ROOT", logs_root)
+    monkeypatch.setenv(LOGS_ROOT_ENV_VAR, str(logs_root))
     monkeypatch.setattr(cli_mod, "run_eval", lambda: tmp_path / "gold.json")
     assert not logs_root.exists()
 
