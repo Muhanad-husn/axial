@@ -56,7 +56,7 @@ Each is excluded deliberately; documenting them protects the architecture.
 
    **D10 — reusing the name embeddings does not reopen this.** `find_names` (§7.5) reads the vectors Reconcile already built over **name surface forms** (`data/names/embeddings.lance`) as its last resolution tier. That is a different problem from chunk retrieval, on a different unit: the index is already built and paid for, and exact match demonstrably fails on the names briefs actually use — the index holds `Charles Tilly`, `Giorgio Agamben`, `Uğur Ümit Üngör` while briefs say Tilly, Agamben, Ungor. Hand-rolling a string matcher instead would be reinventing a wheel sitting in `data/names/`. Nothing here embeds, indexes or ranks a note's text, which is what this non-goal defers.
 5. **No corpus or schema modification.** Phase A owns ingestion, interrogation, and the domain frame. Phase B reads the vault read-only. A gap found here routes to a Phase A issue under the DEC-55 rule — new issues come from using the product — never a Phase-B code patch.
-6. **No multi-brief orchestration or batching** beyond what the CLI needs to run one brief, run the five-brief smoke set, and inspect either. Corpus-wide brief sweeps, scheduling, and caching across briefs are out of scope; the 30-brief sweep is retired (§9.0, D7).
+6. **No multi-brief orchestration or batching** beyond what the CLI needs to run one brief, run the six-brief smoke set, and inspect either. Corpus-wide brief sweeps, scheduling, and caching across briefs are out of scope; the 30-brief sweep is retired (§9.0, D7).
 
 ---
 
@@ -105,7 +105,7 @@ src/axial/
                 #   instrument, never reached by a brief run
 config/
   briefs/
-    smoke/      # the five short briefs run on every slice (§9, D7)
+    smoke/      # the six short briefs run on every slice (§9, D7)
     eval/       # the five hard briefs run when the engine is stable (§9, D7)
     sim/        # the v0 30-brief pool, kept as history; no longer swept (§9)
     dev/        # small fixture briefs for tests; NOT a brief set
@@ -349,7 +349,7 @@ Alongside the JSON record, stage 6 renders a human-readable markdown answer. It 
 Model choice and reasoning are per-pass settings, carried in the existing `model_by_pass` / `reasoning_by_pass` config seams (PRODUCT.md §7.9), never hardcoded. Tentative starting assignments, tunable like Phase A's:
 - **Analysis / synthesis (stage 4)** — **high tier, reasoning ON**. This is the judgment-heavy, once-per-brief call whose output every downstream validator checks.
 - **Brief interrogation (stage 1)** and the **bounded validator model checks (stage 5)** — a cheaper tier may suffice; reasoning per pass as measured.
-- **The agentic query loop (stage 3)** — tier chosen for tool-use reliability, measured on the smoke set. **Currently `production_high`** (issue #517), moved off the default low tier on a one-brief measurement: retrieval's real work is a judgment — which two names to intersect — and on P3-01 the low tier called `where_names_meet` once, on a name only one book uses, assembling 24 notes from 2 sources, while the high tier called it five times and assembled 137 from 12. The deciding signal was in the low tier's own prompt either way (`find_names`' `member_count`, and each result's source span through `ToolResult.detail`), and two prompt revisions did not change what it did with it. **One brief, one draw**: the smoke set (§9) is what turns this into the measurement this bullet asks for, and it has not run yet.
+- **The agentic query loop (stage 3)** — tier chosen for tool-use reliability, measured on the smoke set. **Currently `production_high`** (issue #517), moved off the default low tier on a one-brief measurement: retrieval's real work is a judgment — which two names to intersect — and on P3-01 (then in the smoke set, now history under `config/briefs/sim/` after the 2026-07-30 rebuild — §9.0) the low tier called `where_names_meet` once, on a name only one book uses, assembling 24 notes from 2 sources, while the high tier called it five times and assembled 137 from 12. The deciding signal was in the low tier's own prompt either way (`find_names`' `member_count`, and each result's source span through `ToolResult.detail`), and two prompt revisions did not change what it did with it. **One brief, one draw**: the smoke set (§9) is what turns this into the measurement this bullet asks for, and it has not run yet.
 
 Which pass runs at which tier is proven by measurement on the smoke and eval sets (§9), not asserted here.
 
@@ -410,7 +410,7 @@ source_usage: {
 
 **The names the denominator counts over are the CANONICALS those queries reached**, not the query strings: the `canonical` argument of every name-layer traversal plus every canonical `find_names` resolved (`axial.validators.coverage.retrieved_names`, the same read §7.7's coverage scope uses, imported rather than restated so the two cannot drift). `names_queried` discloses the queries; the denominator is computed over the names they landed on.
 
-**`denominator_by_name` is why one hub name cannot hide (issue #491).** Measured over the live vault 2026-07-30: `Syria` carries 962 member notes, 15.6% of the 6,148 prose notes, and `United States`, `United Kingdom`, `France` and `Egypt` follow at 14.7%, 14.0%, 14.0% and 11.0%. Every P2/P3 smoke brief touches `Syria` by construction, so one place name can dominate the union and flatten `usage_ratio` and both §7.15 concentration figures toward zero regardless of how well the run selected. The per-name contribution is therefore recorded alongside the total, so an inflated denominator is visible as data rather than only in the ratios it flattens. **No `kind` exclusion and no per-name cap is applied**: either would be a constant fitted before any measurement, and the inspection below is what decides whether one is needed.
+**`denominator_by_name` is why one hub name cannot hide (issue #491).** Measured over the live vault 2026-07-30: `Syria` carries 962 member notes, 15.6% of the 6,148 prose notes, and `United States`, `United Kingdom`, `France` and `Egypt` follow at 14.7%, 14.0%, 14.0% and 11.0%. **P3-04 is the smoke set's one Syria brief and is retained for exactly this reason** (§9.0, set rebuilt 2026-07-30): one place name can dominate the union and flatten `usage_ratio` and both §7.15 concentration figures toward zero regardless of how well the run selected, and P3-04 is the only brief in the set that can produce that. The five S-0N briefs anchor between 5 and 22 sources by design, so they measure the opposite end — whether a union built from mid-sized names is wide enough to flatten every ratio toward 1 on its own. The per-name contribution is therefore recorded alongside the total, so an inflated denominator is visible as data rather than only in the ratios it flattens. **No `kind` exclusion and no per-name cap is applied**: either would be a constant fitted before any measurement, and the inspection below is what decides whether one is needed.
 
 **The denominator is a stated tunable, and the smoke set is where it is proven.** Under tags, `available_chunk_count` was that source's share of the union of chunks matching any observed filter. Under names the natural analogue -- and what v1 specifies -- is **the union of member notes across the names queried**, a note that is a member of two queried names counting once, re-queried over the pinned vault, never derived from this run's own evidence, so a source the run under-drew on still gets an honest, non-zero denominator when the corpus held it. That analogue is a hypothesis, not a proof: names overlap far more than tag filters did, so the union may be wide enough to flatten every ratio toward 1 and hide the very skew this field exists to catch. **The distribution is inspected on the smoke set (§9) before any concentration figure is read as meaning anything.** This is the same discipline §7.7's coverage band and §7.8's contested rule follow: state the tunable, prove it by inspection, then set it.
 
@@ -465,7 +465,7 @@ It is a separate artifact rather than a field, because §7.3's record shape is l
 
 **Accuracy.** Exactly the four measures of D8 (§10), each reported separately and never summed into one number: attribution completeness and retrieval hit (mechanical); grounding-support rate and instant-dismissal violations (judged, each under its own pass name, never by the generating model).
 
-**The two mechanical numbers are computed with zero model calls; the two judged numbers are opt-in and are otherwise reported as not-scored with a stated reason** -- never as a 0 that reads like a measurement, and never as a silent pass. That is the same three-state discipline §10 states for a gate metric, applied to a report that gates nothing. `retrieval_hit` scores against the `required_citation_source_ids` of the §9.3 case joined to the run; the join is the brief file's own stem (`config/briefs/smoke/P3-01.yaml` scores against `evals/cases/sim/P3-01.json`), and a brief with no case file has no oracle, which the report states rather than scoring as 0. `grounding_support_rate` reuses the rung-3 grounding gate wholesale rather than opening a second judge seam.
+**The two mechanical numbers are computed with zero model calls; the two judged numbers are opt-in and are otherwise reported as not-scored with a stated reason** -- never as a 0 that reads like a measurement, and never as a silent pass. That is the same three-state discipline §10 states for a gate metric, applied to a report that gates nothing. `retrieval_hit` scores against the `required_citation_source_ids` of the §9.3 case joined to the run; the join is the brief file's own stem (`config/briefs/smoke/S-01.yaml` scores against `evals/cases/sim/S-01.json`), and a brief with no case file has no oracle, which the report states rather than scoring as 0. `grounding_support_rate` reuses the rung-3 grounding gate wholesale rather than opening a second judge seam.
 
 **Response quality.**
 
@@ -549,8 +549,8 @@ It is a separate artifact rather than a field, because §7.3's record shape is l
 - [ ] Observable (D6, #484): restoring a Gather section that was cleared, with no prose note changed, moves the vault snapshot hash and so requires a fresh pin.
 
 **P0-11 Brief sets landed as versioned data.**
-- [ ] Five short briefs under `config/briefs/smoke/` and five hard briefs under `config/briefs/eval/`, real files in the §7.1 shape (§9, D7). Observable: both sets are readable from the repo and drive the harness runs with no Academic dependency.
-- [ ] The five smoke briefs run on every slice; the five hard briefs run when the engine is stable. Each smoke brief has a case file under `evals/cases/sim/`; the one new hard brief lands with a case file authored alongside it or that slot has no mechanical oracle.
+- [ ] Six short briefs under `config/briefs/smoke/` and five hard briefs under `config/briefs/eval/`, real files in the §7.1 shape (§9, D7). Observable: both sets are readable from the repo and drive the harness runs with no Academic dependency.
+- [ ] The six smoke briefs run on every slice; the five hard briefs run when the engine is stable. Each smoke brief has a case file under `evals/cases/sim/`; the one new hard brief lands with a case file authored alongside it or that slot has no mechanical oracle.
 - [ ] `config/briefs/sim/` is retained untouched as history and is no longer swept. `config/briefs/dev/` holds small fixture briefs for tests and is not a brief set. The 26 parked Academic research questions are **not coming** (#250, closed not planned), so these sets are permanent rather than a stand-in.
 
 **P0-12 Rung-3 eval-gate harnesses built and dry-runnable (charter §2 rung 3).**
@@ -593,7 +593,7 @@ It is a separate artifact rather than a field, because §7.3's record shape is l
 
 **Brief and case sources.**
 
-- **Smoke briefs** — `config/briefs/smoke/`, five short briefs in the §7.1 shape, run on every slice (§9.0, P0-11).
+- **Smoke briefs** — `config/briefs/smoke/`, six short briefs in the §7.1 shape, run on every slice (§9.0, P0-11).
 - **Eval briefs** — `config/briefs/eval/`, five hard briefs, run when the engine is stable (§9.0, P0-11).
 - **Adversarial seeded briefs** — `config/briefs/adversarial/`, authored in-repo, each carrying its own declared premise. The seed is the answer key (§10).
 - **Sim hard cases** — `evals/cases/sim/`, retained permanently, with the field-by-field contract of §9.3.
@@ -605,23 +605,30 @@ It is a separate artifact rather than a field, because §7.3's record shape is l
 
 Two sets, real files rather than a manifest over a pool. **The eval brief is the one that counts**, so it is authored, not selected.
 
-**Smoke — five short briefs, four retrieval shapes, run on every slice.**
+**Smoke — six short briefs, six retrieval shapes, run on every slice.**
 
-| brief | chars | shape it exercises |
-|---|---|---|
-| P3-01 | 181 | scholar against scholar over a densely covered question |
-| P3-04 | 183 | concept anchor at the corpus's centre of gravity |
-| P4-03 | 185 | a concept name page whose own book is in the corpus |
-| P4-04 | 198 | thin coverage, and the name-layer **fragmentation** case (measured 2026-07-30, §7.5): the corpus holds `Autonomous Administration of North and East Syria` (2 members) plus an unmerged `AANS` node, and the acronym `AANES` a brief writes reaches neither. Not a resolution-failure case — the entity is there |
-| P2-02 | 248 | single-book-heavy retrieval, the source-concentration probe |
+| brief | chars | shape it exercises | anchor spread |
+|---|---|---|---|
+| P3-04 | 183 | hub anchor at the corpus's centre of gravity | `Syria` 962 notes / 22 sources |
+| S-01 | 189 | scholar against scholar over a densely covered question | Tilly 154/20, Mann 377/15 |
+| S-02 | 197 | a concept several books use in incompatible ways | `nationalism` 158/18 |
+| S-03 | 194 | a concept whose own book is in the corpus | `quasi-states` 51/**5** |
+| S-04 | 189 | thin coverage | `Transnistria` 36/**2** |
+| S-05 | 179 | single-source concentration | `Somaliland` 52/**1** |
 
-All five have case files under `evals/cases/sim/`, joined on the file stem, so each smoke run scores the mechanical retrieval-hit oracle (§9.3). **No P1 or P5 brief is in this set**: both personas write long compound questions by construction, which is why they carry the hard set instead.
+All six have case files under `evals/cases/sim/`, joined on the file stem, so each smoke run scores the mechanical retrieval-hit oracle (§9.3). **No P1 or P5 brief is in this set**: both personas write long compound questions by construction, which is why they carry the hard set instead.
 
-**`axial brief smoke` runs the set** (issue #491): five briefs, one draw each, **mechanical checks only** -- the record validates against the §7.3 shape and every grounds pointer resolves; `disposition` is one of the three; the coverage map is non-empty (the empty-map regression #490 exists to fix must be loud, and only a refusal legitimately skips it); no unhandled exception and no tool call the dispatcher had to refuse; and a per-brief cost and latency budget. Nothing there is a quality judgment. It is a thin front end over `run_sweep` -- resume, one fresh client per draw, per-draw latency and per-pass cost aggregation already live there -- with three deliberate differences: the checks and budgets, **a non-zero exit on any mechanical failure** (`axial brief sweep` returns 0 even with failed draws, mirroring `axial run`'s loop rule; smoke inverts that because it is a gate), and **gate scoring off** through one boolean seam, because the four rung-3 gates are a quality judgment and a model bill that would make the cost budget measure the judge instead of the run.
+**The set was rebuilt on 2026-07-30 (founder decision) and is no longer Syria-concentrated.** All five original briefs were Syria briefs, which left most of the corpus unexercised: 25 of the 31 sources are not about Syria, and the name layer's widest meeting points are `Charles Tilly` (20 sources), `Max Weber` (19), `nationalism` (18) and `World War I` (19). S-01 through S-05 were authored against the measured index by a model with no access to this repo, then verified anchor by anchor before landing; spreads above are measured over the live index 2026-07-30. `config/briefs/sim/` still holds the originals as history.
 
-**The budgets are stated tunables set from the first five real runs, never guessed in advance, and until then they are UNSET.** `smoke.max_usd_per_brief` and `smoke.max_seconds_per_brief` (`config/pipeline.yaml`) are present and explicitly `null`, with no code-level fallback: an unset budget **skips** its check rather than passing vacuously or failing for a number nobody measured, and the command's own output says `UNMEASURED` where the figure would be.
+**P3-04 is retained as the set's one Syria brief, and the reason is §7.13.** The denominator inspection this phase owes is stated in terms of a hub name swamping the union of member notes. Every S-0N anchor is mid-sized by design (5 to 22 sources, 36 to 377 notes), so a Syria-free set would leave that inspection with nothing to bite on.
 
-**P4-04's fragmentation read is printed, not asserted.** Whether a run silently substituted a nearest-neighbour name for `AANES` is a judgment about which names it reached, and a brief-specific rule in `src/` would be domain content as code. So the command prints the names each run queried and the founder reads them.
+**S-04 and S-05 do not name the finding they probe.** Both measure whether a run *notices* thin evidence and single-source concentration unprompted, so a question that says the evidence is thin, or that every note comes from one book, would make a pass prove only instruction-following. The disclosure requirement sits in the §9.3 rubric instead.
+
+**`axial brief smoke` runs the set** (issue #491): six briefs, one draw each, **mechanical checks only** -- the record validates against the §7.3 shape and every grounds pointer resolves; `disposition` is one of the three; the coverage map is non-empty (the empty-map regression #490 exists to fix must be loud, and only a refusal legitimately skips it); no unhandled exception and no tool call the dispatcher had to refuse; and a per-brief cost and latency budget. Nothing there is a quality judgment. It is a thin front end over `run_sweep` -- resume, one fresh client per draw, per-draw latency and per-pass cost aggregation already live there -- with three deliberate differences: the checks and budgets, **a non-zero exit on any mechanical failure** (`axial brief sweep` returns 0 even with failed draws, mirroring `axial run`'s loop rule; smoke inverts that because it is a gate), and **gate scoring off** through one boolean seam, because the four rung-3 gates are a quality judgment and a model bill that would make the cost budget measure the judge instead of the run.
+
+**The budgets are stated tunables set from the first real runs of the set, never guessed in advance, and until then they are UNSET.** `smoke.max_usd_per_brief` and `smoke.max_seconds_per_brief` (`config/pipeline.yaml`) are present and explicitly `null`, with no code-level fallback: an unset budget **skips** its check rather than passing vacuously or failing for a number nobody measured, and the command's own output says `UNMEASURED` where the figure would be.
+
+**Which names a run reached is printed, not asserted.** Whether a run silently substituted a nearest-neighbour name is a judgment, and a brief-specific rule in `src/` would be domain content as code. So the command prints the names each run queried and the founder reads them. **The name-layer fragmentation case left the set with P4-04** (the corpus holds `Autonomous Administration of North and East Syria` with 2 members plus an unmerged `AANS` node, and the acronym `AANES` reaches neither — measured 2026-07-30, §7.5, filed against Phase A as #498). Nothing in the rebuilt set replaces it. That is a known cut, not an oversight: no mechanical check ever asserted on it, so what was lost is one printed read, and the brief survives in `config/briefs/sim/`.
 
 **Eval — five hard briefs, five theory clusters, run when the engine is stable.**
 
@@ -805,7 +812,7 @@ The build proceeds bottom-up, so each layer stands on a tested one beneath it. *
 3. **The retrieval loop rewired (P0-3)** onto step 2's tools: tool registry and dispatcher, trajectory log unchanged, step budget re-proven.
 4. **Evidence assembly & analysis (P0-4)** rebuilt around `claim` / `position_of` / `position` / `arguing_against` / `citations`, with Gather findings as hints per D4; the inspect-before-spend `examine` affordance (P0-9).
 5. **Coverage, counter-position and the metrics** — the per-name map, confidence derivation, contested detection (P0-6, P0-7), then source usage re-based and the run report (P0-13, P0-14).
-6. **The smoke harness (P0-11).** `config/briefs/smoke/` and five briefs behind mechanical gates plus a cost and latency budget. Built early on purpose: it is the feedback loop everything above and below is checked against.
+6. **The smoke harness (P0-11).** `config/briefs/smoke/` and six briefs behind mechanical gates plus a cost and latency budget. Built early on purpose: it is the feedback loop everything above and below is checked against.
 7. **The gates and the eval run (P0-12).** Gate fixtures re-pointed at the new record, `config/briefs/eval/` landed with the new brief and its case, and the instrumented run executed and reported. These are trusted-tier numbers (§9.2).
 8. **The reviewer panel and its positive control.** Stand up the §9.4 sealed-packet panel, run the mandatory positive control against planted defects, and only then report any answer-quality number, in the refereed tier with its ceiling and sampling frame disclosed. This is an offline measurement step, not a pipeline stage: steps 1 to 7 ship a complete engine without it, and it runs occasionally against a sample thereafter. No academic step precedes or replaces it.
 

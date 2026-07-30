@@ -1,0 +1,9 @@
+# origin: simulated
+# model: GPT-5.6 Pro
+# persona: smoke-v2
+# reasoning_mode_confirmed: reasoning
+# date: 2026-07-30
+# path_version: sim-v1
+# shape: a concept whose own book is in the library
+case: "Comparative: quasi-states, recognition and international statebuilding, 1945-2012"
+request: "How do later accounts of sovereignty, recognition and international statebuilding modify Jackson's concept of quasi-states: do they narrow it, extend it, or contest what it was meant to explain?"

@@ -65,15 +65,16 @@ def test_non_string_entries_are_dropped_rather_than_carried(tmp_path):
 
 
 def test_every_committed_sim_case_still_states_both_oracles():
-    """§9.3 says `instant_dismissal_criteria` is non-empty on all 21 cases
-    and `required_citation_source_ids` survived the Phase A v1 rebuild. This
-    pins both, since the whole point of this slice is that they are now
-    read."""
+    """§9.3 says `instant_dismissal_criteria` is non-empty on every committed
+    case and `required_citation_source_ids` survived the Phase A v1 rebuild.
+    This pins both, since the whole point of this slice is that they are now
+    read. 21 original cases plus the five S-0N cases authored with the
+    2026-07-30 smoke-set rebuild (§9.0)."""
     from pathlib import Path
 
     cases_dir = Path("evals/cases/sim")
     case_ids = sorted(path.stem for path in cases_dir.glob("*.json"))
-    assert len(case_ids) == 21
+    assert len(case_ids) == 26
     for case_id in case_ids:
         case = load_case(case_id, cases_dir=cases_dir)
         assert case is not None

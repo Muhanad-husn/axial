@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "GPT-5.6 Pro",
+    "persona": "smoke-v2",
+    "reasoning_mode_confirmed": "reasoning",
+    "date": "2026-07-30",
+    "path_version": "sim-v1"
+  },
+  "case_id": "S-03",
+  "question": "How do later accounts of sovereignty, recognition and international statebuilding modify Jackson's concept of quasi-states: do they narrow it, extend it, or contest what it was meant to explain?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "jackson-1990-7eb3f39a639f",
+    "caspersen-2012-fbc0efe4fffc",
+    "zaum-2007-834d3343aa95"
+  ],
+  "rubric": [
+    "establishes the originating problem posed by quasi-states without allowing Jackson's book to stand in for the whole concept",
+    "distinguishes juridical sovereignty, empirical capacity, external recognition and local ownership as separate explanatory dimensions",
+    "identifies where later works borrow the term, narrow it, extend it or contest its causal implications",
+    "attributes the comparison across at least two books and states whether the originating work dominates or is outnumbered in the evidence it reached"
+  ],
+  "instant_dismissal_criteria": [
+    "answers entirely from Jackson's book",
+    "treats quasi-states and unrecognized states as exact synonyms",
+    "mentions sovereignty without distinguishing legal status from institutional capacity",
+    "claims cross-book consensus without identifying any modification, borrowing or criticism"
+  ],
+  "notes": "The disagreement lies in whether the central deficit is juridical, institutional, relational or produced through international intervention. The probe tests whether the system can preserve Jackson's concept while showing how other books reorganize it. Citation ids derived from the live index 2026-07-30: across the three anchors (quasi-states, Robert H. Jackson, sovereignty) only these three sources carry more than 3 notes, and the cut below them is sharp (45 / 36 / 28, then 3)."
+}

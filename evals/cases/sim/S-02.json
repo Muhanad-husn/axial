@@ -1,0 +1,34 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "GPT-5.6 Pro",
+    "persona": "smoke-v2",
+    "reasoning_mode_confirmed": "reasoning",
+    "date": "2026-07-30",
+    "path_version": "sim-v1"
+  },
+  "case_id": "S-02",
+  "question": "Is nationalism best explained as a product of modernity, a reconstruction of inherited symbols, an organized ideology of the nation-state, or a boundary-making force linking state formation to war?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "malesevic-2013-5d3ec1809b12",
+    "smith-2009-cba7b6f3dfba",
+    "wimmer-2013-a67941b77943",
+    "malesevic-2007-323a2518e61b",
+    "malesevic-2010-fd2cbe41384f"
+  ],
+  "rubric": [
+    "keeps nationalism analytically distinct from nation-state, modernity and ethnic identity while tracing the relations among them",
+    "compares modernization, ethno-symbolic, organizational-ideological and war-linked accounts as genuinely different causal explanations",
+    "orders the competing accounts by causal sequence, specifying whether culture, state organization or political closure is treated as prior",
+    "draws on multiple books and attributes each theoretical move to the relevant author or passage"
+  ],
+  "instant_dismissal_criteria": [
+    "offers only a definition of nationalism",
+    "equates nationalism with the nation-state without argument",
+    "treats inherited identities as timeless actors rather than historically reconstructed claims",
+    "relies on a single theorist or a single book"
+  ],
+  "notes": "The dispute is over causal priority and mechanism: whether nationalism follows modern social transformation, reworks older cultural materials, grows through organizational power, or helps close political fields in ways that make war more likely. Citation ids derived from the live index 2026-07-30, one per position named in the question: smith-2009 for ethno-symbolism, malesevic-2013 for the organizational-ideological account, wimmer-2013 for the war-linked account, malesevic-2007 for the Gellnerian modernization debate."
+}

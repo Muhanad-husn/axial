@@ -1,0 +1,9 @@
+# origin: simulated
+# model: GPT-5.6 Pro
+# persona: smoke-v2
+# reasoning_mode_confirmed: reasoning
+# date: 2026-07-30
+# path_version: sim-v1
+# shape: thin coverage
+case: "Transnistria in the post-Soviet space, 1991-2012"
+request: "How has non-recognition shaped Transnistria's internal state-building, and what can be established about that case specifically rather than about post-Soviet unrecognized states in general?"

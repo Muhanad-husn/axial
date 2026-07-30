@@ -1,0 +1,9 @@
+# origin: simulated
+# model: GPT-5.6 Pro
+# persona: smoke-v2
+# reasoning_mode_confirmed: reasoning
+# date: 2026-07-30
+# path_version: sim-v1
+# shape: a concept anchor with real theoretical weight
+case: "Comparative: nationalism and nation-state formation, nineteenth and twentieth centuries"
+request: "Is nationalism best explained as a product of modernity, a reconstruction of inherited symbols, an organized ideology of the nation-state, or a boundary-making force linking state formation to war?"

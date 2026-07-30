@@ -238,5 +238,15 @@ def test_the_rendered_summary_says_plainly_that_the_budgets_are_unmeasured():
 
 def test_smoke_brief_paths_is_sorted_and_ignores_the_readme():
     paths = smoke_brief_paths()
-    assert [path.stem for path in paths] == ["P2-02", "P3-01", "P3-04", "P4-03", "P4-04"]
+    # The set was rebuilt 2026-07-30 (§9.0): five Syria briefs out, five
+    # measured-anchor briefs in, P3-04 retained as the one hub anchor
+    # §7.13's denominator inspection needs.
+    assert [path.stem for path in paths] == [
+        "P3-04",
+        "S-01",
+        "S-02",
+        "S-03",
+        "S-04",
+        "S-05",
+    ]
     assert all(path.suffix == ".yaml" for path in paths)

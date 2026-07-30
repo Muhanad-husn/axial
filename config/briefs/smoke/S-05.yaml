@@ -1,0 +1,9 @@
+# origin: simulated
+# model: GPT-5.6 Pro
+# persona: smoke-v2
+# reasoning_mode_confirmed: reasoning
+# date: 2026-07-30
+# path_version: sim-v1
+# shape: single-source concentration
+case: "Somaliland, 1991-2012"
+request: "How does the absence of international recognition shape Somaliland's internal state-building and its claim to sovereignty, and how secure is the evidential basis for that account?"
