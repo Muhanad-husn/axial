@@ -43,7 +43,16 @@ this corpus's traps at any usable precision:
      standalone surface form elsewhere in the inventory -- an acronym the
      corpus never writes bare (`AANES`, #498's own recorded out-of-scope
      half) has nothing to pair with and is silently skipped, never folded
-     and never proposed.
+     and never proposed. **Refused whenever more than one distinct surface
+     form carries the same acronym** (issue #498's own live-corpus
+     measurement, below) -- exactly the family 1/2 ambiguity gate above,
+     for the same reason: the acronym node is a hub in the alias-map
+     union, so proposing one pair out of several would silently fuse
+     whichever expansions the model happened to fold, without any call
+     ever asking whether they are the same entity. `SDF` carries both
+     `Marxist Social Democratic Federation (SDF)` and `Syrian Democratic
+     Forces (SDF)` in this corpus -- unrelated entities a century apart --
+     and neither pair is proposed.
 
 **A separate rule -- case-only and whitespace-only pairs -- used to live
 here and is retired (issue #463).** It proposed exactly these pairs (the 230-pair
@@ -243,16 +252,33 @@ def _family_parenthesized_acronym(
     resolve to more than one expansion depending on the corpus (`ABC` ->
     `Al-Ahram Beverages Company` here, and need not everywhere), so the
     model's own evidence check (#449) decides each pair exactly like any
-    other candidate cluster."""
+    other candidate cluster.
+
+    Refused whenever more than one DISTINCT surface form carries the same
+    acronym (issue #498's own live-corpus measurement: `SDF` against both
+    `Marxist Social Democratic Federation (SDF)` and `Syrian Democratic
+    Forces (SDF)`) -- the same ambiguity gate families 1 and 2 already use,
+    for the same reason. The acronym's own standalone node is a HUB in the
+    alias-map union: proposing one pair out of several would let the model's
+    fold of that ONE pair transitively drag in whichever other expansion a
+    later decision also unions onto the same acronym, fusing two entities no
+    call was ever asked to compare. Refusing here means the union never has
+    more than one candidate edge to chain through in the first place."""
     surface_forms = [surface for surface, _kind, _count in entries]
     standalone = set(surface_forms)
-    pairs: list[tuple[str, str]] = []
+
+    carriers: dict[str, list[str]] = {}
     for surface in surface_forms:
         acronym = _extract_parenthesized_acronym(surface)
         if acronym is None or acronym == surface:
             continue
-        if acronym in standalone:
-            pairs.append((acronym, surface))
+        carriers.setdefault(acronym, []).append(surface)
+
+    pairs: list[tuple[str, str]] = []
+    for acronym, surfaces in carriers.items():
+        if acronym not in standalone or len(surfaces) != 1:
+            continue
+        pairs.append((acronym, surfaces[0]))
     return pairs
 
 

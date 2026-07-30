@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from axial.name_candidates import (
     _extract_parenthesized_acronym,
+    _family_parenthesized_acronym,
     fold_groups,
     generate_candidate_clusters,
 )
@@ -217,6 +218,55 @@ def test_acronym_family_ignores_unrelated_surfaces_sharing_no_acronym():
     entries = [_entry("Ernest Gellner"), _entry("Perry Anderson (ANDR)")]
 
     assert generate_candidate_clusters(entries) == []
+
+
+def test_acronym_with_more_than_one_expansion_is_refused_sdf():
+    """Issue #498's own live-corpus measurement: `SDF` carries two distinct
+    expansions -- `Marxist Social Democratic Federation` (a 19th-century
+    British party) and `Syrian Democratic Forces` -- unrelated entities a
+    century apart. Proposing one pair would make the acronym a HUB in the
+    alias-map union and silently fuse them with no call ever asking whether
+    they are the same. Refused entirely, exactly like family 1/2's own
+    ambiguity gate: neither pair is proposed."""
+    marxist = "Marxist Social Democratic Federation (SDF)"
+    syrian = "Syrian Democratic Forces (SDF)"
+    entries = [
+        _entry("SDF", kind="institution"),
+        _entry(marxist, kind="institution"),
+        _entry(syrian, kind="institution"),
+    ]
+
+    clusters = generate_candidate_clusters(entries)
+
+    assert not _appear_together(clusters, "SDF", marxist)
+    assert not _appear_together(clusters, "SDF", syrian)
+
+
+def test_acronym_with_exactly_one_expansion_is_still_proposed():
+    """The SDF ambiguity gate above must not turn into a blanket refusal --
+    an acronym carried by exactly one surface form is still proposed."""
+    entries = [
+        _entry("PKK", kind="institution"),
+        _entry("Kurdistan Workers' Party (PKK)", kind="institution"),
+    ]
+
+    clusters = generate_candidate_clusters(entries)
+
+    assert _has_pair(clusters, "PKK", "Kurdistan Workers' Party (PKK)")
+
+
+def test_acronym_refusal_happens_at_proposal_never_a_decision():
+    """The refusal lives in `_family_parenthesized_acronym` itself: the
+    ambiguous pair never becomes a batch, let alone a merge call -- pinned
+    directly on the candidate-generation function, not inferred through
+    what a decision would have done with it."""
+    entries = [
+        _entry("SDF", kind="institution"),
+        _entry("Marxist Social Democratic Federation (SDF)", kind="institution"),
+        _entry("Syrian Democratic Forces (SDF)", kind="institution"),
+    ]
+
+    assert _family_parenthesized_acronym(entries) == []
 
 
 def test_acronym_candidate_generation_is_deterministic():
