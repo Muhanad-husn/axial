@@ -1,0 +1,130 @@
+{
+  "ingest_code_sha": "f9f1ed22eca9b9982d2d9c424cd9b5f9d507d847",
+  "sources": [
+    {
+      "content_hash": "b22edc40e0fc9948406f5c21ea63da14d96d80cedfa5be9c15b49fba483f7a01",
+      "source_id": "agamben-2005-b22edc40e0fc"
+    },
+    {
+      "content_hash": "16fd6a2e503f7b8df9ac8fd811e6a251695137d583665c5ad8eb17b89374e452",
+      "source_id": "ayubi-1995-16fd6a2e503f"
+    },
+    {
+      "content_hash": "598624067df3025b8cef3f82fb691a1843bba5aa34dbff59014c8cad9c215565",
+      "source_id": "batatu-1999-598624067df3"
+    },
+    {
+      "content_hash": "ce6bb0643cfb12dbfcdfce752cf06ec17f3a02cc6778acfdfd2ad8a222bc59e2",
+      "source_id": "bayat-2017-ce6bb0643cfb"
+    },
+    {
+      "content_hash": "8410a9059300a22b883d8816d3e5104fa3a1967b5c6ffa3ed33c36dd117bc2ac",
+      "source_id": "beshara-2011-8410a9059300"
+    },
+    {
+      "content_hash": "fbc0efe4fffcbeda1993da6bee97d5c49d3b639e62e3a0abb9d958eb61d7ea9a",
+      "source_id": "caspersen-2012-fbc0efe4fffc"
+    },
+    {
+      "content_hash": "91e7fc84f05ca226ef96479ad5ae745f65385e3e5ddde274e900529fd9ba8918",
+      "source_id": "chouliaraki-2024-91e7fc84f05c"
+    },
+    {
+      "content_hash": "78f0cccef5b97b039471733352edbe50fd6294006dbb91eebac51839380c4974",
+      "source_id": "elcheroth-2017-78f0cccef5b9"
+    },
+    {
+      "content_hash": "a8b0206cb566264d4cfc1013702497f4161d0cf295e04338b7fc13e17673d4b7",
+      "source_id": "gellner-1981-a8b0206cb566"
+    },
+    {
+      "content_hash": "449559bfe4dcd5b5a23e7d6de20c65062d1c10a42910a06dda529f07a867e5c5",
+      "source_id": "hall-2006-449559bfe4dc"
+    },
+    {
+      "content_hash": "66701ffbb36c8ffd8838c1c524431116ff92f5168c1cd99bacb437db03fe370a",
+      "source_id": "heydemann-2000-66701ffbb36c"
+    },
+    {
+      "content_hash": "72a4a9a9b3b01a8e53728a60bc7e6902af41b42684f2f494376a1c69f999c6fb",
+      "source_id": "heydemann-2004-72a4a9a9b3b0"
+    },
+    {
+      "content_hash": "7eb3f39a639f79c0090b224ce6beccb3a9eef7dccd7381e278e23777ae9bf09e",
+      "source_id": "jackson-1990-7eb3f39a639f"
+    },
+    {
+      "content_hash": "0b5817b2642ed71cb1a8b49bc03f9ebd6cecfcaa5403d65f99fce165aab6f252",
+      "source_id": "kalyvas-2006-0b5817b2642e"
+    },
+    {
+      "content_hash": "454c87b22e16d045ec0b532e4ded938f69d4b0e7152f8bccb92b84db3dc700b7",
+      "source_id": "kandiah-2018-454c87b22e16"
+    },
+    {
+      "content_hash": "ab19e646ab7dd65c9977f0bce8a0dd9b57f9bfd7714a80eda5de40326e469cfd",
+      "source_id": "kao-2025-ab19e646ab7d"
+    },
+    {
+      "content_hash": "323a2518e61b6b83d026558598980ad5e79db691669068fef7305aba685bdcaf",
+      "source_id": "malesevic-2007-323a2518e61b"
+    },
+    {
+      "content_hash": "fd2cbe41384fed633c58d5299219638d04a53c90bb48457c1c758842e8942ed1",
+      "source_id": "malesevic-2010-fd2cbe41384f"
+    },
+    {
+      "content_hash": "5d3ec1809b1282590b41d99f8daacc9d08529ae4cec10eab2ecef055a9e068e9",
+      "source_id": "malesevic-2013-5d3ec1809b12"
+    },
+    {
+      "content_hash": "4faeb528594d25be3ac4932b53c51da7342b42c1d49a141c54825a8f97fa9088",
+      "source_id": "malesevic-2026-4faeb528594d"
+    },
+    {
+      "content_hash": "5f90ead66c9342a9f70cd6042c1fb9cd3b573a732ffa8e160e20e12183dbac28",
+      "source_id": "mann-v1-2012-5f90ead66c93"
+    },
+    {
+      "content_hash": "ec759675dcbd1637a462acdd93ad02c9eb1ce02c2ba2370462ac9113f95def15",
+      "source_id": "mann-v2-1993-ec759675dcbd"
+    },
+    {
+      "content_hash": "3e9f48ff605adb695efe80d1551717b248995c06950f1d3aead9c86b6f22fdc8",
+      "source_id": "mann-v3-2012-3e9f48ff605a"
+    },
+    {
+      "content_hash": "1b7e828e019949957be039f23e45d8973f7fc6db980750692650d5ffbcbe0b54",
+      "source_id": "mann-v4-2013-1b7e828e0199"
+    },
+    {
+      "content_hash": "cba7b6f3dfbaf895936fa7c7693647a3d9fa64bea7d063ea0d1faef782f7cded",
+      "source_id": "smith-2009-cba7b6f3dfba"
+    },
+    {
+      "content_hash": "f908c910464c572dfd4f5e72a0267b7bed6e0c07ca3859f5a313c24f7028f1e1",
+      "source_id": "tilly-1978-f908c910464c"
+    },
+    {
+      "content_hash": "ae5701dcc70607ab8ee8d2692e0337457cbe7354186fe7cb7cfefb8aeec1b9fa",
+      "source_id": "ungor-2020-ae5701dcc706"
+    },
+    {
+      "content_hash": "c7005c2bf8ef67c1e1c3841ab5f8eb38d1dc1998b7caf5f41bfebf328c92b90a",
+      "source_id": "vignal-2021-c7005c2bf8ef"
+    },
+    {
+      "content_hash": "5f35a47d9657a5b527b9af7dec5d8db255b6ae15aaebb695db8a42f4b634269e",
+      "source_id": "white-2011-5f35a47d9657"
+    },
+    {
+      "content_hash": "a67941b7794331621b9259bd13395ef0aba609351031689c75cf1b7c09a1d440",
+      "source_id": "wimmer-2013-a67941b77943"
+    },
+    {
+      "content_hash": "834d3343aa95a99b91a63e1deb6d89121d9f8a2df5838d939f82c38782f36f85",
+      "source_id": "zaum-2007-834d3343aa95"
+    }
+  ],
+  "vault_snapshot_hash": "7daa85d501532259bd4062f1772f1b37ca4c90f5c7f628958aa0dd401b65d332"
+}
