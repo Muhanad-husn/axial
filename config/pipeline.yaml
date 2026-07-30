@@ -150,6 +150,22 @@ llm:
   # per-pass model override.
   model_by_pass:
     envelope: production_high
+    # Phase-B stage-3 retrieval (§7.5/§7.6, issue #517): moved off the
+    # default (production_low/flash) tier onto production_high on measured
+    # evidence, not on a tier preference. Retrieval is a judgment call --
+    # which two names to intersect -- and the flash tier could not make it.
+    # Same brief (P3-01), same branch, same prompt, tier the only variable
+    # (data/logs/2026-07-30-517-intersection-validation/): flash called
+    # where_names_meet once, on a narrow name, and assembled 24 notes from
+    # 2 sources; pro called it five times and assembled 137 notes from 12.
+    # The signal was reaching flash either way -- find_names' member_count
+    # and the per-result source span both sit in its prompt (ToolResult.
+    # detail) -- and two prompt iterations did not change what it did with
+    # them. ~5x the pass's cost and ~5 cents a brief, against 2 sources vs
+    # 12 on a product whose premise is passages meeting across books.
+    # ONE BRIEF, ONE DRAW: the five smoke briefs (issue #491) are what
+    # turn this into a pattern, and they have not run yet.
+    retrieve: production_high
     # Phase-B stage-4 synthesis (§7.11, issue #256): a dedicated tier,
     # mirroring envelope's own once-per-run, judgment-heavy profile but
     # NAMED SEPARATELY from production_high (2026-07 model-swap experiment)

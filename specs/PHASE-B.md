@@ -349,7 +349,7 @@ Alongside the JSON record, stage 6 renders a human-readable markdown answer. It 
 Model choice and reasoning are per-pass settings, carried in the existing `model_by_pass` / `reasoning_by_pass` config seams (PRODUCT.md §7.9), never hardcoded. Tentative starting assignments, tunable like Phase A's:
 - **Analysis / synthesis (stage 4)** — **high tier, reasoning ON**. This is the judgment-heavy, once-per-brief call whose output every downstream validator checks.
 - **Brief interrogation (stage 1)** and the **bounded validator model checks (stage 5)** — a cheaper tier may suffice; reasoning per pass as measured.
-- **The agentic query loop (stage 3)** — tier chosen for tool-use reliability, measured on the smoke set.
+- **The agentic query loop (stage 3)** — tier chosen for tool-use reliability, measured on the smoke set. **Currently `production_high`** (issue #517), moved off the default low tier on a one-brief measurement: retrieval's real work is a judgment — which two names to intersect — and on P3-01 the low tier called `where_names_meet` once, on a name only one book uses, assembling 24 notes from 2 sources, while the high tier called it five times and assembled 137 from 12. The deciding signal was in the low tier's own prompt either way (`find_names`' `member_count`, and each result's source span through `ToolResult.detail`), and two prompt revisions did not change what it did with it. **One brief, one draw**: the smoke set (§9) is what turns this into the measurement this bullet asks for, and it has not run yet.
 
 Which pass runs at which tier is proven by measurement on the smoke and eval sets (§9), not asserted here.
 
