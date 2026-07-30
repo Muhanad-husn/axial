@@ -339,6 +339,104 @@ def test_an_escalated_surface_stands_alone_and_is_recorded_and_counted(isolated_
 
 
 # ---------------------------------------------------------------------------
+# Issue #504: a one-node response that omits a member is read as an alias,
+# not left to split off as its own page -- and an ALREADY-persisted decision
+# recorded under the pre-fix parse folds on the very next run, with no model
+# call: a re-read of the log, never a re-decision.
+# ---------------------------------------------------------------------------
+
+WHO_ACRONYM = "WHO"
+WHO_SPELLED_OUT = "World Health Organization (WHO)"
+
+
+def test_run_merge_names_folds_an_already_persisted_one_node_omission(
+    isolated_vault_root, monkeypatch
+):
+    """The issue's own worked case, end to end. First run: the fold is
+    monkeypatched to a no-op, standing in for the pre-#504 code that wrote
+    this exact record -- one node, the acronym omitted, split into its own
+    page. Second run, the real code restored: the SAME decision log folds
+    the omitted member with ZERO model calls -- `merge_decisions.jsonl` is
+    content-keyed on rendered members, so this is a re-read, not a re-ask."""
+    import axial.merge_names as merge_names_module
+    from axial.names import run_names
+
+    root = isolated_vault_root
+    _build_fixture_answers(root, [[WHO_ACRONYM, WHO_SPELLED_OUT]], kind="institution")
+    names_dir = root / "data" / "names"
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+        cluster_fn=lambda vectors: [0] * len(vectors),
+    )
+
+    class OneNodeOmitsClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            return json.dumps({"nodes": [{"canonical": WHO_SPELLED_OUT, "aliases": []}]})
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "stub"
+
+    decisions_path = names_dir / "merge_decisions.jsonl"
+    manifest_path = names_dir / "merge_manifest.json"
+
+    monkeypatch.setattr(
+        merge_names_module,
+        "_fold_omitted_into_single_node",
+        lambda members, nodes, escalated: nodes,
+    )
+    first = merge_names_module.run_merge_names(
+        embeddings_dir=names_dir / "embeddings.lance",
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=decisions_path,
+        manifest_path=manifest_path,
+        domain_dir=root / "no-such-domain",
+        client=OneNodeOmitsClient(),
+        cluster_fn=lambda vectors: [0] * len(vectors),
+    )
+    assert first["decided"] == 1
+
+    # The bug, reproduced: the model's one-node answer is read as unplaced
+    # for WHO, which survives as its own separate page.
+    pre_fix_nodes = _nodes_by_canonical(_read_alias_map(root))
+    assert pre_fix_nodes[WHO_SPELLED_OUT] == []
+    assert WHO_ACRONYM in pre_fix_nodes and pre_fix_nodes[WHO_ACRONYM] == []
+
+    decisions_before = decisions_path.read_text(encoding="utf-8")
+    monkeypatch.undo()  # restore the real fold for the second run
+
+    class ExplodingClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            raise AssertionError("an already-decided batch must never be re-asked")
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "stub"
+
+    second = merge_names_module.run_merge_names(
+        embeddings_dir=names_dir / "embeddings.lance",
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=decisions_path,
+        manifest_path=manifest_path,
+        domain_dir=root / "no-such-domain",
+        client=ExplodingClient(),
+        cluster_fn=lambda vectors: [0] * len(vectors),
+    )
+
+    # Zero new model calls -- the decision log is reused, never rewritten.
+    assert second["decided"] == 0
+    assert second["reused"] == first["batches"]
+    assert decisions_path.read_text(encoding="utf-8") == decisions_before
+
+    nodes = _nodes_by_canonical(_read_alias_map(root))
+    assert nodes[WHO_SPELLED_OUT] == [WHO_ACRONYM]
+    assert WHO_ACRONYM not in nodes
+
+
+# ---------------------------------------------------------------------------
 # Issue #469: a client-side parse failure is not a real "undecided"
 # ---------------------------------------------------------------------------
 
