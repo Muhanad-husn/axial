@@ -103,6 +103,8 @@ from axial.llm import (
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.nonprose_guard import garble_only_skip_reason
 from axial.paths import _read_configured_dir
+from axial.query.reader import NOT_IN_PASSAGE as _NOT_IN_PASSAGE
+from axial.query.reader import is_abstention as _is_abstention
 from axial.schema import Schema, SchemaError, load_schema
 
 DEFAULT_DOMAIN_DIR = Path("config/domains/syria")
@@ -174,11 +176,14 @@ NEAREST_EXAMPLE_AXES = {
 # every codebook/schema entry.
 RETIRED_SENTINEL_EXAMPLE_IDS = frozenset({"not-applicable", "unlisted"})
 
-# The explicit abstention value (D7, §7.15). A field abstains when its value
-# is this bare string, or an object `{"not-in-passage": "<one-clause
-# reason>"}` -- structurally distinct from every real answer, which is a
-# string, a list, or an object with other keys.
-NOT_IN_PASSAGE = "not-in-passage"
+# The explicit abstention value and its predicate (D7, §7.15), re-exported
+# from the read path where they now live (`axial.query.reader`, issue #489):
+# Phase B's readers must apply the same predicate this pass writes against,
+# and they cannot import this module (it pulls in the whole generation stack).
+# One definition, imported by both sides; `axial.gather`, `axial.materialize`
+# and `axial.names` keep importing both names from here unchanged.
+NOT_IN_PASSAGE = _NOT_IN_PASSAGE
+is_abstention = _is_abstention
 
 _WHITESPACE = re.compile(r"\s+")
 
@@ -326,32 +331,6 @@ def _default_domain_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Pat
     """Honour `paths.domain_dir` when config declares it, else the default
     domain directory (mirrors `axial.tag._default_domain_dir`)."""
     return _read_configured_dir(config_path, "domain_dir", DEFAULT_DOMAIN_DIR)
-
-
-# ---------------------------------------------------------------------------
-# Abstention (D7)
-# ---------------------------------------------------------------------------
-
-
-def is_abstention(value: Any) -> bool:
-    """Whether `value` is the explicit abstention rather than an answer: the
-    bare `not-in-passage` string, `{"not-in-passage": "<reason>"}`, or either
-    of those alone inside a one-element list.
-
-    The list form exists because six fields are asked for as JSON lists and
-    the abstention rule is written for a scalar, so `["not-in-passage"]` is
-    the natural middle form for a multi-valued field. Read as an answer it
-    would under-report abstention on exactly those fields, and Reconcile
-    (§7.16) would mint `not-in-passage` as a name in the corpus. A list with
-    a second element is a real answer, however malformed -- an abstention is
-    never partial."""
-    if value == NOT_IN_PASSAGE:
-        return True
-    if isinstance(value, dict):
-        return set(value) == {NOT_IN_PASSAGE}
-    if isinstance(value, list) and len(value) == 1:
-        return is_abstention(value[0])
-    return False
 
 
 # ---------------------------------------------------------------------------

@@ -27,7 +27,7 @@ def _claim(
         "kind": kind,
         "grounds": grounds,
         "confidence": confidence,
-        "polities_touched": [],
+        "names_touched": [],
     }
 
 
@@ -203,7 +203,7 @@ def test_coverage_map_entries_carry_both_counts_and_the_band():
 def test_empty_coverage_map_renders_a_stated_none_line():
     record = _base_record(coverage_map={})
     markdown = render_markdown(record)
-    assert "(none -- no polity touched by any claim)" in markdown
+    assert "(none -- no name touched by any claim)" in markdown
 
 
 def test_confidence_section_renders_band_and_rationale():

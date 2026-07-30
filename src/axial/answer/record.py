@@ -136,7 +136,7 @@ def _claim_to_dict(claim: Claim) -> dict[str, Any]:
         "kind": claim.kind,
         "grounds": [{"ref_type": g.ref_type, "ref_id": g.ref_id} for g in claim.grounds],
         "confidence": claim.confidence,
-        "polities_touched": list(claim.polities_touched),
+        "names_touched": list(claim.names_touched),
     }
 
 

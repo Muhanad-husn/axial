@@ -12,8 +12,8 @@ Then  every emitted claim carries a `kind` in {a, b, c}
   And the (a) claim and the (b) claim each carry at least one `grounds` entry
   And every grounds entry is {ref_type, ref_id} with ref_type in
       {chunk, artifact} and ref_id resolving to a real id in the fixture vault
-  And each claim's `polities_touched` equals the union of its grounds chunks'
-      polities_touched facets
+  And each claim's `names_touched` equals the union of the canonical names its
+      grounds notes are members of, resolved through the alias map alone
   And `lens` is recorded as "political-economy"
 
 Given the recorded prompt at AXIAL_LLM_RECORD_PATH from that run
@@ -74,7 +74,15 @@ LEBANON_A = "acfix_003_lebanon_a"
 ARTIFACT_A = "acfix_004_artifact"
 
 
-def _chunk_frontmatter(*, chunk_id: str, polities_touched: list[str]) -> dict[str, Any]:
+def _chunk_frontmatter(*, chunk_id: str, surfaces: list[str]) -> dict[str, Any]:
+    """A prose note in the shape `axial.materialize` writes today: source
+    metadata plus the nested interrogation `answers` block (§7.15, Appendix
+    H). `surfaces` are the names this note itself named, which is what §7.4's
+    `names_touched` resolves through the alias map.
+
+    `position_of` abstains, in the object form that carries a reason: 23% of
+    the live corpus does, and the prompt must never show it as a stated
+    position."""
     return {
         "chunk_id": chunk_id,
         "section": "Synthetic Section",
@@ -86,22 +94,39 @@ def _chunk_frontmatter(*, chunk_id: str, polities_touched: list[str]) -> dict[st
             "thesis": "Synthetic thesis.",
             "scope": "Synthetic scope.",
         },
-        "schema_version": "0.1",
-        "role_in_argument": "role:claim",
-        "field": {"primary": "field:political-sociology", "secondary": []},
-        "claim_type": {"primary": "claim:causal", "secondary": None, "subtags": []},
-        "theory_school": {
-            "primary": "school:synthetic-institutionalist",
-            "secondary": None,
-            "status": "candidate",
+        "frame_version": "0.1",
+        "answers": {
+            "claim": f"Claim of {chunk_id}.",
+            "move": "stating a mechanism",
+            "position_of": {"not-in-passage": "the passage does not say whose position this is"},
+            "arguing_against": [],
+            "names": [{"name": surface, "kind": "person"} for surface in surfaces],
         },
-        "empirical_scope": {
-            "value": "scope:country-case",
-            "polity": polities_touched[0] if polities_touched else None,
-        },
-        "polities_touched": polities_touched,
-        "artifact_refs": [],
     }
+
+
+def _write_name_layer(root: Path) -> Path:
+    """Reconcile's alias map and index (§7.16), the ONLY tier `names_touched`
+    is allowed to resolve through. "Tilly" is an alias of "Charles Tilly", so
+    a real alias hop is exercised; "Absurdistan" is in neither, so §7.4's
+    drop-rather-than-invent rule is too."""
+    names_dir = root / "data" / "names"
+    names_dir.mkdir(parents=True, exist_ok=True)
+    (names_dir / "alias_map.json").write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    {"canonical": "Charles Tilly", "kind": "person", "aliases": ["Tilly"]},
+                    {"canonical": "Hanna Batatu", "kind": "person", "aliases": ["Batatu"]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (names_dir / "index.json").write_text(
+        json.dumps({"names": ["Charles Tilly", "Hanna Batatu"]}), encoding="utf-8"
+    )
+    return names_dir
 
 
 def _artifact_frontmatter() -> dict[str, Any]:
@@ -120,9 +145,9 @@ def _write_fixture_vault(root: Path) -> Path:
     prose_dir = root / "data" / "vault" / "prose"
     prose_dir.mkdir(parents=True, exist_ok=True)
     notes = [
-        _chunk_frontmatter(chunk_id=SYRIA_A, polities_touched=["Syria"]),
-        _chunk_frontmatter(chunk_id=IRAQ_A, polities_touched=["Iraq"]),
-        _chunk_frontmatter(chunk_id=LEBANON_A, polities_touched=["Lebanon"]),
+        _chunk_frontmatter(chunk_id=SYRIA_A, surfaces=["Tilly"]),
+        _chunk_frontmatter(chunk_id=IRAQ_A, surfaces=["Batatu", "Absurdistan"]),
+        _chunk_frontmatter(chunk_id=LEBANON_A, surfaces=[]),
     ]
     for frontmatter in notes:
         text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
@@ -146,11 +171,16 @@ def vault_dir(fixture_root: Path) -> Path:
     return fixture_root / "data" / "vault"
 
 
+@pytest.fixture
+def names_dir(fixture_root: Path) -> Path:
+    return _write_name_layer(fixture_root)
+
+
 def _three_kind_response() -> str:
     """One (a), one (b), one (c) claim -- the acceptance criterion's own
-    canned response. The (b) claim draws on two chunks across two
-    polities (Syria, Iraq) so `polities_touched` union/dedup is exercised
-    on a real multi-source claim, not just a single-source one.
+    canned response. The (b) claim draws on two chunks naming two different
+    scholars, so `names_touched` union/dedup is exercised on a real
+    multi-source claim, not just a single-source one.
 
     Chunk grounds cite the short opaque HANDLE (issue #410), never the real
     `chunk_id`, mirroring what a real model response now sees: the fixture's
@@ -199,11 +229,11 @@ def _read_recorded_prompts(record_path: Path) -> list[str]:
 
 
 def test_synthesis_emits_marked_grounded_claims_with_recorded_lens(
-    fixture_root: Path, vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+    fixture_root: Path, vault_dir: Path, names_dir: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """Scenario 1+2 (issue #256): every claim's kind/grounds/polities_touched
-    round-trip correctly, and the prompt carries the grounded-by-construction
-    instructions."""
+    """Scenario 1+2 (issue #256, re-based by #489): every claim's
+    kind/grounds/names_touched round-trip correctly, and the prompt carries
+    the grounded-by-construction instructions."""
     monkeypatch.setenv(STUB_SYNTHESIZE_RESPONSE_ENV_VAR, _three_kind_response())
     record_path = fixture_root / "record.jsonl"
     client = _build_client(record_path)
@@ -216,7 +246,7 @@ def test_synthesis_emits_marked_grounded_claims_with_recorded_lens(
     )
     evidence = assemble_evidence([SYRIA_A, IRAQ_A], vault_dir=vault_dir)
 
-    graph = synthesize(evidence, brief, client=client, vault_dir=vault_dir)
+    graph = synthesize(evidence, brief, client=client, vault_dir=vault_dir, names_dir=names_dir)
 
     assert graph.lens == "political-economy"
     assert len(graph.claims) == 3
@@ -231,14 +261,16 @@ def test_synthesis_emits_marked_grounded_claims_with_recorded_lens(
             assert ground.ref_type in {"chunk", "artifact"}
             assert ground.ref_id  # resolved already (synthesize would have raised otherwise)
 
-    # (a): grounded in Syria only -> polities_touched == ["Syria"].
-    assert by_kind["a"].polities_touched == ["Syria"]
-    # (b): grounded in Syria + Iraq chunks + one artifact (no facet of its
-    # own) -> union, first-seen order, deduped.
-    assert by_kind["b"].polities_touched == ["Syria", "Iraq"]
-    # (c): empty grounds -> empty polities_touched.
+    # (a): grounded in the note naming "Tilly", which the index carries only
+    # as an ALIAS -- the claim touches the canonical (§7.4, issue #489).
+    assert by_kind["a"].names_touched == ["Charles Tilly"]
+    # (b): the union across its two grounds notes plus one artifact (which
+    # names nothing of its own), first-seen order, deduped -- and
+    # "Absurdistan", which no node carries, is DROPPED rather than invented.
+    assert by_kind["b"].names_touched == ["Charles Tilly", "Hanna Batatu"]
+    # (c): empty grounds -> empty names_touched.
     assert by_kind["c"].grounds == []
-    assert by_kind["c"].polities_touched == []
+    assert by_kind["c"].names_touched == []
 
     prompts = _read_recorded_prompts(record_path)
     assert len(prompts) == 1
@@ -247,6 +279,16 @@ def test_synthesis_emits_marked_grounded_claims_with_recorded_lens(
     assert "parametric memory" in prompt
     assert "open web" in prompt
     assert "never" in prompt and "(b)" in prompts[0]
+
+    # The evidence block is built on the interrogation's answers now (#489),
+    # and an abstained answer never appears as one: every fixture note
+    # abstained on `position_of`.
+    assert "claim: Claim of " in prompts[0]
+    assert "not-in-passage" not in prompts[0]
+    assert "whose position:" not in prompts[0]
+    # `arguing_against: []` IS an answer ("the passage names none"), so it is
+    # rendered -- and said in words, never as an empty bracket pair.
+    assert "arguing against: (the passage names none)" in prompts[0]
 
 
 def test_synthesis_fails_loudly_on_an_ungrounded_a_claim(

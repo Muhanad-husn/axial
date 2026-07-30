@@ -33,11 +33,28 @@ sometimes echoes only the tail). Every claim's `confidence` is validated
 against the closed §7.4 three-band vocabulary `CONFIDENCE_BANDS` (issue
 #402 -- a real run emitted "medium-high", a band the calibration gate
 correctly refused to score; caught here instead, at generation), and
-`polities_touched` is computed here -- never trusted from the model -- as
-the union of the claim's grounds CHUNKS' `polities_touched` facets (an
-artifact ground carries no such facet of its own, so it contributes
-nothing). `claim_id` is a deterministic hash over each claim's own parsed
-content, so the same response parses to the same ids on every run.
+`names_touched` is computed here -- never trusted from the model -- as the
+union of the canonical names the claim's grounds CHUNKS are members of
+(§7.4, issue #489): each note's own `names` answers are surface forms,
+resolved through the alias map alone
+(`axial.query.names.canonical_name_for_surface`), and a surface the index
+does not carry is DROPPED rather than invented. Never through `find_names`'
+embedding tier -- a nearest-neighbour match here would fabricate coverage of
+a name the passage never named. An artifact ground names nothing of its own,
+so it contributes nothing. `claim_id` is a deterministic hash over each
+claim's own parsed content, so the same response parses to the same ids on
+every run.
+
+**The prompt is built on the interrogation's answers** (Phase B v1 slice 04,
+issue #489). It used to list five closed-vocabulary tag axes per chunk, all
+of which Phase A v1 deleted, so every one of them rendered empty. It now
+lists each note's own answers (`axial.analyze.assembly.EvidenceChunk.
+answers`) -- claim, move, whose position and what it is, who it argues
+against, mechanism, evidence, comparison, what it defines/uses, concedes,
+assumes, the names it names and who it cites with what stance -- alongside
+the real prose. An abstained field never appears at all: assembly filtered
+it out (`axial.query.reader.is_abstention`), which is what keeps "the
+passage does not support an answer" from reaching the model as an answer.
 
 Out of scope for this slice (see plans/analysis-synthesis/02-synthesis-claim-
 graph.md): the attribution validator, the grounding check, the coverage map,
@@ -76,11 +93,12 @@ from typing import Any
 import httpx
 import yaml
 
-from axial.analyze.assembly import EvidenceSet
+from axial.analyze.assembly import EvidenceSet, name_surfaces
 from axial.brief.intake import Brief
 from axial.llm import COUNTER_POSITION_GENERATE_PASS_NAME, SYNTHESIZE_PASS_NAME, LLMClient, LLMError
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
+from axial.query.names import canonical_name_for_surface
 from axial.query.reader import (
     ArtifactNotFoundError,
     ChunkNotFoundError,
@@ -357,16 +375,19 @@ class Ground:
 @dataclass(frozen=True)
 class Claim:
     """One §7.4 claim: `{claim_id, text, kind, grounds, confidence,
-    polities_touched}`. `confidence` is validated against `CONFIDENCE_BANDS`
+    names_touched}`. `confidence` is validated against `CONFIDENCE_BANDS`
     (issue #402) before a `Claim` is ever constructed -- never a value
-    outside the three-band vocabulary."""
+    outside the three-band vocabulary. `names_touched` is the union of the
+    canonical names this claim's grounds notes are members of, computed in
+    code (see the module docstring), which is what makes the §7.7 coverage
+    map computable from the claim graph."""
 
     claim_id: str
     text: str
     kind: str
     grounds: list[Ground]
     confidence: Any
-    polities_touched: list[str]
+    names_touched: list[str]
 
 
 @dataclass(frozen=True)
@@ -409,6 +430,94 @@ def resolve_lens(lens_name: str | None, *, lenses_dir: Path | None = None) -> st
     return available[0]
 
 
+# How each §7.15 answer field is labelled in the prompt (issue #489). Display
+# copy, so the model reads a question rather than a schema key: the field names
+# themselves are terse and two of them (`position_of` = whose position,
+# `position` = what that position is) are only distinguishable by their
+# wording. Order comes from `assembly.EVIDENCE_ANSWER_FIELDS`, not from here.
+_ANSWER_LABELS = {
+    "claim": "claim",
+    "move": "move in the argument",
+    "position_of": "whose position",
+    "position": "the position",
+    "arguing_against": "arguing against",
+    "about": "about",
+    "ranges_over": "ranges over",
+    "stops_holding": "stops holding",
+    "mechanism": "mechanism",
+    "evidence": "evidence offered",
+    "comparison": "comparison",
+    "defines": "defines",
+    "uses": "uses",
+    "concedes": "concedes or hedges",
+    "assumes": "assumes",
+    "names": "names",
+    "citations": "cites",
+}
+
+
+def _render_name(entry: Any) -> str:
+    """One `names` answer entry (§7.15: `{name, kind}`) as `Name (kind)`. A
+    bare string is accepted as its own name, the same tolerance
+    `axial.query.names._read_note_answers` applies to a free-text answer."""
+    if isinstance(entry, dict) and isinstance(entry.get("name"), str):
+        kind = entry.get("kind")
+        return (
+            f"{entry['name']} ({kind})" if isinstance(kind, str) and kind.strip() else entry["name"]
+        )
+    return str(entry)
+
+
+def _render_citation(entry: Any) -> str:
+    """One `citations` answer entry (§7.15: `{cited, stance, about}`) as
+    `Cited [stance] -- about`, so the author's own support / foil / authority
+    stance travels with the reference instead of being flattened away."""
+    if not isinstance(entry, dict) or not isinstance(entry.get("cited"), str):
+        return str(entry)
+    rendered = entry["cited"]
+    stance = entry.get("stance")
+    if isinstance(stance, str) and stance.strip():
+        rendered += f" [{stance}]"
+    about = entry.get("about")
+    if isinstance(about, str) and about.strip():
+        rendered += f" -- {about}"
+    return rendered
+
+
+def _render_answer_value(field_name: str, value: Any) -> str:
+    if isinstance(value, list):
+        if not value:
+            # `[]` is an ANSWER (§7.15): the passage names none of that kind
+            # of thing. Said in words, because an empty bracket pair reads to
+            # a model as a missing field rather than as a read.
+            return "(the passage names none)"
+        if field_name == "names":
+            return "; ".join(_render_name(entry) for entry in value)
+        if field_name == "citations":
+            return "; ".join(_render_citation(entry) for entry in value)
+        return "; ".join(str(entry) for entry in value)
+    return str(value)
+
+
+def _render_evidence_chunk(handle: str, chunk: Any, chunk_text: str) -> str:
+    """One evidence chunk as the model sees it: its opaque handle, its
+    source's own author/year/title, every substantive interrogation answer it
+    carries, then its verbatim prose. The real `chunk_id` appears nowhere
+    (issue #410)."""
+    meta = chunk.source_meta or {}
+    header = f"- chunk={handle}"
+    for key in ("author", "date", "title"):
+        value = meta.get(key)
+        if value not in (None, ""):
+            header += f" {key}={value}"
+    lines = [header]
+    for field_name, value in chunk.answers.items():
+        label = _ANSWER_LABELS.get(field_name, field_name)
+        lines.append(f"  {label}: {_render_answer_value(field_name, value)}")
+    lines.append(f"  text: {chunk_text}")
+    return "\n".join(lines)
+
+
 def compose_prompt(
     brief: Brief,
     lens_name: str,
@@ -419,18 +528,23 @@ def compose_prompt(
     evidence_char_budget: int | None = None,
 ) -> SynthesisPrompt:
     """Assemble the synthesis prompt (§7.4/P0-4): the brief's case/request,
-    the applied lens, and every evidence chunk's real prose TEXT and
-    synthesis-relevant frontmatter. `EvidenceSet.chunks` (`EvidenceChunk`)
-    deliberately does not carry `chunk_text` (`axial.analyze.assembly`'s own
-    module docstring: "chunk_text ... stay[s] reachable via ... get_chunk when
-    synthesis (slice 02) actually needs them") -- this is that need: the
-    prompt re-fetches each evidence chunk's full text via
-    `axial.query.reader.get_chunk` so the model reasons over real prose, not
-    just tag facets, and grounds pointers are drawn from what was actually
-    supplied rather than invented. Every phrase this module's acceptance
-    test checks against the recorded prompt lives verbatim in this
-    template, so a prompt wording change is a deliberate, visible diff, not
-    silent drift.
+    the applied lens, and every evidence chunk's real prose TEXT plus the
+    interrogation's own answers about it (issue #489 --
+    `axial.analyze.assembly` already dropped every abstained field, so a
+    question the passage did not support never reaches the model as an
+    answer). `EvidenceSet.chunks` (`EvidenceChunk`) deliberately does not
+    carry `chunk_text`, so the prompt re-fetches each evidence chunk's full
+    text via `axial.query.reader.get_chunk`: the model reasons over real
+    prose, and grounds pointers are drawn from what was actually supplied
+    rather than invented. Every phrase this module's acceptance test checks
+    against the recorded prompt lives verbatim in this template, so a prompt
+    wording change is a deliberate, visible diff, not silent drift.
+
+    D4 is stated in the prompt, not just in the code: a Gather-pass
+    disagreement is another pass's reading of the corpus and is never
+    citable. The 575 findings have never been scored (DEC-55), so a claim
+    resting on one would launder unscored prose into an attributed answer.
+    `ref_type` stays `chunk` or `artifact`; it gains no third value.
 
     Issue #410 (opaque-handle mitigation): the model is never shown a real
     `chunk_id` at all. Each included chunk is offered under a short, per-call
@@ -474,14 +588,7 @@ def compose_prompt(
         running_total += len(note.chunk_text)
         handle = f"[c{len(handle_map) + 1}]"
         handle_map[handle] = chunk_id
-        lines.append(
-            f"- chunk_id={handle} role_in_argument={chunk.role_in_argument} "
-            f"polities_touched={chunk.polities_touched} "
-            f"theory_school={chunk.theory_school.get('primary')} "
-            f"claim_type={chunk.claim_type.get('primary')} "
-            f"empirical_scope={chunk.empirical_scope.get('value')}\n"
-            f"  text: {note.chunk_text}"
-        )
+        lines.append(_render_evidence_chunk(handle, chunk, note.chunk_text))
     evidence_lines = "\n".join(lines) or "(no evidence chunks were retrieved for this brief)"
 
     text = f"""You are the stage-4 synthesis pass of an analysis engine (specs/PHASE-B.md §7.4). Apply the lens named below and perform axial coding across ONLY the evidence chunks supplied below -- reason only over the grounds supplied here, never from your own parametric memory or the open web. Any assertion not traceable to a supplied grounds pointer is not a claim this pass may emit.
@@ -490,8 +597,12 @@ Case: "{brief.case}"
 Request: "{brief.request}"
 Lens: "{lens_name}"
 
+Each evidence chunk below carries its source's author and title, then what a first reading of that passage answered about it -- what it claims, what it is doing in the argument, whose position it is and what that position is, who it argues against, who it cites and whether as support, foil or authority, and the rest -- and finally its verbatim prose. Those answers are another reading of the same passage, not a second source: where an answer and the prose differ, the prose is what the passage says. A question that passage did not support an answer for is ABSENT from its list; read nothing into the absence, and never treat it as a "no".
+
 Evidence chunks -- cite ONLY the bracketed handle shown for each (e.g. "[cN]") as your grounds ref_id for a chunk, or an artifact_id as your grounds ref_id for an artifact. Reproduce a handle EXACTLY as shown; never invent one and never write out any other id:
 {evidence_lines}
+
+Retrieval may have reached this evidence by following a disagreement another pass of this system wrote about a name. Such a finding is that pass's own reading of the corpus, never a source and never scored: it is not quotable, not citable, and no claim may rest on one. Your grounds are the chunk handles and artifact_ids listed above, and nothing else.
 
 For every claim you emit, mark its kind:
 - "a" (source-says) -- a single source directly asserts this; grounds must name that source's chunk(s)/artifact(s).
@@ -551,6 +662,26 @@ def _resolve_truncated_ref_id(
     return resolved_id
 
 
+def _canonical_names_of(note: Any, *, names_dir: Path | None) -> list[str]:
+    """The canonical names one grounds note is a member of (§7.4): every
+    surface form its own `names` answer gave, resolved through the alias map
+    alone (`axial.query.names.canonical_name_for_surface`).
+
+    A surface the index does not carry is DROPPED, never invented -- and never
+    retried against `find_names`' embedding tier, which would land the claim
+    on a plausible neighbouring name and fabricate coverage the corpus does not
+    have. An abstained `names` answer contributes nothing: `name_surfaces`
+    applies the abstention predicate before any surface is read, so
+    `not-in-passage` can never be minted as a name here (the same trap §7.16
+    names for Reconcile's inventory)."""
+    resolved: list[str] = []
+    for surface in name_surfaces(note.names):
+        canonical = canonical_name_for_surface(surface, names_dir=names_dir)
+        if canonical is not None:
+            resolved.append(canonical)
+    return resolved
+
+
 def _resolve_grounds(
     index: int,
     text: Any,
@@ -558,14 +689,16 @@ def _resolve_grounds(
     *,
     vault_dir: Path | None,
     handle_map: dict[str, str],
+    names_dir: Path | None = None,
 ) -> tuple[list[Ground], list[str]]:
     """Validate and resolve one claim's raw `grounds` list: structural
     shape, `ref_type` in `_REF_TYPES`, and `ref_id` resolving to a real
     note. The `Ground` recorded always carries the resolved (full, real)
     id, never the ref_id as the model emitted it. Returns the resolved
-    `Ground` list plus the `polities_touched` union computed from resolved
-    CHUNK grounds only (an artifact ground contributes nothing --
-    `ArtifactNote` carries no `polities_touched` facet of its own).
+    `Ground` list plus the `names_touched` union computed from resolved CHUNK
+    grounds only (`_canonical_names_of`) -- an artifact ground names nothing
+    of its own, so it contributes nothing, unchanged from the field this
+    replaced.
 
     A `chunk` ref_id is resolved against `handle_map` alone (issue #410):
     the model was never shown a real chunk_id, only a short opaque handle
@@ -605,7 +738,7 @@ def _resolve_grounds(
             if resolved_id is None:
                 raise UnresolvableGroundError(index, text, ref_type, ref_id)
             note = get_chunk(resolved_id, vault_dir=vault_dir)
-            touched.extend(note.polities_touched)
+            touched.extend(_canonical_names_of(note, names_dir=names_dir))
         else:
             resolved_id = ref_id
             try:
@@ -642,7 +775,11 @@ def _compute_claim_id(index: int, kind: str, text: str, grounds: list[Ground]) -
 
 
 def parse_synthesis_response(
-    raw: str, *, vault_dir: Path | None = None, handle_map: dict[str, str] | None = None
+    raw: str,
+    *,
+    vault_dir: Path | None = None,
+    handle_map: dict[str, str] | None = None,
+    names_dir: Path | None = None,
 ) -> list[Claim]:
     """Parse a raw synthesis completion into a validated `Claim` list
     (§7.4). Raises `ModelJsonError` (via `parse_model_json`) when `raw`
@@ -659,7 +796,12 @@ def parse_synthesis_response(
     (`_resolve_grounds`). Omitting it (the default, `None`, treated as
     empty) means no handle resolves -- correct for a caller that never
     offered any, never a silent pass-through to some other resolution
-    path."""
+    path.
+
+    `names_dir` (issue #489) is where the alias map `names_touched` resolves
+    surface forms through lives (`data/names/`, `axial.paths.
+    default_names_dir` when omitted) -- the same optional-directory
+    convention every name-layer tool already takes."""
     handle_map = handle_map or {}
     data = parse_model_json(raw)
     if not isinstance(data, dict):
@@ -687,8 +829,13 @@ def parse_synthesis_response(
         if confidence not in CONFIDENCE_BANDS:
             raise InvalidClaimConfidenceError(index, text, confidence)
 
-        grounds, polities_touched = _resolve_grounds(
-            index, text, entry.get("grounds"), vault_dir=vault_dir, handle_map=handle_map
+        grounds, names_touched = _resolve_grounds(
+            index,
+            text,
+            entry.get("grounds"),
+            vault_dir=vault_dir,
+            handle_map=handle_map,
+            names_dir=names_dir,
         )
         if kind in _GROUNDED_KINDS and not grounds:
             raise UngroundedClaimError(index, text, kind)
@@ -701,7 +848,7 @@ def parse_synthesis_response(
                 kind=kind,
                 grounds=grounds,
                 confidence=confidence,
-                polities_touched=polities_touched,
+                names_touched=names_touched,
             )
         )
 
@@ -716,6 +863,7 @@ def synthesize(
     vault_dir: Path | None = None,
     lenses_dir: Path | None = None,
     config_path: Path | None = None,
+    names_dir: Path | None = None,
 ) -> ClaimGraph:
     """Run the §7.4 synthesis pass over `evidence`: resolve the lens
     (`resolve_lens`), compose the grounded-by-construction prompt
@@ -733,7 +881,11 @@ def synthesize(
     (or a more specific subclass) when the response parses as JSON but
     violates the §7.4 shape -- both are named, immediately-fatal failures.
     `UnknownLensError`/`NoLensesAvailableError` propagate unchanged from
-    `resolve_lens` when the brief names a lens that does not exist."""
+    `resolve_lens` when the brief names a lens that does not exist.
+
+    `names_dir` is forwarded to `parse_synthesis_response` for
+    `names_touched`'s alias-map resolution (§7.4), defaulting to
+    `data/names/` exactly as every name-layer tool does."""
     lens_name = resolve_lens(brief.lens, lenses_dir=lenses_dir)
     composed = compose_prompt(
         brief, lens_name, evidence, vault_dir=vault_dir, config_path=config_path
@@ -748,7 +900,9 @@ def synthesize(
     except (LLMError, httpx.HTTPError, ModelJsonError) as exc:
         raise SynthesisFailedError(f"synthesis call failed: {exc}") from exc
 
-    claims = parse_synthesis_response(raw, vault_dir=vault_dir, handle_map=composed.handle_map)
+    claims = parse_synthesis_response(
+        raw, vault_dir=vault_dir, handle_map=composed.handle_map, names_dir=names_dir
+    )
     print(f"synthesize: done, {len(claims)} claim(s)", file=sys.stderr)
     return ClaimGraph(lens=lens_name, claims=claims)
 

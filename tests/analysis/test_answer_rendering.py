@@ -112,7 +112,7 @@ def _fixture_record() -> dict[str, Any]:
                 "kind": "a",
                 "grounds": [{"ref_type": "chunk", "ref_id": "syr_001_intro_001"}],
                 "confidence": "medium",
-                "polities_touched": ["Syria"],
+                "names_touched": ["Syria"],
             },
             {
                 "claim_id": "clm_b",
@@ -123,7 +123,7 @@ def _fixture_record() -> dict[str, Any]:
                     {"ref_type": "chunk", "ref_id": "irq_001_intro_001"},
                 ],
                 "confidence": "low",
-                "polities_touched": ["Syria", "Iraq"],
+                "names_touched": ["Syria", "Iraq"],
             },
             {
                 "claim_id": "clm_c",
@@ -131,7 +131,7 @@ def _fixture_record() -> dict[str, Any]:
                 "kind": "c",
                 "grounds": [],
                 "confidence": "low",
-                "polities_touched": [],
+                "names_touched": [],
             },
         ],
         "counter_position": {

@@ -803,10 +803,11 @@ def build_parser() -> argparse.ArgumentParser:
         "examine",
         help=(
             "run interrogation and retrieval and report the retrieved "
-            "chunk_ids (retrieval order), the raw per-polity coverage "
-            "counts, and the interrogation result -- makes ZERO stage-4 "
-            "synthesis calls and writes nothing under data/analyses/ "
-            "(specs/PHASE-B.md §5 stage 4, §7.5, §8 P0-9, issue #255)"
+            "chunk_ids (retrieval order) with each note's own claim, a plain "
+            "count of assembled notes per name, and the interrogation result "
+            "-- makes ZERO stage-4 synthesis calls and writes nothing under "
+            "data/analyses/ (specs/PHASE-B.md §5 stage 4, §7.5, §8 P0-9, "
+            "issues #255 and #489)"
         ),
     )
     brief_examine_parser.add_argument("brief_path", help="path to a versioned brief YAML file")
