@@ -12,7 +12,12 @@ issue names.
 
 from __future__ import annotations
 
-from axial.name_candidates import fold_groups, generate_candidate_clusters
+from axial.name_candidates import (
+    _extract_parenthesized_acronym,
+    _family_parenthesized_acronym,
+    fold_groups,
+    generate_candidate_clusters,
+)
 
 
 def _entry(
@@ -145,8 +150,189 @@ def test_bare_surname_gated_on_both_sides_being_person():
 
 
 # ---------------------------------------------------------------------------
-# Family 3 (case-only / whitespace-only pairs) is RETIRED (issue #463): it
-# used to propose exactly these pairs as a candidate cluster, and the model
+# Family 3 (issue #498, D2): a parenthesized acronym against its own
+# standalone inventory entry. The rule is a shape test, stated once: a
+# parenthesized acronym is a run of two or more bare uppercase ASCII letters,
+# alone in parentheses -- nothing else inside the parens, no fuzzy matching.
+# This is a CANDIDATE, never a fold: the model's own evidence check (#449)
+# decides each pair, exactly like family 1/2, because an acronym can resolve
+# to more than one expansion depending on the corpus.
+# ---------------------------------------------------------------------------
+
+AANS = "AANS"
+AANS_SURFACE = "Autonomous Administration of Northeast Syria (AANS)"
+
+
+def test_extracts_a_bare_uppercase_acronym_in_parentheses():
+    assert _extract_parenthesized_acronym(AANS_SURFACE) == "AANS"
+    assert _extract_parenthesized_acronym("Kurdistan Workers' Party (PKK)") == "PKK"
+
+
+def test_extraction_ignores_a_single_letter_in_parentheses():
+    """A single letter is a list marker shape ('(a)', '(A)'), not an
+    acronym -- the rule requires two or more letters."""
+    assert _extract_parenthesized_acronym("Appendix A (A)") is None
+
+
+def test_extraction_ignores_a_lowercase_word_in_parentheses():
+    assert _extract_parenthesized_acronym("the report (ed.)") is None
+    assert _extract_parenthesized_acronym("a translated work (trans.)") is None
+
+
+def test_extraction_ignores_a_multi_word_parenthetical():
+    """Two tokens inside the parentheses is a different shape -- a phrase,
+    not a bare acronym -- even when both tokens are themselves all caps."""
+    assert _extract_parenthesized_acronym("The report (UN Security)") is None
+
+
+def test_extraction_ignores_a_year():
+    assert _extract_parenthesized_acronym("The Second Coming (1920)") is None
+
+
+def test_extraction_ignores_a_page_locator():
+    assert _extract_parenthesized_acronym("Some claim (p. 12)") is None
+    assert _extract_parenthesized_acronym("Some claim (see p.12)") is None
+
+
+def test_acronym_pairs_with_its_own_standalone_entry():
+    """The worked case (issue #498): a bare `AANS` node and the surface that
+    carries `(AANS)` in parentheses become a candidate pair."""
+    entries = [_entry(AANS, kind="institution"), _entry(AANS_SURFACE, kind="institution")]
+
+    clusters = generate_candidate_clusters(entries)
+
+    assert _has_pair(clusters, AANS, AANS_SURFACE)
+
+
+def test_acronym_with_no_standalone_entry_produces_no_candidate():
+    """`AANES` (out of scope, #498's own recorded smaller half): the corpus
+    never writes it bare, so there is nothing for it to pair with -- silently
+    skipped, never folded and never proposed."""
+    surface = "Autonomous Administration of North and East Syria (AANES)"
+    entries = [_entry(surface, kind="institution")]
+
+    assert generate_candidate_clusters(entries) == []
+
+
+def test_acronym_family_ignores_unrelated_surfaces_sharing_no_acronym():
+    entries = [_entry("Ernest Gellner"), _entry("Perry Anderson (ANDR)")]
+
+    assert generate_candidate_clusters(entries) == []
+
+
+def test_acronym_with_more_than_one_expansion_is_refused_sdf():
+    """Issue #498's own live-corpus measurement: `SDF` carries two distinct
+    expansions -- `Marxist Social Democratic Federation` (a 19th-century
+    British party) and `Syrian Democratic Forces` -- unrelated entities a
+    century apart. Proposing one pair would make the acronym a HUB in the
+    alias-map union and silently fuse them with no call ever asking whether
+    they are the same. Refused entirely, exactly like family 1/2's own
+    ambiguity gate: neither pair is proposed."""
+    marxist = "Marxist Social Democratic Federation (SDF)"
+    syrian = "Syrian Democratic Forces (SDF)"
+    entries = [
+        _entry("SDF", kind="institution"),
+        _entry(marxist, kind="institution"),
+        _entry(syrian, kind="institution"),
+    ]
+
+    clusters = generate_candidate_clusters(entries)
+
+    assert not _appear_together(clusters, "SDF", marxist)
+    assert not _appear_together(clusters, "SDF", syrian)
+
+
+def test_acronym_with_exactly_one_expansion_is_still_proposed():
+    """The SDF ambiguity gate above must not turn into a blanket refusal --
+    an acronym carried by exactly one surface form is still proposed."""
+    entries = [
+        _entry("PKK", kind="institution"),
+        _entry("Kurdistan Workers' Party (PKK)", kind="institution"),
+    ]
+
+    clusters = generate_candidate_clusters(entries)
+
+    assert _has_pair(clusters, "PKK", "Kurdistan Workers' Party (PKK)")
+
+
+def test_acronym_refusal_happens_at_proposal_never_a_decision():
+    """The refusal lives in `_family_parenthesized_acronym` itself: the
+    ambiguous pair never becomes a batch, let alone a merge call -- pinned
+    directly on the candidate-generation function, not inferred through
+    what a decision would have done with it."""
+    entries = [
+        _entry("SDF", kind="institution"),
+        _entry("Marxist Social Democratic Federation (SDF)", kind="institution"),
+        _entry("Syrian Democratic Forces (SDF)", kind="institution"),
+    ]
+
+    assert _family_parenthesized_acronym(entries) == []
+
+
+def test_acronym_matches_through_the_upstream_fold_cia():
+    """Issue #498's second live-corpus measurement: `fold_groups` runs
+    upstream of every candidate family (issue #463) and had already unioned
+    `CIA` with its dotted form `C.I.A.` before candidate generation ever ran
+    -- only the fold's own representative (`C.I.A.` sorts before `CIA`)
+    survived as an entry, so bare `CIA` was never in the inventory this
+    function actually saw. The pair must still be found through the fold,
+    using the surface form the run actually carries."""
+    entries = [
+        _entry("C.I.A.", kind="institution"),
+        _entry("Central Intelligence Agency (CIA)", kind="institution"),
+    ]
+
+    clusters = generate_candidate_clusters(entries)
+
+    assert _has_pair(clusters, "C.I.A.", "Central Intelligence Agency (CIA)")
+
+
+def test_acronym_refusal_still_holds_when_standalone_form_is_folded():
+    """The multi-expansion refusal must survive the fold too: even when the
+    acronym's only surviving standalone entry is a dotted spelling
+    (`S.D.F.`, not bare `SDF`), two distinct carrying expansions still
+    refuse the pair entirely -- the fold must never reintroduce the SDF
+    hub."""
+    marxist = "Marxist Social Democratic Federation (SDF)"
+    syrian = "Syrian Democratic Forces (SDF)"
+    entries = [
+        _entry("S.D.F.", kind="institution"),
+        _entry(marxist, kind="institution"),
+        _entry(syrian, kind="institution"),
+    ]
+
+    clusters = generate_candidate_clusters(entries)
+
+    assert not _appear_together(clusters, "S.D.F.", marxist)
+    assert not _appear_together(clusters, "S.D.F.", syrian)
+
+
+def test_acronym_candidate_generation_is_deterministic():
+    """Same inventory, same candidate pairs, in the same order across
+    repeated calls (issue #498's own determinism requirement)."""
+    entries = [
+        _entry(AANS, kind="institution"),
+        _entry(AANS_SURFACE, kind="institution"),
+        _entry("Perry Anderson (ANDR)"),
+        _entry("ANDR", kind="institution"),
+    ]
+
+    first = generate_candidate_clusters(entries)
+    second = generate_candidate_clusters(entries)
+
+    assert first == second
+
+
+def test_acronym_pair_is_a_candidate_never_a_fold():
+    """The acronym pair must reach `generate_candidate_clusters`, never
+    `fold_groups` -- an acronym is not identical to its expansion under any
+    case/whitespace/punctuation fold, so `fold_groups` must not touch it."""
+    assert fold_groups([AANS, AANS_SURFACE]) == []
+
+
+# ---------------------------------------------------------------------------
+# The retired case-fold family (issue #463): a THIRD rule used to propose
+# case-only and whitespace-only pairs as a candidate cluster, and the model
 # refused 295 of ~305 of them on the real corpus. They are now folded
 # upstream instead (`fold_groups`, below) and must never reach this
 # function's output -- these two tests are edited, not deleted, to pin the

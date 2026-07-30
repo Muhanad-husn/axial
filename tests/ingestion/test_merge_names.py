@@ -791,6 +791,147 @@ def test_existing_decisions_are_reused_when_candidates_are_added(isolated_vault_
 
 
 # ---------------------------------------------------------------------------
+# Issue #498, D2: a parenthesized acronym is a candidate, decided by the
+# evidence check, never a string fold. The worked case: an inventory holding
+# both the bare acronym `AANS` and `Autonomous Administration of Northeast
+# Syria (AANS)` (already an alias, by a SEPARATE merge decision, of the
+# spelled-out `Autonomous Administration of North and East Syria`) yields a
+# candidate pair; on a fold decision, `AANS` reaches the spelled-out
+# canonical too -- one page, one kind, the union of every member.
+# ---------------------------------------------------------------------------
+
+AANES_CANONICAL = "Autonomous Administration of North and East Syria"
+AANS_ALIAS_SURFACE = "Autonomous Administration of Northeast Syria (AANS)"
+AANS = "AANS"
+
+
+def test_acronym_candidate_folds_onto_the_spelled_out_canonical(isolated_vault_root):
+    """Issue #498's own worked case, exercised end to end: `AANS` is never
+    co-clustered with anything (HDBSCAN's own recall gap, issue #446), so
+    only candidate generation's new family recovers the pair. Once the model
+    folds it, transitivity across the two separate merge decisions (the real
+    cluster's, and the candidate's) lands `AANS` on the SAME canonical page
+    as the full spelled-out name, not just the parenthetical-bearing alias."""
+    from axial.merge_names import run_merge_names
+    from axial.names import run_names
+
+    root = isolated_vault_root
+    names_dir = root / "data" / "names"
+
+    # Phase 1: the corpus already has the spelled-out canonical and its
+    # parenthetical-bearing alias, decided by a REAL HDBSCAN cluster (the two
+    # surfaces are similar spellings and land together) -- no `AANS` yet.
+    _build_fixture_answers(
+        root,
+        [[AANES_CANONICAL], [AANES_CANONICAL], [AANS_ALIAS_SURFACE]],
+        kind="institution",
+    )
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+        cluster_fn=lambda vectors: [0, 0],
+    )
+
+    class FoldSpellingsClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            assert AANES_CANONICAL in prompt and AANS_ALIAS_SURFACE in prompt
+            return json.dumps(
+                {"nodes": [{"canonical": AANES_CANONICAL, "aliases": [AANS_ALIAS_SURFACE]}]}
+            )
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    phase1 = run_merge_names(
+        embeddings_dir=names_dir / "embeddings.lance",
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=names_dir / "merge_decisions.jsonl",
+        manifest_path=names_dir / "merge_manifest.json",
+        domain_dir=root / "no-such-domain",
+        client=FoldSpellingsClient(),
+        cluster_fn=lambda vectors: [0, 0],
+    )
+    assert phase1["candidate_batches"] == 0  # `AANS` is not in the inventory yet
+    assert phase1["batches"] == 1
+    assert phase1["decided"] == 1
+    assert _nodes_by_canonical(_read_alias_map(root))[AANES_CANONICAL] == [AANS_ALIAS_SURFACE]
+
+    decisions_before = (names_dir / "merge_decisions.jsonl").read_text(encoding="utf-8")
+
+    # Phase 2: `AANS` enters the inventory, mentioned twice as often as the
+    # canonical spelling so it does NOT accidentally win canonical election.
+    # It lands in its own singleton HDBSCAN cluster (never co-clustered with
+    # its own expansion) -- only the new candidate family recovers the pair.
+    _build_fixture_answers(
+        root,
+        [[AANES_CANONICAL], [AANES_CANONICAL], [AANS_ALIAS_SURFACE], [AANS]],
+        kind="institution",
+    )
+    run_names(
+        answers_dir=root / "data" / "answers",
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=names_dir / "embeddings.lance",
+        manifest_path=names_dir / "similarity_manifest.json",
+        # sorted surface order: AANS, AANES_CANONICAL, AANS_ALIAS_SURFACE
+        cluster_fn=lambda vectors: [1, 0, 0],
+    )
+
+    class GuardedFoldClient:
+        """Refuses to re-decide the real cluster (already recorded) and
+        folds only the new acronym candidate."""
+
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            assert not (AANES_CANONICAL in prompt and AANS_ALIAS_SURFACE in prompt), (
+                "the real cluster's decision must be reused, never re-asked"
+            )
+            assert AANS in prompt and AANS_ALIAS_SURFACE in prompt
+            return json.dumps({"nodes": [{"canonical": AANS_ALIAS_SURFACE, "aliases": [AANS]}]})
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake"
+
+    phase2 = run_merge_names(
+        embeddings_dir=names_dir / "embeddings.lance",
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=names_dir / "merge_decisions.jsonl",
+        manifest_path=names_dir / "merge_manifest.json",
+        domain_dir=root / "no-such-domain",
+        client=GuardedFoldClient(),
+        cluster_fn=lambda vectors: [1, 0, 0],
+    )
+    assert phase2["candidate_batches"] == 1
+    assert phase2["decided"] == 1  # only the new candidate pair
+    assert phase2["reused"] == 1  # the real cluster's decision, untouched
+
+    # Deliverable #4: the pre-existing decision is byte-for-byte untouched --
+    # the new pair arrives strictly as an APPENDED line, never a rewrite.
+    decisions_after = (names_dir / "merge_decisions.jsonl").read_text(encoding="utf-8")
+    assert decisions_after.startswith(decisions_before)
+    assert decisions_after.count("\n") == decisions_before.count("\n") + 1
+
+    # The worked case itself: `AANS` and the full spelled-out string reach
+    # ONE page, one kind, the union of every member -- not just the
+    # parenthetical-bearing alias.
+    alias_map = _read_alias_map(root)
+    nodes = _nodes_by_canonical(alias_map)
+    assert AANES_CANONICAL in nodes
+    assert sorted(nodes[AANES_CANONICAL]) == sorted([AANS, AANS_ALIAS_SURFACE])
+    assert AANS not in nodes and AANS_ALIAS_SURFACE not in nodes
+
+    node = next(n for n in alias_map["nodes"] if n["canonical"] == AANES_CANONICAL)
+    assert node["kind"] == "institution"
+
+    index = json.loads((names_dir / "index.json").read_text(encoding="utf-8"))
+    assert AANES_CANONICAL in index["names"]
+    assert AANS not in index["names"]
+    assert AANS_ALIAS_SURFACE not in index["names"]
+
+
+# ---------------------------------------------------------------------------
 # Issue #463: case, whitespace and punctuation fold upstream of every
 # candidate source and the HDBSCAN blocker -- so an identical-under-fold
 # group is one entity by construction and never reaches a merge call at all.
