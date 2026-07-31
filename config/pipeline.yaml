@@ -283,16 +283,34 @@ gather:
 # bounded step budget is a stated tunable, never hardcoded at the call
 # site (src/axial/retrieve/loop.py reads this via _resolve_step_budget,
 # falling back to its own DEFAULT_STEP_BUDGET when this file or key is
-# absent). Raised 10 -> 20 by issue #488 (the name-layer rewiring): the old
-# 10 was tuned against a tool set where one query_by_tag call could return
-# a large slice of the corpus, and the name-layer surface that replaced it
-# is narrower per call, so 10 is unlikely to be enough headroom for even a
-# two-name comparison brief. 20 is a PROVISIONAL headroom allowance, not a
-# re-measured bound -- re-proving the real number happens on the smoke
-# briefs, which slice 06 (issue #491) now carries after #492 was folded
-# into it.
+# absent, kept numerically in sync with this value -- see that constant's
+# own comment).
+#
+# Cut 20 -> 14 by issue #545, from a replay of the same seven persisted
+# smoke runs the smoke budgets above are set from (P3-04, S-01, S-02, S-03,
+# S-04 on v2; S-05, S-03 on v3). For every run, the step at which the LAST
+# note that ended up CITED first surfaced in that run's own trajectory:
+#
+#   brief   steps used   last cited note first surfaced at step
+#   P3-04   20           13
+#   S-01    16            7
+#   S-02    20           12
+#   S-03    11            8
+#   S-04    17            2
+#   S-05    20            3
+#   S-03    20           10
+#
+# Maximum is 13, so steps 14-20 produced nothing any of the seven runs
+# cited on the pre-#545 build. 14 is that ceiling plus one -- a
+# PROVISIONAL headroom allowance, not a re-measured bound: the five hard
+# briefs of #493 have never run at this budget, and issue #545's own
+# metadata-in-feedback change (this same PR) is expected to move the
+# settle-step down further on its own, since the loop can now tell a
+# well-covered evidence set from a thin one without spending a re-query to
+# find out. Re-cut from the post-#545 runs once they exist, the same
+# "measured, not asserted" status the smoke budgets carry.
 retrieve:
-  step_budget: 20
+  step_budget: 14
   # Slice 02 (issue #254, PRD §4/§7.6): the re-query-on-thin threshold. A
   # tool result whose result_count is below this floor is fed back to the
   # model flagged as thin, so the agent can decide to broaden its query

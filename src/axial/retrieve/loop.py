@@ -113,18 +113,13 @@ from axial.yaml_loader import SAFE_LOADER
 # stated tunable") -- used only when `config/pipeline.yaml` (or its
 # `retrieve.step_budget` key) is absent; the file is the actual carried
 # source of truth, mirroring every other per-pass tunable in this codebase
-# (e.g. `axial.llm.DEFAULT_REASONING_BY_PASS`).
-#
-# Raised 10 -> 20 by issue #488, and this is a PROVISIONAL headroom
-# allowance, not a re-measured bound: the old 10 was tuned against a tool
-# set where one `query_by_tag` call could return a large slice of the
-# corpus, and the name-layer surface it replaced is narrower per call --
-# resolving one name, reading one page, and following one traversal is
-# already 3 steps, so a brief comparing two scholars can need 6-10 calls
-# before any re-query. Re-proving the real bound happens on the smoke
-# briefs, which slice 06 (issue #491) carries after #492 was folded into
-# it; until then this number is stated, not asserted.
-DEFAULT_STEP_BUDGET = 20
+# (e.g. `axial.llm.DEFAULT_REASONING_BY_PASS`). Kept numerically in sync
+# with `config/pipeline.yaml`'s own `retrieve.step_budget` on purpose (a
+# fallback that quietly disagreed with the shipped file would be worse than
+# either number alone) -- see that key's own comment for the full
+# provenance and re-cut history (10 -> 20 by issue #488, 20 -> 14 by issue
+# #545).
+DEFAULT_STEP_BUDGET = 14
 
 # The re-query-on-thin threshold's code-level fallback (§4/§7.6, issue
 # #254) -- mirrors DEFAULT_STEP_BUDGET's own fallback convention exactly,
