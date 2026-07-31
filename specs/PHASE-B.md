@@ -282,6 +282,14 @@ Appended by stage 3, one entry per tool call, in call order:
 `{step, tool, args, result_ids[], result_count}`.
 It is the eval #3 (process axis) raw material and the audit trail for how retrieval reached its evidence. It records the full path including re-queries after thin results, so a right answer reached by a lucky guess over a broken path is distinguishable from one reached by sound retrieval (eval #3). Its storage format inside the record is fixed here; a richer standalone trajectory store is an Open Question.
 
+**One entry per CALL, not per id.** A batched `get_chunk` (§7.5, issue #542) returns several notes in one call and writes one entry carrying every returned id in that entry's `result_ids`, with `result_count` the honest count of them. Everything computed off this log therefore keeps counting what it already counted: `assemble_evidence_ids` walks entries, and §7.15's `evidence_tool_calls` and `turns_without_new_evidence` are per-entry figures, so a batch is one turn that added evidence if any one of its ids was new.
+
+**The loop is told its own evidence set's composition (issue #542).** After every step, the next turn's prompt states how many notes the run's assembled evidence set holds, how many distinct sources they span, and which sources — computed mechanically from this log by `axial.retrieve.loop.evidence_set_composition`, appended to the tool feedback exactly the way `ToolResult.total` and `.detail` already ride beside it (§7.5), and never a sixth field in the entry itself.
+
+Why sources, and why at all: replaying seven persisted brief runs step by step, **the assembled prefix synthesis actually reads changes exactly when a new SOURCE arrives** — identical step for step in 6 of the 7 runs, with the seventh carrying one extra change where an existing source's bucket deepened enough to shift the round-robin rotation. Reaching another book is the loop's productive act; reaching another note in a book it already holds is not. The loop could see neither, and spent a model round trip per turn adding ids to a set it had no view of at all.
+
+**It states composition and nothing else — never a budget, a cap, a maximum or a remaining allowance.** #505's own finding is that a cap a model can SEE gets widened on purpose, and `synthesis.evidence_char_budget` (§7.4) is exactly such a cap: it decides which prefix of the assembled set reaches the model, and it is disclosed to the retrieval loop in **no** form, direct or derived. What the set holds is a fact about the corpus reached; what would still fit is a target to fill.
+
 ### 7.7 The per-name coverage map (Principle V, charter §3; D2) **[FIRM]**
 
 Computed deterministically from the name layer, never asked of a model. For each name the answer is about:

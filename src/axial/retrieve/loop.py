@@ -56,6 +56,17 @@ corpus run showed a model told to intersect only a "large" name avoiding the
 tool entirely by resolving narrow, one-book names instead, so `compose_
 retrieval_prompt`'s step 4 now points at source diversity directly and
 `detail` makes it checkable rather than inferred from a name's specificity.
+
+`evidence_set_composition` rides the same channel one level up (issue #542):
+after every step, the prompt states what the run's own evidence set now holds
+-- how many notes, across how many sources, and which. Replaying seven
+persisted brief runs, the assembled prefix synthesis reads changes exactly
+when a NEW SOURCE arrives (identical step for step in 6 of the 7), and the
+loop could see none of that: it spent a model round trip per turn adding ids
+to a set it had no view of. It is composition and nothing else -- never a
+budget, a cap or a remaining allowance, because #505's finding is that a cap
+the model can SEE gets widened on purpose, and `synthesis.
+evidence_char_budget` is exactly such a cap.
 """
 
 from __future__ import annotations
@@ -254,7 +265,14 @@ def run_retrieval_loop(
             # re-asking blind.
             if result.detail is not None:
                 tool_feedback = f"{tool_feedback} detail: {result.detail}"
-        prompt = f"{prompt}\n\n[step {step} result for {tool_name!r}: {tool_feedback}]"
+        # What the run has actually assembled so far (issue #542): the loop
+        # was spending a model round trip per turn adding ids to a set it
+        # could not see. Stated after EVERY step, including a failed one --
+        # composition is a fact about the set, not about the call.
+        prompt = (
+            f"{prompt}\n\n[step {step} result for {tool_name!r}: {tool_feedback}]"
+            f"\n[{evidence_set_composition(trajectory)}]"
+        )
 
     return trajectory
 
@@ -404,6 +422,41 @@ def assemble_evidence_ids(trajectory: list[dict[str, Any]]) -> list[str]:
                 seen.add(chunk_id)
                 ordered.append(chunk_id)
     return _round_robin_by_source(ordered)
+
+
+def evidence_set_composition(trajectory: list[dict[str, Any]]) -> str:
+    """What the evidence set assembled so far HOLDS, in one sentence: how
+    many notes, how many distinct sources, and which sources (issue #542).
+    Computed mechanically off the trajectory the loop already has -- no
+    model call, no extra vault read -- and appended to each turn's tool
+    feedback exactly the way `ToolResult.total`/`.detail` already ride
+    beside it.
+
+    **Why sources.** Replaying seven persisted brief runs step by step, the
+    assembled prefix synthesis actually reads changes exactly when a new
+    SOURCE arrives -- identical step for step in 6 of the 7. Reaching
+    another book is the loop's productive act; reaching another note in a
+    book it already has is not. The loop could see neither, and spent a
+    model round trip per turn adding ids to a set it had no view of.
+
+    **This states composition and nothing else.** No budget, no cap, no
+    maximum, no remaining allowance, no prefix boundary -- #505's finding is
+    that a cap the model can SEE gets widened on purpose, and
+    `synthesis.evidence_char_budget` is exactly such a cap. What the set
+    holds is a fact about the corpus reached; what would still fit is a
+    target to fill.
+
+    A malformed id contributes to the note count (it is a real member of the
+    set) but names no source, the same way `_round_robin_by_source` groups
+    it under `""` rather than inventing a source for it."""
+    ids = assemble_evidence_ids(trajectory)
+    if not ids:
+        return "your evidence set is still empty"
+    sources = sorted({_source_id_or_empty(chunk_id) for chunk_id in ids} - {""})
+    return (
+        f"your evidence set holds {len(ids)} notes across {len(sources)} sources: "
+        f"{', '.join(sources)}"
+    )
 
 
 def run_planned_retrieval(
