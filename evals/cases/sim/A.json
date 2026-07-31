@@ -1,0 +1,46 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "authored outside this environment, no repository access",
+    "persona": "eval-hard",
+    "date": "2026-07-31",
+    "path_version": "sim-v1",
+    "required_sources_derived": "per question leg from the live name index at pin sim-2026-07-30, LLM-free: resolve the leg's anchors, count member notes by source, keep the leader. bellicist mechanism -> tilly-1978 (the originating text the question's premise names); power distinction and critics -> hall-2006 (25 and 173 notes); recognition regime -> jackson-1990 (51); Middle East state -> ayubi-1995 (21); war making in the Middle East -> heydemann-2000 (23)."
+  },
+  "case_id": "A",
+  "question": "The claim that war made the modern state was built on the European experience of sustained inter-state competition. Assess whether the argument survives transfer to the twentieth-century Middle East, where states waged and prepared for war under a regime of guaranteed juridical sovereignty and external rents. Which of the bellicist mechanisms travel and which fail, and what do the sharpest critics of the state-formation literature identify as the reason for the difference?",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "tilly-1978-f908c910464c",
+    "hall-2006-449559bfe4dc",
+    "jackson-1990-7eb3f39a639f",
+    "ayubi-1995-16fd6a2e503f",
+    "heydemann-2000-66701ffbb36c"
+  ],
+  "rubric": [
+    "Decomposes the war-makes-states claim into at least three distinct causal mechanisms (e.g. fiscal extraction, capital-coercion bargaining, administrative penetration, mass mobilisation and citizenship) rather than treating it as a single thesis to accept or reject",
+    "Treats the international recognition regime - juridical statehood sustained without empirical statehood - as a scope condition that changes how the mechanisms operate, not as background scenery",
+    "Distinguishes coercive 'fierceness' from infrastructural capacity when characterising Middle Eastern state outcomes, and explains why war preparation could enlarge the first without producing the second",
+    "Engages at least one critic or commentator on the major state-formation theorists on that critic's own terms, not only the originators of the bellicist and multi-source-of-power positions",
+    "Tests the argument against at least two concrete settings or periods, and reaches a differentiated verdict - naming which mechanisms transfer, which are blocked, and by what - rather than a wholesale yes or no",
+    "Registers fairly the position that war and war preparation did restructure Middle Eastern states and societies, only through channels the Europe-derived model does not predict, before agreeing or disagreeing with it"
+  ],
+  "instant_dismissal_criteria": [
+    "Treats 'war makes states' as one undifferentiated claim and accepts or rejects it wholesale, with no separation of mechanisms",
+    "Explains the Middle Eastern divergence by culture or religion alone, without engaging the fiscal-military and geopolitical mechanisms",
+    "Omits the international dimension entirely - no account of external recognition, guarantees, or rents in sustaining states that never had to bargain with their societies",
+    "Answers from a single theorist's framework, with no critic, commentator, or rival explanation anywhere in the answer"
+  ],
+  "notes": "The real disagreement is whether the bellicist account is a general theory with parameters that vary, or a historically bounded description of one region whose enabling conditions - competitive elimination of weak states, no external guarantor, revenue extractable only from domestic society - do not recur. One side holds that guaranteed juridical sovereignty and non-tax revenue sever the war-extraction-representation loop; the other that war making and war preparation still transformed Middle Eastern states and societies, only through coercion-heavy, distributive, and even deterritorialised channels that the European model does not anticipate. A strong answer adjudicates mechanism by mechanism and uses the critics to sharpen, not decorate; an adequate one contrasts Europe and the Middle East wholesale and stops there.",
+  "turns_on": [
+    "Charles Tilly and the capital-coercion / extraction-bargaining account of state formation",
+    "Michael Mann's four sources of social power and infrastructural vs. despotic power",
+    "critics and commentators on Mann and the state-formation literature",
+    "negative sovereignty and juridical vs. empirical statehood (quasi-states)",
+    "the 'fierce' but weak Arab state",
+    "war making and war preparation as sources of state and social change in the Middle East",
+    "nation-state formation and war in the last two centuries",
+    "civil war as state-making or state-breaking"
+  ]
+}

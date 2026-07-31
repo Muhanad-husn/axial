@@ -1,0 +1,44 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "authored outside this environment, no repository access",
+    "persona": "eval-hard",
+    "date": "2026-07-31",
+    "path_version": "sim-v1",
+    "required_sources_derived": "per question leg from the live name index at pin sim-2026-07-30, LLM-free. control and information -> kalyvas-2006 (24 of 27 notes across the leg's anchors). paramilitary -> ungor-2020 (11 of 12). the case -> kao-2025 (5) and vignal-2021 (3, plus 20 of the 22 on `Syrian conflict`). identity production -> elcheroth-2017, which the concept anchors do not reach: `identity` holds 5 notes and `sectarianism` 3, and the account's material sits under `Guy Elcheroth` (15 notes) and `Stephen Reicher` (14), both single-source. Required because an answer that never reaches it cannot state the account it is asked to weigh.",
+    "known_risk": "One side of this debate is reachable mainly by author name and the question deliberately names no authors. If a run misses elcheroth-2017, read that as a retrieval finding about concept-vs-author anchoring, not as the answer ducking the question."
+  },
+  "case_id": "B",
+  "question": "Violence against Syrian civilians has been read in two ways that locate cause and agency differently: as the strategic output of territorial control and information, in which apparently sectarian targeting is selective violence under another name, and as a deliberate political technology that produces sectarian identities by shattering shared social practices and freezing fluid populations into hardened categories. Argue which account better explains the Syrian pattern, stating the strongest version of the account you reject, and test your choice against the specific role of paramilitary violence.",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "kalyvas-2006-0b5817b2642e",
+    "elcheroth-2017-78f0cccef5b9",
+    "ungor-2020-ae5701dcc706",
+    "vignal-2021-c7005c2bf8ef",
+    "kao-2025-ab19e646ab7d"
+  ],
+  "rubric": [
+    "Commits to one of the two accounts and defends it throughout; does not retreat into a survey of positions",
+    "States the rejected account in its strongest form - for the control-and-information account, that it explains the variation in violence better than hatred does and predicts where violence falls, not merely that it occurs; for the identity-production account, that collective identities are made in shared social practices and remade when violence disrupts them, so that categories are outcomes of the violence rather than its pre-existing causes, and leaders choose violence precisely for this effect",
+    "Identifies at least one observable pattern that discriminates between the accounts, such as whether violence concentrates in zones of contested control or tracks identity boundaries regardless of the military situation",
+    "Treats sectarian identity as something the answer must explain, not as a self-evident prior cause of the violence",
+    "Uses paramilitary and irregular violence as a genuine test - asking whether its organisation, targets, deniability and relation to the state fit the chosen logic - rather than mentioning it in passing",
+    "Names the limits of the chosen account explicitly, without converting those limits into a claim that both accounts are equally correct"
+  ],
+  "instant_dismissal_criteria": [
+    "Resolves the disagreement by assigning each account to a different 'level' or 'question' and declaring both right, without specifying a mechanism linking them or adjudicating where they conflict",
+    "Treats ancient or pre-existing sectarian hatred as a sufficient explanation of the violence",
+    "Argues against a strawman - attributing to the strategic account the view that violence is senseless or purely opportunistic, or to the identity account the view that strategy plays no role",
+    "Never commits to a position, or commits only in a final sentence unsupported by the preceding argument"
+  ],
+  "notes": "The genuine disagreement concerns the direction of causality between identity and violence, and whether targeting logic is informational (who collaborates, who defects, where control is contested) or constitutive (violence chosen to manufacture the categories it appears to respond to). The tempting shallow move is level-splitting: micro-logic for the strategists, macro-logic for the identity theorists, everyone right in their own register. A strong answer refuses that move, finds evidence the two accounts predict differently, and shows whether paramilitary violence - organised, deniable, and standing in a particular relation to the state - behaves as its chosen logic requires; an adequate answer merely describes both accounts accurately and picks one at the end.",
+  "turns_on": [
+    "the logic of selective and indiscriminate violence, territorial control, and information in civil war",
+    "identity construction through shared social practices and its transformation by collective violence; mobilising hatred and demobilising dissent",
+    "paramilitarism and its relation to the state",
+    "the social organisation and ideology that make organised violence possible",
+    "sectarianism in the Syrian conflict as explanandum vs. explanans"
+  ]
+}

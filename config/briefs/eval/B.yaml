@@ -1,0 +1,11 @@
+# origin: simulated
+# model: authored outside this environment, no repository access
+# persona: eval-hard
+# date: 2026-07-31
+# path_version: sim-v1
+# shape: judgment -- a real unsettled disagreement with an obvious wrong shallow answer
+# source: config/briefs/eval/hard-questions-final.md
+# note: case string tightened off the bare token `Syria` (962 notes / 22 sources)
+#       on 2026-07-31; same war, same decade, same object. See the source file.
+case: "The Syrian civil war, 2011-2021"
+request: "Violence against Syrian civilians has been read in two ways that locate cause and agency differently: as the strategic output of territorial control and information, in which apparently sectarian targeting is selective violence under another name, and as a deliberate political technology that produces sectarian identities by shattering shared social practices and freezing fluid populations into hardened categories. Argue which account better explains the Syrian pattern, stating the strongest version of the account you reject, and test your choice against the specific role of paramilitary violence."
