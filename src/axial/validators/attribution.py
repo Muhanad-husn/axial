@@ -48,8 +48,10 @@ from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.query.reader import (
     ArtifactNotFoundError,
     ChunkNotFoundError,
+    MalformedChunkIdError,
     get_artifact,
     get_chunk,
+    source_id_from_chunk_id,
 )
 
 # The §7.4 claim-kind vocabulary -- closed, not open text.
@@ -187,21 +189,72 @@ def _check_grounds(
     return None
 
 
+def _distinct_source_ids(grounds: list[dict[str, Any]], *, vault_dir: Path | None) -> list[str]:
+    """The distinct source ids one claim's `grounds` actually draw on, in
+    first-seen order -- the (b)-seam judge's own discriminator (§7.9):
+    without this, the judge could not tell a multi-source synthesis from a
+    single-source assertion and fell back to flagging declarative prose in
+    general (measured false-positive rate up to 0.333 across six real
+    runs). Only ever called on a claim's grounds after `_check_grounds` has
+    already passed them, so every entry is expected to resolve; still
+    degrades to skipping an entry rather than raising, since naming the
+    sources is this check's own job, not a second grounds-resolution gate."""
+    source_ids: list[str] = []
+    for entry in grounds:
+        if not isinstance(entry, dict):
+            continue
+        ref_type = entry.get("ref_type")
+        ref_id = entry.get("ref_id")
+        source_id: str | None = None
+        if ref_type == "chunk":
+            try:
+                source_id = source_id_from_chunk_id(ref_id)
+            except MalformedChunkIdError:
+                source_id = None
+        elif ref_type == "artifact":
+            try:
+                source_id = get_artifact(ref_id, vault_dir=vault_dir).source_id
+            except ArtifactNotFoundError:
+                source_id = None
+        if source_id and source_id not in source_ids:
+            source_ids.append(source_id)
+    return source_ids
+
+
 def _compose_b_seam_prompt(claims_b: list[dict[str, Any]]) -> str:
     """Assemble the bounded (b)-seam check prompt: every kind-`b` claim's
-    `claim_id`/text, asking an independent model whether any reads as a
-    single source's assertion rather than the tool's own cross-source
-    inference. One call for the whole batch -- "bounded" per §7.9, not
-    one call per claim."""
-    lines = "\n".join(f'- claim_id={claim["claim_id"]}: "{claim["text"]}"' for claim in claims_b)
+    `claim_id`/text alongside the distinct source ids its own `grounds`
+    draw on, asking an independent model whether the text reads as one of
+    those sources' own assertion rather than the tool's disclosed
+    cross-source inference. One call for the whole batch -- "bounded" per
+    §7.9, not one call per claim.
+
+    The source ids are the discriminator the rule itself names (§7.9: a
+    (b) claim "must NEVER read as though a single source directly asserted
+    it") -- without them the judge cannot tell a multi-source synthesis
+    from a single-source assertion and falls back to flagging declarative
+    voice in general, regardless of how many sources actually ground the
+    claim."""
+
+    def _render(claim: dict[str, Any]) -> str:
+        source_ids = claim["source_ids"]
+        count = len(source_ids)
+        noun = "source" if count == 1 else "sources"
+        listed = ", ".join(source_ids) if source_ids else "none resolved"
+        return (
+            f"- claim_id={claim['claim_id']} (grounds: {count} distinct {noun} -- "
+            f'{listed}): "{claim["text"]}"'
+        )
+
+    lines = "\n".join(_render(claim) for claim in claims_b)
     return f"""You are the independent (b)-seam honesty check of an analysis engine's stage-5 attribution validator (specs/PHASE-B.md §7.9). You are NOT the model that generated these claims -- you are checking its work.
 
-Every claim below is marked "b" (tool-infers-across-sources): it must be the SYSTEM's own inference drawn across multiple sources, and must NEVER read as though a single source directly asserted it.
+Every claim below is marked "b" (tool-infers-across-sources): it must be the SYSTEM's own inference drawn across multiple sources, and must NEVER read as though a single source directly asserted it. Each claim is followed by the distinct source ids its OWN grounds actually cite -- ground truth for how many sources it draws on, not a guess from the prose.
 
 Claims marked (b):
 {lines}
 
-For each claim, decide: does its TEXT read as a source assertion (as if one source said this) rather than as the tool's own cross-source inference? Flag only claims that fail this test.
+For each claim, decide: does its TEXT present the proposition as though ONE identifiable source asserted it alone, when the claim's grounds in fact draw on the sources listed? A claim grounded in two or more sources is EXPECTED to read as synthesis, comparison, or generalization across them -- confident or declarative phrasing is not itself a defect, and is not grounds to flag a claim on its own. Flag a claim only when its wording claims or implies that a single source said this, while its own grounds name more than one.
 
 Return ONLY this JSON object, no prose and no code fence:
 {{"flagged_claim_ids": ["<claim_id>", ...]}}"""
@@ -286,7 +339,14 @@ def validate_attribution(
             continue
 
         if kind == "b":
-            claims_b.append({"claim_id": claim_id, "text": claim.get("text", "")})
+            grounds = claim.get("grounds") or []
+            claims_b.append(
+                {
+                    "claim_id": claim_id,
+                    "text": claim.get("text", ""),
+                    "source_ids": _distinct_source_ids(grounds, vault_dir=vault_dir),
+                }
+            )
 
     if claims_b:
         failures.extend(
