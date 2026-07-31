@@ -101,11 +101,18 @@ def test_resolve_budgets_reads_set_values(tmp_path):
     assert budgets.any_measured
 
 
-def test_the_committed_config_leaves_both_budgets_unmeasured():
-    """They are set from the first five real runs, never guessed in advance
-    (§9.0). This pins that they are still unset, so a value landing later is
-    a deliberate, reviewed change."""
-    assert resolve_budgets(Path("config/pipeline.yaml")) == Budgets(None, None)
+def test_the_committed_config_carries_measured_budgets():
+    """Set 2026-07-31 from seven real runs of five briefs (issue #524), as
+    ceilings that should never fire on the post-#541/#542 build. This replaces
+    the assertion that they were still `null`, which had pinned that a value
+    landing later must be a deliberate, reviewed change -- it was, and this is
+    it. Pinned as measured rather than to the exact figures, because both are
+    re-cut tight once the retest completes and this test is about the values
+    existing, not about which ones they are."""
+    budgets = resolve_budgets(Path("config/pipeline.yaml"))
+    assert budgets.any_measured
+    assert budgets.max_usd_per_brief is not None
+    assert budgets.max_seconds_per_brief is not None
 
 
 # -- the mechanical checks ------------------------------------------------------
