@@ -34,6 +34,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from axial.validators.coverage import confidence_ceiling_for_claim
+
 # The §7.4 claim-kind marker vocabulary this module renders -- stable and
 # documented, per the plan's own inner-loop rule ("distinguishable in the
 # output by a stable, documented marker").
@@ -68,7 +70,23 @@ def _render_grounds(grounds: list[dict[str, Any]]) -> str | None:
     return f"  grounds: {refs}"
 
 
-def _render_claims(claims: list[dict[str, Any]]) -> list[str]:
+def _render_confidence_for_claim(claim: dict[str, Any], coverage_map: dict[str, Any]) -> str:
+    """One claim's `[confidence: ...]` tag (issue #550): the EFFECTIVE band
+    (`confidence_ceiling_for_claim`), clamped down to the coverage of the
+    names this claim's own grounds notes carry when the model's emitted band
+    exceeds it. Nothing is silently rewritten -- the emitted band still
+    appears alongside the ceiling whenever it was clamped, so a reader sees
+    both what the model asked for and what the answer actually prints."""
+    ceiling = confidence_ceiling_for_claim(claim, coverage_map)
+    if not ceiling.clamped:
+        return f"confidence: {ceiling.effective_band}"
+    return (
+        f"confidence: {ceiling.effective_band} (model emitted {ceiling.emitted!r}, "
+        f"capped by this claim's own coverage ceiling {ceiling.ceiling!r})"
+    )
+
+
+def _render_claims(claims: list[dict[str, Any]], coverage_map: dict[str, Any]) -> list[str]:
     lines = ["", "## Claims", ""]
     if not claims:
         lines.append("(none)")
@@ -76,7 +94,8 @@ def _render_claims(claims: list[dict[str, Any]]) -> list[str]:
     for claim in claims:
         kind = claim.get("kind")
         marker = _KIND_MARKERS.get(kind, f"({kind})")
-        lines.append(f"- {marker} {claim.get('text', '')} [confidence: {claim.get('confidence')}]")
+        confidence_text = _render_confidence_for_claim(claim, coverage_map)
+        lines.append(f"- {marker} {claim.get('text', '')} [{confidence_text}]")
         grounds_line = _render_grounds(claim.get("grounds") or [])
         if grounds_line is not None:
             lines.append(grounds_line)
@@ -147,7 +166,7 @@ def render_markdown(record: dict[str, Any]) -> str:
     if disposition == "refuse":
         lines += _render_refusal(record)
     else:
-        lines += _render_claims(record.get("claims") or [])
+        lines += _render_claims(record.get("claims") or [], record.get("coverage_map") or {})
     lines += _render_counter_position(record.get("counter_position") or {})
     lines += _render_coverage_map(record.get("coverage_map") or {})
     lines += _render_confidence(record.get("confidence") or {})

@@ -114,8 +114,11 @@ from axial.query.reader import (
 )
 from axial.validators.counter_position import (
     SIGNAL_GATHER_DISAGREEMENT,
+    SIGNAL_NAMES_OPPONENT,
+    SIGNAL_OPPOSED_POSITIONS,
     _opposition_surfaces,
     detect_contested,
+    notes_naming_an_opponent,
     opposed_grounds_notes,
     resolve_grounds_notes,
     stated_position,
@@ -1001,21 +1004,6 @@ def _empty_counter_position() -> dict[str, Any]:
 MAX_COUNTER_POSITION_CANDIDATES = 20
 
 
-def _majority_position(notes: list[ChunkNote]) -> str | None:
-    """The stated position most of this run's grounds notes carry (§7.8).
-    Ties break by FIRST-SEEN citation order -- `dict` preserves insertion
-    order and `max` returns the first maximal item -- so this never falls
-    back to an alphabetical pick unrelated to what the run actually argued."""
-    counts: dict[str, int] = {}
-    for note in notes:
-        position = stated_position(note)
-        if position:
-            counts[position] = counts.get(position, 0) + 1
-    if not counts:
-        return None
-    return max(counts, key=lambda position: counts[position])
-
-
 def _counter_position_candidates(
     claims: list[dict[str, Any]],
     trajectory: list[dict[str, Any]] | None,
@@ -1024,46 +1012,50 @@ def _counter_position_candidates(
     names_dir: Path | None = None,
 ) -> list[ChunkNote]:
     """The whitelist of real, resolvable vault notes (`ChunkNote`) offered as
-    candidate counter-position grounds (§7.8, issue #490). Three sources, in
-    this order, deduplicated on `chunk_id` and truncated at
-    `MAX_COUNTER_POSITION_CANDIDATES`:
+    candidate counter-position grounds (§7.8, issues #490 and #550). Four
+    sources, in this order, deduplicated on `chunk_id` and truncated at
+    `MAX_COUNTER_POSITION_CANDIDATES` -- the run's own cited evidence
+    outranks name-layer material, and a paired opposition outranks a note
+    that names an opponent unpaired:
 
     1. **Both sides of every stated opposition among this run's own grounds
        notes** (`opposed_grounds_notes` -- the same function the contested
-       predicate reads), plus any grounds note whose stated position differs
-       from the majority among that evidence. This is the opposing material
-       the answer already cites. The majority clause alone would come up
-       empty on the real corpus, where 76% of notes answer `position_of`
-       with "the author" and so no position differs from the majority.
-    2. **The notes `who_argues_against` returns** for a name the run touched
+       predicate's `opposed_positions` path reads).
+    2. **Every other grounds note whose own `arguing_against` names an
+       opponent at all** (`notes_naming_an_opponent` -- the contested
+       predicate's `names_opponent` path, issue #550), no pairing required.
+       This is what puts Caspersen's note on the whitelist when it states and
+       rejects Pegg's position: Pegg is not an author in this corpus, so
+       Caspersen's note never pairs under source 1, but it is still this
+       run's own cited opposition and belongs ahead of name-layer material.
+       A note source 1 already added is not re-added here (`opposed_grounds_
+       notes`'s own arguing side is a strict subset of this wider pool).
+    3. **The notes `who_argues_against` returns** for a name the run touched
        (the §7.7 coverage scope) -- real vault ids reached deterministically
        from the name layer, never a fresh model-driven retrieval. Called with
        `limit=MAX_COUNTER_POSITION_CANDIDATES` (issue #505): this whitelist
        never keeps more than that many candidates in total, so it never needs
        more than that many from any one name either, and no new constant is
        introduced to state that.
-    3. **The member notes of a Gather finding** at such a name (D4). The
+    4. **The member notes of a Gather finding** at such a name (D4). The
        finding itself is a pointer and is never offered, quoted or cited; its
        page's own member notes are, because they are the passages the finding
-       is about. Without this clause a brief that fires contested on path 2
-       alone can reach the empty-candidates guard, whose disclosure would
-       then say the grounds chunks did not resolve -- which is false: they
-       resolved and simply carry no opposing position.
+       is about. Without this clause a brief that fires contested on the
+       `gather_disagreement` path alone can reach the empty-candidates guard,
+       whose disclosure would then say the grounds chunks did not resolve --
+       which is false: they resolved and simply carry no opposing position.
 
     Not guaranteed non-empty even on a contested brief, which is why the
     caller still guards that case: a grounds id can fail to resolve here
     exactly as it does in `detect_contested` (skipped -- a broken grounds
     pointer is the attribution validator's job)."""
     grounds_notes = resolve_grounds_notes(claims, vault_dir=vault_dir)
-    majority = _majority_position(grounds_notes)
 
     candidates: dict[str, ChunkNote] = {}
     for note in opposed_grounds_notes(grounds_notes, names_dir=names_dir):
         candidates[note.chunk_id] = note
-    for note in grounds_notes:
-        position = stated_position(note)
-        if position and position != majority:
-            candidates[note.chunk_id] = note
+    for note in notes_naming_an_opponent(grounds_notes):
+        candidates.setdefault(note.chunk_id, note)
 
     scope = coverage_scope([c for c in claims if isinstance(c, dict)], trajectory or [])
     for canonical in scope:
@@ -1113,8 +1105,43 @@ def _describe_candidate(note: ChunkNote) -> str:
     )
 
 
+# The §7.8 contested-signal vocabulary, in the model's own words (issue
+# #550). Once `names_opponent` joined the predicate, 86% of grounds notes
+# name an opponent (measured over the six smoke-v4 records, `data/logs/
+# 2026-07-31-panel-smoke-v4/`), so "mechanically flagged CONTESTED" reads as
+# selective when it is now the common case. The prompt states which signal
+# actually fired instead of asserting a single, increasingly-meaningless
+# verdict.
+_CONTESTED_SIGNAL_DESCRIPTIONS = {
+    SIGNAL_OPPOSED_POSITIONS: (
+        "two of this run's own cited passages state opposing positions, and one of them "
+        "names the other's side directly"
+    ),
+    SIGNAL_NAMES_OPPONENT: (
+        "one of this run's own cited passages states and argues against an opposing "
+        "position, even though no note on that other side is itself part of this run's "
+        "own evidence"
+    ),
+    SIGNAL_GATHER_DISAGREEMENT: (
+        "a name this answer rests on carries a disagreement the corpus's own authors are "
+        "recorded as holding"
+    ),
+}
+
+
+def _describe_contested_signal(signal: str | None) -> str:
+    """The §7.8 prompt's own words for whichever contested signal fired
+    (issue #550) -- never a generic "mechanically flagged" claim. Falls back
+    to a plain, still-honest statement for a signal this dict does not name
+    (a caller-supplied `None`, or a future signal added here without
+    updating this map first)."""
+    return _CONTESTED_SIGNAL_DESCRIPTIONS.get(
+        signal, "this run's own resolved evidence states a disagreement"
+    )
+
+
 def _compose_counter_position_prompt(
-    brief: Brief, claims: list[dict[str, Any]], candidates: list[ChunkNote]
+    brief: Brief, claims: list[dict[str, Any]], candidates: list[ChunkNote], signal: str | None
 ) -> str:
     claim_lines = (
         "\n".join(
@@ -1125,7 +1152,8 @@ def _compose_counter_position_prompt(
         or "(no claims)"
     )
     candidate_lines = "\n".join(_describe_candidate(note) for note in candidates)
-    return f"""You are the stage-4 counter-position pass of an analysis engine (specs/PHASE-B.md §7.8). This brief has already been mechanically flagged CONTESTED: the corpus itself states a disagreement here -- one passage names another's position, author or subject as what it argues against, or a name this answer rests on carries a recorded disagreement. Your job is to state the strongest opposing position the corpus itself supports, or to say plainly that it does not -- never to invent one.
+    signal_description = _describe_contested_signal(signal)
+    return f"""You are the stage-4 counter-position pass of an analysis engine (specs/PHASE-B.md §7.8). This brief is CONTESTED because {signal_description}. Your job is to state the strongest opposing position the corpus itself supports, or to say plainly that it does not -- never to invent one.
 
 Case: "{brief.case}"
 Request: "{brief.request}"
@@ -1339,7 +1367,7 @@ def generate_counter_position(
             model_called=False,
         )
 
-    prompt = _compose_counter_position_prompt(brief, claims, candidates)
+    prompt = _compose_counter_position_prompt(brief, claims, candidates, contested.signal)
     print(
         f"generate_counter_position: starting, signal={contested.signal!r}, "
         f"{len(candidates)} candidate(s)",

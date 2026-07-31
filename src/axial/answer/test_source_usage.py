@@ -76,6 +76,19 @@ def _name_call(step, tool, args):
     return {"step": step, "tool": tool, "args": args, "result_ids": [], "result_count": 0}
 
 
+def _where_names_meet_call(step, canonical, other, *, result_count=0, result_ids=None):
+    """A `where_names_meet` trajectory entry, persisted with whatever the
+    real tool call would have capped `result_count`/`result_ids` to -- the
+    denominator must re-query the true size rather than trust these."""
+    return {
+        "step": step,
+        "tool": "where_names_meet",
+        "args": {"canonical": canonical, "other": other},
+        "result_ids": result_ids or [],
+        "result_count": result_count,
+    }
+
+
 def _record(*, claims, trajectory, disposition="proceed"):
     return {
         "claims": claims,
@@ -274,6 +287,104 @@ def test_a_page_over_the_default_limit_is_counted_in_full(tmp_path):
 
     assert result["denominator_by_name"] == {TILLY: 25}
     assert result["sources"][0]["available_chunk_count"] == 25
+
+
+# -- where_names_meet: pair-keyed, re-queried, additive (issue #550) ---------
+
+
+def test_an_intersection_alone_credits_only_the_pair_with_its_true_size(tmp_path):
+    """Issue #550's own first acceptance scenario: a trajectory with one
+    `where_names_meet` and no other name query puts the pair's TRUE size in
+    the denominator -- and nothing under either name alone, since neither
+    page was read as a whole here."""
+    prose = tmp_path / "prose"
+    shared = [f"shared_0_a_{i:03d}" for i in range(3)]
+    for chunk_id in shared:
+        _write_chunk_note(prose, chunk_id)
+    names = tmp_path / "names"
+    _write_name_page(names, TILLY, shared)
+    _write_name_page(names, BAYAT, shared)
+
+    trajectory = [_where_names_meet_call(1, TILLY, BAYAT, result_count=3, result_ids=shared)]
+    result = compute_source_usage(_record(claims=[], trajectory=trajectory), vault_dir=tmp_path)
+
+    assert result["denominator_by_name"] == {f"{BAYAT} & {TILLY}": 3}
+
+
+def test_a_directly_queried_name_keeps_its_full_page_and_the_pair_is_added_alongside(tmp_path):
+    """Issue #550's own second acceptance scenario: `get_name('Syria')` plus
+    `where_names_meet('Syria', 'paramilitarism')` keeps Syria's full page
+    count unchanged and adds the pair as an ADDITIONAL entry, never a
+    replacement."""
+    prose = tmp_path / "prose"
+    syria_only = [f"syria_0_a_{i:03d}" for i in range(5)]
+    shared = [f"shared_0_a_{i:03d}" for i in range(2)]
+    for chunk_id in [*syria_only, *shared]:
+        _write_chunk_note(prose, chunk_id)
+    names = tmp_path / "names"
+    _write_name_page(names, "Syria", [*syria_only, *shared])
+    _write_name_page(names, "paramilitarism", shared)
+
+    trajectory = [
+        _name_call(1, "get_name", {"canonical": "Syria"}),
+        _where_names_meet_call(2, "Syria", "paramilitarism", result_count=2, result_ids=shared),
+    ]
+    result = compute_source_usage(_record(claims=[], trajectory=trajectory), vault_dir=tmp_path)
+
+    assert result["denominator_by_name"]["Syria"] == 7
+    assert result["denominator_by_name"]["Syria & paramilitarism"] == 2
+    assert "paramilitarism" not in result["denominator_by_name"], (
+        "the name reached ONLY as the intersection's other half must not get its own "
+        "whole-page entry"
+    )
+
+
+def test_the_pairs_true_size_is_re_queried_not_the_capped_persisted_result_count(tmp_path):
+    """`result_count` on the persisted step is the capped `limit` (the tool
+    caps at `DEFAULT_LIMIT`, 10), never the true intersection size -- the
+    denominator must re-query it fresh rather than trust the trajectory."""
+    prose = tmp_path / "prose"
+    shared = [f"shared_0_a_{i:03d}" for i in range(12)]  # exceeds DEFAULT_LIMIT (10)
+    for chunk_id in shared:
+        _write_chunk_note(prose, chunk_id)
+    names = tmp_path / "names"
+    _write_name_page(names, TILLY, shared)
+    _write_name_page(names, BAYAT, shared)
+
+    # Mirrors what the real tool call would have persisted: capped at 10.
+    trajectory = [_where_names_meet_call(1, TILLY, BAYAT, result_count=10, result_ids=shared[:10])]
+    result = compute_source_usage(_record(claims=[], trajectory=trajectory), vault_dir=tmp_path)
+
+    key = f"{BAYAT} & {TILLY}"
+    assert result["denominator_by_name"][key] == 12, "must re-query the TRUE size, not result_count"
+
+
+def test_the_same_pair_with_swapped_arguments_is_one_entry(tmp_path):
+    prose = tmp_path / "prose"
+    shared = ["shared_0_a_000"]
+    _write_chunk_note(prose, shared[0])
+    names = tmp_path / "names"
+    _write_name_page(names, TILLY, shared)
+    _write_name_page(names, BAYAT, shared)
+
+    trajectory = [
+        _where_names_meet_call(1, TILLY, BAYAT, result_count=1, result_ids=shared),
+        _where_names_meet_call(2, BAYAT, TILLY, result_count=1, result_ids=shared),
+    ]
+    result = compute_source_usage(_record(claims=[], trajectory=trajectory), vault_dir=tmp_path)
+
+    assert len([k for k in result["denominator_by_name"] if "&" in k]) == 1
+
+
+def test_an_intersection_naming_an_absent_page_is_skipped_not_raised(tmp_path):
+    _write_name_page(tmp_path / "names", TILLY, [])
+    trajectory = [
+        _where_names_meet_call(1, TILLY, "Some Absent Name", result_count=0, result_ids=[])
+    ]
+
+    result = compute_source_usage(_record(claims=[], trajectory=trajectory), vault_dir=tmp_path)
+
+    assert not any("&" in k for k in result["denominator_by_name"])
 
 
 # -- usage_ratio ----------------------------------------------------------------

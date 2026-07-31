@@ -8,7 +8,8 @@ grounds note is a member of), `corpus_note_count` sourced from
 `coverage_count` (never a recount), `evidence_note_count` as the intersection
 with the page's own member list, the null-denominator case, band-boundary
 derivation, config-driven overriding, determinism, zero model calls, the
-three release-gate checks, and the vacuous refuse-disposition pass.
+three release-gate checks, the vacuous refuse-disposition pass, and the
+fourth, non-blocking per-claim confidence-ceiling check (issue #550).
 """
 
 from __future__ import annotations
@@ -25,9 +26,11 @@ from axial.validators.coverage import (
     REASON_MISSING_COVERAGE_ENTRY,
     compute_confidence,
     compute_coverage_map,
+    confidence_ceiling_for_claim,
     coverage_band_for,
     coverage_scope,
     format_coverage_map,
+    intersected_names,
     retrieved_names,
     validate_coverage_and_confidence,
 )
@@ -85,14 +88,18 @@ def vault_dir(tmp_path: Path) -> Path:
 
 
 def _claim(
-    claim_id: str, *, names_touched: list[str], grounds: list[dict[str, Any]]
+    claim_id: str,
+    *,
+    names_touched: list[str],
+    grounds: list[dict[str, Any]],
+    confidence: Any = "medium",
 ) -> dict[str, Any]:
     return {
         "claim_id": claim_id,
         "text": f"Text for {claim_id}.",
         "kind": "a",
         "grounds": grounds,
-        "confidence": "medium",
+        "confidence": confidence,
         "names_touched": names_touched,
     }
 
@@ -111,6 +118,16 @@ def _chunk_grounds(*chunk_ids: str) -> list[dict[str, Any]]:
     return [{"ref_type": "chunk", "ref_id": chunk_id} for chunk_id in chunk_ids]
 
 
+def _where_names_meet_call(canonical: str, other: str) -> dict[str, Any]:
+    return {
+        "step": 1,
+        "tool": "where_names_meet",
+        "args": {"canonical": canonical, "other": other},
+        "result_ids": [],
+        "result_count": 0,
+    }
+
+
 # -- the map's scope: retrieved AND touched ----------------------------------
 
 
@@ -126,6 +143,36 @@ def test_retrieved_names_reads_both_the_canonical_arg_and_find_names_results():
         },
     ]
     assert retrieved_names(trajectory) == {TILLY, BAYAT}
+
+
+def test_intersected_names_reads_both_canonical_and_other():
+    """Issue #550: `where_names_meet` takes TWO name arguments, and neither
+    is folded into `NAME_ARG_TOOLS` -- a frozenset membership test there
+    reads `args["canonical"]` alone and would silently drop `other`."""
+    trajectory = [_where_names_meet_call(TILLY, BAYAT)]
+    assert intersected_names(trajectory) == {TILLY, BAYAT}
+
+
+def test_retrieved_names_includes_both_names_of_a_where_names_meet_call():
+    trajectory = [_where_names_meet_call(TILLY, BAYAT)]
+    assert retrieved_names(trajectory) == {TILLY, BAYAT}
+
+
+def test_an_intersection_alone_puts_both_names_in_the_coverage_scope(vault_dir: Path):
+    """Issue #550's own named acceptance scenario: a trajectory with one
+    `where_names_meet` and no other name query still puts both names in the
+    §7.7 coverage scope -- a claim resting on notes found only at an
+    intersection must not go undisclosed."""
+    claims = [_claim("c-1", names_touched=[TILLY, BAYAT], grounds=_chunk_grounds(TILLY_CHUNK_1))]
+    trajectory = [_where_names_meet_call(TILLY, BAYAT)]
+    assert coverage_scope(claims, trajectory) == sorted([TILLY, BAYAT])
+
+
+def test_compute_coverage_map_covers_a_name_reached_only_via_intersection(vault_dir: Path):
+    claims = [_claim("c-1", names_touched=[TILLY, BAYAT], grounds=_chunk_grounds(TILLY_CHUNK_1))]
+    trajectory = [_where_names_meet_call(TILLY, BAYAT)]
+    coverage_map = compute_coverage_map(claims, trajectory=trajectory, vault_dir=vault_dir)
+    assert set(coverage_map) == {TILLY, BAYAT}
 
 
 def test_coverage_count_tool_results_never_enter_the_scope():
@@ -554,6 +601,102 @@ def test_claims_key_absent_passes_vacuously_for_the_coverage_check():
         {"confidence": {"overall_band": "low", "rationale": "x"}}
     )
     assert report.passed
+
+
+# -- per-claim confidence ceiling: clamp, never fail (issue #550) -----------
+
+
+def test_confidence_ceiling_is_the_worst_touched_names_coverage_band():
+    coverage_map = {
+        TILLY: {"corpus_note_count": 240, "evidence_note_count": 5, "coverage_band": "dense"},
+        BAYAT: {"corpus_note_count": 6, "evidence_note_count": 1, "coverage_band": "thin"},
+    }
+    claim = _claim("c-1", names_touched=[TILLY, BAYAT], grounds=[], confidence="high")
+    result = confidence_ceiling_for_claim(claim, coverage_map)
+    assert result.ceiling == "low"
+    assert result.emitted == "high"
+    assert result.effective_band == "low"
+    assert result.clamped is True
+
+
+def test_confidence_within_its_own_ceiling_is_not_clamped():
+    coverage_map = {
+        TILLY: {"corpus_note_count": 240, "evidence_note_count": 5, "coverage_band": "dense"}
+    }
+    claim = _claim("c-1", names_touched=[TILLY], grounds=[], confidence="medium")
+    result = confidence_ceiling_for_claim(claim, coverage_map)
+    assert result.ceiling == "high"
+    assert result.effective_band == "medium"
+    assert result.clamped is False
+
+
+def test_a_dense_claim_ignores_a_thin_name_some_OTHER_claim_touches():
+    """The measured reason the RUN band is useless as a per-claim ceiling
+    (issue #550): a claim resting only on its own dense names must not be
+    dragged down by a thin name elsewhere in the SAME answer's coverage_map,
+    the way `compute_confidence`'s run-level derivation is."""
+    coverage_map = {
+        TILLY: {"corpus_note_count": 240, "evidence_note_count": 5, "coverage_band": "dense"},
+        BAYAT: {"corpus_note_count": 6, "evidence_note_count": 1, "coverage_band": "thin"},
+    }
+    claim = _claim("c-1", names_touched=[TILLY], grounds=[], confidence="high")
+    result = confidence_ceiling_for_claim(claim, coverage_map)
+    assert result.ceiling == "high"
+    assert result.clamped is False
+
+
+def test_no_touched_name_in_the_coverage_map_leaves_the_ceiling_undecided():
+    """A claim whose own `names_touched` are all absent from `coverage_map`
+    (the run never retrieved on any of them) has no denominator to derive a
+    ceiling from -- left unclamped rather than guessed at, never a
+    fabricated `low`."""
+    claim = _claim("c-1", names_touched=["Some Untouched Name"], grounds=[], confidence="high")
+    result = confidence_ceiling_for_claim(claim, {})
+    assert result.ceiling is None
+    assert result.effective_band == "high"
+    assert result.clamped is False
+
+
+def test_an_invalid_emitted_confidence_passes_through_unclamped():
+    coverage_map = {
+        BAYAT: {"corpus_note_count": 6, "evidence_note_count": 1, "coverage_band": "thin"}
+    }
+    claim = _claim("c-1", names_touched=[BAYAT], grounds=[], confidence="medium-high")
+    result = confidence_ceiling_for_claim(claim, coverage_map)
+    assert result.ceiling == "low"
+    assert result.effective_band == "medium-high"
+    assert result.clamped is False
+
+
+def test_validate_coverage_and_confidence_reports_the_clamped_count_without_failing():
+    claims = [
+        _claim("c-1", names_touched=[BAYAT], grounds=[], confidence="high"),
+        _claim("c-2", names_touched=[TILLY], grounds=[], confidence="medium"),
+    ]
+    record = _record(
+        claims=claims,
+        coverage_map={
+            TILLY: {"corpus_note_count": 240, "evidence_note_count": 5, "coverage_band": "dense"},
+            BAYAT: {"corpus_note_count": 6, "evidence_note_count": 1, "coverage_band": "thin"},
+        },
+        confidence={"overall_band": "low", "rationale": "x"},
+        trajectory=[_get_name_call(TILLY), _get_name_call(BAYAT)],
+    )
+    report = validate_coverage_and_confidence(record)
+    assert report.passed, report.failures
+    assert report.clamped_claim_ids == ["c-1"]
+    assert report.clamped_count == 1
+
+
+def test_no_claim_is_clamped_yields_an_empty_list_not_none():
+    record = _record(
+        claims=[],
+        coverage_map={},
+        confidence={"overall_band": "low", "rationale": "refused; no synthesis was attempted"},
+    )
+    report = validate_coverage_and_confidence(record)
+    assert report.clamped_claim_ids == []
+    assert report.clamped_count == 0
 
 
 # -- model-free by construction -----------------------------------------------

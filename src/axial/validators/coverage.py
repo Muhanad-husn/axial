@@ -47,11 +47,25 @@ settle that the plan did not:
 Takes no `LLMClient` at all: nothing here can make a model call, so the
 `explode` provider installed in tests never fires by construction, not by
 a check that happens not to trip it.
+
+**`retrieved_names` also carries `where_names_meet`'s two names (issue
+#550).** Measured over smoke-v4: the tool fired 12 times across six briefs
+and reached names -- `Nation-state formation`, `sovereignty` -- that then
+appeared in NEITHER run's coverage map, because the pre-#550 scope only read
+`NAME_ARG_TOOLS`'s single `canonical` argument and `where_names_meet` takes
+two (`canonical` AND `other`). Both now enter the §7.7 scope through
+`intersected_names`, kept as its own function (never folded into
+`NAME_ARG_TOOLS`, whose frozenset test reads one arg key and would silently
+drop `other`). `axial.answer.source_usage` needs the narrower,
+single-argument set alone for its own per-name whole-page denominator (a
+name reached only as one half of an intersection did not have its own page
+read), which is why that split is `_directly_queried_names`, not
+`retrieved_names` itself -- see that function's own docstring.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -69,15 +83,25 @@ TOP_CONFIDENCE_BAND = "high"
 # confidence-vs-coverage check.
 THIN_COVERAGE_BAND = "thin"
 
-# The §7.5 name-layer tools that take a canonical name as an argument, and
-# the one that RETURNS canonical names. Together they are "the names this
-# run retrieved on" (`retrieved_names`) -- the §7.7 map's scope. `find_names`
+# The §7.5 name-layer tools that take a SINGLE canonical name as an
+# argument, and the one that RETURNS canonical names. Together they are the
+# names this run reached directly (`_directly_queried_names`). `find_names`
 # is the brief's own resolution step (§7.2); the other four are the
 # traversals a run makes from a name it already resolved. `coverage_count`
 # is deliberately absent: as a tool it returns EVERY canonical in the index
 # (62,821 on the real corpus), which is the whole-index table §7.2 rules out.
+#
+# `where_names_meet` (#517/#523) is deliberately NOT a fifth member here
+# (issue #550): it takes TWO name arguments, `canonical` AND `other`, and a
+# frozenset membership test that reads `args["canonical"]` the way the other
+# four do would silently capture one name and drop the other. It gets its
+# own branch in `intersected_names` below, read by both name arguments.
 NAME_ARG_TOOLS = frozenset({"get_name", "name_neighbors", "who_cites", "who_argues_against"})
 NAME_RESULT_TOOLS = frozenset({"find_names"})
+
+# The one §7.5 tool with two name arguments -- read directly by name below,
+# never folded into `NAME_ARG_TOOLS` (see that constant's own comment).
+WHERE_NAMES_MEET_TOOL = "where_names_meet"
 
 # The `coverage_bands` config block's code-level fallback: used only when
 # `config/pipeline.yaml` (or its `coverage_bands` key) is absent, mirroring
@@ -155,17 +179,20 @@ def touched_names(claims: list[dict[str, Any]]) -> set[str]:
     return names
 
 
-def retrieved_names(trajectory: list[dict[str, Any]]) -> set[str]:
-    """The canonical names this run retrieved on, read off the §7.6
-    trajectory: the `canonical` argument of every name-layer traversal
+def _directly_queried_names(trajectory: list[dict[str, Any]]) -> set[str]:
+    """The canonical names this run reached through a DIRECT single-name
+    query: the `canonical` argument of every name-layer traversal
     (`NAME_ARG_TOOLS`) and every canonical `find_names` resolved
     (`NAME_RESULT_TOOLS`, whose `result_ids` are canonical names, not chunk
     ids -- `ToolSpec.returns_chunk_ids` is `False` for exactly that reason).
 
-    This is "the names this brief is about" (§7.2) as the run itself
-    recorded them, and it is what keeps the §7.7 map to the handful of names
-    the answer is anchored at rather than every name its evidence mentions
-    in passing (see the module docstring's measurement)."""
+    Kept separate from `intersected_names` (issue #550) because a caller
+    that credits a name its own WHOLE PAGE (`axial.answer.source_usage.
+    compute_available_notes`'s per-name denominator) must not do that for a
+    name reached only as one half of a `where_names_meet` intersection --
+    that call read the intersection, not the page. `retrieved_names` below
+    is the union of both, for callers (the §7.7 coverage scope) that want
+    every name this run reached, however it reached it."""
     names: set[str] = set()
     for entry in trajectory:
         if not isinstance(entry, dict):
@@ -180,6 +207,38 @@ def retrieved_names(trajectory: list[dict[str, Any]]) -> set[str]:
                 if isinstance(result_id, str) and result_id.strip():
                     names.add(result_id)
     return names
+
+
+def intersected_names(trajectory: list[dict[str, Any]]) -> set[str]:
+    """Every name reached as either half of a `where_names_meet` call (issue
+    #550, #517/#523): both `canonical` and `other`. Read directly by both
+    argument keys, never through `NAME_ARG_TOOLS` (that constant's own
+    comment states why a frozenset test would silently drop `other`)."""
+    names: set[str] = set()
+    for entry in trajectory:
+        if not isinstance(entry, dict) or entry.get("tool") != WHERE_NAMES_MEET_TOOL:
+            continue
+        args = entry.get("args") or {}
+        for key in ("canonical", "other"):
+            value = args.get(key)
+            if isinstance(value, str) and value.strip():
+                names.add(value)
+    return names
+
+
+def retrieved_names(trajectory: list[dict[str, Any]]) -> set[str]:
+    """The canonical names this run retrieved on, read off the §7.6
+    trajectory: every direct single-name query (`_directly_queried_names`)
+    plus both names of every `where_names_meet` intersection
+    (`intersected_names`, issue #550) -- a claim resting on notes found only
+    at an intersection must still get a coverage entry (§7.7), even though
+    neither name's own page was ever read as a whole.
+
+    This is "the names this brief is about" (§7.2) as the run itself
+    recorded them, and it is what keeps the §7.7 map to the handful of names
+    the answer is anchored at rather than every name its evidence mentions
+    in passing (see the module docstring's measurement)."""
+    return _directly_queried_names(trajectory) | intersected_names(trajectory)
 
 
 def coverage_scope(claims: list[dict[str, Any]], trajectory: list[dict[str, Any]]) -> list[str]:
@@ -365,6 +424,15 @@ def format_coverage_map(coverage_map: dict[str, dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+# The §7.4 confidence-band vocabulary, worst to best -- the rank order the
+# per-claim confidence ceiling (issue #550) compares the model's own emitted
+# band against. Deliberately a SEPARATE dict from `_COVERAGE_BAND_RANK`
+# above: the two vocabularies are one-to-one but rank different things (a
+# coverage band vs. a confidence band), and a shared dict would silently
+# couple them the moment either vocabulary's spelling ever diverged.
+_CONFIDENCE_BAND_RANK = {"low": 0, "medium": 1, TOP_CONFIDENCE_BAND: 2}
+
+
 @dataclass(frozen=True)
 class CoverageConfidenceFailure:
     """One failed release-gate check: which of the three reasons, and a
@@ -375,12 +443,99 @@ class CoverageConfidenceFailure:
 
 
 @dataclass(frozen=True)
+class ClaimConfidenceCeiling:
+    """One claim's confidence ceiling (issue #550): the confidence band the
+    coverage of its OWN grounds notes' names can justify, and the effective
+    band that gets rendered. Model-free and pure -- derived entirely from a
+    persisted claim's own `confidence`/`names_touched` against the record's
+    own `coverage_map`, never a fresh vault read.
+
+    `ceiling` is `None` when none of the claim's own `names_touched` has a
+    `coverage_map` entry at all (the run never retrieved on any of them, or
+    the claim touches no name) -- there is nothing to derive a ceiling from,
+    so `effective_band` is left equal to `emitted` rather than guessed at.
+    `clamped` is `True` only when the model's own emitted confidence
+    resolves to a REAL band that exceeds a REAL derived ceiling; `emitted`
+    is carried through unchanged either way -- nothing here rewrites the
+    claim, it only reports what the rendered answer should show instead."""
+
+    emitted: Any
+    ceiling: str | None
+    effective_band: Any
+    clamped: bool
+
+
+def confidence_ceiling_for_claim(
+    claim: dict[str, Any], coverage_map: dict[str, dict[str, Any]]
+) -> ClaimConfidenceCeiling:
+    """The §7.4/§7.9 per-claim confidence ceiling (issue #550): a claim's
+    confidence may not exceed the coverage band of the names its OWN
+    grounds notes carry -- the same coverage-to-confidence mapping the
+    run-level `overall_band` already uses (`compute_confidence`'s `_CONFIDENCE_
+    BAND_BY_COVERAGE_RANK`), applied per claim against `names_touched`
+    instead of over the whole map.
+
+    Deliberately narrower than the run-level derivation: the run band is
+    bounded by the LEAST-covered name anywhere in the whole answer, which
+    measured 92% of claims across six smoke-v4 records as "above the run's
+    own band" -- useless as a per-claim ceiling, since a given claim may
+    rest only on this run's densest names while some OTHER claim's thin name
+    drags the run band down. The per-claim rule reads only THIS claim's own
+    `names_touched`, restricted to names `coverage_map` actually covers (a
+    name a claim touches that the run never retrieved on has no coverage
+    entry at all, §7.7's own scope rule, and contributes nothing here)."""
+    emitted = claim.get("confidence")
+    bands = [
+        entry.get("coverage_band")
+        for name in (claim.get("names_touched") or [])
+        if isinstance((entry := coverage_map.get(name)), dict)
+        and entry.get("coverage_band") in _COVERAGE_BAND_RANK
+    ]
+    if not bands:
+        return ClaimConfidenceCeiling(
+            emitted=emitted, ceiling=None, effective_band=emitted, clamped=False
+        )
+
+    worst_rank = min(_COVERAGE_BAND_RANK[band] for band in bands)
+    ceiling = _CONFIDENCE_BAND_BY_COVERAGE_RANK[worst_rank]
+
+    if emitted not in _CONFIDENCE_BAND_RANK:
+        # An absent or out-of-vocabulary emitted confidence has no rank to
+        # compare against a ceiling; it passes through unclamped, exactly as
+        # `parse_synthesis_response` already rejects an invalid band at
+        # generation (issue #402) -- this validator never invents a fourth
+        # state for a value that should not have reached it.
+        return ClaimConfidenceCeiling(
+            emitted=emitted, ceiling=ceiling, effective_band=emitted, clamped=False
+        )
+
+    if _CONFIDENCE_BAND_RANK[emitted] > _CONFIDENCE_BAND_RANK[ceiling]:
+        return ClaimConfidenceCeiling(
+            emitted=emitted, ceiling=ceiling, effective_band=ceiling, clamped=True
+        )
+    return ClaimConfidenceCeiling(
+        emitted=emitted, ceiling=ceiling, effective_band=emitted, clamped=False
+    )
+
+
+@dataclass(frozen=True)
 class CoverageConfidenceReport:
     """The validator's whole verdict: `passed` is `True` only when
-    `failures` is empty. A failure blocks release (§7.9)."""
+    `failures` is empty. A failure blocks release (§7.9).
+
+    `clamped_claim_ids` (issue #550) is a separate, non-blocking disclosure:
+    the claims whose own confidence ceiling (`confidence_ceiling_for_claim`)
+    clamped their emitted band. It never contributes to `passed` -- clamping
+    is not a failure (§7.9: "clamp, do not fail"), it is a gap this report
+    keeps visible and measurable rather than silently rewriting the claim."""
 
     passed: bool
     failures: list[CoverageConfidenceFailure]
+    clamped_claim_ids: list[str] = field(default_factory=list)
+
+    @property
+    def clamped_count(self) -> int:
+        return len(self.clamped_claim_ids)
 
 
 def validate_coverage_and_confidence(record: dict[str, Any]) -> CoverageConfidenceReport:
@@ -390,8 +545,8 @@ def validate_coverage_and_confidence(record: dict[str, Any]) -> CoverageConfiden
     `compute_coverage_map`'s separate job, used by the inspection
     affordance, not this gate).
 
-    Three checks, none short-circuiting the others so every failure is
-    reported in one pass:
+    Four checks. The first three block release on failure, none
+    short-circuiting the others so every failure is reported in one pass:
     1. Every name the map is required to cover -- `coverage_scope` over the
        record's own `claims` and `trajectory` -- has an entry in
        `record["coverage_map"]`.
@@ -401,10 +556,20 @@ def validate_coverage_and_confidence(record: dict[str, Any]) -> CoverageConfiden
        in `coverage_map` is disclosed `thin` -- an unjustified confidence
        disclosure otherwise (§7.4: "a band is never rendered instead of the
        counts that justify it").
+    4. **The per-claim confidence ceiling (issue #550), which never fails.**
+       Every claim's own `confidence_ceiling_for_claim` is computed against
+       `record["coverage_map"]`; a claim whose emitted band exceeds its own
+       derived ceiling is CLAMPED, not failed -- `clamped_claim_ids` on the
+       returned report names them, and `passed` is never affected by this
+       check. Measured over six smoke-v4 records, failing here would have
+       reddened every single brief (103 of 112 claims exceeded the coarser
+       RUN-level band already, and even the per-claim rule alone still
+       clamps 55 of 112) -- the gap stays visible through the count instead.
 
     An empty `claims` list (a `refuse` disposition, §7.2) has an empty
     scope, so check 1 passes vacuously; checks 2-3 still apply, since §7.3
-    marks `confidence` non-nullable even on refusal."""
+    marks `confidence` non-nullable even on refusal. Check 4 has nothing to
+    clamp on an empty claim list either, and reports zero clamped claims."""
     claims = record.get("claims") or []
     trajectory = record.get("trajectory") or []
     coverage_map = record.get("coverage_map") or {}
@@ -455,16 +620,33 @@ def validate_coverage_and_confidence(record: dict[str, Any]) -> CoverageConfiden
                 )
             )
 
-    return CoverageConfidenceReport(passed=not failures, failures=failures)
+    clamped_claim_ids: list[str] = []
+    for index, claim in enumerate(claims, start=1):
+        if not isinstance(claim, dict):
+            continue
+        ceiling = confidence_ceiling_for_claim(claim, coverage_map)
+        if ceiling.clamped:
+            claim_id = claim.get("claim_id") or f"<claim #{index}>"
+            clamped_claim_ids.append(claim_id)
+
+    return CoverageConfidenceReport(
+        passed=not failures, failures=failures, clamped_claim_ids=clamped_claim_ids
+    )
 
 
 def format_coverage_confidence_report(report: CoverageConfidenceReport) -> str:
     """Render `report` as human-readable text for the CLI (`axial brief
     validate`): a one-line verdict plus one line per failure, naming the
-    reason and its detail."""
+    reason and its detail, plus the clamped-claim count (issue #550) --
+    reported regardless of pass/fail, since clamping never affects
+    `passed`."""
     if report.passed:
-        return "coverage/confidence validator: PASS (0 failures)"
-    lines = [f"coverage/confidence validator: FAIL ({len(report.failures)} failure(s))"]
-    for failure in report.failures:
-        lines.append(f"  {failure.reason} -- {failure.detail}")
+        lines = ["coverage/confidence validator: PASS (0 failures)"]
+    else:
+        lines = [f"coverage/confidence validator: FAIL ({len(report.failures)} failure(s))"]
+        for failure in report.failures:
+            lines.append(f"  {failure.reason} -- {failure.detail}")
+    lines.append(
+        f"  confidence ceiling: {report.clamped_count} claim(s) clamped {report.clamped_claim_ids}"
+    )
     return "\n".join(lines)

@@ -27,8 +27,10 @@ When  `axial brief validate DEV12` runs
 Then  the command exits 0 and the validator reports pass by explicit one-sided
       disclosure
 
-Given an analysis record at data/analyses/DEV13.json whose evidence names no
-      opponent, over names carrying no Gather disagreement
+Given an analysis record at data/analyses/DEV13.json whose sole evidence note's
+      own `arguing_against` is empty (names no opponent at all, so neither
+      opposed_positions -- no pair -- nor names_opponent -- nothing named --
+      can fire, issue #550), over names carrying no Gather disagreement
 When  `axial brief validate DEV13` runs
 Then  the command exits 0, the report records the brief as uncontested, and the
       counter-position section is not required
@@ -287,13 +289,15 @@ def test_scenario_dev12_one_sided_disclosure_passes(fixture_root: Path):
 
 
 def test_scenario_dev13_uncontested_brief_does_not_require_the_section(fixture_root: Path):
-    """DEV13: one note, naming no opponent among this run's evidence --
-    uncontested, exit 0, the section is not required (absent/false is
-    fine)."""
+    """DEV13: one note whose own `arguing_against` is empty (CHUNK_COUNTER,
+    not CHUNK_MAIN -- CHUNK_MAIN's `arguing_against` is non-empty and fires
+    `names_opponent` on its own since issue #550, no pairing required) --
+    genuinely uncontested under all three signals, exit 0, the section is
+    not required (absent/false is fine)."""
     _write_record(
         fixture_root,
         "DEV13",
-        claims=[_claim("c-1", CHUNK_MAIN)],
+        claims=[_claim("c-1", CHUNK_COUNTER)],
         counter_position={
             "present": False,
             "stance": None,

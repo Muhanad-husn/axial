@@ -19,7 +19,12 @@ from axial.answer.render import render_markdown
 
 
 def _claim(
-    claim_id: str, kind: str, text: str, grounds: list[dict[str, str]], confidence: str = "medium"
+    claim_id: str,
+    kind: str,
+    text: str,
+    grounds: list[dict[str, str]],
+    confidence: str = "medium",
+    names_touched: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
         "claim_id": claim_id,
@@ -27,7 +32,7 @@ def _claim(
         "kind": kind,
         "grounds": grounds,
         "confidence": confidence,
-        "names_touched": [],
+        "names_touched": names_touched or [],
     }
 
 
@@ -209,6 +214,53 @@ def test_confidence_section_renders_band_and_rationale():
     markdown = render_markdown(_base_record())
     assert "medium" in markdown
     assert "medium confidence, grounded in 2 evidence chunks" in markdown
+
+
+# -- per-claim confidence ceiling: the rendered band is the EFFECTIVE one
+# (issue #550), and nothing is silently rewritten -----------------------------
+
+
+def test_a_claim_within_its_own_coverage_ceiling_renders_unclamped():
+    record = _base_record(
+        claims=[
+            _claim(
+                "clm_a",
+                "a",
+                "A claim grounded in dense coverage.",
+                [{"ref_type": "chunk", "ref_id": "syr_001_intro_001"}],
+                confidence="medium",
+                names_touched=["Syria"],
+            )
+        ]
+    )
+    markdown = render_markdown(record)
+    assert "[confidence: medium]" in markdown
+    assert "capped" not in markdown
+
+
+def test_a_claim_above_its_own_coverage_ceiling_renders_the_effective_band_and_states_both():
+    """P3-04's own defect, minimized: `confidence: high` on a claim whose
+    only touched name (Iraq, here) is disclosed `thin` in this same record's
+    coverage_map. The rendered band is the clamped one, and the model's own
+    emitted band still appears -- nothing here is silently rewritten."""
+    record = _base_record(
+        claims=[
+            _claim(
+                "clm_a",
+                "a",
+                "An overconfident claim.",
+                [{"ref_type": "chunk", "ref_id": "irq_001_intro_001"}],
+                confidence="high",
+                names_touched=["Iraq"],
+            )
+        ]
+    )
+    markdown = render_markdown(record)
+    assert (
+        "[confidence: low (model emitted 'high', capped by this claim's own coverage " in markdown
+    )
+    assert "'low')]" in markdown
+    assert "[confidence: high]" not in markdown
 
 
 def test_refusal_path_renders_reason_and_omits_claims_section():

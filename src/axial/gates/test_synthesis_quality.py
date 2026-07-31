@@ -141,9 +141,13 @@ def _contested_record(brief_id: str, *, counter_position: dict[str, Any]) -> dic
 
 
 def _uncontested_record(brief_id: str) -> dict[str, Any]:
+    # Grounded in CHUNK_B alone, whose `arguing_against` is empty -- CHUNK_A's
+    # is non-empty (issue #550's `names_opponent` path fires on that alone,
+    # no pairing required), so a record citing CHUNK_A here would no longer
+    # be uncontested once that path landed.
     return {
         "brief_id": brief_id,
-        "claims": [_claim(f"{brief_id}-c1", CHUNK_A)],
+        "claims": [_claim(f"{brief_id}-c1", CHUNK_B)],
         "counter_position": _absent_counter_position(),
     }
 
