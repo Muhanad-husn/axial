@@ -365,16 +365,29 @@ coverage_bands:
 # issue #491): `axial brief smoke` compares each brief's run-report figures
 # against these, so a spend or slowdown regression shows the day it lands.
 #
-# BOTH ARE DELIBERATELY UNSET. §9.0 states these are "set from the first five
-# real runs, never guessed in advance", and those runs happen after #517
-# changes the retrieval path -- a budget measured against a path that is about
-# to move buys a number that expires. src/axial/brief/smoke.py reads this via
-# `resolve_budgets`, and there is NO code-level fallback on purpose: an unset
-# budget SKIPS its check and prints UNMEASURED, so it can neither pass
-# vacuously nor fail a run for a number nobody measured.
+# Set 2026-07-31 from seven real runs of five briefs (issue #524). They are
+# CEILINGS that should never fire, not tight budgets: every run they are drawn
+# from predates #541 and #542, which together removed ~600s of non-model work
+# per brief and collapsed the loop's single-note reads. The post-fix build is
+# strictly faster and no more expensive, so a brief that reaches either figure
+# has regressed.
+#
+#   cost     $0.0781 - $0.1552 over the seven, mean $0.1191. The ceiling is
+#            1.6x the highest. Tighter would fail on variance alone: S-03 moved
+#            39% between two runs of the same brief on the same code.
+#   latency  473.2s - 1829.6s (per-pass sum, not sweep wall clock -- PassClock
+#            wraps whole passes including vault I/O, so the two differ by only
+#            a few seconds). The ceiling is the highest figure measured on the
+#            slow build.
+#
+# Both get RE-CUT tight from the six post-fix runs once #524's stage 3 lands.
+# src/axial/brief/smoke.py reads this via `resolve_budgets`, and there is NO
+# code-level fallback on purpose: an unset budget SKIPS its check and prints
+# UNMEASURED, so it can neither pass vacuously nor fail for a number nobody
+# measured.
 smoke:
-  max_usd_per_brief: null
-  max_seconds_per_brief: null
+  max_usd_per_brief: 0.25
+  max_seconds_per_brief: 1800
 
 # Rung-3 eval-gate thresholds (issues #262, #264, PRD §10, §8 P0-12): one
 # starting threshold per named metric, read by src/axial/gates/harness.py via
