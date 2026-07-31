@@ -155,11 +155,15 @@ def _contested_claim(claim_id: str) -> dict[str, Any]:
 
 
 def _uncontested_claim(claim_id: str) -> dict[str, Any]:
+    """Grounded in CHUNK_B alone, whose own `arguing_against` is empty --
+    CHUNK_A's is non-empty and fires the `names_opponent` signal on its own
+    since issue #550 (no pairing required), so a claim grounded there would
+    no longer be uncontested."""
     return {
         "claim_id": claim_id,
         "text": f"Claim text for {claim_id}.",
         "kind": "a",
-        "grounds": _grounds(CHUNK_A),
+        "grounds": _grounds(CHUNK_B),
         "confidence": "medium",
     }
 
