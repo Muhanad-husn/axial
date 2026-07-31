@@ -191,6 +191,20 @@ def _no_counter_position() -> dict[str, Any]:
     }
 
 
+def _failed_counter_position(
+    reason: str = "counter-position generation call failed: boom",
+) -> dict[str, Any]:
+    return {
+        "present": False,
+        "stance": None,
+        "grounds": [],
+        "corpus_one_sided": False,
+        "one_sided_reason": None,
+        "failed": True,
+        "failure_reason": reason,
+    }
+
+
 def _present_counter_position(
     *chunk_ids: str, stance: str = "The opposing school holds..."
 ) -> dict[str, Any]:
@@ -548,6 +562,30 @@ def test_neither_present_nor_disclosed_fails(vault_dir: Path, names_dir: Path):
     )
     assert not report.passed
     assert report.failures[0].reason == REASON_CONTESTED_WITHOUT_COUNTER_POSITION
+
+
+def test_a_failed_generation_fails_the_presence_or_disclosure_check(
+    vault_dir: Path, names_dir: Path
+):
+    """Issue #558: a section marked `failed` (counter-position GENERATION
+    raised, and `build_record` persisted the record anyway) must not be
+    silently treated as a satisfied counter-position -- it fails exactly
+    like an unattempted absence, never like a real disclosure, and the
+    detail names the actual failure reason so a triager is not misled into
+    thinking nothing was ever attempted. `ExplodingLLMClient` also proves
+    the steelman-quality check never spends a model call on a failed
+    section."""
+    claims = _contested(vault_dir)
+    report = validate_counter_position(
+        _record(claims, _failed_counter_position("counter-position generation call failed: boom")),
+        client=ExplodingLLMClient(),
+        vault_dir=vault_dir,
+        names_dir=names_dir,
+    )
+    assert not report.passed
+    assert report.failures[0].reason == REASON_CONTESTED_WITHOUT_COUNTER_POSITION
+    assert "boom" in report.failures[0].detail
+    assert report.steelman.ran is False
 
 
 def test_uncontested_brief_never_requires_the_section(vault_dir: Path, names_dir: Path):

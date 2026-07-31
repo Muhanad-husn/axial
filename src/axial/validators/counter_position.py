@@ -448,9 +448,28 @@ def _check_presence_or_disclosure(
     contested brief. `present: true` with empty `grounds` is not a real
     counter-position (a stance with no grounds), and `corpus_one_sided: true`
     with an empty/absent reason is not a real disclosure -- both fail
-    exactly as absence would."""
+    exactly as absence would.
+
+    A section marked `failed` (issue #558: counter-position GENERATION
+    raised and `axial.answer.record.build_record` persisted the record
+    anyway) also falls through to this failure -- it satisfies neither
+    channel by construction (`failed_counter_position_section` never sets
+    `present`/`corpus_one_sided`), so it is never silently treated as a
+    satisfied counter-position. The detail names the actual failure reason
+    rather than the generic wording, so a triager reads "generation was
+    attempted and raised X" instead of a message that reads as though
+    nothing was ever tried."""
     if _is_present_with_grounds(counter_position) or _is_disclosed_one_sided(counter_position):
         return None
+    if counter_position.get("failed"):
+        return CounterPositionFailure(
+            reason=REASON_CONTESTED_WITHOUT_COUNTER_POSITION,
+            detail=(
+                "the brief is contested and counter-position GENERATION was attempted "
+                f"and failed ({counter_position.get('failure_reason')!r}) -- neither "
+                "present nor disclosed (§7.8)"
+            ),
+        )
     return CounterPositionFailure(
         reason=REASON_CONTESTED_WITHOUT_COUNTER_POSITION,
         detail=(

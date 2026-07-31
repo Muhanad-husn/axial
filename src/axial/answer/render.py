@@ -104,7 +104,15 @@ def _render_claims(claims: list[dict[str, Any]], coverage_map: dict[str, Any]) -
 
 def _render_counter_position(counter_position: dict[str, Any]) -> list[str]:
     lines = ["", "## Counter-position", ""]
-    if counter_position.get("present"):
+    if counter_position.get("failed"):
+        # Issue #558: generation was attempted and raised. Rendered
+        # distinctly from both legitimate outcomes below -- never as
+        # "(none disclosed)", which would read as an uncontested brief with
+        # nothing to say, and never as one-sided, which would misattribute a
+        # bug to a finding about the corpus.
+        reason = counter_position.get("failure_reason") or ""
+        lines.append(f"**Counter-position generation FAILED:** {reason}")
+    elif counter_position.get("present"):
         stance = counter_position.get("stance") or ""
         lines.append(f"**Stance:** {stance}")
         grounds_line = _render_grounds(counter_position.get("grounds") or [])

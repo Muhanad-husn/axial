@@ -38,6 +38,17 @@ this run's own opposing evidence, never a synthesised-from-nothing stance
 `refuse` disposition's empty claim list is trivially uncontested, so it
 still costs zero model calls, exactly as it did with the placeholder.
 
+**A counter-position GENERATION failure never discards the run (issue
+#558).** A real paid eval run once died at exactly this call, after
+interrogation, fourteen retrieval turns and a 189k-character synthesis had
+all already succeeded -- because `generate_counter_position` raised, no
+record was written at all, and every earlier stage's paid work was thrown
+away with it. `build_record` now catches `CounterPositionGenerationError`
+around this call and persists the record anyway, with `counter_position`
+marked `failed_counter_position_section(reason)`: a third §7.8 state,
+distinguishable from both legitimate outcomes, never laundered into
+`corpus_one_sided`. See `build_record`'s own docstring for the full seam.
+
 `source_usage` (§7.13/P0-13, issue #265) IS computed here: `build_record`
 assembles every other §7.3 field first, then calls
 `axial.answer.source_usage.compute_source_usage` over the record-so-far
@@ -74,12 +85,21 @@ correct on a `refuse` disposition where stage 3/4 never ran.
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from axial.analyze.assembly import assemble_evidence
-from axial.analyze.synthesis import Claim, generate_counter_position, resolve_lens, synthesize
+from axial.analyze.synthesis import (
+    Claim,
+    CounterPositionGenerationError,
+    CounterPositionResult,
+    failed_counter_position_section,
+    generate_counter_position,
+    resolve_lens,
+    synthesize,
+)
 from axial.answer.render import render_markdown
 from axial.answer.run_report import PassClock, build_run_report, persist_run_report
 from axial.answer.source_usage import compute_source_usage
@@ -215,7 +235,25 @@ def build_record(
     every field it reads is already in the dict. `cost` (§7.14, issue #363)
     reads `client`'s accumulated per-pass token usage
     (`_usage_and_cost_by_pass`) -- `client` is needed for that AND for
-    `generate_counter_position`'s own possible model call."""
+    `generate_counter_position`'s own possible model call.
+
+    **A `CounterPositionGenerationError` never aborts this function (issue
+    #558).** By the time this call runs, interrogation, retrieval and
+    synthesis have already succeeded and already cost real money -- a real
+    paid eval run was once destroyed in full because this stage's own raise
+    propagated all the way out and nothing had been persisted. Catching it
+    here, at the exact call site, means every caller of `build_record` (and
+    so `run_brief`, and so `axial.brief.sweep`) gets the resilience for free
+    without touching its own error handling: the record is still assembled
+    and returned, with `counter_position` marked `failed_counter_position_
+    section` -- distinguishable from both legitimate §7.8 outcomes, never
+    laundered into `corpus_one_sided`. `generate_counter_position` itself is
+    unchanged and still raises (every existing unit test asserting that
+    still passes); only this call site decides to catch it. `model_called`
+    is still `True` in this branch: a real model call was attempted (the
+    brief was contested, which is the only way this call is ever reached at
+    all), so its pass name still belongs in `model_by_pass`/`cost` exactly
+    as it would have on success."""
     clock = clock if clock is not None else PassClock()
     claim_dicts = [_claim_to_dict(claim) for claim in claims]
     coverage_map = compute_coverage_map(claim_dicts, trajectory=trajectory, vault_dir=vault_dir)
@@ -225,9 +263,19 @@ def build_record(
     # calls under that pass name (§7.8). A caller that passed no clock gets a
     # throwaway one, so this reads the same either way.
     with clock.time(COUNTER_POSITION_GENERATE_PASS_NAME):
-        counter_position_result = generate_counter_position(
-            claim_dicts, brief, client=client, trajectory=trajectory, vault_dir=vault_dir
-        )
+        try:
+            counter_position_result = generate_counter_position(
+                claim_dicts, brief, client=client, trajectory=trajectory, vault_dir=vault_dir
+            )
+        except CounterPositionGenerationError as exc:
+            print(
+                "build_record: counter-position generation failed -- persisting the "
+                f"record anyway with the section marked failed: {exc}",
+                file=sys.stderr,
+            )
+            counter_position_result = CounterPositionResult(
+                section=failed_counter_position_section(str(exc)), model_called=True
+            )
     record_model_by_pass = dict(model_by_pass)
     if counter_position_result.model_called:
         record_model_by_pass[COUNTER_POSITION_GENERATE_PASS_NAME] = client.model_for_pass(
