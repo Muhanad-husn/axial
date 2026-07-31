@@ -106,7 +106,7 @@ src/axial/
 config/
   briefs/
     smoke/      # the six short briefs run on every slice (§9, D7)
-    eval/       # the five hard briefs run when the engine is stable (§9, D7)
+    eval/       # the three hard questions run when the engine is stable (§9, D7)
     sim/        # the v0 30-brief pool, kept as history; no longer swept (§9)
     dev/        # small fixture briefs for tests; NOT a brief set
     adversarial/  # seeded red-team briefs, each carrying its own answer key (§10)
@@ -587,8 +587,8 @@ It is a separate artifact rather than a field, because §7.3's record shape is l
 - [ ] Observable (D6, #484): restoring a Gather section that was cleared, with no prose note changed, moves the vault snapshot hash and so requires a fresh pin.
 
 **P0-11 Brief sets landed as versioned data.**
-- [ ] Six short briefs under `config/briefs/smoke/` and five hard briefs under `config/briefs/eval/`, real files in the §7.1 shape (§9, D7). Observable: both sets are readable from the repo and drive the harness runs with no Academic dependency.
-- [ ] The six smoke briefs run on every slice; the five hard briefs run when the engine is stable. Each smoke brief has a case file under `evals/cases/sim/`; the one new hard brief lands with a case file authored alongside it or that slot has no mechanical oracle.
+- [ ] Six short briefs under `config/briefs/smoke/` and three hard questions under `config/briefs/eval/`, real files in the §7.1 shape (§9, D7). Observable: both sets are readable from the repo and drive the harness runs with no Academic dependency.
+- [ ] The six smoke briefs run on every slice; the three hard questions run when the engine is stable. Each smoke brief has a case file under `evals/cases/sim/`; each hard question lands with a case file authored alongside it or that slot has no mechanical oracle.
 - [ ] `config/briefs/sim/` is retained untouched as history and is no longer swept. `config/briefs/dev/` holds small fixture briefs for tests and is not a brief set. The 26 parked Academic research questions are **not coming** (#250, closed not planned), so these sets are permanent rather than a stand-in.
 
 **P0-12 Rung-3 eval-gate harnesses built and dry-runnable (charter §2 rung 3).**
@@ -623,6 +623,15 @@ It is a separate artifact rather than a field, because §7.3's record shape is l
 - **P2-2** Second-domain briefs proving the engine is domain-portable by schema and lens data, no code change (mirrors PRODUCT.md P2-1).
 - **P2-3** Cross-brief caching / batching, once single-brief quality is proven.
 
+**P2-4 through P2-9 are what two rounds of sealed peer review over the smoke set left open** (2026-07-31, issue #552 closed not-planned, founder decision: pipeline enhancement stops after #550). Evidence for every one of them: `data/logs/2026-07-31-panel-smoke-v4/summary.md` and `data/logs/2026-07-31-smoke-v5/summary.md`. Each reopens under the DEC-55 rule — when real use makes it visibly wrong, because then the failure names which one to fix.
+
+- **P2-4** **Re-bar the (b)-claim grounding metric.** `b_claim_contradiction_rate` reports 0.0000 on both review rounds, including the records holding the claim it was built to catch: one whose cited passage opens "Contrary to Mann's assertion…". Its proposition is supported; what the passage contradicts is the claim's crediting of a scholar, and "does any cited passage contradict this claim" does not ask that. The note states the opposition in its own `arguing_against`, which the judge is never shown. Related: the judge resolves to `production_low`, the cheapest tier, which also decides the (a) metric.
+- **P2-5** **A chapter's argument credited to its volume's editor.** Six of the 31 sources are edited volumes and the corpus records one author per book, so every claim drawn from them is attributed to the editor by construction — 8 of the first round's 40 defects. Needs an ingestion redesign, deferred 2026-07-31. It produced zero defects in the second round, on one draw and with nothing changed; two reviewers filed it under `unverifiable` instead. The cheap signal, if it is ever picked up: the chapter author's byline is often inside the chunk text.
+- **P2-6** **The latency budget measures run order.** A sweep's first brief pays a one-time cold start of the vault and index — 585s of the 1290s that breached the 900s ceiling, against a 3–7s gap on every later brief. Warm the index before a sweep, or exclude the first brief's startup from the measured wall clock.
+- **P2-7** **The synthesis prefix, unmoved.** Retrieval gathered 62% more evidence between the two runs (327 → 530 assembled) and *exactly* 127 notes reached a model both times. The ~20-note prefix holds however much is gathered (#505, #545). The largest known lever on answer quality that nothing has yet moved.
+- **P2-8** **The reviewer's false-positive rate is unmeasured.** Its positive control passed 3 of 3 planted defects, which tests only what it catches. Nothing tests what it invents. Cheapest close: hand one reviewer a packet whose defects have been repaired and see what it still reports.
+- **P2-9** **N ≥ 3 reviewers with the spread reported** (§9.4 property 4). Both rounds ran one reviewer per packet, so the bands sort the briefs and are not measurements. Costs only wall clock on a Claude Code judge.
+
 ---
 
 ## 9. Referee data & the answer-quality seam
@@ -632,7 +641,7 @@ It is a separate artifact rather than a field, because §7.3's record shape is l
 **Brief and case sources.**
 
 - **Smoke briefs** — `config/briefs/smoke/`, six short briefs in the §7.1 shape, run on every slice (§9.0, P0-11).
-- **Eval briefs** — `config/briefs/eval/`, five hard briefs, run when the engine is stable (§9.0, P0-11).
+- **Eval briefs** — `config/briefs/eval/`, three hard questions authored outside this repo, run when the engine is stable (§9.0, P0-11).
 - **Adversarial seeded briefs** — `config/briefs/adversarial/`, authored in-repo, each carrying its own declared premise. The seed is the answer key (§10).
 - **Sim hard cases** — `evals/cases/sim/`, retained permanently, with the field-by-field contract of §9.3.
 - `config/briefs/sim/` is the v0 30-brief pool, kept as history. `config/briefs/dev/` holds small fixture briefs for tests. Neither is a brief set.
@@ -672,31 +681,23 @@ These replace $0.25 and 1800s, set from seven runs of five briefs on a build tha
 
 **Which names a run reached is printed, not asserted.** Whether a run silently substituted a nearest-neighbour name is a judgment, and a brief-specific rule in `src/` would be domain content as code. So the command prints the names each run queried and the founder reads them. **The name-layer fragmentation case left the set with P4-04** (the corpus holds `Autonomous Administration of North and East Syria` with 2 members plus an unmerged `AANS` node, and the acronym `AANES` reaches neither — measured 2026-07-30, §7.5, filed against Phase A as #498). Nothing in the rebuilt set replaces it. That is a known cut, not an oversight: no mechanical check ever asserted on it, so what was lost is one printed read, and the brief survives in `config/briefs/sim/`.
 
-**Eval — five hard briefs, five theory clusters, run when the engine is stable.**
+**Eval — three hard questions, authored outside this environment, run when the engine is stable.**
 
-| brief | what it tests |
-|---|---|
-| **new** — Bayat vs Tilly | organized challengers against revolution-without-revolutionaries, over the same object |
-| P1-02 | White × Batatu, a causal chain across two books that barely overlap |
-| P5-01 | Kalyvas control logic mapped onto observed violence; 5 required sources, 4 dismissal criteria |
-| P5-04 | victim and perpetrator discourse, a different corpus region entirely |
-| P4-01 | juridical against empirical sovereignty, Jackson versus Caspersen |
+**The five-brief set of earlier drafts is retired** (founder direction, 2026-07-31). It was four questions lifted from the v0 sim pool plus one drafted here, and all five were Syria-cased — the concentration already rejected for the smoke set on 2026-07-30. The replacement was authored the way the smoke set was rebuilt: by a model outside this repo, working from the corpus overview alone, told what each question had to stress and forbidden to name a book or ask for citations. The authored source, with its provenance and the one edit made to it, is `config/briefs/eval/hard-questions-final.md`.
 
-The new brief, drafted:
+| question | case | what it tests |
+|---|---|---|
+| **A** | Western Europe 1760–1914 against the twentieth-century Middle East | **reach** — whether the bellicist account survives transfer, decomposed into mechanisms, with critics engaged on their own terms |
+| **B** | The Syrian civil war, 2011–2021 | **judgment** — control-and-information against violence-as-identity-production, forced to commit and to steelman the account it rejects |
+| **C** | Europe to 1914 and the post-Ottoman Arab East | **reach** — four competing explanations of why nationhood and mass war arrived together, tested against the mandate case |
 
-```yaml
-case: "Syria, 2011–2024"
-request: "Tilly makes organized challengers and their accumulated resources the
-  mechanism that converts a revolutionary situation into a revolutionary outcome.
-  Bayat argues the 2011 uprisings were revolutions without revolutionaries — mass
-  mobilization uncoupled from the organization and ideas that conversion is
-  supposed to require. Which account better explains sustained Syrian mobilization
-  without a revolutionary outcome? Where the two disagree about what organization
-  is for, is Bayat describing a case Tilly's model excludes, or a failure of the
-  model itself?"
-```
+Every anchor of all three resolves against the live index; the densest are `Michael Mann` (377 notes / 15 sources), `Ernest Gellner` (208/15), `nationalism` (158/18) and `Charles Tilly` (154/20), and A's demand for critics is funded by the Hall/Schroeder and Malešević volumes, 173 and 109 of those notes respectively.
 
-Its last clause cannot be answered by summarising either book, so it forces a cross-source (b) claim, which is exactly what §7.15's headline metric measures. **It needs a case file authored alongside it or that slot loses its mechanical oracle.** Proposed `required_citation_source_ids`: `bayat-2017-ce6bb0643cfb`, `tilly-1978-f908c910464c`, `beshara-2011-8410a9059300`, `vignal-2021-c7005c2bf8ef`, `kao-2025-ab19e646ab7d`. All five resolve against `data/envelopes/`.
+**What each is for.** A and C carry the `retrieve.step_budget` decision — two briefs at 14 and at 20, because one draw cannot separate a truncation from run-to-run variance and S-03 moved 39% between draws on unchanged code. B carries the open-source-against-closed-source model comparison (§7.11), whose rubric demands a committed position and a steelman, which is what separates a careful model from a fluent one.
+
+**Two known distortions, stated rather than engineered away.** One side of B's debate lives in a single book — `selective violence` is 12 notes, all from `kalyvas-2006` — so B's required-source set is small and its usage disclosure will read as concentrated for a reason that is the corpus. And B's case string was tightened off the bare token `Syria` (962 notes across 22 sources, the hub that gave P3-04 a denominator 94.6% composed of one name) to `Syrian civil war`, 9 notes across three sources: same war, same decade, same object, and neutral between the two accounts B asks the answer to choose between.
+
+**Each question needs a case file authored alongside it or its slot has no mechanical oracle.** `required_citation_source_ids` is derived from the live name index — resolve the question's anchors, read off which sources carry notes on those pages, cut where the counts fall off — never guessed, and never confirmed by hand. That is one read-only pass and zero model calls, and it is strictly better than the model's guess the 21 v0 sim cases hold.
 
 **P1-01 moves to the adversarial set.** It asks about "Tilly's coercive-extraction cycle", which is *Coercion, Capital and European States*. The corpus holds Tilly 1978, *From Mobilization to Revolution*. That is a smuggled premise the interrogation pre-pass should catch, so the brief is worth keeping: as a seeded adversarial case with `kind: smuggled_premise` (§10), not as a synthesis eval.
 
@@ -833,7 +834,7 @@ The phase does not compute one and must not invent one. **Accuracy decomposes in
 - The attribution-fidelity mechanical portion is a **hard 100% gate**, not a sampled rate: it is mechanically checkable, so any unmarked or unresolvable-grounds claim fails outright (P0-5).
 - **The judge is independent, and independence is enforced in code.** For these five gates, each judged check runs under its own `pass_name` and must resolve to a different model than the pass it grades; the guard raises before any judge call is made. Eval #1's answer quality is not scored here at all: it is measured offline on a sample by the §9.4 panel, which is sealed from the repo, drawn from a **different vendor** than the generating model, and trusted only after its positive control catches planted defects. No gate in this table waits on it. The generating model never grades its own output.
 - **These five gates need no human referee** (§9.1). Each is anchored to material the repo or vault already holds: seeded briefs that state their own answer key, and resolved note text. They report in the trusted tier (§9.2) once a pin resolves over the full rebuilt corpus.
-- **No self-grading on softballs**: gates are scored on hard cases the system cannot already ace (the anti-Üngör principle, eval charter constraint 4). The five hard briefs of §9.0 are that set.
+- **No self-grading on softballs**: gates are scored on hard cases the system cannot already ace (the anti-Üngör principle, eval charter constraint 4). The three hard questions of §9.0 are that set.
 - **A Gather finding is never an oracle either (D4).** No gate scores an answer against a disagreement section, and no gate credits a run for repeating one. The 575 findings have never been scored (`axial gather-eval` exists and has never run, DEC-55), so nothing here may depend on their accuracy. The one thing a gate may read is §7.15's `disagreement_reuse`, which records whether the run *reached a note* a finding also cites: a retrieval fact, not a quality verdict.
 - **Calibration is measured band-wise, not as error over a continuous score.** The question is whether `high`-band claims actually hold up at the rate `high` implies, and likewise for `medium` and `low`. Expected calibration error and Brier score both presuppose a numeric confidence the three-band vocabulary deliberately does not produce (§7.4), so they are inapplicable here rather than merely unchosen. The gate needs enough judged claims per band to mean anything: a band below the minimum sample size is excluded from the deviation and strict-ordering computation (its `n`/`observed` are still reported, flagged `scoreable: false`), and if every band falls short the metric reports **not-scoreable** rather than a verdict built on nothing (issue #402). The minimum is a stated tunable, `calibration.min_band_n` (config/pipeline.yaml, code fallback **5** — the standard rule-of-thumb minimum cell count from categorical statistics, the same "expected count ≥ 5" bar a chi-square test applies), set from the first judged run's own evidence (a single high-band claim was generating a verdict with two of three bands empty) rather than tuned to that run's pass/fail counts.
 - **A gate metric computed on a sample too small to mean anything reports a third, distinct `not-scoreable` state — never a silent pass or a silent fail (issues #401/#402).** `MetricResult.passed` (and `GateReport.passed`, the conjunction one level up) is tri-state: `true`/`false` is a real verdict, `null` means the metric never had enough to evaluate. A metric that vacuously "passes" on zero observations reads as a green light for a check that never ran; a metric that "fails" an input it never had anything to evaluate sends a reader debugging the wrong thing — both are worse than saying plainly that nothing was measured. Every caller that folds a gate's `passed` into a further aggregate (a sweep's per-brief console summary, a corpus-wide tally) must keep the three states distinguishable; collapsing `not-scoreable` back into a boolean anywhere downstream defeats the point. This is a general harness property (`axial.gates.harness.not_scoreable_metric`/`compare`), not a one-off fix to either gate below. **`not-scoreable` blocks release** (exit non-zero, `overall: NOT-SCOREABLE`): a claim of "passed" requires having actually measured something, and a gate that never fully ran cannot claim that, even though it also did not fail anything it checked. The CLI's binary exit code cannot itself carry three states, so it treats `not-scoreable` the same as `false` for that one purpose (non-zero) while `axial.gates.harness.format_report` still renders the report text distinctly (`NOT-SCOREABLE`, never `FAIL`) so a reader is never told the check failed when it simply never ran.
@@ -873,7 +874,7 @@ That is the whole list. Academic-authored hard cases are **not** a precondition 
 
 **Stack.** Python, driven through the `axial` CLI. **Inference:** API-based via the existing provider clients (OpenRouter, NVIDIA), through the existing `model_by_pass` / `reasoning_by_pass` config seams (PRODUCT.md §7.9, §12): analysis/synthesis wants the high tier with reasoning ON; interrogation and the validator model checks may run cheaper; tier assignments are **[TENTATIVE]** and proven on the smoke set. **Retrieval:** the deterministic query API over the vault and the name layer. **No new embedding dependency:** `find_names` reuses the `sentence-transformers` + `lancedb` path Phase A already installed and the vectors it already wrote (D10); **no chunk embedding index is built** (§3 non-goal 4). **Substrate consumed read-only:** the Phase-A vault (`data/vault/prose/`, `data/vault/artifacts/`, `data/vault/names/`, markdown + YAML frontmatter), the name-layer artifacts (`data/names/`: `index.json`, `alias_map.json`, `embeddings.lance`, `disagreements.jsonl`), the per-source envelopes (`data/envelopes/`), and the domain frame (`config/domains/syria/`). Phase B adds no new inference dependency beyond what Phase A already carries, though the existing provider clients gain **native tool-calling** (`tools` / `tool_calls`) to drive the stage-3 agentic loop, rather than a hand-rolled JSON tool protocol over the text-completion seam.
 
-**Out of scope, stated so it is not smuggled in.** Any change to Phase A: the vault is read-only here, and a gap found in the index routes to a Phase A issue under the DEC-55 rule. Scoring the 575 Gather findings: `axial gather-eval` is Phase A's instrument and Phase A is closed — D4 is what makes this phase independent of whether that score ever runs. The reviewer panel: `src/axial/panel/` stands as specified in §9.4, an offline instrument on a sample, and nothing here triggers or waits on one. The frontier-versus-hybrid model comparison: unsettled since PR #361, and it re-files against the five hard briefs once they produce numbers, not before.
+**Out of scope, stated so it is not smuggled in.** Any change to Phase A: the vault is read-only here, and a gap found in the index routes to a Phase A issue under the DEC-55 rule. Scoring the 575 Gather findings: `axial gather-eval` is Phase A's instrument and Phase A is closed — D4 is what makes this phase independent of whether that score ever runs. The reviewer panel: `src/axial/panel/` stands as specified in §9.4, an offline instrument on a sample, and nothing here triggers or waits on one. The open-source-versus-closed-source model comparison: unsettled since PR #361, wired by the four per-pass tiers of §7.11, and it runs against question B of §9.0 once the step-budget decision is settled on A and C, not beside it.
 
 **Owned elsewhere:** the Phase-A quality question is a Phase-A concern (PRODUCT.md §10) and does not gate anything here.
 
