@@ -1,0 +1,9 @@
+# origin: simulated
+# model: authored outside this environment, no repository access
+# persona: eval-hard
+# date: 2026-07-31
+# path_version: sim-v1
+# shape: reach -- four competing explanations, tested against a second setting
+# source: config/briefs/eval/hard-questions-final.md
+case: "Comparative: Europe from the late eighteenth century to the First World War, and the post-Ottoman Arab East under and after the mandates"
+request: "The century in which the nation became the dominant political form ended in total war and the destruction of the multinational empires. Weigh the main competing explanations of why nationalism and large-scale war rose together - industrial modernity, mobilised ethnic pasts, expanding organisational and ideological power, or the exclusions built into the nation-state form itself. Then test your preferred account against the post-Ottoman Arab East, where nationhood and its 'minorities' took shape under external rule, and state what the critics of the major positions add that the originators miss."

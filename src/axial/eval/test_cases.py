@@ -68,13 +68,17 @@ def test_every_committed_sim_case_still_states_both_oracles():
     """§9.3 says `instant_dismissal_criteria` is non-empty on every committed
     case and `required_citation_source_ids` survived the Phase A v1 rebuild.
     This pins both, since the whole point of this slice is that they are now
-    read. 21 original cases plus the five S-0N cases authored with the
-    2026-07-30 smoke-set rebuild (§9.0)."""
+    read. The set grows -- 21 original cases, the five S-0N cases authored with
+    the 2026-07-30 smoke-set rebuild (§9.0), the three eval questions authored
+    2026-07-31 -- so the membership assertion names the families that must be
+    present rather than a count that breaks every time one is added."""
     from pathlib import Path
 
     cases_dir = Path("evals/cases/sim")
     case_ids = sorted(path.stem for path in cases_dir.glob("*.json"))
-    assert len(case_ids) == 26
+    assert {"A", "B", "C"} <= set(case_ids), "the three eval questions (§9.0)"
+    assert {f"S-0{n}" for n in range(1, 6)} <= set(case_ids), "the smoke cases (§9.0)"
+    assert len(case_ids) >= 26
     for case_id in case_ids:
         case = load_case(case_id, cases_dir=cases_dir)
         assert case is not None

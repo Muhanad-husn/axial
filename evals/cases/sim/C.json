@@ -1,0 +1,47 @@
+{
+  "_meta": {
+    "origin": "simulated",
+    "model": "authored outside this environment, no repository access",
+    "persona": "eval-hard",
+    "date": "2026-07-31",
+    "path_version": "sim-v1",
+    "required_sources_derived": "per question leg from the live name index at pin sim-2026-07-30, LLM-free: resolve the leg's anchors, count member notes by source, keep the leader. modernist -> malesevic-2007 (114 notes, the Gellner volume). ethno-symbolic -> smith-2009 (20). organisational and ideological -> malesevic-2013 (37). the war link -> mann-v2-1993 (205). post-Ottoman -> beshara-2011 (20) and white-2011 (16), the only two sources on `Syrian nationalism`. Six rather than five because the question names four explanations and then demands a second setting; dropping any one leaves a leg with no source that must be reached."
+  },
+  "case_id": "C",
+  "question": "The century in which the nation became the dominant political form ended in total war and the destruction of the multinational empires. Weigh the main competing explanations of why nationalism and large-scale war rose together - industrial modernity, mobilised ethnic pasts, expanding organisational and ideological power, or the exclusions built into the nation-state form itself. Then test your preferred account against the post-Ottoman Arab East, where nationhood and its 'minorities' took shape under external rule, and state what the critics of the major positions add that the originators miss.",
+  "answer_kind": "rubric",
+  "expected_answer": "",
+  "required_citation_source_ids": [
+    "malesevic-2007-323a2518e61b",
+    "smith-2009-cba7b6f3dfba",
+    "malesevic-2013-5d3ec1809b12",
+    "mann-v2-1993-ec759675dcbd",
+    "beshara-2011-8410a9059300",
+    "white-2011-5f35a47d9657"
+  ],
+  "rubric": [
+    "Presents at least four genuinely distinct explanations of the nationalism-war connection and shows where they conflict, rather than four labels for the same story",
+    "Distinguishes the question of why nations arise from the question of why nation-state formation produces war, instead of sliding between the two",
+    "Uses the post-Ottoman case as a test, not an illustration: identifies what the mandate-era production of majority and minority categories confirms or embarrasses in the chosen account",
+    "Engages at least one commentator or critic of the major theorists on that critic's own terms and states what the criticism changes in the final judgment",
+    "Takes an argued position on whether national categories are modern constructions or mobilisations of older ethnic material, rather than ignoring the dispute",
+    "Reaches a committed, differentiated conclusion about which explanation carries most weight and where it fails"
+  ],
+  "instant_dismissal_criteria": [
+    "Treats nationalism as a natural or ancient force whose eruption into war needs no explanation",
+    "Conflates the origin of nations with the causes of nationalist war throughout the answer",
+    "Handles the post-Ottoman material as decoration - no claim in the answer would change if it were removed",
+    "Represents every position only through its originator, with no critic or commentator anywhere"
+  ],
+  "notes": "The real disagreement runs between modernist-functional, ethno-symbolic, organisational-materialist, and exclusion-centred accounts of why nationhood and mass war arrived together, and over whether the Middle Eastern sequence - states before nations, categories manufactured by external rule - refutes the Europe-derived models or extends them. A strong answer uses the mandate case as leverage on the theory; an adequate one surveys the European debate competently and bolts the Middle East on at the end.",
+  "turns_on": [
+    "modernist theory of nationalism (industrial society and high culture)",
+    "ethno-symbolism and pre-modern ethnic cores",
+    "organisation, ideology and solidarity as the material of nation-states",
+    "nation-state formation as a cause of the last two centuries' wars",
+    "the four sources of social power in the long nineteenth century",
+    "commentators and critics on the major theorists of nationalism and power",
+    "the mandate-era production of minorities and a majority",
+    "the contested origins of Arab and Syrian nationhood"
+  ]
+}
