@@ -1,0 +1,24 @@
+{
+  "corpus_pin": "sim-2026-07-30",
+  "gate": "grounding",
+  "metrics": [
+    {
+      "comparison": "gte",
+      "metric": "grounding_support_rate",
+      "n": 84,
+      "passed": true,
+      "threshold": 0.9,
+      "value": 0.9880952380952381
+    }
+  ],
+  "passed": true,
+  "reported": {
+    "b_claim_contradiction_rate": {
+      "contradicted_claim_ids": [],
+      "denominator": 37,
+      "numerator": 0,
+      "value": 0.0
+    }
+  },
+  "trusted": true
+}
