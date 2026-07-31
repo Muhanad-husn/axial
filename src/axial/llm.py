@@ -210,6 +210,18 @@ PRODUCTION_SYNTHESIS_TIER = "production_synthesis"
 # either existing tier would couple it to an unrelated pass, so that a later
 # swap of one silently moves the other.
 PRODUCTION_INTERROGATE_TIER = "production_interrogate"
+# Three more tiers (issue #493's two-arm eval, founder direction 2026-07-31),
+# named for exactly the reason the two above were. The open-source and
+# closed-source arms wire Phase B's four model-calling passes to four
+# different models, and three of those passes share a tier today: `interrogate`
+# and `retrieve` both sit on `production_high`, and `counter_position_generate`
+# rides `production_synthesis`. Splitting them is what makes an arm a
+# secrets.toml swap rather than a code change, and it stops an arm's pick from
+# dragging a Phase A pass with it -- `envelope` and `gather_eval` keep
+# `production_high`, `note_interrogate` keeps `production_interrogate`.
+PRODUCTION_BRIEF_INTERROGATE_TIER = "production_brief_interrogate"
+PRODUCTION_RETRIEVE_TIER = "production_retrieve"
+PRODUCTION_COUNTER_POSITION_TIER = "production_counter_position"
 DEFAULT_LLM_TIER = BUILDING_TIER
 
 # Fallback model used only when secrets.toml doesn't name one for the
@@ -478,13 +490,25 @@ DEFAULT_TEMPERATURE_BY_PASS: dict[str, float] = {}
 # deliberately NOT a live pricing API or an auto-refreshed table (#363's own
 # out-of-scope list -- an over-engineering tripwire) -- a static snapshot is
 # enough for a benchmark sweep. Sourced from OpenRouter's public `/models`
-# pricing endpoint, spot-checked 2026-07-24; $ per 1000 tokens. A model id
-# absent here is UNPRICED, not an error: `estimate_cost` resolves it to
-# `None` and logs the gap once, never raises and never fails a run.
+# pricing endpoint, re-read 2026-07-31 for issue #493's two-arm eval; $ per
+# 1000 tokens. A model id absent here is UNPRICED, not an error:
+# `estimate_cost` resolves it to `None` and logs the gap once, never raises
+# and never fails a run.
+#
+# TWO ROWS MOVED between the 2026-07-24 snapshot and this one, both upward:
+# `deepseek-v4-flash` 0.000098/0.000196 and `z-ai/glm-5.2`
+# 0.0007826/0.0024596. Every cost figure this repo reported before today was
+# computed from those, so runs whose synthesis ran on glm-5.2 -- the whole
+# smoke history, including the $0.30 budget cut from smoke-v4 -- spent more
+# than they reported. The three new rows are the closed-source and
+# open-source arms of #493; without them the arms' cost column is null.
 PRICE_TABLE_USD_PER_1K: dict[str, dict[str, float]] = {
     "deepseek/deepseek-v4-pro": {"input": 0.000435, "output": 0.00087},
-    "deepseek/deepseek-v4-flash": {"input": 0.000098, "output": 0.000196},
-    "z-ai/glm-5.2": {"input": 0.0007826, "output": 0.0024596},
+    "deepseek/deepseek-v4-flash": {"input": 0.00014, "output": 0.00028},
+    "z-ai/glm-5.2": {"input": 0.00112, "output": 0.00352},
+    "openai/gpt-5.4": {"input": 0.0025, "output": 0.015},
+    "openai/gpt-5.6-sol": {"input": 0.005, "output": 0.03},
+    "moonshotai/kimi-k3": {"input": 0.003, "output": 0.015},
     "nvidia/nemotron-3-ultra-550b-a55b:free": {"input": 0.0, "output": 0.0},
 }
 
@@ -2493,6 +2517,9 @@ TIER_TO_MODEL_KEY = {
     PRODUCTION_LOW_TIER: "production_low",
     PRODUCTION_SYNTHESIS_TIER: "production_synthesis",
     PRODUCTION_INTERROGATE_TIER: "production_interrogate",
+    PRODUCTION_BRIEF_INTERROGATE_TIER: "production_brief_interrogate",
+    PRODUCTION_RETRIEVE_TIER: "production_retrieve",
+    PRODUCTION_COUNTER_POSITION_TIER: "production_counter_position",
 }
 
 

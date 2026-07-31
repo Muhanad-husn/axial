@@ -342,9 +342,17 @@ def test_corpus_note_count_reads_the_chunk_artifact_and_ignores_skip_sidecars(tm
 
 
 def test_cost_report_extrapolates_a_measured_per_note_cost_to_the_corpus():
+    # Priced off the live table rather than two copied literals: this test is
+    # about extrapolating a measured per-note cost, and a price refresh
+    # (2026-07-31, issue #493) should not read as a failure of that.
+    from axial.llm import PRICE_TABLE_USD_PER_1K
+
+    price = PRICE_TABLE_USD_PER_1K["z-ai/glm-5.2"]
     usage = {"prompt_tokens": 2000, "completion_tokens": 1000, "total_tokens": 3000}
     report = cost_report(usage, "z-ai/glm-5.2", answered=2, corpus_notes=6000)
-    assert report["usd"] == pytest.approx(2000 / 1000 * 0.0007826 + 1000 / 1000 * 0.0024596)
+    assert report["usd"] == pytest.approx(
+        2000 / 1000 * price["input"] + 1000 / 1000 * price["output"]
+    )
     assert report["usd_per_note"] == pytest.approx(report["usd"] / 2)
     assert report["usd_corpus_extrapolated"] == pytest.approx(report["usd_per_note"] * 6000)
     assert report["tokens_per_note"] == 1500.0

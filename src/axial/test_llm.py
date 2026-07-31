@@ -1749,6 +1749,64 @@ def test_resolve_model_by_pass_resolves_production_synthesis_tier():
     assert resolved == {"synthesize": "z-ai/glm-5.2"}
 
 
+def test_the_four_phase_b_passes_resolve_to_four_independent_models():
+    """Issue #493's two-arm eval: brief interrogation, retrieval, synthesis
+    and counter-position generation each carry their own tier, so an arm is a
+    secrets.toml swap. Before this, `interrogate` and `retrieve` shared
+    `production_high` with the Phase A envelope pass and
+    `counter_position_generate` rode `production_synthesis`, so no wiring
+    could give the four passes four different models without dragging a
+    Phase A pass along."""
+    from axial.llm import _resolve_model_by_pass
+
+    secrets = {
+        "production_high": "deepseek/deepseek-v4-pro",
+        "production_brief_interrogate": "openai/gpt-5.4",
+        "production_retrieve": "openai/gpt-5.4",
+        "production_synthesis": "openai/gpt-5.6-sol",
+        "production_counter_position": "moonshotai/kimi-k3",
+    }
+    llm_config = {
+        "model_by_pass": {
+            "envelope": "production_high",
+            "interrogate": "production_brief_interrogate",
+            "retrieve": "production_retrieve",
+            "synthesize": "production_synthesis",
+            "counter_position_generate": "production_counter_position",
+        }
+    }
+
+    resolved, unresolved = _resolve_model_by_pass(secrets, llm_config)
+
+    assert resolved == {
+        "envelope": "deepseek/deepseek-v4-pro",
+        "interrogate": "openai/gpt-5.4",
+        "retrieve": "openai/gpt-5.4",
+        "synthesize": "openai/gpt-5.6-sol",
+        "counter_position_generate": "moonshotai/kimi-k3",
+    }
+    assert unresolved == {}
+
+
+def test_every_model_the_two_eval_arms_wire_is_priced():
+    """A model absent from the price table costs `None`, never zero (issue
+    #363), so an unpriced arm would report a null cost column and the
+    open-vs-closed comparison would lose its operational half."""
+    from axial.llm import PRICE_TABLE_USD_PER_1K, estimate_cost
+
+    arms = (
+        "z-ai/glm-5.2",
+        "deepseek/deepseek-v4-pro",
+        "moonshotai/kimi-k3",
+        "openai/gpt-5.4",
+        "openai/gpt-5.6-sol",
+    )
+
+    for model in arms:
+        assert model in PRICE_TABLE_USD_PER_1K
+        assert estimate_cost(model, prompt_tokens=1000, completion_tokens=1000) is not None
+
+
 def test_resolve_model_by_pass_is_empty_when_config_names_no_overrides():
     """No pass gets a model override absent config -- every pass keeps
     sending requests to the client's own default configured model (mirrors

@@ -165,7 +165,13 @@ llm:
     # 12 on a product whose premise is passages meeting across books.
     # ONE BRIEF, ONE DRAW: the five smoke briefs (issue #491) are what
     # turn this into a pattern, and they have not run yet.
-    retrieve: production_high
+    #
+    # MOVED to its own tier 2026-07-31 (issue #493, founder direction). The
+    # model is unchanged -- production_retrieve resolves to
+    # deepseek/deepseek-v4-pro, exactly what production_high named -- but the
+    # two-arm eval needs retrieval to move independently of the envelope
+    # pass, which stays on production_high.
+    retrieve: production_retrieve
     # Phase-B stage-4 synthesis (§7.11, issue #256): a dedicated tier,
     # mirroring envelope's own once-per-run, judgment-heavy profile but
     # NAMED SEPARATELY from production_high (2026-07 model-swap experiment)
@@ -178,13 +184,26 @@ llm:
     # experiment, moved off the default (production_low/flash) tier onto
     # production_high -- see the paired reasoning_by_pass.interrogate note
     # above for why.
-    interrogate: production_high
+    #
+    # MOVED to its own tier 2026-07-31 (issue #493, founder direction), same
+    # model as before (production_brief_interrogate resolves to
+    # deepseek/deepseek-v4-pro). The brief pre-pass and the envelope pass
+    # shared production_high, and the two-arm eval swaps one without the
+    # other. Distinct from production_interrogate, which is Phase A's
+    # per-NOTE pass.
+    interrogate: production_brief_interrogate
     # Stage-4 counter-position generation (§7.8/§7.11, issue #399): routed
     # to the SAME tier as `synthesize` above, on purpose -- see that
     # pass name's own comment in reasoning_by_pass and in
     # src/axial/llm.py (COUNTER_POSITION_GENERATE_PASS_NAME) for why this
     # is still the generating model, never an independent judge.
-    counter_position_generate: production_synthesis
+    #
+    # MOVED to its own tier 2026-07-31 (issue #493, founder direction). It
+    # still resolves to the synthesis model in the open-source arm, so
+    # nothing about "the generating model drafts its own counter-position"
+    # changes by default; the closed-source arm is what needs the two split,
+    # putting synthesis on one model and this pass on another.
+    counter_position_generate: production_counter_position
     # Phase A v1 per-note interrogation (§7.9/§7.15, D14, issue #419): its
     # own tier, resolving to z-ai/glm-5.2 in secrets.toml. Not
     # production_high (deepseek-v4-pro, the envelope pass) and not
