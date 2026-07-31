@@ -39,7 +39,11 @@ import pytest
 import yaml
 
 from axial.llm import STUB_TOOL_CALLS_ENV_VAR, RecordLLMClient
-from axial.retrieve.loop import evidence_set_composition, run_retrieval_loop
+from axial.retrieve.loop import (
+    chunk_feedback_metadata,
+    evidence_set_composition,
+    run_retrieval_loop,
+)
 
 SOURCE_A = "compfix-alpha"
 SOURCE_B = "compfix-beta"
@@ -114,15 +118,24 @@ def test_composition_reports_an_empty_set_before_any_chunk_valued_call():
     "forbidden",
     ["budget", "limit", "cap", "maximum", "remaining", "room", "char", "quota", "allowance"],
 )
-def test_composition_never_names_a_budget_a_cap_or_a_remaining_allowance(forbidden: str):
+def test_composition_never_names_a_budget_a_cap_or_a_remaining_allowance(
+    forbidden: str, fixture_vault_dir: Path
+):
     """The whole risk of this change (#505): a cap the model can SEE gets
     widened on purpose. Composition is what the set HOLDS; nothing here names
     a budget, a limit, a maximum or how much room is left, and
     `synthesis.evidence_char_budget` and the prefix boundary are disclosed in
-    no form."""
+    no form.
+
+    Extended by issue #545's own per-id metadata feedback
+    (`chunk_feedback_metadata`): it rides the identical channel, right beside
+    `evidence_set_composition`, so the same trap applies to it too -- it
+    states what a note HOLDS, never how many more would fit."""
     stated = (
         evidence_set_composition([_entry("get_chunk", [A_CHUNK_IDS[0], B_CHUNK_IDS[0]])]),
         evidence_set_composition([]),
+        chunk_feedback_metadata([A_CHUNK_IDS[0], B_CHUNK_IDS[0]], fixture_vault_dir) or "",
+        chunk_feedback_metadata([], fixture_vault_dir) or "",
     )
 
     for composition in stated:
