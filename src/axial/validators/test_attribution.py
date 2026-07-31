@@ -32,6 +32,8 @@ from axial.validators.attribution import (
 )
 
 CHUNK_ID = "unitfix_001_syria_a"
+CHUNK_ID_SAME_SOURCE = "unitfix_003_syria_b"
+CHUNK_ID_OTHER_SOURCE = "otherfix_001_history_a"
 ARTIFACT_ID = "unitfix_002_artifact"
 MISSING_CHUNK_ID = "unitfix_999_missing"
 
@@ -41,15 +43,19 @@ class FakeClient:
     caller-supplied per-pass mapping (so a test can make the synthesis pass
     and the (b)-seam pass resolve to the SAME or DIFFERENT models on
     demand), and `complete`/`complete_with_tools` answer a scripted JSON
-    string, recording every `pass_name` they were called with."""
+    string, recording every `pass_name` they were called with, plus the
+    prompt itself (`self.prompts`) so a test can assert on what the (b)-seam
+    check actually showed the judge."""
 
     def __init__(self, *, model_by_pass: dict[str, str], response: str = ""):
         self._model_by_pass = model_by_pass
         self._response = response
         self.calls: list[str | None] = []
+        self.prompts: list[str] = []
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         self.calls.append(pass_name)
+        self.prompts.append(prompt)
         return self._response
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
@@ -90,6 +96,11 @@ def _write_vault(root: Path) -> Path:
     }
     text = "---\n" + yaml.safe_dump(chunk_frontmatter, sort_keys=False) + "---\nBody.\n"
     (prose_dir / f"{CHUNK_ID}.md").write_text(text, encoding="utf-8")
+
+    for chunk_id in (CHUNK_ID_SAME_SOURCE, CHUNK_ID_OTHER_SOURCE):
+        other_frontmatter = dict(chunk_frontmatter, chunk_id=chunk_id)
+        text = "---\n" + yaml.safe_dump(other_frontmatter, sort_keys=False) + "---\nBody.\n"
+        (prose_dir / f"{chunk_id}.md").write_text(text, encoding="utf-8")
 
     artifacts_dir = root / "vault" / "artifacts"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -339,6 +350,59 @@ def test_b_seam_check_runs_under_a_pass_name_distinct_from_synthesis(vault_dir: 
     validate_attribution(_record([claim]), client=client, vault_dir=vault_dir)
     assert client.calls == ["attribution"]
     assert client.calls[0] != SYNTHESIZE_PASS_NAME
+
+
+# -- (b)-seam check: the judge sees each claim's grounds source ids ----------
+#
+# The fix under test: the prompt tells the judge how many distinct sources
+# a (b) claim's own grounds draw on, so it can tell a multi-source synthesis
+# from a single-source assertion instead of flagging declarative prose in
+# general (measured false-positive rate up to 0.333 across six real runs).
+
+
+def test_prompt_names_a_multi_source_claims_distinct_source_ids(vault_dir: Path):
+    client = FakeClient(
+        model_by_pass=DISTINCT_MODELS, response=json.dumps({"flagged_claim_ids": []})
+    )
+    claim = _claim(
+        "c-1",
+        kind="b",
+        grounds=[
+            {"ref_type": "chunk", "ref_id": CHUNK_ID},
+            {"ref_type": "chunk", "ref_id": CHUNK_ID_OTHER_SOURCE},
+        ],
+    )
+    validate_attribution(_record([claim]), client=client, vault_dir=vault_dir)
+
+    assert len(client.prompts) == 1
+    prompt = client.prompts[0]
+    assert "unitfix" in prompt, "the judge must see the first source's id"
+    assert "otherfix" in prompt, "the judge must see the second source's id"
+    assert "2 distinct sources" in prompt, "the judge must see the source COUNT, not just names"
+
+
+def test_prompt_dedupes_source_ids_shared_across_grounds_entries(vault_dir: Path):
+    """Two grounds entries that both resolve to the SAME source_id (a chunk
+    and an artifact from the same source, or two chunks from the same
+    source) must count as ONE source, not two -- a claim genuinely grounded
+    in a single source must never be shown to the judge as multi-source."""
+    client = FakeClient(
+        model_by_pass=DISTINCT_MODELS, response=json.dumps({"flagged_claim_ids": []})
+    )
+    claim = _claim(
+        "c-1",
+        kind="b",
+        grounds=[
+            {"ref_type": "chunk", "ref_id": CHUNK_ID},
+            {"ref_type": "chunk", "ref_id": CHUNK_ID_SAME_SOURCE},
+            {"ref_type": "artifact", "ref_id": ARTIFACT_ID},
+        ],
+    )
+    validate_attribution(_record([claim]), client=client, vault_dir=vault_dir)
+
+    prompt = client.prompts[0]
+    assert "1 distinct source" in prompt
+    assert "unitfix" in prompt
 
 
 # -- (b)-seam check: same-model config guard ---------------------------------
