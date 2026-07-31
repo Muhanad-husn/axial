@@ -272,6 +272,46 @@ def test_synthesis_emits_marked_grounded_claims_with_recorded_lens(
     assert by_kind["c"].grounds == []
     assert by_kind["c"].names_touched == []
 
+
+def test_evidence_composed_count_reflects_the_char_budget_drop(
+    fixture_root: Path, vault_dir: Path, names_dir: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Issue #545: `compose_prompt`'s `synthesis.evidence_char_budget` walk
+    drops chunks silently -- nobody downstream could previously tell how
+    many of the assembled evidence set actually reached the model.
+    `ClaimGraph.evidence_composed_count` is that count, distinct from
+    `len(evidence.chunk_ids)` (how many were assembled)."""
+    monkeypatch.setenv(STUB_SYNTHESIZE_RESPONSE_ENV_VAR, json.dumps({"claims": []}))
+    record_path = fixture_root / "record.jsonl"
+    client = _build_client(record_path)
+    config_path = fixture_root / "config" / "pipeline.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    # Each fixture chunk's text runs 43-46 chars; a 60-char budget admits
+    # exactly the first one and drops the other two.
+    config_path.write_text(
+        yaml.safe_dump({"synthesis": {"evidence_char_budget": 60}}), encoding="utf-8"
+    )
+
+    brief = Brief(
+        brief_id="synfix-drop-brief",
+        case="Syria",
+        request="How did displacement reshape local authority?",
+        lens="political-economy",
+    )
+    evidence = assemble_evidence([SYRIA_A, IRAQ_A, LEBANON_A], vault_dir=vault_dir)
+
+    graph = synthesize(
+        evidence,
+        brief,
+        client=client,
+        vault_dir=vault_dir,
+        names_dir=names_dir,
+        config_path=config_path,
+    )
+
+    assert len(evidence.chunk_ids) == 3
+    assert graph.evidence_composed_count == 1
+
     prompts = _read_recorded_prompts(record_path)
     assert len(prompts) == 1
     prompt = prompts[0].lower()

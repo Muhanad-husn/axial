@@ -331,6 +331,7 @@ def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path
         "counter_position",
         "coverage_map",
         "confidence",
+        "evidence",
         "trajectory",
         "model_by_pass",
     }
@@ -375,6 +376,13 @@ def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path
     rationale = record["confidence"]["rationale"]
     assert TILLY in rationale and "50" in rationale, rationale
     assert "placeholder" not in rationale
+
+    # Issue #545: both fixture notes are a few dozen characters, nowhere
+    # near `synthesis.evidence_char_budget`'s default 100,000 -- so nothing
+    # is dropped and the two counts agree, proving the field is wired
+    # end-to-end rather than only unit-tested against `build_record`/
+    # `synthesize` in isolation.
+    assert record["evidence"] == {"assembled_count": 2, "composed_count": 2}
 
     assert isinstance(record["trajectory"], list) and record["trajectory"]
     for entry in record["trajectory"]:
@@ -479,6 +487,10 @@ def test_brief_run_on_refuse_disposition_writes_empty_claims_and_makes_no_synthe
         == "the corpus holds no coverage for the polity this brief depends on"
     )
     assert record["trajectory"] == []
+    # Issue #545: stage 3/4 never ran on a refusal, so both counts are 0 --
+    # present, non-nullable, the same "still-written on refuse" contract
+    # `source_usage`/`confidence` already carry.
+    assert record["evidence"] == {"assembled_count": 0, "composed_count": 0}
     # Issue #400: an empty claim list touches no polity, so coverage_map is
     # empty -- but confidence is still a non-nullable disclosure (§7.3),
     # pinned to "low" rather than absent.

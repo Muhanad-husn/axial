@@ -401,10 +401,20 @@ class Claim:
 @dataclass(frozen=True)
 class ClaimGraph:
     """The full stage-4 output: the lens actually applied (always recorded,
-    §7.1) plus the parsed, validated, grounded claim list."""
+    §7.1) plus the parsed, validated, grounded claim list.
+
+    `evidence_composed_count` (issue #545) is `len(composed.handle_map)` --
+    how many of the evidence chunks `compose_prompt` assembled actually made
+    it past `synthesis.evidence_char_budget`'s prefix walk and into the
+    prompt the model read. Carried here, alongside `claims`, because it is
+    the one number `compose_prompt` computes and then discards: the walk
+    breaks silently (see that function's own docstring), and this is what
+    lets a caller (`axial.answer.record.build_record`) disclose the drop
+    against the assembled count it already has (`EvidenceSet.chunk_ids`)."""
 
     lens: str
     claims: list[Claim]
+    evidence_composed_count: int
 
 
 def _available_lenses(lenses_dir: Path) -> list[str]:
@@ -918,7 +928,8 @@ def synthesize(
         brief, lens_name, evidence, vault_dir=vault_dir, config_path=config_path
     )
     print(
-        f"synthesize: starting, lens={lens_name!r}, {len(evidence.chunk_ids)} evidence item(s)",
+        f"synthesize: starting, lens={lens_name!r}, {len(evidence.chunk_ids)} evidence item(s) "
+        f"assembled, {len(composed.handle_map)} composed into the prompt",
         file=sys.stderr,
     )
 
@@ -931,7 +942,9 @@ def synthesize(
         raw, vault_dir=vault_dir, handle_map=composed.handle_map, names_dir=names_dir
     )
     print(f"synthesize: done, {len(claims)} claim(s)", file=sys.stderr)
-    return ClaimGraph(lens=lens_name, claims=claims)
+    return ClaimGraph(
+        lens=lens_name, claims=claims, evidence_composed_count=len(composed.handle_map)
+    )
 
 
 # ---------------------------------------------------------------------------

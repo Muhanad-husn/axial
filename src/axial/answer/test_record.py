@@ -1,6 +1,8 @@
 """Inner unit tests for `axial.answer.record.build_record`'s `cost` field
-(§7.14, issue #363) -- co-located under src/axial/answer/, mirroring
-src/axial/answer/test_source_usage.py's own layout for this module."""
+(§7.14, issue #363), plus its `evidence` field (§7.3, issue #545) -- both
+small enough to share this file rather than each earning its own, co-located
+under src/axial/answer/, mirroring src/axial/answer/test_source_usage.py's
+own layout for this module."""
 
 from __future__ import annotations
 
@@ -132,3 +134,34 @@ def test_cost_defaults_to_zero_tokens_and_null_usd_when_the_client_reports_no_us
         "usd": None,
     }
     assert record["cost"]["total_usd"] is None
+
+
+def test_evidence_field_defaults_to_zero_when_the_caller_passes_none():
+    """A caller that omits `evidence_assembled_count`/`evidence_composed_
+    count` -- `run_brief` on a `refuse` disposition, where stage 3/4 never
+    ran -- still gets the field present and non-nullable, at 0/0, mirroring
+    `claims`/`trajectory` defaulting empty on that same path."""
+    record = _build({"interrogate": "deepseek/deepseek-v4-pro"}, _FakeUsageClient({}))
+
+    assert record["evidence"] == {"assembled_count": 0, "composed_count": 0}
+
+
+def test_evidence_field_carries_the_callers_counts_through_unchanged():
+    """`build_record` neither recomputes nor validates the two counts against
+    `claims`/`trajectory` -- it carries what the caller (`run_brief`, from
+    `EvidenceSet.chunk_ids`/`ClaimGraph.evidence_composed_count`) already
+    computed, the same pass-through `model_by_pass` gets."""
+    record = build_record(
+        _brief(),
+        _interrogation_result(),
+        corpus_pin="baseline",
+        lens="default",
+        claims=[],
+        trajectory=[],
+        model_by_pass={"interrogate": "deepseek/deepseek-v4-pro"},
+        client=_FakeUsageClient({}),
+        evidence_assembled_count=506,
+        evidence_composed_count=146,
+    )
+
+    assert record["evidence"] == {"assembled_count": 506, "composed_count": 146}

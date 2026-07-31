@@ -67,6 +67,27 @@ to a set it had no view of. It is composition and nothing else -- never a
 budget, a cap or a remaining allowance, because #505's finding is that a cap
 the model can SEE gets widened on purpose, and `synthesis.
 evidence_char_budget` is exactly such a cap.
+
+`chunk_feedback_metadata` rides the same channel a third way (issue #545):
+until now, a successful chunk-valued call's feedback was `result.ids` --
+bare id strings, ~200 characters each after DEC-42, with nothing about what
+any of them says. The model was choosing what to retrieve, and later which
+notes matter most (`synthesis.evidence_char_budget`'s prefix keeps roughly
+twenty of whatever the loop assembled), by string alone. `chunk_feedback_
+metadata` reads each returned id's own note (`axial.query.reader.get_chunk`)
+and renders `"<chunk_id> -- <author> (<year>): <claim>"`, applied uniformly
+at the feedback site to every tool whose `ToolSpec.returns_chunk_ids` is
+`True` -- `get_name`/`where_names_meet` already carry this for free
+(`axial.query.names.NameMember`), but `who_cites`/`who_argues_against`
+carry no author/year at all and `query_by_source`/`get_chunk` carry no
+metadata whatsoever, so threading each tool's own already-parsed shape
+through `ToolResult` would give the model RAGGED feedback -- rich for one
+call, bare for the next. Reading the note directly makes every chunk-valued
+tool's feedback the same shape; #541/#543's libyaml swap is what makes that
+extra read affordable per id (timed in the PR body). Same discipline as
+`evidence_set_composition`: states what a returned id's own note holds,
+never a cap, a budget or a count of what more would fit, and an abstained
+`claim` is marked, never shown as if it were an answer (issue #489).
 """
 
 from __future__ import annotations
@@ -82,7 +103,8 @@ from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult
 from axial.llm import RETRIEVE_PASS_NAME, LLMClient
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
-from axial.query.reader import MalformedChunkIdError, source_id_from_chunk_id
+from axial.query import reader
+from axial.query.reader import MalformedChunkIdError, is_abstention, source_id_from_chunk_id
 from axial.retrieve.dispatcher import dispatch
 from axial.retrieve.tools import TOOL_REGISTRY, tool_specs_for_provider
 from axial.yaml_loader import SAFE_LOADER
@@ -91,18 +113,13 @@ from axial.yaml_loader import SAFE_LOADER
 # stated tunable") -- used only when `config/pipeline.yaml` (or its
 # `retrieve.step_budget` key) is absent; the file is the actual carried
 # source of truth, mirroring every other per-pass tunable in this codebase
-# (e.g. `axial.llm.DEFAULT_REASONING_BY_PASS`).
-#
-# Raised 10 -> 20 by issue #488, and this is a PROVISIONAL headroom
-# allowance, not a re-measured bound: the old 10 was tuned against a tool
-# set where one `query_by_tag` call could return a large slice of the
-# corpus, and the name-layer surface it replaced is narrower per call --
-# resolving one name, reading one page, and following one traversal is
-# already 3 steps, so a brief comparing two scholars can need 6-10 calls
-# before any re-query. Re-proving the real bound happens on the smoke
-# briefs, which slice 06 (issue #491) carries after #492 was folded into
-# it; until then this number is stated, not asserted.
-DEFAULT_STEP_BUDGET = 20
+# (e.g. `axial.llm.DEFAULT_REASONING_BY_PASS`). Kept numerically in sync
+# with `config/pipeline.yaml`'s own `retrieve.step_budget` on purpose (a
+# fallback that quietly disagreed with the shipped file would be worse than
+# either number alone) -- see that key's own comment for the full
+# provenance and re-cut history (10 -> 20 by issue #488, 20 -> 14 by issue
+# #545).
+DEFAULT_STEP_BUDGET = 14
 
 # The re-query-on-thin threshold's code-level fallback (§4/§7.6, issue
 # #254) -- mirrors DEFAULT_STEP_BUDGET's own fallback convention exactly,
@@ -265,6 +282,15 @@ def run_retrieval_loop(
             # re-asking blind.
             if result.detail is not None:
                 tool_feedback = f"{tool_feedback} detail: {result.detail}"
+            # Per-id author/year/claim (issue #545), uniformly for every
+            # chunk-valued tool -- see `chunk_feedback_metadata`'s own
+            # docstring for why this reads the note directly rather than
+            # threading each tool's own already-parsed shape through.
+            spec = TOOL_REGISTRY.get(tool_name)
+            if spec is not None and spec.returns_chunk_ids:
+                metadata = chunk_feedback_metadata(result.ids, vault_dir)
+                if metadata is not None:
+                    tool_feedback = f"{tool_feedback} notes: {metadata}"
         # What the run has actually assembled so far (issue #542): the loop
         # was spending a model round trip per turn adding ids to a set it
         # could not see. Stated after EVERY step, including a failed one --
@@ -457,6 +483,86 @@ def evidence_set_composition(trajectory: list[dict[str, Any]]) -> str:
         f"your evidence set holds {len(ids)} notes across {len(sources)} sources: "
         f"{', '.join(sources)}"
     )
+
+
+def _render_note_claim(value: Any) -> str:
+    """One note's raw `claim` answer, rendered for the loop's own tool
+    feedback (issue #545): the D7 abstention marker (never shown as if it
+    were an answer -- `is_abstention` applied before any answer field
+    reaches the model, issue #489's own rule), a plain marker for a note
+    with no claim recorded, the free-text claim verbatim otherwise.
+
+    Mirrors `axial.materialize._render_claim`'s exact three-way rule, not
+    imported: this module stays outside `axial.materialize`'s import graph,
+    which pulls the whole interrogation and clustering stack in to define
+    one four-line rendering rule -- the same trade `axial.query.reader.
+    _default_envelopes_dir` already makes for `axial.envelope`."""
+    if value is None:
+        return "(no claim recorded)"
+    if is_abstention(value):
+        return "(not stated in the passage)"
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _chunk_feedback_line(chunk_id: str, vault_dir: Path | None) -> str | None:
+    """One id's own feedback line (issue #545): `"<chunk_id> -- <author>
+    (<year>): <claim>"`, read straight off the prose note the id names --
+    the same shape a name page's own member line already carries
+    (`axial.materialize.render_name_page_body`), so a model reading this
+    feedback and a founder reading a name page see the same rendering for
+    the same note. `author`/`year` are read raw off `source_meta` and
+    rendered exactly as held -- `None` included -- never guessed at or
+    backfilled, mirroring `axial.query.names._split_member_line`'s own
+    "honestly unknown rather than guessed at" rule.
+
+    `None` when `chunk_id` does not resolve to a prose note at all -- an
+    artifact id from `get_artifact` reaching this through the same uniform
+    call site, or a stale/malformed id -- so the caller skips it rather than
+    showing a lookup failure to the model; the bare id itself still reaches
+    the model through `result_ids` regardless of whether this resolves."""
+    try:
+        note = reader.get_chunk(chunk_id, vault_dir=vault_dir)
+    except reader.QueryError:
+        return None
+    source_meta = note.source_meta or {}
+    author = source_meta.get("author")
+    year = source_meta.get("date")
+    return f"{chunk_id} — {author} ({year}): {_render_note_claim(note.claim)}"
+
+
+def chunk_feedback_metadata(chunk_ids: list[str], vault_dir: Path | None) -> str | None:
+    """Per-id feedback metadata for one step's own returned ids (issue
+    #545): author, year and the one-sentence claim, one line per id that
+    resolves to a prose note, joined `"; "`. `None` when no id in
+    `chunk_ids` resolves to one (an all-artifact result, or an empty list).
+
+    **Design pick, measured in the PR body: read the note, uniformly,
+    rather than thread each tool's own already-parsed shape through
+    `ToolResult`.** `get_name`/`where_names_meet` already return
+    `axial.query.names.NameMember`, which carries author/year/claim for
+    free; `who_cites`/`who_argues_against` carry no author/year at all
+    (`CitationEdge`/`OppositionEdge`); `query_by_source`/`get_chunk` carry
+    no metadata whatsoever. Threading each tool's own shape through
+    `ToolResult` would give the model RAGGED feedback -- rich for one call,
+    bare for the next, with no way to tell "this tool never carries it"
+    from "this note has none". Reading the note directly
+    (`axial.query.reader.get_chunk`) makes every chunk-valued tool's
+    feedback the same shape, at a per-note cost #541/#543's libyaml swap
+    made affordable to pay again here.
+
+    Never a §7.6 trajectory field -- this rides beside the trajectory
+    exactly the way `ToolResult.total`/`.detail` already do -- and never a
+    cap, a budget or a count of what more would fit (issue #542's own rule,
+    extended here): it states what EACH returned id's own note holds,
+    nothing about the evidence set as a whole."""
+    lines = [
+        line
+        for line in (_chunk_feedback_line(chunk_id, vault_dir) for chunk_id in chunk_ids)
+        if line is not None
+    ]
+    return "; ".join(lines) if lines else None
 
 
 def run_planned_retrieval(

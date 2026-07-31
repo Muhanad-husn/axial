@@ -26,10 +26,32 @@ import pytest
 import yaml
 
 from axial.llm import RETRIEVE_PASS_NAME, OpenRouterClient, OpenRouterError
+from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.retrieve.loop import DEFAULT_STEP_BUDGET, _resolve_step_budget
 
 
 # --- step budget: read from config, not hardcoded --------------------------
+
+
+def test_the_shipped_pipeline_config_step_budget_is_14():
+    """Cut 20 -> 14 (issue #545), re-derived from the seven persisted smoke
+    runs: for every run, the step at which the LAST cited note first
+    surfaced in the trajectory tops out at 13 (P3-04), and steps 14-20
+    produced nothing any of the seven runs cited. 14 is that ceiling plus
+    one, a provisional headroom allowance re-cut once post-#545 runs land
+    (see the comment beside the value in config/pipeline.yaml) -- the same
+    "stated, not asserted" status the smoke budgets carry."""
+    assert _resolve_step_budget(DEFAULT_PIPELINE_CONFIG_PATH) == 14
+
+
+def test_default_step_budget_is_kept_in_sync_with_the_shipped_config():
+    """`DEFAULT_STEP_BUDGET` is only ever the code-level fallback for a
+    missing/absent config (its own docstring); `config/pipeline.yaml` is the
+    real source of truth every production run ships. Pinned equal so the
+    two numbers cannot silently drift apart -- a future re-cut of one
+    without the other fails this test rather than shipping a fallback that
+    quietly disagrees with the file."""
+    assert DEFAULT_STEP_BUDGET == 14
 
 
 def test_step_budget_reads_from_config_pipeline_yaml(tmp_path: Path):
