@@ -29,6 +29,26 @@ before any measurement exists, and §7.13 makes proving the denominator on
 the smoke set a separate, evidence-led step. `denominator_by_name` is what
 that step reads.
 
+**`where_names_meet` gets its own, pair-keyed entry (issue #550).** Before
+this, the tool contributed nothing here at all: it is called through a
+different trajectory shape (`canonical` AND `other`, not the single-name
+`NAME_ARG_TOOLS` this module's per-name loop reads), so a run that
+intersected a hub three times and read that hub's whole page once still
+disclosed a denominator that was 88.4% that one hub (measured, P3-04:
+962 of 1,088). Each distinct pair the trajectory calls `where_names_meet`
+on gets ONE entry, keyed under `"<name> & <name>"` (sorted, so the same pair
+called with its two arguments swapped is one entry, not two) -- **never
+under either name alone**, which would misrepresent a name's own page size
+as the (usually much smaller) intersection. The value is the TRUE
+intersection size, re-queried over the pinned vault through
+`axial.query.names.where_names_meet`, never taken from the persisted
+trajectory step: `result_count` there is the capped `limit` (20), not the
+size. A name independently queried too (`get_name("Syria")` alongside
+`where_names_meet("Syria", "paramilitarism")`) keeps its own whole-page
+entry exactly as before, unaffected -- the pair is an ADDITIONAL entry, not
+a replacement. No cap and no kind exclusion here either, for the same
+reason as the rest of this module.
+
 This module never imports `axial.llm` or constructs any LLM client --
 mirroring `axial.query.reader`'s own model-free-by-construction discipline
 (§7.5), it is pure vault reads plus arithmetic.
@@ -40,8 +60,14 @@ from pathlib import Path
 from typing import Any
 
 from axial.query.names import NameNotFoundError, NamePage, get_name
+from axial.query.names import where_names_meet as query_where_names_meet
 from axial.query.reader import get_artifact, source_id_from_chunk_id
-from axial.validators.coverage import NAME_ARG_TOOLS, NAME_RESULT_TOOLS, retrieved_names
+from axial.validators.coverage import (
+    NAME_ARG_TOOLS,
+    NAME_RESULT_TOOLS,
+    WHERE_NAMES_MEET_TOOL,
+    _directly_queried_names,
+)
 
 # The §7.5 tools whose calls ARE name queries -- the four that take a
 # canonical name plus `find_names`, which resolves one. Exactly the tools
@@ -102,25 +128,77 @@ def _all_member_chunk_ids(canonical: str, *, vault_dir: Path | None) -> set[str]
     return {member.chunk_id for member in page.members}
 
 
+def _pair_key(canonical: str, other: str) -> str:
+    """The denominator key for one `where_names_meet` pair (issue #550):
+    both names, sorted so the same pair called with its arguments swapped
+    is one key, joined so it can never collide with a real canonical name
+    (no name in the index contains `" & "` -- names are surface forms from
+    author prose, not delimited strings)."""
+    first, second = sorted((canonical, other))
+    return f"{first} & {second}"
+
+
+def _intersected_name_pairs(trajectory: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Every distinct `where_names_meet` pair this run called (issue #550),
+    each pair sorted and deduplicated so a call and its argument-swapped
+    twin are the same pair, not two."""
+    seen: set[tuple[str, str]] = set()
+    pairs: list[tuple[str, str]] = []
+    for entry in trajectory:
+        if not isinstance(entry, dict) or entry.get("tool") != WHERE_NAMES_MEET_TOOL:
+            continue
+        args = entry.get("args") or {}
+        canonical, other = args.get("canonical"), args.get("other")
+        if not (isinstance(canonical, str) and canonical.strip()):
+            continue
+        if not (isinstance(other, str) and other.strip()):
+            continue
+        pair = tuple(sorted((canonical, other)))
+        if pair in seen:
+            continue
+        seen.add(pair)
+        pairs.append(pair)
+    return pairs
+
+
 def compute_available_notes(
     trajectory: list[dict[str, Any]], *, vault_dir: Path | None = None
 ) -> tuple[dict[str, int], dict[str, int]]:
     """The §7.13 denominator: `(per-name member counts, per-source counts of
     the union)`.
 
-    The names are the canonicals this run reached -- the `canonical`
-    argument of every name-layer traversal plus every canonical `find_names`
-    resolved (`axial.validators.coverage.retrieved_names`, the same read
-    §7.7's coverage scope uses). The union counts a note once however many
-    queried names it is a member of; the per-name map is NOT that union
-    de-duplicated, it is each name's own page size, so a hub name's
-    contribution to the denominator is legible on its own."""
+    The names are the canonicals this run reached DIRECTLY -- the
+    `canonical` argument of every name-layer traversal plus every canonical
+    `find_names` resolved (`axial.validators.coverage._directly_queried_
+    names`; deliberately narrower than that module's own `retrieved_names`,
+    which also carries `where_names_meet`'s two names for the §7.7 coverage
+    scope -- a name reached only as one half of an intersection did not have
+    its own page read, so it must not be credited that page's full size
+    here). The union counts a note once however many queried names it is a
+    member of; the per-name map is NOT that union de-duplicated, it is each
+    name's own page size, so a hub name's contribution to the denominator is
+    legible on its own.
+
+    **Each distinct `where_names_meet` pair gets one additional entry**
+    (issue #550), keyed under the pair (`_pair_key`, never either name
+    alone) at the TRUE intersection size, re-queried over the pinned vault
+    (`axial.query.names.where_names_meet`) rather than read off the
+    trajectory's own `result_count`, which is the capped `limit` (20). A
+    name independently queried too keeps its own whole-page entry from the
+    loop above, unaffected -- the pair is additive, never a replacement."""
     per_name: dict[str, int] = {}
     union: set[str] = set()
-    for canonical in sorted(retrieved_names(trajectory)):
+    for canonical in sorted(_directly_queried_names(trajectory)):
         member_ids = _all_member_chunk_ids(canonical, vault_dir=vault_dir)
         per_name[canonical] = len(member_ids)
         union |= member_ids
+
+    for canonical, other in _intersected_name_pairs(trajectory):
+        try:
+            _members, total = query_where_names_meet(canonical, other, vault_dir=vault_dir)
+        except NameNotFoundError:
+            continue
+        per_name[_pair_key(canonical, other)] = total
 
     by_source: dict[str, int] = {}
     for chunk_id in union:

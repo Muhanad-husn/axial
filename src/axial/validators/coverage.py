@@ -47,6 +47,20 @@ settle that the plan did not:
 Takes no `LLMClient` at all: nothing here can make a model call, so the
 `explode` provider installed in tests never fires by construction, not by
 a check that happens not to trip it.
+
+**`retrieved_names` also carries `where_names_meet`'s two names (issue
+#550).** Measured over smoke-v4: the tool fired 12 times across six briefs
+and reached names -- `Nation-state formation`, `sovereignty` -- that then
+appeared in NEITHER run's coverage map, because the pre-#550 scope only read
+`NAME_ARG_TOOLS`'s single `canonical` argument and `where_names_meet` takes
+two (`canonical` AND `other`). Both now enter the §7.7 scope through
+`intersected_names`, kept as its own function (never folded into
+`NAME_ARG_TOOLS`, whose frozenset test reads one arg key and would silently
+drop `other`). `axial.answer.source_usage` needs the narrower,
+single-argument set alone for its own per-name whole-page denominator (a
+name reached only as one half of an intersection did not have its own page
+read), which is why that split is `_directly_queried_names`, not
+`retrieved_names` itself -- see that function's own docstring.
 """
 
 from __future__ import annotations
@@ -69,15 +83,25 @@ TOP_CONFIDENCE_BAND = "high"
 # confidence-vs-coverage check.
 THIN_COVERAGE_BAND = "thin"
 
-# The §7.5 name-layer tools that take a canonical name as an argument, and
-# the one that RETURNS canonical names. Together they are "the names this
-# run retrieved on" (`retrieved_names`) -- the §7.7 map's scope. `find_names`
+# The §7.5 name-layer tools that take a SINGLE canonical name as an
+# argument, and the one that RETURNS canonical names. Together they are the
+# names this run reached directly (`_directly_queried_names`). `find_names`
 # is the brief's own resolution step (§7.2); the other four are the
 # traversals a run makes from a name it already resolved. `coverage_count`
 # is deliberately absent: as a tool it returns EVERY canonical in the index
 # (62,821 on the real corpus), which is the whole-index table §7.2 rules out.
+#
+# `where_names_meet` (#517/#523) is deliberately NOT a fifth member here
+# (issue #550): it takes TWO name arguments, `canonical` AND `other`, and a
+# frozenset membership test that reads `args["canonical"]` the way the other
+# four do would silently capture one name and drop the other. It gets its
+# own branch in `intersected_names` below, read by both name arguments.
 NAME_ARG_TOOLS = frozenset({"get_name", "name_neighbors", "who_cites", "who_argues_against"})
 NAME_RESULT_TOOLS = frozenset({"find_names"})
+
+# The one §7.5 tool with two name arguments -- read directly by name below,
+# never folded into `NAME_ARG_TOOLS` (see that constant's own comment).
+WHERE_NAMES_MEET_TOOL = "where_names_meet"
 
 # The `coverage_bands` config block's code-level fallback: used only when
 # `config/pipeline.yaml` (or its `coverage_bands` key) is absent, mirroring
@@ -155,17 +179,20 @@ def touched_names(claims: list[dict[str, Any]]) -> set[str]:
     return names
 
 
-def retrieved_names(trajectory: list[dict[str, Any]]) -> set[str]:
-    """The canonical names this run retrieved on, read off the §7.6
-    trajectory: the `canonical` argument of every name-layer traversal
+def _directly_queried_names(trajectory: list[dict[str, Any]]) -> set[str]:
+    """The canonical names this run reached through a DIRECT single-name
+    query: the `canonical` argument of every name-layer traversal
     (`NAME_ARG_TOOLS`) and every canonical `find_names` resolved
     (`NAME_RESULT_TOOLS`, whose `result_ids` are canonical names, not chunk
     ids -- `ToolSpec.returns_chunk_ids` is `False` for exactly that reason).
 
-    This is "the names this brief is about" (§7.2) as the run itself
-    recorded them, and it is what keeps the §7.7 map to the handful of names
-    the answer is anchored at rather than every name its evidence mentions
-    in passing (see the module docstring's measurement)."""
+    Kept separate from `intersected_names` (issue #550) because a caller
+    that credits a name its own WHOLE PAGE (`axial.answer.source_usage.
+    compute_available_notes`'s per-name denominator) must not do that for a
+    name reached only as one half of a `where_names_meet` intersection --
+    that call read the intersection, not the page. `retrieved_names` below
+    is the union of both, for callers (the §7.7 coverage scope) that want
+    every name this run reached, however it reached it."""
     names: set[str] = set()
     for entry in trajectory:
         if not isinstance(entry, dict):
@@ -180,6 +207,38 @@ def retrieved_names(trajectory: list[dict[str, Any]]) -> set[str]:
                 if isinstance(result_id, str) and result_id.strip():
                     names.add(result_id)
     return names
+
+
+def intersected_names(trajectory: list[dict[str, Any]]) -> set[str]:
+    """Every name reached as either half of a `where_names_meet` call (issue
+    #550, #517/#523): both `canonical` and `other`. Read directly by both
+    argument keys, never through `NAME_ARG_TOOLS` (that constant's own
+    comment states why a frozenset test would silently drop `other`)."""
+    names: set[str] = set()
+    for entry in trajectory:
+        if not isinstance(entry, dict) or entry.get("tool") != WHERE_NAMES_MEET_TOOL:
+            continue
+        args = entry.get("args") or {}
+        for key in ("canonical", "other"):
+            value = args.get(key)
+            if isinstance(value, str) and value.strip():
+                names.add(value)
+    return names
+
+
+def retrieved_names(trajectory: list[dict[str, Any]]) -> set[str]:
+    """The canonical names this run retrieved on, read off the §7.6
+    trajectory: every direct single-name query (`_directly_queried_names`)
+    plus both names of every `where_names_meet` intersection
+    (`intersected_names`, issue #550) -- a claim resting on notes found only
+    at an intersection must still get a coverage entry (§7.7), even though
+    neither name's own page was ever read as a whole.
+
+    This is "the names this brief is about" (§7.2) as the run itself
+    recorded them, and it is what keeps the §7.7 map to the handful of names
+    the answer is anchored at rather than every name its evidence mentions
+    in passing (see the module docstring's measurement)."""
+    return _directly_queried_names(trajectory) | intersected_names(trajectory)
 
 
 def coverage_scope(claims: list[dict[str, Any]], trajectory: list[dict[str, Any]]) -> list[str]:

@@ -30,6 +30,7 @@ from axial.validators.coverage import (
     coverage_band_for,
     coverage_scope,
     format_coverage_map,
+    intersected_names,
     retrieved_names,
     validate_coverage_and_confidence,
 )
@@ -117,6 +118,16 @@ def _chunk_grounds(*chunk_ids: str) -> list[dict[str, Any]]:
     return [{"ref_type": "chunk", "ref_id": chunk_id} for chunk_id in chunk_ids]
 
 
+def _where_names_meet_call(canonical: str, other: str) -> dict[str, Any]:
+    return {
+        "step": 1,
+        "tool": "where_names_meet",
+        "args": {"canonical": canonical, "other": other},
+        "result_ids": [],
+        "result_count": 0,
+    }
+
+
 # -- the map's scope: retrieved AND touched ----------------------------------
 
 
@@ -132,6 +143,36 @@ def test_retrieved_names_reads_both_the_canonical_arg_and_find_names_results():
         },
     ]
     assert retrieved_names(trajectory) == {TILLY, BAYAT}
+
+
+def test_intersected_names_reads_both_canonical_and_other():
+    """Issue #550: `where_names_meet` takes TWO name arguments, and neither
+    is folded into `NAME_ARG_TOOLS` -- a frozenset membership test there
+    reads `args["canonical"]` alone and would silently drop `other`."""
+    trajectory = [_where_names_meet_call(TILLY, BAYAT)]
+    assert intersected_names(trajectory) == {TILLY, BAYAT}
+
+
+def test_retrieved_names_includes_both_names_of_a_where_names_meet_call():
+    trajectory = [_where_names_meet_call(TILLY, BAYAT)]
+    assert retrieved_names(trajectory) == {TILLY, BAYAT}
+
+
+def test_an_intersection_alone_puts_both_names_in_the_coverage_scope(vault_dir: Path):
+    """Issue #550's own named acceptance scenario: a trajectory with one
+    `where_names_meet` and no other name query still puts both names in the
+    §7.7 coverage scope -- a claim resting on notes found only at an
+    intersection must not go undisclosed."""
+    claims = [_claim("c-1", names_touched=[TILLY, BAYAT], grounds=_chunk_grounds(TILLY_CHUNK_1))]
+    trajectory = [_where_names_meet_call(TILLY, BAYAT)]
+    assert coverage_scope(claims, trajectory) == sorted([TILLY, BAYAT])
+
+
+def test_compute_coverage_map_covers_a_name_reached_only_via_intersection(vault_dir: Path):
+    claims = [_claim("c-1", names_touched=[TILLY, BAYAT], grounds=_chunk_grounds(TILLY_CHUNK_1))]
+    trajectory = [_where_names_meet_call(TILLY, BAYAT)]
+    coverage_map = compute_coverage_map(claims, trajectory=trajectory, vault_dir=vault_dir)
+    assert set(coverage_map) == {TILLY, BAYAT}
 
 
 def test_coverage_count_tool_results_never_enter_the_scope():
