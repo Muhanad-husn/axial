@@ -394,14 +394,38 @@ def not_applicable_metric(
 
 
 def load_records(records_dir: Path) -> list[dict[str, Any]]:
-    """Every `*.json` file directly under `records_dir`, parsed and sorted
-    by filename for determinism -- the dev-brief-or-hand-built analysis
-    records a gate scores in `--dry-run` mode (§9), never the full vault."""
+    """Every analysis record found anywhere under `records_dir`, parsed and
+    sorted by path for determinism -- the dev-brief-or-hand-built analysis
+    records a gate scores in `--dry-run` mode (§9), never the full vault.
+
+    Walks recursively (`rglob`) so both layouts a caller may point `--records`
+    at read the same way: a flat directory (`<records_dir>/<record_id>.json`)
+    and `axial.brief.sweep`'s own nested one (`<records_dir>/<brief>/
+    draw<N>/<record_id>.json`, issue #493 -- pointing this loader at a sweep's
+    `analyses/` directory used to silently find zero records, since a plain
+    `glob("*.json")` never looks two levels down).
+
+    A sweep directory also holds JSON that is not an analysis record --
+    `summary.json` at its root, and each draw's own `runs/<record_id>.json`
+    accuracy report -- so a file is only kept when it parses to a dict
+    carrying a top-level `claims` key (§7.3: every record has one, empty only
+    on refusal). Filtering on that shape, not on a filename pattern, is
+    deliberate: nothing about the non-record files' names is a stable
+    contract, but `claims` is part of the record's own locked shape.
+
+    Every record found is kept, including every draw of a brief sampled more
+    than once: each draw is a distinct, independently executed analysis run
+    whose own claims earned their own scrutiny, not a duplicate to thin
+    before scoring -- thinning to one draw per brief would silently drop
+    already-paid-for, already-measured output.
+    """
     if not records_dir.is_dir():
         raise GateError(f"no records directory found at {records_dir}")
     records = []
-    for path in sorted(records_dir.glob("*.json")):
-        records.append(json.loads(path.read_text(encoding="utf-8")))
+    for path in sorted(records_dir.rglob("*.json")):
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(parsed, dict) and "claims" in parsed:
+            records.append(parsed)
     return records
 
 
