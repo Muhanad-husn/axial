@@ -14,7 +14,7 @@ against and who they cite.
 
 - **Slug:** phase-b-v1
 - **Created:** 2026-07-29
-- **Status:** planned
+- **Status:** CLOSED 2026-08-01 (see Closure)
 - **New system?** no — it replaces Phase B's query layer and the three contracts
   that read the retired tag axes. The record shape, validators, gates, CLI and
   trajectory log survive.
@@ -245,9 +245,9 @@ in **Order and concurrency** below.
 | 03 | retrieval loop rewired | #488 | Tool registry and dispatcher onto 02's tools; trajectory log unchanged. Ten tools registered, per-arg types so `limit` is an honest int, and a `returns_chunk_ids` flag that keeps canonical names out of the evidence set. Validated LLM-free against the live vault: `Tilly` → `Charles Tilly` → 146 members, 58 citation edges, 2 oppositions, all three rejection paths firing before the vault, 0 names leaked. **The step budget was NOT re-proven** — raised 10 → 20 as stated provisional headroom, because the name surface needs ~3 calls per name; the real bound is measured on the smoke briefs in 06 | ✅ |
 | 04 | synthesis on the new evidence | #489 | Evidence assembly and the synthesis prompt rebuilt around `claim` / `position_of` / `position` / `arguing_against` / `citations`. `ChunkNote` now exposes all 21 answer keys instead of 7, the abstention predicate moved into the read path as one shared function, and `names_touched` resolves through the alias map alone (99.9% of 9,434 real surfaces; the 8 drops are locator-shaped). **Gather findings are NOT plumbed into the prompt** — D4 permits rather than requires it and nothing carries one into stage 4, so the prompt states the never-cite rule and no finding-as-context path was built. Two shared-substrate bugs fixed: the reader read a bare-string abstention as fourteen one-letter names, and `brief examine` crashed writing its own report | ✅ |
 | 05 | coverage and counter-position | #490 | Per-name coverage map, confidence derivation, contested detection and counter-position generation per D2 and D3. **The map is keyed on the names the answer is about, not on `names_touched`** — the literal reading gives a 423-row map and a constant `low` band, which is the bug this slice exists to fix. Bands stay at 20/100, proven on 32 live queries; contested fires on 4 of 10 real evidence sets and both Gather-path hits produce a non-empty whitelist | ✅ |
-| 06 | the run report, and the smoke harness that asserts on it | #491 | Source usage re-based, the response-quality table computed, per-pass latency captured, one report per run — plus `config/briefs/smoke/` and `axial brief smoke`: five briefs, mechanical checks and a cost and latency budget, built as a front end over the existing `run_sweep` | ☐ |
+| 06 | the run report, and the smoke harness that asserts on it | #491 | Source usage re-based, the response-quality table computed, per-pass latency captured, one report per run — plus `config/briefs/smoke/` and `axial brief smoke`: five briefs, mechanical checks and a cost and latency budget, built as a front end over the existing `run_sweep` | ✅ |
 | ~~07~~ | ~~smoke harness~~ | ~~#492~~ | **Absorbed into 06 on 2026-07-30.** Two of its five mechanical checks read 06's and 05's output, so it was never independent; both slices also edit `cli.py` and the record layer | — |
-| 08 | gates and the eval run | #493 | Gate fixtures re-pointed at the new record, `config/briefs/eval/` landed with the new brief and its case, the instrumented run executed and reported. **Blocked on `plans/name-layer-rekey/` slice 03** — it pins its figures to a vault hash, and that sprint moves the pin | ☐ |
+| 08 | gates and the eval run | #493 | Gate fixtures re-pointed at the new record, `config/briefs/eval/` landed with the new brief and its case, the instrumented run executed and reported. **Blocked on `plans/name-layer-rekey/` slice 03** — it pins its figures to a vault hash, and that sprint moves the pin | ✅ |
 
 <!-- Status values: ☐ todo · ◐ in-progress · ✅ done. Update the row when a slice's PR opens. -->
 
@@ -510,3 +510,68 @@ docs-only gate exception.
   natural analogue is the union of member notes across the names queried. Prove
   it on the smoke set before the concentration metrics are read as meaning
   anything.
+
+---
+
+## Closure
+
+**Closed 2026-08-01 by founder decision, under the 80/20 rule.** The feature's
+premise was that Phase B retrieved by filtering bins Phase A had deleted, and
+that the fix was the same inversion one layer up: traverse the name layer
+instead. It held. All eight slices shipped.
+
+### What it produced
+
+| | before (2026-07-29) | now |
+| --- | --- | --- |
+| query tools returning results | 4 of 8 | 10 of 10 |
+| a brief run end to end | broken since #513 | six runs, one failure, recovered |
+| answer quality | never judged | two sealed peer-review rounds |
+| defects the reviewer found | — | 40 → **15** after #550 |
+| misattributed / contradicted / strawman / evasive | 17 | **0** |
+
+The engine answers a hard comparative question from a 31-book corpus with claims
+marked for kind, grounds that resolve, a counter-position, a coverage map, a
+confidence band clamped to what the coverage supports, and a disclosed source
+usage. A referee that has never seen this repository calls the results strong on
+factual correctness and citation grounding.
+
+### The two questions this phase existed to answer
+
+**`retrieve.step_budget` stays at 14.** Composed evidence did not move across
+four reach runs — 17, 21, 18, 20 — while assembled ranged 56 to 181. C at budget
+20 gathered 181 notes across 15 sources against 107 across 8 at budget 14, and
+put one fewer note in front of the model. The wall was never the binding
+constraint; the ~20-note synthesis prefix is.
+
+**The open-source arm wins, narrowly, at 2.3x less money** — $0.3905 against
+$0.8893, 7 sources against 5, 4 of 5 required sources against 3 of 5. A blind
+referee chose it on the reading of one passage: both arms cite Üngör's argument
+that paramilitarism arises from incomplete monopolies of violence "rather than
+from cultural divisions alone", and only the open arm read it as written. The
+comparison swaps four models at once and cannot say which swap carried it.
+
+### What it does badly, measured
+
+- **The mechanical oracle is the weak spot.** A decomposed the war-makes-states
+  claim without ever citing Tilly. C reached two of six required books at budget
+  14, three at 20. Both B runs missed the book carrying one of the two accounts
+  the question asks them to weigh.
+- **The synthesis prefix takes ~20 notes however much is gathered** (P2-7), and
+  no retrieval change this phase made has moved it.
+- **A judged metric drawn once is indistinguishable from noise.**
+  `b_seam_mislabel_rate` scored 0.571, 1.000 and 0.000 on identical input before
+  #559 fixed it. Grounding support and calibration error have each been drawn
+  once and never re-drawn.
+
+### Standing rule for what is left
+
+P2-4 through P2-9 in `specs/PHASE-B.md` hold everything deliberately not fixed:
+the (b)-claim metric that asks the wrong question, editor-for-chapter-author
+attribution, the latency budget measuring cold start, the synthesis prefix, the
+reviewer's unmeasured false-positive rate, and N=1 where §9.4 asks for three.
+**Nobody works these until real use demands it** (DEC-55) — when a real answer
+is visibly wrong because of one, the failure names which to fix.
+
+**Phase C is specified (`specs/PHASE-C.md`) and not started.** There is nothing
+to close there. The next work is the CLI sprint, #526–#536.
