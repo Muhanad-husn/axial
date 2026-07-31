@@ -572,10 +572,16 @@ def compose_prompt(
     `evidence_char_budget` (issue #358, default `_resolve_evidence_char_budget`
     off `config_path`/`DEFAULT_EVIDENCE_CHAR_BUDGET`) bounds the combined
     length of every included chunk's `chunk_text`: chunks are walked in
-    `evidence.chunk_ids`' existing (first-seen retrieval) order, and the
-    included evidence set is a deterministic PREFIX of that order -- the walk
-    stops (never mid-text truncating a chunk) at the first chunk that would
-    push the running total over budget, so every later chunk is dropped too.
+    `evidence.chunk_ids`' existing order -- which is SOURCE ROUND-ROBIN, not
+    first-seen retrieval order, since issue #517 slice 2 reordered it in
+    `axial.retrieve.loop.assemble_evidence_ids` -- and the included evidence
+    set is a deterministic PREFIX of that order. The walk stops (never
+    mid-text truncating a chunk) at the first chunk that would push the
+    running total over budget, so every later chunk is dropped too. The
+    round-robin is why a late-arriving id from an under-represented source
+    can displace one already inside the prefix: it lands at the FRONT of its
+    own source's rotation slot, not at the tail of the walk (measured on
+    seven persisted brief runs, issue #542).
     A dropped chunk gets no handle and never appears in the evidence list, so
     the model has nothing to cite it with (grounds validation already rejects
     a handle absent from `handle_map`)."""

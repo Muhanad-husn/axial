@@ -129,9 +129,12 @@ def _trajectory_figures(trajectory: list[dict[str, Any]]) -> dict[str, int]:
     nothing. `empty_result_calls` is the honest superset those land in.
 
     `turns_without_new_evidence` is #505's convergence signal: a turn that
-    re-fetches an already-seen id changes nothing downstream, because
-    `get_chunk` returns one id, `assemble_evidence_ids` dedupes, and the
-    model's own reasoning text is never persisted. Counted only over turns
+    re-fetches only already-seen ids changes nothing downstream, because
+    `assemble_evidence_ids` dedupes and the model's own reasoning text is
+    never persisted. Counted per ENTRY, which is per CALL -- a batched
+    `get_chunk` (issue #542) returns several ids in one entry and counts as
+    one turn, adding new evidence if any one of them is new. Counted only
+    over turns
     that could have added evidence at all (`returns_chunk_ids`), so a
     resolution call like `find_names` -- which never yields evidence by
     construction -- is not miscounted as a wasted turn."""
