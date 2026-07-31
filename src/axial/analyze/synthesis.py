@@ -303,10 +303,22 @@ class NoLensesAvailableError(SynthesisError):
 
 class CounterPositionGenerationError(SynthesisError):
     """Base class for all counter-position GENERATION errors (§7.8, issue
-    #399) -- a separate family from the claim-graph parse errors above, but
-    the same severity: a failure here is as fatal to the run as a
-    claim-graph parse failure, never silently downgraded to an empty or
-    placeholder section."""
+    #399) -- a separate family from the claim-graph parse errors above.
+
+    Raised out of `generate_counter_position` completely unchanged (every
+    existing unit test that asserts one of these propagating still passes):
+    this class is not where the resilience below lives. It is `axial.answer.
+    record.build_record` that decides not to let it abort the whole run
+    (issue #557/#558): by the time this stage runs, interrogation, retrieval
+    and synthesis have already completed and cost real money, and a real
+    paid eval run was once destroyed in full because this stage's own raise
+    discarded all of it. `build_record` catches this family and persists the
+    record anyway, with the §7.8 section marked `failed: True` and
+    `failure_reason` carrying this exception's own message
+    (`failed_counter_position_section`) -- a third, distinguishable state,
+    never laundered into `corpus_one_sided` (that would misattribute a bug
+    to a finding about the corpus) and never satisfying the §7.9
+    presence-or-disclosure check."""
 
 
 class CounterPositionGenerationFailedError(CounterPositionGenerationError):
@@ -1034,7 +1046,15 @@ class CounterPositionResult:
     every grounds chunk unresolvable, never called" (both disclose,
     differently) against "contested, model called, model itself judged
     one-sided" (also discloses) -- three states, only one of which spent a
-    real completion call."""
+    real completion call.
+
+    A fourth state -- generation attempted and failed -- is never returned
+    by `generate_counter_position` itself; that function still raises a
+    `CounterPositionGenerationError` exactly as before (issue #558). It is
+    `build_record` that catches the raise and constructs a
+    `CounterPositionResult` directly around `failed_counter_position_section`,
+    with `model_called=True` (a real call was attempted -- see that
+    function's own docstring)."""
 
     section: dict[str, Any]
     model_called: bool
@@ -1053,6 +1073,38 @@ def _empty_counter_position() -> dict[str, Any]:
         "grounds": [],
         "corpus_one_sided": False,
         "one_sided_reason": None,
+    }
+
+
+def failed_counter_position_section(reason: str) -> dict[str, Any]:
+    """The §7.8 shape's third, additive state (issue #558): counter-position
+    GENERATION was attempted -- the brief was contested, so
+    `generate_counter_position` made its one bounded model call -- and it
+    failed: a transport failure, a malformed response, an unresolvable
+    grounds id, or a citation outside the anti-fabrication whitelist (any
+    `CounterPositionGenerationError` subclass). `reason` is that exception's
+    own message, carried so the failure is diagnosable from the record alone.
+
+    `present` and `corpus_one_sided` both stay `False` on purpose: this state
+    must never be misread as "the corpus is one-sided" (that would launder a
+    bug into a finding about the corpus, exactly backwards) and it must
+    never satisfy the §7.9 presence-or-disclosure check by accident --
+    `_check_presence_or_disclosure` (`axial.validators.counter_position`)
+    treats this exactly like an unattempted absence and fails the same way,
+    because the run genuinely owes the brief a counter-position it did not
+    produce. `failed`/`failure_reason` are the only two keys this state adds;
+    every other counter_position-producing path (`_empty_counter_position`,
+    a model-generated `present`/`corpus_one_sided` section) simply omits
+    them, so a reader checks `.get("failed")` rather than relying on a
+    `False`/`None` default being written everywhere."""
+    return {
+        "present": False,
+        "stance": None,
+        "grounds": [],
+        "corpus_one_sided": False,
+        "one_sided_reason": None,
+        "failed": True,
+        "failure_reason": reason,
     }
 
 

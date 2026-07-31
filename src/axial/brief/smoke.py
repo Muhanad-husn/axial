@@ -3,7 +3,7 @@
 
 Runs the five short briefs of `config/briefs/smoke/`, one draw each, and
 reports pass or fail on **mechanical checks only**. Nothing here is a quality
-judgment: this is a smoke alarm, not an eval. The five checks are the ones a
+judgment: this is a smoke alarm, not an eval. The six checks are the ones a
 regression makes loud on the day it lands --
 
 1. the record validates against the §7.3 shape and every grounds pointer
@@ -13,7 +13,13 @@ regression makes loud on the day it lands --
    fix);
 4. the draw raised no unhandled exception and the trajectory carries no call
    the dispatcher had to refuse;
-5. a cost and latency budget per brief.
+5. the counter-position section was not marked `failed` (issue #558) --
+   `axial.answer.record.build_record` persists a record even when
+   counter-position GENERATION raises, precisely so this checker (and a
+   human) can still see it happened; a failed section is a mechanical
+   failure, checked here without paying for the (costed) counter-position
+   validator's own steelman-quality model call;
+6. a cost and latency budget per brief.
 
 Built on `run_sweep`, not beside it
 ----------------------------------------------------------------------
@@ -106,6 +112,7 @@ CHECK_RECORD_SHAPE = "record_shape_and_grounds"
 CHECK_DISPOSITION = "disposition"
 CHECK_COVERAGE_MAP = "coverage_map_non_empty"
 CHECK_TOOL_CALLS = "no_unhandled_failure"
+CHECK_COUNTER_POSITION = "counter_position_not_failed"
 CHECK_COST_BUDGET = "cost_budget"
 CHECK_LATENCY_BUDGET = "latency_budget"
 
@@ -288,6 +295,29 @@ def _check_tool_calls(record: dict[str, Any], *, draw_failed: bool, reason: str)
     return CheckResult(CHECK_TOOL_CALLS, True, "no unhandled exception, no refused tool call")
 
 
+def _check_counter_position_not_failed(record: dict[str, Any]) -> CheckResult:
+    """Check 5: the §7.8 section was not marked `failed` (issue #558).
+
+    `build_record` persists a record even when counter-position GENERATION
+    raises, exactly so a completed, already-paid-for run is never discarded
+    -- but a failed section is still a mechanical failure, not a clean
+    result, and the founder's own direction is that smoke's exit code must
+    say so. This reads `counter_position.get("failed")` directly rather than
+    calling `axial.validators.counter_position.validate_counter_position`:
+    that function's steelman-quality half makes its own bounded model call
+    whenever the section is genuinely present, which would make this smoke
+    run's cost budget (check 6) measure a judge call the smoke set
+    deliberately excludes (module docstring: "gate scoring off")."""
+    counter_position = record.get("counter_position") or {}
+    if counter_position.get("failed"):
+        return CheckResult(
+            CHECK_COUNTER_POSITION,
+            False,
+            f"counter-position generation failed: {counter_position.get('failure_reason')}",
+        )
+    return CheckResult(CHECK_COUNTER_POSITION, True, "counter-position generation did not fail")
+
+
 def _check_budget(
     name: str, observed: float | None, budget: float | None, unit: str
 ) -> CheckResult:
@@ -362,6 +392,7 @@ def check_brief(
         _check_tool_calls(
             record, draw_failed=draw_failed, reason=draw.reason if draw is not None else ""
         ),
+        _check_counter_position_not_failed(record),
         _check_budget(CHECK_COST_BUDGET, total_usd, budgets.max_usd_per_brief, "usd"),
         _check_budget(CHECK_LATENCY_BUDGET, total_seconds, budgets.max_seconds_per_brief, "s"),
     ]

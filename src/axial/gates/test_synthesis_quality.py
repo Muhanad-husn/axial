@@ -122,6 +122,20 @@ def _absent_counter_position() -> dict[str, Any]:
     }
 
 
+def _failed_counter_position(
+    reason: str = "counter-position generation call failed: boom",
+) -> dict[str, Any]:
+    return {
+        "present": False,
+        "stance": None,
+        "grounds": [],
+        "corpus_one_sided": False,
+        "one_sided_reason": None,
+        "failed": True,
+        "failure_reason": reason,
+    }
+
+
 def _present_counter_position(*chunk_ids: str) -> dict[str, Any]:
     return {
         "present": True,
@@ -246,6 +260,29 @@ def test_two_failing_contested_records_score_0_83_and_are_named(vault_dir: Path,
     steelman = next(m for m in report.metrics if m.metric == "steelman_quality")
     assert steelman.passed is None
     assert "not_applicable" not in steelman.detail
+
+
+def test_a_failed_generation_counts_as_a_failing_contested_record(vault_dir: Path, tmp_path: Path):
+    """Issue #558: a record whose counter-position GENERATION raised and was
+    persisted anyway (`failed: True`) must not silently satisfy this gate --
+    it counts against `counter_position_presence_rate` exactly like an
+    unattempted absence, and `ExplodingLLMClient` proves it never spends the
+    steelman-quality judge call."""
+    records = [_contested_record("BAD1", counter_position=_failed_counter_position())]
+    report = run_synthesis_quality_gate(
+        records,
+        client=ExplodingLLMClient(),
+        vault_dir=vault_dir,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+    )
+    presence = next(m for m in report.metrics if m.metric == "counter_position_presence_rate")
+    assert presence.passed is False
+    assert presence.detail["failing_brief_ids"] == ["BAD1"]
+
+    steelman = next(m for m in report.metrics if m.metric == "steelman_quality")
+    assert steelman.passed is None
 
 
 def test_steelman_quality_scores_the_stated_counter_position(vault_dir: Path, tmp_path: Path):

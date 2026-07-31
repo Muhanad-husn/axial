@@ -167,6 +167,31 @@ def test_counter_position_corpus_one_sided_renders_disclosure_and_reason():
     assert "Displacement entrenched" not in markdown
 
 
+def test_failed_counter_position_renders_the_failure_distinctly():
+    """Issue #558: a section marked `failed` (generation raised, and
+    `build_record` persisted the record anyway) must render as its own
+    distinct state -- never "(none disclosed)" (which reads as an
+    uncontested brief with nothing to say) and never the one-sided
+    disclosure (which would misattribute a bug to a finding about the
+    corpus)."""
+    record = _base_record(
+        counter_position={
+            "present": False,
+            "stance": None,
+            "grounds": [],
+            "corpus_one_sided": False,
+            "one_sided_reason": None,
+            "failed": True,
+            "failure_reason": "counter-position generation call failed: boom",
+        }
+    )
+    markdown = render_markdown(record)
+    assert "counter-position generation call failed: boom" in markdown
+    assert "FAILED" in markdown
+    assert "(none disclosed)" not in markdown
+    assert "one-sided" not in markdown.lower()
+
+
 def test_absent_counter_position_renders_a_stated_none_line():
     record = _base_record(
         counter_position={

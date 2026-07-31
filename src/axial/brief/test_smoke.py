@@ -10,6 +10,7 @@ import yaml
 
 from axial.brief.smoke import (
     CHECK_COST_BUDGET,
+    CHECK_COUNTER_POSITION,
     CHECK_COVERAGE_MAP,
     CHECK_DISPOSITION,
     CHECK_RECORD_SHAPE,
@@ -19,6 +20,7 @@ from axial.brief.smoke import (
     CheckResult,
     SmokeSummary,
     _check_budget,
+    _check_counter_position_not_failed,
     _check_coverage_map,
     _check_disposition,
     _check_record_shape,
@@ -193,6 +195,32 @@ def test_a_raised_draw_fails_the_no_unhandled_failure_check():
     result = _check_tool_calls(_record(), draw_failed=True, reason="boom")
     assert result.passed is False
     assert "boom" in result.detail
+
+
+def test_a_failed_counter_position_section_fails_the_check():
+    """Issue #558: `build_record` persists a record even when
+    counter-position generation raises, marking the section `failed` rather
+    than discarding the run -- but a failed section is still a mechanical
+    failure the smoke alarm must report loudly, per founder direction."""
+    record = _record(
+        counter_position={
+            "present": False,
+            "stance": None,
+            "grounds": [],
+            "corpus_one_sided": False,
+            "one_sided_reason": None,
+            "failed": True,
+            "failure_reason": "counter-position generation call failed: boom",
+        }
+    )
+    result = _check_counter_position_not_failed(record)
+    assert result.passed is False
+    assert result.name == CHECK_COUNTER_POSITION
+    assert "boom" in result.detail
+
+
+def test_a_clean_counter_position_section_passes_the_check():
+    assert _check_counter_position_not_failed(_record()).passed is True
 
 
 # -- the summary's verdict is a gate, not a loop --------------------------------
