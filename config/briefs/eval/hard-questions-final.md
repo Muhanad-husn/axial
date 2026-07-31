@@ -40,8 +40,18 @@ request: "The claim that war made the modern state was built on the European exp
 
 ## B
 
+> **Case string tightened 2026-07-31, mechanically and not substantively.** As
+> authored it opened on the bare token `Syria`, whose name page carries 962
+> notes across 22 sources — the hub anchor that gave P3-04 a coverage
+> denominator 94.6% composed of one name, so B's usage and coverage figures
+> would have described `Syria` rather than the question. `Syrian civil war`
+> resolves instead to a 9-member page across three sources. Same war, same
+> decade, same object; the question, the rubric and the dismissal criteria are
+> untouched, and the case stays neutral between the two accounts it asks the
+> answer to choose between.
+
 ```yaml
-case: "Syria, the civil war from 2011 through its first decade"
+case: "The Syrian civil war, 2011-2021"
 request: "Violence against Syrian civilians has been read in two ways that locate cause and agency differently: as the strategic output of territorial control and information, in which apparently sectarian targeting is selective violence under another name, and as a deliberate political technology that produces sectarian identities by shattering shared social practices and freezing fluid populations into hardened categories. Argue which account better explains the Syrian pattern, stating the strongest version of the account you reject, and test your choice against the specific role of paramilitary violence."
 ```
 
