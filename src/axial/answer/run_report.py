@@ -145,11 +145,12 @@ def _trajectory_figures(trajectory: list[dict[str, Any]]) -> dict[str, int]:
 
     `rejected_tool_calls` counts entries naming a tool the registry does not
     hold -- a call the dispatcher deliberately refused before it ever
-    reached the vault. It is a LOWER bound on failed calls and says so:
-    §7.6's shape is [FIRM] at `{step, tool, args, result_ids, result_count}`
-    with no error field, so a registered tool rejected for malformed args is
-    indistinguishable here from a valid call that legitimately returned
-    nothing. `empty_result_calls` is the honest superset those land in.
+    reached the vault. It is a LOWER bound on failed calls and says so: the
+    §7.6 entry (`{step, tool, args, result_ids, result_count}`, plus `total`/
+    `detail` since issue #493) still carries no error field, so a registered
+    tool rejected for malformed args is indistinguishable here from a valid
+    call that legitimately returned nothing. `empty_result_calls` is the
+    honest superset those land in.
 
     `turns_without_new_evidence` is #505's convergence signal: a turn that
     re-fetches only already-seen ids changes nothing downstream, because

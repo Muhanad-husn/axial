@@ -49,14 +49,16 @@ class ToolResult:
     truncated at its `limit` -- `get_name`/`who_cites`/`who_argues_against`/
     `where_names_meet`, plus `get_chunk`, whose pre-cap count is the number
     of ids the call asked for (issue #542) -- and `None` for the rest. It
-    rides beside the trajectory exactly the way `error` does, for the same
-    reason: a capped result the model cannot see is a lie about the corpus
-    (`get_name` on `Syria` returns 10 members out of 962), so the loop
-    surfaces `total` through its own conversation channel rather than
-    smuggling a sixth field into the [FIRM] trajectory shape.
+    rides beside the trajectory in the loop's own prompt feedback exactly the
+    way `error` does, for the same reason: a capped result the model cannot
+    see is a lie about the corpus (`get_name` on `Syria` returns 10 members
+    out of 962) -- **and it is also persisted onto the trajectory entry
+    itself** (`axial.retrieve.loop.run_retrieval_loop`, issue #493), so the
+    record can answer the same question offline, after the run, without
+    replaying the prompt text.
 
-    `detail`, when set (issue #517), is the same kind of beside-the-
-    trajectory rider, populated by three tools: `find_names` states each
+    `detail`, when set (issues #517 and #493), is the same kind of beside-
+    the-trajectory rider, populated by four tools: `find_names` states each
     hit's `kind`, `member_count` and `tier`, so a model can tell an
     exact/alias resolution apart from an embedding guess -- a bare canonical
     string cannot. `get_name` and `where_names_meet` state how many distinct
@@ -64,7 +66,12 @@ class ToolResult:
     a live corpus run showed a model avoiding a large page or intersection
     entirely by resolving a narrow, one-book name instead, because it could
     not see that the "large" result it was told to avoid was actually the
-    cross-book one. Every other tool leaves `detail` `None`."""
+    cross-book one. `name_neighbors` states the `shared_note_count`
+    distribution over the neighbours returned (min/median/max/floor-count),
+    because a ranked list whose ranking carries no signal past a handful of
+    ties looks identical to a real gradient until that spread is disclosed.
+    Every other tool leaves `detail` `None`. Persisted onto the trajectory
+    entry the same way `total` now is, for the same reason."""
 
     ids: list[str]
     count: int
