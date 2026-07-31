@@ -106,6 +106,29 @@ class PassClock:
 # ---------------------------------------------------------------------------
 
 
+def _evidence_figures(evidence: dict[str, Any]) -> dict[str, Any]:
+    """The record's own `evidence` field (§7.3, issue #545), carried
+    through with the arithmetic a reader would otherwise do by hand:
+    `dropped_count` (assembled minus composed) and `composed_share`
+    (composed / assembled, `None` when nothing was assembled -- a `refuse`
+    disposition, or a run whose retrieval reached nothing -- rather than a
+    division by zero).
+
+    Replaying seven persisted smoke runs, 506 notes were assembled and 146
+    reached a model -- 360 were paid for and read by nothing, and this is
+    the figure that makes the next run comparable to those seven. Operator-
+    facing only, same as the rest of this report: nothing here reaches a
+    prompt."""
+    assembled = int(evidence.get("assembled_count") or 0)
+    composed = int(evidence.get("composed_count") or 0)
+    return {
+        "assembled_count": assembled,
+        "composed_count": composed,
+        "dropped_count": assembled - composed,
+        "composed_share": (composed / assembled) if assembled else None,
+    }
+
+
 def _latency(latency_by_pass: dict[str, float], model_by_pass: dict[str, Any]) -> dict[str, Any]:
     """One elapsed figure per pass `model_by_pass` names (P0-14's own
     observable), plus their sum as the total. A pass that ran but was never
@@ -531,6 +554,7 @@ def build_run_report(
             "cost": _cost_figures(record.get("cost") or {}),
             "latency_seconds": _latency(latency_by_pass or {}, model_by_pass),
             "trajectory": _trajectory_figures(trajectory),
+            "evidence": _evidence_figures(record.get("evidence") or {}),
         },
         "accuracy": {
             "attribution_completeness": _attribution_completeness(claims, vault_dir=vault_dir),
@@ -620,6 +644,12 @@ def format_run_report(report: dict[str, Any]) -> str:
         f"  trajectory: steps={trajectory.get('steps')} "
         f"rejected={trajectory.get('rejected_tool_calls')} "
         f"turns_without_new_evidence={trajectory.get('turns_without_new_evidence')}"
+    )
+    evidence = operational.get("evidence") or {}
+    lines.append(
+        f"  evidence: assembled={evidence.get('assembled_count')} "
+        f"composed={evidence.get('composed_count')} "
+        f"composed_share={_fmt(evidence.get('composed_share'))}"
     )
 
     lines.append("  accuracy (four measures, never summed -- §10.0):")

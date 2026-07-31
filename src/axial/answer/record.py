@@ -58,6 +58,17 @@ JSON: `run_brief` calls `persist_markdown`, which renders the just-built
 record through `axial.answer.render.render_markdown` (a pure function of
 the record -- no model call, no vault read, no clock) and writes it to
 `<analyses_dir>/<brief_id>.md`.
+
+`evidence` (§7.3, issue #545) carries `assembled_count`/`composed_count`:
+how many notes the retrieval loop assembled (`EvidenceSet.chunk_ids`) versus
+how many `compose_prompt`'s `synthesis.evidence_char_budget` walk actually
+let into the synthesis prompt (`ClaimGraph.evidence_composed_count`).
+Replaying seven persisted smoke runs, 506 notes were assembled and 146
+reached a model -- 360 were paid for and read by nothing, and neither the
+record nor the loop could see it before this field existed. Operator-facing
+only: nothing about this reaches a prompt, the same discipline `synthesis.
+evidence_char_budget` itself is held to (issue #505). Both default to 0,
+correct on a `refuse` disposition where stage 3/4 never ran.
 """
 
 from __future__ import annotations
@@ -174,10 +185,16 @@ def build_record(
     client: LLMClient,
     vault_dir: Path | None = None,
     clock: PassClock | None = None,
+    evidence_assembled_count: int = 0,
+    evidence_composed_count: int = 0,
 ) -> dict[str, Any]:
     """Assemble the §7.3 analysis record. `claims`/`trajectory` are the
     caller's already-computed stage-4/stage-3 output (empty on a `refuse`
-    disposition). `counter_position` (§7.8) is computed for real (issue #399)
+    disposition). `evidence_assembled_count`/`evidence_composed_count`
+    (issue #545) default to 0, correct for a `refuse` disposition where
+    stage 3/4 never ran, exactly like `claims`/`trajectory` defaulting empty
+    on that path -- a real run passes both from `EvidenceSet.chunk_ids` and
+    `ClaimGraph.evidence_composed_count` (`run_brief`). `counter_position` (§7.8) is computed for real (issue #399)
     from the record's own claims via `generate_counter_position` -- zero
     model calls on an uncontested brief, one bounded follow-up call
     otherwise (see that function's own docstring). When that call actually
@@ -226,6 +243,10 @@ def build_record(
         "counter_position": counter_position_result.section,
         "coverage_map": coverage_map,
         "confidence": compute_confidence(coverage_map),
+        "evidence": {
+            "assembled_count": evidence_assembled_count,
+            "composed_count": evidence_composed_count,
+        },
         "trajectory": list(trajectory),
         "model_by_pass": record_model_by_pass,
         "cost": _usage_and_cost_by_pass(client, record_model_by_pass),
@@ -331,6 +352,8 @@ def run_brief(
         lens = resolve_lens(brief.lens, lenses_dir=lenses_dir)
         claims: list[Claim] = []
         trajectory: list[dict[str, Any]] = []
+        evidence_assembled_count = 0
+        evidence_composed_count = 0
     else:
         with clock.time(RETRIEVE_PASS_NAME):
             retrieval_result = run_planned_retrieval(
@@ -364,6 +387,8 @@ def run_brief(
         lens = claim_graph.lens
         claims = claim_graph.claims
         trajectory = retrieval_result.trajectory
+        evidence_assembled_count = len(evidence.chunk_ids)
+        evidence_composed_count = claim_graph.evidence_composed_count
 
     record = build_record(
         brief,
@@ -376,6 +401,8 @@ def run_brief(
         client=client,
         vault_dir=vault_dir,
         clock=clock,
+        evidence_assembled_count=evidence_assembled_count,
+        evidence_composed_count=evidence_composed_count,
     )
     path = persist_record(
         brief.brief_id, record, analyses_dir=analyses_dir, config_path=config_path

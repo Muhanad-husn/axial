@@ -15,6 +15,7 @@ from axial.answer.run_report import (
     _concentration,
     _cost_figures,
     _cross_source_rate,
+    _evidence_figures,
     _grounds_per_claim,
     _latency,
     _retrieval_precision,
@@ -204,6 +205,41 @@ def test_cost_figures_carry_a_null_total_usd_through_rather_than_zeroing_it():
     assert figures["total_usd"] is None
 
 
+# -- evidence: assembled vs composed (§7.3, issue #545) ------------------------
+
+
+def test_evidence_figures_report_the_drop_and_its_share():
+    figures = _evidence_figures({"assembled_count": 506, "composed_count": 146})
+
+    assert figures["assembled_count"] == 506
+    assert figures["composed_count"] == 146
+    assert figures["dropped_count"] == 360
+    assert figures["composed_share"] == pytest.approx(146 / 506)
+
+
+def test_evidence_figures_report_no_share_rather_than_dividing_by_zero():
+    """Nothing was assembled -- a `refuse` disposition, or a run whose
+    retrieval reached no note -- so `composed_share` is `None`, not a
+    ZeroDivisionError and not a fabricated 0 or 1."""
+    figures = _evidence_figures({"assembled_count": 0, "composed_count": 0})
+
+    assert figures["dropped_count"] == 0
+    assert figures["composed_share"] is None
+
+
+def test_evidence_figures_default_cleanly_on_an_absent_field():
+    """A record from before issue #545 (or a caller's minimal test double)
+    carries no `evidence` key at all -- reads as 0/0, never a crash."""
+    figures = _evidence_figures({})
+
+    assert figures == {
+        "assembled_count": 0,
+        "composed_count": 0,
+        "dropped_count": 0,
+        "composed_share": None,
+    }
+
+
 # -- accuracy: the four are separate ---------------------------------------------
 
 
@@ -276,3 +312,20 @@ def test_format_run_report_names_the_headline_and_the_unscored_reasons(tmp_path)
     assert "cross-source rate (headline, D9)" in text
     assert "grounding_support_rate: n/a" in text
     assert "not scored" in text
+
+
+def test_the_report_surfaces_the_records_own_assembled_and_composed_counts(tmp_path):
+    """Issue #545: the record's `evidence` field reaches the report
+    unchanged, with the derived drop/share alongside it, and a rendered
+    line so the next run is comparable to these seven at a glance."""
+    record = {**_minimal_record([]), "evidence": {"assembled_count": 21, "composed_count": 19}}
+
+    report = build_run_report(record, vault_dir=tmp_path)
+
+    assert report["operational"]["evidence"] == {
+        "assembled_count": 21,
+        "composed_count": 19,
+        "dropped_count": 2,
+        "composed_share": pytest.approx(19 / 21),
+    }
+    assert "evidence: assembled=21 composed=19" in format_run_report(report)

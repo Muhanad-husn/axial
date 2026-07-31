@@ -162,6 +162,7 @@ One JSON per brief run at `data/analyses/<brief_id>.json`, the phase's analogue 
   counter_position,                    # the counter-position section (§7.8)
   coverage_map,                        # per-name coverage (§7.7)
   confidence: { overall_band, rationale },   # disclosed, calibrated (Principle V)
+  evidence: { assembled_count, composed_count },  # notes assembled vs. composed into the prompt (issue #545)
   source_usage,                        # per-source contribution vs. available share (§7.13)
   trajectory: [ <tool_call> ],         # the retrieval trajectory log (§7.6)
   model_by_pass,                       # which model + reasoning setting each pass used
@@ -170,6 +171,8 @@ One JSON per brief run at `data/analyses/<brief_id>.json`, the phase's analogue 
 ```
 
 `confidence.overall_band` is exactly one of `high` / `medium` / `low`, the same three-band vocabulary as the per-claim field (§7.4). `confidence.rationale` states the coverage counts that justify the band, drawn from `coverage_map`, so the band is never disclosed without the counts behind it. `source_usage` is non-nullable and follows §7.13; on disposition `refuse` it is present with an empty source list, like `claims`.
+
+**`evidence` (issue #545) discloses the funnel `compose_prompt` (§7.4) walks silently.** `assembled_count` is how many notes the retrieval loop's evidence set held (`EvidenceSet.chunk_ids`, §7.4's assembly step); `composed_count` is how many of those actually fit `synthesis.evidence_char_budget`'s prefix walk and reached the synthesis model. Replaying seven persisted smoke runs, 506 notes were assembled and 146 were composed — 360 were paid for by retrieval and read by no model, and neither this record nor the §7.15 run report could disclose it before this field existed. Both default to `0` on disposition `refuse`, where stage 3/4 never ran, mirroring `claims`/`trajectory`. **Operator-facing only**: this is a disclosure field like `cost`/`source_usage`, never a value stated to the retrieval or synthesis model — §7.6's own composition line and this field are deliberately two different channels for two different readers.
 
 The record is the audit surface: every claim traces to grounds, every grounds pointer resolves to a real vault id, and the trajectory shows how retrieval got there. It is written once per run and is read by eval #1 (output) and eval #3 (process). On disposition `refuse`, `claims` is empty and the answer carries the refusal.
 
@@ -469,6 +472,9 @@ It is a separate artifact rather than a field, because §7.3's record shape is l
 | `model_by_pass` | which model and reasoning setting each pass ran at, off the record |
 | disposition | `proceed` / `proceed_bounded` / `refuse` (§7.2) |
 | trajectory | step count, tool calls, refused tool calls, empty-result calls, and **turns that added no new evidence**, off the trajectory log (§7.6) |
+| evidence | notes assembled vs. **composed into the synthesis prompt**, the dropped count and the composed share, off the record's own `evidence` field (§7.3, issue #545) |
+
+**The evidence row makes the funnel comparable run over run.** `compose_prompt`'s `synthesis.evidence_char_budget` walk (§7.4) drops chunks silently; replaying seven persisted smoke runs, 506 notes were assembled and 146 were composed, so `composed_share` averaged 28.9% and ranged 14.6%-55.6% across them. `dropped_count`/`composed_share` are computed here, not stored on the record, from `evidence.assembled_count`/`.composed_count` alone -- `composed_share` is `null`, never a division by zero, when nothing was assembled. Operator-facing only, same as every other row in this table: nothing here reaches a prompt.
 
 **Wall clock is captured per pass and the total is their SUM**, never a second stopwatch around the whole run, which would silently absorb vault I/O and disagree with its own parts. `axial.answer.run_report.PassClock` accumulates it as `run_brief` drives each stage; evidence assembly is timed under the synthesis pass it feeds, since it makes no model call and has no pass name of its own. A pass named in `model_by_pass` always carries a figure; a pass that was timed but never named (the counter-position pass on an uncontested brief) is not reported. `axial brief sweep` already times each `(brief, draw)` pair (`DrawOutcome.latency_seconds`), and with per-pass figures on the report that number becomes a cross-check on their sum rather than a competing source of truth.
 
