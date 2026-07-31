@@ -17,7 +17,8 @@ Then  the command exits 0
   And record["corpus_pin"] equals the pin id under evals/corpus_pin/
   And record["claims"] equals the claim graph the synthesis pass emitted
   And record["trajectory"] is a list of {step, tool, args, result_ids,
-      result_count} entries in tool-call order
+      result_count, total, detail} entries in tool-call order (issue #493
+      adds total/detail additively over the original five)
   And record["model_by_pass"] names each pass that ran
 
 Given the same brief run a second time over the same pinned vault
@@ -385,8 +386,19 @@ def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path
     assert record["evidence"] == {"assembled_count": 2, "composed_count": 2}
 
     assert isinstance(record["trajectory"], list) and record["trajectory"]
+    # issue #493: `total`/`detail` are additively persisted onto every entry
+    # now, beside the original five -- this assertion is updated with that
+    # one-line justification.
     for entry in record["trajectory"]:
-        assert set(entry) == {"step", "tool", "args", "result_ids", "result_count"}
+        assert set(entry) == {
+            "step",
+            "tool",
+            "args",
+            "result_ids",
+            "result_count",
+            "total",
+            "detail",
+        }
     assert [entry["tool"] for entry in record["trajectory"]] == [
         "get_chunk",
         "get_chunk",

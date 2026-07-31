@@ -59,17 +59,23 @@ the dispatcher both need them and neither is free to assume the answer:
   citable passages.
 
 Every adapter now returns `(result_ids, result_count, total, detail)`
-(issues #505 and #517): `total` is the true pre-cap count for `get_name`/
-`who_cites`/`who_argues_against`/`where_names_meet`, `None` for every other
-tool. `detail` is set by three tools, each a planner-blindness fix (§4,
-issue #517) -- `find_names` carries each hit's `kind`, `member_count` and
-`tier` so a model can tell an exact resolution from a guess; `get_name` and
-`where_names_meet` carry `_source_span_detail`'s `"<N> notes across <M>
-sources"` over the members actually returned, so a model can tell a large
-page (or intersection) is one book from many without re-reading it. Every
-other adapter passes `None`. Both `total` and `detail` ride straight through
-to `axial.retrieve.dispatcher.ToolResult`, never part of the §7.6 trajectory
-entry (which stays exactly `{step, tool, args, result_ids, result_count}`).
+(issues #505, #517 and #493): `total` is the true pre-cap count for
+`get_name`/`who_cites`/`who_argues_against`/`where_names_meet`, `None` for
+every other tool. `detail` is set by four tools, each a planner-blindness
+fix (§4, issues #517/#493) -- `find_names` carries each hit's `kind`,
+`member_count` and `tier` so a model can tell an exact resolution from a
+guess; `get_name` and `where_names_meet` carry `_source_span_detail`'s
+`"<N> notes across <M> sources"` over the members actually returned, so a
+model can tell a large page (or intersection) is one book from many without
+re-reading it; `name_neighbors` carries `_shared_note_count_distribution`'s
+compact min/median/max/floor-count summary over the neighbours actually
+returned (issue #493 -- see that function's own docstring for why a summary,
+never one line per neighbour). Every other adapter passes `None`. Both
+`total` and `detail` ride straight through to
+`axial.retrieve.dispatcher.ToolResult`, and are now ALSO persisted onto the
+§7.6 trajectory entry itself (`axial.retrieve.loop.run_retrieval_loop`,
+issue #493) -- see that module for why the record needed them, not only the
+next turn's prompt.
 
 **A live corpus run measured why `get_name`/`where_names_meet` need this
 too, not just `find_names` (issue #517's own follow-up).** A model told to
@@ -159,6 +165,40 @@ def _source_span_detail(members: list[names.NameMember]) -> str | None:
         return None
     source_count = len({member.source_id for member in members})
     return f"{len(members)} notes across {source_count} sources"
+
+
+def _shared_note_count_distribution(neighbors: list[names.NameNeighbor]) -> str | None:
+    """`name_neighbors`' own `detail` (issue #493): a compact summary of the
+    `shared_note_count` spread over the neighbours actually returned, never
+    one line per neighbour. Measured on the real index, `name_neighbors('state
+    formation')` returns 30 neighbours of which 26 sit at `shared_note_count`
+    1, ordered alphabetically from there -- a ranked list whose ranking
+    carries no signal past the head, and a run's record could not previously
+    say so: the returned ids are bare canonical strings with no count
+    attached anywhere in the persisted trajectory. A model can (and does) ask
+    for a large `limit`, so this states four numbers regardless of how many
+    neighbours came back -- min, median, max, and how many sit at that
+    floor -- rather than growing linearly with the result the way
+    `result_ids` already does. `None` only when there is nothing to
+    describe (an empty result)."""
+    if not neighbors:
+        return None
+    counts = sorted(neighbor.shared_note_count for neighbor in neighbors)
+    count = len(counts)
+    middle = count // 2
+    median = counts[middle] if count % 2 else (counts[middle - 1] + counts[middle]) / 2
+    # An even-count average of two equal counts (e.g. two neighbours tied at
+    # 1) is a whole number that Python's `/` still renders as `1.0` -- shown
+    # as a bare int instead, so "the middle of the ranking" reads the same
+    # whether it landed on one neighbour's count or split two of them.
+    if isinstance(median, float) and median.is_integer():
+        median = int(median)
+    floor = counts[0]
+    at_floor = sum(1 for value in counts if value == floor)
+    return (
+        f"{count} neighbors, shared_note_count min={floor} median={median} max={counts[-1]} "
+        f"({at_floor} of {count} at the floor of {floor})"
+    )
 
 
 def _query_by_source(
@@ -259,7 +299,7 @@ def _name_neighbors(
         args["canonical"], limit, vault_dir=vault_dir, names_dir=names_dir
     )
     canonicals = [neighbor.canonical for neighbor in neighbors]
-    return canonicals, len(canonicals), None, None
+    return canonicals, len(canonicals), None, _shared_note_count_distribution(neighbors)
 
 
 def _who_cites(

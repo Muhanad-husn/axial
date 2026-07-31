@@ -42,20 +42,36 @@ their own `limit` (issue #505: `get_name` on a hub name page returned 962 ids
 into one prompt, then got re-sent on every later turn). When a result was
 truncated, the per-step tool-result text states the true pre-cap total beside
 the capped ids -- `ToolResult.total`, carried the same way `ToolResult.error`
-already is, never a sixth §7.6 field -- so the model can deliberately widen
-`limit` instead of mistaking a window for the whole corpus.
+already is -- so the model can deliberately widen `limit` instead of mistaking
+a window for the whole corpus. **`total` is now also written onto the §7.6
+trajectory entry itself** (issue #493), a sixth field, additive alongside the
+original five: before this, a completed run's persisted record could not say
+what `member_count` a `get_name`/`where_names_meet` call actually resolved
+without replaying the prompt text the model saw at run time, which is not
+data an offline audit should have to reconstruct.
 
-`find_names`, `get_name` and `where_names_meet` each carry a second
-beside-the-trajectory rider, `ToolResult.detail` (issue #517), appended to
-the per-step tool-result text exactly like `total`. `find_names` states each
-hit's `kind`, `member_count` and `tier` -- the fix for a model that cannot
-tell an exact resolution from a weak embedding guess when all it sees is a
-bare canonical string. `get_name`/`where_names_meet` state how many distinct
-sources the returned members span (`"<N> notes across <M> sources"`): a live
-corpus run showed a model told to intersect only a "large" name avoiding the
-tool entirely by resolving narrow, one-book names instead, so `compose_
-retrieval_prompt`'s step 4 now points at source diversity directly and
-`detail` makes it checkable rather than inferred from a name's specificity.
+`find_names`, `get_name`, `name_neighbors` and `where_names_meet` each carry
+a second beside-the-trajectory rider, `ToolResult.detail` (issues #517 and
+#493), appended to the per-step tool-result text exactly like `total` and
+**likewise now persisted as the entry's seventh field** (issue #493, same
+reasoning as `total` above). `find_names` states each hit's `kind`,
+`member_count` and `tier` -- the fix for a model that cannot tell an exact
+resolution from a weak embedding guess when all it sees is a bare canonical
+string, and, persisted, the fix for a record that could not say which tier a
+run's own name resolutions actually used. `get_name`/`where_names_meet` state
+how many distinct sources the returned members span (`"<N> notes across <M>
+sources"`): a live corpus run showed a model told to intersect only a
+"large" name avoiding the tool entirely by resolving narrow, one-book names
+instead, so `compose_retrieval_prompt`'s step 4 now points at source
+diversity directly and `detail` makes it checkable rather than inferred from
+a name's specificity. `name_neighbors` states the `shared_note_count`
+distribution over the neighbours actually returned (min/median/max/
+floor-count, `axial.retrieve.tools._shared_note_count_distribution`) --
+measured on the real index, `name_neighbors('state formation')` returns 30
+neighbours of which 26 sit at `shared_note_count` 1, ordered alphabetically
+from there, and neither the model's own turn nor a completed run's record
+could previously tell a ranked list whose ranking carries no signal apart
+from one that does.
 
 `evidence_set_composition` rides the same channel one level up (issue #542):
 after every step, the prompt states what the run's own evidence set now holds
@@ -169,10 +185,13 @@ def run_retrieval_loop(
     thin_result_floor: int | None = None,
 ) -> list[dict[str, Any]]:
     """Run the tool loop and return the §7.6 trajectory log: one
-    `{step, tool, args, result_ids, result_count}` entry per tool call, in
-    call order, `step` 1-indexed with no gaps -- including a step whose
-    dispatch failed validation, which still consumes a step and still gets
-    an entry (`result_ids: [], result_count: 0`).
+    `{step, tool, args, result_ids, result_count, total, detail}` entry per
+    tool call, in call order, `step` 1-indexed with no gaps -- including a
+    step whose dispatch failed validation, which still consumes a step and
+    still gets an entry (`result_ids: [], result_count: 0, total: None,
+    detail: None`). `total`/`detail` are `ToolResult.total`/`.detail`
+    (issue #493), carried by only some tools and `None` on every other --
+    additive fields beside the original five, never replacing them.
 
     Halts cleanly -- without raising -- in either of two ways:
     - the model's turn carries no tool call AND ended with a genuine clean
@@ -240,6 +259,18 @@ def run_retrieval_loop(
                 "args": args,
                 "result_ids": result.ids,
                 "result_count": result.count,
+                # `total`/`detail` (issue #493): the same pre-cap count and
+                # resolution/spread rider that already ride beside the
+                # trajectory in the NEXT turn's prompt feedback (below),
+                # persisted here too so the record answers "what member_count
+                # and tier did this run resolve" and "what did a
+                # name_neighbors call's ranking actually look like" offline,
+                # without replaying prompt text. `None` on every tool that
+                # never sets them (see `axial.retrieve.tools`'s module
+                # docstring) -- an additive pair of fields, never removing or
+                # renumbering the five §7.6 fields above them.
+                "total": result.total,
+                "detail": result.detail,
             }
         )
 

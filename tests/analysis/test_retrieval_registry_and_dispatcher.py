@@ -716,7 +716,11 @@ def test_dispatch_carries_detail_for_where_names_meet(tmp_path: Path):
 @pytest.mark.parametrize(
     "tool,args",
     [
-        ("name_neighbors", {"canonical": "Charles Tilly"}),
+        # `name_neighbors` is excluded here (issue #493): it now populates
+        # `detail` too, when it has any neighbours to summarize -- see
+        # `test_dispatch_carries_detail_for_name_neighbors` below. This
+        # fixture's notes carry no `names` answer at all, so a separate
+        # empty-result case for it is covered there instead.
         ("who_cites", {"canonical": "Charles Tilly"}),
         ("who_argues_against", {"canonical": "Charles Tilly"}),
         ("get_chunk", {"chunk_id": "tillyfix-1978_1_intro_001"}),
@@ -726,7 +730,43 @@ def test_dispatch_carries_detail_for_where_names_meet(tmp_path: Path):
 def test_dispatch_leaves_detail_none_for_tools_with_no_source_span_concept(
     tool: str, args: dict[str, str], fixture_tilly_vault_dir: Path
 ):
-    """Only `find_names`, `get_name` and `where_names_meet` populate
-    `detail` (issue #517) -- every other tool leaves it `None`."""
+    """`find_names`, `get_name`, `name_neighbors` and `where_names_meet`
+    populate `detail` (issues #517, #493) -- every other tool leaves it
+    `None`."""
     result = dispatch(tool, args, vault_dir=fixture_tilly_vault_dir)
     assert result.detail is None
+
+
+def test_dispatch_carries_detail_for_name_neighbors(fixture_tilly_vault_dir: Path):
+    """issue #493: `name_neighbors`' own `detail` is the `shared_note_count`
+    distribution over the neighbours actually returned -- a compact summary,
+    never one line per neighbour, so a hub anchor's neighbour list does not
+    grow the persisted record the way a full per-neighbour breakdown would."""
+    prose_dir = fixture_tilly_vault_dir / "prose"
+    for chunk_id, neighbor in [
+        ("named-1_1_a_001", "State Formation"),
+        ("named-2_1_a_001", "State Formation"),
+        ("named-3_1_a_001", "Coercion"),
+    ]:
+        frontmatter = {
+            "chunk_id": chunk_id,
+            "section": "Synthetic Section",
+            "chunk_text": "SENTINEL: synthetic prose.",
+            "source_meta": {"author": "Someone", "title": "T", "date": 2000},
+            "answers": {
+                "claim": "A claim.",
+                "position_of": "the author",
+                "names": [{"name": "Charles Tilly"}, {"name": neighbor}],
+            },
+        }
+        text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
+        (prose_dir / f"{chunk_id}.md").write_text(text, encoding="utf-8")
+
+    result = dispatch(
+        "name_neighbors", {"canonical": "Charles Tilly"}, vault_dir=fixture_tilly_vault_dir
+    )
+
+    assert result.error is None
+    assert result.detail == (
+        "2 neighbors, shared_note_count min=1 median=1.5 max=2 (1 of 2 at the floor of 1)"
+    )

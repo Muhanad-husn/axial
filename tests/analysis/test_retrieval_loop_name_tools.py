@@ -40,8 +40,9 @@ Then  the first trajectory entry is thin (result_count 0)
 Given a scripted get_name call capped with limit=1 against the fixture's
       3-member Tilly page (issue #505)
 When  the retrieval loop runs
-Then  the trajectory entry still has exactly the five §7.6 fields, with
-      result_count 1
+Then  the trajectory entry still has exactly the §7.6 fields (seven, since
+      issue #493 additively persists `total`/`detail` onto the entry too),
+      with result_count 1
   And the recorded prompt for the next step states "1 of 3 total" and invites
       a larger limit
   And the same call with no limit (3 of 3, uncapped) adds no such text at all
@@ -52,9 +53,12 @@ Given a scripted find_names call that resolves through the alias tier
       (issue #517: planner blindness -- the loop used to hand back only a
       bare canonical string)
 When  the retrieval loop runs
-Then  the trajectory entry still has exactly the five §7.6 fields
+Then  the trajectory entry still has exactly the §7.6 fields (seven, issue
+      #493)
   And the recorded prompt for the next step states the hit's kind and tier,
       so the model can tell a solid resolution from a guess
+  And the entry's own persisted `detail` field states the same kind/tier,
+      answerable offline without replaying the prompt
 
 Given a scripted get_name call, and separately a scripted where_names_meet
       call, each against members drawn from a known number of sources
@@ -62,13 +66,15 @@ Given a scripted get_name call, and separately a scripted where_names_meet
       intersect only a "large" name avoiding the tool by resolving narrow,
       one-book names instead)
 When  the retrieval loop runs
-Then  each trajectory entry still has exactly the five §7.6 fields
+Then  each trajectory entry still has exactly the §7.6 fields (seven, issue
+      #493)
   And the recorded prompt for the next step states how many distinct
       sources the returned members actually span
 
 See specs/PHASE-B.md §4 (the agentic loop, case-as-anchor P0-3), §7.5 (the
 name-layer tools, [FIRM], and D4's Gather-hint rule) and §7.6 (the
-trajectory log, [FIRM], unchanged) for the source of truth, and
+trajectory log, [FIRM]; its shape gained `total`/`detail` as of issue #493,
+additive over the original five) for the source of truth, and
 plans/phase-b-v1/README.md slice 03.
 
 Seam decisions
@@ -476,7 +482,8 @@ def test_thin_first_find_names_call_triggers_a_different_broadened_call(
 # ---------------------------------------------------------------------------
 # Scenario 5 (issue #505): a capped result states its true total in the next
 # prompt, and an uncapped one adds no such noise. The trajectory entry stays
-# exactly the five §7.6 fields either way.
+# exactly the §7.6 fields either way (seven since issue #493 additively
+# persists `total`/`detail` onto the entry itself, not only the next prompt).
 # ---------------------------------------------------------------------------
 
 
@@ -509,11 +516,13 @@ def test_capped_get_name_result_states_the_true_total_in_the_next_prompt(
 
     assert len(trajectory) == 1
     entry = trajectory[0]
-    assert set(entry) == {"step", "tool", "args", "result_ids", "result_count"}, (
-        "the §7.6 trajectory shape stays exactly these five fields -- total is not a sixth"
-    )
+    # issue #493: `total`/`detail` are now persisted onto the entry too,
+    # additive over the original five -- this assertion is updated with that
+    # one-line justification rather than the shape drifting unnoticed.
+    assert set(entry) == {"step", "tool", "args", "result_ids", "result_count", "total", "detail"}
     assert entry["result_count"] == 1, "result_count is the honest count of ids returned"
     assert entry["result_ids"] == [EGYPT_CHUNK_ID]
+    assert entry["total"] == 3, "the entry itself now carries the true pre-cap total"
 
     prompts = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
     step_2_prompt = prompts[1]
@@ -599,7 +608,8 @@ def test_a_result_that_is_both_thin_and_capped_states_both_notes(
 # ---------------------------------------------------------------------------
 # Scenario 6 (issue #517): find_names' own resolution detail -- kind,
 # member_count, tier -- reaches the next turn's prompt, beside the
-# trajectory, never inside it.
+# trajectory, AND (issue #493) is now also persisted onto the trajectory
+# entry itself, so the record answers the same question offline.
 # ---------------------------------------------------------------------------
 
 
@@ -629,9 +639,17 @@ def test_find_names_detail_reaches_the_next_turns_prompt(
     )
 
     assert len(trajectory) == 1
-    assert set(trajectory[0]) == {"step", "tool", "args", "result_ids", "result_count"}, (
-        "detail rides beside the trajectory, never inside it -- the §7.6 shape is unchanged"
-    )
+    # issue #493: `detail` (and `total`) now ride on the persisted entry too,
+    # not only the next prompt -- updated with that one-line justification.
+    assert set(trajectory[0]) == {
+        "step",
+        "tool",
+        "args",
+        "result_ids",
+        "result_count",
+        "total",
+        "detail",
+    }
 
     prompts = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
     step_2_prompt = prompts[1]
@@ -644,6 +662,13 @@ def test_find_names_detail_reaches_the_next_turns_prompt(
     assert "tier=alias" in step_2_prompt, (
         f"expected which tier resolved the query in the next prompt, got {step_2_prompt!r}"
     )
+
+    # The record itself (not only the prompt) must answer the same question
+    # offline -- the whole point of issue #493.
+    detail = trajectory[0]["detail"]
+    assert detail is not None and "kind=person" in detail
+    assert "member_count=3" in detail
+    assert "tier=alias" in detail
 
 
 def test_get_name_detail_reaches_the_next_turns_prompt(
@@ -668,15 +693,23 @@ def test_get_name_detail_reaches_the_next_turns_prompt(
         client, "seed prompt", vault_dir=vault_dir, names_dir=names_dir, step_budget=10
     )
 
-    assert set(trajectory[0]) == {"step", "tool", "args", "result_ids", "result_count"}, (
-        "detail rides beside the trajectory, never inside it"
-    )
+    assert set(trajectory[0]) == {
+        "step",
+        "tool",
+        "args",
+        "result_ids",
+        "result_count",
+        "total",
+        "detail",
+    }, "issue #493: detail (and total) now ride on the persisted entry too"
 
     prompts = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
     step_2_prompt = prompts[1]
     assert "3 notes across 1 sources" in step_2_prompt, (
         f"expected the source-span detail in the next prompt, got {step_2_prompt!r}"
     )
+    assert trajectory[0]["detail"] == "3 notes across 1 sources"
+    assert trajectory[0]["total"] == 3
 
 
 def test_where_names_meet_detail_reaches_the_next_turns_prompt(
@@ -722,10 +755,20 @@ def test_where_names_meet_detail_reaches_the_next_turns_prompt(
         client, "seed prompt", vault_dir=vault_dir, names_dir=names_dir, step_budget=10
     )
 
-    assert set(trajectory[0]) == {"step", "tool", "args", "result_ids", "result_count"}
+    assert set(trajectory[0]) == {
+        "step",
+        "tool",
+        "args",
+        "result_ids",
+        "result_count",
+        "total",
+        "detail",
+    }
 
     prompts = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
     step_2_prompt = prompts[1]
     assert "2 notes across 2 sources" in step_2_prompt, (
         f"expected the source-span detail in the next prompt, got {step_2_prompt!r}"
     )
+    assert trajectory[0]["detail"] == "2 notes across 2 sources"
+    assert trajectory[0]["total"] == 2
