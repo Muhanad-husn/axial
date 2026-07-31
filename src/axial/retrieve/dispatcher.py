@@ -10,10 +10,12 @@ caller-supplied bad call. A real query-API failure (e.g. a well-formed but
 nonexistent id or canonical) is caught the same way, so a bad tool call can
 never crash the retrieval loop; only a bug in this module's own code would.
 
-Arg types are validated against each tool's own declared `int_args`
-(`axial.retrieve.tools.ToolSpec`): an arg named there must be an `int`
-(never a `bool`, which Python's `isinstance(x, int)` would otherwise let
-through), every other allowed arg must be a `str`.
+Arg types are validated against each tool's own declared `int_args`/
+`str_list_args` (`axial.retrieve.tools.ToolSpec`): an arg named in the first
+must be an `int` (never a `bool`, which Python's `isinstance(x, int)` would
+otherwise let through), an arg named in the second may be a list of strings
+or a bare string (issue #542, `get_chunk`'s batch), and every other allowed
+arg must be a `str`.
 
 `names_dir` is threaded through the call exactly like `vault_dir`/
 `envelopes_dir`: an optional caller-supplied directory for the name-layer
@@ -44,8 +46,9 @@ class ToolResult:
     surfacing `error` to the model through its own conversation channel.
 
     `total`, when set (issue #505), is the true pre-cap count for a tool
-    truncated at its `limit` -- currently `get_name`/`who_cites`/
-    `who_argues_against`/`where_names_meet`, `None` for every other tool. It
+    truncated at its `limit` -- `get_name`/`who_cites`/`who_argues_against`/
+    `where_names_meet`, plus `get_chunk`, whose pre-cap count is the number
+    of ids the call asked for (issue #542) -- and `None` for the rest. It
     rides beside the trajectory exactly the way `error` does, for the same
     reason: a capped result the model cannot see is a lie about the corpus
     (`get_name` on `Syria` returns 10 members out of 962), so the loop
@@ -72,10 +75,29 @@ class ToolResult:
 
 def _declared_type_ok(spec: ToolSpec, key: str, value: Any) -> bool:
     """Whether `value` matches `key`'s declared type on `spec`: `int` (never
-    `bool`) when `key` is in `spec.int_args`, `str` otherwise."""
+    `bool`) when `key` is in `spec.int_args`; a list of strings OR a bare
+    string when `key` is in `spec.str_list_args`; `str` otherwise.
+
+    The bare string is accepted on a list arg deliberately (issue #542):
+    `get_chunk` is advertised to the model as taking a list, but a model will
+    keep emitting the single-id form it used before, and rejecting it would
+    cost a full model turn to say something the tool can simply answer."""
     if key in spec.int_args:
         return isinstance(value, int) and not isinstance(value, bool)
+    if key in spec.str_list_args:
+        return isinstance(value, str) or (
+            isinstance(value, list) and all(isinstance(item, str) for item in value)
+        )
     return isinstance(value, str)
+
+
+def _declared_type_name(spec: ToolSpec, key: str) -> str:
+    """`key`'s declared type, named for the model in a validation error."""
+    if key in spec.int_args:
+        return "int"
+    if key in spec.str_list_args:
+        return "list of str"
+    return "str"
 
 
 def dispatch(
@@ -116,7 +138,7 @@ def dispatch(
         if extra:
             problems.append(f"unexpected arg(s) {sorted(extra)!r}")
         if wrong_typed:
-            expected = {key: ("int" if key in spec.int_args else "str") for key in wrong_typed}
+            expected = {key: _declared_type_name(spec, key) for key in wrong_typed}
             detail = ", ".join(f"{key!r} (expected {expected[key]})" for key in sorted(wrong_typed))
             problems.append(f"wrong-typed arg(s): {detail}")
         return ToolResult(

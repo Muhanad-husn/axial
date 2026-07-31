@@ -44,7 +44,16 @@ and `other`, plus the same `limit`/`total` shape `get_name`/`who_cites`/
 this locked-contract file, per the founder-approved #517 decision.
 `EXPECTED_TOOL_NAMES`/`CHUNK_VALUED_TOOLS`/the `limit`-int-arg test below are
 all updated, and new tests cover its two-required-arg schema through the
-dispatcher."""
+dispatcher.
+
+Issue #542 makes `get_chunk` batch-valued: `chunk_id` takes a list of ids and
+the call is bounded by the same `limit`/`DEFAULT_LIMIT` mechanism the name
+tools already use. Two assertions here move as a result, both deliberate
+contract changes rather than oversights -- `get_chunk` joins the
+`limit`-taking set, and it now carries a real pre-cap `total` (the number of
+ids asked for), so the "no pre-cap total" example moves to `query_by_source`.
+The batch's own outer acceptance contract is
+`tests/analysis/test_retrieval_batch_get_chunk.py`."""
 
 from __future__ import annotations
 
@@ -130,7 +139,9 @@ def test_limit_is_the_one_declared_int_arg_in_the_whole_tool_set():
     """Issue #505: `get_name`/`who_cites`/`who_argues_against` join
     `find_names`/`name_neighbors` in declaring `limit` as an int arg -- the
     whole name-layer tool set is now uniform (bounded, `limit`-taking).
-    Issue #517 adds `where_names_meet` to the same uniform set."""
+    Issue #517 adds `where_names_meet` to the same uniform set, and issue
+    #542 adds `get_chunk`, whose id list is bounded by the same mechanism
+    rather than by a second cap invented for it."""
     limit_taking = {
         "find_names",
         "name_neighbors",
@@ -138,12 +149,24 @@ def test_limit_is_the_one_declared_int_arg_in_the_whole_tool_set():
         "who_cites",
         "who_argues_against",
         "where_names_meet",
+        "get_chunk",
     }
     for name, spec in TOOL_REGISTRY.items():
         if name in limit_taking:
             assert spec.int_args == frozenset({"limit"}), name
         else:
             assert spec.int_args == frozenset(), name
+
+
+def test_chunk_id_is_the_one_declared_list_arg_in_the_whole_tool_set():
+    """Issue #542: `get_chunk` reads a batch, so its `chunk_id` is a list of
+    strings. It is the only list-typed arg in the tool set; every other tool
+    stays string- and int-typed."""
+    for name, spec in TOOL_REGISTRY.items():
+        expected = frozenset({"chunk_id"}) if name == "get_chunk" else frozenset()
+        assert spec.str_list_args == expected, name
+        assert spec.str_list_args <= spec.allowed_args, name
+        assert spec.str_list_args.isdisjoint(spec.int_args), name
 
 
 def test_coverage_count_is_not_a_registered_tool():
@@ -517,14 +540,36 @@ def test_dispatch_carries_the_true_total_for_who_cites_and_who_argues_against_wh
 def test_dispatch_total_is_none_for_a_tool_that_carries_no_pre_cap_total(
     fixture_tilly_vault_dir: Path,
 ):
-    """`get_chunk` (and every tool but `get_name`/`who_cites`/
-    `who_argues_against`) never sets `total` -- it has no cap-relevant
-    concept of one."""
-    member_id = "tillyfix-1978_1_intro_001"
-    result = dispatch("get_chunk", {"chunk_id": member_id}, vault_dir=fixture_tilly_vault_dir)
+    """`query_by_source` (and every tool but `get_name`/`who_cites`/
+    `who_argues_against`/`where_names_meet`/`get_chunk`) never sets `total`
+    -- it has no cap-relevant concept of one.
+
+    `get_chunk` used to be this test's example and no longer is: issue #542
+    gave it a batch bounded at `limit`, so it now has a real pre-cap count
+    (the number of ids the call asked for) and reports it, asserted below."""
+    result = dispatch(
+        "query_by_source", {"source_id": "tillyfix-1978"}, vault_dir=fixture_tilly_vault_dir
+    )
 
     assert result.error is None
     assert result.total is None
+
+
+def test_dispatch_carries_the_ids_asked_for_as_get_chunks_pre_cap_total(
+    fixture_tilly_vault_dir: Path,
+):
+    """Issue #542: a batch truncated at `limit` is never silent about being
+    one -- `total` is the count of ids the call asked for, the same "N of M
+    total" the model already reads for a capped name page."""
+    member_ids = [f"tillyfix-1978_{index}_intro_001" for index in range(1, 4)]
+    result = dispatch(
+        "get_chunk", {"chunk_id": member_ids, "limit": 2}, vault_dir=fixture_tilly_vault_dir
+    )
+
+    assert result.error is None
+    assert result.ids == member_ids[:2]
+    assert result.count == 2
+    assert result.total == 3
 
 
 # --- issue #517: where_names_meet through the dispatcher -------------------

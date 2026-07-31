@@ -44,10 +44,11 @@ the dispatcher both need them and neither is free to assume the answer:
   `name_neighbors`, and, as of issue #505, `get_name`, `who_cites` and
   `who_argues_against` too (all five were unbounded or capless before; the
   last three used to return every matching row, and one `get_name` on a
-  hub name page returned 962 ids into a retrieval loop's prompt). `int_args`
-  names the subset of a tool's `allowed_args` that are int-typed; every
-  other allowed arg is str. Two types total -- no JSON-schema library is
-  pulled in for that.
+  hub name page returned 962 ids into a retrieval loop's prompt) -- and
+  `get_chunk`'s `chunk_id`, which is a list of strings (issue #542). Three
+  arg types total -- `int_args` and `str_list_args` name the subsets of a
+  tool's `allowed_args` that are int- and list-typed, every other allowed
+  arg is str, and no JSON-schema library is pulled in for that.
 - **What kind of id a tool yields.** `find_names` and `name_neighbors`
   return CANONICAL NAMES. `get_name`, `who_cites`, `who_argues_against`,
   `where_names_meet`, `query_by_source`, `get_chunk` and `get_artifact`
@@ -79,6 +80,22 @@ that phrase. Narrowing felt like precision and produced a one-book answer;
 `_source_span_detail` makes the number of sources a result actually spans
 checkable in the next prompt rather than something the model has to infer
 from how specific a name sounds.
+
+**`get_chunk` reads a BATCH (issue #542).** `chunk_id` takes a list of ids
+and the tool returns them together, because a read per model round trip is
+what the tail of a real brief run is made of: replayed over seven persisted
+smoke records, `get_chunk` was called 44 times, contributed zero new ids to
+the evidence set every single time (the id was always already surfaced by
+the `get_name` that listed it), and 24 of those 44 calls sat in a run of
+consecutive `get_chunk` calls one batched call collapses. A bare string is
+still accepted -- the model will emit both forms, and a hard error on the
+old one costs a full turn -- and the batch is bounded by the SAME
+`limit`/`names.DEFAULT_LIMIT` mechanism every other bounded tool uses
+(issue #505), never a second cap invented here: an unbounded id list is the
+same "one call pulls the index into the prompt" hazard #505 fixed. `total`
+carries the pre-cap count of ids ASKED FOR, so a truncated batch is never
+silent. One call is still one §7.6 trajectory entry, with every returned id
+in that entry's `result_ids`.
 """
 
 from __future__ import annotations
@@ -111,9 +128,12 @@ class ToolSpec:
     """One registry entry: a model-facing `name`, a `description` (fed to a
     real provider's tool schema), the args it accepts split into
     `required_args`/`optional_args`, `int_args` -- the subset of those that
-    are int rather than str -- `returns_chunk_ids` (see the module
-    docstring), and `call` -- the adapter that invokes the underlying
-    `axial.query` function and returns `(result_ids, result_count)`."""
+    are int rather than str -- `str_list_args` -- the subset that take a
+    list of strings (`get_chunk`'s `chunk_id`, issue #542; a bare string is
+    tolerated there too, see the module docstring) -- `returns_chunk_ids`
+    (see the module docstring), and `call` -- the adapter that invokes the
+    underlying `axial.query` function and returns
+    `(result_ids, result_count)`."""
 
     name: str
     description: str
@@ -122,6 +142,7 @@ class ToolSpec:
     call: ToolCall
     int_args: frozenset[str]
     returns_chunk_ids: bool
+    str_list_args: frozenset[str] = frozenset()
 
     @property
     def allowed_args(self) -> frozenset[str]:
@@ -166,8 +187,20 @@ def _get_chunk(
     _envelopes_dir: Path | None,
     _names_dir: Path | None,
 ) -> tuple[list[str], int, int | None, str | None]:
-    chunk = reader.get_chunk(args["chunk_id"], vault_dir=vault_dir)
-    return [chunk.chunk_id], 1, None, None
+    """One or many prose notes (issue #542). `chunk_id` is a list of ids, or
+    a single id as a bare string; the batch is truncated at `limit` and
+    `total` is the pre-cap count of ids asked for, so a truncated batch
+    reaches the model as "N of M total" exactly like a capped name page. An
+    id that resolves to no note raises `reader.QueryError` for the whole
+    call, unchanged from the single-id behaviour -- across the 44 real
+    `get_chunk` calls on the seven smoke records, none ever hit one."""
+    requested = args["chunk_id"]
+    chunk_ids = [requested] if isinstance(requested, str) else list(requested)
+    limit = args.get("limit", names.DEFAULT_LIMIT)
+    ids = [
+        reader.get_chunk(chunk_id, vault_dir=vault_dir).chunk_id for chunk_id in chunk_ids[:limit]
+    ]
+    return ids, len(ids), len(chunk_ids), None
 
 
 def _get_artifact(
@@ -378,10 +411,15 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
     ),
     "get_chunk": ToolSpec(
         name="get_chunk",
-        description="One prose chunk by chunk_id, with its frontmatter and text.",
+        description=(
+            "Prose chunks by chunk_id, with their frontmatter and text. Takes one id or "
+            "a list of ids, so several notes are read in a single call rather than one "
+            "call per note, up to limit."
+        ),
         required_args=frozenset({"chunk_id"}),
-        optional_args=frozenset(),
-        int_args=frozenset(),
+        optional_args=frozenset({"limit"}),
+        int_args=frozenset({"limit"}),
+        str_list_args=frozenset({"chunk_id"}),
         returns_chunk_ids=True,
         call=_get_chunk,
     ),
@@ -401,14 +439,24 @@ def tool_specs_for_provider() -> list[dict[str, Any]]:
     """The registry rendered into the OpenAI/OpenRouter function-calling
     `tools` payload shape (`OpenRouterClient.complete_with_tools` sends this
     list verbatim). An arg named in a spec's `int_args` is emitted as JSON
-    type `"integer"`; every other allowed arg is `"string"` -- the honest
-    reflection of `ToolSpec`'s own declared types."""
+    type `"integer"`, one named in `str_list_args` as an array of strings,
+    every other allowed arg as `"string"` -- the honest reflection of
+    `ToolSpec`'s own declared types. A `str_list_args` arg is advertised as
+    the array alone rather than as a string/array union: the batch is the
+    shape the model is asked for, a union type is the shape strict function-
+    calling modes reject, and the dispatcher separately TOLERATES a bare
+    string there (issue #542) so a model that emits the old single-id form
+    does not burn a turn on a schema error."""
     specs: list[dict[str, Any]] = []
     for spec in TOOL_REGISTRY.values():
-        properties = {
-            arg_name: {"type": "integer" if arg_name in spec.int_args else "string"}
-            for arg_name in spec.allowed_args
-        }
+        properties: dict[str, dict[str, Any]] = {}
+        for arg_name in spec.allowed_args:
+            if arg_name in spec.int_args:
+                properties[arg_name] = {"type": "integer"}
+            elif arg_name in spec.str_list_args:
+                properties[arg_name] = {"type": "array", "items": {"type": "string"}}
+            else:
+                properties[arg_name] = {"type": "string"}
         specs.append(
             {
                 "type": "function",
