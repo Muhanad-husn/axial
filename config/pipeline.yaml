@@ -383,29 +383,31 @@ coverage_bands:
 # issue #491): `axial brief smoke` compares each brief's run-report figures
 # against these, so a spend or slowdown regression shows the day it lands.
 #
-# Set 2026-07-31 from seven real runs of five briefs (issue #524). They are
-# CEILINGS that should never fire, not tight budgets: every run they are drawn
-# from predates #541 and #542, which together removed ~600s of non-model work
-# per brief and collapsed the loop's single-note reads. The post-fix build is
-# strictly faster and no more expensive, so a brief that reaches either figure
-# has regressed.
+# Re-cut 2026-07-31 from the smoke-v4 run: all six briefs, one draw each, on
+# the post-#541/#542/#545 build (`data/logs/2026-07-31-smoke-v4/`). They remain
+# CEILINGS that should never fire, not tight budgets. The figures they replace
+# came from seven runs of five briefs on a build that has since lost ~600s of
+# non-model work per brief, so every one of them was stale.
 #
-#   cost     $0.0781 - $0.1552 over the seven, mean $0.1191. The ceiling is
-#            1.6x the highest. Tighter would fail on variance alone: S-03 moved
-#            39% between two runs of the same brief on the same code.
-#   latency  473.2s - 1829.6s (per-pass sum, not sweep wall clock -- PassClock
-#            wraps whole passes including vault I/O, so the two differ by only
-#            a few seconds). The ceiling is the highest figure measured on the
-#            slow build.
+#   cost     $0.0618 - $0.2278 over the six, mean $0.1253. The ceiling is 1.3x
+#            the highest. The previous $0.25 was left BELOW the observed range's
+#            top after the re-measure -- S-02 came in at $0.2278, 91% of it, so
+#            the gate was one ordinary run from crying wolf.
+#   latency  291.8s - 688.3s (sweep wall clock). The ceiling is 1.3x the
+#            highest, down from 1800s, which the fastest brief now beats 6x.
 #
-# Both get RE-CUT tight from the six post-fix runs once #524's stage 3 lands.
+# The headroom is 1.3x on both because run-to-run variance on this set is real
+# and measured, not assumed: S-03 moved 39% between two runs of the same brief
+# on the same code. One draw per brief cannot see that spread, so neither figure
+# is cut to the observed maximum.
+#
 # src/axial/brief/smoke.py reads this via `resolve_budgets`, and there is NO
 # code-level fallback on purpose: an unset budget SKIPS its check and prints
 # UNMEASURED, so it can neither pass vacuously nor fail for a number nobody
 # measured.
 smoke:
-  max_usd_per_brief: 0.25
-  max_seconds_per_brief: 1800
+  max_usd_per_brief: 0.30
+  max_seconds_per_brief: 900
 
 # Rung-3 eval-gate thresholds (issues #262, #264, PRD §10, §8 P0-12): one
 # starting threshold per named metric, read by src/axial/gates/harness.py via
