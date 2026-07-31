@@ -317,6 +317,64 @@ def test_load_records_missing_directory_raises(tmp_path: Path):
         load_records(tmp_path / "nonexistent")
 
 
+def test_load_records_reads_sweep_nested_layout(tmp_path: Path):
+    """A sweep writes records two levels down, `<records>/<brief>/draw<N>/
+    <record_id>.json` (`axial.brief.sweep`) -- issue #493's bug: a flat
+    `glob("*.json")` found zero records here."""
+    records_dir = tmp_path / "records"
+    draw_dir = records_dir / "S-01" / "draw0"
+    draw_dir.mkdir(parents=True)
+    (draw_dir / "abc123.json").write_text(
+        json.dumps({"brief_id": "abc123", "claims": [{"id": "only"}]}), encoding="utf-8"
+    )
+
+    records = load_records(records_dir)
+    assert [r["claims"][0]["id"] for r in records] == ["only"]
+
+
+def test_load_records_scores_every_draw_of_a_brief_not_just_one(tmp_path: Path):
+    """A brief sampled more than once writes one record per draw. Every draw
+    is a distinct, independently executed run, so every one is kept -- none
+    is thinned away as a duplicate."""
+    records_dir = tmp_path / "records"
+    for draw in (0, 1):
+        draw_dir = records_dir / "S-01" / f"draw{draw}"
+        draw_dir.mkdir(parents=True)
+        (draw_dir / f"rec{draw}.json").write_text(
+            json.dumps({"brief_id": "S-01", "claims": [{"id": f"draw{draw}"}]}),
+            encoding="utf-8",
+        )
+
+    records = load_records(records_dir)
+    assert sorted(r["claims"][0]["id"] for r in records) == ["draw0", "draw1"]
+
+
+def test_load_records_skips_non_record_json_in_a_sweep_directory(tmp_path: Path):
+    """A sweep directory also holds `summary.json` at its root and each
+    draw's own `runs/<record_id>.json` accuracy report -- neither carries a
+    top-level `claims` key, and neither must be loaded as if it were an
+    analysis record or crash the walk."""
+    records_dir = tmp_path / "records"
+    draw_dir = records_dir / "S-01" / "draw0"
+    draw_dir.mkdir(parents=True)
+    (draw_dir / "abc123.json").write_text(
+        json.dumps({"brief_id": "abc123", "claims": [{"id": "real"}]}), encoding="utf-8"
+    )
+    reports_dir = draw_dir / "runs"
+    reports_dir.mkdir()
+    (reports_dir / "abc123.json").write_text(
+        json.dumps({"brief_id": "abc123", "accuracy": {"attribution_completeness": {}}}),
+        encoding="utf-8",
+    )
+    (records_dir / "summary.json").write_text(
+        json.dumps({"briefs": [], "ok_count": 0}), encoding="utf-8"
+    )
+
+    records = load_records(records_dir)
+    assert len(records) == 1
+    assert records[0]["claims"][0]["id"] == "real"
+
+
 # -- corpus pin / academic cases / trusted -----------------------------------
 
 
