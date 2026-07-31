@@ -174,12 +174,25 @@ class GateReport:
     failed (a not-scoreable metric elsewhere never hides a real failure),
     else `None` if any metric is not-scoreable (the gate never fully ran, so
     it cannot report a clean pass either), else `True` only when every
-    metric ran and passed."""
+    metric ran and passed.
+
+    `reported` (issue #550) is a second, DELIBERATELY separate bucket for a
+    number a gate computes and discloses but never gates on -- §10.0's own
+    "deliberately not a gate" numbers (source usage, the cross-source rate,
+    instant-dismissal violations) already live outside this harness entirely
+    for exactly this reason: no baseline exists yet, and asserting a
+    threshold before one is measured would be a guess dressed as a bar. A
+    `reported` entry never influences `passed` above (only `metrics` does),
+    is plain `{name: {"value": ..., ...}}` data -- no `MetricResult`, no
+    threshold, no comparison direction, because none of those apply to a
+    number nothing is measured against yet. Empty by default so every
+    existing gate that never populates it is unaffected."""
 
     gate: str
     corpus_pin: str | None
     trusted: bool
     metrics: list[MetricResult]
+    reported: dict[str, Any] = field(default_factory=dict)
 
     @property
     def passed(self) -> bool | None:
@@ -190,13 +203,16 @@ class GateReport:
         return True
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        payload = {
             "gate": self.gate,
             "corpus_pin": self.corpus_pin,
             "trusted": self.trusted,
             "passed": self.passed,
             "metrics": [metric.to_json() for metric in self.metrics],
         }
+        if self.reported:
+            payload["reported"] = self.reported
+        return payload
 
 
 def resolve_threshold(metric: str, config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> float:
@@ -466,6 +482,13 @@ def format_report(report: GateReport) -> str:
         missed_brief_ids = metric.detail.get("missed_brief_ids")
         if missed_brief_ids:
             lines.append(f"    missed brief_ids: {', '.join(missed_brief_ids)}")
+    if report.reported:
+        lines.append("reported (not gated -- no baseline threshold established yet):")
+        for name, entry in report.reported.items():
+            value = entry.get("value") if isinstance(entry, dict) else None
+            value_str = "n/a" if value is None else f"{value:.4f}"
+            n = entry.get("denominator") if isinstance(entry, dict) else None
+            lines.append(f"  {name}: value={value_str} n={n}")
     lines.append(f"overall: {verdict_text(report.passed)}")
     lines.append(f"corpus_pin: {report.corpus_pin}")
     lines.append(f"trusted: {report.trusted}")

@@ -89,6 +89,48 @@ def test_gate_report_to_json_carries_gate_corpus_pin_trusted():
     assert payload["metrics"][0]["metric"] == "m1"
 
 
+# -- `reported`: a number disclosed but never gated (issue #550) -------------
+
+
+def test_reported_is_empty_by_default_and_omitted_from_json():
+    metric = MetricResult("m1", 1.0, 1.0, "gte", True, 1)
+    report = GateReport(gate="g", corpus_pin=None, trusted=False, metrics=[metric])
+    assert report.reported == {}
+    assert "reported" not in report.to_json()
+
+
+def test_reported_entries_never_affect_gate_report_passed():
+    """A `reported` value can be anything -- even one a hypothetical future
+    threshold would call bad -- and `passed` must still ignore it entirely:
+    only `metrics` gates release."""
+    failing_looking_value = {"value": 0.0, "numerator": 0, "denominator": 10}
+    metric = MetricResult("m1", 1.0, 1.0, "gte", True, 1)
+    report = GateReport(
+        gate="g",
+        corpus_pin=None,
+        trusted=False,
+        metrics=[metric],
+        reported={"some_metric": failing_looking_value},
+    )
+    assert report.passed is True
+    assert report.to_json()["reported"] == {"some_metric": failing_looking_value}
+
+
+def test_format_report_renders_reported_entries_distinctly_as_not_gated():
+    metric = MetricResult("m1", 1.0, 1.0, "gte", True, 1)
+    report = GateReport(
+        gate="g",
+        corpus_pin=None,
+        trusted=False,
+        metrics=[metric],
+        reported={"some_metric": {"value": 0.25, "numerator": 1, "denominator": 4}},
+    )
+    text = format_report(report)
+    assert "not gated" in text
+    assert "some_metric" in text
+    assert "0.2500" in text
+
+
 # -- threshold resolution: config, never a literal ---------------------------
 
 

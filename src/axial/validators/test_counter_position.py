@@ -27,6 +27,7 @@ from axial.query.names import DISAGREEMENT_HEADING
 from axial.validators.counter_position import (
     REASON_CONTESTED_WITHOUT_COUNTER_POSITION,
     SIGNAL_GATHER_DISAGREEMENT,
+    SIGNAL_NAMES_OPPONENT,
     SIGNAL_OPPOSED_POSITIONS,
     VERDICT_STRAWMAN,
     CounterPositionCheckFailedError,
@@ -291,23 +292,27 @@ def test_a_note_naming_a_name_the_other_note_names_is_contested(vault_dir: Path,
     assert report.contested.contested is True
 
 
-def test_an_arguing_against_naming_nobody_in_the_evidence_is_not_contested(
+def test_an_arguing_against_naming_nobody_in_the_evidence_fires_names_opponent(
     vault_dir: Path, names_dir: Path
 ):
-    """The measured heart of D3: read loosely as "an `arguing_against`
-    exists" the clause is a 1.00x no-op. It must fire only when the evidence
-    itself carries the other side."""
+    """Issue #550, re-basing D3's own measured heart: read loosely as "an
+    `arguing_against` exists" the clause is still a 1.00x no-op for
+    `opposed_positions` SPECIFICALLY -- pairing still requires the evidence
+    to carry the other side. But the same loose reading is now `names_
+    opponent`'s own path (S-04's shape: Caspersen states and rejects Pegg's
+    position, and Pegg is not an author in this corpus), so the brief is
+    contested via that signal instead of falling through to uncontested."""
     _write_tilly(vault_dir, arguing_against=["Some Absent Scholar"], names=[])
     _write_skocpol(vault_dir)
     claims = [_claim("c-1", TILLY_CHUNK, SKOCPOL_CHUNK)]
     report = validate_counter_position(
-        _record(claims, _no_counter_position()),
+        _record(claims, _disclosed_one_sided()),
         client=ExplodingLLMClient(),
         vault_dir=vault_dir,
         names_dir=names_dir,
     )
-    assert report.contested.contested is False
-    assert report.contested.signal is None
+    assert report.contested.contested is True
+    assert report.contested.signal == SIGNAL_NAMES_OPPONENT
 
 
 def test_an_empty_arguing_against_is_an_answer_not_an_abstention(vault_dir: Path, names_dir: Path):
@@ -351,19 +356,26 @@ def test_two_abstaining_notes_never_manufacture_a_disagreement(vault_dir: Path, 
     assert report.contested.contested is False
 
 
-def test_a_note_arguing_against_its_own_book_is_not_two_sides(vault_dir: Path, names_dir: Path):
+def test_a_note_arguing_against_its_own_book_does_not_pair_but_still_names_an_opponent(
+    vault_dir: Path, names_dir: Path
+):
     """Same source, same stated position: one passage's argument with
-    itself, not a disagreement between two sides."""
+    itself is not `opposed_positions` -- there is no second, genuinely
+    opposing side to pair with (`_different_sides`). Issue #550's
+    `names_opponent` path carries no pairing requirement at all though, so
+    the lone note's own non-empty `arguing_against` still fires it -- the
+    founder's literal "no pairing required" rule, unguarded even here."""
     _write_tilly(vault_dir, TILLY_CHUNK, arguing_against=[TILLY_AUTHOR], names=[])
     _write_tilly(vault_dir, TILLY_CHUNK_2, arguing_against=[], names=[])
     claims = [_claim("c-1", TILLY_CHUNK, TILLY_CHUNK_2)]
     report = validate_counter_position(
-        _record(claims, _no_counter_position()),
+        _record(claims, _disclosed_one_sided()),
         client=ExplodingLLMClient(),
         vault_dir=vault_dir,
         names_dir=names_dir,
     )
-    assert report.contested.contested is False
+    assert report.contested.contested is True
+    assert report.contested.signal == SIGNAL_NAMES_OPPONENT
 
 
 def test_zero_evidence_is_not_contested(vault_dir: Path, names_dir: Path):

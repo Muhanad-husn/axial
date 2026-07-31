@@ -305,6 +305,104 @@ def test_contested_brief_with_genuine_opposing_evidence_produces_present_with_re
     assert "theory_school" not in prompt
     assert "role_in_argument" not in prompt
     assert "stated position" in prompt
+    # Issue #550: the prompt states WHICH signal fired, never the old
+    # "mechanically flagged CONTESTED" wording -- that phrasing reads as
+    # selective now that 86% of grounds notes name an opponent.
+    assert "mechanically flagged" not in prompt
+    assert "two of this run's own cited passages state opposing positions" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Issue #550: a grounds note whose `arguing_against` names an opponent that
+# is not itself a note in this run's evidence (no pairing possible) is still
+# offered as candidate material, and the prompt states the signal that fired
+# rather than a generic "mechanically flagged" claim.
+# ---------------------------------------------------------------------------
+
+
+def test_an_unpaired_named_opposition_becomes_a_whitelisted_candidate(
+    tmp_path: Path, names_dir: Path
+):
+    """The S-04 shape from the smoke-v4 measurement: Caspersen's own passage
+    states and rejects Pegg's position, and Pegg is not an author in this
+    corpus, so no second note ever pairs with it. The lone note's own
+    `arguing_against` still puts it on the whitelist (§7.8 `names_opponent`),
+    and the prompt names that signal rather than claiming a generic
+    mechanical flag."""
+    vault_dir = _write_vault(tmp_path, [_tilly(arguing_against=["An Absent Scholar"], names=[])])
+    claims = [_claim("c1", MAIN_CHUNK)]
+    response = json.dumps(
+        {
+            "present": True,
+            "stance": "Tilly's own passage states and rejects the absent scholar's position.",
+            "grounds": [{"ref_type": "chunk", "ref_id": MAIN_CHUNK}],
+            "corpus_one_sided": False,
+            "one_sided_reason": None,
+        }
+    )
+    client = _ScriptedClient(response)
+
+    result = generate_counter_position(
+        claims, _brief(), client=client, vault_dir=vault_dir, names_dir=names_dir
+    )
+
+    assert result.model_called is True
+    assert result.section["present"] is True
+    assert result.section["grounds"] == [{"ref_type": "chunk", "ref_id": MAIN_CHUNK}]
+
+    prompt = client.calls[0][0]
+    assert MAIN_CHUNK in prompt
+    assert "mechanically flagged" not in prompt
+    assert "no note on that other side is itself part of this run's own evidence" in prompt
+
+
+def test_candidate_ordering_paired_opposition_before_unpaired_named_opposition(
+    tmp_path: Path, names_dir: Path
+):
+    """Issue #550's stated candidate order: paired oppositions first, then
+    notes naming an opponent unpaired. Both fire here -- Tilly/Skocpol pair,
+    and a third note (same book as Tilly) names an absent scholar on its
+    own -- and only the paired pair is a REAL vault id the response may cite
+    without the unpaired note ALSO being offered; this proves the unpaired
+    note is offered too, distinctly ordered after the pair."""
+    unpaired_chunk = "tilly-1978_003_intro_001"
+    vault_dir = _write_vault(
+        tmp_path,
+        [
+            _tilly(),
+            _skocpol(),
+            _tilly(unpaired_chunk, arguing_against=["Some Other Absent Scholar"], names=[]),
+        ],
+    )
+    claims = [_claim("c1", MAIN_CHUNK, COUNTER_CHUNK, unpaired_chunk)]
+    response = json.dumps(
+        {
+            "present": True,
+            "stance": "Both the paired and unpaired opposition are cited.",
+            "grounds": [
+                {"ref_type": "chunk", "ref_id": COUNTER_CHUNK},
+                {"ref_type": "chunk", "ref_id": unpaired_chunk},
+            ],
+            "corpus_one_sided": False,
+            "one_sided_reason": None,
+        }
+    )
+    client = _ScriptedClient(response)
+
+    result = generate_counter_position(
+        claims, _brief(), client=client, vault_dir=vault_dir, names_dir=names_dir
+    )
+
+    assert result.section["grounds"] == [
+        {"ref_type": "chunk", "ref_id": COUNTER_CHUNK},
+        {"ref_type": "chunk", "ref_id": unpaired_chunk},
+    ]
+    prompt = client.calls[0][0]
+    idx_paired = prompt.index(COUNTER_CHUNK)
+    idx_unpaired = prompt.index(unpaired_chunk)
+    assert idx_paired < idx_unpaired, (
+        "the paired opposition must be offered before the unpaired named opposition"
+    )
 
 
 def test_a_grounds_note_outside_the_opposition_is_never_offered(tmp_path: Path, names_dir: Path):

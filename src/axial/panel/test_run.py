@@ -106,8 +106,13 @@ def _perfect_reviewer(prompt: str) -> str:
         defects.append(
             {"claim_id": "<counter_position>", "kind": "strawman_counter_position", "note": ""}
         )
-    # overconfident: c-1 raised to high over a thin polity.
-    if "[confidence: high]" in prompt.split("Militia payrolls grew.")[0]:
+    # overconfident: c-1 raised to high over a thin polity. Issue #550's
+    # per-claim confidence ceiling now clamps this at RENDER time, so the
+    # packet no longer literally states "confidence: high" for a claim this
+    # was done to -- it states the clamped effective band plus the fact that
+    # the model's own emitted band was capped, which is if anything an even
+    # more legible overconfidence signal for a real reviewer to read.
+    if "model emitted 'high'" in prompt.split("Militia payrolls grew.")[0]:
         defects.append({"claim_id": "c-1", "kind": "overconfident", "note": ""})
     return json.dumps({**_bands("weak"), "defects": defects})
 

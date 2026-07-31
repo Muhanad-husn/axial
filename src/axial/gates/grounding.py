@@ -15,6 +15,21 @@ An unresolvable grounds pointer on an "a" claim is a **gate error**, never
 silently judged "does not support" -- a broken pointer is an attribution-
 fidelity concern (that gate already catches it), not evidence against
 grounding.
+
+**`b_claim_contradiction_rate` (issue #550) is a SEPARATE, reported-only
+number, never folded into `grounding_support_rate`.** 33 of 112 claims
+(29%) across the six smoke-v4 records are kind-"b" -- a cross-source
+inference -- and not one was ever grounding-judged: the sharpest defect the
+sealed peer-review pass found was exactly a (b) claim whose cited passage
+opens "Contrary to Mann's assertion...", the opposite of what the claim
+says. "Does this passage assert the claim" is the wrong bar for an
+inference, which by definition may not be asserted by any single source; the
+bar here is "does any cited passage CONTRADICT it". Reported via
+`GateReport.reported` (`axial.gates.harness`), never `metrics`: no baseline
+distribution has ever been observed, so no threshold is asserted, and this
+number can never fail the gate or block release -- exactly the discipline
+§10.0 already states for source usage, the cross-source rate and
+instant-dismissal violations.
 """
 
 from __future__ import annotations
@@ -45,6 +60,10 @@ GATE_NAME = "grounding"
 _SUPPORTS = "supports"
 _DOES_NOT_SUPPORT = "does_not_support"
 _VERDICTS = frozenset({_SUPPORTS, _DOES_NOT_SUPPORT})
+
+_CONTRADICTS = "contradicts"
+_DOES_NOT_CONTRADICT = "does_not_contradict"
+_CONTRADICTION_VERDICTS = frozenset({_CONTRADICTS, _DOES_NOT_CONTRADICT})
 
 
 class GroundingGateError(Exception):
@@ -160,22 +179,131 @@ def _judge_claim(
     return _parse_judge_response(raw, claim_id)
 
 
-def _iter_a_claims(records: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
-    """Every kind-"a" claim across every record, paired with a best-effort
+def _compose_b_claim_judge_prompt(claim_text: str, grounds_text: str) -> str:
+    """The (b)-claim bar, deliberately different from `_compose_judge_prompt`
+    above (issue #550): a (b) claim is the tool's OWN cross-source inference
+    (§7.4), so "does a single cited passage assert this" is the wrong
+    question -- an inference may be true without any one source stating it.
+    The question this judge answers instead is whether any cited passage
+    CONTRADICTS the claim, which is what a broken (b) claim actually looks
+    like (the sharpest smoke-v4 defect: a claim's own cited passage opens
+    "Contrary to Mann's assertion...", the opposite of what the claim says)."""
+    return f"""You are the independent grounding judge of an analysis engine's rung-3 eval gate (specs/PHASE-B.md §10). You are NOT the model that generated this claim -- you are judging its evidence.
+
+This is a kind-"b" claim: a cross-source INFERENCE the tool drew across two or more sources, not a single source's own assertion. The bar for an inference is not whether a cited passage asserts it outright -- it may not, and still be a sound inference -- but whether any cited passage CONTRADICTS it.
+
+Claim (the tool's own inference):
+"{claim_text}"
+
+Cited grounds (the resolved chunk/artifact text the claim points at):
+"{grounds_text}"
+
+Decide: does any part of the cited grounds text CONTRADICT the claim -- state or clearly imply the opposite of what the claim asserts? Judge only what the grounds text actually says, not whether it goes as far as the claim on its own.
+
+Return ONLY this JSON object, no prose and no code fence:
+{{"verdict": "contradicts"}} or {{"verdict": "does_not_contradict"}}"""
+
+
+def _parse_b_claim_judge_response(raw: str, claim_id: str) -> str:
+    data = parse_model_json(raw)
+    verdict = data.get("verdict") if isinstance(data, dict) else None
+    if verdict not in _CONTRADICTION_VERDICTS:
+        raise GroundingCheckFailedError(
+            f"claim {claim_id!r}: (b)-claim contradiction judge response carries no valid "
+            f"'verdict' in {sorted(_CONTRADICTION_VERDICTS)!r}: {data!r}"
+        )
+    return verdict
+
+
+def _judge_b_claim(
+    claim_text: str,
+    grounds_text: str,
+    claim_id: str,
+    *,
+    client: LLMClient,
+    judge_pass_name: str,
+) -> str:
+    prompt = _compose_b_claim_judge_prompt(claim_text, grounds_text)
+    try:
+        raw = complete_json(client, prompt, pass_name=judge_pass_name)
+    except (LLMError, httpx.HTTPError, ModelJsonError) as exc:
+        raise GroundingCheckFailedError(
+            f"claim {claim_id!r}: (b)-claim contradiction judge call failed: {exc}"
+        ) from exc
+    return _parse_b_claim_judge_response(raw, claim_id)
+
+
+def _iter_claims_of_kind(
+    records: list[dict[str, Any]], kind: str
+) -> list[tuple[str, dict[str, Any]]]:
+    """Every claim of `kind` across every record, paired with a best-effort
     claim_id (falling back to a positional placeholder, mirroring
-    `axial.validators.attribution._claim_id_of`) -- (b)/(c) claims are
-    excluded from the denominator entirely (§10: "computed over (a) claims
-    only")."""
+    `axial.validators.attribution._claim_id_of`). The shared walk behind
+    both `_iter_a_claims` (§10: "computed over (a) claims only") and the
+    (b)-claim contradiction check's own denominator (issue #550) -- one
+    index counter across BOTH kinds, so a claim_id fallback never collides
+    between the two even when a record mixes them."""
     claims: list[tuple[str, dict[str, Any]]] = []
     index = 0
     for record in records:
         for claim in record.get("claims") or []:
             index += 1
-            if claim.get("kind") != "a":
+            if claim.get("kind") != kind:
                 continue
             claim_id = claim.get("claim_id") or f"<claim #{index}>"
             claims.append((claim_id, claim))
     return claims
+
+
+def _iter_a_claims(records: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+    """Every kind-"a" claim across every record -- (b)/(c) claims are
+    excluded from `grounding_support_rate`'s denominator entirely (§10:
+    "computed over (a) claims only")."""
+    return _iter_claims_of_kind(records, "a")
+
+
+def _iter_b_claims(records: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+    """Every kind-"b" claim across every record -- the (b)-claim
+    contradiction check's own denominator (issue #550), kept separate from
+    `grounding_support_rate` because the two ask different questions and
+    must never average together."""
+    return _iter_claims_of_kind(records, "b")
+
+
+def _b_claim_contradiction_rate(
+    b_claims: list[tuple[str, dict[str, Any]]],
+    *,
+    client: LLMClient,
+    vault_dir: Path | None,
+    judge_pass_name: str,
+) -> dict[str, Any]:
+    """The reported-only (b)-claim measure (issue #550, module docstring):
+    the share of kind-"b" claims where SOME cited passage contradicts the
+    claim. Raises `UnresolvableGroundsError`/`GroundingCheckFailedError`
+    exactly like the (a)-claim judge -- a broken pointer or a failed judge
+    call is a gate error here too, never silently swallowed into a
+    "does_not_contradict" verdict."""
+    contradicted: list[str] = []
+    for claim_id, claim in b_claims:
+        grounds_text = _resolve_grounds_text(claim, claim_id, vault_dir=vault_dir)
+        verdict = _judge_b_claim(
+            claim.get("text", ""),
+            grounds_text,
+            claim_id,
+            client=client,
+            judge_pass_name=judge_pass_name,
+        )
+        if verdict == _CONTRADICTS:
+            contradicted.append(claim_id)
+
+    denominator = len(b_claims)
+    return {
+        "value": (len(contradicted) / denominator) if denominator else None,
+        "numerator": len(contradicted),
+        "denominator": denominator,
+        "contradicted_claim_ids": contradicted,
+        **({} if denominator else {"reason": "no (b) claims found to evaluate"}),
+    }
 
 
 def run_grounding_gate(
@@ -189,14 +317,19 @@ def run_grounding_gate(
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
 ) -> GateReport:
     """Score `grounding_support_rate` over every kind-"a" claim in
-    `records`. Raises `SelfGradingError` before any judge call is made when
-    `judge_pass_name` resolves to the same model as `SYNTHESIZE_PASS_NAME`;
-    raises `UnresolvableGroundsError` when an "a" claim's grounds pointer
-    does not resolve; raises `GroundingCheckFailedError` when the judge's
-    own call or response fails."""
+    `records`, plus the reported-only `b_claim_contradiction_rate` (issue
+    #550, module docstring) over every kind-"b" claim -- a separate number,
+    never averaged into the (a)-claim rate and never gating release (`
+    GateReport.reported`, not `metrics`). Raises `SelfGradingError` before
+    any judge call is made when `judge_pass_name` resolves to the same model
+    as `SYNTHESIZE_PASS_NAME` (checked once, since both measures share the
+    one judge pass); raises `UnresolvableGroundsError` when a claim's
+    grounds pointer does not resolve; raises `GroundingCheckFailedError`
+    when the judge's own call or response fails."""
     a_claims = _iter_a_claims(records)
+    b_claims = _iter_b_claims(records)
 
-    if a_claims:
+    if a_claims or b_claims:
         synthesis_model = client.model_for_pass(SYNTHESIZE_PASS_NAME)
         judge_model = client.model_for_pass(judge_pass_name)
         if judge_model == synthesis_model:
@@ -222,9 +355,15 @@ def run_grounding_gate(
         config_path=config_path,
         empty_denominator_fails=True,
     )
+    reported = {
+        "b_claim_contradiction_rate": _b_claim_contradiction_rate(
+            b_claims, client=client, vault_dir=vault_dir, judge_pass_name=judge_pass_name
+        )
+    }
     return GateReport(
         gate=GATE_NAME,
         corpus_pin=corpus_pin,
         trusted=trusted,
         metrics=[metric],
+        reported=reported,
     )

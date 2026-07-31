@@ -5,16 +5,26 @@ Reads a persisted §7.3 analysis record and reports pass/fail, never editing
 it -- same "never edits the record" contract as the attribution validator
 (src/axial/validators/attribution.py). Two checks, run in this order:
 
-1. **Contested predicate (mechanical), from what the notes say (D3).**
-   Whether the brief is contested is determined from corpus signal, never
-   the brief's wording (§7.8). The union of chunk-typed grounds cited across
-   every claim ("this run's evidence", the same union §7.7's coverage map
-   reads) is resolved through the query API and its interrogation answers
-   inspected. Contested when either fires, checked in this order:
+1. **Contested predicate (mechanical), from what the notes say (D3, issue
+   #550).** Whether the brief is contested is determined from corpus
+   signal, never the brief's wording (§7.8). The union of chunk-typed
+   grounds cited across every claim ("this run's evidence", the same union
+   §7.7's coverage map reads) is resolved through the query API and its
+   interrogation answers inspected. Contested when any fires, checked in
+   this order:
    - **opposed_positions** -- two grounds notes state different positions
      and one of them NAMES the other's side in its `arguing_against`: the
      other's stated position, the other's author, or a name the other note
      itself names. Matching is literal, through the alias map alone.
+   - **names_opponent** (issue #550) -- a grounds note's own `arguing_against`
+     is non-empty at all, with no pairing required. This catches the
+     opposition a single passage states and rejects on its own -- Caspersen
+     reporting Pegg's position and rejecting it, where Pegg is not an author
+     in this corpus and so never forms a pair under `opposed_positions`.
+     Every note `opposed_positions` counts already satisfies this clause too
+     (a paired note's `arguing_against` is necessarily non-empty), so this
+     path is checked second and only adds notes the first path could not
+     pair.
    - **gather_disagreement** -- a name this run both retrieved on and
      grounded a claim in carries a Gather disagreement section
      (`specs/PRODUCT.md` §7.18). A hint only, per D4: it decides that the
@@ -35,21 +45,38 @@ differ" is true of 99% of names and discriminates nothing; no count
 threshold rescues it. `arguing_against` separates at 1.9x-2.4x over a 0.26
 base rate, but **only when "names the other side" is implemented
 literally** -- read loosely as "an `arguing_against` exists" it is a 1.00x
-no-op. So the differing-positions clause is a guard against a note counting
-as arguing with itself, and the literal naming is what fires.
+no-op FOR `opposed_positions` SPECIFICALLY, which is why that clause still
+requires a pairable other side. So the differing-positions clause is a
+guard against a note counting as arguing with itself, and the literal
+naming is what fires `opposed_positions`.
+
+**`names_opponent` is deliberately the loose reading, on its own path
+(issue #550, measured over six smoke-v4 records, `data/logs/
+2026-07-31-panel-smoke-v4/`).** 74 of 86 grounds notes (86%) name an
+opponent in their own `arguing_against`, and one brief (S-04) printed
+"Counter-position: (none disclosed)" while 14 of its own cited notes named
+one, because none of them paired. Contested is therefore near-universal for
+this corpus by construction once `names_opponent` is added -- correct for a
+corpus of academic argument, where most passages argue against someone --
+which is exactly why the §7.8 prompt states which signal fired rather than
+asserting a selective "mechanically flagged" verdict (see
+`_describe_contested_signal` in `axial.analyze.synthesis`).
 
 **Two abstentions must never compare as different positions.** `[]` is an
 answer and 19.3% of notes give it on `arguing_against`; only 4.9% abstain
 there, and 23.6% abstain on `position_of`. The predicate applies
 `axial.query.reader.is_abstention` -- 04's one shared predicate, imported,
-never reimplemented -- before reading any answer.
+never reimplemented -- before reading any answer. This binds `names_opponent`
+identically to `opposed_positions`: `_opposition_surfaces` is the one shared
+reading both paths use.
 
 **Recall is capped and that is a stated limit, not a bug.** The measurement
-puts this predicate's recall at 0.35-0.59: a disagreement the corpus states
-only implicitly is not seen. Contested stays a boolean anyway (two contracts
-block on it, this validator's own presence check and #405's one-sided
-outcome), so the validator requires a counter-position exactly where it sees
-the disagreement, and nowhere else.
+puts `opposed_positions`' own recall at 0.35-0.59: a disagreement the corpus
+states only implicitly, in neither side's own `arguing_against`, is still not
+seen by any of the three paths. Contested stays a boolean anyway (two
+contracts block on it, this validator's own presence check and #405's
+one-sided outcome), so the validator requires a counter-position exactly
+where it sees the disagreement, and nowhere else.
 
 A **bounded model steelman-quality check**, anchored to the counter-position
 `grounds` text and run under its own `pass_name` (never the generating
@@ -78,9 +105,10 @@ from axial.query.names import (
 from axial.query.reader import ChunkNotFoundError, ChunkNote, get_chunk, is_abstention
 from axial.validators.coverage import coverage_scope
 
-# The two contested signals this validator ever persists -- a fixed, small
+# The three contested signals this validator ever persists -- a fixed, small
 # vocabulary (mirrors attribution.py's REASON_* constants), never open text.
 SIGNAL_OPPOSED_POSITIONS = "opposed_positions"
+SIGNAL_NAMES_OPPONENT = "names_opponent"
 SIGNAL_GATHER_DISAGREEMENT = "gather_disagreement"
 
 # The one blocking reason this validator ever reports.
@@ -328,10 +356,35 @@ def opposed_grounds_notes(
     return list(opposed.values())
 
 
+def notes_naming_an_opponent(notes: list[ChunkNote]) -> list[ChunkNote]:
+    """§7.8 path 2, `names_opponent` (issue #550): every grounds note whose
+    own `arguing_against` names an opponent at all, no pairing required --
+    unlike `opposed_grounds_notes` above, the named opponent need not be a
+    note in this run's own evidence. This is what lets Caspersen reporting
+    and rejecting Pegg's position count as stated opposition even though
+    Pegg is not an author in this corpus and so never appears as the
+    `other` side of a pair.
+
+    A strict superset of `opposed_grounds_notes`' arguing side: a paired
+    note's `arguing_against` is necessarily non-empty (that is what let it
+    pair), so every note the paired path counts is already included here.
+    Callers that want the paired-vs-unpaired distinction (candidate
+    ordering, `axial.analyze.synthesis._counter_position_candidates`) check
+    `opposed_grounds_notes` first and treat this as the wider pool.
+
+    First-seen order, deduplicated on `chunk_id`."""
+    seen: dict[str, ChunkNote] = {}
+    for note in notes:
+        if _opposition_surfaces(note):
+            seen.setdefault(note.chunk_id, note)
+    return list(seen.values())
+
+
 def _gather_disagreement_at(
     names: list[str], *, vault_dir: Path | None, names_dir: Path | None = None
 ) -> bool:
-    """§7.8 path 2: one of `names` carries a Gather disagreement section.
+    """§7.8 path 3, `gather_disagreement`: one of `names` carries a Gather
+    disagreement section.
     A retrieval hint, never a citation (D4). Reads only `page.disagreement`,
     parsed off the page's whole body regardless of `limit` (issue #505) --
     the default `get_name` cap on `members` is irrelevant here, unlike
@@ -359,15 +412,17 @@ def detect_contested(
     (issue #399): two implementations of "is this contested" would let the
     generator and the gate that checks it disagree.
 
-    Path 2's name set is the §7.7 coverage scope (`coverage_scope`): the
-    names this run retrieved on that a claim's grounds note is a member of.
-    Not every name in `names_touched` -- a real evidence set's notes name
-    423 distinct canonicals on average, mostly one-off mentions, and a Gather
-    finding at a name the answer merely brushed past says nothing about
-    whether the answer is contested."""
+    `gather_disagreement`'s name set is the §7.7 coverage scope
+    (`coverage_scope`): the names this run retrieved on that a claim's
+    grounds note is a member of. Not every name in `names_touched` -- a real
+    evidence set's notes name 423 distinct canonicals on average, mostly
+    one-off mentions, and a Gather finding at a name the answer merely
+    brushed past says nothing about whether the answer is contested."""
     notes = resolve_grounds_notes(claims, vault_dir=vault_dir)
     if opposed_grounds_notes(notes, names_dir=names_dir):
         return ContestedResult(contested=True, signal=SIGNAL_OPPOSED_POSITIONS)
+    if notes_naming_an_opponent(notes):
+        return ContestedResult(contested=True, signal=SIGNAL_NAMES_OPPONENT)
     scope = coverage_scope([c for c in claims if isinstance(c, dict)], trajectory or [])
     if _gather_disagreement_at(scope, vault_dir=vault_dir, names_dir=names_dir):
         return ContestedResult(contested=True, signal=SIGNAL_GATHER_DISAGREEMENT)
