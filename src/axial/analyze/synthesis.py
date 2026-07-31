@@ -86,10 +86,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 import yaml
@@ -656,6 +657,56 @@ def _dedupe_preserving_order(values: list[str]) -> list[str]:
     return ordered
 
 
+# Matches a `ref_id`'s own trailing per-chunk index component (e.g. the
+# `_002` in `..._59_002`) -- the second anchor `_resolve_head_and_index`
+# needs, once neither existing repair has already resolved a truncated id on
+# its own.
+_TRAILING_INDEX_RE = re.compile(r"_(\d+)$")
+
+
+def _resolve_head_and_index(
+    ref_id: str, *, prefix_finder: Callable[[str], list[str]]
+) -> str | None:
+    """The third truncation repair, shared by `_resolve_truncated_ref_id`
+    (artifact grounds) and `_resolve_counter_position_ground` (counter-
+    position chunk grounds): tried only after each caller's own suffix and
+    prefix repairs have both already failed to find a unique match.
+
+    A real paid eval run died citing `<digest>_59_002`: the model kept the
+    id's head (source digest, order key) AND its trailing per-chunk index,
+    but elided the slug between them. Neither existing repair catches this
+    shape -- the suffix repair's tail anchor (`..._59_002`) matches nothing,
+    because no real id ends with the index alone (the slug always sits
+    between the order key and it); the prefix repair's head anchor
+    (`<digest>_59_002_`) matches nothing either, because `002` is not a
+    component of any real id's head. The two real anchors the model DID keep
+    -- the head and the index -- together identify the chunk uniquely; this
+    repair is what uses both at once.
+
+    Splits `ref_id` at its LAST `_<digits>` component into that head and
+    that index, then requires a real id that starts with the component-
+    bounded head prefix (`f"{head}_"`, same boundary rule the prefix repair
+    already uses, so a head naming section 59 can never reach section 590)
+    AND ends with the index suffix (`f"_{index}"`). This is not a loosening
+    of the anti-confabulation argument the two existing repairs rest on:
+    each anchor alone is exactly as restrictive as it already is on its own
+    repair above, and this only accepts an id that satisfies BOTH
+    simultaneously -- a wider match on either anchor alone is never enough.
+    Returns `None`, never raises, when `ref_id` carries no trailing
+    `_<digits>` component to split on, or when 0 or 2+ real ids satisfy both
+    anchors at once: the caller keeps raising its own hard error exactly as
+    it did before this repair existed, so ambiguity or absence stays exactly
+    as firm a failure as an exact-match miss always was."""
+    match = _TRAILING_INDEX_RE.search(ref_id)
+    if match is None or not ref_id[: match.start()]:
+        return None
+    head = ref_id[: match.start()]
+    trailing_index = match.group(1)
+    candidates = prefix_finder(f"{head}_")
+    matches = [candidate for candidate in candidates if candidate.endswith(f"_{trailing_index}")]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _resolve_truncated_ref_id(
     index: int, text: Any, ref_type: str, ref_id: str, *, vault_dir: Path | None
 ) -> str:
@@ -666,17 +717,22 @@ def _resolve_truncated_ref_id(
     truncation, not a pipeline bug (a real benchmark run's succeeding claims
     cited the full id correctly).
 
-    Two symmetric repairs, tried in that order: the SOLE real id ending with
-    `ref_id` (the model dropped the long human-readable head), then the SOLE
-    real id starting with `f"{ref_id}_"` (issue #524: the model kept the head
-    and dropped the slug and index). Neither is a loosening of
+    Three repairs, tried in that order: the SOLE real id ending with
+    `ref_id` (the model dropped the long human-readable head), the SOLE real
+    id starting with `f"{ref_id}_"` (issue #524: the model kept the head and
+    dropped the slug and index), then `_resolve_head_and_index` (the model
+    kept BOTH the head and the trailing index and dropped only the slug
+    between them -- see that function's own docstring for the production
+    failure that motivated it). None of the three is a loosening of
     anti-confabulation. A cited tail carries the source's 12-hex content
     digest plus the chunk's order key, slug and index, unique across the
     corpus in practice; a cited head carries the digest and order key, and
     the trailing separator makes the boundary a component boundary, so a head
-    naming section 18 can never reach section 180. A genuinely hallucinated
-    id will not happen to match exactly one real id at either end. Zero or 2+
-    matches raise `UnresolvableGroundError` unchanged -- ambiguity or absence
+    naming section 18 can never reach section 180; the third repair pins
+    both of those same anchors to one real id at once, never loosening
+    either on its own. A genuinely hallucinated id will not happen to match
+    exactly one real id under any of the three. Zero or 2+ matches at every
+    repair raise `UnresolvableGroundError` unchanged -- ambiguity or absence
     is still a hard error, never guessed at."""
     if ref_type == "chunk":
         suffix_finder, prefix_finder = find_chunk_ids_ending_with, find_chunk_ids_starting_with
@@ -690,6 +746,13 @@ def _resolve_truncated_ref_id(
     if len(matches) != 1:
         matches = prefix_finder(f"{ref_id}_", vault_dir=vault_dir)
         kind = "prefix"
+    if len(matches) != 1:
+        head_index_match = _resolve_head_and_index(
+            ref_id, prefix_finder=lambda prefix: prefix_finder(prefix, vault_dir=vault_dir)
+        )
+        if head_index_match is not None:
+            matches = [head_index_match]
+            kind = "head+index"
     if len(matches) != 1:
         raise UnresolvableGroundError(index, text, ref_type, ref_id)
 
@@ -1176,16 +1239,24 @@ Return ONLY this JSON object, no prose and no code fence:
 
 def _resolve_counter_position_ground(ref_id: str, *, vault_dir: Path | None) -> str:
     """Resolve one counter-position grounds `ref_id` against the vault --
-    exact match first, then the two truncated-citation repairs (mirrors
-    `_resolve_truncated_ref_id`'s own pair exactly, DEC-42: ids run to ~200
-    chars and a model drops either end even when shown the full id, as here).
-    The head-truncation repair is what issue #524 added, after a live brief
-    died at this line after 998.6s of paid work on
-    `caspersen-2012-fbc0efe4fffc_18`. Raises
-    `UnresolvableCounterPositionGroundError` -- not `UnresolvableGroundError`,
-    whose message names a "claim", misleading for a section that is not
-    one -- on zero or 2+ matches at either end, exactly as firm as an
-    exact-match miss."""
+    exact match first, then the same three truncated-citation repairs
+    `_resolve_truncated_ref_id` applies (mirrors that function's own set
+    exactly, DEC-42: ids run to ~200 chars and a model drops part of one even
+    when shown the full id, as here). The head-truncation (prefix) repair is
+    what issue #524 added, after a live brief died at this line after 998.6s
+    of paid work on `caspersen-2012-fbc0efe4fffc_18`; the third,
+    `_resolve_head_and_index`, is what a later paid run needed after it died
+    citing `malesevic-2007-323a2518e61b_59_002` -- head and index both kept,
+    only the slug between them dropped, a shape neither of the first two
+    repairs resolves (see that function's own docstring). Kept in lockstep
+    with `_resolve_truncated_ref_id` deliberately: this section's chunk
+    grounds carry the identical ~200-char ids and the identical model
+    truncation behaviour as that path's artifact grounds, so a repair added
+    to one and not the other would leave the two silently diverging on the
+    same failure mode. Raises `UnresolvableCounterPositionGroundError` --
+    not `UnresolvableGroundError`, whose message names a "claim", misleading
+    for a section that is not one -- on zero or 2+ matches at every repair,
+    exactly as firm as an exact-match miss."""
     try:
         get_chunk(ref_id, vault_dir=vault_dir)
         return ref_id
@@ -1196,6 +1267,14 @@ def _resolve_counter_position_ground(ref_id: str, *, vault_dir: Path | None) -> 
     if len(matches) != 1:
         matches = find_chunk_ids_starting_with(f"{ref_id}_", vault_dir=vault_dir)
         kind = "prefix"
+    if len(matches) != 1:
+        head_index_match = _resolve_head_and_index(
+            ref_id,
+            prefix_finder=lambda prefix: find_chunk_ids_starting_with(prefix, vault_dir=vault_dir),
+        )
+        if head_index_match is not None:
+            matches = [head_index_match]
+            kind = "head+index"
     if len(matches) != 1:
         raise UnresolvableCounterPositionGroundError(ref_id)
     resolved_id = matches[0]
