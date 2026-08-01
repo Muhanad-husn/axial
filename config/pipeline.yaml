@@ -349,13 +349,30 @@ retrieve:
 # _resolve_evidence_char_budget, falling back to its own
 # DEFAULT_EVIDENCE_CHAR_BUDGET when this file or the key is absent.
 # Character-based, not a real token count (~4 chars/token is a standard
-# rough English-prose estimate): 100_000 chars is roughly 25k tokens of
-# evidence text, conservative headroom under a 128k-class context window
-# even after the 60k-token completion reservation. [TENTATIVE], mirroring
-# step_budget/thin_result_floor's own starting-value status -- not yet
-# measured against a real brief run.
+# rough English-prose estimate).
+#
+# MEASURED against real brief runs (issue #572), which replaced the earlier
+# [TENTATIVE] 100_000. That figure was sized as headroom under "a 128k-class
+# context window"; every model this pipeline routes to now carries a 1M
+# context, so the window was never the binding constraint -- the number was.
+#
+# What 100_000 actually did: it admitted ~20 notes, and since the assembled
+# order is source round-robin (issue #517 slice 2), those 20 were 20 DISTINCT
+# positions carrying ONE note each. An answer built from twenty single
+# passages has no second witness for anything, which is what two sealed peer
+# reviewers independently described as source facts with an inference welded
+# on. Measured over a real evidence set: mean note 4,478 chars, median 4,212,
+# p90 6,626, max 8,410 -- so 100_000 -> 20 notes, 200_000 -> 44, 250_000 ->
+# 56, 400_000 -> 89.
+#
+# 250_000 is the first setting at which anything gets a second note: the
+# ~44 landed and corridor positions each take one, then the strongest dozen
+# take a second. Cost is real and linear -- roughly $0.15 of synthesis per
+# brief against $0.13 at 200_000 -- and the per-chunk interrogation answers
+# nearly double the payload, so 250_000 chars of evidence composes a ~485k
+# char prompt. Raise this further only with the same measurement in hand.
 synthesis:
-  evidence_char_budget: 100000
+  evidence_char_budget: 250000
 
 # Contested detection has no numeric knob any more (issue #490, D3). The
 # `contested_detection.min_distinct_theory_schools` block that lived here

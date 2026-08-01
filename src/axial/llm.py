@@ -1614,7 +1614,17 @@ _REQUEST_TIMEOUT = httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=15.0
 # exactly like an `httpx.ReadTimeout`, and retried within the existing
 # budget. Set well above `_REQUEST_TIMEOUT.read` (180s) so a legitimately
 # slow-but-progressing real completion is never penalized by this ceiling.
-_REQUEST_DEADLINE_SECONDS = 300.0
+#
+# RAISED 300 -> 600 (issue #572). A legitimately slow completion WAS penalized
+# by it: with `synthesis.evidence_char_budget` at its measured value the
+# synthesis prompt runs ~485k chars (~100k prompt tokens), and a real run's
+# first attempt self-aborted at exactly 300.02s before the retry completed the
+# same call in 40.6s. That is one wasted paid attempt per large brief, which
+# is the failure this ceiling exists to prevent, not to cause. 600s keeps the
+# watchdog doing its actual job -- catching an attempt stalled at 0% CPU that
+# httpx's per-read timer would never fail -- while leaving a large, reasoning-
+# heavy completion room to finish.
+_REQUEST_DEADLINE_SECONDS = 600.0
 
 # HTTP connection-pool size. httpx's own defaults are 100 concurrent
 # connections but only 20 KEPT ALIVE, which is wrong for how every concurrent
