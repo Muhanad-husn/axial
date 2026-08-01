@@ -8,7 +8,11 @@
 
 > **FOUNDER RULING 2026-08-01, and it moves a boundary rather than a detail.** A Phase-B answer must itself read as an argued paper, not as a bulleted claim inventory. The evidence is the rendered answer: smoke-v5's S-01 puts its own thesis — *"the available evidence supports the conclusion that Mann's distinction merely specifies… rather than overturning it"* — in the **twelfth of twelve bullets**, after eleven premises in retrieval order, and then renders `usage_ratio=22.954545454545453` beneath them. The material of a paper is all present and none of it is arranged. A user who asks a question and receives that has been handed the parts.
 >
-> **So the prose layer is common infrastructure, not Phase C's private machinery.** Arc planning, drafting, the citation index, the bibliography and rendering must serve **one** analysis record as readily as several, and **Phase B owns the single-record case** — `axial ask` renders through the same layer with one record, not through a second implementation of it. Building that layer inside Phase C first would have built it twice.
+> **So the prose layer must serve one analysis record as readily as several.** Arc planning, drafting, the citation index, the bibliography and rendering all take a *list* of records, and a list of one is not a special case. That is what stops the machinery being written twice.
+>
+> **REVISED the same day, on the founder's second reading, and this supersedes what stood here.** The first version of this ruling put the prose layer in Phase B and had `axial ask` render through it immediately. That is the riskier order. Phase B was closed and benchmarked one day earlier; smoke-v6 and eval-v2 are the standing baseline, the sealed panel's packets are built from the **rendered** answer (§7.7), and re-rendering it changes what every prior reviewer read and what every prior number means. Reopening a just-measured layer to restructure its output is the polishing-past-the-bar the handbook names as a process bug.
+>
+> **The layer is therefore built here, in `paper/`, and Phase B is not reopened now.** This costs nothing that the first version bought: the duplication it guarded against is prevented by the record-count-agnostic signature, not by which phase holds the file. If Phase B later routes `axial ask` through it, that is a call plus a mechanical module move — no design decision is deferred and none is pre-made. A neutral shared home is **not** built ahead of a second caller (over-engineering tripwire: an abstraction with one implementation).
 >
 > **What this leaves Phase C is what it always actually was:** an arc across *several* analyses, and the cross-source (b) claims that span them. That is a narrower and truer definition than "the layer where prose happens". Nothing else in this spec changes shape — the paper record, the confidence ceiling, the four gates, the contested predicate and the panel all still describe the multi-record case. What changes is where three of the five stages **live**, which is settled here and specified in Phase B.
 >
@@ -104,7 +108,9 @@ Like every phase beneath it, the mechanism is domain-general and the content is 
 
 **Five pipeline stages**, each independently testable. Stages 1, 4, and 5 are deterministic and make zero model calls. The coherence eval track is not a pipeline stage and is specified in §10.2.
 
-**Stages 2 through 5 are the shared prose layer** (the 2026-08-01 ruling, §0). They are specified here because Phase C is their multi-record caller, and they are **built and owned in Phase B**, which needs the identical machinery to render one analysis record as an argued answer. Phase C supplies what only it has: an inventory spanning several records, an arc across them, and new (b) claims that reason between them. Where a rule below says "the drafter" or "the renderer", it binds the shared layer under Phase C's inputs — it does not describe a second implementation. **Stage 1 is Phase C's alone**, because resolving several records to one pin and building an inventory across them is a question a single-record answer never asks.
+**Stages 2 through 5 are the prose layer, and they are built here** (the 2026-08-01 ruling as revised, §0). Every one of them takes a **list** of analysis records, and a list of one is an ordinary input rather than a special case — that signature is what keeps the machinery from being written a second time if Phase B later renders its own answers through it. Phase B is not reopened to do that now.
+
+**Stage 1 is the one stage a single-record caller would not need**: resolving several records to one pin, rejecting a refusal or a mixed-pin set, and building an inventory keyed by `(brief_id, claim_id)` are questions a single answer never asks. Everything downstream of it reads the inventory and does not care how many records fed it.
 
 1. **Paper-brief intake (deterministic).** Reads the paper brief (§7.1), resolves every named analysis record, verifies they share one `corpus_pin`, and rejects a brief naming a missing record, a refused record, or a mixed-pin set. Builds the **claim inventory**: every claim across every named record, keyed by `(brief_id, claim_id)`.
 2. **Arc planning (model).** Emits the **paper plan** (§7.2): an ordered list of sections, each with a heading, an argumentative role, and the inventory claims assigned to it. No prose is written at this stage, and the plan is inspectable before any drafting call is paid for.
@@ -122,12 +128,12 @@ Scaffold to this shape; adjust only with reason. Extends the Phase-A (`PRODUCT.m
 
 ```
 src/axial/
-  paper/        # Phase C's OWN half: paper-brief intake, record resolution,
-                # the claim inventory, the unioned coverage map, the paper
-                # record and its persistence (stage 1, and stage 5's
-                # multi-record parts). The prose layer it calls -- arc plan,
-                # draft, citation index, bibliography, render -- is shared
-                # with Phase B and lives where Phase B puts it (§0, §5).
+  paper/        # all five stages: paper-brief intake, record resolution, the
+                # claim inventory, arc plan, draft, citation index,
+                # bibliography, render, the paper record and its persistence.
+                # Stages 2-5 take a LIST of analysis records and a list of one
+                # is not a special case, so Phase B can later render through
+                # them without any of this being rewritten (§0, §5).
   panel/        # EXISTING (PHASE-B §9.4, issue #385): the OFFLINE coherence
                 # eval track (§10.2) -- packet, vendor, review, control, run.
                 # Phase C adds a paper-shaped packet builder and two finding
