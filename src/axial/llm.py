@@ -222,6 +222,15 @@ PRODUCTION_INTERROGATE_TIER = "production_interrogate"
 PRODUCTION_BRIEF_INTERROGATE_TIER = "production_brief_interrogate"
 PRODUCTION_RETRIEVE_TIER = "production_retrieve"
 PRODUCTION_COUNTER_POSITION_TIER = "production_counter_position"
+
+# Phase C's two model-calling passes, one tier each on the same rule
+# (specs/PHASE-C.md §7.12). Both must be registered in TIER_TO_MODEL_KEY
+# below as well: a tier is three legs, not two -- the constant here, the
+# secrets.toml key it names, and the config/pipeline.yaml entry routing a pass
+# to it. Naming a tier in config and secrets alone fails with "unknown model
+# tier", which is the right failure and a confusing one to meet cold.
+PRODUCTION_PAPER_PLAN_TIER = "production_paper_plan"
+PRODUCTION_PAPER_DRAFT_TIER = "production_paper_draft"
 DEFAULT_LLM_TIER = BUILDING_TIER
 
 # Fallback model used only when secrets.toml doesn't name one for the
@@ -320,6 +329,28 @@ COUNTER_POSITION_GENERATE_PASS_NAME = "counter_position_generate"
 # must resolve to a DIFFERENT model than SYNTHESIZE_PASS_NAME, never the
 # model that generated the claims it is checking (§7.9, charter §2).
 ATTRIBUTION_PASS_NAME = "attribution"
+
+# Pass name Phase C's stage-2 arc-planning call identifies itself with (see
+# src/axial/paper/plan.py, specs/PHASE-C.md §7.2/§7.12): it emits the ordered
+# sections, their roles and their assigned claims, and no prose at all, so a
+# plan is inspectable before a single drafting dollar is spent. Named
+# separately from PAPER_DRAFT_PASS_NAME below for the same reason
+# COUNTER_POSITION_GENERATE_PASS_NAME is named separately from
+# SYNTHESIZE_PASS_NAME -- the two return differently-shaped JSON, and a
+# stub-driven test scripting one must never leak into the other. §7.12 says a
+# cheaper tier may suffice here, since this pass emits structure rather than
+# prose; that is a config choice, not a code one.
+PAPER_PLAN_PASS_NAME = "paper_plan"
+
+# Pass name Phase C's stage-3 drafting call identifies itself with (see
+# src/axial/paper/draft.py, specs/PHASE-C.md §7.2/§7.12). Called ONCE PER
+# SECTION rather than once per paper (§4): Phase B measured that ~20 notes
+# reach a model however many are supplied (PHASE-B P2-7), so a whole-inventory
+# prompt would have a tail nothing reads. This is the pass Phase C's grounding
+# and (b)-seam gates re-anchor their self-grading guards to, where Phase B's
+# anchor is SYNTHESIZE_PASS_NAME (§10.1) -- so it must be routable, and a
+# judge must never resolve to whatever this resolves to.
+PAPER_DRAFT_PASS_NAME = "paper_draft"
 
 # Pass name the stage-5 counter-position validator's bounded steelman-quality
 # check identifies itself with (see src/axial/validators/counter_position.py,
@@ -443,6 +474,12 @@ DEFAULT_REASONING_BY_PASS: dict[str, bool | str] = {
     CONTENT_APPARATUS_PASS_NAME: True,
     HOLDINGS_PASS_NAME: True,
     SYNTHESIZE_PASS_NAME: True,
+    # §7.12: drafting is the judgment-heavy pass, high tier with reasoning ON,
+    # for the same reason synthesis is. Arc planning is deliberately absent
+    # rather than set False -- it emits structure, and whether it needs
+    # reasoning is a measurement nobody has made, so it keeps the client's own
+    # default instead of a guess hardcoded here.
+    PAPER_DRAFT_PASS_NAME: True,
     # §7.9: OFF by default, matching every other high-volume per-note pass
     # (#147). The 50-output sample gate is where that default is tested; if
     # the sample shows the answers need reasoning, turning it on is a config
@@ -2520,6 +2557,8 @@ TIER_TO_MODEL_KEY = {
     PRODUCTION_BRIEF_INTERROGATE_TIER: "production_brief_interrogate",
     PRODUCTION_RETRIEVE_TIER: "production_retrieve",
     PRODUCTION_COUNTER_POSITION_TIER: "production_counter_position",
+    PRODUCTION_PAPER_PLAN_TIER: "production_paper_plan",
+    PRODUCTION_PAPER_DRAFT_TIER: "production_paper_draft",
 }
 
 

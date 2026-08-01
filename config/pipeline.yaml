@@ -204,6 +204,34 @@ llm:
     # changes by default; the closed-source arm is what needs the two split,
     # putting synthesis on one model and this pass on another.
     counter_position_generate: production_counter_position
+    # Phase-C stage-3 drafting (specs/PHASE-C.md §7.12): its own tier, for the
+    # same reason `synthesize` has one -- it is the judgment-heavy pass of its
+    # layer, and it must be able to move without moving Phase B's synthesis
+    # model, which is the standing smoke-v6 / eval-v2 baseline. Requires a
+    # `production_paper_draft` key in secrets.toml; without one this pass
+    # alone fails loudly (src/axial/llm.py, _resolve_model_by_pass), which is
+    # the intended behaviour rather than a silent fallback to flash.
+    #
+    # NOT hardcoded to a concrete model here (DEC-26), and NOT assumed to be
+    # the closed frontier tier: Phase B's two-arm eval had the all-open wiring
+    # win at 2.3x less money on one draw, four models swapped at once, so
+    # which model backs this tier is a measurement the first dev papers make,
+    # not a preference this file settles.
+    paper_draft: production_paper_draft
+    # Phase-C stage-2 arc planning (§7.12). Founder direction 2026-08-01:
+    # upgraded off the default flash tier to pro, before any measurement
+    # rather than after one. The reasoning §7.12 carried -- "it emits
+    # structure, not prose, so a cheaper tier may suffice" -- reads the pass
+    # backwards. Deciding the arc IS the judgment: which claims earn a
+    # section, what order makes each section earn the next, and where the
+    # counter-position goes. The drafter only writes what this pass decided,
+    # and `retrieve` already made this mistake once -- it sat on flash on the
+    # same "it only picks" reasoning, and the tier turned out to decide
+    # whether the run reached 2 sources or 12.
+    #
+    # Its own tier rather than a shared one, per the one-tier-per-pass rule
+    # (#549), so planning and drafting can move independently.
+    paper_plan: production_paper_plan
     # Phase A v1 per-note interrogation (§7.9/§7.15, D14, issue #419): its
     # own tier, resolving to z-ai/glm-5.2 in secrets.toml. Not
     # production_high (deepseek-v4-pro, the envelope pass) and not
