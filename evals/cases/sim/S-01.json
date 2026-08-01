@@ -5,18 +5,37 @@
     "persona": "smoke-v2",
     "reasoning_mode_confirmed": "reasoning",
     "date": "2026-07-30",
-    "path_version": "sim-v1"
+    "path_version": "sim-v1",
+    "required_sources_derived": "legs are authored per question demand -- Mann's power distinction, Tilly's war-centred account, and the European setting the question puts them in -- with the live name index at pin sim-2026-07-30 read as evidence, not a count rule. Mann's despotic/infrastructural distinction is satisfied by mann-v1..v4, the theorist's own volumes, never a book about Mann. Tilly's war-centred account is carried by tilly-1978 and malesevic-2026, whose bellicist material inherits from Tilly. European nation-state formation as the setting is carried by wimmer-2013 and malesevic-2013, wherever the historical ground is established independent of the two-scholar dispute the first two legs already test. Re-derived 2026-08-01 (issue #564): this case carried no derivation note, and its flat five-id AND list produced a false read on its own persisted smoke-v5 record -- scored 2/5, counting mann-v2-1993, tilly-1978 and malesevic-2010 as missed while the run cited mann-v3-2012, malesevic-2013 and malesevic-2026, other volumes by the same two authors. Wrong-volume false misses, not retrieval failures."
   },
   "case_id": "S-01",
   "question": "Does Michael Mann's distinction between infrastructural and despotic power overturn Charles Tilly's war-centred account of European nation-state formation, or merely specify its mechanisms?",
   "answer_kind": "rubric",
   "expected_answer": "",
-  "required_citation_source_ids": [
-    "hall-2006-449559bfe4dc",
-    "mann-v2-1993-ec759675dcbd",
-    "tilly-1978-f908c910464c",
-    "malesevic-2010-fd2cbe41384f",
-    "malesevic-2013-5d3ec1809b12"
+  "required_citation_legs": [
+    {
+      "leg": "Mann's despotic/infrastructural distinction",
+      "any_of": [
+        "mann-v1-2012-5f90ead66c93",
+        "mann-v2-1993-ec759675dcbd",
+        "mann-v3-2012-3e9f48ff605a",
+        "mann-v4-2013-1b7e828e0199"
+      ]
+    },
+    {
+      "leg": "Tilly's war-centred account of state formation",
+      "any_of": [
+        "tilly-1978-f908c910464c",
+        "malesevic-2026-4faeb528594d"
+      ]
+    },
+    {
+      "leg": "European nation-state formation as the setting",
+      "any_of": [
+        "wimmer-2013-a67941b77943",
+        "malesevic-2013-5d3ec1809b12"
+      ]
+    }
   ],
   "rubric": [
     "distinguishes Mann's infrastructural and despotic power from Tilly's war-centred account rather than treating the vocabularies as interchangeable",

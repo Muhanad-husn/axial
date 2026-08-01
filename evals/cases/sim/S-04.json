@@ -5,15 +5,21 @@
     "persona": "smoke-v2",
     "reasoning_mode_confirmed": "reasoning",
     "date": "2026-07-30",
-    "path_version": "sim-v1"
+    "path_version": "sim-v1",
+    "required_sources_derived": "one leg, the question's single demand -- Transnistria-specific evidence for non-recognition's effect on internal state-building -- with the live name index at pin sim-2026-07-30 read as evidence, not a count rule. Transnistria is 36 notes across exactly two sources, caspersen-2012 holding 35 and ungor-2020 holding one -- the only cross-book contact this case has. Re-derived 2026-08-01 (issue #564): the prior flat two-id AND list required both, scoring the case 1/2 on its own persisted smoke-v5 record for missing ungor-2020, a single note against caspersen-2012's 35. Requiring a single note as its own demand was not a demand the question makes, so the leg is now reached by either source. This makes S-04 a single-leg case -- that is the corpus, not an error; specs/PHASE-B.md §9.0 keeps it in the set to measure whether a run notices thin, single-source evidence unprompted."
   },
   "case_id": "S-04",
   "question": "How has non-recognition shaped Transnistria's internal state-building, and what can be established about that case specifically rather than about post-Soviet unrecognized states in general?",
   "answer_kind": "rubric",
   "expected_answer": "",
-  "required_citation_source_ids": [
-    "caspersen-2012-fbc0efe4fffc",
-    "ungor-2020-ae5701dcc706"
+  "required_citation_legs": [
+    {
+      "leg": "the Transnistria case",
+      "any_of": [
+        "caspersen-2012-fbc0efe4fffc",
+        "ungor-2020-ae5701dcc706"
+      ]
+    }
   ],
   "rubric": [
     "synthesizes the Transnistria-specific evidence and discloses how narrow the evidence base is",

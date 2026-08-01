@@ -5,16 +5,32 @@
     "persona": "smoke-v2",
     "reasoning_mode_confirmed": "reasoning",
     "date": "2026-07-30",
-    "path_version": "sim-v1"
+    "path_version": "sim-v1",
+    "required_sources_derived": "legs are authored per question demand -- Jackson's originating concept, later accounts of recognition, international statebuilding -- with the live name index at pin sim-2026-07-30 read as evidence, not a count rule. Across the three anchors (quasi-states, Robert H. Jackson, sovereignty) jackson-1990, caspersen-2012 and zaum-2007 are the only sources carrying more than 3 notes, one leg per anchor with no split candidates. Re-derived 2026-08-01 (issue #564) onto the leg form; the prior flat three-id list already scored 3/3 on its own persisted smoke-v5 record and is unchanged in substance, only in shape."
   },
   "case_id": "S-03",
   "question": "How do later accounts of sovereignty, recognition and international statebuilding modify Jackson's concept of quasi-states: do they narrow it, extend it, or contest what it was meant to explain?",
   "answer_kind": "rubric",
   "expected_answer": "",
-  "required_citation_source_ids": [
-    "jackson-1990-7eb3f39a639f",
-    "caspersen-2012-fbc0efe4fffc",
-    "zaum-2007-834d3343aa95"
+  "required_citation_legs": [
+    {
+      "leg": "Jackson's quasi-states",
+      "any_of": [
+        "jackson-1990-7eb3f39a639f"
+      ]
+    },
+    {
+      "leg": "later accounts of recognition",
+      "any_of": [
+        "caspersen-2012-fbc0efe4fffc"
+      ]
+    },
+    {
+      "leg": "international statebuilding",
+      "any_of": [
+        "zaum-2007-834d3343aa95"
+      ]
+    }
   ],
   "rubric": [
     "establishes the originating problem posed by quasi-states without allowing Jackson's book to stand in for the whole concept",

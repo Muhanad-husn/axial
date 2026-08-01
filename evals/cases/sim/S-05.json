@@ -5,14 +5,20 @@
     "persona": "smoke-v2",
     "reasoning_mode_confirmed": "reasoning",
     "date": "2026-07-30",
-    "path_version": "sim-v1"
+    "path_version": "sim-v1",
+    "required_sources_derived": "one leg, the question's single demand -- Somaliland-specific evidence -- with the live name index at pin sim-2026-07-30 read as evidence, not a count rule. The Somaliland page holds 52 notes and every one comes from caspersen-2012, the corpus's only source on the case. Re-derived 2026-08-01 (issue #564) onto the leg form; the prior single-id list already scored 1/1 on its own persisted smoke-v5 record and is unchanged in substance, only in shape. This stays a single-leg case -- that is the corpus, not an error; specs/PHASE-B.md §9.0 keeps it in the set to measure whether a run notices single-source concentration unprompted."
   },
   "case_id": "S-05",
   "question": "How does the absence of international recognition shape Somaliland's internal state-building and its claim to sovereignty, and how secure is the evidential basis for that account?",
   "answer_kind": "rubric",
   "expected_answer": "",
-  "required_citation_source_ids": [
-    "caspersen-2012-fbc0efe4fffc"
+  "required_citation_legs": [
+    {
+      "leg": "the Somaliland case",
+      "any_of": [
+        "caspersen-2012-fbc0efe4fffc"
+      ]
+    }
   ],
   "rubric": [
     "discloses that the Somaliland evidence derives from a single source, however many passages it retrieved",
