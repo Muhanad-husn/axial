@@ -1,0 +1,23 @@
+# Dev paper brief (specs/PHASE-C.md §7.1, P0-13).
+#
+# The single-record case. §0 is explicit that a list of one is not a special
+# case, and this is what proves it: the same five stages run, the same record
+# shape comes out, and the only thing missing is a cross-record (b) claim,
+# which §7.4 forbids from a single record anyway.
+#
+# fd0c2636d456d0fc is the only dev record whose own counter-position came back
+# present rather than one-sided, which makes it the honest single-record test:
+# the paper has an opposing position to carry rather than a disclosure to make.
+
+thesis: >-
+  Calling post-2011 Syria a fragmented state concedes the question. Either
+  juridical sovereignty survived the loss of empirical control, in which case
+  recognition is doing the work, or several polities formed and were denied it,
+  in which case sovereignty was never the operative fact.
+
+analysis_ids:
+  - fd0c2636d456d0fc
+
+lens: political-economy
+
+title: One Juridical Sovereign, or Several Unrecognised Ones
