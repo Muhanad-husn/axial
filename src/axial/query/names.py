@@ -953,6 +953,44 @@ def find_names(
 # ---------------------------------------------------------------------------
 
 
+def _round_robin_by_source(members: list[NameMember]) -> list[NameMember]:
+    """`members` regrouped by `source_id`, each group keeping its own
+    relative order, then interleaved one member per group in rotation -- a
+    source's first member, then every source's second, and so on -- until
+    every member has been placed (issue #562). A pure re-ordering, never a
+    truncation and never a re-sort WITHIN a group: the caller slices the
+    result at whatever `limit` it needs.
+
+    Groups are visited in `source_id` ascending order. A member whose
+    `source_id` is `None` (its `chunk_id` did not parse,
+    `_parse_name_page_body`) is grouped under `""`, which sorts first --
+    the same placement `where_names_meet`'s own round-robin already gave an
+    unparsed member (issue #517), reused here rather than invented a second
+    time so a caller sees one rule, not two. This is a defensible, stated
+    placement, not a claim that an unparsed member matters most: it is rare
+    (a malformed chunk_id) and must be reachable and non-crashing, never
+    silently dropped.
+
+    Shared by `get_name` (one page's own members, already in the page's own
+    written order top to bottom, so each group's relative order IS that
+    page's order) and `where_names_meet` (an intersection of two pages,
+    which carries no written order of its own -- that caller sorts by
+    `(source_id, chunk_id)` first so each group lands in `chunk_id` order)."""
+    groups: dict[str, list[NameMember]] = {}
+    for member in members:
+        groups.setdefault(member.source_id or "", []).append(member)
+    keys = sorted(groups)
+    ordered: list[NameMember] = []
+    round_index = 0
+    while len(ordered) < len(members):
+        for key in keys:
+            bucket = groups[key]
+            if round_index < len(bucket):
+                ordered.append(bucket[round_index])
+        round_index += 1
+    return ordered
+
+
 def get_name(
     canonical: str,
     limit: int = DEFAULT_LIMIT,
@@ -973,14 +1011,24 @@ def get_name(
     would hand back a DIFFERENT name's page for a query the index does not
     carry, which is worse than the honest `NameNotFoundError` below.
 
-    Members come back in the page's own written order, which is the order
-    Materialize wrote and is itself deterministic -- never re-sorted here --
-    **truncated at `limit`** (issue #505: a hub name page can carry hundreds
-    of members -- `Syria` has 962 -- and an uncapped `members` list is what
-    flooded a real retrieval loop's prompt to ~72,000 characters over twelve
-    re-sent turns). `member_count` is deliberately left UNCAPPED: it is the
-    page's own frontmatter total regardless of `limit`, so a caller sees both
-    the window (`len(members)`) and the true size it is a window onto.
+    **When `limit` covers every member, they come back in the page's own
+    written order, unchanged** -- the order Materialize wrote and is itself
+    deterministic. **When `limit` truncates, the window is spread across
+    sources instead of a prefix of that order** (issue #562):
+    `_round_robin_by_source` takes each source's first member, then every
+    source's second, and so on, and `members` is that interleaving sliced at
+    `limit`. The page's own written order groups members by `source_id`
+    alphabetically, so the old plain-prefix truncation handed every window
+    to whichever source's `source_id` happened to sort first -- measured on
+    the real vault, `Charles Tilly`'s own book sat at member 108 of 154 and
+    a default `limit` of 10 could never reach it. The spread is a truncation
+    rule, not a re-sort: it changes nothing about `all_members[:limit]` when
+    that slice would already be everything (`limit >= len(all_members)`),
+    matching the rule's own first sentence.
+
+    `member_count` is deliberately left UNCAPPED regardless of either path:
+    it is the page's own frontmatter total, so a caller sees both the window
+    (`len(members)`) and the true size it is a window onto (issue #505).
     `disagreement` is `None` when the page carries no Gather section, which
     is distinguishable from a section whose text is present.
 
@@ -999,12 +1047,15 @@ def get_name(
     all_members, disagreement = _parse_name_page_body(body)
     member_count = frontmatter.get("member_count")
     aliases = [alias for alias in (frontmatter.get("aliases") or []) if isinstance(alias, str)]
+    members = (
+        all_members if limit >= len(all_members) else _round_robin_by_source(all_members)[:limit]
+    )
     return NamePage(
         canonical=frontmatter.get("name") or canonical,
         kind=frontmatter.get("kind"),
         aliases=aliases,
         member_count=member_count if isinstance(member_count, int) else len(all_members),
-        members=all_members[:limit],
+        members=members,
         disagreement=disagreement,
     )
 
@@ -1252,11 +1303,10 @@ def where_names_meet(
     real information about the corpus, never an error.
 
     **Determinism, and why it is not `chunk_id` ascending.** The intersecting
-    members are grouped by `source_id` (a member whose `chunk_id` did not
-    parse groups under `""`, sorting first), the groups ordered by
-    `source_id` ascending, members within a group ordered by `chunk_id`
-    ascending, then emitted one member per group in rotation until every
-    group is exhausted -- a total order, fully deterministic. Plain
+    members are sorted by `(source_id, chunk_id)` (a member whose `chunk_id`
+    did not parse sorts under `""`, first) and interleaved one member per
+    source in rotation by `_round_robin_by_source` (issue #562, shared with
+    `get_name`'s own truncation) -- a total order, fully deterministic. Plain
     `chunk_id` ascending is not used because a `chunk_id` begins with its
     `source_id`, so ascending order **is** alphabetical-by-source -- the
     exact defect #517 was filed on: a 104-note intersection truncated to a
@@ -1287,23 +1337,11 @@ def where_names_meet(
     members_b, _disagreement_b = _parse_name_page_body(body_b)
 
     other_chunk_ids = {member.chunk_id for member in members_b}
-    intersecting = [member for member in members_a if member.chunk_id in other_chunk_ids]
-
-    groups: dict[str, list[NameMember]] = {}
-    for member in intersecting:
-        groups.setdefault(member.source_id or "", []).append(member)
-    for group_members in groups.values():
-        group_members.sort(key=lambda member: member.chunk_id)
-
-    group_keys = sorted(groups)
-    ordered: list[NameMember] = []
-    round_index = 0
-    while len(ordered) < len(intersecting):
-        for key in group_keys:
-            bucket = groups[key]
-            if round_index < len(bucket):
-                ordered.append(bucket[round_index])
-        round_index += 1
+    intersecting = sorted(
+        (member for member in members_a if member.chunk_id in other_chunk_ids),
+        key=lambda member: (member.source_id or "", member.chunk_id),
+    )
+    ordered = _round_robin_by_source(intersecting)
 
     return ordered[:limit], len(ordered)
 
