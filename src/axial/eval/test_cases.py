@@ -149,16 +149,45 @@ def test_every_committed_sim_case_still_states_both_oracles():
     present rather than a count that breaks every time one is added. A case
     may state either the flat `required_citation_source_ids` form or the
     `required_citation_legs` form (issue #560); both normalise to a non-empty
-    `required_citation_legs` on the loaded case."""
+    `required_citation_legs` on the loaded case.
+
+    Issue #564 moved S-01..S-05 off the flat form onto native legs, the last
+    committed cases still scored the old way. That re-authoring is pinned
+    directly against the file content, not just the loaded shape: each S case
+    must state `required_citation_legs` itself, with every leg's `any_of`
+    non-empty, so a future edit cannot quietly regress one back onto the flat
+    back-compat path. The P-family is the control -- it deliberately did not
+    move in #560/#564, so it must still state only the flat form and reach a
+    non-empty `required_citation_legs` through `load_case`'s back-compat
+    normalisation."""
+    import json
     from pathlib import Path
 
     cases_dir = Path("evals/cases/sim")
     case_ids = sorted(path.stem for path in cases_dir.glob("*.json"))
     assert {"A", "B", "C"} <= set(case_ids), "the three eval questions (§9.0)"
-    assert {f"S-0{n}" for n in range(1, 6)} <= set(case_ids), "the smoke cases (§9.0)"
+    s_case_ids = {f"S-0{n}" for n in range(1, 6)}
+    assert s_case_ids <= set(case_ids), "the smoke cases (§9.0)"
     assert len(case_ids) >= 26
     for case_id in case_ids:
         case = load_case(case_id, cases_dir=cases_dir)
         assert case is not None
         assert case.required_citation_legs, case_id
         assert case.instant_dismissal_criteria, case_id
+
+    for case_id in s_case_ids:
+        raw = json.loads((cases_dir / f"{case_id}.json").read_text(encoding="utf-8"))
+        assert raw.get("required_citation_legs"), (
+            case_id,
+            "must state the leg form natively, issue #564",
+        )
+        for leg in raw["required_citation_legs"]:
+            assert leg.get("any_of"), (case_id, leg.get("leg"))
+
+    for case_id in (cid for cid in case_ids if cid.startswith("P")):
+        raw = json.loads((cases_dir / f"{case_id}.json").read_text(encoding="utf-8"))
+        assert "required_citation_legs" not in raw, (
+            case_id,
+            "not part of #560/#564; stays on the flat back-compat form",
+        )
+        assert raw.get("required_citation_source_ids"), case_id

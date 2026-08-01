@@ -5,18 +5,41 @@
     "persona": "smoke-v2",
     "reasoning_mode_confirmed": "reasoning",
     "date": "2026-07-30",
-    "path_version": "sim-v1"
+    "path_version": "sim-v1",
+    "required_sources_derived": "legs are authored per question demand, one per position the question names -- modernity, inherited symbols, organised ideology, boundary-making linked to war -- with the live name index at pin sim-2026-07-30 read as evidence, not a count rule. Modernity is carried by gellner-1981, the theorist's own book, plus malesevic-2007 as a second carrier of the same position. Inherited symbols / ethno-symbolism has one carrier, smith-2009. Organised ideology of the nation-state is Malešević's own material, malesevic-2013 and malesevic-2010. Boundary-making linking state formation to war is carried by wimmer-2013 and mann-v2-1993. Re-derived 2026-08-01 (issue #564): this case carried no derivation note, and its flat five-id AND list produced a false read on its own persisted smoke-v5 record -- scored 2/5, counting malesevic-2013, malesevic-2007 and smith-2009 as missed while the run cited gellner-1981, malesevic-2010 and mann-v2-1993, other volumes by the same authors. Wrong-volume false misses, not retrieval failures."
   },
   "case_id": "S-02",
   "question": "Is nationalism best explained as a product of modernity, a reconstruction of inherited symbols, an organized ideology of the nation-state, or a boundary-making force linking state formation to war?",
   "answer_kind": "rubric",
   "expected_answer": "",
-  "required_citation_source_ids": [
-    "malesevic-2013-5d3ec1809b12",
-    "smith-2009-cba7b6f3dfba",
-    "wimmer-2013-a67941b77943",
-    "malesevic-2007-323a2518e61b",
-    "malesevic-2010-fd2cbe41384f"
+  "required_citation_legs": [
+    {
+      "leg": "modernity",
+      "any_of": [
+        "gellner-1981-a8b0206cb566",
+        "malesevic-2007-323a2518e61b"
+      ]
+    },
+    {
+      "leg": "inherited symbols / ethno-symbolism",
+      "any_of": [
+        "smith-2009-cba7b6f3dfba"
+      ]
+    },
+    {
+      "leg": "organised ideology of the nation-state",
+      "any_of": [
+        "malesevic-2013-5d3ec1809b12",
+        "malesevic-2010-fd2cbe41384f"
+      ]
+    },
+    {
+      "leg": "boundary making, linking state formation to war",
+      "any_of": [
+        "wimmer-2013-a67941b77943",
+        "mann-v2-1993-ec759675dcbd"
+      ]
+    }
   ],
   "rubric": [
     "keeps nationalism analytically distinct from nation-state, modernity and ethnic identity while tracing the relations among them",

@@ -235,7 +235,11 @@ def test_smoke_exits_non_zero_when_the_coverage_map_regresses_to_empty(fixture_r
 def test_the_committed_smoke_set_is_the_five_briefs_with_their_case_files():
     """§9.0/D7: five real files, not a manifest over the sim pool, each
     loadable under §7.1 and each with a case file so the mechanical
-    retrieval-hit oracle is available."""
+    retrieval-hit oracle is available. Issue #564 re-authored the five S-0N
+    cases onto `required_citation_legs`; P3-04 is untouched and still states
+    the older flat `required_citation_source_ids` (issue #560's back-compat
+    path), so each stem is asserted on its own committed oracle shape rather
+    than a single field name that not every case states."""
     from axial.brief.intake import load_brief
 
     stems = sorted(path.stem for path in SMOKE_DIR.glob("*.yaml"))
@@ -247,5 +251,11 @@ def test_the_committed_smoke_set_is_the_five_briefs_with_their_case_files():
         case_path = CASES_DIR / f"{stem}.json"
         assert case_path.is_file(), f"{stem} has no case file at {case_path}"
         case: dict[str, Any] = json.loads(case_path.read_text(encoding="utf-8"))
-        assert case["required_citation_source_ids"]
+        if stem.startswith("S-"):
+            legs = case["required_citation_legs"]
+            assert legs, stem
+            for leg in legs:
+                assert leg["any_of"], (stem, leg.get("leg"))
+        else:
+            assert case["required_citation_source_ids"]
         assert case["instant_dismissal_criteria"]
