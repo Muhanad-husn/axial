@@ -5,19 +5,39 @@
     "persona": "eval-hard",
     "date": "2026-07-31",
     "path_version": "sim-v1",
-    "required_sources_derived": "per question leg from the live name index at pin sim-2026-07-30, LLM-free. control and information -> kalyvas-2006 (24 of 27 notes across the leg's anchors). paramilitary -> ungor-2020 (11 of 12). the case -> kao-2025 (5) and vignal-2021 (3, plus 20 of the 22 on `Syrian conflict`). identity production -> elcheroth-2017, which the concept anchors do not reach: `identity` holds 5 notes and `sectarianism` 3, and the account's material sits under `Guy Elcheroth` (15 notes) and `Stephen Reicher` (14), both single-source. Required because an answer that never reaches it cannot state the account it is asked to weigh.",
+    "required_sources_derived": "legs are authored per question demand (turns_on), one per leg, with the live name index at pin sim-2026-07-30 read as evidence -- not by a count rule. control and information -> kalyvas-2006, the sole source on `selective violence` (24 of 27 notes across the leg's anchors). paramilitary violence -> ungor-2020 (11 of 12 on `paramilitarism`); this leg also carries turns_on's 'the social organisation and ideology that make organised violence possible' -- ungor-2020's account of Syria's paramilitaries is that organisational material, not a separate demand, so four legs cover five turns_on items. the Syrian case -> kao-2025 (5) and vignal-2021 (3, plus 20 of the 22 on `Syrian conflict`). identity production -> elcheroth-2017, whose author-name anchor stands in for the concept anchors, which do not reach the account: `identity` holds 5 notes and `sectarianism` 3, while `Guy Elcheroth` (15) and `Stephen Reicher` (14) are both single-source. A leg whose material sits under a theorist's own name rather than a concept page is resolved by that name, never dropped for lacking a concept anchor.",
     "known_risk": "One side of this debate is reachable mainly by author name and the question deliberately names no authors. If a run misses elcheroth-2017, read that as a retrieval finding about concept-vs-author anchoring, not as the answer ducking the question."
   },
   "case_id": "B",
   "question": "Violence against Syrian civilians has been read in two ways that locate cause and agency differently: as the strategic output of territorial control and information, in which apparently sectarian targeting is selective violence under another name, and as a deliberate political technology that produces sectarian identities by shattering shared social practices and freezing fluid populations into hardened categories. Argue which account better explains the Syrian pattern, stating the strongest version of the account you reject, and test your choice against the specific role of paramilitary violence.",
   "answer_kind": "rubric",
   "expected_answer": "",
-  "required_citation_source_ids": [
-    "kalyvas-2006-0b5817b2642e",
-    "elcheroth-2017-78f0cccef5b9",
-    "ungor-2020-ae5701dcc706",
-    "vignal-2021-c7005c2bf8ef",
-    "kao-2025-ab19e646ab7d"
+  "required_citation_legs": [
+    {
+      "leg": "control and information",
+      "any_of": [
+        "kalyvas-2006-0b5817b2642e"
+      ]
+    },
+    {
+      "leg": "identity production",
+      "any_of": [
+        "elcheroth-2017-78f0cccef5b9"
+      ]
+    },
+    {
+      "leg": "paramilitary violence",
+      "any_of": [
+        "ungor-2020-ae5701dcc706"
+      ]
+    },
+    {
+      "leg": "the Syrian case",
+      "any_of": [
+        "vignal-2021-c7005c2bf8ef",
+        "kao-2025-ab19e646ab7d"
+      ]
+    }
   ],
   "rubric": [
     "Commits to one of the two accounts and defends it throughout; does not retreat into a survey of positions",

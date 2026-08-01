@@ -5,19 +5,68 @@
     "persona": "eval-hard",
     "date": "2026-07-31",
     "path_version": "sim-v1",
-    "required_sources_derived": "per question leg from the live name index at pin sim-2026-07-30, LLM-free: resolve the leg's anchors, count member notes by source, keep the leader. modernist -> malesevic-2007 (114 notes, the Gellner volume). ethno-symbolic -> smith-2009 (20). organisational and ideological -> malesevic-2013 (37). the war link -> mann-v2-1993 (205). post-Ottoman -> beshara-2011 (20) and white-2011 (16), the only two sources on `Syrian nationalism`. Six rather than five because the question names four explanations and then demands a second setting; dropping any one leaves a leg with no source that must be reached."
+    "required_sources_derived": "legs are authored per question demand -- turns_on, plus the fourth explanation the question names but turns_on omits -- with the live name index at pin sim-2026-07-30 read as evidence, not by a count rule. modernist -> gellner-1981, the theorist's own book, plus malesevic-2007 as a second carrier of the same position. ethno-symbolic -> smith-2009, the sole source on `ethno-symbolism`. organisational and ideological -> malesevic-2013 and malesevic-2010, both Malešević's own books. exclusion built into the nation-state form -> wimmer-2013; the question names this as its fourth explanation but `turns_on` never states it as its own demand, so this leg is read off the question text directly. the nationalism-war link -> mann-v1..v4, the theorist's own four volumes (`Michael Mann` carries 379 notes; the volumes themselves, not a book about Mann, satisfy the leg). post-Ottoman Arab nationhood -> beshara-2011. the mandate-era production of minorities -> white-2011; beshara-2011 and white-2011 are the only two sources on `Syrian nationalism` and each answers a distinct demand, so they are two legs, not one. the critics of the major positions -> hall-2006, malesevic-2007, malesevic-2026 -- commentary on Mann, Gellner and the bellicist/organisational positions respectively, the only legs a book about a theorist may satisfy. Eight legs from eight turns_on/question demands: 'nation-state formation as a cause of war' and 'the four sources of social power' collapse onto the single nationalism-war leg they both describe."
   },
   "case_id": "C",
   "question": "The century in which the nation became the dominant political form ended in total war and the destruction of the multinational empires. Weigh the main competing explanations of why nationalism and large-scale war rose together - industrial modernity, mobilised ethnic pasts, expanding organisational and ideological power, or the exclusions built into the nation-state form itself. Then test your preferred account against the post-Ottoman Arab East, where nationhood and its 'minorities' took shape under external rule, and state what the critics of the major positions add that the originators miss.",
   "answer_kind": "rubric",
   "expected_answer": "",
-  "required_citation_source_ids": [
-    "malesevic-2007-323a2518e61b",
-    "smith-2009-cba7b6f3dfba",
-    "malesevic-2013-5d3ec1809b12",
-    "mann-v2-1993-ec759675dcbd",
-    "beshara-2011-8410a9059300",
-    "white-2011-5f35a47d9657"
+  "required_citation_legs": [
+    {
+      "leg": "modernist",
+      "any_of": [
+        "gellner-1981-a8b0206cb566",
+        "malesevic-2007-323a2518e61b"
+      ]
+    },
+    {
+      "leg": "ethno-symbolic",
+      "any_of": [
+        "smith-2009-cba7b6f3dfba"
+      ]
+    },
+    {
+      "leg": "organisational and ideological",
+      "any_of": [
+        "malesevic-2013-5d3ec1809b12",
+        "malesevic-2010-fd2cbe41384f"
+      ]
+    },
+    {
+      "leg": "exclusion built into the nation-state form",
+      "any_of": [
+        "wimmer-2013-a67941b77943"
+      ]
+    },
+    {
+      "leg": "the nationalism-war link",
+      "any_of": [
+        "mann-v2-1993-ec759675dcbd",
+        "mann-v1-2012-5f90ead66c93",
+        "mann-v3-2012-3e9f48ff605a",
+        "mann-v4-2013-1b7e828e0199"
+      ]
+    },
+    {
+      "leg": "post-Ottoman Arab nationhood",
+      "any_of": [
+        "beshara-2011-8410a9059300"
+      ]
+    },
+    {
+      "leg": "the mandate-era production of minorities",
+      "any_of": [
+        "white-2011-5f35a47d9657"
+      ]
+    },
+    {
+      "leg": "the critics of the major positions",
+      "any_of": [
+        "hall-2006-449559bfe4dc",
+        "malesevic-2007-323a2518e61b",
+        "malesevic-2026-4faeb528594d"
+      ]
+    }
   ],
   "rubric": [
     "Presents at least four genuinely distinct explanations of the nationalism-war connection and shows where they conflict, rather than four labels for the same story",

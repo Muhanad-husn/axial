@@ -452,6 +452,33 @@ def test_eval_cases_and_benchmark_analyses_are_rewritten(tmp_path: Path):
     ]
 
 
+def test_required_citation_legs_any_of_ids_are_rewritten(tmp_path: Path):
+    """Issue #560: a case's citation ids can now sit nested inside
+    `required_citation_legs[].any_of` rather than the flat
+    `required_citation_source_ids` list. `substitute_ids_in_text` is a plain
+    text substitution over the whole file rather than a JSON-shape-aware
+    rewrite, so it must reach an id at any nesting depth without changes --
+    this pins that it does, rather than trusting it silently."""
+    corpus = _build_corpus(tmp_path)
+    other_id = "somebody-else-000000000000"
+    _write_json(
+        corpus.cases_dir / "LEG-01.json",
+        {
+            "case_id": "LEG-01",
+            "required_citation_legs": [
+                {"leg": "a demand", "any_of": [corpus.old_id, other_id]},
+                {"leg": "another demand", "any_of": [other_id]},
+            ],
+        },
+    )
+
+    corpus.migrate()
+
+    case = json.loads((corpus.cases_dir / "LEG-01.json").read_text(encoding="utf-8"))
+    assert case["required_citation_legs"][0]["any_of"] == [corpus.new_id, other_id]
+    assert case["required_citation_legs"][1]["any_of"] == [other_id]
+
+
 # -------------------------------------------------------------- vault notes
 
 

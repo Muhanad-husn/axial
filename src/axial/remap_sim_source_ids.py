@@ -13,8 +13,12 @@ corpus used. Every `source_id` in `evals/cases/sim/*.json`'s
 
 This script builds a `hash-suffix -> current source_id` map by scanning a
 raw-sources directory with the exact same `compute_source_id` primitive the
-pipeline uses, then rewrites each case file's `required_citation_source_ids`
-in place -- matching purely on the hash suffix, never the stem.
+pipeline uses, then rewrites each case file's citation ids in place --
+matching purely on the hash suffix, never the stem. Ids are read from
+wherever a case states them: the flat `required_citation_source_ids` list,
+and (issue #560) every `required_citation_legs[].any_of` entry. A case can
+state either, both, or -- once re-authored -- only the leg form; either way
+every id the file names gets remapped.
 
 Deliberately excludes `evals/corpus_pin/*.json`: a corpus pin is a
 point-in-time snapshot of a corpus that no longer exists (different chunk
@@ -86,10 +90,24 @@ class FileReport:
     unmapped: list[str] = field(default_factory=list)
 
 
+def _all_ids(payload: dict) -> list[str]:
+    """Every source id a case states, whether in the flat
+    `required_citation_source_ids` list or nested inside a
+    `required_citation_legs[].any_of` (issue #560). Duplicates across the
+    two forms are harmless -- `plan_file` just maps each occurrence, and
+    `apply_file`'s text substitution rewrites every occurrence regardless of
+    how many times an id is named."""
+    ids: list[str] = list(payload.get("required_citation_source_ids") or [])
+    for leg in payload.get("required_citation_legs") or []:
+        if isinstance(leg, dict):
+            ids.extend(leg.get("any_of") or [])
+    return ids
+
+
 def plan_file(path: Path, hash_map: dict[str, str]) -> FileReport:
     """Compute a `FileReport` for one case file without writing anything."""
     payload = json.loads(path.read_text(encoding="utf-8"))
-    ids = payload.get("required_citation_source_ids", [])
+    ids = _all_ids(payload)
     report = FileReport(path=path)
     for old_id in ids:
         suffix = _hash_suffix(old_id)
