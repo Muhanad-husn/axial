@@ -4,6 +4,7 @@ acceptance test lives at tests/analysis/test_run_report.py.
 
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -12,6 +13,7 @@ import yaml
 from axial.answer.run_report import (
     PassClock,
     _claim_mix,
+    _commentary_mix,
     _concentration,
     _cost_figures,
     _cross_source_rate,
@@ -24,6 +26,7 @@ from axial.answer.run_report import (
     format_run_report,
     persist_run_report,
 )
+from axial.eval.classification import SourceClassification
 
 TILLY = "Charles Tilly"
 
@@ -195,6 +198,133 @@ def test_retrieval_precision_is_not_scored_when_nothing_was_retrieved():
     result = _retrieval_precision(set(), [])
     assert result["value"] is None
     assert result["reason"]
+
+
+# -- commentary mix (issue #563) --------------------------------------------
+
+
+HALL = "hall-2006-449559bfe4dc"
+TILLY_SOURCE = "tilly-1978-f908c910464c"
+
+_MIXED_CLASSIFICATION = SourceClassification(
+    corpus_pin="sim-2026-07-30",
+    classes={HALL: "commentary", TILLY_SOURCE: "primary"},
+)
+
+
+def _source_entry(source_id: str, count: int) -> dict:
+    return {"source_id": source_id, "evidence_chunk_count": count}
+
+
+def test_commentary_mix_reports_the_share_and_names_the_commentary_sources():
+    sources = [_source_entry(HALL, 3), _source_entry(TILLY_SOURCE, 7)]
+    result = _commentary_mix(sources, classification=_MIXED_CLASSIFICATION)
+    assert result["value"] == pytest.approx(0.3)
+    assert result["numerator"] == 3
+    assert result["denominator"] == 10
+    assert result["commentary_source_ids"] == [HALL]
+    assert result["baseline_share"] == pytest.approx(0.5)
+
+
+def test_commentary_mix_is_zero_when_no_grounds_come_from_a_commentary_source():
+    """A record that never cites a commentary source scores a real 0.0 --
+    never `None` -- and the corpus baseline still travels alongside it."""
+    sources = [_source_entry(TILLY_SOURCE, 5)]
+    result = _commentary_mix(sources, classification=_MIXED_CLASSIFICATION)
+    assert result["value"] == 0.0
+    assert result["numerator"] == 0
+    assert result["commentary_source_ids"] == []
+    assert result["baseline_share"] == pytest.approx(0.5)
+
+
+def test_commentary_mix_is_not_scored_with_no_classification():
+    result = _commentary_mix([_source_entry(TILLY_SOURCE, 5)], classification=None)
+    assert result["value"] is None
+    assert result["reason"]
+    assert "baseline_share" not in result
+
+
+def test_commentary_mix_is_not_scored_when_the_run_has_no_grounds():
+    """A `refuse` disposition (or any run whose claims carry no grounds)
+    leaves `source_usage.sources` empty -- not-scored, never a 0 that reads
+    like a measurement -- but the baseline is still disclosed."""
+    result = _commentary_mix([], classification=_MIXED_CLASSIFICATION)
+    assert result["value"] is None
+    assert result["reason"]
+    assert result["baseline_share"] == pytest.approx(0.5)
+
+
+def test_commentary_mix_is_under_response_quality_not_the_locked_four_accuracy_measures(
+    tmp_path,
+):
+    """§10.0/D8 locks `accuracy` to exactly four measures, never a fifth --
+    this figure has no case-file oracle and is disclosed-not-gated (§7.13),
+    the same family as `concentration`/`usage_ratio`, so it lands in
+    `response_quality` alongside them."""
+    classification_path = tmp_path / "classification.json"
+    classification_path.write_text(
+        json.dumps(
+            {"sources": {HALL: {"class": "commentary"}, TILLY_SOURCE: {"class": "primary"}}}
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "prose").mkdir()
+    record = _minimal_record([_claim("a", ["tilly_0_a_001"])])
+
+    def _full_source_entry(source_id: str, count: int) -> dict:
+        return {
+            "source_id": source_id,
+            "evidence_chunk_count": count,
+            "evidence_share": 0.5,
+            "available_chunk_count": count,
+            "available_share": 0.5,
+            "usage_ratio": 1.0,
+        }
+
+    record["source_usage"] = {
+        "names_queried": [],
+        "denominator_by_name": {},
+        "sources": [_full_source_entry(HALL, 1), _full_source_entry(TILLY_SOURCE, 1)],
+    }
+    _write_chunk(tmp_path / "prose", "tilly_0_a_001")
+
+    report = build_run_report(record, vault_dir=tmp_path, classification_path=classification_path)
+
+    assert set(report["accuracy"]) == {
+        "attribution_completeness",
+        "retrieval_hit",
+        "grounding_support_rate",
+        "instant_dismissal_violations",
+    }
+    commentary = report["response_quality"]["commentary_mix"]
+    assert commentary["value"] == pytest.approx(0.5)
+    assert commentary["commentary_source_ids"] == [HALL]
+    assert commentary["baseline_share"] == pytest.approx(0.5)
+
+
+def test_commentary_mix_is_not_scored_when_no_classification_file_exists(tmp_path):
+    (tmp_path / "prose").mkdir()
+    report = build_run_report(
+        _minimal_record([]), vault_dir=tmp_path, classification_path=tmp_path / "nope.json"
+    )
+    commentary = report["response_quality"]["commentary_mix"]
+    assert commentary["value"] is None
+    assert commentary["reason"]
+
+
+def test_format_run_report_names_the_commentary_mix_line(tmp_path):
+    classification_path = tmp_path / "classification.json"
+    classification_path.write_text(
+        json.dumps({"sources": {HALL: {"class": "commentary"}}}), encoding="utf-8"
+    )
+    _write_chunk(tmp_path / "prose", "tilly_0_a_001")
+    report = build_run_report(
+        _minimal_record([_claim("a", ["tilly_0_a_001"])]),
+        vault_dir=tmp_path,
+        classification_path=classification_path,
+    )
+    text = format_run_report(report)
+    assert "commentary mix (issue #563)" in text
 
 
 def test_cost_figures_carry_a_null_total_usd_through_rather_than_zeroing_it():

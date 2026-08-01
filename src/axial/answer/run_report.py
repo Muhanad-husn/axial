@@ -56,6 +56,7 @@ from axial.answer.dismissal import DismissalJudgeError, judge_instant_dismissal
 from axial.answer.render import render_markdown
 from axial.answer.source_usage import full_name_page, source_ids_for_grounds
 from axial.eval.cases import load_case
+from axial.eval.classification import SourceClassification, load_classification
 from axial.gates.grounding import GroundingGateError, run_grounding_gate
 from axial.llm import LLMClient
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_runs_dir
@@ -73,6 +74,10 @@ NO_JUDGE_CLIENT_REASON = (
     "its own pass name; the report itself makes no model call"
 )
 NO_CASE_REASON = "not scored: no sim case file (§9.3) is joined to this run"
+NO_CLASSIFICATION_REASON = (
+    "not scored: no source classification (evals/sources/classification.json, issue #563)"
+)
+NO_GROUNDS_REASON = "not scored: this run produced no ground citation"
 
 
 class PassClock:
@@ -369,6 +374,52 @@ def _concentration(shares: list[float]) -> dict[str, Any]:
     return {"top_1_share": max(shares), "hhi": sum(share * share for share in shares)}
 
 
+def _commentary_mix(
+    sources: list[dict[str, Any]], *, classification: SourceClassification | None
+) -> dict[str, Any]:
+    """Issue #563: of this run's ground citations, the share drawn from a
+    `commentary` source -- a book *about* another thinker's body of work
+    (`hall-2006` on Michael Mann, `malesevic-2007` on Ernest Gellner) rather
+    than one that states its own argument. A `commentary` volume answering a
+    brief is a different kind of evidence than a primary text, and nothing
+    else on this report can see the difference.
+
+    Reuses `source_usage`'s own per-source `evidence_chunk_count` (§7.13,
+    stage 6's distinct-grounds-pointer count) rather than re-walking claim
+    grounds a second time -- this figure asks the same "how many of this
+    run's ground citations" question `per_source_share` already answers, just
+    folded over the classification's `commentary` subset instead of read one
+    source at a time.
+
+    Not a gate (§7.13/§10.0): disclosed and recorded from the first run,
+    promoted only once the distribution has been inspected. Three-state,
+    like the neighbouring §7.13 figures -- no classification file, or a run
+    with no ground citation at all (`sources` empty, e.g. a `refuse`
+    disposition), reports `value: None` with a stated reason, never a 0 that
+    reads like a measurement. `baseline_share` -- the classification's own
+    corpus-wide commentary share -- travels alongside the run's share even
+    when unscored, so the number the run's mix is being read against is
+    never a second lookup away."""
+    if classification is None:
+        return {"value": None, "reason": NO_CLASSIFICATION_REASON}
+
+    baseline = classification.baseline_commentary_share
+    total = sum(int(entry.get("evidence_chunk_count") or 0) for entry in sources)
+    if not total:
+        return {"value": None, "baseline_share": baseline, "reason": NO_GROUNDS_REASON}
+
+    commentary_ids = classification.commentary_source_ids
+    commentary_entries = [entry for entry in sources if entry.get("source_id") in commentary_ids]
+    numerator = sum(int(entry.get("evidence_chunk_count") or 0) for entry in commentary_entries)
+    return {
+        "value": numerator / total,
+        "numerator": numerator,
+        "denominator": total,
+        "commentary_source_ids": sorted(entry["source_id"] for entry in commentary_entries),
+        "baseline_share": baseline,
+    }
+
+
 def _claim_mix(claims: list[dict[str, Any]]) -> dict[str, Any]:
     counts = {kind: sum(1 for c in claims if c.get("kind") == kind) for kind in CLAIM_KINDS}
     total = len(claims)
@@ -531,6 +582,7 @@ def build_run_report(
     vault_dir: Path | None = None,
     case_id: str | None = None,
     cases_dir: Path | None = None,
+    classification_path: Path | None = None,
     client: LLMClient | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
 ) -> dict[str, Any]:
@@ -539,12 +591,18 @@ def build_run_report(
     Deterministic: the same record and the same `latency_by_pass` always
     yield the same report. Makes ZERO model calls unless `client` is given,
     and even then only for the two judged accuracy numbers (§10.0), each
-    under its own pass name and never the generating model."""
+    under its own pass name and never the generating model.
+
+    `classification_path` defaults to `evals/sources/classification.json`
+    (`axial.eval.classification.default_classification_path`); a missing or
+    unauthored file costs only the commentary-mix figure below (issue #563),
+    reported not-scored, never a crash."""
     claims = record.get("claims") or []
     trajectory = record.get("trajectory") or []
     model_by_pass = record.get("model_by_pass") or {}
     source_usage = record.get("source_usage") or {}
     coverage_map = record.get("coverage_map") or {}
+    classification = load_classification(path=classification_path)
 
     cited_ids, grounds_chunk_ids = _grounds_ref_ids(claims)
     grounds_source_ids = {source_id_from_chunk_id(cid) for cid in grounds_chunk_ids}
@@ -582,6 +640,7 @@ def build_run_report(
             "per_source_share": {entry["source_id"]: entry["evidence_share"] for entry in sources},
             "concentration": _concentration([entry["evidence_share"] for entry in sources]),
             "usage_ratio": {entry["source_id"]: entry["usage_ratio"] for entry in sources},
+            "commentary_mix": _commentary_mix(sources, classification=classification),
             "claim_mix": _claim_mix(claims),
             "cross_source_rate": _cross_source_rate(claims, vault_dir=vault_dir),
             "grounds_per_claim": _grounds_per_claim(claims),
@@ -685,5 +744,14 @@ def format_run_report(report: dict[str, Any]) -> str:
         f"hhi={_fmt(concentration.get('hhi'))}"
     )
     lines.append(f"  claim mix: {(quality.get('claim_mix') or {}).get('counts')}")
+    commentary = quality.get("commentary_mix") or {}
+    commentary_reason = commentary.get("reason")
+    commentary_suffix = (
+        f" ({commentary_reason})" if commentary.get("value") is None and commentary_reason else ""
+    )
+    lines.append(
+        f"  commentary mix (issue #563): {_fmt(commentary.get('value'))}{commentary_suffix} "
+        f"vs. corpus baseline {_fmt(commentary.get('baseline_share'))}"
+    )
     lines.append(f"  coverage bands: {quality.get('coverage_bands')}")
     return "\n".join(lines)
