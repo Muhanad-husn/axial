@@ -32,7 +32,7 @@ from axial.yaml_loader import SAFE_LOADER
 # The only top-level keys a paper brief may declare (§7.1 minus
 # `paper_brief_id`, which is computed, never read from the file). An
 # unrecognised key is rejected rather than silently dropped.
-KNOWN_KEYS = {"thesis", "analysis_ids", "title"}
+KNOWN_KEYS = {"thesis", "analysis_ids", "lens", "title"}
 
 # Truncation length, matching `axial.brief.intake._BRIEF_ID_LENGTH`: long
 # enough to be effectively collision-free at this corpus's scale, short enough
@@ -137,6 +137,7 @@ class PaperBriefContent:
 
     thesis: str
     analysis_ids: tuple[str, ...]
+    lens: str | None = None
     title: str | None = None
 
 
@@ -147,6 +148,7 @@ class PaperBrief:
     paper_brief_id: str
     thesis: str
     analysis_ids: tuple[str, ...]
+    lens: str | None = None
     title: str | None = None
 
 
@@ -161,6 +163,7 @@ def compute_paper_brief_id(content: PaperBriefContent) -> str:
         {
             "thesis": content.thesis,
             "analysis_ids": list(content.analysis_ids),
+            "lens": content.lens,
             "title": content.title,
         },
         sort_keys=True,
@@ -182,19 +185,23 @@ def _require_nonempty_string(path: Path, raw: dict[str, Any], field_name: str) -
     return stripped
 
 
-def _validate_title(path: Path, raw: dict[str, Any]) -> str | None:
-    """An optional `title` (§7.1): the key is optional, its value is not.
-    Omitting it -- or setting it to `null` -- means the renderer uses the
-    thesis. A present-but-blank title is rejected rather than coerced to that,
-    exactly as `axial.brief.intake` treats a blank `lens`."""
-    if "title" not in raw or raw["title"] is None:
+def _optional_nonblank(path: Path, raw: dict[str, Any], field_name: str) -> str | None:
+    """An optional field whose KEY is optional but whose VALUE is not (§7.1).
+
+    Covers `lens` and `title`, which share the contract `axial.brief.intake`
+    already applies to a Phase-B `lens`: omitting the key -- or setting it to
+    `null` -- is the only way to ask the stage to choose (a lens) or fall back
+    (a title, to the thesis). A present-but-blank value is rejected rather
+    than silently coerced into that meaning, because "" and "you pick" are
+    different instructions and a typo should not become the second."""
+    if field_name not in raw or raw[field_name] is None:
         return None
-    value = raw["title"]
+    value = raw[field_name]
     if not isinstance(value, str):
-        raise NonStringPaperBriefFieldError(path, "title", value)
+        raise NonStringPaperBriefFieldError(path, field_name, value)
     stripped = value.strip()
     if not stripped:
-        raise EmptyPaperBriefFieldError(path, "title")
+        raise EmptyPaperBriefFieldError(path, field_name)
     return stripped
 
 
@@ -235,9 +242,10 @@ def _validate_paper_brief_dict(path: Path, raw: Any) -> PaperBriefContent:
 
     thesis = _require_nonempty_string(path, raw, "thesis")
     analysis_ids = _validate_analysis_ids(path, raw)
-    title = _validate_title(path, raw)
+    lens = _optional_nonblank(path, raw, "lens")
+    title = _optional_nonblank(path, raw, "title")
 
-    return PaperBriefContent(thesis=thesis, analysis_ids=analysis_ids, title=title)
+    return PaperBriefContent(thesis=thesis, analysis_ids=analysis_ids, lens=lens, title=title)
 
 
 def load_paper_brief(path: str | Path) -> PaperBrief:
@@ -264,5 +272,6 @@ def load_paper_brief(path: str | Path) -> PaperBrief:
         paper_brief_id=compute_paper_brief_id(content),
         thesis=content.thesis,
         analysis_ids=content.analysis_ids,
+        lens=content.lens,
         title=content.title,
     )
