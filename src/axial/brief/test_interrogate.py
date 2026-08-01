@@ -34,7 +34,7 @@ def _brief(case: str = "Syria", request: str = "How did local order change?") ->
 # -- parsing ------------------------------------------------------------------
 
 
-def test_parse_well_formed_response_returns_all_three_fields():
+def test_parse_well_formed_response_returns_all_four_fields():
     raw = json.dumps(
         {
             "premises_found": [
@@ -43,10 +43,11 @@ def test_parse_well_formed_response_returns_all_three_fields():
             ],
             "bounds_applied": ["covers Syria, not the wider region"],
             "refusal": None,
+            "question_scope": {"period": "2011-2021", "setting": "Syria"},
             "disposition": "proceed_bounded",  # must be ignored by the parser
         }
     )
-    premises_found, bounds_applied, refusal = parse_interrogation_response(raw)
+    premises_found, bounds_applied, refusal, question_scope = parse_interrogation_response(raw)
 
     assert premises_found == [
         PremiseAssessment(premise="Tunisia is well covered", assessment="contradicts"),
@@ -54,6 +55,7 @@ def test_parse_well_formed_response_returns_all_three_fields():
     ]
     assert bounds_applied == ["covers Syria, not the wider region"]
     assert refusal is None
+    assert question_scope == {"period": "2011-2021", "setting": "Syria"}
 
 
 def test_parse_well_formed_refusal():
@@ -64,10 +66,11 @@ def test_parse_well_formed_refusal():
             "refusal": {"reason": "the corpus holds nothing on this polity"},
         }
     )
-    premises_found, bounds_applied, refusal = parse_interrogation_response(raw)
+    premises_found, bounds_applied, refusal, question_scope = parse_interrogation_response(raw)
     assert premises_found == []
     assert bounds_applied == []
     assert refusal == {"reason": "the corpus holds nothing on this polity"}
+    assert question_scope is None  # the model's response above never named one
 
 
 def test_parse_rejects_out_of_vocabulary_assessment():
@@ -96,6 +99,75 @@ def test_parse_rejects_non_list_premises_found():
     raw = json.dumps({"premises_found": "not a list", "bounds_applied": [], "refusal": None})
     with pytest.raises(InterrogationParseError):
         parse_interrogation_response(raw)
+
+
+# -- question_scope: the period/setting the QUESTION ITSELF states ----------
+
+
+def _response(**overrides):
+    body = {"premises_found": [], "bounds_applied": [], "refusal": None}
+    body.update(overrides)
+    return json.dumps(body)
+
+
+def test_parse_question_scope_absent_key_abstains_to_none():
+    """A response that never names `question_scope` at all (every fixture
+    written before this field existed) abstains, not crashes -- the same
+    tolerance `refusal` already gets when a client double omits it."""
+    _p, _b, _r, question_scope = parse_interrogation_response(_response())
+    assert question_scope is None
+
+
+def test_parse_question_scope_explicit_null_abstains_to_none():
+    _p, _b, _r, question_scope = parse_interrogation_response(_response(question_scope=None))
+    assert question_scope is None
+
+
+def test_parse_question_scope_all_subfields_null_collapses_to_none():
+    """The model saying "no scope" the long way -- `{"period": null,
+    "setting": null}` -- must read exactly like an outright `null`, so every
+    caller checks one abstention shape rather than two."""
+    raw = _response(question_scope={"period": None, "setting": None})
+    _p, _b, _r, question_scope = parse_interrogation_response(raw)
+    assert question_scope is None
+
+
+def test_parse_question_scope_reads_a_stated_period_and_setting():
+    raw = _response(question_scope={"period": "2011-2021", "setting": "Syria"})
+    _p, _b, _r, question_scope = parse_interrogation_response(raw)
+    assert question_scope == {"period": "2011-2021", "setting": "Syria"}
+
+
+def test_parse_question_scope_keeps_one_subfield_none_when_only_the_other_is_stated():
+    """The question naming a period but no setting (or vice versa) is a real,
+    partial reading -- not collapsed into total abstention, and not a guess
+    at the missing half."""
+    raw = _response(question_scope={"period": "2011-2021", "setting": None})
+    _p, _b, _r, question_scope = parse_interrogation_response(raw)
+    assert question_scope == {"period": "2011-2021", "setting": None}
+
+
+def test_parse_question_scope_rejects_non_object_non_null():
+    raw = _response(question_scope="Syria, 2011-2021")
+    with pytest.raises(InterrogationParseError):
+        parse_interrogation_response(raw)
+
+
+def test_parse_question_scope_rejects_a_blank_period_string():
+    raw = _response(question_scope={"period": "   ", "setting": "Syria"})
+    with pytest.raises(InterrogationParseError):
+        parse_interrogation_response(raw)
+
+
+def test_compose_prompt_asks_the_model_for_the_questions_own_stated_scope():
+    """The interrogation prompt asks for the period/setting the QUESTION
+    ITSELF states, read from the case/request text alone -- never inferred
+    from what the corpus covers -- and tells the model to abstain (null)
+    rather than invent one when the question states neither."""
+    prompt = compose_prompt(_brief(case="Syria", request="A request?"), {})
+    assert "question_scope" in prompt
+    assert "QUESTION ITSELF" in prompt
+    assert "never inferred from what the corpus covers" in prompt
 
 
 # -- disposition rule -----------------------------------------------------
@@ -150,7 +222,7 @@ def test_disposition_for_ignores_any_model_supplied_disposition():
             "disposition": "refuse",  # the model's own claim -- must be discarded
         }
     )
-    premises_found, bounds_applied, refusal = parse_interrogation_response(raw)
+    premises_found, bounds_applied, refusal, _question_scope = parse_interrogation_response(raw)
     assert disposition_for(premises_found, bounds_applied, refusal) == "proceed"
 
 
@@ -302,6 +374,49 @@ def test_interrogate_call_uses_the_registered_pass_name(
     interrogate(_brief(), client=_RecordingClient(), vault_dir=tmp_path / "vault")
 
     assert seen_pass_names == [INTERROGATE_PASS_NAME]
+
+
+# -- question_scope carries through the full pass ----------------------------
+
+
+def test_interrogate_carries_a_stated_question_scope_onto_the_result(tmp_path: Path):
+    """The scope the QUESTION ITSELF states reaches `InterrogationResult`
+    unchanged -- this is the field synthesis reads to state its own
+    soft-preference paragraph (§7.4)."""
+    _write_minimal_vault(tmp_path)
+
+    class _ScopedClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            return json.dumps(
+                {
+                    "premises_found": [],
+                    "bounds_applied": [],
+                    "refusal": None,
+                    "question_scope": {"period": "2011-2021", "setting": "Syria"},
+                }
+            )
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "scoped"
+
+    result = interrogate(_brief(), client=_ScopedClient(), vault_dir=tmp_path / "vault")
+    assert result.question_scope == {"period": "2011-2021", "setting": "Syria"}
+
+
+def test_interrogate_abstains_question_scope_when_the_question_states_none(tmp_path: Path):
+    """An unscoped question -- the ordinary case -- must not have a scope
+    invented for it: `None` here is the correct, abstained answer."""
+    _write_minimal_vault(tmp_path)
+
+    class _UnscopedClient:
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            return json.dumps({"premises_found": [], "bounds_applied": [], "refusal": None})
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "unscoped"
+
+    result = interrogate(_brief(), client=_UnscopedClient(), vault_dir=tmp_path / "vault")
+    assert result.question_scope is None
 
 
 # -- malformed model JSON is a clean, named failure --------------------------

@@ -821,6 +821,127 @@ def test_prompt_forbids_parametric_memory_and_marks_cross_source_inference():
 
 
 # ---------------------------------------------------------------------------
+# the prompt answers the question (measured: 1 claim of kind "c" in 653
+# across 34 persisted brief runs, 0.15% -- the prompt asked for axial coding
+# over evidence and never asked the model to answer the brief's own request)
+# ---------------------------------------------------------------------------
+
+
+def _empty_evidence_prompt(request: str = "Did the state collapse or adapt?") -> str:
+    brief = Brief(brief_id="synfix-brief", case="Syria", request=request, lens="political-economy")
+    empty_evidence = EvidenceSet(chunk_ids=[], chunks=[], name_counts={})
+    return compose_prompt(brief, "political-economy", empty_evidence).text
+
+
+def test_prompt_carries_the_request_as_the_operative_task_not_a_bare_field():
+    """The request must read as the job the model is doing, not a labelled
+    field sitting beside Case/Lens the way `Request: "..."` used to."""
+    text = _empty_evidence_prompt("Did the state collapse or adapt?")
+    assert 'Request: "Did the state collapse or adapt?"' not in text
+    assert "your task" in text.lower()
+    assert '"Did the state collapse or adapt?"' in text
+    assert "answer this question" in text.lower()
+
+
+def test_prompt_instructs_commitment_and_stating_the_chosen_accounts_limits():
+    """Two rubric lines a sealed peer reviewer failed in both arms: commits
+    to one account and defends it throughout, and names the limits of the
+    chosen account explicitly."""
+    text = _empty_evidence_prompt().lower()
+    assert "commit" in text
+    assert "defend" in text
+    assert "weak or fails" in text or "limits" in text
+
+
+def test_prompt_describes_kind_c_as_the_analysts_own_judgment_not_speculation():
+    """The persisted vocabulary value stays exactly "c" (parsing/validation
+    is untouched, see test_rejects_a_claim_whose_kind_is_outside_a_b_c
+    elsewhere in this file) -- only how the PROMPT describes that kind
+    changes: it is the analyst's own judgment, never voiced as a source's
+    assertion, and never called "speculation" to the model."""
+    text = _empty_evidence_prompt()
+    assert '"c"' in text
+    assert "speculation" not in text.lower()
+    assert "your own" in text.lower()
+    assert "judgment" in text.lower() or "judgement" in text.lower()
+
+
+def test_prompt_scopes_the_traceability_ban_to_a_and_b_only():
+    """The regression this test locks: the prompt used to state a blanket
+    "any assertion not traceable to a supplied grounds pointer is not a claim
+    this pass may emit" up front, then offer (c) as a kind that "may carry
+    partial or empty grounds" four paragraphs later -- two rules that cannot
+    both be obeyed. The ban must attach to (a) and (b) specifically, and (c)
+    must be explicitly exempted from it."""
+    text = _empty_evidence_prompt()
+    assert "any assertion not traceable to a supplied grounds pointer is not a claim" not in (
+        text.lower()
+    )
+    assert "traceability rule above binds (a) and (b) only" in text
+    assert "may carry partial or empty grounds" in text
+
+
+# ---------------------------------------------------------------------------
+# question_scope: the period/setting the QUESTION ITSELF states (soft
+# favouring only -- never a filter, a threshold, or a numeric weight)
+# ---------------------------------------------------------------------------
+
+
+def test_compose_prompt_with_no_question_scope_is_the_plain_no_scope_form():
+    """Omitting `question_scope` (the default, and every call site before
+    this parameter existed) must render byte-identical to explicitly passing
+    `None` -- there is no separate code path to drift out of sync."""
+    brief = Brief(brief_id="synfix-brief", case="Syria", request="How?", lens="political-economy")
+    empty_evidence = EvidenceSet(chunk_ids=[], chunks=[], name_counts={})
+    without_kwarg = compose_prompt(brief, "political-economy", empty_evidence).text
+    with_none = compose_prompt(brief, "political-economy", empty_evidence, question_scope=None).text
+    with_empty_subfields = compose_prompt(
+        brief,
+        "political-economy",
+        empty_evidence,
+        question_scope={"period": None, "setting": None},
+    ).text
+    assert without_kwarg == with_none == with_empty_subfields
+    assert "states its own scope" not in without_kwarg
+
+
+def test_compose_prompt_with_a_stated_scope_states_it_as_a_soft_preference():
+    brief = Brief(brief_id="synfix-brief", case="Syria", request="How?", lens="political-economy")
+    empty_evidence = EvidenceSet(chunk_ids=[], chunks=[], name_counts={})
+    text = compose_prompt(
+        brief,
+        "political-economy",
+        empty_evidence,
+        question_scope={"period": "2011-2021", "setting": "Syria"},
+    ).text
+
+    assert "states its own scope" in text
+    assert "2011-2021" in text
+    assert "Syria" in text
+    # Soft favouring, never a filter -- off-scope evidence stays usable, and
+    # a claim resting on it must say so rather than being excluded.
+    assert "stays fully usable" in text
+    assert "disclosure" in text.lower()
+    # No filtering/exclusion/weighting language anywhere in the prompt.
+    lowered = text.lower()
+    for banned in ("exclude", "filter", "down-rank", "downrank", "threshold", "discard"):
+        assert banned not in lowered, f"unexpected filtering language: {banned!r}"
+
+
+def test_compose_prompt_scope_with_only_one_subfield_states_only_that_one():
+    brief = Brief(brief_id="synfix-brief", case="Syria", request="How?", lens="political-economy")
+    empty_evidence = EvidenceSet(chunk_ids=[], chunks=[], name_counts={})
+    text = compose_prompt(
+        brief,
+        "political-economy",
+        empty_evidence,
+        question_scope={"period": "2011-2021", "setting": None},
+    ).text
+    assert "period: 2011-2021" in text
+    assert "setting:" not in text
+
+
+# ---------------------------------------------------------------------------
 # evidence-text budget cap (issue #358): an unbounded evidence set pushed a
 # real synthesis prompt (plus the fixed 60k-token completion budget) past the
 # model's context window on a real brief run against the real vault.

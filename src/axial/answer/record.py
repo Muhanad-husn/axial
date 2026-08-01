@@ -429,6 +429,7 @@ def run_brief(
                 vault_dir=vault_dir,
                 lenses_dir=lenses_dir,
                 config_path=config_path,
+                question_scope=interrogation_result.question_scope,
             )
         model_by_pass[SYNTHESIZE_PASS_NAME] = client.model_for_pass(SYNTHESIZE_PASS_NAME)
 

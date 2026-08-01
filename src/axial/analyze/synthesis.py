@@ -552,6 +552,44 @@ def _render_evidence_chunk(handle: str, chunk: Any, chunk_text: str) -> str:
     return "\n".join(lines)
 
 
+def _render_question_scope_block(question_scope: dict[str, Any] | None) -> str:
+    """The soft-preference paragraph naming the QUESTION's own stated scope
+    (`axial.brief.interrogate.InterrogationResult.question_scope`): rendered
+    only when it actually names a period or a setting. Absent, or an empty/
+    all-`None` dict, renders nothing at all, so a scopeless brief's prompt is
+    byte-identical to the no-scope form -- there is no separate code path to
+    drift out of sync with it.
+
+    **Soft favouring, never a filter.** Off-scope evidence stays fully
+    usable -- as background, as theory, as a comparative case -- and nothing
+    here excludes it, down-ranks it, or requires a threshold to clear. What
+    is asked for is disclosure: a claim resting on such evidence must mark
+    itself as such and must not be presented as though it settled the
+    in-scope question. Deliberately no numeric weight or tunable cutoff
+    anywhere in this text -- adding one would be the exact hand-tuned-constant
+    tripwire this repo already paid three review rounds for once (#268)."""
+    if not question_scope:
+        return ""
+    parts = []
+    period = question_scope.get("period")
+    setting = question_scope.get("setting")
+    if isinstance(period, str) and period.strip():
+        parts.append(f"period: {period.strip()}")
+    if isinstance(setting, str) and setting.strip():
+        parts.append(f"setting: {setting.strip()}")
+    if not parts:
+        return ""
+    stated = "; ".join(parts)
+    return (
+        f"\nThis question states its own scope ({stated}). Evidence from outside "
+        "that scope stays fully usable, exactly like evidence from inside it -- as "
+        "background, as theory, or as a comparative case. What is required instead "
+        "is disclosure: mark, in a claim's own text, when that claim rests on "
+        "evidence from outside this stated scope, and never present such a claim "
+        "as though it settled the in-scope question.\n"
+    )
+
+
 def compose_prompt(
     brief: Brief,
     lens_name: str,
@@ -560,10 +598,11 @@ def compose_prompt(
     vault_dir: Path | None = None,
     config_path: Path | None = None,
     evidence_char_budget: int | None = None,
+    question_scope: dict[str, Any] | None = None,
 ) -> SynthesisPrompt:
-    """Assemble the synthesis prompt (§7.4/P0-4): the brief's case/request,
-    the applied lens, and every evidence chunk's real prose TEXT plus the
-    interrogation's own answers about it (issue #489 --
+    """Assemble the synthesis prompt (§7.4/P0-4): the brief's `request` as
+    the operative task, the applied lens, and every evidence chunk's real
+    prose TEXT plus the interrogation's own answers about it (issue #489 --
     `axial.analyze.assembly` already dropped every abstained field, so a
     question the passage did not support never reaches the model as an
     answer). `EvidenceSet.chunks` (`EvidenceChunk`) deliberately does not
@@ -573,6 +612,23 @@ def compose_prompt(
     rather than invented. Every phrase this module's acceptance test checks
     against the recorded prompt lives verbatim in this template, so a prompt
     wording change is a deliberate, visible diff, not silent drift.
+
+    **The request is the task, not a labelled field.** Measured: over 653
+    claims across 34 persisted brief runs, 1 carried kind `c` (0.15%) -- the
+    prompt asked the model to "perform axial coding" (a data-reduction
+    procedure) over evidence, with `Request: "..."` a bare field nothing told
+    it to answer. The model is now told plainly that answering the request is
+    the job and axial coding is its method for doing so, and, where the
+    request calls for a verdict between positions, that the answer must
+    commit to one and defend it, and must itself state where the chosen
+    account is weak -- never a channel a peer reviewer can catch silently
+    empty.
+
+    `question_scope` (`InterrogationResult.question_scope`, optional) is the
+    period/setting the QUESTION ITSELF states, never a filter -- see
+    `_render_question_scope_block`'s own docstring for the soft-favouring
+    contract. `None` (the default, and every existing call site before this
+    field existed) renders nothing, so this parameter is purely additive.
 
     D4 is stated in the prompt, not just in the code: a Gather-pass
     disagreement is another pass's reading of the corpus and is never
@@ -630,13 +686,17 @@ def compose_prompt(
         handle_map[handle] = chunk_id
         lines.append(_render_evidence_chunk(handle, chunk, note.chunk_text))
     evidence_lines = "\n".join(lines) or "(no evidence chunks were retrieved for this brief)"
+    scope_block = _render_question_scope_block(question_scope)
 
-    text = f"""You are the stage-4 synthesis pass of an analysis engine (specs/PHASE-B.md §7.4). Apply the lens named below and perform axial coding across ONLY the evidence chunks supplied below -- reason only over the grounds supplied here, never from your own parametric memory or the open web. Any assertion not traceable to a supplied grounds pointer is not a claim this pass may emit.
+    text = f"""You are the stage-4 synthesis pass of an analysis engine (specs/PHASE-B.md §7.4). Your task is to answer the request below: apply the lens named below and perform axial coding across ONLY the evidence chunks supplied below as your method for building that answer -- reason only over the grounds supplied here, never from your own parametric memory or the open web.
 
 Case: "{brief.case}"
-Request: "{brief.request}"
 Lens: "{lens_name}"
 
+Your task -- answer this question, using the evidence below as your grounds: "{brief.request}"
+
+Where this question asks you to choose between positions, weigh them, or reach a verdict, your answer must commit to one of them and defend it throughout the claims you emit, rather than surveying the positions without settling anything. At least one claim must also state plainly where the account you commit to is weak or fails -- the limits of the position you adopt -- rather than retreating into "both sides have a point" once you have committed.
+{scope_block}
 Each evidence chunk below carries its source's author and title, then what a first reading of that passage answered about it -- what it claims, what it is doing in the argument, whose position it is and what that position is, who it argues against, who it cites and whether as support, foil or authority, and the rest -- and finally its verbatim prose. Those answers are another reading of the same passage, not a second source: where an answer and the prose differ, the prose is what the passage says. A question that passage did not support an answer for is ABSENT from its list; read nothing into the absence, and never treat it as a "no".
 
 Evidence chunks -- cite ONLY the bracketed handle shown for each (e.g. "[cN]") as your grounds ref_id for a chunk, or an artifact_id as your grounds ref_id for an artifact. Reproduce a handle EXACTLY as shown; never invent one and never write out any other id:
@@ -645,9 +705,9 @@ Evidence chunks -- cite ONLY the bracketed handle shown for each (e.g. "[cN]") a
 Retrieval may have reached this evidence by following a disagreement another pass of this system wrote about a name. Such a finding is that pass's own reading of the corpus, never a source and never scored: it is not quotable, not citable, and no claim may rest on one. Your grounds are the chunk handles and artifact_ids listed above, and nothing else.
 
 For every claim you emit, mark its kind:
-- "a" (source-says) -- a single source directly asserts this; grounds must name that source's chunk(s)/artifact(s).
-- "b" (tool-infers-across-sources) -- YOUR inference drawn across two or more sources; grounds must name every source it draws on. A (b) claim is always marked as the tool's own inference and must NEVER be voiced as though a single source asserted it -- a cross-source inference is marked (b), never phrased as a source assertion.
-- "c" (speculation) -- neither of the above; may carry partial or empty grounds.
+- "a" (source-says) -- a single source directly asserts this; grounds must name that source's chunk(s)/artifact(s). Every (a) claim must be traceable to a supplied grounds pointer -- an (a) claim resting on anything else is not a claim this pass may emit.
+- "b" (tool-infers-across-sources) -- YOUR inference drawn across two or more sources; grounds must name every source it draws on. Every (b) claim must be traceable to supplied grounds pointers the same way -- a (b) claim resting on anything else is not a claim this pass may emit. A (b) claim is always marked as the tool's own inference and must NEVER be voiced as though a single source asserted it -- a cross-source inference is marked (b), never phrased as a source assertion.
+- "c" (your own analytical judgment) -- your verdict, your commitment between positions, or your statement of where the account you adopt is weak: judgment that is YOURS to make, not a source's assertion and not an inference the sources force. The traceability rule above binds (a) and (b) only -- a (c) claim may carry partial or empty grounds. It must still never be voiced as though a source asserted it: it is your own reading, offered as such.
 
 Every (a) and (b) claim MUST carry at least one grounds pointer to a chunk handle or artifact_id listed above -- an unlisted or invented one is never acceptable.
 
@@ -979,6 +1039,7 @@ def synthesize(
     lenses_dir: Path | None = None,
     config_path: Path | None = None,
     names_dir: Path | None = None,
+    question_scope: dict[str, Any] | None = None,
 ) -> ClaimGraph:
     """Run the §7.4 synthesis pass over `evidence`: resolve the lens
     (`resolve_lens`), compose the grounded-by-construction prompt
@@ -1000,10 +1061,21 @@ def synthesize(
 
     `names_dir` is forwarded to `parse_synthesis_response` for
     `names_touched`'s alias-map resolution (§7.4), defaulting to
-    `data/names/` exactly as every name-layer tool does."""
+    `data/names/` exactly as every name-layer tool does.
+
+    `question_scope` (optional, `InterrogationResult.question_scope` --
+    `axial.brief.interrogate` reads it off the same brief text this call
+    already has, so no caller need re-derive it) is forwarded verbatim to
+    `compose_prompt`, which states it to the model as a soft preference
+    only. Omitted (the default), the prompt is the plain no-scope form."""
     lens_name = resolve_lens(brief.lens, lenses_dir=lenses_dir)
     composed = compose_prompt(
-        brief, lens_name, evidence, vault_dir=vault_dir, config_path=config_path
+        brief,
+        lens_name,
+        evidence,
+        vault_dir=vault_dir,
+        config_path=config_path,
+        question_scope=question_scope,
     )
     print(
         f"synthesize: starting, lens={lens_name!r}, {len(evidence.chunk_ids)} evidence item(s) "
