@@ -14,9 +14,12 @@ overstates what the paper rests on cannot be audited by counting.
 
 `coverage_map` is computed from the REDUCED claims, so it discloses the
 coverage of what the paper actually cites rather than of what it was offered.
-It is unioned from the source records, never recomputed -- a paper record has
-no retrieval trajectory and `compute_coverage_map` would return an empty map
-(§7.11).
+It is unioned from the source records, never recomputed. `coverage_map_earned`
+(issue #570) is the one exception: the opposition-repair pass gives the paper
+its own retrieval trajectory, so its own coverage IS computed natively, the
+same way Phase B computes a real analysis record's -- kept in its own field
+rather than merged into `coverage_map`, so a reader can always tell which
+scope a name's coverage came from (§7.11).
 
 **Costs and model_by_pass are recorded per pass**, so a paper's spend is
 attributable to planning versus drafting, and so §7.7's vendor guard has
@@ -37,9 +40,16 @@ from axial.paper.coverage import build_coverage_map, overall_confidence
 from axial.paper.draft import assign_claim_ids, draft_section, remap_local_ids
 from axial.paper.intake import PaperIntake, run_intake
 from axial.paper.lens import resolve_lens
+from axial.paper.opposition import (
+    OPPOSITION_GAP_SCOPE_NOTE,
+    REPAIR_BRIEF_ID,
+    extend_intake,
+    run_opposition_repair,
+)
 from axial.paper.plan import Plan, run_plan
 from axial.paper.render import render_paper
 from axial.paths import ANALYSES_DIR
+from axial.validators.coverage import touched_names
 
 # Where a paper record and its rendered markdown land (§6, §7.3).
 PAPERS_DIR = Path("data/papers")
@@ -54,12 +64,18 @@ class PaperRunError(Exception):
 
 
 def _source_lenses(intake: PaperIntake) -> dict[str, Any]:
-    """What each source record was read through (§7.3).
+    """What each NAMED source record was read through (§7.3).
 
     A paper drawn from records analysed under different lenses is normal and
     is not an intake rejection, but it is a fact about the paper's foundations
-    a reader is owed, so it is recorded rather than flattened."""
-    return {brief_id: record.get("lens") for brief_id, record in intake.records.items()}
+    a reader is owed, so it is recorded rather than flattened.
+
+    Iterates `intake.source_analyses` -- the brief's own declared list --
+    rather than `intake.records`, which may also hold the opposition-repair
+    pass's synthetic pseudo-record (issue #570): that record was read through
+    no lens at all (it makes no model call), and including it here would read
+    as a broken source rather than as what it is."""
+    return {brief_id: intake.records[brief_id].get("lens") for brief_id in intake.source_analyses}
 
 
 def _counter_position(
@@ -149,12 +165,24 @@ def run_paper(
     lenses_dir: Path | None = None,
     source_meta_dir: Path | None = None,
     vault_dir: Path | None = None,
+    names_dir: Path | None = None,
     papers_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Stages 1-5, end to end, returning the persisted §7.3 record."""
+    """Stages 1-5, end to end, returning the persisted §7.3 record.
+
+    Stage 1.5 (issue #570) sits between intake and planning: the
+    exact-match opposition gap is computed over the whole intake inventory,
+    and -- only where it is non-zero -- repaired with claims shaped from the
+    deterministic query API, zero model calls, before a drafting dollar is
+    spent. `names_dir` is new here (Phase C did not read the name layer
+    before this): threaded the same way `vault_dir` already is, so the
+    acceptance suite stays offline."""
     papers_dir = Path(papers_dir) if papers_dir is not None else PAPERS_DIR
 
     intake = run_intake(paper_brief.analysis_ids, analyses_dir=analyses_dir or ANALYSES_DIR)
+    repair = run_opposition_repair(intake, vault_dir=vault_dir, names_dir=names_dir)
+    intake = extend_intake(intake, repair)
+
     lens = resolve_lens(paper_brief.lens, lenses_dir=lenses_dir)
     plan = run_plan(client, paper_brief.thesis, lens, intake)
 
@@ -207,9 +235,52 @@ def run_paper(
     for claim in claims:
         claim["source_ids"] = sorted(source_ids_for_claims([claim], vault_dir=vault_dir))
 
-    coverage_map = build_coverage_map(claims, intake.records)
-    confidence = overall_confidence(coverage_map, intake.records)
+    # The coverage map is a UNION of two scopes, labelled by field name rather
+    # than merged (§7.11's founder amendment, issue #570): "coverage_map" is
+    # carried from the named source records exactly as before, and
+    # "coverage_map_earned" is computed natively over the repair pass's own
+    # trajectory -- possible now because a paper record has one, which is
+    # what §7.11 used to say never happens. `carried_records` excludes the
+    # repair pseudo-record so it is never silently folded into the carried
+    # scope.
+    carried_records = {
+        brief_id: record
+        for brief_id, record in intake.records.items()
+        if brief_id != REPAIR_BRIEF_ID
+    }
+    coverage_map = build_coverage_map(claims, carried_records)
+    coverage_map_earned = (
+        build_coverage_map(claims, {REPAIR_BRIEF_ID: intake.records[REPAIR_BRIEF_ID]})
+        if REPAIR_BRIEF_ID in intake.records
+        else {}
+    )
+    confidence = overall_confidence(
+        coverage_map, carried_records, coverage_map_earned=coverage_map_earned
+    )
     bibliography = build_bibliography(claims, source_meta_dir=source_meta_dir, vault_dir=vault_dir)
+
+    # #570 rule 3: the gap survives the repair. Both the gap as found (over
+    # every source claim's touched names) and the gap restricted to what this
+    # paper actually cited are recorded, labelled -- never a clean zero
+    # presented as though retrieval got it right the first time.
+    cited_names = touched_names(claims)
+    gap_found_cited_scope = repair.gap_restricted_to(cited_names)
+    gap_repaired_cited = sum(
+        1
+        for claim in claims
+        if isinstance(claim.get("origin"), dict)
+        and claim["origin"].get("brief_id") == REPAIR_BRIEF_ID
+    )
+    exact_match_opposition_gap = {
+        "scope_note": OPPOSITION_GAP_SCOPE_NOTE,
+        "names_checked": list(repair.names_checked),
+        "gap_found": repair.gap_found,
+        "gap_repaired": repair.gap_repaired,
+        "gap_found_cited_scope": gap_found_cited_scope,
+        "gap_repaired_cited": gap_repaired_cited,
+        "skipped_abstentions": repair.skipped_abstentions,
+        "by_name": repair.by_name(),
+    }
 
     markdown_path = papers_dir / f"{paper_brief.paper_brief_id}.md"
     record: dict[str, Any] = {
@@ -230,8 +301,15 @@ def run_paper(
         "citations": [citation.to_json() for citation in citations],
         "counter_position": _counter_position(plan, intake, by_id),
         "coverage_map": coverage_map,
+        "coverage_map_earned": coverage_map_earned,
         "confidence": confidence,
         "bibliography": bibliography,
+        # The repair pass's own retrieval trajectory (§7.3's amendment, issue
+        # #570) -- empty when the gap was zero everywhere, never omitted: a
+        # paper record's trajectory is auditable by construction now that it
+        # exists at all.
+        "trajectory": list(repair.trajectory),
+        "exact_match_opposition_gap": exact_match_opposition_gap,
         "paper_markdown_path": str(markdown_path),
         "model_by_pass": dict(getattr(client, "model_by_pass", {}) or {}),
         "cost": getattr(client, "cost_report", lambda: {})(),

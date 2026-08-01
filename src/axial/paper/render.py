@@ -6,8 +6,17 @@ randomness, nothing read from disk.
 
 Contents in order: title, thesis statement, the plan's sections in plan order
 with their prose and in-text markers, the counter-position (or the one-sided
-disclosure), the confidence and coverage disclosure, the citation table, and
-the bibliography.
+disclosure), the exact-match opposition check (issue #570), the confidence
+and coverage disclosure, the citation table, and the bibliography.
+
+**The opposition check is a reader disclosure, not engine telemetry** (the
+"does NOT render" rule below). #570 rule 3 requires both the record and the
+rendered paper to be able to say "gap found: 12 notes; 9 repaired" -- never a
+clean zero presented as though retrieval got it right the first time -- and
+requires the scope note to travel with the number: the check only counts
+opposition whose target text exactly matches a name page, which is measured
+at 4.7% of the corpus's recorded `arguing_against` targets (2026-08-01), so
+the count is a floor, not the opposition that exists.
 
 Two rules carried from the layer beneath, restated because they bind on this
 artifact.
@@ -95,9 +104,16 @@ def _render_counter_position(record: dict[str, Any]) -> list[str]:
 
 
 def _render_coverage(record: dict[str, Any]) -> list[str]:
-    """Confidence next to the counts behind it (§7.10)."""
+    """Confidence next to the counts behind it (§7.10), and the coverage map
+    as a UNION of two labelled scopes (§7.11's founder amendment, issue
+    #570): "carried" from the named source records, unchanged; "earned" by
+    the opposition-repair pass's own retrieval, computed natively over its
+    own trajectory. The two are never merged into one unlabelled row -- a
+    reader must be able to tell which coverage the paper inherited and which
+    it earned itself."""
     confidence = record.get("confidence") or {}
-    coverage_map = record.get("coverage_map") or {}
+    carried = record.get("coverage_map") or {}
+    earned = record.get("coverage_map_earned") or {}
 
     lines = [
         "## Confidence and coverage",
@@ -107,19 +123,63 @@ def _render_coverage(record: dict[str, Any]) -> list[str]:
         str(confidence.get("rationale") or ""),
         "",
     ]
-    if coverage_map:
+    if carried or earned:
         lines.extend(
             [
-                "| name | corpus notes | cited claims | coverage |",
-                "|---|---:|---:|---|",
+                "| name | scope | corpus notes | cited claims | coverage |",
+                "|---|---|---:|---:|---|",
             ]
         )
-        for name, entry in sorted(coverage_map.items()):
-            corpus = entry.get("corpus_note_count")
-            corpus_text = "not in the index" if corpus is None else str(corpus)
+        for scope, coverage_map in (("carried", carried), ("earned", earned)):
+            for name, entry in sorted(coverage_map.items()):
+                corpus = entry.get("corpus_note_count")
+                corpus_text = "not in the index" if corpus is None else str(corpus)
+                lines.append(
+                    f"| {name} | {scope} | {corpus_text} | {entry.get('cited_claim_count')} "
+                    f"| {entry.get('coverage_band')} |"
+                )
+        lines.append("")
+    return lines
+
+
+def _render_opposition_gap(record: dict[str, Any]) -> list[str]:
+    """The exact-match opposition check this paper ran before drafting
+    (issue #570): what it found unread, what it repaired, and the scope note
+    -- carrying the measured 4.7% join recall -- that keeps a zero from being
+    misread as "the corpus has no counter-argument" and keeps the whole
+    count from being misread as "the opposition that exists" rather than a
+    floor. Renders nothing when the check never ran (an older record, or a
+    hand-built fixture)."""
+    gap = record.get("exact_match_opposition_gap")
+    if not isinstance(gap, dict):
+        return []
+
+    names_checked = gap.get("names_checked") or []
+    lines = [
+        "## Opposition check (exact-match join)",
+        "",
+        f"*{gap.get('scope_note') or ''}*",
+        "",
+        f"Checked {len(names_checked)} name(s) this paper's claims touch for opposition "
+        f"none of the source analyses had already read. Found **{gap.get('gap_found', 0)}** "
+        f"such note(s); repaired **{gap.get('gap_repaired', 0)}** into new grounded claims "
+        f"({gap.get('skipped_abstentions', 0)} skipped for carrying no stated claim). "
+        f"Restricted to what this paper actually cites: **{gap.get('gap_found_cited_scope', 0)}** "
+        f"of the notes found, **{gap.get('gap_repaired_cited', 0)}** of the repaired claims.",
+        "",
+    ]
+    by_name = gap.get("by_name") or {}
+    if by_name:
+        lines.extend(
+            [
+                "| name | gap found | gap repaired | already read | total edges |",
+                "|---|---:|---:|---:|---:|",
+            ]
+        )
+        for name, counts in sorted(by_name.items()):
             lines.append(
-                f"| {name} | {corpus_text} | {entry.get('cited_claim_count')} "
-                f"| {entry.get('coverage_band')} |"
+                f"| {name} | {counts.get('gap_found', 0)} | {counts.get('gap_repaired', 0)} "
+                f"| {counts.get('already_read', 0)} | {counts.get('total_opposition_edges', 0)} |"
             )
         lines.append("")
     return lines
@@ -205,6 +265,7 @@ def render_paper(record: dict[str, Any]) -> str:
         lines.append("")
 
     lines.extend(_render_counter_position(record))
+    lines.extend(_render_opposition_gap(record))
     lines.extend(_render_coverage(record))
     lines.extend(_render_citation_table(record))
     lines.extend(_render_bibliography(record))
