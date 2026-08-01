@@ -78,6 +78,11 @@ NO_CLASSIFICATION_REASON = (
     "not scored: no source classification (evals/sources/classification.json, issue #563)"
 )
 NO_GROUNDS_REASON = "not scored: this run produced no ground citation"
+NO_BASELINE_REASON = (
+    "not scored: evals/sources/classification.json carries no note_weighted_baseline "
+    "(issue #563 follow-up) -- a source-count share is not reported in its place, "
+    "since it is a different, unreliable quantity"
+)
 
 
 class PassClock:
@@ -397,16 +402,26 @@ def _commentary_mix(
     with no ground citation at all (`sources` empty, e.g. a `refuse`
     disposition), reports `value: None` with a stated reason, never a 0 that
     reads like a measurement. `baseline_share` -- the classification's own
-    corpus-wide commentary share -- travels alongside the run's share even
-    when unscored, so the number the run's mix is being read against is
-    never a second lookup away."""
+    NOTE-WEIGHTED corpus-wide commentary share, read straight off committed,
+    measured data (`axial.eval.classification`) -- travels alongside the
+    run's share even when unscored, so the number the run's mix is being
+    read against is never a second lookup away. The baseline carries its OWN
+    three-state discipline, one level down: a classification file that
+    carries no measured `note_weighted_baseline` reports `baseline_share:
+    None` with its own `baseline_reason`, never a source-count share
+    substituted in its place -- a wrong baseline read as right is worse than
+    an absent one (issue #563 follow-up)."""
     if classification is None:
         return {"value": None, "reason": NO_CLASSIFICATION_REASON}
 
     baseline = classification.baseline_commentary_share
+    baseline_fields: dict[str, Any] = {"baseline_share": baseline}
+    if baseline is None:
+        baseline_fields["baseline_reason"] = NO_BASELINE_REASON
+
     total = sum(int(entry.get("evidence_chunk_count") or 0) for entry in sources)
     if not total:
-        return {"value": None, "baseline_share": baseline, "reason": NO_GROUNDS_REASON}
+        return {"value": None, "reason": NO_GROUNDS_REASON, **baseline_fields}
 
     commentary_ids = classification.commentary_source_ids
     commentary_entries = [entry for entry in sources if entry.get("source_id") in commentary_ids]
@@ -416,7 +431,7 @@ def _commentary_mix(
         "numerator": numerator,
         "denominator": total,
         "commentary_source_ids": sorted(entry["source_id"] for entry in commentary_entries),
-        "baseline_share": baseline,
+        **baseline_fields,
     }
 
 

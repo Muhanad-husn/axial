@@ -2,6 +2,17 @@
   "version": 1,
   "corpus_pin": "sim-2026-07-30",
   "note": "A source is `commentary` when the book's subject is another thinker's body of work -- an edited volume of readings of one figure. Everything else is `primary`: the author states their own argument or presents their own evidence, including edited topical collections of original research. Authored from titles, 2026-08-01.",
+  "note_weighted_baseline": {
+    "corpus_pin": "sim-2026-07-30",
+    "commentary_note_count": 7812,
+    "total_note_count": 141268,
+    "share": 0.055299,
+    "commentary_note_counts_by_source": {
+      "hall-2006-449559bfe4dc": 4635,
+      "malesevic-2007-323a2518e61b": 3177
+    },
+    "measured": "Measured against the live name index at pin sim-2026-07-30, 2026-08-01 -- the note-weighted corpus baseline the run's own note-weighted commentary_mix share should be read against. This is a MEASUREMENT (7812/141268), never a derivation from the source-count fields above: on this corpus the two happen to land within a point of each other (2/31 sources = 6.45%), which is exactly what makes a source-count substitute dangerous rather than merely imprecise."
+  },
   "sources": {
     "agamben-2005-b22edc40e0fc": {
       "class": "primary",

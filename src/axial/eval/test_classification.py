@@ -5,11 +5,23 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from axial.eval.classification import default_classification_path, load_classification
 
 _PAYLOAD = {
     "version": 1,
     "corpus_pin": "sim-2026-07-30",
+    "note_weighted_baseline": {
+        "corpus_pin": "sim-2026-07-30",
+        "commentary_note_count": 7812,
+        "total_note_count": 141268,
+        "share": 0.055299,
+        "commentary_note_counts_by_source": {
+            "hall-2006-449559bfe4dc": 4635,
+            "malesevic-2007-323a2518e61b": 3177,
+        },
+    },
     "sources": {
         "hall-2006-449559bfe4dc": {"class": "commentary", "about": "Michael Mann"},
         "malesevic-2007-323a2518e61b": {"class": "commentary", "about": "Ernest Gellner"},
@@ -42,19 +54,43 @@ def test_commentary_source_ids_is_exactly_the_commentary_subset(tmp_path):
     )
 
 
-def test_baseline_commentary_share_is_the_source_count_share(tmp_path):
-    """2 of 4 classified sources are commentary -- a source-COUNT share,
-    since the reader makes zero vault reads and cannot weight by how many
-    notes each source actually contributed."""
+def test_baseline_commentary_share_reads_the_committed_measured_share(tmp_path):
+    """The baseline is read straight off `note_weighted_baseline.share` --
+    never recomputed from source counts, which would silently be the wrong,
+    unweighted quantity (issue #563 follow-up)."""
     path = _write(tmp_path / "classification.json", _PAYLOAD)
     classification = load_classification(path=path)
-    assert classification.baseline_commentary_share == 0.5
+    assert classification.baseline_commentary_share == pytest.approx(0.055299)
 
 
-def test_baseline_commentary_share_is_none_rather_than_a_division_by_zero(tmp_path):
-    path = _write(tmp_path / "classification.json", {"version": 1, "sources": {}})
+def test_baseline_commentary_share_is_none_when_the_block_is_absent(tmp_path):
+    """No `note_weighted_baseline` block -- `None`, never a source-count
+    fallback: a wrong baseline silently substituted for a right one is worse
+    than an absent one."""
+    path = _write(tmp_path / "classification.json", {**_PAYLOAD, "note_weighted_baseline": None})
     classification = load_classification(path=path)
     assert classification.baseline_commentary_share is None
+
+
+def test_baseline_commentary_share_is_none_when_share_is_not_a_number(tmp_path):
+    payload = {
+        **_PAYLOAD,
+        "note_weighted_baseline": {**_PAYLOAD["note_weighted_baseline"], "share": "5.5%"},
+    }
+    path = _write(tmp_path / "classification.json", payload)
+    classification = load_classification(path=path)
+    assert classification.baseline_commentary_share is None
+
+
+def test_baseline_commentary_share_does_not_recompute_from_source_counts(tmp_path):
+    """Regression for the exact defect: 2 of 4 sources here are commentary
+    (a 0.5 source-count share) but the authored `note_weighted_baseline`
+    states a different, measured number -- the reader must return THAT
+    number, not silently recompute 0.5 from `classes`."""
+    path = _write(tmp_path / "classification.json", _PAYLOAD)
+    classification = load_classification(path=path)
+    assert classification.baseline_commentary_share != 0.5
+    assert classification.baseline_commentary_share == pytest.approx(0.055299)
 
 
 def test_a_missing_classification_file_is_none_not_an_error(tmp_path):
@@ -112,3 +148,13 @@ def test_the_committed_classification_names_exactly_the_two_known_commentary_sou
     assert classification.commentary_source_ids == frozenset(
         {"hall-2006-449559bfe4dc", "malesevic-2007-323a2518e61b"}
     )
+
+
+def test_the_committed_classification_states_the_measured_note_weighted_baseline():
+    """Measured against the live name index at pin `sim-2026-07-30`
+    (2026-08-01): the two commentary volumes are 7,812 of 141,268 index
+    notes, 5.53% -- a point off the 2/31 = 6.45% source-count share the
+    reader used to derive, which is the exact defect this pins."""
+    classification = load_classification()
+    assert classification is not None
+    assert classification.baseline_commentary_share == pytest.approx(7812 / 141268, abs=1e-6)

@@ -14,15 +14,24 @@ classification costs exactly one figure (§7.15's commentary-mix share, which
 reports not-scored with a stated reason) and nothing else -- the same
 contract `axial.eval.cases.load_case` already holds for a missing case file.
 
-`SourceClassification.baseline_commentary_share` is the classification's OWN
-corpus-wide baseline: commentary sources over every source it classifies. It
-is a source-COUNT share, not a note-weighted one -- this reader makes zero
-vault reads (by design, see above), so it cannot weight by how many notes
-each source actually contributed to the index. The founder's own measurement
-against the real vault (issue #563: the two commentary volumes are 5.5% of
-the name index's notes) is a different, note-weighted number this module
-does not reproduce; the source-count baseline here is the one a report can
-compute without reading the corpus.
+`SourceClassification.baseline_commentary_share` is **note-weighted, and read
+directly off committed, measured data -- never derived from source counts in
+this module.** The figure it is compared against (§7.15's `commentary_mix`)
+is itself note-weighted (`source_usage.evidence_chunk_count`), so the
+baseline must be too, or the comparison is apples to oranges. A source-COUNT
+share (commentary sources over every classified source) was tried first and
+retired: on `sim-2026-07-30` it reads 2/31 = 6.45%, a point off the real,
+measured 7,812/141,268 = 5.53% -- close enough on THIS corpus to look right
+while being the wrong quantity, which is exactly what makes it dangerous
+rather than merely imprecise (issue #563 follow-up). The committed
+`note_weighted_baseline` block carries its own `commentary_note_count`,
+`total_note_count`, `share` and the `corpus_pin` it was measured at, so a
+reader can see it is a measurement, not a derivation. Zero vault reads is
+preserved because the number is already committed data by the time this
+module reads it -- nothing here counts a note itself. A classification file
+with no `note_weighted_baseline` block reads `baseline_commentary_share` as
+`None`: a wrong baseline silently substituted for a right one is worse than
+an absent one, so there is no source-count fallback.
 """
 
 from __future__ import annotations
@@ -38,24 +47,17 @@ _VALID_CLASSES = ("primary", "commentary")
 
 @dataclass(frozen=True)
 class SourceClassification:
-    """One committed classification (§7.15), narrowed to what the run report
-    reads: each source's `class`."""
+    """One committed classification (§7.15): each source's `class`, plus the
+    note-weighted corpus-wide commentary baseline it was measured alongside
+    (see module docstring)."""
 
     corpus_pin: str | None
     classes: dict[str, str]
+    baseline_commentary_share: float | None
 
     @property
     def commentary_source_ids(self) -> frozenset[str]:
         return frozenset(sid for sid, cls in self.classes.items() if cls == "commentary")
-
-    @property
-    def baseline_commentary_share(self) -> float | None:
-        """The classification's own corpus-wide baseline: commentary sources
-        over every classified source. `None` when the file classifies
-        nothing, never a division by zero."""
-        if not self.classes:
-            return None
-        return len(self.commentary_source_ids) / len(self.classes)
 
 
 def default_classification_path() -> Path:
@@ -63,6 +65,22 @@ def default_classification_path() -> Path:
     `axial.eval.cases.default_cases_dir` -- `evals/` is repo content, not a
     `data/` pipeline directory, and no caller has ever needed to move it."""
     return CLASSIFICATION_PATH
+
+
+def _baseline_share(payload: dict) -> float | None:
+    """`note_weighted_baseline.share` off the committed payload -- a plain
+    field read, never a recomputation from `commentary_note_count` /
+    `total_note_count`, so a classification file that states an inconsistent
+    trio is read exactly as authored rather than silently corrected. `None`
+    when the block is absent or its `share` isn't a real number (never a
+    fallback to a source-count share -- module docstring)."""
+    block = payload.get("note_weighted_baseline")
+    if not isinstance(block, dict):
+        return None
+    share = block.get("share")
+    if isinstance(share, bool) or not isinstance(share, (int, float)):
+        return None
+    return float(share)
 
 
 def load_classification(*, path: Path | None = None) -> SourceClassification | None:
@@ -99,4 +117,5 @@ def load_classification(*, path: Path | None = None) -> SourceClassification | N
     return SourceClassification(
         corpus_pin=corpus_pin if isinstance(corpus_pin, str) else None,
         classes=classes,
+        baseline_commentary_share=_baseline_share(payload),
     )

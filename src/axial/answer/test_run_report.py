@@ -209,6 +209,13 @@ TILLY_SOURCE = "tilly-1978-f908c910464c"
 _MIXED_CLASSIFICATION = SourceClassification(
     corpus_pin="sim-2026-07-30",
     classes={HALL: "commentary", TILLY_SOURCE: "primary"},
+    baseline_commentary_share=0.5,
+)
+
+_NO_BASELINE_CLASSIFICATION = SourceClassification(
+    corpus_pin="sim-2026-07-30",
+    classes={HALL: "commentary", TILLY_SOURCE: "primary"},
+    baseline_commentary_share=None,
 )
 
 
@@ -254,6 +261,25 @@ def test_commentary_mix_is_not_scored_when_the_run_has_no_grounds():
     assert result["baseline_share"] == pytest.approx(0.5)
 
 
+def test_commentary_mix_reports_a_run_share_with_no_baseline_share_substituted():
+    """A classification file present but carrying no measured
+    `note_weighted_baseline` (issue #563 follow-up): the run's own share is
+    still scored, `baseline_share` is `None`, and a `baseline_reason` names
+    why -- never a source-count share quietly filled in instead."""
+    sources = [_source_entry(HALL, 3), _source_entry(TILLY_SOURCE, 7)]
+    result = _commentary_mix(sources, classification=_NO_BASELINE_CLASSIFICATION)
+    assert result["value"] == pytest.approx(0.3)
+    assert result["baseline_share"] is None
+    assert result["baseline_reason"]
+
+
+def test_commentary_mix_names_a_baseline_reason_even_with_no_grounds():
+    result = _commentary_mix([], classification=_NO_BASELINE_CLASSIFICATION)
+    assert result["value"] is None
+    assert result["baseline_share"] is None
+    assert result["baseline_reason"]
+
+
 def test_commentary_mix_is_under_response_quality_not_the_locked_four_accuracy_measures(
     tmp_path,
 ):
@@ -264,7 +290,10 @@ def test_commentary_mix_is_under_response_quality_not_the_locked_four_accuracy_m
     classification_path = tmp_path / "classification.json"
     classification_path.write_text(
         json.dumps(
-            {"sources": {HALL: {"class": "commentary"}, TILLY_SOURCE: {"class": "primary"}}}
+            {
+                "note_weighted_baseline": {"share": 0.5},
+                "sources": {HALL: {"class": "commentary"}, TILLY_SOURCE: {"class": "primary"}},
+            }
         ),
         encoding="utf-8",
     )
