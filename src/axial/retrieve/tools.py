@@ -364,10 +364,13 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="get_name",
         description=(
             "One name page by its canonical name: its member notes (chunk_id, author, "
-            "year, one-sentence claim) in the page's own order, up to limit, and any "
-            "Gather disagreement section. A disagreement is a retrieval hint, never a "
-            "citation (D4) -- follow its member chunk_ids to the real notes and cite "
-            "only those."
+            "year, one-sentence claim), up to limit, and any Gather disagreement "
+            "section. When limit covers every member they come back in the page's own "
+            "order; when it truncates, the window is spread across sources (one member "
+            "per source in rotation) rather than a prefix, so a small limit still "
+            "reaches a source that sorts late alphabetically. A disagreement is a "
+            "retrieval hint, never a citation (D4) -- follow its member chunk_ids to "
+            "the real notes and cite only those."
         ),
         required_args=frozenset({"canonical"}),
         optional_args=frozenset({"limit"}),

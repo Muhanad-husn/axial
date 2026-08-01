@@ -299,7 +299,10 @@ def test_get_name_truncates_members_at_limit_but_not_member_count(tmp_path):
 
     capped = get_name("a concept", 2, vault_dir=vault_dir)
     assert [m.chunk_id for m in capped.members] == ["m1", "m2"], (
-        "the truncated prefix is the head of the page's own written order"
+        "these chunk_ids carry no parseable source_id (issue #562's round-robin "
+        "groups every one of them under the same empty-string bucket), so the "
+        "spread degenerates to the page's own written order here -- see the "
+        "round-robin-specific tests below for a fixture with real source spread"
     )
     assert capped.member_count == 4, "member_count is the true total, never capped"
 
@@ -311,6 +314,106 @@ def test_get_name_truncates_members_at_limit_but_not_member_count(tmp_path):
     assert [m.chunk_id for m in default.members] == ["m1", "m2", "m3", "m4"], (
         "DEFAULT_LIMIT (10) does not truncate a 4-member page"
     )
+
+
+def test_get_name_truncated_window_reaches_a_primary_source_deep_in_page_order(tmp_path):
+    """issue #562: `Charles Tilly`'s own page groups members by `source_id`
+    alphabetically, and two secondary sources (`malesevic-2004`,
+    `mann-2012`) hold far more members between them than the primary source
+    (`tilly-1978`) -- the exact hub shape measured on the real vault, where
+    Tilly's own book sat at member 108 of 154. A plain prefix truncation at
+    any limit under 74 never reaches it; the round-robin spread reaches it
+    as soon as every distinct source has contributed once, which for a
+    4-source page is limit=4."""
+    vault_dir = tmp_path / "vault"
+    chunk_ids = (
+        ["bayat-1997_1_a_001"]
+        + [f"malesevic-2004_1_a_{i:03d}" for i in range(1, 31)]
+        + [f"mann-2012_1_a_{i:03d}" for i in range(1, 41)]
+        + [f"tilly-1978_1_a_{i:03d}" for i in range(1, 4)]
+    )
+    _write_name_page(
+        vault_dir, "Charles Tilly", member_count=len(chunk_ids), body=_page_body(chunk_ids)
+    )
+    assert not any(cid.startswith("tilly") for cid in chunk_ids[:10]), (
+        "sanity: a plain prefix at a real-world default limit never reaches tilly"
+    )
+
+    page = get_name("Charles Tilly", 4, vault_dir=vault_dir)
+
+    assert [m.chunk_id for m in page.members] == [
+        "bayat-1997_1_a_001",
+        "malesevic-2004_1_a_001",
+        "mann-2012_1_a_001",
+        "tilly-1978_1_a_001",
+    ]
+    assert page.member_count == len(chunk_ids), "member_count stays the true, uncapped total"
+
+
+def test_get_name_limit_covering_every_member_returns_page_order_unchanged(tmp_path):
+    """The spread is a truncation rule, not a re-sort (issue #562): a `limit`
+    that already covers every member must see the page's own written order,
+    byte-for-byte, whether `limit` equals `member_count` exactly or exceeds
+    it."""
+    vault_dir = tmp_path / "vault"
+    chunk_ids = (
+        ["bayat-1997_1_a_001"]
+        + [f"malesevic-2004_1_a_{i:03d}" for i in range(1, 4)]
+        + [f"mann-2012_1_a_{i:03d}" for i in range(1, 4)]
+        + [f"tilly-1978_1_a_{i:03d}" for i in range(1, 3)]
+    )
+    _write_name_page(
+        vault_dir, "Charles Tilly", member_count=len(chunk_ids), body=_page_body(chunk_ids)
+    )
+
+    exact = get_name("Charles Tilly", len(chunk_ids), vault_dir=vault_dir)
+    assert [m.chunk_id for m in exact.members] == chunk_ids
+
+    over = get_name("Charles Tilly", len(chunk_ids) + 5, vault_dir=vault_dir)
+    assert [m.chunk_id for m in over.members] == chunk_ids
+
+
+def test_get_name_truncated_window_is_deterministic_across_repeated_calls(tmp_path):
+    vault_dir = tmp_path / "vault"
+    chunk_ids = (
+        [f"aaa-src_1_a_{i:03d}" for i in range(1, 6)]
+        + [f"bbb-src_1_a_{i:03d}" for i in range(1, 6)]
+        + [f"ccc-src_1_a_{i:03d}" for i in range(1, 6)]
+    )
+    _write_name_page(
+        vault_dir, "a concept", member_count=len(chunk_ids), body=_page_body(chunk_ids)
+    )
+
+    first = [m.chunk_id for m in get_name("a concept", 5, vault_dir=vault_dir).members]
+    second = [m.chunk_id for m in get_name("a concept", 5, vault_dir=vault_dir).members]
+
+    assert first == second
+    assert first == [
+        "aaa-src_1_a_001",
+        "bbb-src_1_a_001",
+        "ccc-src_1_a_001",
+        "aaa-src_1_a_002",
+        "bbb-src_1_a_002",
+    ]
+
+
+def test_get_name_truncated_window_places_an_unparsed_member_first_and_does_not_crash(tmp_path):
+    """A member whose `chunk_id` does not parse (`_parse_name_page_body`)
+    has `source_id=None`. It is grouped under the empty string, which sorts
+    before any real `source_id` -- the same placement `where_names_meet`'s
+    own round-robin already gives an unparsed member (issue #517) -- so it
+    is reachable in a small window rather than dropped, and grouping it
+    never raises."""
+    vault_dir = tmp_path / "vault"
+    chunk_ids = ["not-a-real-chunk-id", "aaa-src_1_a_001", "bbb-src_1_a_001", "bbb-src_1_a_002"]
+    _write_name_page(
+        vault_dir, "a concept", member_count=len(chunk_ids), body=_page_body(chunk_ids)
+    )
+
+    page = get_name("a concept", 2, vault_dir=vault_dir)
+
+    assert [m.chunk_id for m in page.members] == ["not-a-real-chunk-id", "aaa-src_1_a_001"]
+    assert page.members[0].source_id is None
 
 
 def test_get_name_never_returns_a_different_pages_content_on_a_filename_collision(tmp_path):
