@@ -1,0 +1,28 @@
+# Dev paper brief (specs/PHASE-C.md §7.1, P0-13).
+#
+# Three records spanning a century, so the planner has to build an arc rather
+# than group by source: colonial institution-building, late-authoritarian
+# resilience, post-2011 sovereignty. If the plan comes back as three sections
+# named after three records, §7.2's planning stage has failed and the paper
+# will read as a literature review whatever the drafter does with it.
+#
+# This is also the widest coverage test: the three records' maps overlap only
+# partially, so the §7.11 union has names carried from one record and not the
+# others, and §7.4's clamp has real work to do.
+#
+# All three sit on corpus pin sim-2026-07-26.
+
+thesis: >-
+  The institutions that decided who held power in Syria after 2011 were built
+  under the mandate, not by the Baath and not by the war. What changed across a
+  century was which group the arrangement favoured, and what stayed constant
+  was that belonging, rather than office, was the thing being allocated.
+
+analysis_ids:
+  - 0ae817e05d4dc424
+  - 124f7ba6ff8927c7
+  - fd0c2636d456d0fc
+
+lens: political-economy
+
+title: What the Mandate Built
