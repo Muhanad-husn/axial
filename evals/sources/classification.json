@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "corpus_pin": "sim-2026-07-30",
+  "note": "A source is `commentary` when the book's subject is another thinker's body of work -- an edited volume of readings of one figure. Everything else is `primary`: the author states their own argument or presents their own evidence, including edited topical collections of original research. Authored from titles, 2026-08-01.",
+  "note_weighted_baseline": {
+    "corpus_pin": "sim-2026-07-30",
+    "commentary_note_count": 7812,
+    "total_note_count": 141268,
+    "share": 0.055299,
+    "commentary_note_counts_by_source": {
+      "hall-2006-449559bfe4dc": 4635,
+      "malesevic-2007-323a2518e61b": 3177
+    },
+    "measured": "Measured against the live name index at pin sim-2026-07-30, 2026-08-01 -- the note-weighted corpus baseline the run's own note-weighted commentary_mix share should be read against. This is a MEASUREMENT (7812/141268), never a derivation from the source-count fields above: on this corpus the two happen to land within a point of each other (2/31 sources = 6.45%), which is exactly what makes a source-count substitute dangerous rather than merely imprecise."
+  },
+  "sources": {
+    "agamben-2005-b22edc40e0fc": {
+      "class": "primary",
+      "about": null
+    },
+    "ayubi-1995-16fd6a2e503f": {
+      "class": "primary",
+      "about": null
+    },
+    "batatu-1999-598624067df3": {
+      "class": "primary",
+      "about": null
+    },
+    "bayat-2017-ce6bb0643cfb": {
+      "class": "primary",
+      "about": null
+    },
+    "beshara-2011-8410a9059300": {
+      "class": "primary",
+      "about": null
+    },
+    "caspersen-2012-fbc0efe4fffc": {
+      "class": "primary",
+      "about": null
+    },
+    "chouliaraki-2024-91e7fc84f05c": {
+      "class": "primary",
+      "about": null
+    },
+    "elcheroth-2017-78f0cccef5b9": {
+      "class": "primary",
+      "about": null
+    },
+    "gellner-1981-a8b0206cb566": {
+      "class": "primary",
+      "about": null
+    },
+    "hall-2006-449559bfe4dc": {
+      "class": "commentary",
+      "about": "Michael Mann"
+    },
+    "heydemann-2000-66701ffbb36c": {
+      "class": "primary",
+      "about": null
+    },
+    "heydemann-2004-72a4a9a9b3b0": {
+      "class": "primary",
+      "about": null
+    },
+    "jackson-1990-7eb3f39a639f": {
+      "class": "primary",
+      "about": null
+    },
+    "kalyvas-2006-0b5817b2642e": {
+      "class": "primary",
+      "about": null
+    },
+    "kandiah-2018-454c87b22e16": {
+      "class": "primary",
+      "about": null
+    },
+    "kao-2025-ab19e646ab7d": {
+      "class": "primary",
+      "about": null
+    },
+    "malesevic-2007-323a2518e61b": {
+      "class": "commentary",
+      "about": "Ernest Gellner"
+    },
+    "malesevic-2010-fd2cbe41384f": {
+      "class": "primary",
+      "about": null
+    },
+    "malesevic-2013-5d3ec1809b12": {
+      "class": "primary",
+      "about": null
+    },
+    "malesevic-2026-4faeb528594d": {
+      "class": "primary",
+      "about": null
+    },
+    "mann-v1-2012-5f90ead66c93": {
+      "class": "primary",
+      "about": null
+    },
+    "mann-v2-1993-ec759675dcbd": {
+      "class": "primary",
+      "about": null
+    },
+    "mann-v3-2012-3e9f48ff605a": {
+      "class": "primary",
+      "about": null
+    },
+    "mann-v4-2013-1b7e828e0199": {
+      "class": "primary",
+      "about": null
+    },
+    "smith-2009-cba7b6f3dfba": {
+      "class": "primary",
+      "about": null
+    },
+    "tilly-1978-f908c910464c": {
+      "class": "primary",
+      "about": null
+    },
+    "ungor-2020-ae5701dcc706": {
+      "class": "primary",
+      "about": null
+    },
+    "vignal-2021-c7005c2bf8ef": {
+      "class": "primary",
+      "about": null
+    },
+    "white-2011-5f35a47d9657": {
+      "class": "primary",
+      "about": null
+    },
+    "wimmer-2013-a67941b77943": {
+      "class": "primary",
+      "about": null
+    },
+    "zaum-2007-834d3343aa95": {
+      "class": "primary",
+      "about": null
+    }
+  }
+}
