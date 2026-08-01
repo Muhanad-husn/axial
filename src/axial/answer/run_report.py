@@ -246,13 +246,20 @@ def _retrieval_hit(
     case_id: str | None,
     cases_dir: Path | None,
 ) -> dict[str, Any]:
-    """The phase's one mechanical accuracy oracle (§9.3, §10.0): the share of
-    the case's `required_citation_source_ids` this run's grounds actually
-    reached. Nothing in `src/` read that field before this slice.
+    """The phase's one mechanical accuracy oracle (§9.3, §10.0, issue #560):
+    the share of the case's `required_citation_legs` this run's grounds
+    reached. A leg is reached when the grounds cite ANY source in its
+    `any_of` -- a flat AND list of ids cannot express "this leg is satisfied
+    by any book that carries it", so the unit is the leg, not the id. The
+    older flat `required_citation_source_ids` is read by `load_case` as one
+    leg per id, so a case that has not been re-authored scores exactly as it
+    always did.
 
     Reports not-scored with a reason when no case is joined to the run or
-    the case names no required ids -- a brief without a case has no oracle,
-    which is a fact about the input, not a score of 0."""
+    the case names no legs -- a brief without a case has no oracle, which is
+    a fact about the input, not a score of 0. Names the **unreached legs by
+    name**, since which demand an answer did not reach is the point of the
+    oracle."""
     if case_id is None:
         return {"value": None, "reason": NO_CASE_REASON}
     case = load_case(case_id, cases_dir=cases_dir)
@@ -262,22 +269,23 @@ def _retrieval_hit(
             "case_id": case_id,
             "reason": f"not scored: no case file for case_id {case_id!r} (§9.3)",
         }
-    required = sorted(set(case.required_citation_source_ids))
-    if not required:
+    legs = case.required_citation_legs
+    if not legs:
         return {
             "value": None,
             "case_id": case.case_id,
-            "reason": f"not scored: case {case.case_id!r} names no required_citation_source_ids",
+            "reason": f"not scored: case {case.case_id!r} names no required_citation_legs",
         }
-    reached = sorted(source_id for source_id in required if source_id in grounds_source_ids)
+    reached_legs = [leg.leg for leg in legs if grounds_source_ids.intersection(leg.any_of)]
+    missed_legs = [leg.leg for leg in legs if not grounds_source_ids.intersection(leg.any_of)]
     return {
-        "value": len(reached) / len(required),
-        "numerator": len(reached),
-        "denominator": len(required),
+        "value": len(reached_legs) / len(legs),
+        "numerator": len(reached_legs),
+        "denominator": len(legs),
         "case_id": case.case_id,
-        "required_source_ids": required,
-        "reached_source_ids": reached,
-        "missed_source_ids": [s for s in required if s not in set(reached)],
+        "required_legs": [{"leg": leg.leg, "any_of": list(leg.any_of)} for leg in legs],
+        "reached_legs": reached_legs,
+        "missed_legs": missed_legs,
     }
 
 

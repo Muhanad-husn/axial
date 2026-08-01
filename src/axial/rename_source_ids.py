@@ -36,10 +36,15 @@ What it touches:
     under `dispatch/` and `dispatch/out/` (whose ids are object *keys*), and
     the `chunk_id`/`source` provenance columns of `label_sheet.xlsx`,
   * rewrites every `source_id`/`chunk_id`/`artifact_id` *inside* those
-    files, plus `evals/cases/sim/*.json`'s `required_citation_source_ids`
-    and the benchmark analysis logs under
-    `data/logs/2026-07-25-brief-benchmark-slice1/analyses/`, whose `grounds`
-    carry chunk_ids that would otherwise stop resolving against the vault.
+    files, plus `evals/cases/sim/*.json`'s citation ids -- the flat
+    `required_citation_source_ids` list and every id nested inside a
+    `required_citation_legs[].any_of` (issue #560) -- and the benchmark
+    analysis logs under `data/logs/2026-07-25-brief-benchmark-slice1/
+    analyses/`, whose `grounds` carry chunk_ids that would otherwise stop
+    resolving against the vault. `substitute_ids_in_text` is a plain text
+    substitution over the whole file, not a JSON-shape-aware rewrite, so it
+    reaches an id at any nesting depth without needing to know the case
+    schema.
 
 The other `data/logs/` runs are deliberately left alone. A run log records
 what was true when it ran; rewriting its ids would falsify the record. The

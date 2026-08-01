@@ -68,6 +68,44 @@ def test_happy_path_remap_rewrites_stale_id(tmp_path: Path):
     assert payload["notes"] == "unrelated prose that must survive untouched"
 
 
+def test_ids_nested_in_required_citation_legs_any_of_are_remapped(tmp_path: Path):
+    """Issue #560: once a case is re-authored to the leg schema, its
+    citation ids sit nested inside `required_citation_legs[].any_of` rather
+    than the flat `required_citation_source_ids` list. The remapper must
+    find and rewrite those too, or a source id silently stops being remapped
+    at the next corpus re-cut (specs/PHASE-B.md §7.12)."""
+    sources_dir = tmp_path / "sources"
+    new_id = _write_source(sources_dir, "tidy-stem.pdf", b"epsilon content")
+    old_id = f"stale-stem-{new_id[-12:]}"
+    unmapped_id = "no-hash-suffix-at-all"
+
+    cases_dir = tmp_path / "cases"
+    cases_dir.mkdir(parents=True)
+    case_path = cases_dir / "A.json"
+    case_path.write_text(
+        json.dumps(
+            {
+                "case_id": "A",
+                "required_citation_legs": [
+                    {"leg": "a leg", "any_of": [old_id, unmapped_id]},
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    reports = migrate(cases_dir, sources_dir, apply=True)
+
+    assert reports[0].remapped == {old_id: new_id}
+    assert reports[0].unmapped == [unmapped_id]
+
+    payload = json.loads(case_path.read_text(encoding="utf-8"))
+    assert payload["required_citation_legs"][0]["any_of"] == [new_id, unmapped_id]
+
+
 def test_remap_preserves_formatting_outside_the_changed_ids(tmp_path: Path):
     sources_dir = tmp_path / "sources"
     new_id = _write_source(sources_dir, "tidy-stem.pdf", b"beta content")

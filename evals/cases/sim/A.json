@@ -5,18 +5,58 @@
     "persona": "eval-hard",
     "date": "2026-07-31",
     "path_version": "sim-v1",
-    "required_sources_derived": "per question leg from the live name index at pin sim-2026-07-30, LLM-free: resolve the leg's anchors, count member notes by source, keep the leader. bellicist mechanism -> tilly-1978 (the originating text the question's premise names); power distinction and critics -> hall-2006 (25 and 173 notes); recognition regime -> jackson-1990 (51); Middle East state -> ayubi-1995 (21); war making in the Middle East -> heydemann-2000 (23)."
+    "required_sources_derived": "legs are authored per question demand (turns_on), one per leg, with the live name index at pin sim-2026-07-30 read as evidence -- not by a count rule; a leader-take-all count rule named the wrong sources for two of these legs (issue #560). A leg whose anchor is an author or a work names that author's own books, not the books that cite them: 'Mann's despotic/infrastructural distinction' is satisfied by mann-v1..v4, never hall-2006's *An Anatomy of Power: the social theory of Michael Mann* (175 of `Michael Mann`'s 379 notes, the largest single source, but a book about Mann, not by him); that book instead carries its own leg, 'the critics of the state-formation literature'. Counts choose the carrier only where a leg's material genuinely splits across candidate books: the two Middle East legs split ayubi-1995/batatu-1999/heydemann-2004 and heydemann-2000/heydemann-2004 by which question -- state character vs. war making -- each source actually addresses. `tilly-1978` (*From Mobilization to Revolution*) carries none of the war-makes-states material this question turns on -- its own top name surfaces are France, England, the French Revolution, Durkheim, Marx -- while the corpus's bellicist mechanism lives on `malesevic-2026` (`bellicist approach`, 7 of 9 notes); the bellicist-mechanisms leg's `any_of` names both, so an answer that reaches the mechanism through malesevic-2026 alone has legitimately gone elsewhere, not missed the leg (the recall-vs-legitimate-miss open question, specs/PHASE-B.md Open Questions). Eight `turns_on` items collapse onto six legs: 'nation-state formation and war in the last two centuries' and 'civil war as state-making or state-breaking' are the general thesis the other legs already test, not separate demands."
   },
   "case_id": "A",
   "question": "The claim that war made the modern state was built on the European experience of sustained inter-state competition. Assess whether the argument survives transfer to the twentieth-century Middle East, where states waged and prepared for war under a regime of guaranteed juridical sovereignty and external rents. Which of the bellicist mechanisms travel and which fail, and what do the sharpest critics of the state-formation literature identify as the reason for the difference?",
   "answer_kind": "rubric",
   "expected_answer": "",
-  "required_citation_source_ids": [
-    "tilly-1978-f908c910464c",
-    "hall-2006-449559bfe4dc",
-    "jackson-1990-7eb3f39a639f",
-    "ayubi-1995-16fd6a2e503f",
-    "heydemann-2000-66701ffbb36c"
+  "required_citation_legs": [
+    {
+      "leg": "the bellicist mechanisms",
+      "any_of": [
+        "tilly-1978-f908c910464c",
+        "malesevic-2026-4faeb528594d"
+      ]
+    },
+    {
+      "leg": "Mann's despotic/infrastructural distinction",
+      "any_of": [
+        "mann-v1-2012-5f90ead66c93",
+        "mann-v2-1993-ec759675dcbd",
+        "mann-v3-2012-3e9f48ff605a",
+        "mann-v4-2013-1b7e828e0199"
+      ]
+    },
+    {
+      "leg": "the critics of the state-formation literature",
+      "any_of": [
+        "hall-2006-449559bfe4dc"
+      ]
+    },
+    {
+      "leg": "the recognition regime / juridical statehood",
+      "any_of": [
+        "jackson-1990-7eb3f39a639f",
+        "zaum-2007-834d3343aa95",
+        "caspersen-2012-fbc0efe4fffc"
+      ]
+    },
+    {
+      "leg": "the fierce but weak Middle Eastern state",
+      "any_of": [
+        "ayubi-1995-16fd6a2e503f",
+        "batatu-1999-598624067df3",
+        "heydemann-2004-72a4a9a9b3b0"
+      ]
+    },
+    {
+      "leg": "war making in the Middle East",
+      "any_of": [
+        "heydemann-2000-66701ffbb36c",
+        "heydemann-2004-72a4a9a9b3b0"
+      ]
+    }
   ],
   "rubric": [
     "Decomposes the war-makes-states claim into at least three distinct causal mechanisms (e.g. fiscal extraction, capital-coercion bargaining, administrative penetration, mass mobilisation and citizenship) rather than treating it as a single thesis to accept or reject",

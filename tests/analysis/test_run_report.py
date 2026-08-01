@@ -28,10 +28,17 @@ Then  zero LLM calls are made
   And the two judged accuracy numbers are reported as not-scored with a
       stated reason, never as 0 and never as a pass
 
-Given a case file evals/cases/sim/DEVCASE.json naming two required source ids,
-      one of which this run's grounds reach
+Given a case file evals/cases/sim/DEVCASE.json naming two required citation
+      legs (issue #560) -- one whose `any_of` is reached through a
+      non-leader member, one wholly unreached
 When  the report is built with that case_id
-Then  retrieval_hit is 0.5, naming the reached and the missed source id
+Then  retrieval_hit is 0.5, naming the reached and the missed leg BY NAME
+
+Given the same case restated in the older flat `required_citation_source_ids`
+      form (one id per leg)
+When  the report is built with that case_id
+Then  retrieval_hit scores identically to the leg form -- back-compat for the
+      cases not being re-authored in this slice
 
 Given the same persisted record and the same per-pass latencies
 When  the report is built twice
@@ -364,9 +371,58 @@ def test_single_book_b_claims_report_a_cross_source_rate_of_zero(tmp_path: Path,
         assert judged["reason"]
 
 
-def test_retrieval_hit_scores_against_required_citation_source_ids(tmp_path: Path, monkeypatch):
-    """The mechanical oracle §9.3 keeps and nothing in `src/` read until
-    this slice: did the run's grounds reach the sources the case names?"""
+def test_retrieval_hit_scores_against_required_citation_legs(tmp_path: Path, monkeypatch):
+    """Issue #560: a leg is reached when the run's grounds cite ANY source
+    in its `any_of`, so a leg is reached here through the SECOND
+    (non-leader) member of its `any_of` -- the whole point of the schema is
+    that reaching a leg never depends on which book in the list carried it.
+    The unreached leg is named, not just counted, since which demand an
+    answer missed is the point of the oracle."""
+    monkeypatch.setenv(PROVIDER_ENV_VAR, "explode")
+    from axial.answer.run_report import build_run_report
+
+    _write_chunk(tmp_path, TILLY_CHUNK)
+    vault_dir = tmp_path / "data" / "vault"
+
+    cases_dir = tmp_path / "evals" / "cases" / "sim"
+    cases_dir.mkdir(parents=True)
+    (cases_dir / "DEVCASE.json").write_text(
+        json.dumps(
+            {
+                "case_id": "DEVCASE",
+                "question": "Q",
+                "answer_kind": "rubric",
+                "required_citation_legs": [
+                    {"leg": "the tilly leg", "any_of": [BAYAT_SOURCE, TILLY_SOURCE]},
+                    {"leg": "the unreached leg", "any_of": [BAYAT_SOURCE]},
+                ],
+                "rubric": [],
+                "instant_dismissal_criteria": ["Anything that ignores organization."],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    record = _record([_claim("c1", "a", [TILLY_CHUNK], [TILLY])])
+    report = build_run_report(
+        record,
+        latency_by_pass=_LATENCIES,
+        vault_dir=vault_dir,
+        case_id="DEVCASE",
+        cases_dir=cases_dir,
+    )
+
+    hit = report["accuracy"]["retrieval_hit"]
+    assert hit["value"] == pytest.approx(0.5)
+    assert hit["reached_legs"] == ["the tilly leg"]
+    assert hit["missed_legs"] == ["the unreached leg"]
+
+
+def test_retrieval_hit_old_flat_form_scores_identically_to_before(tmp_path: Path, monkeypatch):
+    """Back-compat (issue #560): a case stating only the older flat
+    `required_citation_source_ids` is read as one leg per id, so the 23
+    cases not being re-authored in this slice score exactly as they always
+    did."""
     monkeypatch.setenv(PROVIDER_ENV_VAR, "explode")
     from axial.answer.run_report import build_run_report
 
@@ -400,8 +456,8 @@ def test_retrieval_hit_scores_against_required_citation_source_ids(tmp_path: Pat
 
     hit = report["accuracy"]["retrieval_hit"]
     assert hit["value"] == pytest.approx(0.5)
-    assert hit["reached_source_ids"] == [TILLY_SOURCE]
-    assert hit["missed_source_ids"] == [BAYAT_SOURCE]
+    assert hit["reached_legs"] == [TILLY_SOURCE]
+    assert hit["missed_legs"] == [BAYAT_SOURCE]
 
 
 def test_the_report_is_deterministic_over_the_same_record(tmp_path: Path, monkeypatch):
