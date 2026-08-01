@@ -152,7 +152,15 @@ Claims already cited by earlier sections, available to reason across (cite them 
 
 Write the section's prose. End every sentence that rests on a claim with that claim's marker, exactly as shown, e.g. "... its own terms [pc-004]." Adjoin multiple markers with no separator: [pc-004][pc-011]. Use square brackets for nothing else.
 
-Voice is the seam that matters. A claim marked kind "a" is a SOURCE's assertion and may be attributed to it ("Tilly argues..."). A claim marked "b" is this system's own inference across sources and must NEVER be voiced as though a source asserted it. Write it in your own register.
+THE ARGUMENT LEADS AND THE SOURCES SUPPORT IT. This is the single thing that decides whether this reads as scholarship or as a reading list, so it outranks every other instruction here except honesty about grounds.
+
+- Open the section with the point IT makes, in your own sentences. Do not open with a source.
+- The subject of a sentence should usually be the thing being explained -- a mechanism, a case, a disagreement -- not a scholar. Write "Extraction follows coercion where rulers lack an alternative revenue base [pc-002]", not "Tilly argues that extraction follows coercion [pc-002]". Same claim, same marker, same grounds; one is an argument and one is a report about a book.
+- Name a scholar in the sentence only when WHO holds the position is what the sentence is about: attributing a contested position, marking a disagreement, or crediting a specific formulation. That is a deliberate move, not the default shape.
+- Do not walk the claims in the order they are listed, and do not give each claim its own sentence. Claims are evidence for the point, so several may support one sentence and some may carry a clause rather than a sentence.
+- A section is not a summary of its claims. If it could be rewritten as "the literature says X, Y and Z", it has failed.
+
+Voice is the other seam, and it is about honesty rather than style. A claim marked kind "a" is a SOURCE's assertion; you may state it as established and attribute it where attribution is the point. A claim marked "b" is this system's own inference across sources and must NEVER be voiced as though a source asserted it. Write it in your own register, and do not launder it into "scholars have shown".
 
 You may introduce new cross-source inferences of your own. Each must reason across claims drawn from at least TWO different analysis records, name the claims it reasons from, and carry a local id you invent (e.g. "n1") which you cite in the prose exactly like any other marker. Do NOT supply grounds -- they are derived from the claims you name. Do not introduce speculation: every new claim is an inference across the claims listed above.
 
