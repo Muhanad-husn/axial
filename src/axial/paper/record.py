@@ -279,6 +279,10 @@ def run_paper(
         "gap_found_cited_scope": gap_found_cited_scope,
         "gap_repaired_cited": gap_repaired_cited,
         "skipped_abstentions": repair.skipped_abstentions,
+        # gap_found is COMPLETE, never capped (§7.15). Only the shaping is
+        # bounded (MAX_REPAIR_CLAIMS_PER_NAME per name), and this is the
+        # disclosed count of what the cap left unshaped -- never silent.
+        "gap_left_unshaped": repair.gap_left_unshaped,
         "by_name": repair.by_name(),
     }
 

@@ -360,6 +360,58 @@ def test_the_lookup_is_an_injectable_seam_not_a_hardcoded_call(analyses_dir, emp
     ]
 
 
+def test_the_gap_is_counted_complete_over_a_truncated_first_call(analyses_dir, empty_vault):
+    """Coordinator fix, 2026-08-01: `who_argues_against` sorts by `chunk_id`
+    ascending and truncates at `limit` (10 by default). Counting the gap over
+    that first, truncated call would report an arbitrary lexicographic slice
+    rather than the real gap. A name whose lookup returns more edges than the
+    first call's window must still have ALL of them counted."""
+    from axial.query.names import OppositionEdge
+
+    vault_dir, names_dir = empty_vault
+    intake = run_intake(("brief-a",), analyses_dir=analyses_dir)
+
+    # 25 distinct opposing notes on "Charles Tilly" -- more than DEFAULT_LIMIT
+    # (10) and more than MAX_REPAIR_CLAIMS_PER_NAME (20).
+    all_edges = [
+        OppositionEdge(
+            chunk_id=f"critic-2021-ccc_{i:02d}_a_001",
+            source_id="critic-2021-ccc",
+            arguing_against="Charles Tilly",
+            position=None,
+            claim=f"Objection {i} to the war-making account.",
+        )
+        for i in range(25)
+    ]
+
+    calls: list[int] = []
+
+    def truncating_lookup(canonical, limit=10, *, vault_dir=None, names_dir=None):
+        calls.append(limit)
+        if canonical != "Charles Tilly":
+            return [], 0
+        return all_edges[:limit], len(all_edges)
+
+    repair = run_opposition_repair(
+        intake, vault_dir=vault_dir, names_dir=names_dir, lookup=truncating_lookup
+    )
+
+    # First call at the default window (truncated at 10), then a SECOND call
+    # at the tool's own true total (25) to complete the count -- never a
+    # third, since the second call is no longer truncated.
+    assert calls == [10, 25]
+    # The gap is the full 25, not the first call's 10.
+    assert repair.gap_found == 25
+    assert repair.gaps[0].total == 25
+    assert repair.gaps[0].checked == 25
+    # Shaping stays bounded at MAX_REPAIR_CLAIMS_PER_NAME (20 of the 25) --
+    # the count is complete, only the repair is capped, and what the cap
+    # left unshaped is disclosed rather than silently dropped.
+    assert repair.gap_repaired == 20
+    assert repair.gaps[0].left_unshaped == 5
+    assert repair.gap_left_unshaped == 5
+
+
 # -- integration: the full run_paper pipeline ---------------------------------
 
 
@@ -462,7 +514,7 @@ def test_a_repaired_claim_reaches_the_inventory_the_record_and_the_render(
     rendered = render_paper(record)
     assert "## Opposition check (exact-match join)" in rendered
     assert "Found **1**" in rendered
-    assert "repaired **1**" in rendered
+    assert "Repaired **1**" in rendered
     assert "4.7%" in rendered  # the scope note's magnitude travels into the render
     assert "| Charles Tilly | earned |" in rendered
     # A repaired run must never report a clean zero (#570 rule 3).
