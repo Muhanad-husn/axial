@@ -693,8 +693,8 @@ exact_match_opposition_gap: {
 - [ ] The control qualifies the **instrument**, not any paper. Observable: a failing positive control blocks no paper's release and fails no per-run gate; it invalidates that measurement run's numbers and nothing else.
 
 **P0-12 CLI surface with inspect-before-spend.**
-- [ ] `axial paper draft <paper_brief_file>` runs stages 1 through 5 and writes the record and rendered paper.
-- [ ] `axial paper examine <paper_brief_file>` runs intake and arc planning and reports the plan, the claim inventory, and the sections' assigned claims **without the drafting call**, analogous to `axial brief examine` (PHASE-B P0-9). Observable: `examine` makes zero drafting calls.
+- [x] `axial paper draft <paper_brief_file>` runs stages 1 through 5 and writes the record and rendered paper.
+- [x] `axial paper examine <paper_brief_file>` runs intake and arc planning and reports the plan, the claim inventory, and the sections' assigned claims **without the drafting call**, analogous to `axial brief examine` (PHASE-B P0-9). Observable: `examine` makes zero drafting calls. **Implemented as `axial.paper.examine.run_paper_examine`, composed from `run_intake` / `run_opposition_repair` / `extend_intake` / `resolve_lens` / `run_plan` -- the same stage functions `run_paper` calls up to the same point -- with no reference anywhere in its call graph to `axial.paper.draft`, so the zero-drafting-calls property holds by import graph rather than by a flag. Pinned in `tests/paper/test_paper_cli.py::test_examine_makes_zero_drafting_calls` by counting a stub client's calls per `pass_name`.**
 - [ ] The four per-run gates run through the existing `axial gate run <gate>` surface. Observable: `draft` and `examine` between them expose no path that invokes the reviewer panel.
 - [ ] `axial eval coherence --sample <sample_spec>` runs the offline eval track: assembles packets, runs the panel over the sampled papers, and writes the per-stratum report with its frame. It is a separate command from `axial paper`, because it measures the system rather than producing a paper.
 

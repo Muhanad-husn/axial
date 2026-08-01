@@ -1,7 +1,9 @@
 """Phase-C paper authorship (specs/PHASE-C.md).
 
-Stages 1 through 3 and the deterministic parts of 4 and 5. Record assembly,
-rendering and the CLI surface are still to come.
+All five stages, record assembly, rendering, and the `axial paper
+draft`/`axial paper examine` CLI surface (§8 P0-12, wired in
+`src/axial/cli.py` alongside every other subcommand -- there is no
+`src/axial/paper/cli.py`).
 
 **Every stage past intake takes a LIST of analysis records, and a list of one
 is not a special case.** That signature is the whole reason the prose layer --
