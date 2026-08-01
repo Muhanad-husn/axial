@@ -43,8 +43,17 @@ shape, so everything downstream of the edge set -- already-read filtering,
 claim shaping, the trajectory, the coverage map, the two gap counts -- is
 correct regardless of which lookup produced the edges.
 
-**Step 1: the gap, recorded before anything repairs it (#570 rule 3).** Over
-every name the intake inventory's claims touch, the lookup is called once. An
+**Step 1: the gap, recorded before anything repairs it (#570 rule 3), and
+counted COMPLETE -- never a window.** Over every name the intake inventory's
+claims touch, the lookup is called, and re-called at the tool's own true
+`total` whenever the first call comes back capped (`_full_edges`, mirroring
+`axial.validators.coverage._evidence_note_count`'s own re-call at a page's
+real `member_count`). `who_argues_against` sorts by `chunk_id` ascending and
+truncates at `limit`; counting the gap over that truncated window would
+report "gap found: 3" on a name carrying 180 unread opposing notes, biased
+toward whichever chunk ids happen to sort first -- not a ranked sample, an
+arbitrary one. This costs nothing in model tokens: it is a second
+deterministic index read, never a retrieval loop and never a model call. An
 edge is "already read" when its chunk id appears in some named source
 record's own retrieval trajectory (issue #556's persisted §7.6 log:
 `result_ids` on a chunk-returning tool call) OR among that record's own
@@ -60,15 +69,22 @@ itself, which -- for the default `who_argues_against` -- is a plain, free
 vault read, not a retrieval loop, not a model call, not the
 commissioned-Phase-B-run alternative the founder rejected.
 
-**Step 3: shaping, with ZERO model calls.** `OppositionEdge` already carries
-`chunk_id` (a real vault id), `source_id`, and the note's own one-sentence
-`claim` -- a source's own assertion, with grounds that come out of the index
-together with the text, so generate-then-cite stays structurally impossible.
-Measured over the real corpus (2026-08-01, `D:/axial/data/vault/prose`,
-6,148 live notes): 6,009 (97.7%) carry a real `claim` answer; 139 (2.3%)
-carry the `not-in-passage` abstention. This module skips those rather than
-inventing text for them -- `skipped_abstentions` on `OppositionRepair` counts
-them.
+**Step 3: shaping, with ZERO model calls, and a BOUNDED claim count -- never
+a bounded gap count.** `OppositionEdge` already carries `chunk_id` (a real
+vault id), `source_id`, and the note's own one-sentence `claim` -- a source's
+own assertion, with grounds that come out of the index together with the
+text, so generate-then-cite stays structurally impossible. Measured over the
+real corpus (2026-08-01, `D:/axial/data/vault/prose`, 6,148 live notes):
+6,009 (97.7%) carry a real `claim` answer; 139 (2.3%) carry the
+`not-in-passage` abstention. This module skips those rather than inventing
+text for them -- `skipped_abstentions` counts them. Separately, **at most
+`MAX_REPAIR_CLAIMS_PER_NAME` (20) gap edges per name are shaped into claims**
+-- a real design bound, not an accident of a default: two hundred repair
+claims across a handful of anchor names would swamp a paper's inventory the
+same way an uncapped counter-position candidate list once blew one Phase-B
+prompt to 72,000 characters (PHASE-B §7.8, issue #505). The gap COUNT is
+never capped this way, only the shaping is, and what the cap left unshaped is
+counted and disclosed (`left_unshaped_by_cap`), never silently dropped.
 
 **Every repair claim is injected into the intake as though it came from an
 extra source record** (`REPAIR_BRIEF_ID`), whose own `coverage_map` is
@@ -132,6 +148,19 @@ OPPOSITION_GAP_SCOPE_NOTE = (
     "opposition went unread, never that the corpus holds no counter-argument, "
     "and never that the unmatched opposition had no name in it"
 )
+
+# A bound on how many of one anchor name's gap edges get SHAPED into repair
+# claims -- never on how many are COUNTED (#570 rule 3: a truncated count is
+# not an instrument, it is a formality). Two hundred repair claims spread
+# across a handful of anchor names would swamp a paper's inventory the same
+# way PHASE-B's own `axial.analyze.synthesis.MAX_COUNTER_POSITION_CANDIDATES`
+# (20) was capped for the identical reason: a hub name's page is unbounded on
+# the real corpus (`Syria` alone carries 962 members) and an uncapped
+# candidate list once blew one prompt to 72,000 characters (issue #505). Same
+# order of magnitude, same reasoning, restated locally rather than imported --
+# that module is off-limits to Phase C's import graph (see `axial.paper.lens`
+# for why importing anything under `axial.analyze` is avoided here).
+MAX_REPAIR_CLAIMS_PER_NAME = 20
 
 
 def _names_the_inventory_touches(intake: PaperIntake) -> list[str]:
@@ -198,22 +227,48 @@ def _already_read_chunk_ids(record: dict[str, Any]) -> set[str]:
     return read
 
 
+def _full_edges(
+    lookup: OppositionLookup,
+    canonical: str,
+    limit: int,
+    *,
+    vault_dir: Path | None,
+    names_dir: Path | None,
+) -> tuple[list[OppositionEdge], int]:
+    """Every opposition edge for `canonical`, complete -- never a window.
+
+    The gap is the instrument (#570 rule 3): counting it over a truncated
+    call is not a ranked sample, it is an arbitrary one, biased toward
+    whichever chunk ids happen to sort first. Mirrors
+    `axial.validators.coverage._evidence_note_count`'s own re-call pattern --
+    ask once at the caller's window, and only pay for a second call, at the
+    tool's own true `total`, when the first one actually came back capped.
+    Two deterministic index reads, still zero model calls."""
+    edges, total = lookup(canonical, limit, vault_dir=vault_dir, names_dir=names_dir)
+    if len(edges) < total:
+        edges, total = lookup(canonical, total, vault_dir=vault_dir, names_dir=names_dir)
+    return edges, total
+
+
 @dataclass(frozen=True)
 class OppositionGap:
-    """One anchor name's gap: the lookup's edges for `canonical`, restricted
-    to the notes no named source record already read.
+    """One anchor name's gap: EVERY edge `lookup` returns for `canonical`
+    (§7.15's complete-count fix), restricted to the notes no named source
+    record already read.
 
-    `checked`/`total` are the lookup's own capped/pre-cap counts (issue
-    #505's shape, which `who_argues_against` follows): a hub name can carry
-    far more opposition edges than `limit`, and the true total travels
-    beside the window exactly as it does everywhere else this product reads
-    that tool."""
+    `checked`/`total` agree after `_full_edges`: both are the tool's true
+    total, not a capped window. `left_unshaped` is the further, SEPARATE
+    bound: of `gap_edges`, how many were never considered for shaping
+    because of `MAX_REPAIR_CLAIMS_PER_NAME` -- the count is never capped,
+    only what gets turned into a claim is, and this field is what keeps that
+    honest rather than silent."""
 
     canonical: str
     gap_edges: tuple[OppositionEdge, ...]
     checked: int
     already_read: int
     total: int
+    left_unshaped: int = 0
 
 
 @dataclass(frozen=True)
@@ -242,6 +297,14 @@ class OppositionRepair:
     def gap_repaired(self) -> int:
         return len(self.repair_claims)
 
+    @property
+    def gap_left_unshaped(self) -> int:
+        """Across every checked name, how many gap edges were never
+        considered for shaping because of `MAX_REPAIR_CLAIMS_PER_NAME` --
+        distinct from `skipped_abstentions`, which counts edges that WERE
+        considered and had no usable `claim` to shape."""
+        return sum(gap.left_unshaped for gap in self.gaps)
+
     def gap_restricted_to(self, names: set[str]) -> int:
         """The same `gap_found` count, restricted to a name subset -- the
         "gap over what the finished paper actually cited" disclosure (#570's
@@ -257,7 +320,7 @@ class OppositionRepair:
 
     def by_name(self) -> dict[str, dict[str, int]]:
         """A per-name breakdown of what was found and what got repaired,
-        sorted -- the detail behind the record's two headline counts."""
+        sorted -- the detail behind the record's headline counts."""
         repaired_by_name: dict[str, int] = {}
         for entry in self.repair_claims:
             for name in entry.claim.get("names_touched") or []:
@@ -268,6 +331,7 @@ class OppositionRepair:
                 "gap_repaired": repaired_by_name.get(gap.canonical, 0),
                 "already_read": gap.already_read,
                 "total_opposition_edges": gap.total,
+                "left_unshaped_by_cap": gap.left_unshaped,
             }
             for gap in sorted(self.gaps, key=lambda entry: entry.canonical)
         }
@@ -281,15 +345,18 @@ def run_opposition_repair(
     limit: int = DEFAULT_LIMIT,
     lookup: OppositionLookup = who_argues_against,
 ) -> OppositionRepair:
-    """Stage 1.5, end to end: compute the gap over every name the intake
-    inventory touches, and -- only for a name the gap is non-zero on --
-    shape what `lookup` returns into kind-(a) claims with zero model calls
-    (#570 rules 1-3).
+    """Stage 1.5, end to end: compute the COMPLETE gap over every name the
+    intake inventory touches (never a truncated window, §7.15), and -- only
+    for a name the gap is non-zero on -- shape up to
+    `MAX_REPAIR_CLAIMS_PER_NAME` of it into kind-(a) claims with zero model
+    calls (#570 rules 1-3). `limit` is the lookup's own first-call window,
+    used only to avoid paying for a second call on a name that turns out not
+    to be truncated; it never caps what the gap counts.
 
     `lookup` defaults to `axial.query.names.who_argues_against` and is the
     seam a future, richer opposition-resolution pass replaces (module
     docstring): everything below this call -- already-read filtering, claim
-    shaping, the trajectory, the coverage map, both gap counts -- is correct
+    shaping, the trajectory, the coverage map, every gap count -- is correct
     for whatever edge set `lookup` returns."""
     names_checked = tuple(_names_the_inventory_touches(intake))
 
@@ -303,7 +370,11 @@ def run_opposition_repair(
     skipped_abstentions = 0
 
     for name in names_checked:
-        edges, total = lookup(name, limit, vault_dir=vault_dir, names_dir=names_dir)
+        # Complete, never a window (§7.15's fix): a truncated call biases the
+        # gap toward whichever chunk ids sort first, which is not an
+        # instrument, so `_full_edges` re-calls at the tool's own true
+        # `total` whenever the first call came back capped.
+        edges, total = _full_edges(lookup, name, limit, vault_dir=vault_dir, names_dir=names_dir)
         gap_edges = tuple(edge for edge in edges if edge.chunk_id not in already_read)
         if not gap_edges:
             continue
@@ -319,6 +390,14 @@ def run_opposition_repair(
                 "detail": None,
             }
         )
+
+        # The gap COUNT is `gap_edges`, complete. Only what gets SHAPED into
+        # a claim is bounded, and the remainder is counted rather than
+        # dropped (`left_unshaped`) -- #570 rule 3 applies to this cap
+        # exactly as it does to the lookup's own truncation above.
+        to_shape = gap_edges[:MAX_REPAIR_CLAIMS_PER_NAME]
+        left_unshaped = len(gap_edges) - len(to_shape)
+
         gaps.append(
             OppositionGap(
                 canonical=name,
@@ -326,10 +405,11 @@ def run_opposition_repair(
                 checked=len(edges),
                 already_read=len(edges) - len(gap_edges),
                 total=total,
+                left_unshaped=left_unshaped,
             )
         )
 
-        for edge in gap_edges:
+        for edge in to_shape:
             if edge.claim is None or edge.claim == NOT_IN_PASSAGE:
                 skipped_abstentions += 1
                 continue

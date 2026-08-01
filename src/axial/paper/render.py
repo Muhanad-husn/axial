@@ -155,6 +155,12 @@ def _render_opposition_gap(record: dict[str, Any]) -> list[str]:
         return []
 
     names_checked = gap.get("names_checked") or []
+    left_unshaped = gap.get("gap_left_unshaped", 0)
+    cap_note = (
+        f" **{left_unshaped}** of those were left unshaped by the per-name repair cap."
+        if left_unshaped
+        else ""
+    )
     lines = [
         "## Opposition check (exact-match join)",
         "",
@@ -162,8 +168,10 @@ def _render_opposition_gap(record: dict[str, Any]) -> list[str]:
         "",
         f"Checked {len(names_checked)} name(s) this paper's claims touch for opposition "
         f"none of the source analyses had already read. Found **{gap.get('gap_found', 0)}** "
-        f"such note(s); repaired **{gap.get('gap_repaired', 0)}** into new grounded claims "
-        f"({gap.get('skipped_abstentions', 0)} skipped for carrying no stated claim). "
+        f"such note(s) -- this count is complete, never capped. Repaired "
+        f"**{gap.get('gap_repaired', 0)}** into new grounded claims "
+        f"({gap.get('skipped_abstentions', 0)} skipped for carrying no stated claim)."
+        f"{cap_note} "
         f"Restricted to what this paper actually cites: **{gap.get('gap_found_cited_scope', 0)}** "
         f"of the notes found, **{gap.get('gap_repaired_cited', 0)}** of the repaired claims.",
         "",
@@ -172,14 +180,15 @@ def _render_opposition_gap(record: dict[str, Any]) -> list[str]:
     if by_name:
         lines.extend(
             [
-                "| name | gap found | gap repaired | already read | total edges |",
-                "|---|---:|---:|---:|---:|",
+                "| name | gap found | gap repaired | already read | total edges | left unshaped (cap) |",
+                "|---|---:|---:|---:|---:|---:|",
             ]
         )
         for name, counts in sorted(by_name.items()):
             lines.append(
                 f"| {name} | {counts.get('gap_found', 0)} | {counts.get('gap_repaired', 0)} "
-                f"| {counts.get('already_read', 0)} | {counts.get('total_opposition_edges', 0)} |"
+                f"| {counts.get('already_read', 0)} | {counts.get('total_opposition_edges', 0)} "
+                f"| {counts.get('left_unshaped_by_cap', 0)} |"
             )
         lines.append("")
     return lines
