@@ -109,13 +109,24 @@ class PremiseAssessment:
 @dataclass(frozen=True)
 class InterrogationResult:
     """The §7.2 interrogation result: `{premises_found[], bounds_applied[],
-    refusal, disposition}`. `disposition` is always set by `disposition_for`,
-    never read from the model's own answer."""
+    refusal, disposition, question_scope}`. `disposition` is always set by
+    `disposition_for`, never read from the model's own answer.
+
+    `question_scope` (§7.2, §7.4) is the period and/or setting the QUESTION
+    ITSELF states -- read from the brief's own `case`/`request` text, never
+    inferred from what the corpus covers -- so synthesis can state it as a
+    soft preference rather than reopening a second read of the same brief.
+    `None` when the question states neither (the honest, common case for an
+    open request); a `{"period": ..., "setting": ...}` dict, each half
+    independently `None` when the question states only the other, when it
+    states either. Never a guess: an unscoped question abstains here exactly
+    as a `refusal`-free brief abstains from `bounds_applied`."""
 
     premises_found: list[PremiseAssessment]
     bounds_applied: list[str]
     refusal: dict[str, Any] | None
     disposition: str
+    question_scope: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -125,6 +136,7 @@ class InterrogationResult:
             "bounds_applied": list(self.bounds_applied),
             "refusal": self.refusal,
             "disposition": self.disposition,
+            "question_scope": self.question_scope,
         }
 
 
@@ -202,12 +214,40 @@ def _parse_refusal(raw: Any) -> dict[str, Any] | None:
     return {"reason": reason.strip()}
 
 
+def _parse_question_scope(raw: Any) -> dict[str, Any] | None:
+    """Parse the §7.2 `question_scope` field: the period and/or setting the
+    QUESTION ITSELF states, read from the brief's own text -- never a guess
+    at what the corpus covers, and never invented when the question states
+    neither. `None` (the model's own `null`, or a `{"period": null,
+    "setting": null}` object that says the same thing the long way) collapses
+    to the one abstention shape every caller checks, mirroring `_parse_refusal`'s
+    own null-is-the-honest-default convention for this same pre-pass."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise InterrogationParseError(
+            f"question_scope must be an object or null, got {type(raw).__name__}"
+        )
+    period = raw.get("period")
+    setting = raw.get("setting")
+    for field_name, value in (("period", period), ("setting", setting)):
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise InterrogationParseError(
+                f"question_scope.{field_name} must be a non-blank string or null: {raw!r}"
+            )
+    period = period.strip() if isinstance(period, str) else None
+    setting = setting.strip() if isinstance(setting, str) else None
+    if period is None and setting is None:
+        return None
+    return {"period": period, "setting": setting}
+
+
 def parse_interrogation_response(
     raw: str,
-) -> tuple[list[PremiseAssessment], list[str], dict[str, Any] | None]:
+) -> tuple[list[PremiseAssessment], list[str], dict[str, Any] | None, dict[str, Any] | None]:
     """Parse a raw model completion into the §7.2 fields the wrapper needs:
-    `(premises_found, bounds_applied, refusal)`. The model's own
-    `disposition` key, if present, is never read here -- the wrapper
+    `(premises_found, bounds_applied, refusal, question_scope)`. The model's
+    own `disposition` key, if present, is never read here -- the wrapper
     (`disposition_for`) is the sole source of that field (issue #252's
     ratified rule).
 
@@ -223,7 +263,8 @@ def parse_interrogation_response(
     premises_found = _parse_premises_found(data.get("premises_found"))
     bounds_applied = _parse_bounds_applied(data.get("bounds_applied"))
     refusal = _parse_refusal(data.get("refusal"))
-    return premises_found, bounds_applied, refusal
+    question_scope = _parse_question_scope(data.get("question_scope"))
+    return premises_found, bounds_applied, refusal, question_scope
 
 
 def render_coverage_section(counts: dict[str, int]) -> str:
@@ -336,8 +377,10 @@ For every premise the case or request smuggles in (an assumption the brief takes
 
 Also state any bound on what the corpus can/cannot answer for this brief (e.g. "covers X, not Y"), and refuse only when the request cannot be answered as posed at all given this coverage.
 
+Also state the scope the QUESTION ITSELF names -- its period and its setting -- read from the case and request text alone, never inferred from what the corpus covers or from what you know about the world. State only what the question's own words establish; if it names no period, or no setting, or neither, say so plainly (null) rather than inferring one.
+
 Return ONLY this JSON object, no prose and no code fence:
-{{"premises_found": [{{"premise": "<premise text>", "assessment": "supports|contradicts|silent"}}], "bounds_applied": ["<statement of what the corpus can/cannot answer>", ...], "refusal": {{"reason": "<reason>"}} or null}}"""
+{{"premises_found": [{{"premise": "<premise text>", "assessment": "supports|contradicts|silent"}}], "bounds_applied": ["<statement of what the corpus can/cannot answer>", ...], "refusal": {{"reason": "<reason>"}} or null, "question_scope": {{"period": "<stated period, or null>", "setting": "<stated setting, or null>"}} or null}}"""
 
 
 def interrogate(
@@ -363,6 +406,13 @@ def interrogate(
     `vault_dir` is kept in the signature: every caller already passes it, and
     #488's scoped read needs it back.
 
+    **`question_scope` is read for free off the same call.** This pass
+    already reads the brief's `case`/`request` to find smuggled premises, so
+    it also extracts the period and/or setting the question ITSELF states --
+    never the corpus's coverage of one -- for synthesis to carry as a soft
+    preference (§7.4). `None` when the question states neither; abstention,
+    not a guess, is the correct answer for an unscoped question.
+
     Raises `InterrogationFailedError` when the underlying model call
     transport-fails or never returns parseable JSON within `complete_json`'s
     bounded re-ask budget; raises `InterrogationParseError` (or its
@@ -377,7 +427,7 @@ def interrogate(
     except (LLMError, httpx.HTTPError, ModelJsonError) as exc:
         raise InterrogationFailedError(f"interrogation call failed: {exc}") from exc
 
-    premises_found, bounds_applied, refusal = parse_interrogation_response(raw)
+    premises_found, bounds_applied, refusal, question_scope = parse_interrogation_response(raw)
     disposition = disposition_for(premises_found, bounds_applied, refusal)
 
     print(f"interrogate: done, disposition={disposition}", file=sys.stderr)
@@ -386,6 +436,7 @@ def interrogate(
         bounds_applied=bounds_applied,
         refusal=refusal,
         disposition=disposition,
+        question_scope=question_scope,
     )
 
 
