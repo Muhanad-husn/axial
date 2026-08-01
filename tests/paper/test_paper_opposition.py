@@ -11,6 +11,7 @@ a name-layer index and one name page), never a real corpus and never
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -572,15 +573,24 @@ def test_a_zero_gap_run_reports_the_real_zero_and_costs_nothing(
 
 def test_the_no_phase_b_import_guarantee_still_holds():
     """Phase C never runs Phase B (§3 non-goal 1) -- reading the name layer
-    and the coverage validator must not have dragged the run path in."""
-    import axial.paper.record  # noqa: F401
-    import axial.paper.opposition  # noqa: F401
+    and the coverage validator must not have dragged the run path in.
 
-    dragged = [
-        name
-        for name in sys.modules
-        if name.startswith("axial.answer")
-        or name.startswith("axial.analyze")
-        or name.startswith("axial.brief")
-    ]
-    assert dragged == []
+    Runs in a CLEAN interpreter, and has to. `sys.modules` is process-wide, so
+    an in-process version of this test asserts about whatever the same worker
+    imported before it: any test that touches `axial.cli` -- which wires every
+    Phase-B subcommand at module load -- makes it fail without Phase C having
+    imported anything. Under `-n auto` that is decided by which worker gets
+    which file, so the guarantee would pass or fail by luck. A structural
+    guarantee that flakes gets marked xfail and then deleted."""
+    probe = (
+        "import sys, json\n"
+        "import axial.paper.record, axial.paper.opposition\n"
+        "print(json.dumps(sorted(\n"
+        "    name for name in sys.modules\n"
+        "    if name.startswith(('axial.answer', 'axial.analyze', 'axial.brief'))\n"
+        ")))"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    )
+    assert json.loads(completed.stdout) == []
