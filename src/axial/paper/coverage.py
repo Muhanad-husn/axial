@@ -169,7 +169,10 @@ def _paper_rationale(band: Any, coverage_map: dict[str, dict[str, Any]]) -> str:
 
 
 def overall_confidence(
-    coverage_map: dict[str, dict[str, Any]], records: dict[str, dict[str, Any]]
+    coverage_map: dict[str, dict[str, Any]],
+    records: dict[str, dict[str, Any]],
+    *,
+    coverage_map_earned: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The paper's `confidence` (§7.3): derived from its own coverage map, then
     held to the lowest overall band among the named source records.
@@ -178,7 +181,14 @@ def overall_confidence(
     Phase B's own `compute_confidence`, so the coverage-to-band mapping is
     shared rather than restated. The source-record ceiling is §7.3's own rule:
     a paper may not be more confident than the weakest analysis it stands on,
-    however well-covered the names it happened to cite are."""
+    however well-covered the names it happened to cite are.
+
+    `coverage_map_earned` (issue #570) is a third, optional floor: the
+    opposition-repair pass's own EARNED coverage (§7.11), restricted to what
+    the paper actually cited from it. It joins the same floor-taking pass as
+    the source records' own bands; `_paper_rationale` itself stays scoped to
+    the carried map alone, since the earned scope's own counts are disclosed
+    separately (`render.py`) rather than blended into this sentence."""
     derived_band = compute_confidence(coverage_map).get("overall_band")
 
     source_bands = [
@@ -187,20 +197,32 @@ def overall_confidence(
         if isinstance(confidence := record.get("confidence"), dict)
         and (band := confidence.get("overall_band")) in _BAND_RANK
     ]
+    earned_band = None
+    if coverage_map_earned:
+        earned_band = compute_confidence(coverage_map_earned).get("overall_band")
+        if earned_band in _BAND_RANK:
+            source_bands.append(earned_band)
 
     band = derived_band
     held = False
+    held_by_earned = False
     if source_bands and derived_band in _BAND_RANK:
         floor = min(source_bands, key=lambda entry: _BAND_RANK[entry])
         if _BAND_RANK[derived_band] > _BAND_RANK[floor]:
             band, held = floor, True
+            held_by_earned = (
+                earned_band is not None and _BAND_RANK[earned_band] == _BAND_RANK[floor]
+            )
 
     rationale = _paper_rationale(band, coverage_map)
     if held:
+        source_phrase = "the source analysis records" + (
+            " and the opposition-repair pass's own cited coverage" if held_by_earned else ""
+        )
         rationale = (
-            f"{rationale}. Held to {band!r}, the lowest overall band among the source "
-            f"analysis records (§7.3): a paper is no more confident than the weakest "
-            f"analysis it stands on"
+            f"{rationale}. Held to {band!r}, the lowest overall band among "
+            f"{source_phrase} (§7.3): a paper is no more confident than the weakest "
+            f"evidence it stands on"
         )
     return {"overall_band": band, "rationale": rationale}
 

@@ -27,6 +27,8 @@
 - The drafter reads **one section's assigned claims at a time**, because Phase B measured that ~20 notes reach a model however many are supplied (§4, §7.2, PHASE-B P2-7).
 - **Phase C does not build a panel.** `src/axial/panel/` exists, was built under PHASE-B §9.4 / issue #385, and has run twice. Phase C extends it (§6, §7.7–§7.9, §11).
 
+> **FURTHER CORRECTED 2026-08-01 (issue #570), later the same day.** The first bullet above is no longer the whole story. A paper record now has a trajectory -- not Phase B's, but its own, produced by the opposition gap-and-repair pass (§7.15) -- so the coverage map is a **union of two scopes**, not a union-only: the carried scope this bullet describes, unchanged, plus a second, **earned** scope computed natively over that trajectory, the same way Phase B computes a real analysis record's own map. The bullet is left as written because it was correct when written; §7.3, §7.11 and §3 non-goal 1 carry the full amendment below.
+
 ---
 
 ## 0. What this is, in one paragraph
@@ -74,10 +76,14 @@ This PRD covers **Phase C (authorship) only**. It does not cover analysis (Phase
 Each is excluded deliberately; documenting them protects the architecture.
 
 1. **Phase C never runs Phase B.** It is a consumer of analysis records. A paper brief naming a brief that has not been run is an intake error, and the operator runs that brief through Phase B first. This is deliberate: it preserves PHASE-B non-goal 6 (no multi-brief orchestration) rather than smuggling brief-sweeping in behind an authorship command.
+
+   > **CORRECTED 2026-08-01 (issue #570).** This non-goal is about running the Phase-B *pipeline* -- interrogation, the agentic retrieval loop, synthesis -- and it still holds exactly as written; nothing here reopens it. It does **not** mean Phase C never calls the vault. The opposition gap-and-repair pass (§7.15) calls `axial.query.names.who_argues_against`, the same read-only, deterministic query API Phase B's own tools are built from, directly and only when a gap is found. That is retrieval without a Phase-B run: no interrogation, no retrieval loop, no synthesis call, and no analysis record is produced or touched. The founder considered and rejected the alternative (commissioning a bounded Phase B run and joining its record into the input list) specifically to keep this non-goal true in the stronger sense -- see §7.15.
 2. **No format adaptation.** Venue conventions, house style, and length targets are **Phase D**. v0 renders one plain markdown paper.
 3. **No citation style.** The apparatus is mechanical: markers that resolve, and a bibliography from recorded metadata. Chicago, APA, footnote-vs-endnote, and short-form subsequent citations are Phase D.
 4. **No new speculation.** Phase C emits no new kind-(c) claims in v0. A (c) claim already present in a source record may be carried, marked, and cited; the drafter does not invent new ones. A paper's speculative conclusion is a real want and is P2, not v0.
 5. **No corpus, schema, vault, or analysis-record modification.** Phase C reads `data/analyses/`, `data/source_meta/`, and the vault read-only, and writes only its own artifacts. A Phase-C run never writes to `data/analyses/`.
+
+   > **CORRECTED 2026-08-01 (issue #570).** "The vault read-only" now includes the name layer (`data/names/`), reached through the same read-only query API §7.15's gap-and-repair pass calls. Nothing here writes to the vault, the name layer, or any analysis record; the pass's own output lands only in the paper record it is building.
 6. **No UI beyond the CLI.**
 7. **No human referee.** No file, gate, or acceptance criterion in this phase may depend on academic-authored data (§9).
 8. **No multi-paper orchestration or batching** in the authorship pipeline, beyond running one paper brief and inspecting it. The offline eval track (§10.2) reads a set of already-written papers, which is not orchestration: it produces no papers of its own.
@@ -106,14 +112,17 @@ Like every phase beneath it, the mechanism is domain-general and the content is 
 
 ## 5. System overview — the stages
 
-**Five pipeline stages**, each independently testable. Stages 1, 4, and 5 are deterministic and make zero model calls. The coherence eval track is not a pipeline stage and is specified in §10.2.
+**Five pipeline stages, plus one gap-and-repair pass between the first two**, each independently testable. Stages 1, 4, and 5 are deterministic and make zero model calls; so is the pass between 1 and 2 (§7.15). The coherence eval track is not a pipeline stage and is specified in §10.2.
 
 **Stages 2 through 5 are the prose layer, and they are built here** (the 2026-08-01 ruling as revised, §0). Every one of them takes a **list** of analysis records, and a list of one is an ordinary input rather than a special case — that signature is what keeps the machinery from being written a second time if Phase B later renders its own answers through it. Phase B is not reopened to do that now.
 
 **Stage 1 is the one stage a single-record caller would not need**: resolving several records to one pin, rejecting a refusal or a mixed-pin set, and building an inventory keyed by `(brief_id, claim_id)` are questions a single answer never asks. Everything downstream of it reads the inventory and does not care how many records fed it.
 
 1. **Paper-brief intake (deterministic).** Reads the paper brief (§7.1), resolves every named analysis record, verifies they share one `corpus_pin`, and rejects a brief naming a missing record, a refused record, or a mixed-pin set. Builds the **claim inventory**: every claim across every named record, keyed by `(brief_id, claim_id)`.
-2. **Arc planning (model).** Emits the **paper plan** (§7.2): an ordered list of sections, each with a heading, an argumentative role, and the inventory claims assigned to it. No prose is written at this stage, and the plan is inspectable before any drafting call is paid for.
+
+**Stage 1.5: the opposition gap-and-repair pass (deterministic query calls, zero model calls; §7.15, issue #570).** Over every name the claim inventory touches, checks whether `who_argues_against` returns opposing material none of the named source records already read, and — only where that gap is non-zero — shapes what comes back into ordinary kind-(a) claims added to the inventory before planning starts. This is retrieval, but it is not Phase B: no interrogation, no agentic loop, no synthesis call, no analysis record. Most runs find nothing here and pay for nothing beyond the lookup (§7.15).
+
+2. **Arc planning (model).** Emits the **paper plan** (§7.2): an ordered list of sections, each with a heading, an argumentative role, and the inventory claims assigned to it — including, where the gap fired, any repair claim stage 1.5 added. No prose is written at this stage, and the plan is inspectable before any drafting call is paid for.
 3. **Drafting (model, high tier + reasoning).** Writes the paper section by section from the plan, emitting prose with in-text citation markers and any new (b) claims it needs to relate material across records. **One call per section.** Each call sees the thesis, the plan, that section's `assigned_claims`, and a running list of what earlier sections already cited — `paper_claim_id`, kind, band and text, never grounds text — so a new (b) claim can still reach back across sections and therefore across records (§4, §7.2). It never sees the whole inventory, and it has no tools.
 4. **Claim assembly & citation indexing (deterministic).** Parses the drafted prose for markers, builds the citation index (§7.5), and assembles the record's `claims` list as exactly the claims cited. A marker naming an unknown claim is a hard failure here.
 5. **Apparatus & rendering (deterministic).** Generates the bibliography from `data/source_meta/` for exactly the cited sources (§7.6), renders the markdown paper (§7.10), and writes the paper record (§7.3).
@@ -229,7 +238,10 @@ One JSON per run at `data/papers/<paper_brief_id>.json`, the phase's analogue of
   claims: [ <paper_claim> ],         # §7.4; exactly the claims cited in the prose
   citations: [ <citation> ],         # §7.5, in document order
   counter_position,                  # the PHASE-B §7.8 shape, reused unchanged (§7.14)
-  coverage_map,                      # §7.8
+  coverage_map,                      # §7.11's CARRIED scope, from the named source records
+  coverage_map_earned,               # §7.11's EARNED scope, from the pass below (§7.15)
+  trajectory,                        # §7.15's own retrieval log, PHASE-B §7.6 shape -- NEW
+  exact_match_opposition_gap,        # §7.15's gap record -- NEW
   confidence: { overall_band, rationale },
   bibliography: [ <bib_entry> ],     # §7.6
   paper_markdown_path,               # the rendered paper written alongside
@@ -242,9 +254,9 @@ One JSON per run at `data/papers/<paper_brief_id>.json`, the phase's analogue of
 
 > **CORRECTED 2026-08-01.** This paragraph said the field had exactly two states. Phase B v1 added the third and the reason it added it binds here identically: a run that died in its closing stage used to be indistinguishable from a corpus that had only one side, so **a bug could read as a finding about the corpus**. A failed counter-position is a failed run — it persists the record with the section marked failed, and it fails the validator, the gate, and the exit code. It is never `corpus_one_sided`, and Phase C must not collapse the two when it carries the field forward.
 
-**The paper record carries no `trajectory`, deliberately.** Phase C performs no retrieval, so it has nothing to record; §7.11 and §7.14 are written against that fact rather than around it.
+> **CORRECTED 2026-08-01, twice in one day (issue #570).** This section said the paper record carries no `trajectory` "deliberately", because "Phase C performs no retrieval, so it has nothing to record." **The founder is amending that, explicitly, and this build makes the change rather than designing around it.** Phase C now retrieves directly through the deterministic query API, targeted and bounded, only to repair a found opposition gap (§7.15) — never through Phase B's interrogation, agentic loop or synthesis. Because that retrieval is real, it is now auditable: `trajectory` carries it, in the exact PHASE-B §7.6 shape (`{step, tool, args, result_ids[], result_count, total, detail}`), empty when the gap was zero everywhere. A retrieval nobody can inspect is the one thing this product has never shipped, and that did not stop being true just because the retrieving layer changed. `exact_match_opposition_gap` is the companion field: the gap as found and what got repaired, both counted before and after restriction to what the paper actually cites (§7.15's own disclosure discipline) — never a clean zero presented as though nothing needed repairing.
 
-`confidence.overall_band` is one of `high` / `medium` / `low` and may not exceed the **lowest** overall band among the named source records. `confidence.rationale` states the coverage counts behind it, drawn from `coverage_map`.
+`confidence.overall_band` is one of `high` / `medium` / `low` and may not exceed the **lowest** overall band among the named source records **or**, when the paper cites a repair claim, the lowest band the earned coverage (§7.11, §7.15) supports.  `confidence.rationale` states the coverage counts behind it, drawn from `coverage_map`.
 
 The record is the audit surface. Every cited sentence traces to a claim, every claim traces to grounds, every grounds pointer resolves to a real vault id, and every cited source appears in the bibliography.
 
@@ -266,6 +278,8 @@ Two kinds of entry, distinguished by `origin`.
 ```
 
 `names_touched` is added by this revision (2026-08-01) and is not decorative: it is what lets §7.11 compute the paper's coverage map with **zero vault reads**, and it is free — every Phase-B claim already carries it (PHASE-B §7.4), resolved through the alias map alone rather than through `find_names`' embedding tier, because a nearest-neighbour hit would land a claim on a plausible neighbouring name and fabricate coverage the corpus does not have.
+
+**A "source record" is not only a named Phase-B analysis record (issue #570).** The opposition gap-and-repair pass (§7.15) injects its own repair claims into the intake inventory as though they came from one extra record, so `origin` can also name that pass's own synthetic `brief_id`. A repair claim is still, in every other respect, an ordinary carried (a) claim: same shape, same clamp, same gates. §7.15 is where this is specified in full; nothing below in this section needs to distinguish the two cases.
 
 **A carried claim** is copied from the inventory with `kind`, `grounds`, and `confidence` **byte-identical** to the source record's claim — where `confidence` means the claim's **clamped** band, which is not the band the record persisted; see the confidence ceiling below — and `origin` naming where it came from. Its `text` may be re-worded for the paper's prose, but a re-worded carried (a) claim is still kind `a` and still carries its origin. **Phase C never restates an (a) claim as its own** (charter Principle II): re-voicing a source's assertion as the tool's inference is the laundering failure this phase exists to prevent.
 
@@ -425,31 +439,40 @@ Two rules carried forward from the layer beneath, restated here because they bin
 
 This is plain rendering only. Venue, length, and house style are Phase D (§3).
 
-### 7.11 The coverage map and confidence, carried forward **[FIRM]**
+### 7.11 The coverage map, carried and earned **[FIRM]**
 
-Coverage is **per name**, not per polity, and the paper's map is **unioned from the source records, never recomputed**. It is a count, never a model judgment.
+Coverage is **per name**, not per polity. The paper's coverage is a **union of two scopes, kept in two separate fields rather than merged**: `coverage_map`, unioned from the named source records exactly as before, and `coverage_map_earned` (issue #570), computed natively over the opposition-repair pass's own retrieval trajectory (§7.15). Both are counts, never a model judgment.
 
 > **CORRECTED 2026-08-01, and this is the one place the mechanism actually changed.** This section read: "the union of the source records' coverage maps over the **polities** the paper's cited claims touch, **recomputed** deterministically from the same `polities_touched` facet Phase B used." Every load-bearing noun in that sentence is now wrong. `polities_touched` was deleted by Phase A v1 — 0 of ~6,100 live prose notes carry it, the map it fed computed empty, and `confidence.overall_band` was pinned `low` by its own derivation rule. Phase B v1 replaced it with `names_touched` (D2): the map is keyed on canonical names, its denominator `corpus_note_count` is the name page's own `member_count`, and it covers concepts and scholars rather than only polities, which is strictly wider than what it replaces.
 >
-> **Recomputation is the part that cannot simply be renamed.** Phase B does not compute its map over every name a claim touches. A live note's `names` answer lists every person, place, date and organisation the passage mentions — median 21 per note — so a 24-note evidence set touches **423 distinct canonical names on average**, and keying on all of them gave a 423-row map and a constant `low` band on 10 of 10 sets at every cut point tried. Phase B's fix (slice 05, #490) keys the map on the names the answer is *about*: `coverage_scope(claims, trajectory)`, the intersection of the names **this run's own retrieval trajectory queried** with the names its claims touch. That intersection needs a trajectory. **A paper record has none and never will** (§7.3): Phase C retrieves nothing. Calling `compute_coverage_map` on a paper record does not approximate the right answer — it returns `{}`.
+> **Recomputation is the part that cannot simply be renamed.** Phase B does not compute its map over every name a claim touches. A live note's `names` answer lists every person, place, date and organisation the passage mentions — median 21 per note — so a 24-note evidence set touches **423 distinct canonical names on average**, and keying on all of them gave a 423-row map and a constant `low` band on 10 of 10 sets at every cut point tried. Phase B's fix (slice 05, #490) keys the map on the names the answer is *about*: `coverage_scope(claims, trajectory)`, the intersection of the names **this run's own retrieval trajectory queried** with the names its claims touch. That intersection needs a trajectory.
 
-**So the paper's map is assembled from the maps that already exist.** Each source record carries its own §7.7 map, computed under its own trajectory, at the same pin. The paper's map is those maps restricted to the names the paper's **cited** claims touch:
+> **CORRECTED AGAIN 2026-08-01, later the same day (issue #570) — this retracts the sentence above it, not just a wording choice.** This section used to continue: "**A paper record has none and never will** (§7.3): Phase C retrieves nothing. Calling `compute_coverage_map` on a paper record does not approximate the right answer — it returns `{}`." **The founder is amending that, deliberately, and this build does not design around it or treat it as a prohibition.** A paper record now has a trajectory: the opposition gap-and-repair pass (§7.15) retrieves directly through the deterministic query API, targeted and bounded, and logs it. So `compute_coverage_map` on that trajectory no longer returns `{}` — it returns exactly what it would for a real Phase-B analysis record, because it is the same function, called the same way. The reasoning this section used to give for "unioned, never recomputed" was reasoning **from the absence of a trajectory**; give the paper layer one and the reasoning no longer applies, for the part of the map that trajectory actually reached. It does not apply retroactively to the source records' own coverage, which is still unioned, never recomputed — a paper still cannot re-derive what a source record's own retrieval saw, only what its own did.
+
+**So the paper's coverage is now two maps, and a reader must be able to tell them apart.** `coverage_map` (carried) is assembled from the maps that already exist: each named source record carries its own §7.7 map, computed under its own trajectory, at the same pin, and the paper's carried map is those maps restricted to the names the paper's **cited** claims touch. `coverage_map_earned` (earned) is `axial.validators.coverage.compute_coverage_map` run over the repair pass's own trajectory and its own cited claims — the identical Phase-B mechanism, not a re-implementation, so the two maps cannot silently drift into disagreeing about what "coverage" means. Both share one shape:
 
 ```
-coverage_map: { canonical_name -> {
-  corpus_note_count,        # carried from the source records; the page's own member_count
-  cited_claim_count,        # the paper's own numerator: cited claims touching this name
+canonical_name -> {
+  corpus_note_count,        # the name page's own member_count -- carried in coverage_map,
+                             # read fresh through the query API in coverage_map_earned
+  cited_claim_count,        # this paper's own numerator: cited claims touching this name
   coverage_band             # re-derived from corpus_note_count, PHASE-B §7.7's thresholds
-} }
+}
 ```
 
-Three rules, all mechanical, all with zero vault reads and zero model calls:
+**The two are never merged into one field, and never silently combined into one number.** Both are legitimate; a reader who cannot tell which coverage the paper *earned* itself and which it *inherited* from a source record is being told less than the record actually knows, which is exactly the failure this amendment exists to prevent. The rendered paper (§7.10) shows both, one row per name per scope, labelled.
+
+Three rules bind `coverage_map`, the carried scope, all mechanical, all with zero vault reads and zero model calls:
 
 - **The denominator is carried, never recomputed.** `corpus_note_count` comes from the source records' maps. Where two records disagree on a name's count, they were produced against the same pin (§7.1) and so cannot legitimately disagree: that is a hard error naming both records, not a value to average. A name the index carries and the vault holds no page for keeps `null`, never a fabricated `0`, and `null` reads `thin` — the most conservative band — with the `null` travelling beside it (PHASE-B §7.7).
 - **The numerator is the paper's own, and it is claims rather than notes.** An analysis counts the evidence notes it assembled; a paper's unit is the cited claim, and reusing a source record's `evidence_note_count` would report evidence the analysis gathered as though the paper had used it. `cited_claim_count` is computed from §7.4's `names_touched`, which every paper claim carries: for a carried claim it is its origin's, and for a new (b) claim it is the union across its `derived_from` claims. That is what keeps this whole section free of vault access.
-- **A name outside every source record's map is not in the paper's map.** It is out of scope by construction, exactly as it was one layer down. The map does not grow at paper scale.
+- **A name outside every source record's map is not in `coverage_map`.** It is out of scope by construction, exactly as it was one layer down. The carried map does not grow at paper scale.
 
-**Where this leaves the scope question.** The intersection Phase B computes is "retrieved on **and** claimed about". Phase C's is "in a source record's map **and** cited in this paper" — the same shape with the paper's own second term, and the first term inherited rather than re-derived. It is narrower than the source maps and never wider, which is the direction an honest disclosure should move when material is dropped on the way into a paper.
+`coverage_map_earned` inherits PHASE-B §7.7's own rules unchanged, because it is PHASE-B §7.7's own function: `corpus_note_count` is a real vault read (the query API, not a source record's say-so), `coverage_band` is the same threshold derivation, and its scope is `coverage_scope(claims, trajectory)` — the repair pass's own claims and its own trajectory, never the paper's carried claims or a source record's trajectory. A name the repair pass checked and found nothing usable for is not in it either (§7.15): the earned map only ever contains names a repair claim was actually built for and cited.
+
+**Where this leaves the scope question.** The intersection Phase B computes, for its own map, is "retrieved on **and** claimed about". `coverage_map`'s is "in a source record's map **and** cited in this paper" — the same shape with the paper's own second term, and the first term inherited rather than re-derived; it is narrower than the source maps and never wider, which is the direction an honest disclosure should move when material is dropped on the way into a paper. `coverage_map_earned`'s is Phase B's own intersection, unmodified, over the repair pass's own retrieval — the one scope in this whole section that is not inherited from anywhere.
+
+`confidence.overall_band` (§7.3, §7.4) is derived from `coverage_map` exactly as before, then held to the lowest of: the named source records' own overall bands, and — only when the paper cites a repair claim — the overall band `coverage_map_earned` alone would derive (§7.15's `overall_confidence` extension). A paper that cites thinly-covered repair material cannot disclose a confidence the repair itself does not support.
 
 ### 7.12 Per-pass model tiering **[TENTATIVE]**
 
@@ -529,7 +552,50 @@ The predicate is the disjunction of the four arms, evaluated in the order above,
 
 **Why this section is [TENTATIVE], and what would settle it.** Not the principle, which is FIRM and is the charter's. What is unproven is whether the fourth arm earns its place. If, over the first real papers, `source_record_contested` never fires alone (never without one of the three inherited arms also firing), it is dead weight and should be dropped. If it fires alone with any regularity, each instance is a paper that dropped its opposition and would otherwise have passed, and the arm is load-bearing. That inspection is the tuning, and it follows the discipline PHASE-B §7.7 and §7.8 already set: state the rule, prove it by inspection, then settle it.
 
-## 8. Requirements
+### 7.15 The opposition gap-and-repair pass **[NEW, 2026-08-01, issue #570]**
+
+Every gap number this product reported before this section counted volume, not effect. Reading 8 of 377 notes on a name costs nothing if the 369 unread say the same thing; the gap that matters is whether unread material **argues against** a conclusion. It is not hypothetical: a Phase-B brief declared `corpus_one_sided: true` while the corpus held the exact opposing account, 17 notes under one name and 14 under another, never retrieved across four consecutive runs (issue #569, DEC-60). The founder's ruling was that this fix does not belong in Phase B's retrieval loop, which plans before any claim exists and so cannot know what it missed — "missed" is only definable once there are claims to argue against. It belongs to the layer that writes the answer, targeted at exactly the material Phase B's own retrieval could have reached and did not.
+
+**Placement (orchestrator decision).** This pass sits between stage 1 (intake) and stage 2 (planning) — "stage 1.5" in §5's stage list. `who_argues_against` keys on canonical names, and a new (b) claim's `names_touched` is the union of the claims it derives from (§7.4), so drafting adds no name intake did not already hold, and `reduce_to_cited` (§7.5) only removes claims, never adds names. The intake-time name set is therefore a **superset** of the post-draft one: checking here finds every gap a later check would, the plan and the draft each run once instead of twice, and no re-draft can open a fresh gap the first draft never saw. The cost is precision, disclosed rather than hidden: the gap is computed over every claim the source records carry, so it can repair opposition to a name the finished paper does not end up citing. Both numbers — the gap as found, and the gap restricted to what the paper actually cited — are recorded (below).
+
+**Decision 1 (founder): Phase C retrieves directly.** An alternative shape was weighed and rejected: commission a bounded Phase B run and let its resulting analysis record join the input list, using the same list-of-records signature §0/§5 already require. That shape was **not** rejected for cost — a bounded run is still bounded — but because it trades a second orchestrated process for a simpler record, and the founder chose the simpler record. Phase C calls the deterministic query API itself and shapes what comes back into claims in its own layer (§3 non-goal 1's CORRECTED note; this is retrieval without running Phase B).
+
+**Three rules, unchanged from the issue that specified them:**
+
+1. **The tool is the existing deterministic query API, never an open search.** It returns ids from the index, so the layer cannot invent opposition to look balanced. Whatever comes back passes through the same (a)/(b) marking, the grounding gate and the steelman check as everything else — no new trust surface (§7.4, §10.1).
+2. **It runs only where the gap is non-zero.** Most runs will not trigger a repair at all: the lookup is a plain, free vault read, not a retrieval loop and not a model call, so there is nothing to pay for beyond the lookup itself, and nothing is added to the record for a name with nothing unread.
+3. **The gap is recorded before the repair, and the repair never erases it.** If the same figure both triggers the pass and scores the result, it goes to zero by construction and measures nothing. The record and the rendered paper must be able to say "gap found: 12 notes; 9 retrieved on the repair pass" — never a clean zero presented as though retrieval got it right the first time.
+
+**What this measures is a FLOOR, and the reason is a join, not a content gap — measured 2026-08-01, and the number belongs beside every count this pass produces, not only in a caveat.** `who_argues_against` finds an opposing note by exact-matching a note's own `arguing_against` answer against a canonical name page. `arguing_against` stores prose, not a pointer: across 4,695 notes carrying 10,883 recorded targets, only **4.7%** exact-match a name page this way. The other 95.3% are free text — 91.2% run longer than three words, with real values like "the assumption that all peasants can be lumped together politically" or "a macro-structural Weberianism that gives no room to agency" — and **87.0%** of those contain a real canonical name of 6+ characters somewhere inside the string (4,716 concept, 1,628 institution/group, 786 movement/religion, 687 person) that the join cannot parse out. So the miss is not that most of this opposition went unnamed; it is that a join on exact string equality cannot recover a name from a sentence. A zero from this pass means no exact-match opposition went unread — never that the corpus holds no counter-argument, and never that the unmatched 95.3% named nobody. This sentence, with the 4.7% figure, is `axial.paper.opposition.OPPOSITION_GAP_SCOPE_NOTE`, and it is required to travel with the count into both the record (`exact_match_opposition_gap.scope_note`) and the rendered paper — a caveat without the magnitude reads as a formality.
+
+**The lookup is an injected parameter, not a hardcoded call.** A richer resolution pass that recovers targets from the free-text 95.3% is real, separate, future work, and it must slot in without reopening the gap arithmetic, the repair retrieval, the record shape or the disclosure above. `run_opposition_repair`'s `lookup` parameter is that seam: `(canonical, limit, *, vault_dir, names_dir) -> (edges, total)`, defaulting to `axial.query.names.who_argues_against`. Everything downstream of the edge set it returns — already-read filtering, claim shaping, the trajectory, the coverage map, both gap counts — is correct for whatever lookup produced the edges.
+
+**Step 1: compute the gap.** Over every canonical name the intake inventory's claims touch (§7.4's `names_touched`, unioned across every named record), the lookup is called once. An edge is **already read** when its chunk id appears in some named source record's own `trajectory` (a chunk-returning tool's `result_ids`, issue #556) OR among that record's own claims' grounds — the union of both, the more generous reading, so a note the retrieval loop saw but never cited is still credited as read. Understating "already read" is what overstates the gap; both source-record fields were checked to confirm they carry enough to determine this (below).
+
+**Step 2: retrieve, only where the gap is non-zero.** A `who_argues_against`-shaped trajectory entry (§7.6's shape exactly: `{step, tool, args, result_ids[], result_count, total, detail}`) is appended, and the pass proceeds to shape claims, only for a name the lookup returned unread material for.
+
+**Step 3: shape into claims, with zero model calls.** `OppositionEdge` (`axial.query.names`) already carries `chunk_id` (a real vault id), `source_id`, and the note's own one-sentence `claim` answer — a source's own assertion, with grounds that come out of the index together with the text, so generate-then-cite is structurally impossible here too, the same move Phase B's own tool-dispatch seam makes (§4). Each unread edge with a usable `claim` becomes an ordinary kind-(a) claim: `text` is the note's own `claim` verbatim, `grounds` is `[{ref_type: "chunk", ref_id: chunk_id}]`, `names_touched` is `[canonical]`, attributed to its own source. **Measured over the real corpus (2026-08-01, `data/vault/prose`, 6,148 live notes): 6,009 (97.7%) carry a real `claim` answer; 139 (2.3%) carry the `not-in-passage` abstention.** An abstained edge still counts toward the gap — the note is genuinely unread opposition — but is not shaped into an invented claim; it is counted separately (`skipped_abstentions`).
+
+**Every repair claim is injected into the intake as though it came from one extra source record**, `axial.paper.opposition.REPAIR_BRIEF_ID` (never a real Phase-B `brief_id`), whose own `coverage_map` is computed natively over the repair pass's own trajectory (§7.11's `coverage_map_earned`). This is what makes rule 1 literally true: `carried_claim` (§7.4) clamps a repair claim's band exactly as it clamps any carried claim, reading the synthetic record's map the same way it reads a real one, and the provenance-integrity gate, the grounding gate and the (b)-seam gate need no special case for a repair claim at all. A repair claim's own emitted band is `high` by construction — there is no model judgment behind it to disclose — so the coverage ceiling, never the emitted value, is what actually governs its rendered band.
+
+**The gap record (§7.3's `exact_match_opposition_gap`).** Both the gap as found and the gap restricted to what the finished paper cited, labelled:
+
+```
+exact_match_opposition_gap: {
+  scope_note,                 # OPPOSITION_GAP_SCOPE_NOTE, the 4.7% floor disclosure, verbatim
+  names_checked: [ canonical ],
+  gap_found,                  # distinct unread notes across every checked name
+  gap_repaired,               # of gap_found, how many became new grounded claims
+  gap_found_cited_scope,      # gap_found restricted to what this paper actually cites
+  gap_repaired_cited,         # of gap_repaired, how many were cited in the finished paper
+  skipped_abstentions,        # gap notes whose own `claim` answer abstained
+  by_name: { canonical -> {gap_found, gap_repaired, already_read, total_opposition_edges} }
+}
+```
+
+**Render (§7.10).** The rendered paper carries a plain "Opposition check (exact-match join)" section, always present once the pass has run, stating the scope note (with its 4.7% figure) beside the found/repaired counts and the cited-restricted counts — never omitted on a zero, and a repaired run's counts are never allowed to read as a clean zero (rule 3). Engine telemetry stays out of the reader's paper exactly as before (§7.10); this section is not that — it is the same class of disclosure as the confidence band, a number the reader needs to weigh what the paper argues.
+
+**What was checked before relying on this (per the build brief that specified it).** Whether the named source records carry enough to determine what they already read: yes — a real Phase-B analysis record always persists `trajectory` (`axial.answer.record.build_record`) and `claims[].grounds`, and this pass unions both. Whether shaping a repair claim from `OppositionEdge.claim` needs a model call: no, at 97.7% real-claim coverage over the live corpus, measured directly rather than assumed.
 
 ### Must-Have (P0)
 
