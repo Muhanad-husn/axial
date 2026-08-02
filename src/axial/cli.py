@@ -41,7 +41,7 @@ from axial.distill.classify_embedding import ClassifyEmbeddingError, run_classif
 from axial.distill.embed import EmbedError, run_embed
 from axial.distill.readiness import ReadinessError, run_readiness
 from axial.drive import DEFAULT_SECRETS_PATH as DRIVE_SECRETS_PATH
-from axial.drive import DriveSecretsError, _load_drive_secrets, run_drive_ingest
+from axial.drive import DriveSecretsError, _load_drive_secrets, run_drive_ingest, run_drive_sources
 from axial.envelope import EnvelopeError, MissingSourceError, compute_source_id, run_envelope
 from axial.eval import EvalError, run_eval
 from axial.interrogate import InterrogateError, run_interrogate
@@ -143,6 +143,9 @@ from axial.run import (
 )
 from axial.runlog import run_context
 from axial.schema import SchemaError, load_schema
+from axial.sources import render_report, resolve_backend, scan_local, sync_local
+from axial.sources import CHANGED as SOURCES_CHANGED
+from axial.sources import NEW as SOURCES_NEW
 from axial.validate import cross_validate
 from axial.validators import (
     AttributionValidatorError,
@@ -777,6 +780,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             f"Drive folder id to list (default: [drive].books_folder_id from {DRIVE_SECRETS_PATH})"
+        ),
+    )
+
+    sources_parser = subparsers.add_parser(
+        "sources",
+        help=(
+            "what is new, changed, already done, or rejected (with reason) in "
+            "the configured source backend -- local folder or Google Drive -- "
+            "then ingest whatever is new or changed; see issue #528"
+        ),
+    )
+    sources_parser.add_argument(
+        "--backend",
+        choices=("local", "drive"),
+        default=None,
+        help=(
+            "override config/pipeline.yaml's sources.backend for this run "
+            "(default: read from config, falling back to 'local')"
         ),
     )
 
@@ -1719,6 +1740,58 @@ def _drive_ingest(folder_id: str | None) -> int:
         folder_id = secrets["books_folder_id"]
 
     return run_drive_ingest(folder_id)
+
+
+def _sources(backend_override: str | None) -> int:
+    """`axial sources` (issue #528): the operator's everyday "what's new,
+    then ingest it" command, for whichever backend `config/pipeline.yaml`'s
+    `sources.backend` names (or `--backend`, for a one-off override) --
+    `axial.sources.resolve_backend` falls back to 'local' when unset."""
+    backend = backend_override or resolve_backend()
+    if backend == "local":
+        return _sources_local()
+    if backend == "drive":
+        return _sources_drive()
+    print(
+        f"error: unknown sources backend {backend!r} (expected 'local' or 'drive')",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def _sources_local() -> int:
+    """The local folder backend: report first (free -- no LLM call, no
+    download, just the corpus glob against the resume ledger), then ingest
+    whatever the report shows as new or changed. A report with nothing new
+    or changed says so and runs no pipeline pass at all."""
+    records = scan_local()
+    print(render_report(records))
+
+    pending = [record for record in records if record.status in (SOURCES_NEW, SOURCES_CHANGED)]
+    if not pending:
+        print("sources: nothing new (0 to ingest)")
+        return 0
+
+    client = get_client()
+    sync_local(client=client)
+    return 0
+
+
+def _sources_drive() -> int:
+    """The Drive backend: resolves `folder_id` from `[drive]` secrets
+    exactly like `axial drive ingest`, then reports and ingests in the one
+    pass `run_drive_sources` already performs (see its docstring for why
+    Drive's report and its ingest cannot be split into two cheap steps the
+    way the local backend's can)."""
+    try:
+        secrets = _load_drive_secrets(DRIVE_SECRETS_PATH)
+    except DriveSecretsError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    records, exit_code = run_drive_sources(secrets["books_folder_id"])
+    print(render_report(records))
+    return exit_code
 
 
 def _ingest(worklist_path: str) -> int:
@@ -2667,6 +2740,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "drive" and args.drive_command == "ingest":
         return _drive_ingest(args.folder_id)
+
+    if args.command == "sources":
+        return _sources(args.backend)
 
     if args.command == "ingest":
         return _ingest(args.worklist_path)

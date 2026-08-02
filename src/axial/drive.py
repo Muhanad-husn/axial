@@ -84,6 +84,7 @@ from axial.extract import ExtractError, extract
 from axial.intake import check_extension, extract_text_layer
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
 from axial.paths import DEFAULT_DOMAIN_DIR
+from axial.sources import CHANGED, DONE, NEW, REJECTED, SourceRecord
 from axial.vault import VaultError, run_vault_write
 from axial.yaml_loader import SAFE_LOADER
 
@@ -219,17 +220,25 @@ def _is_candidate(record: dict[str, Any]) -> bool:
     return suffix in CANDIDATE_EXTENSIONS or mime_type in CANDIDATE_MIME_TYPES
 
 
-def _list_all_candidates(client: DriveClientProtocol, folder_id: str) -> list[dict[str, Any]]:
+def _list_all_records(client: DriveClientProtocol, folder_id: str) -> list[dict[str, Any]]:
     """Paginate `client.list_files` to exhaustion (`next_page_token is
-    None`), returning every listed record that passes `_is_candidate`."""
-    candidates: list[dict[str, Any]] = []
+    None`), returning EVERY listed record, unfiltered -- `axial.sources`
+    (issue #528) needs to see a non-candidate record too, to report it as
+    `rejected` rather than silently excluding it the way `_list_all_
+    candidates` below always has."""
+    records_all: list[dict[str, Any]] = []
     page_token: str | None = None
     while True:
         records, page_token = client.list_files(folder_id, page_token=page_token)
-        candidates.extend(record for record in records if _is_candidate(record))
+        records_all.extend(records)
         if page_token is None:
             break
-    return candidates
+    return records_all
+
+
+def _list_all_candidates(client: DriveClientProtocol, folder_id: str) -> list[dict[str, Any]]:
+    """`_list_all_records` filtered to `.pdf`/`.docx` candidates only."""
+    return [record for record in _list_all_records(client, folder_id) if _is_candidate(record)]
 
 
 def _cache_path(cache_dir: Path, record: dict[str, Any]) -> Path:
@@ -438,7 +447,7 @@ def _default_ingest_fn(
     return _ingest_one
 
 
-def run_drive_ingest(
+def run_drive_sources(
     folder_id: str,
     *,
     client: DriveClientProtocol | None = None,
@@ -454,14 +463,33 @@ def run_drive_ingest(
     chunks_dir: Path | None = None,
     artifacts_dir: Path | None = None,
     vault_dir: Path | None = None,
-) -> int:
-    """List `folder_id` through `client` (paginated to exhaustion), filter to
-    `.pdf`/`.docx` candidates, download each candidate's bytes to a
-    deterministic path under `cache_dir`, and hand each downloaded local
-    path to `ingest_fn`. Returns 0 unless a fatal error prevents the run
-    from happening at all (missing/incomplete `[drive]` secrets); a single
-    candidate's ingest failure is caught, logged, and does not affect the
-    overall exit code (module docstring's per-candidate isolation).
+) -> tuple[list[SourceRecord], int]:
+    """`axial sources`'s Drive backend (issue #528). Lists the WHOLE folder
+    (every file, not just `.pdf`/`.docx` candidates) and returns one
+    `axial.sources.SourceRecord` per listed file, in the same NEW/CHANGED/
+    DONE/REJECTED vocabulary `axial.sources.scan_local` reports for the
+    local folder backend -- then ingests every NEW/CHANGED candidate exactly
+    as before: same fetch-state manifest, same English-only language gate,
+    same per-candidate isolation. `run_drive_ingest` below is a thin wrapper
+    around this function that discards the record list; every side effect
+    (cache writes, manifest writes, stdout/stderr lines) is unchanged either
+    way.
+
+    A file's NEW/CHANGED/DONE status is decided from state already on
+    hand -- the fetch-state manifest -- BEFORE this run's own download/
+    ingest attempt, never from whether that attempt happens to succeed:
+    those names describe what was FOUND, and ingesting is the action taken
+    in response, exactly as `axial.sources.scan_local` decides local status
+    from the ledger before `axial.sources.sync_local` acts on it. A
+    non-candidate (wrong extension/mime type) is REJECTED with an
+    "unsupported file type" reason, never downloaded -- unlike
+    `run_drive_ingest`'s old `_list_all_candidates` call, which silently
+    excluded it. A candidate the language gate rejects is REJECTED with the
+    same detected-language/confidence reason logged to stderr. Deciding a
+    language-gate rejection needs the file's bytes in hand, so -- unlike the
+    local backend, whose report is a separate, free pre-pass over the
+    ledger -- Drive's report and its ingest step are one pass: there is no
+    cheaper way to know a Drive file's language than downloading it.
 
     `[drive]` secrets are loaded and validated FIRST, before any client
     construction or client call -- an absent/incomplete section halts with a
@@ -506,13 +534,13 @@ def run_drive_ingest(
         secrets = _load_drive_secrets(secrets_path)
     except DriveSecretsError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return [], 1
 
     try:
         manifest = _load_fetch_state(fetch_state_path)
     except FetchStateError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return [], 1
 
     if client is None:
         client = _build_drive_client(secrets["service_account_json"])
@@ -534,17 +562,26 @@ def run_drive_ingest(
         def probe_text_fn(local_path: Path, _probe_chars: int = probe_chars) -> str:
             return _default_probe_text(local_path, probe_chars=_probe_chars)
 
-    candidates = _list_all_candidates(client, folder_id)
+    all_records = _list_all_records(client, folder_id)
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    for record in candidates:
-        if _is_unchanged(record, manifest):
+    records: list[SourceRecord] = []
+    for record in all_records:
+        name = record.get("name") or record.get("id", "")
+
+        if not _is_candidate(record):
+            records.append(SourceRecord(name, REJECTED, "unsupported file type"))
             continue
+
+        if _is_unchanged(record, manifest):
+            records.append(SourceRecord(name, DONE))
+            continue
+
+        status = CHANGED if record["id"] in manifest else NEW
 
         data = client.download(record["id"])
         local_path = _cache_path(cache_dir, record)
         local_path.write_bytes(data)
-        name = record.get("name") or local_path.name
 
         detected_lang, confidence = _detect_language(probe_text_fn(local_path))
         # UNKNOWN_LANGUAGE_CODE means "no usable probe text" (most commonly
@@ -556,24 +593,35 @@ def run_drive_ingest(
         if detected_lang != UNKNOWN_LANGUAGE_CODE and (
             detected_lang != ENGLISH_LANGUAGE_CODE or confidence < accept_threshold
         ):
-            print(
-                f"reject: {name}: detected language={detected_lang!r} "
-                f"confidence={confidence:.3f} (English-only gate, threshold="
-                f"{accept_threshold})",
-                file=sys.stderr,
+            reason = (
+                f"detected language={detected_lang!r} confidence={confidence:.3f} "
+                f"(English-only gate, threshold={accept_threshold})"
             )
+            print(f"reject: {name}: {reason}", file=sys.stderr)
+            records.append(SourceRecord(name, REJECTED, reason))
             continue
 
         try:
             ingest_fn(local_path)
         except CHAIN_ERRORS as exc:
             print(f"error: {name}: {exc}", file=sys.stderr)
+            records.append(SourceRecord(name, status))
             continue
 
         manifest[record["id"]] = _fetch_state_entry(record)
         _write_fetch_state(fetch_state_path, manifest)
+        records.append(SourceRecord(name, status))
 
-    return 0
+    return records, 0
+
+
+def run_drive_ingest(folder_id: str, **kwargs: Any) -> int:
+    """The pre-#528 entrypoint (`axial drive ingest`), kept for backward
+    compatibility. A thin wrapper around `run_drive_sources` that discards
+    the structured record list -- every side effect is identical, see that
+    function's docstring for the full contract."""
+    _records, exit_code = run_drive_sources(folder_id, **kwargs)
+    return exit_code
 
 
 class DriveClient:
