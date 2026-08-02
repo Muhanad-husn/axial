@@ -1007,6 +1007,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="bounded concurrent brief workers (default: 1, so latency is uncontended)",
     )
+    brief_smoke_parser.add_argument(
+        "--map",
+        action="store_true",
+        dest="use_map",
+        help=(
+            "run the whole smoke set through the argument-map retrieval "
+            "path instead of the name-layer loop (issue #572) -- the "
+            "coverage-map check adapts itself to whichever path ran"
+        ),
+    )
 
     pin_parser = subparsers.add_parser(
         "pin", help="corpus-pin manifest operations (specs/PHASE-B.md §7.12, §8 P0-10)"
@@ -1919,12 +1929,15 @@ def _brief_sweep(worklist_path: str, draws: int, sweep_dir: str, workers: int) -
     return 0
 
 
-def _brief_smoke(briefs_dir: str | None, sweep_dir: str, workers: int) -> int:
+def _brief_smoke(
+    briefs_dir: str | None, sweep_dir: str, workers: int, *, use_map: bool = False
+) -> int:
     try:
         summary = run_smoke(
             sweep_dir=Path(sweep_dir),
             briefs_dir=Path(briefs_dir) if briefs_dir is not None else None,
             workers=workers,
+            use_map=use_map,
         )
     except SweepError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -2532,7 +2545,7 @@ def main(argv: list[str] | None = None) -> int:
         return _brief_sweep(args.worklist_path, args.draws, args.sweep_dir, args.workers)
 
     if args.command == "brief" and args.brief_command == "smoke":
-        return _brief_smoke(args.briefs_dir, args.sweep_dir, args.workers)
+        return _brief_smoke(args.briefs_dir, args.sweep_dir, args.workers, use_map=args.use_map)
 
     if args.command == "pin" and args.pin_command == "write":
         return _pin_write(args.name)

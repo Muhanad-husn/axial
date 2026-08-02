@@ -250,17 +250,48 @@ def _check_disposition(record: dict[str, Any]) -> CheckResult:
 
 
 def _check_coverage_map(record: dict[str, Any]) -> CheckResult:
-    """Check 3: the coverage map carries at least one name. A `refuse`
-    disposition retrieves nothing and legitimately has no map, so it is
-    SKIPPED with the reason stated rather than failed -- a refusal is a
-    complete run (§7.2). Any other disposition with an empty map is the
-    regression #490 exists to fix, and it must be loud."""
+    """Check 3: this run actually retrieved something, in whichever path's
+    own terms. A `refuse` disposition retrieves nothing and legitimately
+    has no map, so it is SKIPPED with the reason stated rather than failed
+    -- a refusal is a complete run (§7.2).
+
+    **On the name-layer path** (unchanged): the §7.7 `coverage_map` carries
+    at least one name; any other disposition with an empty map is the
+    regression #490 exists to fix, and it must be loud.
+
+    **On a map-retrieved run** (`record["map_retrieval"]`, issue #572, PR 4
+    of 4): `coverage_map` is scoped to names the NAME-LAYER loop retrieved
+    on (§7.7/§7.17) and is empty by construction here, however well the map
+    path performed -- checking it would falsely fail every `--map` smoke
+    run. This branch checks the map path's OWN honest equivalent instead
+    (`map_retrieval["assembled_chunk_ids"]` non-empty), never a shrug: a
+    real pass/fail either way, since this check is the seam a future
+    decision about retiring the name layer would read, and a check that
+    silently always passes here would be worse than one that (correctly)
+    fails when the map genuinely assembled nothing."""
     disposition = (record.get("interrogation") or {}).get("disposition")
-    coverage_map = record.get("coverage_map") or {}
     if disposition == "refuse":
         return CheckResult(
             CHECK_COVERAGE_MAP, None, "skipped: a refusal retrieves nothing, so it maps nothing"
         )
+
+    map_retrieval = record.get("map_retrieval")
+    if map_retrieval:
+        assembled = map_retrieval.get("assembled_chunk_ids") or []
+        if assembled:
+            return CheckResult(
+                CHECK_COVERAGE_MAP,
+                True,
+                f"argument map assembled {len(assembled)} chunk(s) (coverage_map is "
+                "name-layer-scoped and empty here by construction, not a regression)",
+            )
+        return CheckResult(
+            CHECK_COVERAGE_MAP,
+            False,
+            "the argument map assembled no chunk on a non-refusing run",
+        )
+
+    coverage_map = record.get("coverage_map") or {}
     if coverage_map:
         return CheckResult(
             CHECK_COVERAGE_MAP, True, f"{len(coverage_map)} name(s) disclosed with counts"
@@ -418,6 +449,7 @@ def run_smoke(
     lenses_dir: Path | None = None,
     cases_dir: Path | None = None,
     workers: int = 1,
+    use_map: bool = False,
 ) -> SmokeSummary:
     """Run the smoke set once each and check every record mechanically.
 
@@ -427,7 +459,13 @@ def run_smoke(
 
     `workers` defaults to 1, not `run_sweep`'s 3: five briefs is a small set
     and a serial run keeps the per-brief latency figure a budget is compared
-    against free of contention with four other draws on the same machine."""
+    against free of contention with four other draws on the same machine.
+
+    `use_map=True` (issue #572, PR 4 of 4) runs the whole smoke set through
+    the argument-map retrieval path instead of the name-layer loop --
+    forwarded verbatim to `run_sweep`. `_check_coverage_map` already knows
+    how to check a map-retrieved record; nothing else in this module needs
+    to branch on it."""
     paths = smoke_brief_paths(briefs_dir)
     if not paths:
         directory = briefs_dir if briefs_dir is not None else SMOKE_BRIEFS_DIR
@@ -454,6 +492,7 @@ def run_smoke(
         # judgment and a model bill, and scoring them here would make the
         # cost budget measure the judge instead of the run.
         score_gates=False,
+        use_map=use_map,
     )
 
     budgets = resolve_budgets(config_path)

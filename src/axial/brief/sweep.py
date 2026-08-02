@@ -106,6 +106,7 @@ from typing import Any, Callable
 
 from axial.analyze.synthesis import SynthesisError
 from axial.answer.record import AnswerError, run_brief
+from axial.argmap.ask import AskError
 from axial.brief.intake import Brief, BriefError, load_brief
 from axial.brief.interrogate import InterrogationError
 from axial.eval.corpus_pin import CorpusPinError
@@ -133,10 +134,21 @@ FAIL_STATUS = "FAIL"
 SKIP_STATUS = "SKIP"
 
 # The declared error surface a single (brief, draw)'s `run_brief()` call may
-# raise -- exactly `axial.cli._brief_run`'s own catch tuple. Never a bare
-# `except Exception`: an undeclared bug still propagates and is not mistaken
-# for a recoverable per-draw outcome.
-BRIEF_RUN_ERRORS = (InterrogationError, QueryError, SynthesisError, CorpusPinError, AnswerError)
+# raise -- exactly `axial.cli._brief_run`'s own catch tuple, including
+# `AskError` (issue #572, PR 4 of 4): `run_brief(use_map=True)` can raise it
+# (no map built at this pin, an encoder mismatch, an unusable door response)
+# exactly where the name-layer path can raise `QueryError`/`SynthesisError`,
+# and a `--map` draw hitting one must be recorded FAILED, not crash the
+# whole sweep. Never a bare `except Exception`: an undeclared bug still
+# propagates and is not mistaken for a recoverable per-draw outcome.
+BRIEF_RUN_ERRORS = (
+    InterrogationError,
+    QueryError,
+    SynthesisError,
+    CorpusPinError,
+    AnswerError,
+    AskError,
+)
 
 # The declared error surface one gate's `run_gate()` call may raise -- the
 # same tuple `axial.cli._gate_run` itself catches, minus `AdversarialGateError`
@@ -376,9 +388,15 @@ def _run_one_draw(
     cases_dir: Path | None,
     step_budget: int | None,
     thin_result_floor: int | None,
+    use_map: bool = False,
 ) -> tuple[DrawOutcome, dict[str, Any] | None]:
     """Run (or resume) one `(brief, draw)` pair. Returns the outcome plus
-    the resulting analysis record dict (`None` for a FAILed draw)."""
+    the resulting analysis record dict (`None` for a FAILed draw).
+
+    `use_map` (issue #572, PR 4 of 4) forwards verbatim to `run_brief`: this
+    module has no opinion on which retrieval path a draw takes, it only
+    drives whichever one the caller asked for the same resumable,
+    failure-isolated way."""
     brief_stem = Path(brief_path).stem
     analyses_dir = draw_dir(sweep_dir, brief_stem, draw_index)
     record_file = _record_path(sweep_dir, brief_stem, draw_index, brief.brief_id)
@@ -437,6 +455,7 @@ def _run_one_draw(
             case_id=brief_stem,
             step_budget=step_budget,
             thin_result_floor=thin_result_floor,
+            use_map=use_map,
         )
     except BRIEF_RUN_ERRORS as exc:
         elapsed = time.monotonic() - start
@@ -534,6 +553,7 @@ def run_sweep(
     thin_result_floor: int | None = None,
     workers: int = DEFAULT_WORKERS,
     score_gates: bool = True,
+    use_map: bool = False,
 ) -> SweepSummary:
     """Run every brief in `worklist_path` `draws` times each, bounded to
     `workers` concurrent `(brief, draw)` attempts (module docstring), then
@@ -543,6 +563,13 @@ def run_sweep(
     `client_factory` builds ONE fresh client per draw (default:
     `axial.llm.get_client`) -- see the module docstring for why sharing one
     client instance across draws would corrupt per-draw cost accounting.
+
+    `use_map=True` (issue #572, PR 4 of 4) runs every draw through the
+    argument-map retrieval path instead of the name-layer loop -- forwarded
+    verbatim to `run_brief` on every `(brief, draw)` pair; a draw that
+    raises an `AskError` (no map built at this pin, an encoder mismatch, an
+    unusable door response) is recorded FAILED exactly like a name-layer
+    draw raising `QueryError`, never a sweep-ending crash.
 
     `score_gates=False` (issue #491) skips the four rung-3 gates entirely
     and makes ZERO gate calls: the grounding gate calls an independent
@@ -605,6 +632,7 @@ def run_sweep(
                 cases_dir=cases_dir,
                 step_budget=step_budget,
                 thin_result_floor=thin_result_floor,
+                use_map=use_map,
             ): (brief_path, draw_index)
             for brief_path, brief, draw_index in work_items
         }
