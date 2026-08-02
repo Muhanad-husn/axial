@@ -523,6 +523,7 @@ def follow_run(
     *,
     poll_interval: float = 1.0,
     sleep: Callable[[float], None] | None = None,
+    stop_when_stale: bool = False,
 ) -> Iterator[dict[str, Any]]:
     """Yield every `run.jsonl`/`events.jsonl` line as it is written, oldest
     first within each stream, tagged `{"stream": "record"|"event", ...row}`.
@@ -537,7 +538,19 @@ def follow_run(
     own `clock` uses (default `time.sleep`, imported lazily so this module
     carries no top-level `import time` for its one use) -- a test drives
     this with a fake to prove the polling loop without ever blocking on a
-    real timer."""
+    real timer.
+
+    `stop_when_stale` (issue #530, additive -- default `False` preserves the
+    exact prior behaviour for every existing caller): a process killed
+    outright never runs `run_context`'s own `finally`, so its `meta.json`
+    stays stuck at `status: "running"` forever (module docstring) -- a
+    caller that only ever stops on a terminal status would otherwise poll
+    that run forever. When true, each poll also checks `_heartbeat_alive`
+    (the same `HEARTBEAT_STALE_AFTER_SEC` threshold `list_runs`/`load_run`
+    already use, not a second independently-tuned one); once it goes stale
+    this yields one final `{"stream": "status", "status": "stale"}` marker
+    and stops, so a live-following caller (`axial runs follow`) reports the
+    death instead of hanging."""
     if sleep is None:
         import time
 
@@ -558,6 +571,10 @@ def follow_run(
             yield {"stream": "event", **row}
 
         meta = _read_json(run_dir / "meta.json") or {}
-        if meta.get("status") != "running":
+        status = meta.get("status", "unknown")
+        if status != "running":
+            return
+        if stop_when_stale and not _heartbeat_alive(run_dir, status, datetime.now(timezone.utc)):
+            yield {"stream": "status", "status": "stale"}
             return
         sleep(poll_interval)

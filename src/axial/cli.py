@@ -160,12 +160,20 @@ from axial.run import (
     PASS_REGISTRY,
     run_pass,
 )
-from axial.runlog import run_context
+from axial.runlog import RunNotFoundError, follow_run, list_runs, load_run, run_context
 from axial.schema import SchemaError, load_schema
 from axial.sources import render_report, resolve_backend, scan_local, sync_local
 from axial.sources import CHANGED as SOURCES_CHANGED
 from axial.sources import NEW as SOURCES_NEW
 from axial.sources import PARTIAL as SOURCES_PARTIAL
+from axial.status import (
+    compute_status,
+    render_follow_line,
+    render_run_list,
+    render_run_view,
+    render_status,
+    resolve_run_dir,
+)
 from axial.validate import cross_validate
 from axial.validators import (
     AttributionValidatorError,
@@ -926,6 +934,45 @@ def build_parser() -> argparse.ArgumentParser:
             "several concurrent `axial run` processes over disjoint source "
             "sets its own --ledger so they never share one append-mode file"
         ),
+    )
+
+    subparsers.add_parser(
+        "status",
+        help=(
+            "one screen, zero model calls: how many sources and what stage "
+            "each is at (derived from the artifacts on disk, never from the "
+            "resume ledger alone), the live corpus pin, vault note/name-page "
+            "counts, what failed and why, and whether a run is alive right "
+            "now (issue #530)"
+        ),
+    )
+
+    runs_parser = subparsers.add_parser(
+        "runs", help="watch a run's own log directory (issue #530; reads what CLI-1/#526 writes)"
+    )
+    runs_subparsers = runs_parser.add_subparsers(dest="runs_command")
+
+    runs_subparsers.add_parser(
+        "list", help="list every run, past and present, newest first, with status and liveness"
+    )
+
+    runs_show_parser = runs_subparsers.add_parser(
+        "show", help="read one run's meta, record tally and failures -- live or finished"
+    )
+    runs_show_parser.add_argument(
+        "run", help="a run_id (e.g. run-interrogate-20260802T115000Z) or a run directory path"
+    )
+
+    runs_follow_parser = runs_subparsers.add_parser(
+        "follow",
+        help=(
+            "tail a run's records/events as they are appended; stops and "
+            "reports the outcome once the run finishes, or reports the "
+            "run as dead once its heartbeat goes stale -- never hangs"
+        ),
+    )
+    runs_follow_parser.add_argument(
+        "run", help="a run_id (e.g. run-interrogate-20260802T115000Z) or a run directory path"
     )
 
     pipeline_ready_parser = subparsers.add_parser(
@@ -1947,6 +1994,50 @@ def _run(
         ledger_path=Path(ledger_path) if ledger_path is not None else None,
     )
     return exit_code
+
+
+def _status() -> int:
+    print(render_status(compute_status()))
+    return 0
+
+
+def _runs_list() -> int:
+    print(render_run_list(list_runs()))
+    return 0
+
+
+def _runs_show(run: str) -> int:
+    try:
+        run_dir = resolve_run_dir(run)
+        view = load_run(run_dir)
+    except RunNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(render_run_view(view))
+    return 0
+
+
+def _runs_follow(run: str) -> int:
+    try:
+        run_dir = resolve_run_dir(run)
+    except RunNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    last_status: str | None = None
+    for item in follow_run(run_dir, stop_when_stale=True):
+        print(render_follow_line(item))
+        if item.get("stream") == "status":
+            last_status = item.get("status")
+
+    if last_status == "stale":
+        print("[done] the run's heartbeat went stale -- it appears to have died mid-run")
+        return 1
+
+    final_status = load_run(run_dir).meta.get("status")
+    print(f"[done] status: {final_status}")
+    return 0 if final_status == "ok" else 1
 
 
 def _pipeline_ready(manifest_path: str) -> int:
@@ -3170,6 +3261,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "ask":
         return _ask(args.question, args.case)
+
+    if args.command == "status":
+        return _status()
+
+    if args.command == "runs" and args.runs_command == "list":
+        return _runs_list()
+
+    if args.command == "runs" and args.runs_command == "show":
+        return _runs_show(args.run)
+
+    if args.command == "runs" and args.runs_command == "follow":
+        return _runs_follow(args.run)
 
     parser.print_help()
     return 0
