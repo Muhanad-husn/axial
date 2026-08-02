@@ -52,7 +52,13 @@ from axial.llm import (
 from axial.paper.biblio import build_bibliography, source_ids_for_claims
 from axial.paper.brief import PaperBrief
 from axial.paper.citations import build_citation_index, markers_in, reduce_to_cited
-from axial.paper.claims import assert_ceilings, carried_claim, new_b_claim, new_c_claim
+from axial.paper.claims import (
+    MIN_DISTINCT_RECORDS,
+    assert_ceilings,
+    carried_claim,
+    new_b_claim,
+    new_c_claim,
+)
 from axial.paper.coverage import build_coverage_map, overall_confidence
 from axial.paper.draft import assign_claim_ids, draft_section, remap_local_ids
 from axial.paper.intake import PaperIntake, run_intake
@@ -190,7 +196,14 @@ def run_paper(
     cited_so_far: list[dict[str, Any]] = []
     for section in plan.sections:
         draft = draft_section(
-            client, plan.thesis_statement, lens, section, claim_ids, by_id, cited_so_far
+            client,
+            plan.thesis_statement,
+            lens,
+            section,
+            claim_ids,
+            by_id,
+            cited_so_far,
+            cross_source_possible=len(intake.source_analyses) >= MIN_DISTINCT_RECORDS,
         )
 
         # Allocate a stable id per new claim BEFORE remapping, so the prose's

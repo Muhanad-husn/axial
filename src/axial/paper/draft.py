@@ -159,14 +159,64 @@ def _earlier_lines(already_cited: list[dict[str, Any]]) -> str:
     )
 
 
+_NEW_CLAIMS_HEADER = """You may introduce new claims of your own. Each carries a local id you invent (e.g. "n1"), cited in the prose exactly like any other marker, and names the claims above it reasons from -- do NOT supply grounds, they are derived mechanically from the claims you name:"""
+
+_NEW_CLAIM_B = """- kind "b", a cross-source inference: it must reason across claims drawn from at least TWO different analysis records, and it may characterise a disagreement between them but may not declare a winner beyond what those claims support."""
+
+_NEW_CLAIM_C = """- kind "c", this paper's own verdict: where the thesis calls for a verdict, a commitment between positions, or a statement of where the account you commit to is weak, mark it "c" rather than smuggling it into a "b" claim or a source's own voice. It may rest on claims from a single record. Do not mark a claim "c" only to give it more grounds than a "b" claim would need -- "c" is for judgment the sources do not themselves make, not for a shortcut past the two-record rule."""
+
+_ONLY_ONE_RECORD = """This paper stands on ONE analysis record, so a kind "b" cross-source inference is impossible here: there is no second record to reason across, and a claim drawn from a single record is a restatement rather than synthesis. Every new claim you introduce is kind "c"."""
+
+_NEW_CLAIMS_IMPOSSIBLE = """This section is assigned no claims, and no earlier section has cited any, so there is nothing here for a new claim to reason from. Introduce NO new claims: return "new_claims" as an empty list. Frame the question in your own sentences, from the thesis statement above -- stating the thesis is what this section is for, and it needs no claim of its own. The paper's verdict belongs in the section whose role is "synthesis"."""
+
+
+def _new_claims_block(has_visible_claims: bool, cross_source_possible: bool) -> str:
+    """What the drafter may introduce, given what this paper actually has.
+
+    The prompt used to describe the general case unconditionally, which invited
+    a claim the validator then refused: with nothing visible, one that could not
+    be grounded (#596), and on a single-record paper, a (b) claim that can never
+    span two records (#597)."""
+    if not has_visible_claims:
+        return _NEW_CLAIMS_IMPOSSIBLE
+    if not cross_source_possible:
+        return "\n".join([_NEW_CLAIMS_HEADER, _NEW_CLAIM_C, "", _ONLY_ONE_RECORD])
+    return "\n".join([_NEW_CLAIMS_HEADER, _NEW_CLAIM_B, _NEW_CLAIM_C])
+
+
+def _new_claims_example(has_visible_claims: bool, cross_source_possible: bool) -> str:
+    """The example follows the same branch as the instruction above it.
+
+    An example is the strongest instruction in a prompt -- issue #592 -- so it
+    must never demonstrate a claim kind this paper's validator would reject."""
+    if not has_visible_claims:
+        return "[]"
+    if not cross_source_possible:
+        return '[{"local_id": "n1", "kind": "c", "text": "...", "derived_from": ["pc-004"]}]'
+    return '[{"local_id": "n1", "kind": "b", "text": "...", "derived_from": ["pc-004", "pc-011"]}]'
+
+
 def compose_draft_prompt(
     thesis_statement: str,
     lens: Lens,
     section: Section,
     section_claims: str,
     earlier_claims: str,
+    has_visible_claims: bool = True,
+    cross_source_possible: bool = True,
 ) -> str:
-    """The stage-3 prompt for one section."""
+    """The stage-3 prompt for one section.
+
+    `has_visible_claims` is false only when the section is assigned no claims
+    and no earlier section has cited any. Inviting a new claim there is issue
+    #596: the drafter minted a verdict it could not ground, because there was
+    nothing to ground it on. The condition is "nothing visible" rather than
+    "role is setup" -- a `setup` section later in an arc can see earlier
+    sections' claims and may derive from them legitimately.
+
+    `cross_source_possible` is false when the paper stands on one analysis
+    record, where §7.4 makes a (b) claim impossible and (c) the only new claim
+    available (issue #597)."""
     return f"""You are the drafting pass of a paper author (specs/PHASE-C.md §7.4). Write ONE section of a paper. You have no tools, no retrieval, and no access to any source: the claims below are the whole world, and you may not assert anything that is not traceable to one of them.
 
 The paper argues: "{thesis_statement}"
@@ -192,12 +242,10 @@ THE ARGUMENT LEADS AND THE SOURCES SUPPORT IT. This is the single thing that dec
 
 Voice is the other seam, and it is about honesty rather than style. A claim marked kind "a" is a SOURCE's assertion; you may state it as established and attribute it where attribution is the point. A claim marked "b" is this system's own inference across sources and must NEVER be voiced as though a source asserted it. A claim marked "c" is this paper's OWN verdict -- your judgment, never a source's -- and must be voiced the same honest way, as this paper's own conclusion. Write either in your own register, and do not launder either into "scholars have shown".
 
-You may introduce new claims of your own, of two kinds. Each carries a local id you invent (e.g. "n1"), cited in the prose exactly like any other marker, and names the claims above it reasons from -- do NOT supply grounds, they are derived mechanically from the claims you name:
-- kind "b", a cross-source inference: it must reason across claims drawn from at least TWO different analysis records, and it may characterise a disagreement between them but may not declare a winner beyond what those claims support.
-- kind "c", this paper's own verdict: where the thesis calls for a verdict, a commitment between positions, or a statement of where the account you commit to is weak, mark it "c" rather than smuggling it into a "b" claim or a source's own voice. It may rest on claims from a single record. Do not mark a claim "c" only to give it more grounds than a "b" claim would need -- "c" is for judgment the sources do not themselves make, not for a shortcut past the two-record rule.
+{_new_claims_block(has_visible_claims, cross_source_possible)}
 
 Return JSON only:
-{{"prose": "...", "new_claims": [{{"local_id": "n1", "kind": "b", "text": "...", "derived_from": ["pc-004", "pc-011"]}}]}}"""
+{{"prose": "...", "new_claims": {_new_claims_example(has_visible_claims, cross_source_possible)}}}"""
 
 
 def parse_draft_response(raw: str, section: Section, visible_ids: set[str]) -> SectionDraft:
@@ -285,6 +333,7 @@ def draft_section(
     claim_ids: dict[tuple[str, str], str],
     claims_by_id: dict[str, dict[str, Any]],
     already_cited: list[dict[str, Any]],
+    cross_source_possible: bool = True,
 ) -> SectionDraft:
     """One section, one model call."""
     visible = {claim_ids[key] for key in section.assigned_claims}
@@ -295,6 +344,8 @@ def draft_section(
         section,
         _claim_lines(section, claim_ids, claims_by_id),
         _earlier_lines(already_cited),
+        has_visible_claims=bool(visible),
+        cross_source_possible=cross_source_possible,
     )
     raw = complete_json(client, prompt, pass_name=PAPER_DRAFT_PASS_NAME)
     return parse_draft_response(raw, section, visible)
