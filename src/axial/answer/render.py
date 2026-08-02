@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from axial.validators.coverage import confidence_ceiling_for_claim
+from axial.validators.coverage import NOT_MEASURED_BAND, confidence_ceiling_for_claim
 
 # The §7.4 claim-kind marker vocabulary this module renders -- stable and
 # documented, per the plan's own inner-loop rule ("distinguishable in the
@@ -142,9 +142,23 @@ def _render_coverage_map(coverage_map: dict[str, dict[str, Any]]) -> list[str]:
 
 def _render_confidence(confidence: dict[str, Any]) -> list[str]:
     lines = ["", "## Confidence", ""]
-    lines.append(f"**Band:** {confidence.get('overall_band')}")
+    band = confidence.get("overall_band")
+    # `not_measured` (issue #584) is not a rung on the low/medium/high
+    # ordinal -- rendered as a plain phrase so a reader does not parse it as
+    # a fourth band on the same ladder, while the record's own field keeps
+    # its underscore spelling for consumers that compare it verbatim.
+    band_text = "not measured" if band == NOT_MEASURED_BAND else band
+    lines.append(f"**Band:** {band_text}")
     lines.append(f"**Rationale:** {confidence.get('rationale')}")
     return lines
+
+
+def _format_ratio(value: Any) -> str:
+    """`value` at three decimal places, or the literal `null` (issue #584):
+    `available_share` is `None` -- unknown, not a measured zero -- on a run
+    that queried no name at all, and `f"{None:.3f}"` would raise rather than
+    render."""
+    return f"{value:.3f}" if isinstance(value, (int, float)) else "null"
 
 
 def _render_source_usage(source_usage: dict[str, Any]) -> list[str]:
@@ -156,8 +170,8 @@ def _render_source_usage(source_usage: dict[str, Any]) -> list[str]:
     for entry in sorted(sources, key=lambda s: s.get("source_id", "")):
         lines.append(
             f"- {entry.get('source_id')}: evidence_share="
-            f"{entry.get('evidence_share'):.3f} available_share="
-            f"{entry.get('available_share'):.3f} usage_ratio={entry.get('usage_ratio')}"
+            f"{_format_ratio(entry.get('evidence_share'))} available_share="
+            f"{_format_ratio(entry.get('available_share'))} usage_ratio={entry.get('usage_ratio')}"
         )
     return lines
 

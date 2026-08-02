@@ -504,10 +504,12 @@ def test_brief_run_on_refuse_disposition_writes_empty_claims_and_makes_no_synthe
     # `source_usage`/`confidence` already carry.
     assert record["evidence"] == {"assembled_count": 0, "composed_count": 0}
     # Issue #400: an empty claim list touches no polity, so coverage_map is
-    # empty -- but confidence is still a non-nullable disclosure (§7.3),
-    # pinned to "low" rather than absent.
+    # empty -- but confidence is still a non-nullable disclosure (§7.3).
+    # Issue #584: an empty map is not measured, so it is pinned to
+    # "not_measured" rather than the measured "low" -- and rather than
+    # absent.
     assert record["coverage_map"] == {}
-    assert record["confidence"]["overall_band"] == "low"
+    assert record["confidence"]["overall_band"] == "not_measured"
     assert record["confidence"]["rationale"]
     assert record["model_by_pass"] == {"interrogate": "stub"}
     # Issue #363: on refuse, `cost` names only the interrogate pass, mirroring

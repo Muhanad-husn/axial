@@ -262,11 +262,23 @@ def compute_source_usage(
     `evidence_share / available_share`, and is `None` (never 0, never an
     error) when `available_share` is 0: the run drew on a source whose notes
     are members of none of the names it queried, so there is no
-    availability to divide by."""
+    availability to divide by.
+
+    **`available_chunk_count`/`available_share` are `None`, not `0`, when
+    this run queried no name at all (issue #584)** -- `denominator_by_name`
+    empty is that signal: neither a direct single-name traversal nor a
+    `where_names_meet` pair contributed an entry, which is exactly what the
+    argument-map retrieval path (§7.17) produces on every run, since it
+    makes no name-layer tool call. A genuine measured zero -- a source drawn
+    on that is a member of none of the names THIS run actually queried --
+    still reads `0`: the distinction is whether a denominator was ever
+    computed at all, not whether one source's own share of it happens to be
+    empty."""
     trajectory = record.get("trajectory") or []
     names_queried = derive_names_queried(trajectory)
     denominator_by_name, available_counts = compute_available_notes(trajectory, vault_dir=vault_dir)
     available_total = sum(available_counts.values())
+    names_were_queried = bool(denominator_by_name)
 
     disposition = (record.get("interrogation") or {}).get("disposition")
     claims = record.get("claims") or []
@@ -283,8 +295,12 @@ def compute_source_usage(
     for source_id in sorted(evidence_counts):
         evidence_chunk_count = evidence_counts[source_id]
         evidence_share = evidence_chunk_count / total_evidence
-        available_chunk_count = available_counts.get(source_id, 0)
-        available_share = (available_chunk_count / available_total) if available_total else 0.0
+        if names_were_queried:
+            available_chunk_count = available_counts.get(source_id, 0)
+            available_share = (available_chunk_count / available_total) if available_total else 0.0
+        else:
+            available_chunk_count = None
+            available_share = None
         usage_ratio = (evidence_share / available_share) if available_share else None
         sources.append(
             {

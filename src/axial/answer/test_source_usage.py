@@ -390,16 +390,19 @@ def test_an_intersection_naming_an_absent_page_is_skipped_not_raised(tmp_path):
 # -- usage_ratio ----------------------------------------------------------------
 
 
-def test_usage_ratio_is_null_not_zero_when_the_run_queried_no_name(tmp_path):
-    """A run that never queried a name has no availability to divide by, so
-    `usage_ratio` is `None` -- never 0, never an error."""
+def test_usage_ratio_and_available_are_null_not_zero_when_the_run_queried_no_name(tmp_path):
+    """A run that never queried a name (issue #584: the argument-map path
+    queries none, but any empty trajectory hits the same branch) has no
+    denominator at all -- `available_chunk_count` and `available_share` are
+    `None`, an unknown, not a measured `0`, and `usage_ratio` is `None` for
+    the same reason it always was."""
     _write_chunk_note(tmp_path / "prose", "other_0_a_001")
     claims = [{"grounds": [_chunk_ground("zaum_0_a_001")]}]
     result = compute_source_usage(_record(claims=claims, trajectory=[]), vault_dir=tmp_path)
 
     zaum = result["sources"][0]
-    assert zaum["available_chunk_count"] == 0
-    assert zaum["available_share"] == 0
+    assert zaum["available_chunk_count"] is None
+    assert zaum["available_share"] is None
     assert zaum["usage_ratio"] is None
 
 

@@ -23,7 +23,11 @@ Covered here:
   - `run_brief(use_map=True)` calls the shipped `assemble_evidence`/
     `synthesize` with the map's own ordered ids, records `map_retrieval`
     (never a fabricated trajectory) and an empty `trajectory`, and the
-    default (`use_map=False`) path is unchanged and never touches the map.
+    default (`use_map=False`) path is unchanged and never touches the map;
+  - the empty trajectory's downstream effect (issue #584): `coverage_map`
+    is empty and `confidence.overall_band` is `not_measured`, never a
+    measured `low`, and `source_usage`'s per-source `available_chunk_count`/
+    `available_share` are `None`, not a measured `0`.
 """
 
 from __future__ import annotations
@@ -48,6 +52,7 @@ from axial.argmap.ask import (
 from axial.brief.intake import Brief
 from axial.llm import INTERROGATE_PASS_NAME, RETRIEVE_PASS_NAME, SYNTHESIZE_PASS_NAME
 from axial.retrieve.loop import RetrievalResult
+from axial.validators.coverage import NOT_MEASURED_BAND
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 LENSES_DIR = REPO_ROOT / "config" / "lenses"
@@ -421,6 +426,21 @@ def test_run_brief_use_map_calls_shipped_assemble_evidence_and_synthesize_with_m
     }
     assert DECOMPOSE_PASS_NAME in record["model_by_pass"]
     assert RETRIEVE_PASS_NAME not in record["model_by_pass"]
+
+    # Issue #584: an empty trajectory means an empty coverage_map (§7.7
+    # scope is keyed to the name-layer tools the map path never calls), and
+    # that must read as NOT MEASURED, never as a measured `low` -- the map
+    # arm and a thin-corpus name-arm run must not wear the same word.
+    assert record["coverage_map"] == {}
+    assert record["confidence"]["overall_band"] == NOT_MEASURED_BAND
+    assert record["confidence"]["overall_band"] != "low"
+
+    # The companion defect (issue #584): no name was queried at all, so the
+    # source-usage denominator is unknown, not a measured zero.
+    for entry in record["source_usage"]["sources"]:
+        assert entry["available_chunk_count"] is None
+        assert entry["available_share"] is None
+        assert entry["usage_ratio"] is None
 
 
 def test_run_brief_default_path_never_touches_the_map(
