@@ -1,0 +1,24 @@
+{
+  "corpus_pin": "sim-2026-07-30",
+  "gate": "provenance-integrity",
+  "metrics": [
+    {
+      "comparison": "gte",
+      "metric": "provenance_completeness",
+      "n": 229,
+      "passed": true,
+      "threshold": 1.0,
+      "value": 1.0
+    },
+    {
+      "comparison": "lte",
+      "metric": "confidence_upgrade_count",
+      "n": 89,
+      "passed": true,
+      "threshold": 0,
+      "value": 0.0
+    }
+  ],
+  "passed": true,
+  "trusted": true
+}

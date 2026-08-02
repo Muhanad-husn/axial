@@ -1,0 +1,32 @@
+{
+  "corpus_pin": "sim-2026-07-30",
+  "gate": "paper-attribution-fidelity",
+  "metrics": [
+    {
+      "comparison": "gte",
+      "metric": "attribution_completeness",
+      "n": 89,
+      "passed": true,
+      "threshold": 1.0,
+      "value": 1.0
+    },
+    {
+      "comparison": "lte",
+      "metric": "b_seam_mislabel_rate",
+      "n": 35,
+      "passed": true,
+      "threshold": 0.05,
+      "value": 0.0
+    },
+    {
+      "comparison": "lte",
+      "metric": "c_seam_mislabel_rate",
+      "n": 21,
+      "passed": true,
+      "threshold": 0.05,
+      "value": 0.0
+    }
+  ],
+  "passed": true,
+  "trusted": true
+}

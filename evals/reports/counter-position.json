@@ -1,0 +1,16 @@
+{
+  "corpus_pin": "sim-2026-07-30",
+  "gate": "counter-position",
+  "metrics": [
+    {
+      "comparison": "gte",
+      "metric": "paper_counter_position_presence_rate",
+      "n": 2,
+      "passed": true,
+      "threshold": 1.0,
+      "value": 1.0
+    }
+  ],
+  "passed": true,
+  "trusted": true
+}
