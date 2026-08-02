@@ -49,17 +49,31 @@ record; neither loads or re-interrogates a brief).
 
 The four `brief validate` scenarios use `kind: "c"` claims with empty
 grounds: those checks read only the record's own `claims`/`trajectory` and
-its persisted `coverage_map`/`confidence`, so no fixture vault is needed and
-the attribution validator (which also runs inside `brief validate`) passes
-vacuously, isolating each scenario's assertion to the reason under test. The
-`brief coverage` scenario is the opposite by design -- it computes the map
-for real, so it needs real name pages and real grounds.
+its persisted `coverage_map`/`confidence`, isolating each scenario's
+assertion to the reason under test. The `brief coverage` scenario is the
+opposite by design -- it computes the map for real, so it needs real name
+pages and real grounds.
 
-`AXIAL_LLM_PROVIDER=explode` is used for every scenario (not `stub`, unlike
-the attribution acceptance test): the coverage/confidence validator takes no
-LLM client at all and `compute_coverage_map` is model-free by construction,
-so a real poison-client crash would surface immediately if anything on this
-path ever attempted a model call.
+`AXIAL_LLM_PROVIDER=explode` is the DEFAULT for every scenario here: the
+coverage/confidence validator takes no LLM client at all and
+`compute_coverage_map` is model-free by construction (`_brief_coverage`
+never even constructs a client), so a real poison-client crash would
+surface immediately if anything on that path ever attempted a model call.
+
+**The four `brief validate` scenarios override that default (issue #589).**
+A kind-"c" claim now reaches the attribution validator's bounded
+(b)/(c)-seam check (specs/PHASE-B.md §7.9), which needs a real, callable
+client under `pass_name`s that resolve to two DIFFERENT models -- the
+`explode` provider answers the same fixed "explode" id for every pass, so
+constructing a record this way would trip the same-model guard before the
+coverage/confidence assertion under test ever ran. These four scenarios use
+`AXIAL_LLM_PROVIDER=stub` with `AXIAL_STUB_MODEL_BY_PASS` mapping the
+synthesis and attribution passes to different ids (mirroring
+`test_attribution_validator.py`'s own DEV01 pattern): the canned stub
+response flags nothing, so the (c)-seam check passes silently and each
+scenario's assertion still isolates the coverage/confidence reason under
+test. `brief coverage` (DEV25/DEV26) never calls `validate_attribution` at
+all, so it keeps the `explode` default unmodified.
 """
 
 from __future__ import annotations
@@ -76,6 +90,13 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
+STUB_MODEL_BY_PASS_ENV_VAR = "AXIAL_STUB_MODEL_BY_PASS"
+
+# issue #589: the four `brief validate` scenarios below use this to resolve
+# the synthesis and attribution passes to different models under the `stub`
+# provider, satisfying the (b)/(c)-seam check's same-model guard so the
+# canned (nothing-flagged) response is what actually runs.
+DISTINCT_MODELS_ENV_VALUE = json.dumps({"synthesize": "model-a", "attribution": "model-b"})
 
 TILLY = "Charles Tilly"
 BAYAT = "Asef Bayat"
@@ -215,14 +236,21 @@ def vault_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _run_cli(root: Path, *args: str) -> subprocess.CompletedProcess:
-    """Forces `AXIAL_LLM_PROVIDER=explode`: nothing on the coverage path
-    takes an LLM client, and every `brief validate` fixture claim here is
-    kind "c" (so the attribution validator's bounded (b)-seam check never
-    fires either) -- a real model call anywhere on this path would crash the
-    process instead of passing quietly."""
+def _run_cli(
+    root: Path, *args: str, extra_env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess:
+    """Defaults to `AXIAL_LLM_PROVIDER=explode`: `brief coverage` never
+    constructs an LLM client at all, and `compute_coverage_map` is
+    model-free by construction -- a real model call anywhere on that path
+    would crash the process instead of passing quietly. `extra_env`
+    overrides this default (issue #589: the `brief validate` scenarios need
+    a real, distinctly-modelled `stub` client, since a kind-"c" claim now
+    reaches the (b)/(c)-seam check, which `explode`'s single fixed model id
+    cannot satisfy)."""
     env = dict(os.environ)
     env[PROVIDER_ENV_VAR] = "explode"
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         ["uv", "run", "--project", str(REPO_ROOT), "axial", "brief", *args],
         cwd=root,
@@ -316,7 +344,9 @@ def test_a_name_the_run_never_retrieved_on_stays_out_of_the_computed_map(vault_r
 def test_scenario1_complete_map_and_valid_confidence_passes(fixture_root: Path):
     """DEV20: both names in scope have a complete entry, confidence is
     disclosed with a non-empty rationale, and confidence is not the top band
-    -- exit 0, zero LLM calls (the `explode` provider is never invoked)."""
+    -- exit 0. Runs under `stub` with distinct per-pass models (issue #589:
+    the kind-"c" claim now reaches the (c)-seam check, whose canned reply
+    flags nothing) rather than `explode`."""
     _write_record(
         fixture_root,
         "DEV20",
@@ -329,7 +359,15 @@ def test_scenario1_complete_map_and_valid_confidence_passes(fixture_root: Path):
         trajectory=_retrieved(TILLY, BAYAT),
     )
 
-    result = _run_cli(fixture_root, "validate", "DEV20")
+    result = _run_cli(
+        fixture_root,
+        "validate",
+        "DEV20",
+        extra_env={
+            PROVIDER_ENV_VAR: "stub",
+            STUB_MODEL_BY_PASS_ENV_VAR: DISTINCT_MODELS_ENV_VALUE,
+        },
+    )
 
     _assert_not_argparse_fallback(result)
     assert result.returncode == 0, (
@@ -358,7 +396,15 @@ def test_scenario2_missing_coverage_entry_blocks_release(fixture_root: Path):
     analyses_dir = fixture_root / "data" / "analyses"
     before = set(analyses_dir.iterdir())
 
-    result = _run_cli(fixture_root, "validate", "DEV21")
+    result = _run_cli(
+        fixture_root,
+        "validate",
+        "DEV21",
+        extra_env={
+            PROVIDER_ENV_VAR: "stub",
+            STUB_MODEL_BY_PASS_ENV_VAR: DISTINCT_MODELS_ENV_VALUE,
+        },
+    )
 
     _assert_not_argparse_fallback(result)
     assert result.returncode != 0, f"expected non-zero exit, got 0\nstdout: {result.stdout!r}"
@@ -384,7 +430,15 @@ def test_scenario3_missing_confidence_disclosure_blocks_release(fixture_root: Pa
         trajectory=_retrieved(TILLY),
     )
 
-    result = _run_cli(fixture_root, "validate", "DEV22")
+    result = _run_cli(
+        fixture_root,
+        "validate",
+        "DEV22",
+        extra_env={
+            PROVIDER_ENV_VAR: "stub",
+            STUB_MODEL_BY_PASS_ENV_VAR: DISTINCT_MODELS_ENV_VALUE,
+        },
+    )
 
     _assert_not_argparse_fallback(result)
     assert result.returncode != 0, f"expected non-zero exit, got 0\nstdout: {result.stdout!r}"
@@ -409,7 +463,15 @@ def test_scenario4_confidence_exceeds_coverage_blocks_release(fixture_root: Path
         trajectory=_retrieved(TILLY, BAYAT),
     )
 
-    result = _run_cli(fixture_root, "validate", "DEV23")
+    result = _run_cli(
+        fixture_root,
+        "validate",
+        "DEV23",
+        extra_env={
+            PROVIDER_ENV_VAR: "stub",
+            STUB_MODEL_BY_PASS_ENV_VAR: DISTINCT_MODELS_ENV_VALUE,
+        },
+    )
 
     _assert_not_argparse_fallback(result)
     assert result.returncode != 0, f"expected non-zero exit, got 0\nstdout: {result.stdout!r}"
