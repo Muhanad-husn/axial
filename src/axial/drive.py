@@ -450,6 +450,7 @@ def _default_ingest_fn(
 def run_drive_sources(
     folder_id: str,
     *,
+    check: bool = False,
     client: DriveClientProtocol | None = None,
     ingest_fn: Callable[[Path], Any] | None = None,
     secrets_path: Path = DEFAULT_SECRETS_PATH,
@@ -490,6 +491,21 @@ def run_drive_sources(
     local backend, whose report is a separate, free pre-pass over the
     ledger -- Drive's report and its ingest step are one pass: there is no
     cheaper way to know a Drive file's language than downloading it.
+
+    `check=True` (`axial sources --check`, issue #528) reports without
+    ingesting: candidate classification is IDENTICAL either way -- same
+    listing, same manifest lookups, same downloads, same language-gate
+    calls, since that is what deciding NEW/CHANGED/REJECTED honestly
+    requires -- but a checked run never calls `ingest_fn` and never writes
+    the fetch-state manifest. This is NOT a free check the way the local
+    backend's is (`axial.sources.scan_local` answers from the ledger alone,
+    no I/O beyond a read): a Drive check for a NEW/CHANGED candidate still
+    downloads its bytes to `cache_dir` to run the language probe, because
+    there is no cheaper way to know whether it would be gate-rejected. What
+    it never does is call `ingest_fn` (so zero pipeline/model calls) or
+    persist anything to the fetch-state manifest (so zero state writes) --
+    a checked run changes nothing a second checked (or real) run would see
+    differently, other than the transient cache file.
 
     `[drive]` secrets are loaded and validated FIRST, before any client
     construction or client call -- an absent/incomplete section halts with a
@@ -599,6 +615,14 @@ def run_drive_sources(
             )
             print(f"reject: {name}: {reason}", file=sys.stderr)
             records.append(SourceRecord(name, REJECTED, reason))
+            continue
+
+        if check:
+            # Reporting stops here (docstring): the language gate already
+            # answered the one question a Drive report cannot answer for
+            # free. `ingest_fn` is never called (zero pipeline/model calls)
+            # and the fetch-state manifest is never written (zero writes).
+            records.append(SourceRecord(name, status))
             continue
 
         try:

@@ -39,6 +39,16 @@ completion signal would mark every source `rejected` forever -- obviously
 wrong, not a real gate rejection. `interrogate` is the last pass in the
 registry that still does real per-source work end to end today; when
 vault-write is un-retired, moving this one constant is the whole fix.
+
+`axial sources --check` (issue #528, CLI: `src/axial/cli.py`'s `_sources_
+local`/`_sources_drive`) asks the question without committing to the
+action: it prints the same report and stops. On this backend, `scan_local`
+already IS that report -- it never writes anything and never calls
+`sync_local`, so a checked run costs one ledger read, full stop. The Drive
+backend cannot make the same promise (a Drive `--check` still downloads a
+new/changed candidate's bytes to run the language gate -- see
+`axial.drive.run_drive_sources`'s own docstring); this module's own
+report/ingest split is what makes the local side free.
 """
 
 from __future__ import annotations

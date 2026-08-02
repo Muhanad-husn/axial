@@ -237,9 +237,13 @@ def test_build_parser_recognises_sources_subcommand_with_optional_backend():
     args = parser.parse_args(["sources"])
     assert args.command == "sources"
     assert args.backend is None
+    assert args.check is False
 
     args_override = parser.parse_args(["sources", "--backend", "drive"])
     assert args_override.backend == "drive"
+
+    args_check = parser.parse_args(["sources", "--check"])
+    assert args_check.check is True
 
 
 def test_main_sources_local_backend_reports_then_ingests_when_something_is_pending(monkeypatch):
@@ -274,13 +278,70 @@ def test_main_sources_local_backend_does_nothing_and_says_so_when_all_done(monke
     assert "nothing new" in captured.out.lower()
 
 
+def test_main_sources_check_reports_but_never_calls_sync_local(monkeypatch, capsys):
+    import axial.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "resolve_backend", lambda: "local")
+    monkeypatch.setattr(cli_mod, "scan_local", lambda: [SourceRecord("alpha.pdf", NEW)])
+    sync_calls = []
+    monkeypatch.setattr(cli_mod, "sync_local", lambda **kwargs: sync_calls.append(kwargs) or [])
+
+    exit_code = cli_mod.main(["sources", "--check"])
+
+    assert exit_code == 0
+    assert sync_calls == [], "--check must never reach sync_local, pending or not"
+    captured = capsys.readouterr()
+    assert "alpha.pdf" in captured.out
+    assert "new" in captured.out
+
+
+def test_main_sources_check_never_calls_run_pass_on_local_backend(monkeypatch):
+    """The coordinator's own bar: prove --check cannot reach axial.run.
+    run_pass on the local backend, using the REAL scan_local (data/ does
+    not exist in this worktree, so it reports zero sources -- the point is
+    that run_pass, patched to explode if called, never gets a chance to)."""
+    import axial.cli as cli_mod
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("run_pass must not be called when --check is passed")
+
+    monkeypatch.setattr(cli_mod, "resolve_backend", lambda: "local")
+    monkeypatch.setattr("axial.sources.run_pass", _boom)
+
+    exit_code = cli_mod.main(["sources", "--check"])
+
+    assert exit_code == 0
+
+
+def test_main_sources_check_report_matches_ingesting_path_report_for_same_state(
+    monkeypatch, capsys
+):
+    import axial.cli as cli_mod
+
+    fixed_records = [SourceRecord("alpha.pdf", NEW), SourceRecord("beta.pdf", DONE)]
+    monkeypatch.setattr(cli_mod, "resolve_backend", lambda: "local")
+    monkeypatch.setattr(cli_mod, "scan_local", lambda: fixed_records)
+    monkeypatch.setattr(cli_mod, "sync_local", lambda **kwargs: [])
+    monkeypatch.setattr(cli_mod, "get_client", lambda: "client-sentinel")
+
+    cli_mod.main(["sources", "--check"])
+    check_report = capsys.readouterr().out.rstrip("\n")
+
+    cli_mod.main(["sources"])
+    ingesting_report = capsys.readouterr().out
+
+    expected = render_report(fixed_records)
+    assert check_report == expected
+    assert ingesting_report.startswith(expected)
+
+
 def test_main_sources_backend_flag_overrides_config(monkeypatch):
     import axial.cli as cli_mod
 
     monkeypatch.setattr(cli_mod, "resolve_backend", lambda: "local")
     drive_calls = []
 
-    def fake_run_drive_sources(folder_id):
+    def fake_run_drive_sources(folder_id, **kwargs):
         drive_calls.append(folder_id)
         return [], 0
 
