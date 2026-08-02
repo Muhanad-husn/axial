@@ -12,11 +12,7 @@ from typing import Any
 import pytest
 import yaml
 
-from axial.gates.provenance import (
-    UnresolvableOriginClaimError,
-    UnresolvableOriginRecordError,
-    run_provenance_gate,
-)
+from axial.gates.provenance import run_provenance_gate
 from axial.llm import ExplodingLLMClient
 
 CHUNK_ID = "prov_gate_001_syria_a"
@@ -388,36 +384,94 @@ def test_no_claims_is_a_vacuous_zero_never_not_scoreable(tmp_path: Path):
     assert upgrades.n == 0
 
 
-def test_missing_origin_record_raises_not_silently_counted(tmp_path: Path):
+def test_missing_origin_record_is_a_violation_not_a_raise(tmp_path: Path):
+    """Issue #627: a dangling origin drags `confidence_upgrade_count` down
+    for that claim, never aborts the run -- `UnresolvableOriginRecordError`
+    is still the class the gate raises internally, but it is caught before
+    it ever reaches this caller."""
     claims = [_paper_claim("pc-1", origin={"brief_id": "no-such-brief", "claim_id": "c1"})]
     record = _paper_record(claims, [_citation("pc-1")])
 
-    with pytest.raises(UnresolvableOriginRecordError):
-        run_provenance_gate(
-            [record],
-            client=ExplodingLLMClient(),
-            corpus_pin=None,
-            trusted=False,
-            config_path=tmp_path / "nonexistent.yaml",
-            analyses_dir=tmp_path / "analyses",
-        )
+    report = run_provenance_gate(
+        [record],
+        client=ExplodingLLMClient(),
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+        analyses_dir=tmp_path / "analyses",
+    )
+
+    upgrades = next(m for m in report.metrics if m.metric == "confidence_upgrade_count")
+    assert upgrades.value == 1.0
+    assert upgrades.passed is False
+    assert "pc-1" in upgrades.detail["violating_paper_claim_ids"]
 
 
-def test_missing_origin_claim_raises(tmp_path: Path):
+def test_missing_origin_claim_is_a_violation_not_a_raise(tmp_path: Path):
+    """Issue #627: the exact real-corpus shape -- the origin analysis record
+    loads fine, but no longer carries the claim id (regenerated against a
+    newer corpus). This must score as a violation, not crash the run."""
     claims = [_paper_claim("pc-1", origin={"brief_id": "b1", "claim_id": "no-such-claim"})]
     record = _paper_record(claims, [_citation("pc-1")])
     analyses_dir = tmp_path / "analyses"
     _write_origin(analyses_dir, "b1", {"claims": [{"claim_id": "c1"}], "coverage_map": {}})
 
-    with pytest.raises(UnresolvableOriginClaimError):
-        run_provenance_gate(
-            [record],
-            client=ExplodingLLMClient(),
-            corpus_pin=None,
-            trusted=False,
-            config_path=tmp_path / "nonexistent.yaml",
-            analyses_dir=analyses_dir,
-        )
+    report = run_provenance_gate(
+        [record],
+        client=ExplodingLLMClient(),
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+        analyses_dir=analyses_dir,
+    )
+
+    upgrades = next(m for m in report.metrics if m.metric == "confidence_upgrade_count")
+    assert upgrades.value == 1.0
+    assert upgrades.passed is False
+    assert "pc-1" in upgrades.detail["violating_paper_claim_ids"]
+
+
+def test_one_dangling_record_does_not_stop_a_healthy_record_from_scoring(
+    vault_dir: Path, tmp_path: Path
+):
+    """Issue #627's own batch shape: a directory of two records, one with a
+    dangling origin and one clean, scored in the same `run_provenance_gate`
+    call -- the dangling record fails its own metric while the healthy
+    record's claim is scored normally, neither one crashing the other."""
+    analyses_dir = tmp_path / "analyses"
+    _write_origin(
+        analyses_dir,
+        "b1",
+        {"claims": [{"claim_id": "c1", "confidence": "high"}], "coverage_map": {}},
+    )
+    healthy = _paper_record(
+        [_paper_claim("pc-1", origin={"brief_id": "b1", "claim_id": "c1"}, confidence="high")],
+        [_citation("pc-1")],
+    )
+    orphaned = {
+        "paper_brief_id": "pb-2",
+        "claims": [_paper_claim("pc-9", origin={"brief_id": "b1", "claim_id": "no-such-claim"})],
+        "citations": [_citation("pc-9")],
+    }
+
+    report = run_provenance_gate(
+        [healthy, orphaned],
+        client=ExplodingLLMClient(),
+        vault_dir=vault_dir,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+        analyses_dir=analyses_dir,
+    )
+
+    upgrades = next(m for m in report.metrics if m.metric == "confidence_upgrade_count")
+    assert upgrades.value == 1.0, "only the orphaned claim violates -- the healthy one does not"
+    assert upgrades.passed is False
+    assert upgrades.detail["violating_paper_claim_ids"] == ["pc-9"]
+    assert "pc-1" not in upgrades.detail["violating_paper_claim_ids"]
+
+    completeness = next(m for m in report.metrics if m.metric == "provenance_completeness")
+    assert completeness.n == 2, "both records' citation markers were counted -- the batch ran"
 
 
 # -- zero model calls, no panel field ------------------------------------------

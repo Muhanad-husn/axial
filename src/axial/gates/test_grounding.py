@@ -637,19 +637,61 @@ def test_paper_gate_self_grading_guard_anchors_to_paper_draft_pass(vault_dir: Pa
     assert client.calls == [], "zero judge calls when the self-grading guard fires"
 
 
-def test_paper_gate_unresolvable_grounds_pointer_is_a_gate_error(vault_dir: Path, tmp_path: Path):
+def test_paper_gate_unresolvable_grounds_pointer_fails_the_claim_not_a_crash(
+    vault_dir: Path, tmp_path: Path
+):
+    """Issue #627: a paper's new (b) claim whose grounds no longer resolve
+    (the corpus moved on since the paper was drafted) must fail its own
+    metric, never raise and abort the whole gate run -- unlike Phase B's
+    `run_grounding_gate`, which still raises for the identical shape
+    (`test_b_claim_unresolvable_grounds_pointer_is_a_gate_error_not_a_verdict`
+    above, unchanged)."""
     client = ScriptedJudgeClient(
         model_by_pass=PAPER_DISTINCT_MODELS,
         responses=[json.dumps({"verdict": "does_not_contradict"})],
     )
     records = [{"claims": [_paper_new_b_claim("pc-1", chunk_id=MISSING_CHUNK_ID)]}]
 
-    with pytest.raises(UnresolvableGroundsError):
-        run_paper_grounding_gate(
-            records,
-            client=client,
-            vault_dir=vault_dir,
-            corpus_pin=None,
-            trusted=False,
-            config_path=tmp_path / "nonexistent.yaml",
-        )
+    report = run_paper_grounding_gate(
+        records,
+        client=client,
+        vault_dir=vault_dir,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+    )
+
+    metric = report.metrics[0]
+    assert metric.value == pytest.approx(0.0)
+    assert metric.passed is False
+    assert metric.detail["contradicted_claim_ids"] == ["pc-1"]
+    assert client.calls == [], "an unresolvable pointer must never reach the judge"
+
+
+def test_paper_gate_one_unresolvable_record_does_not_stop_a_healthy_one(
+    vault_dir: Path, tmp_path: Path
+):
+    """Issue #627's own batch shape: two paper records in one run, one with
+    a stale grounds pointer and one clean -- the run completes and the
+    healthy record's claim is still judged."""
+    client = ScriptedJudgeClient(
+        model_by_pass=PAPER_DISTINCT_MODELS,
+        responses=[json.dumps({"verdict": "does_not_contradict"})],
+    )
+    orphaned = {"claims": [_paper_new_b_claim("pc-orphan", chunk_id=MISSING_CHUNK_ID)]}
+    healthy = {"claims": [_paper_new_b_claim("pc-healthy")]}
+
+    report = run_paper_grounding_gate(
+        [orphaned, healthy],
+        client=client,
+        vault_dir=vault_dir,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+    )
+
+    metric = report.metrics[0]
+    assert metric.n == 2
+    assert metric.value == pytest.approx(0.5)
+    assert metric.detail["contradicted_claim_ids"] == ["pc-orphan"]
+    assert len(client.calls) == 1, "only the healthy claim ever reaches the judge"
