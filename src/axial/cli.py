@@ -19,9 +19,14 @@ from axial.pidguard import AlreadyRunningError
 from axial.analyze import run_examine
 from axial.analyze.synthesis import SynthesisError
 from axial.answer import AnswerError, run_brief
+from axial.answer.render import render_markdown
 from axial.answer.run_report import format_run_report
 from axial.answer.usage_report import build_usage_report, format_usage_report, load_analysis_records
 from axial.artifacts import ArtifactsError, run_artifacts
+from axial.ask import AskError as AskSessionError
+from axial.ask import Turn as AskTurn
+from axial.ask import ask as ask_question
+from axial.ask import new_session_id as new_ask_session_id
 from axial.brief import BriefError, load_brief
 from axial.brief.interrogate import InterrogationError, interrogate, persist_interrogation
 from axial.brief.smoke import SMOKE_BRIEFS_DIR, format_smoke_summary, run_smoke
@@ -1310,6 +1315,32 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    ask_parser = subparsers.add_parser(
+        "ask",
+        help=(
+            "open a session: state the case, ask a question, watch the "
+            "engine work in plain words, read the answer, ask a follow-up "
+            "-- no brief YAML to author (issue #534). A full engine run "
+            "(specs/PHASE-B.md §7.3) either way, exactly like `brief run`"
+        ),
+    )
+    ask_parser.add_argument(
+        "question",
+        nargs="?",
+        default=None,
+        help="the question to ask; omit to be prompted for it interactively",
+    )
+    ask_parser.add_argument(
+        "--case",
+        default=None,
+        help=(
+            "the case (§7.1): a polity or set of polities, written as the "
+            "corpus writes them. Supplying both QUESTION and --case runs one "
+            "turn and exits, with no follow-up prompt; omit either (or both) "
+            "to be prompted, and to keep the session open for follow-ups"
+        ),
+    )
+
     return parser
 
 
@@ -1942,6 +1973,107 @@ def _brief_run(brief_path: str, *, use_map: bool = False) -> int:
     # §7.2: a `refuse` disposition is a completed, valid run -- exit 0 on
     # every disposition (mirrors `_brief_interrogate`/`_brief_examine`).
     return 0
+
+
+def _ask_prompt(label: str) -> str | None:
+    """One `input()` prompt for `axial ask`, returning `None` on EOF/
+    interrupt rather than raising -- the caller reads that as "end the
+    session", mirroring `_key_set`'s own EOF-is-a-clean-exit rule."""
+    try:
+        return input(label)
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+
+
+def _print_ask_turn(turn: AskTurn) -> int:
+    """Print one `axial ask` turn's answer: the rendered §7.10 markdown for
+    its own just-persisted record -- the same rendering `axial brief run`
+    already writes to `<brief_id>.md` -- so a question is answered in the
+    session itself, never only as a file path to go find (issue #534's own
+    "not a usable surface" complaint). `_print_encoding_safe`, never a bare
+    `print`, since the answer is real corpus prose (mirrors `_brief_run`)."""
+    _print_encoding_safe(render_markdown(turn.result.record))
+    print(f"\npersisted: {turn.result.path}")
+    print(f"run report: {turn.result.report_path}")
+    return 0
+
+
+# Every error `axial.ask.ask` can raise: its own precondition
+# (`AskSessionError`, a blank case or question) plus whatever the engine it
+# drives (`run_brief`, unchanged from `_brief_run`'s own set) can raise.
+_ASK_ERRORS = (
+    AskSessionError,
+    InterrogationError,
+    QueryError,
+    SynthesisError,
+    CorpusPinError,
+    AnswerError,
+    AskError,
+)
+
+
+def _ask(question: str | None, case: str | None) -> int:
+    """`axial ask` (issue #534): a session over the plain `axial.ask.ask`
+    function -- state the case, ask the question, watch the work happen in
+    plain words (`_print_event`, the same rendering `axial brief run`
+    already uses), read the answer, ask a follow-up. Supplying BOTH
+    `question` and `case` up front is the one-shot form -- one turn, no
+    prompts, no follow-up loop, `axial ask "..." --case "..."` -- anything
+    else opens an interactive session, prompting only for what was not
+    already given, and keeps prompting for follow-ups until a blank line or
+    EOF ends it. A follow-up is answered by `axial.ask.ask` as a full run of
+    its own, carrying the previous turn's question and claims forward as
+    context -- never a chat turn answering from memory."""
+    one_shot = question is not None and case is not None
+
+    if case is None:
+        case = _ask_prompt("case: ")
+    if case is None or not case.strip():
+        print("error: a case is required", file=sys.stderr)
+        return 1
+
+    if question is None:
+        question = _ask_prompt("question: ")
+    if question is None or not question.strip():
+        print("no question asked -- nothing to do")
+        return 0
+
+    client = get_client()
+    session_id = new_ask_session_id()
+    previous: AskTurn | None = None
+    turn_index = 1
+    exit_code = 0
+
+    while question is not None and question.strip():
+        try:
+            turn = ask_question(
+                question,
+                case,
+                client=client,
+                session_id=session_id,
+                turn_index=turn_index,
+                previous=previous,
+                on_event=_print_event,
+            )
+        except _ASK_ERRORS as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            exit_code = 1
+            if one_shot:
+                return exit_code
+            question = _ask_prompt("\nfollow-up (blank to end): ")
+            continue
+
+        _print_ask_turn(turn)
+        if one_shot:
+            return 0
+
+        previous = turn
+        turn_index += 1
+        question = _ask_prompt("\nfollow-up (blank to end): ")
+
+    print("session ended.")
+    return exit_code
 
 
 def _load_analysis_record(brief_id: str) -> tuple[dict[str, Any], Path] | None:
@@ -2898,6 +3030,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "key" and args.key_command == "check":
         return _key_check()
+
+    if args.command == "ask":
+        return _ask(args.question, args.case)
 
     parser.print_help()
     return 0

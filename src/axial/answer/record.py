@@ -228,6 +228,7 @@ def build_record(
     evidence_assembled_count: int = 0,
     evidence_composed_count: int = 0,
     map_retrieval: dict[str, Any] | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     """Assemble the §7.3 analysis record. `claims`/`trajectory` are the
     caller's already-computed stage-4/stage-3 output (empty on a `refuse`
@@ -246,6 +247,12 @@ def build_record(
     (`coverage_map`, `source_usage`, the run report) already handles as a
     fact about a run that queried no name, not a bug -- the same path a
     `refuse` disposition's empty trajectory already takes.
+
+    `session_id` (issue #534, §7.3, additive) is `None` for a plain
+    `axial brief run` over a hand-authored brief -- there is no session --
+    and the joining id `axial.ask` threads through every turn of an
+    interactive `axial ask` session otherwise. It is recorded verbatim and
+    never inspected here; nothing about it changes what runs.
 
     `counter_position` (§7.8) is computed for real (issue #399)
     from the record's own claims via `generate_counter_position` -- zero
@@ -318,6 +325,7 @@ def build_record(
     record = {
         "brief_id": brief.brief_id,
         "brief": _brief_to_dict(brief),
+        "session_id": session_id,
         "corpus_pin": corpus_pin,
         "lens": lens,
         "interrogation": interrogation_result.to_dict(),
@@ -399,10 +407,15 @@ def run_brief(
     sources_dir: Path | None = None,
     map_pin: str | None = None,
     on_event: EventCallback | None = None,
+    session_id: str | None = None,
 ) -> BriefRunResult:
     """Run the full engine (stages 1-6) over `brief` and persist the §7.3
     analysis record to `<analyses_dir>/<brief_id>.json` plus the §7.15 run
     report to `<runs_dir>/<brief_id>.json`, returning both.
+
+    `session_id` (issue #534, §7.3, additive) is forwarded verbatim to
+    `build_record`: `None` for a plain brief run, or the joining id an
+    `axial ask` session threads through its own turns.
 
     `on_event` (issue #533) is the one event seam the whole engine narrates
     itself through: called `on_event(plain_sentence, detail)` as each stage
@@ -578,6 +591,7 @@ def run_brief(
         evidence_assembled_count=evidence_assembled_count,
         evidence_composed_count=evidence_composed_count,
         map_retrieval=map_retrieval,
+        session_id=session_id,
     )
     emit_event(
         on_event,

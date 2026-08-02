@@ -176,6 +176,31 @@ def test_evidence_field_carries_the_callers_counts_through_unchanged():
     assert record["evidence"] == {"assembled_count": 506, "composed_count": 146}
 
 
+# -- issue #534: `session_id` is an additive §7.3 field --
+
+
+def test_session_id_defaults_to_none_for_a_plain_brief_run():
+    record = _build({"interrogate": "deepseek/deepseek-v4-pro"}, _FakeUsageClient({}))
+
+    assert record["session_id"] is None
+
+
+def test_session_id_is_carried_through_verbatim_when_given():
+    record = build_record(
+        _brief(),
+        _interrogation_result(),
+        corpus_pin="baseline",
+        lens="default",
+        claims=[],
+        trajectory=[],
+        model_by_pass={"interrogate": "deepseek/deepseek-v4-pro"},
+        client=_FakeUsageClient({}),
+        session_id="a-session-id",
+    )
+
+    assert record["session_id"] == "a-session-id"
+
+
 # -- issue #558: a counter-position GENERATION failure must not discard the run --
 
 
