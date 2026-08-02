@@ -480,3 +480,47 @@ def test_follow_run_polls_and_stops_once_status_leaves_running(tmp_path):
 
     assert sleep_calls == [0.01], "expected exactly one poll before status left 'running'"
     assert [row["kind"] for row in rows] == ["source_start"]
+
+
+def test_follow_run_stop_when_stale_reports_death_instead_of_hanging(tmp_path):
+    """issue #530: a hard-killed run leaves `meta.json` stuck at
+    `"running"` forever (module docstring) -- `stop_when_stale=True` must
+    break the loop the moment the heartbeat itself goes stale, yielding a
+    death marker, rather than polling that run forever."""
+    run_dir = tmp_path / "demo-dead"
+    run_dir.mkdir()
+    (run_dir / "meta.json").write_text(json.dumps({"status": "running"}), encoding="utf-8")
+    stale_heartbeat = datetime.now(timezone.utc) - timedelta(seconds=HEARTBEAT_STALE_AFTER_SEC + 5)
+    (run_dir / "heartbeat.json").write_text(
+        json.dumps({"updated_at": stale_heartbeat.isoformat()}), encoding="utf-8"
+    )
+
+    rows = list(
+        follow_run(
+            run_dir,
+            stop_when_stale=True,
+            sleep=lambda seconds: pytest.fail("must stop on the first stale check, never sleep"),
+        )
+    )
+
+    assert rows == [{"stream": "status", "status": "stale"}]
+
+
+def test_follow_run_without_stop_when_stale_keeps_polling_a_stale_heartbeat(tmp_path):
+    """`stop_when_stale` defaults to `False` -- the exact prior behaviour
+    for every existing caller is unchanged: a stale heartbeat with status
+    still `"running"` keeps polling rather than stopping early."""
+    run_dir = tmp_path / "demo-live"
+    run_dir.mkdir()
+    (run_dir / "meta.json").write_text(json.dumps({"status": "running"}), encoding="utf-8")
+    stale_heartbeat = datetime.now(timezone.utc) - timedelta(seconds=HEARTBEAT_STALE_AFTER_SEC + 5)
+    (run_dir / "heartbeat.json").write_text(
+        json.dumps({"updated_at": stale_heartbeat.isoformat()}), encoding="utf-8"
+    )
+
+    def fake_sleep(seconds):
+        (run_dir / "meta.json").write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+
+    rows = list(follow_run(run_dir, poll_interval=0.01, sleep=fake_sleep))
+
+    assert rows == []
