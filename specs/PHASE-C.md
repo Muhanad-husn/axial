@@ -254,6 +254,10 @@ One JSON per run at `data/papers/<paper_brief_id>.json`, the phase's analogue of
 
 `confidence.overall_band` is one of `high` / `medium` / `low` and may not exceed the **lowest** overall band among the named source records. `confidence.rationale` states the coverage counts behind it, drawn from `coverage_map`.
 
+> **CORRECTED 2026-08-02 (issue #584/#587 follow-up).** This paragraph named three bands. Phase B v1 (#584/#587) added a fourth, `not_measured`, deliberately outside the `low`/`medium`/`high` ordinal: it means a source record's own `coverage_map` was empty, because its retrieval path queried no name at all (the argument map, §7.17) — not that the corpus was measured and found thin. §7.11's source-record ceiling now treats it as a real value rather than filtering it out of the ceiling comparison: **a paper standing on any `not_measured` source record reports `not_measured` itself**, unconditionally, never the measured band of whatever other records it also stands on and never `high`. `not_measured` is never ranked against the three-band ordinal here either, for the identical reason #587 gives for Phase B's own record.
+
+
+
 The record is the audit surface. Every cited sentence traces to a claim, every claim traces to grounds, every grounds pointer resolves to a real vault id, and every cited source appears in the bibliography.
 
 ### 7.4 The paper claim (carried vs. new) **[FIRM]**
@@ -464,6 +468,8 @@ Three rules bind it, all mechanical, all with zero vault reads and zero model ca
 The scope is "in a source record's map **and** cited in this paper" — narrower than the source maps and never wider, which is the direction an honest disclosure should move when material is dropped on the way into a paper.
 
 `confidence.overall_band` (§7.3, §7.4) is derived from `coverage_map` exactly as before, then held to the lowest overall band among the named source records. A paper may not be more confident than the weakest analysis it stands on.
+
+> **CORRECTED 2026-08-02 (issue #584/#587 follow-up).** "The lowest overall band among the named source records" implicitly assumed every named record measured something. A map-fed record (§7.17) does not: its own `overall_band` is `not_measured`, and this section's source-record ceiling used to build its floor from a list filtered `in _BAND_RANK`, which silently dropped a `not_measured` record from the comparison rather than raising it — the paper then reported the OTHER records' band as if the unmeasured one were not there. Fixed: any named source record carrying `not_measured` makes the paper's own `overall_band` `not_measured` too, disclosed by name in the rationale, before the derived/held comparison runs at all. When every named record is measured, nothing here changes. An empty `coverage_map` with no `not_measured` source record (no cited name intersects any source map) still derives `not_measured` from `compute_confidence` as before, with a rationale that says plainly that nothing was measured rather than implying a band was derived and found wanting.
 
 ### 7.12 Per-pass model tiering **[TENTATIVE]**
 

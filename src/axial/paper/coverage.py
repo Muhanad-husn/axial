@@ -30,7 +30,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from axial.validators.coverage import compute_confidence, confidence_ceiling_for_claim
+from axial.validators.coverage import (
+    NOT_MEASURED_BAND,
+    compute_confidence,
+    confidence_ceiling_for_claim,
+)
 
 
 class PaperCoverageError(Exception):
@@ -146,11 +150,20 @@ def _paper_rationale(band: Any, coverage_map: dict[str, dict[str, Any]]) -> str:
     (§7.11) -- reusing it verbatim would render "None evidence notes" beside
     every band, which is the manufactured-precision failure §7.10 forbids in a
     smaller costume. The BAND derivation is still Phase B's, so the
-    coverage-to-band mapping stays shared; only the sentence is the paper's."""
+    coverage-to-band mapping stays shared; only the sentence is the paper's.
+
+    An empty `coverage_map` here is the same fourth meaning `compute_confidence`
+    guards against (issue #584/#587): not a measured `low`, but the absence of
+    any name that is both covered by a source record and touched by a cited
+    claim. The rationale says plainly that nothing was measured rather than
+    implying a band was derived and found wanting -- see
+    `overall_confidence`'s `NOT_MEASURED_BAND` handling for the sibling case
+    where a SOURCE record itself measured nothing."""
     if not coverage_map:
         return (
-            "no name is both covered by a source analysis record and touched by a cited "
-            "claim, so there is no coverage_map entry to justify a higher band"
+            "nothing was measured: no name is both covered by a source analysis record "
+            "and touched by a cited claim, so there is no coverage_map entry to derive a "
+            "band from -- this is not a measured low band"
         )
     worst = min(
         coverage_map,
@@ -168,6 +181,43 @@ def _paper_rationale(band: Any, coverage_map: dict[str, dict[str, Any]]) -> str:
     )
 
 
+def _unmeasured_source_rationale(
+    unmeasured_brief_ids: list[str], coverage_map: dict[str, dict[str, Any]]
+) -> str:
+    """The rationale when at least one source record's own `confidence.
+    overall_band` is `NOT_MEASURED_BAND` (issue #584/#587): its own
+    `coverage_map` was empty, so it measured nothing, and a paper standing on
+    it cannot disclose a measured band either -- not `low`, which would read
+    as "measured and found thin" when nothing was measured at all.
+
+    This overrides the derived/held bands entirely rather than folding the
+    unmeasured record into the floor comparison: `not_measured` is not a rung
+    on the `low`/`medium`/`high` ordinal (§584's own rule, kept out of every
+    rank map in this module and `axial.validators.coverage`), so there is no
+    ceiling arithmetic to run it through.
+
+    Disclosed, not averaged (mixed case): when the paper's OWN coverage map is
+    non-empty -- some other, measured source record does cover a cited name --
+    that coverage is still named here, so a reader sees both facts rather than
+    a single number that quietly drops the unmeasured leg."""
+    detail = (
+        f"source record(s) {unmeasured_brief_ids!r} measured nothing of their own "
+        "(their own coverage_map is empty), and a paper cannot claim a measured band "
+        "while standing on an unmeasured analysis (§7.3) -- this is not a measured low band"
+    )
+    if not coverage_map:
+        return f"paper confidence is not measured: {detail}"
+    per_name = "; ".join(
+        f"{name} ({entry.get('coverage_band')}: {entry.get('corpus_note_count')} "
+        f"corpus notes, {entry.get('cited_claim_count')} cited claims)"
+        for name, entry in sorted(coverage_map.items())
+    )
+    return (
+        f"paper confidence is not measured: {detail}; the other source record(s) do "
+        f"disclose coverage by name: {per_name}"
+    )
+
+
 def overall_confidence(
     coverage_map: dict[str, dict[str, Any]],
     records: dict[str, dict[str, Any]],
@@ -179,15 +229,35 @@ def overall_confidence(
     Phase B's own `compute_confidence`, so the coverage-to-band mapping is
     shared rather than restated. The source-record ceiling is §7.3's own rule:
     a paper may not be more confident than the weakest analysis it stands on,
-    however well-covered the names it happened to cite are."""
+    however well-covered the names it happened to cite are.
+
+    A THIRD state pre-empts both (issue #584/#587): if any source record's own
+    `overall_band` is `NOT_MEASURED_BAND`, that record contributed no
+    measurement at all, and `_BAND_RANK`-filtering it out of the ceiling
+    comparison (as a plain "unrecognised band" would be) would silently drop
+    it from consideration -- the exact defect #587's own docstring predicted
+    for this module by name. The paper's band becomes `NOT_MEASURED_BAND`
+    unconditionally in that case, never `high`, never the measured floor of
+    whatever other records it also stands on."""
     derived_band = compute_confidence(coverage_map).get("overall_band")
 
-    source_bands = [
-        band
-        for record in records.values()
-        if isinstance(confidence := record.get("confidence"), dict)
-        and (band := confidence.get("overall_band")) in _BAND_RANK
-    ]
+    source_bands: list[str] = []
+    unmeasured_brief_ids: list[str] = []
+    for brief_id, record in records.items():
+        confidence = record.get("confidence")
+        if not isinstance(confidence, dict):
+            continue
+        band = confidence.get("overall_band")
+        if band == NOT_MEASURED_BAND:
+            unmeasured_brief_ids.append(brief_id)
+        elif band in _BAND_RANK:
+            source_bands.append(band)
+
+    if unmeasured_brief_ids:
+        return {
+            "overall_band": NOT_MEASURED_BAND,
+            "rationale": _unmeasured_source_rationale(sorted(unmeasured_brief_ids), coverage_map),
+        }
 
     band = derived_band
     held = False
