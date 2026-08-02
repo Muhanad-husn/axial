@@ -169,9 +169,6 @@ class StubClient:
     def usage_for_pass(self, pass_name=None):
         return None
 
-    def cost_report(self):
-        return {"total_usd": 0.0, "by_pass": {}}
-
 
 PLAN = {
     "thesis_statement": "Organized challengers explain the outcome better than mass mobilization alone.",
@@ -383,6 +380,91 @@ def test_the_shape_result_is_persisted_on_the_record(tmp_path, analyses_dir, len
     assert "cost" in shape
     # model_by_pass gains the shape pass alongside planning and drafting.
     assert record["model_by_pass"]["paper_shape"] == "stub/shape"
+
+
+class CostReportingStubClient(StubClient):
+    """A `StubClient` that also reports real per-pass token usage, and is
+    configured with Phase-B pass names alongside Phase C's own three -- the
+    shape a client wired for the whole app actually carries. Pins issue
+    #591: the record's `cost` field must draw only the passes THIS paper
+    ran, never the client's whole configured mapping."""
+
+    model_by_pass = {
+        "paper_plan": "deepseek/deepseek-v4-flash",
+        "paper_draft": "deepseek/deepseek-v4-flash",
+        "paper_shape": "stub/shape",
+        "interrogate": "deepseek/deepseek-v4-flash",
+        "retrieve": "deepseek/deepseek-v4-flash",
+        "synthesize": "deepseek/deepseek-v4-flash",
+    }
+
+    def usage_for_pass(self, pass_name=None):
+        return {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500}
+
+
+def test_the_cost_field_carries_real_usage_scoped_to_the_papers_own_passes(
+    tmp_path, analyses_dir, lenses_dir
+):
+    """Issue #591: `cost` was `getattr(client, "cost_report", lambda: {})()`
+    -- no client ever defines `cost_report`, so this always took the `{}`
+    default. The fix reads real usage through `client.usage_for_pass`,
+    scoped to Phase C's own three passes -- never every pass a shared
+    client happens to be configured with."""
+    client = CostReportingStubClient(PLAN, list(DRAFTS))
+    brief = PaperBrief(
+        paper_brief_id="pb-test",
+        thesis="Which account explains the outcome?",
+        analysis_ids=("brief-a", "brief-b"),
+        lens="state-formation",
+    )
+    record = run_paper(
+        client,
+        brief,
+        analyses_dir=analyses_dir,
+        lenses_dir=lenses_dir,
+        source_meta_dir=tmp_path / "source_meta",
+        papers_dir=tmp_path / "papers",
+    )
+
+    # Exactly Phase C's own passes -- not `{}`, and not the client's other
+    # (Phase-B) configured passes.
+    assert set(record["model_by_pass"]) == {"paper_plan", "paper_draft", "paper_shape"}
+    assert set(record["cost"]["by_pass"]) == {"paper_plan", "paper_draft", "paper_shape"}
+
+    for pass_name in ("paper_plan", "paper_draft", "paper_shape"):
+        entry = record["cost"]["by_pass"][pass_name]
+        assert entry["prompt_tokens"] == 1000
+        assert entry["completion_tokens"] == 500
+        assert entry["total_tokens"] == 1500
+
+    # `paper_plan`/`paper_draft` resolve to a priced model: real dollars.
+    plan_usd = record["cost"]["by_pass"]["paper_plan"]["usd"]
+    draft_usd = record["cost"]["by_pass"]["paper_draft"]["usd"]
+    assert plan_usd is not None and plan_usd > 0
+    assert draft_usd is not None and draft_usd > 0
+    # `paper_shape` resolves to an unpriced model ("stub/shape" is not in
+    # the real price table): null, never a fabricated zero.
+    assert record["cost"]["by_pass"]["paper_shape"]["usd"] is None
+    # The total sums whatever priced -- the one unpriced pass does not
+    # blank it out.
+    assert record["cost"]["total_usd"] == pytest.approx(plan_usd + draft_usd)
+
+
+def test_the_cost_field_is_never_empty_even_under_a_client_reporting_no_usage(
+    tmp_path, analyses_dir, lenses_dir
+):
+    """Issue #591's actual regression: `cost` was `{}` unconditionally,
+    because `getattr(client, "cost_report", ...)` always took its default.
+    Even a client reporting no usage at all must produce the real per-pass
+    shape -- null tokens/dollars honestly, never a fabricated zero and
+    never a bare `{}`."""
+    record, _ = _run(tmp_path, analyses_dir, lenses_dir)
+    assert record["cost"] != {}
+    assert set(record["cost"]["by_pass"]) == {"paper_plan", "paper_draft", "paper_shape"}
+    for entry in record["cost"]["by_pass"].values():
+        assert entry["prompt_tokens"] == 0
+        assert entry["usd"] is None
+    assert record["cost"]["total_usd"] is None
 
 
 def test_a_weak_band_with_no_defects_is_a_parse_error_and_aborts_the_run(

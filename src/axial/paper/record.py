@@ -24,9 +24,17 @@ than waiting on claims, citations or coverage that have nothing to do with
 its question. It reports a band and any named defects onto the record; it
 never blocks `run_paper`, which is `axial.cli._paper_draft`'s job to act on.
 
-**Costs and model_by_pass are recorded per pass**, so a paper's spend is
-attributable to planning versus drafting, and so §7.7's vendor guard has
-something to read when the panel later scores this paper.
+**`cost` and `model_by_pass` are recorded per pass** (issue #591), scoped to
+Phase C's own three passes -- planning, drafting, the shape check -- never
+to `client`'s whole configured mapping, so a paper's spend is attributable
+to planning versus drafting versus the shape check, and so §7.7's vendor
+guard has something to read when the panel later scores this paper. `cost`
+is computed by `axial.llm.usage_and_cost_by_pass`, the same function
+`axial.answer.record.build_record` uses for its own §7.14 field (promoted
+there from a private helper by #591 rather than reimplemented here, without
+importing `axial.answer.record` itself -- see the non-import note above).
+Its dollar figures are a priced CEILING, not a measurement: `llm.py`'s own
+price table runs about 14% high.
 """
 
 from __future__ import annotations
@@ -35,6 +43,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+from axial.llm import (
+    PAPER_DRAFT_PASS_NAME,
+    PAPER_PLAN_PASS_NAME,
+    PAPER_SHAPE_PASS_NAME,
+    usage_and_cost_by_pass,
+)
 from axial.paper.biblio import build_bibliography, source_ids_for_claims
 from axial.paper.brief import PaperBrief
 from axial.paper.citations import build_citation_index, markers_in, reduce_to_cited
@@ -242,6 +256,18 @@ def run_paper(
     confidence = overall_confidence(coverage_map, intake.records)
     bibliography = build_bibliography(claims, source_meta_dir=source_meta_dir, vault_dir=vault_dir)
 
+    # Scoped to Phase C's own three passes -- planning, drafting, the shape
+    # check, which (unlike the counter-position pass on the Phase-B side)
+    # always runs exactly once per paper, never conditionally -- rather than
+    # `client.model_by_pass`'s whole configured mapping, which would fold
+    # every other Phase-B pass into the cost report at zero tokens each
+    # (issue #591).
+    record_model_by_pass = {
+        PAPER_PLAN_PASS_NAME: client.model_for_pass(PAPER_PLAN_PASS_NAME),
+        PAPER_DRAFT_PASS_NAME: client.model_for_pass(PAPER_DRAFT_PASS_NAME),
+        PAPER_SHAPE_PASS_NAME: shape_result.model,
+    }
+
     markdown_path = papers_dir / f"{paper_brief.paper_brief_id}.md"
     record: dict[str, Any] = {
         "paper_brief_id": paper_brief.paper_brief_id,
@@ -265,8 +291,8 @@ def run_paper(
         "bibliography": bibliography,
         "shape": shape_result.to_json(),
         "paper_markdown_path": str(markdown_path),
-        "model_by_pass": dict(getattr(client, "model_by_pass", {}) or {}),
-        "cost": getattr(client, "cost_report", lambda: {})(),
+        "model_by_pass": record_model_by_pass,
+        "cost": usage_and_cost_by_pass(client, record_model_by_pass),
     }
 
     persist_paper(record, papers_dir=papers_dir)
