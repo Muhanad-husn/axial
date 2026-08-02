@@ -29,6 +29,18 @@ exists to catch:
 A plant that cannot be applied to the given record is an **error**, never a
 skip. A control that quietly plants two defects instead of three and then
 passes is worse than no control.
+
+**The plants below are agnostic to which record shape they mutate** (issue
+#611, specs/PHASE-C.md §7.9/§8 P0-11): a Phase-B analysis record and a
+Phase-C paper record both carry `claims`, `counter_position` and
+`coverage_map` in the same shapes these selectors already read, so no
+Phase-C-specific plant function was owed. The one real difference is the
+claim-id field name (`claim_id` vs. `paper_claim_id`), handled once in
+`_claim_id_of` below. A control paper still has to be chosen with the same
+care §7.9 already states for a control analysis: it needs a
+present-with-grounds counter-position and at least one thinly-covered name,
+or a plant raises `PlantNotApplicableError` exactly as it does for an
+analysis record that cannot carry it.
 """
 
 from __future__ import annotations
@@ -133,7 +145,11 @@ def _claims_with_grounds(record: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _claim_id_of(claim: dict[str, Any], index: int) -> str:
-    return claim.get("claim_id") or f"<claim #{index}>"
+    """An analysis claim's id, or a paper claim's `paper_claim_id` (issue
+    #611): the two record shapes carry the id under different keys, and a
+    plant has to name whichever one the reviewer's `claim_id` will actually
+    echo back, or `_caught_by` below can never match it."""
+    return claim.get("claim_id") or claim.get("paper_claim_id") or f"<claim #{index}>"
 
 
 def plant_mis_grounded(record: dict[str, Any]) -> tuple[dict[str, Any], Plant]:

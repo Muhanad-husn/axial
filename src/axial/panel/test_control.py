@@ -212,3 +212,79 @@ def test_a_failed_control_says_no_number_is_reportable():
     rendered = format_control_report(score_control(results))
     assert "MISSED" in rendered
     assert "no panel number is reportable" in rendered
+
+
+# -- the plants over a paper record (issue #611, specs/PHASE-C.md §8 P0-11) --
+
+
+def _paper_record():
+    """Same shape as `_record()` above, but claims are keyed on
+    `paper_claim_id` -- the field a Phase-C paper record actually carries
+    (§7.4) -- and there is no `claim_id` at all, exactly as a real paper
+    record's claims never carry one."""
+    return {
+        "paper_brief_id": "pb-001",
+        "claims": [
+            {
+                "paper_claim_id": "pc-001",
+                "kind": "a",
+                "text": "Bureaucratic capacity fell.",
+                "names_touched": ["syria"],
+                "confidence": "medium",
+                "grounds": [{"ref_type": "chunk", "ref_id": "chunk_a"}],
+            },
+            {
+                "paper_claim_id": "pc-002",
+                "kind": "a",
+                "text": "Militia payrolls grew.",
+                "names_touched": ["lebanon"],
+                "confidence": "high",
+                "grounds": [{"ref_type": "chunk", "ref_id": "chunk_b"}],
+            },
+        ],
+        "counter_position": {
+            "present": True,
+            "stance": "War strengthened the state.",
+            "grounds": [{"ref_type": "chunk", "ref_id": "chunk_c"}],
+        },
+        "coverage_map": {
+            "syria": {"coverage_band": "thin", "corpus_note_count": 3},
+            "lebanon": {"coverage_band": "rich", "corpus_note_count": 400},
+        },
+    }
+
+
+def test_mis_grounded_over_a_paper_record_matches_on_paper_claim_id():
+    mutated, plant = plant_mis_grounded(_paper_record())
+    assert plant == Plant(kind=MIS_GROUNDED, claim_id="pc-001")
+    assert mutated["claims"][0]["grounds"] == [{"ref_type": "chunk", "ref_id": "chunk_b"}]
+
+
+def test_overconfident_over_a_paper_record_matches_on_paper_claim_id():
+    mutated, plant = plant_overconfident(_paper_record())
+    assert plant == Plant(kind=OVERCONFIDENT, claim_id="pc-001")
+    assert mutated["claims"][0]["confidence"] == "high"
+
+
+def test_strawman_over_a_paper_record_needs_no_claim_id_change():
+    mutated, plant = plant_strawman_counter_position(_paper_record())
+    assert plant.kind == STRAWMAN
+    assert mutated["counter_position"]["grounds"] == [{"ref_type": "chunk", "ref_id": "chunk_a"}]
+
+
+def test_a_paper_record_that_cannot_carry_a_plant_raises_not_skips():
+    record = _paper_record()
+    record["counter_position"] = {"present": False}
+    with pytest.raises(PlantNotApplicableError):
+        plant_strawman_counter_position(record)
+
+
+def test_the_control_over_a_paper_record_matches_the_planted_paper_claim_id():
+    """The end-to-end reason the id-field fix matters: a reviewer echoes
+    back the paper's own `paper_claim_id`, and `_caught_by` must match on
+    it, not on a `<claim #N>` fallback."""
+    (plant,) = [plant for _, plant in plant_all(_paper_record())][:1]
+    caught = Defect(claim_id=plant.claim_id, kind=plant.kind)
+    report = _report([_verdict([caught])] * 3)
+    outcome = score_control([(plant, report)])
+    assert outcome.outcomes[0].caught is True
