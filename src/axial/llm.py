@@ -1301,16 +1301,23 @@ def _canned_synthesize_response() -> str:
     return override or _CANNED_SYNTHESIZE_RESPONSE
 
 
-_CANNED_ATTRIBUTION_RESPONSE = json.dumps({"flagged_claim_ids": []})
+# issue #589: the (b)/(c)-seam check is now one combined call that can ask
+# either or both questions, so the canned reply answers BOTH keys
+# unconditionally -- `_parse_seam_response` only requires whichever key the
+# claims sent actually need, so a spare key the call didn't ask for is
+# ignored, and this stays correct whether the record carries (b) claims,
+# (c) claims, or both.
+_CANNED_ATTRIBUTION_RESPONSE = json.dumps({"flagged_claim_ids": [], "flagged_c_claim_ids": []})
 
 
 def _canned_attribution_response() -> str:
     """The canned response for an attribution-pass call (identified by
     `pass_name=ATTRIBUTION_PASS_NAME`, issue #258): read fresh from
     `STUB_ATTRIBUTION_RESPONSE_ENV_VAR` on every call so a test can script
-    which claim_ids the (b)-seam check flags (see the env var's own comment
-    above); unset/"" falls back to flagging nothing -- the conservative
-    default, so a stub-driven run never invents a flag nobody scripted."""
+    which claim_ids the (b)/(c)-seam check flags (see the env var's own
+    comment above); unset/"" falls back to flagging nothing -- the
+    conservative default, so a stub-driven run never invents a flag nobody
+    scripted."""
     override = os.environ.get(STUB_ATTRIBUTION_RESPONSE_ENV_VAR, "")
     return override or _CANNED_ATTRIBUTION_RESPONSE
 

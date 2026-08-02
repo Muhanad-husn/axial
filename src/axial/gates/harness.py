@@ -70,6 +70,7 @@ Comparison = Literal["gte", "lte"]
 DEFAULT_GATE_THRESHOLDS: dict[str, float] = {
     "attribution_completeness": 1.00,
     "b_seam_mislabel_rate": 0.05,
+    "c_seam_mislabel_rate": 0.05,
     "grounding_support_rate": 0.90,
     # Synthesis quality (issue #263, §10 Principle IV).
     "counter_position_presence_rate": 0.95,
@@ -93,6 +94,7 @@ DEFAULT_GATE_THRESHOLDS: dict[str, float] = {
 METRIC_COMPARISON: dict[str, Comparison] = {
     "attribution_completeness": "gte",
     "b_seam_mislabel_rate": "lte",
+    "c_seam_mislabel_rate": "lte",
     "grounding_support_rate": "gte",
     "counter_position_presence_rate": "gte",
     "steelman_quality": "gte",

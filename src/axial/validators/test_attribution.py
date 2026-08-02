@@ -6,9 +6,11 @@ src/axial/analyze/test_synthesis.py).
 Covers plans/analysis-validators/01-attribution-validator.md's inner-loop
 checklist: the kind check, grounds-presence, grounds-resolution via the
 query API (asserted by call, not string match), partial-failure reporting,
-release blocking, the (b)-seam check's zero-model-calls-when-no-b-claims
-property, its distinct-pass_name/same-model guard, and the vacuous pass on
-an empty claims list.
+release blocking, the (b)/(c)-seam check's zero-model-calls-when-neither-
+kind-present property, its distinct-pass_name/same-model guard, and the
+vacuous pass on an empty claims list. Also covers the (c)-seam addition
+(issue #589): a flagged (c) claim, an unflagged (c) claim, and a record
+carrying (c) claims but no (b) claims still reaching the judge.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import yaml
 from axial.llm import SYNTHESIZE_PASS_NAME, ExplodingLLMClient
 from axial.validators.attribution import (
     REASON_B_SEAM_VOICED_AS_SOURCE,
+    REASON_C_SEAM_VOICED_AS_SOURCE,
     REASON_EMPTY_GROUNDS,
     REASON_MISSING_KIND,
     REASON_UNRESOLVABLE_GROUNDS,
@@ -157,8 +160,12 @@ def test_kind_absent_null_blank_or_out_of_vocabulary_fails(bad_kind, vault_dir: 
 @pytest.mark.parametrize("good_kind", ["a", "b", "c"])
 def test_every_real_kind_passes_the_kind_check(good_kind, vault_dir: Path):
     grounds = [] if good_kind == "c" else [{"ref_type": "chunk", "ref_id": CHUNK_ID}]
+    # issue #589: a kind-"c" claim now reaches the (c)-seam judge too, so the
+    # scripted response must satisfy whichever of the two response keys the
+    # claim's own kind triggers -- both are supplied unconditionally here.
     client = FakeClient(
-        model_by_pass=DISTINCT_MODELS, response=json.dumps({"flagged_claim_ids": []})
+        model_by_pass=DISTINCT_MODELS,
+        response=json.dumps({"flagged_claim_ids": [], "flagged_c_claim_ids": []}),
     )
     report = validate_attribution(
         _record([_claim("c-1", kind=good_kind, grounds=grounds)]),
@@ -187,9 +194,13 @@ def test_kind_b_with_absent_grounds_fails():
 
 
 def test_kind_c_with_empty_grounds_passes():
-    report = validate_attribution(
-        _record([_claim("c-1", kind="c", grounds=[])]), client=ExplodingLLMClient()
+    # issue #589: an empty-grounds (c) claim still reaches the (c)-seam
+    # judge (§7.4 permits empty grounds; it does not exempt the claim from
+    # the seam check), so this can no longer use ExplodingLLMClient.
+    client = FakeClient(
+        model_by_pass=DISTINCT_MODELS, response=json.dumps({"flagged_c_claim_ids": []})
     )
+    report = validate_attribution(_record([_claim("c-1", kind="c", grounds=[])]), client=client)
     assert report.passed
 
 
@@ -271,7 +282,12 @@ def test_one_bad_claim_among_five_names_exactly_that_one(vault_dir: Path):
         _claim("c-4", kind="c", grounds=[]),
         _claim("c-5", kind="a", grounds=good_grounds),
     ]
-    report = validate_attribution(_record(claims), client=ExplodingLLMClient(), vault_dir=vault_dir)
+    # issue #589: c-4 (kind "c") now reaches the (c)-seam judge, so this
+    # needs a scripted client rather than ExplodingLLMClient.
+    client = FakeClient(
+        model_by_pass=DISTINCT_MODELS, response=json.dumps({"flagged_c_claim_ids": []})
+    )
+    report = validate_attribution(_record(claims), client=client, vault_dir=vault_dir)
     assert not report.passed
     assert [f.claim_id for f in report.failures] == ["c-3"]
 
@@ -298,18 +314,34 @@ def test_failing_report_is_not_passed():
     assert len(report.failures) > 0
 
 
-# -- (b)-seam check: zero model calls when no (b) claims ---------------------
+# -- (b)/(c)-seam check: zero model calls when neither kind is present -------
 
 
-def test_no_b_claims_means_zero_model_calls(vault_dir: Path):
+def test_neither_b_nor_c_claims_means_zero_model_calls(vault_dir: Path):
     # ExplodingLLMClient raises the instant .complete()/.complete_with_tools()
-    # is invoked -- a record with only a/c claims must never reach it.
+    # is invoked -- a record with only (a) claims must never reach it.
+    claims = [
+        _claim("c-1", kind="a", grounds=[{"ref_type": "chunk", "ref_id": CHUNK_ID}]),
+    ]
+    report = validate_attribution(_record(claims), client=ExplodingLLMClient(), vault_dir=vault_dir)
+    assert report.passed
+
+
+def test_c_claims_but_no_b_claims_still_reaches_the_judge(vault_dir: Path):
+    # issue #589: the zero-call contract only holds when a record carries
+    # NEITHER kind -- a record with (c) claims and no (b) claims must still
+    # make the call. ExplodingLLMClient would raise as soon as it is
+    # reached, so reaching it (without raising) is exactly what this pins.
+    client = FakeClient(
+        model_by_pass=DISTINCT_MODELS, response=json.dumps({"flagged_c_claim_ids": []})
+    )
     claims = [
         _claim("c-1", kind="a", grounds=[{"ref_type": "chunk", "ref_id": CHUNK_ID}]),
         _claim("c-2", kind="c", grounds=[]),
     ]
-    report = validate_attribution(_record(claims), client=ExplodingLLMClient(), vault_dir=vault_dir)
+    report = validate_attribution(_record(claims), client=client, vault_dir=vault_dir)
     assert report.passed
+    assert client.calls == ["attribution"]
 
 
 def test_a_b_claim_that_already_failed_mechanically_is_never_seam_checked(vault_dir: Path):
@@ -403,6 +435,93 @@ def test_prompt_dedupes_source_ids_shared_across_grounds_entries(vault_dir: Path
     prompt = client.prompts[0]
     assert "1 distinct source" in prompt
     assert "unitfix" in prompt
+
+
+# -- (c)-seam check (issue #589) ----------------------------------------------
+
+
+def test_c_seam_check_flags_the_scripted_claim_id(vault_dir: Path):
+    client = FakeClient(
+        model_by_pass=DISTINCT_MODELS, response=json.dumps({"flagged_c_claim_ids": ["c-2"]})
+    )
+    claims = [
+        _claim("c-1", kind="c", grounds=[]),
+        _claim("c-2", kind="c", grounds=[]),
+    ]
+    report = validate_attribution(_record(claims), client=client, vault_dir=vault_dir)
+    assert not report.passed
+    assert [f.claim_id for f in report.failures] == ["c-2"]
+    assert report.failures[0].reason == REASON_C_SEAM_VOICED_AS_SOURCE
+    assert client.calls == ["attribution"], "the check must run under its own distinct pass_name"
+
+
+def test_c_seam_check_does_not_flag_an_unscripted_claim(vault_dir: Path):
+    client = FakeClient(
+        model_by_pass=DISTINCT_MODELS, response=json.dumps({"flagged_c_claim_ids": []})
+    )
+    claim = _claim("c-1", kind="c", grounds=[])
+    report = validate_attribution(_record([claim]), client=client, vault_dir=vault_dir)
+    assert report.passed, report.failures
+
+
+def test_c_seam_prompt_states_empty_grounds_is_normal_not_a_defect(vault_dir: Path):
+    """The founder's own steer: without saying positively that a bare
+    first-person verdict is expected, the judge false-flagged declarative
+    prose (up to 0.333 on the (b) side before it got a discriminator, PR
+    #559). The (c) block must say so, and must say plainly that an empty
+    `grounds` list is normal, not itself a defect."""
+    client = FakeClient(
+        model_by_pass=DISTINCT_MODELS, response=json.dumps({"flagged_c_claim_ids": []})
+    )
+    claim = _claim("c-1", kind="c", grounds=[])
+    validate_attribution(_record([claim]), client=client, vault_dir=vault_dir)
+
+    prompt = client.prompts[0]
+    assert "not itself a defect" in prompt, "the prompt must positively excuse first-person voice"
+    assert "normal for a verdict" in prompt, "the prompt must say empty grounds is normal"
+
+
+def test_c_seam_check_hands_the_judge_the_claims_resolved_source_ids(vault_dir: Path):
+    """A (c) claim's grounds -- however few -- are still handed to the
+    judge as context, reusing `_distinct_source_ids` exactly as the (b)
+    block already does."""
+    client = FakeClient(
+        model_by_pass=DISTINCT_MODELS, response=json.dumps({"flagged_c_claim_ids": []})
+    )
+    claim = _claim("c-1", kind="c", grounds=[{"ref_type": "chunk", "ref_id": CHUNK_ID}])
+    validate_attribution(_record([claim]), client=client, vault_dir=vault_dir)
+
+    prompt = client.prompts[0]
+    assert "unitfix" in prompt
+
+
+def test_a_c_claim_reaches_the_judge_alongside_b_claims_in_one_call(vault_dir: Path):
+    """A record carrying both kinds gets ONE call with both blocks, not two
+    calls -- the founder's decision to extend the existing call rather than
+    add a second judge seam."""
+    client = FakeClient(
+        model_by_pass=DISTINCT_MODELS,
+        response=json.dumps({"flagged_claim_ids": ["b-1"], "flagged_c_claim_ids": ["c-1"]}),
+    )
+    claims = [
+        _claim("b-1", kind="b", grounds=[{"ref_type": "chunk", "ref_id": CHUNK_ID}]),
+        _claim("c-1", kind="c", grounds=[]),
+    ]
+    report = validate_attribution(_record(claims), client=client, vault_dir=vault_dir)
+    assert not report.passed
+    assert {f.claim_id for f in report.failures} == {"b-1", "c-1"}
+    assert {f.reason for f in report.failures} == {
+        REASON_B_SEAM_VOICED_AS_SOURCE,
+        REASON_C_SEAM_VOICED_AS_SOURCE,
+    }
+    assert client.calls == ["attribution"], "one call, not one per kind"
+
+
+def test_c_seam_response_missing_flagged_c_claim_ids_key_raises(vault_dir: Path):
+    client = FakeClient(model_by_pass=DISTINCT_MODELS, response=json.dumps({"not_flagged": []}))
+    claim = _claim("c-1", kind="c", grounds=[])
+    with pytest.raises(AttributionCheckFailedError):
+        validate_attribution(_record([claim]), client=client, vault_dir=vault_dir)
 
 
 # -- (b)-seam check: same-model config guard ---------------------------------
