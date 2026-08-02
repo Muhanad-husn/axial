@@ -58,7 +58,7 @@ class ToolResult:
     replaying the prompt text.
 
     `detail`, when set (issues #517 and #493), is the same kind of beside-
-    the-trajectory rider, populated by four tools: `find_names` states each
+    the-trajectory rider, populated by five tools: `find_names` states each
     hit's `kind`, `member_count` and `tier`, so a model can tell an
     exact/alias resolution apart from an embedding guess -- a bare canonical
     string cannot. `get_name` and `where_names_meet` state how many distinct
@@ -70,8 +70,11 @@ class ToolResult:
     distribution over the neighbours returned (min/median/max/floor-count),
     because a ranked list whose ranking carries no signal past a handful of
     ties looks identical to a real gradient until that spread is disclosed.
-    Every other tool leaves `detail` `None`. Persisted onto the trajectory
-    entry the same way `total` now is, for the same reason."""
+    `get_chunk` (issue #629) names whichever ids in its batch did not
+    resolve, since a skipped bad id (below) must not read to the model as a
+    silent drop in count. Every other tool leaves `detail` `None`. Persisted
+    onto the trajectory entry the same way `total` now is, for the same
+    reason."""
 
     ids: list[str]
     count: int

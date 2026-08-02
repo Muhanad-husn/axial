@@ -137,6 +137,36 @@ def test_get_chunk_honours_an_explicit_limit(fixture_vault_dir: Path):
     assert result.total == 5
 
 
+def test_get_chunk_skips_an_unresolved_id_and_returns_the_rest(fixture_vault_dir: Path):
+    """One bad id must not zero the whole batch -- #630's shape one layer
+    down (issue #629). A real run typo'd a single hyphen out of one
+    ~100-character id, asked for 10, and got 0 back; here the two good ids
+    still come back and the bad one is named in `detail`."""
+    bogus_id = f"{SOURCE_A}_1_intro_does-not-exist_999"
+    wanted = [A_CHUNK_IDS[0], bogus_id, A_CHUNK_IDS[1]]
+
+    result = dispatch("get_chunk", {"chunk_id": wanted}, vault_dir=fixture_vault_dir)
+
+    assert result.error is None
+    assert result.ids == [A_CHUNK_IDS[0], A_CHUNK_IDS[1]]
+    assert result.count == 2
+    assert result.total == 3, "total still means the pre-cap count of ids asked for"
+    assert result.detail is not None
+    assert bogus_id in result.detail
+
+
+def test_get_chunk_all_ids_unresolved_is_an_empty_result_not_an_error(fixture_vault_dir: Path):
+    result = dispatch("get_chunk", {"chunk_id": ["nope-1", "nope-2"]}, vault_dir=fixture_vault_dir)
+
+    assert result.error is None
+    assert result.ids == []
+    assert result.count == 0
+    assert result.total == 2
+    assert result.detail is not None
+    assert "nope-1" in result.detail
+    assert "nope-2" in result.detail
+
+
 def test_get_chunk_rejects_a_list_holding_a_non_string_without_raising(fixture_vault_dir: Path):
     result = dispatch("get_chunk", {"chunk_id": [A_CHUNK_IDS[0], 7]}, vault_dir=fixture_vault_dir)
 

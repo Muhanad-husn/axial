@@ -245,6 +245,124 @@ def test_requery_respects_step_budget_thin_result_halts_cleanly_at_budget(one_ch
     assert [entry["step"] for entry in trajectory] == [1, 2]
 
 
+# --- exhausted results and repeated queries are named (issue #629) ---------
+
+
+def test_exhausted_result_is_named_and_does_not_suggest_a_larger_limit(one_chunk_vault: Path):
+    """`total == result_count` means the result IS the whole set: a bigger
+    `limit` would return nothing more, so the feedback must say so instead of
+    the CAPPED note's "re-ask with a larger limit for more" -- the two are
+    mutually exclusive by construction."""
+    client = _CapturingScriptedClient(
+        [
+            {"tool": "get_chunk", "args": {"chunk_id": [UNIT_CHUNK_ID]}},
+            None,
+        ]
+    )
+
+    run_retrieval_loop(
+        client, "seed prompt", vault_dir=one_chunk_vault, step_budget=5, thin_result_floor=1
+    )
+
+    feedback = client.prompts_seen[1]
+    assert "EXHAUSTED" in feedback
+    assert "re-ask with a larger limit for more" not in feedback
+
+
+def test_a_thin_and_exhausted_result_carries_both_notes(one_chunk_vault: Path):
+    """A small, complete result needs both facts read together: it is thin
+    (below the floor) AND there is nothing more behind it (issue #629)."""
+    client = _CapturingScriptedClient(
+        [
+            {"tool": "get_chunk", "args": {"chunk_id": [UNIT_CHUNK_ID]}},
+            None,
+        ]
+    )
+
+    run_retrieval_loop(
+        client, "seed prompt", vault_dir=one_chunk_vault, step_budget=5, thin_result_floor=3
+    )
+
+    feedback = client.prompts_seen[1]
+    assert "THIN" in feedback
+    assert "EXHAUSTED" in feedback
+
+
+def test_repeated_query_is_named_with_its_earlier_step_number(one_chunk_vault: Path):
+    client = _CapturingScriptedClient(
+        [
+            {"tool": "query_by_source", "args": {"source_id": UNIT_SOURCE_ID}},
+            {"tool": "query_by_source", "args": {"source_id": UNIT_SOURCE_ID}},
+            None,
+        ]
+    )
+
+    run_retrieval_loop(
+        client, "seed prompt", vault_dir=one_chunk_vault, step_budget=5, thin_result_floor=1
+    )
+
+    assert "REPEAT" not in client.prompts_seen[1]
+    assert "REPEAT" in client.prompts_seen[2]
+    assert "step 1" in client.prompts_seen[2]
+
+
+def test_repeat_detection_ignores_a_differing_limit(one_chunk_vault: Path):
+    """The observed repeats differed only in `limit` -- five identical
+    `where_names_meet` calls cycling 20/15/10/15/20 -- so the comparison must
+    be modulo that one argument."""
+    client = _CapturingScriptedClient(
+        [
+            {"tool": "get_chunk", "args": {"chunk_id": [UNIT_CHUNK_ID], "limit": 5}},
+            {"tool": "get_chunk", "args": {"chunk_id": [UNIT_CHUNK_ID], "limit": 10}},
+            None,
+        ]
+    )
+
+    run_retrieval_loop(
+        client, "seed prompt", vault_dir=one_chunk_vault, step_budget=5, thin_result_floor=1
+    )
+
+    assert "REPEAT" in client.prompts_seen[2]
+    assert "step 1" in client.prompts_seen[2]
+
+
+def test_repeat_of_an_empty_result_is_named_too(one_chunk_vault: Path):
+    """`exhausted` cannot cover this case -- `query_by_source` never sets
+    `total`, so an empty repeat needs its own signal (issue #629: one real
+    run re-asked the same empty query three times)."""
+    client = _CapturingScriptedClient(
+        [
+            {"tool": "query_by_source", "args": {"source_id": ABSENT_SOURCE_ID}},
+            {"tool": "query_by_source", "args": {"source_id": ABSENT_SOURCE_ID}},
+            None,
+        ]
+    )
+
+    run_retrieval_loop(
+        client, "seed prompt", vault_dir=one_chunk_vault, step_budget=5, thin_result_floor=3
+    )
+
+    assert "REPEAT" in client.prompts_seen[2]
+    assert "step 1" in client.prompts_seen[2]
+
+
+def test_distinct_queries_do_not_get_a_repeat_note(one_chunk_vault: Path):
+    client = _CapturingScriptedClient(
+        [
+            {"tool": "query_by_source", "args": {"source_id": UNIT_SOURCE_ID}},
+            {"tool": "query_by_source", "args": {"source_id": ABSENT_SOURCE_ID}},
+            None,
+        ]
+    )
+
+    run_retrieval_loop(
+        client, "seed prompt", vault_dir=one_chunk_vault, step_budget=5, thin_result_floor=1
+    )
+
+    assert "REPEAT" not in client.prompts_seen[1]
+    assert "REPEAT" not in client.prompts_seen[2]
+
+
 # --- evidence assembly dedupes while the trajectory keeps every call -------
 
 
