@@ -248,20 +248,41 @@ def test_requery_respects_step_budget_thin_result_halts_cleanly_at_budget(one_ch
 # --- exhausted results and repeated queries are named (issue #629) ---------
 
 
-def test_exhausted_result_is_named_and_does_not_suggest_a_larger_limit(one_chunk_vault: Path):
+def _who_cites_exhausted_vault(tmp_path: Path, *, cited: str) -> Path:
+    """A single prose note whose own `citations` answer names `cited` --
+    enough for `who_cites` to return exactly one edge, the whole set behind
+    that query (`total == count`), with no name-layer files needed at all
+    (`who_cites` matches on exact string first, `axial.query.names.
+    _surface_matches_canonical`). `who_cites` is the fixture tool for the
+    EXHAUSTED property, not `get_chunk`: `get_chunk` only ever sets `total`
+    on genuine limit truncation (issue #629's own follow-up, `_get_chunk`'s
+    own docstring), so its `total` can never equal its `count` and it never
+    reads as EXHAUSTED."""
+    note = {
+        "chunk_id": f"{UNIT_SOURCE_ID}_1_citer_001",
+        "section": "Synthetic Section",
+        "chunk_text": "SENTINEL: a citing passage.",
+        "source_meta": {"author": "A. Synthetic Author", "title": "A Fixture", "date": 2021},
+        "answers": {"citations": [{"cited": cited, "stance": "support", "about": "a topic"}]},
+    }
+    return _write_fixture_vault(tmp_path, [note])
+
+
+def test_exhausted_result_is_named_and_does_not_suggest_a_larger_limit(tmp_path: Path):
     """`total == result_count` means the result IS the whole set: a bigger
     `limit` would return nothing more, so the feedback must say so instead of
     the CAPPED note's "re-ask with a larger limit for more" -- the two are
     mutually exclusive by construction."""
+    vault_dir = _who_cites_exhausted_vault(tmp_path, cited="Cited Scholar")
     client = _CapturingScriptedClient(
         [
-            {"tool": "get_chunk", "args": {"chunk_id": [UNIT_CHUNK_ID]}},
+            {"tool": "who_cites", "args": {"canonical": "Cited Scholar"}},
             None,
         ]
     )
 
     run_retrieval_loop(
-        client, "seed prompt", vault_dir=one_chunk_vault, step_budget=5, thin_result_floor=1
+        client, "seed prompt", vault_dir=vault_dir, step_budget=5, thin_result_floor=1
     )
 
     feedback = client.prompts_seen[1]
@@ -269,18 +290,19 @@ def test_exhausted_result_is_named_and_does_not_suggest_a_larger_limit(one_chunk
     assert "re-ask with a larger limit for more" not in feedback
 
 
-def test_a_thin_and_exhausted_result_carries_both_notes(one_chunk_vault: Path):
+def test_a_thin_and_exhausted_result_carries_both_notes(tmp_path: Path):
     """A small, complete result needs both facts read together: it is thin
     (below the floor) AND there is nothing more behind it (issue #629)."""
+    vault_dir = _who_cites_exhausted_vault(tmp_path, cited="Cited Scholar")
     client = _CapturingScriptedClient(
         [
-            {"tool": "get_chunk", "args": {"chunk_id": [UNIT_CHUNK_ID]}},
+            {"tool": "who_cites", "args": {"canonical": "Cited Scholar"}},
             None,
         ]
     )
 
     run_retrieval_loop(
-        client, "seed prompt", vault_dir=one_chunk_vault, step_budget=5, thin_result_floor=3
+        client, "seed prompt", vault_dir=vault_dir, step_budget=5, thin_result_floor=3
     )
 
     feedback = client.prompts_seen[1]

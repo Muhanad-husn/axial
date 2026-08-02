@@ -61,8 +61,13 @@ the dispatcher both need them and neither is free to assume the answer:
 Every adapter now returns `(result_ids, result_count, total, detail)`
 (issues #505, #517 and #493): `total` is the true pre-cap count for
 `get_name`/`who_cites`/`who_argues_against`/`where_names_meet`, and, since
-issue #542, the count of ids asked for on `get_chunk`; `None` for every
-other tool. `detail` is set by five tools. Four are a planner-blindness fix
+issue #542, the count of ids asked for on `get_chunk` -- **but only when
+`get_chunk`'s own batch was actually truncated by `limit` (issue #629's
+follow-up); `None` otherwise, even when some requested id failed to
+resolve, exactly like every other non-truncating tool below** (see
+`_get_chunk`'s own docstring for the misleading-nudge bug an unconditional
+`total` re-created). `None` for every other tool. `detail` is set by five
+tools. Four are a planner-blindness fix
 (§4, issues #517/#493) -- `find_names` carries each hit's `kind`,
 `member_count` and `tier` so a model can tell an exact resolution from a
 guess; `get_name` and `where_names_meet` carry `_source_span_detail`'s
@@ -102,12 +107,15 @@ old one costs a full turn -- and the batch is bounded by the SAME
 `limit`/`names.DEFAULT_LIMIT` mechanism every other bounded tool uses
 (issue #505), never a second cap invented here: an unbounded id list is the
 same "one call pulls the index into the prompt" hazard #505 fixed. `total`
-carries the pre-cap count of ids ASKED FOR, so a truncated batch is never
-silent. One call is still one §7.6 trajectory entry, with every returned id
-in that entry's `result_ids`. **An id that fails to resolve no longer fails
-the whole call (issue #629's own follow-up):** it is skipped and named in
-`detail` instead -- see `_get_chunk`'s own docstring for the live run that
-found this the hard way.
+carries the pre-cap count of ids ASKED FOR when the batch was actually
+truncated by `limit`, so a truncated batch is never silent -- and `None`
+otherwise, even when some requested id failed to resolve (issue #629's own
+follow-up; see `_get_chunk`'s own docstring for the misleading-nudge bug an
+unconditional `total` re-created). One call is still one §7.6 trajectory
+entry, with every returned id in that entry's `result_ids`. **An id that
+fails to resolve no longer fails the whole call (issue #629's own
+follow-up):** it is skipped and named in `detail` instead -- see
+`_get_chunk`'s own docstring for the live run that found this the hard way.
 """
 
 from __future__ import annotations
@@ -235,8 +243,10 @@ def _get_chunk(
 ) -> tuple[list[str], int, int | None, str | None]:
     """One or many prose notes (issue #542). `chunk_id` is a list of ids, or
     a single id as a bare string; the batch is truncated at `limit`, and
-    `total` is the pre-cap count of ids ASKED FOR, so a truncated batch
-    reaches the model as "N of M total" exactly like a capped name page.
+    `total` is the pre-cap count of ids ASKED FOR -- but, unlike the
+    original #542 version of this function, **only when the batch actually
+    WAS truncated** (`len(chunk_ids) > limit`), `None` otherwise, the same
+    convention every other non-truncating tool already uses.
 
     An id that resolves to no note is SKIPPED, not fatal to the whole call
     (issue #629 -- #630's "a dangling record fails its own metric, not the
@@ -248,9 +258,27 @@ def _get_chunk(
     turn re-asking 8 of the same 9 good ids to get 8 back. Every id that
     resolves still comes back in `result_ids`; every id that does not is
     named in `detail`, so a typo reads as a typo rather than a silent zero.
-    `result_count` stays the honest count of what actually resolved, which
-    can now be lower than the attempted batch length for a reason `limit`
-    had nothing to do with."""
+
+    **Why `total` narrows to "truncated only" (issue #629's own follow-up,
+    caught in review before merge).** The first version of this fix kept
+    `total = len(chunk_ids)` unconditionally, exactly as #542 had it. That
+    re-created the bug #629 exists to fix through a new door: 10 ids asked
+    for, 1 unresolved, 9 resolved -- `total(10) > count(9)` reads as CAPPED
+    in the loop's own feedback ("9 of 10 total -- re-ask with a larger limit
+    for more"), which is false; the missing one isn't sitting past `limit`,
+    it just does not exist. That is the exact misleading nudge that made a
+    live run cycle `limit` 20/15/10/15/20 on an already-exhausted
+    `where_names_meet` call, now reachable through `get_chunk` too. Setting
+    `total` only on genuine truncation makes all three shapes read correctly
+    in the loop: truncated, all resolve -> CAPPED (more really is unasked);
+    truncated, some also unresolved -> CAPPED, plus `detail` names the bad
+    ones; not truncated, some unresolved -> no CAPPED note, only `detail`.
+    **Not truncated never reads as EXHAUSTED either**, and correctly so: a
+    truncated batch's `count` is always strictly below its `total` (only the
+    first `limit` ids are ever attempted), so EXHAUSTED (`total == count`)
+    can never fire here regardless -- which is the right absence, since
+    "exhausted" describes a query whose corpus-side size the model could not
+    see in advance, and a `get_chunk` batch is a list the model wrote itself."""
     requested = args["chunk_id"]
     chunk_ids = [requested] if isinstance(requested, str) else list(requested)
     limit = args.get("limit", names.DEFAULT_LIMIT)
@@ -262,7 +290,8 @@ def _get_chunk(
         except reader.QueryError:
             unresolved.append(chunk_id)
     detail = f"{len(unresolved)} id(s) did not resolve: {unresolved}" if unresolved else None
-    return ids, len(ids), len(chunk_ids), detail
+    total = len(chunk_ids) if len(chunk_ids) > limit else None
+    return ids, len(ids), total, detail
 
 
 def _get_artifact(
