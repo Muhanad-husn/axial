@@ -130,11 +130,23 @@ class AttributionReport:
 def _claim_id_of(claim: Any, index: int) -> str:
     """A best-effort claim_id for reporting even when the field itself is
     absent -- this validator's own job is checking `kind`/`grounds`, not
-    `claim_id` presence, so a missing id must never crash the report."""
+    `claim_id` presence, so a missing id must never crash the report.
+
+    Falls back to `paper_claim_id` (specs/PHASE-C.md §7.4) before the
+    positional placeholder, issue #608: a Phase-C paper claim carries
+    `paper_claim_id`, never `claim_id`, and this validator is reused
+    WHOLESALE over paper records (`axial.gates.attribution.PAPER_GATE_
+    NAME`) -- without this, every flagged-claim report would name an
+    opaque `<claim #N>` a reader cannot act on. A Phase-B claim never
+    carries `paper_claim_id`, so this is unreachable there and changes
+    nothing for it."""
     if isinstance(claim, dict):
         claim_id = claim.get("claim_id")
         if isinstance(claim_id, str) and claim_id.strip():
             return claim_id
+        paper_claim_id = claim.get("paper_claim_id")
+        if isinstance(paper_claim_id, str) and paper_claim_id.strip():
+            return paper_claim_id
     return f"<claim #{index}>"
 
 
