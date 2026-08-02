@@ -370,6 +370,7 @@ def test_run_brief_use_map_calls_shipped_assemble_evidence_and_synthesize_with_m
             ),
         ),
         assembled_chunk_ids=tuple(chunk_ids),
+        pin="fixmap-pin-001",
     )
 
     def _fake_run_map_ask_for_brief(brief: Brief, **_kwargs: Any) -> AskResult:
@@ -412,6 +413,7 @@ def test_run_brief_use_map_calls_shipped_assemble_evidence_and_synthesize_with_m
     # What the map path did IS recorded, in its own terms.
     assert record["map_retrieval"] == {
         "used": True,
+        "pin": "fixmap-pin-001",
         "asks": ["States extract resources through coercion."],
         "landed": [{"position_id": "pos-0001", "score": 0.87}],
         "corridor": [{"position_id": "pos-0002", "labels": ["qualifies ->"]}],

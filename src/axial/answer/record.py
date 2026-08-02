@@ -153,9 +153,17 @@ def _map_retrieval_to_dict(ask_result: AskResult) -> dict[str, Any]:
     audits for the name-layer loop, in the map's own terms. The map path
     makes no name-layer tool call and so produces no trajectory of its own;
     this is the honest substitute, never a trajectory entry manufactured to
-    keep a downstream reader fed."""
+    keep a downstream reader fed.
+
+    `pin` (issue #583) is `ask_result.pin` verbatim -- the map directory's
+    own name, whatever `run_map_ask_for_brief` actually resolved and read,
+    whether that came from an explicit override or the corpus-computed
+    default. Without it two runs against two different maps of the same
+    corpus (a rebuild after a prompt change, a `--force` rotation) produce
+    records indistinguishable on their face."""
     return {
         "used": True,
+        "pin": ask_result.pin,
         "asks": list(ask_result.asks),
         "landed": [
             {"position_id": position.position_id, "score": position.score}
