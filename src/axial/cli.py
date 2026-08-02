@@ -889,6 +889,19 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     brief_run_parser.add_argument("brief_path", help="path to a versioned brief YAML file")
+    brief_run_parser.add_argument(
+        "--map",
+        action="store_true",
+        dest="use_map",
+        help=(
+            "retrieve through the argument map (issue #572) instead of the "
+            "name-layer loop: the door states the arguments the brief is "
+            "about, lands them on the map's positions, follows every "
+            "relation into the corridor, and assembles evidence round-robin "
+            "across positions and sources -- opt-in, off by default; "
+            "synthesis and everything after it is unchanged"
+        ),
+    )
 
     brief_validate_parser = brief_subparsers.add_parser(
         "validate",
@@ -1750,7 +1763,7 @@ def _brief_examine(brief_path: str) -> int:
     return 0
 
 
-def _brief_run(brief_path: str) -> int:
+def _brief_run(brief_path: str, *, use_map: bool = False) -> int:
     try:
         brief = load_brief(brief_path)
     except BriefError as exc:
@@ -1762,11 +1775,19 @@ def _brief_run(brief_path: str) -> int:
         # `case_id` is the brief file's own stem: that is the join
         # `evals/cases/sim/` uses (§9.3), and a brief with no case file of
         # that name simply has no mechanical retrieval-hit oracle.
-        result = run_brief(brief, client=client, case_id=Path(brief_path).stem)
-    except (InterrogationError, QueryError, SynthesisError, CorpusPinError, AnswerError) as exc:
+        result = run_brief(brief, client=client, case_id=Path(brief_path).stem, use_map=use_map)
+    except (
+        InterrogationError,
+        QueryError,
+        SynthesisError,
+        CorpusPinError,
+        AnswerError,
+        AskError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    print(f"retrieval: {'argument map' if use_map else 'name layer'}")
     print(f"brief_id: {brief.brief_id}")
     print(f"disposition: {result.record['interrogation']['disposition']}")
     print(f"persisted: {result.path}")
@@ -2496,7 +2517,7 @@ def main(argv: list[str] | None = None) -> int:
         return _brief_examine(args.brief_path)
 
     if args.command == "brief" and args.brief_command == "run":
-        return _brief_run(args.brief_path)
+        return _brief_run(args.brief_path, use_map=args.use_map)
 
     if args.command == "brief" and args.brief_command == "validate":
         return _brief_validate(args.brief_id)

@@ -1,8 +1,9 @@
-"""The argument map's door and landing (issue #572, PR 3 of 4): a port of
-the scratchpad run this issue measured over the real corpus
-(`stage3_brief_on_map.py`'s `DECOMPOSE_PROMPT` and its landing step), not a
-redesign. PR 1 built the position layer (`axial.argmap.build`); this is the
-way a question reaches it.
+"""The argument map's read side (issue #572): door, landing, corridor, and
+assembly order -- a port of the scratchpad run this issue measured over the
+real corpus (`stage3_brief_on_map.py`), not a redesign. PR 1/2 built the
+position and relation layers (`axial.argmap.build`); this is the way a
+question reaches them, all the way through to an ordered list of chunk ids
+a synthesis prompt can read.
 
 Two steps:
 
@@ -24,9 +25,34 @@ Two steps:
   more than one argument is kept once, at its best score, and the result is
   ordered by that score, descending.
 
-The corridor (following a landed position's relations to what argues with
-it) and the assembly order are PR 4, and depend on PR 2's relations layer --
-out of scope here.
+**The corridor** (`build_corridor`, issue #572, PR 4 of 4). Stage 2's own
+relations (`relations.jsonl`, keyed on `position_id`, never on the argument
+sentence) are read back here: every relation touching a landed position
+pulls its counterpart in, in both directions -- a relation running INTO a
+landed position and one running OUT OF it are different facts about the
+position it reaches, and both are kept. This is where the account the
+answer must reject comes from, and it arrives BECAUSE it argues with what
+landed, never because a stated argument happened to name it. A landed
+position is never also a corridor position. Corridor positions are ordered
+by how many relations connect them to the landed set, descending.
+
+**The assembly order** (`assemble_map_evidence`), which is the real
+retrieval. `axial.analyze.synthesis.synthesize`'s own `evidence_char_budget`
+admits only a prefix of whatever is assembled -- ~56 notes at the shipped
+250,000 (issue #574) -- so the order notes are emitted in decides what the
+answer actually sees. Round-robin, twice over: across positions first
+(landed in score order, then corridor in relation-count order), and within
+one position across its own sources (`round_robin_by_source`), so a
+position holding forty notes from one book and two from another does not
+spend the whole prefix on the first. Chunk ids are deduplicated across
+positions -- a note two positions both carry is emitted once, at whichever
+position's turn reaches it first.
+
+Both are a port of the scratchpad's own measured `stage3_brief_on_map.py`,
+not a redesign; see that module's docstring reproduced in the scratchpad
+for the run this ports. This is the last slice of issue #572: with the
+corridor and the assembly order in place, the read side -- door, landing,
+corridor, assembly -- is complete.
 """
 
 from __future__ import annotations
@@ -45,6 +71,7 @@ from axial.envelope import _default_envelopes_dir
 from axial.llm import LLMClient, LLMError, get_client
 from axial.model_json import ModelJsonError, parse_model_json
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_map_dir, default_sources_dir
+from axial.query.reader import MalformedChunkIdError, source_id_from_chunk_id
 
 # The pass name `config/pipeline.yaml`'s `llm.reasoning_by_pass` keys off of.
 DECOMPOSE_PASS_NAME = "brief_decompose"
@@ -52,7 +79,25 @@ DECOMPOSE_PASS_NAME = "brief_decompose"
 # Every stated argument lands on this many positions (scratchpad measurement,
 # issue #572 step 3) -- kept once each even where two arguments both reach
 # the same position, at whichever score is higher.
+#
+# **Not a knob.** Widening this does nothing: the scratchpad measurement swept
+# 2-24 and the composed-books count was flat throughout, because
+# `round_robin_by_source`'s own first rotation already covers the whole
+# `evidence_char_budget` prefix -- there just aren't enough turns in the
+# budget for a wider landing to matter. Spreading the landing across authors
+# instead of by score was tried and measured WORSE (19 positions -> 11,
+# dropping three books entirely) -- see `land_arguments`'s own score-order
+# result, unchanged. Both are settled findings, not defaults awaiting a
+# future sweep.
 POSITIONS_PER_ASK = 4
+
+# Assembly stops here regardless of how many positions the corridor reaches
+# (scratchpad measurement, issue #572 step 3: brief B assembled 90 notes,
+# composed 20 once `evidence_char_budget` cut the prefix). Generous headroom
+# above what any budget setting has used so far (~56 notes at the shipped
+# 250_000, issue #574) rather than a stopping point tuned to it -- raising
+# the budget again should not also require moving this.
+ASSEMBLE_CAP = 90
 
 # Ported verbatim from `stage3_brief_on_map.py`'s `DECOMPOSE_PROMPT` (issue
 # #572 step 3): every rule here is load-bearing and was measured on the real
@@ -142,13 +187,44 @@ class LandedPosition:
 
 
 @dataclass(frozen=True)
+class CorridorPosition:
+    """One position pulled into the corridor (issue #572, PR 4 of 4)
+    because it argues with what landed -- never because a stated argument
+    named it. `labels` is every relation that reached it, each stamped with
+    the direction it ran: `"<relation> ->"` when the relation runs FROM a
+    landed position INTO this one, `"<relation> <-"` the other way --
+    direction is a fact about the relation (`build.py`'s own record), kept
+    rather than collapsed. `relation_count` (`len(labels)`) is the
+    corridor's own ordering key, descending: a position several relations
+    reach argues with more of what landed than one only a single relation
+    touches. A landed position never also appears here -- see
+    `build_corridor`'s own guard."""
+
+    position_id: str
+    relation_count: int
+    labels: tuple[str, ...]
+    argument: str
+    size: int
+    sources: tuple[str, ...]
+    authors: tuple[str, ...]
+    chunk_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class AskResult:
     """What `run_map_ask` hands back: the brief it read, the arguments the
-    door stated, and the positions the landing reached, in landing order."""
+    door stated, the positions the landing reached (in landing order), the
+    positions the corridor reached (in relation-count order, issue #572 PR
+    4 of 4), and the final assembled chunk ids (`assembled_chunk_ids`) the
+    round-robin walk emitted, in the order a synthesis prompt would read
+    them. `corridor`/`assembled_chunk_ids` default empty for a caller that
+    only wants the door and the landing (PR 3's own original contract)."""
 
     brief: Brief
     asks: tuple[str, ...]
     landed: tuple[LandedPosition, ...]
+    corridor: tuple[CorridorPosition, ...] = ()
+    assembled_chunk_ids: tuple[str, ...] = ()
 
 
 def render_decompose_prompt(brief: Brief) -> str:
@@ -228,6 +304,133 @@ def land_arguments(
     ]
 
 
+def build_corridor(
+    landed: Sequence[LandedPosition],
+    positions_by_id: dict[str, dict[str, Any]],
+    relations: Sequence[dict[str, Any]],
+) -> list[CorridorPosition]:
+    """The corridor (issue #572, PR 4 of 4): every relation touching a
+    landed position pulls its counterpart in, in both directions -- this is
+    where the account the answer must reject comes from, and it arrives
+    BECAUSE it argues with what landed, never because a stated argument
+    named it. Relations key on `position_id` (`from_position_id`/
+    `to_position_id`), never on the argument sentence (issue #572's own
+    settled rule: a sentence-to-index rejoin silently drops any relation
+    whose sentence is not unique across positions).
+
+    A relation between two ALREADY-landed positions contributes nothing --
+    `far not in landed_ids` excludes it, so a landed position never also
+    shows up in the corridor. A relation naming a position id that is not
+    in `positions_by_id` at all (should not happen; `build.py` already
+    drops an invented handle at the relate stage) is skipped defensively
+    rather than raised, the same tolerance this codebase gives every other
+    cross-stage id join.
+
+    Ordered by how many relations connect a position to the landed set,
+    descending; ties broken by `position_id` so the result is deterministic
+    regardless of `relations`' own arrival order."""
+    landed_ids = {position.position_id for position in landed}
+    labels_by_far: dict[str, list[str]] = {}
+    for relation in relations:
+        src = relation.get("from_position_id")
+        dst = relation.get("to_position_id")
+        label = relation.get("relation", "")
+        for near, far, arrow in ((src, dst, "->"), (dst, src, "<-")):
+            if near in landed_ids and far not in landed_ids and far in positions_by_id:
+                labels_by_far.setdefault(far, []).append(f"{label} {arrow}")
+
+    ordered_ids = sorted(labels_by_far, key=lambda pid: (-len(labels_by_far[pid]), pid))
+    corridor: list[CorridorPosition] = []
+    for position_id in ordered_ids:
+        position = positions_by_id[position_id]
+        labels = tuple(labels_by_far[position_id])
+        corridor.append(
+            CorridorPosition(
+                position_id=position_id,
+                relation_count=len(labels),
+                labels=labels,
+                argument=position["argument"],
+                size=position["size"],
+                sources=tuple(position["sources"]),
+                authors=tuple(position["authors"]),
+                chunk_ids=tuple(position["chunk_ids"]),
+            )
+        )
+    return corridor
+
+
+def round_robin_by_source(chunk_ids: Sequence[str]) -> list[str]:
+    """`chunk_ids` regrouped by source (`axial.query.reader.
+    source_id_from_chunk_id`), each group keeping its own relative order,
+    then interleaved one id per group in rotation -- the same
+    `_round_robin_by_source` pattern `axial.query.names` already uses for a
+    name page's own capped window (issue #562), applied here so a position
+    holding forty notes from one book and two from another spends its
+    early turns on one note per book, not forty in a row. A chunk_id that
+    does not parse (`MalformedChunkIdError`) groups under `""`, which sorts
+    first -- the same placement that pattern gives an unparsed member,
+    reused rather than invented a second time, so it stays reachable
+    instead of silently dropped."""
+    groups: dict[str, list[str]] = {}
+    for chunk_id in chunk_ids:
+        try:
+            source_id = source_id_from_chunk_id(chunk_id)
+        except MalformedChunkIdError:
+            source_id = ""
+        groups.setdefault(source_id, []).append(chunk_id)
+
+    keys = sorted(groups)
+    ordered: list[str] = []
+    round_index = 0
+    while len(ordered) < len(chunk_ids):
+        for key in keys:
+            bucket = groups[key]
+            if round_index < len(bucket):
+                ordered.append(bucket[round_index])
+        round_index += 1
+    return ordered
+
+
+def assemble_map_evidence(
+    positions: Sequence[LandedPosition | CorridorPosition], *, cap: int = ASSEMBLE_CAP
+) -> list[str]:
+    """The assembly order (issue #572, PR 4 of 4) -- this IS the retrieval.
+    `axial.analyze.synthesis.synthesize`'s own `evidence_char_budget` admits
+    only a prefix of whatever is assembled here (~56 notes at the shipped
+    250_000, issue #574), so the order these ids are emitted in decides
+    what the answer actually sees.
+
+    Round-robin, twice over: `positions` is walked in the order given
+    (landed positions in score order, then corridor positions in
+    relation-count order -- both already sorted by their own callers), one
+    id from each position's own `round_robin_by_source` queue per turn, so
+    neither a position that happened to sort first nor a source within it
+    can spend the whole prefix on itself. A chunk id already emitted by an
+    earlier position's turn is skipped, never re-emitted -- a note two
+    positions both carry counts once, at whichever position's turn reaches
+    it first. A position's own queue emptying mid-walk drops it out of the
+    rotation rather than stalling it: the remaining queues simply keep
+    turning."""
+    queues = [
+        list(round_robin_by_source(position.chunk_ids))
+        for position in positions
+        if position.chunk_ids
+    ]
+    assembled: list[str] = []
+    seen: set[str] = set()
+    while queues and len(assembled) < cap:
+        for queue in list(queues):
+            chunk_id = queue.pop(0)
+            if chunk_id not in seen:
+                seen.add(chunk_id)
+                assembled.append(chunk_id)
+            if not queue:
+                queues.remove(queue)
+            if len(assembled) >= cap:
+                break
+    return assembled
+
+
 def _load_map(outdir: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """`positions.jsonl` and `map.json` under `outdir`, or `MapNotBuiltError`
     when either is missing or `positions.jsonl` is empty."""
@@ -247,14 +450,29 @@ def _load_map(outdir: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     return positions, manifest
 
 
+def _load_relations(outdir: Path) -> list[dict[str, Any]]:
+    """`relations.jsonl` under `outdir`, or an empty list when the file
+    does not exist -- a map built before PR 2 shipped, or a test fixture
+    that only exercises the door and the landing, still lands cleanly with
+    an empty corridor rather than raising."""
+    relations_path = outdir / "relations.jsonl"
+    if not relations_path.is_file():
+        return []
+    return [
+        json.loads(line)
+        for line in relations_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
 def _check_encoder(manifest: dict[str, Any], outdir: Path, encoder_model: str) -> None:
     built_with = manifest.get("encoder")
     if built_with != encoder_model:
         raise EncoderMismatchError(outdir, encoder_model, built_with)
 
 
-def run_map_ask(
-    brief_path: str | Path,
+def run_map_ask_for_brief(
+    brief: Brief,
     *,
     map_dir: Path | None = None,
     envelopes_dir: Path | None = None,
@@ -265,10 +483,19 @@ def run_map_ask(
     encoder_model: str = ENCODER_MODEL,
     pin: str | None = None,
     top_k: int = POSITIONS_PER_ASK,
+    assemble_cap: int = ASSEMBLE_CAP,
 ) -> AskResult:
-    """Load `brief_path`, land it on the pinned argument map, and return the
-    result: the door's stated arguments plus the positions they landed on,
-    in landing order.
+    """Everything `run_map_ask` does except loading the brief from disk:
+    land an already-loaded `brief` on the pinned argument map and walk it
+    all the way through assembly -- door, landing, corridor, and the
+    round-robin assembly order.
+
+    This is the seam `axial.answer.record.run_brief` uses directly (issue
+    #572, PR 4 of 4): that caller already holds a loaded `Brief` (its own
+    stage-1 interrogation ran over it first), and re-reading the same brief
+    file a second time here would be pointless I/O for no new information.
+    `run_map_ask` (the CLI's own entry point) still takes a path, and calls
+    straight through to this function once it has loaded one.
 
     `pin` defaults to `compute_corpus_pin(envelopes_dir, sources_dir)` -- the
     same pin `axial map build` writes under -- but a caller may pass one
@@ -278,12 +505,9 @@ def run_map_ask(
     `axial.llm.get_client()` and the real MiniLM encoder; both are injection
     seams for tests.
 
-    Raises `BriefError` (a malformed or missing brief), `MapNotBuiltError`
-    (no map at this pin), `EncoderMismatchError` (the map was built with a
-    different encoder), or `DecomposeError` (the door call failed or
-    returned nothing usable)."""
-    brief = load_brief(brief_path)
-
+    Raises `MapNotBuiltError` (no map at this pin), `EncoderMismatchError`
+    (the map was built with a different encoder), or `DecomposeError` (the
+    door call failed or returned nothing usable)."""
     if map_dir is None:
         map_dir = default_map_dir(config_path)
     if pin is None:
@@ -299,6 +523,7 @@ def run_map_ask(
     outdir = Path(map_dir) / pin
     positions, manifest = _load_map(outdir)
     _check_encoder(manifest, outdir, encoder_model)
+    relations = _load_relations(outdir)
 
     if client is None:
         client = get_client(config_path=config_path)
@@ -307,5 +532,49 @@ def run_map_ask(
 
     asks = decompose_brief(brief, client)
     landed = land_arguments(asks, positions, encode, top_k=top_k)
+    positions_by_id = {position["position_id"]: position for position in positions}
+    corridor = build_corridor(landed, positions_by_id, relations)
+    assembled = assemble_map_evidence((*landed, *corridor), cap=assemble_cap)
 
-    return AskResult(brief=brief, asks=tuple(asks), landed=tuple(landed))
+    return AskResult(
+        brief=brief,
+        asks=tuple(asks),
+        landed=tuple(landed),
+        corridor=tuple(corridor),
+        assembled_chunk_ids=tuple(assembled),
+    )
+
+
+def run_map_ask(
+    brief_path: str | Path,
+    *,
+    map_dir: Path | None = None,
+    envelopes_dir: Path | None = None,
+    sources_dir: Path | None = None,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    client: LLMClient | None = None,
+    encode: Encoder | None = None,
+    encoder_model: str = ENCODER_MODEL,
+    pin: str | None = None,
+    top_k: int = POSITIONS_PER_ASK,
+    assemble_cap: int = ASSEMBLE_CAP,
+) -> AskResult:
+    """Load `brief_path` and run it through `run_map_ask_for_brief` -- the
+    CLI's own entry point (`axial map ask <brief.yaml>`). See that
+    function's docstring for the full contract; this wrapper only adds
+    `BriefError` to what a caller must handle, for a malformed or missing
+    brief file."""
+    brief = load_brief(brief_path)
+    return run_map_ask_for_brief(
+        brief,
+        map_dir=map_dir,
+        envelopes_dir=envelopes_dir,
+        sources_dir=sources_dir,
+        config_path=config_path,
+        client=client,
+        encode=encode,
+        encoder_model=encoder_model,
+        pin=pin,
+        top_k=top_k,
+        assemble_cap=assemble_cap,
+    )
