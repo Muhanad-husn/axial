@@ -32,6 +32,21 @@ would have scored a `synthesis` section that commits to a position as
 reaching beyond its evidence. `compose_shape_prompt` below says the opposite
 explicitly, because that is precisely the paper doing what this check
 exists to look for.
+
+**Calibrated against planted defects, issue #600.** The first live paper
+returned `strong`/`[]` in 13 completion tokens -- a bare-band answer with no
+visible reasoning. Measured against one clean control and three
+single-section planted defects (synthesis-summarizes, evidence-as-list,
+counter-position-as-strawman), the bare-band prompt caught **1 of 12
+planted defects (8.3%)**, missing two of the three defect classes in four
+tries each. Requiring a one-sentence `section_review` entry per section
+--`meets_bar`/`reason`-- *before* `band`/`defects` in the response raised
+that to **6 of 12 (50%)**, with zero false positives on the clean control
+either way (`data/logs/2026-08-02-shape-check-calibration/`). This is a
+real improvement, not a fix to reliable: the same content still draws a
+different band across replicates for two of the three defect classes. That
+is expected of a single-draw check (§7.16) and is not a regression to chase
+here -- multi-draw agreement is what the §10.2 panel is for.
 """
 
 from __future__ import annotations
@@ -138,10 +153,12 @@ Role-specific bar, section by section:
 
 Also judge across the whole paper: does the argument advance section to section toward the stated thesis, or does each section restart as though the others were not there?
 
-Return a band -- "strong", "adequate", or "weak" -- for the paper as a whole. If the band is not "strong", you MUST name at least one defect: which section_id failed its role and, in one sentence, what went wrong. A "weak" or "adequate" verdict naming no defects is not a valid answer.
+Before naming a band, work through EVERY section against its own bar above: for each section_id, state in one sentence whether it met the bar for its assigned role and why. Do this for all sections, not just ones you suspect are weak -- a section can only be judged "strong" by a reviewer who checked it, not by one who did not find a reason to flag it.
 
-Return JSON only:
-{{"band": "strong", "defects": [{{"section_id": "s2", "note": "..."}}]}}"""
+Only after that section-by-section review, return a band -- "strong", "adequate", or "weak" -- for the paper as a whole. If the band is not "strong", you MUST name at least one defect: which section_id failed its role and, in one sentence, what went wrong. A "weak" or "adequate" verdict naming no defects is not a valid answer.
+
+Return JSON only, in this order:
+{{"section_review": [{{"section_id": "s1", "meets_bar": true, "reason": "..."}}, ...one entry per section...], "band": "strong", "defects": [{{"section_id": "s2", "note": "..."}}]}}"""
 
 
 def parse_shape_response(raw: str) -> tuple[str, list[ShapeDefect]]:

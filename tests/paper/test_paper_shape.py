@@ -121,6 +121,48 @@ def test_the_rubric_scores_a_synthesis_verdict_as_success_not_overreach():
     assert "THAT IS SUCCESS, never overreach" in prompt
 
 
+def test_the_prompt_requires_section_by_section_reasoning_before_the_band():
+    """Issue #600: calibrated against planted defects, the bare-band prompt
+    (just `{"band", "defects"}`) caught 1 of 12 planted defects across four
+    replicates each (data/logs/2026-08-02-shape-check-calibration/). Asking
+    for one sentence of reasoning per section BEFORE the band raised that to
+    6 of 12, with the response schema still asking for `band` and `defects`
+    after the per-section review. This pins the prompt shape the calibration
+    measured against, not the model's actual sensitivity -- a live model
+    check is what data/logs holds; this is a fast, deterministic guard
+    against silently reverting to a bare-band prompt."""
+    prompt = compose_shape_prompt("thesis", _sections())
+    assert "section_review" in prompt
+    assert "before naming a band" in prompt.lower()
+    # The instruction to review every section, not just suspected ones,
+    # is what keeps a diligent-looking "strong" from being a skipped check.
+    assert "not just ones you suspect are weak" in prompt
+    # The example response still shows band/defects after the review --
+    # the persisted record's contract (§7.3 `shape`) is unchanged.
+    section_review_pos = prompt.index('"section_review"')
+    band_pos = prompt.rindex('"band"')
+    assert section_review_pos < band_pos
+
+
+def test_a_response_carrying_section_review_still_parses_to_only_band_and_defects():
+    """The new `section_review` field is scratch work for the model, never
+    persisted (§7.3's `shape` record is unchanged: `band`, `defects`,
+    `model`, `cost`). `parse_shape_response` must accept and ignore it."""
+    raw = json.dumps(
+        {
+            "section_review": [
+                {"section_id": "s1", "meets_bar": True, "reason": "orients toward the thesis"},
+                {"section_id": "s2", "meets_bar": False, "reason": "states a weak foil"},
+            ],
+            "band": "weak",
+            "defects": [{"section_id": "s2", "note": "weak foil, not the strongest case"}],
+        }
+    )
+    band, defects = parse_shape_response(raw)
+    assert band == "weak"
+    assert defects == [ShapeDefect(section_id="s2", note="weak foil, not the strongest case")]
+
+
 def test_self_grading_raises_before_any_call_and_names_both_passes():
     client = _StubClient(
         {"paper_draft": "same/model", "paper_shape": "same/model"},
