@@ -25,12 +25,14 @@ import httpx
 
 from axial.llm import (
     PANEL_REVIEW_PASS_NAME,
+    PAPER_DRAFT_PASS_NAME,
+    PAPER_PLAN_PASS_NAME,
     SYNTHESIZE_PASS_NAME,
     LLMClient,
     LLMError,
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
-from axial.panel.packet import ReviewPacket, assert_sealed
+from axial.panel.packet import PaperReviewPacket, ReviewPacket, assert_sealed
 from axial.panel.vendor import guard_distinct_vendor
 
 # §9.4 property 5: eval #1's three dimensions, scored separately. Free prose
@@ -38,21 +40,37 @@ from axial.panel.vendor import guard_distinct_vendor
 # distrusts.
 DIMENSIONS: tuple[str, ...] = ("factual_correctness", "citation_grounding", "completeness")
 
+# The Phase-C addition (specs/PHASE-C.md §7.8, issue #611): scored only for
+# a paper packet (`review_paper_packet`), never for an analysis one -- an
+# analysis has no argument arc to hold together across sections.
+COHERENCE_DIMENSION = "coherence"
+PAPER_DIMENSIONS: tuple[str, ...] = DIMENSIONS + (COHERENCE_DIMENSION,)
+
 # Ordinal, not numeric. A numeric reviewer score would manufacture precision
 # the judgement does not carry -- the same reason §7.4's confidence
 # vocabulary is three bands rather than a probability.
 BANDS: tuple[str, ...] = ("weak", "adequate", "strong")
 _BAND_RANK = {band: rank for rank, band in enumerate(BANDS)}
 
+# Named separately so the positive control (axial.panel.control) and any
+# caller can reference them without a string literal (issue #611, §7.8).
+ARC_BREAK = "arc_break"
+UNMARKED_INFERENCE = "unmarked_inference"
+
 # The defect vocabulary. Closed rather than free-text because the positive
 # control (axial.panel.control) plants defects of exactly these kinds and
 # has to check the panel named them -- an open vocabulary would make
-# "did it catch the plant" a string-matching guess.
+# "did it catch the plant" a string-matching guess. §7.8 extends the
+# original four by two -- `arc_break` and `unmarked_inference` -- renaming
+# nothing: a reviewer scoring an analysis packet is simply never offered
+# them in its prompt, so this global closed vocabulary costs nothing there.
 DEFECT_KINDS: tuple[str, ...] = (
     "mis_grounded",
     "strawman_counter_position",
     "overconfident",
     "other",
+    ARC_BREAK,
+    UNMARKED_INFERENCE,
 )
 
 # N >= 3 (property 4). Three is the floor, not a target: two reviewers
@@ -91,9 +109,19 @@ class Defect:
     claim_id: str
     kind: str
     note: str = ""
+    # §7.8, issue #611: nullable -- an analysis has no sections, so this is
+    # always None for a defect the analysis-packet prompt elicits. Carried
+    # by an `arc_break` defect over a paper packet, whose target is a
+    # section rather than a claim.
+    section_id: str | None = None
 
     def to_json(self) -> dict[str, Any]:
-        return {"claim_id": self.claim_id, "kind": self.kind, "note": self.note}
+        return {
+            "claim_id": self.claim_id,
+            "kind": self.kind,
+            "note": self.note,
+            "section_id": self.section_id,
+        }
 
 
 @dataclass(frozen=True)
@@ -186,7 +214,9 @@ Return ONLY this JSON object, no prose and no code fence:
 {{"factual_correctness": "...", "citation_grounding": "...", "completeness": "...", "defects": [{{"claim_id": "...", "kind": "...", "note": "..."}}]}}"""
 
 
-def _parse_verdict(raw: str, *, model: str, vendor: str) -> ReviewerVerdict:
+def _parse_verdict(
+    raw: str, *, model: str, vendor: str, dimensions: tuple[str, ...] = DIMENSIONS
+) -> ReviewerVerdict:
     data = parse_model_json(raw)
     if not isinstance(data, dict):
         raise ReviewerCallFailedError(
@@ -194,7 +224,7 @@ def _parse_verdict(raw: str, *, model: str, vendor: str) -> ReviewerVerdict:
         )
 
     bands: dict[str, str] = {}
-    for dimension in DIMENSIONS:
+    for dimension in dimensions:
         band = data.get(dimension)
         if band not in _BAND_RANK:
             raise ReviewerCallFailedError(
@@ -219,15 +249,18 @@ def _parse_verdict(raw: str, *, model: str, vendor: str) -> ReviewerVerdict:
                 claim_id=str(entry.get("claim_id") or ""),
                 kind=kind,
                 note=str(entry.get("note") or ""),
+                section_id=(str(entry["section_id"]) if entry.get("section_id") else None),
             )
         )
 
     return ReviewerVerdict(model=model, vendor=vendor, bands=bands, defects=defects)
 
 
-def _summarize(verdicts: list[ReviewerVerdict]) -> list[DimensionSummary]:
+def _summarize(
+    verdicts: list[ReviewerVerdict], dimensions: tuple[str, ...] = DIMENSIONS
+) -> list[DimensionSummary]:
     summaries = []
-    for dimension in DIMENSIONS:
+    for dimension in dimensions:
         bands = [verdict.bands[dimension] for verdict in verdicts]
         ranks = [_BAND_RANK[band] for band in bands]
         # The aggregate is the median rank, floored on an even split. A mean
@@ -288,6 +321,106 @@ def review_packet(
         corpus_pin=packet.corpus_pin,
         reviewers=verdicts,
         dimensions=_summarize(verdicts),
+        trusted=trusted,
+        frame=dict(frame or {}),
+    )
+
+
+def _distinct(items: list[str | None]) -> list[str]:
+    seen: list[str] = []
+    for item in items:
+        if item and item not in seen:
+            seen.append(item)
+    return seen
+
+
+def _compose_paper_reviewer_prompt(packet: PaperReviewPacket) -> str:
+    return f"""You are an independent peer reviewer. You are reading a submitted paper and the evidence its claims cite, and nothing else. You did not write it, you have no access to how it was produced, and you must judge only what is in front of you.
+
+{packet.prompt_body}
+
+Judge the submission on four dimensions, each as one of "weak", "adequate", or "strong":
+
+- factual_correctness: are the substantive assertions right?
+- citation_grounding: does each claim actually rest on the evidence it cites?
+- completeness: does it answer the question it set itself, including the strongest opposing position?
+- coherence: does the argument hold together across sections, over the evidence shown?
+
+Then list every defect you find. Each defect names the claim_id and/or section_id it attaches to, and a kind from exactly this list:
+
+- "mis_grounded": the cited evidence does not support the claim
+- "strawman_counter_position": the opposing position is stated in a weakened form, or rests on evidence that does not oppose anything
+- "overconfident": the claim asserts more certainty than its evidence carries
+- "arc_break": a section does not follow from the argument the paper has made so far -- name it by section_id
+- "unmarked_inference": a cross-source inference is presented as though a single source asserted it outright
+- "other": anything else, described in the note
+
+Be exacting. A submission that reads fluently can still be wrong, and confident prose is not evidence.
+
+Return ONLY this JSON object, no prose and no code fence:
+{{"factual_correctness": "...", "citation_grounding": "...", "completeness": "...", "coherence": "...", "defects": [{{"claim_id": "...", "section_id": "...", "kind": "...", "note": "..."}}]}}"""
+
+
+def review_paper_packet(
+    packet: PaperReviewPacket,
+    *,
+    client: LLMClient,
+    model_by_pass: dict[str, str],
+    n_reviewers: int = MIN_REVIEWERS,
+    trusted: bool = False,
+    frame: dict[str, Any] | None = None,
+) -> PanelReport:
+    """The paper analogue of `review_packet` (§7.7/§7.8, issue #611):
+    scores `PAPER_DIMENSIONS` (adds `coherence`) and guards the vendor bar
+    against BOTH of the paper's own generating passes -- drafting and arc
+    planning, read off `model_by_pass` -- rather than the single Phase-B
+    synthesis pass `review_packet` guards against. #594 scoped Phase C's
+    generating passes to exactly these two plus the shape check, and the
+    shape check never authors prose a reviewer reads.
+
+    Every guard fires BEFORE any reviewer call, exactly as `review_packet`'s
+    does: too few reviewers, a seal breach, an undeclared vendor, or a
+    reviewer sharing either generating pass's training lab.
+    """
+    if n_reviewers < MIN_REVIEWERS:
+        raise TooFewReviewersError(n_reviewers)
+
+    assert_sealed(packet)
+
+    generating_models = _distinct(
+        [model_by_pass.get(PAPER_DRAFT_PASS_NAME), model_by_pass.get(PAPER_PLAN_PASS_NAME)]
+    )
+    if not generating_models:
+        raise PanelError(
+            "model_by_pass carries neither a paper_draft nor a paper_plan model "
+            "for the vendor guard to check reviewers against (§7.7)"
+        )
+
+    reviewers: list[tuple[str, str, str]] = []
+    for index in range(1, n_reviewers + 1):
+        pass_name = reviewer_pass_name(index)
+        model = client.model_for_pass(pass_name)
+        vendor = ""
+        for generating_model in generating_models:
+            vendor = guard_distinct_vendor(reviewer_model=model, generating_model=generating_model)
+        reviewers.append((pass_name, model, vendor))
+
+    prompt = _compose_paper_reviewer_prompt(packet)
+    verdicts: list[ReviewerVerdict] = []
+    for pass_name, model, vendor in reviewers:
+        try:
+            raw = complete_json(client, prompt, pass_name=pass_name)
+        except (LLMError, httpx.HTTPError, ModelJsonError) as exc:
+            raise ReviewerCallFailedError(f"reviewer {model!r} call failed: {exc}") from exc
+        verdicts.append(
+            _parse_verdict(raw, model=model, vendor=vendor, dimensions=PAPER_DIMENSIONS)
+        )
+
+    return PanelReport(
+        brief_id=packet.paper_brief_id,
+        corpus_pin=packet.corpus_pin,
+        reviewers=verdicts,
+        dimensions=_summarize(verdicts, dimensions=PAPER_DIMENSIONS),
         trusted=trusted,
         frame=dict(frame or {}),
     )

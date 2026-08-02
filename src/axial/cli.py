@@ -124,6 +124,12 @@ from axial.panel import (
     format_panel_run,
     run_panel,
 )
+from axial.panel.coherence_eval import (
+    CoherenceEvalError,
+    format_coherence_eval_report,
+    run_coherence_eval,
+)
+from axial.panel.sample import SampleSpecError, load_sample_spec
 from axial.paper.biblio import BibliographyError
 from axial.paper.brief import PaperBriefError, load_paper_brief
 from axial.paper.citations import CitationError
@@ -638,13 +644,43 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    subparsers.add_parser(
+    eval_parser = subparsers.add_parser(
         "eval",
         help=(
             "score the Academic's returned label_sheet.xlsx under "
             "data/gold/labels/ against the tagger's own chunk records, "
-            "writing data/gold/labels/eval_report.json"
+            "writing data/gold/labels/eval_report.json (bare `eval`); or "
+            "run the argument-coherence eval track (`eval coherence`, "
+            "specs/PHASE-C.md §10.2)"
         ),
+    )
+    eval_subparsers = eval_parser.add_subparsers(dest="eval_command")
+
+    eval_coherence_parser = eval_subparsers.add_parser(
+        "coherence",
+        help=(
+            "the argument-coherence eval track (offline, sampled, blocks "
+            "nothing): reads a committed sample spec (specs/PHASE-C.md "
+            "§7.13), runs the sealed-packet panel over its papers, and "
+            "reports one coherence figure per stratum -- never a pooled "
+            "system-wide mean (§8 P0-10, P0-12, issue #611)"
+        ),
+    )
+    eval_coherence_parser.add_argument(
+        "--sample",
+        required=True,
+        help="path to a committed sample spec JSON file (specs/PHASE-C.md §7.13)",
+    )
+    eval_coherence_parser.add_argument(
+        "--reviewers",
+        type=int,
+        default=PANEL_MIN_REVIEWERS,
+        help=f"how many independent reviewers per packet (default and minimum: {PANEL_MIN_REVIEWERS})",
+    )
+    eval_coherence_parser.add_argument(
+        "--out",
+        default=None,
+        help="optional path to write the run's JSON report to",
     )
 
     gather_eval_parser = subparsers.add_parser(
@@ -2500,6 +2536,45 @@ def _distill_classify(axis: str) -> int:
     return 0
 
 
+def _eval_coherence(sample_path: str, *, reviewers: int, out_path: str | None) -> int:
+    """The §10.2 coherence eval track: a committed sample spec in, a per-
+    stratum report out. Offline instrument, same as `_panel_run` below:
+    nothing in a paper run reaches this, and no gate reads its output.
+
+    Ships unrun by design (issue #611 PR body): a coherence sample must
+    span more than one performance tier and more than one model
+    combination (§7.13), and the corpus does not yet hold enough papers to
+    build one. The frame carries its own `corpus_pin` (§7.13), read from
+    the sample spec itself rather than the runtime `resolve_trusted()` seam
+    the per-run gates use -- a committed sample is pinned to whichever
+    corpus its named papers were drafted against, not to whatever pin is
+    live in the working tree today."""
+    try:
+        spec = load_sample_spec(Path(sample_path))
+    except SampleSpecError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        report = run_coherence_eval(spec, client=get_client(), n_reviewers=reviewers)
+    except (CoherenceEvalError, PanelError, PacketError, VendorError, ControlError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if out_path:
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(out_path).write_text(
+            json.dumps(report.to_json(), indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+    _print_encoding_safe(format_coherence_eval_report(report))
+    # Mirrors `_panel_run`'s own exit-code convention: a failed positive
+    # control must not read as a clean run (§7.9) -- this run's own numbers
+    # are not trustworthy yet, whatever they say.
+    return 0 if report.trusted else 1
+
+
 def _panel_run(
     records_dir: str, control_record_path: str, reviewers: int, out_path: str | None
 ) -> int:
@@ -2735,8 +2810,11 @@ def main(argv: list[str] | None = None) -> int:
             workers=args.workers,
         )
 
-    if args.command == "eval":
+    if args.command == "eval" and not getattr(args, "eval_command", None):
         return _eval()
+
+    if args.command == "eval" and args.eval_command == "coherence":
+        return _eval_coherence(args.sample, reviewers=args.reviewers, out_path=args.out)
 
     if args.command == "vault" and args.vault_command == "write":
         return _vault_write(args.source_path)

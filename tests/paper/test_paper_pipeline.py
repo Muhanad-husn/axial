@@ -676,3 +676,33 @@ def test_the_no_phase_b_import_guarantee_still_holds():
         [sys.executable, "-c", probe], capture_output=True, text=True, check=True
     )
     assert json.loads(completed.stdout) == []
+
+
+def test_no_module_under_axial_paper_imports_axial_panel():
+    """§8 P0-10 observable: the panel is off the pipeline. Same clean-
+    interpreter technique as the Phase-B guarantee above, and for the same
+    reason -- an in-process check would read whatever a prior test in the
+    same worker already imported (issue #611)."""
+    probe = (
+        "import sys, json\n"
+        "import axial.paper.record\n"
+        "import axial.paper.draft\n"
+        "import axial.paper.plan\n"
+        "import axial.paper.render\n"
+        "print(json.dumps(sorted(\n"
+        "    name for name in sys.modules if name.startswith('axial.panel')\n"
+        ")))"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    )
+    assert json.loads(completed.stdout) == []
+
+
+def test_axial_paper_draft_makes_zero_reviewer_calls(tmp_path, analyses_dir, lenses_dir):
+    """§8 P0-10 observable: `axial paper draft` completes end to end with
+    zero reviewer calls. `reviewer_pass_name` names every reviewer call
+    `panel_review.<n>` (axial.panel.review); nothing in this pipeline run
+    dispatches one."""
+    _, client = _run(tmp_path, analyses_dir, lenses_dir)
+    assert not any(pass_name.startswith("panel_review") for pass_name, _ in client.prompts)

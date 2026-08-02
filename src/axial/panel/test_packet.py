@@ -7,11 +7,13 @@ import pytest
 
 import axial.panel.packet as packet_mod
 from axial.panel.packet import (
+    PaperReviewPacket,
     ReviewPacket,
     SealBreachError,
     UnresolvableGroundsError,
     assert_sealed,
     build_packet,
+    build_paper_packet,
 )
 
 
@@ -166,3 +168,114 @@ def test_build_packet_never_writes_to_disk(stub_vault, tmp_path, monkeypatch):
     before = set(tmp_path.rglob("*"))
     build_packet(_record(), corpus_pin="pin-1")
     assert set(tmp_path.rglob("*")) == before
+
+
+# -- the paper-shaped packet (issue #611, specs/PHASE-C.md §7.7) -------------
+
+
+def _paper_record(**overrides):
+    record = {
+        "paper_brief_id": "pb-001",
+        "paper_brief": {"title": "Did the state hold?", "thesis": "It did not."},
+        "plan": {
+            "thesis_statement": "It did not.",
+            "sections": [{"section_id": "s1", "heading": "The claim", "role": "claim"}],
+        },
+        "drafts": [{"section_id": "s1", "prose": "The bureaucracy hollowed out [pc-001]."}],
+        "claims": [
+            {
+                "paper_claim_id": "pc-001",
+                "kind": "a",
+                "confidence": "medium",
+                "grounds": [{"ref_type": "chunk", "ref_id": "src_1_intro_001"}],
+                "source_ids": ["src-1"],
+            }
+        ],
+        "citations": [],
+        "counter_position": {"present": False, "corpus_one_sided": True},
+        "coverage_map": {},
+        "confidence": {"overall_band": "medium", "rationale": "thin on one name"},
+        "bibliography": [
+            {
+                "source_id": "src-1",
+                "author": {"value": "Batatu", "provenance": "title page"},
+                "date": {"value": "1999", "provenance": "title page"},
+            }
+        ],
+    }
+    record.update(overrides)
+    return record
+
+
+def test_paper_packet_carries_exactly_the_section_7_7_shape(stub_vault):
+    packet = build_paper_packet(_paper_record(), corpus_pin="pin-1")
+    assert isinstance(packet, PaperReviewPacket)
+    assert set(packet.to_packet_dict()) == {
+        "packet_id",
+        "paper_markdown",
+        "cited_evidence",
+        "bibliography",
+    }
+
+
+def test_paper_packet_prompt_carries_the_rendered_paper_and_its_evidence(stub_vault):
+    packet = build_paper_packet(_paper_record(), corpus_pin="pin-1")
+    assert "bureaucracy hollowed out" in packet.prompt_body
+    assert "Tax receipts fell" in packet.prompt_body
+
+
+def test_paper_packet_cited_evidence_is_keyed_per_claim(stub_vault):
+    packet = build_paper_packet(_paper_record(), corpus_pin="pin-1")
+    entries = packet.to_packet_dict()["cited_evidence"]
+    assert len(entries) == 1
+    assert entries[0]["paper_claim_id"] == "pc-001"
+    assert entries[0]["kind"] == "a"
+    assert entries[0]["confidence"] == "medium"
+    assert entries[0]["grounds"] == [
+        {"ref_id": "src_1_intro_001", "text": "Tax receipts fell while militia payrolls grew."}
+    ]
+
+
+def test_paper_packet_is_byte_for_byte_deterministic(stub_vault):
+    first = build_paper_packet(_paper_record(), corpus_pin="pin-1")
+    second = build_paper_packet(_paper_record(), corpus_pin="pin-1")
+    assert first.prompt_body == second.prompt_body
+
+
+def test_paper_packet_unresolvable_grounds_is_an_assembly_error(stub_vault):
+    record = _paper_record(
+        claims=[
+            {
+                "paper_claim_id": "pc-001",
+                "kind": "a",
+                "confidence": "medium",
+                "grounds": [{"ref_type": "chunk", "ref_id": "no_such_chunk"}],
+            }
+        ]
+    )
+    with pytest.raises(UnresolvableGroundsError):
+        build_paper_packet(record, corpus_pin=None)
+
+
+def test_a_paper_packet_carrying_a_repo_path_is_a_seal_breach(stub_vault):
+    record = _paper_record(
+        drafts=[{"section_id": "s1", "prose": "See specs/PHASE-C.md for the rubric."}]
+    )
+    with pytest.raises(SealBreachError):
+        build_paper_packet(record, corpus_pin=None)
+
+
+def test_paper_packet_never_writes_to_disk(stub_vault, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    before = set(tmp_path.rglob("*"))
+    build_paper_packet(_paper_record(), corpus_pin="pin-1")
+    assert set(tmp_path.rglob("*")) == before
+
+
+def test_an_analysis_packet_is_unaffected_by_the_paper_packet_addition(stub_vault):
+    """§8 P0-10 observable: an analysis packet still assembles from the
+    original ReviewPacket shape, nothing added."""
+    packet = build_packet(_record(), corpus_pin="pin-1")
+    assert isinstance(packet, ReviewPacket)
+    assert not hasattr(packet, "packet_id")
+    assert not hasattr(packet, "cited_evidence")
