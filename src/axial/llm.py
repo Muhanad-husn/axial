@@ -124,13 +124,47 @@ import time
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 import httpx
 import yaml
 
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.yaml_loader import SAFE_LOADER
+
+# The single event-callback shape every stage-narrating seam in this repo
+# uses (issue #533): `on_event(plain_sentence, detail)`. `plain_sentence` is
+# the whole analyst-facing surface -- "the plain-language view is the only
+# view" (issue #533's own why) -- worded so a renderer never has to guess or
+# invent wording of its own; `detail` is a free-form dict carrying whatever
+# machinery (tool name, args, ids, counts) a DIFFERENT, non-analyst renderer
+# (a debug log, a future `#526` activity log) might want instead. Engine
+# code (`axial.answer.record.run_brief`, `axial.retrieve.loop`) accepts this
+# as an optional keyword, defaulting to `None` everywhere it is added, so
+# every pre-#533 caller is unaffected.
+EventCallback = Callable[[str, dict[str, Any]], None]
+
+
+def emit_event(
+    on_event: EventCallback | None, message: str, detail: dict[str, Any] | None = None
+) -> None:
+    """Call `on_event(message, detail)` when given, else print `message` to
+    stderr (issue #533) -- the one seam every ad-hoc `print(...,
+    file=sys.stderr)` stage/turn/call announcement in this codebase now
+    goes through, replacing a scattered one-off line per call site with a
+    single shared fallback renderer. A caller with nothing wired up (every
+    pass this issue doesn't touch, and every existing caller of the
+    functions below) sees the exact same real-time stderr visibility it
+    always has -- this never reduces it, only gives a caller that DOES wire
+    a callback (e.g. `axial brief run`'s live view) the same words instead
+    of a machinery-shaped line."""
+    if detail is None:
+        detail = {}
+    if on_event is not None:
+        on_event(message, detail)
+    else:
+        print(message, file=sys.stderr)
+
 
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
@@ -1844,7 +1878,7 @@ def _log_retry(
     if prompt is not None:
         prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         line += f" prompt_hash={prompt_hash} prompt_prefix={prompt[:_PROMPT_PREFIX_LEN]!r}"
-    print(line, file=sys.stderr)
+    emit_event(None, line)
 
 
 def _log_call_request(
@@ -1871,10 +1905,10 @@ def _log_call_request(
     that never sets it keeps logging the exact same line as before."""
     attempt_suffix = f" attempt={attempt}/{_MAX_ATTEMPTS}" if attempt > 1 else ""
     run_id_suffix = f" run_id={run_id}" if run_id is not None else ""
-    print(
+    emit_event(
+        None,
         f"llm_call_request pass={pass_name} model={model}{attempt_suffix} "
         f"prompt_chars={len(prompt)}{run_id_suffix}",
-        file=sys.stderr,
     )
 
 
@@ -1902,10 +1936,10 @@ def _log_call_response(
     `_log_call_request`'s own: appended only when given."""
     run_id_suffix = f" run_id={run_id}" if run_id is not None else ""
     if error is not None:
-        print(
+        emit_event(
+            None,
             f"llm_call_response pass={pass_name} model={model} outcome=error "
             f"error={error} elapsed={elapsed_seconds:.2f}s{run_id_suffix}",
-            file=sys.stderr,
         )
         return
     line = (
@@ -1921,7 +1955,7 @@ def _log_call_response(
             f" total_tokens={usage.get('total_tokens')}"
         )
     line += run_id_suffix
-    print(line, file=sys.stderr)
+    emit_event(None, line)
 
 
 def _raise_for_status_with_body(response: httpx.Response, *, action: str) -> None:

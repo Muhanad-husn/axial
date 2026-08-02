@@ -1852,6 +1852,16 @@ def _brief_examine(brief_path: str) -> int:
     return 0
 
 
+def _print_event(message: str, _detail: dict[str, Any]) -> None:
+    """The CLI's live renderer for the engine's event seam (issue #533):
+    prints exactly the plain sentence the engine composed, live, while the
+    run goes -- "the plain-language view is the only view" (no tool names,
+    ids or argument shapes in `message` at all, by the seam's own contract)
+    -- and never the `detail` dict, which exists for a future renderer
+    (e.g. an activity log) to pick from instead."""
+    print(message, file=sys.stderr)
+
+
 def _brief_run(brief_path: str, *, use_map: bool = False) -> int:
     try:
         brief = load_brief(brief_path)
@@ -1864,7 +1874,13 @@ def _brief_run(brief_path: str, *, use_map: bool = False) -> int:
         # `case_id` is the brief file's own stem: that is the join
         # `evals/cases/sim/` uses (§9.3), and a brief with no case file of
         # that name simply has no mechanical retrieval-hit oracle.
-        result = run_brief(brief, client=client, case_id=Path(brief_path).stem, use_map=use_map)
+        result = run_brief(
+            brief,
+            client=client,
+            case_id=Path(brief_path).stem,
+            use_map=use_map,
+            on_event=_print_event,
+        )
     except (
         InterrogationError,
         QueryError,

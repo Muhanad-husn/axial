@@ -108,7 +108,6 @@ never a cap, a budget or a count of what more would fit, and an abstained
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -117,7 +116,7 @@ import yaml
 
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult
-from axial.llm import RETRIEVE_PASS_NAME, LLMClient
+from axial.llm import RETRIEVE_PASS_NAME, EventCallback, LLMClient, emit_event
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.query import reader
 from axial.query.reader import MalformedChunkIdError, is_abstention, source_id_from_chunk_id
@@ -173,6 +172,57 @@ def is_thin_result(result_count: int, floor: int) -> bool:
     return result_count < floor
 
 
+def _looking_for_phrase(tool_name: str | None, args: dict[str, Any]) -> str:
+    """The plain-language half of one retrieval turn's event (issue #533):
+    what the turn is looking for, worded from the tool the model just chose
+    and its arguments' own CONTENT (a name, a source label) -- never the
+    tool's own machinery name or its argument shape (the acceptance rule
+    every renderer of this event is held to). A tool this table doesn't
+    name (an unrecognized/malformed request, caught by the dispatcher as an
+    error) gets the honest generic phrase rather than a guess."""
+    if tool_name == "find_names":
+        return f"looking for the name {args.get('query', '')!r}"
+    if tool_name == "get_name":
+        return f"looking at what the corpus says about {args.get('canonical', '')!r}"
+    if tool_name == "name_neighbors":
+        return f"looking for names that appear alongside {args.get('canonical', '')!r}"
+    if tool_name == "who_cites":
+        return f"looking for who cites {args.get('canonical', '')!r}"
+    if tool_name == "who_argues_against":
+        return f"looking for who argues against {args.get('canonical', '')!r}"
+    if tool_name == "where_names_meet":
+        return (
+            f"looking for where {args.get('canonical', '')!r} and "
+            f"{args.get('other', '')!r} are discussed together"
+        )
+    if tool_name == "query_by_source":
+        return f"looking through {args.get('source_id', '')!r}"
+    if tool_name == "get_envelope":
+        return f"looking at the shape of {args.get('source_id', '')!r}"
+    if tool_name == "get_chunk":
+        return "reading passages already found more closely"
+    if tool_name == "get_artifact":
+        return "reading one figure or table already found more closely"
+    return "looking for more evidence"
+
+
+def _turn_outcome_message(
+    tool_name: str | None, args: dict[str, Any], count: int, total: int | None
+) -> str:
+    """The whole retrieval-turn sentence (issue #533): `_looking_for_phrase`
+    plus what the turn found, e.g. "looking for where Mann and Tilly are
+    discussed together -- found 41 passages". `total`, given only when the
+    result was capped, adds "(of <total> total)" so the sentence stays
+    honest about a truncated window without naming a tool or a limit."""
+    spec = TOOL_REGISTRY.get(tool_name)
+    unit = "passage" if spec is not None and spec.returns_chunk_ids else "result"
+    plural = "" if count == 1 else "s"
+    outcome = f"found {count} {unit}{plural}"
+    if total is not None:
+        outcome += f" (of {total} total)"
+    return f"{_looking_for_phrase(tool_name, args)} -- {outcome}"
+
+
 def run_retrieval_loop(
     client: LLMClient,
     prompt: str,
@@ -183,6 +233,7 @@ def run_retrieval_loop(
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     step_budget: int | None = None,
     thin_result_floor: int | None = None,
+    on_event: EventCallback | None = None,
 ) -> list[dict[str, Any]]:
     """Run the tool loop and return the §7.6 trajectory log: one
     `{step, tool, args, result_ids, result_count, total, detail}` entry per
@@ -220,6 +271,17 @@ def run_retrieval_loop(
     tools (`find_names`, `get_name`, `name_neighbors`, `who_cites`,
     `who_argues_against`), defaulting to `None` so a caller passing nothing
     resolves against the query API's own default.
+
+    `on_event` (issue #533) replaces this loop's own ad-hoc
+    `print(..., file=sys.stderr)` per-turn lines with the shared engine
+    event seam (`axial.llm.emit_event`): one event per turn, carrying a
+    plain sentence -- what the turn looked for and what it found, e.g.
+    "looking for where Mann and Tilly are discussed together -- found 41
+    passages" -- built from the tool/args the model just chose, never a raw
+    tool name or argument dump (see `_looking_for_phrase`). `None` (the
+    default) prints that same sentence to stderr instead, so a caller that
+    never wires a callback keeps the exact real-time turn-by-turn
+    visibility this loop always had.
     """
     if step_budget is None:
         step_budget = _resolve_step_budget(config_path)
@@ -230,7 +292,11 @@ def run_retrieval_loop(
     trajectory: list[dict[str, Any]] = []
 
     for step in range(1, step_budget + 1):
-        print(f"retrieve: turn {step}/{step_budget} starting", file=sys.stderr)
+        emit_event(
+            on_event,
+            f"retrieval turn {step} of {step_budget}: deciding what to look for next",
+            {"stage": "retrieve", "phase": "planning", "step": step, "step_budget": step_budget},
+        )
         requested = client.complete_with_tools(prompt, tools, pass_name=RETRIEVE_PASS_NAME)
         if requested is None:
             break
@@ -245,11 +311,19 @@ def run_retrieval_loop(
             names_dir=names_dir,
         )
         capped = result.total is not None and result.total > result.count
-        progress_suffix = f" ({result.count} of {result.total} total)" if capped else ""
-        print(
-            f"retrieve: turn {step}/{step_budget} called {tool_name!r}, "
-            f"{result.count} result(s){progress_suffix}",
-            file=sys.stderr,
+        emit_event(
+            on_event,
+            _turn_outcome_message(tool_name, args, result.count, result.total if capped else None),
+            {
+                "stage": "retrieve",
+                "phase": "outcome",
+                "step": step,
+                "step_budget": step_budget,
+                "tool": tool_name,
+                "args": args,
+                "result_count": result.count,
+                "total": result.total,
+            },
         )
 
         trajectory.append(
@@ -607,6 +681,7 @@ def run_planned_retrieval(
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     step_budget: int | None = None,
     thin_result_floor: int | None = None,
+    on_event: EventCallback | None = None,
 ) -> RetrievalResult:
     """The planning entry point (issue #254, §4/§5 stage 3; rewired onto the
     name layer by issue #488): plans the step-1 prompt from
@@ -617,6 +692,9 @@ def run_planned_retrieval(
     `names_dir`, when given, is forwarded to every name-layer tool call the
     same way `vault_dir`/`envelopes_dir` already are; `None` (the default)
     resolves against the query API's own default directory.
+
+    `on_event` (issue #533) is forwarded verbatim to `run_retrieval_loop`,
+    which is the only stage here that has anything per-turn to narrate.
 
     A `refuse` disposition (§7.2) short-circuits before any model or vault
     call is made: the run is already complete per §7.2's own rule, so the
@@ -633,6 +711,7 @@ def run_planned_retrieval(
         vault_dir=vault_dir,
         envelopes_dir=envelopes_dir,
         names_dir=names_dir,
+        on_event=on_event,
         config_path=config_path,
         step_budget=step_budget,
         thin_result_floor=thin_result_floor,
