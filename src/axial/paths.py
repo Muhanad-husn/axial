@@ -167,6 +167,18 @@ def default_runs_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
     return _read_configured_dir(config_path, "runs_dir", RUNS_DIR)
 
 
+# The default location of the argument map (issue #572): one pin directory
+# per corpus content hash, each holding positions.jsonl, map.json, and the
+# reads.jsonl resume ledger.
+MAP_DIR = Path("data/map")
+
+
+def default_map_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
+    """Read `paths.map_dir` from `config_path`, falling back to `MAP_DIR`
+    when the file or key is absent."""
+    return _read_configured_dir(config_path, "map_dir", MAP_DIR)
+
+
 # =============================================================================
 # Note filename budgeting -- shared by `axial.vault` (the writer) and
 # `axial.query.reader` (the reader).

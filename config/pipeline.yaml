@@ -110,6 +110,16 @@ llm:
     # a different model without moving Gather itself.
     gather_eval: high
     artifacts: false
+    # Argument-map position extraction (issue #572): ON at an explicit
+    # "high" effort, same profile as `reconcile`/`gather` above -- deciding
+    # how many arguments a bag of similarly-worded passages actually holds,
+    # and refusing to fuse contending ones into one sentence, is the same
+    # underdetermined judgment call. Measured directly on the scratchpad
+    # port this pass ships from: with reasoning off, a 200-passage bag
+    # holding two opposed accounts of violence came back as one argument,
+    # "violence is shaped by social, strategic and political processes";
+    # with it on, the same bag correctly split into the two accounts.
+    position_extract: high
   # Per-pass SAMPLING TEMPERATURE (§7.9, issue #416): the third per-pass
   # block, same shape and same resolution as the two around it
   # (src/axial/llm.py's OpenRouterClient reads it via
