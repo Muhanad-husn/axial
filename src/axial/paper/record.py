@@ -17,6 +17,13 @@ coverage of what the paper actually cites rather than of what it was offered.
 It is unioned from the source records, never recomputed (§7.11): Phase C
 performs no retrieval of its own, so it has nothing to recompute a map over.
 
+**The shape check (§7.16, issue #578) runs once, after every section is
+drafted and before any of the above.** It reads only the plan's stated intent
+and the drafted prose, so it runs as soon as the drafting loop ends rather
+than waiting on claims, citations or coverage that have nothing to do with
+its question. It reports a band and any named defects onto the record; it
+never blocks `run_paper`, which is `axial.cli._paper_draft`'s job to act on.
+
 **Costs and model_by_pass are recorded per pass**, so a paper's spend is
 attributable to planning versus drafting, and so §7.7's vendor guard has
 something to read when the panel later scores this paper.
@@ -38,6 +45,7 @@ from axial.paper.intake import PaperIntake, run_intake
 from axial.paper.lens import resolve_lens
 from axial.paper.plan import Plan, run_plan
 from axial.paper.render import render_paper
+from axial.paper.shape import run_shape_check
 from axial.paths import ANALYSES_DIR
 
 # Where a paper record and its rendered markdown land (§6, §7.3).
@@ -194,6 +202,25 @@ def run_paper(
         cited = {marker for earlier in drafts for marker in markers_in(earlier.prose)}
         cited_so_far = [claim for claim in claims if claim["paper_claim_id"] in cited]
 
+    # A barrier after drafting, exactly once regardless of section count
+    # (§7.16, issue #578): reports the paper's own conformance to its plan,
+    # never blocks. Reads only the plan's stated intent and the drafted
+    # prose -- nothing claims/citations/coverage produce below this point.
+    prose_by_section = {draft.section_id: draft.prose for draft in drafts}
+    shape_result = run_shape_check(
+        client,
+        plan.thesis_statement,
+        [
+            {
+                "section_id": section.section_id,
+                "heading": section.heading,
+                "role": section.role,
+                "prose": prose_by_section.get(section.section_id, ""),
+            }
+            for section in plan.sections
+        ],
+    )
+
     citations = build_citation_index(
         [{"section_id": draft.section_id, "prose": draft.prose} for draft in drafts],
         set(by_id),
@@ -236,6 +263,7 @@ def run_paper(
         "coverage_map": coverage_map,
         "confidence": confidence,
         "bibliography": bibliography,
+        "shape": shape_result.to_json(),
         "paper_markdown_path": str(markdown_path),
         "model_by_pass": dict(getattr(client, "model_by_pass", {}) or {}),
         "cost": getattr(client, "cost_report", lambda: {})(),

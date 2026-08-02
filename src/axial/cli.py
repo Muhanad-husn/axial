@@ -128,6 +128,7 @@ from axial.paper.intake import PaperIntakeError
 from axial.paper.lens import LensError
 from axial.paper.plan import PlanError
 from axial.paper.record import PaperRunError, run_paper
+from axial.paper.shape import ShapeCheckError
 from axial.paths import DEFAULT_DOMAIN_DIR, default_analyses_dir
 from axial.pipeline_ready import PipelineReadyError, run_pipeline_ready
 from axial.polity_canonical import PolityCanonicalError, run_polity_build, run_polity_report
@@ -2003,19 +2004,24 @@ def _brief_smoke(
 
 # Every failure `axial.paper`'s five stages can raise before a record is
 # persisted: the brief loader's own family, the three §7.1 intake rejections,
-# lens resolution, arc planning, drafting, claim assembly (the §7.4
-# confidence ceiling and the single-record-inference check), citation
-# indexing (§7.5), the bibliography (§7.6), and `LLMError`/`ModelJsonError`
-# from the model seam itself (`complete_json` never catches either -- see
-# its own docstring). `PaperRunError` is `run_paper`'s own base class, held
-# open for a future whole-pipeline failure though nothing raises it yet.
-# Caught together so every rejection reports as a named, non-zero failure --
-# never a traceback -- exactly like `_brief_run`'s own tuple one layer down.
+# lens resolution, arc planning, drafting, the shape check's own self-grading
+# guard and parse failures (§7.16, issue #578 -- these ARE blocking: the
+# check's BAND never blocks, but a misconfigured judge or a malformed
+# response is a genuine pipeline failure like any other), claim assembly
+# (the §7.4 confidence ceiling and the single-record-inference check),
+# citation indexing (§7.5), the bibliography (§7.6), and
+# `LLMError`/`ModelJsonError` from the model seam itself (`complete_json`
+# never catches either -- see its own docstring). `PaperRunError` is
+# `run_paper`'s own base class, held open for a future whole-pipeline failure
+# though nothing raises it yet. Caught together so every rejection reports as
+# a named, non-zero failure -- never a traceback -- exactly like
+# `_brief_run`'s own tuple one layer down.
 _PAPER_PIPELINE_ERRORS = (
     PaperIntakeError,
     LensError,
     PlanError,
     DraftError,
+    ShapeCheckError,
     PaperClaimError,
     CitationError,
     PaperCoverageError,
@@ -2042,14 +2048,30 @@ def _paper_draft(paper_brief_file: str) -> int:
 
     markdown_path = Path(record["paper_markdown_path"])
     record_path = markdown_path.with_suffix(".json")
+    shape = record.get("shape") or {}
     print(f"paper_brief_id: {paper_brief.paper_brief_id}")
     print(f"corpus_pin: {record['corpus_pin']}")
     print(f"lens: {record['lens']}")
     print(f"sections: {len(record['plan']['sections'])}")
     print(f"claims cited: {len(record['claims'])}")
     print(f"confidence: {record['confidence']['overall_band']}")
+    print(f"shape: {shape.get('band')}")
     print(f"persisted: {record_path}")
     print(f"paper: {markdown_path}")
+
+    # The shape check reports; it never blocks the record or the rendered
+    # paper from being written (§3 non-goal 9, §7.16). It DOES make a `weak`
+    # run exit non-zero and say so loudly -- the operator reads the named
+    # defects and decides whether to re-run; there is no re-draft loop.
+    if shape.get("band") == "weak":
+        defects = shape.get("defects") or []
+        print(
+            f"shape check: WEAK -- {len(defects)} defect(s) named; the paper was still "
+            "written to disk, but its own shape check flagged it. Review the defects on "
+            f"{record_path} before treating this draft as done.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

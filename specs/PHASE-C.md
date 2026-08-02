@@ -90,6 +90,8 @@ Each is excluded deliberately; documenting them protects the architecture.
 7. **No human referee.** No file, gate, or acceptance criterion in this phase may depend on academic-authored data (§9).
 8. **No multi-paper orchestration or batching** in the authorship pipeline, beyond running one paper brief and inspecting it. The offline eval track (§10.2) reads a set of already-written papers, which is not orchestration: it produces no papers of its own.
 9. **No per-run coherence gating.** No paper waits on a reviewer panel to be released. The four per-run gates (§10.1) are cheap and run on every paper; the coherence panel (§10.2) is an offline measuring instrument over a sample, and it blocks nothing.
+
+   > **RESTATED 2026-08-02 (issue #578), precisely rather than differently.** This non-goal forbids gating release on a **panel** -- the sealed, N ≥ 3, different-vendor, positive-controlled instrument of §7.7–§7.9, run offline over a sample. It does not, and never did, forbid a cheap per-run check that reports without blocking. The §7.16 shape check is exactly that: one model call on every paper, on the per-run path, that writes a band and any named defects onto the record and never fails a gate. It is neither the panel (it is not sealed, not N ≥ 3, not different-vendor, not sampled, and not positive-controlled -- it is a single different-model check) nor a gate (no gate in §10.1 reads its field, per §7.16). A check that reports is not gating, whatever cadence it runs on.
 10. **No adjudication between contradictory source records.** Phase C does not decide which of two opposing records is right, and does not reconcile them. It carries both, identifies their sources, and holds the result to charter Principle IV (§7.14).
 
 ---
@@ -242,11 +244,14 @@ One JSON per run at `data/papers/<paper_brief_id>.json`, the phase's analogue of
   coverage_map,                      # §7.11, unioned from the named source records
   confidence: { overall_band, rationale },
   bibliography: [ <bib_entry> ],     # §7.6
+  shape: { band, defects: [ {section_id, note} ], model, cost },  # §7.16, issue #578
   paper_markdown_path,               # the rendered paper written alongside
   model_by_pass,
   cost                               # per-pass tokens + dollars, PHASE-B §7.14 shape
 }
 ```
+
+`shape` is written by the §7.16 post-draft check: `band` is one of `strong`/`adequate`/`weak`, `defects` is non-empty whenever `band` is not `strong` (a band below `strong` naming no defect is a parse error, not a persisted value), `model` is the model the check resolved to, and `cost` is that one call's dollar cost (nullable, mirroring `estimate_cost`'s own unpriced-model convention). It never affects any other field on this record and no gate in §10.1 reads it (§7.16).
 
 `counter_position` reuses the PHASE-B §7.8 shape unchanged: `{present, stance, grounds[], corpus_one_sided, one_sided_reason}`, **plus the two additive fields PR #558 introduced, `failed` and `failure_reason`**. It is never absent, and it now carries three states rather than two: the counter-position material carried into the paper, naming the section that states it and the source claims it is built from; the explicit one-sided disclosure, carrying the source records that reported it; or a **failure**, where the section could not be produced. Where the named source records themselves argue opposite sides, this is the field that carries the opposition into the paper (§7.14).
 
@@ -435,7 +440,9 @@ This rule binds the eval report and nothing else. **No per-run gate report (§10
 
 Plain markdown at `data/papers/<paper_brief_id>.md`, rendered deterministically from the record. The same record renders the same markdown, byte for byte.
 
-Contents, in order: title, thesis statement, the plan's sections in plan order with their prose and in-text markers, the counter-position section (or the one-sided disclosure), the confidence and coverage disclosure, the citation table, and the bibliography.
+Contents, in order: title, thesis statement, the plan's sections in plan order with their prose and in-text markers, the counter-position section (or the one-sided disclosure), the confidence and coverage disclosure, the shape-check block, the citation table, and the bibliography.
+
+> **EXTENDED 2026-08-02 (issue #578).** A "Shape check" block was added here, between the confidence/coverage disclosure and the citation table: the §7.16 band and, whenever it is not `strong`, the named defects that justify it. Nothing else in this ordering moved.
 
 Two rules carried forward from the layer beneath, restated here because they bind on this artifact:
 
@@ -563,6 +570,28 @@ This section specified a "stage 1.5" gap-and-repair pass (issue #570) between in
 **#572 principle 1 rejects this pass's premise outright: opposition earns no privileged retrieval edge, no special pass, no stage of its own.** The argument map's ordinary corridor step already pulls in what argues back, as part of the same retrieval every other claim goes through, for a measured $0.0007 -- against a dedicated pass built to do the identical job at paper scale. The founder's ruling closing PR #571 was explicit: superseded, not revisable. The pass, its module (`axial.paper.opposition`), its test file, and every field it alone produced (`trajectory`, `coverage_map_earned`, `exact_match_opposition_gap`) are deleted. The cascading corrections are at §5, §7.3, §7.4, §7.11 and §3 non-goals 1 and 5, each restoring the statement this pass's correction had retracted and naming this strike as the reason.
 
 What this section measured about the join underneath it -- that `who_argues_against` exact-matches only 4.7% of recorded `arguing_against` targets, and that a zero from an exact-match join is a floor rather than a finding about the corpus -- remains true as a fact about that join. It motivated a pass that is now gone; it does not motivate rebuilding one, per the ruling above.
+
+### 7.16 The shape check (per-run, reports and never blocks) **[NEW 2026-08-02, issue #578]**
+
+**One model call, after all section drafts complete and before the record is written, comparing the rendered prose against the plan the same run produced.** Not a fifth pipeline stage and not a gate: it runs once per paper, regardless of section count, as a barrier immediately after stage 3 and before assembly reads the drafts for anything else. It touches nothing before drafting -- concurrency across sections, assembly order and section order are all unchanged.
+
+**Why this is not the deterministic subject-of-the-sentence proxy that was proposed and rejected.** Three reasons, stated once here since they are why this section exists at all rather than a threshold in a validator.
+
+- **It would fire hardest on the paper doing its job best.** The `counter-position` role exists to state the rejected account at full strength, which is attribution prose by design. A metric that penalises a scholar's name as the sentence subject is anti-correlated with quality exactly where a paper is required to name one.
+- **There is nothing to set a cutoff against.** No paper has ever been written under this branch; build-now, run-later was its standing constraint. A threshold chosen against zero observations is the failure #268 already cost three review rounds to learn.
+- **It needs a parser to answer a question a parser answers badly.** Finding a grammatical subject means a dependency or a regex that mis-reads ordinary argumentative prose ("What Tilly's account cannot explain is X") as a scholar-subject sentence.
+
+**The question is conformance to a stated plan, not open-ended quality.** The arc-planning stage (§7.2) already emits a `thesis_statement` and a section list where every section carries one role from the closed vocabulary -- `setup`, `claim`, `evidence`, `counter-position`, `synthesis`. That plan is the paper's stated intent, and the check asks only whether the drafted prose delivered it: does each section perform its role, does the paper advance the thesis section to section rather than each one restarting, and does a `synthesis` section reach the paper's own position rather than merely summarising what came before.
+
+**A `synthesis` section that reaches a verdict is success, not overreach.** Issue #577 landed first for exactly this reason: it made a new kind-(c) claim -- this paper's own verdict, distinct from a (b) claim's cross-source inference -- a legitimate part of a paper (§3 non-goal 4's correction, §7.4). A rubric written while (c) was still forbidden would have scored a correct paper as reaching beyond its evidence. The check's own prompt (`axial.paper.shape.compose_shape_prompt`) says the opposite in as many words: a `synthesis` section that commits to a position is doing exactly what its role requires.
+
+**The result is the §7.8 three-band ordinal, `strong`/`adequate`/`weak`, and a band below `strong` must name at least one defect.** Same vocabulary as the panel's `coherence` dimension, deliberately (see §10.2's note below): the cheap check and the expensive one measure the same axis, so the cheap one can later be scored against the expensive one. A defect names a `section_id` and states in one sentence what went wrong. A `weak` or `adequate` verdict with an empty defect list is a parse error, never a pass -- exactly like a `weak` band with no reason named anywhere else in this spec.
+
+**It runs on a different model than the drafter.** It reuses the self-grading guard `axial.gates.grounding` already carries for its own judge (§10.1), re-anchored from `SYNTHESIZE_PASS_NAME` to `PAPER_DRAFT_PASS_NAME`: the model that wrote a section's prose must never grade whether that prose did its job. Configuring the same model for both is a hard error naming both passes, raised before any call is made. This is the drafting-pass guard, not the panel's stricter different-vendor bar (§7.7) -- like the grounding and (b)-seam judges, this is a narrower question than the panel's open-ended coherence judgment.
+
+**It writes `shape` onto the paper record and a block in the rendered paper.** `shape: {band, defects: [{section_id, note}], model, cost}` (§7.3). The rendered paper carries the same information beside the existing counter-position, coverage and citation-table blocks, so a reader can always see what the check said about the paper in front of them.
+
+**It reports; it never blocks.** No band from this check fails any gate in §10.1 and no gate reads this field (P0-8 through P0-14 are unaffected by whether this check ran at all). This is not a relaxation of §3 non-goal 9 -- that non-goal forbids gating release on the reviewer **panel**, and this check is not the panel: it is one cheap call that runs on every paper and reports, exactly the shape non-goal 9 already permits. **On a `weak` band, `axial paper draft` exits non-zero and says so loudly, and the record and the rendered paper are written to disk regardless.** There is no re-draft loop: inventing a repair for a defect nobody has yet seen in a real paper would be exactly the kind of speculative mechanism the handbook's over-engineering tripwires warn against. The operator reads the named defects and decides whether to re-run.
 
 ### Must-Have (P0)
 
@@ -758,6 +787,7 @@ Coherence is **measured, not gated** (§9). This track runs on its own cadence o
 - **Three plants is a small n.** `positive_control_catch_rate = 1.00` over three plants is a floor, not a demonstration of sensitivity. P1-3 adds two more classes. A panel that catches three obvious plants has not proven it catches a subtle one, and the control's own limits are stated in every report it produces.
 - **The panel has never actually run at N ≥ 3**, and the first Phase-C report must not read as though it had. Both Phase-B rounds ran one reviewer per packet, so no spread has ever been reported and every band drawn so far sorts briefs rather than measures them (PHASE-B P2-9, §9). On a Claude Code judge this costs wall clock rather than money, so the first Phase-C coherence run is the natural place to close it.
 - **What the panel invents is unmeasured** (PHASE-B P2-8). The control proves what it catches; nothing tests its false positives. A coherence figure carries that limit whether or not the control passed, and `trusted: true` means "the instrument catches planted defects", never "the instrument does not manufacture them".
+- **The `coherence` dimension and the §7.16 shape check share a vocabulary on purpose [NEW 2026-08-02, issue #578].** Both report the identical `strong`/`adequate`/`weak` ordinal, and this was chosen rather than coincidental: the shape check is one cheap different-model call on every paper, and `coherence` is a panel of N ≥ 3 sealed, different-vendor reviewers over a sample. They are not the same instrument and neither substitutes for the other — the shape check reports on the per-run path and never blocks (§7.16, §3 non-goal 9), the panel measures offline and never runs per paper. Sharing the ordinal is what makes it possible to later ask, on the same sample this track already reads, whether the cheap check's band predicts the expensive one's — a question this spec does not answer, because it needs papers and panel runs that do not exist yet.
 
 ---
 
