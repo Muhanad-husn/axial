@@ -79,6 +79,18 @@ from axial.yaml_loader import SAFE_LOADER
 # `thin` name in the coverage map may never be disclosed alongside.
 TOP_CONFIDENCE_BAND = "high"
 
+# The fourth `overall_band` value (issue #584): not a rung on the three-band
+# measured ordinal (`low`/`medium`/`high`) at all, so it is deliberately kept
+# out of `_CONFIDENCE_BAND_BY_COVERAGE_RANK` and `_CONFIDENCE_BAND_RANK`
+# below -- nothing ranks it, sorts it against a measured band, or treats it
+# as a run's own top band. It means `coverage_map` is empty: an empty map is
+# not evidence of a thin corpus, it is the absence of a measurement, and
+# dressing it in the same vocabulary as a measured `low` (#490's original
+# defect, reopened by the argument-map path that queries no names, #584)
+# lets a reader, a referee, or a downstream consumer (Phase C's own coverage
+# roll-up) mistake "nothing was measured" for "the corpus was found thin".
+NOT_MEASURED_BAND = "not_measured"
+
 # The §7.7 band vocabulary's bottom band -- the one that triggers the
 # confidence-vs-coverage check.
 THIN_COVERAGE_BAND = "thin"
@@ -368,16 +380,25 @@ def compute_confidence(coverage_map: dict[str, dict[str, Any]]) -> dict[str, Any
     coverage_map"), in ascending name order for the same determinism
     contract `compute_coverage_map` follows.
 
-    An empty `coverage_map` (a `refuse` disposition, or a run that never
-    retrieved on a name any claim then used) still returns a non-nullable
-    disclosure (§7.3), pinned to the most conservative band with a rationale
-    that says plainly why there are no counts to cite."""
+    An empty `coverage_map` still returns a non-nullable disclosure (§7.3),
+    but NOT a measured `low` (issue #584): a `refuse` disposition, a run
+    whose retrieved names were never touched by a claim, and a run whose
+    retrieval path queries no name at all (the argument map, §7.17) all
+    produce an empty map for different reasons, and none of them measured
+    anything -- the three-band ordinal cannot carry a fourth meaning
+    silently. `overall_band` is `NOT_MEASURED_BAND`, deliberately outside
+    the `low`/`medium`/`high` ordinal so nothing ranks it against a measured
+    band, with a rationale that states plainly that nothing was measured and
+    why."""
     if not coverage_map:
         return {
-            "overall_band": "low",
+            "overall_band": NOT_MEASURED_BAND,
             "rationale": (
-                "no name is both retrieved on by this run and touched by a claim, so "
-                "there is no coverage_map entry to justify a higher band"
+                "nothing was measured: no name is both retrieved on by this run and "
+                "touched by a claim, so there is no coverage_map entry to derive a band "
+                "from -- this is not a measured low band, and may mean a refuse "
+                "disposition, an unused retrieval, or a retrieval path (such as the "
+                "argument map) that queries no name at all"
             ),
         }
 

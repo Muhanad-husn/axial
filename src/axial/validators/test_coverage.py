@@ -21,6 +21,7 @@ import pytest
 import yaml
 
 from axial.validators.coverage import (
+    NOT_MEASURED_BAND,
     REASON_CONFIDENCE_EXCEEDS_COVERAGE,
     REASON_MISSING_CONFIDENCE_DISCLOSURE,
     REASON_MISSING_COVERAGE_ENTRY,
@@ -456,10 +457,31 @@ def test_the_rationale_carries_every_mapped_names_counts():
         assert token in rationale
 
 
-def test_empty_coverage_map_yields_low_band_with_a_plain_rationale():
+def test_empty_coverage_map_yields_not_measured_band_with_a_plain_rationale():
+    """Issue #584: an empty map is the absence of a measurement, not a
+    measured `low` -- `overall_band` says so in its own vocabulary, and the
+    rationale states plainly that nothing was measured."""
     confidence = compute_confidence({})
-    assert confidence["overall_band"] == "low"
+    assert confidence["overall_band"] == NOT_MEASURED_BAND
+    assert confidence["overall_band"] != "low"
     assert confidence["rationale"]
+    assert (
+        "not measured" in confidence["rationale"]
+        or "nothing was measured" in confidence["rationale"]
+    )
+
+
+def test_not_measured_and_measured_thin_are_distinguishable():
+    """A coverage map whose worst entry is `thin` still yields a MEASURED
+    `low`, never collapsed with the not-measured band an empty map yields
+    (issue #584): the two must be tellable apart by a reader or a gate."""
+    thin_map = {BAYAT: {"corpus_note_count": 6, "evidence_note_count": 1, "coverage_band": "thin"}}
+    measured = compute_confidence(thin_map)
+    not_measured = compute_confidence({})
+
+    assert measured["overall_band"] == "low"
+    assert not_measured["overall_band"] == NOT_MEASURED_BAND
+    assert measured["overall_band"] != not_measured["overall_band"]
 
 
 def test_confidence_disclosure_is_never_nullable():
@@ -467,6 +489,16 @@ def test_confidence_disclosure_is_never_nullable():
         confidence = compute_confidence(coverage_map)
         assert confidence["overall_band"]
         assert confidence["rationale"]
+
+
+def test_not_measured_band_is_outside_the_ranked_vocabulary():
+    """The not-measured band is not a rung on the three-band ordinal (issue
+    #584): nothing in the module's own rank tables recognizes it as a
+    measured band."""
+    from axial.validators.coverage import _CONFIDENCE_BAND_BY_COVERAGE_RANK, _CONFIDENCE_BAND_RANK
+
+    assert NOT_MEASURED_BAND not in _CONFIDENCE_BAND_BY_COVERAGE_RANK.values()
+    assert NOT_MEASURED_BAND not in _CONFIDENCE_BAND_RANK
 
 
 # -- validate_coverage_and_confidence: presence checks -----------------------
@@ -510,6 +542,21 @@ def test_complete_map_and_valid_confidence_passes():
         },
         confidence={"overall_band": "medium", "rationale": "240 corpus notes, 5 evidence notes"},
         trajectory=[_get_name_call(TILLY)],
+    )
+    report = validate_coverage_and_confidence(record)
+    assert report.passed, report.failures
+
+
+def test_not_measured_band_passes_the_release_gate():
+    """A record whose `coverage_map` is empty by construction (a `refuse`
+    disposition, or a run whose retrieval path queries no name) still
+    releases: check 2 only requires a non-blank `overall_band` and a
+    non-empty `rationale`, and check 3 keys on `== TOP_CONFIDENCE_BAND`,
+    which `not_measured` is not (issue #584)."""
+    record = _record(
+        claims=[],
+        coverage_map={},
+        confidence=compute_confidence({}),
     )
     report = validate_coverage_and_confidence(record)
     assert report.passed, report.failures

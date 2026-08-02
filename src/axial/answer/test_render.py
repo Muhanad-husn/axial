@@ -241,6 +241,45 @@ def test_confidence_section_renders_band_and_rationale():
     assert "medium confidence, grounded in 2 evidence chunks" in markdown
 
 
+def test_not_measured_band_renders_as_a_readable_phrase_not_the_raw_token():
+    """Issue #584: `overall_band: "not_measured"` reads as a sentence a
+    human parses correctly rather than the raw underscore-spelled token."""
+    record = _base_record(
+        coverage_map={},
+        confidence={
+            "overall_band": "not_measured",
+            "rationale": "nothing was measured: no name is both retrieved on and touched",
+        },
+    )
+    markdown = render_markdown(record)
+    assert "**Band:** not measured" in markdown
+    assert "not_measured" not in markdown
+
+
+def test_source_usage_renders_null_available_share_without_crashing():
+    """Issue #584: `available_chunk_count`/`available_share` are `None` when
+    this run queried no name at all -- rendering must not try to format
+    `None` as a float."""
+    record = _base_record(
+        source_usage={
+            "names_queried": [],
+            "sources": [
+                {
+                    "source_id": "syr_001",
+                    "evidence_note_count": 1,
+                    "evidence_share": 0.5,
+                    "available_chunk_count": None,
+                    "available_share": None,
+                    "usage_ratio": None,
+                },
+            ],
+        },
+    )
+    markdown = render_markdown(record)
+    assert "available_share=null" in markdown
+    assert "usage_ratio=None" in markdown
+
+
 # -- per-claim confidence ceiling: the rendered band is the EFFECTIVE one
 # (issue #550), and nothing is silently rewritten -----------------------------
 

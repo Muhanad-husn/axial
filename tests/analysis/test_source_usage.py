@@ -24,7 +24,9 @@ Then  the command exits 0
       names_queried is empty (no name-layer tool was called)
   And source_usage.sources entry for "tilly" is
       {evidence_chunk_count: 6, evidence_share: 0.6,
-       available_chunk_count: 0, available_share: 0.0, usage_ratio: null}
+       available_chunk_count: null, available_share: null, usage_ratio: null}
+      (issue #584: no name was ever queried, so the denominator is unknown,
+      not a measured zero)
   And every entry carries evidence_share and available_share together
 
 Given a hand-built analysis record at data/analyses/DEV31.json whose claims'
@@ -44,11 +46,11 @@ Then  source_usage is present with names_queried from the trajectory and
       an empty sources list
 
 Given a hand-built analysis record at data/analyses/DEV33.json whose
-      trajectory filters match zero chunks of source_id "zaum" while its
-      grounds cite one
+      trajectory queries no name at all while its grounds cite a "zaum" chunk
 When  the source-usage computation runs over that record
-Then  the "zaum" entry has available_chunk_count 0, available_share 0, and
-      usage_ratio null
+Then  the "zaum" entry has available_chunk_count null, available_share null,
+      and usage_ratio null (issue #584: unknown, not a measured zero, since
+      no name was ever queried)
 
 See specs/PHASE-B.md §7.13 (the source-usage disclosure), §7.3 (the record
 shape, locked -- this slice only adds the field), and §7.6 (the trajectory
@@ -290,7 +292,8 @@ def test_source_usage_disclosed_with_denominator_via_full_brief_run(fixture_root
     """Scenario 1 (issue #265): a real `axial brief run` over a fixture
     vault of 100 chunks (22 tilly / 78 other), grounds citing 10 distinct
     chunks (6 tilly / 4 other) -- source_usage discloses tilly's contribution
-    alongside its (currently zero, issue #487) availability."""
+    alongside its availability, `null` (issue #584) since `query_by_source`
+    is not a name query and this run queried no name at all."""
     record_path = fixture_root / "record.jsonl"
     stub_interrogate_response = {"premises_found": [], "bounds_applied": [], "refusal": None}
     stub_tool_calls = [
@@ -337,8 +340,8 @@ def test_source_usage_disclosed_with_denominator_via_full_brief_run(fixture_root
     tilly = by_source["tilly"]
     assert tilly["evidence_chunk_count"] == 6
     assert tilly["evidence_share"] == pytest.approx(0.6)
-    assert tilly["available_chunk_count"] == 0
-    assert tilly["available_share"] == 0.0
+    assert tilly["available_chunk_count"] is None
+    assert tilly["available_share"] is None
     assert tilly["usage_ratio"] is None
 
     for entry in source_usage["sources"]:
@@ -435,8 +438,9 @@ def test_source_usage_on_a_concentrated_hand_built_record_makes_zero_llm_calls(
 ):
     """Scenario 2 (issue #265, DEV31): grounds all resolve to a single
     source_id "gellner" -- source_usage discloses evidence_share 1.0 and the
-    sole entry's available_share (0.0 since issue #487, D1), with zero LLM
-    calls made and no failure/non-zero-exit reaction to the
+    sole entry's available_share, `None` (issue #584) since `query_by_source`
+    queries no name and this run's denominator is unknown, not zero, with
+    zero LLM calls made and no failure/non-zero-exit reaction to the
     concentration."""
     monkeypatch.setenv(PROVIDER_ENV_VAR, "explode")
     from axial.llm import ExplodingLLMClient, get_client
@@ -478,8 +482,8 @@ def test_source_usage_on_a_concentrated_hand_built_record_makes_zero_llm_calls(
     gellner = source_usage["sources"][0]
     assert gellner["source_id"] == "gellner"
     assert gellner["evidence_share"] == 1.0
-    assert gellner["available_chunk_count"] == 0
-    assert gellner["available_share"] == 0.0
+    assert gellner["available_chunk_count"] is None
+    assert gellner["available_share"] is None
 
 
 def test_source_usage_empty_on_refuse_disposition_with_empty_claims(tmp_path: Path):
@@ -509,10 +513,11 @@ def test_source_usage_empty_on_refuse_disposition_with_empty_claims(tmp_path: Pa
 def test_source_usage_usage_ratio_null_when_filters_match_zero_of_a_cited_sources_chunks(
     tmp_path: Path,
 ):
-    """Scenario 4 (issue #265, DEV33): nothing the run queried matched a
-    chunk of source_id "zaum" while its grounds cite one -- available_
-    chunk_count 0, available_share 0, usage_ratio null (never 0, never an
-    error). The `usage_ratio is None` branch is what this pins."""
+    """Scenario 4 (issue #265, DEV33): the trajectory's own `query_by_tag`
+    call is not a name query, so this run queried no name at all while its
+    grounds cite a "zaum" chunk -- available_chunk_count and available_share
+    are `None` (issue #584: unknown, not a measured zero), and usage_ratio
+    is null for the same reason it always was."""
     vault_dir = tmp_path / "vault"
     prose_dir = vault_dir / "prose"
     prose_dir.mkdir(parents=True)
@@ -540,6 +545,6 @@ def test_source_usage_usage_ratio_null_when_filters_match_zero_of_a_cited_source
     source_usage = compute_source_usage(record, vault_dir=vault_dir)
     zaum = source_usage["sources"][0]
     assert zaum["source_id"] == "zaum"
-    assert zaum["available_chunk_count"] == 0
-    assert zaum["available_share"] == 0
+    assert zaum["available_chunk_count"] is None
+    assert zaum["available_share"] is None
     assert zaum["usage_ratio"] is None
