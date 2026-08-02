@@ -30,6 +30,19 @@ distribution has ever been observed, so no threshold is asserted, and this
 number can never fail the gate or block release -- exactly the discipline
 §10.0 already states for source usage, the cross-source rate and
 instant-dismissal violations.
+
+**P2-4 re-bar (issue #607, specs/PHASE-C.md §8 P0-9).** The metric above
+read 0.0000 on both sealed review rounds, including the "Contrary to Mann's
+assertion..." record it exists to catch. What that passage contradicts is
+the claim's own crediting of a scholar -- not the claim's proposition, which
+the judge WAS shown and which the passage does not contradict on its own
+terms. The note that carries the passage states this opposition itself, in
+its own `arguing_against` answer (§7.15), which the judge was never shown.
+`_resolve_grounds_arguing_against` below reads it off every chunk-typed
+grounds note (an abstention, or an artifact ref which carries no
+interrogation answers, contributes nothing) and the judge prompt now shows
+it alongside the grounds text -- no other change to the metric's shape,
+denominator, or reported-only status.
 """
 
 from __future__ import annotations
@@ -48,11 +61,13 @@ from axial.llm import (
     LLMError,
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
+from axial.query.names import as_string_list
 from axial.query.reader import (
     ArtifactNotFoundError,
     ChunkNotFoundError,
     get_artifact,
     get_chunk,
+    is_abstention,
 )
 
 GATE_NAME = "grounding"
@@ -135,6 +150,38 @@ def _resolve_grounds_text(claim: dict[str, Any], claim_id: str, *, vault_dir: Pa
     return "\n---\n".join(texts)
 
 
+def _resolve_grounds_arguing_against(
+    claim: dict[str, Any], claim_id: str, *, vault_dir: Path | None
+) -> str:
+    """The (b)-claim re-bar (issue #607, module docstring): every chunk-typed
+    grounds note's own `arguing_against` answer (§7.15), concatenated in
+    citation order -- what the CITED PASSAGE ITSELF says it argues against,
+    which is what a (b) claim's "Contrary to Mann's assertion..." defect
+    actually contradicts (the claim's crediting of a scholar, not its bare
+    proposition).
+
+    An abstention (`is_abstention`) contributes nothing, exactly as
+    `axial.validators.counter_position._opposition_surfaces` already treats
+    it. An artifact-typed grounds entry contributes nothing either -- an
+    artifact note carries no interrogation answers. Never raises on an
+    unresolvable pointer: `_resolve_grounds_text` above already raised
+    `UnresolvableGroundsError` for the same claim before this is ever
+    called, so every chunk here is expected to resolve."""
+    surfaces: list[str] = []
+    for entry in claim.get("grounds") or []:
+        if not isinstance(entry, dict) or entry.get("ref_type") != "chunk":
+            continue
+        ref_id = entry.get("ref_id")
+        try:
+            note = get_chunk(ref_id, vault_dir=vault_dir)
+        except ChunkNotFoundError as exc:
+            raise UnresolvableGroundsError(claim_id, str(exc)) from exc
+        if is_abstention(note.arguing_against):
+            continue
+        surfaces.extend(as_string_list(note.arguing_against))
+    return "; ".join(surfaces)
+
+
 def _compose_judge_prompt(claim_text: str, grounds_text: str) -> str:
     return f"""You are the independent grounding judge of an analysis engine's rung-3 eval gate (specs/PHASE-B.md §10). You are NOT the model that generated this claim -- you are judging its evidence.
 
@@ -179,7 +226,9 @@ def _judge_claim(
     return _parse_judge_response(raw, claim_id)
 
 
-def _compose_b_claim_judge_prompt(claim_text: str, grounds_text: str) -> str:
+def _compose_b_claim_judge_prompt(
+    claim_text: str, grounds_text: str, arguing_against_text: str
+) -> str:
     """The (b)-claim bar, deliberately different from `_compose_judge_prompt`
     above (issue #550): a (b) claim is the tool's OWN cross-source inference
     (§7.4), so "does a single cited passage assert this" is the wrong
@@ -187,7 +236,19 @@ def _compose_b_claim_judge_prompt(claim_text: str, grounds_text: str) -> str:
     The question this judge answers instead is whether any cited passage
     CONTRADICTS the claim, which is what a broken (b) claim actually looks
     like (the sharpest smoke-v4 defect: a claim's own cited passage opens
-    "Contrary to Mann's assertion...", the opposite of what the claim says)."""
+    "Contrary to Mann's assertion...", the opposite of what the claim says).
+
+    **The re-bar (issue #607).** That defect's own passage does not
+    contradict the claim's bare proposition -- what it contradicts is the
+    claim's crediting of a scholar, which `grounds_text` alone never states,
+    because it is the cited note's OWN `arguing_against` answer that states
+    it. `arguing_against_text` shows the judge that field directly, framed as
+    what the passage itself says it argues against, so a claim that credits
+    the wrong side of a stated opposition is now visible to the question
+    being asked."""
+    arguing_against_block = (
+        arguing_against_text.strip() or "(none of the cited notes recorded an opposing position)"
+    )
     return f"""You are the independent grounding judge of an analysis engine's rung-3 eval gate (specs/PHASE-B.md §10). You are NOT the model that generated this claim -- you are judging its evidence.
 
 This is a kind-"b" claim: a cross-source INFERENCE the tool drew across two or more sources, not a single source's own assertion. The bar for an inference is not whether a cited passage asserts it outright -- it may not, and still be a sound inference -- but whether any cited passage CONTRADICTS it.
@@ -198,7 +259,10 @@ Claim (the tool's own inference):
 Cited grounds (the resolved chunk/artifact text the claim points at):
 "{grounds_text}"
 
-Decide: does any part of the cited grounds text CONTRADICT the claim -- state or clearly imply the opposite of what the claim asserts? Judge only what the grounds text actually says, not whether it goes as far as the claim on its own.
+What the cited passage(s) themselves say they argue against (each note's own recorded opposition, if any):
+"{arguing_against_block}"
+
+Decide: does any part of the cited grounds text, OR the opposition it itself records above, CONTRADICT the claim -- state or clearly imply the opposite of what the claim asserts, or credit the claim's position to the wrong side of a stated disagreement? Judge only what the grounds text and its recorded opposition actually say, not whether it goes as far as the claim on its own.
 
 Return ONLY this JSON object, no prose and no code fence:
 {{"verdict": "contradicts"}} or {{"verdict": "does_not_contradict"}}"""
@@ -218,12 +282,13 @@ def _parse_b_claim_judge_response(raw: str, claim_id: str) -> str:
 def _judge_b_claim(
     claim_text: str,
     grounds_text: str,
+    arguing_against_text: str,
     claim_id: str,
     *,
     client: LLMClient,
     judge_pass_name: str,
 ) -> str:
-    prompt = _compose_b_claim_judge_prompt(claim_text, grounds_text)
+    prompt = _compose_b_claim_judge_prompt(claim_text, grounds_text, arguing_against_text)
     try:
         raw = complete_json(client, prompt, pass_name=judge_pass_name)
     except (LLMError, httpx.HTTPError, ModelJsonError) as exc:
@@ -283,18 +348,9 @@ def _b_claim_contradiction_rate(
     exactly like the (a)-claim judge -- a broken pointer or a failed judge
     call is a gate error here too, never silently swallowed into a
     "does_not_contradict" verdict."""
-    contradicted: list[str] = []
-    for claim_id, claim in b_claims:
-        grounds_text = _resolve_grounds_text(claim, claim_id, vault_dir=vault_dir)
-        verdict = _judge_b_claim(
-            claim.get("text", ""),
-            grounds_text,
-            claim_id,
-            client=client,
-            judge_pass_name=judge_pass_name,
-        )
-        if verdict == _CONTRADICTS:
-            contradicted.append(claim_id)
+    contradicted, _contradicted_ids = _judge_b_claims(
+        b_claims, client=client, vault_dir=vault_dir, judge_pass_name=judge_pass_name
+    )
 
     denominator = len(b_claims)
     return {
@@ -304,6 +360,40 @@ def _b_claim_contradiction_rate(
         "contradicted_claim_ids": contradicted,
         **({} if denominator else {"reason": "no (b) claims found to evaluate"}),
     }
+
+
+def _judge_b_claims(
+    b_claims: list[tuple[str, dict[str, Any]]],
+    *,
+    client: LLMClient,
+    vault_dir: Path | None,
+    judge_pass_name: str,
+) -> tuple[list[str], list[str]]:
+    """Judge every claim in `b_claims`, re-barred (issue #607): each judge
+    call is shown both the resolved grounds text and the grounds notes' own
+    `arguing_against` answers. Returns `(contradicted_claim_ids,
+    all_claim_ids)` -- the shared walk behind `_b_claim_contradiction_rate`
+    above, so the re-bar is one code path, never two judge calls per
+    claim."""
+    contradicted: list[str] = []
+    all_ids: list[str] = []
+    for claim_id, claim in b_claims:
+        all_ids.append(claim_id)
+        grounds_text = _resolve_grounds_text(claim, claim_id, vault_dir=vault_dir)
+        arguing_against_text = _resolve_grounds_arguing_against(
+            claim, claim_id, vault_dir=vault_dir
+        )
+        verdict = _judge_b_claim(
+            claim.get("text", ""),
+            grounds_text,
+            arguing_against_text,
+            claim_id,
+            client=client,
+            judge_pass_name=judge_pass_name,
+        )
+        if verdict == _CONTRADICTS:
+            contradicted.append(claim_id)
+    return contradicted, all_ids
 
 
 def run_grounding_gate(

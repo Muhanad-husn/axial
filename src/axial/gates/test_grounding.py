@@ -22,6 +22,8 @@ from axial.llm import ExplodingLLMClient
 
 CHUNK_ID = "gatefix_001_syria_a"
 MISSING_CHUNK_ID = "gatefix_999_missing"
+OPPOSING_CHUNK_ID = "gatefix_002_syria_b"
+ARGUING_AGAINST_TEXT = "Mann's claim that state formation preceded capital accumulation"
 
 DISTINCT_MODELS = {"synthesize": "model-a", "grounding": "model-b"}
 SAME_MODEL = {"synthesize": "model-x", "grounding": "model-x"}
@@ -86,9 +88,43 @@ def _write_vault(root: Path, *, n_chunks: int = 1) -> Path:
     return root / "vault"
 
 
+def _write_opposing_chunk(
+    root: Path, *, chunk_id: str = OPPOSING_CHUNK_ID, arguing_against: Any = ARGUING_AGAINST_TEXT
+) -> None:
+    """A second chunk note carrying an `answers.arguing_against` answer
+    (§7.15) -- the re-bar fixture (issue #607): `_write_vault`'s own chunk
+    carries no `answers` block at all, so this is a separate helper rather
+    than a parameter on it, keeping every existing `vault_dir` test's
+    fixture byte-identical."""
+    prose_dir = root / "vault" / "prose"
+    prose_dir.mkdir(parents=True, exist_ok=True)
+    frontmatter = {
+        "chunk_id": chunk_id,
+        "section": "Synthetic Section",
+        "chunk_text": f"SENTINEL_{chunk_id}: Contrary to Mann's assertion, state formation followed capital accumulation.",
+        "source_meta": {
+            "author": "B",
+            "title": "U",
+            "date": 2021,
+            "thesis": "X",
+            "scope": "Y",
+        },
+        "answers": {"arguing_against": [arguing_against] if arguing_against else []},
+    }
+    text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
+    (prose_dir / f"{chunk_id}.md").write_text(text, encoding="utf-8")
+
+
 @pytest.fixture
 def vault_dir(tmp_path: Path) -> Path:
     return _write_vault(tmp_path)
+
+
+@pytest.fixture
+def vault_dir_with_opposition(tmp_path: Path) -> Path:
+    vault = _write_vault(tmp_path)
+    _write_opposing_chunk(tmp_path)
+    return vault
 
 
 def _a_claim(claim_id: str, *, chunk_id: str = CHUNK_ID) -> dict[str, Any]:
@@ -418,3 +454,54 @@ def test_judge_response_missing_verdict_raises(vault_dir: Path, tmp_path: Path):
             trusted=False,
             config_path=tmp_path / "nonexistent.yaml",
         )
+
+
+# -- P2-4 re-bar: the (b)-claim judge is shown the note's own
+# arguing_against (issue #607) -----------------------------------------------
+
+
+def test_b_claim_judge_prompt_shows_the_notes_own_arguing_against(
+    vault_dir_with_opposition: Path, tmp_path: Path
+):
+    client = ScriptedJudgeClient(
+        model_by_pass=DISTINCT_MODELS, responses=[json.dumps({"verdict": "does_not_contradict"})]
+    )
+    records = [{"claims": [_b_claim("c-1", chunk_id=OPPOSING_CHUNK_ID)]}]
+
+    run_grounding_gate(
+        records,
+        client=client,
+        vault_dir=vault_dir_with_opposition,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+    )
+
+    assert len(client.calls) == 1
+    _pass_name, prompt = client.calls[0]
+    assert ARGUING_AGAINST_TEXT in prompt, (
+        "the judge must be shown the cited note's own arguing_against answer"
+    )
+
+
+def test_b_claim_judge_prompt_states_no_recorded_opposition_when_absent(
+    vault_dir: Path, tmp_path: Path
+):
+    """`CHUNK_ID`'s own fixture carries no `answers` block at all -- the
+    judge prompt must say so plainly rather than showing an empty string."""
+    client = ScriptedJudgeClient(
+        model_by_pass=DISTINCT_MODELS, responses=[json.dumps({"verdict": "does_not_contradict"})]
+    )
+    records = [{"claims": [_b_claim("c-1")]}]
+
+    run_grounding_gate(
+        records,
+        client=client,
+        vault_dir=vault_dir,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+    )
+
+    _pass_name, prompt = client.calls[0]
+    assert "none of the cited notes recorded an opposing position" in prompt
