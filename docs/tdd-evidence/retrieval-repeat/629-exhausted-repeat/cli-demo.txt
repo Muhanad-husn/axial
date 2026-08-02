@@ -1,0 +1,36 @@
+========================================================================
+1. The five identical calls from the measured run (#629), in order
+========================================================================
+step 1: where_names_meet('Syria','Mandate System', limit=20)
+  count=2 total=2
+  notes: THIN: below the floor of 3 -- consider a broadened re-query; EXHAUSTED: this is everything behind this query -- a larger limit will not return more; broadening means asking something different, not a bigger number
+  detail: 2 notes across 1 sources
+
+step 2: where_names_meet('Syria','Mandate System', limit=15)
+  count=2 total=2
+  notes: THIN: below the floor of 3 -- consider a broadened re-query; EXHAUSTED: this is everything behind this query -- a larger limit will not return more; broadening means asking something different, not a bigger number; REPEAT: step 1 asked the same query (limit aside) and already returned this
+  detail: 2 notes across 1 sources
+
+step 3: where_names_meet('Syria','Mandate System', limit=10)
+  count=2 total=2
+  notes: THIN: below the floor of 3 -- consider a broadened re-query; EXHAUSTED: this is everything behind this query -- a larger limit will not return more; broadening means asking something different, not a bigger number; REPEAT: step 1 asked the same query (limit aside) and already returned this
+  detail: 2 notes across 1 sources
+
+step 4: where_names_meet('Syria','Mandate System', limit=15)
+  count=2 total=2
+  notes: THIN: below the floor of 3 -- consider a broadened re-query; EXHAUSTED: this is everything behind this query -- a larger limit will not return more; broadening means asking something different, not a bigger number; REPEAT: step 1 asked the same query (limit aside) and already returned this
+  detail: 2 notes across 1 sources
+
+step 5: where_names_meet('Syria','Mandate System', limit=20)
+  count=2 total=2
+  notes: THIN: below the floor of 3 -- consider a broadened re-query; EXHAUSTED: this is everything behind this query -- a larger limit will not return more; broadening means asking something different, not a bigger number; REPEAT: step 1 asked the same query (limit aside) and already returned this
+  detail: 2 notes across 1 sources
+
+========================================================================
+2. The get_chunk batch that returned 0 (one transcribed id, one hyphen off)
+========================================================================
+step 1: get_chunk([4 good ids + 1 fabricated id])
+  count=4 total=None
+  notes: (none)
+  detail: 1 id(s) did not resolve: ['batatu-1999-598624067df3_72_the-f-our-l-evels-of-a-sad-s-p-ower-structure-and-t-heir-b-asic-c_001']
+
