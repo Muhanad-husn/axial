@@ -270,3 +270,60 @@ def test_scenario3_upgraded_band_fails_confidence_upgrade_count(fixture_root: Pa
     assert upgrades["passed"] is False
     assert "pc-1" in upgrades["violating_paper_claim_ids"]
     assert "pc-1" in result.stdout
+
+
+def test_scenario4_one_orphaned_record_does_not_abort_the_batch(fixture_root: Path):
+    """Issue #627's real-corpus reproduction: `axial gate run
+    provenance-integrity --records data/papers` crashed and scored nothing
+    the first time it ran against real records, because ONE record's origin
+    claim id no longer existed in its own (regenerated) source analysis --
+    the exact `UnresolvableOriginClaimError` shape reproduced here. A
+    directory holding one healthy record and one orphaned one must complete
+    the run, score the healthy record normally, and name the orphan as
+    failing -- never abort with an uncaught exception."""
+    origin = {"brief_id": "b1", "claim_id": "c1"}
+    _write_origin_analysis(
+        fixture_root,
+        "b1",
+        {
+            "claims": [{"claim_id": "c1", "confidence": "high", "names_touched": []}],
+            "coverage_map": {},
+        },
+    )
+    healthy_record = {
+        "paper_brief_id": "pb-healthy",
+        "claims": [_paper_claim("pc-1", origin=origin, confidence="high")],
+        "citations": [{"section_id": "s1", "sentence_index": 0, "paper_claim_id": "pc-1"}],
+    }
+    orphaned_record = {
+        "paper_brief_id": "pb-orphan",
+        "claims": [
+            _paper_claim(
+                "pc-orphan",
+                origin={"brief_id": "b1", "claim_id": "no-longer-exists"},
+                confidence="high",
+            )
+        ],
+        "citations": [{"section_id": "s1", "sentence_index": 0, "paper_claim_id": "pc-orphan"}],
+    }
+    records_dir = _write_paper_record(fixture_root, "pb-healthy", healthy_record)
+    _write_paper_record(fixture_root, "pb-orphan", orphaned_record)
+
+    result = _run_gate_cli(fixture_root, records_dir)
+
+    _assert_not_argparse_fallback(result)
+    assert "Traceback" not in result.stderr, (
+        f"the run must never crash on an orphaned record\nstderr: {result.stderr!r}"
+    )
+    assert result.returncode != 0, "the orphaned record's own violation must still fail the gate"
+
+    report = _load_report(fixture_root)
+    upgrades = next(m for m in report["metrics"] if m["metric"] == "confidence_upgrade_count")
+    assert upgrades["passed"] is False
+    assert "pc-orphan" in upgrades["violating_paper_claim_ids"]
+    assert "pc-1" not in upgrades["violating_paper_claim_ids"], (
+        "the healthy record's claim must be scored normally, not swept up by the orphan"
+    )
+
+    completeness = next(m for m in report["metrics"] if m["metric"] == "provenance_completeness")
+    assert completeness["n"] == 2, "both records' citation markers were scored -- the batch ran"

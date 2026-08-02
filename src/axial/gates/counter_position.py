@@ -39,6 +39,11 @@ draws on; `_load_source_records` reads them from `analyses_dir` (default
 own `_load_origin_record`/`analyses_dir` convention -- a small local loader
 duplicated here rather than imported, for the same reason `axial.gates.
 provenance`'s own module docstring gives for its local `_BAND_RANK` copy.
+A `source_analyses` entry that does not resolve (issue #627: the corpus was
+regenerated since the paper was drafted) is counted as contested-and-failing
+by `_score_presence_rate`, never a raise that stops every other record in
+the same `--records` directory from being scored -- mirrors `axial.gates.
+provenance`'s own fix for the identical shape.
 """
 
 from __future__ import annotations
@@ -60,9 +65,13 @@ class CounterPositionGateError(Exception):
 
 
 class UnresolvableSourceRecordError(CounterPositionGateError):
-    """Raised when a paper record's `source_analyses` names an analysis
-    record that cannot be loaded from `analyses_dir` -- the §7.14 fourth
-    arm cannot be checked against a source record this gate cannot read."""
+    """Raised by `_load_source_records` when a paper record's
+    `source_analyses` names an analysis record that cannot be loaded from
+    `analyses_dir` -- the §7.14 fourth arm cannot be checked against a
+    source record this gate cannot read. Caught by `_score_presence_rate`
+    (issue #627): the record it names is counted as contested and failing,
+    never left to propagate and abort every other record `--records` was
+    pointed at."""
 
     def __init__(self, brief_id: str, path: Path):
         self.brief_id = brief_id
@@ -110,7 +119,20 @@ def _score_presence_rate(
     failing_brief_ids: list[str] = []
 
     for index, record in enumerate(records, start=1):
-        source_records = _load_source_records(record, analyses_dir=analyses_dir)
+        try:
+            source_records = _load_source_records(record, analyses_dir=analyses_dir)
+        except UnresolvableSourceRecordError:
+            # Issue #627: a paper's `source_analyses` names a record that no
+            # longer resolves (the corpus was regenerated since the paper
+            # was drafted) -- this record's own §7.14 fourth arm cannot be
+            # checked, which must count AGAINST the record, not abort every
+            # other paper in the same `--records` directory. Counted as
+            # contested (the only honest denominator for a check that
+            # cannot be run) and failing, named beside every other
+            # `failing_brief_ids` entry below.
+            contested_total += 1
+            failing_brief_ids.append(_paper_id(record, index))
+            continue
         coverage_map = record.get("coverage_map") or {}
         scope = sorted(coverage_map)
         contested = detect_paper_contested(
@@ -160,8 +182,11 @@ def run_counter_position_gate(
     paper records, `axial.gates.harness.load_paper_records`). `client` is
     accepted only to match `axial.gates.run_gate`'s shared per-gate dispatch
     signature -- it is never called: the check is mechanical, zero model
-    calls (module docstring). Raises `UnresolvableSourceRecordError` when a
-    paper's `source_analyses` names a record this gate cannot load."""
+    calls (module docstring). Never raises `UnresolvableSourceRecordError`
+    (issue #627): a paper naming a `source_analyses` record this gate
+    cannot load is counted as contested and failing instead, so it fails on
+    its own metric without stopping every other record in `records` from
+    being scored."""
     del client
     resolved_analyses_dir = analyses_dir if analyses_dir is not None else default_analyses_dir()
     metric = _score_presence_rate(

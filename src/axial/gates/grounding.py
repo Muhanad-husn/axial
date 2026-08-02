@@ -14,7 +14,12 @@ check, applied here to a second independent-judge seam.
 An unresolvable grounds pointer on an "a" claim is a **gate error**, never
 silently judged "does not support" -- a broken pointer is an attribution-
 fidelity concern (that gate already catches it), not evidence against
-grounding.
+grounding. Same for a (b) claim judged by `run_grounding_gate` (Phase B,
+reported-only). `run_paper_grounding_gate` (below) is the one exception,
+since issue #627: it folds an unresolvable pointer on a paper's own new (b)
+claim into `contradicted_claim_ids` instead, so one paper record whose
+grounds have gone stale fails on its own metric rather than aborting every
+other record `--records` was pointed at.
 
 **`b_claim_contradiction_rate` (issue #550) is a SEPARATE, reported-only
 number, never folded into `grounding_support_rate`.** 33 of 112 claims
@@ -430,6 +435,7 @@ def _judge_b_claims(
     client: LLMClient,
     vault_dir: Path | None,
     judge_pass_name: str,
+    fail_unresolvable_claims: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Judge every claim in `b_claims`, re-barred (issue #607): each judge
     call is shown both the resolved grounds text and the grounds notes' own
@@ -437,15 +443,34 @@ def _judge_b_claims(
     all_claim_ids)` -- the shared walk behind both the reported-only
     `_b_claim_contradiction_rate` above and the gated
     `run_paper_grounding_gate` below, so the re-bar is one code path, never
-    two judge calls per claim."""
+    two judge calls per claim.
+
+    Raises `UnresolvableGroundsError` on the first claim whose grounds do
+    not resolve, UNLESS `fail_unresolvable_claims` is set (issue #627). Phase
+    B's `_b_claim_contradiction_rate` above never sets it: an unresolvable
+    pointer reaching this judge means a record skipped attribution-fidelity's
+    own grounds check first, a gate error there (module docstring).
+    `run_paper_grounding_gate` DOES set it: a directory of real paper records
+    can hold one whose (b)-claim grounds no longer resolve (the corpus moved
+    on since the paper was drafted), and that record must fail on its own
+    metric rather than abort every other record `--records` was pointed at.
+    With it set, an unresolvable claim is folded into `contradicted_claim_ids`
+    without a judge call -- a ceiling this gate cannot verify is the
+    conservative, non-passing reading, never silently dropped."""
     contradicted: list[str] = []
     all_ids: list[str] = []
     for claim_id, claim in b_claims:
         all_ids.append(claim_id)
-        grounds_text = _resolve_grounds_text(claim, claim_id, vault_dir=vault_dir)
-        arguing_against_text = _resolve_grounds_arguing_against(
-            claim, claim_id, vault_dir=vault_dir
-        )
+        try:
+            grounds_text = _resolve_grounds_text(claim, claim_id, vault_dir=vault_dir)
+            arguing_against_text = _resolve_grounds_arguing_against(
+                claim, claim_id, vault_dir=vault_dir
+            )
+        except UnresolvableGroundsError:
+            if not fail_unresolvable_claims:
+                raise
+            contradicted.append(claim_id)
+            continue
         verdict = _judge_b_claim(
             claim.get("text", ""),
             grounds_text,
@@ -551,7 +576,13 @@ def run_paper_grounding_gate(
 
     The self-grading guard is re-anchored to `PAPER_DRAFT_PASS_NAME`
     (`SelfGradingError`'s own `generating_pass_name`), since Phase C's
-    generating pass is drafting, never Phase-B's `SYNTHESIZE_PASS_NAME`."""
+    generating pass is drafting, never Phase-B's `SYNTHESIZE_PASS_NAME`.
+
+    Never raises `UnresolvableGroundsError` (issue #627): a new (b) claim
+    whose grounds no longer resolve is folded into `contradicted_claim_ids`
+    instead, so one paper record with a stale grounds pointer fails on its
+    own metric without stopping every other record in `records` from being
+    scored (`_judge_b_claims`'s own `fail_unresolvable_claims` docstring)."""
     new_b_claims = _iter_new_b_claims(records)
 
     if new_b_claims:
@@ -570,7 +601,11 @@ def run_paper_grounding_gate(
         )
     else:
         contradicted_ids, all_ids = _judge_b_claims(
-            new_b_claims, client=client, vault_dir=vault_dir, judge_pass_name=judge_pass_name
+            new_b_claims,
+            client=client,
+            vault_dir=vault_dir,
+            judge_pass_name=judge_pass_name,
+            fail_unresolvable_claims=True,
         )
         metric = build_metric_result(
             "b_claim_noncontradiction_rate",

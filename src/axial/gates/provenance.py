@@ -30,6 +30,13 @@ ceiling, the ORIGIN analysis record its `origin` names.
   module's own raise-fast contract should grow a flag for (mirrors
   `axial.paper.coverage`'s own choice to keep a duplicate, tiny `_BAND_RANK`
   local rather than reach into `axial.validators.coverage`'s private one).
+  A carried claim whose origin cannot be resolved at all -- the source
+  analysis is missing, or was regenerated and no longer carries the claim id
+  -- is itself one more violation, caught by `_ceiling_violations` (issue
+  #627), never a raise that aborts every other record `--records` was
+  pointed at: a directory of real papers WILL hold one whose source analysis
+  has since moved on, and that one paper failing outright is correct; the
+  rest of the batch scoring cleanly is the fix.
 
 **No panel field, no panel-derived trust condition, anywhere in this module**
 (§10.1's own note, P0-8's fourth observable): the report is producible, and
@@ -77,10 +84,15 @@ class ProvenanceGateError(Exception):
 
 
 class UnresolvableOriginRecordError(ProvenanceGateError):
-    """Raised when a carried claim's `origin.brief_id` names an analysis
-    record that cannot be loaded from `analyses_dir` -- the gate cannot
-    verify a confidence ceiling it has no origin to check against, so this
-    is a gate error, never silently counted as a violation or a pass."""
+    """Raised internally when a carried claim's `origin.brief_id` names an
+    analysis record that cannot be loaded from `analyses_dir` -- caught by
+    `_ceiling_violations` (issue #627) and folded into a `confidence_upgrade_
+    count` violation for that one claim, never left to propagate: a
+    confidence ceiling this gate cannot verify must drag the metric down for
+    the record that carries it, not abort every other record in the same
+    `--records` directory. Still raised (not silently swallowed) so the
+    catch site is the one place, and the one documented place, that decides
+    what an unresolvable origin means."""
 
     def __init__(self, brief_id: str, path: Path):
         self.brief_id = brief_id
@@ -93,8 +105,12 @@ class UnresolvableOriginRecordError(ProvenanceGateError):
 
 
 class UnresolvableOriginClaimError(ProvenanceGateError):
-    """Raised when a carried claim's `origin.claim_id` is not present in the
-    origin analysis record's own `claims` list."""
+    """Raised internally when a carried claim's `origin.claim_id` is not
+    present in the origin analysis record's own `claims` list -- e.g. the
+    source analysis was regenerated against a newer corpus and no longer
+    carries the claim id a still-published paper names. Caught the same way
+    as `UnresolvableOriginRecordError` above (issue #627): folded into a
+    `confidence_upgrade_count` violation for that claim, batch continues."""
 
     def __init__(self, paper_claim_id: str, brief_id: str, claim_id: str):
         self.paper_claim_id = paper_claim_id
@@ -211,7 +227,17 @@ def _ceiling_violations(
     across every record this gate scores in one run, keyed by `brief_id`, so
     a paper brief naming the same source analysis more than once (or a
     records directory holding more than one paper drawn from it) loads that
-    analysis record once."""
+    analysis record once.
+
+    A carried claim whose origin cannot be resolved -- the analysis record is
+    missing, or the analysis record loads but no longer carries the claim id
+    (issue #627: a source analysis regenerated against a newer corpus drops
+    the old claim ids a still-published paper still names) -- counts as a
+    VIOLATION of this claim, never a raise that aborts every other record in
+    the same batch: the ceiling this gate exists to check cannot be verified,
+    which is exactly what `confidence_upgrade_count` (a hard, threshold-0
+    count) must reflect. `run_provenance_gate`'s caller sees one more
+    genuinely-failing paper, not a report it never got at all."""
     claims = record.get("claims") or []
     by_id = {claim.get("paper_claim_id"): claim for claim in claims if isinstance(claim, dict)}
     violations: list[str] = []
@@ -226,12 +252,16 @@ def _ceiling_violations(
         if isinstance(origin, dict) and origin.get("brief_id"):
             brief_id = str(origin["brief_id"])
             claim_id = origin.get("claim_id")
-            if brief_id not in origin_cache:
-                origin_cache[brief_id] = _load_origin_record(brief_id, analyses_dir)
-            origin_record = origin_cache[brief_id]
-            origin_claim = _origin_claim(origin_record, claim_id)
-            if origin_claim is None:
-                raise UnresolvableOriginClaimError(paper_claim_id, brief_id, str(claim_id))
+            try:
+                if brief_id not in origin_cache:
+                    origin_cache[brief_id] = _load_origin_record(brief_id, analyses_dir)
+                origin_record = origin_cache[brief_id]
+                origin_claim = _origin_claim(origin_record, claim_id)
+                if origin_claim is None:
+                    raise UnresolvableOriginClaimError(paper_claim_id, brief_id, str(claim_id))
+            except (UnresolvableOriginRecordError, UnresolvableOriginClaimError):
+                violations.append(paper_claim_id)
+                continue
             expected = clamped_band_for(origin_claim, origin_record.get("coverage_map") or {})
             if band != expected:
                 violations.append(paper_claim_id)
@@ -289,9 +319,12 @@ def run_provenance_gate(
     records, `axial.gates.harness.load_paper_records`). `client` is accepted
     only to match `axial.gates.run_gate`'s shared per-gate dispatch
     signature -- it is never called: both metrics are zero-model-call and
-    mechanical (§8 P0-8). Raises `UnresolvableOriginRecordError`/
-    `UnresolvableOriginClaimError` when a carried claim's own origin cannot
-    be resolved -- the gate cannot verify a ceiling it cannot read.
+    mechanical (§8 P0-8). Never raises `UnresolvableOriginRecordError`/
+    `UnresolvableOriginClaimError` (issue #627): a carried claim whose own
+    origin cannot be resolved counts as a `confidence_upgrade_count`
+    violation for that claim instead, so one record with a dangling origin
+    fails on its own metrics without stopping every other record in
+    `records` from being scored.
 
     Carries no panel field and no panel-derived trust condition (§10.1):
     `trusted` here resolves exactly as every other rung-3 gate's does, from

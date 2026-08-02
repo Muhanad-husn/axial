@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 import yaml
 
-from axial.gates.counter_position import UnresolvableSourceRecordError, run_counter_position_gate
+from axial.gates.counter_position import run_counter_position_gate
 from axial.llm import ExplodingLLMClient
 
 TILLY_CHUNK = "tilly-1978_001_intro_001"
@@ -241,19 +241,55 @@ def test_fourth_arm_a_failed_source_counter_position_never_fires_alone(tmp_path:
     assert metric.n == 0
 
 
-def test_missing_source_analysis_record_raises(tmp_path: Path):
+def test_missing_source_analysis_record_is_contested_and_failing_not_a_raise(tmp_path: Path):
+    """Issue #627: a paper naming a source analysis that no longer resolves
+    must fail its own metric, never abort the whole gate run."""
     record = _paper_record(
         claims=[], counter_position=_no_counter_position(), source_analyses=["no-such-brief"]
     )
-    with pytest.raises(UnresolvableSourceRecordError):
-        run_counter_position_gate(
-            [record],
-            client=ExplodingLLMClient(),
-            corpus_pin=None,
-            trusted=False,
-            config_path=tmp_path / "nonexistent.yaml",
-            analyses_dir=tmp_path / "analyses",
-        )
+    report = run_counter_position_gate(
+        [record],
+        client=ExplodingLLMClient(),
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+        analyses_dir=tmp_path / "analyses",
+    )
+    metric = report.metrics[0]
+    assert metric.value == pytest.approx(0.0)
+    assert metric.passed is False
+    assert "pb-1" in metric.detail["failing_brief_ids"]
+
+
+def test_one_unresolvable_source_record_does_not_stop_a_healthy_record(tmp_path: Path):
+    """Issue #627's own batch shape: two records in one run, one whose
+    source analysis is missing and one that passes cleanly -- the run
+    completes and both are scored."""
+    _write_source_record(
+        tmp_path / "analyses", "b1", {"counter_position": _present_counter_position("x")}
+    )
+    healthy = _paper_record(
+        claims=[], counter_position=_present_counter_position("x"), source_analyses=["b1"]
+    )
+    orphaned = {
+        "paper_brief_id": "pb-orphan",
+        "claims": [],
+        "counter_position": _no_counter_position(),
+        "source_analyses": ["no-such-brief"],
+        "coverage_map": {},
+    }
+    report = run_counter_position_gate(
+        [healthy, orphaned],
+        client=ExplodingLLMClient(),
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+        analyses_dir=tmp_path / "analyses",
+    )
+    metric = report.metrics[0]
+    assert metric.n == 2
+    assert metric.passed is False
+    assert metric.detail["failing_brief_ids"] == ["pb-orphan"]
 
 
 # -- the three inherited arms, over the paper's OWN cited claims ------------
@@ -287,8 +323,9 @@ def test_inherited_arm_fires_even_with_a_resolvable_source_record_present(
     change the outcome. Source records are loaded eagerly, once per paper
     record, regardless of which arm ends up firing (module docstring): a
     paper's `source_analyses` naming a record that does not resolve is
-    surfaced as `UnresolvableSourceRecordError` unconditionally, the same
-    way `axial.gates.provenance` treats an unresolvable origin."""
+    caught and counted as contested-and-failing (issue #627), the same way
+    `axial.gates.provenance` treats an unresolvable origin -- this scenario
+    uses a record that DOES resolve, so that path is not exercised here."""
     _write_source_record(tmp_path / "analyses", "b1", {"counter_position": _no_counter_position()})
     claims = [_paper_claim("pc-1", TILLY_CHUNK, SKOCPOL_CHUNK)]
     record = _paper_record(

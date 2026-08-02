@@ -241,6 +241,47 @@ def test_paper_attribution_fidelity_flagged_claim_fails_and_names_it(fixture_roo
     assert "pc-2" in b_seam["flagged_claim_ids"]
 
 
+def test_paper_attribution_fidelity_one_orphaned_record_does_not_abort_the_batch(
+    fixture_root: Path,
+):
+    """Issue #627's own shape, checked here too even though this gate
+    already reused `axial.validators.attribution`'s per-claim mechanical
+    checks, which never raise on an unresolved grounds pointer -- they
+    return a per-claim failure (`REASON_UNRESOLVABLE_GROUNDS`) instead. A
+    directory holding a claim whose grounds do not resolve beside a healthy
+    one must complete the run and score both."""
+    orphaned = {
+        "paper_brief_id": "pb-orphan",
+        "claims": [_new_b_claim("pc-orphan", chunk_id="no-such-chunk")],
+    }
+    healthy = {"paper_brief_id": "pb-healthy", "claims": [_new_b_claim("pc-healthy")]}
+    records_dir = _write_paper_record(fixture_root, "pb-orphan", orphaned)
+    _write_paper_record(fixture_root, "pb-healthy", healthy)
+
+    result = _run_gate_cli(
+        fixture_root,
+        "paper-attribution-fidelity",
+        records_dir,
+        extra_env={
+            STUB_ATTRIBUTION_RESPONSE_ENV_VAR: json.dumps(
+                {"flagged_claim_ids": [], "flagged_c_claim_ids": []}
+            ),
+            STUB_MODEL_BY_PASS_ENV_VAR: json.dumps(
+                {"synthesize": "model-a", "attribution": "model-b"}
+            ),
+        },
+    )
+
+    _assert_not_argparse_fallback(result)
+    assert "Traceback" not in result.stderr, f"stderr: {result.stderr!r}"
+    assert result.returncode != 0, "the orphaned claim must fail the gate, not crash it"
+    report = _load_report(fixture_root, "paper-attribution-fidelity")
+    completeness = next(m for m in report["metrics"] if m["metric"] == "attribution_completeness")
+    assert completeness["n"] == 2
+    assert "pc-orphan" in completeness["failing_claim_ids"]
+    assert "pc-healthy" not in completeness["failing_claim_ids"]
+
+
 # -- paper-grounding: the re-barred (b)-claim grounding gate ---------------
 
 
@@ -287,6 +328,40 @@ def test_paper_grounding_self_grading_guard_names_paper_draft(fixture_root: Path
     assert "RuntimeError" not in combined, (
         "the explode provider's .complete() must never fire -- zero judge calls"
     )
+
+
+def test_paper_grounding_one_orphaned_record_does_not_abort_the_batch(fixture_root: Path):
+    """Issue #627: a new (b) claim whose grounds no longer resolve must fail
+    its own record, not crash the whole `--records` batch."""
+    orphaned = {
+        "paper_brief_id": "pb-orphan",
+        "claims": [_new_b_claim("pc-orphan", chunk_id="no-such-chunk")],
+    }
+    healthy = {"paper_brief_id": "pb-healthy", "claims": [_new_b_claim("pc-healthy")]}
+    records_dir = _write_paper_record(fixture_root, "pb-orphan", orphaned)
+    _write_paper_record(fixture_root, "pb-healthy", healthy)
+
+    result = _run_gate_cli(
+        fixture_root,
+        "paper-grounding",
+        records_dir,
+        extra_env={
+            STUB_GROUNDING_RESPONSE_SEQUENCE_ENV_VAR: json.dumps(
+                [json.dumps({"verdict": "does_not_contradict"})]
+            ),
+            STUB_MODEL_BY_PASS_ENV_VAR: json.dumps(
+                {"paper_draft": "model-a", "grounding": "model-b"}
+            ),
+        },
+    )
+
+    _assert_not_argparse_fallback(result)
+    assert "Traceback" not in result.stderr, f"stderr: {result.stderr!r}"
+    assert result.returncode != 0, "the orphaned claim must fail the gate, not crash it"
+    report = _load_report(fixture_root, "paper-grounding")
+    metric = next(m for m in report["metrics"] if m["metric"] == "b_claim_noncontradiction_rate")
+    assert metric["n"] == 2
+    assert "pc-orphan" in metric["contradicted_claim_ids"]
 
 
 # -- counter-position: mechanical presence-or-disclosure over papers -------
@@ -378,3 +453,65 @@ def test_counter_position_fourth_arm_fails_when_paper_drops_the_disclosure(fixtu
     assert metric["value"] == pytest.approx(0.0)
     assert metric["passed"] is False
     assert "pb-1" in metric["failing_brief_ids"]
+
+
+def test_counter_position_one_orphaned_record_does_not_abort_the_batch(fixture_root: Path):
+    """Issue #627: a paper naming a `source_analyses` record that no longer
+    resolves must fail its own record, not crash the whole `--records`
+    directory a healthy record sits in beside it."""
+    _write_chunk(fixture_root, TILLY_CHUNK, author="Charles Tilly", arguing_against=["Skocpol"])
+    _write_chunk(fixture_root, SKOCPOL_CHUNK, author="Theda Skocpol", arguing_against=[])
+    healthy = {
+        "paper_brief_id": "pb-healthy",
+        "claims": [
+            {
+                "paper_claim_id": "pc-1",
+                "text": "Text.",
+                "kind": "a",
+                "grounds": [
+                    {"ref_type": "chunk", "ref_id": TILLY_CHUNK},
+                    {"ref_type": "chunk", "ref_id": SKOCPOL_CHUNK},
+                ],
+                "names_touched": [],
+            }
+        ],
+        "counter_position": {
+            "present": True,
+            "stance": "The opposing school holds...",
+            "grounds": [{"ref_type": "chunk", "ref_id": SKOCPOL_CHUNK}],
+            "corpus_one_sided": False,
+            "one_sided_reason": None,
+        },
+        "source_analyses": [],
+        "coverage_map": {},
+    }
+    orphaned = {
+        "paper_brief_id": "pb-orphan",
+        "claims": [],
+        "counter_position": {
+            "present": False,
+            "stance": None,
+            "grounds": [],
+            "corpus_one_sided": False,
+            "one_sided_reason": None,
+        },
+        "source_analyses": ["no-such-brief"],
+        "coverage_map": {},
+    }
+    records_dir = _write_paper_record(fixture_root, "pb-healthy", healthy)
+    _write_paper_record(fixture_root, "pb-orphan", orphaned)
+
+    result = _run_gate_cli(
+        fixture_root, "counter-position", records_dir, extra_env={PROVIDER_ENV_VAR: "explode"}
+    )
+
+    _assert_not_argparse_fallback(result)
+    assert "Traceback" not in result.stderr, f"stderr: {result.stderr!r}"
+    assert result.returncode != 0, "the orphaned record must fail the gate, not crash it"
+    report = _load_report(fixture_root, "counter-position")
+    metric = next(
+        m for m in report["metrics"] if m["metric"] == "paper_counter_position_presence_rate"
+    )
+    assert metric["n"] == 2
+    assert "pb-orphan" in metric["failing_brief_ids"]
+    assert "pb-healthy" not in metric["failing_brief_ids"]
