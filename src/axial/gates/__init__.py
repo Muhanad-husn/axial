@@ -58,6 +58,7 @@ from axial.gates.harness import (
     GateReport,
     MetricResult,
     format_report,
+    load_paper_records,
     load_records,
     metric_verdict_text,
     not_applicable_metric,
@@ -66,6 +67,13 @@ from axial.gates.harness import (
     resolve_trusted,
     verdict_text,
     write_report,
+)
+from axial.gates.provenance import GATE_NAME as PROVENANCE_GATE_NAME
+from axial.gates.provenance import (
+    ProvenanceGateError,
+    UnresolvableOriginClaimError,
+    UnresolvableOriginRecordError,
+    run_provenance_gate,
 )
 from axial.gates.synthesis_quality import GATE_NAME as SYNTHESIS_QUALITY_GATE_NAME
 from axial.gates.synthesis_quality import run_synthesis_quality_gate
@@ -81,6 +89,7 @@ GATE_RUNNERS = {
     SYNTHESIS_QUALITY_GATE_NAME: run_synthesis_quality_gate,
     CALIBRATION_GATE_NAME: run_calibration_gate,
     ADVERSARIAL_GATE_NAME: run_adversarial_gate,
+    PROVENANCE_GATE_NAME: run_provenance_gate,
 }
 
 
@@ -124,6 +133,7 @@ __all__ = [
     "ADVERSARIAL_GATE_NAME",
     "ATTRIBUTION_FIDELITY_GATE_NAME",
     "GROUNDING_GATE_NAME",
+    "PROVENANCE_GATE_NAME",
     "SYNTHESIS_QUALITY_GATE_NAME",
     "CALIBRATION_GATE_NAME",
     "GATE_RUNNERS",
@@ -144,11 +154,15 @@ __all__ = [
     "MalformedSeededBlockError",
     "MissingSeededBlockError",
     "PremiseMatchCheckFailedError",
+    "ProvenanceGateError",
     "SeededBrief",
     "SelfGradingError",
     "UnresolvableGroundsError",
+    "UnresolvableOriginClaimError",
+    "UnresolvableOriginRecordError",
     "UnknownGateError",
     "format_report",
+    "load_paper_records",
     "load_records",
     "load_seeded_briefs",
     "metric_verdict_text",
@@ -161,6 +175,7 @@ __all__ = [
     "run_calibration_gate",
     "run_gate",
     "run_grounding_gate",
+    "run_provenance_gate",
     "run_synthesis_quality_gate",
     "verdict_text",
     "write_report",

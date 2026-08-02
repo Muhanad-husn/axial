@@ -20,6 +20,7 @@ from axial.gates.harness import (
     comparison_for,
     compare,
     format_report,
+    load_paper_records,
     load_records,
     not_scoreable_metric,
     resolve_corpus_pin,
@@ -377,6 +378,46 @@ def test_load_records_skips_non_record_json_in_a_sweep_directory(tmp_path: Path)
     assert records[0]["claims"][0]["id"] == "real"
 
 
+# -- load_paper_records (specs/PHASE-C.md §7.3, §8 P0-8/P0-12; issue #606) ---
+
+
+def test_load_paper_records_reads_paper_records_sorted(tmp_path: Path):
+    records_dir = tmp_path / "records"
+    records_dir.mkdir()
+    (records_dir / "b.json").write_text(
+        json.dumps({"paper_brief_id": "b", "claims": []}), encoding="utf-8"
+    )
+    (records_dir / "a.json").write_text(
+        json.dumps({"paper_brief_id": "a", "claims": []}), encoding="utf-8"
+    )
+
+    records = load_paper_records(records_dir)
+    assert [r["paper_brief_id"] for r in records] == ["a", "b"]
+
+
+def test_load_paper_records_excludes_a_plain_analysis_record(tmp_path: Path):
+    """An analysis record carries `claims` but no `paper_brief_id` -- the
+    exact inverse of a paper record's own shape -- so `load_records`'
+    discriminator would wrongly admit it here without this check."""
+    records_dir = tmp_path / "records"
+    records_dir.mkdir()
+    (records_dir / "analysis.json").write_text(
+        json.dumps({"brief_id": "abc", "claims": [{"id": "x"}]}), encoding="utf-8"
+    )
+    (records_dir / "paper.json").write_text(
+        json.dumps({"paper_brief_id": "pb-1", "claims": []}), encoding="utf-8"
+    )
+
+    records = load_paper_records(records_dir)
+    assert len(records) == 1
+    assert records[0]["paper_brief_id"] == "pb-1"
+
+
+def test_load_paper_records_missing_directory_raises(tmp_path: Path):
+    with pytest.raises(GateError):
+        load_paper_records(tmp_path / "nonexistent")
+
+
 # -- corpus pin / academic cases / trusted -----------------------------------
 
 
@@ -477,3 +518,36 @@ def test_format_report_names_metric_and_overall_verdict():
     assert "FAIL" in text
     assert "c-3" in text
     assert "trusted: False" in text
+
+
+def test_format_report_names_dangling_and_violating_paper_claim_ids():
+    """issue #606: the provenance-integrity gate's own detail keys, so its
+    CLI stdout names the offending `paper_claim_id`s exactly like every
+    other gate's `failing_claim_ids`."""
+    completeness = MetricResult(
+        "provenance_completeness",
+        0.5,
+        1.0,
+        "gte",
+        False,
+        2,
+        detail={"dangling_paper_claim_ids": ["pc-9"]},
+    )
+    upgrades = MetricResult(
+        "confidence_upgrade_count",
+        1.0,
+        0,
+        "lte",
+        False,
+        1,
+        detail={"violating_paper_claim_ids": ["pc-1"]},
+    )
+    report = GateReport(
+        gate="provenance-integrity",
+        corpus_pin=None,
+        trusted=False,
+        metrics=[completeness, upgrades],
+    )
+    text = format_report(report)
+    assert "pc-9" in text
+    assert "pc-1" in text

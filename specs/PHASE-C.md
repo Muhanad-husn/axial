@@ -661,11 +661,11 @@ What this section measured about the join underneath it -- that `who_argues_agai
 - [ ] Rendering is deterministic: the same record renders the same markdown, byte for byte.
 - [ ] Every confidence band in the rendered paper appears next to the coverage counts that justify it, and claim kind is legible in the citation table (§7.10).
 
-**P0-8 Provenance-integrity gate (charter Principle II; mechanical hard gate).**
-- [ ] A **deterministic** gate scores `provenance_completeness`: the share of citation markers that resolve to a claim in the record whose grounds resolve to real vault ids. Threshold **1.00**. Observable: a record with one dangling marker or one unresolvable grounds pointer fails outright.
-- [ ] The same gate scores `confidence_upgrade_count`: the number of claims violating the §7.4 ceiling. Threshold **0**. Observable: a single upgraded band fails the gate.
-- [ ] Both metrics are computed with **zero model calls**.
-- [ ] The gate report carries **no panel field and no panel-derived trust condition**. Observable: the report is produced, and can pass, with no reviewer panel configured and no reviewer call ever made (§10.1).
+**P0-8 Provenance-integrity gate (charter Principle II; mechanical hard gate).** [x] Shipped issue #606 (B1 of #605), `src/axial/gates/provenance.py`.
+- [x] A **deterministic** gate scores `provenance_completeness`: the share of citation markers that resolve to a claim in the record whose grounds resolve to real vault ids. Threshold **1.00**. Observable: a record with one dangling marker or one unresolvable grounds pointer fails outright.
+- [x] The same gate scores `confidence_upgrade_count`: the number of claims violating the §7.4 ceiling. Threshold **0**. Observable: a single upgraded band fails the gate.
+- [x] Both metrics are computed with **zero model calls**.
+- [x] The gate report carries **no panel field and no panel-derived trust condition**. Observable: the report is produced, and can pass, with no reviewer panel configured and no reviewer call ever made (§10.1).
 
 **P0-9 Grounding and (b)-seam gates, reusing Phase B (charter Principles I, II).**
 - [ ] Phase C's new (b) claims are scored by the **existing grounding judge** in `src/axial/gates/grounding.py`: its prompt, verdict vocabulary, unresolvable-grounds error, and self-grading guard are reused unchanged. The judge's self-grading guard is re-anchored to Phase C's drafting pass rather than the Phase-B synthesis pass.
