@@ -47,7 +47,23 @@ from axial.run import (
 class _FakeClient:
     """A sentinel client so tests can assert identity (constructed once,
     threaded unchanged into every pass invocation) without touching the real
-    LLM provider machinery."""
+    LLM provider machinery.
+
+    `model_for_pass`/`usage_for_pass` (issue #526): `run_pass` now calls
+    both on whatever client it holds -- to render the live progress line's
+    spend figure, to decide whether a source's own `record()` carries a
+    real model id, and to build the end-of-run report's token/cost totals
+    -- so a client passed to it must satisfy at least this much of the real
+    `LLMClient` protocol even when, as here, it never actually completes
+    anything. `usage_for_pass` returning `None` unconditionally is the same
+    "nothing to report" case a real client reports before its first call
+    (`axial.llm._accumulate_usage`'s own docstring)."""
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
+        return None
 
 
 class _DeclaredError(Exception):
@@ -810,4 +826,3 @@ def test_empty_corpus_source_set_exits_zero_with_total_zero(tmp_path, monkeypatc
     assert exit_code == 0
     assert summary.total == 0
     assert summary.outcomes == []
-
