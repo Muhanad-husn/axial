@@ -245,6 +245,50 @@ def test_run_one_draw_records_a_declared_error_as_fail_and_does_not_raise(tmp_pa
     assert record is None
 
 
+def test_run_one_draw_records_an_ask_error_as_fail_and_does_not_raise(tmp_path, monkeypatch):
+    """issue #572, PR 4 of 4: `AskError` (no map built at this pin, an
+    encoder mismatch, an unusable door response) is `run_brief`'s own
+    declared failure surface on a `--map` draw, exactly like `QueryError`/
+    `SynthesisError` are on the name-layer path -- it must not crash the
+    whole sweep."""
+    brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
+
+    def _raise(*_args, **_kwargs):
+        raise sweep_mod.AskError("no argument map built at this pin")
+
+    monkeypatch.setattr(sweep_mod, "run_brief", _raise)
+
+    outcome, record = sweep_mod._run_one_draw(
+        "briefstem.yaml", brief, 0, **_draw_kwargs(tmp_path / "sweep", lambda: object())
+    )
+
+    assert outcome.status == sweep_mod.FAIL_STATUS
+    assert "no argument map built" in outcome.reason
+    assert record is None
+
+
+def test_run_one_draw_forwards_use_map_to_run_brief(tmp_path, monkeypatch):
+    brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
+    captured = {}
+
+    def _fake_run_brief(_brief, *, use_map=False, **_kwargs):
+        captured["use_map"] = use_map
+        record = {"brief_id": brief.brief_id}
+        return _FakeBriefRunResult(record=record, path=Path("x.json"), markdown_path=Path("x.md"))
+
+    monkeypatch.setattr(sweep_mod, "run_brief", _fake_run_brief)
+
+    sweep_mod._run_one_draw(
+        "briefstem.yaml",
+        brief,
+        0,
+        use_map=True,
+        **_draw_kwargs(tmp_path / "sweep", lambda: object()),
+    )
+
+    assert captured["use_map"] is True
+
+
 def test_run_one_draw_propagates_an_undeclared_exception(tmp_path, monkeypatch):
     brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
 
@@ -393,6 +437,47 @@ def test_run_sweep_runs_every_brief_draws_times_and_scopes_gates_per_brief(tmp_p
     # -- never pooled across briefs.
     assert len(gate_calls) == 2 * len(sweep_mod.SWEEP_GATE_NAMES)
     assert all(count == 3 for _gate_name, count in gate_calls)
+
+
+def test_run_sweep_forwards_use_map_to_every_draws_run_brief(tmp_path, monkeypatch):
+    """issue #572, PR 4 of 4: `run_sweep(use_map=True)` -- the seam
+    `axial.brief.smoke.run_smoke(use_map=True)` uses -- reaches every single
+    `(brief, draw)` pair's own `run_brief` call, not just the first."""
+    briefs_by_path = {
+        "briefA.yaml": Brief(brief_id="idA", case="A", request="rA", lens=None),
+        "briefB.yaml": Brief(brief_id="idB", case="B", request="rB", lens=None),
+    }
+    monkeypatch.setattr(sweep_mod, "read_worklist", lambda _path: list(briefs_by_path))
+    monkeypatch.setattr(sweep_mod, "load_brief", lambda path: briefs_by_path[path])
+    monkeypatch.setattr(sweep_mod, "resolve_trusted", lambda evals_dir=None: (None, False))
+
+    captured_use_map: list[bool] = []
+
+    def _fake_run_brief(brief, *, analyses_dir, use_map=False, **_kwargs):
+        captured_use_map.append(use_map)
+        record = {
+            "brief_id": brief.brief_id,
+            "interrogation": {"disposition": "proceed"},
+            "claims": [],
+            "cost": {"by_pass": {}},
+        }
+        path = Path(analyses_dir) / f"{brief.brief_id}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record), encoding="utf-8")
+        return _FakeBriefRunResult(record=record, path=path, markdown_path=path)
+
+    monkeypatch.setattr(sweep_mod, "run_brief", _fake_run_brief)
+
+    sweep_mod.run_sweep(
+        "worklist-ignored-by-fake-read_worklist",
+        draws=2,
+        sweep_dir=tmp_path / "sweep",
+        client_factory=lambda: object(),
+        score_gates=False,
+        use_map=True,
+    )
+
+    assert captured_use_map == [True, True, True, True]  # 2 briefs x 2 draws
 
 
 def test_run_sweep_resume_across_two_invocations_skips_completed_pairs(tmp_path, monkeypatch):

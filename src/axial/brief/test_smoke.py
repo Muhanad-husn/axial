@@ -8,6 +8,7 @@ from pathlib import Path
 
 import yaml
 
+import axial.brief.smoke as smoke_mod
 from axial.brief.smoke import (
     CHECK_COST_BUDGET,
     CHECK_COUNTER_POSITION,
@@ -163,6 +164,45 @@ def test_a_refusal_skips_the_coverage_check_rather_than_failing_it():
     assert result.name == CHECK_COVERAGE_MAP
 
 
+def test_a_map_run_with_an_empty_coverage_map_passes_not_falsely_fails():
+    """issue #572, PR 4 of 4: `coverage_map` is name-layer-scoped and empty
+    by construction on a map-retrieved run -- the #490 check must not
+    mistake that for the regression it exists to catch."""
+    record = _record(
+        coverage_map={},
+        map_retrieval={
+            "used": True,
+            "asks": ["An argument."],
+            "landed": [{"position_id": "pos-0001", "score": 0.9}],
+            "corridor": [],
+            "assembled_chunk_ids": ["fixmap-2021-a_1_s_001"],
+        },
+    )
+    result = _check_coverage_map(record)
+    assert result.passed is True
+    assert result.name == CHECK_COVERAGE_MAP
+    assert "argument map" in result.detail
+
+
+def test_a_map_run_that_assembled_nothing_fails_the_coverage_check():
+    """The map path's own genuine failure mode still gets a real, non-shrug
+    verdict -- never a silent pass just because a name-layer field happens
+    to be empty."""
+    record = _record(
+        coverage_map={},
+        map_retrieval={
+            "used": True,
+            "asks": [],
+            "landed": [],
+            "corridor": [],
+            "assembled_chunk_ids": [],
+        },
+    )
+    result = _check_coverage_map(record)
+    assert result.passed is False
+    assert "argument map" in result.detail
+
+
 def test_a_refused_tool_call_fails_the_no_unhandled_failure_check():
     record = _record(
         trajectory=[
@@ -284,3 +324,48 @@ def test_smoke_brief_paths_is_sorted_and_ignores_the_readme():
         "S-05",
     ]
     assert all(path.suffix == ".yaml" for path in paths)
+
+
+# -- --map pass-through (issue #572, PR 4 of 4) -----------------------------
+
+
+def test_run_smoke_forwards_use_map_to_run_sweep(tmp_path, monkeypatch):
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    (briefs_dir / "b1.yaml").write_text("case: C\nrequest: R\n", encoding="utf-8")
+
+    captured = {}
+
+    class _FakeSummary:
+        briefs: list = []
+
+    def _fake_run_sweep(*_args, **kwargs):
+        captured["use_map"] = kwargs.get("use_map")
+        return _FakeSummary()
+
+    monkeypatch.setattr(smoke_mod, "run_sweep", _fake_run_sweep)
+
+    smoke_mod.run_smoke(sweep_dir=tmp_path / "out", briefs_dir=briefs_dir, use_map=True)
+
+    assert captured["use_map"] is True
+
+
+def test_run_smoke_defaults_use_map_to_false(tmp_path, monkeypatch):
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    (briefs_dir / "b1.yaml").write_text("case: C\nrequest: R\n", encoding="utf-8")
+
+    captured = {}
+
+    class _FakeSummary:
+        briefs: list = []
+
+    def _fake_run_sweep(*_args, **kwargs):
+        captured["use_map"] = kwargs.get("use_map")
+        return _FakeSummary()
+
+    monkeypatch.setattr(smoke_mod, "run_sweep", _fake_run_sweep)
+
+    smoke_mod.run_smoke(sweep_dir=tmp_path / "out", briefs_dir=briefs_dir)
+
+    assert captured["use_map"] is False

@@ -61,7 +61,6 @@ from axial.gates.grounding import GroundingGateError, run_grounding_gate
 from axial.llm import LLMClient
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_runs_dir
 from axial.query.reader import source_id_from_chunk_id
-from axial.retrieve.loop import assemble_evidence_ids
 from axial.retrieve.tools import TOOL_REGISTRY
 from axial.validators.attribution import _check_grounds, _check_kind, _claim_id_of
 
@@ -495,23 +494,36 @@ def _grounds_ref_ids(claims: list[dict[str, Any]]) -> tuple[set[str], set[str]]:
     return all_ids, chunk_ids
 
 
-def _retrieval_precision(cited_ids: set[str], trajectory: list[dict[str, Any]]) -> dict[str, Any]:
-    """Distinct notes cited over distinct notes retrieved. "Retrieved" is
-    `assemble_evidence_ids`' own fold -- the same dedupe stage 4 assembles
-    evidence from -- so precision measures the selection the run actually
-    made, not the raw id count its trajectory printed."""
-    retrieved = assemble_evidence_ids(trajectory)
-    if not retrieved:
+def _retrieval_precision(cited_ids: set[str], evidence: dict[str, Any]) -> dict[str, Any]:
+    """Distinct notes cited over distinct notes **composed** into the
+    synthesis prompt -- not assembled (issue #545's own correction, settled
+    after a wrong number was published: 103 of 506 assembled reads as
+    9.7%, but the synthesis model only ever saw 146 of those 506 -- the
+    `evidence_char_budget` prefix `compose_prompt` actually walks -- and
+    103 of 146 is 70.5%, the honest figure). Assembled-but-never-shown
+    notes were paid for and read by no model; dividing by them understates
+    precision by counting misses the model was never given a chance to
+    make.
+
+    `evidence` is the §7.3 record's own `evidence` field
+    (`composed_count`, already computed by stage 4's `compose_prompt` walk
+    -- see `_evidence_figures`). That field is **path-agnostic**: it is
+    filled in identically whether stage 3 was the name-layer retrieval
+    loop or the argument map (issue #572, PR 4 of 4), so this metric scores
+    a map-retrieved run exactly as it scores a name-layer one, with no
+    branch for either."""
+    composed = int(evidence.get("composed_count") or 0)
+    if not composed:
         return {
             "value": None,
             "cited_note_count": len(cited_ids),
-            "retrieved_note_count": 0,
-            "reason": "not scored: this run retrieved no note",
+            "composed_note_count": 0,
+            "reason": "not scored: this run composed no note into the synthesis prompt",
         }
     return {
-        "value": len(cited_ids) / len(retrieved),
+        "value": len(cited_ids) / composed,
         "cited_note_count": len(cited_ids),
-        "retrieved_note_count": len(retrieved),
+        "composed_note_count": composed,
     }
 
 
@@ -617,6 +629,7 @@ def build_run_report(
     model_by_pass = record.get("model_by_pass") or {}
     source_usage = record.get("source_usage") or {}
     coverage_map = record.get("coverage_map") or {}
+    evidence = record.get("evidence") or {}
     classification = load_classification(path=classification_path)
 
     cited_ids, grounds_chunk_ids = _grounds_ref_ids(claims)
@@ -636,7 +649,7 @@ def build_run_report(
             "cost": _cost_figures(record.get("cost") or {}),
             "latency_seconds": _latency(latency_by_pass or {}, model_by_pass),
             "trajectory": _trajectory_figures(trajectory),
-            "evidence": _evidence_figures(record.get("evidence") or {}),
+            "evidence": _evidence_figures(evidence),
         },
         "accuracy": {
             "attribution_completeness": _attribution_completeness(claims, vault_dir=vault_dir),
@@ -659,7 +672,7 @@ def build_run_report(
             "claim_mix": _claim_mix(claims),
             "cross_source_rate": _cross_source_rate(claims, vault_dir=vault_dir),
             "grounds_per_claim": _grounds_per_claim(claims),
-            "retrieval_precision": _retrieval_precision(cited_ids, trajectory),
+            "retrieval_precision": _retrieval_precision(cited_ids, evidence),
             "name_reach": name_reach,
             "disagreement_reuse": disagreement_reuse,
             "coverage_bands": _coverage_bands(coverage_map),

@@ -187,15 +187,20 @@ def test_grounds_per_claim_reports_mean_median_and_the_two_or_more_share():
     assert result["share_with_two_or_more"] == pytest.approx(0.5)
 
 
-def test_retrieval_precision_divides_cited_by_retrieved():
-    trajectory = [_entry(1, "get_chunk", ["a"]), _entry(2, "get_chunk", ["b"])]
-    result = _retrieval_precision({"a"}, trajectory)
+def test_retrieval_precision_divides_cited_by_composed_not_assembled():
+    # issue #545's own correction, mirrored exactly: a wrong number was
+    # published once dividing by ASSEMBLED (103/506 = 9.7%); the settled
+    # definition divides by COMPOSED, the notes that actually reached the
+    # synthesis prompt (103/146 = 70.5%). A far larger assembled_count here
+    # must not move the result at all -- only composed_count may.
+    evidence = {"assembled_count": 506, "composed_count": 2}
+    result = _retrieval_precision({"a"}, evidence)
     assert result["value"] == pytest.approx(0.5)
-    assert result["retrieved_note_count"] == 2
+    assert result["composed_note_count"] == 2
 
 
-def test_retrieval_precision_is_not_scored_when_nothing_was_retrieved():
-    result = _retrieval_precision(set(), [])
+def test_retrieval_precision_is_not_scored_when_nothing_was_composed():
+    result = _retrieval_precision(set(), {})
     assert result["value"] is None
     assert result["reason"]
 

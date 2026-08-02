@@ -103,6 +103,7 @@ from axial.analyze.synthesis import (
 from axial.answer.render import render_markdown
 from axial.answer.run_report import PassClock, build_run_report, persist_run_report
 from axial.answer.source_usage import compute_source_usage
+from axial.argmap.ask import DECOMPOSE_PASS_NAME, AskResult, run_map_ask_for_brief
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult, interrogate
 from axial.eval.corpus_pin import resolve_pin_id
@@ -141,6 +142,30 @@ def _claim_to_dict(claim: Claim) -> dict[str, Any]:
         "grounds": [{"ref_type": g.ref_type, "ref_id": g.ref_id} for g in claim.grounds],
         "confidence": claim.confidence,
         "names_touched": list(claim.names_touched),
+    }
+
+
+def _map_retrieval_to_dict(ask_result: AskResult) -> dict[str, Any]:
+    """The argument-map path's own audit trail (issue #572, PR 4 of 4): the
+    stated arguments, which positions landed and at what score, which
+    positions the corridor reached and the relation labels that pulled them
+    in, and the assembled chunk ids -- exactly what a §7.6 trajectory
+    audits for the name-layer loop, in the map's own terms. The map path
+    makes no name-layer tool call and so produces no trajectory of its own;
+    this is the honest substitute, never a trajectory entry manufactured to
+    keep a downstream reader fed."""
+    return {
+        "used": True,
+        "asks": list(ask_result.asks),
+        "landed": [
+            {"position_id": position.position_id, "score": position.score}
+            for position in ask_result.landed
+        ],
+        "corridor": [
+            {"position_id": position.position_id, "labels": list(position.labels)}
+            for position in ask_result.corridor
+        ],
+        "assembled_chunk_ids": list(ask_result.assembled_chunk_ids),
     }
 
 
@@ -207,6 +232,7 @@ def build_record(
     clock: PassClock | None = None,
     evidence_assembled_count: int = 0,
     evidence_composed_count: int = 0,
+    map_retrieval: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the §7.3 analysis record. `claims`/`trajectory` are the
     caller's already-computed stage-4/stage-3 output (empty on a `refuse`
@@ -214,7 +240,19 @@ def build_record(
     (issue #545) default to 0, correct for a `refuse` disposition where
     stage 3/4 never ran, exactly like `claims`/`trajectory` defaulting empty
     on that path -- a real run passes both from `EvidenceSet.chunk_ids` and
-    `ClaimGraph.evidence_composed_count` (`run_brief`). `counter_position` (§7.8) is computed for real (issue #399)
+    `ClaimGraph.evidence_composed_count` (`run_brief`).
+
+    `map_retrieval` (issue #572, PR 4 of 4) is `None` on the default
+    name-layer path and on `refuse` -- an explicit, honest absence, never a
+    trajectory-shaped stand-in -- and `_map_retrieval_to_dict`'s own dict
+    when `run_brief(use_map=True)` retrieved through the argument map
+    instead. `trajectory` is genuinely empty on that path (the map makes no
+    name-layer tool call), which every trajectory reader downstream
+    (`coverage_map`, `source_usage`, the run report) already handles as a
+    fact about a run that queried no name, not a bug -- the same path a
+    `refuse` disposition's empty trajectory already takes.
+
+    `counter_position` (§7.8) is computed for real (issue #399)
     from the record's own claims via `generate_counter_position` -- zero
     model calls on an uncontested brief, one bounded follow-up call
     otherwise (see that function's own docstring). When that call actually
@@ -296,6 +334,7 @@ def build_record(
             "composed_count": evidence_composed_count,
         },
         "trajectory": list(trajectory),
+        "map_retrieval": map_retrieval,
         "model_by_pass": record_model_by_pass,
         "cost": _usage_and_cost_by_pass(client, record_model_by_pass),
     }
@@ -359,6 +398,10 @@ def run_brief(
     case_id: str | None = None,
     step_budget: int | None = None,
     thin_result_floor: int | None = None,
+    use_map: bool = False,
+    map_dir: Path | None = None,
+    sources_dir: Path | None = None,
+    map_pin: str | None = None,
 ) -> BriefRunResult:
     """Run the full engine (stages 1-6) over `brief` and persist the §7.3
     analysis record to `<analyses_dir>/<brief_id>.json` plus the §7.15 run
@@ -386,7 +429,20 @@ def run_brief(
     (synthesis) never run: `claims` and `trajectory` are both empty and
     `model_by_pass` names only the interrogation pass. This is a COMPLETE
     run -- the record is still written and this function still returns
-    normally; translating that into exit 0 is the CLI's job."""
+    normally; translating that into exit 0 is the CLI's job.
+
+    `use_map` (issue #572, PR 4 of 4, default off): retrieve through the
+    argument map instead of the name-layer loop. Interrogation (stage 1)
+    and synthesis (stage 4) are the exact same calls either way -- only
+    stage 3 changes, from `run_planned_retrieval`'s tool loop to
+    `axial.argmap.ask.run_map_ask_for_brief`'s door/landing/corridor/
+    assembly walk, which hands back an ordered list of chunk ids that feeds
+    the same `assemble_evidence`/`synthesize` the name-layer path already
+    used. `map_dir`/`sources_dir`/`map_pin` are forwarded verbatim (ignored
+    when `use_map` is `False`); nothing about them changes the default
+    path. The name-layer loop remains the default retrieval path -- this is
+    opt-in, not a replacement (settled on issue #572: nothing is retired on
+    one brief)."""
     corpus_pin = resolve_pin_id(evals_dir)
     clock = PassClock()
 
@@ -402,26 +458,56 @@ def run_brief(
         trajectory: list[dict[str, Any]] = []
         evidence_assembled_count = 0
         evidence_composed_count = 0
+        map_retrieval: dict[str, Any] | None = None
     else:
-        with clock.time(RETRIEVE_PASS_NAME):
-            retrieval_result = run_planned_retrieval(
-                client,
-                brief,
-                interrogation_result,
-                vault_dir=vault_dir,
-                envelopes_dir=envelopes_dir,
-                config_path=config_path,
-                step_budget=step_budget,
-                thin_result_floor=thin_result_floor,
-            )
-        model_by_pass[RETRIEVE_PASS_NAME] = client.model_for_pass(RETRIEVE_PASS_NAME)
+        if use_map:
+            with clock.time(DECOMPOSE_PASS_NAME):
+                ask_result = run_map_ask_for_brief(
+                    brief,
+                    client=client,
+                    map_dir=map_dir,
+                    envelopes_dir=envelopes_dir,
+                    sources_dir=sources_dir,
+                    config_path=config_path,
+                    pin=map_pin,
+                )
+            model_by_pass[DECOMPOSE_PASS_NAME] = client.model_for_pass(DECOMPOSE_PASS_NAME)
+            evidence_ids: list[str] = list(ask_result.assembled_chunk_ids)
+            # The map path makes no name-layer tool call, so it has no §7.6
+            # trajectory of its own -- an honest empty list, never a
+            # fabricated one built to keep a downstream reader fed. Every
+            # trajectory consumer (coverage_map, source_usage, the run
+            # report) already treats an empty trajectory as "this run
+            # queried no name", the same fact a `refuse` disposition's
+            # empty trajectory already states; what the map path actually
+            # did is recorded in `map_retrieval` instead.
+            trajectory = []
+            map_retrieval = _map_retrieval_to_dict(ask_result)
+        else:
+            with clock.time(RETRIEVE_PASS_NAME):
+                retrieval_result = run_planned_retrieval(
+                    client,
+                    brief,
+                    interrogation_result,
+                    vault_dir=vault_dir,
+                    envelopes_dir=envelopes_dir,
+                    config_path=config_path,
+                    step_budget=step_budget,
+                    thin_result_floor=thin_result_floor,
+                )
+            model_by_pass[RETRIEVE_PASS_NAME] = client.model_for_pass(RETRIEVE_PASS_NAME)
+            evidence_ids = retrieval_result.evidence_ids
+            trajectory = retrieval_result.trajectory
+            map_retrieval = None
 
         # Evidence assembly is timed under the synthesis pass it feeds: it
         # makes no model call of its own and has no pass name to report
         # under, and leaving it untimed would make the per-pass figures sum
-        # to less than the run really took.
+        # to less than the run really took. This call is the SAME one
+        # either path takes -- the map path differs only in how
+        # `evidence_ids` was produced above.
         with clock.time(SYNTHESIZE_PASS_NAME):
-            evidence = assemble_evidence(retrieval_result.evidence_ids, vault_dir=vault_dir)
+            evidence = assemble_evidence(evidence_ids, vault_dir=vault_dir)
             claim_graph = synthesize(
                 evidence,
                 brief,
@@ -435,7 +521,6 @@ def run_brief(
 
         lens = claim_graph.lens
         claims = claim_graph.claims
-        trajectory = retrieval_result.trajectory
         evidence_assembled_count = len(evidence.chunk_ids)
         evidence_composed_count = claim_graph.evidence_composed_count
 
@@ -452,6 +537,7 @@ def run_brief(
         clock=clock,
         evidence_assembled_count=evidence_assembled_count,
         evidence_composed_count=evidence_composed_count,
+        map_retrieval=map_retrieval,
     )
     path = persist_record(
         brief.brief_id, record, analyses_dir=analyses_dir, config_path=config_path
