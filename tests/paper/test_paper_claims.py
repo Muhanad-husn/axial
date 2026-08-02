@@ -109,6 +109,31 @@ def test_a_new_c_claims_confidence_is_capped_at_its_weakest_input():
     assert verdict["confidence"] == "low"
 
 
+def test_a_new_b_claim_resolves_record_span_transitively_through_a_prior_new_claim():
+    """A new claim's parent can itself be a new (b)/(c) claim, and the span
+    check must resolve through it to the real source records rather than
+    stopping at one hop (issue #616) -- otherwise a legitimate second-order
+    inference over an already-cross-source claim reads as single-record
+    (zero DIRECT carried parents) and is rejected regardless of what its
+    parent actually spans."""
+    parents = _by_id(
+        _carried("pc-001", "brief-a", "a1", "high", "chunk-a1", ["Alice"]),
+        _carried("pc-002", "brief-b", "b1", "medium", "chunk-b1", ["Bob"]),
+    )
+    first = new_b_claim(
+        "pc-003", "The two accounts diverge on organization.", ["pc-001", "pc-002"], parents
+    )
+    parents["pc-003"] = first
+
+    # Derives from ONLY the prior (b) claim -- no direct carried parent, so a
+    # one-hop-only check would see zero source records here.
+    second = new_b_claim(
+        "pc-004", "That divergence tracks a deeper disagreement.", ["pc-003"], parents
+    )
+    assert second["kind"] == "b"
+    assert second["derived_from"] == ["pc-003"]
+
+
 _INVENTORY = {
     ("brief-a", "a1"): _inventory_entry("brief-a", "a1", "high", "chunk-a1"),
     ("brief-b", "b1"): _inventory_entry("brief-b", "b1", "low", "chunk-b1"),
