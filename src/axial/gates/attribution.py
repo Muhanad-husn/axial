@@ -32,6 +32,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from dataclasses import replace
+
 from axial.gates.harness import GateReport, MetricResult, build_metric_result
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
 from axial.validators.attribution import (
@@ -44,6 +46,19 @@ from axial.validators.attribution import (
 )
 
 GATE_NAME = "attribution-fidelity"
+
+# The paper-side gate name (specs/PHASE-C.md §10.1, §7.4, §8 P0-9, issue
+# #608): a SEPARATE CLI entry from GATE_NAME above, dispatched to `axial.
+# gates.harness.load_paper_records` rather than `load_records` -- see
+# `_gate_run`'s per-gate loader dispatch in `axial.cli`. `run_attribution_
+# fidelity_gate`'s CHECK LOGIC is reused WHOLESALE for it (specs/PHASE-C.md
+# §10.1: "the (b)-seam gate reuses ... attribution.py's judged check
+# wholesale"), including its unchanged self-grading guard anchored to
+# `SYNTHESIZE_PASS_NAME` -- no re-anchor to `PAPER_DRAFT_PASS_NAME` here,
+# unlike the paper-side grounding gate, per that same spec note.
+# `_claim_id_of` now falls back to `paper_claim_id` before the positional
+# placeholder (issue #608), so a flagged paper claim is still nameable.
+PAPER_GATE_NAME = "paper-attribution-fidelity"
 
 
 def _iter_claims(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -184,3 +199,34 @@ def run_attribution_fidelity_gate(
         trusted=trusted,
         metrics=[completeness, b_seam, c_seam],
     )
+
+
+def run_paper_attribution_fidelity_gate(
+    records: list[dict[str, Any]],
+    *,
+    client: LLMClient,
+    vault_dir: Path | None = None,
+    corpus_pin: str | None,
+    trusted: bool,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+) -> GateReport:
+    """`PAPER_GATE_NAME`'s own `GATE_RUNNERS` entry (issue #608): identical
+    to `run_attribution_fidelity_gate` in every respect but the report's own
+    `gate` field. A thin wrapper, not a second implementation -- every check
+    is `run_attribution_fidelity_gate`'s, called unchanged.
+
+    Exists because `GateReport.gate` names the file `axial.gates.harness.
+    write_report` writes to (`evals/reports/<gate>.json`): without this,
+    `axial gate run paper-attribution-fidelity` would silently write
+    `attribution-fidelity.json`, indistinguishable from -- and clobbering --
+    a Phase-B run's own report, even though it was dispatched under a
+    different CLI name and scored a different kind of record entirely."""
+    report = run_attribution_fidelity_gate(
+        records,
+        client=client,
+        vault_dir=vault_dir,
+        corpus_pin=corpus_pin,
+        trusted=trusted,
+        config_path=config_path,
+    )
+    return replace(report, gate=PAPER_GATE_NAME)

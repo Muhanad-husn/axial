@@ -105,11 +105,16 @@ from axial.query.names import (
 from axial.query.reader import ChunkNotFoundError, ChunkNote, get_chunk, is_abstention
 from axial.validators.coverage import coverage_scope
 
-# The three contested signals this validator ever persists -- a fixed, small
+# The four contested signals this validator ever persists -- a fixed, small
 # vocabulary (mirrors attribution.py's REASON_* constants), never open text.
 SIGNAL_OPPOSED_POSITIONS = "opposed_positions"
 SIGNAL_NAMES_OPPONENT = "names_opponent"
 SIGNAL_GATHER_DISAGREEMENT = "gather_disagreement"
+# The fourth arm (specs/PHASE-C.md §7.14, issue #608): fires from a named
+# SOURCE record's own fields, never from the current record's own claims --
+# see `source_record_contested`/`detect_paper_contested` below, Phase C's
+# own callers.
+SIGNAL_SOURCE_RECORD_CONTESTED = "source_record_contested"
 
 # The one blocking reason this validator ever reports.
 REASON_CONTESTED_WITHOUT_COUNTER_POSITION = "contested_without_counter_position"
@@ -405,6 +410,7 @@ def detect_contested(
     *,
     vault_dir: Path | None = None,
     names_dir: Path | None = None,
+    scope: list[str] | None = None,
 ) -> ContestedResult:
     """The §7.8 contested predicate over the record's own resolved evidence
     -- never the brief's wording. Public because
@@ -417,15 +423,102 @@ def detect_contested(
     grounds note is a member of. Not every name in `names_touched` -- a real
     evidence set's notes name 423 distinct canonicals on average, mostly
     one-off mentions, and a Gather finding at a name the answer merely
-    brushed past says nothing about whether the answer is contested."""
+    brushed past says nothing about whether the answer is contested.
+
+    `scope`, when given, is used for `gather_disagreement` DIRECTLY instead
+    of deriving one from `trajectory` (specs/PHASE-C.md §7.14, issue #608):
+    a Phase-C paper record performs no retrieval of its own and so has no
+    trajectory, but its own §7.11 coverage map's keys are the paper-scale
+    analogue of `coverage_scope` -- names both covered by a source record
+    and touched by a cited claim. `detect_paper_contested` below is the one
+    caller that passes it; every existing caller (this validator's own
+    `validate_counter_position`, `axial.analyze.synthesis`) passes neither
+    `scope` nor changes behavior."""
     notes = resolve_grounds_notes(claims, vault_dir=vault_dir)
     if opposed_grounds_notes(notes, names_dir=names_dir):
         return ContestedResult(contested=True, signal=SIGNAL_OPPOSED_POSITIONS)
     if notes_naming_an_opponent(notes):
         return ContestedResult(contested=True, signal=SIGNAL_NAMES_OPPONENT)
-    scope = coverage_scope([c for c in claims if isinstance(c, dict)], trajectory or [])
-    if _gather_disagreement_at(scope, vault_dir=vault_dir, names_dir=names_dir):
+    effective_scope = (
+        scope
+        if scope is not None
+        else coverage_scope([c for c in claims if isinstance(c, dict)], trajectory or [])
+    )
+    if _gather_disagreement_at(effective_scope, vault_dir=vault_dir, names_dir=names_dir):
         return ContestedResult(contested=True, signal=SIGNAL_GATHER_DISAGREEMENT)
+    return ContestedResult(contested=False, signal=None)
+
+
+def source_record_contested(
+    source_records: list[dict[str, Any]],
+    *,
+    vault_dir: Path | None = None,
+    names_dir: Path | None = None,
+) -> bool:
+    """§7.14's fourth arm (specs/PHASE-C.md §7.14, issue #608): whether any
+    NAMED SOURCE record -- a Phase-B analysis record a paper draws on,
+    never the paper's own claims -- carries a present-with-grounds or
+    one-sided-disclosed `counter_position` section, or whose OWN claims/
+    trajectory fire its OWN contested predicate.
+
+    This closes the hole the three inherited arms leave open: they read
+    only what the PAPER cited, so a drafter that simply declines to carry
+    any opposing material produces a paper whose cited evidence spans one
+    school, which all three score as uncontested. A source record's own
+    fields do not depend on what got carried forward.
+
+    A `failed` counter-position section (§7.3) is never a disclosure and
+    never fires this arm on its own -- `_is_present_with_grounds`/
+    `_is_disclosed_one_sided` both return `False` for it by construction
+    (neither `present` nor `corpus_one_sided` is ever set on a failed
+    section), exactly as PR #558 already established for every other reader
+    of this field.
+
+    `vault_dir`/`names_dir` are the SAME vault a source record's own
+    `detect_contested` call needs to resolve its grounds notes against --
+    the corpus pin binds every record at one pin (§7.1), so there is only
+    ever one vault to pass through, never a per-record one. Zero vault reads
+    and zero model calls of its OWN beyond what that call already pays: the
+    source record's own contested check, already paid at Phase-B analysis
+    time -- this arm adds no NEW read beyond it."""
+    for record in source_records:
+        if not isinstance(record, dict):
+            continue
+        counter_position = record.get("counter_position") or {}
+        if _is_present_with_grounds(counter_position) or _is_disclosed_one_sided(counter_position):
+            return True
+        own_contested = detect_contested(
+            record.get("claims") or [],
+            record.get("trajectory") or [],
+            vault_dir=vault_dir,
+            names_dir=names_dir,
+        )
+        if own_contested.contested:
+            return True
+    return False
+
+
+def detect_paper_contested(
+    claims: list[Any],
+    source_records: list[dict[str, Any]],
+    *,
+    scope: list[str],
+    vault_dir: Path | None = None,
+    names_dir: Path | None = None,
+) -> ContestedResult:
+    """Phase C's own four-arm contested predicate (specs/PHASE-C.md §7.14,
+    issue #608): `detect_contested`'s three inherited arms over the PAPER's
+    own claims (scoped by `scope`, the paper's §7.11 coverage-map keys,
+    standing in for a trajectory a paper record does not have), and --
+    only when none of those three fired -- the fourth `source_record_
+    contested` arm over the named SOURCE records the paper draws on.
+    Checked in the stated §7.14 order so the fired signal names which arm
+    actually caught it."""
+    inherited = detect_contested(claims, vault_dir=vault_dir, names_dir=names_dir, scope=scope)
+    if inherited.contested:
+        return inherited
+    if source_record_contested(source_records, vault_dir=vault_dir, names_dir=names_dir):
+        return ContestedResult(contested=True, signal=SIGNAL_SOURCE_RECORD_CONTESTED)
     return ContestedResult(contested=False, signal=None)
 
 

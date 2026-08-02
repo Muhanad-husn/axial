@@ -12,10 +12,15 @@ from typing import Any
 import pytest
 import yaml
 
-from axial.gates.attribution import run_attribution_fidelity_gate
+from axial.gates.attribution import (
+    PAPER_GATE_NAME,
+    run_attribution_fidelity_gate,
+    run_paper_attribution_fidelity_gate,
+)
 from axial.llm import ExplodingLLMClient
 
 CHUNK_ID = "gatefix_001_syria_a"
+OTHER_SOURCE_CHUNK_ID = "othersrc_001_syria_a"
 MISSING_CHUNK_ID = "gatefix_999_missing"
 
 
@@ -29,9 +34,11 @@ class FakeClient:
         self._model_by_pass = model_by_pass
         self._response = response
         self.calls: list[str | None] = []
+        self.prompts: list[str] = []
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         self.calls.append(pass_name)
+        self.prompts.append(prompt)
         return self._response
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
@@ -69,9 +76,35 @@ def _write_vault(root: Path) -> Path:
     return root / "vault"
 
 
+def _write_second_source_chunk(root: Path) -> None:
+    """A second chunk note whose `chunk_id` resolves to a DIFFERENT
+    `source_id` (`axial.query.reader.source_id_from_chunk_id`) than
+    `CHUNK_ID` -- the paper-wiring test below needs two distinct sources to
+    prove the (b)-seam judge is handed each claim's distinct grounds source
+    ids (PR #559) for a paper claim exactly as it already is for a Phase-B
+    one."""
+    prose_dir = root / "vault" / "prose"
+    prose_dir.mkdir(parents=True, exist_ok=True)
+    frontmatter = {
+        "chunk_id": OTHER_SOURCE_CHUNK_ID,
+        "section": "Synthetic Section",
+        "chunk_text": "SENTINEL: synthetic prose from a second source.",
+        "source_meta": {"author": "B", "title": "U", "date": 2021, "thesis": "X", "scope": "Y"},
+    }
+    text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
+    (prose_dir / f"{OTHER_SOURCE_CHUNK_ID}.md").write_text(text, encoding="utf-8")
+
+
 @pytest.fixture
 def vault_dir(tmp_path: Path) -> Path:
     return _write_vault(tmp_path)
+
+
+@pytest.fixture
+def vault_dir_two_sources(tmp_path: Path) -> Path:
+    vault = _write_vault(tmp_path)
+    _write_second_source_chunk(tmp_path)
+    return vault
 
 
 def _claim(claim_id: str, *, kind: Any, grounds: list[dict[str, Any]]) -> dict[str, Any]:
@@ -294,6 +327,108 @@ def test_same_model_guard_propagates_from_validate_attribution(vault_dir: Path, 
             trusted=False,
             config_path=tmp_path / "nonexistent.yaml",
         )
+
+
+# -- Reuse over paper records (specs/PHASE-C.md §10.1, §8 P0-9, issue #608) --
+
+
+def test_paper_gate_name_is_distinct_from_the_phase_b_gate_name():
+    """A new CLI entry point, dispatched to `load_paper_records` rather
+    than `load_records` (`axial.cli._gate_run`) -- never a reshaping of the
+    existing `attribution-fidelity` dispatch path."""
+    from axial.gates.attribution import GATE_NAME
+
+    assert PAPER_GATE_NAME != GATE_NAME
+    assert PAPER_GATE_NAME == "paper-attribution-fidelity"
+
+
+def test_run_attribution_fidelity_gate_reused_wholesale_over_a_paper_claim(
+    vault_dir_two_sources: Path, tmp_path: Path
+):
+    """The check logic `run_paper_attribution_fidelity_gate` wraps, given a
+    paper-shaped record (`paper_claim_id`, no `claim_id`) whose (b) claim's
+    grounds draw on TWO distinct sources -- the judge must be shown both
+    (PR #559), exactly as it already is for a Phase-B claim, with zero
+    change owed to the check itself to get there."""
+    client = FakeClient(
+        model_by_pass=DISTINCT_MODELS, response=json.dumps({"flagged_claim_ids": []})
+    )
+    grounds = [
+        {"ref_type": "chunk", "ref_id": CHUNK_ID},
+        {"ref_type": "chunk", "ref_id": OTHER_SOURCE_CHUNK_ID},
+    ]
+    records = [
+        {
+            "paper_brief_id": "pb-1",
+            "claims": [
+                {
+                    "paper_claim_id": "pc-1",
+                    "kind": "b",
+                    "origin": None,
+                    "text": "New cross-source claim for pc-1.",
+                    "grounds": grounds,
+                }
+            ],
+        }
+    ]
+
+    report = run_attribution_fidelity_gate(
+        records,
+        client=client,
+        vault_dir=vault_dir_two_sources,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+    )
+
+    b_seam = next(m for m in report.metrics if m.metric == "b_seam_mislabel_rate")
+    assert b_seam.n == 1
+    assert b_seam.value == 0.0
+    assert client.calls == ["attribution"]
+    assert "2 distinct sources -- gatefix, othersrc" in client.prompts[0]
+
+
+def test_paper_wrapper_reports_its_own_gate_name_and_names_a_flagged_paper_claim(
+    vault_dir: Path, tmp_path: Path
+):
+    """`run_paper_attribution_fidelity_gate` -- `GATE_RUNNERS[PAPER_GATE_
+    NAME]`'s actual entry -- writes `gate=PAPER_GATE_NAME` on its report
+    (issue #608): without this, `axial gate run paper-attribution-fidelity`
+    would silently write `evals/reports/attribution-fidelity.json`, the
+    SAME file a Phase-B run writes. It also proves a flagged PAPER claim is
+    named by its real `paper_claim_id`, via `_claim_id_of`'s new fallback,
+    never the opaque `<claim #N>` placeholder."""
+    client = FakeClient(
+        model_by_pass=DISTINCT_MODELS, response=json.dumps({"flagged_claim_ids": ["pc-2"]})
+    )
+    records = [
+        {
+            "paper_brief_id": "pb-1",
+            "claims": [
+                {
+                    "paper_claim_id": "pc-2",
+                    "kind": "b",
+                    "origin": None,
+                    "text": "New cross-source claim for pc-2.",
+                    "grounds": GOOD_GROUNDS,
+                }
+            ],
+        }
+    ]
+
+    report = run_paper_attribution_fidelity_gate(
+        records,
+        client=client,
+        vault_dir=vault_dir,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+    )
+
+    assert report.gate == PAPER_GATE_NAME
+    b_seam = next(m for m in report.metrics if m.metric == "b_seam_mislabel_rate")
+    assert b_seam.value == pytest.approx(1.0)
+    assert b_seam.detail["flagged_claim_ids"] == ["pc-2"]
 
 
 def test_trusted_and_corpus_pin_pass_through_to_the_report(vault_dir: Path, tmp_path: Path):

@@ -29,9 +29,13 @@ from axial.validators.counter_position import (
     SIGNAL_GATHER_DISAGREEMENT,
     SIGNAL_NAMES_OPPONENT,
     SIGNAL_OPPOSED_POSITIONS,
+    SIGNAL_SOURCE_RECORD_CONTESTED,
     VERDICT_STRAWMAN,
     CounterPositionCheckFailedError,
     SamePassModelError,
+    detect_contested,
+    detect_paper_contested,
+    source_record_contested,
     validate_counter_position,
 )
 
@@ -709,3 +713,146 @@ def test_never_mutates_the_input_record(vault_dir: Path, names_dir: Path):
         record, client=ExplodingLLMClient(), vault_dir=vault_dir, names_dir=names_dir
     )
     assert json.dumps(record, sort_keys=True) == before
+
+
+# -- detect_contested's `scope` parameter (specs/PHASE-C.md §7.14, issue #608)
+
+
+def test_scope_param_is_used_directly_instead_of_deriving_from_trajectory(
+    vault_dir: Path, names_dir: Path
+):
+    """A paper record has no trajectory (§7.3); `scope` stands in for
+    `coverage_scope(claims, trajectory)` directly. An EMPTY trajectory would
+    normally derive an empty scope and never see the Gather disagreement --
+    passing `scope` explicitly must reach it anyway."""
+    _write_tilly(vault_dir, arguing_against=[], names=[])
+    _write_skocpol(vault_dir, arguing_against=[], names=[])
+    _write_name_page(
+        vault_dir,
+        SKOCPOL_AUTHOR,
+        member_ids=[SKOCPOL_CHUNK],
+        disagreement="These authors disagree about whether organization is required.",
+    )
+    claims = [_claim("c-1", TILLY_CHUNK, SKOCPOL_CHUNK, names_touched=[SKOCPOL_AUTHOR])]
+
+    without_scope = detect_contested(claims, [], vault_dir=vault_dir, names_dir=names_dir)
+    assert without_scope.contested is False, "an empty trajectory derives an empty scope"
+
+    with_scope = detect_contested(
+        claims, [], vault_dir=vault_dir, names_dir=names_dir, scope=[SKOCPOL_AUTHOR]
+    )
+    assert with_scope.contested is True
+    assert with_scope.signal == SIGNAL_GATHER_DISAGREEMENT
+
+
+def test_scope_none_leaves_existing_trajectory_derivation_unchanged(
+    vault_dir: Path, names_dir: Path
+):
+    """The default (`scope=None`) must reproduce the pre-existing
+    trajectory-derived behavior exactly -- no existing caller of
+    `detect_contested` (this validator's own `validate_counter_position`,
+    `axial.analyze.synthesis`) passes `scope`."""
+    _write_tilly(vault_dir, arguing_against=[], names=[])
+    _write_skocpol(vault_dir, arguing_against=[], names=[])
+    _write_name_page(
+        vault_dir,
+        SKOCPOL_AUTHOR,
+        member_ids=[SKOCPOL_CHUNK],
+        disagreement="These authors disagree about whether organization is required.",
+    )
+    claims = [_claim("c-1", TILLY_CHUNK, SKOCPOL_CHUNK, names_touched=[SKOCPOL_AUTHOR])]
+    trajectory = [
+        {
+            "step": 1,
+            "tool": "get_name",
+            "args": {"canonical": SKOCPOL_AUTHOR},
+            "result_ids": [SKOCPOL_CHUNK],
+            "result_count": 1,
+        }
+    ]
+    result = detect_contested(claims, trajectory, vault_dir=vault_dir, names_dir=names_dir)
+    assert result.contested is True
+    assert result.signal == SIGNAL_GATHER_DISAGREEMENT
+
+
+# -- source_record_contested, §7.14's fourth arm (issue #608) ---------------
+
+
+def test_source_record_with_present_counter_position_fires():
+    source_records = [{"counter_position": _present_counter_position("x_001_a_001")}]
+    assert source_record_contested(source_records) is True
+
+
+def test_source_record_disclosed_one_sided_fires():
+    source_records = [{"counter_position": _disclosed_one_sided()}]
+    assert source_record_contested(source_records) is True
+
+
+def test_source_record_with_failed_counter_position_never_fires_on_that_alone():
+    """§7.3/PR #558: a `failed` section is a run that died, never a
+    disclosure -- it must not manufacture a contested finding."""
+    source_records = [
+        {"counter_position": _failed_counter_position(), "claims": [], "trajectory": []}
+    ]
+    assert source_record_contested(source_records) is False
+
+
+def test_source_record_whose_own_claims_are_contested_fires(vault_dir: Path, names_dir: Path):
+    claims = _contested(vault_dir)
+    source_records = [{"counter_position": _no_counter_position(), "claims": claims}]
+    assert source_record_contested(source_records, vault_dir=vault_dir, names_dir=names_dir) is True
+
+
+def test_source_record_with_nothing_contested_does_not_fire(vault_dir: Path, names_dir: Path):
+    _write_tilly(vault_dir, arguing_against=[], names=[])
+    claims = [_claim("c-1", TILLY_CHUNK)]
+    source_records = [{"counter_position": _no_counter_position(), "claims": claims}]
+    assert (
+        source_record_contested(source_records, vault_dir=vault_dir, names_dir=names_dir) is False
+    )
+
+
+# -- detect_paper_contested, Phase C's own four-arm predicate (issue #608) --
+
+
+def test_paper_contested_fires_on_an_inherited_arm_without_consulting_sources(
+    vault_dir: Path, names_dir: Path
+):
+    """When one of the three inherited arms already fires over the PAPER's
+    own claims, the fourth arm's source records are never even consulted --
+    a bogus `source_records` argument must not matter here."""
+    claims = _contested(vault_dir)
+    result = detect_paper_contested(
+        claims,
+        source_records=[{"this": "would raise if inspected"}],
+        scope=[],
+        vault_dir=vault_dir,
+        names_dir=names_dir,
+    )
+    assert result.contested is True
+    assert result.signal == SIGNAL_OPPOSED_POSITIONS
+
+
+def test_paper_contested_falls_through_to_the_source_record_arm(vault_dir: Path, names_dir: Path):
+    """The paper's OWN cited claims are uncontested (a drafter that dropped
+    the opposing side), but a named source record's own counter_position
+    discloses the corpus was one-sided -- the fourth arm catches it."""
+    _write_tilly(vault_dir, arguing_against=[], names=[])
+    claims = [_claim("c-1", TILLY_CHUNK)]
+    source_records = [{"counter_position": _disclosed_one_sided()}]
+    result = detect_paper_contested(
+        claims, source_records, scope=[], vault_dir=vault_dir, names_dir=names_dir
+    )
+    assert result.contested is True
+    assert result.signal == SIGNAL_SOURCE_RECORD_CONTESTED
+
+
+def test_paper_contested_false_when_no_arm_fires(vault_dir: Path, names_dir: Path):
+    _write_tilly(vault_dir, arguing_against=[], names=[])
+    claims = [_claim("c-1", TILLY_CHUNK)]
+    source_records = [{"counter_position": _no_counter_position(), "claims": []}]
+    result = detect_paper_contested(
+        claims, source_records, scope=[], vault_dir=vault_dir, names_dir=names_dir
+    )
+    assert result.contested is False
+    assert result.signal is None

@@ -35,7 +35,11 @@ from axial.gates.adversarial import (
 from axial.gates.adversarial import SelfGradingError as AdversarialSelfGradingError
 from axial.gates.adversarial import load_seeded_briefs, run_adversarial_gate
 from axial.gates.attribution import GATE_NAME as ATTRIBUTION_FIDELITY_GATE_NAME
-from axial.gates.attribution import run_attribution_fidelity_gate
+from axial.gates.attribution import PAPER_GATE_NAME as PAPER_ATTRIBUTION_FIDELITY_GATE_NAME
+from axial.gates.attribution import (
+    run_attribution_fidelity_gate,
+    run_paper_attribution_fidelity_gate,
+)
 from axial.gates.calibration import GATE_NAME as CALIBRATION_GATE_NAME
 from axial.gates.calibration import (
     CalibrationCheckFailedError,
@@ -44,13 +48,21 @@ from axial.gates.calibration import (
 )
 from axial.gates.calibration import SelfGradingError as CalibrationSelfGradingError
 from axial.gates.calibration import run_calibration_gate
+from axial.gates.counter_position import GATE_NAME as COUNTER_POSITION_GATE_NAME
+from axial.gates.counter_position import (
+    CounterPositionGateError,
+    UnresolvableSourceRecordError,
+    run_counter_position_gate,
+)
 from axial.gates.grounding import GATE_NAME as GROUNDING_GATE_NAME
+from axial.gates.grounding import PAPER_GATE_NAME as PAPER_GROUNDING_GATE_NAME
 from axial.gates.grounding import (
     GroundingCheckFailedError,
     GroundingGateError,
     SelfGradingError,
     UnresolvableGroundsError,
     run_grounding_gate,
+    run_paper_grounding_gate,
 )
 from axial.gates.harness import (
     REPORTS_DIR,
@@ -90,6 +102,12 @@ GATE_RUNNERS = {
     CALIBRATION_GATE_NAME: run_calibration_gate,
     ADVERSARIAL_GATE_NAME: run_adversarial_gate,
     PROVENANCE_GATE_NAME: run_provenance_gate,
+    # Paper-side gates (specs/PHASE-C.md §10.1, issue #608): scored over
+    # Phase-C paper records (`load_paper_records`), never Phase-B analysis
+    # records -- see each runner's own module docstring for what it reuses.
+    PAPER_ATTRIBUTION_FIDELITY_GATE_NAME: run_paper_attribution_fidelity_gate,
+    PAPER_GROUNDING_GATE_NAME: run_paper_grounding_gate,
+    COUNTER_POSITION_GATE_NAME: run_counter_position_gate,
 }
 
 
@@ -132,7 +150,10 @@ def run_gate(
 __all__ = [
     "ADVERSARIAL_GATE_NAME",
     "ATTRIBUTION_FIDELITY_GATE_NAME",
+    "COUNTER_POSITION_GATE_NAME",
     "GROUNDING_GATE_NAME",
+    "PAPER_ATTRIBUTION_FIDELITY_GATE_NAME",
+    "PAPER_GROUNDING_GATE_NAME",
     "PROVENANCE_GATE_NAME",
     "SYNTHESIS_QUALITY_GATE_NAME",
     "CALIBRATION_GATE_NAME",
@@ -143,6 +164,7 @@ __all__ = [
     "CalibrationSelfGradingError",
     "AdversarialGateError",
     "AdversarialSelfGradingError",
+    "CounterPositionGateError",
     "GateError",
     "GateReport",
     "InvalidConfidenceBandError",
@@ -160,6 +182,7 @@ __all__ = [
     "UnresolvableGroundsError",
     "UnresolvableOriginClaimError",
     "UnresolvableOriginRecordError",
+    "UnresolvableSourceRecordError",
     "UnknownGateError",
     "format_report",
     "load_paper_records",
@@ -173,8 +196,11 @@ __all__ = [
     "run_adversarial_gate",
     "run_attribution_fidelity_gate",
     "run_calibration_gate",
+    "run_counter_position_gate",
     "run_gate",
     "run_grounding_gate",
+    "run_paper_attribution_fidelity_gate",
+    "run_paper_grounding_gate",
     "run_provenance_gate",
     "run_synthesis_quality_gate",
     "verdict_text",

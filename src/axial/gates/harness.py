@@ -92,6 +92,22 @@ DEFAULT_GATE_THRESHOLDS: dict[str, float] = {
     # src/axial/gates/provenance.py's module docstring.
     "provenance_completeness": 1.00,
     "confidence_upgrade_count": 0,
+    # Paper-side counter-position presence (specs/PHASE-C.md §10.1, §7.14,
+    # §8 P0-14, issue #608): a DISTINCT metric name from Phase-B's own
+    # `counter_position_presence_rate` above (threshold 0.95, synthesis-
+    # quality gate) specifically so the two never share one config-tunable
+    # threshold -- Phase C's own hard bar is 1.00. See
+    # src/axial/gates/counter_position.py's module docstring.
+    "paper_counter_position_presence_rate": 1.00,
+    # Paper-side grounding of Phase C's own new (b) claims (specs/PHASE-C.md
+    # §10.1, §8 P0-9, issue #608): the INVERSE of the reported-only
+    # `b_claim_contradiction_rate` above, scored only over a paper's NEW (b)
+    # claims and gated under its OWN metric name -- a distinct name from
+    # `b_claim_contradiction_rate` (never gated) and from
+    # `grounding_support_rate` (a different question, over (a) claims), so
+    # this threshold is independently tunable rather than colliding with
+    # either. See src/axial/gates/grounding.py's module docstring.
+    "b_claim_noncontradiction_rate": 0.90,
 }
 
 # The comparison direction is a property of what each metric MEANS, not
@@ -108,6 +124,8 @@ METRIC_COMPARISON: dict[str, Comparison] = {
     "premise_catch_rate": "gte",
     "provenance_completeness": "gte",
     "confidence_upgrade_count": "lte",
+    "paper_counter_position_presence_rate": "gte",
+    "b_claim_noncontradiction_rate": "gte",
 }
 
 
@@ -549,6 +567,24 @@ def format_report(report: GateReport) -> str:
         violating_paper_claim_ids = metric.detail.get("violating_paper_claim_ids")
         if violating_paper_claim_ids:
             lines.append(f"    violating paper_claim_ids: {', '.join(violating_paper_claim_ids)}")
+        # The (b)/(c)-seam and (b)-claim-grounding gates report the raw
+        # flagged/contradicted count beside the rate (specs/PHASE-C.md
+        # §10.1, issue #608): at a paper's small denominators (a handful of
+        # new (b) claims) the rate alone misleads -- one mislabel already
+        # reads as 0.25 -- so the count is printed explicitly, not left to a
+        # reader to derive from `value * n`.
+        flagged_claim_ids = metric.detail.get("flagged_claim_ids")
+        if flagged_claim_ids:
+            lines.append(
+                f"    flagged claim_ids ({len(flagged_claim_ids)} of {metric.n}): "
+                f"{', '.join(flagged_claim_ids)}"
+            )
+        contradicted_claim_ids = metric.detail.get("contradicted_claim_ids")
+        if contradicted_claim_ids:
+            lines.append(
+                f"    contradicted claim_ids ({len(contradicted_claim_ids)} of {metric.n}): "
+                f"{', '.join(contradicted_claim_ids)}"
+            )
     if report.reported:
         lines.append("reported (not gated -- no baseline threshold established yet):")
         for name, entry in report.reported.items():
