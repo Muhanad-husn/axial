@@ -146,6 +146,7 @@ from axial.schema import SchemaError, load_schema
 from axial.sources import render_report, resolve_backend, scan_local, sync_local
 from axial.sources import CHANGED as SOURCES_CHANGED
 from axial.sources import NEW as SOURCES_NEW
+from axial.sources import PARTIAL as SOURCES_PARTIAL
 from axial.validate import cross_validate
 from axial.validators import (
     AttributionValidatorError,
@@ -1776,9 +1777,12 @@ def _sources(backend_override: str | None, check: bool) -> int:
 
 def _sources_local(check: bool) -> int:
     """The local folder backend: report first (free -- no LLM call, no
-    download, just the corpus glob against the resume ledger), then ingest
-    whatever the report shows as new or changed. A report with nothing new
-    or changed says so and runs no pipeline pass at all.
+    download, just a handful of artifact-file checks plus a ledger read,
+    never a parse -- see `axial.sources.scan_local`), then ingest whatever
+    the report shows as new, changed, or partial (a partial source is
+    exactly what `sync_local`'s resumable pass chain is for: finishing a
+    run that died halfway, not restarting it). A report with nothing new,
+    changed, or partial says so and runs no pipeline pass at all.
 
     `check=True` returns right after printing the report: `sync_local` (the
     only path that reaches `axial.run.run_pass`) is never called, so a
@@ -1791,7 +1795,11 @@ def _sources_local(check: bool) -> int:
     if check:
         return 0
 
-    pending = [record for record in records if record.status in (SOURCES_NEW, SOURCES_CHANGED)]
+    pending = [
+        record
+        for record in records
+        if record.status in (SOURCES_NEW, SOURCES_CHANGED, SOURCES_PARTIAL)
+    ]
     if not pending:
         print("sources: nothing new (0 to ingest)")
         return 0

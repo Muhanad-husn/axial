@@ -12,6 +12,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import axial.chunk as chunk_mod
+import axial.envelope as envelope_mod
+import axial.extract as extract_mod
+import axial.interrogate as interrogate_mod
 from axial.envelope import compute_source_id
 from axial.run import FAIL_STATUS, OK_STATUS, RunSummary, _append_ledger_row
 from axial.sources import (
@@ -19,6 +23,7 @@ from axial.sources import (
     DEFAULT_INGEST_PASSES,
     DONE,
     NEW,
+    PARTIAL,
     REJECTED,
     SourceRecord,
     render_report,
@@ -44,6 +49,39 @@ def _ledger_row(pass_name: str, source_path: Path, source_id: str, status: str, 
         "reason": reason,
         "timestamp": "2026-08-02T00:00:00+00:00",
     }
+
+
+def _isolate_artifact_dirs(monkeypatch, tmp_path: Path) -> None:
+    """Point every per-source artifact directory `axial.sources` checks at a
+    fresh tmp location -- mirrors `src/axial/conftest.py`'s own
+    `_isolate_checkpoint_dirs` fixture, never the real (gitignored, absent
+    in this worktree) `data/` tree. Paired with a `config_path` pointing at
+    a file that does not exist, so `_default_*_dir`'s config-then-fallback
+    resolvers fall through to these patched module constants rather than
+    reading the real `config/pipeline.yaml` (issue #528: reproducing the
+    live bug needs a config that declares no `paths:` overrides, exactly
+    like the real corpus run that surfaced it)."""
+    monkeypatch.setattr(extract_mod, "TREES_DIR", tmp_path / "trees")
+    monkeypatch.setattr(envelope_mod, "ENVELOPES_DIR", tmp_path / "envelopes")
+    monkeypatch.setattr(chunk_mod, "CHUNKS_DIR", tmp_path / "chunks")
+    monkeypatch.setattr(interrogate_mod, "ANSWERS_DIR", tmp_path / "answers")
+
+
+def _write_artifacts(tmp_path: Path, source_id: str, *, skip: tuple[str, ...] = ()) -> None:
+    """Touch every per-source artifact file for `source_id` (paired with
+    `_isolate_artifact_dirs`) except those named in `skip`. Content is
+    irrelevant -- `axial.sources` only checks existence, never parses."""
+    paths = {
+        "tree": tmp_path / "trees" / f"{source_id}.json",
+        "envelope": tmp_path / "envelopes" / f"{source_id}.json",
+        "chunks": tmp_path / "chunks" / f"{source_id}.jsonl",
+        "answers": tmp_path / "answers" / f"{source_id}.jsonl",
+    }
+    for name, path in paths.items():
+        if name in skip:
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
 
 
 # --- scan_local --------------------------------------------------------------
@@ -149,6 +187,97 @@ def test_scan_local_reports_new_changed_done_and_rejected_together(tmp_path):
     assert records["new.pdf"].status == NEW
     assert records["stray.txt"].status == REJECTED
     assert new_path.exists()  # sanity: file really is there, not consumed
+
+
+# --- scan_local: artifacts are the truth (issue #528, live-corpus fix) -------
+#
+# The exact real-world bug: `--check` against the real 31-source corpus
+# reported every source `new` because `data/run/ledger.tsv` (the unified
+# ledger) had never been written there -- only an unrelated, differently-
+# keyed `ledger-extract.tsv` existed -- even though every source's envelope,
+# chunks, tree, and answers were on disk. A source is `done` when its
+# artifacts say so, whatever the ledger says or fails to say.
+
+
+def test_scan_local_all_artifacts_present_with_absent_ledger_is_done(tmp_path, monkeypatch):
+    """Pins the live bug directly: an absent ledger (no data/run/ledger.tsv
+    at all, the real corpus's actual state) must not read as `new` when
+    every artifact for this exact content already exists."""
+    _isolate_artifact_dirs(monkeypatch, tmp_path)
+    sources_dir = tmp_path / "sources"
+    path = _write_source(sources_dir, "mann-1986.pdf")
+    source_id = compute_source_id(path)
+    _write_artifacts(tmp_path, source_id)
+    absent_ledger_path = tmp_path / "ledger.tsv"
+    assert not absent_ledger_path.exists()  # sanity: this is the real bug's own state
+
+    records = scan_local(
+        sources_dir,
+        absent_ledger_path,
+        config_path=tmp_path / "no-such-pipeline.yaml",
+    )
+
+    assert records == [SourceRecord("mann-1986.pdf", DONE)]
+
+
+def test_scan_local_some_artifacts_present_is_partial_and_names_what_is_missing(
+    tmp_path, monkeypatch
+):
+    _isolate_artifact_dirs(monkeypatch, tmp_path)
+    sources_dir = tmp_path / "sources"
+    path = _write_source(sources_dir, "ayubi-1995.pdf")
+    source_id = compute_source_id(path)
+    _write_artifacts(tmp_path, source_id, skip=("chunks", "answers"))
+
+    records = scan_local(
+        sources_dir,
+        tmp_path / "ledger.tsv",
+        config_path=tmp_path / "no-such-pipeline.yaml",
+    )
+
+    assert len(records) == 1
+    assert records[0].status == PARTIAL
+    assert "chunks" in records[0].reason
+    assert "answers" in records[0].reason
+    assert "tree" not in records[0].reason
+    assert "envelope" not in records[0].reason
+
+
+def test_scan_local_no_artifacts_and_no_ledger_is_new_via_isolated_dirs(tmp_path, monkeypatch):
+    """Companion to test_scan_local_never_seen_before_is_new, pinned with
+    the artifact dirs explicitly isolated (and empty) rather than relying
+    on the real data/ tree simply not existing in this worktree."""
+    _isolate_artifact_dirs(monkeypatch, tmp_path)
+    sources_dir = tmp_path / "sources"
+    _write_source(sources_dir, "elcheroth-2017.pdf")
+
+    records = scan_local(
+        sources_dir,
+        tmp_path / "ledger.tsv",
+        config_path=tmp_path / "no-such-pipeline.yaml",
+    )
+
+    assert records == [SourceRecord("elcheroth-2017.pdf", NEW)]
+
+
+def test_scan_local_ledger_ok_row_skips_artifact_checks_entirely(tmp_path, monkeypatch):
+    """The ledger is a fast path, not a second source of truth to
+    cross-check: when it already carries an OK row for the current bytes,
+    scan_local must never touch the artifact directories at all."""
+    sources_dir = tmp_path / "sources"
+    path = _write_source(sources_dir, "alpha.pdf")
+    source_id = compute_source_id(path)
+    ledger_path = tmp_path / "ledger.tsv"
+    _append_ledger_row(ledger_path, _ledger_row("interrogate", path, source_id, OK_STATUS))
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("artifact stats must not run when the ledger already agrees")
+
+    monkeypatch.setattr("axial.sources._artifact_status", _boom)
+
+    records = scan_local(sources_dir, ledger_path)
+
+    assert records == [SourceRecord("alpha.pdf", DONE)]
 
 
 # --- render_report -------------------------------------------------------------
@@ -276,6 +405,28 @@ def test_main_sources_local_backend_does_nothing_and_says_so_when_all_done(monke
     assert sync_calls == [], "nothing new/changed must run zero pipeline work"
     captured = capsys.readouterr()
     assert "nothing new" in captured.out.lower()
+
+
+def test_main_sources_local_backend_ingests_a_partial_source_to_finish_it(monkeypatch):
+    """A partial source (a died-halfway run) must not be flattened into
+    'nothing to do' -- axial.run.run_pass's own per-pass done-predicate is
+    what finishes it, by resuming, not restarting."""
+    import axial.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "resolve_backend", lambda: "local")
+    monkeypatch.setattr(
+        cli_mod,
+        "scan_local",
+        lambda: [SourceRecord("alpha.pdf", PARTIAL, "missing: chunks, answers")],
+    )
+    sync_calls = []
+    monkeypatch.setattr(cli_mod, "sync_local", lambda **kwargs: sync_calls.append(kwargs) or [])
+    monkeypatch.setattr(cli_mod, "get_client", lambda: "client-sentinel")
+
+    exit_code = cli_mod.main(["sources"])
+
+    assert exit_code == 0
+    assert len(sync_calls) == 1
 
 
 def test_main_sources_check_reports_but_never_calls_sync_local(monkeypatch, capsys):

@@ -16,14 +16,38 @@ so the ledger a corpus-wide `axial run <pass>` already writes answers
 "have I seen these exact bytes under this path before, and did the pipeline
 finish" without any new bookkeeping.
 
-Both backends report the same four-way status for every listed item:
+Both backends report the same status vocabulary for every listed item:
 
 - **new** -- never seen before.
 - **changed** -- seen under this name/path (local) or Drive file id before,
   different content.
 - **done** -- already fully processed; ingesting it again is a no-op.
+- **partial** -- SOME but not all per-source artifacts exist; names what is
+  missing, since that is what tells the operator a run died halfway
+  (local backend only -- Drive's fetch-state manifest has no equivalent
+  partial state, a candidate either has a recorded successful fetch+ingest
+  or it does not).
 - **rejected** -- named, with a reason: wrong file type (both backends), or
   Drive's English-only language gate (`axial.drive`'s P0-11c).
+
+**The artifacts are the truth, the ledger is a fast path (issue #528,
+measured live 2026-08-02).** A first cut of `scan_local` trusted the ledger
+alone and, run against the real 31-source corpus, reported every one of
+them `new` -- proposing to re-ingest a corpus that is fully processed, at
+the ~$35 cost the founder is explicitly holding off. Two real conditions
+caused it: the unified ledger this module reads (`data/run/ledger.tsv`)
+had never actually been written on that corpus (only an unrelated
+`ledger-extract.tsv` from an earlier run existed), and even where a ledger
+row exists, it can be keyed by a RETIRED `source_id` format (the old
+long-filename form, before the author-year rename) that will never match
+what `compute_source_id` returns today. Per this project's own first
+principle, a rule that produces an obviously wrong answer loses to the
+obvious one: every one of those 31 sources has an envelope, a chunk
+checkpoint, a structural tree, and interrogation answers on disk, so
+`scan_local` now checks for those files directly and trusts the ledger's
+OK row only as a shortcut when it is present and agrees -- never as the
+sole signal. Checking is four `Path.exists()` calls per source, not a
+parse of any artifact's contents, so this stays cheap at corpus scale.
 
 Ingesting means running the alive per-source pass chain
 (`DEFAULT_INGEST_PASSES`) over whatever scan reports NEW or CHANGED. A plain
@@ -57,10 +81,14 @@ import csv
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 import yaml
 
+import axial.chunk as _chunk_mod
+import axial.envelope as _envelope_mod
+import axial.extract as _extract_mod
+import axial.interrogate as _interrogate_mod
 from axial.envelope import MissingSourceError, compute_source_id
 from axial.llm import LLMClient
 from axial.paths import DEFAULT_DOMAIN_DIR, DEFAULT_PIPELINE_CONFIG_PATH
@@ -77,6 +105,7 @@ from axial.yaml_loader import SAFE_LOADER
 NEW = "new"
 CHANGED = "changed"
 DONE = "done"
+PARTIAL = "partial"
 REJECTED = "rejected"
 
 # The last pass in axial.run.PASS_REGISTRY that still runs end to end (see
@@ -139,11 +168,70 @@ def _read_ledger_rows(ledger_path: Path, pass_name: str) -> list[dict[str, str]]
         return [row for row in reader if row.get("pass") == pass_name]
 
 
+# The four per-source artifacts a fully-processed source has on disk, in the
+# order §5's pipeline produces them (module docstring's "the artifacts are
+# the truth"). Each entry is a `(name, path_fn)` pair; `path_fn(source_id,
+# config_path)` returns that artifact's path -- never its parsed contents,
+# so `_artifact_status` below stays a handful of `Path.exists()` calls per
+# source, cheap at corpus scale (the two constraints issue #528 was built
+# against: instant on 31 sources, and no read past a stat).
+#
+# Every lambda reaches its constant/resolver through the MODULE (`_extract_
+# mod.TREES_DIR`, not a bare `TREES_DIR` name or a function's own default
+# parameter value) so a test that isolates its data dirs by monkeypatching
+# that module -- `axial.chunk.CHUNKS_DIR` etc., the established pattern in
+# `src/axial/conftest.py`'s `_isolate_checkpoint_dirs` fixture -- is honored
+# here too. A default parameter value is bound once at import time and would
+# not be.
+_ARTIFACT_PATH_FNS: tuple[tuple[str, Callable[[str, Path], Path]], ...] = (
+    (
+        "tree",
+        lambda source_id, config_path: _extract_mod.tree_path(source_id, _extract_mod.TREES_DIR),
+    ),
+    (
+        "envelope",
+        lambda source_id, config_path: _envelope_mod.envelope_path(
+            source_id, _envelope_mod._default_envelopes_dir(config_path)
+        ),
+    ),
+    (
+        "chunks",
+        lambda source_id, config_path: _chunk_mod.chunks_checkpoint_path(
+            source_id, _chunk_mod._default_chunks_dir(config_path)
+        ),
+    ),
+    (
+        "answers",
+        lambda source_id, config_path: _interrogate_mod.answers_checkpoint_path(
+            source_id, _interrogate_mod._default_answers_dir(config_path)
+        ),
+    ),
+)
+
+
+def _artifact_status(source_id: str, config_path: Path) -> tuple[str, str]:
+    """Whether `source_id` is DONE, PARTIAL, or NEW by what is actually on
+    disk (module docstring): every one of the four `_ARTIFACT_PATH_FNS`
+    present is DONE; none present is NEW (the caller still has the ledger's
+    own CHANGED-vs-NEW history to consult in that case); some but not all is
+    PARTIAL, its reason naming exactly which are missing -- "a run died
+    halfway" is diagnostic information, not something to flatten away."""
+    missing = [
+        name for name, path_fn in _ARTIFACT_PATH_FNS if not path_fn(source_id, config_path).exists()
+    ]
+    if not missing:
+        return DONE, ""
+    if len(missing) == len(_ARTIFACT_PATH_FNS):
+        return NEW, ""
+    return PARTIAL, f"missing: {', '.join(missing)}"
+
+
 def scan_local(
     sources_dir: Path = CORPUS_SOURCES_DIR,
     ledger_path: Path = LEDGER_PATH,
     *,
     done_pass: str = DEFAULT_DONE_PASS,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
 ) -> list[SourceRecord]:
     """The local folder backend's report (module docstring): one
     `SourceRecord` per file directly under `sources_dir`, sorted by name.
@@ -152,17 +240,19 @@ def scan_local(
     `rejected` ("unsupported file type") without ever computing a
     `source_id` -- the same candidate filter Drive applies before download,
     made visible here instead of silently excluding the file from the
-    corpus glob. Otherwise the file's current content-derived `source_id` is
-    looked up against `done_pass`'s own ledger rows for this exact path:
-    an OK row for the current `source_id` is `done`; any row at all for this
-    path under a *different* `source_id` is `changed` (the path was seen
-    before, the bytes were not); anything else -- never seen, or seen only
-    as a prior FAIL under this same `source_id` -- is `new`, eligible for
-    (re)ingest. A FAIL row is deliberately not its own `rejected` status:
-    like Drive's own chain-error handling, a pipeline failure leaves the
-    file retryable, not gated out (module docstring's `rejected` is reserved
-    for a type check or a gate, mirroring Drive's own vocabulary of
-    `reject:` vs. `error:`).
+    corpus glob.
+
+    Otherwise: the ledger is consulted FIRST, as a fast path -- an OK row
+    for the current `source_id` under `done_pass` is trusted as `done`
+    without touching disk again. When the ledger does not agree (no such
+    row -- absent ledger, stale id format, or a genuine first run), the
+    file's four per-source artifacts (`_ARTIFACT_PATH_FNS`) are the actual
+    source of truth: all four present is `done` regardless of what the
+    ledger said or failed to say; some but not all is `partial`, naming
+    what is missing; none present falls back to the ledger's own path
+    history to tell `new` from `changed` -- any row at all for this path
+    under a *different* `source_id` is `changed` (the path was seen before,
+    the bytes were not), anything else is `new`.
 
     An absent `sources_dir` yields an empty list -- nothing to report.
     """
@@ -190,8 +280,21 @@ def scan_local(
 
         path_rows = rows_by_path.get(str(path), [])
         matching = [row for row in path_rows if row.get("source_id") == source_id]
+
+        # Fast path: the ledger already agrees this exact content is done --
+        # skip the artifact stats entirely.
         if any(row.get("status") == OK_STATUS for row in matching):
             records.append(SourceRecord(path.name, DONE))
+            continue
+
+        # The ledger is silent or disagrees (issue #528: it can be entirely
+        # absent while the corpus is fully processed) -- the artifacts on
+        # disk are what actually answer the question.
+        status, reason = _artifact_status(source_id, config_path)
+        if status == DONE:
+            records.append(SourceRecord(path.name, DONE))
+        elif status == PARTIAL:
+            records.append(SourceRecord(path.name, PARTIAL, reason))
         elif path_rows and not matching:
             records.append(SourceRecord(path.name, CHANGED))
         else:
