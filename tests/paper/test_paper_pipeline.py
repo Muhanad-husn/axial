@@ -11,6 +11,8 @@ claims are exactly what the prose cited, and that rendering is deterministic.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -327,3 +329,30 @@ def test_the_record_and_the_paper_are_persisted_side_by_side(tmp_path, analyses_
     assert record["corpus_pin"] == PIN
     assert record["lens"] == "state-formation"
     assert record["source_lenses"] == {"brief-a": "state-formation", "brief-b": "state-formation"}
+
+
+def test_the_no_phase_b_import_guarantee_still_holds():
+    """Phase C never runs Phase B (§3 non-goal 1) -- relocated here from the
+    deleted `test_paper_opposition.py` (issue #577 riders): this guarantee is
+    about the whole `axial.paper` package, not about the opposition pass that
+    file was named for, and it must survive that file's deletion.
+
+    Runs in a CLEAN interpreter, and has to. `sys.modules` is process-wide, so
+    an in-process version of this test asserts about whatever the same worker
+    imported before it: any test that touches `axial.cli` -- which wires every
+    Phase-B subcommand at module load -- makes it fail without Phase C having
+    imported anything. Under `-n auto` that is decided by which worker gets
+    which file, so the guarantee would pass or fail by luck. A structural
+    guarantee that flakes gets marked xfail and then deleted."""
+    probe = (
+        "import sys, json\n"
+        "import axial.paper.record\n"
+        "print(json.dumps(sorted(\n"
+        "    name for name in sys.modules\n"
+        "    if name.startswith(('axial.answer', 'axial.analyze', 'axial.brief'))\n"
+        ")))"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    )
+    assert json.loads(completed.stdout) == []

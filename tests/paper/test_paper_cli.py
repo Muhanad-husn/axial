@@ -11,18 +11,18 @@ Seam decision: a CHILD PROCESS, not `axial.cli.main` called in-process
 -----------------------------------------------------------------------
 `axial.cli` wires up every subcommand at import time, including `brief`,
 `gate` and `panel`, which pulls in `axial.answer`, `axial.analyze` and
-`axial.brief` regardless of which subcommand a test actually calls.
-Importing `axial.cli` in the SAME pytest process as
-`test_paper_opposition.py::test_the_no_phase_b_import_guarantee_still_holds`
-(same directory, same session) would poison that test's `sys.modules` check
--- measured directly: `pytest tests/chunk/test_chunk_cli.py
-tests/paper/test_paper_opposition.py` already fails that assertion today for
-exactly this reason, independent of anything in this file. A plain `python -c`
-subprocess (the project venv's own interpreter, not `uv run`, so there is no
-per-test dependency-resolution cost) keeps the CLI's wide import surface
-confined to a process this test throws away, and the stub client's own call
-log is handed back over a small file so the parent process can still assert
-on it.
+`axial.brief` regardless of which subcommand a test actually calls. The
+no-Phase-B-import guarantee
+(`test_paper_pipeline.py::test_the_no_phase_b_import_guarantee_still_holds`)
+protects itself against that by running its own `sys.modules` check in a
+clean child interpreter rather than in-process, so it cannot be poisoned by
+whatever else the same pytest worker happened to import first (a fix that
+predates this revival). This file follows the identical seam for
+the same reason, one layer up: a plain `python -c` subprocess (the project
+venv's own interpreter, not `uv run`, so there is no per-test
+dependency-resolution cost) keeps the CLI's wide import surface confined to
+a process this test throws away, and the stub client's own call log is
+handed back over a small file so the parent process can still assert on it.
 """
 
 from __future__ import annotations

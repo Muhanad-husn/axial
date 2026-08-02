@@ -1,12 +1,18 @@
 """Stage 3: drafting, one call per section (specs/PHASE-C.md §4, §5, §8 P0-3).
 
 **One call per section, over that section's assigned claims and nothing else.**
-Phase B measured that roughly twenty notes reach a model however much is
-supplied -- 62% more evidence assembled between two runs put exactly the same
-127 notes in front of it (PHASE-B P2-7, issues #505 and #545). An inventory
-across three records runs to 40-70 claims plus grounds, so a whole-inventory
-prompt would have a tail nothing reads and no way to know which claims fell
-off it. The plan is what makes the smaller prompt possible.
+The "roughly twenty notes reach a model however much is supplied" figure this
+paragraph used to cite (PHASE-B P2-7, issues #505 and #545) was measured at a
+100k-character budget; it does not hold at the budgets Phase B now runs at --
+the 2026-08-02 run at 200k composed 44 of 200 assembled notes, and the 250k
+run composed 56 of 90. The per-section design still stands on its own
+grounds, unrelated to that number: a section needs an argumentative role
+(§7.2), and a single call over the whole inventory leaves no way to know
+which claims fell off the end. An inventory across three records runs to
+40-70 claims plus grounds, so a whole-inventory prompt would still hand the
+drafter a mixed bag of unrelated argumentative roles in one call, whatever
+the model's real attention turns out to be. The plan is what makes the
+per-section prompt possible.
 
 **A new (b) claim can still reach across sections**, and therefore across
 records, because each call also carries what earlier sections already cited:

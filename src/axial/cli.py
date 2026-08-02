@@ -1038,12 +1038,11 @@ def build_parser() -> argparse.ArgumentParser:
     paper_draft_parser = paper_subparsers.add_parser(
         "draft",
         help=(
-            "run the paper pipeline end to end -- intake, the opposition "
-            "gap-and-repair pass, arc planning, section-by-section "
-            "drafting, citation indexing, the bibliography and rendering "
-            "-- and persist the paper record plus the rendered markdown "
-            "under data/papers/<paper_brief_id> (specs/PHASE-C.md §5, "
-            "§7.3, §7.10, §8 P0-12)"
+            "run the paper pipeline end to end -- intake, arc planning, "
+            "section-by-section drafting, citation indexing, the "
+            "bibliography and rendering -- and persist the paper record "
+            "plus the rendered markdown under data/papers/<paper_brief_id> "
+            "(specs/PHASE-C.md §5, §7.3, §7.10, §8 P0-12)"
         ),
     )
     paper_draft_parser.add_argument(
@@ -1054,11 +1053,11 @@ def build_parser() -> argparse.ArgumentParser:
     paper_examine_parser = paper_subparsers.add_parser(
         "examine",
         help=(
-            "run intake, the opposition gap-and-repair pass, and arc "
-            "planning, and report the resolved lens, the claim inventory, "
-            "and each section's assigned claims -- makes ZERO drafting "
-            "calls and writes nothing under data/papers/, analogous to "
-            "`axial brief examine` (specs/PHASE-C.md §5 stages 1-2, §8 P0-12)"
+            "run intake and arc planning, and report the resolved lens, "
+            "the claim inventory, and each section's assigned claims -- "
+            "makes ZERO drafting calls and writes nothing under "
+            "data/papers/, analogous to `axial brief examine` "
+            "(specs/PHASE-C.md §5 stages 1-2, §8 P0-12)"
         ),
     )
     paper_examine_parser.add_argument(
