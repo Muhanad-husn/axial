@@ -89,7 +89,7 @@ concentrated in one pass (e.g. retrieve vs. synthesize), not just an
 aggregate figure. A pass whose `usd` was `None` on ANY draw (an unpriced
 model) keeps that pass's summed `usd` `None` too -- summing `None` as 0
 would silently understate cost for a brief mixing priced and unpriced
-passes, the same "never a fabricated zero" rule `_usage_and_cost_by_pass`
+passes, the same "never a fabricated zero" rule `axial.llm.usage_and_cost_by_pass`
 itself already follows.
 """
 
@@ -325,7 +325,7 @@ def aggregate_brief_cost(records: list[dict[str, Any]]) -> dict[str, Any]:
     `total_tokens` sums every pass's `total_tokens` across every draw,
     `total_usd` sums every pass's summed `usd` that IS known (never a
     fabricated zero for an unpriced/uncaptured pass, mirroring
-    `axial.answer.record._usage_and_cost_by_pass`'s own rule one level up)."""
+    `axial.llm.usage_and_cost_by_pass`'s own rule one level up)."""
     if not records:
         return dict(_EMPTY_COST_SUMMARY)
 

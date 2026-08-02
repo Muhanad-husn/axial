@@ -213,9 +213,6 @@ class StubClient:
     def usage_for_pass(self, pass_name=None):
         return None
 
-    def cost_report(self):
-        return {{"total_usd": 0.0, "by_pass": {{}}}}
-
 
 client = StubClient()
 cli.get_client = lambda: client

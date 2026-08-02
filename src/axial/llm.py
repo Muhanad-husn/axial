@@ -597,6 +597,49 @@ def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> flo
     return (prompt_tokens / 1000) * price["input"] + (completion_tokens / 1000) * price["output"]
 
 
+def usage_and_cost_by_pass(client: LLMClient, model_by_pass: dict[str, str]) -> dict[str, Any]:
+    """Per-pass token usage + computed dollar cost, summed to a run total --
+    the run-record `cost` field every stage-6-shaped record carries (issue
+    #363, promoted from `axial.answer.record._usage_and_cost_by_pass` by
+    issue #591 so `axial.paper.record` can reuse it without importing across
+    the Phase-B/Phase-C seam -- see that module's own docstring on why it is
+    "deliberately not an import of" `axial.answer.record`). Reads
+    `client.usage_for_pass` for every pass named in `model_by_pass` -- never
+    guesses at a pass that is not a key of it, so the caller controls the
+    scope by what it hands in (a Phase-B run's own passes, or a Phase-C
+    paper's own three).
+
+    A pass whose usage was never captured (a client that reports none, or a
+    real response that carried no `usage` object) contributes zero token
+    counts and a `null` `usd` -- never zero cost pretending to be real. A
+    pass whose model has no `PRICE_TABLE_USD_PER_1K` entry likewise gets a
+    `null` `usd` (`estimate_cost` itself logs that gap once). `total_usd` is
+    the sum of whatever per-pass costs ARE known; it is `null` only when NONE
+    of the passes priced, so one unpriced/uncaptured pass does not blank out
+    an otherwise-real total for a multi-pass run.
+
+    **The price table is a ceiling, not a measurement**: `PRICE_TABLE_USD_PER_1K`
+    runs about 14% high against at least one measured real invoice, so every
+    `usd`/`total_usd` figure this returns is an upper bound on real spend, not
+    a reading of it."""
+    by_pass: dict[str, Any] = {}
+    for pass_name, model in model_by_pass.items():
+        usage = client.usage_for_pass(pass_name)
+        prompt_tokens = usage["prompt_tokens"] if usage else 0
+        completion_tokens = usage["completion_tokens"] if usage else 0
+        total_tokens = usage["total_tokens"] if usage else 0
+        usd = estimate_cost(model, prompt_tokens, completion_tokens) if usage else None
+        by_pass[pass_name] = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "usd": usd,
+        }
+    known = [entry["usd"] for entry in by_pass.values() if entry["usd"] is not None]
+    total_usd = sum(known) if known else None
+    return {"by_pass": by_pass, "total_usd": total_usd}
+
+
 def _accumulate_usage(
     store: dict[str | None, dict[str, int]], pass_name: str | None, usage: dict[str, Any] | None
 ) -> None:
