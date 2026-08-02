@@ -27,6 +27,7 @@ from axial.paper.intake import (
 )
 from axial.paper.record import run_paper
 from axial.paper.render import render_paper
+from axial.paper.shape import SelfGradingError, ShapeParseError
 
 PIN = "sim-2026-07-30"
 
@@ -130,21 +131,43 @@ def lenses_dir(tmp_path: Path) -> Path:
     return directory
 
 
+# The default shape-check response every pipeline test gets unless it asks
+# for something else: `strong`, no defects -- the check does its own job
+# (issue #578) without perturbing tests that only care about earlier stages.
+SHAPE_RESPONSE = {"band": "strong", "defects": []}
+
+
 class StubClient:
     """Returns scripted JSON per pass, and records what it was asked."""
 
-    model_by_pass = {"paper_plan": "stub/plan", "paper_draft": "stub/draft"}
+    # `paper_shape` deliberately resolves to a DIFFERENT model than
+    # `paper_draft`: the shape check's own self-grading guard (issue #578)
+    # raises if the two ever match.
+    model_by_pass = {
+        "paper_plan": "stub/plan",
+        "paper_draft": "stub/draft",
+        "paper_shape": "stub/shape",
+    }
 
-    def __init__(self, plan, drafts):
+    def __init__(self, plan, drafts, shape=None):
         self._plan = plan
         self._drafts = list(drafts)
+        self._shape = shape if shape is not None else SHAPE_RESPONSE
         self.prompts: list[tuple[str, str]] = []
 
     def complete(self, prompt, pass_name=None, **_):
         self.prompts.append((pass_name, prompt))
         if pass_name == "paper_plan":
             return json.dumps(self._plan)
+        if pass_name == "paper_shape":
+            return json.dumps(self._shape)
         return json.dumps(self._drafts.pop(0))
+
+    def model_for_pass(self, pass_name=None):
+        return self.model_by_pass.get(pass_name)
+
+    def usage_for_pass(self, pass_name=None):
+        return None
 
     def cost_report(self):
         return {"total_usd": 0.0, "by_pass": {}}
@@ -215,8 +238,8 @@ def test_contradicting_records_are_never_rejected(analyses_dir: Path):
     assert len(intake.inventory) == 3
 
 
-def _run(tmp_path, analyses_dir, lenses_dir, drafts=None):
-    client = StubClient(PLAN, drafts if drafts is not None else DRAFTS)
+def _run(tmp_path, analyses_dir, lenses_dir, drafts=None, shape=None):
+    client = StubClient(PLAN, drafts if drafts is not None else DRAFTS, shape=shape)
     brief = PaperBrief(
         paper_brief_id="pb-test",
         thesis="Which account explains the outcome?",
@@ -334,6 +357,88 @@ def test_the_drafter_is_called_once_per_section_and_never_sees_the_whole_invento
     assert len(draft_prompts) == len(PLAN["sections"])
     # Section 1's call must not carry section 2's claim text.
     assert "revolution without revolutionaries" not in draft_prompts[0]
+
+
+def test_the_shape_check_makes_exactly_one_call_after_every_draft(
+    tmp_path, analyses_dir, lenses_dir
+):
+    """Issue #578 acceptance criterion 1: one call regardless of section
+    count, made after the drafting calls, never before."""
+    _, client = _run(tmp_path, analyses_dir, lenses_dir)
+    pass_names = [pass_name for pass_name, _ in client.prompts]
+    shape_calls = [name for name in pass_names if name == "paper_shape"]
+    assert len(shape_calls) == 1
+    # It runs after every draft call, not interleaved with them.
+    assert pass_names.index("paper_shape") == len(pass_names) - 1
+    assert pass_names.count("paper_draft") == len(PLAN["sections"])
+
+
+def test_the_shape_result_is_persisted_on_the_record(tmp_path, analyses_dir, lenses_dir):
+    """Issue #578 acceptance criterion 6: band, defects, model and cost."""
+    record, _ = _run(tmp_path, analyses_dir, lenses_dir)
+    shape = record["shape"]
+    assert shape["band"] == "strong"
+    assert shape["defects"] == []
+    assert shape["model"] == "stub/shape"
+    assert "cost" in shape
+    # model_by_pass gains the shape pass alongside planning and drafting.
+    assert record["model_by_pass"]["paper_shape"] == "stub/shape"
+
+
+def test_a_weak_band_with_no_defects_is_a_parse_error_and_aborts_the_run(
+    tmp_path, analyses_dir, lenses_dir
+):
+    """Issue #578 acceptance criterion 3, exercised end to end."""
+    with pytest.raises(ShapeParseError):
+        _run(tmp_path, analyses_dir, lenses_dir, shape={"band": "weak", "defects": []})
+
+
+def test_the_shape_check_refuses_to_run_on_the_drafting_model(tmp_path, analyses_dir, lenses_dir):
+    """Issue #578 acceptance criterion 4: configuring the same model for both
+    raises, naming both passes."""
+    client = StubClient(PLAN, list(DRAFTS))
+    client.model_by_pass = {"paper_plan": "stub/plan", "paper_draft": "same/model"}
+    # `paper_shape` absent from `model_by_pass` resolves to the client's own
+    # default model via `model_for_pass` -- give it explicitly here so the
+    # guard has something concrete to compare.
+    client.model_by_pass["paper_shape"] = "same/model"
+    brief = PaperBrief(
+        paper_brief_id="pb-test",
+        thesis="Which account explains the outcome?",
+        analysis_ids=("brief-a", "brief-b"),
+        lens="state-formation",
+    )
+    with pytest.raises(SelfGradingError) as excinfo:
+        run_paper(
+            client,
+            brief,
+            analyses_dir=analyses_dir,
+            lenses_dir=lenses_dir,
+            source_meta_dir=tmp_path / "source_meta",
+            papers_dir=tmp_path / "papers",
+        )
+    assert "paper_shape" in str(excinfo.value)
+    assert "paper_draft" in str(excinfo.value)
+    # No paper was written: the guard fires before any of stage 4/5 runs.
+    assert not (tmp_path / "papers").exists()
+
+
+def test_the_rendered_output_is_byte_identical_but_for_the_added_shape_block(
+    tmp_path, analyses_dir, lenses_dir
+):
+    """Issue #578 acceptance criterion 5: adding the shape check changes the
+    rendered paper by exactly one new block and nothing else."""
+    record, _ = _run(tmp_path, analyses_dir, lenses_dir)
+    with_shape = render_paper(record)
+
+    without_shape_record = dict(record)
+    without_shape_record.pop("shape")
+    without_shape = render_paper(without_shape_record)
+
+    start = with_shape.index("## Shape check")
+    end = with_shape.index("## Citations")
+    stripped = with_shape[:start] + with_shape[end:]
+    assert stripped == without_shape
 
 
 def test_the_lens_reaches_the_model_with_its_description(tmp_path, analyses_dir, lenses_dir):

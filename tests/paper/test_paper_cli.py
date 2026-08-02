@@ -156,8 +156,16 @@ DRAFTS = [
 ]
 
 
+SHAPE_RESPONSE = {"band": "strong", "defects": []}
+
+
 def _run_paper_cli(
-    root: Path, args: list[str], *, plan: dict | None = None, drafts: list[dict] | None = None
+    root: Path,
+    args: list[str],
+    *,
+    plan: dict | None = None,
+    drafts: list[dict] | None = None,
+    shape: dict | None = None,
 ) -> tuple[int, str, str, list[str | None]]:
     """Run `axial.cli.main(["paper", ...])` in a throwaway child process with
     a stubbed `get_client`, returning (exit_code, stdout, stderr, calls) --
@@ -172,10 +180,18 @@ import axial.cli as cli
 
 PLAN = {json.dumps(plan if plan is not None else PLAN)}
 DRAFTS = {json.dumps(drafts if drafts is not None else DRAFTS)}
+SHAPE = {json.dumps(shape if shape is not None else SHAPE_RESPONSE)}
 
 
 class StubClient:
-    model_by_pass = {{"paper_plan": "stub/plan", "paper_draft": "stub/draft"}}
+    # `paper_shape` deliberately resolves to a DIFFERENT model than
+    # `paper_draft` -- the shape check's own self-grading guard (issue #578)
+    # raises if the two ever match.
+    model_by_pass = {{
+        "paper_plan": "stub/plan",
+        "paper_draft": "stub/draft",
+        "paper_shape": "stub/shape",
+    }}
 
     def __init__(self):
         self._drafts = list(DRAFTS)
@@ -187,7 +203,15 @@ class StubClient:
             return json.dumps(PLAN)
         if pass_name == "paper_draft":
             return json.dumps(self._drafts.pop(0))
+        if pass_name == "paper_shape":
+            return json.dumps(SHAPE)
         raise AssertionError("unexpected pass_name: " + str(pass_name))
+
+    def model_for_pass(self, pass_name=None):
+        return self.model_by_pass.get(pass_name)
+
+    def usage_for_pass(self, pass_name=None):
+        return None
 
     def cost_report(self):
         return {{"total_usd": 0.0, "by_pass": {{}}}}
@@ -235,7 +259,34 @@ def test_draft_writes_the_record_and_the_rendered_paper(root):
     # so compare on the filename rather than the fixture's absolute path.
     assert json_files[0].name in out
     assert md_files[0].name in out
-    assert calls == ["paper_plan", "paper_draft", "paper_draft"]
+    assert calls == ["paper_plan", "paper_draft", "paper_draft", "paper_shape"]
+    assert record["shape"]["band"] == "strong"
+
+
+def test_draft_exits_nonzero_on_a_weak_shape_band_but_still_writes_the_files(root):
+    """Issue #578 acceptance criterion 7: a `weak` shape band makes `axial
+    paper draft` exit non-zero, and the record and rendered paper are still
+    on disk after it."""
+    brief_path = _write_paper_brief(root, analysis_ids=["brief-a", "brief-b"])
+    weak_shape = {
+        "band": "weak",
+        "defects": [{"section_id": "s2", "note": "reads as a summary, not an argument"}],
+    }
+
+    exit_code, out, err, calls = _run_paper_cli(
+        root, ["paper", "draft", str(brief_path)], shape=weak_shape
+    )
+
+    assert exit_code == 1, f"stdout: {out!r}\nstderr: {err!r}"
+    assert "weak" in err.lower()
+    json_files = list((root / "data" / "papers").glob("*.json"))
+    md_files = list((root / "data" / "papers").glob("*.md"))
+    assert len(json_files) == 1, "the record must still be written on a weak shape band"
+    assert len(md_files) == 1, "the rendered paper must still be written on a weak shape band"
+
+    record = json.loads(json_files[0].read_text(encoding="utf-8"))
+    assert record["shape"]["band"] == "weak"
+    assert record["shape"]["defects"]
 
 
 def test_examine_makes_zero_drafting_calls(root):

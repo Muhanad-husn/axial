@@ -6,8 +6,9 @@ randomness, nothing read from disk.
 
 Contents in order: title, thesis statement, the plan's sections in plan order
 with their prose and in-text markers, the counter-position (or the one-sided
-disclosure), the confidence and coverage disclosure, the citation table, and
-the bibliography.
+disclosure), the confidence and coverage disclosure, the shape-check block
+(§7.16, issue #578 -- the band and, below `strong`, the named defects), the
+citation table, and the bibliography.
 
 Two rules carried from the layer beneath, restated because they bind on this
 artifact.
@@ -126,6 +127,32 @@ def _render_coverage(record: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _render_shape(record: dict[str, Any]) -> list[str]:
+    """The §7.16 shape-check block (issue #578): the band the check returned
+    and, whenever it is not `strong`, the named defects that justify it. This
+    check reports and never blocks -- a `weak` band still renders here, next
+    to what it says is wrong, exactly like a confidence band never renders
+    without the counts behind it (§7.10)."""
+    shape = record.get("shape")
+    if not isinstance(shape, dict):
+        return []
+
+    lines = [
+        "## Shape check",
+        "",
+        f"**Band:** {shape.get('band')}.",
+        "",
+    ]
+    defects = shape.get("defects") or []
+    if defects:
+        lines.append("| section | defect |")
+        lines.append("|---|---|")
+        for defect in defects:
+            lines.append(f"| {defect.get('section_id')} | {defect.get('note')} |")
+        lines.append("")
+    return lines
+
+
 def _bib_label(entry: dict[str, Any]) -> str:
     author = (entry.get("author") or {}).get("value")
     date = (entry.get("date") or {}).get("value")
@@ -212,6 +239,7 @@ def render_paper(record: dict[str, Any]) -> str:
 
     lines.extend(_render_counter_position(record))
     lines.extend(_render_coverage(record))
+    lines.extend(_render_shape(record))
     lines.extend(_render_citation_table(record))
     lines.extend(_render_bibliography(record))
 

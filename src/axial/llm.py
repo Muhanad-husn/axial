@@ -231,6 +231,13 @@ PRODUCTION_COUNTER_POSITION_TIER = "production_counter_position"
 # tier", which is the right failure and a confusing one to meet cold.
 PRODUCTION_PAPER_PLAN_TIER = "production_paper_plan"
 PRODUCTION_PAPER_DRAFT_TIER = "production_paper_draft"
+# The shape check's own tier (issue #578, specs/PHASE-C.md §7.16): named
+# separately from the two above for the same reason they are named
+# separately from each other -- it must be free to move without moving the
+# drafting model it checks, and it must resolve to a DIFFERENT model than
+# PRODUCTION_PAPER_DRAFT_TIER (enforced at run time, not by this naming
+# alone: see PAPER_SHAPE_PASS_NAME's self-grading guard).
+PRODUCTION_PAPER_SHAPE_TIER = "production_paper_shape"
 DEFAULT_LLM_TIER = BUILDING_TIER
 
 # Fallback model used only when secrets.toml doesn't name one for the
@@ -351,6 +358,21 @@ PAPER_PLAN_PASS_NAME = "paper_plan"
 # anchor is SYNTHESIZE_PASS_NAME (§10.1) -- so it must be routable, and a
 # judge must never resolve to whatever this resolves to.
 PAPER_DRAFT_PASS_NAME = "paper_draft"
+
+# Pass name the post-draft shape check's single per-paper call identifies
+# itself with (see src/axial/paper/shape.py, issue #578, specs/PHASE-C.md
+# §7.16): one call after all section drafts complete, asking whether each
+# section did the argumentative work its plan-assigned role required and
+# whether the paper advances its thesis across sections. It REPORTS, never
+# blocks (§3 non-goal 9 stays true: this is not a panel and not a gate). Same
+# out-of-band dispatch convention as CHUNK_PASS_NAME above -- naming this
+# constant is what makes the check routable through `model_by_pass`, and it
+# must resolve to a DIFFERENT model than PAPER_DRAFT_PASS_NAME, since the
+# model that wrote the prose must never grade its own shape (§10.1, charter
+# §2) -- the same self-grading guard GROUNDING_PASS_NAME carries, re-anchored
+# from SYNTHESIZE_PASS_NAME to PAPER_DRAFT_PASS_NAME because this check's
+# generating pass is drafting, not synthesis.
+PAPER_SHAPE_PASS_NAME = "paper_shape"
 
 # Pass name the stage-5 counter-position validator's bounded steelman-quality
 # check identifies itself with (see src/axial/validators/counter_position.py,
@@ -2569,6 +2591,7 @@ TIER_TO_MODEL_KEY = {
     PRODUCTION_COUNTER_POSITION_TIER: "production_counter_position",
     PRODUCTION_PAPER_PLAN_TIER: "production_paper_plan",
     PRODUCTION_PAPER_DRAFT_TIER: "production_paper_draft",
+    PRODUCTION_PAPER_SHAPE_TIER: "production_paper_shape",
 }
 
 
