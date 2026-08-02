@@ -382,6 +382,77 @@ def test_the_shape_result_is_persisted_on_the_record(tmp_path, analyses_dir, len
     assert record["model_by_pass"]["paper_shape"] == "stub/shape"
 
 
+def test_the_record_carries_a_zero_retry_count_when_nothing_was_rejected(
+    tmp_path, analyses_dir, lenses_dir
+):
+    """Issue #598: a paper that never hit a validator rejection still carries
+    the field, at zero -- so its presence is not itself a sign of trouble."""
+    record, _ = _run(tmp_path, analyses_dir, lenses_dir)
+    assert record["retries"] == {"paper_plan": 0, "paper_draft": 0}
+
+
+class RetryingStubClient(StubClient):
+    """Rejects the first arc-planning draw and the first section's first
+    drafting draw -- the exact §7.2 empty-section shape issue #598 measured
+    failing 2 of 7 real draws -- before returning the scripted good
+    response, so the record's own `retries` field can be pinned end to
+    end."""
+
+    def __init__(self, plan, drafts):
+        super().__init__(plan, drafts)
+        self._plan_attempts = 0
+        self._draft_attempts = 0
+
+    def complete(self, prompt, pass_name=None, **_):
+        if pass_name == "paper_plan":
+            self._plan_attempts += 1
+            self.prompts.append((pass_name, prompt))
+            if self._plan_attempts == 1:
+                return json.dumps(
+                    {
+                        "thesis_statement": "x",
+                        "sections": [
+                            {
+                                "section_id": "s1",
+                                "heading": "h",
+                                "role": "claim",
+                                "assigned_claims": [],
+                            }
+                        ],
+                    }
+                )
+            return json.dumps(self._plan)
+        if pass_name == "paper_draft":
+            self._draft_attempts += 1
+            self.prompts.append((pass_name, prompt))
+            if self._draft_attempts == 1:
+                return json.dumps({"new_claims": []})  # no 'prose'
+            return json.dumps(self._drafts.pop(0))
+        return super().complete(prompt, pass_name=pass_name)
+
+
+def test_the_record_carries_a_nonzero_retry_count_per_pass(tmp_path, analyses_dir, lenses_dir):
+    """Issue #598: retry cost is visible in the same place as run cost
+    (#591/#594) -- one rejected plan draw and one rejected drafting draw,
+    summed across sections onto the record's `paper_draft` entry."""
+    client = RetryingStubClient(PLAN, list(DRAFTS))
+    brief = PaperBrief(
+        paper_brief_id="pb-test",
+        thesis="Which account explains the outcome?",
+        analysis_ids=("brief-a", "brief-b"),
+        lens="state-formation",
+    )
+    record = run_paper(
+        client,
+        brief,
+        analyses_dir=analyses_dir,
+        lenses_dir=lenses_dir,
+        source_meta_dir=tmp_path / "source_meta",
+        papers_dir=tmp_path / "papers",
+    )
+    assert record["retries"] == {"paper_plan": 1, "paper_draft": 1}
+
+
 class CostReportingStubClient(StubClient):
     """A `StubClient` that also reports real per-pass token usage, and is
     configured with Phase-B pass names alongside Phase C's own three -- the

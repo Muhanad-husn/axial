@@ -18,7 +18,8 @@ not a special case (§0, §5).
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+import sys
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from axial.llm import PAPER_PLAN_PASS_NAME
@@ -130,10 +131,16 @@ class Section:
 
 @dataclass(frozen=True)
 class Plan:
-    """The arc (§7.2). `sections` is ordered and rendering never reorders."""
+    """The arc (§7.2). `sections` is ordered and rendering never reorders.
+
+    `retries` counts how many of `run_plan`'s attempts beyond the first were
+    rejected before this plan was accepted (issue #598) -- a Python-side
+    bookkeeping field, never part of the persisted §7.2 plan shape, which
+    `to_json` below does not emit it into."""
 
     thesis_statement: str
     sections: tuple[Section, ...] = field(default_factory=tuple)
+    retries: int = 0
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -260,13 +267,73 @@ def validate_plan(plan: Plan, records: dict[str, dict[str, Any]]) -> None:
         raise MissingCounterPositionError(disclosing, len(records))
 
 
+# Bounded retry (issue #598): a rejected plan is re-asked with the error
+# text appended, never repaired. First attempt plus up to two re-asks -- one
+# number, matching `axial.llm`'s own `_MAX_ATTEMPTS` retry budget for
+# transport failures, which this is not: that budget catches a stalled
+# connection or a 5xx; this one catches a well-formed response that fails
+# Phase C's own rules (measured: #598's seven-draw sample was 5 valid, 2
+# rejected on the exact §7.2 empty-section rule, 1 indeterminate).
+_MAX_ATTEMPTS = 3
+
+# Exactly the four errors issue #598 names as retryable. Deliberately NOT
+# `PlanError` (the shared base): `MissingCounterPositionError` is also a
+# `PlanError` and is raised by `validate_plan`, called only after a parse
+# already succeeded -- the issue scopes retry to a malformed or
+# rule-violating PARSE, not to the counter-position presence guard, which
+# stays a hard first-attempt failure exactly as before (§7.2's own note
+# that a plan carrying no counter-position section is a red flag either way).
+_PLAN_RETRYABLE_ERRORS: tuple[type[PlanError], ...] = (
+    PlanParseError,
+    UnknownRoleError,
+    EmptySectionError,
+    UnassignedClaimError,
+)
+
+
+def _log_plan_retry(attempt: int, error: PlanError) -> None:
+    """One structured stderr line per rejected attempt (issue #598): a
+    silent retry turns a measured flake rate into an invisible one. Bare
+    print, matching `axial.llm._log_retry`'s convention -- this repo has no
+    logging framework."""
+    print(
+        f"paper_retry pass={PAPER_PLAN_PASS_NAME} attempt={attempt}/{_MAX_ATTEMPTS} "
+        f"validator={type(error).__name__}",
+        file=sys.stderr,
+    )
+
+
+def _plan_retry_prompt(base_prompt: str, error: PlanError, attempt: int) -> str:
+    """Re-ask with the error text appended -- not a repair loop. The prompt
+    the model sees next is the original prompt plus what went wrong, so it
+    can avoid the mistake; nothing here patches the rejected plan itself."""
+    return (
+        f"{base_prompt}\n\n"
+        f"Your previous plan (attempt {attempt} of {_MAX_ATTEMPTS}) was rejected: {error}\n"
+        "Produce a new, complete plan from scratch that does not repeat this mistake."
+    )
+
+
 def run_plan(client: Any, thesis: str, lens: Lens, intake: PaperIntake) -> Plan:
-    """Stage 2, end to end: one model call, parsed and validated."""
-    prompt = compose_plan_prompt(thesis, lens, intake)
-    raw = complete_json(client, prompt, pass_name=PAPER_PLAN_PASS_NAME)
-    plan = parse_plan_response(raw, intake)
-    validate_plan(plan, intake.records)
-    return plan
+    """Stage 2, end to end: parsed and validated, with a bounded retry
+    (issue #598) on the four §7.2 errors a malformed or rule-violating
+    response can raise. `validate_plan`'s counter-position guard is not
+    retried -- see `_PLAN_RETRYABLE_ERRORS`."""
+    base_prompt = compose_plan_prompt(thesis, lens, intake)
+    prompt = base_prompt
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        raw = complete_json(client, prompt, pass_name=PAPER_PLAN_PASS_NAME)
+        try:
+            plan = parse_plan_response(raw, intake)
+        except _PLAN_RETRYABLE_ERRORS as exc:
+            if attempt == _MAX_ATTEMPTS:
+                raise
+            _log_plan_retry(attempt, exc)
+            prompt = _plan_retry_prompt(base_prompt, exc, attempt)
+            continue
+        validate_plan(plan, intake.records)
+        return replace(plan, retries=attempt - 1)
+    raise AssertionError("unreachable: the retry loop always returns or raises")
 
 
 def format_plan(plan: Plan) -> str:
