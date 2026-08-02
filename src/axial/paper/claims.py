@@ -147,6 +147,22 @@ class ConfidenceCeilingError(PaperClaimError):
         )
 
 
+def names_touched_of(claim: dict[str, Any]) -> list[str]:
+    """The names a Phase-B claim touches, under either vocabulary (issue #599).
+
+    Records written before the names rename carry the same values under
+    `polities_touched`. Four of the six analysis records on disk still do, and
+    the sim corpus is not regenerated wholesale (DEC-29), so a mixed corpus is
+    the permanent condition rather than a migration window. This branches on
+    KEY PRESENCE rather than a version field, which is the rule #496 settled
+    one layer down."""
+    for key in ("names_touched", "polities_touched"):
+        values = claim.get(key)
+        if values:
+            return [name for name in values if isinstance(name, str) and name]
+    return []
+
+
 def carried_claim(
     paper_claim_id: str,
     text: str,
@@ -167,7 +183,7 @@ def carried_claim(
         "origin": {"brief_id": entry.brief_id, "claim_id": entry.claim_id},
         "grounds": list(origin.get("grounds") or []),
         "confidence": clamped_band_for(origin, source_coverage_map),
-        "names_touched": list(origin.get("names_touched") or []),
+        "names_touched": names_touched_of(origin),
         "derived_from": [],
     }
 
