@@ -49,11 +49,14 @@ from axial.eval.corpus_pin import CorpusPinError, write_pin
 from axial.extract import ExtractError, extract
 from axial.gates import (
     ADVERSARIAL_GATE_NAME,
+    PROVENANCE_GATE_NAME,
     AdversarialGateError,
     CalibrationGateError,
     GateError,
     GroundingGateError,
+    ProvenanceGateError,
     format_report,
+    load_paper_records,
     load_records,
     load_seeded_briefs,
     resolve_trusted,
@@ -1183,8 +1186,9 @@ def build_parser() -> argparse.ArgumentParser:
         "run",
         help=(
             "score a named gate (attribution-fidelity, grounding, "
-            "synthesis-quality, calibration, adversarial) over a directory of "
-            "analysis records or (adversarial) seeded briefs, writing "
+            "synthesis-quality, calibration, adversarial, provenance-integrity) "
+            "over a directory of analysis records, (adversarial) seeded briefs, "
+            "or (provenance-integrity) Phase-C paper records, writing "
             "evals/reports/<gate>.json"
         ),
     )
@@ -1192,7 +1196,8 @@ def build_parser() -> argparse.ArgumentParser:
         "gate",
         help=(
             "which gate to run: attribution-fidelity, grounding, "
-            "synthesis-quality, calibration, or adversarial"
+            "synthesis-quality, calibration, adversarial, or provenance-integrity "
+            "(specs/PHASE-C.md §10.1)"
         ),
     )
     gate_run_parser.add_argument(
@@ -1209,7 +1214,11 @@ def build_parser() -> argparse.ArgumentParser:
     gate_run_parser.add_argument(
         "--records",
         default=None,
-        help="directory of analysis-record JSON files to score (attribution-fidelity, grounding)",
+        help=(
+            "directory of analysis-record JSON files to score (attribution-fidelity, "
+            "grounding, synthesis-quality, calibration), or of Phase-C paper-record "
+            "JSON files (provenance-integrity)"
+        ),
     )
     gate_run_parser.add_argument(
         "--briefs",
@@ -2501,6 +2510,11 @@ def _gate_run(gate: str, records_dir: str | None, briefs_dir: str | None) -> int
                 print(f"error: gate {gate!r} requires --briefs <dir>", file=sys.stderr)
                 return 1
             records: list[Any] = load_seeded_briefs(Path(briefs_dir))
+        elif gate == PROVENANCE_GATE_NAME:
+            if records_dir is None:
+                print(f"error: gate {gate!r} requires --records <dir>", file=sys.stderr)
+                return 1
+            records = load_paper_records(Path(records_dir))
         else:
             if records_dir is None:
                 print(f"error: gate {gate!r} requires --records <dir>", file=sys.stderr)
@@ -2522,6 +2536,7 @@ def _gate_run(gate: str, records_dir: str | None, briefs_dir: str | None) -> int
         CounterPositionValidatorError,
         CalibrationGateError,
         AdversarialGateError,
+        ProvenanceGateError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

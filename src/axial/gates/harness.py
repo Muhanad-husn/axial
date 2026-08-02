@@ -86,6 +86,12 @@ DEFAULT_GATE_THRESHOLDS: dict[str, float] = {
     # metric §10 v1.1 settled on (band-wise, not ECE/Brier).
     "band_reliability": 0.15,
     "premise_catch_rate": 0.80,
+    # Provenance integrity (specs/PHASE-C.md §10.1, §7.4, §8 P0-8): both
+    # mechanical, zero model calls. `confidence_upgrade_count` is a raw
+    # COUNT of violating claims, not a rate -- see
+    # src/axial/gates/provenance.py's module docstring.
+    "provenance_completeness": 1.00,
+    "confidence_upgrade_count": 0,
 }
 
 # The comparison direction is a property of what each metric MEANS, not
@@ -100,6 +106,8 @@ METRIC_COMPARISON: dict[str, Comparison] = {
     "steelman_quality": "gte",
     "band_reliability": "lte",
     "premise_catch_rate": "gte",
+    "provenance_completeness": "gte",
+    "confidence_upgrade_count": "lte",
 }
 
 
@@ -395,6 +403,25 @@ def not_applicable_metric(
     )
 
 
+def _load_json_records(records_dir: Path, *, discriminator_key: str) -> list[dict[str, Any]]:
+    """Every JSON object found anywhere under `records_dir` (`rglob`) that
+    carries `discriminator_key` at its top level, sorted by path for
+    determinism. The shared walk behind `load_records` (analysis records,
+    keyed on `claims`) and `load_paper_records` (Phase-C paper records,
+    keyed on `paper_brief_id`) below -- see `load_records`'s own docstring
+    for why the walk is recursive and why a non-record JSON file under the
+    same directory (a sweep's `summary.json`, a draw's own `runs/<id>.json`
+    accuracy report) is skipped rather than raising."""
+    if not records_dir.is_dir():
+        raise GateError(f"no records directory found at {records_dir}")
+    records = []
+    for path in sorted(records_dir.rglob("*.json")):
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(parsed, dict) and discriminator_key in parsed:
+            records.append(parsed)
+    return records
+
+
 def load_records(records_dir: Path) -> list[dict[str, Any]]:
     """Every analysis record found anywhere under `records_dir`, parsed and
     sorted by path for determinism -- the dev-brief-or-hand-built analysis
@@ -421,14 +448,22 @@ def load_records(records_dir: Path) -> list[dict[str, Any]]:
     before scoring -- thinning to one draw per brief would silently drop
     already-paid-for, already-measured output.
     """
-    if not records_dir.is_dir():
-        raise GateError(f"no records directory found at {records_dir}")
-    records = []
-    for path in sorted(records_dir.rglob("*.json")):
-        parsed = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(parsed, dict) and "claims" in parsed:
-            records.append(parsed)
-    return records
+    return _load_json_records(records_dir, discriminator_key="claims")
+
+
+def load_paper_records(records_dir: Path) -> list[dict[str, Any]]:
+    """Every Phase-C paper record found anywhere under `records_dir`
+    (specs/PHASE-C.md §7.3), parsed and sorted by path for determinism --
+    the paper-record analogue of `load_records` above, for the four Phase-C
+    per-run gates that score a paper rather than a Phase-B analysis (§8
+    P0-8/P0-12; B1 of issue #605 builds the first of the four, B2-B4 the
+    rest, all landing on this loader).
+
+    Discriminated on the top-level `paper_brief_id` key rather than `claims`:
+    a paper record ALSO carries a `claims` list (§7.3), so `load_records`'s
+    own discriminator would admit a paper record as though it were a Phase-B
+    analysis record. `paper_brief_id` is a key only a paper record carries."""
+    return _load_json_records(records_dir, discriminator_key="paper_brief_id")
 
 
 def resolve_corpus_pin(evals_dir: Path | None = None) -> str | None:
@@ -508,6 +543,12 @@ def format_report(report: GateReport) -> str:
         missed_brief_ids = metric.detail.get("missed_brief_ids")
         if missed_brief_ids:
             lines.append(f"    missed brief_ids: {', '.join(missed_brief_ids)}")
+        dangling_paper_claim_ids = metric.detail.get("dangling_paper_claim_ids")
+        if dangling_paper_claim_ids:
+            lines.append(f"    dangling paper_claim_ids: {', '.join(dangling_paper_claim_ids)}")
+        violating_paper_claim_ids = metric.detail.get("violating_paper_claim_ids")
+        if violating_paper_claim_ids:
+            lines.append(f"    violating paper_claim_ids: {', '.join(violating_paper_claim_ids)}")
     if report.reported:
         lines.append("reported (not gated -- no baseline threshold established yet):")
         for name, entry in report.reported.items():
