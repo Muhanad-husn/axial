@@ -18,7 +18,6 @@ from pathlib import Path
 import pytest
 
 from axial.paper.brief import PaperBrief
-from axial.paper.claims import SingleRecordInferenceError
 from axial.paper.intake import (
     MixedCorpusPinError,
     RefusedAnalysisError,
@@ -280,18 +279,39 @@ def test_a_new_b_claim_spans_two_records_and_is_capped(tmp_path, analyses_dir, l
     assert new["confidence"] == "low"
 
 
-def test_a_single_record_inference_is_rejected(tmp_path, analyses_dir, lenses_dir):
-    drafts = [
-        {
-            "prose": "War made the state [pc-001]. And so [n1].",
-            "new_claims": [
-                {"local_id": "n1", "text": "A restatement.", "derived_from": ["pc-001", "pc-002"]}
-            ],
-        },
-        {"prose": "Mobilization did not convert [pc-003].", "new_claims": []},
-    ]
-    with pytest.raises(SingleRecordInferenceError):
-        _run(tmp_path, analyses_dir, lenses_dir, drafts)
+def test_a_single_record_b_proposal_is_retried_not_fatal(tmp_path, analyses_dir, lenses_dir):
+    """Issue #616: the §7.4 span check now runs INSIDE `draft_section`'s
+    bounded retry (issue #598) rather than after `run_paper` has already
+    returned. Before this fix a single-record (b) proposal raised
+    `SingleRecordInferenceError` straight out of `run_paper`, fatal on first
+    occurrence and discarding every section already drafted -- which is what
+    made #605's D1 multi-record briefs fail outright. Both `derived_from`
+    ids in the rejected proposal (`pc-001`, `pc-002`) come from `brief-a`
+    alone; the retry succeeds with a section that introduces no new claim."""
+    single_record_proposal = {
+        "prose": "War made the state [pc-001]. And so [n1].",
+        "new_claims": [
+            {"local_id": "n1", "text": "A restatement.", "derived_from": ["pc-001", "pc-002"]}
+        ],
+    }
+    corrected_draft = {
+        "prose": "War made the state [pc-001]. Extraction followed [pc-002].",
+        "new_claims": [],
+    }
+    drafts = [single_record_proposal, corrected_draft, DRAFTS[1]]
+
+    record, client = _run(tmp_path, analyses_dir, lenses_dir, drafts)
+
+    # The run completed: no PaperClaimError escaped, and the (b) claim from
+    # section 2's own draft (spanning brief-a and brief-b) still landed.
+    new_claims = [claim for claim in record["claims"] if claim["origin"] is None]
+    assert len(new_claims) == 1
+    assert record["retries"]["paper_draft"] == 1
+
+    draft_prompts = [prompt for name, prompt in client.prompts if name == "paper_draft"]
+    retry_prompt = draft_prompts[1]
+    assert "distinct source record" in retry_prompt
+    assert "attempt 1 of 3" in retry_prompt
 
 
 def test_a_new_c_claim_reaches_a_verdict_resting_on_a_single_record(

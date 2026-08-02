@@ -188,6 +188,34 @@ def carried_claim(
     }
 
 
+def _brief_ids_of(
+    parent_id: str, by_paper_claim_id: dict[str, dict[str, Any]], visited: set[str]
+) -> set[str]:
+    """The distinct source records reachable from one claim, resolved
+    TRANSITIVELY (issue #616).
+
+    `grounds` and `names_touched` already inherit transitively for free: a
+    new claim's own fields are the union over ITS ancestors, computed when it
+    was built, so a later claim that derives from it inherits the union just
+    by copying that field. Source records have no such persisted field, so a
+    parent that is itself a new (b)/(c) claim (`origin` is `None`) is resolved
+    by walking ITS `derived_from` in turn, not counted as contributing zero
+    records -- one hop is not the whole chain."""
+    if parent_id in visited:
+        return set()
+    visited.add(parent_id)
+    parent = by_paper_claim_id.get(parent_id)
+    if parent is None:
+        raise UnknownInventoryClaimError((parent_id, ""))
+    origin = parent.get("origin")
+    if isinstance(origin, dict) and origin.get("brief_id"):
+        return {str(origin["brief_id"])}
+    brief_ids: set[str] = set()
+    for grandparent_id in parent.get("derived_from") or []:
+        brief_ids |= _brief_ids_of(grandparent_id, by_paper_claim_id, visited)
+    return brief_ids
+
+
 def _union_over_derivation(
     derived_from: list[str], by_paper_claim_id: dict[str, dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], list[str], set[str]]:
@@ -209,9 +237,7 @@ def _union_over_derivation(
         parent = by_paper_claim_id.get(parent_id)
         if parent is None:
             raise UnknownInventoryClaimError((parent_id, ""))
-        origin = parent.get("origin")
-        if isinstance(origin, dict) and origin.get("brief_id"):
-            brief_ids.add(str(origin["brief_id"]))
+        brief_ids |= _brief_ids_of(parent_id, by_paper_claim_id, set())
         for ground in parent.get("grounds") or []:
             if not isinstance(ground, dict):
                 continue

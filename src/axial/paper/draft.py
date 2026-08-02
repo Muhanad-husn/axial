@@ -45,6 +45,7 @@ from typing import Any
 
 from axial.llm import PAPER_DRAFT_PASS_NAME
 from axial.model_json import complete_json, parse_model_json
+from axial.paper.claims import MIN_DISTINCT_RECORDS
 from axial.paper.lens import Lens
 from axial.paper.plan import Plan, Section
 
@@ -99,6 +100,31 @@ class InvalidNewClaimKindError(DraftError):
         )
 
 
+class InsufficientRecordSpanError(DraftError):
+    """Raised when a proposed new (b) claim does not derive from at least two
+    distinct source records (§7.4) -- the drafting-time twin of
+    `axial.paper.claims.SingleRecordInferenceError` (issue #616).
+
+    `new_b_claim` still checks this again at construction time, as the
+    backstop this predicts; that check runs after `draft_section` has
+    already returned, which used to make a single-record proposal fatal on
+    first occurrence and discard every section drafted so far. Checking it
+    here, inside the bounded retry, makes it a re-ask like any other
+    validation failure."""
+
+    def __init__(self, section_id: str, local_id: str, brief_ids: set[str]):
+        self.section_id = section_id
+        self.local_id = local_id
+        self.brief_ids = set(brief_ids)
+        super().__init__(
+            f"new (b) claim {local_id!r} in section {section_id!r} derives from "
+            f"{sorted(self.brief_ids)!r} -- {len(self.brief_ids)} distinct source "
+            f"record(s), and §7.4 requires at least {MIN_DISTINCT_RECORDS}. Reason "
+            'across a claim from a second record, or mark this claim kind "c" if it '
+            "is this paper's own verdict rather than a cross-source inference"
+        )
+
+
 @dataclass(frozen=True)
 class NewClaimDraft:
     """A new claim as the drafter proposed it: text, its kind ('b' or 'c'),
@@ -140,6 +166,42 @@ def assign_claim_ids(plan: Plan) -> dict[tuple[str, str], str]:
     return ids
 
 
+def _brief_ids_of_claim(
+    claim: dict[str, Any],
+    claims_by_id: dict[str, dict[str, Any]],
+    visited: set[str] | None = None,
+) -> set[str]:
+    """The distinct source records one BUILT claim rests on (issue #616).
+
+    A carried claim names its own record in `origin`. A new (b)/(c) claim
+    names none of its own -- it resolves through `derived_from`,
+    transitively, because a claim's parents can themselves be new claims
+    (`axial.paper.claims._brief_ids_of` is the same walk, over the record
+    that check ultimately runs against; this is the drafting-time twin, used
+    to SHOW the record on a claim line rather than to gate one)."""
+    origin = claim.get("origin")
+    if isinstance(origin, dict) and origin.get("brief_id"):
+        return {str(origin["brief_id"])}
+    visited = visited if visited is not None else set()
+    brief_ids: set[str] = set()
+    for parent_id in claim.get("derived_from") or []:
+        if parent_id in visited:
+            continue
+        visited.add(parent_id)
+        parent = claims_by_id.get(parent_id)
+        if parent is not None:
+            brief_ids |= _brief_ids_of_claim(parent, claims_by_id, visited)
+    return brief_ids
+
+
+def _record_label(brief_ids: set[str]) -> str:
+    """`§7.4`'s span rule is stated over `origin.brief_id`; a claim line that
+    omits it holds the drafter to a field it cannot see (issue #616)."""
+    if not brief_ids:
+        return "record unknown"
+    return "record " + ", ".join(sorted(brief_ids))
+
+
 def _claim_lines(
     section: Section,
     claim_ids: dict[tuple[str, str], str],
@@ -149,21 +211,74 @@ def _claim_lines(
     for key in section.assigned_claims:
         paper_claim_id = claim_ids[key]
         claim = claims_by_id.get(paper_claim_id, {})
+        record = _record_label(_brief_ids_of_claim(claim, claims_by_id))
         lines.append(
             f"[{paper_claim_id}] (kind {claim.get('kind')}, confidence "
-            f"{claim.get('confidence')}) {claim.get('text')}"
+            f"{claim.get('confidence')}, {record}) {claim.get('text')}"
         )
     return "\n".join(lines) or "(this section is assigned no claims)"
 
 
-def _earlier_lines(already_cited: list[dict[str, Any]]) -> str:
+def _earlier_lines(
+    already_cited: list[dict[str, Any]], claims_by_id: dict[str, dict[str, Any]]
+) -> str:
     if not already_cited:
         return "(nothing has been cited yet -- this is the first section)"
-    return "\n".join(
-        f"[{claim.get('paper_claim_id')}] (kind {claim.get('kind')}, confidence "
-        f"{claim.get('confidence')}) {claim.get('text')}"
-        for claim in already_cited
-    )
+    lines = []
+    for claim in already_cited:
+        record = _record_label(_brief_ids_of_claim(claim, claims_by_id))
+        lines.append(
+            f"[{claim.get('paper_claim_id')}] (kind {claim.get('kind')}, confidence "
+            f"{claim.get('confidence')}, {record}) {claim.get('text')}"
+        )
+    return "\n".join(lines)
+
+
+def _proposed_brief_ids(
+    proposal: NewClaimDraft,
+    proposals_by_local_id: dict[str, NewClaimDraft],
+    claims_by_id: dict[str, dict[str, Any]],
+    visited: set[str] | None = None,
+) -> set[str]:
+    """The distinct source records a JUST-PROPOSED claim would rest on,
+    before it has a stable id or an entry in `claims_by_id` (issue #616).
+
+    Same walk as `_brief_ids_of_claim`, except a parent may still be another
+    proposal in THIS SAME response, named by the local id the drafter
+    invented for it (`derived_from` is validated against local ids by
+    `parse_draft_response` before this ever runs) -- the case
+    `_brief_ids_of_claim` alone cannot resolve, because that sibling has no
+    entry in `claims_by_id` yet."""
+    visited = visited if visited is not None else set()
+    brief_ids: set[str] = set()
+    for parent_id in proposal.derived_from:
+        if parent_id in visited:
+            continue
+        visited.add(parent_id)
+        sibling = proposals_by_local_id.get(parent_id)
+        if sibling is not None:
+            brief_ids |= _proposed_brief_ids(sibling, proposals_by_local_id, claims_by_id, visited)
+            continue
+        parent = claims_by_id.get(parent_id)
+        if parent is not None:
+            brief_ids |= _brief_ids_of_claim(parent, claims_by_id, visited)
+    return brief_ids
+
+
+def _check_record_span(draft: SectionDraft, claims_by_id: dict[str, dict[str, Any]]) -> None:
+    """The §7.4 span check for every proposed (b) claim, run BEFORE this
+    draft is accepted (issue #616), so a single-record proposal is retried
+    like any other validation failure rather than fatal after acceptance.
+
+    `axial.paper.claims.new_b_claim` still checks again at construction
+    time, unchanged, as the backstop this predicts."""
+    proposals_by_local_id = {proposal.local_id: proposal for proposal in draft.new_claims}
+    for proposal in draft.new_claims:
+        if proposal.kind != "b":
+            continue
+        brief_ids = _proposed_brief_ids(proposal, proposals_by_local_id, claims_by_id)
+        if len(brief_ids) < MIN_DISTINCT_RECORDS:
+            raise InsufficientRecordSpanError(draft.section_id, proposal.local_id, brief_ids)
 
 
 _NEW_CLAIMS_HEADER = """You may introduce new claims of your own. Each carries a local id you invent (e.g. "n1"), cited in the prose exactly like any other marker, and names the claims above it reasons from -- do NOT supply grounds, they are derived mechanically from the claims you name:"""
@@ -340,11 +455,13 @@ def remap_local_ids(draft: SectionDraft, assigned: dict[str, str]) -> SectionDra
 _MAX_ATTEMPTS = 3
 
 
-# `DraftError` has exactly three subclasses today -- `DraftParseError` and
-# the two new-claim validation errors, `UnknownDerivationError` and
-# `InvalidNewClaimKindError` -- which is precisely the set issue #598 names
-# as retryable, so catching the shared base is equivalent to naming all
-# three and simpler to keep in sync if a fourth is ever added deliberately.
+# `DraftError` has four subclasses today -- `DraftParseError`, the two
+# new-claim validation errors `UnknownDerivationError` and
+# `InvalidNewClaimKindError` issue #598 named as retryable, and
+# `InsufficientRecordSpanError` (issue #616), the §7.4 span check moved
+# inside this same retry -- so catching the shared base is equivalent to
+# naming all four and simpler to keep in sync if a fifth is ever added
+# deliberately.
 def _log_draft_retry(section_id: str, attempt: int, error: DraftError) -> None:
     """One structured stderr line per rejected attempt (issue #598),
     matching `axial.paper.plan._log_plan_retry`'s convention."""
@@ -376,7 +493,9 @@ def draft_section(
     cross_source_possible: bool = True,
 ) -> SectionDraft:
     """One section, with a bounded retry (issue #598) on `DraftError` --
-    `DraftParseError` and the new-claim validation errors."""
+    `DraftParseError`, the new-claim validation errors, and the §7.4 span
+    check on a proposed (b) claim (issue #616), which used to run only after
+    this function returned and was fatal on the first occurrence."""
     visible = {claim_ids[key] for key in section.assigned_claims}
     visible.update(str(claim.get("paper_claim_id")) for claim in already_cited)
     base_prompt = compose_draft_prompt(
@@ -384,7 +503,7 @@ def draft_section(
         lens,
         section,
         _claim_lines(section, claim_ids, claims_by_id),
-        _earlier_lines(already_cited),
+        _earlier_lines(already_cited, claims_by_id),
         has_visible_claims=bool(visible),
         cross_source_possible=cross_source_possible,
     )
@@ -393,6 +512,7 @@ def draft_section(
         raw = complete_json(client, prompt, pass_name=PAPER_DRAFT_PASS_NAME)
         try:
             draft = parse_draft_response(raw, section, visible)
+            _check_record_span(draft, claims_by_id)
         except DraftError as exc:
             if attempt == _MAX_ATTEMPTS:
                 raise
