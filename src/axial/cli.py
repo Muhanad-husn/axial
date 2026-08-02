@@ -42,7 +42,7 @@ from axial.distill.classify_embedding import ClassifyEmbeddingError, run_classif
 from axial.distill.embed import EmbedError, run_embed
 from axial.distill.readiness import ReadinessError, run_readiness
 from axial.drive import DEFAULT_SECRETS_PATH as DRIVE_SECRETS_PATH
-from axial.drive import DriveSecretsError, _load_drive_secrets, run_drive_ingest
+from axial.drive import DriveSecretsError, _load_drive_secrets, run_drive_ingest, run_drive_sources
 from axial.envelope import EnvelopeError, MissingSourceError, compute_source_id, run_envelope
 from axial.eval import EvalError, run_eval
 from axial.interrogate import InterrogateError, run_interrogate
@@ -153,6 +153,10 @@ from axial.run import (
 )
 from axial.runlog import run_context
 from axial.schema import SchemaError, load_schema
+from axial.sources import render_report, resolve_backend, scan_local, sync_local
+from axial.sources import CHANGED as SOURCES_CHANGED
+from axial.sources import NEW as SOURCES_NEW
+from axial.sources import PARTIAL as SOURCES_PARTIAL
 from axial.validate import cross_validate
 from axial.validators import (
     AttributionValidatorError,
@@ -817,6 +821,37 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             f"Drive folder id to list (default: [drive].books_folder_id from {DRIVE_SECRETS_PATH})"
+        ),
+    )
+
+    sources_parser = subparsers.add_parser(
+        "sources",
+        help=(
+            "what is new, changed, already done, or rejected (with reason) in "
+            "the configured source backend -- local folder or Google Drive -- "
+            "then ingest whatever is new or changed; see issue #528"
+        ),
+    )
+    sources_parser.add_argument(
+        "--backend",
+        choices=("local", "drive"),
+        default=None,
+        help=(
+            "override config/pipeline.yaml's sources.backend for this run "
+            "(default: read from config, falling back to 'local')"
+        ),
+    )
+    sources_parser.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "report only, then stop -- no ingest, no pipeline or model call, "
+            "no write. Free on the local backend (reads data/run/ledger.tsv "
+            "only, no download); on the Drive backend it is NOT free -- it "
+            "still downloads each new/changed candidate's bytes to run the "
+            "English-only language gate (the only way to know it would be "
+            "rejected), it just never hands the download to ingest or writes "
+            "the fetch-state manifest"
         ),
     )
 
@@ -1777,6 +1812,82 @@ def _drive_ingest(folder_id: str | None) -> int:
         folder_id = secrets["books_folder_id"]
 
     return run_drive_ingest(folder_id)
+
+
+def _sources(backend_override: str | None, check: bool) -> int:
+    """`axial sources` (issue #528): the operator's everyday "what's new,
+    then ingest it" command, for whichever backend `config/pipeline.yaml`'s
+    `sources.backend` names (or `--backend`, for a one-off override) --
+    `axial.sources.resolve_backend` falls back to 'local' when unset.
+    `check=True` (`--check`) stops after the report -- no ingest -- see
+    `_sources_local`/`_sources_drive` for each backend's own cost."""
+    backend = backend_override or resolve_backend()
+    if backend == "local":
+        return _sources_local(check)
+    if backend == "drive":
+        return _sources_drive(check)
+    print(
+        f"error: unknown sources backend {backend!r} (expected 'local' or 'drive')",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def _sources_local(check: bool) -> int:
+    """The local folder backend: report first (free -- no LLM call, no
+    download, just a handful of artifact-file checks plus a ledger read,
+    never a parse -- see `axial.sources.scan_local`), then ingest whatever
+    the report shows as new, changed, or partial (a partial source is
+    exactly what `sync_local`'s resumable pass chain is for: finishing a
+    run that died halfway, not restarting it). A report with nothing new,
+    changed, or partial says so and runs no pipeline pass at all.
+
+    `check=True` returns right after printing the report: `sync_local` (the
+    only path that reaches `axial.run.run_pass`) is never called, so a
+    checked run is provably zero pipeline calls, zero model calls, zero
+    writes -- this is the founder's standing "don't touch the 31 already-
+    ingested sources" guard made safe to run on the real corpus."""
+    records = scan_local()
+    print(render_report(records))
+
+    if check:
+        return 0
+
+    pending = [
+        record
+        for record in records
+        if record.status in (SOURCES_NEW, SOURCES_CHANGED, SOURCES_PARTIAL)
+    ]
+    if not pending:
+        print("sources: nothing new (0 to ingest)")
+        return 0
+
+    client = get_client()
+    sync_local(client=client)
+    return 0
+
+
+def _sources_drive(check: bool) -> int:
+    """The Drive backend: resolves `folder_id` from `[drive]` secrets
+    exactly like `axial drive ingest`, then reports and ingests in the one
+    pass `run_drive_sources` already performs (see its docstring for why
+    Drive's report and its ingest cannot be split into two cheap steps the
+    way the local backend's can).
+
+    `check=True` is NOT free here, unlike the local backend: a new/changed
+    candidate's bytes still get downloaded to run the language gate, since
+    that is the only way to know whether it would be rejected. What it
+    never does is call `ingest_fn` or write the fetch-state manifest --
+    `run_drive_sources`'s own docstring has the full contract."""
+    try:
+        secrets = _load_drive_secrets(DRIVE_SECRETS_PATH)
+    except DriveSecretsError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    records, exit_code = run_drive_sources(secrets["books_folder_id"], check=check)
+    print(render_report(records))
+    return exit_code
 
 
 def _ingest(worklist_path: str) -> int:
@@ -2827,6 +2938,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "drive" and args.drive_command == "ingest":
         return _drive_ingest(args.folder_id)
+
+    if args.command == "sources":
+        return _sources(args.backend, args.check)
 
     if args.command == "ingest":
         return _ingest(args.worklist_path)

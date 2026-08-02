@@ -457,6 +457,14 @@ drive:
   # (non-English let through) pollutes the corpus and the eval.
   language_accept_threshold: 0.9
 
+# The operator's one-time backend choice for `axial sources` (issue #528):
+# `local` scans data/sources/ against the runner's own resume ledger
+# (axial.run.LEDGER_PATH); `drive` lists the Google Drive "Books" folder via
+# the [drive] secrets above. src/axial/sources.py reads this via
+# resolve_backend; an absent file/block/key falls back to "local".
+sources:
+  backend: local
+
 # Per-NAME coverage-band cut points (issues #260 and #490, PRD §7.7):
 # src/axial/validators/coverage.py reads this via _resolve_coverage_bands,
 # falling back to its own DEFAULT_MODERATE_FLOOR/DEFAULT_DENSE_FLOOR when

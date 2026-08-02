@@ -53,6 +53,7 @@ from axial.drive import (
     _load_fetch_state,
     _write_fetch_state,
     run_drive_ingest,
+    run_drive_sources,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -1317,6 +1318,310 @@ def test_genuinely_textless_source_is_ultimately_rejected_and_logged_via_intake(
         from axial.intake import intake as real_intake
 
         real_intake(INTAKE_FIXTURES_DIR / "no_text_layer.pdf")
+
+
+# --- run_drive_sources (issue #528: axial sources' Drive backend) -----------
+
+
+def test_run_drive_sources_reports_wrong_type_without_downloading(tmp_path):
+    key_path = _key_file(tmp_path)
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text(
+        f'[drive]\nservice_account_json = "{_toml_path(key_path)}"\nbooks_folder_id = "BOOKS"\n',
+        encoding="utf-8",
+    )
+    client = _FakeClient(
+        {None: ([{"id": "f-1", "name": "notes.txt", "mimeType": "text/plain"}], None)}
+    )
+    client.download = _tracking_download(client)
+
+    records, exit_code = run_drive_sources(
+        "BOOKS",
+        client=client,
+        ingest_fn=lambda path: None,
+        secrets_path=secrets_path,
+        cache_dir=tmp_path / "cache",
+        fetch_state_path=tmp_path / "fetch_state.json",
+    )
+
+    assert exit_code == 0
+    assert len(records) == 1
+    assert records[0].name == "notes.txt"
+    assert records[0].status == "rejected"
+    assert "unsupported file type" in records[0].reason
+    assert client.download_calls == []
+
+
+def test_run_drive_sources_classifies_new_changed_done_together(tmp_path):
+    key_path = _key_file(tmp_path)
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text(
+        f'[drive]\nservice_account_json = "{_toml_path(key_path)}"\nbooks_folder_id = "BOOKS"\n',
+        encoding="utf-8",
+    )
+    fetch_state_path = tmp_path / "fetch_state.json"
+    fetch_state_path.write_text(
+        json.dumps(
+            {
+                "f-done": {
+                    "modifiedTime": "2026-01-01T00:00:00Z",
+                    "md5Checksum": "same",
+                    "fetched_at": "2026-01-01T00:00:00Z",
+                },
+                "f-changed": {
+                    "modifiedTime": "2020-01-01T00:00:00Z",
+                    "md5Checksum": "stale",
+                    "fetched_at": "2020-01-01T00:00:00Z",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = _FakeClient(
+        {
+            None: (
+                [
+                    {
+                        "id": "f-done",
+                        "name": "done.pdf",
+                        "mimeType": "application/pdf",
+                        "modifiedTime": "2026-01-01T00:00:00Z",
+                        "md5Checksum": "same",
+                    },
+                    {
+                        "id": "f-changed",
+                        "name": "changed.pdf",
+                        "mimeType": "application/pdf",
+                        "modifiedTime": "2026-02-01T00:00:00Z",
+                        "md5Checksum": "fresh",
+                    },
+                    {
+                        "id": "f-new",
+                        "name": "new.pdf",
+                        "mimeType": "application/pdf",
+                        "modifiedTime": "2026-01-01T00:00:00Z",
+                        "md5Checksum": "brand-new",
+                    },
+                ],
+                None,
+            )
+        }
+    )
+    client.download = lambda file_id: b"pdf-bytes"
+
+    records, exit_code = run_drive_sources(
+        "BOOKS",
+        client=client,
+        ingest_fn=lambda path: None,
+        secrets_path=secrets_path,
+        cache_dir=tmp_path / "cache",
+        fetch_state_path=fetch_state_path,
+        probe_text_fn=lambda path: "",  # UNKNOWN_LANGUAGE_CODE, gate never rejects
+    )
+
+    assert exit_code == 0
+    by_name = {record.name: record.status for record in records}
+    assert by_name == {"done.pdf": "done", "changed.pdf": "changed", "new.pdf": "new"}
+
+
+def test_run_drive_sources_records_language_gate_rejection_with_reason(tmp_path):
+    secrets_path, client, probe_text_fn = _drive_secrets_and_client_for_gate_test(
+        tmp_path, records_and_probes={"f-french": FRENCH_PROBE_TEXT}
+    )
+
+    records, exit_code = run_drive_sources(
+        "BOOKS",
+        client=client,
+        ingest_fn=lambda path: None,
+        secrets_path=secrets_path,
+        cache_dir=tmp_path / "cache",
+        fetch_state_path=tmp_path / "fetch_state.json",
+        probe_text_fn=probe_text_fn,
+    )
+
+    assert exit_code == 0
+    assert len(records) == 1
+    assert records[0].status == "rejected"
+    assert "fr" in records[0].reason
+
+
+def test_run_drive_sources_re_running_immediately_reports_all_done(tmp_path):
+    key_path = _key_file(tmp_path)
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text(
+        f'[drive]\nservice_account_json = "{_toml_path(key_path)}"\nbooks_folder_id = "BOOKS"\n',
+        encoding="utf-8",
+    )
+    fetch_state_path = tmp_path / "fetch_state.json"
+    cache_dir = tmp_path / "cache"
+
+    def make_client():
+        client = _FakeClient(
+            {
+                None: (
+                    [
+                        {
+                            "id": "f-1",
+                            "name": "alpha.pdf",
+                            "mimeType": "application/pdf",
+                            "modifiedTime": "2026-01-01T00:00:00Z",
+                            "md5Checksum": "abc",
+                        }
+                    ],
+                    None,
+                )
+            }
+        )
+        client.download = lambda file_id: b"pdf-bytes"
+        return client
+
+    calls = []
+    first_records, first_exit = run_drive_sources(
+        "BOOKS",
+        client=make_client(),
+        ingest_fn=calls.append,
+        secrets_path=secrets_path,
+        cache_dir=cache_dir,
+        fetch_state_path=fetch_state_path,
+        probe_text_fn=lambda path: "",
+    )
+    second_records, second_exit = run_drive_sources(
+        "BOOKS",
+        client=make_client(),
+        ingest_fn=calls.append,
+        secrets_path=secrets_path,
+        cache_dir=cache_dir,
+        fetch_state_path=fetch_state_path,
+        probe_text_fn=lambda path: "",
+    )
+
+    assert first_exit == second_exit == 0
+    assert [record.status for record in first_records] == ["new"]
+    assert [record.status for record in second_records] == ["done"]
+    assert len(calls) == 1, "the second run must not re-ingest an unchanged candidate"
+
+
+# --- run_drive_sources(check=True) (issue #528: --check on the Drive backend) --
+
+
+def _books_folder_secrets(tmp_path):
+    key_path = _key_file(tmp_path)
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text(
+        f'[drive]\nservice_account_json = "{_toml_path(key_path)}"\nbooks_folder_id = "BOOKS"\n',
+        encoding="utf-8",
+    )
+    return secrets_path
+
+
+def test_run_drive_sources_check_downloads_but_never_calls_ingest_fn_or_writes_manifest(
+    tmp_path,
+):
+    """The Drive asymmetry, pinned: a --check run for a NEW candidate still
+    downloads bytes (there is no cheaper way to know its language), but it
+    must never reach ingest_fn and must never write the fetch-state
+    manifest."""
+    secrets_path = _books_folder_secrets(tmp_path)
+    fetch_state_path = tmp_path / "fetch_state.json"
+
+    client = _FakeClient(
+        {None: ([{"id": "f-1", "name": "alpha.pdf", "mimeType": "application/pdf"}], None)}
+    )
+    client.download = _tracking_download(client)
+
+    def _boom(local_path):
+        raise AssertionError("ingest_fn must not be called when check=True")
+
+    records, exit_code = run_drive_sources(
+        "BOOKS",
+        check=True,
+        client=client,
+        ingest_fn=_boom,
+        secrets_path=secrets_path,
+        cache_dir=tmp_path / "cache",
+        fetch_state_path=fetch_state_path,
+        probe_text_fn=lambda path: "",  # UNKNOWN_LANGUAGE_CODE, gate never rejects
+    )
+
+    assert exit_code == 0
+    assert [record.status for record in records] == ["new"]
+    assert client.download_calls == ["f-1"], "a Drive check still fetches (module docstring)"
+    assert not fetch_state_path.exists(), "check=True must never write the fetch-state manifest"
+
+
+def test_run_drive_sources_check_still_reports_language_gate_rejection(tmp_path):
+    """A --check run must still surface a language-gate rejection with its
+    reason -- the report is not allowed to go blind just because it will
+    not act on what it finds."""
+    secrets_path, client, probe_text_fn = _drive_secrets_and_client_for_gate_test(
+        tmp_path, records_and_probes={"f-french": FRENCH_PROBE_TEXT}
+    )
+
+    records, exit_code = run_drive_sources(
+        "BOOKS",
+        check=True,
+        client=client,
+        ingest_fn=lambda path: (_ for _ in ()).throw(AssertionError("must not be called")),
+        secrets_path=secrets_path,
+        cache_dir=tmp_path / "cache",
+        fetch_state_path=tmp_path / "fetch_state.json",
+        probe_text_fn=probe_text_fn,
+    )
+
+    assert exit_code == 0
+    assert len(records) == 1
+    assert records[0].status == "rejected"
+    assert "fr" in records[0].reason
+
+
+def test_run_drive_sources_check_report_matches_ingesting_run_for_the_same_state(tmp_path):
+    """Same folder listing, same fetch-state manifest, same probe -- a
+    checked run and a real run must classify every candidate identically;
+    only whether ingest_fn gets called (and the manifest gets written)
+    differs."""
+    secrets_path = _books_folder_secrets(tmp_path)
+
+    def make_client():
+        client = _FakeClient(
+            {
+                None: (
+                    [
+                        {"id": "f-1", "name": "alpha.pdf", "mimeType": "application/pdf"},
+                        {"id": "f-2", "name": "notes.txt", "mimeType": "text/plain"},
+                    ],
+                    None,
+                )
+            }
+        )
+        client.download = lambda file_id: b"pdf-bytes"
+        return client
+
+    check_records, check_exit = run_drive_sources(
+        "BOOKS",
+        check=True,
+        client=make_client(),
+        ingest_fn=lambda path: (_ for _ in ()).throw(AssertionError("must not be called")),
+        secrets_path=secrets_path,
+        cache_dir=tmp_path / "cache-check",
+        fetch_state_path=tmp_path / "fetch_state.json",
+        probe_text_fn=lambda path: "",
+    )
+    real_calls = []
+    real_records, real_exit = run_drive_sources(
+        "BOOKS",
+        client=make_client(),
+        ingest_fn=real_calls.append,
+        secrets_path=secrets_path,
+        cache_dir=tmp_path / "cache-real",
+        fetch_state_path=tmp_path / "fetch_state.json",
+        probe_text_fn=lambda path: "",
+    )
+
+    assert check_exit == real_exit == 0
+    assert [(r.name, r.status, r.reason) for r in check_records] == [
+        (r.name, r.status, r.reason) for r in real_records
+    ]
+    assert len(real_calls) == 1, "sanity: the real run really did ingest the new candidate"
 
 
 # --- CLI wiring (axial drive ingest) ------------------------------------------
