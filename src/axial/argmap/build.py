@@ -48,6 +48,13 @@ minutes at 20 workers for 31 sources ($2.53 / ~2.5h extrapolated to 100).
 flushed the instant it returns, keyed by `(bag, slice)`, and a restart skips
 whatever is already on disk -- never held in memory and written once at the
 end, so a kill partway through never discards a single paid call.
+
+**Forceable, deliberately separate from resume.** The corpus pin is content
+only (`compute_corpus_pin`), so a prompt or model-tier change moves nothing
+and a plain rerun would resume under the old ledger -- half old prompt, half
+new. `run_map_build(force=True)` (`axial map build --force`) moves the
+existing `reads.jsonl` aside to a timestamped sibling and re-asks every read
+under the pin; the old ledger is never deleted.
 """
 
 from __future__ import annotations
@@ -58,6 +65,7 @@ import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -534,6 +542,14 @@ def compute_corpus_pin(envelopes_dir: Path, sources_dir: Path) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
+def _force_aside_suffix() -> str:
+    """A stable, lexically sortable suffix for a forced-aside reads ledger:
+    UTC to microsecond precision, so two `--force` runs seconds apart -- or
+    a test doing both in the same process -- never collide and overwrite
+    each other's set-aside ledger."""
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+
+
 def run_map_build(
     *,
     answers_dir: Path | None = None,
@@ -547,6 +563,7 @@ def run_map_build(
     workers: int = WORKERS,
     guard: bool = True,
     pin: str | None = None,
+    force: bool = False,
     log: Callable[[str], None] = print,
 ) -> dict[str, Any]:
     """Run all four steps and write `<map_dir>/<pin>/{positions.jsonl,
@@ -558,7 +575,17 @@ def run_map_build(
     this codebase exposes for path/id overrides) to build/test without a
     real `data/envelopes/`+`data/sources/` on disk. `encode`/`client`
     default to the real MiniLM encoder and `axial.llm.get_client()`; both
-    are injection seams for tests."""
+    are injection seams for tests.
+
+    `force` (default off, so no existing caller's behaviour changes): the
+    corpus pin alone is deliberately blind to a prompt or model-tier change
+    (`compute_corpus_pin`'s own docstring), so a rebuild after one of those
+    would otherwise *resume* from `reads.jsonl` and produce a map that is
+    half old prompt, half new. `force` moves the existing ledger aside to a
+    timestamped sibling -- never deletes it, a paid ledger stays on disk --
+    and re-asks every read under this pin. The founder's chosen escape
+    hatch for a prompt change is one whole rebuild by hand; this is what
+    that rebuild fires."""
     started = time.monotonic()
     if answers_dir is None:
         answers_dir = _default_answers_dir(config_path)
@@ -592,6 +619,14 @@ def run_map_build(
         client = get_client(config_path=config_path)
 
     reads_path = outdir / "reads.jsonl"
+    if force and reads_path.exists():
+        prior = load_checkpoint_records(reads_path, CorruptReadsLedgerError)
+        aside_path = outdir / f"reads.{_force_aside_suffix()}.jsonl"
+        reads_path.replace(aside_path)
+        log(
+            f"--force: set aside {len(prior)} prior read(s) to {aside_path.name}; "
+            f"re-asking all {len(jobs)} read(s) under this pin"
+        )
     reads = run_extraction(jobs, client=client, reads_path=reads_path, workers=workers, log=log)
 
     raw_positions = [position for read in reads for position in read["positions"]]

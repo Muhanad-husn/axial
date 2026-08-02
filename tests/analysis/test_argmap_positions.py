@@ -42,6 +42,7 @@ from axial.argmap.build import (
     merge_positions,
     render_claims_blind,
     run_extraction,
+    run_map_build,
     select_passages,
 )
 from axial.envelope import compute_source_id
@@ -386,6 +387,73 @@ def test_resume_makes_no_call_for_a_bag_slice_already_on_disk(tmp_path: Path) ->
     assert len(reads) == 2
     keys = {(r["bag"], r["slice"]) for r in reads}
     assert keys == {(0, 0), (1, 0)}
+
+
+# ---------------------------------------------------------------------------
+# run_map_build: --force re-asks under the same pin, keeping the old ledger
+# ---------------------------------------------------------------------------
+
+
+def _write_one_answer(answers_dir: Path) -> None:
+    answers_dir.mkdir(parents=True, exist_ok=True)
+    record = _record(
+        "alpha-2020-book_010_intro_001",
+        "States extract resources through coercion.",
+        mechanism="coercive taxation",
+    )
+    with (answers_dir / "alpha-2020-book.jsonl").open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps(record) + "\n")
+
+
+def _fake_encode_any(texts: Any) -> np.ndarray:
+    return np.zeros((len(texts), 2))
+
+
+def _run_build(tmp_path: Path, *, client: Any, force: bool = False) -> Path:
+    manifest = run_map_build(
+        answers_dir=tmp_path / "answers",
+        trees_dir=tmp_path / "trees",
+        map_dir=tmp_path / "map",
+        client=client,
+        encode=_fake_encode_any,
+        pin="testpin",
+        guard=False,
+        force=force,
+        log=lambda _msg: None,
+    )
+    assert manifest["corpus_pin"] == "testpin"
+    return tmp_path / "map" / "testpin"
+
+
+def test_force_reasks_a_bag_slice_already_on_disk_and_keeps_the_prior_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("axial.argmap.build.load_back_matter_sections", lambda trees_dir: {})
+    _write_one_answer(tmp_path / "answers")
+
+    first_client = _CountingClient()
+    outdir = _run_build(tmp_path, client=first_client)
+    reads_path = outdir / "reads.jsonl"
+    assert first_client.call_count == 1
+    prior_ledger = reads_path.read_text(encoding="utf-8")
+
+    # Without --force, a second build resumes: no new call for the same
+    # (bag, slice), and the ledger is untouched -- the existing contract.
+    resumed_client = _CountingClient()
+    _run_build(tmp_path, client=resumed_client)
+    assert resumed_client.call_count == 0
+    assert reads_path.read_text(encoding="utf-8") == prior_ledger
+
+    # With --force, the same (bag, slice) is re-asked, and the prior ledger
+    # survives on disk under a new name rather than being deleted.
+    forced_client = _CountingClient()
+    _run_build(tmp_path, client=forced_client, force=True)
+    assert forced_client.call_count == 1
+
+    siblings = list(outdir.glob("reads.*.jsonl"))
+    assert len(siblings) == 1
+    assert siblings[0].read_text(encoding="utf-8") == prior_ledger
+    assert reads_path.exists()
 
 
 # ---------------------------------------------------------------------------

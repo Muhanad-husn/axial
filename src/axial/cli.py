@@ -11,6 +11,7 @@ import axial
 from axial.analyze import format_examine_report as format_brief_examine_report
 from axial.argmap.build import MapError
 from axial.argmap.build import PASS_NAME as MAP_BUILD_PASS_NAME
+from axial.argmap.build import WORKERS as MAP_BUILD_DEFAULT_WORKERS
 from axial.argmap.build import run_map_build
 from axial.pidguard import AlreadyRunningError
 from axial.analyze import run_examine
@@ -524,13 +525,34 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     map_subparsers = map_parser.add_subparsers(dest="map_command")
-    map_subparsers.add_parser(
+    map_build_parser = map_subparsers.add_parser(
         "build",
         help=(
             "run all four steps (select, bag, extract, merge) and pin the "
             "result to the corpus's own content hash; resumable by "
             "(bag, slice) via reads.jsonl, and refuses to start a second "
             "copy over the same pin while an earlier one is still running"
+        ),
+    )
+    map_build_parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "re-read everything under the current pin instead of resuming "
+            "(issue #572 follow-up: the pin is content-only, so a prompt or "
+            "model-tier change alone would otherwise resume under the old "
+            "prompt's ledger). Moves the existing reads.jsonl aside to a "
+            "timestamped sibling rather than deleting it -- a paid ledger "
+            "is never destroyed by this flag"
+        ),
+    )
+    map_build_parser.add_argument(
+        "--workers",
+        type=int,
+        default=MAP_BUILD_DEFAULT_WORKERS,
+        help=(
+            "bounded concurrent extraction workers (this pass is I/O-bound) "
+            f"(default: {MAP_BUILD_DEFAULT_WORKERS})"
         ),
     )
 
@@ -2110,7 +2132,13 @@ def _format_map_build_summary(manifest: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _map_build(*, root: Path | None = None, clock: Callable[[], str] | None = None) -> int:
+def _map_build(
+    *,
+    workers: int = MAP_BUILD_DEFAULT_WORKERS,
+    force: bool = False,
+    root: Path | None = None,
+    clock: Callable[[], str] | None = None,
+) -> int:
     """`axial map build` (issue #572, PR 1 of 4): wrapped in a run-logging
     context like every other pass -- one `run.jsonl` record for the whole
     build, `console.log` teed with real-time per-read progress, and
@@ -2129,7 +2157,7 @@ def _map_build(*, root: Path | None = None, clock: Callable[[], str] | None = No
             run.logger.info(message)
 
         try:
-            manifest = run_map_build(client=client, log=_tee)
+            manifest = run_map_build(client=client, log=_tee, workers=workers, force=force)
         except (MapError, AlreadyRunningError, LLMError, CorpusPinError) as exc:
             run.record(
                 source_id="",
@@ -2337,7 +2365,7 @@ def main(argv: list[str] | None = None) -> int:
         return _names_escalations(args.decisions_path, args.inventory_path, args.as_json)
 
     if args.command == "map" and args.map_command == "build":
-        return _map_build()
+        return _map_build(workers=args.workers, force=args.force)
 
     if args.command == "artifacts":
         return _artifacts(args.source_path)
