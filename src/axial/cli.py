@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 import axial
 from axial.analyze import format_examine_report as format_brief_examine_report
+from axial.argmap.ask import AskError, run_map_ask
 from axial.argmap.build import MapError
 from axial.argmap.build import PASS_NAME as MAP_BUILD_PASS_NAME
 from axial.argmap.build import WORKERS as MAP_BUILD_DEFAULT_WORKERS
@@ -559,6 +560,17 @@ def build_parser() -> argparse.ArgumentParser:
             f"(default: {MAP_BUILD_DEFAULT_WORKERS})"
         ),
     )
+    map_ask_parser = map_subparsers.add_parser(
+        "ask",
+        help=(
+            "the door and the landing (issue #572, PR 3 of 4): one model call "
+            "states the arguments a brief's case/request are actually about, "
+            "then each is matched against the pinned map's own positions by "
+            "cosine similarity -- prints the stated arguments and the landed "
+            "positions, each with its score, passage count, authors, and text"
+        ),
+    )
+    map_ask_parser.add_argument("brief_path", help="path to a brief YAML file (§7.1)")
 
     gold_parser = subparsers.add_parser("gold", help="gold-set (Academic labeling) operations")
     gold_subparsers = gold_parser.add_subparsers(dest="gold_command")
@@ -2214,6 +2226,35 @@ def _map_build(
     return 0
 
 
+def _map_ask(brief_path: str) -> int:
+    """`axial map ask <brief.yaml>` (issue #572, PR 3 of 4): a thin wrapper
+    over `run_map_ask` -- every error class it can raise (a malformed brief,
+    no map built at this pin, a mismatched encoder, an unusable door
+    response) is a plain, non-zero-exit failure, never a traceback."""
+    try:
+        result = run_map_ask(brief_path)
+    except (BriefError, AskError, LLMError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    lines = [
+        f"brief_id: {result.brief.brief_id}",
+        "",
+        f"THE QUESTION AS ARGUMENTS ({len(result.asks)}):",
+    ]
+    for ask in result.asks:
+        lines.append(f"  - {ask}")
+    lines.append("")
+    lines.append(f"LANDED ON {len(result.landed)} POSITION(S):")
+    for position in result.landed:
+        lines.append(
+            f"  [{position.score:.2f}] {position.size:3d} passage(s), "
+            f"{'+'.join(position.authors)}: {position.argument}"
+        )
+    _print_encoding_safe("\n".join(lines))
+    return 0
+
+
 def _distill_classify(axis: str) -> int:
     try:
         if axis in DISTILL_CLASSIFY_EMBEDDING_AXES:
@@ -2392,6 +2433,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "map" and args.map_command == "build":
         return _map_build(workers=args.workers, force=args.force)
+
+    if args.command == "map" and args.map_command == "ask":
+        return _map_ask(args.brief_path)
 
     if args.command == "artifacts":
         return _artifacts(args.source_path)
