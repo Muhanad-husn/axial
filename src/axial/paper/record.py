@@ -35,6 +35,13 @@ there from a private helper by #591 rather than reimplemented here, without
 importing `axial.answer.record` itself -- see the non-import note above).
 Its dollar figures are a priced CEILING, not a measurement: `llm.py`'s own
 price table runs about 14% high.
+
+**`retries` is recorded alongside them** (§7.17, issue #598): `run_plan` and
+`draft_section` each carry their own bounded retry now, and this is where
+their counts surface -- `plan.retries` directly, and drafting's summed
+across every section's call, since they all share one pass name and one
+budget. Scoped to the same two passes that are actually retried; the shape
+check never is, so it carries no entry.
 """
 
 from __future__ import annotations
@@ -281,6 +288,18 @@ def run_paper(
         PAPER_SHAPE_PASS_NAME: shape_result.model,
     }
 
+    # Scoped to the two passes issue #598 actually retries -- planning
+    # (`plan.retries`, set once by `run_plan`) and drafting (summed across
+    # every section's `draft_section` call, since all of them share one
+    # pass_name). The shape check is never retried, so it carries no entry
+    # here rather than a hardcoded 0: a key that can never be non-zero is
+    # not a fact about this run. Visible in the same place as `cost` and
+    # `model_by_pass` so retry cost is visible alongside run cost (#591/#594).
+    retries = {
+        PAPER_PLAN_PASS_NAME: plan.retries,
+        PAPER_DRAFT_PASS_NAME: sum(draft.retries for draft in drafts),
+    }
+
     markdown_path = papers_dir / f"{paper_brief.paper_brief_id}.md"
     record: dict[str, Any] = {
         "paper_brief_id": paper_brief.paper_brief_id,
@@ -306,6 +325,7 @@ def run_paper(
         "paper_markdown_path": str(markdown_path),
         "model_by_pass": record_model_by_pass,
         "cost": usage_and_cost_by_pass(client, record_model_by_pass),
+        "retries": retries,
     }
 
     persist_paper(record, papers_dir=papers_dir)

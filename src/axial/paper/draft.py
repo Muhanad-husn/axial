@@ -39,7 +39,8 @@ been numbered.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+import sys
+from dataclasses import dataclass, replace
 from typing import Any
 
 from axial.llm import PAPER_DRAFT_PASS_NAME
@@ -112,11 +113,17 @@ class NewClaimDraft:
 
 @dataclass(frozen=True)
 class SectionDraft:
-    """One section's drafted prose and the new claims it introduced."""
+    """One section's drafted prose and the new claims it introduced.
+
+    `retries` counts how many of `draft_section`'s attempts beyond the
+    first were rejected before this draft was accepted (issue #598) --
+    bookkeeping only, carried through `remap_local_ids` so the count
+    survives the local-id rewrite untouched."""
 
     section_id: str
     prose: str
     new_claims: tuple[NewClaimDraft, ...] = ()
+    retries: int = 0
 
 
 def assign_claim_ids(plan: Plan) -> dict[tuple[str, str], str]:
@@ -322,6 +329,39 @@ def remap_local_ids(draft: SectionDraft, assigned: dict[str, str]) -> SectionDra
             )
             for claim in draft.new_claims
         ),
+        retries=draft.retries,
+    )
+
+
+# Bounded retry (issue #598): first attempt plus up to two re-asks, same
+# budget and same reasoning as `axial.paper.plan._MAX_ATTEMPTS` -- a fresh
+# draw usually avoids whatever a rejected draw got wrong, and this is not
+# the transport-level retry `llm.py` already runs.
+_MAX_ATTEMPTS = 3
+
+
+# `DraftError` has exactly three subclasses today -- `DraftParseError` and
+# the two new-claim validation errors, `UnknownDerivationError` and
+# `InvalidNewClaimKindError` -- which is precisely the set issue #598 names
+# as retryable, so catching the shared base is equivalent to naming all
+# three and simpler to keep in sync if a fourth is ever added deliberately.
+def _log_draft_retry(section_id: str, attempt: int, error: DraftError) -> None:
+    """One structured stderr line per rejected attempt (issue #598),
+    matching `axial.paper.plan._log_plan_retry`'s convention."""
+    print(
+        f"paper_retry pass={PAPER_DRAFT_PASS_NAME} section={section_id} "
+        f"attempt={attempt}/{_MAX_ATTEMPTS} validator={type(error).__name__}",
+        file=sys.stderr,
+    )
+
+
+def _draft_retry_prompt(base_prompt: str, error: DraftError, attempt: int) -> str:
+    """Re-ask with the error text appended -- not a repair loop, exactly
+    like `axial.paper.plan._plan_retry_prompt`."""
+    return (
+        f"{base_prompt}\n\n"
+        f"Your previous draft (attempt {attempt} of {_MAX_ATTEMPTS}) was rejected: {error}\n"
+        "Write a new, complete section from scratch that does not repeat this mistake."
     )
 
 
@@ -335,10 +375,11 @@ def draft_section(
     already_cited: list[dict[str, Any]],
     cross_source_possible: bool = True,
 ) -> SectionDraft:
-    """One section, one model call."""
+    """One section, with a bounded retry (issue #598) on `DraftError` --
+    `DraftParseError` and the new-claim validation errors."""
     visible = {claim_ids[key] for key in section.assigned_claims}
     visible.update(str(claim.get("paper_claim_id")) for claim in already_cited)
-    prompt = compose_draft_prompt(
+    base_prompt = compose_draft_prompt(
         thesis_statement,
         lens,
         section,
@@ -347,5 +388,16 @@ def draft_section(
         has_visible_claims=bool(visible),
         cross_source_possible=cross_source_possible,
     )
-    raw = complete_json(client, prompt, pass_name=PAPER_DRAFT_PASS_NAME)
-    return parse_draft_response(raw, section, visible)
+    prompt = base_prompt
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        raw = complete_json(client, prompt, pass_name=PAPER_DRAFT_PASS_NAME)
+        try:
+            draft = parse_draft_response(raw, section, visible)
+        except DraftError as exc:
+            if attempt == _MAX_ATTEMPTS:
+                raise
+            _log_draft_retry(section.section_id, attempt, exc)
+            prompt = _draft_retry_prompt(base_prompt, exc, attempt)
+            continue
+        return replace(draft, retries=attempt - 1)
+    raise AssertionError("unreachable: the retry loop always returns or raises")

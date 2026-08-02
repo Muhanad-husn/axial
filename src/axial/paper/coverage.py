@@ -83,6 +83,18 @@ def _cited_names(claims: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
+def _corpus_note_count(entry: dict[str, Any]) -> Any:
+    """A source map entry's corpus count, under either vocabulary (issue #599).
+
+    Records predating the notes rename carry it as `corpus_chunk_count`, the
+    same four records that carry `polities_touched`. Keyed on presence rather
+    than truthiness: `None` and `0` are both meaningful counts, and `None` is
+    what a map-fed record's entry legitimately holds."""
+    if "corpus_note_count" in entry:
+        return entry.get("corpus_note_count")
+    return entry.get("corpus_chunk_count")
+
+
 def build_coverage_map(
     claims: list[dict[str, Any]], records: dict[str, dict[str, Any]]
 ) -> dict[str, dict[str, Any]]:
@@ -104,7 +116,7 @@ def build_coverage_map(
             entry = source_map.get(canonical)
             if not isinstance(entry, dict):
                 continue
-            counts_by_brief_id[brief_id] = entry.get("corpus_note_count")
+            counts_by_brief_id[brief_id] = _corpus_note_count(entry)
             if band is None:
                 band = entry.get("coverage_band")
 
