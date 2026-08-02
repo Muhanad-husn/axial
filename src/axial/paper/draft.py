@@ -14,16 +14,20 @@ drafter a mixed bag of unrelated argumentative roles in one call, whatever
 the model's real attention turns out to be. The plan is what makes the
 per-section prompt possible.
 
-**A new (b) claim can still reach across sections**, and therefore across
-records, because each call also carries what earlier sections already cited:
-id, kind, band and text, never grounds text. Without that a cross-source
-inference would be impossible whenever the plan grouped a section by source.
+**A new (b) or (c) claim can still reach across sections**, and therefore
+across records, because each call also carries what earlier sections already
+cited: id, kind, band and text, never grounds text. Without that a
+cross-source (b) inference, or a (c) verdict resting on claims from more than
+one section, would be impossible whenever the plan grouped a section by
+source.
 
 **The drafter has no tools.** It cannot introduce a grounds pointer that was
 not already in the inventory, because it never supplies grounds at all: a new
-(b) claim names the claims it reasons from, and `axial.paper.claims` derives
-the pointers mechanically. Generate-then-cite is structurally impossible here
-rather than forbidden by instruction.
+claim names the claims it reasons from, and `axial.paper.claims` derives the
+pointers mechanically -- for a (b) claim, at least two distinct records'
+worth; for a (c) claim, its own verdict, exempt from that count but never
+from naming something (issue #577). Generate-then-cite is structurally
+impossible here rather than forbidden by instruction.
 
 Claim ids are assigned deterministically BEFORE drafting, so the drafter
 writes real markers rather than placeholders. New claims are the exception --
@@ -62,7 +66,7 @@ class DraftParseError(DraftError):
 
 
 class UnknownDerivationError(DraftError):
-    """Raised when a new (b) claim derives from a claim the drafter could not
+    """Raised when a new claim derives from a claim the drafter could not
     see -- one not assigned to this section and not cited earlier."""
 
     def __init__(self, section_id: str, local_id: str, unknown: list[str]):
@@ -76,14 +80,34 @@ class UnknownDerivationError(DraftError):
         )
 
 
+class InvalidNewClaimKindError(DraftError):
+    """Raised when a new claim names a `kind` outside {"b", "c"} (issue #577).
+
+    A new claim is either a cross-source inference (`b`) or the paper's own
+    verdict (`c`) -- never a restated source assertion (`a`, §3 non-goal 4)
+    and never anything outside the vocabulary."""
+
+    def __init__(self, section_id: str, local_id: str, kind: object):
+        self.section_id = section_id
+        self.local_id = local_id
+        self.kind = kind
+        super().__init__(
+            f"new claim {local_id!r} in section {section_id!r} names kind {kind!r}; "
+            f"a new claim is 'b' (cross-source inference) or 'c' (this paper's "
+            f"verdict) -- never 'a' and never anything else"
+        )
+
+
 @dataclass(frozen=True)
 class NewClaimDraft:
-    """A new (b) claim as the drafter proposed it: text and what it reasons
-    from. No kind, no grounds, no band -- all three are derived, never asked."""
+    """A new claim as the drafter proposed it: text, its kind ('b' or 'c'),
+    and what it reasons from. No grounds, no band -- both are derived, never
+    asked."""
 
     local_id: str
     text: str
     derived_from: tuple[str, ...]
+    kind: str = "b"
 
 
 @dataclass(frozen=True)
@@ -166,12 +190,14 @@ THE ARGUMENT LEADS AND THE SOURCES SUPPORT IT. This is the single thing that dec
 - Do not walk the claims in the order they are listed, and do not give each claim its own sentence. Claims are evidence for the point, so several may support one sentence and some may carry a clause rather than a sentence.
 - A section is not a summary of its claims. If it could be rewritten as "the literature says X, Y and Z", it has failed.
 
-Voice is the other seam, and it is about honesty rather than style. A claim marked kind "a" is a SOURCE's assertion; you may state it as established and attribute it where attribution is the point. A claim marked "b" is this system's own inference across sources and must NEVER be voiced as though a source asserted it. Write it in your own register, and do not launder it into "scholars have shown".
+Voice is the other seam, and it is about honesty rather than style. A claim marked kind "a" is a SOURCE's assertion; you may state it as established and attribute it where attribution is the point. A claim marked "b" is this system's own inference across sources and must NEVER be voiced as though a source asserted it. A claim marked "c" is this paper's OWN verdict -- your judgment, never a source's -- and must be voiced the same honest way, as this paper's own conclusion. Write either in your own register, and do not launder either into "scholars have shown".
 
-You may introduce new cross-source inferences of your own. Each must reason across claims drawn from at least TWO different analysis records, name the claims it reasons from, and carry a local id you invent (e.g. "n1") which you cite in the prose exactly like any other marker. Do NOT supply grounds -- they are derived from the claims you name. Do not introduce speculation: every new claim is an inference across the claims listed above.
+You may introduce new claims of your own, of two kinds. Each carries a local id you invent (e.g. "n1"), cited in the prose exactly like any other marker, and names the claims above it reasons from -- do NOT supply grounds, they are derived mechanically from the claims you name:
+- kind "b", a cross-source inference: it must reason across claims drawn from at least TWO different analysis records, and it may characterise a disagreement between them but may not declare a winner beyond what those claims support.
+- kind "c", this paper's own verdict: where the thesis calls for a verdict, a commitment between positions, or a statement of where the account you commit to is weak, mark it "c" rather than smuggling it into a "b" claim or a source's own voice. It may rest on claims from a single record. Do not mark a claim "c" only to give it more grounds than a "b" claim would need -- "c" is for judgment the sources do not themselves make, not for a shortcut past the two-record rule.
 
 Return JSON only:
-{{"prose": "...", "new_claims": [{{"local_id": "n1", "text": "...", "derived_from": ["pc-004", "pc-011"]}}]}}"""
+{{"prose": "...", "new_claims": [{{"local_id": "n1", "kind": "b", "text": "...", "derived_from": ["pc-004", "pc-011"]}}]}}"""
 
 
 def parse_draft_response(raw: str, section: Section, visible_ids: set[str]) -> SectionDraft:
@@ -198,6 +224,12 @@ def parse_draft_response(raw: str, section: Section, visible_ids: set[str]) -> S
         if not isinstance(text, str) or not text.strip():
             raise DraftParseError(section.section_id, f"new claim {local_id!r} has no text")
 
+        # Missing 'kind' defaults to "b": every new claim before issue #577
+        # was a cross-source inference, and nothing else was ever asked.
+        kind = entry.get("kind", "b")
+        if kind not in {"b", "c"}:
+            raise InvalidNewClaimKindError(section.section_id, local_id, kind)
+
         derived = [str(value) for value in (entry.get("derived_from") or [])]
         unknown = [
             value for value in derived if value not in visible_ids and value not in local_ids
@@ -207,7 +239,12 @@ def parse_draft_response(raw: str, section: Section, visible_ids: set[str]) -> S
 
         local_ids.add(local_id.strip())
         new_claims.append(
-            NewClaimDraft(local_id=local_id.strip(), text=text.strip(), derived_from=tuple(derived))
+            NewClaimDraft(
+                local_id=local_id.strip(),
+                text=text.strip(),
+                derived_from=tuple(derived),
+                kind=kind,
+            )
         )
 
     return SectionDraft(
@@ -233,6 +270,7 @@ def remap_local_ids(draft: SectionDraft, assigned: dict[str, str]) -> SectionDra
                 local_id=assigned.get(claim.local_id, claim.local_id),
                 text=claim.text,
                 derived_from=tuple(assigned.get(parent, parent) for parent in claim.derived_from),
+                kind=claim.kind,
             )
             for claim in draft.new_claims
         ),

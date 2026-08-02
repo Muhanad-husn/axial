@@ -274,6 +274,45 @@ def test_a_single_record_inference_is_rejected(tmp_path, analyses_dir, lenses_di
         _run(tmp_path, analyses_dir, lenses_dir, drafts)
 
 
+def test_a_new_c_claim_reaches_a_verdict_resting_on_a_single_record(
+    tmp_path, analyses_dir, lenses_dir
+):
+    """Issue #577: a paper can carry someone else's (c) claim but must also be
+    able to reach one of its own -- exempt from the two-distinct-records rule
+    a (b) claim needs, since a verdict is judgment, not cross-source synthesis.
+    Both `derived_from` claims here (pc-001, pc-002) come from `brief-a` alone."""
+    drafts = [
+        {"prose": "War made the state [pc-001]. Extraction followed [pc-002].", "new_claims": []},
+        {
+            "prose": (
+                "Mobilization did not convert [pc-003]. On balance, the bellicist "
+                "account holds [n1]."
+            ),
+            "new_claims": [
+                {
+                    "local_id": "n1",
+                    "kind": "c",
+                    "text": "The bellicist account is the stronger explanation here.",
+                    "derived_from": ["pc-001", "pc-002"],
+                }
+            ],
+        },
+    ]
+    record, _ = _run(tmp_path, analyses_dir, lenses_dir, drafts)
+
+    verdicts = [claim for claim in record["claims"] if claim["kind"] == "c" and not claim["origin"]]
+    assert len(verdicts) == 1
+    verdict = verdicts[0]
+    assert verdict["derived_from"] == ["pc-001", "pc-002"]
+    assert len(verdict["grounds"]) == 2
+    # Both parents carry `high` (dense Tilly coverage), so the verdict does too.
+    assert verdict["confidence"] == "high"
+
+    rendered = render_paper(record)
+    assert "(this paper's verdict)" in rendered
+    assert "(this paper's inference)" not in rendered  # no new (b) claim here
+
+
 def test_claims_are_exactly_what_the_prose_cited(tmp_path, analyses_dir, lenses_dir):
     """§7.5: a claim assigned but never cited is dropped, not carried."""
     drafts = [
@@ -315,8 +354,11 @@ def test_rendering_is_deterministic_and_discloses_bands_with_counts(
     assert "## Confidence and coverage" in first
     # A band never renders alone (§7.10).
     assert "corpus notes" in first and "cited claims" in first
-    # Kind is legible in the citation table.
-    assert "(carried)" in first and "(this paper's)" in first
+    # Kind is legible in the citation table -- extended from two states to
+    # three by issue #577: carried, this paper's (b) inference, and this
+    # paper's (c) verdict (none of the latter here, so only the first two
+    # are asserted; the third is pinned in test_a_new_c_claim_reaches_a_verdict).
+    assert "(carried)" in first and "(this paper's inference)" in first
     # Engine telemetry belongs to examine, never to the reader's paper (§0).
     assert "usage_ratio" not in first
 

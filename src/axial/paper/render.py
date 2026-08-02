@@ -165,7 +165,12 @@ def _render_citation_table(record: dict[str, Any]) -> list[str]:
         )
         origin = claim.get("origin")
         kind = claim.get("kind")
-        kind_text = f"{kind} (carried)" if origin else f"{kind} (this paper's)"
+        if origin:
+            kind_text = f"{kind} (carried)"
+        elif kind == "c":
+            kind_text = f"{kind} (this paper's verdict)"
+        else:
+            kind_text = f"{kind} (this paper's inference)"
         lines.append(
             f"| {claim.get('paper_claim_id')} | {kind_text} | "
             f"{claim.get('confidence')} | {ground_ids} | {'; '.join(sources) or '-'} |"
