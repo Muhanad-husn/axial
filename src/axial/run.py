@@ -56,12 +56,33 @@ of `RunSummary` at the bottom of this module, `attach_theory_school_rates`/
 Retired along with the tag pass and its `theory_school` axis (issue #414,
 `plans/phase-a-v1/README.md` D4/D9) -- `RunSummary.rates` remains as an
 attachment point for a future consumer, unenriched by this module itself.
+
+**Issue #526 wires this loop into `axial.runlog.run_context`** -- the first
+multi-source caller of that seam. The whole `run_pass` body runs inside one
+`run_context(f"run-{pass_name}", ...)`: every source's start, finish, and
+failure becomes an `event()` (durable, cross-process-readable progress);
+every attempted source still gets exactly one `record()` (unchanged
+one-per-source granularity); a live line prints at each source's start --
+position, elapsed, spend so far (read from the shared client's own
+`usage_for_pass`, never a second accounting), failures so far, and a rough
+ETA from the median duration of what has already completed; and an
+end-of-run `report.json` is written into the run directory before
+returning, on every exit path (fatal or clean) -- per-source timings with
+slow outliers named, total tokens/cost, failures grouped by their own
+(exact-match) reason string, and whatever sources were never reached.
+`summary.md` is untouched: still an operator-authored stub, never
+generated. None of this changes the printed TSV table, the tally line, the
+resume ledger, or the exit-code contract -- see the outer acceptance tests
+under `tests/test_run*.py`, all pinned before #526 and unedited by it.
 """
 
 from __future__ import annotations
 
 import csv
+import json
+import statistics
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -80,8 +101,9 @@ from axial.envelope import (
 from axial.extract import ExtractError, extract, tree_path
 from axial.ingest import WorklistError, read_worklist
 from axial.interrogate import InterrogateError, run_interrogate
-from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient, get_client
+from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient, get_client, usage_and_cost_by_pass
 from axial.paths import DEFAULT_DOMAIN_DIR
+from axial.runlog import format_duration, run_context
 from axial.vault import VaultError, run_vault_write
 
 OK_STATUS = "OK"
@@ -118,6 +140,12 @@ CORPUS_SOURCES_DIR = Path("data/sources")
 # note: "one corpus root, the two documented extensions" -- no config option
 # for this, since nothing today needs a third).
 CORPUS_EXTENSIONS = (".pdf", ".docx")
+
+# End-of-run report (issue #526): a completed source is a "slow outlier"
+# when its own duration is more than this many times the run's median --
+# one clear, unconfigurable multiplier, not a hand-tuned table. Needs at
+# least two completed durations to make a median meaningful at all.
+SLOW_OUTLIER_FACTOR = 2
 
 
 class RunError(Exception):
@@ -465,6 +493,135 @@ def _print_encoding_safe(text: str, *, stream: Any = None) -> None:
         print(text.encode("ascii", errors="backslashreplace").decode("ascii"), file=stream)
 
 
+def _render_progress_line(
+    *,
+    index: int,
+    total: int,
+    source_path: str,
+    elapsed_sec: float,
+    spent_usd: float | None,
+    fail_count: int,
+    eta_sec: float | None,
+) -> str:
+    """One live-progress line, printed the moment a source starts -- not
+    only once it finishes (issue #526's "progress appears while a source
+    runs" bar; this is also the honest answer for the one opaque step,
+    docling extraction, which has no finer progress hook: this line is all
+    it ever gets beyond the existing start/finish outcome row). `eta_sec` is
+    `None` until at least one source in this run has completed, since a
+    median of zero durations is not an estimate."""
+    spent = f"${spent_usd:.4f}" if spent_usd is not None else "n/a"
+    eta = f"~{format_duration(eta_sec)}" if eta_sec is not None else "unknown"
+    return (
+        f"progress: {index}/{total} starting {source_path} "
+        f"(elapsed={format_duration(elapsed_sec)} spent={spent} "
+        f"failed={fail_count} eta={eta})"
+    )
+
+
+def _spent_so_far(client: LLMClient, pass_name: str) -> float | None:
+    """This pass's dollar spend so far in this process, read straight from
+    the shared client's own per-pass accumulation (`usage_for_pass` via
+    `axial.llm.usage_and_cost_by_pass`) -- never a second accounting."""
+    model = client.model_for_pass(pass_name)
+    report = usage_and_cost_by_pass(client, {pass_name: model})
+    return report["by_pass"][pass_name]["usd"]
+
+
+def _label_corpus_pin(
+    worklist_path: str | Path | None, corpus: bool, sources_dir: Path | None
+) -> str | None:
+    """A short, human-readable `meta.json.corpus_pin` label: which source
+    set this run resolved against. Computed from the raw arguments, before
+    `_resolve_source_paths` can even fail, so a fatal `SourceSetError`/
+    `WorklistError` run still carries a meaningful label."""
+    if worklist_path is not None:
+        return f"worklist:{worklist_path}"
+    if corpus:
+        return f"corpus:{sources_dir if sources_dir is not None else CORPUS_SOURCES_DIR}"
+    return None
+
+
+def _build_report(
+    pass_name: str,
+    outcomes: list[Outcome],
+    durations: dict[str, float],
+    source_paths: list[str],
+    client: LLMClient | None,
+    total_elapsed_sec: float,
+) -> dict[str, Any]:
+    """The end-of-run report (issue #526), written into the run directory
+    and re-readable long after the run finished: per-source timings with
+    slow outliers named, total tokens/cost, failures grouped by their own
+    (exact-match) reason string rather than listed one by one, and whatever
+    sources this run never reached. Built on every exit path -- fatal or
+    clean -- so even a crashed run's own report answers "how far did it
+    get" without reading `console.log` by hand."""
+    attempted_paths = {outcome.source_path for outcome in outcomes}
+    outstanding = [path for path in source_paths if path not in attempted_paths]
+
+    per_source = [
+        {
+            "source_path": outcome.source_path,
+            "source_id": outcome.source_id,
+            "status": outcome.status,
+            "duration_sec": durations.get(outcome.source_path),
+        }
+        for outcome in outcomes
+    ]
+
+    # A completed source is a "slow outlier" when its own duration is more
+    # than SLOW_OUTLIER_FACTOR times the run's own median -- needs at least
+    # two completed durations for a median to mean anything.
+    slow_outliers: list[str] = []
+    if len(durations) >= 2:
+        median = statistics.median(durations.values())
+        if median > 0:
+            slow_outliers = sorted(
+                (
+                    path
+                    for path, seconds in durations.items()
+                    if seconds > median * SLOW_OUTLIER_FACTOR
+                ),
+                key=lambda path: durations[path],
+                reverse=True,
+            )
+
+    failures_by_cause: dict[str, dict[str, Any]] = {}
+    for outcome in outcomes:
+        if outcome.status != FAIL_STATUS:
+            continue
+        cause = outcome.reason or "(no reason recorded)"
+        bucket = failures_by_cause.setdefault(cause, {"count": 0, "source_ids": []})
+        bucket["count"] += 1
+        bucket["source_ids"].append(outcome.source_id)
+
+    tokens_and_cost = None
+    if client is not None:
+        model = client.model_for_pass(pass_name)
+        tokens_and_cost = usage_and_cost_by_pass(client, {pass_name: model})
+
+    return {
+        "pass_name": pass_name,
+        "total": len(outcomes),
+        "ok_count": sum(1 for outcome in outcomes if outcome.status == OK_STATUS),
+        "fail_count": sum(1 for outcome in outcomes if outcome.status == FAIL_STATUS),
+        "skip_count": sum(1 for outcome in outcomes if outcome.status == SKIP_STATUS),
+        "total_elapsed_sec": total_elapsed_sec,
+        "per_source": per_source,
+        "slow_outliers": slow_outliers,
+        "failures_by_cause": failures_by_cause,
+        "tokens_and_cost": tokens_and_cost,
+        "outstanding": outstanding,
+    }
+
+
+def _write_report(run_dir: Path, report: dict[str, Any]) -> None:
+    (run_dir / "report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
 def run_pass(
     pass_name: str,
     worklist_path: str | Path | None = None,
@@ -517,84 +674,183 @@ def run_pass(
     The shared `client` is constructed once for the whole run (if not passed
     explicitly) and threaded, along with `config_path`/`domain_dir`, into
     every source's pass invocation -- never rebuilt per source.
+
+    Issue #526: the whole call runs inside one `axial.runlog.run_context`
+    (named `f"run-{pass_name}"`). Every source's start/finish/failure is an
+    `event()`; every attempted source still gets exactly one `record()`; a
+    live progress line prints at each source's start; and an end-of-run
+    `report.json` is written into the run directory on every exit path.
+    None of this changes the table/tally text, the resume ledger, or the
+    exit-code contract documented above -- see this module's own docstring.
     """
-    descriptor = PASS_REGISTRY.get(pass_name)
-    if descriptor is None:
-        _print_encoding_safe(f"error: {UnknownPassError(pass_name)}", stream=sys.stderr)
-        return _empty_summary(pass_name), 1
+    corpus_pin = _label_corpus_pin(worklist_path, corpus, sources_dir)
 
-    try:
-        source_paths = _resolve_source_paths(worklist_path, corpus, sources_dir)
-    except (SourceSetError, WorklistError) as exc:
-        _print_encoding_safe(f"error: {exc}", stream=sys.stderr)
-        return _empty_summary(pass_name), 1
-
-    if ledger_path is None:
-        ledger_path = LEDGER_PATH
-
-    try:
-        ledger_done_ids = _load_done_source_ids(ledger_path, pass_name)
-    except LedgerError as exc:
-        _print_encoding_safe(f"error: {exc}", stream=sys.stderr)
-        return _empty_summary(pass_name), 1
-
-    if client is None:
-        client = get_client(config_path=config_path)
-
-    outcomes: list[Outcome] = []
-    _print_encoding_safe("\t".join(TABLE_COLUMNS))
-
-    if not source_paths:
-        _print_encoding_safe(f"run: pass={pass_name} nothing to do (0 sources in source set)")
-        return _summarize(pass_name, outcomes), 0
-
-    for source_path_str in source_paths:
-        source_path = Path(source_path_str)
+    with run_context(f"run-{pass_name}", corpus_pin=corpus_pin) as run:
+        outcomes: list[Outcome] = []
+        durations: dict[str, float] = {}
+        source_paths: list[str] = []
+        run_start = time.monotonic()
 
         try:
-            source_id = compute_source_id(source_path)
-        except MissingSourceError as exc:
-            _print_encoding_safe(f"error: {exc}", stream=sys.stderr)
-            outcome = Outcome(str(source_path), "", FAIL_STATUS, str(exc))
-            outcomes.append(outcome)
-            _print_encoding_safe(_render_row(outcome))
+            descriptor = PASS_REGISTRY.get(pass_name)
+            if descriptor is None:
+                _print_encoding_safe(f"error: {UnknownPassError(pass_name)}", stream=sys.stderr)
+                run.set_status("failed")
+                return _empty_summary(pass_name), 1
+
             try:
-                _append_ledger_row(ledger_path, _ledger_row(pass_name, outcome))
+                source_paths = _resolve_source_paths(worklist_path, corpus, sources_dir)
+            except (SourceSetError, WorklistError) as exc:
+                _print_encoding_safe(f"error: {exc}", stream=sys.stderr)
+                run.set_status("failed")
+                return _empty_summary(pass_name), 1
+
+            if ledger_path is None:
+                ledger_path = LEDGER_PATH
+
+            try:
+                ledger_done_ids = _load_done_source_ids(ledger_path, pass_name)
             except LedgerError as exc:
                 _print_encoding_safe(f"error: {exc}", stream=sys.stderr)
-                return _summarize(pass_name, outcomes), 1
-            continue
+                run.set_status("failed")
+                return _empty_summary(pass_name), 1
 
-        if descriptor.done_predicate(source_id, ledger_done_ids, config_path):
-            _print_encoding_safe(f"skip: {source_path} already done ({pass_name})")
-            outcome = Outcome(str(source_path), source_id, SKIP_STATUS)
-            outcomes.append(outcome)
-            _print_encoding_safe(_render_row(outcome))
-            continue
+            if client is None:
+                client = get_client(config_path=config_path)
 
-        try:
-            descriptor.invoke(str(source_path), client, config_path, domain_dir)
-        except descriptor.error as exc:
-            _print_encoding_safe(f"error: {source_path}: {exc}", stream=sys.stderr)
-            outcome = Outcome(str(source_path), source_id, FAIL_STATUS, str(exc))
-        else:
-            outcome = Outcome(str(source_path), source_id, OK_STATUS)
+            _print_encoding_safe("\t".join(TABLE_COLUMNS))
 
-        outcomes.append(outcome)
-        _print_encoding_safe(_render_row(outcome))
+            if not source_paths:
+                _print_encoding_safe(
+                    f"run: pass={pass_name} nothing to do (0 sources in source set)"
+                )
+                return _summarize(pass_name, outcomes), 0
 
-        try:
-            _append_ledger_row(ledger_path, _ledger_row(pass_name, outcome))
-        except LedgerError as exc:
-            _print_encoding_safe(f"error: {exc}", stream=sys.stderr)
-            return _summarize(pass_name, outcomes), 1
-        if outcome.status == OK_STATUS:
-            ledger_done_ids.add(source_id)
+            total_sources = len(source_paths)
+            for index, source_path_str in enumerate(source_paths, start=1):
+                source_path = Path(source_path_str)
+                source_start = time.monotonic()
 
-    summary = _summarize(pass_name, outcomes)
-    _print_encoding_safe(
-        f"run: pass={pass_name} total={summary.total} ok={summary.ok_count} "
-        f"skipped={summary.skip_count} failed={summary.fail_count}"
-    )
+                try:
+                    source_id = compute_source_id(source_path)
+                except MissingSourceError as exc:
+                    _print_encoding_safe(f"error: {exc}", stream=sys.stderr)
+                    run.event(
+                        kind="source_fail", source_id="", pass_name=pass_name, detail=str(exc)
+                    )
+                    outcome = Outcome(str(source_path), "", FAIL_STATUS, str(exc))
+                    outcomes.append(outcome)
+                    _print_encoding_safe(_render_row(outcome))
+                    run.record(
+                        source_id="",
+                        pass_name=pass_name,
+                        model=None,
+                        status="error",
+                        duration_sec=time.monotonic() - source_start,
+                        error=str(exc),
+                    )
+                    try:
+                        _append_ledger_row(ledger_path, _ledger_row(pass_name, outcome))
+                    except LedgerError as exc:
+                        _print_encoding_safe(f"error: {exc}", stream=sys.stderr)
+                        run.set_status("failed")
+                        return _summarize(pass_name, outcomes), 1
+                    continue
 
-    return summary, 0
+                if descriptor.done_predicate(source_id, ledger_done_ids, config_path):
+                    run.event(kind="source_skip", source_id=source_id, pass_name=pass_name)
+                    _print_encoding_safe(f"skip: {source_path} already done ({pass_name})")
+                    outcome = Outcome(str(source_path), source_id, SKIP_STATUS)
+                    outcomes.append(outcome)
+                    _print_encoding_safe(_render_row(outcome))
+                    continue
+
+                fail_so_far = sum(1 for o in outcomes if o.status == FAIL_STATUS)
+                eta_sec = (
+                    statistics.median(durations.values()) * (total_sources - index + 1)
+                    if durations
+                    else None
+                )
+                _print_encoding_safe(
+                    _render_progress_line(
+                        index=index,
+                        total=total_sources,
+                        source_path=str(source_path),
+                        elapsed_sec=time.monotonic() - run_start,
+                        spent_usd=_spent_so_far(client, pass_name),
+                        fail_count=fail_so_far,
+                        eta_sec=eta_sec,
+                    )
+                )
+                run.event(
+                    kind="source_start",
+                    source_id=source_id,
+                    pass_name=pass_name,
+                    detail=f"{index}/{total_sources}",
+                )
+
+                usage_before = client.usage_for_pass(pass_name)
+                try:
+                    descriptor.invoke(str(source_path), client, config_path, domain_dir)
+                except descriptor.error as exc:
+                    _print_encoding_safe(f"error: {source_path}: {exc}", stream=sys.stderr)
+                    outcome = Outcome(str(source_path), source_id, FAIL_STATUS, str(exc))
+                    run.event(
+                        kind="source_fail",
+                        source_id=source_id,
+                        pass_name=pass_name,
+                        detail=str(exc),
+                    )
+                else:
+                    outcome = Outcome(str(source_path), source_id, OK_STATUS)
+                    run.event(kind="source_finish", source_id=source_id, pass_name=pass_name)
+
+                duration = time.monotonic() - source_start
+                durations[str(source_path)] = duration
+                # A model is reported only when THIS source's own invocation
+                # actually moved the shared client's per-pass accumulator --
+                # never a fabricated model id for a pass (or a cache hit)
+                # that made no call (mirrors the eval pass's own precedent,
+                # tests/test_runlog_passes.py).
+                usage_after = client.usage_for_pass(pass_name)
+                model = client.model_for_pass(pass_name) if usage_after != usage_before else None
+                run.record(
+                    source_id=source_id,
+                    pass_name=pass_name,
+                    model=model,
+                    status="ok" if outcome.status == OK_STATUS else "error",
+                    duration_sec=duration,
+                    error=outcome.reason or None,
+                )
+
+                outcomes.append(outcome)
+                _print_encoding_safe(_render_row(outcome))
+
+                try:
+                    _append_ledger_row(ledger_path, _ledger_row(pass_name, outcome))
+                except LedgerError as exc:
+                    _print_encoding_safe(f"error: {exc}", stream=sys.stderr)
+                    run.set_status("failed")
+                    return _summarize(pass_name, outcomes), 1
+                if outcome.status == OK_STATUS:
+                    ledger_done_ids.add(source_id)
+
+            summary = _summarize(pass_name, outcomes)
+            _print_encoding_safe(
+                f"run: pass={pass_name} total={summary.total} ok={summary.ok_count} "
+                f"skipped={summary.skip_count} failed={summary.fail_count}"
+            )
+
+            return summary, 0
+        finally:
+            _write_report(
+                run.run_dir,
+                _build_report(
+                    pass_name,
+                    outcomes,
+                    durations,
+                    source_paths,
+                    client,
+                    time.monotonic() - run_start,
+                ),
+            )
