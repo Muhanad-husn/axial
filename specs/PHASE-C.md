@@ -27,6 +27,8 @@
 - The drafter reads **one section's assigned claims at a time**, because Phase B measured that ~20 notes reach a model however many are supplied (§4, §7.2, PHASE-B P2-7).
 - **Phase C does not build a panel.** `src/axial/panel/` exists, was built under PHASE-B §9.4 / issue #385, and has run twice. Phase C extends it (§6, §7.7–§7.9, §11).
 
+> **FURTHER CORRECTED 2026-08-01 (issue #570), later the same day, then RETRACTED 2026-08-02 (issue #577 riders).** The correction here gave the paper record its own retrieval trajectory, produced by an opposition gap-and-repair pass (§7.15), and made the coverage map a union of two scopes rather than one. That pass is deleted: #572 principle 1 rejects its premise outright — opposition earns no privileged retrieval edge of its own, and the argument map's ordinary corridor step already covers what it was for, at a fraction of the cost — so issue #570 is superseded, not revised (founder ruling, PR #571). The bullet above is exactly true again, with no amendment: the coverage map is unioned from the source records, never recomputed, and a paper record carries no trajectory.
+
 ---
 
 ## 0. What this is, in one paragraph
@@ -74,10 +76,14 @@ This PRD covers **Phase C (authorship) only**. It does not cover analysis (Phase
 Each is excluded deliberately; documenting them protects the architecture.
 
 1. **Phase C never runs Phase B.** It is a consumer of analysis records. A paper brief naming a brief that has not been run is an intake error, and the operator runs that brief through Phase B first. This is deliberate: it preserves PHASE-B non-goal 6 (no multi-brief orchestration) rather than smuggling brief-sweeping in behind an authorship command.
+
+   > **CORRECTED 2026-08-01 (issue #570), RETRACTED 2026-08-02 (issue #577 riders).** The correction carved out an exception for the opposition gap-and-repair pass (§7.15), which called the query API directly for retrieval. That pass is deleted, superseded rather than revised — #572 principle 1 rejects its premise outright, see the revision note above — and Phase C once again calls no query-API tool of any kind. The non-goal needs no exception and holds exactly as first written.
 2. **No format adaptation.** Venue conventions, house style, and length targets are **Phase D**. v0 renders one plain markdown paper.
 3. **No citation style.** The apparatus is mechanical: markers that resolve, and a bibliography from recorded metadata. Chicago, APA, footnote-vs-endnote, and short-form subsequent citations are Phase D.
 4. **No new speculation.** Phase C emits no new kind-(c) claims in v0. A (c) claim already present in a source record may be carried, marked, and cited; the drafter does not invent new ones. A paper's speculative conclusion is a real want and is P2, not v0.
 5. **No corpus, schema, vault, or analysis-record modification.** Phase C reads `data/analyses/`, `data/source_meta/`, and the vault read-only, and writes only its own artifacts. A Phase-C run never writes to `data/analyses/`.
+
+   > **CORRECTED 2026-08-01 (issue #570), RETRACTED 2026-08-02 (issue #577 riders).** The correction extended "the vault read-only" to include the name layer (`data/names/`), reached only through the opposition gap-and-repair pass (§7.15) this non-goal's own correction above named. That pass is deleted, superseded by #572 principle 1; Phase C reads no name layer at all, and the non-goal holds exactly as first written -- the vault, read-only, and nothing else.
 6. **No UI beyond the CLI.**
 7. **No human referee.** No file, gate, or acceptance criterion in this phase may depend on academic-authored data (§9).
 8. **No multi-paper orchestration or batching** in the authorship pipeline, beyond running one paper brief and inspecting it. The offline eval track (§10.2) reads a set of already-written papers, which is not orchestration: it produces no papers of its own.
@@ -107,6 +113,8 @@ Like every phase beneath it, the mechanism is domain-general and the content is 
 ## 5. System overview — the stages
 
 **Five pipeline stages**, each independently testable. Stages 1, 4, and 5 are deterministic and make zero model calls. The coherence eval track is not a pipeline stage and is specified in §10.2.
+
+> **STRUCK 2026-08-02 (issue #577 riders).** A "stage 1.5" gap-and-repair pass sat here between intake and planning (§7.15, issue #570), retrieving directly through the query API to repair opposition the named source records had not already read. #572 principle 1 rejects its premise outright — opposition earns no privileged retrieval edge, and the argument map's ordinary corridor step already covers what it was for, for a fraction of the cost — so the pass is deleted, superseded rather than revised (founder ruling, PR #571). The pipeline is five stages again, with no pass between the first two.
 
 **Stages 2 through 5 are the prose layer, and they are built here** (the 2026-08-01 ruling as revised, §0). Every one of them takes a **list** of analysis records, and a list of one is an ordinary input rather than a special case — that signature is what keeps the machinery from being written a second time if Phase B later renders its own answers through it. Phase B is not reopened to do that now.
 
@@ -229,7 +237,7 @@ One JSON per run at `data/papers/<paper_brief_id>.json`, the phase's analogue of
   claims: [ <paper_claim> ],         # §7.4; exactly the claims cited in the prose
   citations: [ <citation> ],         # §7.5, in document order
   counter_position,                  # the PHASE-B §7.8 shape, reused unchanged (§7.14)
-  coverage_map,                      # §7.8
+  coverage_map,                      # §7.11, unioned from the named source records
   confidence: { overall_band, rationale },
   bibliography: [ <bib_entry> ],     # §7.6
   paper_markdown_path,               # the rendered paper written alongside
@@ -242,9 +250,13 @@ One JSON per run at `data/papers/<paper_brief_id>.json`, the phase's analogue of
 
 > **CORRECTED 2026-08-01.** This paragraph said the field had exactly two states. Phase B v1 added the third and the reason it added it binds here identically: a run that died in its closing stage used to be indistinguishable from a corpus that had only one side, so **a bug could read as a finding about the corpus**. A failed counter-position is a failed run — it persists the record with the section marked failed, and it fails the validator, the gate, and the exit code. It is never `corpus_one_sided`, and Phase C must not collapse the two when it carries the field forward.
 
-**The paper record carries no `trajectory`, deliberately.** Phase C performs no retrieval, so it has nothing to record; §7.11 and §7.14 are written against that fact rather than around it.
+> **CORRECTED 2026-08-01, twice in one day (issue #570), RETRACTED 2026-08-02 (issue #577 riders).** The correction gave the paper record a `trajectory` and a companion `exact_match_opposition_gap` field, both produced solely by the opposition gap-and-repair pass (§7.15). That pass is deleted — #572 principle 1 rejects its premise outright, superseded rather than revised (founder ruling, PR #571) — so the original statement is true again exactly as first written: **the paper record carries no `trajectory`, deliberately. Phase C performs no retrieval of its own, so it has nothing to record.** Both fields are removed from the record shape above.
 
 `confidence.overall_band` is one of `high` / `medium` / `low` and may not exceed the **lowest** overall band among the named source records. `confidence.rationale` states the coverage counts behind it, drawn from `coverage_map`.
+
+> **CORRECTED 2026-08-02 (issue #584/#587 follow-up).** This paragraph named three bands. Phase B v1 (#584/#587) added a fourth, `not_measured`, deliberately outside the `low`/`medium`/`high` ordinal: it means a source record's own `coverage_map` was empty, because its retrieval path queried no name at all (the argument map, §7.17) — not that the corpus was measured and found thin. §7.11's source-record ceiling now treats it as a real value rather than filtering it out of the ceiling comparison: **a paper standing on any `not_measured` source record reports `not_measured` itself**, unconditionally, never the measured band of whatever other records it also stands on and never `high`. `not_measured` is never ranked against the three-band ordinal here either, for the identical reason #587 gives for Phase B's own record.
+
+
 
 The record is the audit surface. Every cited sentence traces to a claim, every claim traces to grounds, every grounds pointer resolves to a real vault id, and every cited source appears in the bibliography.
 
@@ -266,6 +278,8 @@ Two kinds of entry, distinguished by `origin`.
 ```
 
 `names_touched` is added by this revision (2026-08-01) and is not decorative: it is what lets §7.11 compute the paper's coverage map with **zero vault reads**, and it is free — every Phase-B claim already carries it (PHASE-B §7.4), resolved through the alias map alone rather than through `find_names`' embedding tier, because a nearest-neighbour hit would land a claim on a plausible neighbouring name and fabricate coverage the corpus does not have.
+
+> **STRUCK 2026-08-02 (issue #577 riders).** This section briefly said a "source record" was not only a named Phase-B analysis record, because the opposition gap-and-repair pass (§7.15, issue #570) injected its own repair claims under a synthetic `brief_id`. That pass is deleted, superseded by #572 principle 1; every claim's `origin` names a real Phase-B analysis record again, with no exception.
 
 **A carried claim** is copied from the inventory with `kind`, `grounds`, and `confidence` **byte-identical** to the source record's claim — where `confidence` means the claim's **clamped** band, which is not the band the record persisted; see the confidence ceiling below — and `origin` naming where it came from. Its `text` may be re-worded for the paper's prose, but a re-worded carried (a) claim is still kind `a` and still carries its origin. **Phase C never restates an (a) claim as its own** (charter Principle II): re-voicing a source's assertion as the tool's inference is the laundering failure this phase exists to prevent.
 
@@ -425,31 +439,37 @@ Two rules carried forward from the layer beneath, restated here because they bin
 
 This is plain rendering only. Venue, length, and house style are Phase D (§3).
 
-### 7.11 The coverage map and confidence, carried forward **[FIRM]**
+### 7.11 The coverage map **[FIRM]**
 
-Coverage is **per name**, not per polity, and the paper's map is **unioned from the source records, never recomputed**. It is a count, never a model judgment.
+Coverage is **per name**, not per polity. The paper's `coverage_map` is the union of the named source records' own coverage maps, restricted to the names the paper's cited claims touch. It is unioned, never recomputed, and it is a count, never a model judgment.
 
 > **CORRECTED 2026-08-01, and this is the one place the mechanism actually changed.** This section read: "the union of the source records' coverage maps over the **polities** the paper's cited claims touch, **recomputed** deterministically from the same `polities_touched` facet Phase B used." Every load-bearing noun in that sentence is now wrong. `polities_touched` was deleted by Phase A v1 — 0 of ~6,100 live prose notes carry it, the map it fed computed empty, and `confidence.overall_band` was pinned `low` by its own derivation rule. Phase B v1 replaced it with `names_touched` (D2): the map is keyed on canonical names, its denominator `corpus_note_count` is the name page's own `member_count`, and it covers concepts and scholars rather than only polities, which is strictly wider than what it replaces.
 >
 > **Recomputation is the part that cannot simply be renamed.** Phase B does not compute its map over every name a claim touches. A live note's `names` answer lists every person, place, date and organisation the passage mentions — median 21 per note — so a 24-note evidence set touches **423 distinct canonical names on average**, and keying on all of them gave a 423-row map and a constant `low` band on 10 of 10 sets at every cut point tried. Phase B's fix (slice 05, #490) keys the map on the names the answer is *about*: `coverage_scope(claims, trajectory)`, the intersection of the names **this run's own retrieval trajectory queried** with the names its claims touch. That intersection needs a trajectory. **A paper record has none and never will** (§7.3): Phase C retrieves nothing. Calling `compute_coverage_map` on a paper record does not approximate the right answer — it returns `{}`.
 
-**So the paper's map is assembled from the maps that already exist.** Each source record carries its own §7.7 map, computed under its own trajectory, at the same pin. The paper's map is those maps restricted to the names the paper's **cited** claims touch:
+> **CORRECTED AGAIN 2026-08-01, later the same day (issue #570), RETRACTED 2026-08-02 (issue #577 riders).** The correction here said a paper record now has a trajectory, produced by an opposition gap-and-repair pass (§7.15), and made the coverage map a union of two scopes -- a "carried" one unioned from the source records and an "earned" one recomputed natively over that trajectory. That pass is deleted: #572 principle 1 rejects its premise outright, superseded rather than revised (founder ruling, PR #571). The sentence the correction retracted is true again, unamended: a paper record has no trajectory and never will, and `coverage_map` is the whole of this section's coverage, unioned from the source records exactly as originally specified.
+
+`coverage_map` shares its shape with a Phase-B analysis record's own map:
 
 ```
-coverage_map: { canonical_name -> {
-  corpus_note_count,        # carried from the source records; the page's own member_count
-  cited_claim_count,        # the paper's own numerator: cited claims touching this name
+canonical_name -> {
+  corpus_note_count,        # carried from the source records' own maps
+  cited_claim_count,        # this paper's own numerator: cited claims touching this name
   coverage_band             # re-derived from corpus_note_count, PHASE-B §7.7's thresholds
-} }
+}
 ```
 
-Three rules, all mechanical, all with zero vault reads and zero model calls:
+Three rules bind it, all mechanical, all with zero vault reads and zero model calls:
 
 - **The denominator is carried, never recomputed.** `corpus_note_count` comes from the source records' maps. Where two records disagree on a name's count, they were produced against the same pin (§7.1) and so cannot legitimately disagree: that is a hard error naming both records, not a value to average. A name the index carries and the vault holds no page for keeps `null`, never a fabricated `0`, and `null` reads `thin` — the most conservative band — with the `null` travelling beside it (PHASE-B §7.7).
 - **The numerator is the paper's own, and it is claims rather than notes.** An analysis counts the evidence notes it assembled; a paper's unit is the cited claim, and reusing a source record's `evidence_note_count` would report evidence the analysis gathered as though the paper had used it. `cited_claim_count` is computed from §7.4's `names_touched`, which every paper claim carries: for a carried claim it is its origin's, and for a new (b) claim it is the union across its `derived_from` claims. That is what keeps this whole section free of vault access.
-- **A name outside every source record's map is not in the paper's map.** It is out of scope by construction, exactly as it was one layer down. The map does not grow at paper scale.
+- **A name outside every source record's map is not in `coverage_map`.** It is out of scope by construction, exactly as it was one layer down. The map does not grow at paper scale.
 
-**Where this leaves the scope question.** The intersection Phase B computes is "retrieved on **and** claimed about". Phase C's is "in a source record's map **and** cited in this paper" — the same shape with the paper's own second term, and the first term inherited rather than re-derived. It is narrower than the source maps and never wider, which is the direction an honest disclosure should move when material is dropped on the way into a paper.
+The scope is "in a source record's map **and** cited in this paper" — narrower than the source maps and never wider, which is the direction an honest disclosure should move when material is dropped on the way into a paper.
+
+`confidence.overall_band` (§7.3, §7.4) is derived from `coverage_map` exactly as before, then held to the lowest overall band among the named source records. A paper may not be more confident than the weakest analysis it stands on.
+
+> **CORRECTED 2026-08-02 (issue #584/#587 follow-up).** "The lowest overall band among the named source records" implicitly assumed every named record measured something. A map-fed record (§7.17) does not: its own `overall_band` is `not_measured`, and this section's source-record ceiling used to build its floor from a list filtered `in _BAND_RANK`, which silently dropped a `not_measured` record from the comparison rather than raising it — the paper then reported the OTHER records' band as if the unmeasured one were not there. Fixed: any named source record carrying `not_measured` makes the paper's own `overall_band` `not_measured` too, disclosed by name in the rationale, before the derived/held comparison runs at all. When every named record is measured, nothing here changes. An empty `coverage_map` with no `not_measured` source record (no cited name intersects any source map) still derives `not_measured` from `compute_confidence` as before, with a rationale that says plainly that nothing was measured rather than implying a band was derived and found wanting.
 
 ### 7.12 Per-pass model tiering **[TENTATIVE]**
 
@@ -529,7 +549,13 @@ The predicate is the disjunction of the four arms, evaluated in the order above,
 
 **Why this section is [TENTATIVE], and what would settle it.** Not the principle, which is FIRM and is the charter's. What is unproven is whether the fourth arm earns its place. If, over the first real papers, `source_record_contested` never fires alone (never without one of the three inherited arms also firing), it is dead weight and should be dropped. If it fires alone with any regularity, each instance is a paper that dropped its opposition and would otherwise have passed, and the arm is load-bearing. That inspection is the tuning, and it follows the discipline PHASE-B §7.7 and §7.8 already set: state the rule, prove it by inspection, then settle it.
 
-## 8. Requirements
+### 7.15 The opposition gap-and-repair pass -- STRUCK 2026-08-02 (issue #577 riders)
+
+This section specified a "stage 1.5" gap-and-repair pass (issue #570) between intake and planning: over every name the claim inventory touched, it checked whether `who_argues_against` returned opposing material none of the named source records had already read, and -- only where that gap was non-zero -- shaped what came back into ordinary kind-(a) claims added to the inventory before planning started, with zero model calls.
+
+**#572 principle 1 rejects this pass's premise outright: opposition earns no privileged retrieval edge, no special pass, no stage of its own.** The argument map's ordinary corridor step already pulls in what argues back, as part of the same retrieval every other claim goes through, for a measured $0.0007 -- against a dedicated pass built to do the identical job at paper scale. The founder's ruling closing PR #571 was explicit: superseded, not revisable. The pass, its module (`axial.paper.opposition`), its test file, and every field it alone produced (`trajectory`, `coverage_map_earned`, `exact_match_opposition_gap`) are deleted. The cascading corrections are at §5, §7.3, §7.4, §7.11 and §3 non-goals 1 and 5, each restoring the statement this pass's correction had retracted and naming this strike as the reason.
+
+What this section measured about the join underneath it -- that `who_argues_against` exact-matches only 4.7% of recorded `arguing_against` targets, and that a zero from an exact-match join is a floor rather than a finding about the corpus -- remains true as a fact about that join. It motivated a pass that is now gone; it does not motivate rebuilding one, per the ruling above.
 
 ### Must-Have (P0)
 
@@ -618,8 +644,8 @@ The predicate is the disjunction of the four arms, evaluated in the order above,
 - [ ] The control qualifies the **instrument**, not any paper. Observable: a failing positive control blocks no paper's release and fails no per-run gate; it invalidates that measurement run's numbers and nothing else.
 
 **P0-12 CLI surface with inspect-before-spend.**
-- [ ] `axial paper draft <paper_brief_file>` runs stages 1 through 5 and writes the record and rendered paper.
-- [ ] `axial paper examine <paper_brief_file>` runs intake and arc planning and reports the plan, the claim inventory, and the sections' assigned claims **without the drafting call**, analogous to `axial brief examine` (PHASE-B P0-9). Observable: `examine` makes zero drafting calls.
+- [x] `axial paper draft <paper_brief_file>` runs stages 1 through 5 and writes the record and rendered paper.
+- [x] `axial paper examine <paper_brief_file>` runs intake and arc planning and reports the plan, the claim inventory, and the sections' assigned claims **without the drafting call**, analogous to `axial brief examine` (PHASE-B P0-9). Observable: `examine` makes zero drafting calls. **Implemented as `axial.paper.examine.run_paper_examine`, composed from `run_intake` / `resolve_lens` / `run_plan` -- the same stage functions `run_paper` calls up to the same point -- with no reference anywhere in its call graph to `axial.paper.draft`, so the zero-drafting-calls property holds by import graph rather than by a flag. Pinned in `tests/paper/test_paper_cli.py::test_examine_makes_zero_drafting_calls` by counting a stub client's calls per `pass_name`.**
 - [ ] The four per-run gates run through the existing `axial gate run <gate>` surface. Observable: `draft` and `examine` between them expose no path that invokes the reviewer panel.
 - [ ] `axial eval coherence --sample <sample_spec>` runs the offline eval track: assembles packets, runs the panel over the sampled papers, and writes the per-stratum report with its frame. It is a separate command from `axial paper`, because it measures the system rather than producing a paper.
 

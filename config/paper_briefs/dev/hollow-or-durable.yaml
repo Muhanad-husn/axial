@@ -1,0 +1,25 @@
+# Dev paper brief (specs/PHASE-C.md §7.1, P0-13).
+#
+# Two records that pull in opposite directions on the same object. One argues
+# the regime's institutional core is real and informal -- networks of privilege
+# ARE the institution, which is why it held. The other argues the coercive core
+# was contracted out to paramilitaries, which is what Tilly's cycle cannot
+# absorb. A paper over both has to adjudicate rather than summarise, so this is
+# the brief that says whether the drafting layer argues or lists.
+#
+# Both records sit on corpus pin sim-2026-07-26. Do not add a record from
+# another pin: §7.1 rejects a mixed-pin input rather than reconciling it.
+
+thesis: >-
+  The Syrian regime's survival and its violence are usually explained by
+  different mechanisms, and they should not be. If networks of privilege are
+  what institutionalised the state, then contracting coercion out to militias
+  is not a departure from that arrangement but its continuation by other means.
+
+analysis_ids:
+  - 124f7ba6ff8927c7
+  - 47f316f6fb04bba7
+
+lens: political-economy
+
+title: Privilege and the Contracted-Out Militia

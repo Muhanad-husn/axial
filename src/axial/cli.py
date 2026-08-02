@@ -95,6 +95,7 @@ from axial.merge_names import (
     list_escalations,
     run_merge_names,
 )
+from axial.model_json import ModelJsonError
 from axial.names import (
     DEFAULT_INVENTORY_PATH,
     DEFAULT_MIN_CLUSTER_SIZE,
@@ -116,6 +117,17 @@ from axial.panel import (
     format_panel_run,
     run_panel,
 )
+from axial.paper.biblio import BibliographyError
+from axial.paper.brief import PaperBriefError, load_paper_brief
+from axial.paper.citations import CitationError
+from axial.paper.claims import PaperClaimError
+from axial.paper.coverage import PaperCoverageError
+from axial.paper.draft import DraftError
+from axial.paper.examine import format_paper_examine_report, run_paper_examine
+from axial.paper.intake import PaperIntakeError
+from axial.paper.lens import LensError
+from axial.paper.plan import PlanError
+from axial.paper.record import PaperRunError, run_paper
 from axial.paths import DEFAULT_DOMAIN_DIR, default_analyses_dir
 from axial.pipeline_ready import PipelineReadyError, run_pipeline_ready
 from axial.polity_canonical import PolityCanonicalError, run_polity_build, run_polity_report
@@ -1016,6 +1028,41 @@ def build_parser() -> argparse.ArgumentParser:
             "path instead of the name-layer loop (issue #572) -- the "
             "coverage-map check adapts itself to whichever path ran"
         ),
+    )
+
+    paper_parser = subparsers.add_parser(
+        "paper", help="Phase-C paper authorship operations (specs/PHASE-C.md §7.1, §8 P0-12)"
+    )
+    paper_subparsers = paper_parser.add_subparsers(dest="paper_command")
+
+    paper_draft_parser = paper_subparsers.add_parser(
+        "draft",
+        help=(
+            "run the paper pipeline end to end -- intake, arc planning, "
+            "section-by-section drafting, citation indexing, the "
+            "bibliography and rendering -- and persist the paper record "
+            "plus the rendered markdown under data/papers/<paper_brief_id> "
+            "(specs/PHASE-C.md §5, §7.3, §7.10, §8 P0-12)"
+        ),
+    )
+    paper_draft_parser.add_argument(
+        "paper_brief_file",
+        help="path to a versioned paper brief YAML file (specs/PHASE-C.md §7.1)",
+    )
+
+    paper_examine_parser = paper_subparsers.add_parser(
+        "examine",
+        help=(
+            "run intake and arc planning, and report the resolved lens, "
+            "the claim inventory, and each section's assigned claims -- "
+            "makes ZERO drafting calls and writes nothing under "
+            "data/papers/, analogous to `axial brief examine` "
+            "(specs/PHASE-C.md §5 stages 1-2, §8 P0-12)"
+        ),
+    )
+    paper_examine_parser.add_argument(
+        "paper_brief_file",
+        help="path to a versioned paper brief YAML file (specs/PHASE-C.md §7.1)",
     )
 
     pin_parser = subparsers.add_parser(
@@ -1954,6 +2001,81 @@ def _brief_smoke(
     return 0 if summary.passed else 1
 
 
+# Every failure `axial.paper`'s five stages can raise before a record is
+# persisted: the brief loader's own family, the three §7.1 intake rejections,
+# lens resolution, arc planning, drafting, claim assembly (the §7.4
+# confidence ceiling and the single-record-inference check), citation
+# indexing (§7.5), the bibliography (§7.6), and `LLMError`/`ModelJsonError`
+# from the model seam itself (`complete_json` never catches either -- see
+# its own docstring). `PaperRunError` is `run_paper`'s own base class, held
+# open for a future whole-pipeline failure though nothing raises it yet.
+# Caught together so every rejection reports as a named, non-zero failure --
+# never a traceback -- exactly like `_brief_run`'s own tuple one layer down.
+_PAPER_PIPELINE_ERRORS = (
+    PaperIntakeError,
+    LensError,
+    PlanError,
+    DraftError,
+    PaperClaimError,
+    CitationError,
+    PaperCoverageError,
+    BibliographyError,
+    PaperRunError,
+    LLMError,
+    ModelJsonError,
+)
+
+
+def _paper_draft(paper_brief_file: str) -> int:
+    try:
+        paper_brief = load_paper_brief(paper_brief_file)
+    except PaperBriefError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    client = get_client()
+    try:
+        record = run_paper(client, paper_brief)
+    except _PAPER_PIPELINE_ERRORS as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    markdown_path = Path(record["paper_markdown_path"])
+    record_path = markdown_path.with_suffix(".json")
+    print(f"paper_brief_id: {paper_brief.paper_brief_id}")
+    print(f"corpus_pin: {record['corpus_pin']}")
+    print(f"lens: {record['lens']}")
+    print(f"sections: {len(record['plan']['sections'])}")
+    print(f"claims cited: {len(record['claims'])}")
+    print(f"confidence: {record['confidence']['overall_band']}")
+    print(f"persisted: {record_path}")
+    print(f"paper: {markdown_path}")
+    return 0
+
+
+def _paper_examine(paper_brief_file: str) -> int:
+    try:
+        paper_brief = load_paper_brief(paper_brief_file)
+    except PaperBriefError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    client = get_client()
+    try:
+        result = run_paper_examine(client, paper_brief)
+    except (PaperIntakeError, LensError, PlanError, LLMError, ModelJsonError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    # `_print_encoding_safe`: the report carries corpus prose -- each
+    # inventory claim's own `text` -- exactly the class of report that broke
+    # `axial brief examine` on a transliterated diacritic once stdout picked
+    # up a narrow codec (issue #489), after the retrieval/planning call had
+    # already been paid for.
+    _print_encoding_safe(format_paper_examine_report(paper_brief, result))
+    return 0
+
+
 def _pin_write(name: str) -> int:
     try:
         path = write_pin(name)
@@ -2546,6 +2668,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "brief" and args.brief_command == "smoke":
         return _brief_smoke(args.briefs_dir, args.sweep_dir, args.workers, use_map=args.use_map)
+
+    if args.command == "paper" and args.paper_command == "draft":
+        return _paper_draft(args.paper_brief_file)
+
+    if args.command == "paper" and args.paper_command == "examine":
+        return _paper_examine(args.paper_brief_file)
 
     if args.command == "pin" and args.pin_command == "write":
         return _pin_write(args.name)
