@@ -55,6 +55,41 @@ and a plain rerun would resume under the old ledger -- half old prompt, half
 new. `run_map_build(force=True)` (`axial map build --force`) moves the
 existing `reads.jsonl` aside to a timestamped sibling and re-asks every read
 under the pin; the old ledger is never deleted.
+
+**Stage 2 (issue #572, PR 2 of 4): relations between positions.** The same
+command continues past `positions.jsonl` into `relations.jsonl` -- a port
+of the scratchpad's own `stage2_relations.py`, already run and measured over
+the real corpus, not a redesign. Four rules carry over unchanged from that
+measurement:
+
+  1. **No menu of relation types.** The model says how two positions stand
+     in its own words and coins its own short label; the shapes that recur
+     are named AFTERWARDS from what came back. An engine told to look for
+     opposition finds opposition -- measured directly on the scratchpad
+     run: opposition came back at only 6.6% precisely because nothing asked
+     for it.
+  2. **Blind, the same rule as extraction.** No author, no book, no year --
+     a relation judged with authorship visible reads agreement and
+     disagreement off reputations, and would make the cross-author balance
+     this pass itself reports measure its own input rather than the corpus.
+  3. **Neighbourhoods, not pairs.** All-pairs over the full position set is
+     never done (1.5M+ comparisons at this corpus's scale). Positions are
+     grouped into small neighbourhoods of near neighbours -- sized by
+     `TARGET_NEIGHBOURHOOD`/`MAX_NEIGHBOURHOOD` below -- and each is read
+     once, so cost is one call per neighbourhood, not per pair, and the
+     model sees a cluster of related arguments rather than an isolated
+     couple.
+  4. **"Unrelated" is expected and must stay cheap to say.** Two positions
+     that merely share vocabulary have no relation; the prompt says so
+     plainly, and a pass that returns a relation for every pair has told us
+     nothing.
+
+Relations are keyed on `position_id`, never on the argument sentence
+(settled on issue #572): a scratchpad draft of this pass rejoined relations
+through a sentence-to-index dictionary, which silently drops any relation
+whose sentence is not unique across positions. A relation naming a handle
+that was not offered, or naming itself, is dropped, never repaired -- both
+classes are counted (`dropped_relations` in `map.json`).
 """
 
 from __future__ import annotations
@@ -127,6 +162,29 @@ PASS_NAME = "position_extract"
 # be kept in sync by hand.
 POSITION_EXTRACT_REASONING = "high"
 
+# Neighbourhood sizing for the relate pass (stage 2, issue #572): a flat
+# clustering at real-corpus scale gave wildly uneven groups -- measured
+# sizes 2, 2, 3, 3, 3, 4, 4, 12, 13, 15, 15, **53** on the scratchpad run
+# this section ports. A 53-position neighbourhood is 1,378 possible pairs
+# in ONE call, which the model cannot weigh (it misses relations from load
+# alone) and which alone dominates the "pairs possible" denominator and
+# makes the assertion rate look artificially low. So a coarse pass targets
+# TARGET_NEIGHBOURHOOD-sized groups, and any group still over
+# MAX_NEIGHBOURHOOD is split recursively until none exceeds it.
+TARGET_NEIGHBOURHOOD = 8
+MAX_NEIGHBOURHOOD = 12
+
+# The pass name `config/pipeline.yaml`'s `llm.reasoning_by_pass` keys off of
+# for the relate call, mirroring `PASS_NAME` above.
+RELATE_PASS_NAME = "position_relate"
+
+# Mirrors `config/pipeline.yaml`'s `llm.reasoning_by_pass.position_relate`
+# entry, recorded in `map.json` the same way `POSITION_EXTRACT_REASONING`
+# is -- deciding how two positions actually stand to one another, with no
+# menu to pick from, is the same underdetermined judgment call extraction
+# makes.
+POSITION_RELATE_REASONING = "high"
+
 ENCODER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 # The six fields §7.15 asks every passage: a passage that abstains on every
@@ -154,6 +212,18 @@ class CorruptReadsLedgerError(MapError):
         self.line_no = line_no
         self.cause = cause
         super().__init__(f"corrupt reads ledger at {path}:{line_no}: {cause}")
+
+
+class CorruptRelationsLedgerError(MapError):
+    """The relate-stage sibling of `CorruptReadsLedgerError`, raised for a
+    non-torn-tail corrupt line in the relate stage's own resume ledger
+    (`relation_reads.jsonl`)."""
+
+    def __init__(self, path: Path, line_no: int, cause: Exception):
+        self.path = path
+        self.line_no = line_no
+        self.cause = cause
+        super().__init__(f"corrupt relation reads ledger at {path}:{line_no}: {cause}")
 
 
 @dataclass(frozen=True)
@@ -520,6 +590,239 @@ def assign_position_ids(positions: Sequence[dict[str, Any]]) -> list[dict[str, A
     ]
 
 
+@dataclass(frozen=True)
+class Neighbourhood:
+    """One neighbourhood of near-neighbour positions to read in a single
+    relate call. `key` is a stable hash of this neighbourhood's own sorted
+    `position_ids` -- deliberately NOT derived from a clustering label or
+    from split order, either of which a reclustering (a rebuild over a
+    slightly different position set) could shuffle. The resume ledger is
+    keyed by `key`, so it must depend only on the neighbourhood's own
+    membership, never on how that membership was arrived at."""
+
+    key: str
+    position_ids: tuple[str, ...]
+
+
+def _neighbourhood_key(position_ids: Sequence[str]) -> str:
+    canonical = "|".join(sorted(position_ids))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+CountClusterFn = Callable[[np.ndarray, int], list[int]]
+
+
+def _agglomerative_cluster_by_count(vectors: np.ndarray, n_clusters: int) -> list[int]:
+    """`AgglomerativeClustering(n_clusters=n_clusters, metric="cosine",
+    linkage="average")` over `vectors` -- the count-based sibling of
+    `_agglomerative_cluster`'s own distance-threshold clustering, needed
+    here because neighbourhood sizing targets a GROUP COUNT
+    (`TARGET_NEIGHBOURHOOD`), not a similarity radius. `n_clusters<=1` (one
+    neighbourhood covers everything) or `n_clusters>=len(vectors)` (every
+    row is already its own cluster) both need no real clustering call --
+    scikit-learn is imported lazily and only when an actual split is
+    required, mirroring `_agglomerative_cluster`'s own single-vector
+    shortcut."""
+    if n_clusters <= 1:
+        return [0] * len(vectors)
+    if n_clusters >= len(vectors):
+        return list(range(len(vectors)))
+    from sklearn.cluster import AgglomerativeClustering
+
+    labels = AgglomerativeClustering(
+        n_clusters=n_clusters, metric="cosine", linkage="average"
+    ).fit_predict(vectors)
+    return [int(label) for label in labels]
+
+
+def build_neighbourhoods(
+    positions: Sequence[dict[str, Any]],
+    encode: Encoder,
+    cluster_fn: CountClusterFn | None = None,
+) -> list[Neighbourhood]:
+    """Group merged `positions` into neighbourhoods of near neighbours by
+    their own `argument` sentence's cosine similarity, for one relate call
+    per neighbourhood rather than one per pair.
+
+    `positions` is sorted by `position_id` FIRST, before encoding or
+    clustering -- so neighbourhood membership, and therefore every
+    `Neighbourhood.key`, depends only on which positions exist, never on
+    the order they arrived in (`assign_position_ids`'s own arrival-order
+    independence would otherwise be undone one step downstream). A coarse
+    pass targets `TARGET_NEIGHBOURHOOD`-sized groups; any group still over
+    `MAX_NEIGHBOURHOOD` is split recursively (a flat clustering at this
+    corpus's scale produced a 53-position group -- see the module
+    docstring) until every neighbourhood is at most `MAX_NEIGHBOURHOOD`.
+    Singletons are skipped -- a neighbourhood of one position has nothing
+    to relate it to. `cluster_fn`, when given, replaces the default
+    count-based agglomerative clustering (the same injection seam
+    `bag_passages`/`merge_positions` expose, for tests)."""
+    ordered = sorted(positions, key=lambda p: p["position_id"])
+    if len(ordered) < 2:
+        return []
+
+    vectors = encode([position["argument"] for position in ordered])
+    cluster = cluster_fn if cluster_fn is not None else _agglomerative_cluster_by_count
+
+    def split(indices: list[int]) -> list[list[int]]:
+        if len(indices) <= MAX_NEIGHBOURHOOD:
+            return [indices]
+        n_groups = max(2, round(len(indices) / TARGET_NEIGHBOURHOOD))
+        labels = cluster(vectors[indices], n_groups)
+        pieces: dict[int, list[int]] = collections.defaultdict(list)
+        for offset, label in enumerate(labels):
+            pieces[int(label)].append(indices[offset])
+        out: list[list[int]] = []
+        for piece in pieces.values():
+            # A split that fails to shrink anything would recurse forever.
+            out.extend(split(piece) if len(piece) < len(indices) else [piece])
+        return out
+
+    n_groups = max(1, round(len(ordered) / TARGET_NEIGHBOURHOOD))
+    labels = cluster(vectors, n_groups)
+    coarse: dict[int, list[int]] = collections.defaultdict(list)
+    for index, label in enumerate(labels):
+        coarse[int(label)].append(index)
+
+    neighbourhoods: list[Neighbourhood] = []
+    for members in coarse.values():
+        for piece in split(sorted(members)):
+            if len(piece) < 2:
+                continue
+            ids = tuple(sorted(ordered[i]["position_id"] for i in piece))
+            neighbourhoods.append(Neighbourhood(key=_neighbourhood_key(ids), position_ids=ids))
+    neighbourhoods.sort(key=lambda n: n.key)
+    return neighbourhoods
+
+
+RELATE_PROMPT = """Below are arguments drawn from a body of academic work. They were placed together because their wording resembles one another; nobody has read them, and resemblance is not a relationship.
+
+Say how these arguments actually stand to one another.
+
+{positions}
+
+Answer as JSON only, no other text:
+
+{{"relations": [
+   {{"from": "a3", "to": "a7",
+     "relation": "<a short label you choose for how a3 stands to a7 -- your own words, two or three words>",
+     "says": "<one sentence saying what that relationship actually is>"}},
+   ...
+ ]}}
+
+Rules:
+
+- **There is no list of allowed relations.** Do not pick from a menu and do not reach for opposition by default. Say what is actually there: one may support another, sharpen it, restate it in stronger terms, borrow its mechanism for a different purpose, apply it where the first never looked, depend on something the first denies, qualify its scope, explain why it fails, or contradict it outright. Coin whatever label fits. If the same shape recurs, use the same words for it.
+- **Direction matters.** "a3 qualifies a7" is not the same as "a7 qualifies a3". Put them in the order the relationship runs.
+- **Most pairs have no relationship, and saying so costs nothing.** These arguments were grouped by wording, so many merely share a subject. Two arguments about the state are unrelated unless one bears on the other. Omit those pairs entirely -- do not invent a relation to fill the list.
+- Only relate arguments listed here, by their handles. Do not invent handles."""
+
+
+def render_positions_blind(
+    neighbourhood: Neighbourhood, by_id: dict[str, dict[str, Any]]
+) -> tuple[str, dict[str, str]]:
+    """Render `neighbourhood`'s own positions as the relate prompt's
+    listing, BLIND: `[a3] <argument>`, never author, book, or year -- the
+    same rule `render_claims_blind` applies to extraction. Returns the
+    rendered listing and the handle -> `position_id` map
+    `relate_neighbourhood` resolves handles against."""
+    handles = {f"a{i + 1}": position_id for i, position_id in enumerate(neighbourhood.position_ids)}
+    listing = "\n".join(f"[{handle}] {by_id[pid]['argument']}" for handle, pid in handles.items())
+    return listing, handles
+
+
+def relate_neighbourhood(
+    neighbourhood: Neighbourhood,
+    by_id: dict[str, dict[str, Any]],
+    client: LLMClient,
+    pass_name: str = RELATE_PASS_NAME,
+) -> dict[str, Any]:
+    """One model call for `neighbourhood`. Returns a read record:
+    `neighbourhood` (its own key), `positions` (members offered),
+    `relations` (each carrying `from_position_id`, `to_position_id`, the
+    model's own `relation` label stripped and lowercased, and `says`),
+    `dropped` (a relation naming a handle that was not offered, or naming
+    itself, is dropped, never repaired -- both classes are counted here,
+    never repaired or silently ignored), and -- only on failure -- `error`.
+
+    Mirrors `extract_positions_for_slice`'s own fault-isolation contract: a
+    transport failure, a refused/malformed response, or a response shaped
+    as something other than the expected object are all caught here and
+    recorded as `error` rather than raised, so one bad call never aborts
+    the whole relate pass."""
+    listing, handles = render_positions_blind(neighbourhood, by_id)
+    record: dict[str, Any] = {
+        "neighbourhood": neighbourhood.key,
+        "positions": len(neighbourhood.position_ids),
+        "relations": [],
+    }
+    dropped = 0
+    try:
+        parsed = parse_model_json(
+            client.complete(RELATE_PROMPT.format(positions=listing), pass_name=pass_name)
+        )
+        for entry in parsed.get("relations") or []:
+            src, dst = entry.get("from"), entry.get("to")
+            if src not in handles or dst not in handles or src == dst:
+                dropped += 1
+                continue
+            record["relations"].append(
+                {
+                    "from_position_id": handles[src],
+                    "to_position_id": handles[dst],
+                    "relation": (entry.get("relation") or "").strip().lower(),
+                    "says": entry.get("says", ""),
+                }
+            )
+    except (LLMError, httpx.HTTPError, ModelJsonError, AttributeError, TypeError) as exc:
+        record["error"] = str(exc)[:200]
+    record["dropped"] = dropped
+    return record
+
+
+def run_relations(
+    neighbourhoods: Sequence[Neighbourhood],
+    by_id: dict[str, dict[str, Any]],
+    *,
+    client: LLMClient,
+    reads_path: Path,
+    pass_name: str = RELATE_PASS_NAME,
+    workers: int = WORKERS,
+    log: Callable[[str], None] = print,
+) -> list[dict[str, Any]]:
+    """Run every neighbourhood in `neighbourhoods` through one relate call
+    each, resumable by `Neighbourhood.key` via `reads_path` -- the same
+    collecting-thread pattern `run_extraction` uses: calls run concurrently
+    (`workers`), but every checkpoint write happens on this one collecting
+    thread, so a mid-run kill can never race two threads onto the same
+    line, and every result is durable the instant it returns.
+
+    Returns every read now on disk for `reads_path`: this run's own results
+    plus any earlier run's resumed ones, read back after the pool drains."""
+    done = {
+        record["neighbourhood"]
+        for record in load_checkpoint_records(reads_path, CorruptRelationsLedgerError)
+    }
+    if done:
+        log(f"resuming: {len(done)} neighbourhood(s) already read")
+    pending = [n for n in neighbourhoods if n.key not in done]
+    log(f"neighbourhoods to read this run: {len(pending)} of {len(neighbourhoods)}")
+
+    if pending:
+        with ThreadPoolExecutor(max_workers=max(workers, 1)) as pool:
+            futures = {
+                pool.submit(relate_neighbourhood, n, by_id, client, pass_name): n for n in pending
+            }
+            completed = 0
+            for future in as_completed(futures):
+                record = future.result()
+                append_checkpoint_record(reads_path, record)
+                completed += 1
+                log(f"  read {completed}/{len(pending)} (neighbourhood {record['neighbourhood']})")
+
+    return load_checkpoint_records(reads_path, CorruptRelationsLedgerError)
+
+
 def compute_corpus_pin(envelopes_dir: Path, sources_dir: Path) -> str:
     """The pin `axial map build` writes its artifact under: a sha256 digest
     (first 16 hex chars) over the corpus's own raw source content --
@@ -566,9 +869,12 @@ def run_map_build(
     force: bool = False,
     log: Callable[[str], None] = print,
 ) -> dict[str, Any]:
-    """Run all four steps and write `<map_dir>/<pin>/{positions.jsonl,
-    map.json, reads.jsonl}`, returning the manifest also written to
-    `map.json`.
+    """Run both stages -- positions, then relations -- and write
+    `<map_dir>/<pin>/{positions.jsonl, relations.jsonl, map.json,
+    reads.jsonl, relation_reads.jsonl}`, returning the manifest also
+    written to `map.json`. One command builds the whole map: there is no
+    second subcommand, and each stage is independently resumable and
+    independently `--force`-able under the same pin.
 
     `pin` defaults to `compute_corpus_pin(envelopes_dir, sources_dir)`; a
     caller may pass one explicitly (the seam every other run_* function in
@@ -580,8 +886,9 @@ def run_map_build(
     `force` (default off, so no existing caller's behaviour changes): the
     corpus pin alone is deliberately blind to a prompt or model-tier change
     (`compute_corpus_pin`'s own docstring), so a rebuild after one of those
-    would otherwise *resume* from `reads.jsonl` and produce a map that is
-    half old prompt, half new. `force` moves the existing ledger aside to a
+    would otherwise *resume* from a stale ledger and produce a map that is
+    half old prompt, half new. `force` moves each stage's own existing
+    ledger (`reads.jsonl`, and separately `relation_reads.jsonl`) aside to a
     timestamped sibling -- never deletes it, a paid ledger stays on disk --
     and re-asks every read under this pin. The founder's chosen escape
     hatch for a prompt change is one whole rebuild by hand; this is what
@@ -651,6 +958,75 @@ def run_map_build(
     cost = (
         estimate_cost(model, usage["prompt_tokens"], usage["completion_tokens"]) if usage else None
     )
+
+    # ------------------------------------------------------------------
+    # Stage 2: relations between positions (issue #572, PR 2 of 4).
+    # ------------------------------------------------------------------
+    by_id = {position["position_id"]: position for position in stamped}
+    neighbourhoods = build_neighbourhoods(stamped, encode)
+    singletons = len(stamped) - sum(len(n.position_ids) for n in neighbourhoods)
+    log(
+        f"neighbourhoods {len(neighbourhoods)} (positions {len(stamped)}, "
+        f"target size {TARGET_NEIGHBOURHOOD}, max {MAX_NEIGHBOURHOOD}, "
+        f"{singletons} singleton(s) skipped)"
+    )
+
+    relation_reads_path = outdir / "relation_reads.jsonl"
+    if force and relation_reads_path.exists():
+        prior_relation_reads = load_checkpoint_records(
+            relation_reads_path, CorruptRelationsLedgerError
+        )
+        relation_aside_path = outdir / f"relation_reads.{_force_aside_suffix()}.jsonl"
+        relation_reads_path.replace(relation_aside_path)
+        log(
+            f"--force: set aside {len(prior_relation_reads)} prior relation read(s) to "
+            f"{relation_aside_path.name}; re-asking all {len(neighbourhoods)} "
+            "neighbourhood(s) under this pin"
+        )
+    relation_reads = run_relations(
+        neighbourhoods,
+        by_id,
+        client=client,
+        reads_path=relation_reads_path,
+        workers=workers,
+        log=log,
+    )
+
+    flat_relations = [relation for read in relation_reads for relation in read["relations"]]
+    failed_relation_reads = [read for read in relation_reads if "error" in read]
+    dropped_relations = sum(read.get("dropped", 0) for read in relation_reads)
+    pairs_possible = sum(
+        read["positions"] * (read["positions"] - 1) // 2
+        for read in relation_reads
+        if "error" not in read
+    )
+    distinct_labels = len({relation["relation"] for relation in flat_relations})
+    cross_author_relations = sum(
+        1
+        for relation in flat_relations
+        if set(by_id[relation["from_position_id"]]["authors"])
+        != set(by_id[relation["to_position_id"]]["authors"])
+    )
+    log(
+        f"relations {len(flat_relations)} of {pairs_possible} possible pairs "
+        f"(dropped {dropped_relations}, failed reads {len(failed_relation_reads)}, "
+        f"distinct labels {distinct_labels}, cross-author {cross_author_relations})"
+    )
+
+    with (outdir / "relations.jsonl").open("w", encoding="utf-8") as handle:
+        for relation in flat_relations:
+            handle.write(json.dumps(relation, ensure_ascii=False) + "\n")
+
+    relation_usage = client.usage_for_pass(RELATE_PASS_NAME)
+    relation_model = client.model_for_pass(RELATE_PASS_NAME)
+    relation_cost = (
+        estimate_cost(
+            relation_model, relation_usage["prompt_tokens"], relation_usage["completion_tokens"]
+        )
+        if relation_usage
+        else None
+    )
+
     manifest = {
         "corpus_pin": pin,
         "counts": {
@@ -668,6 +1044,24 @@ def run_map_build(
         "usage": usage,
         "cost_usd": cost,
         "wall_time_sec": time.monotonic() - started,
+        # The relation stage's own figures, nested rather than mixed into
+        # the fields above -- this manifest describes both stages, and
+        # nothing here overwrites the position stage's own counts/usage/cost.
+        "relations": {
+            "counts": {
+                "neighbourhoods_read": len(relation_reads),
+                "failed_reads": len(failed_relation_reads),
+                "relations_asserted": len(flat_relations),
+                "pairs_possible": pairs_possible,
+                "distinct_labels": distinct_labels,
+                "cross_author_relations": cross_author_relations,
+                "dropped_relations": dropped_relations,
+            },
+            "model": relation_model,
+            "reasoning": POSITION_RELATE_REASONING,
+            "usage": relation_usage,
+            "cost_usd": relation_cost,
+        },
     }
     (outdir / "map.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
