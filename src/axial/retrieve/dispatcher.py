@@ -57,8 +57,19 @@ class ToolResult:
     record can answer the same question offline, after the run, without
     replaying the prompt text.
 
+    **`get_chunk` sets `total` only when its own batch was actually
+    truncated by `limit` (issue #629's own follow-up), never merely because
+    one of its requested ids failed to resolve.** An unconditional `total`
+    (the first cut of this fix) re-created #629's own bug through a new
+    door: 10 ids asked for, 1 unresolved, `total(10) > count(9)` reads as
+    CAPPED -- "9 of 10 total -- re-ask with a larger limit for more" -- which
+    is false, since the missing one was never past `limit`, it just does not
+    exist. `get_chunk` now follows the same "unset unless truncation
+    happened" convention every non-truncating tool below already uses; a
+    failed id is still named, through `detail` alone, never through `total`.
+
     `detail`, when set (issues #517 and #493), is the same kind of beside-
-    the-trajectory rider, populated by four tools: `find_names` states each
+    the-trajectory rider, populated by five tools: `find_names` states each
     hit's `kind`, `member_count` and `tier`, so a model can tell an
     exact/alias resolution apart from an embedding guess -- a bare canonical
     string cannot. `get_name` and `where_names_meet` state how many distinct
@@ -70,8 +81,11 @@ class ToolResult:
     distribution over the neighbours returned (min/median/max/floor-count),
     because a ranked list whose ranking carries no signal past a handful of
     ties looks identical to a real gradient until that spread is disclosed.
-    Every other tool leaves `detail` `None`. Persisted onto the trajectory
-    entry the same way `total` now is, for the same reason."""
+    `get_chunk` (issue #629) names whichever ids in its batch did not
+    resolve, since a skipped bad id (below) must not read to the model as a
+    silent drop in count. Every other tool leaves `detail` `None`. Persisted
+    onto the trajectory entry the same way `total` now is, for the same
+    reason."""
 
     ids: list[str]
     count: int

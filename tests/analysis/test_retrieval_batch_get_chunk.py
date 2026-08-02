@@ -137,6 +137,65 @@ def test_get_chunk_honours_an_explicit_limit(fixture_vault_dir: Path):
     assert result.total == 5
 
 
+def test_get_chunk_skips_an_unresolved_id_and_returns_the_rest(fixture_vault_dir: Path):
+    """One bad id must not zero the whole batch -- #630's shape one layer
+    down (issue #629). A real run typo'd a single hyphen out of one
+    ~100-character id, asked for 10, and got 0 back; here the two good ids
+    still come back and the bad one is named in `detail`. The batch here is
+    NOT truncated by `limit` (3 ids, default limit 10), so `total` stays
+    `None` -- see the dedicated `total`-narrowing tests below for why."""
+    bogus_id = f"{SOURCE_A}_1_intro_does-not-exist_999"
+    wanted = [A_CHUNK_IDS[0], bogus_id, A_CHUNK_IDS[1]]
+
+    result = dispatch("get_chunk", {"chunk_id": wanted}, vault_dir=fixture_vault_dir)
+
+    assert result.error is None
+    assert result.ids == [A_CHUNK_IDS[0], A_CHUNK_IDS[1]]
+    assert result.count == 2
+    assert result.total is None, "the batch was not truncated by limit, so total is unset"
+    assert result.detail is not None
+    assert bogus_id in result.detail
+
+
+def test_get_chunk_all_ids_unresolved_is_an_empty_result_not_an_error(fixture_vault_dir: Path):
+    result = dispatch("get_chunk", {"chunk_id": ["nope-1", "nope-2"]}, vault_dir=fixture_vault_dir)
+
+    assert result.error is None
+    assert result.ids == []
+    assert result.count == 0
+    assert result.total is None, "not truncated by limit either, even though nothing resolved"
+    assert result.detail is not None
+    assert "nope-1" in result.detail
+    assert "nope-2" in result.detail
+
+
+def test_get_chunk_total_still_reports_a_genuine_truncation_alongside_an_unresolved_id(
+    fixture_vault_dir: Path,
+):
+    """The narrowed meaning of `total` (issue #629's own follow-up, caught in
+    review before merge): the first cut of this fix kept `total =
+    len(chunk_ids)` unconditionally, which re-created the bug through a new
+    door -- an unresolved id alone made a batch read as CAPPED even when
+    nothing sat past `limit`. `total` must still fire correctly, though, when
+    a real truncation and an unresolved id occur in the SAME call: one bad id
+    within the attempted window, plus real ids genuinely left unasked past
+    `limit`. `get_chunk` now means exactly what `get_name`/`who_cites`/
+    `who_argues_against`/`where_names_meet` already mean by `total`: set only
+    on a genuine truncation, whatever else happened in that same call."""
+    bogus_id = f"{SOURCE_A}_1_intro_does-not-exist_999"
+    wanted = [bogus_id, *A_CHUNK_IDS]
+    assert len(wanted) > DEFAULT_LIMIT
+
+    result = dispatch("get_chunk", {"chunk_id": wanted}, vault_dir=fixture_vault_dir)
+
+    assert result.error is None
+    assert result.count == DEFAULT_LIMIT - 1, "one of the first `limit` ids was the bad one"
+    assert result.total == len(wanted), (
+        "the tail past `limit` is genuinely unasked -- CAPPED is right"
+    )
+    assert bogus_id in (result.detail or "")
+
+
 def test_get_chunk_rejects_a_list_holding_a_non_string_without_raising(fixture_vault_dir: Path):
     result = dispatch("get_chunk", {"chunk_id": [A_CHUNK_IDS[0], 7]}, vault_dir=fixture_vault_dir)
 
@@ -218,3 +277,42 @@ def test_batching_reads_assembles_exactly_what_reading_them_one_at_a_time_did(
     assert len(one_at_a_time) == 3
     assert len(batched) == 1
     assert assemble_evidence_ids(batched) == assemble_evidence_ids(one_at_a_time)
+
+
+def test_untruncated_batch_with_an_unresolved_id_gets_no_capped_note_from_the_loop(
+    fixture_vault_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The regression this branch would otherwise ship (issue #629's own
+    follow-up, caught in review before merge): a batch NOT truncated by
+    `limit` must not tell the model a larger `limit` would return more just
+    because one of its own ids failed to resolve. That is the exact
+    misleading nudge measured on a live run that cycled `where_names_meet`'s
+    `limit` 20/15/10/15/20 on an already-exhausted call -- reachable through
+    `get_chunk` too if `total` stayed unconditional on "fewer came back than
+    asked for" rather than on genuine truncation."""
+    bogus_id = f"{SOURCE_A}_1_intro_does-not-exist_999"
+    wanted = [A_CHUNK_IDS[0], bogus_id]
+    assert len(wanted) < DEFAULT_LIMIT, "the batch itself must not be limit-truncated"
+    _set_scripted_tool_calls(
+        monkeypatch, [{"tool": "get_chunk", "args": {"chunk_id": wanted}}, None]
+    )
+    record_path = tmp_path / "unresolved-untruncated.jsonl"
+
+    run_retrieval_loop(
+        RecordLLMClient(record_path),
+        "PROMPT",
+        vault_dir=fixture_vault_dir,
+        step_budget=5,
+        thin_result_floor=1,
+    )
+
+    prompts = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
+    feedback = prompts[1]
+    assert "re-ask with a larger limit for more" not in feedback
+    # Not EXHAUSTED either (see `_get_chunk`'s own docstring): "exhausted"
+    # describes a query whose corpus-side size the model could not see in
+    # advance, and a get_chunk batch is a list the model wrote itself --
+    # `total` narrowed to "truncated only" makes this the natural, not a
+    # special-cased, consequence.
+    assert "EXHAUSTED" not in feedback
+    assert bogus_id in feedback
