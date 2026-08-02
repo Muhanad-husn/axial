@@ -19,7 +19,7 @@ from axial.pidguard import AlreadyRunningError
 from axial.analyze import run_examine
 from axial.analyze.synthesis import SynthesisError
 from axial.answer import AnswerError, run_brief
-from axial.answer.render import render_markdown
+from axial.answer.render import render_analyst_answer
 from axial.answer.run_report import format_run_report
 from axial.answer.usage_report import build_usage_report, format_usage_report, load_analysis_records
 from axial.artifacts import ArtifactsError, run_artifacts
@@ -2196,13 +2196,18 @@ def _ask_prompt(label: str) -> str | None:
 
 
 def _print_ask_turn(turn: AskTurn) -> int:
-    """Print one `axial ask` turn's answer: the rendered §7.10 markdown for
-    its own just-persisted record -- the same rendering `axial brief run`
-    already writes to `<brief_id>.md` -- so a question is answered in the
-    session itself, never only as a file path to go find (issue #534's own
-    "not a usable surface" complaint). `_print_encoding_safe`, never a bare
-    `print`, since the answer is real corpus prose (mirrors `_brief_run`)."""
-    _print_encoding_safe(render_markdown(turn.result.record))
+    """Print one `axial ask` turn's answer: the analyst-facing rendering
+    (issue #535, `render_analyst_answer`) of its own just-persisted record
+    and run report -- which books it drew on by title, how much of the
+    corpus it read and used, how well that corpus covers what it discusses,
+    how confident it is and why, and the cross-book headline -- so a
+    question is answered in the session itself, in plain language, never
+    only as a file path to go find (issue #534's own "not a usable surface"
+    complaint). `_print_encoding_safe`, never a bare `print`, since the
+    answer is real corpus prose (mirrors `_brief_run`). The persisted paths
+    still print below it for the operator/debugging case; an analyst never
+    needs to open either to trust the answer above them."""
+    _print_encoding_safe(render_analyst_answer(turn.result.record, turn.result.report))
     print(f"\npersisted: {turn.result.path}")
     print(f"run report: {turn.result.report_path}")
     return 0
