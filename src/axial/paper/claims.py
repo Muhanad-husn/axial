@@ -55,7 +55,7 @@ _BAND_RANK = {"low": 0, "medium": 1, "high": 2}
 # A new (b) claim must reason across at least this many DISTINCT source
 # records. Not a tunable: two is what "cross-source" means, and one is a
 # restatement (§7.4).
-_MIN_DISTINCT_RECORDS = 2
+MIN_DISTINCT_RECORDS = 2
 
 
 class PaperClaimError(Exception):
@@ -86,7 +86,7 @@ class SingleRecordInferenceError(PaperClaimError):
         super().__init__(
             f"new (b) claim {paper_claim_id!r} derives from {sorted(brief_ids)!r} -- "
             f"{len(brief_ids)} distinct source record(s), and §7.4 requires at least "
-            f"{_MIN_DISTINCT_RECORDS}. A claim drawn from one record is a restatement, "
+            f"{MIN_DISTINCT_RECORDS}. A claim drawn from one record is a restatement, "
             f"not cross-source synthesis"
         )
 
@@ -222,7 +222,7 @@ def new_b_claim(
     checks for."""
     grounds, names, brief_ids = _union_over_derivation(derived_from, by_paper_claim_id)
 
-    if len(brief_ids) < _MIN_DISTINCT_RECORDS:
+    if len(brief_ids) < MIN_DISTINCT_RECORDS:
         raise SingleRecordInferenceError(paper_claim_id, brief_ids)
 
     return {
