@@ -8,12 +8,16 @@ import json
 import pytest
 
 from axial.llm import SYNTHESIZE_PASS_NAME
-from axial.panel.packet import ReviewPacket
+from axial.panel.packet import PaperReviewPacket, ReviewPacket
 from axial.panel.review import (
+    DIMENSIONS,
+    PAPER_DIMENSIONS,
+    PanelError,
     ReviewerCallFailedError,
     TooFewReviewersError,
     format_panel_report,
     review_packet,
+    review_paper_packet,
     reviewer_pass_name,
 )
 from axial.panel.vendor import UnknownVendorError, VendorCollisionError
@@ -181,3 +185,129 @@ def test_rendered_report_always_discloses_the_referee():
     rendered = format_panel_report(review_packet(_packet(), client=client))
     assert "NOT human expert judgement" in rendered
     assert "spread=" in rendered
+
+
+def test_analysis_dimensions_are_unaffected_by_the_coherence_addition():
+    """§8 P0-10 observable: an analysis packet still scores exactly the
+    original three dimensions."""
+    assert DIMENSIONS == ("factual_correctness", "citation_grounding", "completeness")
+    client = FakeClient(_models(), [_verdict()] * 3)
+    report = review_packet(_packet(), client=client)
+    assert {d.dimension for d in report.dimensions} == set(DIMENSIONS)
+    assert "coherence" not in {d.dimension for d in report.dimensions}
+
+
+# -- the paper reviewer path (issue #611, specs/PHASE-C.md §7.7/§7.8) --------
+
+
+def _paper_verdict(coherence="strong", defects=()):
+    return json.dumps(
+        {
+            "factual_correctness": "strong",
+            "citation_grounding": "strong",
+            "completeness": "strong",
+            "coherence": coherence,
+            "defects": list(defects),
+        }
+    )
+
+
+def _paper_packet():
+    return PaperReviewPacket(
+        paper_brief_id="pb-001",
+        corpus_pin="pin-1",
+        packet_id="paper-packet:pb-001",
+        paper_markdown="The bureaucracy hollowed out.",
+        cited_evidence=(
+            {
+                "paper_claim_id": "pc-001",
+                "kind": "a",
+                "confidence": "medium",
+                "grounds": [{"ref_id": "src_1_intro_001", "text": "Tax receipts fell."}],
+            },
+        ),
+        bibliography=(),
+    )
+
+
+def _paper_model_by_pass():
+    return {"paper_draft": "deepseek/deepseek-v4-pro", "paper_plan": "z-ai/glm-5.2"}
+
+
+class PaperFakeClient(FakeClient):
+    """Three independent-vendor reviewers, distinct from both of
+    `_paper_model_by_pass`'s generating models."""
+
+    _REVIEWER_VENDORS = ("anthropic/claude-opus-4", "openai/gpt-5", "google/gemini-3-pro")
+
+    def model_for_pass(self, pass_name):
+        models = {
+            reviewer_pass_name(index): model
+            for index, model in enumerate(self._REVIEWER_VENDORS, start=1)
+        }
+        return models.get(pass_name, self._models.get("default", "stub/default"))
+
+
+def test_paper_reviewer_scores_the_coherence_dimension():
+    client = PaperFakeClient({}, [_paper_verdict()] * 3)
+    report = review_paper_packet(
+        _paper_packet(), client=client, model_by_pass=_paper_model_by_pass()
+    )
+    assert {d.dimension for d in report.dimensions} == set(PAPER_DIMENSIONS)
+    coherence = next(d for d in report.dimensions if d.dimension == "coherence")
+    assert coherence.aggregate == "strong"
+
+
+def test_paper_reviewer_report_is_keyed_on_the_paper_brief_id():
+    client = PaperFakeClient({}, [_paper_verdict()] * 3)
+    report = review_paper_packet(
+        _paper_packet(), client=client, model_by_pass=_paper_model_by_pass()
+    )
+    assert report.brief_id == "pb-001"
+
+
+def test_paper_reviewer_defect_vocabulary_accepts_arc_break_with_a_section_id():
+    defects = [{"claim_id": "", "section_id": "s2", "kind": "arc_break", "note": "non sequitur"}]
+    client = PaperFakeClient({}, [_paper_verdict(defects=defects)] + [_paper_verdict()] * 2)
+    report = review_paper_packet(
+        _paper_packet(), client=client, model_by_pass=_paper_model_by_pass()
+    )
+    defect = report.reviewers[0].defects[0]
+    assert defect.kind == "arc_break"
+    assert defect.section_id == "s2"
+
+
+def test_paper_reviewer_defect_vocabulary_accepts_unmarked_inference():
+    defects = [{"claim_id": "pc-001", "kind": "unmarked_inference", "note": "reads as a source"}]
+    client = PaperFakeClient({}, [_paper_verdict(defects=defects)] + [_paper_verdict()] * 2)
+    report = review_paper_packet(
+        _paper_packet(), client=client, model_by_pass=_paper_model_by_pass()
+    )
+    assert report.reviewers[0].defects[0].kind == "unmarked_inference"
+
+
+def test_a_reviewer_sharing_the_drafting_models_vendor_is_refused_before_any_call():
+    """The vendor guard checks BOTH generating passes -- here the reviewer
+    collides with paper_draft."""
+    client = PaperFakeClient({}, [_paper_verdict()] * 3)
+    model_by_pass = {"paper_draft": "anthropic/claude-opus-4", "paper_plan": "z-ai/glm-5.2"}
+    with pytest.raises(VendorCollisionError):
+        review_paper_packet(_paper_packet(), client=client, model_by_pass=model_by_pass)
+    assert client.prompts == []
+
+
+def test_a_reviewer_sharing_the_planning_models_vendor_is_refused_before_any_call():
+    """Same guard, the other generating pass -- a reviewer that only avoids
+    paper_draft's vendor is not enough."""
+    client = PaperFakeClient({}, [_paper_verdict()] * 3)
+    model_by_pass = {"paper_draft": "deepseek/deepseek-v4-pro", "paper_plan": "openai/gpt-5"}
+    with pytest.raises(VendorCollisionError):
+        review_paper_packet(_paper_packet(), client=client, model_by_pass=model_by_pass)
+    assert client.prompts == []
+
+
+def test_a_paper_reviewer_needs_at_least_one_generating_model_to_guard_against():
+    client = PaperFakeClient({}, [])
+    with pytest.raises(PanelError):
+        review_paper_packet(_paper_packet(), client=client, model_by_pass={})
+    assert client.prompts == []
