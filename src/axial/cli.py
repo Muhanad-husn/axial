@@ -1,6 +1,7 @@
 """Command-line entry point for axial."""
 
 import argparse
+import getpass
 import json
 import sys
 import time
@@ -77,8 +78,11 @@ from axial.intake import IntakeError, intake
 from axial.llm import (
     ENVELOPE_PASS_NAME,
     NOTE_INTERROGATE_PASS_NAME,
+    KeyCheckResult,
     LLMError,
+    check_key,
     get_client,
+    write_api_key,
 )
 from axial.gather import DEFAULT_WORKERS as GATHER_DEFAULT_WORKERS, GatherError, run_gather
 from axial.gather_eval import CALIBRATION_SAMPLE_SIZE, NULL_SAMPLE_SIZE
@@ -1252,6 +1256,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="auto-confirm removal under --apply, for non-interactive runs",
     )
 
+    key_parser = subparsers.add_parser("key", help="manage the OpenRouter API key (issue #527)")
+    key_subparsers = key_parser.add_subparsers(dest="key_command")
+
+    key_subparsers.add_parser(
+        "set",
+        help=(
+            "prompt for the OpenRouter API key (never read from the command "
+            "line) and write it to the resolved secrets file"
+        ),
+    )
+    key_subparsers.add_parser(
+        "check",
+        help=(
+            "spend one cheap call to prove the configured key works, and "
+            "report which model tiers secrets.toml configures"
+        ),
+    )
+
     return parser
 
 
@@ -1830,6 +1852,16 @@ def _brief_examine(brief_path: str) -> int:
     return 0
 
 
+def _print_event(message: str, _detail: dict[str, Any]) -> None:
+    """The CLI's live renderer for the engine's event seam (issue #533):
+    prints exactly the plain sentence the engine composed, live, while the
+    run goes -- "the plain-language view is the only view" (no tool names,
+    ids or argument shapes in `message` at all, by the seam's own contract)
+    -- and never the `detail` dict, which exists for a future renderer
+    (e.g. an activity log) to pick from instead."""
+    print(message, file=sys.stderr)
+
+
 def _brief_run(brief_path: str, *, use_map: bool = False) -> int:
     try:
         brief = load_brief(brief_path)
@@ -1842,7 +1874,13 @@ def _brief_run(brief_path: str, *, use_map: bool = False) -> int:
         # `case_id` is the brief file's own stem: that is the join
         # `evals/cases/sim/` uses (§9.3), and a brief with no case file of
         # that name simply has no mechanical retrieval-hit oracle.
-        result = run_brief(brief, client=client, case_id=Path(brief_path).stem, use_map=use_map)
+        result = run_brief(
+            brief,
+            client=client,
+            case_id=Path(brief_path).stem,
+            use_map=use_map,
+            on_event=_print_event,
+        )
     except (
         InterrogationError,
         QueryError,
@@ -2566,6 +2604,50 @@ def _reconcile_gc(apply: bool, yes: bool) -> int:
     return 0
 
 
+def _key_set() -> int:
+    """`axial key set` (issue #527): prompt for the key via `getpass` --
+    never `sys.argv`, so it never lands in shell history -- and write it to
+    the resolved secrets file. The key itself is never printed here; only
+    the path it landed at is."""
+    try:
+        key = getpass.getpass("OpenRouter API key: ")
+    except (EOFError, KeyboardInterrupt):
+        print("error: no key entered", file=sys.stderr)
+        return 1
+    try:
+        path = write_api_key(key)
+    except LLMError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"key written to {path}")
+    return 0
+
+
+def _format_key_check(result: KeyCheckResult) -> str:
+    lines = ["key: valid"]
+    lines.append(
+        "reachable tiers: "
+        + (", ".join(result.reachable_tiers) if result.reachable_tiers else "(none configured)")
+    )
+    if result.unreachable_tiers:
+        lines.append("unconfigured tiers:")
+        for tier in sorted(result.unreachable_tiers):
+            lines.append(f"  {tier}: {result.unreachable_tiers[tier]}")
+    return "\n".join(lines)
+
+
+def _key_check() -> int:
+    """`axial key check` (issue #527): one cheap completion call proves the
+    configured key authenticates; the tier report that follows costs no
+    further network call (`check_key`'s own docstring)."""
+    result = check_key()
+    if not result.valid:
+        print(f"error: {result.error}", file=sys.stderr)
+        return 1
+    print(_format_key_check(result))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -2732,6 +2814,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "reconcile" and args.reconcile_command == "gc":
         return _reconcile_gc(args.apply, args.yes)
+
+    if args.command == "key" and args.key_command == "set":
+        return _key_set()
+
+    if args.command == "key" and args.key_command == "check":
+        return _key_check()
 
     parser.print_help()
     return 0

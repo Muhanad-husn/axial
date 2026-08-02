@@ -117,18 +117,54 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 import threading
 import time
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 import httpx
 import yaml
 
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.yaml_loader import SAFE_LOADER
+
+# The single event-callback shape every stage-narrating seam in this repo
+# uses (issue #533): `on_event(plain_sentence, detail)`. `plain_sentence` is
+# the whole analyst-facing surface -- "the plain-language view is the only
+# view" (issue #533's own why) -- worded so a renderer never has to guess or
+# invent wording of its own; `detail` is a free-form dict carrying whatever
+# machinery (tool name, args, ids, counts) a DIFFERENT, non-analyst renderer
+# (a debug log, a future `#526` activity log) might want instead. Engine
+# code (`axial.answer.record.run_brief`, `axial.retrieve.loop`) accepts this
+# as an optional keyword, defaulting to `None` everywhere it is added, so
+# every pre-#533 caller is unaffected.
+EventCallback = Callable[[str, dict[str, Any]], None]
+
+
+def emit_event(
+    on_event: EventCallback | None, message: str, detail: dict[str, Any] | None = None
+) -> None:
+    """Call `on_event(message, detail)` when given, else print `message` to
+    stderr (issue #533) -- the one seam every ad-hoc `print(...,
+    file=sys.stderr)` stage/turn/call announcement in this codebase now
+    goes through, replacing a scattered one-off line per call site with a
+    single shared fallback renderer. A caller with nothing wired up (every
+    pass this issue doesn't touch, and every existing caller of the
+    functions below) sees the exact same real-time stderr visibility it
+    always has -- this never reduces it, only gives a caller that DOES wire
+    a callback (e.g. `axial brief run`'s live view) the same words instead
+    of a machinery-shaped line."""
+    if detail is None:
+        detail = {}
+    if on_event is not None:
+        on_event(message, detail)
+    else:
+        print(message, file=sys.stderr)
+
 
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
@@ -1842,7 +1878,7 @@ def _log_retry(
     if prompt is not None:
         prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         line += f" prompt_hash={prompt_hash} prompt_prefix={prompt[:_PROMPT_PREFIX_LEN]!r}"
-    print(line, file=sys.stderr)
+    emit_event(None, line)
 
 
 def _log_call_request(
@@ -1869,10 +1905,10 @@ def _log_call_request(
     that never sets it keeps logging the exact same line as before."""
     attempt_suffix = f" attempt={attempt}/{_MAX_ATTEMPTS}" if attempt > 1 else ""
     run_id_suffix = f" run_id={run_id}" if run_id is not None else ""
-    print(
+    emit_event(
+        None,
         f"llm_call_request pass={pass_name} model={model}{attempt_suffix} "
         f"prompt_chars={len(prompt)}{run_id_suffix}",
-        file=sys.stderr,
     )
 
 
@@ -1900,10 +1936,10 @@ def _log_call_response(
     `_log_call_request`'s own: appended only when given."""
     run_id_suffix = f" run_id={run_id}" if run_id is not None else ""
     if error is not None:
-        print(
+        emit_event(
+            None,
             f"llm_call_response pass={pass_name} model={model} outcome=error "
             f"error={error} elapsed={elapsed_seconds:.2f}s{run_id_suffix}",
-            file=sys.stderr,
         )
         return
     line = (
@@ -1919,7 +1955,7 @@ def _log_call_response(
             f" total_tokens={usage.get('total_tokens')}"
         )
     line += run_id_suffix
-    print(line, file=sys.stderr)
+    emit_event(None, line)
 
 
 def _raise_for_status_with_body(response: httpx.Response, *, action: str) -> None:
@@ -2840,3 +2876,158 @@ def get_client(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> LLMClient:
     if provider == "openrouter":
         return _build_openrouter_client(llm_config)
     raise LLMConfigError(f"unknown LLM provider: {provider!r}")
+
+
+# ---------------------------------------------------------------------------
+# `axial key set` / `axial key check` (issue #527)
+# ---------------------------------------------------------------------------
+
+_API_KEY_LINE_RE = re.compile(r"^\s*api_key\s*=")
+_SECTION_HEADER_RE = re.compile(r"^\s*\[(?P<name>[^\]]+)\]\s*$")
+
+
+def _toml_quote(value: str) -> str:
+    """Minimal TOML basic-string quoting (issue #527): escape the two
+    characters that would otherwise break a `"..."` basic string. An
+    OpenRouter key is `[A-Za-z0-9_-]+`-shaped in practice, but this never
+    trusts that -- a key carrying a literal quote or backslash still writes
+    back out as valid TOML."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _upsert_api_key_line(text: str, api_key_line: str) -> str:
+    """Insert or replace the `[openrouter]` table's `api_key` line in an
+    existing secrets.toml's raw text, touching nothing else -- every other
+    table, key, comment and blank line survives untouched (issue #527: a
+    full parse-then-`tomllib.dump` rewrite would silently drop every
+    comment `secrets.example.toml` is full of, since `tomllib` is read-only
+    and this repo has no TOML-writer dependency to add for one field).
+
+    Three cases: an existing `api_key` line inside `[openrouter]` is
+    replaced in place; an `[openrouter]` table with no `api_key` line yet
+    gets one inserted right after its header; no `[openrouter]` table at
+    all gets one appended at the end of the file."""
+    lines = text.splitlines(keepends=True)
+    section_start: int | None = None
+    section_end = len(lines)
+    for index, line in enumerate(lines):
+        match = _SECTION_HEADER_RE.match(line.rstrip("\n"))
+        if match is None:
+            continue
+        if section_start is not None:
+            section_end = index
+            break
+        if match.group("name").strip() == "openrouter":
+            section_start = index
+
+    if section_start is None:
+        prefix = text if (not text or text.endswith("\n")) else text + "\n"
+        if prefix and not prefix.endswith("\n\n"):
+            prefix += "\n"
+        return f"{prefix}[openrouter]\n{api_key_line}\n"
+
+    for index in range(section_start + 1, section_end):
+        if _API_KEY_LINE_RE.match(lines[index]):
+            lines[index] = api_key_line + "\n"
+            return "".join(lines)
+
+    lines.insert(section_start + 1, api_key_line + "\n")
+    return "".join(lines)
+
+
+def write_api_key(key: str) -> Path:
+    """`axial key set`'s own write (issue #527): upsert `[openrouter].api_key`
+    into the resolved secrets file (`_secrets_path()` -- the SAME
+    `AXIAL_SECRETS_PATH`-then-`secrets/secrets.toml` order every other
+    reader in this module already uses; issue #527 says "do not add a
+    second one"), creating the file and its parent directory if neither
+    exists yet. Every other line in an existing file -- other tables, other
+    keys, comments -- survives untouched (`_upsert_api_key_line`).
+
+    Chmod's the file to owner-read/write only (`0o600`) on a best-effort
+    basis: real on POSIX; on Windows `Path.chmod` only toggles the
+    read-only attribute (no ACL), so this narrows what it can and silently
+    no-ops (`OSError`) rather than failing the write over a permission bit
+    the platform cannot express.
+
+    The key itself is never logged or printed by this function -- only the
+    path it was written to is ever returned. Raises `LLMConfigError` (never
+    writes) on a blank/whitespace-only key."""
+    key = key.strip()
+    if not key:
+        raise LLMConfigError("refusing to write an empty API key")
+    path = _secrets_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    api_key_line = f"api_key = {_toml_quote(key)}"
+    existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+    path.write_text(_upsert_api_key_line(existing, api_key_line), encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return path
+
+
+@dataclass(frozen=True)
+class KeyCheckResult:
+    """`axial key check`'s own result (issue #527): whether the configured
+    API key authenticates against OpenRouter at all -- proven with exactly
+    ONE cheap completion call against the building tier's model, never one
+    call per tier, so a fast sanity check never turns into a small bill --
+    plus, read from secrets.toml/config alone with no further network call,
+    which of the named model tiers (`TIER_TO_MODEL_KEY`) resolve to a
+    configured model ("reachable": a real run routed to that tier would
+    have a model to call) and which do not ("unreachable": a real run
+    routed there fails at `model_for_pass`, before this check, with the
+    same reason given here). `error` is `None` iff `valid` is `True`."""
+
+    valid: bool
+    error: str | None
+    reachable_tiers: list[str]
+    unreachable_tiers: dict[str, str]
+
+
+def check_key(
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    client: LLMClient | None = None,
+) -> KeyCheckResult:
+    """Prove the configured OpenRouter key works with exactly ONE cheap
+    completion call (issue #527: "a bad key fails in a second rather than
+    forty minutes into a corpus pass") -- against the building tier's
+    model, the cheapest/free one every install has (`DEFAULT_BUILDING_MODEL`
+    when secrets.toml names none) -- then reports, from config alone, which
+    tiers are configured.
+
+    `client`, when given, replaces the real completion call entirely -- the
+    test-only injection seam every other real-network entry point in this
+    module already offers (mirrors `axial.pipeline_ready.evaluate_canary`'s
+    own `client=None` convention) -- so a test proves this makes exactly
+    one call without ever reaching OpenRouter."""
+    llm_config = _load_pipeline_llm_config(config_path)
+    secrets = _load_openrouter_secrets(_secrets_path())
+    try:
+        api_key = _resolve_api_key(secrets)
+    except LLMConfigError as exc:
+        return KeyCheckResult(valid=False, error=str(exc), reachable_tiers=[], unreachable_tiers={})
+
+    if client is None:
+        cheap_model = _resolve_model_for_tier(secrets, llm_config, BUILDING_TIER)
+        base_url = llm_config.get("base_url", DEFAULT_OPENROUTER_BASE_URL)
+        client = OpenRouterClient(api_key=api_key, model=cheap_model, base_url=base_url)
+
+    try:
+        client.complete("Reply with the single word: ok", pass_name=None)
+    except LLMError as exc:
+        return KeyCheckResult(valid=False, error=str(exc), reachable_tiers=[], unreachable_tiers={})
+
+    reachable: list[str] = []
+    unreachable: dict[str, str] = {}
+    for tier in TIER_TO_MODEL_KEY:
+        try:
+            _resolve_model_for_tier(secrets, llm_config, tier)
+            reachable.append(tier)
+        except LLMConfigError as exc:
+            unreachable[tier] = str(exc)
+    return KeyCheckResult(
+        valid=True, error=None, reachable_tiers=sorted(reachable), unreachable_tiers=unreachable
+    )

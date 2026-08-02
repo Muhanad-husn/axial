@@ -112,7 +112,9 @@ from axial.llm import (
     INTERROGATE_PASS_NAME,
     RETRIEVE_PASS_NAME,
     SYNTHESIZE_PASS_NAME,
+    EventCallback,
     LLMClient,
+    emit_event,
     usage_and_cost_by_pass,
 )
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_analyses_dir
@@ -122,6 +124,24 @@ from axial.validators.coverage import compute_confidence, compute_coverage_map
 
 class AnswerError(Exception):
     """Base class for all stage-6 (analysis-record) errors."""
+
+
+def _interrogation_conclusion_message(result: InterrogationResult) -> str:
+    """The plain-language half of the interrogation stage's own "outcome"
+    event (issue #533): what interrogation concluded, worded from
+    `InterrogationResult`'s own fields, never from the raw prompt or the
+    model's own JSON shape. A `refuse` disposition states the reason
+    (§7.2's own `refusal.reason`); any other disposition states how many
+    premises/bounds interrogation found -- the two facts §7.2 says this
+    stage produces."""
+    if result.disposition == "refuse":
+        reason = (result.refusal or {}).get("reason") or "the question is out of scope"
+        return f"interrogation concluded: this cannot be answered from the corpus -- {reason}"
+    n_premises = len(result.premises_found)
+    n_bounds = len(result.bounds_applied)
+    premise_word = "premise" if n_premises == 1 else "premises"
+    bound_word = "bound" if n_bounds == 1 else "bounds"
+    return f"interrogation concluded: found {n_premises} {premise_word}, applied {n_bounds} {bound_word}"
 
 
 def _brief_to_dict(brief: Brief) -> dict[str, Any]:
@@ -378,10 +398,20 @@ def run_brief(
     map_dir: Path | None = None,
     sources_dir: Path | None = None,
     map_pin: str | None = None,
+    on_event: EventCallback | None = None,
 ) -> BriefRunResult:
     """Run the full engine (stages 1-6) over `brief` and persist the §7.3
     analysis record to `<analyses_dir>/<brief_id>.json` plus the §7.15 run
     report to `<runs_dir>/<brief_id>.json`, returning both.
+
+    `on_event` (issue #533) is the one event seam the whole engine narrates
+    itself through: called `on_event(plain_sentence, detail)` as each stage
+    starts and concludes -- interrogating the question and what it
+    concluded, each retrieval turn (`axial.retrieve.loop`'s own per-turn
+    events), assembling passages, writing the answer, and checking it --
+    `None` (the default) falls back to printing the same sentence to
+    stderr (`axial.llm.emit_event`), so a caller that wires nothing loses
+    no real-time visibility versus before this issue.
 
     **Per-pass wall clock is captured here and nowhere else** (§7.15): only
     the running process holds it, so each stage is timed as it is driven and
@@ -422,8 +452,16 @@ def run_brief(
     corpus_pin = resolve_pin_id(evals_dir)
     clock = PassClock()
 
+    emit_event(
+        on_event, "interrogating the question", {"stage": "interrogate", "brief_id": brief.brief_id}
+    )
     with clock.time(INTERROGATE_PASS_NAME):
         interrogation_result = interrogate(brief, client=client, vault_dir=vault_dir)
+    emit_event(
+        on_event,
+        _interrogation_conclusion_message(interrogation_result),
+        {"stage": "interrogate", **interrogation_result.to_dict()},
+    )
     model_by_pass: dict[str, str] = {
         INTERROGATE_PASS_NAME: client.model_for_pass(INTERROGATE_PASS_NAME)
     }
@@ -437,6 +475,9 @@ def run_brief(
         map_retrieval: dict[str, Any] | None = None
     else:
         if use_map:
+            emit_event(
+                on_event, "retrieving evidence through the argument map", {"stage": "retrieve"}
+            )
             with clock.time(DECOMPOSE_PASS_NAME):
                 ask_result = run_map_ask_for_brief(
                     brief,
@@ -449,6 +490,11 @@ def run_brief(
                 )
             model_by_pass[DECOMPOSE_PASS_NAME] = client.model_for_pass(DECOMPOSE_PASS_NAME)
             evidence_ids: list[str] = list(ask_result.assembled_chunk_ids)
+            emit_event(
+                on_event,
+                f"found {len(evidence_ids)} passage(s) through the argument map",
+                {"stage": "retrieve", "evidence_count": len(evidence_ids)},
+            )
             # The map path makes no name-layer tool call, so it has no §7.6
             # trajectory of its own -- an honest empty list, never a
             # fabricated one built to keep a downstream reader fed. Every
@@ -470,6 +516,7 @@ def run_brief(
                     config_path=config_path,
                     step_budget=step_budget,
                     thin_result_floor=thin_result_floor,
+                    on_event=on_event,
                 )
             model_by_pass[RETRIEVE_PASS_NAME] = client.model_for_pass(RETRIEVE_PASS_NAME)
             evidence_ids = retrieval_result.evidence_ids
@@ -483,7 +530,18 @@ def run_brief(
         # either path takes -- the map path differs only in how
         # `evidence_ids` was produced above.
         with clock.time(SYNTHESIZE_PASS_NAME):
+            emit_event(
+                on_event,
+                "assembling passages",
+                {"stage": "assemble", "evidence_ids": len(evidence_ids)},
+            )
             evidence = assemble_evidence(evidence_ids, vault_dir=vault_dir)
+            emit_event(
+                on_event,
+                f"assembled {len(evidence.chunk_ids)} passage(s)",
+                {"stage": "assemble", "assembled_count": len(evidence.chunk_ids)},
+            )
+            emit_event(on_event, "writing the answer", {"stage": "synthesize"})
             claim_graph = synthesize(
                 evidence,
                 brief,
@@ -493,6 +551,11 @@ def run_brief(
                 config_path=config_path,
                 question_scope=interrogation_result.question_scope,
             )
+            emit_event(
+                on_event,
+                f"wrote the answer -- {len(claim_graph.claims)} claim(s)",
+                {"stage": "synthesize", "claim_count": len(claim_graph.claims)},
+            )
         model_by_pass[SYNTHESIZE_PASS_NAME] = client.model_for_pass(SYNTHESIZE_PASS_NAME)
 
         lens = claim_graph.lens
@@ -500,6 +563,7 @@ def run_brief(
         evidence_assembled_count = len(evidence.chunk_ids)
         evidence_composed_count = claim_graph.evidence_composed_count
 
+    emit_event(on_event, "checking the answer", {"stage": "check"})
     record = build_record(
         brief,
         interrogation_result,
@@ -514,6 +578,15 @@ def run_brief(
         evidence_assembled_count=evidence_assembled_count,
         evidence_composed_count=evidence_composed_count,
         map_retrieval=map_retrieval,
+    )
+    emit_event(
+        on_event,
+        f"checked the answer -- confidence {record['confidence']['overall_band']}",
+        {
+            "stage": "check",
+            "confidence": record["confidence"],
+            "coverage_map": record["coverage_map"],
+        },
     )
     path = persist_record(
         brief.brief_id, record, analyses_dir=analyses_dir, config_path=config_path
