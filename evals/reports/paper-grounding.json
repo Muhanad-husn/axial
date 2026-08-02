@@ -1,0 +1,16 @@
+{
+  "corpus_pin": "sim-2026-07-30",
+  "gate": "paper-grounding",
+  "metrics": [
+    {
+      "comparison": "gte",
+      "metric": "b_claim_noncontradiction_rate",
+      "n": 7,
+      "passed": true,
+      "threshold": 0.9,
+      "value": 1.0
+    }
+  ],
+  "passed": true,
+  "trusted": true
+}
