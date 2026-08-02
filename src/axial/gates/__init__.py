@@ -55,12 +55,14 @@ from axial.gates.counter_position import (
     run_counter_position_gate,
 )
 from axial.gates.grounding import GATE_NAME as GROUNDING_GATE_NAME
+from axial.gates.grounding import PAPER_GATE_NAME as PAPER_GROUNDING_GATE_NAME
 from axial.gates.grounding import (
     GroundingCheckFailedError,
     GroundingGateError,
     SelfGradingError,
     UnresolvableGroundsError,
     run_grounding_gate,
+    run_paper_grounding_gate,
 )
 from axial.gates.harness import (
     REPORTS_DIR,
@@ -104,6 +106,7 @@ GATE_RUNNERS = {
     # Phase-C paper records (`load_paper_records`), never Phase-B analysis
     # records -- see each runner's own module docstring for what it reuses.
     PAPER_ATTRIBUTION_FIDELITY_GATE_NAME: run_paper_attribution_fidelity_gate,
+    PAPER_GROUNDING_GATE_NAME: run_paper_grounding_gate,
     COUNTER_POSITION_GATE_NAME: run_counter_position_gate,
 }
 
@@ -150,6 +153,7 @@ __all__ = [
     "COUNTER_POSITION_GATE_NAME",
     "GROUNDING_GATE_NAME",
     "PAPER_ATTRIBUTION_FIDELITY_GATE_NAME",
+    "PAPER_GROUNDING_GATE_NAME",
     "PROVENANCE_GATE_NAME",
     "SYNTHESIS_QUALITY_GATE_NAME",
     "CALIBRATION_GATE_NAME",
@@ -196,6 +200,7 @@ __all__ = [
     "run_gate",
     "run_grounding_gate",
     "run_paper_attribution_fidelity_gate",
+    "run_paper_grounding_gate",
     "run_provenance_gate",
     "run_synthesis_quality_gate",
     "verdict_text",

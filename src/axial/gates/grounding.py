@@ -43,6 +43,22 @@ grounds note (an abstention, or an artifact ref which carries no
 interrogation answers, contributes nothing) and the judge prompt now shows
 it alongside the grounds text -- no other change to the metric's shape,
 denominator, or reported-only status.
+
+**`run_paper_grounding_gate` (specs/PHASE-C.md §10.1, §8 P0-9) is Phase C's
+own GATED use of this judge**, scored only over a paper record's NEW (b)
+claims (`origin is None`, §7.4) -- a carried (b) claim already passed
+whatever Phase B did or did not gate it on, and Phase C's new (b) claims are
+the entire contribution this phase adds (§2 goal 2). It reuses every private
+helper below (`_resolve_grounds_text`, `_resolve_grounds_arguing_against`,
+`_judge_b_claim`) unchanged; the only new work is the (b)-claim selector and
+turning the contradiction rate into a GATED, inverted
+`b_claim_noncontradiction_rate` (numerator = claims NOT contradicted) at a
+distinct metric name from the reported-only `b_claim_contradiction_rate`
+above, precisely so the two never share one config-tunable threshold. Its
+self-grading guard is re-anchored to `PAPER_DRAFT_PASS_NAME` rather than
+`SYNTHESIZE_PASS_NAME` (specs/PHASE-C.md §10.1: "its guard re-anchored to
+Phase C's drafting pass"), since Phase C's generating pass is drafting, not
+Phase-B synthesis.
 """
 
 from __future__ import annotations
@@ -52,10 +68,11 @@ from typing import Any
 
 import httpx
 
-from axial.gates.harness import GateReport, build_metric_result
+from axial.gates.harness import GateReport, build_metric_result, not_scoreable_metric
 from axial.llm import (
     DEFAULT_PIPELINE_CONFIG_PATH,
     GROUNDING_PASS_NAME,
+    PAPER_DRAFT_PASS_NAME,
     SYNTHESIZE_PASS_NAME,
     LLMClient,
     LLMError,
@@ -71,6 +88,14 @@ from axial.query.reader import (
 )
 
 GATE_NAME = "grounding"
+
+# The paper-side gate name (specs/PHASE-C.md §10.1, §8 P0-9): a SEPARATE
+# CLI entry from GATE_NAME above, dispatched to `axial.gates.harness.
+# load_paper_records` rather than `load_records` -- see `_gate_run`'s
+# per-gate loader dispatch in `axial.cli`. Reuses this module's judge
+# wholesale; only the (b)-claim selector and the gated metric are new
+# (module docstring).
+PAPER_GATE_NAME = "paper-grounding"
 
 _SUPPORTS = "supports"
 _DOES_NOT_SUPPORT = "does_not_support"
@@ -99,17 +124,31 @@ class UnresolvableGroundsError(GroundingGateError):
 
 class SelfGradingError(GroundingGateError):
     """Raised when the grounding judge's configured pass resolves to the
-    SAME model as the synthesis pass -- the generating model must never
+    SAME model as the generating pass -- the generating model must never
     grade its own output (§10, charter §2). Raised before any judge call is
-    made; zero calls are made when this fires."""
+    made; zero calls are made when this fires.
 
-    def __init__(self, judge_pass_name: str, model: str):
+    `generating_pass_name` defaults to `SYNTHESIZE_PASS_NAME` (Phase B,
+    `run_grounding_gate`'s own anchor); `run_paper_grounding_gate` passes
+    `PAPER_DRAFT_PASS_NAME` instead, re-anchoring the guard to Phase C's own
+    generating pass (specs/PHASE-C.md §10.1: "its guard re-anchored to Phase
+    C's drafting pass") -- the guard's LOGIC is identical, only which pass
+    counts as "the generating one" changes."""
+
+    def __init__(
+        self,
+        judge_pass_name: str,
+        model: str,
+        *,
+        generating_pass_name: str = SYNTHESIZE_PASS_NAME,
+    ):
         self.judge_pass_name = judge_pass_name
         self.model = model
+        self.generating_pass_name = generating_pass_name
         super().__init__(
             f"the grounding judge (pass_name={judge_pass_name!r}) resolves to model "
-            f"{model!r}, the SAME model as the synthesis pass "
-            f"(pass_name={SYNTHESIZE_PASS_NAME!r}) -- self-grading: configure "
+            f"{model!r}, the SAME model as the generating pass "
+            f"(pass_name={generating_pass_name!r}) -- self-grading: configure "
             "model_by_pass so the judge runs under a different model, from a "
             "different model family, than the pass that generated the claims "
             "it is judging"
@@ -335,6 +374,29 @@ def _iter_b_claims(records: list[dict[str, Any]]) -> list[tuple[str, dict[str, A
     return _iter_claims_of_kind(records, "b")
 
 
+def _iter_new_b_claims(records: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+    """Every kind-"b" claim across every record whose `origin` is `None` --
+    a Phase-C NEW (b) claim (specs/PHASE-C.md §7.4), Phase C's own
+    contribution, as opposed to a Phase-B (b) claim merely carried through
+    with its `origin` naming the analysis record it came from. This is
+    `run_paper_grounding_gate`'s own denominator (§10.1, §8 P0-9): a carried
+    (b) claim already went through whatever Phase B did or did not gate it
+    on, so re-litigating it here would double-count rather than measure the
+    thing this phase adds. Falls back to `paper_claim_id` (the paper
+    record's own claim-id field, §7.4) before `claim_id`, since a paper
+    claim never carries the latter."""
+    claims: list[tuple[str, dict[str, Any]]] = []
+    index = 0
+    for record in records:
+        for claim in record.get("claims") or []:
+            index += 1
+            if claim.get("kind") != "b" or claim.get("origin") is not None:
+                continue
+            claim_id = claim.get("paper_claim_id") or claim.get("claim_id") or f"<claim #{index}>"
+            claims.append((claim_id, claim))
+    return claims
+
+
 def _b_claim_contradiction_rate(
     b_claims: list[tuple[str, dict[str, Any]]],
     *,
@@ -372,9 +434,10 @@ def _judge_b_claims(
     """Judge every claim in `b_claims`, re-barred (issue #607): each judge
     call is shown both the resolved grounds text and the grounds notes' own
     `arguing_against` answers. Returns `(contradicted_claim_ids,
-    all_claim_ids)` -- the shared walk behind `_b_claim_contradiction_rate`
-    above, so the re-bar is one code path, never two judge calls per
-    claim."""
+    all_claim_ids)` -- the shared walk behind both the reported-only
+    `_b_claim_contradiction_rate` above and the gated
+    `run_paper_grounding_gate` below, so the re-bar is one code path, never
+    two judge calls per claim."""
     contradicted: list[str] = []
     all_ids: list[str] = []
     for claim_id, claim in b_claims:
@@ -456,4 +519,71 @@ def run_grounding_gate(
         trusted=trusted,
         metrics=[metric],
         reported=reported,
+    )
+
+
+def run_paper_grounding_gate(
+    records: list[dict[str, Any]],
+    *,
+    client: LLMClient,
+    vault_dir: Path | None = None,
+    corpus_pin: str | None,
+    trusted: bool,
+    judge_pass_name: str = GROUNDING_PASS_NAME,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+) -> GateReport:
+    """Phase C's own GATED use of the (b)-claim judge (specs/PHASE-C.md
+    §10.1, §8 P0-9), scored over `records` (Phase-C paper records,
+    `axial.gates.harness.load_paper_records`) -- `PAPER_GATE_NAME`'s own
+    runner, registered separately from `run_grounding_gate` above.
+
+    Denominator is `_iter_new_b_claims`: a paper's NEW (b) claims only
+    (`origin is None`, §7.4) -- Phase C's own contribution, not a carried
+    (b) claim Phase B already produced. `b_claim_noncontradiction_rate` is
+    the INVERSE of the reported-only `b_claim_contradiction_rate` above (the
+    share of new (b) claims NOT contradicted), gated at its own metric name
+    so it never shares a config-tunable threshold with the always-reported
+    Phase-B number. Zero new (b) claims is a legitimate, common state (a
+    single-source-record paper produces none) and is reported
+    not-scoreable, never a vacuous fail -- an inverted rate's vacuous value
+    (`0.0`) would otherwise read as "0% non-contradicted", the opposite of
+    what an empty population means.
+
+    The self-grading guard is re-anchored to `PAPER_DRAFT_PASS_NAME`
+    (`SelfGradingError`'s own `generating_pass_name`), since Phase C's
+    generating pass is drafting, never Phase-B's `SYNTHESIZE_PASS_NAME`."""
+    new_b_claims = _iter_new_b_claims(records)
+
+    if new_b_claims:
+        drafting_model = client.model_for_pass(PAPER_DRAFT_PASS_NAME)
+        judge_model = client.model_for_pass(judge_pass_name)
+        if judge_model == drafting_model:
+            raise SelfGradingError(
+                judge_pass_name, judge_model, generating_pass_name=PAPER_DRAFT_PASS_NAME
+            )
+
+    if not new_b_claims:
+        metric = not_scoreable_metric(
+            "b_claim_noncontradiction_rate",
+            reason="no new (b) claims found to evaluate",
+            config_path=config_path,
+        )
+    else:
+        contradicted_ids, all_ids = _judge_b_claims(
+            new_b_claims, client=client, vault_dir=vault_dir, judge_pass_name=judge_pass_name
+        )
+        metric = build_metric_result(
+            "b_claim_noncontradiction_rate",
+            numerator=len(all_ids) - len(contradicted_ids),
+            denominator=len(all_ids),
+            config_path=config_path,
+            detail={"contradicted_claim_ids": contradicted_ids} if contradicted_ids else {},
+            empty_denominator_fails=True,
+        )
+
+    return GateReport(
+        gate=PAPER_GATE_NAME,
+        corpus_pin=corpus_pin,
+        trusted=trusted,
+        metrics=[metric],
     )

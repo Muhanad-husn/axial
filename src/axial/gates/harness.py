@@ -99,6 +99,15 @@ DEFAULT_GATE_THRESHOLDS: dict[str, float] = {
     # threshold -- Phase C's own hard bar is 1.00. See
     # src/axial/gates/counter_position.py's module docstring.
     "paper_counter_position_presence_rate": 1.00,
+    # Paper-side grounding of Phase C's own new (b) claims (specs/PHASE-C.md
+    # §10.1, §8 P0-9, issue #608): the INVERSE of the reported-only
+    # `b_claim_contradiction_rate` above, scored only over a paper's NEW (b)
+    # claims and gated under its OWN metric name -- a distinct name from
+    # `b_claim_contradiction_rate` (never gated) and from
+    # `grounding_support_rate` (a different question, over (a) claims), so
+    # this threshold is independently tunable rather than colliding with
+    # either. See src/axial/gates/grounding.py's module docstring.
+    "b_claim_noncontradiction_rate": 0.90,
 }
 
 # The comparison direction is a property of what each metric MEANS, not
@@ -116,6 +125,7 @@ METRIC_COMPARISON: dict[str, Comparison] = {
     "provenance_completeness": "gte",
     "confidence_upgrade_count": "lte",
     "paper_counter_position_presence_rate": "gte",
+    "b_claim_noncontradiction_rate": "gte",
 }
 
 

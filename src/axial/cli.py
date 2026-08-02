@@ -52,6 +52,7 @@ from axial.gates import (
     ADVERSARIAL_GATE_NAME,
     COUNTER_POSITION_GATE_NAME,
     PAPER_ATTRIBUTION_FIDELITY_GATE_NAME,
+    PAPER_GROUNDING_GATE_NAME,
     PROVENANCE_GATE_NAME,
     AdversarialGateError,
     CalibrationGateError,
@@ -1265,10 +1266,10 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "score a named gate (attribution-fidelity, grounding, "
             "synthesis-quality, calibration, adversarial, provenance-integrity, "
-            "paper-attribution-fidelity, counter-position) "
+            "paper-attribution-fidelity, paper-grounding, counter-position) "
             "over a directory of analysis records, (adversarial) seeded briefs, "
-            "or (provenance-integrity, paper-attribution-fidelity, counter-position) "
-            "Phase-C paper records, writing evals/reports/<gate>.json"
+            "or (provenance-integrity, paper-attribution-fidelity, paper-grounding, "
+            "counter-position) Phase-C paper records, writing evals/reports/<gate>.json"
         ),
     )
     gate_run_parser.add_argument(
@@ -1276,7 +1277,8 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "which gate to run: attribution-fidelity, grounding, "
             "synthesis-quality, calibration, adversarial, provenance-integrity, "
-            "paper-attribution-fidelity, or counter-position (specs/PHASE-C.md §10.1)"
+            "paper-attribution-fidelity, paper-grounding, or counter-position "
+            "(specs/PHASE-C.md §10.1)"
         ),
     )
     gate_run_parser.add_argument(
@@ -1296,7 +1298,8 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "directory of analysis-record JSON files to score (attribution-fidelity, "
             "grounding, synthesis-quality, calibration), or of Phase-C paper-record "
-            "JSON files (provenance-integrity, paper-attribution-fidelity, counter-position)"
+            "JSON files (provenance-integrity, paper-attribution-fidelity, "
+            "paper-grounding, counter-position)"
         ),
     )
     gate_run_parser.add_argument(
@@ -2749,6 +2752,11 @@ def _gate_run(gate: str, records_dir: str | None, briefs_dir: str | None) -> int
                 return 1
             records = load_paper_records(Path(records_dir))
         elif gate == COUNTER_POSITION_GATE_NAME:
+            if records_dir is None:
+                print(f"error: gate {gate!r} requires --records <dir>", file=sys.stderr)
+                return 1
+            records = load_paper_records(Path(records_dir))
+        elif gate == PAPER_GROUNDING_GATE_NAME:
             if records_dir is None:
                 print(f"error: gate {gate!r} requires --records <dir>", file=sys.stderr)
                 return 1

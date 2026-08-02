@@ -17,6 +17,7 @@ from axial.gates.grounding import (
     SelfGradingError,
     UnresolvableGroundsError,
     run_grounding_gate,
+    run_paper_grounding_gate,
 )
 from axial.llm import ExplodingLLMClient
 
@@ -27,6 +28,9 @@ ARGUING_AGAINST_TEXT = "Mann's claim that state formation preceded capital accum
 
 DISTINCT_MODELS = {"synthesize": "model-a", "grounding": "model-b"}
 SAME_MODEL = {"synthesize": "model-x", "grounding": "model-x"}
+
+PAPER_DISTINCT_MODELS = {"paper_draft": "model-a", "grounding": "model-b"}
+PAPER_SAME_MODEL = {"paper_draft": "model-x", "grounding": "model-x"}
 
 
 class ScriptedJudgeClient:
@@ -141,6 +145,30 @@ def _b_claim(claim_id: str, *, chunk_id: str = CHUNK_ID) -> dict[str, Any]:
         "claim_id": claim_id,
         "kind": "b",
         "text": f"Cross-source inference for {claim_id}.",
+        "grounds": [{"ref_type": "chunk", "ref_id": chunk_id}],
+    }
+
+
+def _paper_new_b_claim(paper_claim_id: str, *, chunk_id: str = CHUNK_ID) -> dict[str, Any]:
+    """A Phase-C NEW (b) claim (§7.4): `origin: None`, on a paper record."""
+    return {
+        "paper_claim_id": paper_claim_id,
+        "kind": "b",
+        "origin": None,
+        "text": f"New cross-source claim for {paper_claim_id}.",
+        "grounds": [{"ref_type": "chunk", "ref_id": chunk_id}],
+    }
+
+
+def _paper_carried_b_claim(paper_claim_id: str, *, chunk_id: str = CHUNK_ID) -> dict[str, Any]:
+    """A Phase-B (b) claim merely CARRIED into a paper (§7.4): `origin`
+    names the source record it came from, so `run_paper_grounding_gate`'s
+    own selector must exclude it -- it is not Phase C's own contribution."""
+    return {
+        "paper_claim_id": paper_claim_id,
+        "kind": "b",
+        "origin": {"brief_id": "b1", "claim_id": "c-origin"},
+        "text": f"Carried cross-source claim for {paper_claim_id}.",
         "grounds": [{"ref_type": "chunk", "ref_id": chunk_id}],
     }
 
@@ -505,3 +533,123 @@ def test_b_claim_judge_prompt_states_no_recorded_opposition_when_absent(
 
     _pass_name, prompt = client.calls[0]
     assert "none of the cited notes recorded an opposing position" in prompt
+
+
+# -- run_paper_grounding_gate: Phase C's own gated use (issue #608) ---------
+
+
+def test_paper_gate_scores_only_new_b_claims_not_carried_ones(vault_dir: Path, tmp_path: Path):
+    client = ScriptedJudgeClient(
+        model_by_pass=PAPER_DISTINCT_MODELS,
+        responses=[json.dumps({"verdict": "does_not_contradict"})],
+    )
+    records = [
+        {
+            "claims": [
+                _paper_new_b_claim("pc-1"),
+                _paper_carried_b_claim("pc-2"),
+            ]
+        }
+    ]
+
+    report = run_paper_grounding_gate(
+        records,
+        client=client,
+        vault_dir=vault_dir,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+    )
+
+    metric = report.metrics[0]
+    assert metric.metric == "b_claim_noncontradiction_rate"
+    assert metric.n == 1, "only the NEW (b) claim (origin: None) is scored"
+    assert metric.value == pytest.approx(1.0)
+    assert metric.threshold == 0.90
+    assert metric.passed is True
+    assert len(client.calls) == 1
+
+
+def test_paper_gate_zero_new_b_claims_is_not_scoreable(vault_dir: Path, tmp_path: Path):
+    records = [{"claims": [_paper_carried_b_claim("pc-1")]}]
+
+    report = run_paper_grounding_gate(
+        records,
+        client=ExplodingLLMClient(),
+        vault_dir=vault_dir,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+    )
+
+    metric = report.metrics[0]
+    assert metric.value is None
+    assert metric.passed is None, "a legitimately empty new-(b) population is not-scoreable"
+    assert metric.n == 0
+    assert "reason" in metric.detail
+
+
+def test_paper_gate_inverts_the_contradiction_rate(vault_dir: Path, tmp_path: Path):
+    client = ScriptedJudgeClient(
+        model_by_pass=PAPER_DISTINCT_MODELS,
+        responses=[
+            json.dumps({"verdict": "contradicts"}),
+            json.dumps({"verdict": "does_not_contradict"}),
+            json.dumps({"verdict": "does_not_contradict"}),
+            json.dumps({"verdict": "does_not_contradict"}),
+        ],
+    )
+    records = [{"claims": [_paper_new_b_claim(f"pc-{i}") for i in range(4)]}]
+
+    report = run_paper_grounding_gate(
+        records,
+        client=client,
+        vault_dir=vault_dir,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+    )
+
+    metric = report.metrics[0]
+    assert metric.value == pytest.approx(0.75)
+    assert metric.passed is False, "0.75 < the 0.90 threshold"
+    assert metric.detail["contradicted_claim_ids"] == ["pc-0"]
+
+
+def test_paper_gate_self_grading_guard_anchors_to_paper_draft_pass(vault_dir: Path, tmp_path: Path):
+    client = ScriptedJudgeClient(
+        model_by_pass=PAPER_SAME_MODEL,
+        responses=[json.dumps({"verdict": "does_not_contradict"})],
+    )
+    records = [{"claims": [_paper_new_b_claim("pc-1")]}]
+
+    with pytest.raises(SelfGradingError) as excinfo:
+        run_paper_grounding_gate(
+            records,
+            client=client,
+            vault_dir=vault_dir,
+            corpus_pin=None,
+            trusted=False,
+            config_path=tmp_path / "nonexistent.yaml",
+        )
+    assert "paper_draft" in str(excinfo.value)
+    assert "model-x" in str(excinfo.value)
+    assert client.calls == [], "zero judge calls when the self-grading guard fires"
+
+
+def test_paper_gate_unresolvable_grounds_pointer_is_a_gate_error(vault_dir: Path, tmp_path: Path):
+    client = ScriptedJudgeClient(
+        model_by_pass=PAPER_DISTINCT_MODELS,
+        responses=[json.dumps({"verdict": "does_not_contradict"})],
+    )
+    records = [{"claims": [_paper_new_b_claim("pc-1", chunk_id=MISSING_CHUNK_ID)]}]
+
+    with pytest.raises(UnresolvableGroundsError):
+        run_paper_grounding_gate(
+            records,
+            client=client,
+            vault_dir=vault_dir,
+            corpus_pin=None,
+            trusted=False,
+            config_path=tmp_path / "nonexistent.yaml",
+        )
