@@ -218,13 +218,19 @@ class AskResult:
     4 of 4), and the final assembled chunk ids (`assembled_chunk_ids`) the
     round-robin walk emitted, in the order a synthesis prompt would read
     them. `corridor`/`assembled_chunk_ids` default empty for a caller that
-    only wants the door and the landing (PR 3's own original contract)."""
+    only wants the door and the landing (PR 3's own original contract).
+    `pin` (issue #583) is the map directory's own name -- whatever this
+    call actually resolved and read, whether the caller passed one
+    explicitly or `run_map_ask_for_brief` computed it from the corpus --
+    so a caller downstream (`axial.answer.record.run_brief`) can record
+    which map answered the brief without re-deriving the pin itself."""
 
     brief: Brief
     asks: tuple[str, ...]
     landed: tuple[LandedPosition, ...]
     corridor: tuple[CorridorPosition, ...] = ()
     assembled_chunk_ids: tuple[str, ...] = ()
+    pin: str | None = None
 
 
 def render_decompose_prompt(brief: Brief) -> str:
@@ -542,6 +548,7 @@ def run_map_ask_for_brief(
         landed=tuple(landed),
         corridor=tuple(corridor),
         assembled_chunk_ids=tuple(assembled),
+        pin=pin,
     )
 
 

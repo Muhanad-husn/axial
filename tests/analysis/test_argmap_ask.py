@@ -33,6 +33,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from axial.argmap import ask as ask_module
 from axial.argmap.ask import (
     DECOMPOSE_PROMPT,
     DecomposeError,
@@ -302,6 +303,62 @@ def test_run_map_ask_succeeds_when_the_encoder_matches(tmp_path: Path) -> None:
     assert result.asks == (_ASK_1,)
     assert len(result.landed) == 1
     assert result.landed[0].position_id == "pos-0001"
+
+
+# ---------------------------------------------------------------------------
+# run_map_ask: the resolved pin is carried on the result (issue #583) --
+# an analysis record built from it must be able to say which map answered
+# the brief, whether the caller pinned the map explicitly or the corpus
+# default was resolved for it.
+# ---------------------------------------------------------------------------
+
+
+def test_run_map_ask_carries_the_pin_it_was_given_explicitly(tmp_path: Path) -> None:
+    brief_path = _write_brief(tmp_path, case="A case.", request="A question?")
+    map_dir = _write_map(
+        tmp_path,
+        "testpin",
+        [_position("pos-0001", _ASK_1)],
+        encoder="the-real-encoder",
+    )
+    client = _ScriptedClient(json.dumps({"arguments": [_ASK_1]}))
+
+    result = run_map_ask(
+        brief_path,
+        map_dir=map_dir,
+        pin="testpin",
+        client=client,
+        encode=_fake_encode,
+        encoder_model="the-real-encoder",
+    )
+
+    assert result.pin == "testpin"
+    assert (map_dir / result.pin).is_dir()
+
+
+def test_run_map_ask_carries_the_corpus_resolved_default_pin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    brief_path = _write_brief(tmp_path, case="A case.", request="A question?")
+    map_dir = _write_map(
+        tmp_path,
+        "computed-pin-007",
+        [_position("pos-0001", _ASK_1)],
+        encoder="the-real-encoder",
+    )
+    monkeypatch.setattr(ask_module, "compute_corpus_pin", lambda *_a, **_k: "computed-pin-007")
+    client = _ScriptedClient(json.dumps({"arguments": [_ASK_1]}))
+
+    result = run_map_ask(
+        brief_path,
+        map_dir=map_dir,
+        client=client,
+        encode=_fake_encode,
+        encoder_model="the-real-encoder",
+    )
+
+    assert result.pin == "computed-pin-007"
+    assert (map_dir / result.pin).is_dir()
 
 
 def test_run_map_ask_raises_on_a_missing_pin_directory(tmp_path: Path) -> None:
