@@ -108,8 +108,8 @@ never a cap, a budget or a count of what more would fit, and an abstained
 Issue #629 also tried naming an EXHAUSTED result (`result.total ==
 result.count`, CAPPED's complement) and a REPEATed query (comparing each
 step's `(tool, args)` pair, modulo `limit`, against the trajectory so far)
-directly in the tool feedback. Both were reverted by issue #634 after a
-live paired measurement -- `axial ask`, before/after, three arms, same
+directly in the tool feedback. Both were reverted, on that same issue, after
+a live paired measurement -- `axial ask`, before/after, three arms, same
 corpus pin, same questions -- found the notes fired exactly as designed and
 changed nothing: a post-fix trajectory shows two steps in one run both
 labelled `EXHAUSTED + REPEAT of step 4`, and the model repeated anyway.
