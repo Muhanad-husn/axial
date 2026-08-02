@@ -19,7 +19,7 @@ from axial.pidguard import AlreadyRunningError
 from axial.analyze import run_examine
 from axial.analyze.synthesis import SynthesisError
 from axial.answer import AnswerError, run_brief
-from axial.answer.render import render_markdown
+from axial.answer.render import render_analyst_answer
 from axial.answer.run_report import format_run_report
 from axial.answer.usage_report import build_usage_report, format_usage_report, load_analysis_records
 from axial.artifacts import ArtifactsError, run_artifacts
@@ -27,6 +27,8 @@ from axial.ask import AskError as AskSessionError
 from axial.ask import Turn as AskTurn
 from axial.ask import ask as ask_question
 from axial.ask import new_session_id as new_ask_session_id
+from axial.ask.history import PastTurn, list_past_turns, load_turn
+from axial.ask.role import ANALYST, InvalidRoleError, current_role
 from axial.brief import BriefError, load_brief
 from axial.brief.interrogate import InterrogationError, interrogate, persist_interrogation
 from axial.brief.smoke import SMOKE_BRIEFS_DIR, format_smoke_summary, run_smoke
@@ -1429,6 +1431,27 @@ def build_parser() -> argparse.ArgumentParser:
             "to be prompted, and to keep the session open for follow-ups"
         ),
     )
+    ask_parser.add_argument(
+        "--list",
+        dest="list_past",
+        action="store_true",
+        help=(
+            "list past questions (issue #536): when each was asked, what "
+            "case, what happened, and the headline cross-book number -- "
+            "never spends money and never calls the engine"
+        ),
+    )
+    ask_parser.add_argument(
+        "--reopen",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "reopen past question N from `--list`'s own numbering (1 is "
+            "most recent) and render it exactly like a fresh answer -- "
+            "never spends money and never calls the engine"
+        ),
+    )
 
     return parser
 
@@ -2196,15 +2219,65 @@ def _ask_prompt(label: str) -> str | None:
 
 
 def _print_ask_turn(turn: AskTurn) -> int:
-    """Print one `axial ask` turn's answer: the rendered §7.10 markdown for
-    its own just-persisted record -- the same rendering `axial brief run`
-    already writes to `<brief_id>.md` -- so a question is answered in the
-    session itself, never only as a file path to go find (issue #534's own
-    "not a usable surface" complaint). `_print_encoding_safe`, never a bare
-    `print`, since the answer is real corpus prose (mirrors `_brief_run`)."""
-    _print_encoding_safe(render_markdown(turn.result.record))
+    """Print one `axial ask` turn's answer: the analyst-facing rendering
+    (issue #535, `render_analyst_answer`) of its own just-persisted record
+    and run report -- which books it drew on by title, how much of the
+    corpus it read and used, how well that corpus covers what it discusses,
+    how confident it is and why, and the cross-book headline -- so a
+    question is answered in the session itself, in plain language, never
+    only as a file path to go find (issue #534's own "not a usable surface"
+    complaint). `_print_encoding_safe`, never a bare `print`, since the
+    answer is real corpus prose (mirrors `_brief_run`). The persisted paths
+    still print below it for the operator/debugging case; an analyst never
+    needs to open either to trust the answer above them."""
+    _print_encoding_safe(render_analyst_answer(turn.result.record, turn.result.report))
     print(f"\npersisted: {turn.result.path}")
     print(f"run report: {turn.result.report_path}")
+    return 0
+
+
+def _format_past_turns(turns: list[PastTurn]) -> str:
+    """`axial ask --list` (issue #536): every past turn, most recently
+    asked first, numbered so `--reopen` never needs a `brief_id`."""
+    if not turns:
+        return "no past questions yet"
+    lines = []
+    for index, turn in enumerate(turns, start=1):
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(turn.asked_at))
+        headline = f"{turn.cross_source_rate:.0%}" if turn.cross_source_rate is not None else "n/a"
+        lines.append(
+            f"{index}. [{when}] case={turn.case!r} {turn.disposition} cross-book={headline}"
+        )
+        lines.append(f"     {turn.question}")
+    return "\n".join(lines)
+
+
+def _ask_list() -> int:
+    """List past questions (issue #536), never spending money: pure reads
+    over `<analyses_dir>`/`<runs_dir>`, no client constructed."""
+    _print_encoding_safe(_format_past_turns(list_past_turns()))
+    return 0
+
+
+def _ask_reopen(index: int) -> int:
+    """Reopen past question number `index` from `--list`'s own numbering
+    (1-based, most recent first) and render it exactly as commit 1 renders
+    a fresh answer (issue #536's own acceptance: "no knowledge of hashes or
+    paths"). Never spends money: no client is constructed on this path."""
+    turns = list_past_turns()
+    if index < 1 or index > len(turns):
+        print(
+            f"error: no past question numbered {index} (there are {len(turns)}); "
+            "run `axial ask --list` first",
+            file=sys.stderr,
+        )
+        return 1
+    loaded = load_turn(turns[index - 1].brief_id)
+    if loaded is None:
+        print("error: that question's record could not be re-read", file=sys.stderr)
+        return 1
+    record, report = loaded
+    _print_encoding_safe(render_analyst_answer(record, report))
     return 0
 
 
@@ -2222,7 +2295,13 @@ _ASK_ERRORS = (
 )
 
 
-def _ask(question: str | None, case: str | None) -> int:
+def _ask(
+    question: str | None,
+    case: str | None,
+    *,
+    list_past: bool = False,
+    reopen: int | None = None,
+) -> int:
     """`axial ask` (issue #534): a session over the plain `axial.ask.ask`
     function -- state the case, ask the question, watch the work happen in
     plain words (`_print_event`, the same rendering `axial brief run`
@@ -2233,7 +2312,16 @@ def _ask(question: str | None, case: str | None) -> int:
     already given, and keeps prompting for follow-ups until a blank line or
     EOF ends it. A follow-up is answered by `axial.ask.ask` as a full run of
     its own, carrying the previous turn's question and claims forward as
-    context -- never a chat turn answering from memory."""
+    context -- never a chat turn answering from memory.
+
+    `list_past`/`reopen` (issue #536) short-circuit before any client is
+    constructed -- neither ever spends money, both are pure reads over
+    already-persisted records (`axial.ask.history`)."""
+    if list_past:
+        return _ask_list()
+    if reopen is not None:
+        return _ask_reopen(reopen)
+
     one_shot = question is not None and case is not None
 
     if case is None:
@@ -3080,8 +3168,49 @@ def _key_check() -> int:
     return 0
 
 
+# The analyst role's whole reachable surface (issue #536, `plans/
+# multiuser-analyst-service/README.md`): `axial ask` (issue #534), nothing
+# else. `--version` is a top-level flag, not a subparser choice, so it is
+# untouched by this restriction either way.
+_ANALYST_ALLOWED_COMMANDS = frozenset({"ask"})
+
+
+def _restrict_parser_to_analyst_role(parser: argparse.ArgumentParser) -> None:
+    """Prune every subcommand but `ask` from `parser`'s own top-level
+    `_SubParsersAction` (issue #536): pruning `choices` (what `argparse`
+    rejects a `parser_name not in choices` dispatch against) and
+    `_choices_actions` (what the help formatter lists) with the same one
+    edit makes an excluded command neither listed in `--help` nor runnable.
+
+    This is a post-build prune, not a role parameter threaded through
+    `build_parser`'s own ~1500 lines of subcommand wiring: `src/axial/
+    cli.py` is hot (another builder edits it concurrently), and this way
+    the role never touches a single line inside that function -- this is
+    the one place it touches the parser at all."""
+    for action in parser._actions:
+        if not isinstance(action, argparse._SubParsersAction):
+            continue
+        for name in list(action.choices):
+            if name not in _ANALYST_ALLOWED_COMMANDS:
+                del action.choices[name]
+        action._choices_actions = [
+            choice_action
+            for choice_action in action._choices_actions
+            if choice_action.dest in _ANALYST_ALLOWED_COMMANDS
+        ]
+        return
+
+
 def main(argv: list[str] | None = None) -> int:
+    try:
+        role = current_role()
+    except InvalidRoleError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
     parser = build_parser()
+    if role == ANALYST:
+        _restrict_parser_to_analyst_role(parser)
     args = parser.parse_args(argv)
 
     if args.version:
@@ -3260,7 +3389,7 @@ def main(argv: list[str] | None = None) -> int:
         return _key_check()
 
     if args.command == "ask":
-        return _ask(args.question, args.case)
+        return _ask(args.question, args.case, list_past=args.list_past, reopen=args.reopen)
 
     if args.command == "status":
         return _status()

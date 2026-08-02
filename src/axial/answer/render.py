@@ -32,8 +32,15 @@ format other than markdown.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
+# Imported as a module, not by-name (mirrors `axial.vault`'s own
+# `SOURCE_META_DIR` resolution): `axial.conftest`'s autouse isolation
+# fixture monkeypatches `axial.intake.SOURCE_META_DIR` per test, and a
+# `from axial.intake import SOURCE_META_DIR` binding here would capture the
+# real, un-isolated path at import time instead.
+from axial import intake as _intake
 from axial.validators.coverage import NOT_MEASURED_BAND, confidence_ceiling_for_claim
 
 # The §7.4 claim-kind marker vocabulary this module renders -- stable and
@@ -174,6 +181,191 @@ def _render_source_usage(source_usage: dict[str, Any]) -> list[str]:
             f"{_format_ratio(entry.get('available_share'))} usage_ratio={entry.get('usage_ratio')}"
         )
     return lines
+
+
+# ---------------------------------------------------------------------------
+# The analyst-facing view (issue #535)
+# ---------------------------------------------------------------------------
+#
+# `render_markdown` above is the §7.10 operator/audit rendering: claims keyed
+# by `source_id`/`chunk_id`, ratios to three decimal places, a band with no
+# plain-language gloss. `render_analyst_answer` is a second, additive view
+# over the SAME two already-computed artifacts -- the persisted record and
+# the §7.15 run report (`axial.answer.run_report.build_run_report`) -- for a
+# reader who has not opened either JSON file and does not know what a
+# `source_id` is. It reads every figure straight off `report` or `record`;
+# it computes nothing a report field does not already state, so there is one
+# set of numbers, never two that could disagree. Cost stays off this view
+# entirely (never rendered here, in any form) -- it is an infrastructure
+# fact for the operator (`format_run_report`'s own job), not a property of
+# the answer.
+
+_ANALYST_KIND_LABELS = {
+    "a": "source-says",
+    "b": "cross-source",
+    "c": "analyst's judgment",
+}
+
+
+def _title_for_source(source_id: str, *, source_meta_dir: Any = None) -> str:
+    """`source_id`'s bibliographic title, or an honest `untitled (<id>)`
+    when no title was ever resolved -- never the id alone standing in for
+    a title (issue #535's own acceptance). Mirrors the three-state
+    contract `axial.paper.biblio._field` already applies to this same
+    persisted record (a resolved `{value, provenance}`, the `unavailable`
+    sentinel, or the `not_attempted` sentinel absent a read at all), rather
+    than raising on a missing record the way `axial.vault.read_source_meta`
+    does -- a write-path contract that is wrong for a read-only render: an
+    answer that refuses to print because one cited source lacks metadata
+    helps nobody."""
+    meta_dir = source_meta_dir if source_meta_dir is not None else _intake.SOURCE_META_DIR
+    path = _intake.source_meta_path(source_id, meta_dir)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        record = {}
+    raw = record.get("title", _intake.NOT_ATTEMPTED) if isinstance(record, dict) else None
+    title = raw.get("value") if isinstance(raw, dict) else raw
+    if (
+        isinstance(title, str)
+        and title.strip()
+        and title
+        not in (
+            _intake.UNAVAILABLE,
+            _intake.NOT_ATTEMPTED,
+        )
+    ):
+        return title
+    return f"untitled ({source_id})"
+
+
+def _render_analyst_header(record: dict[str, Any]) -> list[str]:
+    brief = record.get("brief") or {}
+    return [
+        f"**Case:** {brief.get('case', '')}",
+        f"**Question:** {brief.get('request', '')}",
+    ]
+
+
+def _render_analyst_claims(claims: list[dict[str, Any]]) -> list[str]:
+    lines = ["", "## Answer", ""]
+    if not claims:
+        lines.append("(no claims)")
+        return lines
+    for claim in claims:
+        label = _ANALYST_KIND_LABELS.get(claim.get("kind"), claim.get("kind") or "unlabeled")
+        lines.append(f"- [{label}] {claim.get('text', '')}")
+    return lines
+
+
+def _render_books_drawn_on(quality: dict[str, Any], *, source_meta_dir: Any) -> list[str]:
+    lines = ["", "## Which books it drew on", ""]
+    shares = quality.get("per_source_share") or {}
+    if not shares:
+        lines.append("(none -- no source was cited)")
+        return lines
+    for source_id, share in sorted(shares.items(), key=lambda item: item[1], reverse=True):
+        title = _title_for_source(source_id, source_meta_dir=source_meta_dir)
+        lines.append(f"- {title}: {share:.0%} of the answer's citations")
+    return lines
+
+
+def _render_passages_read_and_used(
+    operational: dict[str, Any], quality: dict[str, Any]
+) -> list[str]:
+    evidence = operational.get("evidence") or {}
+    precision = quality.get("retrieval_precision") or {}
+    assembled = evidence.get("assembled_count", 0)
+    cited = precision.get("cited_note_count", 0)
+    return [
+        "",
+        "## How much of the corpus it read",
+        "",
+        f"Read {assembled} passage(s) from the corpus; this answer actually cites {cited} of them.",
+    ]
+
+
+_ANALYST_BAND_WORDS = {"thin": "thin", "moderate": "moderate", "dense": "dense"}
+
+
+def _render_name_coverage(coverage_map: dict[str, dict[str, Any]]) -> list[str]:
+    lines = ["", "## How well the corpus covers what it discusses", ""]
+    if not coverage_map:
+        lines.append("(no name was both retrieved on and touched by a claim)")
+        return lines
+    for name in sorted(coverage_map):
+        entry = coverage_map[name]
+        band_word = _ANALYST_BAND_WORDS.get(
+            entry.get("coverage_band"), entry.get("coverage_band") or "unknown"
+        )
+        lines.append(
+            f"- {name}: {band_word} coverage ({entry.get('evidence_note_count')} of "
+            f"{entry.get('corpus_note_count')} corpus passage(s) on this name were used)"
+        )
+    return lines
+
+
+def _render_analyst_confidence(confidence: dict[str, Any]) -> list[str]:
+    # Reuses the same section `render_markdown` already renders -- band and
+    # rationale are already plain language, and there is no second way to
+    # compute either.
+    return _render_confidence(confidence)
+
+
+def _render_cross_book_headline(quality: dict[str, Any]) -> list[str]:
+    lines = ["", "## How much of this is genuinely cross-book", ""]
+    cross = quality.get("cross_source_rate") or {}
+    value = cross.get("value")
+    if value is None:
+        reason = cross.get("reason", "not measured")
+        lines.append(f"Not measured: {reason}")
+        return lines
+    lines.append(
+        f"{value:.0%} of the claims that combine two or more sources actually did "
+        f"({cross.get('numerator')} of {cross.get('denominator')}) -- the number that says "
+        "whether this answer did the thing this product exists to do."
+    )
+    return lines
+
+
+def render_analyst_answer(
+    record: dict[str, Any],
+    report: dict[str, Any],
+    *,
+    source_meta_dir: Any = None,
+) -> str:
+    """The analyst-facing rendering of one `axial ask` turn (issue #535):
+    the answer printed where it was asked, then what stands behind it in
+    plain language -- which books it drew on (by title), how many passages
+    it read versus actually cites, how well the corpus covers each name it
+    discusses, how confident it is and why, and the cross-book rate that
+    says whether the answer did the thing this product exists to do.
+
+    `record` is the persisted §7.3 record; `report` is the §7.15 run report
+    built from it (`axial.answer.run_report.build_run_report`) -- every
+    figure below is read from one of the two, never recomputed, so there is
+    one set of numbers, not two that could disagree. Cost never appears
+    here in any form (it is `format_run_report`'s own job, for the
+    operator). `source_meta_dir` resolves each cited source to its title; a
+    source with no metadata record, or whose title was never resolved, is
+    named honestly as untitled rather than falling back to its id alone."""
+    interrogation = record.get("interrogation") or {}
+    disposition = interrogation.get("disposition")
+    operational = report.get("operational") or {}
+    quality = report.get("response_quality") or {}
+
+    lines = _render_analyst_header(record)
+    if disposition == "refuse":
+        lines += _render_refusal(record)
+        return "\n".join(lines) + "\n"
+
+    lines += _render_analyst_claims(record.get("claims") or [])
+    lines += _render_books_drawn_on(quality, source_meta_dir=source_meta_dir)
+    lines += _render_passages_read_and_used(operational, quality)
+    lines += _render_name_coverage(record.get("coverage_map") or {})
+    lines += _render_analyst_confidence(record.get("confidence") or {})
+    lines += _render_cross_book_headline(quality)
+    return "\n".join(lines) + "\n"
 
 
 def render_markdown(record: dict[str, Any]) -> str:
