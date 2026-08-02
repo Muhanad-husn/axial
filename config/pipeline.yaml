@@ -120,6 +120,11 @@ llm:
     # "violence is shaped by social, strategic and political processes";
     # with it on, the same bag correctly split into the two accounts.
     position_extract: high
+    # Argument-map relate pass (issue #572, PR 2 of 4): ON, same profile as
+    # `position_extract` above -- deciding how two positions actually
+    # stand to one another, with no menu of relation types to pick from,
+    # is the same underdetermined judgment call.
+    position_relate: high
   # Per-pass SAMPLING TEMPERATURE (§7.9, issue #416): the third per-pass
   # block, same shape and same resolution as the two around it
   # (src/axial/llm.py's OpenRouterClient reads it via

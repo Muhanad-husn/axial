@@ -515,35 +515,39 @@ def build_parser() -> argparse.ArgumentParser:
     map_parser = subparsers.add_parser(
         "map",
         help=(
-            "the argument map's position layer (issue #572, PR 1 of 4): "
-            "'build' selects argument-bearing passages out of data/answers/, "
-            "bags them by claim similarity (local encoder, zero model calls), "
-            "extracts the arguments each bag actually holds (one blind model "
-            "call per author-spread slice), and merges near-duplicate "
-            "namings -- writing data/map/<corpus content hash>/{positions.jsonl,"
-            "map.json,reads.jsonl}"
+            "the argument map (issue #572, PRs 1-2 of 4): 'build' selects "
+            "argument-bearing passages out of data/answers/, bags them by "
+            "claim similarity (local encoder, zero model calls), extracts "
+            "the arguments each bag actually holds (one blind model call per "
+            "author-spread slice), merges near-duplicate namings into "
+            "positions, then groups positions into neighbourhoods and relates "
+            "each neighbourhood in one further blind model call -- writing "
+            "data/map/<corpus content hash>/{positions.jsonl,relations.jsonl,"
+            "map.json,reads.jsonl,relation_reads.jsonl}"
         ),
     )
     map_subparsers = map_parser.add_subparsers(dest="map_command")
     map_build_parser = map_subparsers.add_parser(
         "build",
         help=(
-            "run all four steps (select, bag, extract, merge) and pin the "
-            "result to the corpus's own content hash; resumable by "
-            "(bag, slice) via reads.jsonl, and refuses to start a second "
-            "copy over the same pin while an earlier one is still running"
+            "run both stages (positions, then relations) and pin the result "
+            "to the corpus's own content hash; each stage is independently "
+            "resumable (positions by (bag, slice) via reads.jsonl, relations "
+            "by neighbourhood via relation_reads.jsonl), and the command "
+            "refuses to start a second copy over the same pin while an "
+            "earlier one is still running"
         ),
     )
     map_build_parser.add_argument(
         "--force",
         action="store_true",
         help=(
-            "re-read everything under the current pin instead of resuming "
-            "(issue #572 follow-up: the pin is content-only, so a prompt or "
-            "model-tier change alone would otherwise resume under the old "
-            "prompt's ledger). Moves the existing reads.jsonl aside to a "
-            "timestamped sibling rather than deleting it -- a paid ledger "
-            "is never destroyed by this flag"
+            "re-read everything under the current pin instead of resuming, "
+            "for both stages (issue #572 follow-up: the pin is content-only, "
+            "so a prompt or model-tier change alone would otherwise resume "
+            "under the old prompt's ledger). Moves each stage's own existing "
+            "ledger aside to a timestamped sibling rather than deleting it -- "
+            "a paid ledger is never destroyed by this flag"
         ),
     )
     map_build_parser.add_argument(
@@ -2129,6 +2133,21 @@ def _format_map_build_summary(manifest: dict[str, Any]) -> str:
     ]
     for key, value in counts.items():
         lines.append(f"- {key}: {value}")
+
+    relations = manifest.get("relations")
+    if relations is not None:
+        lines += [
+            "",
+            "## relations",
+            "",
+            f"model: {relations['model']} (reasoning={relations['reasoning']})",
+            f"cost: ${relations['cost_usd']:.4f}"
+            if relations["cost_usd"] is not None
+            else "cost: unpriced",
+            "",
+        ]
+        for key, value in relations["counts"].items():
+            lines.append(f"- {key}: {value}")
     return "\n".join(lines) + "\n"
 
 
@@ -2139,11 +2158,12 @@ def _map_build(
     root: Path | None = None,
     clock: Callable[[], str] | None = None,
 ) -> int:
-    """`axial map build` (issue #572, PR 1 of 4): wrapped in a run-logging
+    """`axial map build` (issue #572, PRs 1-2 of 4): wrapped in a run-logging
     context like every other pass -- one `run.jsonl` record for the whole
-    build, `console.log` teed with real-time per-read progress, and
-    (uniquely to this pass, see `_format_map_build_summary`) a real
-    `summary.md` carrying the measured cost, not just the header stub."""
+    build (both stages), `console.log` teed with real-time per-read
+    progress, and (uniquely to this pass, see `_format_map_build_summary`) a
+    real `summary.md` carrying the measured cost, not just the header
+    stub."""
     with run_context("map-build", root=root, clock=clock) as run:
         start = time.monotonic()
         try:
@@ -2185,6 +2205,12 @@ def _map_build(
         print(f"{key}: {manifest[key]}")
     for key, value in manifest["counts"].items():
         print(f"{key}: {value}")
+    relations = manifest.get("relations")
+    if relations is not None:
+        print(f"relations model: {relations['model']} (reasoning={relations['reasoning']})")
+        print(f"relations cost_usd: {relations['cost_usd']}")
+        for key, value in relations["counts"].items():
+            print(f"relations {key}: {value}")
     return 0
 
 
