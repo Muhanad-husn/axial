@@ -105,35 +105,22 @@ extra read affordable per id (timed in the PR body). Same discipline as
 never a cap, a budget or a count of what more would fit, and an abstained
 `claim` is marked, never shown as if it were an answer (issue #489).
 
-`is_thin_result`'s THIN note tells a model a result is small; it never told
-the model whether asking again with a bigger `limit` could help (issue
-#629). Replaying 10 persisted `ask`/`brief run` records: 135 retrieval turns,
-23 of them repeats (17%), and 21 of those 23 (91%) re-asked a query whose
-earlier call had already returned `result.total == result.count` -- a
-result that IS the whole set, where a bigger `limit` returns nothing more.
-The worst run issued `where_names_meet(canonical='Syria', other='Mandate
-System')` five times, differing only in `limit` (20, 15, 10, 15, 20), each
-returning the same `2 of 2 total`. `capped`'s complement, `exhausted`
-(`result.total is not None and result.total == result.count`), states
-exactly that, alongside a THIN note when the result is also small, never
-replacing it -- a thin-and-exhausted result needs both facts read together.
-The two are mutually exclusive by construction: one requires `total >
-count`, the other `total == count`.
-
-A repeated call is now also named directly (`_repeated_step`): when a
-step's `(tool, args)` pair -- compared modulo `limit`, since every observed
-repeat differed only there -- matches an earlier step this run, the
-feedback cites that step's number. This covers what `exhausted` cannot: an
-empty result carries `total: None` for most tools (only `get_name`/
-`who_cites`/`who_argues_against`/`where_names_meet`/`get_chunk` ever set
-it), so 4 of the 23 measured repeats -- re-asking a query that had already
-returned zero -- would get no exhaustion signal at all; one run re-asked
-the same empty query three times running. Stated as fact only, never an
-instruction ("step 3 asked the same query and already returned this"),
-matching `is_thin_result`'s own rule that the decision stays the model's.
-Computed off the trajectory the loop already builds -- no new state, and
-the §7.6 log itself is untouched, the same way #517's round-robin reduction
-leaves it alone.
+Issue #629 also tried naming an EXHAUSTED result (`result.total ==
+result.count`, CAPPED's complement) and a REPEATed query (comparing each
+step's `(tool, args)` pair, modulo `limit`, against the trajectory so far)
+directly in the tool feedback. Both were reverted, on that same issue, after
+a live paired measurement -- `axial ask`, before/after, three arms, same
+corpus pin, same questions -- found the notes fired exactly as designed and
+changed nothing: a post-fix trajectory shows two steps in one run both
+labelled `EXHAUSTED + REPEAT of step 4`, and the model repeated anyway.
+Repeats rose from 5 of 37 turns (14%) to 8 of 40 (20%), every arm up by
+one. Replaying the runs found every repeat sat on a name with no better
+route visible: one run re-read a 19-note name three times while a 55-note,
+8-source name that would have helped was never offered to it (a resolver
+gap, issue #632); the other two re-asked intersections that return zero
+either way. A repeat is downstream of what the name layer offers, not of
+the loop forgetting what it already asked, so naming it here bought
+nothing.
 
 Issue #629's third fix sits one layer down, in `axial.retrieve.tools.
 _get_chunk`: a batch id that fails to resolve is now skipped and named
@@ -203,25 +190,6 @@ def is_thin_result(result_count: int, floor: int) -> bool:
     itself (that decision stays the model's, per the plan's own
     "a non-thin result does not force a re-query" rule)."""
     return result_count < floor
-
-
-def _repeated_step(
-    trajectory: list[dict[str, Any]], tool_name: str | None, args: dict[str, Any]
-) -> int | None:
-    """The earlier step, if any, that already issued this `(tool_name, args)`
-    pair this run -- compared modulo `limit`, since every repeat measured for
-    issue #629 differed only there (`where_names_meet(canonical='Syria',
-    other='Mandate System')` re-asked five times, `limit` cycling 20, 15, 10,
-    15, 20). `None` the first time a query is asked. Pure: reads only the
-    trajectory already built, no new state beyond it."""
-    comparable = {key: value for key, value in args.items() if key != "limit"}
-    for entry in trajectory:
-        if entry.get("tool") != tool_name:
-            continue
-        earlier = {key: value for key, value in (entry.get("args") or {}).items() if key != "limit"}
-        if earlier == comparable:
-            return entry["step"]
-    return None
 
 
 def _looking_for_phrase(tool_name: str | None, args: dict[str, Any]) -> str:
@@ -363,16 +331,6 @@ def run_retrieval_loop(
             names_dir=names_dir,
         )
         capped = result.total is not None and result.total > result.count
-        # `exhausted` is `capped`'s complement (issue #629): `total == count`
-        # means this result IS the whole set behind the query, not a window
-        # onto more. The two can never both be true -- one needs `total >
-        # count`, the other `total == count` -- so at most one of their notes
-        # below ever fires.
-        exhausted = result.total is not None and result.total == result.count
-        # A repeat is detected against the trajectory as it stood BEFORE this
-        # step (issue #629): the earlier call, if any, that asked the same
-        # `(tool, args)` pair modulo `limit`.
-        repeat_step = _repeated_step(trajectory, tool_name, args)
         emit_event(
             on_event,
             _turn_outcome_message(tool_name, args, result.count, result.total if capped else None),
@@ -415,18 +373,15 @@ def run_retrieval_loop(
         # ignores prompt content entirely for its OWN choice of next call,
         # but a `record`-provider test can still observe this text (issue
         # #254's own seam). A dispatch error is surfaced verbatim. Otherwise
-        # up to three independent notes are appended: a THIN note (§4,
-        # `is_thin_result`) flags a low `result_count` so the model considers
-        # a broadened re-query; then exactly one of CAPPED (issue #505) or
-        # EXHAUSTED (issue #629), since they are mutually exclusive -- CAPPED
-        # states the true total beside the ids so the model can deliberately
-        # re-ask with a larger `limit`, EXHAUSTED states that this result IS
-        # the whole set, so a larger `limit` would not help and broadening
-        # means a different query; and a REPEAT note (issue #629) names the
-        # earlier step this exact query (modulo `limit`) already asked, when
-        # there is one -- fires independently of THIN/CAPPED/EXHAUSTED, since
-        # a repeat of an empty result carries no `total` at all. A plain
-        # result with none of these carries just its ids, same as slice 01.
+        # up to two independent notes are appended, since a small caller-
+        # chosen `limit` can be BOTH below `thin_result_floor` AND capped
+        # below `result.total` at once: a THIN note (§4, `is_thin_result`)
+        # flags a low `result_count` so the model considers a broadened
+        # re-query, and a CAPPED note (issue #505) states the true total
+        # beside the ids so the model can deliberately re-ask with a larger
+        # `limit` instead of mistaking a window for the whole corpus. A
+        # plain result with neither note carries just its ids, same as
+        # slice 01.
         if result.error is not None:
             tool_feedback = result.error
         else:
@@ -438,16 +393,6 @@ def run_retrieval_loop(
             if capped:
                 notes.append(
                     f"{result.count} of {result.total} total -- re-ask with a larger limit for more"
-                )
-            if exhausted:
-                notes.append(
-                    "EXHAUSTED: this is everything behind this query -- a larger limit will not "
-                    "return more; broadening means asking something different, not a bigger number"
-                )
-            if repeat_step is not None:
-                notes.append(
-                    f"REPEAT: step {repeat_step} asked the same query (limit aside) and already "
-                    "returned this"
                 )
             if notes:
                 tool_feedback = (
