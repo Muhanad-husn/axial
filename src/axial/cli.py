@@ -9,6 +9,10 @@ from typing import Any, Callable
 
 import axial
 from axial.analyze import format_examine_report as format_brief_examine_report
+from axial.argmap.build import MapError
+from axial.argmap.build import PASS_NAME as MAP_BUILD_PASS_NAME
+from axial.argmap.build import run_map_build
+from axial.pidguard import AlreadyRunningError
 from axial.analyze import run_examine
 from axial.analyze.synthesis import SynthesisError
 from axial.answer import AnswerError, run_brief
@@ -505,6 +509,29 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="as_json",
         help="machine-readable JSON array instead of the human-readable report",
+    )
+
+    map_parser = subparsers.add_parser(
+        "map",
+        help=(
+            "the argument map's position layer (issue #572, PR 1 of 4): "
+            "'build' selects argument-bearing passages out of data/answers/, "
+            "bags them by claim similarity (local encoder, zero model calls), "
+            "extracts the arguments each bag actually holds (one blind model "
+            "call per author-spread slice), and merges near-duplicate "
+            "namings -- writing data/map/<corpus content hash>/{positions.jsonl,"
+            "map.json,reads.jsonl}"
+        ),
+    )
+    map_subparsers = map_parser.add_subparsers(dest="map_command")
+    map_subparsers.add_parser(
+        "build",
+        help=(
+            "run all four steps (select, bag, extract, merge) and pin the "
+            "result to the corpus's own content hash; resumable by "
+            "(bag, slice) via reads.jsonl, and refuses to start a second "
+            "copy over the same pin while an earlier one is still running"
+        ),
     )
 
     gold_parser = subparsers.add_parser("gold", help="gold-set (Academic labeling) operations")
@@ -2058,6 +2085,81 @@ def _names_escalations(
     return 0
 
 
+def _format_map_build_summary(manifest: dict[str, Any]) -> str:
+    """The real narrative `_map_build` overwrites `run_context`'s summary.md
+    stub with (issue #572: "a 27-minute paid pass ... cost recorded") --
+    every other pass leaves that file an operator-authored stub, but this
+    one's own cost is exactly the thing a founder needs on disk without
+    re-deriving it from `map.json`."""
+    counts = manifest["counts"]
+    lines = [
+        "# Run: map-build",
+        "",
+        f"corpus pin: {manifest['corpus_pin']}",
+        f"model: {manifest['model']} (reasoning={manifest['reasoning']})",
+        f"cost: ${manifest['cost_usd']:.4f}"
+        if manifest["cost_usd"] is not None
+        else "cost: unpriced",
+        f"wall time: {manifest['wall_time_sec']:.1f}s",
+        "",
+        "## counts",
+        "",
+    ]
+    for key, value in counts.items():
+        lines.append(f"- {key}: {value}")
+    return "\n".join(lines) + "\n"
+
+
+def _map_build(*, root: Path | None = None, clock: Callable[[], str] | None = None) -> int:
+    """`axial map build` (issue #572, PR 1 of 4): wrapped in a run-logging
+    context like every other pass -- one `run.jsonl` record for the whole
+    build, `console.log` teed with real-time per-read progress, and
+    (uniquely to this pass, see `_format_map_build_summary`) a real
+    `summary.md` carrying the measured cost, not just the header stub."""
+    with run_context("map-build", root=root, clock=clock) as run:
+        start = time.monotonic()
+        try:
+            client = get_client()
+        except LLMError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        def _tee(message: str) -> None:
+            print(message, flush=True)
+            run.logger.info(message)
+
+        try:
+            manifest = run_map_build(client=client, log=_tee)
+        except (MapError, AlreadyRunningError, LLMError, CorpusPinError) as exc:
+            run.record(
+                source_id="",
+                pass_name=MAP_BUILD_PASS_NAME,
+                model=None,
+                status="error",
+                duration_sec=time.monotonic() - start,
+                error=str(exc),
+            )
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        run.record(
+            source_id=manifest["corpus_pin"],
+            pass_name=MAP_BUILD_PASS_NAME,
+            model=manifest["model"],
+            status="ok",
+            duration_sec=time.monotonic() - start,
+            error=None,
+        )
+        summary_path = run.run_dir / "summary.md"
+
+    summary_path.write_text(_format_map_build_summary(manifest), encoding="utf-8")
+    for key in ("corpus_pin", "model", "reasoning", "cost_usd", "wall_time_sec"):
+        print(f"{key}: {manifest[key]}")
+    for key, value in manifest["counts"].items():
+        print(f"{key}: {value}")
+    return 0
+
+
 def _distill_classify(axis: str) -> int:
     try:
         if axis in DISTILL_CLASSIFY_EMBEDDING_AXES:
@@ -2233,6 +2335,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "names" and args.names_command == "escalations":
         return _names_escalations(args.decisions_path, args.inventory_path, args.as_json)
+
+    if args.command == "map" and args.map_command == "build":
+        return _map_build()
 
     if args.command == "artifacts":
         return _artifacts(args.source_path)

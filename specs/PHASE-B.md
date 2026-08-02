@@ -548,6 +548,46 @@ It is a separate artifact rather than a field, because §7.3's record shape is l
 
 **No threshold is asserted on any of these.** They are disclosed and joined across runs; §10 owns what gates. A metric here becomes a gate only under the discipline §7.13 states: inspect the distribution, find a threshold that separates what the founder judges good from what he judges bad, then set it.
 
+### 7.16 The argument map: positions (issue #572) **[TENTATIVE]**
+
+**What it is.** Retrieval keyed on the name layer alone (§7.5) reaches a passage only through a proper noun it happens to mention, and issue #572's own stage-0 measurement found the resulting map dense enough to matter: 5,734 argument-bearing passages compress to 685 distinct arguments at the grain this section fixes, a third of which are genuine meetings across two or more authors and carry 64% of all passages. The **position layer** groups passages that make the same argument, once, offline, into a **position**: the unit a question can land on directly instead of hoping the right name was mentioned. This section owns the build (four steps below, `axial map build`, `src/axial/argmap/`); the door, the landing, the corridor, and relations between positions are a later slice of the same issue and are not specified here.
+
+**Four steps, one command, over the corpus's own answer records (`data/answers/*.jsonl`, §7.15 of `specs/PRODUCT.md`).**
+
+1. **Select** — every passage whose `claim` is not abstained, that sits before its own source's back-matter boundary (`axial.names.load_back_matter_sections`, the already-validated D-line rule), and that does not abstain on every one of `mechanism`, `comparison`, `concedes`, `assumes`, `position_of`, `ranges_over` — a passage silent on all six argues nothing (bibliography, acknowledgements, method throat-clearing that happened to resemble other claims in wording).
+2. **Bag** — a local sentence-transformer (`sentence-transformers/all-MiniLM-L6-v2`) clusters passages by their own `claim`'s cosine similarity (`AgglomerativeClustering`, no fixed cluster count, average linkage), zero model calls. This is the grain decision issue #572's stage-0 measurement calls out by name: 1,636 positions at a tight threshold, 234 at a loose one, on the same corpus — no correct number is hiding in the data, the grain is a stated choice, not a fitted one.
+3. **Extract** — every bag read in full, never sampled, in author-spread slices bounded so a big bag's context is never exceeded, one model call per slice, reasoning on: the model names every argument that RECURS across passages the bag merely resembles each other by wording, and is told explicitly that producing roughly as many arguments as passages is a failed read (restating passages, not finding what recurs between them). **Blind, deliberately**: the claim listing carries a bare handle only (`[p7] <claim>`), never the source's author — the one point where this section's port of its own measured scratchpad run departs from it on purpose, because authorship visible during extraction would let it help decide what meets, which would make the later cross-author balance count (§7.13's `source_usage` sibling, applied to positions rather than to claims) measure its own input rather than the corpus. A handle the model invents is dropped, never repaired, mirroring the grounds-resolution discipline of §7.4.
+4. **Merge** — the same argument is routinely named from more than one bag; a second clustering pass over the extracted arguments' own sentences folds near-duplicate namings together. A merged position keeps every raw phrasing (`variants`), the union of its passages, sources and authors, and how many times it was independently named (`named_times`) — a high `named_times` is itself a signal of how settled an argument is across the corpus, not merely a deduplication artifact to discard.
+
+**The position record.** One per merged position, in `positions.jsonl`:
+
+```
+{
+  position_id,       # stable, e.g. "pos-0001" -- assigned by sorting deterministically
+                      # (descending size, then alphabetically by argument) before stamping,
+                      # so two builds of the SAME corpus assign the SAME ids regardless of
+                      # thread-completion order
+  argument,          # one sentence, in the passages' own terms -- the largest-membership
+                      # phrasing, alphabetical tiebreak
+  variants,          # every raw phrasing that folded into this position, sorted
+  chunk_ids,         # every passage carrying this argument
+  sources,           # distinct source_ids
+  authors,           # distinct authors
+  size,              # count of distinct chunk_ids
+  named_times        # how many raw (pre-merge) positions folded into this one
+}
+```
+
+Relations between positions (§7.16's own follow-on slice) key on `position_id`, never on the argument sentence — a scratchpad draft of this pass rejoined relations through a sentence-to-index dictionary, which silently drops any relation whose sentence was not unique across positions.
+
+**The build manifest and resume ledger.** `map.json` carries the corpus pin, counts at every step (passages selected, bags, reads, raw positions, merged positions, passages placed, passages unassigned, failed reads), the model and reasoning tier the extraction pass ran at, measured token usage and dollar cost, and wall time. `reads.jsonl` is the resume ledger for the extraction pass: one record per `(bag, slice)` model call, appended and flushed the instant it returns — never held in memory and written once at the end — so a restart skips whatever is already on disk. A stage-1 build over 31 sources was measured at 705 calls, 27 minutes wall clock at 20 concurrent workers, $0.47; the whole build (with the relation pass this section does not yet specify) came to $0.75 and 45 minutes. A pass that costs real money and runs that long must survive an interruption without discarding a single paid call, which is what the ledger is for.
+
+**The pin is the corpus's own content hash, and nothing else — the opposite of this codebase's usual content-keyed convention, and deliberately so.** `axial.eval.corpus_pin`'s committed manifest (§7.12) folds in `ingest_code_sha` (the axial checkout's own git HEAD) and the vault snapshot hash (the name layer, downstream of this pass, not input to it); reusing that whole pin here would force a rebuild on an unrelated code commit or a prompt/model tweak to this very pass, at $0.75 and 45 minutes a rebuild. The position layer's own pin (`axial.argmap.build.compute_corpus_pin`) covers only the raw source content — `source_id`/`content_hash` pairs, the same primitive the committed manifest's own `sources` field is built from — so a rebuild fires when the corpus itself changes and does not fire when this pass's prompt, model, or reasoning tier changes. `gather`/`merge_names`'s own decision logs key on the rendered prompt for the opposite reason (a wording change re-asks the corpus); both are correct for what each protects.
+
+**Single-instance guard (`axial.pidguard`).** A long, paid, resumable pass must be findable and killable independently of the shell that launched it: `uv run python` on Windows spawns a child process that survives its own bash wrapper being killed, and an orphaned copy has, in practice, kept spending against a stale prompt while the operator believed the run had stopped. `axial map build` refuses to start a second time over the same pin directory while a PID file it wrote names a still-live process, and clears that file on a clean finish.
+
+**Not yet specified here.** Relations between positions (no menu of relation types, blind, neighbourhoods rather than all-pairs), the door (question → contestable arguments), the landing (arguments matched against positions by meaning), the corridor (relation-reached positions pulled in), and the assembly order that is the real retrieval — all later slices of issue #572, each binding to the artifact contract above once it ships.
+
 ---
 
 ## 8. Requirements
