@@ -31,7 +31,7 @@ from typing import Any
 from axial.paper.biblio import build_bibliography, source_ids_for_claims
 from axial.paper.brief import PaperBrief
 from axial.paper.citations import build_citation_index, markers_in, reduce_to_cited
-from axial.paper.claims import assert_ceilings, carried_claim, new_b_claim
+from axial.paper.claims import assert_ceilings, carried_claim, new_b_claim, new_c_claim
 from axial.paper.coverage import build_coverage_map, overall_confidence
 from axial.paper.draft import assign_claim_ids, draft_section, remap_local_ids
 from axial.paper.intake import PaperIntake, run_intake
@@ -43,8 +43,9 @@ from axial.paths import ANALYSES_DIR
 # Where a paper record and its rendered markdown land (§6, §7.3).
 PAPERS_DIR = Path("data/papers")
 
-# New (b) claim ids continue the same `pc-NNN` sequence as carried claims, so
-# one namespace covers both and a marker never has to say which it is.
+# New (b)/(c) claim ids continue the same `pc-NNN` sequence as carried
+# claims, so one namespace covers all three and a marker never has to say
+# which it is.
 _NEW_CLAIM_PREFIX = "pc"
 
 
@@ -121,9 +122,10 @@ def build_claims(
 ) -> list[dict[str, Any]]:
     """Every CARRIED claim the plan assigns, in plan order (§7.4).
 
-    New (b) claims are not built here: they do not exist until a section has
-    been drafted, and they are appended one section at a time by `run_paper`
-    so that each drafting call can reason across what earlier ones produced."""
+    New (b) and (c) claims are not built here: they do not exist until a
+    section has been drafted, and they are appended one section at a time by
+    `run_paper` so that each drafting call can reason across what earlier
+    ones produced."""
     claim_ids = assign_claim_ids(plan)
     inventory = intake.by_key()
     section_of = {
@@ -180,9 +182,8 @@ def run_paper(
         drafts.append(draft)
 
         for proposed in draft.new_claims:
-            claim = new_b_claim(
-                proposed.local_id, proposed.text, list(proposed.derived_from), by_id
-            )
+            build = new_c_claim if proposed.kind == "c" else new_b_claim
+            claim = build(proposed.local_id, proposed.text, list(proposed.derived_from), by_id)
             claim["section_id"] = draft.section_id
             claims.append(claim)
             by_id[claim["paper_claim_id"]] = claim
