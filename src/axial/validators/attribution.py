@@ -15,15 +15,21 @@ claim:
    `axial.query.reader.get_chunk`, `ref_type: artifact` via `get_artifact`
    (`unresolvable_grounds` for a miss or an unknown `ref_type`). A `c` claim
    is never grounds-checked (§7.4: "may carry partial or empty grounds").
-3. **(b)-seam honesty check.** One bounded model call, over every `kind: b`
-   claim that passed 1-2, asks an INDEPENDENT model (never the generating
-   one) whether the claim's text reads as a source assertion rather than
-   the tool's own cross-source inference (§7.9). Skipped entirely -- zero
-   model calls -- when the record carries no `b` claim. Runs under
-   `ATTRIBUTION_PASS_NAME`, a `pass_name` distinct from
-   `SYNTHESIZE_PASS_NAME`; `model_by_pass` MUST resolve the two to different
-   models, or `SamePassModelError` raises before any call is made (the
-   generating model must never grade its own attribution).
+3. **(b)/(c)-seam honesty check.** One bounded model call, over every `kind:
+   b` claim that passed 1-2 AND every `kind: c` claim that passed 1 (a `c`
+   claim is never grounds-checked, so passing 1 is enough), asks an
+   INDEPENDENT model (never the generating one) two questions in the same
+   call: whether a (b) claim's text reads as a source assertion rather than
+   the tool's own cross-source inference, and whether a (c) claim's text
+   attributes the analyst's own verdict to a source (§7.9, §7.4: "a `c`
+   claim... must still never be voiced as though a source asserted it").
+   Skipped entirely -- zero model calls -- when the record carries neither a
+   `b` claim nor a `c` claim. Runs under `ATTRIBUTION_PASS_NAME`, a
+   `pass_name` distinct from `SYNTHESIZE_PASS_NAME`; `model_by_pass` MUST
+   resolve the two to different models, or `SamePassModelError` raises
+   before any call is made (the generating model must never grade its own
+   attribution). One judge, one call, two labelled prompt blocks and two
+   response lists -- not a second judge seam (issue #589).
 
 A record with `disposition: refuse` carries an empty `claims` list (§7.2)
 and passes vacuously -- there is nothing to check.
@@ -70,6 +76,7 @@ REASON_MISSING_KIND = "missing_kind"
 REASON_EMPTY_GROUNDS = "empty_grounds"
 REASON_UNRESOLVABLE_GROUNDS = "unresolvable_grounds"
 REASON_B_SEAM_VOICED_AS_SOURCE = "b_seam_voiced_as_source"
+REASON_C_SEAM_VOICED_AS_SOURCE = "c_seam_voiced_as_source"
 
 
 class AttributionValidatorError(Exception):
@@ -77,7 +84,7 @@ class AttributionValidatorError(Exception):
 
 
 class AttributionCheckFailedError(AttributionValidatorError):
-    """Raised when the bounded (b)-seam model call itself fails: a
+    """Raised when the bounded (b)/(c)-seam model call itself fails: a
     transport error, or a response that never parsed as usable JSON within
     `complete_json`'s bounded re-ask budget."""
 
@@ -221,87 +228,177 @@ def _distinct_source_ids(grounds: list[dict[str, Any]], *, vault_dir: Path | Non
     return source_ids
 
 
-def _compose_b_seam_prompt(claims_b: list[dict[str, Any]]) -> str:
-    """Assemble the bounded (b)-seam check prompt: every kind-`b` claim's
-    `claim_id`/text alongside the distinct source ids its own `grounds`
-    draw on, asking an independent model whether the text reads as one of
-    those sources' own assertion rather than the tool's disclosed
-    cross-source inference. One call for the whole batch -- "bounded" per
-    §7.9, not one call per claim.
+def _render_seam_claim(claim: dict[str, Any]) -> str:
+    source_ids = claim["source_ids"]
+    count = len(source_ids)
+    noun = "source" if count == 1 else "sources"
+    listed = ", ".join(source_ids) if source_ids else "none resolved"
+    return (
+        f"- claim_id={claim['claim_id']} (grounds: {count} distinct {noun} -- "
+        f'{listed}): "{claim["text"]}"'
+    )
 
-    The source ids are the discriminator the rule itself names (§7.9: a
-    (b) claim "must NEVER read as though a single source directly asserted
-    it") -- without them the judge cannot tell a multi-source synthesis
-    from a single-source assertion and falls back to flagging declarative
-    voice in general, regardless of how many sources actually ground the
-    claim."""
 
-    def _render(claim: dict[str, Any]) -> str:
-        source_ids = claim["source_ids"]
-        count = len(source_ids)
-        noun = "source" if count == 1 else "sources"
-        listed = ", ".join(source_ids) if source_ids else "none resolved"
-        return (
-            f"- claim_id={claim['claim_id']} (grounds: {count} distinct {noun} -- "
-            f'{listed}): "{claim["text"]}"'
+def _compose_seam_prompt(claims_b: list[dict[str, Any]], claims_c: list[dict[str, Any]]) -> str:
+    """Assemble the bounded (b)/(c)-seam check prompt: one call, one or two
+    labelled blocks depending on which of `claims_b`/`claims_c` is
+    non-empty (the caller only reaches here with at least one), each with
+    its own question and its own response list -- not a second judge seam
+    (issue #589). Every claim in either block carries its `claim_id`/text
+    alongside the distinct source ids its own `grounds` draw on.
+
+    The (b) question's discriminator is the count of distinct grounds
+    source ids (§7.9: a (b) claim "must NEVER read as though a single
+    source directly asserted it") -- without it the judge cannot tell a
+    multi-source synthesis from a single-source assertion and falls back to
+    flagging declarative voice in general. **That discriminator does not
+    exist for a (c) claim**: §7.4 permits a (c) claim -- this analysis's own
+    verdict -- to carry partial or empty grounds, so the (c) question asks
+    something adjacent but different: does the TEXT credit a source with
+    reaching the verdict, rather than stating it as the analyst's own.
+    Without saying positively that first-person, declarative verdict voice
+    is expected, the judge false-flagged declarative prose at up to 0.333
+    across six real runs on the (b) side before that check got its own
+    discriminator (PR #559) -- the (c) block states the expectation up
+    front for exactly that reason."""
+    blocks = [
+        "You are the independent seam honesty check of an analysis engine's "
+        "stage-5 attribution validator (specs/PHASE-B.md §7.9). You are NOT "
+        "the model that generated these claims -- you are checking its work."
+    ]
+    response_keys: list[str] = []
+
+    if claims_b:
+        lines_b = "\n".join(_render_seam_claim(claim) for claim in claims_b)
+        blocks.append(
+            'Every claim below is marked "b" (tool-infers-across-sources): it '
+            "must be the SYSTEM's own inference drawn across multiple sources, "
+            "and must NEVER read as though a single source directly asserted "
+            "it. Each claim is followed by the distinct source ids its OWN "
+            "grounds actually cite -- ground truth for how many sources it "
+            "draws on, not a guess from the prose.\n\n"
+            f"Claims marked (b):\n{lines_b}\n\n"
+            "For each (b) claim, decide: does its TEXT present the "
+            "proposition as though ONE identifiable source asserted it "
+            "alone, when the claim's grounds in fact draw on the sources "
+            "listed? A claim grounded in two or more sources is EXPECTED to "
+            "read as synthesis, comparison, or generalization across them -- "
+            "confident or declarative phrasing is not itself a defect, and "
+            "is not grounds to flag a claim on its own. Flag a claim only "
+            "when its wording claims or implies that a single source said "
+            "this, while its own grounds name more than one."
         )
+        response_keys.append('"flagged_claim_ids": ["<claim_id>", ...]')
 
-    lines = "\n".join(_render(claim) for claim in claims_b)
-    return f"""You are the independent (b)-seam honesty check of an analysis engine's stage-5 attribution validator (specs/PHASE-B.md §7.9). You are NOT the model that generated these claims -- you are checking its work.
+    if claims_c:
+        lines_c = "\n".join(_render_seam_claim(claim) for claim in claims_c)
+        blocks.append(
+            'Claims marked "c" are this analysis\'s OWN VERDICT -- its '
+            "judgment about the question, not something any source "
+            "asserted. A (c) claim is EXPECTED to be stated in the "
+            "analyst's own voice: first-person, declarative, committing "
+            "between positions. That voice is correct and is NOT itself a "
+            "defect. A (c) claim may carry partial grounds, or NO grounds "
+            "at all -- that is normal for a verdict and is not itself a "
+            "defect either. Each claim below is followed by whatever "
+            "distinct source ids its own grounds do resolve to, for context "
+            "only -- a (c) claim is not required to draw on any particular "
+            "number of sources.\n\n"
+            f"Claims marked (c):\n{lines_c}\n\n"
+            "For each (c) claim, decide: does its TEXT attribute the "
+            "judgment to a source -- crediting a source with reaching this "
+            "verdict -- rather than stating it as the analysis's own? Flag "
+            "a claim only when its wording credits a source with the "
+            'verdict (for example "Smith concludes that..." or "the '
+            'evidence proves..." stated as an external finding, not this '
+            "analysis's own judgment). Do not flag a claim merely for being "
+            "confident, declarative, or first-person -- that voice is "
+            "exactly what a verdict is supposed to sound like."
+        )
+        response_keys.append('"flagged_c_claim_ids": ["<claim_id>", ...]')
 
-Every claim below is marked "b" (tool-infers-across-sources): it must be the SYSTEM's own inference drawn across multiple sources, and must NEVER read as though a single source directly asserted it. Each claim is followed by the distinct source ids its OWN grounds actually cite -- ground truth for how many sources it draws on, not a guess from the prose.
+    response_shape = "{" + ", ".join(response_keys) + "}"
+    blocks.append(f"Return ONLY this JSON object, no prose and no code fence:\n{response_shape}")
 
-Claims marked (b):
-{lines}
-
-For each claim, decide: does its TEXT present the proposition as though ONE identifiable source asserted it alone, when the claim's grounds in fact draw on the sources listed? A claim grounded in two or more sources is EXPECTED to read as synthesis, comparison, or generalization across them -- confident or declarative phrasing is not itself a defect, and is not grounds to flag a claim on its own. Flag a claim only when its wording claims or implies that a single source said this, while its own grounds name more than one.
-
-Return ONLY this JSON object, no prose and no code fence:
-{{"flagged_claim_ids": ["<claim_id>", ...]}}"""
+    return "\n\n".join(blocks)
 
 
-def _parse_b_seam_response(raw: str) -> list[str]:
+def _parse_seam_response(
+    raw: str, *, expect_b: bool, expect_c: bool
+) -> tuple[list[str], list[str]]:
     data = parse_model_json(raw)
-    if not isinstance(data, dict) or not isinstance(data.get("flagged_claim_ids"), list):
-        raise AttributionCheckFailedError(
-            f"(b)-seam response is missing a 'flagged_claim_ids' list: {data!r}"
-        )
-    return [str(claim_id) for claim_id in data["flagged_claim_ids"]]
+    if not isinstance(data, dict):
+        raise AttributionCheckFailedError(f"(b)/(c)-seam response is not a JSON object: {data!r}")
+
+    flagged_b_ids: list[str] = []
+    if expect_b:
+        if not isinstance(data.get("flagged_claim_ids"), list):
+            raise AttributionCheckFailedError(
+                f"(b)-seam response is missing a 'flagged_claim_ids' list: {data!r}"
+            )
+        flagged_b_ids = [str(claim_id) for claim_id in data["flagged_claim_ids"]]
+
+    flagged_c_ids: list[str] = []
+    if expect_c:
+        if not isinstance(data.get("flagged_c_claim_ids"), list):
+            raise AttributionCheckFailedError(
+                f"(c)-seam response is missing a 'flagged_c_claim_ids' list: {data!r}"
+            )
+        flagged_c_ids = [str(claim_id) for claim_id in data["flagged_c_claim_ids"]]
+
+    return flagged_b_ids, flagged_c_ids
 
 
-def _run_b_seam_check(
+def _run_seam_check(
     claims_b: list[dict[str, Any]],
+    claims_c: list[dict[str, Any]],
     *,
     client: LLMClient,
     b_seam_pass_name: str,
 ) -> list[AttributionFailure]:
-    """Run the bounded (b)-seam model call over `claims_b` (already `kind:
-    b` claims that passed the mechanical checks). Zero model calls when
-    `claims_b` is empty -- the caller only reaches here with a non-empty
-    list. Raises `SamePassModelError` before calling the model at all when
-    `b_seam_pass_name` resolves to the same model as the synthesis pass."""
+    """Run the bounded (b)/(c)-seam model call over `claims_b`/`claims_c`
+    (already claims that passed the mechanical checks). Zero model calls
+    when both are empty -- the caller only reaches here with at least one
+    non-empty. Raises `SamePassModelError` before calling the model at all
+    when `b_seam_pass_name` resolves to the same model as the synthesis
+    pass."""
     synthesis_model = client.model_for_pass(SYNTHESIZE_PASS_NAME)
-    b_seam_model = client.model_for_pass(b_seam_pass_name)
-    if b_seam_model == synthesis_model:
-        raise SamePassModelError(b_seam_pass_name, b_seam_model)
+    seam_model = client.model_for_pass(b_seam_pass_name)
+    if seam_model == synthesis_model:
+        raise SamePassModelError(b_seam_pass_name, seam_model)
 
-    prompt = _compose_b_seam_prompt(claims_b)
+    prompt = _compose_seam_prompt(claims_b, claims_c)
     try:
         raw = complete_json(client, prompt, pass_name=b_seam_pass_name)
     except (LLMError, httpx.HTTPError, ModelJsonError) as exc:
-        raise AttributionCheckFailedError(f"(b)-seam check call failed: {exc}") from exc
+        raise AttributionCheckFailedError(f"(b)/(c)-seam check call failed: {exc}") from exc
 
-    flagged_ids = set(_parse_b_seam_response(raw))
-    valid_ids = {claim["claim_id"] for claim in claims_b}
-    return [
+    flagged_b_ids, flagged_c_ids = _parse_seam_response(
+        raw, expect_b=bool(claims_b), expect_c=bool(claims_c)
+    )
+
+    valid_b_ids = {claim["claim_id"] for claim in claims_b}
+    valid_c_ids = {claim["claim_id"] for claim in claims_c}
+
+    failures = [
         AttributionFailure(
             claim_id=claim_id,
             reason=REASON_B_SEAM_VOICED_AS_SOURCE,
             detail="the independent (b)-seam check found this claim's text reads as a "
             "source assertion, not a disclosed cross-source inference",
         )
-        for claim_id in sorted(flagged_ids & valid_ids)
+        for claim_id in sorted(set(flagged_b_ids) & valid_b_ids)
     ]
+    failures.extend(
+        AttributionFailure(
+            claim_id=claim_id,
+            reason=REASON_C_SEAM_VOICED_AS_SOURCE,
+            detail="the independent (c)-seam check found this claim's text credits a "
+            "source with this analysis's own verdict",
+        )
+        for claim_id in sorted(set(flagged_c_ids) & valid_c_ids)
+    )
+    return failures
 
 
 def validate_attribution(
@@ -313,16 +410,19 @@ def validate_attribution(
 ) -> AttributionReport:
     """Validate every claim in `record["claims"]` (§7.3/§7.4): the kind
     check and grounds check run mechanically over every claim; the bounded
-    (b)-seam check runs once over every `kind: b` claim that passed both
-    (never over a claim already failing a mechanical check -- nothing more
-    to learn from checking wording nobody can act on). An empty `claims`
-    list (a `refuse` disposition, §7.2) passes vacuously.
+    (b)/(c)-seam check runs once over every `kind: b` claim that passed both
+    mechanical checks AND every `kind: c` claim that passed the kind check
+    (a `c` claim is never grounds-checked, §7.4) (never over a claim already
+    failing a mechanical check -- nothing more to learn from checking
+    wording nobody can act on). An empty `claims` list (a `refuse`
+    disposition, §7.2) passes vacuously.
 
     Never edits `record` -- returns a report, nothing more."""
     claims = record.get("claims") or []
 
     failures: list[AttributionFailure] = []
     claims_b: list[dict[str, Any]] = []
+    claims_c: list[dict[str, Any]] = []
 
     for index, claim in enumerate(claims, start=1):
         claim_id = _claim_id_of(claim, index)
@@ -347,10 +447,19 @@ def validate_attribution(
                     "source_ids": _distinct_source_ids(grounds, vault_dir=vault_dir),
                 }
             )
+        elif kind == "c":
+            grounds = claim.get("grounds") or []
+            claims_c.append(
+                {
+                    "claim_id": claim_id,
+                    "text": claim.get("text", ""),
+                    "source_ids": _distinct_source_ids(grounds, vault_dir=vault_dir),
+                }
+            )
 
-    if claims_b:
+    if claims_b or claims_c:
         failures.extend(
-            _run_b_seam_check(claims_b, client=client, b_seam_pass_name=b_seam_pass_name)
+            _run_seam_check(claims_b, claims_c, client=client, b_seam_pass_name=b_seam_pass_name)
         )
 
     return AttributionReport(passed=not failures, failures=failures)

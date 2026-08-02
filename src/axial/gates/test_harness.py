@@ -138,6 +138,7 @@ def test_resolve_threshold_falls_back_to_default_when_config_absent(tmp_path: Pa
     missing_config = tmp_path / "nonexistent.yaml"
     assert resolve_threshold("attribution_completeness", missing_config) == 1.00
     assert resolve_threshold("b_seam_mislabel_rate", missing_config) == 0.05
+    assert resolve_threshold("c_seam_mislabel_rate", missing_config) == 0.05
     assert resolve_threshold("grounding_support_rate", missing_config) == 0.90
 
 
@@ -157,6 +158,7 @@ def test_resolve_threshold_unknown_metric_raises(tmp_path: Path):
 def test_comparison_for_known_metrics():
     assert comparison_for("attribution_completeness") == "gte"
     assert comparison_for("b_seam_mislabel_rate") == "lte"
+    assert comparison_for("c_seam_mislabel_rate") == "lte"
     assert comparison_for("grounding_support_rate") == "gte"
 
 

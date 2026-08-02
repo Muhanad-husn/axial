@@ -160,7 +160,7 @@ def test_empty_records_reports_completeness_failed_not_vacuous(tmp_path: Path):
     assert completeness.n == 0
 
 
-def test_no_b_claims_means_zero_model_calls(vault_dir: Path, tmp_path: Path):
+def test_no_b_or_c_claims_means_zero_model_calls(vault_dir: Path, tmp_path: Path):
     records = [{"claims": [_claim("c-1", kind="a", grounds=GOOD_GROUNDS)]}]
     report = run_attribution_fidelity_gate(
         records,
@@ -174,6 +174,10 @@ def test_no_b_claims_means_zero_model_calls(vault_dir: Path, tmp_path: Path):
     assert b_seam.n == 0
     assert b_seam.value == 0.0
     assert b_seam.passed is True
+    c_seam = next(m for m in report.metrics if m.metric == "c_seam_mislabel_rate")
+    assert c_seam.n == 0
+    assert c_seam.value == 0.0
+    assert c_seam.passed is True
 
 
 def test_b_seam_mislabel_rate_flags_the_scripted_claim(vault_dir: Path, tmp_path: Path):
@@ -203,6 +207,76 @@ def test_b_seam_mislabel_rate_flags_the_scripted_claim(vault_dir: Path, tmp_path
     assert "attribution" in client.calls
 
 
+def test_c_seam_mislabel_rate_flags_the_scripted_claim_with_no_b_claims(
+    vault_dir: Path, tmp_path: Path
+):
+    """A record carrying only kind-"c" claims (no kind-"b") still reaches
+    the judge -- issue #589's widened contract -- and scores its own
+    metric, numerator/denominator/detail, the same way `b_seam_mislabel_
+    rate` does."""
+    client = FakeClient(
+        model_by_pass=DISTINCT_MODELS, response=json.dumps({"flagged_c_claim_ids": ["c-2"]})
+    )
+    records = [
+        {
+            "claims": [
+                _claim("c-1", kind="c", grounds=[]),
+                _claim("c-2", kind="c", grounds=[]),
+            ]
+        }
+    ]
+    report = run_attribution_fidelity_gate(
+        records,
+        client=client,
+        vault_dir=vault_dir,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+    )
+    c_seam = next(m for m in report.metrics if m.metric == "c_seam_mislabel_rate")
+    assert c_seam.n == 2
+    assert c_seam.value == 0.5
+    assert c_seam.detail["flagged_claim_ids"] == ["c-2"]
+    assert client.calls == ["attribution"], "only one call, even with zero (b) claims present"
+
+
+def test_b_and_c_seam_rates_scored_independently_from_one_combined_call(
+    vault_dir: Path, tmp_path: Path
+):
+    """A record carrying BOTH kinds scores two independent metrics from a
+    SINGLE judge call: `b_seam_mislabel_rate`'s denominator/numerator/detail
+    are unaffected by the (c) claims present alongside it, and vice versa."""
+    client = FakeClient(
+        model_by_pass=DISTINCT_MODELS,
+        response=json.dumps({"flagged_claim_ids": ["b-2"], "flagged_c_claim_ids": ["c-1"]}),
+    )
+    records = [
+        {
+            "claims": [
+                _claim("b-1", kind="b", grounds=GOOD_GROUNDS),
+                _claim("b-2", kind="b", grounds=GOOD_GROUNDS),
+                _claim("c-1", kind="c", grounds=[]),
+                _claim("c-2", kind="c", grounds=[]),
+            ]
+        }
+    ]
+    report = run_attribution_fidelity_gate(
+        records,
+        client=client,
+        vault_dir=vault_dir,
+        corpus_pin=None,
+        trusted=False,
+        config_path=tmp_path / "nonexistent.yaml",
+    )
+    b_seam = next(m for m in report.metrics if m.metric == "b_seam_mislabel_rate")
+    c_seam = next(m for m in report.metrics if m.metric == "c_seam_mislabel_rate")
+    assert b_seam.n == 2
+    assert b_seam.detail["flagged_claim_ids"] == ["b-2"]
+    assert c_seam.n == 2
+    assert c_seam.detail["flagged_claim_ids"] == ["c-1"]
+    assert client.calls == ["attribution"], "one combined call, not one per kind"
+
+
 def test_same_model_guard_propagates_from_validate_attribution(vault_dir: Path, tmp_path: Path):
     from axial.validators.attribution import SamePassModelError
 
@@ -223,7 +297,11 @@ def test_same_model_guard_propagates_from_validate_attribution(vault_dir: Path, 
 
 
 def test_trusted_and_corpus_pin_pass_through_to_the_report(vault_dir: Path, tmp_path: Path):
-    records = [{"claims": [_claim("c-1", kind="c", grounds=[])]}]
+    # A kind-"a" claim (rather than "c") keeps this record off the (b)/(c)-
+    # seam judge entirely (issue #589 widened the judge to cover kind-"c"
+    # claims too), so ExplodingLLMClient still pins "no model call" here --
+    # this test is about corpus_pin/trusted passthrough, not seam behaviour.
+    records = [{"claims": [_claim("c-1", kind="a", grounds=GOOD_GROUNDS)]}]
     report = run_attribution_fidelity_gate(
         records,
         client=ExplodingLLMClient(),
