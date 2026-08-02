@@ -125,6 +125,14 @@ llm:
     # stand to one another, with no menu of relation types to pick from,
     # is the same underdetermined judgment call.
     position_relate: high
+    # The door onto the argument map (issue #572, PR 3 of 4): ON at an
+    # explicit "high" effort, same profile as `position_extract` above. One
+    # call, no corpus in view, deciding what a question is actually about --
+    # the same underdetermined judgment shape the port's own kickoff
+    # measurement already found reasoning-off failing on a bag of similarly-
+    # worded passages; this is the same kind of call made once per brief
+    # instead of once per bag.
+    brief_decompose: high
   # Per-pass SAMPLING TEMPERATURE (§7.9, issue #416): the third per-pass
   # block, same shape and same resolution as the two around it
   # (src/axial/llm.py's OpenRouterClient reads it via

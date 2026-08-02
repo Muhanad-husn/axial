@@ -1041,6 +1041,16 @@ def run_map_build(
         },
         "model": model,
         "reasoning": POSITION_EXTRACT_REASONING,
+        # `ENCODER_MODEL` (issue #572, PR 3 of 4): the position-argument
+        # sentences below are only comparable to a question's own vectors if
+        # both were embedded by the same model. Recorded as the constant
+        # itself, not introspected from `encode` -- like `reasoning` above,
+        # an injected callable (a test's fake encoder, or any future
+        # override) exposes no identity to read back, so this names the
+        # encoder the DEFAULT build path carries; a caller who injects a
+        # different one is responsible for knowing it no longer matches what
+        # this field claims.
+        "encoder": ENCODER_MODEL,
         "usage": usage,
         "cost_usd": cost,
         "wall_time_sec": time.monotonic() - started,
