@@ -64,9 +64,13 @@ class UnassignedClaimError(PlanError):
     def __init__(self, section_id: str, key: tuple[Any, Any]):
         self.section_id = section_id
         self.key = key
+        # The two fields are reported separately because the failure this error
+        # actually sees is a misfilled pair, not an invented claim (issue #592).
+        brief_id, claim_id = key
         super().__init__(
-            f"section {section_id!r} assigns claim {key!r}, which is not in the claim "
-            f"inventory; the inventory is the drafter's entire world (§4)"
+            f"section {section_id!r} assigns brief_id={brief_id!r} claim_id={claim_id!r}, "
+            f"which is not in the claim inventory; copy both fields verbatim from one "
+            f"inventory line; the inventory is the drafter's entire world (§4)"
         )
 
 
@@ -140,12 +144,18 @@ class Plan:
 
 def _inventory_lines(inventory: tuple[InventoryClaim, ...]) -> str:
     """The claim inventory as the planner sees it: enough to arrange by, and
-    no grounds text. The planner decides order and assignment, not wording."""
+    no grounds text. The planner decides order and assignment, not wording.
+
+    Each line names `brief_id` and `claim_id` in the same shape the response
+    schema asks for. Rendering them as one `(brief_id / claim_id)` pair instead
+    is what issue #592 was: the planner could not tell where the compound
+    identifier split, and filled the two fields wrong on every draw."""
     lines = []
     for entry in inventory:
         claim = entry.claim
         lines.append(
-            f"- ({entry.brief_id} / {entry.claim_id}) [kind {claim.get('kind')}] "
+            f"- brief_id={entry.brief_id} claim_id={entry.claim_id} "
+            f"[kind {claim.get('kind')}] "
             f"[confidence {claim.get('confidence')}] {claim.get('text')}"
         )
     return "\n".join(lines) or "(the named records carry no claims)"
@@ -169,6 +179,8 @@ Each section carries exactly one role, from: {", ".join(ROLES)}. Only a "setup" 
 At least one section must have role "counter-position" and state the opposing position at its strongest, unless the records themselves report the corpus is one-sided. A paper that quietly drops the side it disagrees with is the failure this pass most needs to avoid.
 
 Also state the thesis as the PAPER will state it -- one sentence, in the paper's own voice, read through the lens. That sentence is the paper's claim, not a restatement of the question.
+
+Every entry in "assigned_claims" copies "brief_id" and "claim_id" verbatim from one inventory line above, as two separate fields. Do not combine them into one field, and do not put a claim's text in either.
 
 Return JSON only:
 {{"thesis_statement": "...", "sections": [{{"section_id": "s1", "heading": "...", "role": "...", "assigned_claims": [{{"brief_id": "...", "claim_id": "..."}}]}}]}}"""
