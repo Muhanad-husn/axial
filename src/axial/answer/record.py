@@ -113,7 +113,7 @@ from axial.llm import (
     RETRIEVE_PASS_NAME,
     SYNTHESIZE_PASS_NAME,
     LLMClient,
-    estimate_cost,
+    usage_and_cost_by_pass,
 )
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_analyses_dir
 from axial.retrieve.loop import run_planned_retrieval
@@ -175,39 +175,6 @@ def _map_retrieval_to_dict(ask_result: AskResult) -> dict[str, Any]:
         ],
         "assembled_chunk_ids": list(ask_result.assembled_chunk_ids),
     }
-
-
-def _usage_and_cost_by_pass(client: LLMClient, model_by_pass: dict[str, str]) -> dict[str, Any]:
-    """The §7.14 `cost` field (issue #363): per-pass token usage + computed
-    dollar cost, summed to a run total -- the cost/token analogue of
-    `model_by_pass` (same precedent, same per-pass shape). Reads
-    `client.usage_for_pass` for every pass that actually ran (`model_by_pass`'s
-    own keys), never guesses at a pass that did not.
-
-    A pass whose usage was never captured (a client that reports none, or a
-    real response that carried no `usage` object) contributes zero token
-    counts and a `null` `usd` -- never zero cost pretending to be real. A
-    pass whose model has no `PRICE_TABLE_USD_PER_1K` entry likewise gets a
-    `null` `usd` (`estimate_cost` itself logs that gap once). `total_usd` is
-    the sum of whatever per-pass costs ARE known; it is `null` only when
-    NONE of the passes priced, so one unpriced/uncaptured pass does not
-    blank out an otherwise-real total for a multi-pass run."""
-    by_pass: dict[str, Any] = {}
-    for pass_name, model in model_by_pass.items():
-        usage = client.usage_for_pass(pass_name)
-        prompt_tokens = usage["prompt_tokens"] if usage else 0
-        completion_tokens = usage["completion_tokens"] if usage else 0
-        total_tokens = usage["total_tokens"] if usage else 0
-        usd = estimate_cost(model, prompt_tokens, completion_tokens) if usage else None
-        by_pass[pass_name] = {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
-            "usd": usd,
-        }
-    known = [entry["usd"] for entry in by_pass.values() if entry["usd"] is not None]
-    total_usd = sum(known) if known else None
-    return {"by_pass": by_pass, "total_usd": total_usd}
 
 
 @dataclass(frozen=True)
@@ -280,8 +247,9 @@ def build_record(
     own `claims`/`trajectory`/`interrogation` -- assembled last here, once
     every field it reads is already in the dict. `cost` (§7.14, issue #363)
     reads `client`'s accumulated per-pass token usage
-    (`_usage_and_cost_by_pass`) -- `client` is needed for that AND for
-    `generate_counter_position`'s own possible model call.
+    (`axial.llm.usage_and_cost_by_pass`, promoted there by issue #591 so
+    `axial.paper.record` can share it) -- `client` is needed for that AND
+    for `generate_counter_position`'s own possible model call.
 
     **A `CounterPositionGenerationError` never aborts this function (issue
     #558).** By the time this call runs, interrogation, retrieval and
@@ -344,7 +312,7 @@ def build_record(
         "trajectory": list(trajectory),
         "map_retrieval": map_retrieval,
         "model_by_pass": record_model_by_pass,
-        "cost": _usage_and_cost_by_pass(client, record_model_by_pass),
+        "cost": usage_and_cost_by_pass(client, record_model_by_pass),
     }
     record["source_usage"] = compute_source_usage(record, vault_dir=vault_dir)
     return record
