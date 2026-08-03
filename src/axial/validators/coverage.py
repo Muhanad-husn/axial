@@ -361,6 +361,16 @@ _COVERAGE_BAND_RANK = {THIN_COVERAGE_BAND: 0, "moderate": 1, "dense": 2}
 # is about.
 _CONFIDENCE_BAND_BY_COVERAGE_RANK = {0: "low", 1: "medium", 2: TOP_CONFIDENCE_BAND}
 
+# The inverse of `_COVERAGE_BAND_RANK`, for naming the median note's own
+# coverage band in `compute_confidence`'s rationale.
+_COVERAGE_BAND_NAME_BY_RANK = {rank: band for band, rank in _COVERAGE_BAND_RANK.items()}
+
+# `_CONFIDENCE_BAND_BY_COVERAGE_RANK`'s rank for `medium` -- the cap
+# `compute_confidence` holds the band to while any name in the map is
+# disclosed `thin` (issue #640, keeping §7.9 check 3 satisfied by
+# construction).
+_MEDIUM_CONFIDENCE_RANK = 1
+
 
 def compute_confidence(coverage_map: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """The §7.3/§7.4 record-level `confidence` disclosure, computed
@@ -368,17 +378,42 @@ def compute_confidence(coverage_map: dict[str, dict[str, Any]]) -> dict[str, Any
     the same "computed separately and deterministically" contract §7.9
     states for the map itself.
 
-    `overall_band` is set by the LEAST-covered name the answer is about
-    (`dense` -> `high`, `moderate` -> `medium`, `thin` -> `low`, issue
-    #400): a run that grounds part of its argument in a thin-coverage name
-    cannot disclose high confidence overall. This satisfies
-    `validate_coverage_and_confidence`'s `confidence_exceeds_coverage` check
-    by construction rather than by coincidence.
+    **`overall_band` is set by the evidence-weighted lower median (issue
+    #640), not the least-covered name.** Every name contributes
+    `evidence_note_count` notes, each carrying that name's own
+    `coverage_band` rank. Sort those note-ranks ascending; the LOWER median
+    (index `n // 2 - 1` for an even count, the same element as the odd-count
+    middle index otherwise) sets the rank, mapped to a band exactly as
+    before (`dense` -> `high`, `moderate` -> `medium`, `thin` -> `low`). A
+    `min`-over-names rule let a single one-note, thin-coverage name --
+    however small a share of the run's actual evidence -- drag the whole
+    run's headline band down, so a richer retrieval slate that happened to
+    pick up more small names could LOWER the reported band even though the
+    evidence improved (#640's own measured defect). Weighting by
+    `evidence_note_count` makes the band track what the run actually rested
+    its claims on, not every name it merely touched.
 
-    `rationale` names every mapped name's own coverage band and counts
-    (§7.4: "states the coverage counts that justify the band, drawn from
-    coverage_map"), in ascending name order for the same determinism
-    contract `compute_coverage_map` follows.
+    **Fallback: a non-empty map whose every `evidence_note_count` is 0 or
+    missing has no notes to take a median over.** That happens when a
+    caller (`axial.paper.coverage`'s own map, which carries
+    `cited_claim_count` instead) or a hand-built map never populates the
+    field. Rather than crash or report `not_measured` -- the map is
+    non-empty, so something WAS measured -- this falls back to the old
+    `min`-over-names rank.
+
+    **Cap: while any name in the map is disclosed `thin`, the band may
+    never exceed `medium`.** This is what keeps
+    `validate_coverage_and_confidence`'s `confidence_exceeds_coverage`
+    check (§7.9) satisfied by construction, exactly as the plain `min` rule
+    did -- a thin name's own notes might all sort below the median, so the
+    median alone would not otherwise guarantee it.
+
+    `rationale` states the evidence-note count behind the band and the
+    coverage band of the median note that set it, plus every mapped name's
+    own coverage band and counts (§7.4: "states the coverage counts that
+    justify the band, drawn from coverage_map"), the latter in ascending
+    name order for the same determinism contract `compute_coverage_map`
+    follows.
 
     An empty `coverage_map` still returns a non-nullable disclosure (§7.3),
     but NOT a measured `low` (issue #584): a `refuse` disposition, a run
@@ -402,24 +437,50 @@ def compute_confidence(coverage_map: dict[str, dict[str, Any]]) -> dict[str, Any
             ),
         }
 
-    worst_name = min(
-        coverage_map,
-        key=lambda name: (
-            _COVERAGE_BAND_RANK.get(coverage_map[name].get("coverage_band"), 0),
-            name,
-        ),
+    note_ranks: list[int] = []
+    for entry in coverage_map.values():
+        rank = _COVERAGE_BAND_RANK.get(entry.get("coverage_band"), 0)
+        count = entry.get("evidence_note_count") or 0
+        if isinstance(count, int) and count > 0:
+            note_ranks.extend([rank] * count)
+
+    has_thin = any(
+        entry.get("coverage_band") == THIN_COVERAGE_BAND for entry in coverage_map.values()
     )
-    worst_rank = _COVERAGE_BAND_RANK.get(coverage_map[worst_name].get("coverage_band"), 0)
-    overall_band = _CONFIDENCE_BAND_BY_COVERAGE_RANK[worst_rank]
+
+    if note_ranks:
+        note_ranks.sort()
+        median_index = (
+            len(note_ranks) // 2 - 1 if len(note_ranks) % 2 == 0 else len(note_ranks) // 2
+        )
+        median_rank = note_ranks[median_index]
+        weighted_note = (
+            f"{len(note_ranks)} evidence note(s), median note band "
+            f"{_COVERAGE_BAND_NAME_BY_RANK[median_rank]!r}"
+        )
+    else:
+        # Fallback (issue #640): a non-empty map with no evidence notes to
+        # weight -- fall back to the old min-over-names rank.
+        median_rank = min(
+            _COVERAGE_BAND_RANK.get(entry.get("coverage_band"), 0)
+            for entry in coverage_map.values()
+        )
+        weighted_note = (
+            "no evidence notes recorded in coverage_map, falling back to the "
+            f"least-covered name's own band {_COVERAGE_BAND_NAME_BY_RANK[median_rank]!r}"
+        )
+
+    overall_rank = min(median_rank, _MEDIUM_CONFIDENCE_RANK) if has_thin else median_rank
+    overall_band = _CONFIDENCE_BAND_BY_COVERAGE_RANK[overall_rank]
 
     per_name = "; ".join(
         f"{name} ({entry.get('coverage_band')}: {entry.get('corpus_note_count')} "
         f"corpus notes, {entry.get('evidence_note_count')} evidence notes)"
         for name, entry in sorted(coverage_map.items())
     )
+    cap_note = " capped at 'medium' because coverage_map discloses a thin name" if has_thin else ""
     rationale = (
-        f"overall confidence is {overall_band!r}, bounded by the least-covered "
-        f"name touched ({worst_name!r}, band {coverage_map[worst_name].get('coverage_band')!r}); "
+        f"overall confidence is {overall_band!r}, bounded by {weighted_note}{cap_note}; "
         f"coverage by name: {per_name}"
     )
     return {"overall_band": overall_band, "rationale": rationale}
