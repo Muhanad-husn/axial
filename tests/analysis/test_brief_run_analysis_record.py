@@ -344,6 +344,10 @@ def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path
         "case": "Syria",
         "request": "How did displacement reshape local authority?",
         "lens": None,
+        # issue #639: `weights` is always present, `{}` when none were
+        # supplied -- an explicit "no weights were applied" a reader can
+        # see, rather than an absent key they'd have to infer it from.
+        "weights": {},
     }
     assert record["corpus_pin"] == "baseline"
     assert record["interrogation"]["disposition"] == "proceed"
