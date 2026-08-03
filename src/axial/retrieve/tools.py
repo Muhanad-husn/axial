@@ -68,9 +68,10 @@ resolve, exactly like every other non-truncating tool below** (see
 `_get_chunk`'s own docstring for the misleading-nudge bug an unconditional
 `total` re-created). `None` for every other tool. `detail` is set by five
 tools. Four are a planner-blindness fix
-(§4, issues #517/#493) -- `find_names` carries each hit's `kind`,
-`member_count` and `tier` so a model can tell an exact resolution from a
-guess; `get_name` and `where_names_meet` carry `_source_span_detail`'s
+(§4, issues #517/#493, extended by #632's door slate) -- `find_names`
+carries each hit's `kind`, `member_count`, `source_count` and `tier` so a
+model can tell an exact resolution from a guess, and a big same-family door
+from a small one; `get_name` and `where_names_meet` carry `_source_span_detail`'s
 `"<N> notes across <M> sources"` over the members actually returned, so a
 model can tell a large page (or intersection) is one book from many without
 re-reading it; `name_neighbors` carries `_shared_note_count_distribution`'s
@@ -313,13 +314,14 @@ def _find_names(
     limit = args.get("limit", names.DEFAULT_LIMIT)
     hits = names.find_names(args["query"], limit, names_dir=names_dir, vault_dir=vault_dir)
     canonicals = [hit.canonical for hit in hits]
-    # Issue #517's planner-blindness fix: a bare canonical string cannot tell
-    # the model an exact hit apart from an embedding guess. `detail` carries
-    # what `find_names` already computed per hit -- no new lookup, no LLM
-    # call -- so the next turn's prompt can show it.
+    # Issue #517's planner-blindness fix, extended by #632's door slate:
+    # `detail` carries what `find_names` already computed per hit -- no new
+    # lookup, no LLM call -- so the next turn's prompt can show a 55-note/
+    # 8-source door next to a 3-note/3-source one and let the model pick.
     detail = (
         "; ".join(
-            f"{hit.canonical} (kind={hit.kind}, member_count={hit.member_count}, tier={hit.tier})"
+            f"{hit.canonical} (kind={hit.kind}, member_count={hit.member_count}, "
+            f"source_count={hit.source_count}, tier={hit.tier})"
             for hit in hits
         )
         or None
@@ -399,11 +401,17 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
     "find_names": ToolSpec(
         name="find_names",
         description=(
-            "Resolve a phrase (a scholar, concept or polity) to the canonical names the "
-            "corpus actually carries -- tiered exact/alias/folded/embedding resolution, "
-            "never string equality. Returns each hit's canonical, kind, member_count and "
-            "which surface form and tier matched. An empty result is a real, honest "
-            "resolution failure, not an error."
+            "Resolve a phrase (a scholar, concept or polity) to a slate of doors the "
+            "corpus actually carries -- every page whose name matches or contains the "
+            "phrase, ranked by how many notes and sources it spans, topped up with "
+            "embedding matches only if that literal set is short of limit. A bigger "
+            "same-family page (e.g. 'French Mandate', 55 notes/8 sources) is offered "
+            "alongside a narrower exact hit (e.g. 'Mandate', 3 notes/3 sources), never "
+            "suppressed by it. If the phrase matches no page at all, its individual "
+            "words are each resolved instead and marked tier=word. Returns each hit's "
+            "canonical, kind, member_count, source_count and which surface form and "
+            "tier matched. An empty result is a real, honest resolution failure, not an "
+            "error."
         ),
         required_args=frozenset({"query"}),
         optional_args=frozenset({"limit"}),

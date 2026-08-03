@@ -22,10 +22,13 @@ Two substrates, two arguments:
   about itself is read from here, never recomputed.
 
 **Zero LLM calls** (§7.5), with exactly one relaxation, D10: `find_names`'
-fourth tier embeds the query string with the local sentence-transformer the
-store names in its own `similarity_manifest.json`. That import is lazy,
-inside the tier-4 path, so tiers 1-3 run with no encoder loaded at all and
-importing this module costs nothing. No network call, no LLM, no chunk index.
+embedding group embeds the query string with the local sentence-transformer
+the store names in its own `similarity_manifest.json`. That import is lazy,
+inside that path, so the literal group (issue #632: exact/alias/folded/
+contains, plus its compound-query word fallback) runs with no encoder
+loaded at all, and is skipped entirely once it already fills `limit`.
+Importing this module costs nothing. No network call, no LLM, no chunk
+index.
 
 **Determinism** (§7.5, binding on every tool here): every result is sorted
 explicitly and every ranked tool states its whole tie-break, so the order is
@@ -130,11 +133,67 @@ DEFAULT_LIMIT = 10
 # name-layer gap filed against Phase A, not a floor to tune.
 MIN_EMBEDDING_SIMILARITY = 0.5
 
-# The four tiers, in resolution order (§7.5).
+# The routes `find_names` unions into its door slate (§7.5, issue #632).
+# `exact`/`alias`/`folded` are the three original tiers, each an exact
+# lookup over the name layer. `contains` is new: a page whose folded name
+# carries the folded query as a whole-word phrase. `word` marks a hit found
+# by the compound-query fallback (resolving one content word of a query
+# that matched no page at all) rather than the query's own phrase, so a
+# caller can tell "your phrase matched no page; this word did" from a real
+# phrase resolution. `embedding` is unchanged, the last resort.
 TIER_EXACT = "exact"
 TIER_ALIAS = "alias"
 TIER_FOLDED = "folded"
+TIER_CONTAINS = "contains"
+TIER_WORD = "word"
 TIER_EMBEDDING = "embedding"
+
+
+# A short list of function words to skip when the compound-query fallback
+# (issue #632) splits a query into content words -- tiny and deliberately
+# so: the fallback's whole point is that even noisy per-word doors (`party`,
+# `de`) are useful once shown with their own numbers, so this only screens
+# the words a scholar or concept name never actually is. Checked: no
+# dependency this module already carries exposes a stopword list at the
+# base-dependency tier (`sklearn`'s is `distill`-group-only, and pulling in
+# an NLP library for eleven words would be reinventing this).
+_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "but",
+        "by",
+        "for",
+        "from",
+        "in",
+        "is",
+        "it",
+        "nor",
+        "not",
+        "of",
+        "on",
+        "or",
+        "so",
+        "that",
+        "the",
+        "this",
+        "to",
+        "was",
+        "were",
+        "with",
+    }
+)
+
+# Whitespace or any hyphen variant (mirrors `axial.name_candidates._HYPHENS`,
+# the same characters the surface fold treats as a word separator) --
+# splits a query into raw-case content-word tokens for the compound-query
+# fallback.
+_WORD_SPLIT = re.compile(r"[\s\-‐‑‒–—]+")
 
 # `(texts) -> one vector per text`, the same injection seam
 # `axial.names.run_names` uses.
@@ -155,13 +214,19 @@ class NameNotFoundError(QueryError):
 
 @dataclass(frozen=True)
 class NameHit:
-    """One `find_names` result (§7.5). `matched_on` is the surface form that
-    actually matched -- a canonical, an alias, or an inventory surface -- and
-    `tier` is which of the four resolution tiers produced it, so a caller can
-    see how confident the resolution is. `member_count` is the name page's
-    own frontmatter value, or `None` when this vault holds no page for the
-    name (an index/vault mismatch, reported rather than filled in with a 0
-    that would read like real, thin coverage)."""
+    """One `find_names` result: one door in the slate (§7.5, issue #632).
+    `matched_on` is the surface form (or, for a `word`-tier hit, the query
+    word) that actually matched, and `tier` is which route produced it
+    (`exact`/`alias`/`folded`/`contains`/`word`/`embedding`), so a caller can
+    see how confident the resolution is. `member_count`/`source_count` are
+    the name page's own -- the page's total member notes and the number of
+    distinct sources they span -- or `None` when this vault holds no page
+    for the name (an index/vault mismatch, reported rather than filled in
+    with a 0 that would read like real, thin coverage) or, for
+    `source_count` specifically, when only a head read was ever done for it
+    (never true from `find_names`, whose slate always decorates from the
+    persisted door index; see `_resolve_name_page`'s own docstring for the
+    other caller that still leaves it `None`)."""
 
     canonical: str
     kind: str | None
@@ -169,6 +234,7 @@ class NameHit:
     member_count: int | None
     matched_on: str
     tier: str
+    source_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -995,6 +1061,147 @@ def _embedding_tier(
     ]
 
 
+# Folded page names, cached alongside the door index they are derived from
+# (issue #632): `[(canonical, " <folded name> ")]`, padded with a leading and
+# trailing space so a substring check against a padded query
+# (` <folded query> `) is a correct whole-word match without a regex per
+# candidate -- folding punctuation to nothing and hyphens to a space
+# (`fold_surface_form`) already leaves single-space-separated words with no
+# leading/trailing space of their own. Built at most once per resolved
+# `vault_dir` for the process lifetime, from `_name_page_index`'s own result:
+# measured over the real vault (49,674 pages), folding all of them once costs
+# 0.16s, against 40ms if it were repeated on every `find_names` call in a
+# retrieval loop that calls it many times over one vault.
+_FOLDED_PAGE_NAMES_CACHE: dict[Path, list[tuple[str, str]]] = {}
+_FOLDED_PAGE_NAMES_LOCK = threading.Lock()
+
+
+def _folded_page_names(vault_dir: Path) -> list[tuple[str, str]]:
+    key = Path(vault_dir).resolve()
+    cached = _FOLDED_PAGE_NAMES_CACHE.get(key)
+    if cached is not None:
+        return cached
+    with _FOLDED_PAGE_NAMES_LOCK:
+        cached = _FOLDED_PAGE_NAMES_CACHE.get(key)
+        if cached is None:
+            cached = [(name, f" {fold_surface_form(name)} ") for name in _name_page_index(key)]
+            _FOLDED_PAGE_NAMES_CACHE[key] = cached
+        return cached
+
+
+def _contains_matches(folded_query: str, vault_dir: Path) -> list[str]:
+    """Every page name whose folded form carries `folded_query` as a
+    whole-word phrase (issue #632's `contains` route) -- `Mandate` matches
+    `French Mandate` and `mandate period`, never `mandated`. Measured 40ms
+    per query over the real vault's 49,674 folded names."""
+    if not folded_query:
+        return []
+    needle = f" {folded_query} "
+    return [name for name, padded in _folded_page_names(vault_dir) if needle in padded]
+
+
+def _content_words(query: str) -> list[str]:
+    """`query` split on whitespace and hyphens (`_WORD_SPLIT`, the same
+    separators the surface fold treats as word boundaries), stopwords
+    dropped, original casing kept -- the compound-query fallback's own
+    tokenizer (issue #632). `"mandate-era institutions Syria"` yields
+    `["mandate", "era", "institutions", "Syria"]`."""
+    tokens = [token for token in _WORD_SPLIT.split(query) if token]
+    return [token for token in tokens if token.casefold() not in _STOPWORDS]
+
+
+def _group_one_candidates(
+    query: str, layer: _NameLayer, vault_dir: Path
+) -> list[tuple[str, str, str]]:
+    """`(canonical, matched_on, tier)` for every literal route's hit on
+    `query` -- the union `exact` ∪ `alias` ∪ `folded` ∪ `contains` (issue
+    #632) -- deduplicated by canonical: whichever route below matches a
+    canonical FIRST wins its `tier`/`matched_on` (`dict.setdefault`, tried in
+    `exact`, `alias`, `folded`, `contains` order), so a canonical that is
+    both an exact hit and incidentally contains itself is reported as
+    `exact`, never demoted to the vaguer route that also happens to find it.
+    Unranked and untruncated: `_rank_group_one` orders the result, and a
+    caller decides whether to use it as the phrase-level group or feed one
+    query word from the compound-query fallback."""
+    matches: dict[str, tuple[str, str]] = {}
+
+    if query in layer.canonicals:
+        matches[query] = (query, TIER_EXACT)
+
+    for canonical in sorted(layer.canonicals_by_alias.get(query, ())):
+        matches.setdefault(canonical, (query, TIER_ALIAS))
+
+    folded_query = fold_surface_form(query)
+    # One canonical, one hit: a query can fold onto a canonical AND onto one
+    # of that same canonical's aliases (the corpus writes both "bellicist
+    # state formation" and "bellicist state-formation"), which is one name,
+    # not two. Walked in sorted order, so the surviving `matched_on` is the
+    # lowest matching surface form, deterministically.
+    for canonical, surface in sorted(layer.folded.get(folded_query, ())):
+        matches.setdefault(canonical, (surface, TIER_FOLDED))
+
+    for name in _contains_matches(folded_query, vault_dir):
+        matches.setdefault(name, (name, TIER_CONTAINS))
+
+    return [(canonical, matched_on, tier) for canonical, (matched_on, tier) in matches.items()]
+
+
+def _rank_group_one(
+    candidates: list[tuple[str, str, str]],
+    layer: _NameLayer,
+    page_index: dict[str, _NamePageEntry],
+) -> list[tuple[str, str, str]]:
+    """Group 1's own order (issue #632): `kind == "work"` last, then
+    `source_count` descending, then `member_count` descending, then
+    canonical ascending -- a total order. The `work` demotion is measured,
+    not taste: 8,583 of the vault's 49,674 pages are book/article titles, and
+    for a concept query they crowd out the argument pages a `contains` scan
+    also turns up (`sectarianism` pulls five `Culture of Sectarianism`
+    variants ahead of nothing) -- a work is a citation target, which
+    `who_cites` already serves. `None` counts (an orphan canonical with no
+    materialized page) sort as `0`, lowest."""
+
+    def sort_key(candidate: tuple[str, str, str]) -> tuple[bool, int, int, str]:
+        canonical, _matched_on, _tier = candidate
+        entry = page_index.get(canonical)
+        kind = layer.kind_by_canonical.get(canonical) or (entry.kind if entry is not None else None)
+        source_count = entry.source_count if entry is not None else None
+        member_count = entry.member_count if entry is not None else None
+        return (kind == "work", -(source_count or 0), -(member_count or 0), canonical)
+
+    return sorted(candidates, key=sort_key)
+
+
+def _compound_fallback_candidates(
+    query: str,
+    layer: _NameLayer,
+    vault_dir: Path,
+    page_index: dict[str, _NamePageEntry],
+) -> list[tuple[str, str, str]]:
+    """The compound-query fallback (issue #632): when the query's own phrase
+    matches no page at all, resolve each content word separately (the same
+    group-1 union and ranking, per word) and offer the best door for each --
+    `"mandate-era institutions Syria"` -> `mandate -> French Mandate`,
+    `syria -> Syria`. Every hit is marked `TIER_WORD`, never the underlying
+    route that actually matched the word, so a caller can tell a real
+    phrase resolution from "your phrase matched no page; this word did".
+    `matched_on` is the query word itself, not the page name, for the same
+    reason. One door per word, in query order, deduplicated by canonical
+    (an earlier word's door is kept over a later word's repeat of it)."""
+    doors: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    for word in _content_words(query):
+        ranked = _rank_group_one(_group_one_candidates(word, layer, vault_dir), layer, page_index)
+        if not ranked:
+            continue
+        canonical, _matched_on, _tier = ranked[0]
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        doors.append((canonical, word, TIER_WORD))
+    return doors
+
+
 def find_names(
     query: str,
     limit: int = DEFAULT_LIMIT,
@@ -1003,24 +1210,40 @@ def find_names(
     vault_dir: Path | None = None,
     encoder: Encoder | None = None,
 ) -> list[NameHit]:
-    """Resolve `query` to the names the corpus actually carries (§7.5), in
-    four tiers, each exhausted before the next is tried:
+    """Resolve `query` to a slate of doors into the corpus (§7.5, issue
+    #632), assembled in two ordered groups and truncated at `limit`:
 
-    1. `exact` -- `query` is a canonical name in `index.json`;
-    2. `alias` -- `query` is an alias of a node in `alias_map.json`;
-    3. `folded` -- `query` equals either under the fold Phase A already
-       applies to surface forms (case, whitespace, punctuation, hyphen to a
-       space; §7.16, issue #463 -- reused, never re-derived);
-    4. `embedding` -- nearest neighbours among the vectors Reconcile
-       persisted, each mapped back through the alias map to its canonical and
-       de-duplicated.
+    **Group 1 -- literal candidates.** The union of four routes, none
+    stopping the others: `exact`/`alias`/`folded` (the original three exact
+    lookups over `data/names/index.json`/`alias_map.json`) and `contains`
+    (new: every page whose folded name carries the folded query as a
+    whole-word phrase -- `Mandate` reaches `French Mandate`, never
+    `mandated`). Ranked `work`-kind pages last, then by `source_count`
+    descending, then `member_count` descending, then canonical ascending
+    (`_rank_group_one`) -- **never string equality and never a single
+    stop-at-first-tier resolution**: an exact hit on `Mandate` (3 members) no
+    longer suppresses `French Mandate` (55 members, 8 sources), which
+    `contains` also finds.
 
-    **Resolution is tiered, never string equality**, because exact lookup
-    provably fails on the names briefs use: the index holds `Charles Tilly`,
-    `Giorgio Agamben` and `Uğur Ümit Üngör` while briefs say Tilly, Agamben,
-    Ungor. Measured on the live vault (2026-07-30): `Tilly`, `Agamben`,
-    `Bayat`, `Batatu` and `Caspersen` all land through the alias map, and
-    `Ungor` reaches `Uğur Ümit Üngör` only through tier 4.
+    **The compound-query fallback.** When group 1 is empty -- no page name
+    contains the query phrase at all, which is what a query like
+    `"mandate-era institutions Syria"` does -- each content word of the
+    query is resolved separately (the same group-1 union and ranking) and
+    the best door per word stands in for group 1, tagged `tier="word"` so a
+    caller can tell the difference from a real phrase match.
+
+    **Group 2 -- embedding candidates**, not already in group 1, in the
+    existing similarity order -- appended only when group 1 (or its
+    compound-query stand-in) has not already filled `limit`.
+    **Never re-ranked by size**: ranking an embedding hit by `member_count`/
+    `source_count` drifts to the corpus's biggest pages regardless of
+    relevance (measured: `Syria` then outranks the query `Ugor`'s own best
+    match), because a nearest-neighbour search's candidate set carries no
+    guarantee any member actually names the query -- only `contains`'
+    candidates, which literally carry the query's own words, can be ranked
+    that way. Same nearest-neighbour lookup as before: the vectors
+    Reconcile persisted (`data/names/embeddings.lance`), each mapped back
+    through the alias map to its canonical and de-duplicated.
 
     **A query that resolves to nothing returns `[]`, and that is a real
     answer** -- never an exception, never silence, and never the nearest name
@@ -1030,54 +1253,40 @@ def find_names(
     index carries can still reach nothing (see `MIN_EMBEDDING_SIMILARITY`),
     which is a name-layer gap rather than an answer about the corpus.
 
-    **Determinism:** tiers 1-3 are exact lookups over committed data, ordered
-    by canonical ascending then by the matched surface form. Tier 4 is
-    ordered by score descending, ties by canonical ascending. Every tier is
-    truncated at `limit`.
+    **Determinism:** group 1 (or its compound-query stand-in) is a total
+    order (`_rank_group_one`'s own tie-break, canonical ascending as the
+    last word); group 2 is ordered by score descending, ties by canonical
+    ascending. The slate is that order, truncated at `limit`; the same query
+    over the same pinned vault returns the same slate on every call.
 
-    `encoder` replaces the default sentence-transformer (tier 4 only) -- the
-    seam a test uses to exercise the ranked tier without loading a model.
-    Tiers 1-3 never call it.
+    `encoder` replaces the default sentence-transformer (the embedding group
+    only) -- the seam a test uses to exercise the ranked group without
+    loading a model. Group 1 and the compound-query fallback never call it,
+    and the embedding group is skipped entirely (no vector store read, no
+    encoder built) once group 1 already fills `limit`.
     """
     layer = _name_layer(names_dir)
-    directory = Path(names_dir) if names_dir is not None else default_names_dir()
-
-    matches: list[tuple[str, str]] = []
-    tier = TIER_EXACT
-    if query in layer.canonicals:
-        matches = [(query, query)]
-    else:
-        aliased = layer.canonicals_by_alias.get(query)
-        if aliased:
-            tier = TIER_ALIAS
-            matches = [(canonical, query) for canonical in aliased]
-        else:
-            folded = layer.folded.get(fold_surface_form(query))
-            if folded:
-                tier = TIER_FOLDED
-                # One canonical, one hit: a query can fold onto a canonical
-                # AND onto one of that same canonical's aliases (the corpus
-                # writes both "bellicist state formation" and "bellicist
-                # state-formation"), which is one name, not two. Walked in
-                # sorted order, so the surviving `matched_on` is the lowest
-                # matching surface form, deterministically.
-                seen: set[str] = set()
-                for canonical, surface in sorted(folded):
-                    if canonical not in seen:
-                        seen.add(canonical)
-                        matches.append((canonical, surface))
-            else:
-                tier = TIER_EMBEDDING
-                matches = _embedding_tier(query, layer, directory, encoder)
-
+    names_directory = Path(names_dir) if names_dir is not None else default_names_dir()
     vault = Path(vault_dir) if vault_dir is not None else default_vault_dir()
+    page_index = _name_page_index(vault)
+
+    literal = _rank_group_one(_group_one_candidates(query, layer, vault), layer, page_index)
+    if not literal:
+        literal = _compound_fallback_candidates(query, layer, vault, page_index)
+
+    slate = list(literal)
+    if len(slate) < limit:
+        already = {canonical for canonical, _matched_on, _tier in slate}
+        for canonical, matched_on in _embedding_tier(query, layer, names_directory, encoder):
+            if canonical not in already:
+                slate.append((canonical, matched_on, TIER_EMBEDDING))
+                already.add(canonical)
+
     hits = []
-    for canonical, matched_on in matches[:limit]:
-        # One page read per hit, never the whole-vault index: `find_names` is
-        # the first thing a retrieval loop calls, and a 62.8k-page scan to
-        # decorate at most `limit` hits with their `member_count` would be
-        # paid on every run.
-        entry = _resolve_name_page(canonical, vault)
+    for canonical, matched_on, tier in slate[:limit]:
+        # Decorated from the one door-index read already paid for above
+        # (`page_index`, issue #634) -- never a fresh page open per hit.
+        entry = page_index.get(canonical)
         hits.append(
             NameHit(
                 canonical=canonical,
@@ -1085,6 +1294,7 @@ def find_names(
                 or (entry.kind if entry is not None else None),
                 aliases=list(layer.aliases_by_canonical.get(canonical, ())),
                 member_count=entry.member_count if entry is not None else None,
+                source_count=entry.source_count if entry is not None else None,
                 matched_on=matched_on,
                 tier=tier,
             )
