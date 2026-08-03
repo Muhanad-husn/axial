@@ -81,13 +81,15 @@ election (`axial.merge_names._elect_canonical`) and every rendered name page
 keep apostrophes, hyphens and diacritics exactly as the corpus wrote them,
 because those characters are part of a name's identity. See
 `_normalize_form`'s own docstring for the fold rules themselves (which
-punctuation folds to a space, which to nothing, and why diacritics are out
-of scope).
+punctuation folds to a space, which to nothing, which transliteration
+renderings fold together, and why diacritics are out of scope).
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
+from functools import lru_cache
 from typing import Iterable
 
 _WHITESPACE = re.compile(r"\s+")
@@ -118,13 +120,35 @@ _HYPHENS = re.compile(r"[-‐‑‒–—]")
 # prefix, not a different name.
 _PUNCTUATION = re.compile(r"[^\w\s]", re.UNICODE)
 
+# Issue #642: a doubled `a` is this corpus's other way of writing the same
+# ayn/hamza the markers above render, so it folds to one -- `Baath` and
+# `Ba'th` and `Baʿth` are one name. Only `a`. Measured over the live
+# inventory (61,612 surfaces): collapsing every doubled vowel instead folds
+# `World War I` into `World War II`, `Volume I` into `Volume II`, `EC` into
+# `EEC` and `God` into `Good`, because `ii` and `ee` carry Roman numerals
+# and acronyms; `aa` carries transliterations.
+_LONG_A = re.compile("aa+")
+
+
+@lru_cache(maxsize=None)
+def _is_modifier_letter(char: str) -> bool:
+    """Whether `char` is a Unicode spacing modifier letter (category `Lm`) --
+    `ʿ` (U+02BF) and `ʾ` (U+02BE), the half rings a romanization writes for
+    ayn and hamza, and 636 of them in this corpus. They are punctuation the
+    Unicode tables happen to classify as letters, so `_PUNCTUATION`'s `\\w`
+    complement walks straight past them; naming the category is the same
+    move that class already makes, not a hand-picked list of characters."""
+    return unicodedata.category(char) == "Lm"
+
 
 def _normalize_form(surface: str) -> str:
     """Fold `surface` for CANDIDATE GENERATION ONLY -- never for identity
     (issue #463). Casefolds; folds hyphens (and common typographic dash
     substitutions, `_HYPHENS`) to a space; folds every other punctuation or
-    symbol character to nothing (`_PUNCTUATION`); then collapses whitespace
-    to one space and trims the ends.
+    symbol character to nothing (`_PUNCTUATION`), including the modifier
+    letters a romanization uses for ayn and hamza (`_is_modifier_letter`);
+    folds a doubled `a` to one (`_LONG_A`); then collapses whitespace to one
+    space and trims the ends.
 
     This is not the rule for deciding or rendering a canonical surface --
     `axial.names.build_inventory`, `axial.merge_names._elect_canonical` and
@@ -133,17 +157,29 @@ def _normalize_form(surface: str) -> str:
     because those characters are part of a name's identity, not noise. This
     function exists only to say, before any merge call is ever made, that
     two surface forms are the SAME string once case, whitespace and
-    punctuation are set aside -- so that judgment never has to be asked of
-    the model at all (measured: asking gets it refused 295 times out of
-    ~305, issue #463).
+    transliteration rendering are set aside -- so that judgment never has to
+    be asked of the model at all (measured: asking gets it refused 295 times
+    out of ~305, issue #463).
 
-    Diacritics are deliberately left untouched (measured out of scope, issue
-    #463): folding them would collide `Galilee` with the genuinely distinct
-    `Galilée`.
+    **Transliteration variants fold (issue #642).** A corpus that writes the
+    Ba'th party twelve ways gives the analyst two half-doors and no whole
+    one: `Ba'th Party` carried 43 notes without Vignal, `Baath Party` 25
+    with him. The two renderings the corpus actually varies are the marker
+    (`'`, `ʿ`, `ʾ`, or nothing) and the vowel length (`aa` or `a`), so both
+    fold. The fold still folds the *rendering* of a name and never its
+    extent: `Ba'th Regional Command` does not fold into `Ba'th Party`.
+
+    Diacritics ON a base letter are still left untouched (measured out of
+    scope, issue #463): folding them would collide `Galilee` with the
+    genuinely distinct `Galilée`. A spacing modifier letter is not that --
+    it stands alone between two letters, exactly where an apostrophe stands
+    in the same word's other spelling.
     """
     folded = _HYPHENS.sub(" ", surface)
     folded = _PUNCTUATION.sub("", folded)
-    return _WHITESPACE.sub(" ", folded).strip().casefold()
+    folded = "".join(char for char in folded if not _is_modifier_letter(char))
+    folded = _WHITESPACE.sub(" ", folded).strip().casefold()
+    return _LONG_A.sub("a", folded)
 
 
 def _is_initial_token(token: str) -> bool:

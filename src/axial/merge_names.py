@@ -1034,9 +1034,11 @@ def build_alias_map_nodes(
     a surface no decision, no seed and no fold touched still comes out as
     its own node with no aliases (§7.16). The canonical is elected in this
     order: the seed's own spelling when the corpus contains it (it is the
-    curated one), then the canonical the model chose, then the most-mentioned
-    surface form -- ties broken lexicographically throughout, so the map is a
-    pure function of its inputs. `folded_groups` never enters that election:
+    curated one), then the most-mentioned canonical the model actually chose
+    -- a node it returned with no aliases folded nothing and is no
+    preference (issue #642) -- then the most-mentioned surface form; ties
+    broken lexicographically throughout, so the map is a pure function of
+    its inputs. `folded_groups` never enters that election:
     it only says which surfaces are the same entity, never which spelling
     wins (issue #463 -- the fold is for candidate generation, not identity).
 
@@ -1114,9 +1116,15 @@ def _elect_canonical(
     seeded = sorted(member for member in members if member in seed_canonical)
     if seeded:
         return seeded[0]
-    chosen = [member for member in members if member in model_canonical]
+    # Issue #642: a node the model returned with NO aliases folded nothing,
+    # so it is not a preference -- reading it as one let `Asʿad`, mentioned
+    # once, name the page holding Hafiz al-Asad's 110 notes. And among
+    # canonicals the model really did choose, mentions decide before the
+    # size of the batch each one won: `Ba'th Party` (20 mentions, 3 aliases)
+    # names the party's door, not `Syrian Ba'ath party` (1 mention, 4).
+    chosen = [member for member in members if model_canonical.get(member)]
     if chosen:
-        return min(chosen, key=lambda member: (-model_canonical[member], -counts[member], member))
+        return min(chosen, key=lambda member: (-counts[member], -model_canonical[member], member))
     return min(members, key=lambda member: (-counts[member], member))
 
 
