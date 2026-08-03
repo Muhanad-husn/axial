@@ -1111,7 +1111,11 @@ def _content_words(query: str) -> list[str]:
 
 
 def _group_one_candidates(
-    query: str, layer: _NameLayer, vault_dir: Path
+    query: str,
+    layer: _NameLayer,
+    vault_dir: Path,
+    *,
+    contains: list[str] | None = None,
 ) -> list[tuple[str, str, str]]:
     """`(canonical, matched_on, tier)` for every literal route's hit on
     `query` -- the union `exact` ∪ `alias` ∪ `folded` ∪ `contains` (issue
@@ -1122,7 +1126,13 @@ def _group_one_candidates(
     `exact`, never demoted to the vaguer route that also happens to find it.
     Unranked and untruncated: `_rank_group_one` orders the result, and a
     caller decides whether to use it as the phrase-level group or feed one
-    query word from the compound-query fallback."""
+    query word from the compound-query fallback.
+
+    `contains`, when given, replaces the `contains`-route scan with an
+    already-computed page-name list -- the compound-query fallback's own
+    per-word frequency count (`_compound_fallback_candidates`) already pays
+    for this exact scan, and re-running it here would be a second 49,674-name
+    pass for the same word."""
     matches: dict[str, tuple[str, str]] = {}
 
     if query in layer.canonicals:
@@ -1140,7 +1150,10 @@ def _group_one_candidates(
     for canonical, surface in sorted(layer.folded.get(folded_query, ())):
         matches.setdefault(canonical, (surface, TIER_FOLDED))
 
-    for name in _contains_matches(folded_query, vault_dir):
+    found_contains = (
+        contains if contains is not None else _contains_matches(folded_query, vault_dir)
+    )
+    for name in found_contains:
         matches.setdefault(name, (name, TIER_CONTAINS))
 
     return [(canonical, matched_on, tier) for canonical, (matched_on, tier) in matches.items()]
@@ -1186,12 +1199,46 @@ def _compound_fallback_candidates(
     route that actually matched the word, so a caller can tell a real
     phrase resolution from "your phrase matched no page; this word did".
     `matched_on` is the query word itself, not the page name, for the same
-    reason. One door per word, in query order, deduplicated by canonical
-    (an earlier word's door is kept over a later word's repeat of it)."""
+    reason. Deduplicated by canonical (an earlier word's door is kept over a
+    later word's repeat of it).
+
+    **Ordered by vocabulary rarity, rarest word first -- not query order and
+    not door size (issue #632, second round).** A generic connective word
+    (`Syrian`, `de`, `Robert`, `state`) appears in hundreds of page names, so
+    its own biggest same-family door -- `Syrian government`, `Charles de
+    Gaulle`, `Robert R. Kaufman`, `nation-state` -- used to lead the slate
+    ahead of the word that actually names what the query is about, moving a
+    door that was already correct pre-#632 out of first place. `frequency`
+    is how many page names contain each word as a whole word (the same
+    `contains` scan every word already pays for, its own result length --
+    no second pass), and the rarest word's door leads because the rare word
+    is the one that names the query's actual topic; a word every third page
+    carries is a connective, not a topic. This is a different quantity over
+    a different set from #522's own IDF finding: #522 ranked a hub's
+    NEIGHBOURS by their own size and found no rarity gradient (a hub's
+    neighbours are themselves hubs); this ranks the QUERY'S WORDS by how
+    common each is in the page-name vocabulary, which does have a gradient
+    -- `jackson` (10 page names) against `states` (306) for the query
+    `Robert Jackson quasi-states`, measured on the real vault. Ties (two
+    words appearing in equally many page names) break by word ascending, so
+    the whole order is total."""
+    frequency: dict[str, int] = {}
+    contains_by_word: dict[str, list[str]] = {}
+    for word in _content_words(query):
+        if word in contains_by_word:
+            continue
+        matches = _contains_matches(fold_surface_form(word), vault_dir)
+        contains_by_word[word] = matches
+        frequency[word] = len(matches)
+
     doors: list[tuple[str, str, str]] = []
     seen: set[str] = set()
-    for word in _content_words(query):
-        ranked = _rank_group_one(_group_one_candidates(word, layer, vault_dir), layer, page_index)
+    for word in sorted(frequency, key=lambda w: (frequency[w], w.casefold())):
+        ranked = _rank_group_one(
+            _group_one_candidates(word, layer, vault_dir, contains=contains_by_word[word]),
+            layer,
+            page_index,
+        )
         if not ranked:
             continue
         canonical, _matched_on, _tier = ranked[0]
@@ -1230,7 +1277,12 @@ def find_names(
     `"mandate-era institutions Syria"` does -- each content word of the
     query is resolved separately (the same group-1 union and ranking) and
     the best door per word stands in for group 1, tagged `tier="word"` so a
-    caller can tell the difference from a real phrase match.
+    caller can tell the difference from a real phrase match. **The words
+    themselves are ordered rarest first**, by how many page names each
+    appears in (`_compound_fallback_candidates`) -- a connective word
+    (`Syrian`, `de`, `state`) appears in hundreds of page names and its own
+    door would otherwise lead ahead of the word that names the query's
+    actual topic.
 
     **Group 2 -- embedding candidates**, not already in group 1, in the
     existing similarity order -- appended only when group 1 (or its

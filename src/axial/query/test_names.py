@@ -375,6 +375,38 @@ def test_compound_query_fallback_offers_the_best_door_per_content_word(tmp_path)
     )
 
 
+def test_compound_query_fallback_orders_words_by_page_name_rarity_not_query_order(tmp_path):
+    """Issue #632, second round: a generic word that names hundreds of pages
+    (`Syrian`, `de`, `state`) used to lead the fallback slate ahead of the
+    word that actually names the query's topic, bumping an
+    already-correct door out of first place. The per-word doors are now
+    ordered by how many page names each word appears in -- rarest first --
+    never by query order and never by door size: `common` appears in four
+    of this fixture's page names, `rare` in one, and `rare` leads even
+    though it comes SECOND in the query text."""
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    canonicals = ["Rare Concept", "Common Era", "Common Ground", "Common Law", "Common Sense"]
+    _write_layer(
+        names_dir, [{"canonical": c, "kind": "concept", "aliases": []} for c in canonicals]
+    )
+    for c in canonicals:
+        _write_name_page(vault_dir, c, member_count=1)
+
+    # Neither word, nor the two-word phrase, is any page's own name, so
+    # this exercises the fallback rather than group 1's literal routes.
+    hits = find_names("common rare", 10, names_dir=names_dir, vault_dir=vault_dir)
+
+    word_hits = [hit for hit in hits if hit.tier == "word"]
+    assert [hit.matched_on for hit in word_hits] == ["rare", "common"], (
+        "the rarer word's door leads even though 'common' comes first in the query text"
+    )
+    assert word_hits[0].canonical == "Rare Concept"
+    assert word_hits[1].canonical == "Common Era", (
+        "among the four 'common' pages the usual group-1 ranking still decides which one wins"
+    )
+
+
 def test_find_names_ordering_is_deterministic_including_group_one_ties(tmp_path):
     """Issue #632: two pages tied on kind/source_count/member_count break by
     canonical ascending, and the same query returns the same slate on every
