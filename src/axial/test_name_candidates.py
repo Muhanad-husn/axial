@@ -440,6 +440,53 @@ def test_fold_groups_leaves_diacritics_alone():
     assert fold_groups(["Galilee", "Galilée"]) == []
 
 
+# ---------------------------------------------------------------------------
+# Issue #642: transliteration variants are a rendering, not a name. Pinned on
+# the issue's own worked case -- the corpus writes the Ba'th party twelve
+# ways, and `Ba'th Party` (43 notes, no Vignal) and `Baath Party` (25 notes,
+# with him) were two half-doors where one whole door belongs.
+# ---------------------------------------------------------------------------
+
+
+def test_fold_groups_transliteration_variants_of_one_name():
+    """The marker (`'`, `ʿ`, `ʾ`, or nothing) and the vowel length (`aa` or
+    `a`) are the two renderings this corpus varies; all four spellings of
+    the party are one name."""
+    groups = fold_groups(
+        ["Ba'th Party", "Baath Party", "Ba'ath Party", "Baʿth Party", "Bath Party"]
+    )
+
+    assert groups == [("Ba'ath Party", "Ba'th Party", "Baath Party", "Bath Party", "Baʿth Party")]
+
+
+def test_fold_groups_modifier_letter_is_punctuation_not_a_diacritic():
+    """`ʿ` (U+02BF) is category `Lm`, so `\\w` treats it as a letter and the
+    punctuation class walks past it -- 636 occurrences in this corpus. It
+    stands between two letters exactly where an apostrophe stands in the
+    same word's other spelling, so it folds like one."""
+    groups = fold_groups(["ʿAlawis", "'Alawis", "Alawis"])
+
+    assert groups == [("'Alawis", "Alawis", "ʿAlawis")]
+
+
+def test_fold_groups_folds_the_rendering_never_the_extent():
+    """The scope line from issue #642: `Ba'th Regional Command` is not
+    `Ba'th Party`, and a fold that collapsed them would be worse than the
+    split it fixes."""
+    assert fold_groups(["Ba'th Party", "Baath Regional Command"]) == []
+
+
+def test_fold_groups_leaves_roman_numerals_and_acronyms_apart():
+    """Only a doubled `a` folds, measured (issue #642): collapsing every
+    doubled vowel over the live inventory folds `World War I` into `World
+    War II` and `EC` into `EEC`, because `ii` and `ee` carry Roman numerals
+    and acronyms where `aa` carries transliterations."""
+    assert fold_groups(["World War I", "World War II"]) == []
+    assert fold_groups(["Volume II", "Volume III"]) == []
+    assert fold_groups(["EC", "EEC"]) == []
+    assert fold_groups(["God", "Good"]) == []
+
+
 def test_fold_groups_ignores_unrelated_surfaces():
     assert fold_groups(["Ernest Gellner", "Perry Anderson"]) == []
 

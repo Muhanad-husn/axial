@@ -382,6 +382,47 @@ def test_a_seed_canonical_absent_from_the_corpus_still_folds_without_minting_a_n
     assert nodes == [{"canonical": "UK", "kind": None, "aliases": ["Britain"]}]
 
 
+def test_a_model_node_with_no_aliases_is_not_a_canonical_preference():
+    """Issue #642: the model returning `Asʿad` as a one-member node folded
+    nothing, so it said nothing about which spelling should name the page.
+    Read as a preference, it let a surface mentioned once outrank the one
+    mentioned 110 times, once the transliteration fold put them in the same
+    group."""
+    entries = [("Asad", "person", 110), ("Asʿad", "person", 1)]
+
+    nodes = build_alias_map_nodes(
+        entries,
+        [{"canonical": "Asʿad", "aliases": []}],
+        {},
+        folded_groups=[("Asad", "Asʿad")],
+    )
+
+    assert nodes == [{"canonical": "Asad", "kind": "person", "aliases": ["Asʿad"]}]
+
+
+def test_among_model_canonicals_mentions_decide_before_batch_size():
+    """Issue #642: two spellings the model really did choose as canonical,
+    in different batches, land in one group once the fold unions them. The
+    door takes the name the corpus uses, not the name that happened to win
+    the bigger batch."""
+    entries = [
+        ("Ba'th Party", "institution/group", 20),
+        ("Syrian Ba'ath party", "institution/group", 1),
+    ]
+
+    nodes = build_alias_map_nodes(
+        entries,
+        [
+            {"canonical": "Ba'th Party", "aliases": ["Ba'th party", "Bath Party"]},
+            {"canonical": "Syrian Ba'ath party", "aliases": ["a", "b", "c", "d"]},
+        ],
+        {},
+        folded_groups=[("Ba'th Party", "Syrian Ba'ath party")],
+    )
+
+    assert nodes[0]["canonical"] == "Ba'th Party"
+
+
 def test_kind_falls_back_to_the_groups_own_most_mentioned_kind():
     entries = [("Gellner 1992", None, 9), ("Ernest Gellner", "person", 3)]
 
