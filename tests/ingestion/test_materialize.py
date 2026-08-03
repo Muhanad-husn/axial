@@ -422,6 +422,37 @@ def test_name_page_carries_cross_book_members_as_links_with_author_year_claim(tm
     assert "Bellicist state building." in body
 
 
+def test_materialize_writes_a_door_index_with_source_count(tmp_path):
+    """Issue #634: Materialize writes `<vault_dir>/names.jsonl`, a sibling of
+    `names/` (never a member of it), one row per surviving name page,
+    carrying `source_count` -- the number of distinct sources the page's
+    members span, which the frontmatter alone does not carry."""
+    _build_fixture(tmp_path)
+    run_materialize(**_dirs(tmp_path))
+
+    vault_dir = tmp_path / "data" / "vault"
+    index_path = vault_dir / "names.jsonl"
+    assert index_path.is_file()
+    assert index_path.parent == vault_dir, "the index is a sibling of names/, not inside it"
+
+    rows = {
+        row["name"]: row
+        for row in (
+            json.loads(line) for line in index_path.read_text(encoding="utf-8").splitlines()
+        )
+    }
+
+    # "Kevin Attell" is named in src1 AND src2 -- two distinct sources.
+    assert rows["Kevin Attell"]["member_count"] == 2
+    assert rows["Kevin Attell"]["source_count"] == 2
+    assert rows["Kevin Attell"]["kind"] == "person"
+    assert rows["Kevin Attell"]["filename"] == "Kevin Attell.md"
+
+    # "Table 3.1" is named only in src1 -- one source.
+    assert rows["Table 3.1"]["member_count"] == 1
+    assert rows["Table 3.1"]["source_count"] == 1
+
+
 def test_figure_table_name_page_links_the_matching_artifact_note(tmp_path):
     _build_fixture(tmp_path)
     run_materialize(**_dirs(tmp_path))

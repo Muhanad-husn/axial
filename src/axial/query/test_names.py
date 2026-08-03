@@ -1012,7 +1012,12 @@ def test_coverage_count_skips_a_malformed_page_rather_than_aborting_the_scan(tmp
 
 def test_the_name_page_index_is_built_at_most_once_per_vault(tmp_path, monkeypatch):
     """Repeated calls inside one retrieval loop must not re-scan ~62.8k
-    pages; a regression to a per-call scan leaves every other test green."""
+    pages; a regression to a per-call scan leaves every other test green.
+
+    Patches `_read_name_page_full`, not `_read_name_page_head` (issue #634):
+    the fallback scan now reads each page's body too, since `source_count`
+    is not in the frontmatter -- a one-line justification for editing this
+    existing unit, the mechanism the index is built from actually moved."""
     from axial.query import names as names_module
 
     vault_dir = tmp_path / "vault"
@@ -1020,13 +1025,13 @@ def test_the_name_page_index_is_built_at_most_once_per_vault(tmp_path, monkeypat
     _write_name_page(vault_dir, "b", member_count=2)
 
     reads: list[Path] = []
-    original = names_module._read_name_page_head
+    original = names_module._read_name_page_full
 
     def counting(path):
         reads.append(path)
         return original(path)
 
-    monkeypatch.setattr(names_module, "_read_name_page_head", counting)
+    monkeypatch.setattr(names_module, "_read_name_page_full", counting)
 
     coverage_count(vault_dir=vault_dir)
     after_first = len(reads)
@@ -1066,6 +1071,101 @@ def test_no_index_is_built_on_a_direct_page_hit(tmp_path, monkeypatch):
     assert get_name("a concept", vault_dir=vault_dir).canonical == "a concept"
     hits = find_names("a concept", 10, names_dir=names_dir, vault_dir=vault_dir)
     assert [(hit.canonical, hit.member_count) for hit in hits] == [("a concept", 1)]
+
+
+# -- the door index (issue #634) ----------------------------------------------
+
+
+def test_name_page_index_reads_the_persisted_file_and_never_scans_when_present(
+    tmp_path, monkeypatch
+):
+    """When Materialize already wrote `<vault_dir>/names.jsonl`, the reader
+    builds its in-memory index from that one file and never opens a page."""
+    from axial.query import names as names_module
+
+    vault_dir = tmp_path / "vault"
+    page_path = _write_name_page(vault_dir, "a concept", kind="concept", member_count=3)
+    (vault_dir / "names.jsonl").write_text(
+        json.dumps(
+            {
+                "name": "a concept",
+                "filename": page_path.name,
+                "kind": "concept",
+                "member_count": 3,
+                "source_count": 2,
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def _explode(_path):
+        raise AssertionError("the persisted index file was present; no page scan may run")
+
+    monkeypatch.setattr(names_module, "_read_name_page_full", _explode)
+
+    index = _name_page_index(vault_dir)
+
+    assert index["a concept"].path == page_path
+    assert index["a concept"].kind == "concept"
+    assert index["a concept"].member_count == 3
+    assert index["a concept"].source_count == 2
+
+
+def test_absent_index_file_falls_back_to_a_scan_and_writes_one(tmp_path):
+    """An already-materialized vault with no `names.jsonl` yet (issue #634)
+    still resolves, by scanning `names/` itself, and self-heals by writing
+    the index it just built -- so the next call reads the file instead."""
+    vault_dir = tmp_path / "vault"
+    _write_name_page(
+        vault_dir,
+        "cross-book concept",
+        kind="concept",
+        member_count=2,
+        body=(
+            "**Member notes:**\n"
+            "- [[srcA_000_intro_001]] — A (2020): claim a.\n"
+            "- [[srcB_000_intro_001]] — B (2021): claim b.\n"
+        ),
+    )
+    _write_name_page(
+        vault_dir,
+        "one-book concept",
+        kind="concept",
+        member_count=1,
+        body="**Member notes:**\n- [[srcA_001_intro_002]] — A (2020): claim.\n",
+    )
+    assert not (vault_dir / "names.jsonl").is_file()
+
+    index = _name_page_index(vault_dir)
+
+    assert index["cross-book concept"].source_count == 2
+    assert index["one-book concept"].source_count == 1
+
+    index_path = vault_dir / "names.jsonl"
+    assert index_path.is_file(), "a missing index self-heals by writing one"
+    rows = {
+        row["name"]: row
+        for row in (
+            json.loads(line) for line in index_path.read_text(encoding="utf-8").splitlines()
+        )
+    }
+    assert rows["cross-book concept"]["source_count"] == 2
+    assert rows["one-book concept"]["source_count"] == 1
+
+
+def test_write_name_page_index_file_degrades_silently_when_not_writable(tmp_path):
+    """A vault directory the process cannot write to must not turn a
+    successful in-memory build into a raised error (issue #634)."""
+    from axial.query.names import _NamePageEntry, _write_name_page_index_file
+
+    unwritable_vault_dir = tmp_path / "does-not-exist" / "nested"
+    entry = _NamePageEntry(
+        path=unwritable_vault_dir / "names" / "a.md", kind="concept", member_count=1, source_count=1
+    )
+
+    _write_name_page_index_file(unwritable_vault_dir, {"a": entry})  # must not raise
 
 
 # -- small shared helpers -----------------------------------------------------

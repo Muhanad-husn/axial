@@ -163,6 +163,7 @@ axial/
       prose/                   # prose-pool notes (.md with frontmatter)
       artifacts/               # artifact-pool notes (.md with frontmatter)
       names/                   # name pages (.md, one per surviving name, §7.17)
+      names.jsonl              # the name-page index (§7.17, issue #634): derived, rebuildable
   tests/
 ```
 
@@ -635,6 +636,8 @@ Materialize (§5 stage 8) writes the vault with **no model call** (D11). Three o
 **Why the links live here.** Obsidian treats a link as a connection in both directions, so a name page linking its members draws exactly the same graph as members linking the name — and the whole link layer becomes regenerable. A changed alias map rewrites a few hundred name pages instead of six thousand notes. Notes carry their names as plain strings and never as links (§7.2).
 
 **Deleting an orphaned name page is the existing mechanism, and issue #508 is the largest thing it has ever had to do.** A page whose canonical no longer appears in the index is unlinked on the next run, so a tightened merge never leaves the vault accumulating orphans. The cut set removes 12,309 pages at once on the live layer, taking the index from 62,704 to 50,395, and that arrives through the same path with no special case. §7.16's guarantee that a prose note stays byte-unchanged is unaffected: only name pages move.
+
+**The name-page index (`data/vault/names.jsonl`, issue #634).** A retrieval reader that needs a fact about every name page — how many notes a page carries, how many distinct sources it spans — used to open and read each of 49,674 files itself, measured at 9m22s serial wall clock on the live vault. Materialize already knows every number a reader could want as it writes the pages, so it writes them once more, next to `names/` rather than inside it (a stray file inside `names/` would be read as a page by anything that globs there): one JSONL row per surviving name, carrying `name` (the page's own `name` frontmatter, still the sole authoritative id — never the filename), `filename` (so a reader opens the page directly, no glob), `kind`, `member_count`, and `source_count` — the number of distinct `source_id` values among that page's member notes, a fact the frontmatter alone does not carry and the reason this is a writer change rather than a reader one. **The index is derived and rebuildable, never a second source of truth**: a reader that finds it missing rebuilds it by scanning `names/` itself (threaded — the cost is per-file-open latency, measured at ~40s for all 49,674 pages against the 9m22s serial scan) and writes it back so the next run reads it in one pass; a vault directory that is not writable degrades to the in-memory result rather than raising. Materialize itself always rewrites the whole index on every run, the same way it always rewrites prose and artifact notes.
 
 **First look.** This stage is the first point at which the founder can open the graph view and see the corpus. Everything before it is invisible on disk. It is sequenced early for that reason, and building Gather before that look happens is a mistake worth naming here.
 
