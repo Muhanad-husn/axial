@@ -437,12 +437,18 @@ def test_thin_name_never_yields_high_overall_band():
     assert BAYAT in confidence["rationale"]
 
 
-def test_overall_band_is_bounded_by_the_worst_touched_name():
+def test_overall_band_is_the_weighted_median_not_the_worst_touched_name():
+    """Issue #640: a single thin name's ONE evidence note no longer drags
+    the whole run down to `low` when the bulk of the run's evidence sits on
+    a moderate name -- the exact shape (5 moderate notes to 1 thin note)
+    that used to read `low` under the old `min`-over-names rule now reads
+    `medium`, its weighted-median band. Superseded
+    `test_overall_band_is_bounded_by_the_worst_touched_name`."""
     coverage_map = {
         TILLY: {"corpus_note_count": 50, "evidence_note_count": 5, "coverage_band": "moderate"},
         BAYAT: {"corpus_note_count": 6, "evidence_note_count": 1, "coverage_band": "thin"},
     }
-    assert compute_confidence(coverage_map)["overall_band"] == "low"
+    assert compute_confidence(coverage_map)["overall_band"] == "medium"
 
 
 def test_the_rationale_carries_every_mapped_names_counts():
@@ -499,6 +505,92 @@ def test_not_measured_band_is_outside_the_ranked_vocabulary():
 
     assert NOT_MEASURED_BAND not in _CONFIDENCE_BAND_BY_COVERAGE_RANK.values()
     assert NOT_MEASURED_BAND not in _CONFIDENCE_BAND_RANK
+
+
+# -- compute_confidence: issue #640's own measured shapes --------------------
+
+
+def test_a_one_note_thin_name_no_longer_sinks_a_richer_slate_to_low():
+    """Issue #640's reported defect, pinned on its own arm B shape: a
+    1-corpus/1-evidence-note thin name (`1963 Baath takeover`) used to set
+    the whole run's band to `low` under `min`-over-names, even though it
+    supplies only 1 of the run's 24 evidence notes and the bulk sit on
+    moderate/dense names. The weighted median reads `medium`."""
+    coverage_map = {
+        "1963 Baath takeover": {
+            "corpus_note_count": 1,
+            "evidence_note_count": 1,
+            "coverage_band": "thin",
+        },
+        "French Mandate": {
+            "corpus_note_count": 55,
+            "evidence_note_count": 2,
+            "coverage_band": "moderate",
+        },
+        "Syrian Civil War": {
+            "corpus_note_count": 9,
+            "evidence_note_count": 3,
+            "coverage_band": "thin",
+        },
+        "Baath Party": {
+            "corpus_note_count": 25,
+            "evidence_note_count": 7,
+            "coverage_band": "moderate",
+        },
+        "Syria": {"corpus_note_count": 962, "evidence_note_count": 11, "coverage_band": "dense"},
+    }
+    assert compute_confidence(coverage_map)["overall_band"] == "medium"
+
+
+def test_a_dominant_thin_name_still_reads_low_not_inflated_by_the_fix():
+    """Issue #640's arm C shape: `2011 uprising` is genuinely thin (13
+    corpus notes) and supplies 10 of the arm's 23 evidence notes -- its own
+    median note. The fix does not blanket-inflate every band; a run whose
+    median evidence note really is thin still reads `low`."""
+    coverage_map = {
+        "Syrian Civil War": {
+            "corpus_note_count": 9,
+            "evidence_note_count": 1,
+            "coverage_band": "thin",
+        },
+        "sectarianism": {
+            "corpus_note_count": 3,
+            "evidence_note_count": 2,
+            "coverage_band": "thin",
+        },
+        "2011 uprising": {
+            "corpus_note_count": 13,
+            "evidence_note_count": 10,
+            "coverage_band": "thin",
+        },
+        "Syria": {"corpus_note_count": 962, "evidence_note_count": 10, "coverage_band": "dense"},
+    }
+    assert compute_confidence(coverage_map)["overall_band"] == "low"
+
+
+def test_thin_present_caps_a_dense_median_at_medium_not_high():
+    """The top-band cap (issue #640): a dense-median map that also discloses
+    one thin name may not exceed `medium`, keeping §7.9 check 3
+    (`confidence_exceeds_coverage`) satisfied by construction."""
+    coverage_map = {
+        "Syria": {"corpus_note_count": 962, "evidence_note_count": 10, "coverage_band": "dense"},
+        "Rojava": {"corpus_note_count": 3, "evidence_note_count": 1, "coverage_band": "thin"},
+    }
+    assert compute_confidence(coverage_map)["overall_band"] == "medium"
+
+
+def test_a_map_with_no_evidence_notes_falls_back_to_min_over_names():
+    """Issue #640's fallback: a non-empty map whose every
+    `evidence_note_count` is 0 or missing has no notes to weight a median
+    over. Rather than crash or report `not_measured` -- the map is
+    non-empty, so something was measured -- this falls back to the old
+    `min`-over-names rank, exercised here through the paper layer's own
+    coverage-map shape (`cited_claim_count`, no `evidence_note_count`)."""
+    coverage_map = {
+        TILLY: {"corpus_note_count": 240, "cited_claim_count": 3, "coverage_band": "dense"},
+        BAYAT: {"corpus_note_count": 6, "cited_claim_count": 1, "coverage_band": "thin"},
+    }
+    assert compute_confidence(coverage_map)["overall_band"] == "low"
 
 
 # -- validate_coverage_and_confidence: presence checks -----------------------
