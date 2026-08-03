@@ -34,7 +34,9 @@ index"), not per source:
      page's members span, not otherwise recorded anywhere). It exists so a
      retrieval reader never has to open all 49,674 pages itself to answer a
      question the writer already knew the answer to while it wrote them;
-     see `axial.query.names._name_page_index`, which reads it.
+     see `axial.query.names._name_page_index`, which reads it. Written
+     atomically (issue #637), so a concurrent reader never observes a
+     truncated or partial file.
 
 **The figure/table join (Open Question, §10, spec line 807).** A name whose
 `kind` is `figure`/`table` additionally links to the artifact note(s) it
@@ -101,6 +103,7 @@ from axial.names import DEFAULT_INVENTORY_PATH, load_answer_records, unscope_sur
 from axial.paths import (
     DEFAULT_PIPELINE_CONFIG_PATH,
     _read_configured_dir,
+    atomic_write_text,
     default_vault_dir,
     name_page_path,
 )
@@ -465,11 +468,17 @@ def _write_name_page_index(vault_dir: Path, rows: list[dict[str, Any]]) -> None:
     written next to `names/` as `NAME_PAGE_INDEX_FILENAME`. Rewritten in
     full on every Materialize run, the same as prose and artifact notes --
     it is cheap (~3 MB over the real corpus) and this pass already walks
-    every node once to write its page."""
+    every node once to write its page.
+
+    Written atomically (`atomic_write_text`, issue #637): a materialize run
+    rewriting this file while a concurrent `axial ask` reads it is the live
+    scenario this exists to survive, not a hypothetical. Unlike the query
+    side's self-healing write, a failed write here is a real failure and is
+    left to raise."""
     path = Path(vault_dir) / NAME_PAGE_INDEX_FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
     text = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
-    path.write_text(text, encoding="utf-8")
+    atomic_write_text(path, text)
 
 
 def name_page_paths(vault_dir: Path, nodes: list[dict[str, Any]]) -> dict[str, Path]:

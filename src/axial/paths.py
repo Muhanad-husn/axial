@@ -23,10 +23,12 @@ source of truth instead of two literals that happen to agree today.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import re
 import stat
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any
@@ -177,6 +179,48 @@ def default_map_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
     """Read `paths.map_dir` from `config_path`, falling back to `MAP_DIR`
     when the file or key is absent."""
     return _read_configured_dir(config_path, "map_dir", MAP_DIR)
+
+
+# =============================================================================
+# Atomic text writes -- shared by `axial.materialize` and `axial.query.names`
+# (issue #637). `Path.write_text(path, ...)` opens `path` in "w" mode, which
+# truncates it immediately and then streams the new content in -- a reader
+# racing that write (another process, since both call sites here can run
+# concurrently: a materialize pass rewriting the door index while an `axial
+# ask` reads it) can observe a truncated or partially-written file, which the
+# door-index reader treats as a smaller vault rather than an error (it skips
+# malformed rows by design). `axial.chunk`'s `_write_chunk_sections` solved
+# this the same way for issue #185; this is that same tmp-file-plus-
+# `os.replace` shape, generalized so the two callers here share one
+# implementation instead of a second hand-rolled copy.
+
+
+def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
+    """Write `text` to `path` atomically: a temp file in `path`'s own
+    directory is written and closed first, then `os.replace`d over `path` in
+    one filesystem rename -- so a concurrent reader always observes either
+    the complete prior file or the complete new one, `path` itself is never
+    opened for writing directly, and there is no window where it is
+    truncated or partial. The temp file's name is unique per call
+    (`tempfile.mkstemp`), so two writers racing on the same `path` never
+    collide on each other's temp file, only on which `os.replace` lands
+    last -- and either outcome is a complete file.
+
+    Raises whatever `OSError` the write hits (e.g. `path`'s parent directory
+    is missing or read-only); the temp file is removed before the error
+    propagates. This function never creates `path`'s parent directory --
+    callers that need one call `path.parent.mkdir(...)` themselves first.
+    Callers that must degrade silently rather than surface the failure
+    catch `OSError` around this call."""
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding=encoding) as handle:
+            handle.write(text)
+        os.replace(tmp_name, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
 
 
 # =============================================================================

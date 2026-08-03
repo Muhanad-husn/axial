@@ -1463,6 +1463,64 @@ def test_write_name_page_index_file_degrades_silently_when_not_writable(tmp_path
     _write_name_page_index_file(unwritable_vault_dir, {"a": entry})  # must not raise
 
 
+def test_write_name_page_index_file_is_atomic_never_exposes_a_partial_write(tmp_path, monkeypatch):
+    """Issue #637: a concurrent reader of `names.jsonl` must never observe a
+    truncated or partial file, only the complete prior content or the
+    complete new content.
+
+    `Path.write_text`'s "w" mode truncates the file the instant it opens,
+    before a single byte of the new content is written, so a writer that
+    calls `path.write_text(...)` directly exposes an empty file for that
+    whole window. Demonstrated by spying on every direct `open()` of the
+    real index path in write mode: this test fails for the right reason
+    against the pre-fix code (which opens `path` itself for writing) and
+    passes once the write goes through a temp-file-plus-`os.replace` swap,
+    which never opens the real path for writing at all."""
+    from axial.query.names import (
+        NAME_PAGE_INDEX_FILENAME,
+        _NamePageEntry,
+        _write_name_page_index_file,
+    )
+
+    vault_dir = tmp_path / "vault"
+    vault_dir.mkdir()
+    index_path = vault_dir / NAME_PAGE_INDEX_FILENAME
+
+    old_entry = _NamePageEntry(
+        path=vault_dir / "names" / "Old Name.md", kind="person", member_count=1, source_count=1
+    )
+    _write_name_page_index_file(vault_dir, {"Old Name": old_entry})
+    old_bytes = index_path.read_bytes()
+    assert old_bytes, "fixture setup: the first write must actually land"
+
+    new_entry = _NamePageEntry(
+        path=vault_dir / "names" / "New Name.md", kind="concept", member_count=5, source_count=3
+    )
+
+    observed_mid_write: list[bytes] = []
+    real_open = Path.open
+
+    def spying_open(self, mode="r", *args, **kwargs):
+        handle = real_open(self, mode, *args, **kwargs)
+        if self == index_path and "w" in mode:
+            # `real_open` above already ran -- if this is a direct write
+            # open of the real path, it has already truncated it.
+            observed_mid_write.append(index_path.read_bytes())
+        return handle
+
+    monkeypatch.setattr(Path, "open", spying_open)
+
+    _write_name_page_index_file(vault_dir, {"New Name": new_entry})
+
+    assert observed_mid_write == [], (
+        "the real index path was opened directly for writing -- a concurrent "
+        f"reader would have observed a truncated file: {observed_mid_write!r}"
+    )
+    new_bytes = index_path.read_bytes()
+    assert b"New Name" in new_bytes
+    assert b"Old Name" not in new_bytes
+
+
 # -- small shared helpers -----------------------------------------------------
 
 

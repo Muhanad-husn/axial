@@ -60,7 +60,7 @@ from typing import Any, Callable
 import yaml
 
 from axial.name_candidates import _normalize_form as fold_surface_form
-from axial.paths import default_names_dir, default_vault_dir, name_page_path
+from axial.paths import atomic_write_text, default_names_dir, default_vault_dir, name_page_path
 from axial.query.reader import (
     MalformedChunkIdError,
     MalformedNoteError,
@@ -599,10 +599,12 @@ def _read_name_page_index_file(vault_dir: Path) -> dict[str, _NamePageEntry] | N
 def _write_name_page_index_file(vault_dir: Path, index: dict[str, _NamePageEntry]) -> None:
     """Persist a freshly-built index (the threaded-scan fallback below) so
     the next process reads it in one file read instead of scanning again.
-    **Degrades silently on a read-only vault directory** -- a caller that
-    reached this point already has the in-memory `index` to return, and a
-    failed write here must not turn a successful build into a raised
-    error."""
+    Written atomically (`atomic_write_text`, issue #637) so a concurrent
+    reader of `NAME_PAGE_INDEX_FILENAME` never observes a truncated or
+    partial file. **Degrades silently on a read-only vault directory** -- a
+    caller that reached this point already has the in-memory `index` to
+    return, and a failed write here must not turn a successful build into a
+    raised error."""
     path = Path(vault_dir) / NAME_PAGE_INDEX_FILENAME
     lines = (
         json.dumps(
@@ -618,7 +620,7 @@ def _write_name_page_index_file(vault_dir: Path, index: dict[str, _NamePageEntry
         for name, entry in sorted(index.items())
     )
     try:
-        path.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+        atomic_write_text(path, "".join(line + "\n" for line in lines))
     except OSError:
         pass
 
@@ -643,7 +645,10 @@ def _name_page_index(vault_dir: Path) -> dict[str, _NamePageEntry]:
     fresh process reads the file instead of scanning again. An
     already-materialized vault with no index file therefore self-heals on
     its first read; a vault directory that will not accept the write
-    degrades to the in-memory result rather than raising.
+    degrades to the in-memory result rather than raising. Both writers of
+    this file (this self-heal and Materialize's) write it atomically (issue
+    #637), so a concurrent read of `<vault_dir>/names.jsonl` never observes
+    a truncated or partial file.
 
     Built lazily, at most once per resolved `vault_dir` for the process
     lifetime -- never on import. `get_name`'s fast path (the writer's own

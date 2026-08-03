@@ -453,6 +453,73 @@ def test_materialize_writes_a_door_index_with_source_count(tmp_path):
     assert rows["Table 3.1"]["source_count"] == 1
 
 
+def test_write_name_page_index_is_atomic_never_exposes_a_partial_write(tmp_path, monkeypatch):
+    """Issue #637: a concurrent reader of `names.jsonl` -- the live scenario
+    is `axial ask` reading it while a Materialize run rewrites it -- must
+    never observe a truncated or partial file, only the complete prior
+    content or the complete new content.
+
+    `Path.write_text`'s "w" mode truncates the file the instant it opens,
+    before a single byte of the new content is written, so a writer that
+    calls `path.write_text(...)` directly exposes an empty file for that
+    whole window. This is demonstrated by spying on every direct `open()`
+    of the real index path in write mode: this test fails for the right
+    reason against the pre-fix code (which opens `path` itself for writing)
+    and passes once the write goes through a temp-file-plus-`os.replace`
+    swap, which never opens the real path for writing at all."""
+    from axial.materialize import NAME_PAGE_INDEX_FILENAME, _write_name_page_index
+
+    vault_dir = tmp_path / "vault"
+    vault_dir.mkdir()
+    index_path = vault_dir / NAME_PAGE_INDEX_FILENAME
+
+    old_rows = [
+        {
+            "name": "Old Name",
+            "filename": "Old Name.md",
+            "kind": "person",
+            "member_count": 1,
+            "source_count": 1,
+        }
+    ]
+    _write_name_page_index(vault_dir, old_rows)
+    old_bytes = index_path.read_bytes()
+    assert old_bytes, "fixture setup: the first write must actually land"
+
+    new_rows = [
+        {
+            "name": "New Name",
+            "filename": "New Name.md",
+            "kind": "concept",
+            "member_count": 5,
+            "source_count": 3,
+        }
+    ]
+
+    observed_mid_write: list[bytes] = []
+    real_open = Path.open
+
+    def spying_open(self, mode="r", *args, **kwargs):
+        handle = real_open(self, mode, *args, **kwargs)
+        if self == index_path and "w" in mode:
+            # `real_open` above already ran -- if this is a direct write
+            # open of the real path, it has already truncated it.
+            observed_mid_write.append(index_path.read_bytes())
+        return handle
+
+    monkeypatch.setattr(Path, "open", spying_open)
+
+    _write_name_page_index(vault_dir, new_rows)
+
+    assert observed_mid_write == [], (
+        "the real index path was opened directly for writing -- a concurrent "
+        f"reader would have observed a truncated file: {observed_mid_write!r}"
+    )
+    new_bytes = index_path.read_bytes()
+    assert b"New Name" in new_bytes
+    assert b"Old Name" not in new_bytes
+
+
 def test_figure_table_name_page_links_the_matching_artifact_note(tmp_path):
     _build_fixture(tmp_path)
     run_materialize(**_dirs(tmp_path))
