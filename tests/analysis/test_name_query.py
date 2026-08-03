@@ -549,9 +549,22 @@ def test_find_names_reaches_the_canonical_through_phase_as_own_fold(
     assert hits[0].tier == "folded"
 
 
-def test_find_names_tiers_are_exhausted_in_order_not_unioned(fixture_layer: tuple[Path, Path]):
-    """An exact canonical hit is not diluted with the fold's own wider set:
-    "SDF" is a canonical, so tier 1 answers and tiers 2-4 never run."""
+def test_find_names_exact_hit_alone_is_the_whole_slate_when_nothing_else_literally_matches(
+    fixture_layer: tuple[Path, Path],
+):
+    """Issue #632, a locked-contract edit (justification inline): renamed
+    from `test_find_names_tiers_are_exhausted_in_order_not_unioned`, whose
+    old claim -- an exact hit means tiers 2-4 never run at all -- the door
+    slate deliberately drops (a bigger same-family page must still be
+    offered alongside a narrower exact hit; see
+    `src/axial/query/test_names.py`'s own #632 acceptance tests, which cover
+    that case against a small, purpose-built fixture rather than this
+    module's large locked one). What is still true, and is what this fixture actually
+    exercises: "SDF" has no bigger same-family page in this fixture (no
+    other canonical's folded name contains "sdf" as a whole word) and this
+    vault carries no vector store, so the slate is exactly the one exact
+    hit -- not because later tiers were skipped, but because they found
+    nothing to add."""
     from axial.query import find_names
 
     vault_dir, names_dir = fixture_layer

@@ -68,11 +68,13 @@ class ToolResult:
     happened" convention every non-truncating tool below already uses; a
     failed id is still named, through `detail` alone, never through `total`.
 
-    `detail`, when set (issues #517 and #493), is the same kind of beside-
-    the-trajectory rider, populated by five tools: `find_names` states each
-    hit's `kind`, `member_count` and `tier`, so a model can tell an
-    exact/alias resolution apart from an embedding guess -- a bare canonical
-    string cannot. `get_name` and `where_names_meet` state how many distinct
+    `detail`, when set (issues #517, #493 and #632), is the same kind of
+    beside-the-trajectory rider, populated by five tools: `find_names`
+    states each hit's `kind`, `member_count`, `source_count` and `tier`, so a
+    model can tell an exact/alias resolution apart from a `contains`,
+    per-word or embedding one -- and a big same-family door from a small
+    one -- a bare canonical string cannot. `get_name` and
+    `where_names_meet` state how many distinct
     sources the returned members span (`"<N> notes across <M> sources"`) --
     a live corpus run showed a model avoiding a large page or intersection
     entirely by resolving a narrow, one-book name instead, because it could

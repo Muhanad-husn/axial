@@ -175,6 +175,267 @@ def test_limit_of_zero_returns_empty(tmp_path):
     assert find_names("a concept", 0, names_dir=names_dir, vault_dir=tmp_path) == []
 
 
+# -- the door slate (issue #632) -----------------------------------------------
+#
+# `_page_body`, defined later in this module (near `where_names_meet`'s own
+# tests), is reused here rather than re-derived -- these tests just run
+# after it exists at import time, same as every other forward reference in
+# this file.
+
+
+def test_find_names_exact_hit_does_not_suppress_a_bigger_same_family_page(tmp_path):
+    """Issue #632's own motivating case: `Mandate` used to return only
+    itself because an exact hit stopped every other tier. The new
+    `contains` route now also surfaces `French Mandate`, a bigger
+    same-family page, and ranks it AHEAD of the exact hit by its own
+    (source_count, member_count) -- an exact hit is no longer a ceiling on
+    what the slate offers."""
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(
+        names_dir,
+        [
+            {"canonical": "Mandate", "kind": "concept", "aliases": []},
+            {"canonical": "French Mandate", "kind": "concept", "aliases": []},
+        ],
+    )
+    _write_name_page(
+        vault_dir,
+        "Mandate",
+        member_count=3,
+        body=_page_body(["srcA_000_intro_001", "srcA_000_intro_002", "srcB_000_intro_001"]),
+    )
+    _write_name_page(
+        vault_dir,
+        "French Mandate",
+        member_count=5,
+        body=_page_body(
+            [
+                "srcD_000_intro_001",
+                "srcE_000_intro_001",
+                "srcF_000_intro_001",
+                "srcD_000_intro_002",
+                "srcE_000_intro_002",
+            ]
+        ),
+    )
+
+    hits = find_names("Mandate", 10, names_dir=names_dir, vault_dir=vault_dir)
+
+    assert [(hit.canonical, hit.tier, hit.member_count, hit.source_count) for hit in hits] == [
+        ("French Mandate", "contains", 5, 3),
+        ("Mandate", "exact", 3, 2),
+    ]
+
+
+def test_find_names_ranks_a_work_kind_page_last_regardless_of_size(tmp_path):
+    """Issue #632: 8,583 of the real vault's pages are book/article titles;
+    a concept query's `contains` scan turns up work-titled pages sharing
+    its words, and those must rank LAST even when they are the bigger page
+    -- a work is a citation target (`who_cites` already serves it), not an
+    argument page."""
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(
+        names_dir,
+        [
+            {"canonical": "Culture of Sectarianism", "kind": "work", "aliases": []},
+            {"canonical": "sectarianism", "kind": "concept", "aliases": []},
+        ],
+    )
+    _write_name_page(
+        vault_dir,
+        "Culture of Sectarianism",
+        kind="work",
+        member_count=20,
+        body=_page_body([f"srcBig{i}_000_intro_001" for i in range(5)]),
+    )
+    _write_name_page(
+        vault_dir,
+        "sectarianism",
+        kind="concept",
+        member_count=5,
+        body=_page_body(["srcSmall_000_intro_001"]),
+    )
+
+    hits = find_names("sectarianism", 10, names_dir=names_dir, vault_dir=vault_dir)
+
+    assert [hit.canonical for hit in hits] == ["sectarianism", "Culture of Sectarianism"], (
+        "the work-kind page ranks last even though it spans five sources against one"
+    )
+
+
+def test_embedding_group_keeps_similarity_order_never_reranked_by_size(tmp_path, monkeypatch):
+    """Issue #632: ranking an embedding hit by size drifts to hubs (measured
+    in the issue's own prototype: `United States` outranks the real match
+    for the query `Syria`). Group 2 keeps `_embedding_tier`'s own
+    similarity order even when a later hit's page is far bigger than an
+    earlier one's -- `_embedding_tier` itself is stubbed here so this test
+    pins `find_names`'s OWN assembly, not the ranked tier's math (which
+    `tests/analysis/test_name_query_embedding_tier.py` already covers)."""
+    from axial.query import names as names_module
+
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(
+        names_dir,
+        [
+            {"canonical": "Small Match", "kind": "concept", "aliases": []},
+            {"canonical": "Big Hub", "kind": "concept", "aliases": []},
+        ],
+    )
+    _write_name_page(vault_dir, "Small Match", member_count=2)
+    _write_name_page(vault_dir, "Big Hub", member_count=900)
+
+    def fake_embedding_tier(_query, _layer, _names_dir, _encoder):
+        # The real nearest-neighbour order: the small page is the closer
+        # match, the hub a distant second -- the shape a size re-rank flips.
+        return [("Small Match", "Small Match"), ("Big Hub", "Big Hub")]
+
+    monkeypatch.setattr(names_module, "_embedding_tier", fake_embedding_tier)
+
+    # A query no literal route matches at all, so the slate is pure group 2.
+    hits = find_names("an unmatched query phrase", 10, names_dir=names_dir, vault_dir=vault_dir)
+
+    assert [hit.canonical for hit in hits] == ["Small Match", "Big Hub"], (
+        "group 2 must keep the embedding tier's own similarity order, never "
+        "re-rank by member_count/source_count"
+    )
+
+
+def test_group_two_only_tops_up_when_group_one_is_short(tmp_path, monkeypatch):
+    """Issue #632: the embedding group is appended only while the literal
+    group (or its compound-query stand-in) has not already filled `limit`
+    -- and is never even COMPUTED once it has, so a call the literal group
+    alone answers pays no vector-store read and builds no encoder."""
+    from axial.query import names as names_module
+
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(names_dir, [{"canonical": "One Door", "kind": "concept", "aliases": []}])
+    _write_name_page(vault_dir, "One Door", member_count=1)
+
+    calls: list[str] = []
+
+    def fake_embedding_tier(query, _layer, _names_dir, _encoder):
+        calls.append(query)
+        return [("Embedded Door", "Embedded Door")]
+
+    monkeypatch.setattr(names_module, "_embedding_tier", fake_embedding_tier)
+
+    filled = find_names("One Door", 1, names_dir=names_dir, vault_dir=vault_dir)
+    assert [hit.canonical for hit in filled] == ["One Door"]
+    assert calls == [], "the embedding group must not even be computed once group 1 fills limit"
+
+    topped_up = find_names("One Door", 2, names_dir=names_dir, vault_dir=vault_dir)
+    assert [hit.canonical for hit in topped_up] == ["One Door", "Embedded Door"]
+    assert calls == ["One Door"], "group 2 tops up exactly once group 1 falls short of limit"
+
+
+def test_compound_query_fallback_offers_the_best_door_per_content_word(tmp_path):
+    """Issue #632's own motivating compound case: no page's name literally
+    carries "mandate-era institutions Syria" as a phrase, so each content
+    word is resolved separately and the best door per word stands in for
+    group 1, marked `tier="word"` so a caller can tell "your phrase matched
+    no page; this word did" from a real phrase resolution -- and
+    `matched_on` names the query WORD, not the page, for the same reason."""
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(
+        names_dir,
+        [
+            {"canonical": "French Mandate", "kind": "concept", "aliases": []},
+            {"canonical": "Syria", "kind": "country/state/place", "aliases": []},
+        ],
+    )
+    _write_name_page(
+        vault_dir,
+        "French Mandate",
+        member_count=5,
+        body=_page_body(["srcD_000_intro_001", "srcE_000_intro_001", "srcF_000_intro_001"]),
+    )
+    _write_name_page(
+        vault_dir,
+        "Syria",
+        member_count=20,
+        body=_page_body([f"src{i}_000_intro_001" for i in range(4)]),
+    )
+
+    hits = find_names(
+        "mandate-era institutions Syria", 10, names_dir=names_dir, vault_dir=vault_dir
+    )
+
+    by_canonical = {hit.canonical: hit for hit in hits}
+    assert by_canonical["French Mandate"].tier == "word"
+    assert by_canonical["French Mandate"].matched_on == "mandate"
+    assert by_canonical["Syria"].tier == "word"
+    assert by_canonical["Syria"].matched_on == "Syria"
+    assert "institutions" not in by_canonical and "era" not in by_canonical, (
+        "a content word with no door in this fixture adds none"
+    )
+
+
+def test_compound_query_fallback_orders_words_by_page_name_rarity_not_query_order(tmp_path):
+    """Issue #632, second round: a generic word that names hundreds of pages
+    (`Syrian`, `de`, `state`) used to lead the fallback slate ahead of the
+    word that actually names the query's topic, bumping an
+    already-correct door out of first place. The per-word doors are now
+    ordered by how many page names each word appears in -- rarest first --
+    never by query order and never by door size: `common` appears in four
+    of this fixture's page names, `rare` in one, and `rare` leads even
+    though it comes SECOND in the query text."""
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    canonicals = ["Rare Concept", "Common Era", "Common Ground", "Common Law", "Common Sense"]
+    _write_layer(
+        names_dir, [{"canonical": c, "kind": "concept", "aliases": []} for c in canonicals]
+    )
+    for c in canonicals:
+        _write_name_page(vault_dir, c, member_count=1)
+
+    # Neither word, nor the two-word phrase, is any page's own name, so
+    # this exercises the fallback rather than group 1's literal routes.
+    hits = find_names("common rare", 10, names_dir=names_dir, vault_dir=vault_dir)
+
+    word_hits = [hit for hit in hits if hit.tier == "word"]
+    assert [hit.matched_on for hit in word_hits] == ["rare", "common"], (
+        "the rarer word's door leads even though 'common' comes first in the query text"
+    )
+    assert word_hits[0].canonical == "Rare Concept"
+    assert word_hits[1].canonical == "Common Era", (
+        "among the four 'common' pages the usual group-1 ranking still decides which one wins"
+    )
+
+
+def test_find_names_ordering_is_deterministic_including_group_one_ties(tmp_path):
+    """Issue #632: two pages tied on kind/source_count/member_count break by
+    canonical ascending, and the same query returns the same slate on every
+    call -- the determinism contract §7.5 requires, extended to the slate."""
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(
+        names_dir,
+        [
+            {"canonical": "Zeta Mandate", "kind": "concept", "aliases": []},
+            {"canonical": "Alpha Mandate", "kind": "concept", "aliases": []},
+        ],
+    )
+    _write_name_page(
+        vault_dir, "Zeta Mandate", member_count=1, body=_page_body(["srcX_000_intro_001"])
+    )
+    _write_name_page(
+        vault_dir, "Alpha Mandate", member_count=1, body=_page_body(["srcY_000_intro_001"])
+    )
+
+    first = find_names("Mandate", 10, names_dir=names_dir, vault_dir=vault_dir)
+    second = find_names("Mandate", 10, names_dir=names_dir, vault_dir=vault_dir)
+
+    assert [hit.canonical for hit in first] == ["Alpha Mandate", "Zeta Mandate"], (
+        "a tie on kind/source_count/member_count breaks by canonical ascending"
+    )
+    assert first == second, "the same query over the same vault returns the same slate every call"
+
+
 def test_canonical_for_surface_prefers_exact_then_alias_then_fold(tmp_path):
     names_dir = tmp_path / "names"
     _write_layer(
@@ -1051,16 +1312,15 @@ def test_the_name_page_index_is_keyed_per_vault_not_shared(tmp_path):
     assert set(_name_page_index(vault_b)) == {"only in b"}
 
 
-def test_no_index_is_built_on_a_direct_page_hit(tmp_path, monkeypatch):
-    """`get_name`'s and `find_names`' fast path is the writer's own naming
-    function plus a frontmatter check -- index-free, like `get_chunk`'s. A
-    `find_names` that built the whole-vault index to decorate at most `limit`
-    hits with their `member_count` would pay a 62.8k-page scan per run."""
+def test_get_name_avoids_the_index_on_a_direct_page_hit(tmp_path, monkeypatch):
+    """`get_name`'s fast path is the writer's own naming function plus a
+    frontmatter check -- index-free, like `get_chunk`'s. Issue #632 leaves
+    this alone on purpose: `get_name` resolves its own argument through
+    `canonical_for_surface` (never the door index), so an alias or folded
+    variant still lands the same page as its canonical without a slate."""
     from axial.query import names as names_module
 
     vault_dir = tmp_path / "vault"
-    names_dir = tmp_path / "names"
-    _write_layer(names_dir, [{"canonical": "a concept", "kind": "concept", "aliases": []}])
     _write_name_page(vault_dir, "a concept", member_count=1)
 
     def _explode(_vault_dir):
@@ -1069,8 +1329,43 @@ def test_no_index_is_built_on_a_direct_page_hit(tmp_path, monkeypatch):
     monkeypatch.setattr(names_module, "_name_page_index", _explode)
 
     assert get_name("a concept", vault_dir=vault_dir).canonical == "a concept"
+
+
+def test_find_names_scans_the_vault_at_most_once_per_call(tmp_path, monkeypatch):
+    """Issue #632: `find_names`'s new `contains` route needs the whole door
+    index up front to scan every page name, so the old "index-free direct
+    hit" claim this test descends from (`test_no_index_is_built_on_a_direct_
+    page_hit`, now `test_get_name_avoids_the_index_on_a_direct_page_hit`
+    above) no longer holds for `find_names` -- a locked-contract edit this
+    change deliberately makes, one line of justification: the slate cannot
+    be assembled without seeing every page's name. What survives, and is
+    the actual cost claim (the issue's own "one file read, no page opens"):
+    the underlying page scan still runs at most ONCE per vault per process
+    (`_name_page_index`'s own cache), never once per hit, even though this
+    module's own helpers (the `contains` route, the door decoration) each
+    ask for the index."""
+    from axial.query import names as names_module
+
+    vault_dir = tmp_path / "vault"
+    names_dir = tmp_path / "names"
+    _write_layer(names_dir, [{"canonical": "a concept", "kind": "concept", "aliases": []}])
+    _write_name_page(vault_dir, "a concept", member_count=1)
+
+    reads: list[Path] = []
+    original = names_module._read_name_page_full
+
+    def counting(path):
+        reads.append(path)
+        return original(path)
+
+    monkeypatch.setattr(names_module, "_read_name_page_full", counting)
+
     hits = find_names("a concept", 10, names_dir=names_dir, vault_dir=vault_dir)
-    assert [(hit.canonical, hit.member_count) for hit in hits] == [("a concept", 1)]
+
+    assert [(hit.canonical, hit.member_count, hit.source_count) for hit in hits] == [
+        ("a concept", 1, 0)
+    ]
+    assert len(reads) == 1, "the whole-vault scan runs once, cached, not once per hit"
 
 
 # -- the door index (issue #634) ----------------------------------------------

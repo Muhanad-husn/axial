@@ -465,7 +465,7 @@ Bounds applied:
 {bounds_lines}
 
 Retrieval is traversal of the name layer, not a conjunction of filters. A good plan:
-1. Name the scholars, concepts and polities the brief is actually about, and resolve each one with find_names -- it is tiered (exact, alias, folded, embedding) and reports a genuine resolution failure as an empty result, never the nearest name to hand.
+1. Name the scholars, concepts and polities the brief is actually about, and resolve each one with find_names -- it returns a slate of doors (exact, alias, folded and contains matches ranked by how many notes and sources they span, topped up with embedding matches), and reports a genuine resolution failure as an empty result, never the nearest name to hand.
 2. For each name that resolves, read who meets there with get_name: its member notes, each with author, year and one-sentence claim.
 3. Follow what those notes say. who_argues_against and who_cites surface the author-stated opposition and citation edges those notes themselves carry -- real cross-book traversal, not a guess. name_neighbors surfaces names that co-occur with one you already have.
 4. Narrowing the name feels like precision but produces a one-book answer: a name only one author uses returns only that author. Intersect the case anchor with a BROAD intellectual name the brief is about -- a concept, period, institution or scholar, never a narrow phrase -- using where_names_meet(canonical, other): that is where more than one book actually meets. Every result's detail now states how many sources it spans (e.g. "24 notes across 2 sources"); a result drawn from one source cannot support a comparison, so check that number instead of assuming it from how specific the name felt.

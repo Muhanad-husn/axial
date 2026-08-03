@@ -211,12 +211,20 @@ def test_tier_four_orders_by_score_descending_and_is_deterministic(names_dir: Pa
     assert [hit.canonical for hit in truncated] == [ROJAVA]
 
 
-def test_tiers_one_to_three_never_touch_the_store_even_when_it_exists(names_dir: Path):
-    """The tiers are exhausted in order: an exact canonical answers without
-    the encoder ever being called, store present or not."""
+def test_the_embedding_group_is_skipped_once_the_literal_group_fills_limit(names_dir: Path):
+    """Issue #632, a locked-contract edit (justification inline): the old
+    claim here was that an exact hit alone means the embedding tier is
+    NEVER touched, store present or not. That is no longer true in
+    general -- the door slate tops up from the embedding group whenever the
+    literal group has not already filled `limit`, on purpose, so a bigger
+    same-family page can still be offered alongside an exact hit. What
+    still holds, and is what this test now pins: when `limit` asks for
+    exactly as many doors as the literal group already has, the embedding
+    group is skipped entirely -- no vector-store read, no encoder built --
+    which is why `_exploding_encoder` still proves something here."""
     from axial.query import find_names
 
-    hits = find_names(ROJAVA, 5, names_dir=names_dir, encoder=_exploding_encoder)
+    hits = find_names(ROJAVA, 1, names_dir=names_dir, encoder=_exploding_encoder)
 
     assert [(hit.canonical, hit.tier) for hit in hits] == [(ROJAVA, "exact")]
 
