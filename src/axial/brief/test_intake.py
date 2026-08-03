@@ -15,10 +15,13 @@ from axial.brief import (
     BriefContent,
     BriefError,
     EmptyFieldError,
+    InvalidWeightKeyError,
+    InvalidWeightValueError,
     MalformedBriefError,
     MissingBriefFileError,
     MissingFieldError,
     NonMappingBriefError,
+    NonMappingWeightsError,
     NonStringFieldError,
     UnknownFieldError,
     compute_brief_id,
@@ -242,3 +245,106 @@ def test_syria_displacement_fixture_matches_pinned_content():
     brief = load_brief(path)
     assert brief.case == "Syria"
     assert brief.request == "How did displacement reshape local authority?"
+
+
+# --- issue #639: weights ----------------------------------------------------
+
+
+def test_a_brief_with_no_weights_key_gets_an_empty_weights_dict(tmp_path: Path):
+    path = _write_brief(tmp_path, "no_weights.yaml", 'case: "Syria"\nrequest: "A question"\n')
+    brief = load_brief(path)
+    assert brief.weights == {}
+
+
+def test_a_brief_with_weights_parses_them_as_floats(tmp_path: Path):
+    path = _write_brief(
+        tmp_path,
+        "weighted.yaml",
+        'case: "Syria"\nrequest: "A question"\nweights:\n  beshara-2011: 0.1\n  vignal-2021: 2\n',
+    )
+    brief = load_brief(path)
+    assert brief.weights == {"beshara-2011": 0.1, "vignal-2021": 2.0}
+
+
+def test_a_brief_with_an_empty_weights_mapping_is_equivalent_to_omitting_it(tmp_path: Path):
+    path = _write_brief(
+        tmp_path, "empty_weights.yaml", 'case: "Syria"\nrequest: "A question"\nweights: {}\n'
+    )
+    brief = load_brief(path)
+    assert brief.weights == {}
+
+
+def test_a_non_mapping_weights_field_is_rejected(tmp_path: Path):
+    path = _write_brief(
+        tmp_path,
+        "bad_weights_shape.yaml",
+        'case: "Syria"\nrequest: "A question"\nweights: "nope"\n',
+    )
+    with pytest.raises(NonMappingWeightsError):
+        load_brief(path)
+
+
+def test_a_non_numeric_weight_value_is_rejected(tmp_path: Path):
+    path = _write_brief(
+        tmp_path,
+        "bad_weight_value.yaml",
+        'case: "Syria"\nrequest: "A question"\nweights:\n  beshara-2011: "big"\n',
+    )
+    with pytest.raises(InvalidWeightValueError) as excinfo:
+        load_brief(path)
+    assert "beshara-2011" in str(excinfo.value)
+
+
+def test_a_negative_weight_value_is_rejected(tmp_path: Path):
+    path = _write_brief(
+        tmp_path,
+        "negative_weight.yaml",
+        'case: "Syria"\nrequest: "A question"\nweights:\n  beshara-2011: -1.0\n',
+    )
+    with pytest.raises(InvalidWeightValueError):
+        load_brief(path)
+
+
+def test_a_blank_weight_key_is_rejected(tmp_path: Path):
+    path = _write_brief(
+        tmp_path,
+        "blank_weight_key.yaml",
+        'case: "Syria"\nrequest: "A question"\nweights:\n  "": 1.0\n',
+    )
+    with pytest.raises(InvalidWeightKeyError):
+        load_brief(path)
+
+
+def test_compute_brief_id_is_unaffected_by_an_empty_weights_dict():
+    """Trap 1 (issue #639): an empty `weights` and an omitted `weights`
+    must hash identically -- `compute_brief_id` includes the key only when
+    it is genuinely non-empty."""
+    without = BriefContent(case="Syria", request="A question")
+    with_empty = BriefContent(case="Syria", request="A question", weights={})
+    assert compute_brief_id(without) == compute_brief_id(with_empty)
+
+
+def test_compute_brief_id_changes_when_weights_are_actually_supplied():
+    without = BriefContent(case="Syria", request="A question")
+    with_weights = BriefContent(case="Syria", request="A question", weights={"beshara-2011": 0.1})
+    assert compute_brief_id(without) != compute_brief_id(with_weights)
+
+
+def test_compute_brief_id_ignores_weights_key_order():
+    a = BriefContent(
+        case="Syria", request="A question", weights={"beshara-2011": 0.1, "vignal-2021": 2.0}
+    )
+    b = BriefContent(
+        case="Syria", request="A question", weights={"vignal-2021": 2.0, "beshara-2011": 0.1}
+    )
+    assert compute_brief_id(a) == compute_brief_id(b)
+
+
+def test_a_known_existing_brief_id_is_unchanged_by_the_weights_field():
+    """Trap 1's own pin (issue #639): the dev fixture's `brief_id` was
+    computed before `weights` existed as a field at all. Adding the field
+    must not re-key a single brief already on disk, or every persisted
+    analysis record it named would be silently orphaned."""
+    path = DEV_BRIEFS_DIR / "fixture-syria-displacement.yaml"
+    brief = load_brief(path)
+    assert brief.brief_id == "84c6dd95acf41894"

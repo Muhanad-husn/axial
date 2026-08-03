@@ -33,8 +33,13 @@ class _FakeUsageClient:
         return "test-double-model"
 
 
-def _brief() -> Brief:
-    return Brief(brief_id="deadbeefcafef00d", case="Syria", request="How did order change?")
+def _brief(*, weights: dict[str, float] | None = None) -> Brief:
+    return Brief(
+        brief_id="deadbeefcafef00d",
+        case="Syria",
+        request="How did order change?",
+        weights=weights or {},
+    )
 
 
 def _interrogation_result() -> InterrogationResult:
@@ -46,9 +51,11 @@ def _interrogation_result() -> InterrogationResult:
     )
 
 
-def _build(model_by_pass: dict[str, str], client: _FakeUsageClient) -> dict:
+def _build(
+    model_by_pass: dict[str, str], client: _FakeUsageClient, *, brief: Brief | None = None
+) -> dict:
     return build_record(
-        _brief(),
+        brief if brief is not None else _brief(),
         _interrogation_result(),
         corpus_pin="baseline",
         lens="default",
@@ -262,3 +269,37 @@ def test_a_counter_position_generation_failure_still_persists_the_record(monkeyp
     # A real call was attempted (contested is the only way this path is ever
     # reached), so its pass name still belongs in model_by_pass/cost.
     assert "counter_position_generate" in record["model_by_pass"]
+
+
+# --- issue #639: weights ride the record, verbatim and disclosed twice -----
+
+
+def test_brief_dict_carries_weights_verbatim():
+    client = _FakeUsageClient({})
+    brief = _brief(weights={"beshara-2011": 0.1})
+
+    record = _build({}, client, brief=brief)
+
+    assert record["brief"]["weights"] == {"beshara-2011": 0.1}
+
+
+def test_brief_dict_carries_an_empty_weights_dict_when_none_were_supplied():
+    client = _FakeUsageClient({})
+
+    record = _build({}, client)
+
+    assert record["brief"]["weights"] == {}
+
+
+def test_source_usage_discloses_the_same_weights_beside_its_own_effect():
+    """The disclosure this issue is built around (§7.13): the instruction
+    and its effect live in one place. `source_usage` reads `record["brief"]
+    ["weights"]`, which `build_record` has already assembled by the time it
+    calls `compute_source_usage` -- so the two never drift apart."""
+    client = _FakeUsageClient({})
+    brief = _brief(weights={"beshara-2011": 0.1})
+
+    record = _build({}, client, brief=brief)
+
+    assert record["source_usage"]["weights"] == record["brief"]["weights"]
+    assert record["source_usage"]["weights"] == {"beshara-2011": 0.1}

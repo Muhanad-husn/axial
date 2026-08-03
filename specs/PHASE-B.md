@@ -127,11 +127,12 @@ tests/
 ### 7.1 The brief (input contract) **[FIRM]**
 
 A brief is the phase's input, supplied as a versioned file. Its shape:
-`{brief_id, case, request, lens?}`.
+`{brief_id, case, request, lens?, weights?}`.
 - `case` — the anchor: free text naming a polity or set of polities, written as the corpus writes them. It anchors retrieval; it does not fence it (Principle §3). It is resolved to canonical names through `find_names` (§7.5) like any other phrase in the brief, so a spelling the index does not hold fails visibly rather than silently returning nothing.
 - `request` — the analytical question, free text.
 - `lens` — optional named lens from `config/lenses/`; when absent the analysis stage selects one and records which, so the choice is always disclosed. The key is optional; its value is not. A present `lens` must be a non-empty string, and a blank or whitespace-only value is rejected exactly as a blank `case` or `request` is. Omitting the key is the only way to ask the stage to choose.
-- `brief_id` — a stable, deterministic id over the brief's content (no randomness, no timestamps), so re-running the same brief is traceable.
+- `weights` — optional, `{source_id: float}`, DEC-61/issue #639: the analyst's own instruction for how many rotation slots a source earns in retrieval's evidence round-robin (`axial.retrieve.loop._round_robin_by_source`), relative to the implicit default of 1.0 for every source not named. **Soft favouring, never a filter** — a source at any weight, including 0, stays reachable; a weight only changes how soon and how densely its ids surface in the deterministic prefix `compose_prompt` (§7.4) walks. Omitting the key, or an empty mapping, means every source stays at 1.0, byte-identical to a brief with no `weights` field at all. Axial neither infers a weight from the brief's own text nor asks the analyst for one (DEC-61, Charter §1.3): correcting an imbalanced corpus is a judgement about the scholarship, and it belongs to the person asking. `axial ask --weight <source_id>=<float>` (repeatable) is the CLI's own way to supply it for a session turn that authors no file.
+- `brief_id` — a stable, deterministic id over the brief's content (no randomness, no timestamps), so re-running the same brief is traceable. `weights` is hashed into it only when non-empty (issue #639), so a brief that never used the field keeps the exact id it had before the field existed.
 
 `case` and `request` are required and must be non-empty after whitespace stripping. A brief that violates any of these field rules is rejected at intake, naming the offending field.
 
@@ -465,6 +466,8 @@ source_usage: {
     canonical: member_note_count,      # each directly-queried name's own whole-page contribution
     "<name> & <name>": intersection_size,  # each where_names_meet PAIR (sorted, issue #550), additive
   },
+  weights: { source_id: float },       # the brief's own §7.1 `weights`, verbatim, {} when none were
+                                        # supplied (issue #639) -- the instruction disclosed beside its effect
   sources: [ {
     source_id,
     evidence_chunk_count,               # notes of this source appearing in claim grounds
@@ -478,6 +481,8 @@ source_usage: {
   } ]
 }
 ```
+
+**`weights` (issue #639, DEC-61) is the analyst's own correction for an imbalanced corpus, read straight off `record["brief"]["weights"]`** and disclosed here, next to the contribution figures it was meant to move, so a reader sees the instruction and its effect together rather than cross-referencing the brief separately. It applies at retrieval, not here: `assemble_evidence_ids` (§7.6, `axial.retrieve.loop`) reorders the source round-robin so a weighted source earns more or fewer rotation slots per pass, which changes what `compose_prompt`'s (§7.4) deterministic char-budget prefix actually contains. **Never a filter** — a source at weight 0 stays reachable, just last in the rotation. Present on every run, `{}` when none were supplied, including on disposition `refuse` and on a run whose claims carry no grounds, exactly like `names_queried`/`denominator_by_name`.
 
 > **STRUCK (D1).** `filters_observed` was the union of tag filters queried, and the tools that produced it (`query_by_tag`, `query_by_polity`) are retired. `names_queried` is the same field doing the same job over the retrieval surface that exists. The field's shape and its `tool`-alongside-`args` rule are unchanged. Implemented in issue #491 (`axial.answer.source_usage.derive_names_queried`); `axial brief usage` joins on it, so the cross-run report is keyed on names rather than tag filters.
 

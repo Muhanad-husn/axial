@@ -55,6 +55,26 @@ def test_build_parser_recognises_ask_with_nothing_given():
     assert args.case is None
 
 
+def test_build_parser_collects_repeated_weight_flags():
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        ["ask", "Q", "--case", "Syria", "--weight", "beshara-2011=0.1", "--weight", "vignal-2021=2"]
+    )
+
+    assert args.weight == ["beshara-2011=0.1", "vignal-2021=2"]
+
+
+def test_build_parser_weight_defaults_to_none_when_omitted():
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["ask"])
+
+    assert args.weight is None
+
+
 def test_one_shot_ask_answers_and_exits_without_any_prompt(monkeypatch, capsys):
     """Issue #534 acceptance: `axial ask "..." --case "..."` runs one turn
     and exits -- no interactive prompt at all."""
@@ -180,3 +200,113 @@ def test_a_blank_question_ends_the_session_cleanly(monkeypatch, capsys):
 
     assert exit_code == 0
     assert "nothing to do" in captured.out
+
+
+# --- issue #639: --weight parsing and threading -----------------------------
+
+
+def test_parse_weight_args_returns_empty_dict_when_none_given():
+    from axial.cli import _parse_weight_args
+
+    assert _parse_weight_args(None) == {}
+
+
+def test_parse_weight_args_parses_repeated_flags():
+    from axial.cli import _parse_weight_args
+
+    assert _parse_weight_args(["beshara-2011=0.1", "vignal-2021=2"]) == {
+        "beshara-2011": 0.1,
+        "vignal-2021": 2.0,
+    }
+
+
+def test_parse_weight_args_a_later_repeat_of_the_same_source_wins():
+    from axial.cli import _parse_weight_args
+
+    assert _parse_weight_args(["beshara-2011=0.1", "beshara-2011=0.5"]) == {"beshara-2011": 0.5}
+
+
+def test_parse_weight_args_rejects_a_missing_equals_sign():
+    from axial.cli import WeightArgError, _parse_weight_args
+
+    try:
+        _parse_weight_args(["beshara-2011"])
+        assert False, "expected WeightArgError"
+    except WeightArgError as exc:
+        assert "beshara-2011" in str(exc)
+
+
+def test_parse_weight_args_rejects_a_non_numeric_value():
+    from axial.cli import WeightArgError, _parse_weight_args
+
+    try:
+        _parse_weight_args(["beshara-2011=big"])
+        assert False, "expected WeightArgError"
+    except WeightArgError:
+        pass
+
+
+def test_parse_weight_args_rejects_a_negative_value():
+    from axial.cli import WeightArgError, _parse_weight_args
+
+    try:
+        _parse_weight_args(["beshara-2011=-1"])
+        assert False, "expected WeightArgError"
+    except WeightArgError:
+        pass
+
+
+def test_a_malformed_weight_flag_is_rejected_before_any_engine_call(monkeypatch, capsys):
+    import axial.cli as cli_mod
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("must not run the engine on a malformed --weight")
+
+    monkeypatch.setattr(cli_mod, "ask_question", _boom)
+    monkeypatch.setattr(cli_mod, "get_client", lambda: object())
+
+    exit_code = cli_mod.main(
+        ["ask", "Q", "--case", "Syria", "--weight", "not-a-valid-weight"]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code != 0
+    assert "invalid --weight" in captured.err
+
+
+def test_a_well_formed_weight_flag_reaches_ask_question(monkeypatch, capsys):
+    import axial.cli as cli_mod
+
+    calls: list[dict[str, Any]] = []
+
+    def _fake_ask(question, case, **kwargs):
+        calls.append(kwargs)
+        return _turn("sess-1", 1, question, case)
+
+    monkeypatch.setattr(cli_mod, "ask_question", _fake_ask)
+    monkeypatch.setattr(cli_mod, "get_client", lambda: object())
+
+    exit_code = cli_mod.main(
+        ["ask", "Q", "--case", "Syria", "--weight", "beshara-2011=0.1"]
+    )
+
+    assert exit_code == 0
+    assert calls[0]["weights"] == {"beshara-2011": 0.1}
+
+
+def test_no_weight_flag_passes_an_empty_dict_to_ask_question(monkeypatch, capsys):
+    import axial.cli as cli_mod
+
+    calls: list[dict[str, Any]] = []
+
+    def _fake_ask(question, case, **kwargs):
+        calls.append(kwargs)
+        return _turn("sess-1", 1, question, case)
+
+    monkeypatch.setattr(cli_mod, "ask_question", _fake_ask)
+    monkeypatch.setattr(cli_mod, "get_client", lambda: object())
+
+    exit_code = cli_mod.main(["ask", "Q", "--case", "Syria"])
+
+    assert exit_code == 0
+    assert calls[0]["weights"] == {}

@@ -1452,6 +1452,19 @@ def build_parser() -> argparse.ArgumentParser:
             "never spends money and never calls the engine"
         ),
     )
+    ask_parser.add_argument(
+        "--weight",
+        dest="weight",
+        action="append",
+        default=None,
+        metavar="SOURCE_ID=FLOAT",
+        help=(
+            "give a source more or fewer rotation slots in the evidence "
+            "round-robin, repeatable (issue #639); every source defaults "
+            "to 1.0 and this is never a filter -- a source at any weight, "
+            "including 0, stays reachable"
+        ),
+    )
 
     return parser
 
@@ -2295,12 +2308,43 @@ _ASK_ERRORS = (
 )
 
 
+class WeightArgError(Exception):
+    """Raised by `_parse_weight_args` on a malformed `--weight` value."""
+
+
+def _parse_weight_args(raw: list[str] | None) -> dict[str, float]:
+    """Parse `--weight <source_id>=<float>` (issue #639), repeatable: `raw`
+    is argparse's own `action="append"` list, `None` when the flag was
+    never given. Each entry must split on exactly one `=` into a non-empty
+    `source_id` and a float; a later repeat of the same `source_id`
+    overrides an earlier one rather than erroring, the same "last flag
+    wins" rule argparse itself would give a non-repeatable option. Raises
+    `WeightArgError` naming the offending value on any malformed entry --
+    never a partial dict silently returned alongside an error."""
+    if not raw:
+        return {}
+    weights: dict[str, float] = {}
+    for entry in raw:
+        source_id, sep, value = entry.partition("=")
+        if not sep or not source_id.strip():
+            raise WeightArgError(f"invalid --weight {entry!r}: expected SOURCE_ID=FLOAT")
+        try:
+            weight = float(value)
+        except ValueError:
+            raise WeightArgError(f"invalid --weight {entry!r}: {value!r} is not a number") from None
+        if weight < 0:
+            raise WeightArgError(f"invalid --weight {entry!r}: weight must be >= 0")
+        weights[source_id.strip()] = weight
+    return weights
+
+
 def _ask(
     question: str | None,
     case: str | None,
     *,
     list_past: bool = False,
     reopen: int | None = None,
+    weight_args: list[str] | None = None,
 ) -> int:
     """`axial ask` (issue #534): a session over the plain `axial.ask.ask`
     function -- state the case, ask the question, watch the work happen in
@@ -2316,11 +2360,23 @@ def _ask(
 
     `list_past`/`reopen` (issue #536) short-circuit before any client is
     constructed -- neither ever spends money, both are pure reads over
-    already-persisted records (`axial.ask.history`)."""
+    already-persisted records (`axial.ask.history`).
+
+    `weight_args` (issue #639) is argparse's raw `--weight` list, parsed
+    once here (`_parse_weight_args`) and threaded into every turn of this
+    session -- a malformed value is rejected before any client is
+    constructed or any prompt shown, the same "fail before spending"
+    discipline `list_past`/`reopen` already get."""
     if list_past:
         return _ask_list()
     if reopen is not None:
         return _ask_reopen(reopen)
+
+    try:
+        weights = _parse_weight_args(weight_args)
+    except WeightArgError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     one_shot = question is not None and case is not None
 
@@ -2351,6 +2407,7 @@ def _ask(
                 session_id=session_id,
                 turn_index=turn_index,
                 previous=previous,
+                weights=weights,
                 on_event=_print_event,
             )
         except _ASK_ERRORS as exc:
@@ -3389,7 +3446,13 @@ def main(argv: list[str] | None = None) -> int:
         return _key_check()
 
     if args.command == "ask":
-        return _ask(args.question, args.case, list_past=args.list_past, reopen=args.reopen)
+        return _ask(
+            args.question,
+            args.case,
+            list_past=args.list_past,
+            reopen=args.reopen,
+            weight_args=args.weight,
+        )
 
     if args.command == "status":
         return _status()

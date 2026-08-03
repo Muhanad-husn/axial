@@ -195,6 +195,62 @@ def test_a_followup_is_a_full_run_with_its_own_distinct_brief_id():
     assert len(calls) == 2
 
 
+# --- issue #639: weights fold into this turn's own brief -------------------
+
+
+def test_ask_with_no_weights_yields_an_empty_weights_dict_on_the_brief():
+    turn = ask(
+        "Q1", "Case", client=_FakeClient(), run_brief_fn=_recording_run_brief([], _stub_result())
+    )
+    assert turn.brief.weights == {}
+
+
+def test_ask_folds_weights_into_the_turns_own_brief():
+    turn = ask(
+        "Q1",
+        "Case",
+        client=_FakeClient(),
+        weights={"beshara-2011": 0.1},
+        run_brief_fn=_recording_run_brief([], _stub_result()),
+    )
+    assert turn.brief.weights == {"beshara-2011": 0.1}
+
+
+def test_ask_with_weights_changes_the_brief_id_from_the_unweighted_one():
+    plain = ask(
+        "Q1", "Case", client=_FakeClient(), run_brief_fn=_recording_run_brief([], _stub_result())
+    )
+    weighted = ask(
+        "Q1",
+        "Case",
+        client=_FakeClient(),
+        weights={"beshara-2011": 0.1},
+        run_brief_fn=_recording_run_brief([], _stub_result()),
+    )
+    assert plain.brief.brief_id != weighted.brief.brief_id
+
+
+def test_a_followup_does_not_inherit_the_prior_turns_weights_automatically():
+    """The analyst supplies weights with the question they go with (module
+    docstring) -- a follow-up that passes none of its own gets none, even
+    when the turn before it carried some."""
+    first = ask(
+        "Q1",
+        "Case",
+        client=_FakeClient(),
+        weights={"beshara-2011": 0.1},
+        run_brief_fn=_recording_run_brief([], _stub_result()),
+    )
+    followup = ask(
+        "Q2",
+        "Case",
+        client=_FakeClient(),
+        previous=first,
+        run_brief_fn=_recording_run_brief([], _stub_result()),
+    )
+    assert followup.brief.weights == {}
+
+
 def test_ask_is_reachable_as_a_function_without_the_cli():
     """Issue #534's own acceptance line: "the engine is reachable as a
     function, not only as a command." No CLI machinery is imported or

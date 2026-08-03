@@ -499,35 +499,73 @@ def _source_id_or_empty(chunk_id: str) -> str:
         return ""
 
 
-def _round_robin_by_source(ids: list[str]) -> list[str]:
+def _round_robin_by_source(ids: list[str], weights: dict[str, float] | None = None) -> list[str]:
     """`ids`, grouped by `_source_id_or_empty`, the groups ordered by
     `source_id` ascending, each group's OWN ids kept in their existing
-    relative order, then emitted one id per group in rotation until every
-    group is exhausted -- the same rotation shape
-    `axial.query.names.where_names_meet` already writes, kept as a separate,
-    smaller helper rather than a shared one: that function additionally
-    sorts each group by `chunk_id`, because a name page's member order is
-    not itself meaningful evidence-order, while this reduction must instead
-    PRESERVE each id's first-seen call order within its source (see
-    `assemble_evidence_ids`) -- sharing the helper would have to bend one of
-    the two rules, so it stays two small functions instead of one bent one."""
+    relative order, then emitted in rotation until every group is
+    exhausted -- the same rotation shape `axial.query.names.where_names_meet`
+    already writes, kept as a separate, smaller helper rather than a shared
+    one: that function additionally sorts each group by `chunk_id`, because
+    a name page's member order is not itself meaningful evidence-order,
+    while this reduction must instead PRESERVE each id's first-seen call
+    order within its source (see `assemble_evidence_ids`) -- sharing the
+    helper would have to bend one of the two rules, so it stays two small
+    functions instead of one bent one.
+
+    `weights` (issue #639, the analyst-supplied `Brief.weights`, `None`/`{}`
+    for every existing caller) is how many rotation slots a source earns
+    per pass through the group list, relative to the implicit default of
+    1.0 for any source not named in it. **Soft favouring, never a filter**
+    -- the same contract `_render_question_scope_block`
+    (`axial.analyze.synthesis`) already states for `question_scope`: a
+    weight changes how SOON a source's ids surface, never whether they do.
+
+    Implemented as weighted fair queuing (the same construction network
+    schedulers use for exactly this problem, not invented here): a group's
+    `i`-th id (0-indexed) gets a virtual finish time of `(i + 1) / weight`,
+    and every id across every group is emitted in ascending virtual-time
+    order, ties (which happen constantly -- every group's first id ties at
+    `1 / weight`) broken by ascending `source_id`. At the default weight
+    (1.0 for every source), every id's virtual time is just its 1-based
+    position in its own group, so ties fall at 1, 2, 3, ... for every
+    source alike and this reduces to exactly one id per group per pass --
+    the identical sequence the pre-#639 version of this function produced,
+    byte for byte (pinned by a unit test), so an unweighted call is
+    unaffected by this change. A larger weight pulls a group's virtual
+    times down, so its ids surface sooner and more densely; this needs no
+    loop bounded by "a pass makes progress", so an arbitrarily small
+    positive weight is handled exactly like any other -- it only ever
+    stretches virtual time, never risks not terminating.
+
+    **A weight of exactly 0 is not "very stretched"; it is excluded from
+    the ranking entirely** and its whole bucket is appended, in its own
+    existing order, after every ranked id -- still reachable, just last,
+    never withheld. This is the one place 0 is special: `1 / 0` has no
+    virtual time to compute, and "last" is the honest reading of "earns no
+    rotation slot" for a source that is not being filtered out."""
+    weights = weights or {}
     groups: dict[str, list[str]] = {}
     for chunk_id in ids:
         groups.setdefault(_source_id_or_empty(chunk_id), []).append(chunk_id)
 
     group_keys = sorted(groups)
-    rotated: list[str] = []
-    round_index = 0
-    while len(rotated) < len(ids):
-        for key in group_keys:
-            bucket = groups[key]
-            if round_index < len(bucket):
-                rotated.append(bucket[round_index])
-        round_index += 1
-    return rotated
+    ranked: list[tuple[float, int, str]] = []
+    unweighted_tail: list[str] = []
+    for rank, key in enumerate(group_keys):
+        weight = weights.get(key, 1.0)
+        bucket = groups[key]
+        if weight <= 0:
+            unweighted_tail.extend(bucket)
+            continue
+        for position, chunk_id in enumerate(bucket):
+            ranked.append(((position + 1) / weight, rank, chunk_id))
+    ranked.sort(key=lambda entry: (entry[0], entry[1]))
+    return [chunk_id for _, _, chunk_id in ranked] + unweighted_tail
 
 
-def assemble_evidence_ids(trajectory: list[dict[str, Any]]) -> list[str]:
+def assemble_evidence_ids(
+    trajectory: list[dict[str, Any]], weights: dict[str, float] | None = None
+) -> list[str]:
     """Deduplicate chunk/artifact ids across every trajectory entry's
     `result_ids`, preserving first-seen order, THEN reorder the deduplicated
     set source round-robin rather than leaving it first-seen (issue #517
@@ -537,6 +575,11 @@ def assemble_evidence_ids(trajectory: list[dict[str, Any]]) -> list[str]:
     applying **no** case-scope filter (charter §3, P0-3): an id belonging to
     a chunk from a source about a different polity than the case anchor is
     kept exactly like any other.
+
+    `weights` (issue #639, `None`/`{}` for every caller before it existed)
+    is forwarded verbatim to `_round_robin_by_source` -- see that
+    function's own docstring for the soft-favouring contract. Omitted or
+    empty, this function's output is unchanged from before #639.
 
     **Only chunk/artifact-valued entries contribute (issue #488).** A
     trajectory entry whose tool is not in `TOOL_REGISTRY` (which includes
@@ -572,7 +615,7 @@ def assemble_evidence_ids(trajectory: list[dict[str, Any]]) -> list[str]:
             if chunk_id not in seen:
                 seen.add(chunk_id)
                 ordered.append(chunk_id)
-    return _round_robin_by_source(ordered)
+    return _round_robin_by_source(ordered, weights)
 
 
 def evidence_set_composition(trajectory: list[dict[str, Any]]) -> str:
@@ -720,7 +763,11 @@ def run_planned_retrieval(
     call is made: the run is already complete per §7.2's own rule, so the
     trajectory and evidence set are both empty rather than the loop
     spending a single step on a request the interrogation pre-pass already
-    declined."""
+    declined.
+
+    `brief.weights` (issue #639, `{}` for every brief before it existed) is
+    forwarded to `assemble_evidence_ids` verbatim -- it is `brief`'s own
+    field, so no separate parameter is needed here to carry it."""
     if interrogation_result.disposition == "refuse":
         return RetrievalResult(trajectory=[], evidence_ids=[])
 
@@ -736,4 +783,7 @@ def run_planned_retrieval(
         step_budget=step_budget,
         thin_result_floor=thin_result_floor,
     )
-    return RetrievalResult(trajectory=trajectory, evidence_ids=assemble_evidence_ids(trajectory))
+    return RetrievalResult(
+        trajectory=trajectory,
+        evidence_ids=assemble_evidence_ids(trajectory, brief.weights),
+    )

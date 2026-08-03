@@ -126,6 +126,7 @@ def ask(
     turn_index: int = 1,
     previous: Turn | None = None,
     lens: str | None = None,
+    weights: dict[str, float] | None = None,
     on_event: EventCallback | None = None,
     vault_dir: Path | None = None,
     envelopes_dir: Path | None = None,
@@ -151,6 +152,16 @@ def ask(
     correct for a first question; a caller carries the same id into every
     later `ask()` call in one session so the persisted records join.
 
+    `weights` (issue #639, `axial ask --weight <source_id>=<float>`,
+    repeatable) is the analyst's own instruction for how many rotation
+    slots a source gets in retrieval's evidence round-robin -- `None` (the
+    default, and every call site before this parameter existed) means
+    every source stays at the implicit default of 1.0, byte-identical to
+    before. It is folded straight into this turn's own `Brief`, never
+    inferred and never asked for (DEC-61): a follow-up does not inherit a
+    prior turn's weights automatically, since a follow-up is its own full
+    brief and the analyst supplies weights with the question they go with.
+
     Raises `BlankCaseError`/`BlankQuestionError` for its own precondition;
     every engine error `run_brief_fn` raises propagates unchanged."""
     if not case or not case.strip():
@@ -162,8 +173,15 @@ def ask(
         session_id = new_session_id()
 
     request_text = _followup_request(question, previous) if previous is not None else question
-    content = BriefContent(case=case, request=request_text, lens=lens)
-    brief = Brief(brief_id=compute_brief_id(content), case=case, request=request_text, lens=lens)
+    weights = dict(weights) if weights else {}
+    content = BriefContent(case=case, request=request_text, lens=lens, weights=weights)
+    brief = Brief(
+        brief_id=compute_brief_id(content),
+        case=case,
+        request=request_text,
+        lens=lens,
+        weights=weights,
+    )
 
     result = run_brief_fn(
         brief,

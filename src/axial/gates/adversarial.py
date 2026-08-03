@@ -212,7 +212,13 @@ def load_seeded_brief(path: str | Path) -> SeededBrief:
     except BriefError as exc:
         raise AdversarialGateError(f"seeded brief at {path}: {exc}") from exc
     brief_id = compute_brief_id(content)
-    brief = Brief(brief_id=brief_id, case=content.case, request=content.request, lens=content.lens)
+    brief = Brief(
+        brief_id=brief_id,
+        case=content.case,
+        request=content.request,
+        lens=content.lens,
+        weights=content.weights,
+    )
 
     return SeededBrief(
         brief=brief, kind=kind, premise=premise, expected_disposition=expected_disposition
