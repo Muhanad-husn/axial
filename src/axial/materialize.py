@@ -27,6 +27,14 @@ index"), not per source:
      `aliases`/`member_count` in frontmatter and, in the body, every member
      note as an Obsidian link with its author, year and one-sentence claim
      (§7.17). Link direction is name-page -> note only.
+  4. **The name-page index** (`data/vault/names.jsonl`, issue #634) -- one
+     JSONL row per name page written above, a sibling of `names/` rather
+     than a member of it, carrying `name`/`filename`/`kind`/`member_count`
+     and `source_count` (the number of distinct `source_id` values the
+     page's members span, not otherwise recorded anywhere). It exists so a
+     retrieval reader never has to open all 49,674 pages itself to answer a
+     question the writer already knew the answer to while it wrote them;
+     see `axial.query.names._name_page_index`, which reads it.
 
 **The figure/table join (Open Question, §10, spec line 807).** A name whose
 `kind` is `figure`/`table` additionally links to the artifact note(s) it
@@ -96,6 +104,7 @@ from axial.paths import (
     default_vault_dir,
     name_page_path,
 )
+from axial.query.reader import MalformedChunkIdError, source_id_from_chunk_id
 from axial.vault import (
     VaultError,
     bibliographic_value,
@@ -113,6 +122,14 @@ from axial.vault import (
 # path constant, which this LLM-free, extraction-free pass has no other
 # reason to pull in.
 DEFAULT_ARTIFACTS_DIR = Path("data/artifacts")
+
+# The door index's own filename (issue #634, specs/PRODUCT.md §7.17): one
+# JSONL row per name page, written as a SIBLING of `vault_dir/names/` -- not
+# inside it, so a `*.md` glob over `names/` never picks it up and nothing
+# there mistakes it for a page. `axial.query.names` repeats this literal
+# rather than importing it, the same small-duplicate trade this module's own
+# docstring already makes for `DEFAULT_ARTIFACTS_DIR`.
+NAME_PAGE_INDEX_FILENAME = "names.jsonl"
 
 # The two `kind` values §7.15's interrogation prompt uses for a figure/table
 # name (D5) -- matched case-insensitively, since nothing enforces exact case
@@ -425,6 +442,36 @@ def member_chunk_ids_for_node(
     return sorted(chunk_ids)
 
 
+def _distinct_source_count(member_ids: list[str]) -> int:
+    """The number of distinct `source_id` values `member_ids` span, parsed
+    with the SAME function the reader groups a page's members by
+    (`axial.query.reader.source_id_from_chunk_id`,
+    `axial.query.names._parse_name_page_body`) -- so the door index's
+    `source_count` and the reader's own member grouping never disagree on
+    what counts as one source. A `chunk_id` that does not parse counts under
+    `""`, matching `_parse_name_page_body`'s placement for an unparsed
+    member, rather than being dropped."""
+    sources: set[str] = set()
+    for chunk_id in member_ids:
+        try:
+            sources.add(source_id_from_chunk_id(chunk_id))
+        except MalformedChunkIdError:
+            sources.add("")
+    return len(sources)
+
+
+def _write_name_page_index(vault_dir: Path, rows: list[dict[str, Any]]) -> None:
+    """The door index (issue #634): one JSONL row per surviving name page,
+    written next to `names/` as `NAME_PAGE_INDEX_FILENAME`. Rewritten in
+    full on every Materialize run, the same as prose and artifact notes --
+    it is cheap (~3 MB over the real corpus) and this pass already walks
+    every node once to write its page."""
+    path = Path(vault_dir) / NAME_PAGE_INDEX_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+    path.write_text(text, encoding="utf-8")
+
+
 def name_page_paths(vault_dir: Path, nodes: list[dict[str, Any]]) -> dict[str, Path]:
     """`{canonical: name page path}` for every node, assigned in ONE
     deterministic pass (nodes sorted by canonical, one shared `used`
@@ -563,6 +610,7 @@ def materialize_names(
 
     written = 0
     unchanged = 0
+    index_rows: list[dict[str, Any]] = []
     for node in sorted(nodes, key=lambda n: n["canonical"]):
         canonical = node["canonical"]
         kind = node.get("kind")
@@ -593,6 +641,15 @@ def materialize_names(
 
         path = page_paths[canonical]
         kept.add(path)
+        index_rows.append(
+            {
+                "name": canonical,
+                "filename": path.name,
+                "kind": kind,
+                "member_count": len(member_ids),
+                "source_count": _distinct_source_count(member_ids),
+            }
+        )
         if path.is_file() and path.read_text(encoding="utf-8") == text:
             unchanged += 1
             continue
@@ -603,6 +660,8 @@ def materialize_names(
     orphaned = sorted(existing - kept)
     for path in orphaned:
         path.unlink()
+
+    _write_name_page_index(vault_dir, index_rows)
 
     return {
         "name_pages": len(nodes),

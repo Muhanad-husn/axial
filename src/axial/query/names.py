@@ -45,6 +45,7 @@ one-shared-copy discipline exists to prevent).
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import math
 import re
@@ -87,6 +88,21 @@ _MEMBER_NOTES_MARKER = "**Member notes:**"
 _WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
 # One member line: `- [[<chunk_id>]] — <author> (<year>): <claim>`.
 _MEMBER_LINE = re.compile(r"^- \[\[(?P<chunk_id>[^\]]+)\]\] — (?P<rest>.*)$")
+
+# Materialize's own door-index filename (`axial.materialize.
+# NAME_PAGE_INDEX_FILENAME`, issue #634, specs/PRODUCT.md §7.17): a sibling
+# of `vault_dir/names/`, repeated here rather than imported -- see the
+# module docstring.
+NAME_PAGE_INDEX_FILENAME = "names.jsonl"
+
+# Worker count for `_name_page_index`'s threaded fallback scan, when the
+# persisted index above is missing (issue #634). Measured on the live vault
+# (49,674 pages, `sim-2026-07-30`): a 48-thread pool reads every page --
+# frontmatter and body both, since `source_count` is not in the frontmatter
+# -- in ~40s, against 9m22s serial. The cost is per-file-open latency, which
+# threading parallelizes; this is the number the measurement used, not a
+# knob meant to be retuned.
+_INDEX_BUILD_WORKERS = 48
 
 # How many hits a tool returns when the caller states no limit of its own.
 DEFAULT_LIMIT = 10
@@ -402,6 +418,16 @@ class _NamePageEntry:
     path: Path
     kind: str | None
     member_count: int
+    # The number of distinct `source_id` values the page's members span
+    # (issue #634, issue #632's own dependency). `None` on an entry built
+    # from a HEAD-only read (`_read_name_page_head`, `_resolve_name_page`'s
+    # filename fast path): `source_count` is not in the frontmatter, so
+    # answering it costs a body read that fast path is deliberately built to
+    # avoid paying. Real on every entry the persisted index or the threaded
+    # fallback scan produces. Nothing reads this field yet -- #632 will --
+    # but the index the writer persists carries it regardless, because
+    # deriving it is the one thing a body scan (not a head scan) buys.
+    source_count: int | None = None
 
 
 _NAME_PAGE_INDEX_CACHE: dict[Path, dict[str, _NamePageEntry]] = {}
@@ -440,14 +466,118 @@ def _read_name_page_head(path: Path) -> tuple[str, str | None, int] | None:
     return name, parsed.get("kind"), int(member_count) if isinstance(member_count, int) else 0
 
 
+def _read_name_page_full(path: Path) -> tuple[str, str | None, int, int] | None:
+    """`(name, kind, member_count, source_count)` off `path`'s frontmatter
+    AND body -- unlike `_read_name_page_head`, which never reads the body at
+    all. `source_count` (the number of distinct `source_id` values among the
+    page's own member notes) is not carried in frontmatter, so answering it
+    is the one thing this function pays for that the head read does not: a
+    member whose `chunk_id` does not parse groups under `""`, the same
+    placement `_parse_name_page_body` already gives an unparsed member, so
+    this and the writer's own `axial.materialize._distinct_source_count`
+    never disagree on what counts as one source. `None`, never an exception,
+    on any malformed page -- the same never-abort-a-whole-scan rule
+    `_read_name_page_head` follows."""
+    try:
+        frontmatter, body = _read_frontmatter(path)
+    except (MalformedNoteError, OSError):
+        return None
+    name = frontmatter.get("name")
+    if not isinstance(name, str):
+        return None
+    members, _disagreement = _parse_name_page_body(body)
+    frontmatter_count = frontmatter.get("member_count")
+    member_count = frontmatter_count if isinstance(frontmatter_count, int) else len(members)
+    source_count = len({member.source_id or "" for member in members})
+    return name, frontmatter.get("kind"), member_count, source_count
+
+
+def _read_name_page_index_file(vault_dir: Path) -> dict[str, _NamePageEntry] | None:
+    """The persisted door index (`<vault_dir>/names.jsonl`, issue #634,
+    `axial.materialize.NAME_PAGE_INDEX_FILENAME`), read as `name ->
+    _NamePageEntry`, one file read replacing a whole-vault page scan.
+    `None` when the file does not exist, so the caller falls back to the
+    threaded scan. A malformed row is skipped rather than aborting the whole
+    read -- the same never-abort-a-scan rule every other page-index helper
+    here follows."""
+    path = Path(vault_dir) / NAME_PAGE_INDEX_FILENAME
+    if not path.is_file():
+        return None
+    names_dir = Path(vault_dir) / "names"
+    index: dict[str, _NamePageEntry] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        name = row.get("name")
+        filename = row.get("filename")
+        if not isinstance(name, str) or not isinstance(filename, str):
+            continue
+        member_count = row.get("member_count")
+        source_count = row.get("source_count")
+        index[name] = _NamePageEntry(
+            path=names_dir / filename,
+            kind=row.get("kind"),
+            member_count=member_count if isinstance(member_count, int) else 0,
+            source_count=source_count if isinstance(source_count, int) else None,
+        )
+    return index
+
+
+def _write_name_page_index_file(vault_dir: Path, index: dict[str, _NamePageEntry]) -> None:
+    """Persist a freshly-built index (the threaded-scan fallback below) so
+    the next process reads it in one file read instead of scanning again.
+    **Degrades silently on a read-only vault directory** -- a caller that
+    reached this point already has the in-memory `index` to return, and a
+    failed write here must not turn a successful build into a raised
+    error."""
+    path = Path(vault_dir) / NAME_PAGE_INDEX_FILENAME
+    lines = (
+        json.dumps(
+            {
+                "name": name,
+                "filename": entry.path.name,
+                "kind": entry.kind,
+                "member_count": entry.member_count,
+                "source_count": entry.source_count,
+            },
+            ensure_ascii=False,
+        )
+        for name, entry in sorted(index.items())
+    )
+    try:
+        path.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _name_page_index(vault_dir: Path) -> dict[str, _NamePageEntry]:
-    """`name -> (path, kind, member_count)` over every page under
-    `<vault_dir>/names/`, keyed on each page's OWN `name` frontmatter -- the
-    sole authoritative id (§7.5). Never keyed on filenames: a canonical
-    carries no unique suffix of its own, so two canonicals can sanitize to
-    one filename and the writer hash-suffixes whichever it wrote second
-    (`axial.paths.name_page_filename`'s `used` set), a write-order fact no
-    reader can reproduce.
+    """`name -> (path, kind, member_count, source_count)` over every page
+    under `<vault_dir>/names/`, keyed on each page's OWN `name` frontmatter
+    -- the sole authoritative id (§7.5). Never keyed on filenames: a
+    canonical carries no unique suffix of its own, so two canonicals can
+    sanitize to one filename and the writer hash-suffixes whichever it wrote
+    second (`axial.paths.name_page_filename`'s `used` set), a write-order
+    fact no reader can reproduce.
+
+    **Reads the persisted door index when Materialize wrote one**
+    (`<vault_dir>/names.jsonl`, issue #634) -- one file read over the whole
+    vault, ~3 MB on the real corpus, rather than opening 49,674 files.
+    **Absent that file, falls back to a threaded scan of `names/` itself**
+    (`_INDEX_BUILD_WORKERS`-wide, ~40s measured against 9m22s serial: the
+    cost is per-file-open latency, which parallelizes), reading each page's
+    body as well as its frontmatter -- `source_count` is not in the
+    frontmatter -- and then writes the index back so the next call in a
+    fresh process reads the file instead of scanning again. An
+    already-materialized vault with no index file therefore self-heals on
+    its first read; a vault directory that will not accept the write
+    degrades to the in-memory result rather than raising.
 
     Built lazily, at most once per resolved `vault_dir` for the process
     lifetime -- never on import. `get_name`'s fast path (the writer's own
@@ -464,15 +594,26 @@ def _name_page_index(vault_dir: Path) -> dict[str, _NamePageEntry]:
         cached = _NAME_PAGE_INDEX_CACHE.get(key)
         if cached is not None:
             return cached
-        names_dir = key / "names"
-        index: dict[str, _NamePageEntry] = {}
-        if names_dir.is_dir():
-            for path in sorted(names_dir.glob("*.md")):
-                head = _read_name_page_head(path)
-                if head is None:
-                    continue
-                name, kind, member_count = head
-                index[name] = _NamePageEntry(path=path, kind=kind, member_count=member_count)
+        index = _read_name_page_index_file(key)
+        if index is None:
+            names_dir = key / "names"
+            index = {}
+            if names_dir.is_dir():
+                paths = sorted(names_dir.glob("*.md"))
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=_INDEX_BUILD_WORKERS
+                ) as pool:
+                    for path, head in zip(paths, pool.map(_read_name_page_full, paths)):
+                        if head is None:
+                            continue
+                        name, kind, member_count, source_count = head
+                        index[name] = _NamePageEntry(
+                            path=path,
+                            kind=kind,
+                            member_count=member_count,
+                            source_count=source_count,
+                        )
+            _write_name_page_index_file(key, index)
         _NAME_PAGE_INDEX_CACHE[key] = index
         return index
 
@@ -488,7 +629,10 @@ def _resolve_name_page(canonical: str, vault_dir: Path) -> _NamePageEntry | None
 
     Returns the head alongside the path so a caller wanting only `kind`/
     `member_count` (`find_names`, per hit) pays one file read rather than the
-    whole-vault index build."""
+    whole-vault index build. This fast path is deliberately unchanged by
+    issue #634: it stays a frontmatter-only read, so the entry it returns
+    carries `source_count=None` (unknown, not read) even when the index built
+    from `_name_page_index` would carry a real one for the same name."""
     direct = name_page_path(vault_dir, canonical)
     if direct.is_file():
         head = _read_name_page_head(direct)
