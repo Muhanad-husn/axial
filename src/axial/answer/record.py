@@ -145,12 +145,16 @@ def _interrogation_conclusion_message(result: InterrogationResult) -> str:
 
 
 def _brief_to_dict(brief: Brief) -> dict[str, Any]:
-    """The brief, verbatim (§7.1, §7.3: "the brief (§7.1), verbatim")."""
+    """The brief, verbatim (§7.1, §7.3: "the brief (§7.1), verbatim").
+    `weights` (issue #639) is `{}`, never `None`, when the brief carried
+    none -- `Brief.weights` already defaults that way, so this is a
+    straight passthrough, not a normalisation."""
     return {
         "brief_id": brief.brief_id,
         "case": brief.case,
         "request": brief.request,
         "lens": brief.lens,
+        "weights": dict(brief.weights),
     }
 
 
@@ -461,7 +465,16 @@ def run_brief(
     when `use_map` is `False`); nothing about them changes the default
     path. The name-layer loop remains the default retrieval path -- this is
     opt-in, not a replacement (settled on issue #572: nothing is retired on
-    one brief)."""
+    one brief).
+
+    `brief.weights` (issue #639) only bites on the name-layer path: it
+    reaches `run_planned_retrieval`, which forwards it to `assemble_
+    evidence_ids`'s round-robin. The argument-map path builds its own
+    ordered chunk list a different way (`run_map_ask_for_brief`) and never
+    calls that function, so a weight supplied on a `use_map=True` run is
+    recorded (`brief.weights` still lands in the persisted record, §7.1)
+    but has no retrieval effect -- out of scope here exactly as the map's
+    own ranking is (issue #639's own scope note)."""
     corpus_pin = resolve_pin_id(evals_dir)
     clock = PassClock()
 

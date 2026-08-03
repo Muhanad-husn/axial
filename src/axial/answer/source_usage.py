@@ -19,6 +19,14 @@ already holds plus deterministic re-reads of the pinned vault:
   grounds (never a source that only appears in the denominator query but
   was never actually drawn on): its evidence share, plus its available
   share across the names queried.
+- `weights` -- the analyst's own `Brief.weights` (issue #639), `{}` when
+  none were supplied, read straight off `record["brief"]["weights"]`
+  (§7.1's verbatim brief). Recorded here, beside the contribution figures
+  it was meant to move, so a reader sees the instruction and its effect in
+  one place rather than having to cross-reference `record["brief"]`
+  separately -- disclosed on every run, including a `refuse` disposition
+  or one with no grounds, exactly like `names_queried`/`denominator_by_
+  name` below.
 
 **The denominator is the plain union of member notes across the names
 queried**, a note that is a member of two queried names counting once,
@@ -252,8 +260,13 @@ def compute_source_usage(
     record: dict[str, Any], *, vault_dir: Path | None = None
 ) -> dict[str, Any]:
     """Compute the §7.13 `source_usage` field for an analysis record
-    (§7.3's shape: `claims`, `trajectory`, `interrogation.disposition`).
-    Zero model calls -- pure vault reads plus arithmetic.
+    (§7.3's shape: `claims`, `trajectory`, `interrogation.disposition`,
+    `brief.weights`). Zero model calls -- pure vault reads plus arithmetic.
+
+    `weights` (issue #639) is read straight off `record["brief"]["weights"]`
+    -- `{}` for a record with none, never absent -- so the analyst's own
+    instruction rides alongside the contribution figures it was meant to
+    move, always, on every disposition.
 
     `sources` is empty on disposition `refuse` and on any run whose claims
     carry no grounds (§7.13), `names_queried` and `denominator_by_name`
@@ -286,7 +299,12 @@ def compute_source_usage(
         {} if disposition == "refuse" else _fold_evidence_grounds(claims, vault_dir=vault_dir)
     )
 
-    base = {"names_queried": names_queried, "denominator_by_name": denominator_by_name}
+    weights = dict((record.get("brief") or {}).get("weights") or {})
+    base = {
+        "names_queried": names_queried,
+        "denominator_by_name": denominator_by_name,
+        "weights": weights,
+    }
     if not evidence_counts:
         return {**base, "sources": []}
 

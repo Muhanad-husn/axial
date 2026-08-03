@@ -58,6 +58,7 @@ Each principle states what it is, why it exists, and how it binds. "How it binds
 **How it binds.**
 - *Forbids:* producing a synthesis without first testing the brief's premises; fabricating coverage where the corpus is thin in order to satisfy the request as posed.
 - *Requires:* the tool may **bound** the request ("the corpus covers X but not Y"), may **refuse** it ("the sources do not support this claim"), and must **surface** premises smuggled into the brief. A brief taken at face value is a failure mode, not compliance. Bounding and refusal are first-class outputs, not errors.
+- *Never of the asker:* interrogation is of the brief and the corpus — bounding, refusing, surfacing smuggled premises — never of the person at the keyboard. Where the evidence itself is imbalanced across sources, the analyst corrects it by supplying a source weight with the brief (specs/PHASE-B.md §7.1); Axial neither infers that weight from the question nor asks the analyst for one (DEC-61).
 
 ### 1.4 Principle IV — Counter-position is mandatory
 

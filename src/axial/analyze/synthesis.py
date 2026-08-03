@@ -664,6 +664,17 @@ def compose_prompt(
     can displace one already inside the prefix: it lands at the FRONT of its
     own source's rotation slot, not at the tail of the walk (measured on
     seven persisted brief runs, issue #542).
+
+    **This is where a `Brief.weights` instruction actually bites (issue
+    #639, DEC-61).** This function itself takes no weight and does not
+    change: it walks whatever order `evidence.chunk_ids` already carries.
+    The round-robin that PRODUCES that order is what a weight reorders --
+    a de-emphasised source's ids surface later in the rotation, so fewer of
+    them (or none) survive into this walk's char-budget prefix; a favoured
+    source's surface sooner and denser. See `assemble_evidence_ids`'s own
+    docstring for the mechanism, and `_round_robin_by_source`'s for the
+    soft-favouring contract -- unweighted, this function's output is
+    unchanged from before #639.
     A dropped chunk gets no handle and never appears in the evidence list, so
     the model has nothing to cite it with (grounds validation already rejects
     a handle absent from `handle_map`)."""

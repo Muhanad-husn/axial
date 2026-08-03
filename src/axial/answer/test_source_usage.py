@@ -89,12 +89,15 @@ def _where_names_meet_call(step, canonical, other, *, result_count=0, result_ids
     }
 
 
-def _record(*, claims, trajectory, disposition="proceed"):
-    return {
+def _record(*, claims, trajectory, disposition="proceed", brief=None):
+    record = {
         "claims": claims,
         "trajectory": trajectory,
         "interrogation": {"disposition": disposition},
     }
+    if brief is not None:
+        record["brief"] = brief
+    return record
 
 
 # -- names_queried derivation -------------------------------------------------
@@ -505,3 +508,36 @@ def test_full_concentration_on_one_source_produces_no_failure(tmp_path):
     result = compute_source_usage(_record(claims=claims, trajectory=trajectory), vault_dir=tmp_path)
     assert result["sources"][0]["evidence_share"] == 1.0
     assert result["sources"][0]["usage_ratio"] == pytest.approx(1.0)
+
+
+# -- issue #639: weights disclosure ----------------------------------------------
+
+
+def test_weights_defaults_to_empty_when_the_record_carries_no_brief():
+    record = _record(claims=[], trajectory=[])
+    assert compute_source_usage(record, vault_dir=None)["weights"] == {}
+
+
+def test_weights_defaults_to_empty_when_the_brief_supplied_none():
+    record = _record(claims=[], trajectory=[], brief={"case": "Syria", "weights": {}})
+    assert compute_source_usage(record, vault_dir=None)["weights"] == {}
+
+
+def test_weights_are_disclosed_verbatim_from_the_brief():
+    record = _record(
+        claims=[], trajectory=[], brief={"case": "Syria", "weights": {"beshara-2011": 0.1}}
+    )
+    assert compute_source_usage(record, vault_dir=None)["weights"] == {"beshara-2011": 0.1}
+
+
+def test_weights_are_disclosed_even_on_refuse():
+    trajectory = [_name_call(1, "find_names", {"query": "Tilly"})]
+    record = _record(
+        claims=[],
+        trajectory=trajectory,
+        disposition="refuse",
+        brief={"weights": {"beshara-2011": 0.1}},
+    )
+    result = compute_source_usage(record, vault_dir=None)
+    assert result["sources"] == []
+    assert result["weights"] == {"beshara-2011": 0.1}
