@@ -88,7 +88,7 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from axial.analyze.assembly import assemble_evidence
 from axial.analyze.synthesis import (
@@ -104,11 +104,20 @@ from axial.answer.render import render_markdown
 from axial.answer.run_report import PassClock, build_run_report, persist_run_report
 from axial.answer.source_usage import compute_source_usage
 from axial.argmap.ask import DECOMPOSE_PASS_NAME, AskResult, run_map_ask_for_brief
+from axial.brief.fork import (
+    ForkAnswer,
+    ForkCheckError,
+    ForkCheckResult,
+    assess_fork,
+    compile_constraint,
+    describe_effect,
+)
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult, interrogate
 from axial.eval.corpus_pin import resolve_pin_id
 from axial.llm import (
     COUNTER_POSITION_GENERATE_PASS_NAME,
+    FORK_CHECK_PASS_NAME,
     INTERROGATE_PASS_NAME,
     RETRIEVE_PASS_NAME,
     SYNTHESIZE_PASS_NAME,
@@ -118,8 +127,14 @@ from axial.llm import (
     usage_and_cost_by_pass,
 )
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_analyses_dir
-from axial.retrieve.loop import run_planned_retrieval
+from axial.retrieve.loop import assemble_evidence_ids, run_planned_retrieval
 from axial.validators.coverage import compute_confidence, compute_coverage_map
+
+# The trivial "nothing measured" fork-check result `build_record` substitutes
+# when its caller passes none -- every existing `build_record` call site
+# (there are many, in tests and in `run_examine`'s own future callers) stays
+# correct without threading a fork-check through it.
+_NO_FORK = ForkCheckResult(is_fork=False, measured=False)
 
 
 class AnswerError(Exception):
@@ -148,13 +163,15 @@ def _brief_to_dict(brief: Brief) -> dict[str, Any]:
     """The brief, verbatim (§7.1, §7.3: "the brief (§7.1), verbatim").
     `weights` (issue #639) is `{}`, never `None`, when the brief carried
     none -- `Brief.weights` already defaults that way, so this is a
-    straight passthrough, not a normalisation."""
+    straight passthrough, not a normalisation. `fork_answer` (issue #649) is
+    `None`, `Brief.fork_answer`'s own default, when the brief carried none."""
     return {
         "brief_id": brief.brief_id,
         "case": brief.case,
         "request": brief.request,
         "lens": brief.lens,
         "weights": dict(brief.weights),
+        "fork_answer": dict(brief.fork_answer) if brief.fork_answer is not None else None,
     }
 
 
@@ -233,6 +250,9 @@ def build_record(
     evidence_composed_count: int = 0,
     map_retrieval: dict[str, Any] | None = None,
     session_id: str | None = None,
+    fork_result: ForkCheckResult | None = None,
+    fork_answer: ForkAnswer | None = None,
+    fork_effect: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Assemble the §7.3 analysis record. `claims`/`trajectory` are the
     caller's already-computed stage-4/stage-3 output (empty on a `refuse`
@@ -298,7 +318,18 @@ def build_record(
     is still `True` in this branch: a real model call was attempted (the
     brief was contested, which is the only way this call is ever reached at
     all), so its pass name still belongs in `model_by_pass`/`cost` exactly
-    as it would have on success."""
+    as it would have on success.
+
+    `fork_result`/`fork_answer`/`fork_effect` (issue #649, all `None` for
+    every caller before this field existed) are the intake fork-check's own
+    disclosure (module docstring): what it measured and asked, what the
+    analyst answered (or `None`, unanswered), and what the compiled
+    constraint actually did to the assembled evidence set. `fork_result`
+    defaults to the trivial "nothing measured" result (`_NO_FORK`) so every
+    existing caller keeps recording an honest, empty `intake_fork` block.
+    `intake_fork.failed` is `None` on that shape and on every real verdict;
+    `run_brief` is the sole caller that ever supplies a `fork_result` with
+    `failed` set, when the check itself could not be completed."""
     clock = clock if clock is not None else PassClock()
     claim_dicts = [_claim_to_dict(claim) for claim in claims]
     coverage_map = compute_coverage_map(claim_dicts, trajectory=trajectory, vault_dir=vault_dir)
@@ -326,6 +357,7 @@ def build_record(
         record_model_by_pass[COUNTER_POSITION_GENERATE_PASS_NAME] = client.model_for_pass(
             COUNTER_POSITION_GENERATE_PASS_NAME
         )
+    fork_result = fork_result if fork_result is not None else _NO_FORK
     record = {
         "brief_id": brief.brief_id,
         "brief": _brief_to_dict(brief),
@@ -343,6 +375,29 @@ def build_record(
         },
         "trajectory": list(trajectory),
         "map_retrieval": map_retrieval,
+        "intake_fork": {
+            "measured": fork_result.measured,
+            "is_fork": fork_result.is_fork,
+            "failed": fork_result.failed,
+            "concept": fork_result.concept,
+            "kind": fork_result.kind,
+            "question": fork_result.question,
+            "options": [
+                {
+                    "label": option.label,
+                    "drop_source_ids": list(option.drop_source_ids),
+                    "per_source_cap": option.per_source_cap,
+                    "guidance": option.guidance,
+                }
+                for option in fork_result.options
+            ],
+            "answer": (
+                {"option": fork_answer.option, "free_text": fork_answer.free_text}
+                if fork_answer is not None
+                else None
+            ),
+            "effect": fork_effect,
+        },
         "model_by_pass": record_model_by_pass,
         "cost": usage_and_cost_by_pass(client, record_model_by_pass),
     }
@@ -412,6 +467,7 @@ def run_brief(
     map_pin: str | None = None,
     on_event: EventCallback | None = None,
     session_id: str | None = None,
+    on_fork: Callable[[ForkCheckResult], ForkAnswer | None] | None = None,
 ) -> BriefRunResult:
     """Run the full engine (stages 1-6) over `brief` and persist the §7.3
     analysis record to `<analyses_dir>/<brief_id>.json` plus the §7.15 run
@@ -474,7 +530,25 @@ def run_brief(
     calls that function, so a weight supplied on a `use_map=True` run is
     recorded (`brief.weights` still lands in the persisted record, §7.1)
     but has no retrieval effect -- out of scope here exactly as the map's
-    own ranking is (issue #639's own scope note)."""
+    own ranking is (issue #639's own scope note).
+
+    **The intake fork-check (issue #649, specs/PHASE-B.md §7, DEC-62) runs
+    between interrogation and retrieval, and only on the name-layer path**
+    (`use_map=False`): it measures the question against the note store,
+    and, when the measurement resolved at least one concept, makes one
+    bounded model call (`axial.brief.fork.assess_fork`) to judge whether a
+    genuine fork exists. When one is found, `brief.fork_answer` (§7.1) is
+    read first -- the pre-supplied answer a batch caller (`axial brief
+    run`/`smoke`/`sweep`) gives with no interactive prompt to ask; when
+    that is absent, `on_fork`, when given, is called with the fork so an
+    interactive caller (`axial ask`, `axial.cli._fork_prompt`) can ask it
+    live. Neither given is not an error: the fork is recorded in the
+    persisted record's `intake_fork` block with `answer: null` and the run
+    proceeds fully unconstrained, exactly as issue #649 requires of a
+    batch run. An answer compiles (`compile_constraint`) into a
+    `ForkConstraint` that reaches `run_planned_retrieval`, the same site
+    `brief.weights` already bites, and `intake_fork.effect` discloses what
+    it actually did to the assembled evidence set."""
     corpus_pin = resolve_pin_id(evals_dir)
     clock = PassClock()
 
@@ -499,8 +573,21 @@ def run_brief(
         evidence_assembled_count = 0
         evidence_composed_count = 0
         map_retrieval: dict[str, Any] | None = None
+        fork_result: ForkCheckResult = _NO_FORK
+        fork_answer: ForkAnswer | None = None
+        fork_effect: dict[str, int] | None = None
     else:
         if use_map:
+            # The intake fork-check (issue #649) only bites the name-layer
+            # path: it compiles into `assemble_evidence_ids`'s own
+            # `fork_constraint` argument, which the argument-map path never
+            # calls (`brief.weights`' own scope note above, unchanged
+            # precedent). Skipped entirely here, not merely unconstrained --
+            # `measured=False` says plainly that nothing was asked, the same
+            # honest-absence reading `_NO_FORK` gives a `refuse` disposition.
+            fork_result = _NO_FORK
+            fork_answer = None
+            fork_effect = None
             emit_event(
                 on_event, "retrieving evidence through the argument map", {"stage": "retrieve"}
             )
@@ -532,6 +619,64 @@ def run_brief(
             trajectory = []
             map_retrieval = _map_retrieval_to_dict(ask_result)
         else:
+            emit_event(
+                on_event,
+                "checking the question against the measured corpus",
+                {"stage": "fork_check"},
+            )
+            try:
+                with clock.time(FORK_CHECK_PASS_NAME):
+                    fork_result = assess_fork(
+                        brief,
+                        client=client,
+                        vault_dir=vault_dir,
+                        question_scope=interrogation_result.question_scope,
+                    )
+            except ForkCheckError as exc:
+                # The fork-check is advisory by construction (module
+                # docstring): no fork found means nothing is asked and
+                # retrieval proceeds unconstrained. A malformed answer or a
+                # transport failure lands in that same place -- never
+                # propagated up to abort a run that already paid for
+                # interrogation (issue #649's own live-run finding: a model
+                # mistyped a source id on the third call of a live pass and
+                # the whole run died on it). `measured=False` here is
+                # deliberately the same shape `_NO_FORK` uses -- the run
+                # proceeds identically either way -- but `failed` is set so
+                # the record can say plainly the check FAILED, not that no
+                # fork existed.
+                fork_result = ForkCheckResult(is_fork=False, measured=False, failed=str(exc))
+                model_by_pass[FORK_CHECK_PASS_NAME] = client.model_for_pass(FORK_CHECK_PASS_NAME)
+                emit_event(
+                    on_event,
+                    f"the fork-check failed and is being skipped: {exc}",
+                    {"stage": "fork_check", "failed": True},
+                )
+            else:
+                if fork_result.measured:
+                    model_by_pass[FORK_CHECK_PASS_NAME] = client.model_for_pass(
+                        FORK_CHECK_PASS_NAME
+                    )
+            fork_answer = None
+            if fork_result.is_fork:
+                emit_event(
+                    on_event,
+                    f"a clarifying question was found: {fork_result.question}",
+                    {"stage": "fork_check", "concept": fork_result.concept},
+                )
+                if brief.fork_answer is not None:
+                    fork_answer = ForkAnswer(
+                        option=brief.fork_answer.get("option"),
+                        free_text=brief.fork_answer.get("free_text"),
+                    )
+                elif on_fork is not None:
+                    fork_answer = on_fork(fork_result)
+            fork_constraint = (
+                compile_constraint(fork_result, fork_answer)
+                if fork_result.is_fork and fork_answer is not None and not fork_answer.is_blank()
+                else None
+            )
+
             with clock.time(RETRIEVE_PASS_NAME):
                 retrieval_result = run_planned_retrieval(
                     client,
@@ -543,11 +688,17 @@ def run_brief(
                     step_budget=step_budget,
                     thin_result_floor=thin_result_floor,
                     on_event=on_event,
+                    fork_constraint=fork_constraint,
                 )
             model_by_pass[RETRIEVE_PASS_NAME] = client.model_for_pass(RETRIEVE_PASS_NAME)
             evidence_ids = retrieval_result.evidence_ids
             trajectory = retrieval_result.trajectory
             map_retrieval = None
+            if fork_constraint is not None:
+                baseline_ids = assemble_evidence_ids(trajectory, brief.weights)
+                fork_effect = describe_effect(baseline_ids, evidence_ids)
+            else:
+                fork_effect = None
 
         # Evidence assembly is timed under the synthesis pass it feeds: it
         # makes no model call of its own and has no pass name to report
@@ -605,6 +756,9 @@ def run_brief(
         evidence_composed_count=evidence_composed_count,
         map_retrieval=map_retrieval,
         session_id=session_id,
+        fork_result=fork_result,
+        fork_answer=fork_answer,
+        fork_effect=fork_effect,
     )
     emit_event(
         on_event,

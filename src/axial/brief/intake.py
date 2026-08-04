@@ -28,7 +28,10 @@ from axial.yaml_loader import SAFE_LOADER
 # which is computed, never read from the file). An unrecognised key is
 # rejected rather than silently dropped, so a typo'd field is caught at
 # intake instead of vanishing.
-KNOWN_KEYS = {"case", "request", "lens", "weights"}
+KNOWN_KEYS = {"case", "request", "lens", "weights", "fork_answer"}
+
+# The only keys a `fork_answer` mapping (issue #649, §7.1) may declare.
+_FORK_ANSWER_KEYS = {"option", "free_text"}
 
 # `brief_id` truncation length: long enough to be effectively collision-free
 # for this corpus's scale, short enough to stay a readable filesystem stem
@@ -155,6 +158,46 @@ class InvalidWeightValueError(BriefError):
         )
 
 
+class NonMappingForkAnswerError(BriefError):
+    """Raised when `fork_answer` (issue #649, §7.1) is present but is not a
+    mapping."""
+
+    def __init__(self, path: Path, value: Any):
+        self.path = path
+        self.value = value
+        super().__init__(
+            f"brief at {path} has a non-mapping `fork_answer` field: "
+            f"{type(value).__name__} (expected a mapping with keys "
+            f"{sorted(_FORK_ANSWER_KEYS)!r})"
+        )
+
+
+class UnknownForkAnswerFieldError(BriefError):
+    """Raised when `fork_answer` declares a key outside `_FORK_ANSWER_KEYS`."""
+
+    def __init__(self, path: Path, unknown_keys: set[str]):
+        self.path = path
+        self.unknown_keys = unknown_keys
+        super().__init__(
+            f"brief at {path} has unknown `fork_answer` field(s) {sorted(unknown_keys)!r}; "
+            f"expected only {sorted(_FORK_ANSWER_KEYS)!r}"
+        )
+
+
+class NonStringForkAnswerFieldError(BriefError):
+    """Raised when a `fork_answer` entry's value is present but not a
+    string."""
+
+    def __init__(self, path: Path, field_name: str, value: Any):
+        self.path = path
+        self.field = field_name
+        self.value = value
+        super().__init__(
+            f"brief at {path} has a non-string `fork_answer.{field_name}`: "
+            f"{type(value).__name__} (expected a string or null)"
+        )
+
+
 @dataclass(frozen=True)
 class BriefContent:
     """The validated, id-free content of a brief (§7.1 minus `brief_id`) --
@@ -168,23 +211,35 @@ class BriefContent:
     filter (see that function's own docstring). Defaults to an empty dict,
     never `None`, so every reader can treat it uniformly -- an omitted
     `weights` key and an explicit empty mapping mean the same thing: every
-    source stays at the implicit default of 1.0."""
+    source stays at the implicit default of 1.0.
+
+    `fork_answer` (issue #649, §7.1) is `{option, free_text}`, each
+    independently `None`, the analyst's own pre-supplied answer to whatever
+    intake fork-check question a batch run (`axial brief run`/`smoke`/
+    `sweep`) has no interactive prompt to ask. `None` (the default, and
+    every brief before this field existed) means no answer was supplied: a
+    genuine fork found on that brief is recorded in the analysis record's
+    disclosure and the run proceeds unconstrained (`axial.brief.fork`'s own
+    module docstring) -- never guessed at, never blocked on."""
 
     case: str
     request: str
     lens: str | None = None
     weights: dict[str, float] = field(default_factory=dict)
+    fork_answer: dict[str, str | None] | None = None
 
 
 @dataclass(frozen=True)
 class Brief:
-    """A fully loaded, validated brief (§7.1): `{brief_id, case, request, lens?, weights?}`."""
+    """A fully loaded, validated brief (§7.1): `{brief_id, case, request,
+    lens?, weights?, fork_answer?}`."""
 
     brief_id: str
     case: str
     request: str
     lens: str | None = None
     weights: dict[str, float] = field(default_factory=dict)
+    fork_answer: dict[str, str | None] | None = None
 
 
 def compute_brief_id(content: BriefContent) -> str:
@@ -201,7 +256,12 @@ def compute_brief_id(content: BriefContent) -> str:
     record already on disk (`data/analyses/<brief_id>.json`). An unweighted
     brief -- the overwhelming default -- therefore keeps the exact id it
     had before this field existed; only a brief that actually supplies a
-    weight gets a new one."""
+    weight gets a new one.
+
+    **`fork_answer` (issue #649) is hashed only when given, the identical
+    rule for the identical reason** -- every brief persisted before this
+    field existed has no `fork_answer` key at all, so an unanswered brief
+    keeps the exact id it had before this field existed."""
     payload: dict[str, Any] = {
         "case": content.case,
         "request": content.request,
@@ -209,6 +269,8 @@ def compute_brief_id(content: BriefContent) -> str:
     }
     if content.weights:
         payload["weights"] = content.weights
+    if content.fork_answer is not None:
+        payload["fork_answer"] = content.fork_answer
     canonical = json.dumps(payload, sort_keys=True, ensure_ascii=True)
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return digest[:_BRIEF_ID_LENGTH]
@@ -272,6 +334,41 @@ def _validate_weights(path: Path, raw: dict[str, Any]) -> dict[str, float]:
     return weights
 
 
+def _validate_fork_answer(path: Path, raw: dict[str, Any]) -> dict[str, str | None] | None:
+    """Validate an optional `fork_answer` field (§7.1, issue #649). The key
+    is optional, and `None` is the honest "no pre-supplied answer" default
+    every brief before this field existed already carries. A present value
+    must be a mapping with only `option`/`free_text` keys; each, when
+    present and not `None`, must be a non-blank string after whitespace
+    stripping (the same "present but blank is rejected" rule `lens`
+    follows) -- and at least one of the two must actually be given, since a
+    `fork_answer` that names neither is a no-op that should simply be
+    omitted rather than written."""
+    if "fork_answer" not in raw or raw["fork_answer"] is None:
+        return None
+    value = raw["fork_answer"]
+    if not isinstance(value, dict):
+        raise NonMappingForkAnswerError(path, value)
+    unknown_keys = set(value) - _FORK_ANSWER_KEYS
+    if unknown_keys:
+        raise UnknownForkAnswerFieldError(path, unknown_keys)
+    result: dict[str, str | None] = {}
+    for key in _FORK_ANSWER_KEYS:
+        field_value = value.get(key)
+        if field_value is None:
+            result[key] = None
+            continue
+        if not isinstance(field_value, str):
+            raise NonStringForkAnswerFieldError(path, key, field_value)
+        stripped = field_value.strip()
+        if not stripped:
+            raise EmptyFieldError(path, f"fork_answer.{key}")
+        result[key] = stripped
+    if result["option"] is None and result["free_text"] is None:
+        raise EmptyFieldError(path, "fork_answer")
+    return result
+
+
 def _validate_brief_dict(path: Path, raw: Any) -> BriefContent:
     if not isinstance(raw, dict):
         raise NonMappingBriefError(path, raw)
@@ -284,8 +381,11 @@ def _validate_brief_dict(path: Path, raw: Any) -> BriefContent:
     request = _require_nonempty_string(path, raw, "request")
     lens = _validate_lens(path, raw)
     weights = _validate_weights(path, raw)
+    fork_answer = _validate_fork_answer(path, raw)
 
-    return BriefContent(case=case, request=request, lens=lens, weights=weights)
+    return BriefContent(
+        case=case, request=request, lens=lens, weights=weights, fork_answer=fork_answer
+    )
 
 
 def load_brief(path: str | Path) -> Brief:
@@ -316,4 +416,5 @@ def load_brief(path: str | Path) -> Brief:
         request=content.request,
         lens=content.lens,
         weights=content.weights,
+        fork_answer=content.fork_answer,
     )

@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Callable
 
 from axial.answer.record import BriefRunResult, run_brief
+from axial.brief.fork import ForkAnswer, ForkCheckResult
 from axial.brief.intake import Brief, BriefContent, compute_brief_id
 from axial.llm import EventCallback, LLMClient
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
@@ -47,9 +48,10 @@ from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 class AskError(Exception):
     """Base class for `axial.ask` errors -- raised only for this module's
     own precondition (a blank case or question); every error the engine
-    itself raises (`InterrogationError`, `QueryError`, `SynthesisError`,
-    `CorpusPinError`, `AnswerError`, `AskError` from `axial.argmap.ask`)
-    propagates undisguised, exactly as `axial brief run` already lets it."""
+    itself raises (`InterrogationError`, `axial.brief.fork.ForkCheckError`,
+    `QueryError`, `SynthesisError`, `CorpusPinError`, `AnswerError`,
+    `AskError` from `axial.argmap.ask`) propagates undisguised, exactly as
+    `axial brief run` already lets it."""
 
 
 class BlankCaseError(AskError):
@@ -135,6 +137,7 @@ def ask(
     runs_dir: Path | None = None,
     lenses_dir: Path | None = None,
     run_brief_fn: Callable[..., BriefRunResult] = run_brief,
+    on_fork: Callable[[ForkCheckResult], ForkAnswer | None] | None = None,
 ) -> Turn:
     """Ask one question against one case and run the full engine over it.
     `axial ask` is this function's first caller (module docstring); a
@@ -161,6 +164,13 @@ def ask(
     inferred and never asked for (DEC-61): a follow-up does not inherit a
     prior turn's weights automatically, since a follow-up is its own full
     brief and the analyst supplies weights with the question they go with.
+
+    `on_fork` (issue #649, specs/PHASE-B.md §7, DEC-62) is forwarded
+    verbatim to `run_brief_fn`: the interactive hook a genuine intake fork
+    is offered to, so `axial ask` can ask it live of the analyst
+    (`axial.cli._fork_prompt`). `None` (the default) means no interactive
+    answer is available -- a fork found on this turn is recorded unanswered
+    and the turn proceeds unconstrained, exactly as a batch brief run does.
 
     Raises `BlankCaseError`/`BlankQuestionError` for its own precondition;
     every engine error `run_brief_fn` raises propagates unchanged."""
@@ -194,6 +204,7 @@ def ask(
         lenses_dir=lenses_dir,
         on_event=on_event,
         session_id=session_id,
+        on_fork=on_fork,
     )
 
     return Turn(

@@ -111,6 +111,22 @@ _PARAMETER_BATCH = 500
 
 
 @dataclass(frozen=True)
+class SourceShare:
+    """One source's own contribution to a concept's membership: how many of
+    its notes carry the concept, alongside the source's own publication
+    year -- the per-source breakdown `Door`'s single aggregated
+    `member_count`/`source_count` cannot answer, and the raw material the
+    intake fork-check (issue #649, specs/PHASE-B.md §7, DEC-62) measures a
+    question's own concepts against: how lopsided the coverage is, and
+    whether the sources span the period the question asks about."""
+
+    source_id: str
+    author: str | None
+    year: int | None
+    note_count: int
+
+
+@dataclass(frozen=True)
 class Door:
     """One name as the door layer sees it: the merged node's own `kind`, how
     many notes carry it, and how many distinct sources those notes span. A
@@ -136,8 +152,18 @@ def connect(vault_dir: Path) -> sqlite3.Connection | None:
     A fresh connection per call rather than a cached one: `find_names` is
     called from a threaded retrieval loop, a `sqlite3.Connection` is not
     shared across threads by default, and opening one costs microseconds
-    because SQLite reads pages on demand rather than loading the file."""
-    path = store_path(vault_dir)
+    because SQLite reads pages on demand rather than loading the file.
+
+    **`vault_dir` is resolved to an absolute path first (issue #649's own
+    acceptance test caught this).** `Path.as_uri()` raises `ValueError` on
+    any relative path regardless of the process's own working directory,
+    and both `axial.paths.default_vault_dir`'s fallback and
+    `config/pipeline.yaml`'s own `paths.vault_dir` are the relative literal
+    `data/vault` -- so every real call site that never overrides
+    `vault_dir` (`axial brief run`, `axial ask`, with no explicit
+    `--vault-dir`) was one relative path away from this crashing the moment
+    a vault actually had a store to open."""
+    path = store_path(vault_dir).resolve()
     if not path.is_file():
         return None
     return sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
@@ -240,6 +266,30 @@ def doors(connection: sqlite3.Connection, canonicals: Iterable[str]) -> dict[str
         ):
             found[row[0]] = Door(row[0], row[1], row[2], row[3])
     return found
+
+
+def concept_sources(connection: sqlite3.Connection, canonical: str) -> list[SourceShare]:
+    """Every source contributing to `canonical`'s membership, each with its
+    own note count and publication year, ranked by note count descending
+    (ties broken by `source_id` ascending) -- one `GROUP BY` over
+    `note_names` joined to `sources`, the per-source breakdown `doors()`'s
+    single aggregated counts do not carry. `[]` when the store holds no
+    member note for `canonical` at all, the same "absent, not zero" reading
+    `doors()` gives a canonical it does not carry."""
+    return [
+        SourceShare(row[0], row[1], row[2], row[3])
+        for row in connection.execute(
+            """
+            SELECT nn.source_id, s.author, s.year, COUNT(DISTINCT nn.chunk_id) AS note_count
+            FROM note_names nn
+            LEFT JOIN sources s ON s.source_id = nn.source_id
+            WHERE nn.canonical = ?
+            GROUP BY nn.source_id
+            ORDER BY note_count DESC, nn.source_id ASC
+            """,
+            (canonical,),
+        )
+    ]
 
 
 def name_members(connection: sqlite3.Connection, canonical: str) -> list[tuple]:

@@ -348,6 +348,10 @@ def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path
         # supplied -- an explicit "no weights were applied" a reader can
         # see, rather than an absent key they'd have to infer it from.
         "weights": {},
+        # issue #649: `fork_answer` is always present too, `None` when this
+        # brief supplied none -- the same "explicit absence, not an omitted
+        # key" rule `weights` already follows.
+        "fork_answer": None,
     }
     assert record["corpus_pin"] == "baseline"
     assert record["interrogation"]["disposition"] == "proceed"

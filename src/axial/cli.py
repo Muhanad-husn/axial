@@ -30,6 +30,7 @@ from axial.ask import new_session_id as new_ask_session_id
 from axial.ask.history import PastTurn, list_past_turns, load_turn
 from axial.ask.role import ANALYST, InvalidRoleError, current_role
 from axial.brief import BriefError, load_brief
+from axial.brief.fork import ForkAnswer, ForkCheckError, ForkCheckResult
 from axial.brief.interrogate import InterrogationError, interrogate, persist_interrogation
 from axial.brief.smoke import SMOKE_BRIEFS_DIR, format_smoke_summary, run_smoke
 from axial.brief.sweep import DEFAULT_WORKERS as SWEEP_DEFAULT_WORKERS
@@ -2195,6 +2196,7 @@ def _brief_run(brief_path: str, *, use_map: bool = False) -> int:
         )
     except (
         InterrogationError,
+        ForkCheckError,
         QueryError,
         SynthesisError,
         CorpusPinError,
@@ -2229,6 +2231,29 @@ def _ask_prompt(label: str) -> str | None:
     except (EOFError, KeyboardInterrupt):
         print()
         return None
+
+
+def _fork_prompt(fork: ForkCheckResult) -> ForkAnswer | None:
+    """`axial ask`'s own interactive answer to a genuine intake fork (issue
+    #649, specs/PHASE-B.md §7, DEC-62): print the question and its numbered
+    options -- always alongside free text, never a form -- and read one
+    line. A reply matching an option's own number or label (case-
+    insensitive) becomes that option's own answer; anything else is read as
+    free text verbatim. A blank line or EOF returns `None`: the analyst
+    declined to answer, and the run proceeds unconstrained, recorded as
+    such in the persisted record's `intake_fork` block."""
+    print(f"\n{fork.question}", file=sys.stderr)
+    for index, option in enumerate(fork.options, start=1):
+        print(f"  {index}) {option.label}", file=sys.stderr)
+    print("  (or type your own answer)", file=sys.stderr)
+    reply = _ask_prompt("> ")
+    if reply is None or not reply.strip():
+        return None
+    reply = reply.strip()
+    for index, option in enumerate(fork.options, start=1):
+        if reply == str(index) or reply.casefold() == option.label.casefold():
+            return ForkAnswer(option=option.label)
+    return ForkAnswer(free_text=reply)
 
 
 def _print_ask_turn(turn: AskTurn) -> int:
@@ -2300,6 +2325,7 @@ def _ask_reopen(index: int) -> int:
 _ASK_ERRORS = (
     AskSessionError,
     InterrogationError,
+    ForkCheckError,
     QueryError,
     SynthesisError,
     CorpusPinError,
@@ -2409,6 +2435,7 @@ def _ask(
                 previous=previous,
                 weights=weights,
                 on_event=_print_event,
+                on_fork=_fork_prompt,
             )
         except _ASK_ERRORS as exc:
             print(f"error: {exc}", file=sys.stderr)

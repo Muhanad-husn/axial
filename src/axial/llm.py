@@ -339,6 +339,18 @@ CONTENT_APPARATUS_PASS_NAME = "content_apparatus"
 # tier (that is a measured, separate decision per §7.11's own note).
 RETRIEVE_PASS_NAME = "retrieve"
 
+# Pass name the intake fork-check's single per-brief call identifies itself
+# with (see src/axial/brief/fork.py, issue #649, specs/PHASE-B.md §7, DEC-62):
+# given the question's own measured corpus coverage, does a genuine fork
+# exist worth asking the analyst about, and if so, how should the question be
+# phrased. Same out-of-band dispatch convention as CHUNK_PASS_NAME above --
+# naming this constant is what makes the pass routable through the
+# `model_by_pass`/`reasoning_by_pass` config seams. Runs between
+# INTERROGATE_PASS_NAME and RETRIEVE_PASS_NAME, and only when the
+# measurement resolved at least one concept -- see that module's own
+# docstring.
+FORK_CHECK_PASS_NAME = "fork_check"
+
 # Pass name the stage-4 synthesis pass's single per-brief call identifies
 # itself with (see src/axial/analyze/synthesis.py, issue #256, PRD §7.4/
 # §7.11). Same out-of-band dispatch convention as CHUNK_PASS_NAME above --
@@ -736,6 +748,14 @@ STUB_ARTIFACT_ROLE_ENV_VAR = "AXIAL_STUB_ARTIFACT_ROLE"
 # at call time, like every other seam here. Never affects any other pass's
 # canned response.
 STUB_INTERROGATE_RESPONSE_ENV_VAR = "AXIAL_STUB_INTERROGATE_RESPONSE"
+
+# Issue #649 test/CI-only seam: mirrors STUB_INTERROGATE_RESPONSE_ENV_VAR
+# exactly, for the intake fork-check pass (`FORK_CHECK_PASS_NAME`). When
+# unset/"" the stub/record clients answer "no fork" (the common, correct
+# default for a fixture that never sets out to exercise the fork-check
+# itself); set to a raw JSON string, it lets a test drive a specific
+# `{is_fork, concept, kind, question, options}` fork response end-to-end.
+STUB_FORK_CHECK_RESPONSE_ENV_VAR = "AXIAL_STUB_FORK_CHECK_RESPONSE"
 
 # Issue #419 test/CI-only seam: mirrors STUB_INTERROGATE_RESPONSE_ENV_VAR
 # above, exactly, for the Phase A per-NOTE interrogation pass
@@ -1218,6 +1238,21 @@ def _canned_interrogate_response() -> str:
     return override or _CANNED_INTERROGATE_RESPONSE
 
 
+# The default canned response for a fork-check-pass call (issue #649): no
+# genuine fork found -- the common, correct default so a stub-driven
+# end-to-end run never invents a clarifying question nobody scripted.
+_CANNED_FORK_CHECK_RESPONSE = json.dumps({"is_fork": False})
+
+
+def _canned_fork_check_response() -> str:
+    """The canned response for a fork-check-pass call (identified by
+    `pass_name=FORK_CHECK_PASS_NAME`, never by prompt content): the raw
+    string from `STUB_FORK_CHECK_RESPONSE_ENV_VAR` verbatim when set, else
+    the neutral "no fork" default above."""
+    override = os.environ.get(STUB_FORK_CHECK_RESPONSE_ENV_VAR, "")
+    return override or _CANNED_FORK_CHECK_RESPONSE
+
+
 # The default canned response for a per-note interrogation call (issue #419,
 # PRD §7.15): one plausible answer record carrying every answer field frame
 # 0.2 asks for, one explicit `not-in-passage` abstention (D7 is the ordinary
@@ -1521,6 +1556,8 @@ def _canned_response_for(pass_name: str | None) -> str:
         return _canned_holdings_response()
     if pass_name == INTERROGATE_PASS_NAME:
         return _canned_interrogate_response()
+    if pass_name == FORK_CHECK_PASS_NAME:
+        return _canned_fork_check_response()
     if pass_name == NOTE_INTERROGATE_PASS_NAME:
         return _canned_note_interrogate_response()
     if pass_name == SYNTHESIZE_PASS_NAME:
