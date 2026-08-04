@@ -835,6 +835,51 @@ def test_646_a_protected_trailing_parenthetical_is_never_peeled():
     assert "Phelps-Brown and Hopkins (1956)" not in placed
 
 
+def test_646_bare_repr_with_no_parenthetical_at_all_still_resolves():
+    """The fourth real shape off the failure log's remaining 15 rows: the
+    model drops the kind AND the evidence suffix together, keeping only
+    `repr(surface)` -- no parenthetical to peel at all, so the as-is/literal
+    check has to fire on the untouched value, not only on a value that had
+    a suffix stripped off it. `the 'Final Solution'` pins the double-quoted
+    half of the same shape (its own surface contains apostrophes, so
+    `render_member` double-quotes it, and the response keeps only that)."""
+    members = [
+        "Final Solution",
+        "Possible and impossible solutions",
+        "conversion",
+        "the 'Final Solution'",
+    ]
+    kinds = {
+        "Final Solution": "event",
+        "Possible and impossible solutions": "work",
+        "conversion": "concept",
+        "the 'Final Solution'": "event",
+    }
+    evidence = {
+        "Final Solution": "(in hall-2006-449559bfe4dc)",
+        "Possible and impossible solutions": "(in hall-2006-449559bfe4dc)",
+        "conversion": "(in hall-2006-449559bfe4dc)",
+    }
+    raw = json.dumps(
+        {
+            "nodes": [
+                {"canonical": "'Final Solution'", "aliases": ["\"the 'Final Solution'\""]},
+                {"canonical": "'Possible and impossible solutions'", "aliases": []},
+                {"canonical": "'conversion'", "aliases": []},
+            ],
+            "undecided": [],
+        }
+    )
+
+    nodes, escalated = parse_merge_response(raw, members, kinds, evidence)
+
+    assert escalated == []
+    placed = {n["canonical"] for n in nodes} | {a for n in nodes for a in n["aliases"]}
+    assert placed == set(members)
+    final_solution_node = next(n for n in nodes if n["canonical"] == "Final Solution")
+    assert final_solution_node["aliases"] == ["the 'Final Solution'"]
+
+
 def test_the_prompt_and_the_parse_share_one_renderer():
     """They cannot be allowed to drift: the parse only works because it knows
     exactly what the prompt put in front of the model."""

@@ -689,11 +689,11 @@ def _candidate_batches(
 # single-quoted, or double-quoted when the surface itself contains a `'` --
 # followed by a kind parenthetical and, often, issue #449's evidence
 # parenthetical. Replaying the corpus of record's 79-row `merge_failures.
-# jsonl` (all refused as "placed none of the batch") against the fix below
-# found three real echo shapes, not one:
+# jsonl` (all refused as "placed none of the batch") against the fix below,
+# twice, found four real echo shapes, not one:
 #   1. The evidence suffix dropped, kind kept: `'Golden Age' (period)` for a
 #      member this call rendered as `'Golden Age' (period) (in hall-2006-...,
-#      mann-v3-2012-..., mann-v4-2013-...)` -- the dominant shape (77 of 79).
+#      mann-v3-2012-..., mann-v4-2013-...)` -- the dominant shape.
 #   2. The repr's own quotes dropped: `Battle of Beirut (event)` for
 #      `'Battle of Beirut' (event) (in batatu-1999-...)`.
 #   3. The repr's OUTER wrapping dropped but the surface's OWN quotes kept:
@@ -702,17 +702,29 @@ def _candidate_batches(
 #      because it contains a `'`; the response drops just that outer
 #      wrapping and echoes `'time of troubles' (period) (in ...)` -- which
 #      IS the member verbatim, quotes included, not a literal to decode.
+#   4. BOTH suffixes dropped: only `repr(surface)` survives, no parenthetical
+#      at all -- `"'Final Solution'"`, `"'Tskhinvali'"`, `"\"As'ad
+#      Abukhalil\""` -- for members whose prompts carried a kind and an
+#      evidence suffix neither of which made it into the response.
 #
-# `_resolve_rendered_shape` peels trailing parenthetical groups off the
-# value from the right, one at a time, trying the remainder after each peel:
-# first AS-IS against the exact/normalized maps (shapes 2 and 3 -- a real
-# surface always wins over decoding it, same preference #416's exact map
-# already gives a bare surface over a rendered one), then, only if the
-# remainder is itself a single Python string literal, `ast.literal_eval`'d
-# and looked up the same way (shape 1). First hit wins, so shape 3 can never
-# be misread as shape 1: `'time of troubles'` matches the member as-is
-# before literal_eval ever gets a chance to strip its quotes as if they were
-# repr's, which would decode to the wrong string, `time of troubles`.
+# `_resolve_rendered_shape` tries the value AS-IS first (covers shapes 2 and
+# 3 whole, and is what makes shape 4 reachable with zero suffixes to peel:
+# shape 1's own remainder, once its parentheticals are gone, is this exact
+# same as-is/literal check run again), then peels one trailing parenthetical
+# group off the right and repeats -- so shape 1 (two suffixes) and its
+# partial forms (one suffix) fall out of the same loop as shape 4 (zero)
+# rather than needing a separate rule for "no suffix at all". At each step: a
+# real surface always wins over decoding one (shapes 2/3, and #416's own
+# exact map already gives a bare surface that preference over a rendered
+# one -- a batch that genuinely contains a quoted member like `"Protestant
+# constitution"` resolves there, on the FIRST check, before this fallback
+# even runs, so unwrapping a bare literal can never steal it); only when
+# that misses, and the remainder is itself a single Python string literal,
+# is it `ast.literal_eval`'d and looked up the same way (shapes 1 and 4).
+# First hit wins, so shape 3 can never be misread as shape 1/4:
+# `'time of troubles'` matches the member as-is before literal_eval ever
+# gets a chance to strip its quotes as if they were repr's, which would
+# decode to the wrong string, `time of troubles`.
 #
 # One parenthetical must never be peeled: one that is itself the TRAILING
 # parenthetical of one of this batch's own member surface forms
@@ -720,7 +732,8 @@ def _candidate_batches(
 # `members` up front, not guessed from a shape like "ends in digits", so it
 # holds for whatever real surfaces a batch happens to contain. Peeling stops
 # the moment the next group to remove is protected: reaching past it would
-# mean stripping real content off a real surface form first.
+# mean stripping real content off a real surface form first. Shape 4 never
+# reaches a peel at all, so the guard is simply moot for it.
 _TRAILING_PAREN_RE = re.compile(r"\s*\([^()]*\)$")
 _FULL_LITERAL_RE = re.compile(r"""^('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")$""", re.DOTALL)
 
@@ -743,18 +756,15 @@ def _resolve_rendered_shape(
     known: dict[str, str],
     protected: frozenset[str],
 ) -> str | None:
-    """Peel trailing parenthetical groups off `value` from the right, trying
-    to resolve the remainder after each peel (see the module-level comment
-    above for the three real echo shapes this covers). Stops -- returns
-    `None` -- the moment the next group to peel is one of `protected`."""
+    """Try `value` as-is, then peel trailing parenthetical groups off it from
+    the right one at a time, trying the remainder again after each peel (see
+    the module-level comment above for the real echo shapes this covers --
+    including the fourth: every suffix dropped, keeping only `repr(surface)`
+    with no parenthetical at all, which is why the very first try, before any
+    peel, matters). Stops -- returns `None` -- the moment the next group to
+    peel is one of `protected`."""
     remainder = value
     while True:
-        match = _TRAILING_PAREN_RE.search(remainder)
-        if not match:
-            return None
-        if match.group().strip() in protected:
-            return None
-        remainder = remainder[: match.start()]
         candidate = exact.get(remainder) or known.get(_normalize(remainder))
         if candidate is not None:
             return candidate
@@ -767,6 +777,12 @@ def _resolve_rendered_shape(
                 candidate = exact.get(decoded) or known.get(_normalize(decoded))
                 if candidate is not None:
                     return candidate
+        match = _TRAILING_PAREN_RE.search(remainder)
+        if not match:
+            return None
+        if match.group().strip() in protected:
+            return None
+        remainder = remainder[: match.start()]
 
 
 def parse_merge_response(
@@ -793,27 +809,35 @@ def parse_merge_response(
     Issue #646: a response can also echo the right surface form with the
     wrong WRAPPING -- a different kind label than this batch's own inventory
     gave the member, the evidence suffix (#449) dropped, the repr's quotes
-    dropped, or (when the surface itself contains a `'`) the repr's outer
-    double-quote wrapping dropped while the surface's own quotes survive.
-    Replayed against the corpus of record's own failure log, evidence-suffix
-    dropping is the dominant shape by far. The kind in a response is not
+    dropped, (when the surface itself contains a `'`) the repr's outer
+    double-quote wrapping dropped while the surface's own quotes survive, or
+    every suffix AND the kind dropped together, leaving only `repr(surface)`
+    with no parenthetical at all. Replayed against the corpus of record's
+    own failure log, evidence-suffix-dropped-kind-kept is the dominant shape,
+    but the bare-repr shape is the rest of it. The kind in a response is not
     information this pass reads at all (`_elect_kind` takes it from the
-    inventory, never from a response), so `_resolve_rendered_shape` peels
-    trailing parenthetical groups off the value from the right and, after
-    each peel, tries the remainder as-is against the exact/normalized maps
-    (a real surface always wins over decoding one, so a surface that
-    literally contains quotes -- `'time of troubles'` -- resolves to itself
-    before ever being mistaken for a repr to unwrap) and then, only if the
-    remainder is itself a single Python string literal, `ast.literal_eval`'d
-    and looked up the same way. One parenthetical is never peeled: one that
-    is itself the trailing parenthetical of one of THIS BATCH's own member
-    surface forms (`Phelps-Brown and Hopkins (1956)`'s own `(1956)`,
-    computed from `members`, never guessed from a shape) -- peeling stops
-    there, since reaching past it would mean stripping real content off a
-    real surface first. This fallback only runs when this call was given
-    `kinds` at all -- a batch prompted with no kind labels anywhere gives a
-    response no rendered shape to legitimately echo, so an echoed kind claim
-    there is noise, not a relabeling (the pre-#646 behaviour
+    inventory, never from a response), so `_resolve_rendered_shape` tries the
+    value as-is first -- against the exact/normalized maps (a real surface
+    always wins over decoding one, so a surface that literally contains
+    quotes -- `'time of troubles'` -- resolves to itself before ever being
+    mistaken for a repr to unwrap, and this is also what makes a genuinely
+    quoted member like `"Protestant constitution"` safe: it matches on the
+    very first check this function makes, before any unwrapping) and then,
+    only if the value is itself a single Python string literal,
+    `ast.literal_eval`'d and looked up the same way -- and only when both
+    miss does it peel one trailing parenthetical group off the right and
+    repeat the same two checks on the shorter remainder, which is what
+    reaches the kind-and/or-evidence-suffix shapes without a separate rule
+    for "no suffix at all": the bare-repr shape is just this loop's zeroth
+    iteration. One parenthetical is never peeled: one that is itself the
+    trailing parenthetical of one of THIS BATCH's own member surface forms
+    (`Phelps-Brown and Hopkins (1956)`'s own `(1956)`, computed from
+    `members`, never guessed from a shape) -- peeling stops there, since
+    reaching past it would mean stripping real content off a real surface
+    first. This fallback only runs when this call was given `kinds` at all
+    -- a batch prompted with no kind labels anywhere gives a response no
+    rendered shape to legitimately echo, so an echoed kind claim there is
+    noise, not a relabeling (the pre-#646 behaviour
     `test_parse_accepts_a_surface_echoed_in_the_form_the_prompt_showed`'s
     no-`kinds` call pins). Checked last, after the exact and normalized
     matches, so nothing that already resolves today can start resolving
