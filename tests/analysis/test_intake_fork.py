@@ -257,7 +257,7 @@ def test_a_pre_supplied_answer_drops_the_named_source_from_the_evidence_set(
     _script_retrieval_and_synthesis(monkeypatch)
 
     brief = _brief(fork_answer={"option": "background only", "free_text": None})
-    result = run_brief(brief, client=StubLLMClient())
+    result = run_brief(brief, client=StubLLMClient(), vault_dir=fixture_root / "data" / "vault")
     record = result.record
 
     assert record["intake_fork"]["is_fork"] is True
@@ -282,7 +282,7 @@ def test_a_genuine_fork_with_no_answer_is_disclosed_and_proceeds_unconstrained(
     _script_retrieval_and_synthesis(monkeypatch)
 
     brief = _brief(fork_answer=None)
-    result = run_brief(brief, client=StubLLMClient())
+    result = run_brief(brief, client=StubLLMClient(), vault_dir=fixture_root / "data" / "vault")
     record = result.record
 
     assert record["intake_fork"]["is_fork"] is True
@@ -298,7 +298,9 @@ def test_no_fork_found_asks_nothing_and_measures_it(
     monkeypatch.setenv(STUB_FORK_CHECK_RESPONSE_ENV_VAR, _NO_FORK_RESPONSE)
     _script_retrieval_and_synthesis(monkeypatch)
 
-    result = run_brief(_brief(), client=StubLLMClient())
+    result = run_brief(
+        _brief(), client=StubLLMClient(), vault_dir=fixture_root / "data" / "vault"
+    )
     record = result.record
 
     assert record["intake_fork"]["measured"] is True
@@ -322,7 +324,9 @@ def test_a_response_naming_an_unknown_index_fails_the_check_but_the_run_complete
     monkeypatch.setenv(STUB_FORK_CHECK_RESPONSE_ENV_VAR, _BAD_INDEX_FORK_RESPONSE)
     _script_retrieval_and_synthesis(monkeypatch)
 
-    result = run_brief(_brief(), client=StubLLMClient())
+    result = run_brief(
+        _brief(), client=StubLLMClient(), vault_dir=fixture_root / "data" / "vault"
+    )
     record = result.record
 
     assert record["intake_fork"]["measured"] is False
@@ -355,7 +359,9 @@ def test_a_fork_check_that_raises_still_completes_the_run_with_an_honest_disclos
     monkeypatch.setattr(record_module, "assess_fork", _raise)
     _script_retrieval_and_synthesis(monkeypatch)
 
-    result = run_brief(_brief(), client=StubLLMClient())
+    result = run_brief(
+        _brief(), client=StubLLMClient(), vault_dir=fixture_root / "data" / "vault"
+    )
     record = result.record
 
     assert record["intake_fork"]["measured"] is False
