@@ -45,6 +45,7 @@ from axial.llm import (
     STUB_FORK_CHECK_RESPONSE_ENV_VAR,
     STUB_SYNTHESIZE_RESPONSE_ENV_VAR,
     STUB_TOOL_CALLS_ENV_VAR,
+    SYNTHESIZE_PASS_NAME,
     StubLLMClient,
 )
 from axial.paths import name_page_path
@@ -273,6 +274,52 @@ def test_a_pre_supplied_answer_drops_the_named_source_from_the_evidence_set(
     assert not any(chunk_id in grounds_ids for chunk_id in DOMINANT_IDS)
     assert OLDER_ID in grounds_ids
     assert record["evidence"]["assembled_count"] == 1
+
+
+def test_an_answered_fork_whose_walk_retrieves_nothing_discloses_failure_not_claims_from_nothing(
+    fixture_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Issue #649's own round-3 live-run finding: an answered fork reached
+    the retrieval loop through its guidance prose, and the walk made three
+    `find_names` calls -- no passage-returning tool -- then stopped, so
+    `describe_effect` reported `notes_before: 0, notes_after: 0` (the
+    constraint filtered an already-empty set) and `synthesize` still wrote 5
+    claims, every one with zero grounds. Reproduced here deterministically:
+    the scripted tool calls are all name-resolution-only, so retrieval
+    assembles no evidence regardless of the constraint. The fix routes this
+    to the same `intake_fork.failed` disclosure a malformed fork-check
+    response already uses, and `synthesize` is never called at all."""
+    monkeypatch.setenv(STUB_FORK_CHECK_RESPONSE_ENV_VAR, _FORK_FOUND_RESPONSE)
+    monkeypatch.setenv(
+        STUB_TOOL_CALLS_ENV_VAR,
+        json.dumps(
+            [
+                {"tool": "find_names", "args": {"query": "Syria"}},
+                {"tool": "find_names", "args": {"query": "Syria"}},
+                {"tool": "find_names", "args": {"query": "Syria"}},
+                None,
+            ]
+        ),
+    )
+
+    brief = _brief(fork_answer={"option": "background only", "free_text": None})
+    result = run_brief(brief, client=StubLLMClient(), vault_dir=fixture_root / "data" / "vault")
+    record = result.record
+
+    assert record["intake_fork"]["is_fork"] is True
+    assert record["intake_fork"]["answer"] == {"option": "background only", "free_text": None}
+    assert record["intake_fork"]["effect"] == {
+        "notes_before": 0,
+        "notes_after": 0,
+        "sources_before": 0,
+        "sources_after": 0,
+    }
+    assert record["intake_fork"]["failed"] is not None
+    assert "no evidence" in record["intake_fork"]["failed"]
+    assert record["claims"] == []
+    assert record["evidence"]["assembled_count"] == 0
+    # Synthesis never ran: no model call under its pass name.
+    assert SYNTHESIZE_PASS_NAME not in record["model_by_pass"]
 
 
 def test_a_genuine_fork_with_no_answer_is_disclosed_and_proceeds_unconstrained(

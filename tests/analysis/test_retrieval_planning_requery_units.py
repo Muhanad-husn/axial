@@ -34,6 +34,7 @@ from typing import Any
 import pytest
 import yaml
 
+from axial.brief.fork import ForkConstraint
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult, PremiseAssessment
 from axial.llm import StubLLMClient
@@ -146,6 +147,37 @@ def test_compose_retrieval_prompt_carries_case_premises_and_bounds():
     assert "Syria" in prompt
     assert "A smuggled premise about Syria." in prompt
     assert "Covers state-formation, not economic policy." in prompt
+
+
+def test_compose_retrieval_prompt_guidance_cannot_be_read_as_a_stop_instruction():
+    """Issue #649's own live-run finding, round 3: an answered fork's
+    guidance folded into the planning prompt verbatim, and a real model read
+    "drop Vignal (2021) as post-war voice" as a reason to search less -- it
+    made three `find_names` calls, none returning a passage, then stopped,
+    so the constraint filtered an already-empty set. The block must say
+    plainly that guidance shapes how a found passage is read, never whether
+    or how much retrieval happens, and that a dropped source is excluded
+    automatically so the model never has to avoid it itself."""
+    brief = _brief(case="Syria")
+    interrogation_result = _interrogation_result()
+
+    prompt = compose_retrieval_prompt(
+        brief, interrogation_result, guidance="Focus on pre-war roots: drop Vignal (2021)."
+    )
+
+    assert "Focus on pre-war roots: drop Vignal (2021)." in prompt
+    assert "never whether or how much you retrieve" in prompt
+    assert "already removed from the evidence set automatically" in prompt
+    assert "can never be a reason to call fewer tools or stop the walk early" in prompt
+
+
+def test_compose_retrieval_prompt_with_no_guidance_carries_no_guidance_block():
+    brief = _brief(case="Syria")
+    interrogation_result = _interrogation_result()
+
+    prompt = compose_retrieval_prompt(brief, interrogation_result, guidance=None)
+
+    assert "Analyst guidance" not in prompt
 
 
 # --- thin-result predicate: below floor is thin, at/above is not -----------
@@ -357,6 +389,35 @@ def test_a_chunk_id_that_does_not_parse_groups_under_empty_source_and_sorts_firs
     trajectory = [_entry("get_name", ["not-a-real-chunk-id", "zzz_1_a_001"])]
 
     assert assemble_evidence_ids(trajectory) == ["not-a-real-chunk-id", "zzz_1_a_001"]
+
+
+def test_fork_constraint_drops_one_source_the_other_sources_stay_reachable():
+    """The mechanical half of issue #649's own fix (round 3, live-run
+    finding): once retrieval actually reaches passages from more than one
+    source, dropping one of them must never zero what the others already
+    found -- "a constraint that drops one source of six leaves the other
+    five reachable" at a smaller, hand-built scale (one dropped, three
+    kept)."""
+    trajectory = [
+        _entry("get_name", ["dropped_1_a_001", "dropped_1_a_002"]),
+        _entry("get_name", ["kept-a_1_a_001"]),
+        _entry("where_names_meet", ["kept-b_1_a_001", "kept-c_1_a_001"]),
+    ]
+    constraint = ForkConstraint(drop_source_ids=frozenset({"dropped"}))
+
+    evidence = assemble_evidence_ids(trajectory, fork_constraint=constraint)
+
+    assert evidence
+    assert not any(chunk_id.startswith("dropped_") for chunk_id in evidence)
+    assert {"kept-a_1_a_001", "kept-b_1_a_001", "kept-c_1_a_001"} <= set(evidence)
+
+
+def test_fork_constraint_none_leaves_assembly_unaffected():
+    trajectory = [_entry("get_name", ["aaa_1_a_001", "bbb_1_a_001"])]
+
+    assert assemble_evidence_ids(trajectory, fork_constraint=None) == assemble_evidence_ids(
+        trajectory
+    )
 
 
 def _first_seen_dedup(trajectory: list[dict[str, Any]]) -> list[str]:

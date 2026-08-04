@@ -456,7 +456,21 @@ def compose_retrieval_prompt(
     the guidance here is what makes it ride every turn of the loop, not just
     the first -- the same plain-prose seam `axial.ask.engine._followup_request`
     folds a prior turn's context through, applied here to fold an analyst's
-    own answer through instead."""
+    own answer through instead.
+
+    **The block explicitly bounds what the guidance is allowed to do**
+    (issue #649's own live-run finding, round 3): a live run answered a
+    fork with "drop Vignal (2021) as post-war voice" and the model made
+    three `find_names` calls, none returning a passage, then stopped --
+    `_apply_fork_constraint` (`axial.retrieve.loop`) had nothing to filter,
+    because retrieval itself never reached a chunk-valued tool. The
+    imperative phrasing of an option's own guidance ("drop", "focus on")
+    reads as an instruction to retrieve less; the drop itself is already
+    applied mechanically to the assembled set after the walk
+    (`assemble_evidence_ids`'s own `fork_constraint` argument), so the model
+    never needs to filter its own querying to honour it. The appended
+    sentences say this plainly: guidance shapes how a found passage is
+    read, never whether or how much retrieval happens."""
     premises_lines = (
         "\n".join(
             f"- {p.premise} (assessment: {p.assessment})"
@@ -467,7 +481,17 @@ def compose_retrieval_prompt(
     bounds_lines = "\n".join(f"- {b}" for b in interrogation_result.bounds_applied) or "(none)"
     guidance_block = (
         f"\n\nAnalyst guidance (from a clarifying question asked at intake, "
-        f"specs/PHASE-B.md §7, DEC-62, issue #649): {guidance.strip()}"
+        f"specs/PHASE-B.md §7, DEC-62, issue #649): {guidance.strip()} This "
+        "guidance shapes how you READ what you find -- which voice to "
+        "foreground, which to treat as background -- never whether or how "
+        "much you retrieve. Any source this guidance points away from is "
+        "already removed from the evidence set automatically once you "
+        "retrieve; you never need to avoid querying it yourself, and a name "
+        "or concept that source happens to dominate is still worth "
+        "searching for whatever else it returns. Work the full retrieval "
+        "plan above until you have covered it, exactly as you would with no "
+        "guidance at all -- this guidance can never be a reason to call "
+        "fewer tools or stop the walk early."
         if guidance and guidance.strip()
         else ""
     )
