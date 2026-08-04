@@ -7,6 +7,18 @@ case anchor and the §7.2 interrogation result, short-circuits on a `refuse`
 disposition, and assembles the deduplicated evidence set once the loop
 halts.
 
+**The plan the prompt states is relation-first, not door-first (DEC-62,
+issue #650).** `compose_retrieval_prompt` opens on `find_notes` and the
+argument map's positions, with names, publication years and sources as
+filters on them, and states `find_names`/`get_name` as a fallback for a
+phrase that will not resolve. Nothing about the loop's own shape changed
+for that -- turns, the budget, `assemble_evidence_ids`, the round-robin,
+`ForkConstraint` and the trajectory entry are all untouched -- and the
+name-layer tools stay registered. What moved is where a question is sent
+first: measured (`data/logs/2026-08-04-relational-join-ceiling/`), the
+corpus holds 43,101 cross-source opposition pairs the door-first surface
+reaches effectively none of.
+
 `run_retrieval_loop` itself stays exactly the slice-01 executor it always
 was: `prompt` is supplied verbatim by the caller and only grows with a
 plain-text tool-result summary after each step (flagged THIN, carrying its
@@ -201,6 +213,21 @@ def _looking_for_phrase(tool_name: str | None, args: dict[str, Any]) -> str:
     every renderer of this event is held to). A tool this table doesn't
     name (an unrecognized/malformed request, caught by the dispatcher as an
     error) gets the honest generic phrase rather than a guess."""
+    if tool_name == "find_notes":
+        looking = f"looking for what the corpus says about {args.get('about', '')!r}"
+        if args.get("opposing"):
+            looking += f", from authors who disagree with {args['opposing']!r}"
+        if args.get("published_after") is not None:
+            looking += f", written after {args['published_after']}"
+        if args.get("published_before") is not None:
+            looking += f", written before {args['published_before']}"
+        return looking
+    if tool_name == "opposition_pairs":
+        return f"looking for who disputes whom over {args.get('canonical', '')!r}"
+    if tool_name == "names_arguing_against":
+        return f"looking for what the critics of {args.get('target', '')!r} also discuss"
+    if tool_name == "positions_on":
+        return f"looking for the arguments the corpus makes about {args.get('name', '')!r}"
     if tool_name == "find_names":
         return f"looking for the name {args.get('query', '')!r}"
     if tool_name == "get_name":
@@ -251,18 +278,22 @@ def run_retrieval_loop(
     vault_dir: Path | None = None,
     envelopes_dir: Path | None = None,
     names_dir: Path | None = None,
+    map_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     step_budget: int | None = None,
     thin_result_floor: int | None = None,
     on_event: EventCallback | None = None,
 ) -> list[dict[str, Any]]:
     """Run the tool loop and return the §7.6 trajectory log: one
-    `{step, tool, args, result_ids, result_count, total, detail}` entry per
+    `{step, tool, args, result_ids, result_count, total, detail,
+    resolved_name}` entry per
     tool call, in call order, `step` 1-indexed with no gaps -- including a
     step whose dispatch failed validation, which still consumes a step and
     still gets an entry (`result_ids: [], result_count: 0, total: None,
-    detail: None`). `total`/`detail` are `ToolResult.total`/`.detail`
-    (issue #493), carried by only some tools and `None` on every other --
+    detail: None, resolved_name: None`). `total`/`detail` are
+    `ToolResult.total`/`.detail`
+    (issue #493) and `resolved_name` is `ToolResult.resolved_name` (issue
+    #650), carried by only some tools and `None` on every other --
     additive fields beside the original five, never replacing them.
 
     Halts cleanly -- without raising -- in either of two ways:
@@ -291,7 +322,10 @@ def run_retrieval_loop(
     `vault_dir`/`envelopes_dir`: an optional directory for the name-layer
     tools (`find_names`, `get_name`, `name_neighbors`, `who_cites`,
     `who_argues_against`), defaulting to `None` so a caller passing nothing
-    resolves against the query API's own default.
+    resolves against the query API's own default. `map_dir` (issue #650) is
+    forwarded the same way: the pinned argument-map directory `positions_on`
+    reads, `None` when this corpus has no map built, which that tool
+    reports as an empty result rather than a failure.
 
     `on_event` (issue #533) replaces this loop's own ad-hoc
     `print(..., file=sys.stderr)` per-turn lines with the shared engine
@@ -330,6 +364,7 @@ def run_retrieval_loop(
             vault_dir=vault_dir,
             envelopes_dir=envelopes_dir,
             names_dir=names_dir,
+            map_dir=map_dir,
         )
         capped = result.total is not None and result.total > result.count
         emit_event(
@@ -366,6 +401,15 @@ def run_retrieval_loop(
                 # renumbering the five §7.6 fields above them.
                 "total": result.total,
                 "detail": result.detail,
+                # `resolved_name` (issue #650): the canonical a store-backed
+                # tool's own name argument landed on. Unlike `total`/`detail`
+                # this never reaches the model -- it is written for the
+                # RECORD, because §7.7's coverage scope and §7.13's
+                # denominator both read the trajectory for the names this run
+                # leaned on and a relational tool's argument is a phrase the
+                # model wrote, not a canonical the corpus carries. `None` on
+                # every other tool, and on a phrase that resolved to nothing.
+                "resolved_name": result.resolved_name,
             }
         )
 
@@ -440,13 +484,19 @@ def compose_retrieval_prompt(
     real provider's model reads the same instruction the scripted
     acceptance tests exercise -- plus D4's Gather-hint rule (§7.5), stated
     plainly here because the loop is where a disagreement could otherwise
-    slip into the evidence set. Step 4 (issue #517) tells the model to
-    intersect the case anchor with a BROAD intellectual name, never a narrow
-    one, because a live corpus run showed the first wording of this step
-    (trigger on page size) fail: told to intersect only a "large" name, the
-    model avoided the tool by resolving narrow, one-book names instead --
-    `Syrian nationalism` (24 members) is 83.3% one source because only the
-    book about Syrian nationalism uses that phrase.
+    slip into the evidence set.
+
+    **The plan is relation-first as of issue #650 (DEC-62).** It opens on
+    `find_notes` and `positions_on` and states plainly that a name, a year
+    and a source are filters, not destinations; `find_names`/`get_name` are
+    named as the fallback for a phrase that will not resolve, which is the
+    one thing they do that nothing else does. Issue #517's own measured
+    lesson is kept, generalized off `where_names_meet` onto every
+    chunk-valued result: the model is told to read the source span each
+    result's `detail` states rather than infer it from how specific its
+    query felt, because a live run told to intersect only a "large" name
+    avoided the tool by resolving narrow, one-book names instead
+    (`Syrian nationalism`, 24 members, 83.3% one source).
 
     `guidance` (issue #649, `None` for every caller before it existed) is an
     intake fork's own compiled free-text guidance (`axial.brief.fork.
@@ -507,11 +557,12 @@ Premises found during interrogation:
 Bounds applied:
 {bounds_lines}
 
-Retrieval is traversal of the name layer, not a conjunction of filters. A good plan:
-1. Name the scholars, concepts and polities the brief is actually about, and resolve each one with find_names -- it returns a slate of doors (exact, alias, folded and contains matches ranked by how many notes and sources they span, topped up with embedding matches), and reports a genuine resolution failure as an empty result, never the nearest name to hand.
-2. For each name that resolves, read who meets there with get_name: its member notes, each with author, year and one-sentence claim.
-3. Follow what those notes say. who_argues_against and who_cites surface the author-stated opposition and citation edges those notes themselves carry -- real cross-book traversal, not a guess. name_neighbors surfaces names that co-occur with one you already have.
-4. Narrowing the name feels like precision but produces a one-book answer: a name only one author uses returns only that author. Intersect the case anchor with a BROAD intellectual name the brief is about -- a concept, period, institution or scholar, never a narrow phrase -- using where_names_meet(canonical, other): that is where more than one book actually meets. Every result's detail now states how many sources it spans (e.g. "24 notes across 2 sources"); a result drawn from one source cannot support a comparison, so check that number instead of assuming it from how specific the name felt.
+What you retrieve is notes, arguments and disagreements. Names, publication years and sources are FILTERS on those -- a way of narrowing what you ask for, never the thing you are looking for. You do not need to resolve a name before using it: every tool below resolves the phrase you write through the corpus's own aliases and spellings itself. A good plan:
+1. Start with find_notes(about=...): the notes about a concept, scholar, work, place or period the brief is actually about. Narrow it with the filters when the question calls for them -- opposing=<name> keeps only the sources that argue against that name somewhere, which is how you ask for positions on X held by authors who disagree with Y; published_after/published_before keep only sources from a period, which is how you ask what changed after an event or a date.
+2. positions_on(name=...) reads the argument map: each result is one contestable argument the corpus makes, stated as a sentence, with the passages from every book that make it. Where a note says what one author wrote, a position says what is being argued and by how many books at once. Reach for it early on a conceptual question.
+3. For disagreement itself, call opposition_pairs(canonical=...): pairs of real notes where one argues against something another book's passage is about. Both ends are citable. names_arguing_against(target=...) says what the critics of a name conduct their disagreement in terms of -- follow those names back into find_notes.
+4. Every chunk-valued result's detail states how many sources it spans (e.g. "24 notes across 2 sources"). A result drawn from one source cannot support a comparison, so check that number rather than assuming it from how specific your query felt. Narrowing feels like precision but produces a one-book answer.
+5. find_names and get_name are still there, for when a phrase does not resolve and you want to see what the corpus calls things (find_names returns a slate of doors with their sizes), or when you want one name's whole page. They are a fallback, not a first step -- a page groups notes by a name they happen to mention and can say nothing about who argues with whom. where_names_meet, who_argues_against, who_cites and name_neighbors each walk exactly one relation from a name, and remain available for that.
 
 get_name may also return a disagreement section another model wrote while reading this corpus (Gather). That text is a POINTER, never evidence: read it only to decide where to look next, then follow that page's own member chunk_ids to the real notes and retrieve those. Nothing you cite may be a disagreement, a name page, or a name string itself -- only a chunk_id or artifact_id resolves as a real ground.
 
@@ -822,6 +873,7 @@ def run_planned_retrieval(
     vault_dir: Path | None = None,
     envelopes_dir: Path | None = None,
     names_dir: Path | None = None,
+    map_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     step_budget: int | None = None,
     thin_result_floor: int | None = None,
@@ -868,6 +920,7 @@ def run_planned_retrieval(
         vault_dir=vault_dir,
         envelopes_dir=envelopes_dir,
         names_dir=names_dir,
+        map_dir=map_dir,
         on_event=on_event,
         config_path=config_path,
         step_budget=step_budget,

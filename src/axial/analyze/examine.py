@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from axial.analyze.assembly import EvidenceSet, assemble_evidence
+from axial.argmap.ask import resolve_pinned_map_dir
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult, interrogate
 from axial.llm import LLMClient
@@ -65,6 +66,11 @@ def run_examine(
         interrogation_result,
         vault_dir=vault_dir,
         envelopes_dir=envelopes_dir,
+        # The same pinned map `run_brief`'s own loop reads (issue #650), so
+        # this preview walks the identical tool set the paid run would --
+        # `positions_on` silently answering nothing here would make examine
+        # a preview of a different engine. `None` when no map is built.
+        map_dir=resolve_pinned_map_dir(envelopes_dir=envelopes_dir, config_path=config_path),
         config_path=config_path,
         step_budget=step_budget,
         thin_result_floor=thin_result_floor,

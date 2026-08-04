@@ -396,7 +396,11 @@ def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path
     assert isinstance(record["trajectory"], list) and record["trajectory"]
     # issue #493: `total`/`detail` are additively persisted onto every entry
     # now, beside the original five -- this assertion is updated with that
-    # one-line justification.
+    # one-line justification. Issue #650 adds `resolved_name`, the sixth
+    # rider; this run's three calls (get_chunk, get_chunk, get_name) are all
+    # door tools, none of the four relational tools that resolve one, so the
+    # value is `None` on every entry -- asserted, not just the key's
+    # presence.
     for entry in record["trajectory"]:
         assert set(entry) == {
             "step",
@@ -406,7 +410,9 @@ def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path
             "result_count",
             "total",
             "detail",
+            "resolved_name",
         }
+        assert entry["resolved_name"] is None
     assert [entry["tool"] for entry in record["trajectory"]] == [
         "get_chunk",
         "get_chunk",
