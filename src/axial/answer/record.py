@@ -86,7 +86,7 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -329,7 +329,10 @@ def build_record(
     existing caller keeps recording an honest, empty `intake_fork` block.
     `intake_fork.failed` is `None` on that shape and on every real verdict;
     `run_brief` is the sole caller that ever supplies a `fork_result` with
-    `failed` set, when the check itself could not be completed."""
+    `failed` set -- when the check itself could not be completed, or when a
+    genuine constraint reached retrieval and still came back with nothing
+    to cite (issue #649's own live-run finding, round 3: guidance is guidance,
+    it must never be able to silently end a run with an empty evidence set)."""
     clock = clock if clock is not None else PassClock()
     claim_dicts = [_claim_to_dict(claim) for claim in claims]
     coverage_map = compute_coverage_map(claim_dicts, trajectory=trajectory, vault_dir=vault_dir)
@@ -718,27 +721,64 @@ def run_brief(
                 f"assembled {len(evidence.chunk_ids)} passage(s)",
                 {"stage": "assemble", "assembled_count": len(evidence.chunk_ids)},
             )
-            emit_event(on_event, "writing the answer", {"stage": "synthesize"})
-            claim_graph = synthesize(
-                evidence,
-                brief,
-                client=client,
-                vault_dir=vault_dir,
-                lenses_dir=lenses_dir,
-                config_path=config_path,
-                question_scope=interrogation_result.question_scope,
-            )
-            emit_event(
-                on_event,
-                f"wrote the answer -- {len(claim_graph.claims)} claim(s)",
-                {"stage": "synthesize", "claim_count": len(claim_graph.claims)},
-            )
-        model_by_pass[SYNTHESIZE_PASS_NAME] = client.model_for_pass(SYNTHESIZE_PASS_NAME)
+            # An answered fork must never be able to zero the evidence set
+            # SILENTLY (issue #649's own live-run finding, round 3): a live
+            # run's analyst answer reached the retrieval loop through its
+            # guidance prose and the walk came back with nothing to cite --
+            # `describe_effect` then reported `notes_before: 0, notes_after:
+            # 0` and `synthesize` still wrote 5 claims, every one with zero
+            # grounds. `fork_effect` is only ever non-`None` when a
+            # constraint actually reached retrieval (immediately above), so
+            # this can never fire on an unconstrained or `use_map` run. An
+            # empty result here is routed to the same `intake_fork.failed`
+            # disclosure a malformed fork-check response already uses
+            # (module docstring), never into `synthesize` -- which is left
+            # entirely untouched; its own behaviour on an empty evidence set
+            # is a separate, pre-existing concern outside #649's scope.
+            if fork_effect is not None and not evidence.chunk_ids:
+                emit_event(
+                    on_event,
+                    "the analyst's fork answer left no evidence to retrieve from -- "
+                    "skipping synthesis",
+                    {"stage": "synthesize", "failed": True},
+                )
+                fork_result = replace(
+                    fork_result,
+                    failed=(
+                        "the analyst's fork answer left no evidence to retrieve from -- "
+                        "retrieval assembled zero notes with this constraint applied"
+                    ),
+                )
+                claim_graph = None
+            else:
+                emit_event(on_event, "writing the answer", {"stage": "synthesize"})
+                claim_graph = synthesize(
+                    evidence,
+                    brief,
+                    client=client,
+                    vault_dir=vault_dir,
+                    lenses_dir=lenses_dir,
+                    config_path=config_path,
+                    question_scope=interrogation_result.question_scope,
+                )
+                emit_event(
+                    on_event,
+                    f"wrote the answer -- {len(claim_graph.claims)} claim(s)",
+                    {"stage": "synthesize", "claim_count": len(claim_graph.claims)},
+                )
+        if claim_graph is not None:
+            model_by_pass[SYNTHESIZE_PASS_NAME] = client.model_for_pass(SYNTHESIZE_PASS_NAME)
 
-        lens = claim_graph.lens
-        claims = claim_graph.claims
+        lens = (
+            claim_graph.lens
+            if claim_graph is not None
+            else resolve_lens(brief.lens, lenses_dir=lenses_dir)
+        )
+        claims = claim_graph.claims if claim_graph is not None else []
         evidence_assembled_count = len(evidence.chunk_ids)
-        evidence_composed_count = claim_graph.evidence_composed_count
+        evidence_composed_count = (
+            claim_graph.evidence_composed_count if claim_graph is not None else 0
+        )
 
     emit_event(on_event, "checking the answer", {"stage": "check"})
     record = build_record(
