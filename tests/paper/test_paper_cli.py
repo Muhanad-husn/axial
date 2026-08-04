@@ -385,3 +385,203 @@ def test_a_missing_paper_brief_file_is_reported_not_a_traceback(root):
     assert exit_code == 1
     assert "does_not_exist.yaml" in err
     assert "Traceback" not in err
+
+
+# ---------------------------------------------------------------------------
+# Issue #668: `axial ask` ends in a paper, offline
+# ---------------------------------------------------------------------------
+
+ASK_PLAN = {
+    "thesis_statement": "War made the state, and the record says how.",
+    "sections": [
+        {
+            "section_id": "s1",
+            "heading": "The bellicist account",
+            "role": "claim",
+            "assigned_claims": [{"brief_id": "brief-ask", "claim_id": "k1"}],
+        },
+        # A one-record paper still owes its opposition a section unless the
+        # record discloses a one-sided corpus (charter Principle IV, §7.14),
+        # and §7.2 refuses an empty one. A real `paper_plan` call produces
+        # this; the fixture record below carries the claim it needs.
+        {
+            "section_id": "s2",
+            "heading": "The case against",
+            "role": "counter-position",
+            "assigned_claims": [{"brief_id": "brief-ask", "claim_id": "k2"}],
+        },
+    ],
+}
+
+ASK_DRAFTS = [
+    {"prose": "War made the state [pc-001].", "new_claims": []},
+    {"prose": "Coercion was contracted out instead [pc-002].", "new_claims": []},
+]
+
+
+def _write_ask_record(root: Path) -> None:
+    """One record with two claims, so a single-record paper can carry the
+    counter-position section §7.2 will not let it leave empty."""
+    record = _record(
+        "brief-ask",
+        [
+            _claim(
+                "k1",
+                "a",
+                "Tilly makes war the mechanism.",
+                "high",
+                "tilly-1978-aaa_1_war_001",
+                ["Charles Tilly"],
+            ),
+            _claim(
+                "k2",
+                "a",
+                "Ungor reads the coercion as contracted out.",
+                "high",
+                "ungor-2020-ccc_2_militia_001",
+                ["Ugur Ungor"],
+            ),
+        ],
+        {
+            "Charles Tilly": {
+                "corpus_note_count": 154,
+                "evidence_note_count": 8,
+                "coverage_band": "dense",
+            },
+            "Ugur Ungor": {
+                "corpus_note_count": 40,
+                "evidence_note_count": 3,
+                "coverage_band": "moderate",
+            },
+        },
+    )
+    path = root / "data" / "analyses" / "brief-ask.json"
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+
+def _run_ask_cli(root: Path, args: list[str], *, disposition="proceed"):
+    """`axial ask` end to end in a throwaway child process: the Phase-B engine
+    is stubbed (`cli.ask_question`), the Phase-C pipeline is REAL and runs on
+    a stub client. Proves the #668 wiring reaches the drafting layer and
+    writes a paper, with no network and no live model call anywhere."""
+    _write_ask_record(root)
+    calls_log = root / "_ask_stub_calls.json"
+    script = f"""
+import json, sys
+from pathlib import Path
+import axial.cli as cli
+from axial.answer.record import BriefRunResult
+from axial.ask.engine import Turn
+from axial.brief.intake import Brief
+
+PLAN = {json.dumps(ASK_PLAN)}
+DRAFTS = {json.dumps(ASK_DRAFTS)}
+SHAPE = {json.dumps(SHAPE_RESPONSE)}
+
+
+class StubClient:
+    model_by_pass = {{
+        "paper_plan": "stub/plan",
+        "paper_draft": "stub/draft",
+        "paper_shape": "stub/shape",
+    }}
+
+    def __init__(self):
+        self._drafts = list(DRAFTS)
+        self.calls = []
+
+    def complete(self, prompt, pass_name=None, **_):
+        self.calls.append(pass_name)
+        if pass_name == "paper_plan":
+            return json.dumps(PLAN)
+        if pass_name == "paper_draft":
+            return json.dumps(self._drafts.pop(0))
+        if pass_name == "paper_shape":
+            return json.dumps(SHAPE)
+        raise AssertionError("unexpected pass_name: " + str(pass_name))
+
+    def model_for_pass(self, pass_name=None):
+        return self.model_by_pass.get(pass_name)
+
+    def usage_for_pass(self, pass_name=None):
+        return None
+
+
+def _fake_ask(question, case, **kwargs):
+    brief = Brief(brief_id="brief-ask", case=case, request=question)
+    record = json.loads(Path("data/analyses/brief-ask.json").read_text(encoding="utf-8"))
+    record["interrogation"] = {{"disposition": {disposition!r}}}
+    result = BriefRunResult(
+        record=record,
+        path=Path("data/analyses/brief-ask.json"),
+        markdown_path=Path("data/analyses/brief-ask.md"),
+        report={{}},
+        report_path=Path("data/runs/brief-ask.json"),
+    )
+    return Turn(
+        session_id="sess-1",
+        turn_index=1,
+        question=question,
+        case=case,
+        brief=brief,
+        result=result,
+    )
+
+
+client = StubClient()
+cli.get_client = lambda: client
+cli.ask_question = _fake_ask
+exit_code = cli.main({json.dumps(args)})
+with open({str(calls_log)!r}, "w", encoding="utf-8") as f:
+    json.dump(client.calls, f)
+sys.exit(exit_code)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=root, capture_output=True, text=True
+    )
+    calls = json.loads(calls_log.read_text(encoding="utf-8")) if calls_log.exists() else []
+    return result.returncode, result.stdout, result.stderr, calls
+
+
+def test_ask_ends_in_a_drafted_paper(root):
+    """Issue #668 acceptance: one question, one turn, and a paper on disk --
+    no paper brief authored by hand, no `axial paper draft` typed."""
+    exit_code, out, err, calls = _run_ask_cli(
+        root, ["ask", "Did war make the state?", "--case", "Syria"]
+    )
+
+    assert exit_code == 0, f"stdout: {out!r}\nstderr: {err!r}"
+    assert calls == ["paper_plan", "paper_draft", "paper_draft", "paper_shape"]
+
+    json_files = list((root / "data" / "papers").glob("*.json"))
+    md_files = list((root / "data" / "papers").glob("*.md"))
+    assert len(json_files) == 1, f"expected exactly one paper record, got {json_files}"
+    assert len(md_files) == 1
+
+    record = json.loads(json_files[0].read_text(encoding="utf-8"))
+    assert record["paper_brief"]["thesis"] == "Did war make the state?"
+    assert record["source_analyses"] == ["brief-ask"]
+    assert record["corpus_pin"] == PIN
+    assert record["claims"]
+    assert md_files[0].name in out
+
+
+def test_ask_with_no_paper_writes_no_paper(root):
+    exit_code, out, err, calls = _run_ask_cli(
+        root, ["ask", "Did war make the state?", "--case", "Syria", "--no-paper"]
+    )
+
+    assert exit_code == 0, f"stdout: {out!r}\nstderr: {err!r}"
+    assert calls == []
+    assert not (root / "data" / "papers").exists()
+
+
+def test_a_refused_question_ends_the_turn_without_a_paper(root):
+    exit_code, out, err, calls = _run_ask_cli(
+        root, ["ask", "Did war make the state?", "--case", "Syria"], disposition="refuse"
+    )
+
+    assert exit_code == 0, f"stdout: {out!r}\nstderr: {err!r}"
+    assert calls == []
+    assert not (root / "data" / "papers").exists()
+    assert "no paper drafted" in out

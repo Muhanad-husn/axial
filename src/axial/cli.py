@@ -145,7 +145,12 @@ from axial.panel.coherence_eval import (
 )
 from axial.panel.sample import SampleSpecError, load_sample_spec
 from axial.paper.biblio import BibliographyError
-from axial.paper.brief import PaperBriefError, load_paper_brief
+from axial.paper.brief import (
+    PaperBriefContent,
+    PaperBriefError,
+    build_paper_brief,
+    load_paper_brief,
+)
 from axial.paper.citations import CitationError
 from axial.paper.claims import PaperClaimError
 from axial.paper.coverage import PaperCoverageError
@@ -1492,6 +1497,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     ask_parser.add_argument(
+        "--no-paper",
+        dest="no_paper",
+        action="store_true",
+        help=(
+            "stop at the answer instead of drafting the paper it would "
+            "otherwise end in (issue #668). Every turn drafts one by "
+            "default; this is the way to ask a cheap exploratory question"
+        ),
+    )
+    ask_parser.add_argument(
         "--weight",
         dest="weight",
         action="append",
@@ -2402,6 +2417,44 @@ def _parse_weight_args(raw: list[str] | None) -> dict[str, float]:
     return weights
 
 
+def _ask_paper(client: Any, turn: AskTurn) -> int:
+    """Draft the paper a question ends in (issue #668) -- PHASE-C §0's own
+    "a call plus a mechanical module move", made here rather than by hand.
+
+    The question is the paper's `thesis` (§7.1 defines thesis as "the paper's
+    organizing question", which is what a question is), the record this turn
+    just persisted is its single `analysis_ids` entry, and no lens is named so
+    the stage chooses and records its own. Pin agreement is trivial on one
+    fresh record, and Phase C is never asked to run Phase B -- the record
+    already exists when this is called (§3 non-goal 1).
+
+    **A refusal is skipped, not failed.** §7.1 rejects a refused record at
+    paper intake because it carries no claims, so drafting one would turn a
+    valid Phase-B outcome into an error.
+
+    A `weak` shape check does NOT fail the turn the way it fails
+    `axial paper draft`: the analyst asked a question and has both the answer
+    and the paper in front of them, and `_print_paper` has already named the
+    defects on stderr. Only a drafting failure is non-zero here."""
+    record = turn.result.record
+    if (record.get("interrogation") or {}).get("disposition") == "refuse":
+        print("\nno paper drafted: the question was refused, so there are no claims to draft.")
+        return 0
+
+    paper_brief = build_paper_brief(
+        PaperBriefContent(thesis=turn.question, analysis_ids=(turn.brief.brief_id,))
+    )
+    try:
+        paper_record = run_paper(client, paper_brief)
+    except _PAPER_PIPELINE_ERRORS as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print()
+    _print_paper(paper_brief.paper_brief_id, paper_record)
+    return 0
+
+
 def _ask(
     question: str | None,
     case: str | None,
@@ -2409,6 +2462,7 @@ def _ask(
     list_past: bool = False,
     reopen: int | None = None,
     weight_args: list[str] | None = None,
+    draft_paper: bool = True,
 ) -> int:
     """`axial ask` (issue #534): a session over the plain `axial.ask.ask`
     function -- state the case, ask the question, watch the work happen in
@@ -2484,8 +2538,12 @@ def _ask(
             continue
 
         _print_ask_turn(turn)
+        if draft_paper:
+            paper_exit = _ask_paper(client, turn)
+            if paper_exit:
+                exit_code = paper_exit
         if one_shot:
-            return 0
+            return exit_code
 
         previous = turn
         turn_index += 1
@@ -2666,6 +2724,40 @@ _PAPER_PIPELINE_ERRORS = (
 )
 
 
+def _print_paper(paper_brief_id: str, record: dict[str, Any]) -> bool:
+    """Print one drafted paper's own summary and paths, returning whether its
+    shape check came back `weak`. Shared by `axial paper draft` and by the
+    paper `axial ask` drafts at the end of a turn (issue #668), so the two
+    surfaces report a paper identically."""
+    markdown_path = Path(record["paper_markdown_path"])
+    record_path = markdown_path.with_suffix(".json")
+    shape = record.get("shape") or {}
+    print(f"paper_brief_id: {paper_brief_id}")
+    print(f"corpus_pin: {record['corpus_pin']}")
+    print(f"lens: {record['lens']}")
+    print(f"sections: {len(record['plan']['sections'])}")
+    print(f"claims cited: {len(record['claims'])}")
+    print(f"confidence: {record['confidence']['overall_band']}")
+    print(f"shape: {shape.get('band')}")
+    print(f"persisted: {record_path}")
+    print(f"paper: {markdown_path}")
+
+    # The shape check reports; it never blocks the record or the rendered
+    # paper from being written (§3 non-goal 9, §7.16). It DOES say so loudly
+    # -- the operator reads the named defects and decides whether to re-run;
+    # there is no re-draft loop.
+    if shape.get("band") == "weak":
+        defects = shape.get("defects") or []
+        print(
+            f"shape check: WEAK -- {len(defects)} defect(s) named; the paper was still "
+            "written to disk, but its own shape check flagged it. Review the defects on "
+            f"{record_path} before treating this draft as done.",
+            file=sys.stderr,
+        )
+        return True
+    return False
+
+
 def _paper_draft(paper_brief_file: str) -> int:
     try:
         paper_brief = load_paper_brief(paper_brief_file)
@@ -2680,33 +2772,7 @@ def _paper_draft(paper_brief_file: str) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    markdown_path = Path(record["paper_markdown_path"])
-    record_path = markdown_path.with_suffix(".json")
-    shape = record.get("shape") or {}
-    print(f"paper_brief_id: {paper_brief.paper_brief_id}")
-    print(f"corpus_pin: {record['corpus_pin']}")
-    print(f"lens: {record['lens']}")
-    print(f"sections: {len(record['plan']['sections'])}")
-    print(f"claims cited: {len(record['claims'])}")
-    print(f"confidence: {record['confidence']['overall_band']}")
-    print(f"shape: {shape.get('band')}")
-    print(f"persisted: {record_path}")
-    print(f"paper: {markdown_path}")
-
-    # The shape check reports; it never blocks the record or the rendered
-    # paper from being written (§3 non-goal 9, §7.16). It DOES make a `weak`
-    # run exit non-zero and say so loudly -- the operator reads the named
-    # defects and decides whether to re-run; there is no re-draft loop.
-    if shape.get("band") == "weak":
-        defects = shape.get("defects") or []
-        print(
-            f"shape check: WEAK -- {len(defects)} defect(s) named; the paper was still "
-            "written to disk, but its own shape check flagged it. Review the defects on "
-            f"{record_path} before treating this draft as done.",
-            file=sys.stderr,
-        )
-        return 1
-    return 0
+    return 1 if _print_paper(paper_brief.paper_brief_id, record) else 0
 
 
 def _paper_examine(paper_brief_file: str) -> int:
@@ -3579,6 +3645,7 @@ def main(argv: list[str] | None = None) -> int:
             list_past=args.list_past,
             reopen=args.reopen,
             weight_args=args.weight,
+            draft_paper=not args.no_paper,
         )
 
     if args.command == "status":
