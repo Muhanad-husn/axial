@@ -134,6 +134,7 @@ from typing import Any
 
 import yaml
 
+from axial.brief.fork import ForkConstraint
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult
 from axial.llm import RETRIEVE_PASS_NAME, EventCallback, LLMClient, emit_event
@@ -428,7 +429,9 @@ def run_retrieval_loop(
     return trajectory
 
 
-def compose_retrieval_prompt(brief: Brief, interrogation_result: InterrogationResult) -> str:
+def compose_retrieval_prompt(
+    brief: Brief, interrogation_result: InterrogationResult, guidance: str | None = None
+) -> str:
     """The planning prompt (§4/§7.2, issue #254; rewired onto the name layer
     by issue #488): the step-1 prompt is planned from the brief's case
     anchor and the interrogation result's `premises_found`/`bounds_applied`,
@@ -443,7 +446,17 @@ def compose_retrieval_prompt(brief: Brief, interrogation_result: InterrogationRe
     (trigger on page size) fail: told to intersect only a "large" name, the
     model avoided the tool by resolving narrow, one-book names instead --
     `Syrian nationalism` (24 members) is 83.3% one source because only the
-    book about Syrian nationalism uses that phrase."""
+    book about Syrian nationalism uses that phrase.
+
+    `guidance` (issue #649, `None` for every caller before it existed) is an
+    intake fork's own compiled free-text guidance (`axial.brief.fork.
+    ForkConstraint.guidance`), appended as its own block when non-blank.
+    Because this prompt is composed once and every later step only appends
+    tool-result text to it (`run_retrieval_loop`, never recomposed), stating
+    the guidance here is what makes it ride every turn of the loop, not just
+    the first -- the same plain-prose seam `axial.ask.engine._followup_request`
+    folds a prior turn's context through, applied here to fold an analyst's
+    own answer through instead."""
     premises_lines = (
         "\n".join(
             f"- {p.premise} (assessment: {p.assessment})"
@@ -452,6 +465,12 @@ def compose_retrieval_prompt(brief: Brief, interrogation_result: InterrogationRe
         or "(none found)"
     )
     bounds_lines = "\n".join(f"- {b}" for b in interrogation_result.bounds_applied) or "(none)"
+    guidance_block = (
+        f"\n\nAnalyst guidance (from a clarifying question asked at intake, "
+        f"specs/PHASE-B.md §7, DEC-62, issue #649): {guidance.strip()}"
+        if guidance and guidance.strip()
+        else ""
+    )
 
     return f"""You are the stage-3 retrieval planner of an analysis engine (specs/PHASE-B.md §4/§7.5/§7.6). Plan retrieval over the vault-query tools for this case.
 
@@ -472,7 +491,7 @@ Retrieval is traversal of the name layer, not a conjunction of filters. A good p
 
 get_name may also return a disagreement section another model wrote while reading this corpus (Gather). That text is a POINTER, never evidence: read it only to decide where to look next, then follow that page's own member chunk_ids to the real notes and retrieve those. Nothing you cite may be a disagreement, a name page, or a name string itself -- only a chunk_id or artifact_id resolves as a real ground.
 
-Call the vault-query tools to retrieve corpus evidence. When a tool result is flagged THIN (its result_count is below the configured floor), decide whether to broaden your next query before concluding -- a non-thin result does not require a further call."""
+Call the vault-query tools to retrieve corpus evidence. When a tool result is flagged THIN (its result_count is below the configured floor), decide whether to broaden your next query before concluding -- a non-thin result does not require a further call.{guidance_block}"""
 
 
 @dataclass(frozen=True)
@@ -563,8 +582,38 @@ def _round_robin_by_source(ids: list[str], weights: dict[str, float] | None = No
     return [chunk_id for _, _, chunk_id in ranked] + unweighted_tail
 
 
+def _apply_fork_constraint(ids: list[str], constraint: ForkConstraint | None) -> list[str]:
+    """Apply an intake fork's compiled constraint (issue #649,
+    `axial.brief.fork`) to a deduplicated, first-seen-ordered id list,
+    before round-robin ordering -- the same site `weights` already bites at
+    (`assemble_evidence_ids`, immediately below). Drop every id whose
+    source is excluded, then cap how many of the survivors any one source
+    keeps, both preserving first-seen order. `None` (no fork answered, the
+    common case) is a no-op."""
+    if constraint is None:
+        return ids
+    if constraint.drop_source_ids:
+        ids = [
+            chunk_id
+            for chunk_id in ids
+            if _source_id_or_empty(chunk_id) not in constraint.drop_source_ids
+        ]
+    if constraint.per_source_cap is not None:
+        counts: dict[str, int] = {}
+        capped: list[str] = []
+        for chunk_id in ids:
+            key = _source_id_or_empty(chunk_id)
+            counts[key] = counts.get(key, 0) + 1
+            if counts[key] <= constraint.per_source_cap:
+                capped.append(chunk_id)
+        ids = capped
+    return ids
+
+
 def assemble_evidence_ids(
-    trajectory: list[dict[str, Any]], weights: dict[str, float] | None = None
+    trajectory: list[dict[str, Any]],
+    weights: dict[str, float] | None = None,
+    fork_constraint: ForkConstraint | None = None,
 ) -> list[str]:
     """Deduplicate chunk/artifact ids across every trajectory entry's
     `result_ids`, preserving first-seen order, THEN reorder the deduplicated
@@ -604,7 +653,14 @@ def assemble_evidence_ids(
     page order (§7.5, [FIRM]) and the §7.6 trajectory are both untouched**:
     this reorders only the later, separate reduction over already-
     deduplicated ids, never the page a `get_name` call itself returns or the
-    trajectory entries' own `result_ids`."""
+    trajectory entries' own `result_ids`.
+
+    `fork_constraint` (issue #649, `None` for every caller before it
+    existed) is applied by `_apply_fork_constraint`, immediately above,
+    BEFORE the round-robin reorder: a dropped source's ids never enter the
+    rotation at all, and a per-source cap is enforced on first-seen order
+    the same way the round-robin's own groups preserve it. Omitted, this
+    function's output is unchanged from before #649."""
     seen: set[str] = set()
     ordered: list[str] = []
     for entry in trajectory:
@@ -615,6 +671,7 @@ def assemble_evidence_ids(
             if chunk_id not in seen:
                 seen.add(chunk_id)
                 ordered.append(chunk_id)
+    ordered = _apply_fork_constraint(ordered, fork_constraint)
     return _round_robin_by_source(ordered, weights)
 
 
@@ -745,6 +802,7 @@ def run_planned_retrieval(
     step_budget: int | None = None,
     thin_result_floor: int | None = None,
     on_event: EventCallback | None = None,
+    fork_constraint: ForkConstraint | None = None,
 ) -> RetrievalResult:
     """The planning entry point (issue #254, §4/§5 stage 3; rewired onto the
     name layer by issue #488): plans the step-1 prompt from
@@ -767,11 +825,19 @@ def run_planned_retrieval(
 
     `brief.weights` (issue #639, `{}` for every brief before it existed) is
     forwarded to `assemble_evidence_ids` verbatim -- it is `brief`'s own
-    field, so no separate parameter is needed here to carry it."""
+    field, so no separate parameter is needed here to carry it.
+
+    `fork_constraint` (issue #649, `None` for every caller before it
+    existed) is the intake fork-check's own compiled answer: its
+    `guidance` is folded into the step-1 planning prompt
+    (`compose_retrieval_prompt`), and the whole constraint is forwarded to
+    `assemble_evidence_ids` so its `drop_source_ids`/`per_source_cap` bite
+    the assembled evidence set the same way `weights` already does."""
     if interrogation_result.disposition == "refuse":
         return RetrievalResult(trajectory=[], evidence_ids=[])
 
-    prompt = compose_retrieval_prompt(brief, interrogation_result)
+    guidance = fork_constraint.guidance if fork_constraint is not None else None
+    prompt = compose_retrieval_prompt(brief, interrogation_result, guidance)
     trajectory = run_retrieval_loop(
         client,
         prompt,
@@ -785,5 +851,5 @@ def run_planned_retrieval(
     )
     return RetrievalResult(
         trajectory=trajectory,
-        evidence_ids=assemble_evidence_ids(trajectory, brief.weights),
+        evidence_ids=assemble_evidence_ids(trajectory, brief.weights, fork_constraint),
     )

@@ -303,3 +303,129 @@ def test_source_usage_discloses_the_same_weights_beside_its_own_effect():
 
     assert record["source_usage"]["weights"] == record["brief"]["weights"]
     assert record["source_usage"]["weights"] == {"beshara-2011": 0.1}
+
+
+# --- issue #649: the intake fork-check's own disclosure ---------------------
+
+
+def test_intake_fork_defaults_to_the_honest_nothing_measured_shape():
+    """Every caller before issue #649 (and every other test in this file)
+    passes no `fork_result` at all -- `build_record` must still assemble a
+    complete, honest `intake_fork` block, not a missing key."""
+    client = _FakeUsageClient({})
+
+    record = _build({}, client)
+
+    assert record["intake_fork"] == {
+        "measured": False,
+        "is_fork": False,
+        "concept": None,
+        "kind": None,
+        "question": None,
+        "options": [],
+        "answer": None,
+        "effect": None,
+    }
+
+
+def test_intake_fork_discloses_a_found_and_answered_fork():
+    from axial.brief.fork import ForkAnswer, ForkCheckResult, ForkOption
+
+    client = _FakeUsageClient({})
+    fork_result = ForkCheckResult(
+        is_fork=True,
+        concept="Syria",
+        kind="source_imbalance",
+        question="78% of this is one 2021 monograph -- background only, or full voices?",
+        options=(
+            ForkOption(
+                label="background only",
+                drop_source_ids=("vignal-2021",),
+                per_source_cap=2,
+                guidance="treat vignal-2021 as background",
+            ),
+        ),
+    )
+    fork_answer = ForkAnswer(option="background only")
+    fork_effect = {"notes_before": 10, "notes_after": 4, "sources_before": 3, "sources_after": 2}
+
+    record = build_record(
+        _brief(),
+        _interrogation_result(),
+        corpus_pin="baseline",
+        lens="default",
+        claims=[],
+        trajectory=[],
+        model_by_pass={},
+        client=client,
+        fork_result=fork_result,
+        fork_answer=fork_answer,
+        fork_effect=fork_effect,
+    )
+
+    assert record["intake_fork"]["measured"] is True
+    assert record["intake_fork"]["is_fork"] is True
+    assert record["intake_fork"]["concept"] == "Syria"
+    assert record["intake_fork"]["question"].startswith("78% of this")
+    assert record["intake_fork"]["options"] == [
+        {
+            "label": "background only",
+            "drop_source_ids": ["vignal-2021"],
+            "per_source_cap": 2,
+            "guidance": "treat vignal-2021 as background",
+        }
+    ]
+    assert record["intake_fork"]["answer"] == {"option": "background only", "free_text": None}
+    assert record["intake_fork"]["effect"] == fork_effect
+
+
+def test_intake_fork_discloses_a_found_but_unanswered_fork_in_batch_mode():
+    """A batch run (`axial brief run`/`smoke`/`sweep`) with no `on_fork`
+    callback and no pre-supplied `brief.fork_answer` (issue #649's own
+    acceptance bar: never guess, never block)."""
+    from axial.brief.fork import ForkCheckResult
+
+    client = _FakeUsageClient({})
+    fork_result = ForkCheckResult(
+        is_fork=True, concept="Syria", kind="source_imbalance", question="q", options=()
+    )
+
+    record = build_record(
+        _brief(),
+        _interrogation_result(),
+        corpus_pin="baseline",
+        lens="default",
+        claims=[],
+        trajectory=[],
+        model_by_pass={},
+        client=client,
+        fork_result=fork_result,
+        fork_answer=None,
+        fork_effect=None,
+    )
+
+    assert record["intake_fork"]["is_fork"] is True
+    assert record["intake_fork"]["answer"] is None
+    assert record["intake_fork"]["effect"] is None
+
+
+def test_brief_dict_carries_fork_answer_verbatim():
+    client = _FakeUsageClient({})
+    brief = Brief(
+        brief_id="deadbeefcafef00d",
+        case="Syria",
+        request="How did order change?",
+        fork_answer={"option": "background only", "free_text": None},
+    )
+
+    record = _build({}, client, brief=brief)
+
+    assert record["brief"]["fork_answer"] == {"option": "background only", "free_text": None}
+
+
+def test_brief_dict_carries_none_fork_answer_when_none_supplied():
+    client = _FakeUsageClient({})
+
+    record = _build({}, client)
+
+    assert record["brief"]["fork_answer"] is None

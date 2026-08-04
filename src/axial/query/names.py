@@ -1159,6 +1159,15 @@ def _content_words(query: str) -> list[str]:
     return [token for token in tokens if token.casefold() not in _STOPWORDS]
 
 
+def content_words(query: str) -> list[str]:
+    """Public wrapper over `_content_words` (issue #649's intake fork-check
+    is the first caller outside this module's own compound-query fallback):
+    the same tokenizer and the same stopword list, so a term the intake
+    measurement treats as a "concept the question touches" is the identical
+    term `find_names`' own word-level fallback would resolve it as."""
+    return _content_words(query)
+
+
 def _group_one_candidates(
     query: str,
     layer: _NameLayer,

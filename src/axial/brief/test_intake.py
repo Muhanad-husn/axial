@@ -21,9 +21,12 @@ from axial.brief import (
     MissingBriefFileError,
     MissingFieldError,
     NonMappingBriefError,
+    NonMappingForkAnswerError,
     NonMappingWeightsError,
     NonStringFieldError,
+    NonStringForkAnswerFieldError,
     UnknownFieldError,
+    UnknownForkAnswerFieldError,
     compute_brief_id,
     load_brief,
 )
@@ -345,6 +348,99 @@ def test_a_known_existing_brief_id_is_unchanged_by_the_weights_field():
     computed before `weights` existed as a field at all. Adding the field
     must not re-key a single brief already on disk, or every persisted
     analysis record it named would be silently orphaned."""
+    path = DEV_BRIEFS_DIR / "fixture-syria-displacement.yaml"
+    brief = load_brief(path)
+    assert brief.brief_id == "84c6dd95acf41894"
+
+
+# --- issue #649: fork_answer -------------------------------------------------
+
+
+def test_a_brief_with_no_fork_answer_key_defaults_to_none(tmp_path: Path):
+    path = _write_brief(tmp_path, "no_fork_answer.yaml", 'case: "Syria"\nrequest: "A question"\n')
+    brief = load_brief(path)
+    assert brief.fork_answer is None
+
+
+def test_a_brief_with_an_option_fork_answer_parses_it(tmp_path: Path):
+    path = _write_brief(
+        tmp_path,
+        "fork_answer_option.yaml",
+        'case: "Syria"\nrequest: "A question"\nfork_answer:\n  option: "background only"\n',
+    )
+    brief = load_brief(path)
+    assert brief.fork_answer == {"option": "background only", "free_text": None}
+
+
+def test_a_brief_with_a_free_text_fork_answer_parses_it(tmp_path: Path):
+    path = _write_brief(
+        tmp_path,
+        "fork_answer_free_text.yaml",
+        'case: "Syria"\nrequest: "A question"\nfork_answer:\n  free_text: "read both as full voices"\n',
+    )
+    brief = load_brief(path)
+    assert brief.fork_answer == {"option": None, "free_text": "read both as full voices"}
+
+
+def test_a_non_mapping_fork_answer_field_is_rejected(tmp_path: Path):
+    path = _write_brief(
+        tmp_path,
+        "bad_fork_answer_shape.yaml",
+        'case: "Syria"\nrequest: "A question"\nfork_answer: "nope"\n',
+    )
+    with pytest.raises(NonMappingForkAnswerError):
+        load_brief(path)
+
+
+def test_a_fork_answer_with_an_unknown_key_is_rejected(tmp_path: Path):
+    path = _write_brief(
+        tmp_path,
+        "unknown_fork_answer_key.yaml",
+        'case: "Syria"\nrequest: "A question"\nfork_answer:\n  guess: "x"\n',
+    )
+    with pytest.raises(UnknownForkAnswerFieldError):
+        load_brief(path)
+
+
+def test_a_non_string_fork_answer_value_is_rejected(tmp_path: Path):
+    path = _write_brief(
+        tmp_path,
+        "bad_fork_answer_value.yaml",
+        'case: "Syria"\nrequest: "A question"\nfork_answer:\n  option: 5\n',
+    )
+    with pytest.raises(NonStringForkAnswerFieldError):
+        load_brief(path)
+
+
+def test_a_fork_answer_naming_neither_option_nor_free_text_is_rejected(tmp_path: Path):
+    path = _write_brief(
+        tmp_path,
+        "empty_fork_answer.yaml",
+        'case: "Syria"\nrequest: "A question"\nfork_answer:\n  option: null\n  free_text: null\n',
+    )
+    with pytest.raises(EmptyFieldError):
+        load_brief(path)
+
+
+def test_compute_brief_id_is_unaffected_by_no_fork_answer():
+    without = BriefContent(case="Syria", request="A question")
+    with_none = BriefContent(case="Syria", request="A question", fork_answer=None)
+    assert compute_brief_id(without) == compute_brief_id(with_none)
+
+
+def test_compute_brief_id_changes_when_a_fork_answer_is_actually_supplied():
+    without = BriefContent(case="Syria", request="A question")
+    with_answer = BriefContent(
+        case="Syria",
+        request="A question",
+        fork_answer={"option": "background only", "free_text": None},
+    )
+    assert compute_brief_id(without) != compute_brief_id(with_answer)
+
+
+def test_a_known_existing_brief_id_is_unchanged_by_the_fork_answer_field():
+    """Adding `fork_answer` must not re-key a brief already on disk with no
+    such field -- the same trap #639's own weights test guards against."""
     path = DEV_BRIEFS_DIR / "fixture-syria-displacement.yaml"
     brief = load_brief(path)
     assert brief.brief_id == "84c6dd95acf41894"

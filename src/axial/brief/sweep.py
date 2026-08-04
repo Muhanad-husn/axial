@@ -107,6 +107,7 @@ from typing import Any, Callable
 from axial.analyze.synthesis import SynthesisError
 from axial.answer.record import AnswerError, run_brief
 from axial.argmap.ask import AskError
+from axial.brief.fork import ForkCheckError
 from axial.brief.intake import Brief, BriefError, load_brief
 from axial.brief.interrogate import InterrogationError
 from axial.eval.corpus_pin import CorpusPinError
@@ -139,10 +140,14 @@ SKIP_STATUS = "SKIP"
 # (no map built at this pin, an encoder mismatch, an unusable door response)
 # exactly where the name-layer path can raise `QueryError`/`SynthesisError`,
 # and a `--map` draw hitting one must be recorded FAILED, not crash the
-# whole sweep. Never a bare `except Exception`: an undeclared bug still
-# propagates and is not mistaken for a recoverable per-draw outcome.
+# whole sweep. `ForkCheckError` (issue #649) is the intake fork-check's own
+# declared failure -- a transport error or an out-of-vocabulary model
+# response on the name-layer path -- and must be recorded FAILED the same
+# way. Never a bare `except Exception`: an undeclared bug still propagates
+# and is not mistaken for a recoverable per-draw outcome.
 BRIEF_RUN_ERRORS = (
     InterrogationError,
+    ForkCheckError,
     QueryError,
     SynthesisError,
     CorpusPinError,
