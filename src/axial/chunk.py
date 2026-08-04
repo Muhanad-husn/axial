@@ -62,6 +62,7 @@ from typing import Any, Callable
 
 import yaml
 
+from axial.back_matter import is_chunk_pass_back_matter as _is_back_matter
 from axial.checkpoint import load_checkpoint_records
 from axial.envelope import (
     MissingSourceError as _EnvelopeMissingSourceError,
@@ -273,47 +274,11 @@ def _slugify(label: str) -> str:
     return slug or "section"
 
 
-# Clear non-content back-matter / boilerplate section titles that must never
-# be chunked or written as vault notes (issue #113). Conservative + exact:
-# only unambiguous titles match after normalization; endnotes ("Notes"),
-# appendix, preface, and anything ambiguous are KEPT. OCR-mangled titles
-# (e.g. tilly's index came through as the garbled section "lad ex") won't
-# match here -- that residual is backstopped by the xref input guard (#111).
-_BACK_MATTER_TITLES = frozenset(
-    {
-        "index",
-        "general index",
-        "subject index",
-        "name index",
-        "author index",
-        "index of names",
-        "bibliography",
-        "select bibliography",
-        "references",
-        "reference list",
-        "works cited",
-        "cited works",
-        "table of contents",
-        "contents",
-        "copyright",
-        "list of figures",
-        "list of tables",
-        "list of illustrations",
-        "list of maps",
-        "list of abbreviations",
-    }
-)
-
-
-def _is_back_matter(title: str) -> bool:
-    """True if `title` is a clear non-content back-matter/boilerplate section
-    (issue #113): an exact match, after normalization (lowercase, whitespace
-    collapsed, surrounding punctuation stripped), against `_BACK_MATTER_TITLES`.
-    Conservative by design -- a title that is merely similar (an appendix, an
-    endnotes section, a chapter) is KEPT, since a false keep is cheap while a
-    false drop loses real content."""
-    normalized = re.sub(r"\s+", " ", title.lower()).strip(" .:-–—")
-    return normalized in _BACK_MATTER_TITLES
+# The back-matter vocabulary and classifier (issue #113) are promoted to
+# `axial.back_matter` (issue #661), which `axial.gold`'s broader evidence-
+# frame rule and the store's retrieval filter also import -- `_is_back_matter`
+# is re-exported here under its original name so `axial.artifacts`'s existing
+# import and this module's own call sites are unaffected.
 
 
 def _section_nodes(tree: dict) -> list[dict]:

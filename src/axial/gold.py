@@ -41,7 +41,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
-from axial.chunk import _BACK_MATTER_TITLES
+from axial.back_matter import is_evidence_back_matter as _is_back_matter
 from axial.codebook import CodebookError, load_codebook
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.paths import DEFAULT_DOMAIN_DIR, budgeted_chunk_filename, path_overage
@@ -114,52 +114,15 @@ RECORD_FIELDS = (
     "theory_school",
 )
 
-# Non-substantive front/back-matter titles excluded from the gold sampling
-# frame, on top of the chunk-pass back-matter vocabulary (`_BACK_MATTER_TITLES`,
-# issue #113). #53 excludes a BROADER set than the chunk filter: the chunk
-# filter deliberately keeps endnotes/appendix/preface (a false drop there
-# loses real content before chunking), but the gold FRAME excludes them --
-# they are not substantive argument to be labeled by the Academic.
-_GOLD_EXTRA_BACK_MATTER = frozenset(
-    {
-        "notes",
-        "endnotes",
-        "end notes",
-        "footnotes",
-        "notes and references",
-        "preface",
-        "foreword",
-        "acknowledgements",
-        "acknowledgments",
-        "dedication",
-        "epigraph",
-        "about the author",
-        "about the authors",
-        "notes on contributors",
-        "glossary",
-        "abbreviations",
-        "chronology",
-        "front matter",
-        "back matter",
-        "title page",
-        "half title",
-        "contributors",
-    }
-)
-
-# Vocabulary-specific suffix words (#204): a title where a qualifier PRECEDES
-# a bare back-matter vocab term ("Selected Bibliography", "General Secondary
-# Sources") is still back-matter even though it fails the exact/prefix rules
-# above. Deliberately narrow -- these two terms are specific enough that an
-# `endswith` match never catches an ordinary chapter title ("1984 Reforms"
-# does not end in either), and matching on the suffix alone (rather than
-# requiring the page/roman-numeral prefix to be stripped first) already
-# covers the page-number-prefixed case ("3 General Secondary Sources") since
-# a leading digit token cannot affect a suffix comparison.
-_BACK_MATTER_SUFFIX_WORDS = (
-    "bibliography",
-    "secondary sources",
-)
+# The gold-frame back-matter classifier and its vocabulary are promoted to
+# `axial.back_matter` (issue #661), which the retrieval-evidence filter also
+# imports -- `_is_back_matter` is re-exported here under its original name,
+# byte-identical to the rule this module has carried since #53/#131/#204,
+# so this module's own tests (`test_gold.py::TestIsBackMatter`) and every
+# other caller are unaffected. `_GOLD_EXTRA_BACK_MATTER`/
+# `_BACK_MATTER_SUFFIX_WORDS` moved with it, as
+# `axial.back_matter.EVIDENCE_EXTRA_BACK_MATTER`/
+# `EVIDENCE_BACK_MATTER_SUFFIX_WORDS`.
 
 
 class GoldError(Exception):
@@ -220,83 +183,6 @@ def _default_gold_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
     paths_config = document.get("paths", {}) or {}
     configured = paths_config.get("gold_dir")
     return Path(configured) if configured else GOLD_DIR
-
-
-def _normalize_title(title: str) -> str:
-    """Lowercase, collapse whitespace, strip surrounding punctuation -- the
-    same normalization the chunk-pass back-matter filter uses (issue #113)."""
-    return re.sub(r"\s+", " ", (title or "").lower()).strip(" .:-–—")
-
-
-_ROMAN_NUMERAL_PREFIX = re.compile(r"^[ivxlcdm]+\.?\s+")
-
-# A leading, purely-numeric page-number token ("154 Notes", "12 Bibliography")
-# -- issue #134 gap 1. Stripped before the vocabulary check so page-stamped
-# back-matter titles match the same way their bare form does; deliberately
-# narrow (digits only, no letters) so an ordinary title that merely starts
-# with a year or number ("1984 Reforms") is untouched once its remainder
-# fails the vocabulary check.
-_PAGE_NUMBER_PREFIX = re.compile(r"^\d+\s+")
-
-# References-family words: when a title's leading roman-numeral ordinal is
-# stripped (e.g. "V. Articles and Periodicals" -> "articles and periodicals"),
-# the remainder is back-matter only if it names a references/bibliography
-# subsection. Deliberately narrow -- an ordinary chapter title that happens to
-# start with a roman numeral ("I. The Origins of the State") must NOT match.
-_ROMAN_PREFIXED_BACK_MATTER_WORDS = (
-    "bibliography",
-    "references",
-    "articles and periodicals",
-    "books",
-    "books and articles",
-    "primary sources",
-    "secondary sources",
-    "unpublished sources",
-    "archival sources",
-    "newspapers and periodicals",
-)
-
-
-def _is_back_matter(section: str) -> bool:
-    """True if `section` is non-substantive front/back-matter that must be
-    excluded from the gold sampling frame (#53, #131). Reuses the chunk-pass
-    vocabulary (`_BACK_MATTER_TITLES`) and broadens it with the gold-frame
-    extras plus:
-      - an `appendix`/`annex` prefix match (`Appendix A`, `Annex I`);
-      - a `notes to page(s) ...` / `note to page ...` prefix match (endnote
-        sections titled with a page range, issue #131 false-negative 1);
-      - a roman-numeral-ordinal-prefixed references/bibliography subsection
-        (`V. Articles and Periodicals`, issue #131 false-negative 2) -- the
-        ordinal is stripped and the remainder checked against a narrow
-        references-family vocabulary, so an ordinary chapter title that
-        merely starts with a roman numeral is never dropped;
-      - a leading page-number token before an otherwise-recognized
-        back-matter title (`154 Notes`, issue #134 gap 1) -- the numeric
-        token is stripped and the remainder re-run through this same
-        function, so a title that merely starts with a number but isn't
-        otherwise back-matter (`1984 Reforms`) is never dropped;
-      - a qualifier preceding a bare references/bibliography vocab term
-        (`Selected Bibliography`, `3 General Secondary Sources`, issue #204)
-        -- the normalized title's SUFFIX is checked against a narrow
-        references-family word list, so ordinary chapter titles are
-        untouched while page-prefixed or qualified bibliography/secondary-
-        sources sections are still caught."""
-    normalized = _normalize_title(section)
-    if normalized in _BACK_MATTER_TITLES or normalized in _GOLD_EXTRA_BACK_MATTER:
-        return True
-    if normalized.startswith("appendix") or normalized.startswith("annex"):
-        return True
-    if normalized.startswith("notes to page") or normalized.startswith("note to page"):
-        return True
-    stripped = _ROMAN_NUMERAL_PREFIX.sub("", normalized, count=1)
-    if stripped != normalized and stripped in _ROMAN_PREFIXED_BACK_MATTER_WORDS:
-        return True
-    if any(normalized.endswith(word) for word in _BACK_MATTER_SUFFIX_WORDS):
-        return True
-    page_stripped = _PAGE_NUMBER_PREFIX.sub("", normalized, count=1)
-    if page_stripped != normalized and _is_back_matter(page_stripped):
-        return True
-    return False
 
 
 # Minimum-substance guard (#131): a candidate prose chunk's body must clear a

@@ -64,3 +64,105 @@ def test_concept_sources_empty_for_a_canonical_with_no_member(tmp_path: Path):
         connection.close()
 
     assert shares == []
+
+
+# ---------------------------------------------------------------------------
+# `back_matter` (issue #661): `doors`, `concept_sources` and `name_members`
+# each filter a back-matter member out, and `doors` must still report a
+# canonical whose ONLY members are back matter as a real, empty door rather
+# than dropping it as if the store never carried it at all.
+# ---------------------------------------------------------------------------
+
+
+def _write_back_matter_fixture(path: Path) -> None:
+    note_store.write_store(
+        path,
+        sources=[(SOURCE_A, "A. Author", "A Title", "2005", 2005)],
+        notes=[
+            (f"{SOURCE_A}_000_intro_001", SOURCE_A, "Introduction", None, "real claim", None, 0),
+            (
+                f"{SOURCE_A}_001_ack_001",
+                SOURCE_A,
+                "Acknowledgments",
+                None,
+                "thanks",
+                None,
+                1,
+            ),
+            (
+                f"{SOURCE_A}_002_ack_002",
+                SOURCE_A,
+                "Acknowledgments",
+                None,
+                "more thanks",
+                None,
+                1,
+            ),
+        ],
+        names=[("Mixed", "concept", "mixed"), ("Only Back Matter", "concept", "only back matter")],
+        note_names=[
+            (f"{SOURCE_A}_000_intro_001", SOURCE_A, "Mixed", "concept"),
+            (f"{SOURCE_A}_001_ack_001", SOURCE_A, "Mixed", "concept"),
+            (f"{SOURCE_A}_002_ack_002", SOURCE_A, "Only Back Matter", "concept"),
+        ],
+        note_arguing_against=[],
+        note_citations=[],
+    )
+
+
+def test_name_members_excludes_a_back_matter_note(tmp_path: Path):
+    path = tmp_path / "notes.db"
+    _write_back_matter_fixture(path)
+    connection = note_store.connect(tmp_path)
+    try:
+        members = note_store.name_members(connection, "Mixed")
+    finally:
+        connection.close()
+
+    assert [row[0] for row in members] == [f"{SOURCE_A}_000_intro_001"]
+
+
+def test_doors_counts_only_non_back_matter_members(tmp_path: Path):
+    path = tmp_path / "notes.db"
+    _write_back_matter_fixture(path)
+    connection = note_store.connect(tmp_path)
+    try:
+        found = note_store.doors(connection, ["Mixed"])
+    finally:
+        connection.close()
+
+    assert found["Mixed"].member_count == 1
+    assert found["Mixed"].source_count == 1
+
+
+def test_doors_reports_a_canonical_whose_only_members_are_back_matter_as_empty_not_absent(
+    tmp_path: Path,
+):
+    """A `WHERE`-filtered join would drop this canonical from the result
+    entirely (every one of its `note_names` rows excluded), indistinguishable
+    from a canonical the store never carried. The conditional-aggregate join
+    must instead report it: a real door, sitting at zero."""
+    path = tmp_path / "notes.db"
+    _write_back_matter_fixture(path)
+    connection = note_store.connect(tmp_path)
+    try:
+        found = note_store.doors(connection, ["Only Back Matter"])
+    finally:
+        connection.close()
+
+    assert "Only Back Matter" in found
+    assert found["Only Back Matter"].member_count == 0
+    assert found["Only Back Matter"].source_count == 0
+    assert found["Only Back Matter"].kind == "concept"
+
+
+def test_concept_sources_excludes_a_source_whose_only_notes_are_back_matter(tmp_path: Path):
+    path = tmp_path / "notes.db"
+    _write_back_matter_fixture(path)
+    connection = note_store.connect(tmp_path)
+    try:
+        shares = note_store.concept_sources(connection, "Only Back Matter")
+    finally:
+        connection.close()
+
+    assert shares == []
