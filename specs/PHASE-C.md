@@ -451,6 +451,8 @@ Plain markdown at `data/papers/<paper_brief_id>.md`, rendered deterministically 
 
 Contents, in order: title, thesis statement, the plan's sections in plan order with their prose and in-text markers, the counter-position section (or the one-sided disclosure), the confidence and coverage disclosure, the shape-check block, the citation table, and the bibliography.
 
+> **EXTENDED 2026-08-04 (issue #670).** A section's heading renders exactly once. The renderer emits `## <heading>` from the plan; when the drafter's own prose opens with a line restating that same heading, the renderer drops it before emitting the prose, rather than printing the heading twice back to back.
+
 > **EXTENDED 2026-08-02 (issue #578).** A "Shape check" block was added here, between the confidence/coverage disclosure and the citation table: the §7.16 band and, whenever it is not `strong`, the named defects that justify it. Nothing else in this ordering moved.
 
 Two rules carried forward from the layer beneath, restated here because they bind on this artifact:

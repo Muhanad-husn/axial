@@ -641,6 +641,52 @@ def test_rendering_is_deterministic_and_discloses_bands_with_counts(
     assert "usage_ratio" not in first
 
 
+def _minimal_record(heading: str, prose: str) -> dict:
+    """A hand-built record with just enough shape to exercise `render_paper`'s
+    section loop -- issue #670."""
+    return {
+        "paper_brief": {"title": "Test paper"},
+        "plan": {
+            "thesis_statement": "A thesis.",
+            "sections": [{"section_id": "s1", "heading": heading}],
+        },
+        "drafts": [{"section_id": "s1", "prose": prose}],
+    }
+
+
+def test_prose_that_restates_its_own_heading_renders_it_once():
+    """Issue #670: when the drafter's prose opens with its own `## <heading>`
+    line, the renderer used to emit the heading twice, back to back, with
+    nothing between."""
+    heading = "Networks of privilege as the institutional foundation of the Syrian state"
+    prose = f"## {heading}\n\nThe institutional structure of the Syrian state was its patronage networks."
+    rendered = render_paper(_minimal_record(heading, prose))
+
+    assert rendered.count(f"## {heading}") == 1
+    assert "The institutional structure of the Syrian state" in rendered
+
+
+def test_prose_that_opens_with_a_different_heading_is_left_alone():
+    """Not issue #670's bug: a leading heading that does not match the
+    section's own heading is not a restatement and must survive rendering
+    untouched."""
+    heading = "The case against"
+    prose = "## A different heading entirely\n\nSome prose."
+    rendered = render_paper(_minimal_record(heading, prose))
+
+    assert rendered.count(f"## {heading}") == 1
+    assert "## A different heading entirely" in rendered
+
+
+def test_ordinary_prose_without_a_leading_heading_is_unchanged():
+    heading = "The bellicist account"
+    prose = "War made the state. Extraction followed."
+    rendered = render_paper(_minimal_record(heading, prose))
+
+    assert rendered.count(f"## {heading}") == 1
+    assert "War made the state. Extraction followed." in rendered
+
+
 def test_the_record_and_the_paper_are_persisted_side_by_side(tmp_path, analyses_dir, lenses_dir):
     record, _ = _run(tmp_path, analyses_dir, lenses_dir)
     papers = tmp_path / "papers"
