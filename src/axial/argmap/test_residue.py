@@ -9,6 +9,7 @@ pattern. No `data/` dependence: every fixture builds its own tiny corpus.
 from __future__ import annotations
 
 import json
+import zlib
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -37,6 +38,15 @@ from axial.argmap.residue import (
 # `embed_positions`/`_nearest_candidates` embed the position pool and each
 # target's text in separate `encode` calls that must land in the same
 # vector space.
+#
+# **`zlib.crc32`, never the builtin `hash()`.** `hash()` on a `str` is salted
+# per interpreter process (`PYTHONHASHSEED`, randomized by default since
+# Python 3.3) precisely so untrusted input can't be hash-flooded -- which
+# means a test asserting a specific bucket a word lands in
+# (`test_select_candidates_narrows_to_top_k`) passed or failed depending on
+# nothing this test controlled, roughly 1 run in 3-4. `crc32` is a fixed,
+# unsalted function of the bytes alone: the same word lands in the same
+# bucket in every process, forever.
 # ---------------------------------------------------------------------------
 
 _HASH_DIM = 64
@@ -46,7 +56,8 @@ def _hashing_encode(texts: Sequence[str]) -> np.ndarray:
     vectors = np.zeros((len(texts), _HASH_DIM), dtype=float)
     for row, text in enumerate(texts):
         for word in text.lower().split():
-            vectors[row, hash(word) % _HASH_DIM] += 1.0
+            bucket = zlib.crc32(word.encode("utf-8")) % _HASH_DIM
+            vectors[row, bucket] += 1.0
     return vectors
 
 
