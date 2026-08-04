@@ -60,6 +60,7 @@ CREATE TABLE notes (
     chunk_id  TEXT PRIMARY KEY,
     source_id TEXT,
     section   TEXT,
+    chapter   TEXT,
     claim     TEXT,
     position  TEXT
 );
@@ -96,7 +97,7 @@ CREATE INDEX note_citations_chunk_id ON note_citations (chunk_id);
 
 _TABLES = (
     ("sources", 5),
-    ("notes", 5),
+    ("notes", 6),
     ("names", 3),
     ("note_names", 4),
     ("note_arguing_against", 4),

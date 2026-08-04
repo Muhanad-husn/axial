@@ -781,6 +781,7 @@ def build_note_store(
     inventory_path: Path,
     answers_dir: Path,
     source_meta_dir: Path,
+    envelopes_dir: Path,
     vault_dir: Path,
 ) -> dict[str, int]:
     """Build the vault's relational store (DEC-62, `axial.query.store`) from
@@ -790,6 +791,14 @@ def build_note_store(
     truth -- `note_names` is exactly the name-page membership
     (`member_chunk_ids_for_node`), so a door query over the store and the
     name page for the same name can never disagree about who its members are.
+
+    `chapter` is the one column here that is not already sitting in the
+    answer record: it is `chapter_for_section` read off the source's own
+    envelope, the same call `materialize_notes` makes for the note page, so
+    the store and the page can never disagree about which chapter a section
+    resolves to. The envelope is loaded once per source (issue #648's
+    comment measured 31 sources, ~2-6KB each) and cached across that
+    source's notes, never once per note.
 
     The one relation the pages never carried is the resolved end of
     `arguing_against`: each free-text target keeps a row with the canonical
@@ -811,6 +820,10 @@ def build_note_store(
     # first answer wins, so a note naming one surface twice under two kinds
     # is read the same way on every run.
     kind_by_occurrence: dict[tuple[str, str], str | None] = {}
+    # `source_id -> toc`, loaded once per source and reused across every one
+    # of its notes -- `load_answer_records` groups records by source (one
+    # `<source_id>.jsonl` at a time), so this is never re-read mid-source.
+    toc_by_source: dict[str, Any] = {}
 
     for record in load_answer_records(answers_dir):
         if "answers" not in record:
@@ -819,13 +832,21 @@ def build_note_store(
         source_id = record.get("source_id")
         if source_id:
             source_ids.add(source_id)
+            if source_id not in toc_by_source:
+                envelope = _read_json(
+                    envelope_path(source_id, envelopes_dir), source_id, "envelope", "axial envelope"
+                )
+                toc_by_source[source_id] = envelope.get("toc")
+        section = record.get("section")
+        chapter = chapter_for_section(toc_by_source.get(source_id), section) if source_id else None
         answers = record["answers"]
         position = stated_position(answers)
         notes.append(
             (
                 chunk_id,
                 source_id,
-                _text(record.get("section")),
+                _text(section),
+                chapter,
                 _store_claim(answers.get("claim")),
                 position if isinstance(position, str) else None,
             )
@@ -971,6 +992,7 @@ def run_materialize(
         inventory_path=inventory_path,
         answers_dir=answers_dir,
         source_meta_dir=source_meta_dir,
+        envelopes_dir=envelopes_dir,
         vault_dir=vault_dir,
     )
 

@@ -114,6 +114,13 @@ def _build_fixture(root: Path) -> None:
             "date": {"value": 1999, "provenance": "embedded metadata"},
         },
     )
+    # ALPHA's toc resolves "Introduction" to a chapter; BETA and MANN carry
+    # no toc at all, so their notes' `chapter` column stays NULL -- the
+    # measured common case (38.4% of the real corpus).
+    _write_json(
+        root / "data" / "envelopes" / f"{ALPHA}.json",
+        {"toc": [{"title": "Part I", "children": [{"title": "Introduction"}]}]},
+    )
 
     _write_jsonl(
         root / "data" / "answers" / f"{BETA}.jsonl",
@@ -138,6 +145,7 @@ def _build_fixture(root: Path) -> None:
             "date": {"value": 2005, "provenance": "embedded metadata"},
         },
     )
+    _write_json(root / "data" / "envelopes" / f"{BETA}.json", {})
 
     _write_jsonl(
         root / "data" / "answers" / f"{MANN}.jsonl",
@@ -161,6 +169,7 @@ def _build_fixture(root: Path) -> None:
             "date": {"value": 2012, "provenance": "embedded metadata"},
         },
     )
+    _write_json(root / "data" / "envelopes" / f"{MANN}.json", {})
 
     _write_jsonl(
         root / "data" / "names" / "inventory.jsonl",
@@ -210,6 +219,10 @@ def _dirs(root: Path) -> dict:
     }
 
 
+def _envelopes_dir(root: Path) -> Path:
+    return root / "data" / "envelopes"
+
+
 @pytest.fixture
 def corpus(tmp_path: Path) -> dict:
     """A materialized fixture vault -- name pages, the door index, and the
@@ -217,11 +230,12 @@ def corpus(tmp_path: Path) -> dict:
     _build_fixture(tmp_path)
     dirs = _dirs(tmp_path)
     materialize_names(artifacts_dir=tmp_path / "data" / "artifacts", **dirs)
-    build_note_store(**dirs)
+    build_note_store(envelopes_dir=_envelopes_dir(tmp_path), **dirs)
     return {
         **dirs,
         "root": tmp_path,
         "names_dir": tmp_path / "data" / "names",
+        "envelopes_dir": _envelopes_dir(tmp_path),
     }
 
 
@@ -264,6 +278,20 @@ def test_a_note_carries_its_claim_its_position_and_the_names_it_names(corpus):
         A_NOTE,
     )
     assert [tuple(row) for row in names] == [("Ernest Gellner", "person"), ("the state", "concept")]
+
+
+def test_a_note_carries_its_toc_chapter_and_null_when_the_toc_does_not_resolve_it(corpus):
+    """`chapter` is `chapter_for_section` read off the source's own envelope
+    -- the same call the note page makes -- so a note whose section sits
+    under a toc entry carries that chapter, and a note whose source has no
+    matching toc entry carries `NULL` (issue #648's comment: 38.4% of the
+    real corpus, the honest majority to leave countable, not papered over
+    with a fallback to `section`)."""
+    rows = dict(_query(corpus, "SELECT chunk_id, chapter FROM notes"))
+    assert rows[A_NOTE] == "Part I"
+    assert rows[A_NOTE_2] == "Part I"
+    assert rows[B_NOTE] is None
+    assert rows[M_NOTE] is None
 
 
 def test_a_citation_keeps_the_stance_and_the_about_clause(corpus):
@@ -328,7 +356,10 @@ def test_claims_about_a_name_can_be_filtered_by_publication_year(corpus):
 def test_rebuilding_the_store_replaces_it_and_leaves_no_partial_file(corpus):
     path = store_module.store_path(corpus["vault_dir"])
     before = path.stat().st_mtime_ns
-    build_note_store(**{key: corpus[key] for key in _dirs(corpus["root"])})
+    build_note_store(
+        envelopes_dir=corpus["envelopes_dir"],
+        **{key: corpus[key] for key in _dirs(corpus["root"])},
+    )
     assert path.is_file()
     assert not [item for item in path.parent.iterdir() if item.name.endswith(".tmp")]
     connection = sqlite3.connect(path)
