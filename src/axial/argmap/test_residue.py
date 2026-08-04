@@ -1,6 +1,6 @@
 """Unit tests for `axial.argmap.residue` (issue #651): section blocking,
 prompt rendering, and the content-keyed decision log. Offline throughout --
-a fake encoder (plain word-overlap vectors, no sentence-transformers
+a fake encoder (a fixed-width hashed bag-of-words, no sentence-transformers
 dependency) and a scripted stub client, mirroring
 `tests.analysis.test_argmap_positions._ScriptedClient`'s own local-fixture
 pattern. No `data/` dependence: every fixture builds its own tiny corpus.
@@ -20,6 +20,7 @@ from axial.argmap.residue import (
     UnresolvedTarget,
     build_section_index,
     decision_key,
+    embed_positions,
     find_unresolved_targets,
     load_decisions,
     render_residue_prompt,
@@ -30,19 +31,22 @@ from axial.argmap.residue import (
 )
 
 # ---------------------------------------------------------------------------
-# A fake encoder: deterministic, bag-of-words cosine, no model dependency
+# A fake encoder: a fixed-width hashed bag-of-words. Unlike a vocabulary
+# built fresh from whatever batch is passed, this is comparable ACROSS
+# separate calls -- which the real code relies on, since
+# `embed_positions`/`_nearest_candidates` embed the position pool and each
+# target's text in separate `encode` calls that must land in the same
+# vector space.
 # ---------------------------------------------------------------------------
 
+_HASH_DIM = 64
 
-def _bag_of_words_encode(texts: Sequence[str]) -> np.ndarray:
-    vocab: dict[str, int] = {}
-    for text in texts:
-        for word in text.lower().split():
-            vocab.setdefault(word, len(vocab))
-    vectors = np.zeros((len(texts), max(len(vocab), 1)), dtype=float)
+
+def _hashing_encode(texts: Sequence[str]) -> np.ndarray:
+    vectors = np.zeros((len(texts), _HASH_DIM), dtype=float)
     for row, text in enumerate(texts):
         for word in text.lower().split():
-            vectors[row, vocab[word]] += 1.0
+            vectors[row, hash(word) % _HASH_DIM] += 1.0
     return vectors
 
 
@@ -66,6 +70,29 @@ class _ScriptedClient:
 
     def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
         return {"prompt_tokens": 10 * self.call_count, "completion_tokens": self.call_count}
+
+
+def _select(
+    target: UnresolvedTarget,
+    positions_by_id: dict[str, dict[str, Any]],
+    section_index: dict[str, list[str]],
+    *,
+    use_section_blocking: bool,
+    top_k: int = CANDIDATE_TOP_K,
+) -> list[dict[str, Any]]:
+    """Test-local shorthand: builds `position_vectors` from
+    `positions_by_id` and calls `select_candidates` -- every real caller
+    (`run_residue_sample`) builds this map once up front too."""
+    vectors = embed_positions(list(positions_by_id.values()), _hashing_encode)
+    return select_candidates(
+        target,
+        positions_by_id,
+        section_index,
+        vectors,
+        _hashing_encode,
+        use_section_blocking=use_section_blocking,
+        top_k=top_k,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +205,24 @@ def test_seeded_sample_never_exceeds_the_pool() -> None:
 
 
 # ---------------------------------------------------------------------------
+# embed_positions
+# ---------------------------------------------------------------------------
+
+
+def test_embed_positions_is_keyed_by_position_id_and_normalized() -> None:
+    positions = [
+        {"position_id": "pos-0002", "argument": "ethnicity is constructed"},
+        {"position_id": "pos-0001", "argument": "states extract resources"},
+    ]
+
+    vectors = embed_positions(positions, _hashing_encode)
+
+    assert set(vectors) == {"pos-0001", "pos-0002"}
+    for vector in vectors.values():
+        assert abs(float(np.linalg.norm(vector)) - 1.0) < 1e-9
+
+
+# ---------------------------------------------------------------------------
 # Section blocking
 # ---------------------------------------------------------------------------
 
@@ -203,9 +248,7 @@ def test_select_candidates_falls_back_to_full_set_when_bucket_is_empty() -> None
     section_index: dict[str, list[str]] = {}  # no section carries any position
     target = UnresolvedTarget("c1", "alpha-2020-book", "states extract resources by force", "Notes")
 
-    candidates = select_candidates(
-        target, positions_by_id, section_index, _bag_of_words_encode, use_section_blocking=True
-    )
+    candidates = _select(target, positions_by_id, section_index, use_section_blocking=True)
 
     assert {c["position_id"] for c in candidates} == {"pos-0001", "pos-0002"}
 
@@ -220,12 +263,8 @@ def test_select_candidates_restricts_to_the_section_bucket_when_blocking_is_on()
         "c1", "alpha-2020-book", "ethnicity is constructed socially", "Introduction"
     )
 
-    blocked = select_candidates(
-        target, positions_by_id, section_index, _bag_of_words_encode, use_section_blocking=True
-    )
-    unblocked = select_candidates(
-        target, positions_by_id, section_index, _bag_of_words_encode, use_section_blocking=False
-    )
+    blocked = _select(target, positions_by_id, section_index, use_section_blocking=True)
+    unblocked = _select(target, positions_by_id, section_index, use_section_blocking=False)
 
     # Blocked: only the bucketed position is ever offered, even though it is
     # not the better semantic match -- blocking narrows before matching, it
@@ -242,9 +281,7 @@ def test_select_candidates_narrows_to_top_k() -> None:
     }
     target = UnresolvedTarget("c1", "alpha-2020-book", "argument number 7", None)
 
-    candidates = select_candidates(
-        target, positions_by_id, {}, _bag_of_words_encode, use_section_blocking=False, top_k=5
-    )
+    candidates = _select(target, positions_by_id, {}, use_section_blocking=False, top_k=5)
 
     assert len(candidates) == 5
     assert candidates[0]["position_id"] == "pos-0007"
@@ -332,7 +369,7 @@ def test_run_residue_sample_reuses_a_decision_already_on_disk(tmp_path: Path) ->
         chunk_sections,
         client=client,
         decisions_path=decisions_path,
-        encode=_bag_of_words_encode,
+        encode=_hashing_encode,
         modes=("unblocked",),
     )
     assert first["unblocked"].calls_made == 1
@@ -344,7 +381,7 @@ def test_run_residue_sample_reuses_a_decision_already_on_disk(tmp_path: Path) ->
         chunk_sections,
         client=client,
         decisions_path=decisions_path,
-        encode=_bag_of_words_encode,
+        encode=_hashing_encode,
         modes=("unblocked",),
     )
 
@@ -386,7 +423,7 @@ def test_mode_result_reports_are_separated_per_mode(tmp_path: Path) -> None:
         chunk_sections,
         client=client,
         decisions_path=decisions_path,
-        encode=_bag_of_words_encode,
+        encode=_hashing_encode,
         modes=("blocked", "unblocked"),
     )
 

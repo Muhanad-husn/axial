@@ -227,25 +227,48 @@ def _normalize(vector: np.ndarray) -> np.ndarray:
     return vector / norm if norm else vector
 
 
+def embed_positions(positions: Sequence[dict[str, Any]], encode: Encoder) -> dict[str, np.ndarray]:
+    """`position_id -> L2-normalized embedding of its own argument`,
+    computed ONCE for the whole map. `_nearest_candidates` reuses this
+    rather than re-embedding a target's own candidate pool from scratch:
+    embedding the ~1,830-position map costs the same whether it is queried
+    once or 6,096 times, and re-encoding even a single target's full-map
+    fallback pool on every call would make a 100-target sample take CPU
+    minutes it does not need, and a full pass over the residue
+    computationally, not just financially, impractical."""
+    ordered = sorted(positions, key=lambda position: position["position_id"])
+    vectors = encode([position["argument"] for position in ordered])
+    return {
+        position["position_id"]: _normalize(vector) for position, vector in zip(ordered, vectors)
+    }
+
+
 def _nearest_candidates(
-    target_text: str, candidates: Sequence[dict[str, Any]], encode: Encoder, top_k: int
+    target_text: str,
+    candidates: Sequence[dict[str, Any]],
+    position_vectors: dict[str, np.ndarray],
+    encode: Encoder,
+    top_k: int,
 ) -> list[dict[str, Any]]:
     """`candidates` (each a position dict carrying at least `position_id`
     and `argument`), narrowed to the `top_k` nearest to `target_text` by
-    cosine similarity over `encode`'s own vectors. Ties broken by
+    cosine similarity against `position_vectors` (`embed_positions`'s own
+    precomputed map) -- only `target_text` is embedded here, one sentence
+    per call, never the candidate pool itself. Ties broken by
     `position_id` ascending, so the result -- and therefore
     `decision_key`'s hash of it -- is deterministic regardless of
     `candidates`' own arrival order. `[]` in, `[]` out; `candidates` at or
     under `top_k` already is returned re-ranked, not merely truncated,
-    since the render still lists nearest-first."""
+    since the render still lists nearest-first. A candidate absent from
+    `position_vectors` (should not happen once `embed_positions` has run
+    over the same map) is skipped rather than raising."""
     if not candidates:
         return []
-    ordered = sorted(candidates, key=lambda position: position["position_id"])
-    vectors = encode([position["argument"] for position in ordered] + [target_text])
-    target_vector = _normalize(vectors[-1])
+    target_vector = _normalize(encode([target_text])[0])
     scored = [
-        (position, float(np.dot(_normalize(vector), target_vector)))
-        for position, vector in zip(ordered, vectors[:-1])
+        (position, float(np.dot(position_vectors[position["position_id"]], target_vector)))
+        for position in candidates
+        if position["position_id"] in position_vectors
     ]
     scored.sort(key=lambda pair: (-pair[1], pair[0]["position_id"]))
     return [position for position, _similarity in scored[:top_k]]
@@ -255,6 +278,7 @@ def select_candidates(
     target: UnresolvedTarget,
     positions_by_id: dict[str, dict[str, Any]],
     section_index: dict[str, list[str]],
+    position_vectors: dict[str, np.ndarray],
     encode: Encoder,
     *,
     use_section_blocking: bool,
@@ -265,14 +289,16 @@ def select_candidates(
     on and that bucket is non-empty, else every position in
     `positions_by_id` -- the founder's own fallback rule on #651. Either
     way, narrowed to `top_k` by `_nearest_candidates` before it is ever
-    rendered (module docstring: cost, not a second blocking decision)."""
+    rendered (module docstring: cost, not a second blocking decision).
+    `position_vectors` is `embed_positions`'s own precomputed map, built
+    once per run and shared across every target and both blocking arms."""
     bucket = section_index.get(target.section or "") if use_section_blocking else None
     pool = (
         [positions_by_id[position_id] for position_id in bucket if position_id in positions_by_id]
         if bucket
         else list(positions_by_id.values())
     )
-    return _nearest_candidates(target.target, pool, encode, top_k)
+    return _nearest_candidates(target.target, pool, position_vectors, encode, top_k)
 
 
 RESIDUE_PROMPT = """An academic passage says it argues against the position below, in its own words -- no scholar or work is named distinctly enough to look up directly.
@@ -413,11 +439,13 @@ def run_residue_sample(
     `pass_name` (`residue_resolve_<mode>`) so `client.usage_for_pass`
     reports that arm's own tokens rather than a running total across both.
 
-    `positions` is turned into `positions_by_id` and `section_index` once,
-    shared by both arms -- building either per-arm would double the setup
-    cost for no different result, since neither depends on `mode`."""
+    `positions` is turned into `positions_by_id`, `section_index`, and
+    `embed_positions`'s own precomputed embedding map once, shared by both
+    arms -- building any of them per-arm would double the setup cost for no
+    different result, since none depends on `mode`."""
     positions_by_id = {position["position_id"]: position for position in positions}
     section_index = build_section_index(positions, chunk_sections)
+    position_vectors = embed_positions(positions, encode)
     decisions = load_decisions(decisions_path)
 
     results: dict[str, ModeResult] = {}
@@ -433,6 +461,7 @@ def run_residue_sample(
                 target,
                 positions_by_id,
                 section_index,
+                position_vectors,
                 encode,
                 use_section_blocking=(mode == "blocked"),
                 top_k=top_k,
