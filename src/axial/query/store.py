@@ -32,6 +32,55 @@ answer gave that name, which varies note to note over the same canonical
 on the rest). The measured person/work filter on opposition pairs reads the
 second.
 
+**`note_opposed_position` (issue #651).** `note_arguing_against` above is the
+CONSERVATIVE relational join -- a target resolves only when a >=2-token
+phrase in it names a merged name-page node exactly. Measured
+(`data/logs/2026-08-04-relational-join-ceiling/`), that join alone leaves
+5,846 targets (45.9% of the corpus's `arguing_against` answers) resolved to
+nothing, because most targets are a paraphrase of an argument, not a name
+("the single right-left continuum of regime typologies"). `axial.argmap.
+residue` closes part of that gap with a semantic match against the argument
+map's own positions (`data/map/<pin>/positions.jsonl`, issue #572) instead of
+the name layer -- one model call per target, logged to a content-keyed
+decision log the pass itself writes and never mutates the store from.
+`axial.materialize.build_note_store` is what folds that log into this table,
+at materialize time, the same split `note_arguing_against` already keeps
+between an upstream decision (Reconcile's alias map) and this module's own
+assembly.
+
+A target can carry more than one row here -- the union of positions either
+blocking arm matched it to, per the founder's own #651 decision to run both
+arms and keep everything either one finds rather than picking one. Two
+columns exist because of what the sample run measured about that union,
+neither derivable from the row alone without them:
+
+- `mode` -- `"blocked"`, `"unblocked"`, or `"both"` when the two arms
+  independently landed on the same `(chunk_id, target, position_id)` triple.
+  Section blocking (`build_section_index`) is a recovery net that finds
+  mostly DIFFERENT targets from the unblocked arm, not a subset of them (3 of
+  27 hits overlapped in the 100-target sample) -- if a later pass drops one
+  arm, this column is how a query can tell what that specific arm was
+  carrying, rather than reading a flat, unattributed edge count.
+- `self_referential` -- 1 when the note's own `source_id` is one of the
+  matched position's own `sources` (a plain membership check at assembly, no
+  new mechanism): the target and the position it names came from the SAME
+  book, occasionally the very same passage the target itself is one sentence
+  of. A real match, but not the cross-source opposition #651 exists to
+  surface, so a reader must be able to exclude it rather than have it mixed
+  silently into a "resolved" count.
+
+A query over this table answers the question #651 exists for -- given a
+position, which notes argue against it, and from which OTHER sources:
+
+    SELECT o.source_id, COUNT(DISTINCT o.chunk_id)
+    FROM note_opposed_position o
+    WHERE o.position_id = ? AND o.self_referential = 0
+    GROUP BY o.source_id
+
+`opposing_notes` below is that join, unfiltered (every row, `mode` and
+`self_referential` both exposed) so a caller decides how to read them rather
+than this module deciding for it.
+
 **`notes.back_matter` (issue #661).** Set once, at materialize time
 (`axial.materialize.build_note_store`), from a note's own `section` heading
 via `axial.back_matter.is_evidence_back_matter` -- the same broader rule
@@ -102,11 +151,21 @@ CREATE TABLE note_citations (
     stance    TEXT,
     about     TEXT
 );
+CREATE TABLE note_opposed_position (
+    chunk_id         TEXT NOT NULL,
+    source_id        TEXT,
+    target           TEXT NOT NULL,
+    position_id      TEXT NOT NULL,
+    mode             TEXT NOT NULL,
+    self_referential INTEGER NOT NULL DEFAULT 0
+);
 CREATE INDEX note_names_canonical ON note_names (canonical);
 CREATE INDEX note_names_chunk_id ON note_names (chunk_id);
 CREATE INDEX note_arguing_against_resolved ON note_arguing_against (resolved_canonical);
 CREATE INDEX note_arguing_against_chunk_id ON note_arguing_against (chunk_id);
 CREATE INDEX note_citations_chunk_id ON note_citations (chunk_id);
+CREATE INDEX note_opposed_position_position_id ON note_opposed_position (position_id);
+CREATE INDEX note_opposed_position_chunk_id ON note_opposed_position (chunk_id);
 """
 
 _TABLES = (
@@ -116,6 +175,7 @@ _TABLES = (
     ("note_names", 4),
     ("note_arguing_against", 4),
     ("note_citations", 5),
+    ("note_opposed_position", 6),
 )
 
 # `notes`' own width before `back_matter` was added (issue #661) -- a row of
@@ -197,6 +257,7 @@ def write_store(
     note_names: Iterable[Sequence],
     note_arguing_against: Iterable[Sequence],
     note_citations: Iterable[Sequence],
+    note_opposed_position: Iterable[Sequence] = (),
 ) -> dict[str, int]:
     """Write the whole store to `path` atomically: a fresh database is built
     beside it and `os.replace`d over it in one filesystem rename, so a
@@ -226,6 +287,7 @@ def write_store(
         "note_names": note_names,
         "note_arguing_against": note_arguing_against,
         "note_citations": note_citations,
+        "note_opposed_position": note_opposed_position,
     }
     counts: dict[str, int] = {}
     try:
@@ -370,5 +432,31 @@ def name_members(connection: sqlite3.Connection, canonical: str) -> list[tuple]:
             ORDER BY nn.chunk_id
             """,
             (canonical,),
+        )
+    ]
+
+
+def opposing_notes(connection: sqlite3.Connection, position_id: str) -> list[tuple]:
+    """`(chunk_id, source_id, target, mode, self_referential)` for every note
+    whose `arguing_against` target the semantic residue resolver
+    (`axial.argmap.residue`, issue #651) matched to `position_id` -- the join
+    a caller makes once it already holds a position and wants to know who
+    argues against it, and from which sources. `mode` and `self_referential`
+    are both returned unfiltered (module docstring): `WHERE self_referential
+    = 0` on the caller's own side is what turns this into the cross-source
+    opposition question #651 exists to answer, but nothing here decides that
+    for it. `[]` when `position_id` has no matched note -- the honest
+    majority for now, since a residue full pass has to be run and folded in
+    before this table carries any row at all."""
+    return [
+        tuple(row)
+        for row in connection.execute(
+            """
+            SELECT chunk_id, source_id, target, mode, self_referential
+            FROM note_opposed_position
+            WHERE position_id = ?
+            ORDER BY chunk_id
+            """,
+            (position_id,),
         )
     ]

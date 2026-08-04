@@ -166,3 +166,70 @@ def test_concept_sources_excludes_a_source_whose_only_notes_are_back_matter(tmp_
         connection.close()
 
     assert shares == []
+
+
+# ---------------------------------------------------------------------------
+# `note_opposed_position` (issue #651): the semantic residue resolver's
+# matched edges, folded in by `axial.materialize.build_note_store`. These
+# tests exercise the table and `opposing_notes` directly, at the store
+# level -- `axial.test_materialize` covers the fold from a decision log.
+# ---------------------------------------------------------------------------
+
+
+def test_write_store_defaults_note_opposed_position_to_empty(tmp_path: Path):
+    """A caller that omits `note_opposed_position` entirely (every existing
+    call site before issue #651) still gets a store with the table present
+    and empty -- not a missing table, not an error."""
+    path = tmp_path / "notes.db"
+    _write_fixture_store(path)
+    connection = note_store.connect(tmp_path)
+    try:
+        assert note_store.opposing_notes(connection, "pos-0001") == []
+    finally:
+        connection.close()
+
+
+def test_opposing_notes_returns_mode_and_self_referential_unfiltered(tmp_path: Path):
+    path = tmp_path / "notes.db"
+    note_store.write_store(
+        path,
+        sources=[(SOURCE_A, "A. Author", "A Title", "2005", 2005)],
+        notes=[
+            (f"{SOURCE_A}_000_intro_001", SOURCE_A, "Introduction", None, "claim one", None),
+            (f"{SOURCE_A}_001_intro_002", SOURCE_A, "Introduction", None, "claim two", None),
+        ],
+        names=[],
+        note_names=[],
+        note_arguing_against=[],
+        note_citations=[],
+        note_opposed_position=[
+            (
+                f"{SOURCE_A}_000_intro_001",
+                SOURCE_A,
+                "a paraphrased opposing claim",
+                "pos-0001",
+                "unblocked",
+                0,
+            ),
+            (
+                f"{SOURCE_A}_001_intro_002",
+                SOURCE_A,
+                "a same-book opposing claim",
+                "pos-0001",
+                "blocked",
+                1,
+            ),
+        ],
+    )
+    connection = note_store.connect(tmp_path)
+    try:
+        rows = note_store.opposing_notes(connection, "pos-0001")
+        absent = note_store.opposing_notes(connection, "pos-9999")
+    finally:
+        connection.close()
+
+    assert rows == [
+        (f"{SOURCE_A}_000_intro_001", SOURCE_A, "a paraphrased opposing claim", "unblocked", 0),
+        (f"{SOURCE_A}_001_intro_002", SOURCE_A, "a same-book opposing claim", "blocked", 1),
+    ]
+    assert absent == []

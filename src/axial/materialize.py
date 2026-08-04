@@ -87,6 +87,7 @@ from pathlib import Path
 from typing import Any
 
 from axial.back_matter import is_evidence_back_matter
+from axial.checkpoint import load_checkpoint_records
 from axial.chunk import (
     ChunkError,
     _default_chunks_dir,
@@ -776,6 +777,86 @@ def _resolve_target(target: str, phrases: dict[str, list[str]], longest: int) ->
     return sorted(found)
 
 
+class _CorruptResidueDecisionsError(Exception):
+    """Raised by `_resolved_opposition_edges` on a non-torn-tail corrupt line
+    in the semantic residue resolver's own decision log. A twin of
+    `axial.argmap.residue.ResidueDecisionsCorruptError`, defined here rather
+    than imported: `axial.argmap.residue` already imports `_resolve_target`/
+    `_target_phrase_index` from this module, so importing back from it here
+    would be a materialize <-> argmap.residue cycle for one exception
+    class."""
+
+    def __init__(self, path: Path, line_no: int, cause: Exception) -> None:
+        super().__init__(f"corrupt residue decision log at {path}:{line_no}: {cause}")
+
+
+def _resolved_opposition_edges(
+    decisions_path: Path | None, positions_path: Path | None
+) -> list[tuple]:
+    """`note_opposed_position` rows (issue #651), folded from the semantic
+    residue resolver's own content-keyed decision log (`axial.argmap.
+    residue.run_residue_sample` decides and appends to it; this is the only
+    place it is ever read back into the store -- the pass never writes the
+    store directly).
+
+    One row per `(chunk_id, target, position_id)` the log actually matched.
+    `mode` is `"both"` when the blocked and unblocked arms independently
+    matched the same triple, else whichever single arm did (module
+    docstring on `axial.query.store`: the two arms resolve mostly different
+    targets, not a nested subset, so this is a real distinction, not
+    bookkeeping). `self_referential` is a plain `source_id` membership check
+    against the matched position's own `sources` -- issue #651's own
+    scoping ("a source_id comparison at assembly is enough, no new
+    mechanism"), not a chunk-level check, since the decision record carries
+    no finer join than the note's source.
+
+    `[]` when either path is `None`, or the decision log or the position
+    file does not exist yet -- a corpus with no argument map, or one with a
+    map but no residue pass run against it, materializes exactly as it did
+    before this table existed: no rows, no error."""
+    if decisions_path is None or positions_path is None:
+        return []
+    decisions_path = Path(decisions_path)
+    positions_path = Path(positions_path)
+    if not decisions_path.is_file() or not positions_path.is_file():
+        return []
+
+    positions_by_id = {
+        position["position_id"]: position
+        for position in (
+            json.loads(line)
+            for line in positions_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+    }
+    records = load_checkpoint_records(decisions_path, _CorruptResidueDecisionsError)
+    # Content-keyed (issue #486): the last record on disk under a given key
+    # is the live one -- the same fold `axial.argmap.residue.load_decisions`
+    # does over this exact file.
+    by_key = {record["key"]: record for record in records if "key" in record}
+
+    modes_by_triple: dict[tuple[str, str, str], set[str]] = {}
+    source_by_pair: dict[tuple[str, str], str | None] = {}
+    for record in by_key.values():
+        chunk_id = record.get("chunk_id")
+        target = record.get("target")
+        if not chunk_id or not target:
+            continue
+        source_by_pair[(chunk_id, target)] = record.get("source_id")
+        mode = record.get("mode") or ""
+        for position_id in record.get("matches") or []:
+            modes_by_triple.setdefault((chunk_id, target, position_id), set()).add(mode)
+
+    rows: list[tuple] = []
+    for (chunk_id, target, position_id), modes in sorted(modes_by_triple.items()):
+        mode_label = "both" if len(modes) > 1 else next(iter(modes))
+        source_id = source_by_pair.get((chunk_id, target))
+        position = positions_by_id.get(position_id)
+        self_referential = 1 if position and source_id in (position.get("sources") or ()) else 0
+        rows.append((chunk_id, source_id, target, position_id, mode_label, self_referential))
+    return rows
+
+
 def build_note_store(
     *,
     alias_map_path: Path,
@@ -784,6 +865,7 @@ def build_note_store(
     source_meta_dir: Path,
     envelopes_dir: Path,
     vault_dir: Path,
+    residue_decisions_path: Path | None = None,
 ) -> dict[str, int]:
     """Build the vault's relational store (DEC-62, `axial.query.store`) from
     the same already-persisted artifacts the name pages are written from: the
@@ -814,7 +896,22 @@ def build_note_store(
     or endnotes page, though still written and still interrogated, can
     never again be retrieved, assembled or cited as evidence for a claim.
 
+    **`note_opposed_position` (issue #651)** is folded in from
+    `residue_decisions_path` when given -- the semantic residue resolver's
+    own content-keyed decision log (`axial.argmap.residue`), a SIBLING of
+    that pass's own `positions.jsonl` in the same pinned map directory
+    (`_resolved_opposition_edges` reads both from the one path). `None`
+    (the default) or a decision log that has not been written yet both mean
+    the same thing here -- no rows, no error -- so a vault materialized
+    before a residue pass ever ran looks exactly as it always has.
+
     Written atomically over any existing store."""
+    positions_path = (
+        Path(residue_decisions_path).parent / "positions.jsonl"
+        if residue_decisions_path is not None
+        else None
+    )
+    opposed_positions = _resolved_opposition_edges(residue_decisions_path, positions_path)
     nodes = load_alias_map(alias_map_path)
     inventory = load_inventory(inventory_path)
     layer = _build_name_layer(Path(alias_map_path).parent)
@@ -940,6 +1037,7 @@ def build_note_store(
         note_names=note_names,
         note_arguing_against=opposition,
         note_citations=citations,
+        note_opposed_position=opposed_positions,
     )
 
 
@@ -958,13 +1056,23 @@ def run_materialize(
     source_meta_dir: Path | None = None,
     artifacts_dir: Path | None = None,
     vault_dir: Path | None = None,
+    residue_decisions_path: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
 ) -> dict[str, Any]:
     """Materialize the whole vault in one pass (§7.17): prose notes, artifact
     notes, then name pages, in that order. No model call anywhere (D11).
     Every directory defaults to the same config-then-fallback resolution
     every other pass uses; passing one overrides just that directory,
-    the seam a test uses to point the whole pass at a fixture tree."""
+    the seam a test uses to point the whole pass at a fixture tree.
+
+    `residue_decisions_path` (issue #651, default `None`) opts into folding
+    the semantic residue resolver's decision log into the store's
+    `note_opposed_position` table -- see `build_note_store`'s own docstring.
+    Not auto-discovered from the corpus pin: computing that pin hashes every
+    raw source file (`axial.argmap.build.compute_corpus_pin`), a cost every
+    ordinary materialize run would otherwise pay just to check whether a
+    residue pass happens to exist. An operator who has run one passes its
+    path explicitly (`axial names materialize --residue-decisions-path`)."""
     answers_dir = (
         Path(answers_dir) if answers_dir is not None else _default_answers_dir(config_path)
     )
@@ -1004,6 +1112,7 @@ def run_materialize(
         source_meta_dir=source_meta_dir,
         envelopes_dir=envelopes_dir,
         vault_dir=vault_dir,
+        residue_decisions_path=residue_decisions_path,
     )
 
     return {
