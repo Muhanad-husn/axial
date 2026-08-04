@@ -95,13 +95,23 @@ class ToolResult:
     resolve, since a skipped bad id (below) must not read to the model as a
     silent drop in count. Every other tool leaves `detail` `None`. Persisted
     onto the trajectory entry the same way `total` now is, for the same
-    reason."""
+    reason.
+
+    `resolved_name` (issue #650) is the third such rider, and the only one
+    that is data rather than feedback: the canonical the four store-backed
+    tools' own name argument actually landed on. It never reaches the
+    model -- `detail` already says the same thing in prose -- but it is
+    persisted onto the trajectory entry, because §7.7's coverage scope and
+    §7.13's denominator read the trajectory for the names a run leaned on,
+    and a relational tool's argument is a phrase, not a canonical. `None`
+    for every other tool, and for a call whose phrase resolved to nothing."""
 
     ids: list[str]
     count: int
     error: str | None = None
     total: int | None = None
     detail: str | None = None
+    resolved_name: str | None = None
 
 
 def _declared_type_ok(spec: ToolSpec, key: str, value: Any) -> bool:
@@ -178,7 +188,9 @@ def dispatch(
         )
 
     try:
-        ids, count, total, detail = spec.call(args, vault_dir, envelopes_dir, names_dir, map_dir)
+        ids, count, total, detail, resolved_name = spec.call(
+            args, vault_dir, envelopes_dir, names_dir, map_dir
+        )
     except reader.QueryError as exc:
         return ToolResult(ids=[], count=0, error=f"tool {tool!r} query failed: {exc}")
-    return ToolResult(ids=ids, count=count, total=total, detail=detail)
+    return ToolResult(ids=ids, count=count, total=total, detail=detail, resolved_name=resolved_name)

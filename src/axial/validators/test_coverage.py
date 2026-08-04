@@ -159,6 +159,59 @@ def test_retrieved_names_includes_both_names_of_a_where_names_meet_call():
     assert retrieved_names(trajectory) == {TILLY, BAYAT}
 
 
+def _find_notes_call(about: str, resolved: str | None, **args: Any) -> dict[str, Any]:
+    """One relational call as `axial.retrieve.loop` persists it: the phrase
+    the model wrote under `args`, the canonical the tool landed on under
+    `resolved_name` (issue #650)."""
+    return {
+        "step": 1,
+        "tool": "find_notes",
+        "args": {"about": about, **args},
+        "result_ids": [],
+        "result_count": 0,
+        "resolved_name": resolved,
+    }
+
+
+def test_a_relational_call_is_retrieved_on_through_the_name_it_resolved():
+    """Issue #650: `find_notes` takes a phrase, not a canonical, so reading
+    the ARGUMENT saw nothing at all on a relation-first walk -- measured over
+    three hard briefs, the map fell from 11/5/8 entries to 2/0/1."""
+    trajectory = [_find_notes_call("the state as a cage of social relations", TILLY)]
+    assert retrieved_names(trajectory) == {TILLY}
+
+
+def test_a_relational_call_that_resolved_nothing_is_not_a_queried_name():
+    trajectory = [_find_notes_call("zzqqx quorf", None)]
+    assert retrieved_names(trajectory) == set()
+
+
+def test_a_filtered_relational_call_still_queried_the_name_it_is_about():
+    """The filter narrows which notes come back; it does not change which
+    name the run leaned on, and every note that does come back is a member
+    of that name's own page."""
+    trajectory = [_find_notes_call("Tilly", TILLY, opposing="Bayat", published_after=1990)]
+    assert retrieved_names(trajectory) == {TILLY}
+
+
+def test_a_relational_walk_alone_produces_a_coverage_map_and_a_measured_band(vault_dir: Path):
+    """The defect this fixes end to end: a walk that touches no name-layer
+    tool used to produce an EMPTY map, and an empty map reports
+    `not_measured` -- on a brief that composed real notes and made real
+    claims. A confident band computed from a near-empty map is worse than an
+    honest `not_measured`; so is an honest `not_measured` computed from a
+    walk that did query names."""
+    claims = [_claim("c-1", names_touched=[TILLY], grounds=_chunk_grounds(TILLY_CHUNK_1))]
+    trajectory = [_find_notes_call("the modern state and war", TILLY)]
+
+    coverage_map = compute_coverage_map(claims, trajectory=trajectory, vault_dir=vault_dir)
+
+    assert set(coverage_map) == {TILLY}
+    assert coverage_map[TILLY]["corpus_note_count"] == 240
+    assert coverage_map[TILLY]["evidence_note_count"] == 1
+    assert compute_confidence(coverage_map)["overall_band"] != NOT_MEASURED_BAND
+
+
 def test_an_intersection_alone_puts_both_names_in_the_coverage_scope(vault_dir: Path):
     """Issue #550's own named acceptance scenario: a trajectory with one
     `where_names_meet` and no other name query still puts both names in the

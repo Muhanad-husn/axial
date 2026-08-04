@@ -63,6 +63,14 @@ Then  the positions whose passages carry that name come back, ranked by how
       many of their passages do, with each position's own argument sentence
   And the passages behind them land in the evidence set as citable ids
 
+Given a walk that calls ONLY the relational tools
+When  the §7.7 coverage map and the §7.13 source-usage disclosure are
+      computed off its trajectory
+Then  the map carries an entry per name the walk resolved, the confidence
+      band is a measured one rather than `not_measured`, and the denominator
+      names those canonicals -- the phrase the model wrote never appears as
+      if it were a name the corpus carries
+
 See specs/PHASE-B.md §7.5 (the query API, [FIRM]) and
 `data/logs/2026-08-04-relational-join-ceiling/summary.md` for the
 measurement this slice is built on.
@@ -77,6 +85,7 @@ from typing import Any
 import pytest
 import yaml
 
+from axial.answer.source_usage import compute_source_usage
 from axial.brief.fork import ForkConstraint
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult, PremiseAssessment, disposition_for
@@ -84,6 +93,11 @@ from axial.llm import STUB_TOOL_CALLS_ENV_VAR, StubLLMClient
 from axial.paths import name_page_path
 from axial.query import store as note_store
 from axial.retrieve.loop import run_planned_retrieval
+from axial.validators.coverage import (
+    NOT_MEASURED_BAND,
+    compute_confidence,
+    compute_coverage_map,
+)
 
 MANN = "mann-2012-aaaaaaaaaaaa"
 HALL = "hall-2006-bbbbbbbbbbbb"
@@ -660,3 +674,101 @@ def test_a_corpus_with_no_argument_map_runs_the_same_loop(
 
     assert positions["result_ids"] == [] and positions["total"] == 0
     assert notes["result_ids"], "the rest of the walk is unaffected"
+
+
+# ---------------------------------------------------------------------------
+# What the run leaned on is still measurable when nothing it called was a
+# name-layer tool (issue #650's second follow-up)
+# ---------------------------------------------------------------------------
+
+
+def _claims_grounded_in(*chunk_ids: str, names_touched: list[str]) -> list[dict[str, Any]]:
+    return [
+        {
+            "claim_id": "c-1",
+            "text": "These authors disagree about what a state is.",
+            "kind": "b",
+            "grounds": [{"ref_type": "chunk", "ref_id": chunk_id} for chunk_id in chunk_ids],
+            "confidence": "medium",
+            "names_touched": names_touched,
+        }
+    ]
+
+
+def test_a_relational_only_walk_is_still_measured_for_coverage_and_usage(
+    fixture: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+):
+    """The defect the first re-run exposed: the relational tools resolve
+    their own name argument, so nothing on the trajectory carried a
+    canonical, and §7.7's map -- which reads the trajectory for the names a
+    run retrieved on -- collapsed. Across three hard briefs it fell from
+    11/5/8 entries to 2/0/1: one brief composed 23 notes and made 18 claims
+    and its record said `not_measured`; another reported `high` off a single
+    name. A confident band computed from a near-empty map is worse than an
+    honest `not_measured`, and both are worse than measuring what the run
+    actually leaned on."""
+    vault_dir, names_dir = fixture
+    result = _walk(
+        monkeypatch,
+        [
+            # A phrase, not a canonical -- what a model actually writes.
+            {"tool": "find_notes", "args": {"about": "the state as a cage of social relations"}},
+            {"tool": "opposition_pairs", "args": {"canonical": "Mann"}},
+        ],
+        vault_dir,
+        names_dir,
+    )
+    assert not any(
+        entry["tool"] in {"find_names", "get_name", "where_names_meet"}
+        for entry in result.trajectory
+    ), "this walk touches no name-layer tool at all"
+
+    claims = _claims_grounded_in(
+        HALL_STATE_NOTE, MANN_NOTE, names_touched=[THE_STATE, MICHAEL_MANN]
+    )
+    coverage_map = compute_coverage_map(claims, trajectory=result.trajectory, vault_dir=vault_dir)
+
+    # The map measures both names the walk resolved, at their real corpus
+    # counts and this run's own evidence -- not the phrases that reached them.
+    assert set(coverage_map) == {THE_STATE, MICHAEL_MANN}
+    assert coverage_map[THE_STATE]["corpus_note_count"] == 3
+    assert coverage_map[THE_STATE]["evidence_note_count"] == 1
+    assert compute_confidence(coverage_map)["overall_band"] != NOT_MEASURED_BAND
+
+    # And §7.13 reads the same canonicals: the disclosure says what the run
+    # leaned on, and the denominator is each name's own whole page.
+    usage = compute_source_usage(
+        {
+            "trajectory": result.trajectory,
+            "claims": claims,
+            "interrogation": {"disposition": "answer"},
+            "brief": {},
+        },
+        vault_dir=vault_dir,
+    )
+    assert usage["names_queried"] == [
+        {"tool": "find_notes", "args": {"canonical": THE_STATE}},
+        {"tool": "opposition_pairs", "args": {"canonical": MICHAEL_MANN}},
+    ]
+    assert usage["denominator_by_name"] == {THE_STATE: 3, MICHAEL_MANN: 2}
+    assert all(source["available_chunk_count"] is not None for source in usage["sources"])
+
+
+def test_a_phrase_that_reaches_no_name_is_not_measured_as_one(
+    fixture: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+):
+    """The other half: an unresolved phrase is not a queried name. A walk
+    that only ever wrote words the corpus does not carry has nothing to
+    disclose, and `not_measured` is then the honest answer."""
+    vault_dir, names_dir = fixture
+    result = _walk(
+        monkeypatch,
+        [{"tool": "find_notes", "args": {"about": "zzqqx quorf"}}],
+        vault_dir,
+        names_dir,
+    )
+    claims = _claims_grounded_in(HALL_STATE_NOTE, names_touched=[THE_STATE])
+
+    coverage_map = compute_coverage_map(claims, trajectory=result.trajectory, vault_dir=vault_dir)
+    assert coverage_map == {}
+    assert compute_confidence(coverage_map)["overall_band"] == NOT_MEASURED_BAND

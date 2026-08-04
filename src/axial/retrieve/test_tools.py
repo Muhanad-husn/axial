@@ -123,12 +123,16 @@ def test_name_neighbors_tool_call_carries_the_distribution_of_the_neighbours_dis
 
     spec = TOOL_REGISTRY["name_neighbors"]
     # Five positional slots since issue #650: `map_dir` joined `vault_dir`/
-    # `envelopes_dir`/`names_dir` on every adapter, for `positions_on`.
-    ids, count, total, detail = spec.call({"canonical": "Anchor"}, vault_dir, None, None, None)
+    # `envelopes_dir`/`names_dir` on every adapter, for `positions_on`; and
+    # five RETURNED slots since its second follow-up, `resolved_name` last.
+    ids, count, total, detail, resolved = spec.call(
+        {"canonical": "Anchor"}, vault_dir, None, None, None
+    )
 
     assert count == 2
     assert set(ids) == {"Common", "Rare"}
     assert total is None, "name_neighbors carries no pre-cap total, unchanged by this fix"
+    assert resolved is None, "a name-layer tool takes a canonical; it resolves no phrase"
     assert detail == (
         "2 neighbors, shared_note_count min=1 median=1.5 max=2 (1 of 2 at the floor of 1)"
     )
@@ -187,13 +191,15 @@ def test_find_notes_answers_a_descriptive_phrase_and_says_what_it_resolved_to(tm
     vault_dir, names_dir = _store_vault(tmp_path)
     spec = TOOL_REGISTRY["find_notes"]
 
-    ids, count, total, detail = spec.call(
+    ids, count, total, detail, resolved = spec.call(
         {"about": "the modern state and war"}, vault_dir, None, names_dir, None
     )
 
     assert count == 2 and total == 2
     assert set(ids) == {STATE_A, STATE_B}
     assert "'the modern state and war' resolved to 'the state'" in detail
+    # And as DATA, for the record: what the run leaned on, not the phrase.
+    assert resolved == "the state"
     assert "tier=word, member_count=2, source_count=2" in detail
     # What came back is still described beside what was looked for.
     assert "2 notes across 2 sources" in detail
@@ -216,6 +222,8 @@ def test_the_other_doors_a_phrase_reaches_are_named_answer_or_not(tmp_path: Path
     )
 
     assert answered[1] == 2 and "'state' resolved to 'the state'" in answered[3]
+    # A filter narrows which notes come back, never which name was queried.
+    assert answered[4] == emptied[4] == "the state"
     assert others in answered[3]
     assert emptied[:2] == ([], 0)
     assert others in emptied[3]
@@ -228,7 +236,7 @@ def test_a_phrase_that_resolves_to_nothing_says_so_instead_of_a_bare_zero(tmp_pa
     vault_dir, names_dir = _store_vault(tmp_path)
     spec = TOOL_REGISTRY["find_notes"]
 
-    ids, count, _total, detail = spec.call(
+    ids, count, _total, detail, resolved = spec.call(
         {"about": "zzqqx quorf"}, vault_dir, None, names_dir, None
     )
 
@@ -237,6 +245,9 @@ def test_a_phrase_that_resolves_to_nothing_says_so_instead_of_a_bare_zero(tmp_pa
         "'zzqqx quorf' matched no name this corpus carries -- "
         "the phrase itself and each of its words were tried"
     )
+    # A call that resolved nothing records nothing: an unresolved phrase is
+    # not a queried name and must not enter §7.7's map or §7.13's denominator.
+    assert resolved is None
 
 
 def test_a_tool_with_no_substrate_claims_no_resolution_it_never_attempted(tmp_path: Path):
@@ -247,11 +258,12 @@ def test_a_tool_with_no_substrate_claims_no_resolution_it_never_attempted(tmp_pa
     bare.mkdir()
     vault_dir, names_dir = _store_vault(tmp_path)
 
-    _ids, _count, _total, no_store = TOOL_REGISTRY["find_notes"].call(
+    *_, no_store, no_store_name = TOOL_REGISTRY["find_notes"].call(
         {"about": "the state"}, bare, None, names_dir, None
     )
-    _ids, _count, _total, no_map = TOOL_REGISTRY["positions_on"].call(
+    *_, no_map, no_map_name = TOOL_REGISTRY["positions_on"].call(
         {"name": "the state"}, vault_dir, None, names_dir, None
     )
 
     assert no_store is None and no_map is None
+    assert no_store_name is None and no_map_name is None

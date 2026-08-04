@@ -285,12 +285,15 @@ def run_retrieval_loop(
     on_event: EventCallback | None = None,
 ) -> list[dict[str, Any]]:
     """Run the tool loop and return the §7.6 trajectory log: one
-    `{step, tool, args, result_ids, result_count, total, detail}` entry per
+    `{step, tool, args, result_ids, result_count, total, detail,
+    resolved_name}` entry per
     tool call, in call order, `step` 1-indexed with no gaps -- including a
     step whose dispatch failed validation, which still consumes a step and
     still gets an entry (`result_ids: [], result_count: 0, total: None,
-    detail: None`). `total`/`detail` are `ToolResult.total`/`.detail`
-    (issue #493), carried by only some tools and `None` on every other --
+    detail: None, resolved_name: None`). `total`/`detail` are
+    `ToolResult.total`/`.detail`
+    (issue #493) and `resolved_name` is `ToolResult.resolved_name` (issue
+    #650), carried by only some tools and `None` on every other --
     additive fields beside the original five, never replacing them.
 
     Halts cleanly -- without raising -- in either of two ways:
@@ -398,6 +401,15 @@ def run_retrieval_loop(
                 # renumbering the five §7.6 fields above them.
                 "total": result.total,
                 "detail": result.detail,
+                # `resolved_name` (issue #650): the canonical a store-backed
+                # tool's own name argument landed on. Unlike `total`/`detail`
+                # this never reaches the model -- it is written for the
+                # RECORD, because §7.7's coverage scope and §7.13's
+                # denominator both read the trajectory for the names this run
+                # leaned on and a relational tool's argument is a phrase the
+                # model wrote, not a canonical the corpus carries. `None` on
+                # every other tool, and on a phrase that resolved to nothing.
+                "resolved_name": result.resolved_name,
             }
         )
 

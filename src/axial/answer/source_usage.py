@@ -9,7 +9,9 @@ already holds plus deterministic re-reads of the pinned vault:
 - `names_queried` -- the union of the name queries this run's trajectory
   (§7.6) recorded, each entry `{tool, args}`. It replaces `filters_observed`,
   which drew from `query_by_tag`/`query_by_polity`; both tools are deleted
-  with the facets they filtered (D1), so no trajectory can carry one.
+  with the facets they filtered (D1), so no trajectory can carry one. A
+  relational tool (issue #650) contributes the canonical it RESOLVED, since
+  its own argument is a phrase the model wrote rather than a name.
 - `denominator_by_name` -- per canonical name this run reached, how many
   member notes that name's page holds. Disclosed as data because one hub
   name can be most of the corpus: `Syria` alone carries 962 of the live
@@ -92,16 +94,33 @@ def derive_names_queried(trajectory: list[dict[str, Any]]) -> list[dict[str, Any
     `args` (the #265 rule, unchanged) because `get_name`, `name_neighbors`,
     `who_cites` and `who_argues_against` all take a canonical name under the
     same arg key and are different queries; collapsing them would re-run the
-    wrong tool when the denominator is counted."""
+    wrong tool when the denominator is counted.
+
+    **A relational tool contributes its RESOLVED canonical, not its raw
+    argument (issue #650).** `find_notes`, `positions_on`,
+    `opposition_pairs` and `names_arguing_against` take a phrase the model
+    wrote and resolve it themselves, so their arguments are not names and
+    this field saw none of them. Each such call's own `resolved_name`
+    (persisted by `axial.retrieve.loop`) is recorded under the `canonical`
+    key -- the key four of the five name-layer tools already use, so
+    `axial.answer.usage_report`'s cross-run join and `axial.brief.smoke`'s
+    console rendering both read it with no second convention. The tool still
+    travels with it, so `find_notes` on a name and `get_name` on the same
+    name stay two queries. A call that resolved nothing records nothing: an
+    unresolved phrase is not a queried name."""
     seen: set[tuple[str, tuple[tuple[str, Any], ...]]] = set()
     names_queried: list[dict[str, Any]] = []
     for entry in trajectory:
         if not isinstance(entry, dict):
             continue
         tool = entry.get("tool")
-        if tool not in NAME_QUERY_TOOLS:
+        resolved = entry.get("resolved_name")
+        if isinstance(resolved, str) and resolved.strip():
+            args: dict[str, Any] = {"canonical": resolved}
+        elif tool in NAME_QUERY_TOOLS:
+            args = dict(entry.get("args") or {})
+        else:
             continue
-        args = dict(entry.get("args") or {})
         key = (tool, tuple(sorted((str(k), str(v)) for k, v in args.items())))
         if key in seen:
             continue
@@ -176,8 +195,11 @@ def compute_available_notes(
     the union)`.
 
     The names are the canonicals this run reached DIRECTLY -- the
-    `canonical` argument of every name-layer traversal plus every canonical
-    `find_names` resolved (`axial.validators.coverage._directly_queried_
+    `canonical` argument of every name-layer traversal, every canonical
+    `find_names` resolved, and every canonical a relational tool's own
+    phrase resolved to (issue #650; every note such a call returns is a
+    member of that canonical's page, so the whole page is the honest
+    denominator for it) (`axial.validators.coverage._directly_queried_
     names`; deliberately narrower than that module's own `retrieved_names`,
     which also carries `where_names_meet`'s two names for the §7.7 coverage
     scope -- a name reached only as one half of an intersection did not have

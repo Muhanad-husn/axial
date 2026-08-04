@@ -75,8 +75,9 @@ the dispatcher both need them and neither is free to assume the answer:
   a name string can never land in the evidence set stage 4 treats as
   citable passages.
 
-Every adapter now returns `(result_ids, result_count, total, detail)`
-(issues #505, #517 and #493): `total` is the true pre-cap count for
+Every adapter now returns `(result_ids, result_count, total, detail,
+resolved_name)`
+(issues #505, #517, #493 and #650): `total` is the true pre-cap count for
 `get_name`/`who_cites`/`who_argues_against`/`where_names_meet`, and, since
 issue #542, the count of ids asked for on `get_chunk` -- **but only when
 `get_chunk`'s own batch was actually truncated by `limit` (issue #629's
@@ -113,6 +114,18 @@ steps returned zero because a descriptive phrase never became a name -- and
 the run had no way to see that from the result. Loop-side memory of "you
 already asked this" is NOT the fix and is not built here: #633 measured it
 and repeats rose (14% -> 20%).
+
+**Those four also report the canonical they landed on as `resolved_name`,
+the fifth element of `ToolOutcome`** (`_resolved_name`, issue #650's second
+follow-up). `detail` says it in prose for the model; `resolved_name` says
+it as data for the record, because §7.7's coverage scope and §7.13's
+denominator both read the trajectory and both used to read a name-layer
+tool's `canonical` ARGUMENT -- which a relational tool does not have, its
+argument being whatever phrase the caller wrote. Measured over three hard
+briefs, moving the walk onto these tools took the coverage map from 11/5/8
+entries to 2/0/1 and one brief's confidence band to `not_measured` on 23
+composed notes. A call that resolved nothing reports `None`: an unresolved
+phrase is not a queried name.
 
 **A live corpus run measured why `get_name`/`where_names_meet` need this
 too, not just `find_names` (issue #517's own follow-up).** A model told to
@@ -155,8 +168,16 @@ from typing import Any, Callable
 
 from axial.query import names, reader, relations
 
-# `(args, vault_dir, envelopes_dir, names_dir, map_dir) ->
-# (result_ids, result_count, total, detail)`. Every adapter takes all five
+# What every adapter returns: `(result_ids, result_count, total, detail,
+# resolved_name)`. `total` is `None` for every tool but `get_name`/
+# `who_cites`/`who_argues_against`/`where_names_meet` and the store-backed
+# tools of issue #650 (issues #505, #517); `detail` is `None` for every tool
+# but `find_names` (#517), `get_chunk` (#629) and those (#650);
+# `resolved_name` is set by the four store-backed tools alone.
+ToolOutcome = tuple[list[str], int, int | None, str | None, str | None]
+
+# `(args, vault_dir, envelopes_dir, names_dir, map_dir) -> ToolOutcome`.
+# Every adapter takes all five
 # positional slots, even the four that ignore `names_dir` (`query_by_source`,
 # `get_envelope`, `get_chunk`, `get_artifact` -- the pre-name-layer tools) or
 # `envelopes_dir` (everything but `get_envelope`) or `map_dir` (everything
@@ -164,13 +185,10 @@ from axial.query import names, reader, relations
 # without branching on which tool it is calling. `get_name`
 # now resolves its own `canonical` through `names_dir` too, the same alias
 # resolution `find_names`/`name_neighbors`/`who_cites`/`who_argues_against`/
-# `where_names_meet` already apply. `total` is `None` for every tool but
-# `get_name`/`who_cites`/`who_argues_against`/`where_names_meet` and the
-# store-backed tools of issue #650 (issues #505, #517); `detail` is `None`
-# for every tool but `find_names` (#517) and those (#650).
+# `where_names_meet` already apply.
 ToolCall = Callable[
     [dict[str, Any], Path | None, Path | None, Path | None, Path | None],
-    tuple[list[str], int, int | None, str | None],
+    ToolOutcome,
 ]
 
 
@@ -252,9 +270,9 @@ def _query_by_source(
     _envelopes_dir: Path | None,
     _names_dir: Path | None,
     _map_dir: Path | None,
-) -> tuple[list[str], int, int | None, str | None]:
+) -> ToolOutcome:
     ids = reader.query_by_source(args["source_id"], vault_dir=vault_dir)
-    return ids, len(ids), None, None
+    return ids, len(ids), None, None, None
 
 
 def _get_envelope(
@@ -263,9 +281,9 @@ def _get_envelope(
     envelopes_dir: Path | None,
     _names_dir: Path | None,
     _map_dir: Path | None,
-) -> tuple[list[str], int, int | None, str | None]:
+) -> ToolOutcome:
     envelope = reader.get_envelope(args["source_id"], envelopes_dir=envelopes_dir)
-    return [envelope.source_id], 1, None, None
+    return [envelope.source_id], 1, None, None, None
 
 
 def _get_chunk(
@@ -274,7 +292,7 @@ def _get_chunk(
     _envelopes_dir: Path | None,
     _names_dir: Path | None,
     _map_dir: Path | None,
-) -> tuple[list[str], int, int | None, str | None]:
+) -> ToolOutcome:
     """One or many prose notes (issue #542). `chunk_id` is a list of ids, or
     a single id as a bare string; the batch is truncated at `limit`, and
     `total` is the pre-cap count of ids ASKED FOR -- but, unlike the
@@ -325,7 +343,7 @@ def _get_chunk(
             unresolved.append(chunk_id)
     detail = f"{len(unresolved)} id(s) did not resolve: {unresolved}" if unresolved else None
     total = len(chunk_ids) if len(chunk_ids) > limit else None
-    return ids, len(ids), total, detail
+    return ids, len(ids), total, detail, None
 
 
 def _get_artifact(
@@ -334,9 +352,9 @@ def _get_artifact(
     _envelopes_dir: Path | None,
     _names_dir: Path | None,
     _map_dir: Path | None,
-) -> tuple[list[str], int, int | None, str | None]:
+) -> ToolOutcome:
     artifact = reader.get_artifact(args["artifact_id"], vault_dir=vault_dir)
-    return [artifact.artifact_id], 1, None, None
+    return [artifact.artifact_id], 1, None, None, None
 
 
 def _find_names(
@@ -345,7 +363,7 @@ def _find_names(
     _envelopes_dir: Path | None,
     names_dir: Path | None,
     _map_dir: Path | None,
-) -> tuple[list[str], int, int | None, str | None]:
+) -> ToolOutcome:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     hits = names.find_names(args["query"], limit, names_dir=names_dir, vault_dir=vault_dir)
     canonicals = [hit.canonical for hit in hits]
@@ -361,7 +379,7 @@ def _find_names(
         )
         or None
     )
-    return canonicals, len(canonicals), None, detail
+    return canonicals, len(canonicals), None, detail, None
 
 
 def _get_name(
@@ -370,11 +388,11 @@ def _get_name(
     _envelopes_dir: Path | None,
     names_dir: Path | None,
     _map_dir: Path | None,
-) -> tuple[list[str], int, int | None, str | None]:
+) -> ToolOutcome:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     page = names.get_name(args["canonical"], limit, vault_dir=vault_dir, names_dir=names_dir)
     ids = [member.chunk_id for member in page.members]
-    return ids, len(ids), page.member_count, _source_span_detail(page.members)
+    return ids, len(ids), page.member_count, _source_span_detail(page.members), None
 
 
 def _name_neighbors(
@@ -383,13 +401,13 @@ def _name_neighbors(
     _envelopes_dir: Path | None,
     names_dir: Path | None,
     _map_dir: Path | None,
-) -> tuple[list[str], int, int | None, str | None]:
+) -> ToolOutcome:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     neighbors = names.name_neighbors(
         args["canonical"], limit, vault_dir=vault_dir, names_dir=names_dir
     )
     canonicals = [neighbor.canonical for neighbor in neighbors]
-    return canonicals, len(canonicals), None, _shared_note_count_distribution(neighbors)
+    return canonicals, len(canonicals), None, _shared_note_count_distribution(neighbors), None
 
 
 def _who_cites(
@@ -398,13 +416,13 @@ def _who_cites(
     _envelopes_dir: Path | None,
     names_dir: Path | None,
     _map_dir: Path | None,
-) -> tuple[list[str], int, int | None, str | None]:
+) -> ToolOutcome:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     edges, total = names.who_cites(
         args["canonical"], limit, vault_dir=vault_dir, names_dir=names_dir
     )
     ids = [edge.chunk_id for edge in edges]
-    return ids, len(ids), total, None
+    return ids, len(ids), total, None, None
 
 
 def _who_argues_against(
@@ -413,13 +431,13 @@ def _who_argues_against(
     _envelopes_dir: Path | None,
     names_dir: Path | None,
     _map_dir: Path | None,
-) -> tuple[list[str], int, int | None, str | None]:
+) -> ToolOutcome:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     edges, total = names.who_argues_against(
         args["canonical"], limit, vault_dir=vault_dir, names_dir=names_dir
     )
     ids = [edge.chunk_id for edge in edges]
-    return ids, len(ids), total, None
+    return ids, len(ids), total, None, None
 
 
 def _where_names_meet(
@@ -428,13 +446,13 @@ def _where_names_meet(
     _envelopes_dir: Path | None,
     names_dir: Path | None,
     _map_dir: Path | None,
-) -> tuple[list[str], int, int | None, str | None]:
+) -> ToolOutcome:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     members, total = names.where_names_meet(
         args["canonical"], args["other"], limit, vault_dir=vault_dir, names_dir=names_dir
     )
     ids = [member.chunk_id for member in members]
-    return ids, len(ids), total, _source_span_detail(members)
+    return ids, len(ids), total, _source_span_detail(members), None
 
 
 def _resolution_detail(resolution: relations.Resolution | None) -> str | None:
@@ -498,6 +516,33 @@ def _resolution_detail(resolution: relations.Resolution | None) -> str | None:
     return "; ".join(parts) or None
 
 
+def _resolved_name(resolution: relations.Resolution | None) -> str | None:
+    """The canonical a store-backed tool's name argument actually landed on,
+    for the four tools of issue #650 -- the fifth element of `ToolOutcome`,
+    carried through `ToolResult.resolved_name` onto the §7.6 trajectory entry
+    so §7.7's coverage scope and §7.13's denominator can read what the run
+    leaned on (issue #650's own second follow-up).
+
+    Before this, neither could: both read the name-layer tools' `canonical`
+    argument, and a relational tool's argument is a phrase the caller wrote
+    (`about="violence against civilians Syria"`), not a canonical. Measured
+    over three hard briefs, moving the walk onto these tools took the
+    coverage map from 11/5/8 entries to 2/0/1, and brief B -- 23 composed
+    notes, 18 claims -- reported `not_measured`. A confident band computed
+    from a near-empty map is worse than an honest `not_measured`, and a
+    coverage map with nothing in it is the "computation over nothing" #490
+    exists to prevent.
+
+    **A call that resolved nothing records nothing.** `None` both when no
+    resolution was attempted (no store, no argument map) and when every tier
+    missed -- `resolve_name` falls back to querying the surface verbatim, but
+    an unresolved phrase is not a name the corpus carries and must not enter
+    a per-name map or a denominator as if it were."""
+    if resolution is None or not resolution.resolved:
+        return None
+    return resolution.canonical
+
+
 def _joined(*parts: str | None) -> str | None:
     """The non-`None` `detail` parts of one tool result, joined -- a tool
     that both resolved a phrase and found something says both."""
@@ -529,7 +574,7 @@ def _find_notes(
     _envelopes_dir: Path | None,
     names_dir: Path | None,
     _map_dir: Path | None,
-) -> tuple[list[str], int, int | None, str | None]:
+) -> ToolOutcome:
     rows, total, resolution = relations.find_notes(
         args["about"],
         args.get("limit", names.DEFAULT_LIMIT),
@@ -544,7 +589,10 @@ def _find_notes(
         _resolution_detail(resolution),
         _note_span_detail(rows),
     )
-    return ids, len(ids), total, detail
+    # `about` alone, never `opposing`: the filter narrows which notes come
+    # back, it does not change which name the run leaned on, and the rows
+    # returned are members of `about`'s page and of no other.
+    return ids, len(ids), total, detail, _resolved_name(resolution)
 
 
 def _names_arguing_against(
@@ -553,7 +601,7 @@ def _names_arguing_against(
     _envelopes_dir: Path | None,
     names_dir: Path | None,
     _map_dir: Path | None,
-) -> tuple[list[str], int, int | None, str | None]:
+) -> ToolOutcome:
     rows, total, resolution = relations.names_arguing_against(
         args["target"],
         args.get("limit", names.DEFAULT_LIMIT),
@@ -569,7 +617,7 @@ def _names_arguing_against(
             for row in rows
         ),
     )
-    return canonicals, len(canonicals), total, detail
+    return canonicals, len(canonicals), total, detail, _resolved_name(resolution)
 
 
 def _opposition_pairs(
@@ -578,7 +626,7 @@ def _opposition_pairs(
     _envelopes_dir: Path | None,
     names_dir: Path | None,
     _map_dir: Path | None,
-) -> tuple[list[str], int, int | None, str | None]:
+) -> ToolOutcome:
     """The opposition edge itself. `detail` states which returned id opposes
     which -- the pairing is the whole result, and `result_ids` alone is a
     flat list that cannot say which end of which edge an id is."""
@@ -596,7 +644,7 @@ def _opposition_pairs(
             for pair in pairs
         ),
     )
-    return ids, len(ids), total, detail
+    return ids, len(ids), total, detail, _resolved_name(resolution)
 
 
 def _positions_on(
@@ -605,7 +653,7 @@ def _positions_on(
     _envelopes_dir: Path | None,
     names_dir: Path | None,
     map_dir: Path | None,
-) -> tuple[list[str], int, int | None, str | None]:
+) -> ToolOutcome:
     """The argument map's positions a name reaches (issue #650). `detail`
     carries each position's own argument SENTENCE, which is the point of the
     layer: a position states an argument several passages make, in words a
@@ -634,7 +682,7 @@ def _positions_on(
             for position in positions
         ),
     )
-    return ids, len(ids), total, detail
+    return ids, len(ids), total, detail, _resolved_name(resolution)
 
 
 TOOL_REGISTRY: dict[str, ToolSpec] = {

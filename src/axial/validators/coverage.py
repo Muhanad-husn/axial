@@ -48,6 +48,20 @@ Takes no `LLMClient` at all: nothing here can make a model call, so the
 `explode` provider installed in tests never fires by construction, not by
 a check that happens not to trip it.
 
+**A relational tool's name argument enters the scope through its RESOLVED
+canonical (issue #650).** `find_notes`, `positions_on`, `opposition_pairs`
+and `names_arguing_against` take a phrase, not a canonical -- resolving it
+is the tool's own job -- so the argument-reading rule below saw nothing on
+a relation-first walk and the map collapsed to almost nothing: measured over
+three hard briefs, 11/5/8 entries before the walk moved onto these tools,
+2/0/1 after, with one brief reporting `not_measured` on 23 composed notes
+and 18 claims. A confident band computed from a near-empty map is worse than
+an honest `not_measured`, and an empty one is #490's own defect returning.
+The fix feeds the existing computation its input rather than inventing a
+second coverage notion for the relational path: `axial.retrieve.loop`
+persists each such call's `resolved_name` onto its own §7.6 trajectory
+entry, and `_directly_queried_names` reads it there.
+
 **`retrieved_names` also carries `where_names_meet`'s two names (issue
 #550).** Measured over smoke-v4: the tool fired 12 times across six briefs
 and reached names -- `Nation-state formation`, `sovereignty` -- that then
@@ -194,15 +208,30 @@ def touched_names(claims: list[dict[str, Any]]) -> set[str]:
 def _directly_queried_names(trajectory: list[dict[str, Any]]) -> set[str]:
     """The canonical names this run reached through a DIRECT single-name
     query: the `canonical` argument of every name-layer traversal
-    (`NAME_ARG_TOOLS`) and every canonical `find_names` resolved
+    (`NAME_ARG_TOOLS`), every canonical `find_names` resolved
     (`NAME_RESULT_TOOLS`, whose `result_ids` are canonical names, not chunk
-    ids -- `ToolSpec.returns_chunk_ids` is `False` for exactly that reason).
+    ids -- `ToolSpec.returns_chunk_ids` is `False` for exactly that reason),
+    **and every `resolved_name` a relational tool recorded (issue #650)**.
+
+    That third source is read off the entry itself, not off a tool table,
+    because a relational tool's name ARGUMENT is a phrase the model wrote
+    (`find_notes(about="violence against civilians Syria")`), never a
+    canonical: the tool resolves it, and `axial.retrieve.loop` persists what
+    it landed on. Without it this function saw nothing at all on a
+    relation-first walk, which is where §7.7's map collapsed -- measured over
+    three hard briefs, 11/5/8 entries down to 2/0/1, and one brief with 23
+    composed notes and 18 claims reporting `not_measured`. An entry whose
+    tool resolved nothing carries `None` and contributes nothing, so an
+    unresolved phrase never enters the scope or the denominator.
 
     Kept separate from `intersected_names` (issue #550) because a caller
     that credits a name its own WHOLE PAGE (`axial.answer.source_usage.
     compute_available_notes`'s per-name denominator) must not do that for a
     name reached only as one half of a `where_names_meet` intersection --
-    that call read the intersection, not the page. `retrieved_names` below
+    that call read the intersection, not the page. A relational tool's
+    `resolved_name` belongs here rather than there: every note `find_notes`
+    or `positions_on` returns is a member of that canonical's own page, so
+    the page is the honest denominator for it. `retrieved_names` below
     is the union of both, for callers (the §7.7 coverage scope) that want
     every name this run reached, however it reached it."""
     names: set[str] = set()
@@ -218,6 +247,9 @@ def _directly_queried_names(trajectory: list[dict[str, Any]]) -> set[str]:
             for result_id in entry.get("result_ids") or []:
                 if isinstance(result_id, str) and result_id.strip():
                     names.add(result_id)
+        resolved = entry.get("resolved_name")
+        if isinstance(resolved, str) and resolved.strip():
+            names.add(resolved)
     return names
 
 

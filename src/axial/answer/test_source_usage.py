@@ -145,6 +145,39 @@ def test_names_queried_is_deterministic_and_sorts_arg_keys():
     assert list(first[0]["args"]) == ["canonical", "limit"]
 
 
+def test_a_relational_tool_records_the_canonical_it_resolved_not_the_phrase():
+    """Issue #650: `find_notes`/`positions_on` take a phrase the model wrote
+    and resolve it themselves, so the raw argument is not a name. The
+    canonical they landed on is recorded under `canonical`, the key the
+    name-layer entries already use, and the tool still travels with it."""
+    trajectory = [
+        {**_name_call(1, "find_notes", {"about": "the modern state"}), "resolved_name": TILLY},
+        {**_name_call(2, "positions_on", {"name": "Bayat"}), "resolved_name": BAYAT},
+    ]
+    assert derive_names_queried(trajectory) == [
+        {"tool": "find_notes", "args": {"canonical": TILLY}},
+        {"tool": "positions_on", "args": {"canonical": BAYAT}},
+    ]
+
+
+def test_two_phrases_that_reach_the_same_name_are_one_query():
+    """The point of recording the RESOLVED canonical rather than the query
+    string: `names_queried` is what §7.13's cross-run report joins on, and
+    two spellings of the same door are the same query."""
+    trajectory = [
+        {**_name_call(1, "find_notes", {"about": "Tilly"}), "resolved_name": TILLY},
+        {**_name_call(2, "find_notes", {"about": "state making as war"}), "resolved_name": TILLY},
+    ]
+    assert derive_names_queried(trajectory) == [
+        {"tool": "find_notes", "args": {"canonical": TILLY}}
+    ]
+
+
+def test_a_relational_call_that_resolved_nothing_records_nothing():
+    trajectory = [{**_name_call(1, "find_notes", {"about": "zzqqx"}), "resolved_name": None}]
+    assert derive_names_queried(trajectory) == []
+
+
 def test_non_name_tools_contribute_nothing_to_names_queried():
     trajectory = [
         _name_call(1, "get_chunk", {"chunk_id": "x_0_a_001"}),
