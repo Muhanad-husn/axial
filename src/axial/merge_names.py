@@ -685,60 +685,88 @@ def _candidate_batches(
     return batches
 
 
-# Issue #646: `render_member` always renders a member as `repr(surface_form)`
-# -- a Python string literal, single-quoted unless the surface itself
-# contains a `'` and no `"` -- followed by one or more `" (...)"` suffixes
-# (the kind, and/or issue #449's evidence suffix). A response that echoes
-# that exact literal back but relabels the kind (`'Renaissance' (period)`
-# when the batch called it `(era)`) matches neither the bare surface nor the
-# batch's own rendered form, and used to resolve to nothing. This pattern
-# recognizes ONLY that shape -- a leading quoted-string literal followed by
-# nothing but parenthetical suffixes -- so it is not a general
-# "strip a trailing parenthetical" heuristic: `Phelps-Brown and Hopkins
-# (1956)` does not start with a quote character, so it never matches here
-# and is untouched, exactly as `test_a_real_surface_form_always_beats_
-# another_surfaces_rendering` pins.
-_RENDERED_LITERAL_RE = re.compile(
-    r"""^(?P<literal>'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")(?P<suffixes>(?:\s*\([^()]*\))+)$""",
-    re.DOTALL,
-)
+# Issue #646: `render_member` renders a member as `repr(surface_form)` --
+# single-quoted, or double-quoted when the surface itself contains a `'` --
+# followed by a kind parenthetical and, often, issue #449's evidence
+# parenthetical. Replaying the corpus of record's 79-row `merge_failures.
+# jsonl` (all refused as "placed none of the batch") against the fix below
+# found three real echo shapes, not one:
+#   1. The evidence suffix dropped, kind kept: `'Golden Age' (period)` for a
+#      member this call rendered as `'Golden Age' (period) (in hall-2006-...,
+#      mann-v3-2012-..., mann-v4-2013-...)` -- the dominant shape (77 of 79).
+#   2. The repr's own quotes dropped: `Battle of Beirut (event)` for
+#      `'Battle of Beirut' (event) (in batatu-1999-...)`.
+#   3. The repr's OUTER wrapping dropped but the surface's OWN quotes kept:
+#      a surface that literally is `'time of troubles'` (quotes included)
+#      renders double-quoted (`"'time of troubles'" (period) (in ...)`)
+#      because it contains a `'`; the response drops just that outer
+#      wrapping and echoes `'time of troubles' (period) (in ...)` -- which
+#      IS the member verbatim, quotes included, not a literal to decode.
+#
+# `_resolve_rendered_shape` peels trailing parenthetical groups off the
+# value from the right, one at a time, trying the remainder after each peel:
+# first AS-IS against the exact/normalized maps (shapes 2 and 3 -- a real
+# surface always wins over decoding it, same preference #416's exact map
+# already gives a bare surface over a rendered one), then, only if the
+# remainder is itself a single Python string literal, `ast.literal_eval`'d
+# and looked up the same way (shape 1). First hit wins, so shape 3 can never
+# be misread as shape 1: `'time of troubles'` matches the member as-is
+# before literal_eval ever gets a chance to strip its quotes as if they were
+# repr's, which would decode to the wrong string, `time of troubles`.
+#
+# One parenthetical must never be peeled: one that is itself the TRAILING
+# parenthetical of one of this batch's own member surface forms
+# (`Phelps-Brown and Hopkins (1956)`'s own `(1956)`) -- computed from
+# `members` up front, not guessed from a shape like "ends in digits", so it
+# holds for whatever real surfaces a batch happens to contain. Peeling stops
+# the moment the next group to remove is protected: reaching past it would
+# mean stripping real content off a real surface form first.
+_TRAILING_PAREN_RE = re.compile(r"\s*\([^()]*\)$")
+_FULL_LITERAL_RE = re.compile(r"""^('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")$""", re.DOTALL)
+
+
+def _protected_trailing_parens(members: Iterable[str]) -> frozenset[str]:
+    """The trailing `(...)` of each of `members`' own surface forms (exact
+    text, whitespace stripped) -- the set `_resolve_rendered_shape` must
+    never peel, computed fresh per batch from the batch's own members."""
+    protected: set[str] = set()
+    for member in members:
+        match = _TRAILING_PAREN_RE.search(member)
+        if match:
+            protected.add(match.group().strip())
+    return frozenset(protected)
 
 
 def _resolve_rendered_shape(
     value: str,
     exact: dict[str, str],
     known: dict[str, str],
-    evidence: dict[str, str] | None,
+    protected: frozenset[str],
 ) -> str | None:
-    """`value` in the exact shape `render_member` produces -- a repr'd
-    literal followed by one or more parenthetical suffixes -- resolved
-    through the same exact/normalized maps the caller already built,
-    treating the FIRST parenthetical suffix as the kind claim (never read:
-    `_elect_kind` takes the kind from the inventory, not from a response)
-    and requiring everything after it to still be an exact echo of the
-    evidence suffix (#449) this call would append for the resolved member,
-    or nothing when this call carries none for it. That second condition is
-    what keeps `#449`'s own trap 3 intact: a response that also drops or
-    invents the evidence half is not a relabeling, it is a different prompt
-    answered, and stays unresolved same as before this fix."""
-    match = _RENDERED_LITERAL_RE.match(value)
-    if not match:
-        return None
-    try:
-        decoded = ast.literal_eval(match.group("literal"))
-    except (ValueError, SyntaxError):
-        return None
-    if not isinstance(decoded, str):
-        return None
-    candidate = exact.get(decoded) or known.get(_normalize(decoded))
-    if candidate is None:
-        return None
-    suffix = match.group("suffixes")
-    kind_claim = re.match(r"^\s*\([^()]*\)", suffix)
-    tail = suffix[kind_claim.end() :] if kind_claim else suffix
-    expected_evidence = evidence.get(candidate) if evidence else None
-    expected_tail = f" {expected_evidence}" if expected_evidence else ""
-    return candidate if tail == expected_tail else None
+    """Peel trailing parenthetical groups off `value` from the right, trying
+    to resolve the remainder after each peel (see the module-level comment
+    above for the three real echo shapes this covers). Stops -- returns
+    `None` -- the moment the next group to peel is one of `protected`."""
+    remainder = value
+    while True:
+        match = _TRAILING_PAREN_RE.search(remainder)
+        if not match:
+            return None
+        if match.group().strip() in protected:
+            return None
+        remainder = remainder[: match.start()]
+        candidate = exact.get(remainder) or known.get(_normalize(remainder))
+        if candidate is not None:
+            return candidate
+        if _FULL_LITERAL_RE.match(remainder):
+            try:
+                decoded = ast.literal_eval(remainder)
+            except (ValueError, SyntaxError):
+                decoded = None
+            if isinstance(decoded, str):
+                candidate = exact.get(decoded) or known.get(_normalize(decoded))
+                if candidate is not None:
+                    return candidate
 
 
 def parse_merge_response(
@@ -762,32 +790,34 @@ def parse_merge_response(
     for taking that literally -- the model answered correctly, echoed the
     rendered form, and the whole cluster was thrown away on formatting.
 
-    Issue #646: a response can also echo that same rendered SHAPE with a
-    DIFFERENT kind label than this batch's own inventory gave the member --
-    `'Renaissance' (period)` when this call rendered it `(era)`, or any other
-    relabeling. The kind in a response is not information this pass reads at
-    all (`_elect_kind` takes it from the inventory, never from the model's
-    echo), so `_resolve_rendered_shape` recognizes the shape `render_member`
-    itself produces -- `repr(surface_form)` followed by one or more `"
-    (...)"` suffixes -- decodes the literal back to a surface form with
-    `ast.literal_eval` (handling both the single-quoted default and the
-    double-quoted form `repr` picks when the surface itself contains a `'`),
-    and resolves THAT through the same exact/normalized lookup, treating only
-    the FIRST parenthetical as the (unread) kind claim -- anything after it
-    must still be an exact echo of the evidence suffix this call would have
-    appended, or nothing when it carries none, so a response that also drops
-    or invents the evidence half stays unresolved exactly as before. This
-    fallback only runs when this call was given `kinds` at all -- a batch
-    prompted with no kind labels anywhere gives a response no rendered shape
-    to legitimately echo, so an echoed kind claim there is noise, not a
-    relabeling (the pre-#646 behaviour `test_parse_accepts_a_surface_echoed_
-    in_the_form_the_prompt_showed`'s no-`kinds` call pins). This is still not
-    a general stripped-parenthetical heuristic: it only fires on a leading
-    quoted-string literal, so a real surface that itself ends in a
-    parenthetical and is echoed bare (`Phelps-Brown and Hopkins (1956)`, no
-    leading quote) never matches it and resolves exactly as before, on the
-    exact-match branch. Checked last, after the exact and normalized matches,
-    so nothing that already resolves today can start resolving differently.
+    Issue #646: a response can also echo the right surface form with the
+    wrong WRAPPING -- a different kind label than this batch's own inventory
+    gave the member, the evidence suffix (#449) dropped, the repr's quotes
+    dropped, or (when the surface itself contains a `'`) the repr's outer
+    double-quote wrapping dropped while the surface's own quotes survive.
+    Replayed against the corpus of record's own failure log, evidence-suffix
+    dropping is the dominant shape by far. The kind in a response is not
+    information this pass reads at all (`_elect_kind` takes it from the
+    inventory, never from a response), so `_resolve_rendered_shape` peels
+    trailing parenthetical groups off the value from the right and, after
+    each peel, tries the remainder as-is against the exact/normalized maps
+    (a real surface always wins over decoding one, so a surface that
+    literally contains quotes -- `'time of troubles'` -- resolves to itself
+    before ever being mistaken for a repr to unwrap) and then, only if the
+    remainder is itself a single Python string literal, `ast.literal_eval`'d
+    and looked up the same way. One parenthetical is never peeled: one that
+    is itself the trailing parenthetical of one of THIS BATCH's own member
+    surface forms (`Phelps-Brown and Hopkins (1956)`'s own `(1956)`,
+    computed from `members`, never guessed from a shape) -- peeling stops
+    there, since reaching past it would mean stripping real content off a
+    real surface first. This fallback only runs when this call was given
+    `kinds` at all -- a batch prompted with no kind labels anywhere gives a
+    response no rendered shape to legitimately echo, so an echoed kind claim
+    there is noise, not a relabeling (the pre-#646 behaviour
+    `test_parse_accepts_a_surface_echoed_in_the_form_the_prompt_showed`'s
+    no-`kinds` call pins). Checked last, after the exact and normalized
+    matches, so nothing that already resolves today can start resolving
+    differently.
 
     A surface form the batch did not contain is dropped rather than minted:
     the inventory is the lossless record of what the corpus said (§7.16), and
@@ -843,6 +873,7 @@ def parse_merge_response(
             rendered = _normalize(render_member(surface_form, kinds or {}, evidence))
             buckets.setdefault(rendered, set()).add(surface_form)
     known = {key: next(iter(group)) for key, group in buckets.items() if len(group) == 1}
+    protected_parens = _protected_trailing_parens(members)
     claimed: set[str] = set()
     nodes: list[dict[str, Any]] = []
 
@@ -851,12 +882,12 @@ def parse_merge_response(
             return None
         surface_form = exact.get(value) or known.get(_normalize(value))
         if surface_form is None and kinds:
-            # Issue #646: the response echoed the rendered SHAPE (a repr'd
-            # literal plus parenthetical suffixes) but with a different kind
-            # label than this batch's own kinds -- last, so nothing already
+            # Issue #646: the response echoed the right surface with the
+            # wrong wrapping (a relabeled kind, a dropped evidence suffix,
+            # dropped/extra repr quoting) -- last, so nothing already
             # resolving above is affected, and only when this call actually
             # carries kind info at all (see the docstring).
-            surface_form = _resolve_rendered_shape(value, exact, known, evidence)
+            surface_form = _resolve_rendered_shape(value, exact, known, protected_parens)
         if surface_form is None or surface_form in claimed:
             return None
         claimed.add(surface_form)
