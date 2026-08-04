@@ -518,11 +518,24 @@ def test_capped_get_name_result_states_the_true_total_in_the_next_prompt(
     entry = trajectory[0]
     # issue #493: `total`/`detail` are now persisted onto the entry too,
     # additive over the original five -- this assertion is updated with that
-    # one-line justification rather than the shape drifting unnoticed.
-    assert set(entry) == {"step", "tool", "args", "result_ids", "result_count", "total", "detail"}
+    # one-line justification rather than the shape drifting unnoticed. Issue
+    # #650 adds `resolved_name`, the sixth rider, `None` for `get_name`
+    # itself -- a door tool, not one of the four relational tools that
+    # resolve a phrase against the store.
+    assert set(entry) == {
+        "step",
+        "tool",
+        "args",
+        "result_ids",
+        "result_count",
+        "total",
+        "detail",
+        "resolved_name",
+    }
     assert entry["result_count"] == 1, "result_count is the honest count of ids returned"
     assert entry["result_ids"] == [EGYPT_CHUNK_ID]
     assert entry["total"] == 3, "the entry itself now carries the true pre-cap total"
+    assert entry["resolved_name"] is None
 
     prompts = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
     step_2_prompt = prompts[1]
@@ -641,6 +654,9 @@ def test_find_names_detail_reaches_the_next_turns_prompt(
     assert len(trajectory) == 1
     # issue #493: `detail` (and `total`) now ride on the persisted entry too,
     # not only the next prompt -- updated with that one-line justification.
+    # Issue #650 adds `resolved_name`, the sixth rider: `find_names` is a
+    # door tool, not one of the four relational tools that resolve a phrase
+    # against the store, so its value is `None`.
     assert set(trajectory[0]) == {
         "step",
         "tool",
@@ -649,7 +665,9 @@ def test_find_names_detail_reaches_the_next_turns_prompt(
         "result_count",
         "total",
         "detail",
+        "resolved_name",
     }
+    assert trajectory[0]["resolved_name"] is None
 
     prompts = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
     step_2_prompt = prompts[1]
@@ -701,6 +719,7 @@ def test_get_name_detail_reaches_the_next_turns_prompt(
         "result_count",
         "total",
         "detail",
+        "resolved_name",
     }, "issue #493: detail (and total) now ride on the persisted entry too"
 
     prompts = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
@@ -710,6 +729,11 @@ def test_get_name_detail_reaches_the_next_turns_prompt(
     )
     assert trajectory[0]["detail"] == "3 notes across 1 sources"
     assert trajectory[0]["total"] == 3
+    # issue #650: `get_name` is a door tool, not one of the four relational
+    # tools that resolve a phrase against the store, so `resolved_name` is
+    # `None` here -- distinct from a relational-tool entry, which carries
+    # the canonical it landed on.
+    assert trajectory[0]["resolved_name"] is None
 
 
 def test_where_names_meet_detail_reaches_the_next_turns_prompt(
@@ -763,6 +787,7 @@ def test_where_names_meet_detail_reaches_the_next_turns_prompt(
         "result_count",
         "total",
         "detail",
+        "resolved_name",
     }
 
     prompts = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
@@ -772,3 +797,6 @@ def test_where_names_meet_detail_reaches_the_next_turns_prompt(
     )
     assert trajectory[0]["detail"] == "2 notes across 2 sources"
     assert trajectory[0]["total"] == 2
+    # issue #650: `where_names_meet` is a door tool too, so `resolved_name`
+    # is `None`, unlike the four relational tools that carry a canonical.
+    assert trajectory[0]["resolved_name"] is None
