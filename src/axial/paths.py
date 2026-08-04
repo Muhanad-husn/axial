@@ -30,6 +30,7 @@ import re
 import stat
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -195,6 +196,21 @@ def default_map_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
 # implementation instead of a second hand-rolled copy.
 
 
+# `os.replace`'s retry budget for issue #653: POSIX `rename` swaps under an
+# open file handle, but Windows' `ReplaceFile`/`MoveFileEx` refuses with
+# `PermissionError: [WinError 5]` while ANY process holds the destination
+# open -- observed live when a concurrent `axial ask` query rebuilding its
+# door-index cache (#636) held `names.jsonl` open across the final rename of
+# a full Materialize run, which had already written all 49,555 pages
+# correctly. A reader's handle is open for milliseconds (an `mmap`/read then
+# close), so a short bounded retry wins almost immediately; ten attempts at
+# a tenth of a second apart is under a second of total wall clock and is the
+# whole mechanism -- not a config knob, since no caller has ever needed a
+# different budget.
+_REPLACE_RETRY_ATTEMPTS = 10
+_REPLACE_RETRY_DELAY_SECONDS = 0.1
+
+
 def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
     """Write `text` to `path` atomically: a temp file in `path`'s own
     directory is written and closed first, then `os.replace`d over `path` in
@@ -206,9 +222,18 @@ def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None
     collide on each other's temp file, only on which `os.replace` lands
     last -- and either outcome is a complete file.
 
+    On Windows, `os.replace` itself can raise `PermissionError` for a reason
+    that has nothing to do with the write being wrong: another process
+    (a concurrent reader, per #636/#653) merely has `path` open. That is
+    retried up to `_REPLACE_RETRY_ATTEMPTS` times, `_REPLACE_RETRY_DELAY_
+    SECONDS` apart, before giving up and raising -- POSIX `os.replace` never
+    hits this case, so the retry loop is a no-op there.
+
     Raises whatever `OSError` the write hits (e.g. `path`'s parent directory
-    is missing or read-only); the temp file is removed before the error
-    propagates. This function never creates `path`'s parent directory --
+    is missing or read-only, or every `PermissionError` retry above was
+    exhausted); the temp file is removed before the error propagates. Any
+    `OSError` other than `PermissionError` propagates immediately, without
+    retrying. This function never creates `path`'s parent directory --
     callers that need one call `path.parent.mkdir(...)` themselves first.
     Callers that must degrade silently rather than surface the failure
     catch `OSError` around this call."""
@@ -216,7 +241,14 @@ def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None
     try:
         with os.fdopen(fd, "w", encoding=encoding) as handle:
             handle.write(text)
-        os.replace(tmp_name, path)
+        for attempt in range(_REPLACE_RETRY_ATTEMPTS):
+            try:
+                os.replace(tmp_name, path)
+                break
+            except PermissionError:
+                if attempt == _REPLACE_RETRY_ATTEMPTS - 1:
+                    raise
+                time.sleep(_REPLACE_RETRY_DELAY_SECONDS)
     except OSError:
         with contextlib.suppress(OSError):
             os.unlink(tmp_name)
