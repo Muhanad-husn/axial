@@ -2,18 +2,34 @@
 retrieval runs, measure the question against the corpus it actually has, and
 ask the analyst only at a genuine fork.
 
-**Measurement is deterministic SQL, scoped to the question's own terms --
-never the whole index.** Every content word of the brief's `case` and
-`request` (`axial.query.names.content_words`, the same tokenizer `find_names`'
-own compound-query fallback already uses) is resolved to a door
-(`find_names(word, limit=1)`); each resolved door's per-source breakdown
-(`axial.query.store.concept_sources`) is the raw material -- how many notes,
-from how many sources, the largest single source's own share, and each
-source's publication year. A word that resolves to nothing is recorded as a
-term the corpus is silent on. This is bounded by the question's own vocabulary
-(typically well under twenty words), never the vault's 49,674 names --
-`interrogate.py`'s own docstring measured that whole-index render at ~500k
-tokens and rules it out for exactly this reason.
+**Measurement is deterministic SQL, scoped to the question's own PHRASES --
+never the whole index, and never every content word in isolation (issue #649's
+own live-run finding).** `case` and `request` are each split into maximal runs
+of true, adjacent content words (`axial.query.names.content_word_runs`: two
+content words separated by a stopword are never treated as adjacent). Within
+each run, `_resolve_phrases` tries the longest remaining window first,
+shrinking one word at a time, and accepts the first window whose folded text
+is a literal whole-word match against the store's own name column
+(`axial.query.store.contains_matches`, which subsumes an exact match trivially)
+-- **no embedding fallback here**: a fork question must rest on a concept the
+question's own words actually name, never an approximate nearest neighbour (a
+live run had a bare "2024" embedding-match "late 2023", a door the question
+never named). Once a window resolves, its words are consumed and never queried
+again, so "civil war" resolving as a bigram means "war" alone is never asked
+and never collides with the corpus's unrelated "Cold War". A run's leftover
+single word that still resolves to nothing is recorded as a term the corpus is
+silent on. This is bounded by the question's own vocabulary (typically well
+under twenty words), never the vault's 49,674 names -- `interrogate.py`'s own
+docstring measured a whole-index render at ~500k tokens and rules it out for
+exactly this reason.
+
+**A concept with one note is a silence, not a fork candidate.** `top_share` is
+trivially `1.0` whenever `note_count == 1` -- there is no distribution with one
+data point, and that trivial 1.0 looks maximally imbalanced for the least
+meaningful reason (another live-run finding: a one-note concept was picked as
+THE fork, with one option proposing to drop its only source). A resolved
+concept whose total note count is `<= 1` is folded into the silent terms
+instead of ever reaching the fork-check prompt as a candidate.
 
 **One model call decides whether that measurement is a genuine fork, and
 phrases the question.** No hand-tuned imbalance threshold decides this --
@@ -63,8 +79,15 @@ from axial.llm import FORK_CHECK_PASS_NAME, LLMClient, LLMError
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.paths import default_vault_dir
 from axial.query import store as note_store
-from axial.query.names import content_words, find_names
+from axial.query.names import content_word_runs, fold_surface_form
 from axial.query.reader import MalformedChunkIdError, source_id_from_chunk_id
+
+# A concept whose store membership is this thin is a silence, not a fork
+# candidate (module docstring): `top_share` is trivially `1.0` at exactly one
+# note, which is not evidence of an imbalance -- there is no distribution with
+# one data point. `<= 1` is the mathematical floor of "a distribution exists
+# at all", not a value tuned to this or any other corpus.
+_MIN_CONCEPT_NOTES_FOR_A_FORK = 2
 
 # The §649 fork `kind` vocabulary -- closed, not open text (mirrors
 # `axial.brief.interrogate.ASSESSMENTS`'s own closed-vocabulary discipline).
@@ -111,52 +134,110 @@ class ConceptMeasurement:
 
 @dataclass(frozen=True)
 class QuestionMeasurement:
-    """The whole measurement a fork-check judges: every concept the
-    question's own words resolved to a door for, plus every content word
-    that resolved to nothing -- the corpus's silence, stated rather than
+    """The whole measurement a fork-check judges: every concept a phrase or
+    word in the question's own text resolved to a door for (with at least 2
+    notes of real coverage), plus every phrase/word that resolved to
+    nothing at all, or only to a concept too thin to found a fork on (a
+    single stray note) -- the corpus's silence, stated rather than
     omitted."""
 
     concepts: tuple[ConceptMeasurement, ...] = ()
     silent_terms: tuple[str, ...] = ()
 
 
+def _pick_best_canonical(candidates: list[str], doors: dict[str, note_store.Door]) -> str:
+    """Deterministic tie-break among several canonicals a single phrase
+    query matched (issue #649): `kind == "work"` last -- the identical
+    demotion §7.5's own `contains` route applies, for the identical reason
+    (a work is a citation target, not the concept a fork should measure) --
+    then `member_count` descending, then canonical ascending. Reuses the
+    store's own `Door` counts rather than re-deriving a second ranking rule;
+    `_rank_group_one` (`axial.query.names`) is the private original this
+    mirrors, not imported, so this module never reaches into that one's
+    internals for a two-line tie-break."""
+
+    def sort_key(canonical: str) -> tuple[bool, int, str]:
+        door = doors.get(canonical)
+        kind = door.kind if door is not None else None
+        member_count = door.member_count if door is not None else 0
+        return (kind == "work", -(member_count or 0), canonical)
+
+    return sorted(candidates, key=sort_key)[0]
+
+
+def _resolve_phrases(connection: Any, text: str) -> tuple[dict[str, str], list[str]]:
+    """Resolve `text` to `{matched_phrase: canonical}` plus the words that
+    resolved to nothing at all (module docstring): greedy, longest-phrase-
+    first WITHIN each true content-word run (`content_word_runs`), literal
+    matches only (`note_store.contains_matches`, which subsumes an exact
+    match trivially) -- no embedding fallback. Once a window resolves, its
+    words are consumed and never tried again, so a longer, more specific
+    phrase match (e.g. "civil war") always pre-empts its own constituent
+    words (e.g. "war" alone) from ever being queried."""
+    resolved: dict[str, str] = {}
+    silent: list[str] = []
+    for run in content_word_runs(text):
+        n = len(run)
+        i = 0
+        while i < n:
+            matched = False
+            for length in range(n - i, 0, -1):
+                phrase = " ".join(run[i : i + length])
+                candidates = note_store.contains_matches(connection, fold_surface_form(phrase))
+                if candidates:
+                    doors = note_store.doors(connection, candidates)
+                    resolved.setdefault(phrase, _pick_best_canonical(candidates, doors))
+                    i += length
+                    matched = True
+                    break
+            if not matched:
+                silent.append(run[i])
+                i += 1
+    return resolved, silent
+
+
 def measure_question(brief: Brief, *, vault_dir: Path | None = None) -> QuestionMeasurement:
     """Measure `brief`'s own `case`/`request` against the note store
-    (module docstring): resolve every content word to a door, and read that
-    door's per-source breakdown. `QuestionMeasurement()` (empty) when the
-    vault carries no store at all -- the store is what this measurement
-    reads (DEC-62, issue #648); a vault materialized before it existed has
-    nothing here to measure, and the fork-check is skipped entirely rather
-    than falling back to a second read path built for a feature this new."""
+    (module docstring): resolve the question's own phrases to doors, and
+    read each door's per-source breakdown. `QuestionMeasurement()` (empty)
+    when the vault carries no store at all -- the store is what this
+    measurement reads (DEC-62, issue #648); a vault materialized before it
+    existed has nothing here to measure, and the fork-check is skipped
+    entirely rather than falling back to a second read path built for a
+    feature this new.
+
+    A resolved concept whose total note count is `<= 1` never becomes a
+    candidate: it is folded into `silent_terms` instead (module docstring)
+    -- a concept the corpus barely touches is a silence, not a fork."""
     vault = Path(vault_dir) if vault_dir is not None else default_vault_dir()
     connection = note_store.connect(vault)
     if connection is None:
         return QuestionMeasurement()
     try:
-        terms = list(dict.fromkeys(content_words(brief.case) + content_words(brief.request)))
         concepts: dict[str, ConceptMeasurement] = {}
         silent: list[str] = []
-        for term in terms:
-            hits = find_names(term, limit=1, vault_dir=vault)
-            if not hits:
-                silent.append(term)
-                continue
-            canonical = hits[0].canonical
-            if canonical in concepts:
-                continue
-            sources = tuple(note_store.concept_sources(connection, canonical))
-            note_count = sum(source.note_count for source in sources)
-            if note_count == 0:
-                continue
-            concepts[canonical] = ConceptMeasurement(
-                canonical=canonical,
-                matched_on=term,
-                note_count=note_count,
-                source_count=len(sources),
-                sources=sources,
-                top_share=sources[0].note_count / note_count,
-            )
-        return QuestionMeasurement(concepts=tuple(concepts.values()), silent_terms=tuple(silent))
+        for text in (brief.case, brief.request):
+            resolved, silent_words = _resolve_phrases(connection, text)
+            silent.extend(silent_words)
+            for phrase, canonical in resolved.items():
+                if canonical in concepts:
+                    continue
+                sources = tuple(note_store.concept_sources(connection, canonical))
+                note_count = sum(source.note_count for source in sources)
+                if note_count < _MIN_CONCEPT_NOTES_FOR_A_FORK:
+                    silent.append(phrase)
+                    continue
+                concepts[canonical] = ConceptMeasurement(
+                    canonical=canonical,
+                    matched_on=phrase,
+                    note_count=note_count,
+                    source_count=len(sources),
+                    sources=sources,
+                    top_share=sources[0].note_count / note_count,
+                )
+        return QuestionMeasurement(
+            concepts=tuple(concepts.values()), silent_terms=tuple(dict.fromkeys(silent))
+        )
     finally:
         connection.close()
 
@@ -165,18 +246,21 @@ def render_measurement(
     measurement: QuestionMeasurement, question_scope: dict[str, Any] | None
 ) -> str:
     """Render `measurement` as prompt text: one block per concept (its
-    total notes/sources, then each contributing source's own count, author
-    and year), the silent terms, and the question's own stated period when
-    interrogation (§7.2) found one."""
+    total notes/sources, the publication-year span its sources cover, then
+    each contributing source's own count, author and year), the silent
+    terms, and the question's own stated period when interrogation (§7.2)
+    found one."""
     if not measurement.concepts:
         lines = ["(no concept in this question resolved to anything the corpus holds)"]
     else:
         lines = []
         for concept in measurement.concepts:
+            years = sorted({s.year for s in concept.sources if s.year is not None})
+            year_span = f"{years[0]}-{years[-1]}" if years else "years unknown"
             lines.append(
-                f'- "{concept.canonical}" (matched the word "{concept.matched_on}"): '
+                f'- "{concept.canonical}" (matched "{concept.matched_on}"): '
                 f"{concept.note_count} notes, {concept.source_count} source(s), "
-                f"largest single source is {concept.top_share:.0%} of it"
+                f"years {year_span}, largest single source is {concept.top_share:.0%} of it"
             )
             for source in concept.sources:
                 year = source.year if source.year is not None else "year unknown"
@@ -186,7 +270,8 @@ def render_measurement(
                 )
     if measurement.silent_terms:
         lines.append(
-            "Terms in the question the corpus holds nothing under: "
+            "Terms/phrases in the question the corpus holds nothing under, or holds only a "
+            "single stray note of (too thin to found a fork on): "
             + ", ".join(measurement.silent_terms)
         )
     if question_scope and question_scope.get("period"):
@@ -235,7 +320,16 @@ def compose_fork_prompt(
     """The fork-check prompt (module docstring): the brief, the measurement,
     and the two fork shapes DEC-62 names, with the explicit instruction that
     a small, ordinary imbalance is not a fork -- "no fork found" is the
-    common, correct answer."""
+    common, correct answer.
+
+    Walks the model through the two DEC-62 shapes in a fixed ORDER (check
+    temporal first) and an explicit MATERIALITY preference (prefer the
+    concept with more notes/sources when several could nominally show an
+    imbalance) rather than a numeric threshold on either -- a live run
+    picked a one-note concept's trivial 100%-one-source reading over a
+    962-note, 22-source concept whose own mass sat outside the question's
+    stated period; both defects trace to the prompt never asking the model
+    to compare size or check years at all, not to a missing number."""
     return f"""You are the intake fork-check of an analysis engine (specs/PHASE-B.md \
 section 7, DEC-62, issue #649). Before retrieval runs, decide whether this \
 question's own measured corpus coverage presents a GENUINE FORK worth asking \
@@ -248,18 +342,35 @@ Request: "{brief.request}"
 Measured corpus coverage for the concepts this question touches:
 {render_measurement(measurement, question_scope)}
 
-A genuine fork is one of:
-- source_imbalance: one source (or a small handful) so dominates a concept's \
-coverage that treating it as one voice among many would misrepresent the \
-corpus, and the analyst might reasonably want it read as background rather \
-than as a full voice.
-- temporal_role / temporal_consequence: the question's own period sits after \
-some sources' publication year and before others'. DEC-62 names two shapes: \
-a concept asked about after an event but rooted older, where the older \
-sources are full voices on the roots ("temporal_role"); or a consequence \
+Work through the concepts in this order:
+
+1. TEMPORAL FIRST. For each concept whose own name or role is clearly what \
+the case/request is actually about (ignore a concept that only shares an \
+incidental word with the question -- e.g. an unrelated book title that \
+happens to contain one of the question's words is not what the question is \
+about), compare its sources' own publication years against any period the \
+case or request names. If the request asks whether an event changed \
+something, or asks about a period, and that concept's own source years split \
+unevenly across the edge of that period, this is DEC-62's temporal shape: \
+(a) a concept asked about after an event but rooted older, where the older \
+sources are full voices on the roots ("temporal_role"); or (b) a consequence \
 question -- did the event change its own causes -- where pre-event sources \
 witness the causes and post-event sources the consequences, and comparing \
-them IS the answer ("temporal_consequence").
+them IS the answer ("temporal_consequence"). Prefer this reading whenever it \
+applies; it is what most real questions about a period of change actually are.
+
+2. SOURCE IMBALANCE, only if no temporal reading applies. One source (or a \
+small handful) so dominates a concept's coverage that treating it as one \
+voice among many would misrepresent the corpus, and the analyst might \
+reasonably want it read as background rather than as a full voice.
+
+3. MATERIALITY. When more than one concept could nominally support either \
+reading, prefer the one with more notes and more sources -- a concept the \
+corpus barely touches cannot show a real imbalance, only an artifact of thin \
+coverage; a 100% figure from a handful of notes is not the same finding as a \
+100% figure from dozens. Prefer a concept whose match is a real, whole \
+CONCEPT the question is about over one that only shares a single incidental \
+word with an unrelated corpus entry.
 
 Do NOT invent a fork from an ordinary, small imbalance -- most questions have \
 none, and "no fork found" is the common, correct answer. Only propose one \
@@ -271,11 +382,14 @@ name specific source_ids from the measurement above, under drop_source_ids, \
 to exclude from evidence entirely, and/or a per_source_cap limiting how many \
 notes from any one source the evidence set may hold, plus guidance text \
 stating what that option means for how retrieval should read the corpus. \
-**Per DEC-62, dates assign roles, not cutoffs: a temporal fork's default \
-option keeps every source in and states what each era witnesses in its own \
-guidance -- add drop_source_ids only to an option that is a genuine, \
-explicit EXCLUSION the analyst is choosing, never as the fork's only \
-option.**
+**Per DEC-62, dates assign roles, not cutoffs: a temporal fork's DEFAULT \
+option -- the one the analyst gets by choosing the first, most natural \
+reading -- must keep every source in and state what each era witnesses in \
+its own guidance. Never offer "keep everything" and "exclude a source" as \
+two co-equal, symmetric choices: exclusion is only ever the analyst's own, \
+clearly-marked opt-in choice, offered alongside the keep-everything default, \
+never presented as its equal alternative.** Never propose dropping every \
+source a concept has -- that leaves nothing to retrieve it from at all.
 
 Return ONLY this JSON object, no prose and no code fence:
 {{"is_fork": true|false, "concept": "<canonical from the measurement above, \
@@ -345,6 +459,17 @@ def parse_fork_response(raw: str, measurement: QuestionMeasurement) -> ForkCheck
                     f"{concept!r}'s own measurement ({sorted(known_source_ids)!r})"
                 )
             drop.append(source_id)
+        # Never offer dropping every source a concept has (module docstring
+        # -- a live run offered dropping the ONLY source on a one-note
+        # concept, the general case of which is this): a constraint that
+        # empties a concept's own source set leaves nothing to retrieve it
+        # from at all, which is never a sane default OR a sane opt-in choice.
+        if drop and set(drop) == known_source_ids:
+            raise ForkCheckParseError(
+                f"option {label!r} drops every source {concept!r} has "
+                f"({sorted(known_source_ids)!r}) -- a constraint must leave at "
+                "least one source reachable"
+            )
         cap = entry.get("per_source_cap")
         if cap is not None and (isinstance(cap, bool) or not isinstance(cap, int) or cap < 1):
             raise ForkCheckParseError(f"per_source_cap must be a positive int or null, got {cap!r}")

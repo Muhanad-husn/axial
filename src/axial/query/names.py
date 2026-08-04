@@ -1168,6 +1168,34 @@ def content_words(query: str) -> list[str]:
     return _content_words(query)
 
 
+def content_word_runs(text: str) -> list[list[str]]:
+    """`text` split into maximal runs of consecutive CONTENT words -- the
+    same tokenizer and stopword list `content_words` uses, but grouped by
+    TRUE TEXT ADJACENCY rather than flattened into one list (issue #649's
+    intake fork-check, which resolves the question's own PHRASES rather
+    than every content word in isolation). Two content words separated by
+    a stopword are two different runs, never joined into one: "regime" and
+    "Syria" in "regime durability in Syria" are not one run, because "in"
+    sits between them, and testing "durability Syria" as a phrase would be
+    testing an adjacency the question's own words never had. A run ends
+    (and a new one starts) at every stopword and at the text's own start
+    and end; a lone content word between two stopwords is still a
+    (length-1) run of its own."""
+    tokens = [token for token in _WORD_SPLIT.split(text) if token]
+    runs: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token.casefold() in _STOPWORDS:
+            if current:
+                runs.append(current)
+                current = []
+            continue
+        current.append(token)
+    if current:
+        runs.append(current)
+    return runs
+
+
 def _group_one_candidates(
     query: str,
     layer: _NameLayer,

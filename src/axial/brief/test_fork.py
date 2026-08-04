@@ -102,6 +102,77 @@ def test_measure_question_is_empty_when_the_vault_has_no_store(tmp_path: Path):
     assert measurement == QuestionMeasurement()
 
 
+def _write_war_fixture_store(vault_dir: Path) -> None:
+    """Two 2-word doors sharing the word "war": "Civil War" (what the
+    question is actually about) and "Cold War" (an unrelated door that a
+    bare "war" query would otherwise also match, issue #649's own live-run
+    finding). Both carry >= 2 notes so neither is filtered as thin."""
+    note_store.write_store(
+        note_store.store_path(vault_dir),
+        sources=[
+            (SOURCE_A, "A. Author", "A Title", "2005", 2005),
+            (SOURCE_B, "B. Author", "B Title", "2019", 2019),
+        ],
+        notes=[
+            (f"{SOURCE_A}_000_a_001", SOURCE_A, "S", None, "claim", None),
+            (f"{SOURCE_A}_001_a_002", SOURCE_A, "S", None, "claim", None),
+            (f"{SOURCE_B}_000_a_001", SOURCE_B, "S", None, "claim", None),
+        ],
+        names=[("Civil War", "concept", "civil war"), ("Cold War", "concept", "cold war")],
+        note_names=[
+            (f"{SOURCE_A}_000_a_001", SOURCE_A, "Civil War", "concept"),
+            (f"{SOURCE_A}_001_a_002", SOURCE_A, "Civil War", "concept"),
+            (f"{SOURCE_B}_000_a_001", SOURCE_B, "Cold War", "concept"),
+        ],
+        note_arguing_against=[],
+        note_citations=[],
+    )
+
+
+def test_a_resolved_bigram_consumes_its_words_so_the_unrelated_door_never_surfaces(
+    tmp_path: Path,
+):
+    """ "civil war" resolves as a whole phrase to "Civil War"; "war" alone
+    is therefore never queried and never collides with the corpus's own
+    unrelated "Cold War" (issue #649's own live-run finding: a bare "war"
+    query resolved to Cold War instead of the Syrian civil war)."""
+    vault = tmp_path / "vault"
+    _write_war_fixture_store(vault)
+    brief = Brief(brief_id="warfix", case="Syria", request="the civil war changed everything")
+
+    measurement = measure_question(brief, vault_dir=vault)
+
+    canonicals = {c.canonical for c in measurement.concepts}
+    assert "Civil War" in canonicals
+    assert "Cold War" not in canonicals
+
+
+def _write_thin_concept_store(vault_dir: Path) -> None:
+    """One concept with exactly one note from one source -- top_share is
+    trivially 1.0, and issue #649's own live-run finding is that this
+    looks maximally imbalanced for the least meaningful reason."""
+    note_store.write_store(
+        note_store.store_path(vault_dir),
+        sources=[(SOURCE_A, "A. Author", "A Title", "2017", 2017)],
+        notes=[(f"{SOURCE_A}_000_a_001", SOURCE_A, "S", None, "claim", None)],
+        names=[("Authoritarian Durability", "concept", "authoritarian durability")],
+        note_names=[(f"{SOURCE_A}_000_a_001", SOURCE_A, "Authoritarian Durability", "concept")],
+        note_arguing_against=[],
+        note_citations=[],
+    )
+
+
+def test_a_one_note_concept_is_folded_into_silence_not_offered_as_a_candidate(tmp_path: Path):
+    vault = tmp_path / "vault"
+    _write_thin_concept_store(vault)
+    brief = Brief(brief_id="thinfix", case="Syria", request="what about authoritarian durability")
+
+    measurement = measure_question(brief, vault_dir=vault)
+
+    assert measurement.concepts == ()
+    assert "authoritarian durability" in measurement.silent_terms
+
+
 # --- assess_fork: zero-model-call gate ----------------------------------------
 
 
@@ -216,6 +287,41 @@ def test_parse_fork_response_rejects_a_drop_source_id_not_in_the_measurement():
 
     with pytest.raises(ForkCheckParseError):
         parse_fork_response(raw, _measurement())
+
+
+def test_parse_fork_response_rejects_an_option_that_drops_every_source_a_concept_has():
+    """Issue #649's own live-run finding, generalised: a live run offered
+    dropping the ONLY source on a one-note concept as one of two options.
+    `_measurement()`'s "Syria" concept has two sources; an option naming
+    both must be rejected the same way one naming its only source would be."""
+    raw = json.dumps(
+        {
+            "is_fork": True,
+            "concept": "Syria",
+            "question": "q",
+            "options": [
+                {"label": "x", "drop_source_ids": [SOURCE_A, SOURCE_B]},
+            ],
+        }
+    )
+
+    with pytest.raises(ForkCheckParseError):
+        parse_fork_response(raw, _measurement())
+
+
+def test_parse_fork_response_accepts_an_option_that_drops_only_some_sources():
+    raw = json.dumps(
+        {
+            "is_fork": True,
+            "concept": "Syria",
+            "question": "q",
+            "options": [{"label": "background only", "drop_source_ids": [SOURCE_A]}],
+        }
+    )
+
+    result = parse_fork_response(raw, _measurement())
+
+    assert result.options[0].drop_source_ids == (SOURCE_A,)
 
 
 def test_parse_fork_response_rejects_an_out_of_vocabulary_kind():
