@@ -746,6 +746,23 @@ def test_query_by_source_returns_only_that_sources_chunks(tmp_path):
     assert result == ["srcA_1_intro_001", "srcA_1_intro_002"]
 
 
+def test_query_by_source_excludes_a_back_matter_note(tmp_path):
+    """Issue #661: a live run reached an acknowledgments page through this
+    exact tool -- `query_by_source` lists every chunk under a source
+    straight off disk, unfiltered, which the store-backed tools never went
+    through at all. A note whose own `section` is non-substantive
+    front/back-matter (`axial.back_matter.is_evidence_back_matter`) must
+    never come back as one of that source's citable chunks, while an
+    ordinary body note from the same source still does."""
+    prose_dir = tmp_path / "prose"
+    _write_chunk_note(prose_dir, "srcA_0_intro_001", section="Introduction")
+    _write_chunk_note(prose_dir, "srcA_9_acknowledgments_001", section="Acknowledgments")
+
+    result = query_by_source("srcA", vault_dir=tmp_path)
+
+    assert result == ["srcA_0_intro_001"]
+
+
 def test_query_by_source_raises_when_the_vault_dir_does_not_exist(tmp_path):
     """A missing or typo'd `vault_dir` is a caller bug, not an empty corpus
     (`_iter_chunk_frontmatter`'s own contract)."""

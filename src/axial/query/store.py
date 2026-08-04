@@ -31,6 +31,19 @@ answer gave that name, which varies note to note over the same canonical
 (the corpus calls `French Mandate` a period on 40 notes and something else
 on the rest). The measured person/work filter on opposition pairs reads the
 second.
+
+**`notes.back_matter` (issue #661).** Set once, at materialize time
+(`axial.materialize.build_note_store`), from a note's own `section` heading
+via `axial.back_matter.is_evidence_back_matter` -- the same broader rule
+`axial.gold` already applied to its own sampling frame, reused rather than
+re-derived. A live run grounded two of seventeen claims on an acknowledgments
+page and an endnotes page: both chunks exist, both carry interrogation
+answers, and nothing before this column stopped either from being retrieved
+and cited as evidence. Every read here that returns a note as citable
+evidence (`name_members`, `doors`, `concept_sources`) filters it out at the
+join, once, rather than leaving each caller to re-derive the same check --
+the note ROW still exists in `notes` (nothing here refuses to write one),
+it is simply never counted as evidence again downstream.
 """
 
 from __future__ import annotations
@@ -57,12 +70,13 @@ CREATE TABLE sources (
     year      INTEGER
 );
 CREATE TABLE notes (
-    chunk_id  TEXT PRIMARY KEY,
-    source_id TEXT,
-    section   TEXT,
-    chapter   TEXT,
-    claim     TEXT,
-    position  TEXT
+    chunk_id    TEXT PRIMARY KEY,
+    source_id   TEXT,
+    section     TEXT,
+    chapter     TEXT,
+    claim       TEXT,
+    position    TEXT,
+    back_matter INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE names (
     canonical TEXT PRIMARY KEY,
@@ -97,12 +111,17 @@ CREATE INDEX note_citations_chunk_id ON note_citations (chunk_id);
 
 _TABLES = (
     ("sources", 5),
-    ("notes", 6),
+    ("notes", 7),
     ("names", 3),
     ("note_names", 4),
     ("note_arguing_against", 4),
     ("note_citations", 5),
 )
+
+# `notes`' own width before `back_matter` was added (issue #661) -- a row of
+# exactly this length is a pre-#661 fixture that never states the column,
+# padded with the correct default (`0`, not back matter) by `write_store`.
+_NOTE_COLUMNS_BEFORE_BACK_MATTER = 6
 
 # SQLite's own limit on host parameters in one statement is 999 on the
 # oldest builds still in the wild; a door query over a broad `contains` scan
@@ -193,7 +212,16 @@ def write_store(
     os.close(handle)
     rows = {
         "sources": sources,
-        "notes": notes,
+        # `back_matter` (issue #661) is appended when a row omits it, rather
+        # than requiring every caller to state it: a fixture written before
+        # the column existed and never means to exercise back-matter
+        # behavior gets the correct default (not back matter, `0`) without
+        # editing every such fixture across the codebase; `axial.materialize.
+        # build_note_store` states it explicitly on every row it writes.
+        "notes": (
+            tuple(row) if len(row) != _NOTE_COLUMNS_BEFORE_BACK_MATTER else (*row, 0)
+            for row in notes
+        ),
         "names": names,
         "note_names": note_names,
         "note_arguing_against": note_arguing_against,
@@ -210,6 +238,14 @@ def write_store(
                     f"INSERT INTO {table} VALUES ({placeholders})", rows[table]
                 )
                 counts[f"store_{table}"] = cursor.rowcount
+            # Free off the table just written above (issue #661): how many
+            # notes the evidence filter withholds corpus-wide, for
+            # `axial materialize`'s own operator-facing summary -- one
+            # `COUNT` over a table already in memory, not a second pass.
+            (back_matter_count,) = connection.execute(
+                "SELECT COUNT(*) FROM notes WHERE back_matter = 1"
+            ).fetchone()
+            counts["store_notes_back_matter"] = back_matter_count
             connection.commit()
         finally:
             connection.close()
@@ -246,7 +282,15 @@ def doors(connection: sqlite3.Connection, canonicals: Iterable[str]) -> dict[str
     BY over `note_names` the measurement verified against production's own
     door index. A canonical the store does not carry is simply absent from
     the result -- the caller reports it as an unknown count rather than a 0
-    that would read like real, thin coverage."""
+    that would read like real, thin coverage.
+
+    **A back-matter member never counts (issue #661).** The exclusion is a
+    conditional aggregate (`CASE WHEN ... back_matter = 0`), not a `WHERE`
+    filter on the join -- a `WHERE` would drop a canonical whose members are
+    ALL back-matter out of the result entirely (indistinguishable from one
+    the store does not carry), where a conditional aggregate correctly
+    reports it as a real door sitting at `member_count=0`, the same "carried,
+    but empty" reading `name_members` gives it below."""
     ordered = list(dict.fromkeys(canonicals))
     found: dict[str, Door] = {}
     for start in range(0, len(ordered), _PARAMETER_BATCH):
@@ -255,10 +299,13 @@ def doors(connection: sqlite3.Connection, canonicals: Iterable[str]) -> dict[str
         for row in connection.execute(
             f"""
             SELECT n.canonical, n.kind,
-                   COUNT(DISTINCT nn.chunk_id)  AS member_count,
-                   COUNT(DISTINCT nn.source_id) AS source_count
+                   COUNT(DISTINCT CASE WHEN nt.back_matter = 0 THEN nn.chunk_id END)
+                       AS member_count,
+                   COUNT(DISTINCT CASE WHEN nt.back_matter = 0 THEN nn.source_id END)
+                       AS source_count
             FROM names n
             LEFT JOIN note_names nn ON nn.canonical = n.canonical
+            LEFT JOIN notes nt ON nt.chunk_id = nn.chunk_id
             WHERE n.canonical IN ({placeholders})
             GROUP BY n.canonical, n.kind
             """,
@@ -275,13 +322,21 @@ def concept_sources(connection: sqlite3.Connection, canonical: str) -> list[Sour
     `note_names` joined to `sources`, the per-source breakdown `doors()`'s
     single aggregated counts do not carry. `[]` when the store holds no
     member note for `canonical` at all, the same "absent, not zero" reading
-    `doors()` gives a canonical it does not carry."""
+    `doors()` gives a canonical it does not carry.
+
+    **A back-matter member is not a real contribution (issue #661)**: a
+    source whose only notes carrying `canonical` sit on an acknowledgments
+    or endnotes page is not covering the concept, so it is filtered out of
+    the join here rather than counted -- unlike `doors()`, a source with
+    zero real contribution is supposed to be absent from this per-source
+    breakdown, exactly like one that never carried the concept at all."""
     return [
         SourceShare(row[0], row[1], row[2], row[3])
         for row in connection.execute(
             """
             SELECT nn.source_id, s.author, s.year, COUNT(DISTINCT nn.chunk_id) AS note_count
             FROM note_names nn
+            JOIN notes nt ON nt.chunk_id = nn.chunk_id AND nt.back_matter = 0
             LEFT JOIN sources s ON s.source_id = nn.source_id
             WHERE nn.canonical = ?
             GROUP BY nn.source_id
@@ -296,14 +351,20 @@ def name_members(connection: sqlite3.Connection, canonical: str) -> list[tuple]:
     """`(chunk_id, source_id, author, date, claim)` for every note that
     carries `canonical`, in `chunk_id` order -- `get_name`'s member list as a
     plain join, in the same order the name page writes its own member lines
-    (`axial.materialize.member_chunk_ids_for_node` sorts them)."""
+    (`axial.materialize.member_chunk_ids_for_node` sorts them).
+
+    **A back-matter note is never a member here (issue #661)**: the join to
+    `notes` already carries `nt.back_matter`, so excluding it is one added
+    condition on a join this function already makes, not a second query --
+    an acknowledgments or endnotes page must never come back as a citable
+    passage `get_name`/`chunk_ids_for_name` hand a retrieval loop."""
     return [
         tuple(row)
         for row in connection.execute(
             """
             SELECT nn.chunk_id, nn.source_id, s.author, s.date, n.claim
             FROM note_names nn
-            LEFT JOIN notes n ON n.chunk_id = nn.chunk_id
+            JOIN notes n ON n.chunk_id = nn.chunk_id AND n.back_matter = 0
             LEFT JOIN sources s ON s.source_id = n.source_id
             WHERE nn.canonical = ?
             ORDER BY nn.chunk_id

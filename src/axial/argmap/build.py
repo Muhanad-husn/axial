@@ -9,8 +9,9 @@ mention; this groups passages that make the same argument into
 Four steps, run in one command (`axial map build`):
 
   1. **Select passages** -- every interrogated passage's own `claim`, minus
-     abstentions, back matter, and passages that argue nothing at all
-     (`select_passages`).
+     abstentions, back matter (both the positional run and, since issue
+     #661, a heading check for the front/back matter that run cannot
+     reach), and passages that argue nothing at all (`select_passages`).
   2. **Bag** -- a local sentence-transformer clusters claims by wording
      similarity, zero model calls (`bag_passages`).
   3. **Extract** -- every bag read in full, in author-spread slices, one
@@ -107,6 +108,7 @@ from typing import Any, Callable, Sequence
 import httpx
 import numpy as np
 
+from axial.back_matter import is_evidence_back_matter
 from axial.checkpoint import append_checkpoint_record, load_checkpoint_records
 from axial.envelope import _default_envelopes_dir
 from axial.eval.corpus_pin import _build_sources
@@ -253,9 +255,20 @@ def select_passages(answers_dir: Path, trees_dir: Path = TREES_DIR) -> list[Pass
     """Every `data/answers/*.jsonl` record that is argument-bearing: has a
     non-abstained `claim`, sits before its own source's back-matter boundary
     (`axial.names.load_back_matter_sections`, the #514/DEC-58 positional
-    rule off cached trees), and does not abstain on every one of
-    `_SILENT_KEYS`. All three exclusions reuse already-validated rules from
-    the name layer -- this function invents no new one."""
+    rule off cached trees), is not itself a non-substantive front/back-matter
+    section by heading (`axial.back_matter.is_evidence_back_matter`, issue
+    #661), and does not abstain on every one of `_SILENT_KEYS`.
+
+    **Two back-matter exclusions, deliberately, because they catch different
+    shapes (issue #661).** The positional rule cuts the CONTIGUOUS run
+    starting at a book's index/bibliography anchor -- exactly what #511
+    measured and exactly what keeps interleaved, per-chapter endnotes IN,
+    since those are not part of that terminal run. The heading rule catches
+    what the positional one cannot reach by construction: a front-matter
+    acknowledgments page (nowhere near the terminal run) and a per-chapter
+    endnotes section (interleaved, not terminal) -- the same two shapes
+    issue #661's own live defect was grounded on. Both reuse already-
+    validated rules; neither is invented here."""
     back_matter = load_back_matter_sections(trees_dir)
     rows: list[Passage] = []
     for record in load_answer_records(answers_dir):
@@ -271,6 +284,9 @@ def select_passages(answers_dir: Path, trees_dir: Path = TREES_DIR) -> list[Pass
         cut = back_matter.get(source_id, frozenset())
         tail = chunk_id[len(source_id) + 1 :] if chunk_id.startswith(source_id) else chunk_id
         if tail.split("_", 1)[0] in cut:
+            continue
+        section = record.get("section")
+        if is_evidence_back_matter(section if isinstance(section, str) else ""):
             continue
 
         if all(is_abstention(answers.get(key)) for key in _SILENT_KEYS):

@@ -265,7 +265,12 @@ def find_notes(
     Both name arguments are resolved by `resolve_name`. Empty is a real
     answer; a vault with no store returns `([], 0, None)` -- a `None`
     resolution, because with no store to match against none was attempted,
-    which is a different fact from a phrase that resolved to nothing."""
+    which is a different fact from a phrase that resolved to nothing.
+
+    **A back-matter note is never returned (issue #661)**: the join to
+    `notes` filters `back_matter = 0`, so an acknowledgments or endnotes
+    page can never come back as a note this tool hands a retrieval loop as
+    citable evidence."""
     connection = _connect(vault_dir)
     if connection is None:
         return [], 0, None
@@ -274,7 +279,7 @@ def find_notes(
         sql = [
             "SELECT DISTINCT n.chunk_id, n.source_id, s.author, s.year, n.claim, n.position",
             "FROM note_names nn",
-            "JOIN notes n ON n.chunk_id = nn.chunk_id",
+            "JOIN notes n ON n.chunk_id = nn.chunk_id AND n.back_matter = 0",
             "LEFT JOIN sources s ON s.source_id = n.source_id",
             "WHERE nn.canonical = ?",
         ]
@@ -382,7 +387,12 @@ def opposition_pairs(
     **Determinism:** pairs are ordered by `(opposing_chunk_id, target,
     about_chunk_id)` in SQL -- a total order, since one note can argue
     against the same canonical under two different free-text targets -- then
-    spread across the opposing notes' sources in rotation."""
+    spread across the opposing notes' sources in rotation.
+
+    **Neither end of a pair is ever back-matter (issue #661)**: both the
+    opposing note (`aa.chunk_id`, joined here to `notes` for the first time
+    to state it) and the about note (`n`, already joined) are filtered on
+    `back_matter = 0` -- an edge is only real evidence when both ends are."""
     connection = _connect(vault_dir)
     if connection is None:
         return [], [], 0, None
@@ -394,8 +404,9 @@ def opposition_pairs(
                 """
                 SELECT DISTINCT aa.chunk_id, aa.source_id, aa.target, n.chunk_id, n.source_id
                 FROM note_arguing_against aa
+                JOIN notes opposing ON opposing.chunk_id = aa.chunk_id AND opposing.back_matter = 0
                 JOIN note_names nn ON nn.canonical = aa.resolved_canonical
-                JOIN notes n ON n.chunk_id = nn.chunk_id
+                JOIN notes n ON n.chunk_id = nn.chunk_id AND n.back_matter = 0
                 WHERE aa.resolved_canonical = ?
                   AND aa.source_id IS NOT NULL
                   AND nn.source_id <> aa.source_id

@@ -48,6 +48,7 @@ from typing import Any, Mapping
 
 import yaml
 
+from axial.back_matter import is_evidence_back_matter
 from axial.paths import (
     DEFAULT_PIPELINE_CONFIG_PATH,
     artifact_note_path,
@@ -710,14 +711,26 @@ def query_by_source(source_id: str, *, vault_dir: Path | None = None) -> list[st
     not a `source_meta` lookup -- `source_meta` carries no `source_id`
     field (`ChunkNote.source_meta` is `{author, title, date, thesis,
     scope}` only). Results are sorted ascending, the same determinism
-    contract as every other tool here."""
+    contract as every other tool here.
+
+    **A back-matter note is never returned (issue #661)**: this reads
+    straight off disk, never the store, so the note's own `section`
+    frontmatter is checked directly against `axial.back_matter.
+    is_evidence_back_matter` -- the same rule the store's `back_matter`
+    column encodes. A live run reached an acknowledgments page this way:
+    `query_by_source` returning every note under a source, unfiltered, was
+    the second of the two measured leaks (`find_notes`/`get_name`'s
+    store-side join is the first)."""
     if vault_dir is None:
         vault_dir = default_vault_dir()
     matches: list[str] = []
     for path, frontmatter in _iter_chunk_frontmatter(vault_dir):
         chunk_id = _require(frontmatter, path, "chunk_id")
-        if source_id_from_chunk_id(chunk_id) == source_id:
-            matches.append(chunk_id)
+        if source_id_from_chunk_id(chunk_id) != source_id:
+            continue
+        if is_evidence_back_matter(frontmatter.get("section") or ""):
+            continue
+        matches.append(chunk_id)
     return sorted(matches)
 
 

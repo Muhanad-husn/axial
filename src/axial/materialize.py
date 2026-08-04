@@ -86,6 +86,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from axial.back_matter import is_evidence_back_matter
 from axial.chunk import (
     ChunkError,
     _default_chunks_dir,
@@ -805,6 +806,14 @@ def build_note_store(
     it resolves to, or one row with `NULL` when it resolves to nothing, which
     is the honest majority (56%) and must stay countable.
 
+    **`notes.back_matter` (issue #661)** is set once here, from each note's
+    own `section` via `axial.back_matter.is_evidence_back_matter` -- the
+    same broader rule `axial.gold` already applies to its own sampling
+    frame, reused rather than re-derived. Every store read that returns a
+    note as citable evidence filters on this column so an acknowledgments
+    or endnotes page, though still written and still interrogated, can
+    never again be retrieved, assembled or cited as evidence for a claim.
+
     Written atomically over any existing store."""
     nodes = load_alias_map(alias_map_path)
     inventory = load_inventory(inventory_path)
@@ -849,6 +858,7 @@ def build_note_store(
                 chapter,
                 _store_claim(answers.get("claim")),
                 position if isinstance(position, str) else None,
+                1 if is_evidence_back_matter(section if isinstance(section, str) else "") else 0,
             )
         )
         for entry in answers.get("names") or []:
