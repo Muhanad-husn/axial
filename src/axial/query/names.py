@@ -17,9 +17,18 @@ Two substrates, two arguments:
   (the surviving canonical set), `alias_map.json` (`{canonical, kind,
   aliases}` per node), `similarity_manifest.json` and the persisted vector
   table `embeddings.lance`. Resolution reads these.
-- **`vault_dir`** (`data/vault/`) -- the name pages Materialize wrote and the
-  prose notes' own answer blocks. Everything a name page or a note says
-  about itself is read from here, never recomputed.
+- **`vault_dir`** (`data/vault/`) -- the note store Materialize wrote
+  (`notes.db`, `axial.query.store`, DEC-62), the name pages, and the prose
+  notes' own answer blocks. Everything a note says about itself is read from
+  here, never recomputed.
+
+**`find_names` and `get_name` are answered from the store** (DEC-62, issue
+#648): the door layer is a strict special case of `note_names`, one GROUP BY
+and one join, verified byte-identical against the pages on the live vault.
+A vault with no store -- one materialized before it existed, or a caller
+that writes name pages directly -- still answers from the door index
+(`names.jsonl`), unchanged. The alias/fold resolution and the ranking
+tie-break are shared by both paths and belong to neither.
 
 **Zero LLM calls** (§7.5), with exactly one relaxation, D10: `find_names`'
 embedding group embeds the query string with the local sentence-transformer
@@ -61,12 +70,15 @@ import yaml
 
 from axial.name_candidates import _normalize_form as fold_surface_form
 from axial.paths import atomic_write_text, default_names_dir, default_vault_dir, name_page_path
+from axial.query import store as note_store
 from axial.query.reader import (
     MalformedChunkIdError,
     MalformedNoteError,
     QueryError,
     _read_frontmatter,
+    is_abstention,
     source_id_from_chunk_id,
+    stated_position,
 )
 from axial.yaml_loader import SAFE_LOADER
 
@@ -861,7 +873,7 @@ def _read_note_answers(path: Path) -> _NoteAnswers | None:
             citations.append((entry["cited"], entry.get("stance"), entry.get("about")))
 
     claim = answers.get("claim")
-    position = answers["position"] if "position" in answers else answers.get("position_of")
+    position = stated_position(answers)
     return _NoteAnswers(
         chunk_id=chunk_id,
         source_id=source_id,
@@ -1095,14 +1107,46 @@ def _folded_page_names(vault_dir: Path) -> list[tuple[str, str]]:
 
 
 def _contains_matches(folded_query: str, vault_dir: Path) -> list[str]:
-    """Every page name whose folded form carries `folded_query` as a
-    whole-word phrase (issue #632's `contains` route) -- `Mandate` matches
-    `French Mandate` and `mandate period`, never `mandated`. Measured 40ms
-    per query over the real vault's 49,674 folded names."""
+    """Every name whose folded form carries `folded_query` as a whole-word
+    phrase (issue #632's `contains` route) -- `Mandate` matches `French
+    Mandate` and `mandate period`, never `mandated`.
+
+    One `instr` scan over the store's own `names.folded` column when the
+    vault has a store (DEC-62), else the same scan over the folded page
+    names, for a vault materialized before the store existed."""
     if not folded_query:
         return []
+    connection = note_store.connect(vault_dir)
+    if connection is not None:
+        try:
+            return note_store.contains_matches(connection, folded_query)
+        finally:
+            connection.close()
     needle = f" {folded_query} "
     return [name for name, padded in _folded_page_names(vault_dir) if needle in padded]
+
+
+def _doors(vault_dir: Path, canonicals: list[str]) -> dict[str, note_store.Door]:
+    """`canonical -> Door` (kind, member_count, source_count) for the names
+    given -- the store's own GROUP BY over `note_names` (DEC-62), else the
+    name-page door index for a vault materialized before the store existed.
+    A canonical neither carries is absent from the result, which the caller
+    reports as an unknown count rather than a 0."""
+    connection = note_store.connect(vault_dir)
+    if connection is not None:
+        try:
+            return note_store.doors(connection, canonicals)
+        finally:
+            connection.close()
+    index = _name_page_index(vault_dir)
+    found = {}
+    for canonical in canonicals:
+        entry = index.get(canonical)
+        if entry is not None:
+            found[canonical] = note_store.Door(
+                canonical, entry.kind, entry.member_count, entry.source_count
+            )
+    return found
 
 
 def _content_words(query: str) -> list[str]:
@@ -1167,7 +1211,7 @@ def _group_one_candidates(
 def _rank_group_one(
     candidates: list[tuple[str, str, str]],
     layer: _NameLayer,
-    page_index: dict[str, _NamePageEntry],
+    doors: dict[str, note_store.Door],
 ) -> list[tuple[str, str, str]]:
     """Group 1's own order (issue #632): `kind == "work"` last, then
     `source_count` descending, then `member_count` descending, then
@@ -1181,10 +1225,10 @@ def _rank_group_one(
 
     def sort_key(candidate: tuple[str, str, str]) -> tuple[bool, int, int, str]:
         canonical, _matched_on, _tier = candidate
-        entry = page_index.get(canonical)
-        kind = layer.kind_by_canonical.get(canonical) or (entry.kind if entry is not None else None)
-        source_count = entry.source_count if entry is not None else None
-        member_count = entry.member_count if entry is not None else None
+        door = doors.get(canonical)
+        kind = layer.kind_by_canonical.get(canonical) or (door.kind if door is not None else None)
+        source_count = door.source_count if door is not None else None
+        member_count = door.member_count if door is not None else None
         return (kind == "work", -(source_count or 0), -(member_count or 0), canonical)
 
     return sorted(candidates, key=sort_key)
@@ -1194,7 +1238,6 @@ def _compound_fallback_candidates(
     query: str,
     layer: _NameLayer,
     vault_dir: Path,
-    page_index: dict[str, _NamePageEntry],
 ) -> list[tuple[str, str, str]]:
     """The compound-query fallback (issue #632): when the query's own phrase
     matches no page at all, resolve each content word separately (the same
@@ -1239,10 +1282,11 @@ def _compound_fallback_candidates(
     doors: list[tuple[str, str, str]] = []
     seen: set[str] = set()
     for word in sorted(frequency, key=lambda w: (frequency[w], w.casefold())):
+        candidates = _group_one_candidates(word, layer, vault_dir, contains=contains_by_word[word])
         ranked = _rank_group_one(
-            _group_one_candidates(word, layer, vault_dir, contains=contains_by_word[word]),
+            candidates,
             layer,
-            page_index,
+            _doors(vault_dir, [canonical for canonical, _matched, _tier in candidates]),
         )
         if not ranked:
             continue
@@ -1321,15 +1365,26 @@ def find_names(
     loading a model. Group 1 and the compound-query fallback never call it,
     and the embedding group is skipped entirely (no vector store read, no
     encoder built) once group 1 already fills `limit`.
+
+    **The `contains` route and every hit's counts come from the note store**
+    (DEC-62): one `instr` scan over its folded name column and one GROUP BY
+    over `note_names`, replacing the whole-vault door-index read a fresh
+    process used to pay for (1.97s and 6.6 MB on the live vault, against
+    23-45ms per query now). A store-less vault answers from that index
+    instead, with the same result.
     """
     layer = _name_layer(names_dir)
     names_directory = Path(names_dir) if names_dir is not None else default_names_dir()
     vault = Path(vault_dir) if vault_dir is not None else default_vault_dir()
-    page_index = _name_page_index(vault)
 
-    literal = _rank_group_one(_group_one_candidates(query, layer, vault), layer, page_index)
+    candidates = _group_one_candidates(query, layer, vault)
+    literal = _rank_group_one(
+        candidates,
+        layer,
+        _doors(vault, [canonical for canonical, _matched, _tier in candidates]),
+    )
     if not literal:
-        literal = _compound_fallback_candidates(query, layer, vault, page_index)
+        literal = _compound_fallback_candidates(query, layer, vault)
 
     slate = list(literal)
     if len(slate) < limit:
@@ -1339,19 +1394,22 @@ def find_names(
                 slate.append((canonical, matched_on, TIER_EMBEDDING))
                 already.add(canonical)
 
+    window = slate[:limit]
+    # Decorated from one door lookup over the whole window (DEC-62's GROUP BY
+    # over `note_names`, or the door index for a store-less vault) -- never a
+    # fresh page open per hit.
+    window_doors = _doors(vault, [canonical for canonical, _matched, _tier in window])
     hits = []
-    for canonical, matched_on, tier in slate[:limit]:
-        # Decorated from the one door-index read already paid for above
-        # (`page_index`, issue #634) -- never a fresh page open per hit.
-        entry = page_index.get(canonical)
+    for canonical, matched_on, tier in window:
+        door = window_doors.get(canonical)
         hits.append(
             NameHit(
                 canonical=canonical,
                 kind=layer.kind_by_canonical.get(canonical)
-                or (entry.kind if entry is not None else None),
+                or (door.kind if door is not None else None),
                 aliases=list(layer.aliases_by_canonical.get(canonical, ())),
-                member_count=entry.member_count if entry is not None else None,
-                source_count=entry.source_count if entry is not None else None,
+                member_count=door.member_count if door is not None else None,
+                source_count=door.source_count if door is not None else None,
                 matched_on=matched_on,
                 tier=tier,
             )
@@ -1402,6 +1460,74 @@ def _round_robin_by_source(members: list[NameMember]) -> list[NameMember]:
     return ordered
 
 
+def _render_claim(value: str | None) -> str:
+    """One member line's claim as the name page renders it -- a deliberate,
+    stated mirror of `axial.materialize._render_claim` (the same trade this
+    module's docstring already makes for the page's own body markers, which
+    it cannot import without pulling the interrogation stack into this
+    LLM-free module). `None` is a missing answer, never a claim; D7's
+    explicit abstention is marked, never shown as an answer."""
+    if value is None:
+        return "(no claim recorded)"
+    if is_abstention(value):
+        return "(not stated in the passage)"
+    return value
+
+
+def _name_page_from_store(
+    connection: Any, canonical: str, limit: int, layer: _NameLayer, vault_dir: Path
+) -> NamePage:
+    """`get_name` answered as a join over the store (DEC-62): the door row
+    for `kind`/`member_count`, `note_names ⋈ notes ⋈ sources` for the member
+    lines, and the alias map for the aliases the page's own frontmatter
+    carries.
+
+    **The Gather section is still read from the page**, and is the one thing
+    here that is: Gather appends its finding to the rendered name page after
+    Materialize has already written the store, so the page is where that
+    finding lives. Resolving the page also keeps `NameNotFoundError` meaning
+    exactly what it meant before -- no page, no answer."""
+    door = note_store.doors(connection, [canonical]).get(canonical)
+    entry = _resolve_name_page(canonical, vault_dir)
+    if door is None or entry is None:
+        raise NameNotFoundError(canonical, name_page_path(vault_dir, canonical))
+    _frontmatter, body = _read_frontmatter(entry.path)
+    _page_members, disagreement = _parse_name_page_body(body)
+
+    all_members = []
+    for chunk_id, source_id, author, date, claim in note_store.name_members(connection, canonical):
+        # Rendered and split back exactly as the page writes and the reader
+        # reads a member line -- including the `rstrip`, which is not
+        # cosmetic: the page reader strips the whole line, so a claim the
+        # corpus wrote with trailing whitespace comes back without it, and
+        # this path has to say the same thing. Round-tripping (rather than
+        # returning the store's author/date columns directly) is what keeps
+        # both paths agreeing where the corpus's own author rendering does
+        # not split cleanly into author and year.
+        rest = f"{author} ({date}): {_render_claim(claim)}".rstrip()
+        parsed_author, year, text = _split_member_line(rest)
+        all_members.append(
+            NameMember(
+                chunk_id=chunk_id,
+                source_id=source_id or None,
+                author=parsed_author,
+                year=year,
+                claim=text,
+            )
+        )
+    members = (
+        all_members if limit >= len(all_members) else _round_robin_by_source(all_members)[:limit]
+    )
+    return NamePage(
+        canonical=canonical,
+        kind=door.kind,
+        aliases=list(layer.aliases_by_canonical.get(canonical, ())),
+        member_count=door.member_count,
+        members=members,
+        disagreement=disagreement,
+    )
+
+
 def get_name(
     canonical: str,
     limit: int = DEFAULT_LIMIT,
@@ -1446,10 +1572,21 @@ def get_name(
     Raises `NameNotFoundError`, naming the resolved canonical, when no page
     exists -- never returns `None`. A page whose filename was budgeted down
     or hash-suffixed is still reachable by its real name (§7.5: the `name`
-    frontmatter is the sole authoritative id, never the filename)."""
+    frontmatter is the sole authoritative id, never the filename).
+
+    **Answered as a join over the note store when the vault has one**
+    (`_name_page_from_store`, DEC-62) -- byte-identical to the page read
+    below, which still answers for a vault materialized before the store
+    existed."""
     layer = _name_layer(names_dir)
     canonical = canonical_for_surface(canonical, layer) or canonical
     vault = Path(vault_dir) if vault_dir is not None else default_vault_dir()
+    connection = note_store.connect(vault)
+    if connection is not None:
+        try:
+            return _name_page_from_store(connection, canonical, limit, layer, vault)
+        finally:
+            connection.close()
     entry = _resolve_name_page(canonical, vault)
     if entry is None:
         raise NameNotFoundError(canonical, name_page_path(vault, canonical))

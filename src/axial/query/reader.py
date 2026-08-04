@@ -44,7 +44,7 @@ import re
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 
@@ -99,6 +99,24 @@ def is_abstention(value: Any) -> bool:
     if isinstance(value, list) and len(value) == 1:
         return is_abstention(value[0])
     return False
+
+
+def stated_position(answers: Mapping[str, Any]) -> Any:
+    """A note's stated position, read across issue #496's mixed frame: a note
+    interrogated before frame 0.2 carries `position_of` and no `position`
+    key, a note interrogated after carries both, and no re-run is planned. So
+    `position` is read when the KEY IS PRESENT and `position_of` is the
+    fallback otherwise -- key presence, never truthiness (a note that
+    genuinely answered `position: null` has been asked the frame-0.2 question
+    and its answer is that null, not the older question's answer), and never
+    `frame_version` (a note's own keys say what it was asked; a version
+    string is a second source of truth that can disagree).
+
+    Lives here, next to `is_abstention`, because both readers of the rule --
+    `axial.query.names._read_note_answers` reading a vault note and
+    `axial.materialize.build_note_store` reading an answer record -- must
+    never disagree about which key a note was asked."""
+    return answers["position"] if "position" in answers else answers.get("position_of")
 
 
 class QueryError(Exception):
