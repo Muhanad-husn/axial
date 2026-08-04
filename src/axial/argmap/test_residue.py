@@ -9,6 +9,7 @@ pattern. No `data/` dependence: every fixture builds its own tiny corpus.
 from __future__ import annotations
 
 import json
+import zlib
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -37,6 +38,15 @@ from axial.argmap.residue import (
 # `embed_positions`/`_nearest_candidates` embed the position pool and each
 # target's text in separate `encode` calls that must land in the same
 # vector space.
+#
+# **`zlib.crc32`, never the builtin `hash()`.** `hash()` on a `str` is salted
+# per interpreter process (`PYTHONHASHSEED`, randomized by default since
+# Python 3.3) precisely so untrusted input can't be hash-flooded -- which
+# means a test asserting a specific bucket a word lands in
+# (`test_select_candidates_narrows_to_top_k`) passed or failed depending on
+# nothing this test controlled, roughly 1 run in 3-4. `crc32` is a fixed,
+# unsalted function of the bytes alone: the same word lands in the same
+# bucket in every process, forever.
 # ---------------------------------------------------------------------------
 
 _HASH_DIM = 64
@@ -46,7 +56,8 @@ def _hashing_encode(texts: Sequence[str]) -> np.ndarray:
     vectors = np.zeros((len(texts), _HASH_DIM), dtype=float)
     for row, text in enumerate(texts):
         for word in text.lower().split():
-            vectors[row, hash(word) % _HASH_DIM] += 1.0
+            bucket = zlib.crc32(word.encode("utf-8")) % _HASH_DIM
+            vectors[row, bucket] += 1.0
     return vectors
 
 
@@ -392,6 +403,139 @@ def test_run_residue_sample_reuses_a_decision_already_on_disk(tmp_path: Path) ->
 
 def test_load_decisions_is_empty_before_any_run(tmp_path: Path) -> None:
     assert load_decisions(tmp_path / "does-not-exist.jsonl") == {}
+
+
+# ---------------------------------------------------------------------------
+# Threading (issue #651 follow-up): the pool must not change WHAT gets
+# decided or how many calls a resumed run makes, only how fast it happens.
+# ---------------------------------------------------------------------------
+
+
+class _CountingScriptedClient:
+    """Like `_ScriptedClient`, but `call_count` is incremented under a lock
+    -- several worker threads call `complete` concurrently here, and a bare
+    `+= 1` is not guaranteed atomic."""
+
+    def __init__(self, response: str) -> None:
+        import threading
+
+        self._response = response
+        self._lock = threading.Lock()
+        self.call_count = 0
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        with self._lock:
+            self.call_count += 1
+        return self._response
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "scripted"
+
+    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
+        return {"prompt_tokens": 10, "completion_tokens": 1}
+
+
+def _many_targets(n: int) -> list[UnresolvedTarget]:
+    return [
+        UnresolvedTarget(f"c{i:03d}", "alpha-2020-book", f"a distinct target claim {i}", None)
+        for i in range(n)
+    ]
+
+
+def test_threaded_run_makes_exactly_one_call_per_target(tmp_path: Path) -> None:
+    positions = [{"position_id": "pos-0001", "argument": "states extract resources"}]
+    targets = _many_targets(30)
+    decisions_path = tmp_path / "residue_decisions.jsonl"
+    client = _CountingScriptedClient(json.dumps({"matches": []}))
+
+    result = run_residue_sample(
+        targets,
+        positions,
+        {},
+        client=client,
+        decisions_path=decisions_path,
+        encode=_hashing_encode,
+        modes=("unblocked",),
+        workers=8,
+    )["unblocked"]
+
+    assert result.calls_made == 30
+    assert client.call_count == 30
+    decided = load_decisions(decisions_path)
+    assert len(decided) == 30  # one line per target, no duplicate/dropped keys
+
+
+def test_threaded_run_preserves_records_in_target_order(tmp_path: Path) -> None:
+    positions = [{"position_id": "pos-0001", "argument": "states extract resources"}]
+    targets = _many_targets(20)
+    decisions_path = tmp_path / "residue_decisions.jsonl"
+    client = _CountingScriptedClient(json.dumps({"matches": []}))
+
+    result = run_residue_sample(
+        targets,
+        positions,
+        {},
+        client=client,
+        decisions_path=decisions_path,
+        encode=_hashing_encode,
+        modes=("unblocked",),
+        workers=8,
+    )["unblocked"]
+
+    assert [record["chunk_id"] for record in result.records] == [t.chunk_id for t in targets]
+
+
+def test_a_threaded_resume_reasks_nothing_already_decided(tmp_path: Path) -> None:
+    """Mirrors the shipped sample's own live demonstration (issue #651,
+    `data/logs/2026-08-04-651-residue-sample/`): a run interrupted after
+    some targets were decided resumes and re-asks zero of them, even with
+    several worker threads racing to check the decision log at once."""
+    positions = [{"position_id": "pos-0001", "argument": "states extract resources"}]
+    targets = _many_targets(40)
+    decisions_path = tmp_path / "residue_decisions.jsonl"
+    client = _CountingScriptedClient(json.dumps({"matches": []}))
+
+    # Simulate a run that was killed partway: decide the first half only.
+    first_half = run_residue_sample(
+        targets[:20],
+        positions,
+        {},
+        client=client,
+        decisions_path=decisions_path,
+        encode=_hashing_encode,
+        modes=("unblocked",),
+        workers=8,
+    )["unblocked"]
+    assert first_half.calls_made == 20
+    calls_before_resume = client.call_count
+
+    # Resume over the FULL target list with a different worker count.
+    resumed = run_residue_sample(
+        targets,
+        positions,
+        {},
+        client=client,
+        decisions_path=decisions_path,
+        encode=_hashing_encode,
+        modes=("unblocked",),
+        workers=5,
+    )["unblocked"]
+
+    assert resumed.calls_reused == 20
+    assert resumed.calls_made == 20
+    assert client.call_count == calls_before_resume + 20  # exactly the new half
+    assert len(load_decisions(decisions_path)) == 40
+
+
+def test_workers_default_matches_argmap_build(tmp_path: Path) -> None:
+    # Issue #651: "default worker count should match what this repo already
+    # uses elsewhere" -- the same I/O-bound call shape
+    # `axial.argmap.build.run_extraction` already tuned.
+    from axial.argmap.build import WORKERS as BUILD_WORKERS
+
+    from axial.argmap.residue import WORKERS as RESIDUE_WORKERS
+
+    assert RESIDUE_WORKERS == BUILD_WORKERS
 
 
 def test_mode_result_reports_are_separated_per_mode(tmp_path: Path) -> None:

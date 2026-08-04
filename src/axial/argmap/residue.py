@@ -71,13 +71,13 @@ not a live set (issue #486): a target's row does not move when the
 underlying map or corpus does; a corpus or map rebuild is a new call under
 a new key, never a silent overwrite of the old one.
 
-**What this module does not do (scoped, on purpose).** It answers "does
-target X match position Y", nothing else. Writing a resolved edge back into
-the store (`axial.query.store.note_arguing_against.resolved_canonical`, or
-a sibling column keyed on `position_id`) is out of scope for this slice --
-`resolve_target`'s decision record already carries everything that write
-needs (`chunk_id`, `target`, `matches`), so that step is adding a
-materialize-time read of this log, not a new resolution mechanism.
+**What this module does not do.** It answers "does target X match position
+Y" and appends the answer to `decisions_path`, nothing else -- it never
+opens `notes.db` and never writes a store row. `axial.materialize.
+build_note_store` is what folds this log into `axial.query.store.
+note_opposed_position` (issue #651's own scoping, carried through to that
+table): a materialize-time read of `resolve_target`'s already-complete
+decision record, not a second resolution mechanism.
 """
 
 from __future__ import annotations
@@ -85,6 +85,7 @@ from __future__ import annotations
 import hashlib
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -92,11 +93,23 @@ from typing import Any, Callable, Sequence
 import httpx
 import numpy as np
 
+from axial.argmap.ask import _load_map
+from axial.argmap.build import WORKERS as BUILD_WORKERS
+from axial.argmap.build import _default_encoder, compute_corpus_pin
 from axial.checkpoint import append_checkpoint_record, load_checkpoint_records
-from axial.llm import LLMClient, LLMError, estimate_cost
+from axial.envelope import _default_envelopes_dir
+from axial.interrogate import _default_answers_dir
+from axial.llm import LLMClient, LLMError, estimate_cost, get_client
 from axial.materialize import _resolve_target, _target_phrase_index
 from axial.model_json import ModelJsonError, parse_model_json
 from axial.names import load_answer_records
+from axial.paths import (
+    DEFAULT_PIPELINE_CONFIG_PATH,
+    default_map_dir,
+    default_names_dir,
+    default_sources_dir,
+)
+from axial.pidguard import claim_single_instance
 from axial.query.names import _build_name_layer, as_string_list
 from axial.query.reader import is_abstention
 
@@ -420,6 +433,14 @@ class ModeResult:
     records: list[dict[str, Any]] = field(default_factory=list)
 
 
+# Concurrent residue-resolve workers (issue #651 follow-up): the same
+# I/O-bound shape (one blind completion call per unit of work, nothing else
+# to overlap) `axial.argmap.build.run_extraction` already measured ~20x on
+# the real corpus at this worker count -- reused directly rather than a
+# second tuned number for what is the same call pattern.
+WORKERS = BUILD_WORKERS
+
+
 def run_residue_sample(
     targets: Sequence[UnresolvedTarget],
     positions: Sequence[dict[str, Any]],
@@ -430,6 +451,7 @@ def run_residue_sample(
     encode: Encoder,
     modes: Sequence[str] = ("blocked", "unblocked"),
     top_k: int = CANDIDATE_TOP_K,
+    workers: int = WORKERS,
     log: Callable[[str], None] = print,
 ) -> dict[str, ModeResult]:
     """Run `targets` through both blocking arms (or whichever `modes`
@@ -442,7 +464,33 @@ def run_residue_sample(
     `positions` is turned into `positions_by_id`, `section_index`, and
     `embed_positions`'s own precomputed embedding map once, shared by both
     arms -- building any of them per-arm would double the setup cost for no
-    different result, since none depends on `mode`."""
+    different result, since none depends on `mode`.
+
+    **Threaded within a mode, sequential across modes** (issue #651 follow-
+    up): candidate selection (local encoder, no network) for every target in
+    a mode is done up front on this thread, in target order; only the actual
+    paid calls run concurrently (`workers`), through a `ThreadPoolExecutor`
+    with every checkpoint write happening back on this one collecting
+    thread -- the same pattern `axial.argmap.build.run_extraction` already
+    uses, so a mid-run kill can never race two threads onto the same
+    decision-log line. Modes stay sequential at the outer loop specifically
+    so the second mode's resume check sees every decision the first mode's
+    run just wrote -- the founder's own observation that the two arms
+    "naturally share a decision" whenever they land on the same candidate
+    set depends on that ordering, not on running both arms at once.
+
+    Records are re-assembled in `targets`' own order once the pool drains,
+    not completion order, so a caller reading `ModeResult.records` sees the
+    same sequence regardless of worker count or network timing. **One
+    intentional gap:** two different targets that happen to render the
+    identical prompt (same text, same candidate set) can each fire their own
+    paid call if both are still pending when the pool starts, since neither
+    thread sees the other's in-flight key -- a resumed run then dedupes
+    correctly, because only the content on disk matters, but this run may
+    pay for one extra, unnecessary call. Coordinating that across threads
+    was not worth the added lock for a case this rare (no target pair in the
+    #651 sample or from `find_unresolved_targets`'s own per-note dedup ever
+    produced one)."""
     positions_by_id = {position["position_id"]: position for position in positions}
     section_index = build_section_index(positions, chunk_sections)
     position_vectors = embed_positions(positions, encode)
@@ -452,33 +500,67 @@ def run_residue_sample(
     for mode in modes:
         pass_name = f"{PASS_NAME}_{mode}"
         started = time.monotonic()
-        calls_made = 0
-        calls_reused = 0
-        resolved = 0
-        records: list[dict[str, Any]] = []
-        for target in targets:
-            candidates = select_candidates(
+
+        prepared = [
+            (
                 target,
-                positions_by_id,
-                section_index,
-                position_vectors,
-                encode,
-                use_section_blocking=(mode == "blocked"),
-                top_k=top_k,
+                select_candidates(
+                    target,
+                    positions_by_id,
+                    section_index,
+                    position_vectors,
+                    encode,
+                    use_section_blocking=(mode == "blocked"),
+                    top_k=top_k,
+                ),
             )
-            prompt = render_residue_prompt(target.target, candidates)
-            key = decision_key(prompt)
+            for target in targets
+        ]
+        keys = [
+            decision_key(render_residue_prompt(target.target, candidates))
+            for target, candidates in prepared
+        ]
+
+        records: list[dict[str, Any] | None] = [None] * len(prepared)
+        calls_reused = 0
+        pending: list[int] = []
+        for index, key in enumerate(keys):
             if key in decisions:
-                record = decisions[key]
+                records[index] = decisions[key]
                 calls_reused += 1
             else:
-                record = resolve_target(target, candidates, client, mode=mode, pass_name=pass_name)
-                append_checkpoint_record(decisions_path, record)
-                decisions[key] = record
-                calls_made += 1
-            records.append(record)
-            if record.get("matches"):
-                resolved += 1
+                pending.append(index)
+
+        calls_made = 0
+        if pending:
+            log(f"{mode}: {len(pending)} call(s) to make this run ({calls_reused} reused)")
+            with ThreadPoolExecutor(max_workers=max(workers, 1)) as pool:
+                futures = {
+                    pool.submit(
+                        resolve_target,
+                        prepared[index][0],
+                        prepared[index][1],
+                        client,
+                        mode=mode,
+                        pass_name=pass_name,
+                    ): index
+                    for index in pending
+                }
+                completed = 0
+                for future in as_completed(futures):
+                    index = futures[future]
+                    record = future.result()
+                    append_checkpoint_record(decisions_path, record)
+                    decisions[record["key"]] = record
+                    records[index] = record
+                    calls_made += 1
+                    completed += 1
+                    log(
+                        f"  {mode}: resolved {completed}/{len(pending)} "
+                        f"(chunk {record['chunk_id']})"
+                    )
+
+        resolved = sum(1 for record in records if record and record.get("matches"))
         usage = client.usage_for_pass(pass_name) or {}
         results[mode] = ModeResult(
             mode=mode,
@@ -489,7 +571,7 @@ def run_residue_sample(
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
             wall_time_sec=time.monotonic() - started,
-            records=records,
+            records=[record for record in records if record is not None],
         )
         log(
             f"{mode}: {resolved}/{len(targets)} resolved "
@@ -505,3 +587,115 @@ def mode_cost(client: LLMClient, result: ModeResult) -> float | None:
     `axial.llm.estimate_cost` itself gives an unpriced model."""
     model = client.model_for_pass(f"{PASS_NAME}_{result.mode}")
     return estimate_cost(model, result.prompt_tokens, result.completion_tokens)
+
+
+def run_residue_pass(
+    *,
+    answers_dir: Path | None = None,
+    names_dir: Path | None = None,
+    map_dir: Path | None = None,
+    envelopes_dir: Path | None = None,
+    sources_dir: Path | None = None,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    client: LLMClient | None = None,
+    encode: Encoder | None = None,
+    pin: str | None = None,
+    modes: Sequence[str] = ("blocked", "unblocked"),
+    workers: int = WORKERS,
+    guard: bool = True,
+    log: Callable[[str], None] = print,
+) -> dict[str, Any]:
+    """`axial map residue` (issue #651): the full-corpus counterpart to
+    `run_residue_sample`'s own calibration run -- every unresolved
+    `arguing_against` target (`find_unresolved_targets`), both blocking
+    arms, threaded (`run_residue_sample`'s own `workers`).
+
+    Requires an argument map already built at this corpus's pin
+    (`axial map build` first) -- `positions.jsonl` is the target set this
+    pass matches against, and this pass writes its own decision log,
+    `residue_decisions.jsonl`, as a SIBLING of it in the same `<map_dir>/
+    <pin>/` directory, on purpose: `axial.materialize.build_note_store`
+    derives `positions.jsonl`'s path from `residue_decisions_path` alone, so
+    a caller never has to pass two paths that must always agree. Raises
+    `MapNotBuiltError` (reused from `axial.argmap.ask`, not redefined here)
+    when no map exists at this pin.
+
+    `pin` defaults to `compute_corpus_pin(envelopes_dir, sources_dir)` -- the
+    same pin `axial map build` writes under. `client`/`encode` default to
+    `axial.llm.get_client()` and the real MiniLM encoder; both are injection
+    seams for tests, the same shape every other `run_*` function in this
+    codebase exposes.
+
+    `guard` (default on) claims `<outdir>/RUNNING.pid`
+    (`axial.pidguard.claim_single_instance`) for the run's duration -- the
+    same lock `axial map build` takes over the identical directory, so a
+    build and a residue pass can never write `positions.jsonl`/
+    `residue_decisions.jsonl` out from under each other."""
+    if answers_dir is None:
+        answers_dir = _default_answers_dir(config_path)
+    if names_dir is None:
+        names_dir = default_names_dir(config_path)
+    if map_dir is None:
+        map_dir = default_map_dir(config_path)
+    if envelopes_dir is None:
+        envelopes_dir = _default_envelopes_dir(config_path)
+    if sources_dir is None:
+        sources_dir = default_sources_dir(config_path)
+    if pin is None:
+        pin = compute_corpus_pin(envelopes_dir, sources_dir)
+    if client is None:
+        client = get_client(config_path=config_path)
+    if encode is None:
+        encode = _default_encoder()
+
+    outdir = Path(map_dir) / pin
+    positions, _manifest = _load_map(outdir)  # raises MapNotBuiltError
+    if guard:
+        claim_single_instance(outdir)
+    log(f"corpus pin {pin} -> {outdir} | positions {len(positions)}")
+
+    unresolved, chunk_sections = find_unresolved_targets(answers_dir, names_dir)
+    log(f"unresolved arguing_against targets: {len(unresolved)}")
+
+    decisions_path = outdir / "residue_decisions.jsonl"
+    results = run_residue_sample(
+        unresolved,
+        positions,
+        chunk_sections,
+        client=client,
+        decisions_path=decisions_path,
+        encode=encode,
+        modes=modes,
+        workers=workers,
+        log=log,
+    )
+
+    union_resolved = len(
+        {
+            (record["chunk_id"], record["target"])
+            for result in results.values()
+            for record in result.records
+            if record.get("matches")
+        }
+    )
+    if guard:
+        (outdir / "RUNNING.pid").unlink(missing_ok=True)
+
+    return {
+        "pin": pin,
+        "outdir": str(outdir),
+        "decisions_path": str(decisions_path),
+        "positions_count": len(positions),
+        "unresolved_count": len(unresolved),
+        "union_resolved": union_resolved,
+        "modes": {
+            mode: {
+                "resolved": result.resolved,
+                "calls_made": result.calls_made,
+                "calls_reused": result.calls_reused,
+                "wall_time_sec": result.wall_time_sec,
+                "cost_usd": mode_cost(client, result),
+            }
+            for mode, result in results.items()
+        },
+    }

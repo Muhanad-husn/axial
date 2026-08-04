@@ -15,6 +15,8 @@ from axial.argmap.build import MapError
 from axial.argmap.build import PASS_NAME as MAP_BUILD_PASS_NAME
 from axial.argmap.build import WORKERS as MAP_BUILD_DEFAULT_WORKERS
 from axial.argmap.build import run_map_build
+from axial.argmap.residue import WORKERS as MAP_RESIDUE_DEFAULT_WORKERS
+from axial.argmap.residue import run_residue_pass
 from axial.pidguard import AlreadyRunningError
 from axial.analyze import run_examine
 from axial.analyze.synthesis import SynthesisError
@@ -484,7 +486,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    names_subparsers.add_parser(
+    names_materialize_parser = names_subparsers.add_parser(
         "materialize",
         help=(
             "Phase A v1 slice 06 (issue #411): Materialize -- write the vault "
@@ -496,6 +498,18 @@ def build_parser() -> argparse.ArgumentParser:
             "name-page -> note only). Re-running against an unchanged alias map "
             "rewrites nothing; a changed one rewrites only the affected name "
             "pages, never a prose note"
+        ),
+    )
+    names_materialize_parser.add_argument(
+        "--residue-decisions-path",
+        default=None,
+        help=(
+            "issue #651: fold the semantic residue resolver's decision log "
+            "(written by 'axial map residue', e.g. "
+            "data/map/<pin>/residue_decisions.jsonl) into the store's "
+            "note_opposed_position table. positions.jsonl is read from the "
+            "same directory as this file. Omitted (default): that table is "
+            "left empty, exactly as before this table existed"
         ),
     )
 
@@ -621,6 +635,30 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     map_ask_parser.add_argument("brief_path", help="path to a brief YAML file (§7.1)")
+
+    map_residue_parser = map_subparsers.add_parser(
+        "residue",
+        help=(
+            "the semantic residue resolver's full pass (issue #651): every "
+            "arguing_against target the relational join reaches nothing with "
+            "(data/answers/ + the name layer), matched against the pinned "
+            "map's own positions by one model call per target, both blocking "
+            "arms, threaded. Requires a map already built at this pin ('axial "
+            "map build' first); writes residue_decisions.jsonl as a sibling "
+            "of positions.jsonl under the same pinned directory. Fold the "
+            "result into the store with 'axial names materialize "
+            "--residue-decisions-path <that file>'"
+        ),
+    )
+    map_residue_parser.add_argument(
+        "--workers",
+        type=int,
+        default=MAP_RESIDUE_DEFAULT_WORKERS,
+        help=(
+            "bounded concurrent resolve-target workers (this pass is "
+            f"I/O-bound, like 'map build') (default: {MAP_RESIDUE_DEFAULT_WORKERS})"
+        ),
+    )
 
     gold_parser = subparsers.add_parser("gold", help="gold-set (Academic labeling) operations")
     gold_subparsers = gold_parser.add_subparsers(dest="gold_command")
@@ -2825,9 +2863,11 @@ def _names_merge(
     return 0
 
 
-def _names_materialize() -> int:
+def _names_materialize(residue_decisions_path: str | None = None) -> int:
     try:
-        result = run_materialize()
+        result = run_materialize(
+            residue_decisions_path=Path(residue_decisions_path) if residue_decisions_path else None
+        )
     except MaterializeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -2848,6 +2888,7 @@ def _names_materialize() -> int:
         "store_note_names",
         "store_note_arguing_against",
         "store_note_citations",
+        "store_note_opposed_position",
     ):
         print(f"{key}: {result[key]}")
     return 0
@@ -3031,6 +3072,57 @@ def _map_ask(brief_path: str) -> int:
             f"{'+'.join(position.authors)}: {position.argument}"
         )
     _print_encoding_safe("\n".join(lines))
+    return 0
+
+
+def _map_residue(*, workers: int = MAP_RESIDUE_DEFAULT_WORKERS) -> int:
+    """`axial map residue` (issue #651): run the semantic residue resolver's
+    full pass -- every unresolved `arguing_against` target, both blocking
+    arms, threaded -- and print the union resolution rate and cost per arm.
+    Requires a map already built at this corpus's pin (`axial map build`
+    first, `MapNotBuiltError` otherwise); refuses a second concurrent copy
+    over the same pinned directory (`AlreadyRunningError`)."""
+    with run_context("map-residue") as run:
+        start = time.monotonic()
+
+        def _tee(message: str) -> None:
+            print(message, flush=True)
+            run.logger.info(message)
+
+        try:
+            manifest = run_residue_pass(workers=workers, log=_tee)
+        except (AskError, AlreadyRunningError, LLMError) as exc:
+            run.record(
+                source_id="",
+                pass_name="residue_resolve",
+                model=None,
+                status="error",
+                duration_sec=time.monotonic() - start,
+                error=str(exc),
+            )
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        run.record(
+            source_id=manifest["pin"],
+            pass_name="residue_resolve",
+            model=None,
+            status="ok",
+            duration_sec=time.monotonic() - start,
+            error=None,
+        )
+
+    print(f"pin: {manifest['pin']}")
+    print(f"decisions_path: {manifest['decisions_path']}")
+    print(f"positions: {manifest['positions_count']}")
+    print(f"unresolved targets: {manifest['unresolved_count']}")
+    print(f"resolved (union of both arms): {manifest['union_resolved']}")
+    for mode, stats in manifest["modes"].items():
+        cost = f"${stats['cost_usd']:.4f}" if stats["cost_usd"] is not None else "unpriced"
+        print(
+            f"  {mode}: resolved {stats['resolved']} | calls made {stats['calls_made']} | "
+            f"reused {stats['calls_reused']} | {stats['wall_time_sec']:.1f}s | cost {cost}"
+        )
     return 0
 
 
@@ -3348,7 +3440,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.command == "names" and args.names_command == "materialize":
-        return _names_materialize()
+        return _names_materialize(args.residue_decisions_path)
 
     if args.command == "names" and args.names_command == "gather":
         return _names_gather(args.limit, args.workers)
@@ -3361,6 +3453,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "map" and args.map_command == "ask":
         return _map_ask(args.brief_path)
+
+    if args.command == "map" and args.map_command == "residue":
+        return _map_residue(workers=args.workers)
 
     if args.command == "artifacts":
         return _artifacts(args.source_path)
