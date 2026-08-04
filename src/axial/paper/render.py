@@ -31,6 +31,7 @@ Venue, length and house style are Phase D (§3).
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from axial.paper.biblio import BIB_FIELDS, format_field
@@ -47,6 +48,30 @@ def _title(record: dict[str, Any]) -> str:
 def _sections(record: dict[str, Any]) -> list[dict[str, Any]]:
     plan = record.get("plan") or {}
     return [section for section in (plan.get("sections") or []) if isinstance(section, dict)]
+
+
+_LEADING_HEADING_RE = re.compile(r"^\s*(?:#{1,6}\s+)(.*\S)\s*\n?")
+
+
+def _drop_restated_heading(prose: str, heading: Any) -> str:
+    """Strip a leading markdown heading line from `prose` when it merely
+    restates the section's own heading the renderer is about to emit.
+
+    The drafting model sometimes opens a section's prose with its own
+    `## <heading>` line, duplicating the one `render_paper` prepends. Only a
+    heading that normalises (whitespace, case) to the same text as the
+    section's own heading is stripped; a prose that opens with a *different*
+    heading is left untouched.
+    """
+    match = _LEADING_HEADING_RE.match(prose)
+    if not match:
+        return prose
+    found = " ".join(match.group(1).split()).casefold()
+    expected = " ".join(str(heading or "").split()).casefold()
+    if not expected or found != expected:
+        return prose
+    rest = prose[match.end() :]
+    return rest.lstrip("\n")
 
 
 def _prose_by_section(record: dict[str, Any]) -> dict[str, str]:
@@ -232,9 +257,11 @@ def render_paper(record: dict[str, Any]) -> str:
         lines.extend([str(thesis_statement), ""])
 
     for section in _sections(record):
-        lines.append(f"## {section.get('heading')}")
+        heading = section.get("heading")
+        lines.append(f"## {heading}")
         lines.append("")
-        lines.append(prose.get(str(section.get("section_id")), ""))
+        section_prose = prose.get(str(section.get("section_id")), "")
+        lines.append(_drop_restated_heading(section_prose, heading))
         lines.append("")
 
     lines.extend(_render_counter_position(record))
