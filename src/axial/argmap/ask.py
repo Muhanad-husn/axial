@@ -72,7 +72,7 @@ from axial.llm import LLMClient, LLMError, get_client
 from axial.model_json import ModelJsonError, parse_model_json
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_map_dir, default_sources_dir
 from axial.query.reader import MalformedChunkIdError, source_id_from_chunk_id
-from axial.query.relations import chunk_ids_for_name
+from axial.query.relations import Resolution, chunk_ids_for_name
 
 # The pass name `config/pipeline.yaml`'s `llm.reasoning_by_pass` keys off of.
 DECOMPOSE_PASS_NAME = "brief_decompose"
@@ -471,7 +471,7 @@ def positions_on(
     map_dir: Path | None,
     vault_dir: Path | None = None,
     names_dir: Path | None = None,
-) -> tuple[list[MatchedPosition], list[str], int]:
+) -> tuple[list[MatchedPosition], list[str], int, Resolution | None]:
     """The argument map's positions that a given name reaches, as a
     retrieval target in the §7.5 tool loop (issue #650, DEC-62).
 
@@ -486,7 +486,12 @@ def positions_on(
     `chunk_id` with no encoder, no decompose call and no rebuild. The name
     is a FILTER on positions, exactly as it is a filter on notes elsewhere.
 
-    Returns `(positions, chunk_ids, total)`. `chunk_ids` is assembled by
+    Returns `(positions, chunk_ids, total, resolution)`. `resolution` is
+    what `name` resolved to (`axial.query.relations.resolve_name`, the same
+    tiers `find_names` uses since issue #650's own follow-up), so an empty
+    result can say whether the phrase reached a name at all; it is `None`
+    when no resolution was attempted, which is what "this corpus has no
+    argument map" means. `chunk_ids` is assembled by
     `assemble_map_evidence` -- one id per position per rotation, each
     position's own ids spread across its sources -- capped at `limit`, and
     `total` is the true pre-cap count of distinct ids across every matched
@@ -501,17 +506,17 @@ def positions_on(
 
     Empty is a real answer: no map built at `map_dir` (or `map_dir` `None`),
     no store in the vault, or a name no position's passages carry, all
-    return `([], [], 0)` rather than raising."""
+    return an empty result rather than raising."""
     if map_dir is None:
-        return [], [], 0
+        return [], [], 0, None
     try:
         positions, _manifest = _load_map(Path(map_dir))
     except MapNotBuiltError:
-        return [], [], 0
+        return [], [], 0, None
 
-    members = chunk_ids_for_name(name, vault_dir=vault_dir, names_dir=names_dir)
+    members, resolution = chunk_ids_for_name(name, vault_dir=vault_dir, names_dir=names_dir)
     if not members:
-        return [], [], 0
+        return [], [], 0, resolution
 
     matched: list[MatchedPosition] = []
     for position in positions:
@@ -535,7 +540,7 @@ def positions_on(
     assembled = assemble_map_evidence(matched, cap=limit)
     reached = set(assembled)
     contributing = [p for p in matched if reached.intersection(p.chunk_ids)]
-    return contributing, assembled, total
+    return contributing, assembled, total, resolution
 
 
 def resolve_pinned_map_dir(

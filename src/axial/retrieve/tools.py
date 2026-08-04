@@ -103,6 +103,17 @@ now ALSO persisted onto the §7.6 trajectory entry itself
 (`axial.retrieve.loop.run_retrieval_loop`, issue #493) -- see that module
 for why the record needed them, not only the next turn's prompt.
 
+**The four store-backed tools of issue #650 also say what their name
+argument RESOLVED TO** (`_resolution_detail`), which is the half of a
+result `_note_span_detail` and the rest cannot describe: they say what came
+back, and an empty result's only remaining fact is what was looked for. A
+live paired run measured a model asking `find_notes(about="violence against
+civilians Syria")` six times in a row against a bare `0/0` -- 25 of 42
+steps returned zero because a descriptive phrase never became a name -- and
+the run had no way to see that from the result. Loop-side memory of "you
+already asked this" is NOT the fix and is not built here: #633 measured it
+and repeats rose (14% -> 20%).
+
 **A live corpus run measured why `get_name`/`where_names_meet` need this
 too, not just `find_names` (issue #517's own follow-up).** A model told to
 call `where_names_meet` only on a "large" resolved name avoided it entirely
@@ -426,6 +437,73 @@ def _where_names_meet(
     return ids, len(ids), total, _source_span_detail(members)
 
 
+def _resolution_detail(resolution: relations.Resolution | None) -> str | None:
+    """What a store-backed tool's name argument resolved to, for the four
+    tools of issue #650, and the other names that phrase also reaches.
+
+    **A zero result must say what it tried (issue #650's own follow-up).**
+    The live paired run measured a model asking
+    `find_notes(about="violence against civilians Syria")` six times in a
+    row against a bare `0/0`: the phrase never became a name, and nothing in
+    the result said so, so re-asking the same words was the only move it
+    had. `_note_span_detail` and the position/pair details below describe
+    what came BACK; this describes what was LOOKED FOR, which is the half
+    an empty result has left.
+
+    **The alternatives are stated on a NON-empty result too, and that is
+    the case that needs them most.** Re-measured against the live store
+    after the resolver was widened: `violence against civilians Syria` now
+    reaches `Filipino civilians` -- one note -- because `find_names` orders
+    a compound query's words rarest-first (#632), which is right for a
+    slate a model picks from and wrong for a head taken automatically. One
+    note is not a zero, so it does not look like a failure; `Syria` and
+    `violence` sat third and second in the same slate, unshown. A thin
+    answer to the wrong door is worse than an honest zero, and the fix is
+    to show the slate, not to re-rank it -- size-ranking a
+    relevance-filtered set was measured to drift to hubs (#632, PR #522).
+
+    Silent in the two cases where it would only add noise: `resolution`
+    `None` (no store, or no argument map -- no resolution was attempted and
+    saying "nothing matched" would be a lie), and a phrase that resolved
+    exactly to itself, where naming the resolution repeats the caller's own
+    argument back at it."""
+    if resolution is None:
+        return None
+    parts: list[str] = []
+    if not resolution.resolved:
+        parts.append(
+            f"{resolution.surface!r} matched no name this corpus carries -- "
+            "the phrase itself and each of its words were tried"
+        )
+    elif resolution.canonical != resolution.surface:
+        hit = resolution.slate[0] if resolution.slate else None
+        tier = hit.tier if hit is not None else resolution.tier
+        counts = (
+            f", member_count={hit.member_count}, source_count={hit.source_count}"
+            if hit is not None
+            else ""
+        )
+        parts.append(
+            f"{resolution.surface!r} resolved to {resolution.canonical!r} (tier={tier}{counts})"
+        )
+    if len(resolution.slate) > 1:
+        parts.append(
+            "other names this phrase reaches: "
+            + ", ".join(
+                f"{hit.canonical} (member_count={hit.member_count}, "
+                f"source_count={hit.source_count})"
+                for hit in resolution.slate[1:]
+            )
+        )
+    return "; ".join(parts) or None
+
+
+def _joined(*parts: str | None) -> str | None:
+    """The non-`None` `detail` parts of one tool result, joined -- a tool
+    that both resolved a phrase and found something says both."""
+    return "; ".join(part for part in parts if part) or None
+
+
 def _note_span_detail(rows: list[relations.NoteRow]) -> str | None:
     """`find_notes`' own `detail`: the same `"<N> notes across <M> sources"`
     span `_source_span_detail` gives a name page, plus the DISTINCT stated
@@ -452,7 +530,7 @@ def _find_notes(
     names_dir: Path | None,
     _map_dir: Path | None,
 ) -> tuple[list[str], int, int | None, str | None]:
-    rows, total = relations.find_notes(
+    rows, total, resolution = relations.find_notes(
         args["about"],
         args.get("limit", names.DEFAULT_LIMIT),
         opposing=args.get("opposing"),
@@ -462,7 +540,11 @@ def _find_notes(
         names_dir=names_dir,
     )
     ids = [row.chunk_id for row in rows]
-    return ids, len(ids), total, _note_span_detail(rows)
+    detail = _joined(
+        _resolution_detail(resolution),
+        _note_span_detail(rows),
+    )
+    return ids, len(ids), total, detail
 
 
 def _names_arguing_against(
@@ -472,20 +554,20 @@ def _names_arguing_against(
     names_dir: Path | None,
     _map_dir: Path | None,
 ) -> tuple[list[str], int, int | None, str | None]:
-    rows, total = relations.names_arguing_against(
+    rows, total, resolution = relations.names_arguing_against(
         args["target"],
         args.get("limit", names.DEFAULT_LIMIT),
         vault_dir=vault_dir,
         names_dir=names_dir,
     )
     canonicals = [row.canonical for row in rows]
-    detail = (
+    detail = _joined(
+        _resolution_detail(resolution),
         "; ".join(
             f"{row.canonical} (kind={row.kind}, note_count={row.note_count}, "
             f"source_count={row.source_count})"
             for row in rows
-        )
-        or None
+        ),
     )
     return canonicals, len(canonicals), total, detail
 
@@ -500,19 +582,19 @@ def _opposition_pairs(
     """The opposition edge itself. `detail` states which returned id opposes
     which -- the pairing is the whole result, and `result_ids` alone is a
     flat list that cannot say which end of which edge an id is."""
-    pairs, ids, total = relations.opposition_pairs(
+    pairs, ids, total, resolution = relations.opposition_pairs(
         args["canonical"],
         args.get("limit", names.DEFAULT_LIMIT),
         vault_dir=vault_dir,
         names_dir=names_dir,
     )
-    detail = (
+    detail = _joined(
+        _resolution_detail(resolution),
         "; ".join(
             f"{pair.opposing_chunk_id} argues against {pair.target!r} -> "
             f"{pair.about_chunk_id} ({pair.about_source_id})"
             for pair in pairs
-        )
-        or None
+        ),
     )
     return ids, len(ids), total, detail
 
@@ -536,21 +618,21 @@ def _positions_on(
     dependency no tool here uses. The map's positions are plain JSON."""
     from axial.argmap.ask import positions_on
 
-    positions, ids, total = positions_on(
+    positions, ids, total, resolution = positions_on(
         args["name"],
         args.get("limit", names.DEFAULT_LIMIT),
         map_dir=map_dir,
         vault_dir=vault_dir,
         names_dir=names_dir,
     )
-    detail = (
+    detail = _joined(
+        _resolution_detail(resolution),
         "; ".join(
             f"{position.position_id} ({position.size} passages across "
             f"{len(position.sources)} sources, {position.matched_note_count} naming it): "
             f"{position.argument}"
             for position in positions
-        )
-        or None
+        ),
     )
     return ids, len(ids), total, detail
 
@@ -561,8 +643,10 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         description=(
             "The notes themselves, filtered. Every prose note whose own names answer "
             "carries `about` (a concept, scholar, work, place or period -- written "
-            "however you like; it is resolved through the corpus's own alias and "
-            "spelling variants first, so 'Tilly' reaches 'Charles Tilly'), narrowed by "
+            "however you like, a phrase or a name; it is resolved against the names the "
+            "corpus carries first, so 'Tilly' reaches 'Charles Tilly' and a descriptive "
+            "phrase reaches the closest name it contains, which the result names), "
+            "narrowed by "
             "any of: `opposing`, keeping only notes from sources that argue against "
             "that name somewhere -- 'positions on X held by authors who disagree with "
             "Y'; `published_after` / `published_before`, keeping only sources published "

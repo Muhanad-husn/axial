@@ -23,12 +23,33 @@ about.
 
 **The note is the destination; a name, a year and a source are filters on
 it.** Every function here starts from `notes` and narrows, which is why a
-name argument is resolved through the alias/fold layer
-(`canonical_name_for_surface`) before it is matched -- a caller writes
-`Tilly` and reaches `Charles Tilly` without spending a turn on `find_names`
-first. A surface the layer does not carry is used verbatim, the same
-fallback `axial.query.names.where_names_meet` already applies, so a vault
-whose `data/names/` is absent still queries its own store.
+name argument is resolved (`resolve_name`) before it is matched -- a caller
+writes `Tilly` and reaches `Charles Tilly` without spending a turn on
+`find_names` first.
+
+**A name argument is resolved through the SAME tiers `find_names` uses, not
+the exact ones alone (issue #650's own follow-up, measured live).** The
+first version of this module resolved through `canonical_name_for_surface`
+-- exact, alias, fold -- and used the raw surface when all three missed,
+which matches no `note_names` row at all. Over 42 steps of a paired live
+run, 25 returned a bare `0/0` against 1 of 42 on the old surface: every
+descriptive phrase a model actually writes (`nationalism and war`,
+`violence against civilians Syria`, asked six times in a row) died there,
+while `find_names` resolved the same phrases fine, because it also carries
+the `contains` route, the compound-word fallback and the embedding tier.
+`resolve_name` tries the three exact tiers first -- an exact canonical must
+never be traded for a bigger same-family door -- and falls back to the door
+slate, keeping the rest of that slate so a caller can say what else the
+phrase reaches. A phrase no route resolves is still used verbatim, the same
+fallback `where_names_meet` applies, so a vault whose `data/names/` is
+absent still queries its own store.
+
+**Every query returns its own `Resolution` beside its rows**, because a
+zero result that cannot say what it looked for reads as "the corpus has
+nothing" when it means "the phrase never became a name". Re-asking is what
+that costs: #633 measured that telling the loop it had already asked a
+question does NOT stop the repeat (14% -> 20%), so the feedback belongs on
+the tool's own result, and this is where it comes from.
 
 **The opposition join is the conservative one and nothing here loosens
 it.** `note_arguing_against.resolved_canonical` is written by
@@ -64,7 +85,13 @@ from typing import Any
 
 from axial.paths import default_vault_dir
 from axial.query import store as note_store
-from axial.query.names import DEFAULT_LIMIT, canonical_name_for_surface
+from axial.query.names import (
+    DEFAULT_LIMIT,
+    TIER_EXACT,
+    NameHit,
+    canonical_name_for_surface,
+    find_names,
+)
 
 
 @dataclass(frozen=True)
@@ -110,21 +137,73 @@ class OppositionPair:
     about_source_id: str
 
 
+@dataclass(frozen=True)
+class Resolution:
+    """What a name argument resolved to, and what else it could have.
+
+    `canonical` is the string actually matched against the store --
+    `surface` itself when nothing resolved, which is the honest verbatim
+    fallback, not a claim that the corpus carries it. `tier` is which route
+    answered (`exact` covers all three exact tiers, then `find_names`' own
+    `contains`/`word`/`embedding`), and `None` means no route did. `slate`
+    is the door slate `find_names` returned, its first entry being the one
+    chosen -- empty on the exact path, which needs no alternatives, and on a
+    phrase nothing reached, which has none."""
+
+    surface: str
+    canonical: str
+    tier: str | None
+    slate: tuple[NameHit, ...] = ()
+
+    @property
+    def resolved(self) -> bool:
+        return self.tier is not None
+
+
+def _vault(vault_dir: Path | None) -> Path:
+    return vault_dir if vault_dir is not None else default_vault_dir()
+
+
 def _connect(vault_dir: Path | None) -> sqlite3.Connection | None:
     """A read-only connection to the vault's store, or `None` when the vault
     has none -- `vault_dir` resolved the same way every other `axial.query`
     default is (`axial.paths.default_vault_dir`) when the caller passed
     none."""
-    return note_store.connect(vault_dir if vault_dir is not None else default_vault_dir())
+    return note_store.connect(_vault(vault_dir))
 
 
-def _resolve(surface: str, names_dir: Path | None) -> str:
-    """`surface` as a canonical name, through the alias map's three exact
-    tiers, or `surface` itself when the layer carries no such name -- the
-    same `or canonical` fallback `where_names_meet` already applies, so a
-    store whose vault has no `data/names/` beside it still matches its own
-    `note_names` rows."""
-    return canonical_name_for_surface(surface, names_dir=names_dir) or surface
+def resolve_name(
+    surface: str,
+    *,
+    vault_dir: Path | None = None,
+    names_dir: Path | None = None,
+    limit: int = DEFAULT_LIMIT,
+) -> Resolution:
+    """`surface` as a name the store can match, through the same tiers
+    `find_names` resolves a door with -- see the module docstring for the
+    live measurement that made the exact tiers alone insufficient.
+
+    The three exact tiers (`canonical_name_for_surface`) are tried first and
+    win outright: `find_names` deliberately ranks a bigger same-family door
+    ahead of a narrow exact hit (issue #632 -- `French Mandate`, 55 notes,
+    over `Mandate`, 3), which is right for a slate offered to a model and
+    wrong for a filter a caller already named exactly. Only when all three
+    miss does the door slate answer, and its head becomes the canonical:
+    that head is the same door `find_names` would have offered first, so a
+    model that asks `find_notes` directly reaches what a `find_names` turn
+    in front of it would have found.
+
+    A phrase no route resolves comes back with `tier=None` and `canonical`
+    left as the surface -- queried verbatim, so a store with no `data/names/`
+    beside it still matches its own rows, and a caller can tell the
+    difference and say so."""
+    canonical = canonical_name_for_surface(surface, names_dir=names_dir)
+    if canonical is not None:
+        return Resolution(surface, canonical, TIER_EXACT)
+    slate = find_names(surface, limit, names_dir=names_dir, vault_dir=_vault(vault_dir))
+    if not slate:
+        return Resolution(surface, surface, None)
+    return Resolution(surface, slate[0].canonical, slate[0].tier, tuple(slate))
 
 
 def _spread_by_source(keyed: list[tuple[str, Any]]) -> list[Any]:
@@ -165,9 +244,10 @@ def find_notes(
     published_before: int | None = None,
     vault_dir: Path | None = None,
     names_dir: Path | None = None,
-) -> tuple[list[NoteRow], int]:
+) -> tuple[list[NoteRow], int, Resolution | None]:
     """The notes whose own `names` answer carries `about`, narrowed by any
-    of three filters, plus `total` -- the true pre-cap count.
+    of three filters, plus `total` -- the true pre-cap count -- and the
+    `Resolution` `about` went through.
 
     - `opposing`: keep only notes from sources that argue against this name
       somewhere in their own interrogation answers. "Positions on X held by
@@ -182,11 +262,14 @@ def find_notes(
       which is why "claims about X made only by sources published after Z"
       had no answer on the door layer.
 
-    Both name arguments are resolved through the alias/fold layer first.
-    Empty is a real answer; a vault with no store returns `([], 0)`."""
+    Both name arguments are resolved by `resolve_name`. Empty is a real
+    answer; a vault with no store returns `([], 0, None)` -- a `None`
+    resolution, because with no store to match against none was attempted,
+    which is a different fact from a phrase that resolved to nothing."""
     connection = _connect(vault_dir)
     if connection is None:
-        return [], 0
+        return [], 0, None
+    resolution = resolve_name(about, vault_dir=vault_dir, names_dir=names_dir)
     try:
         sql = [
             "SELECT DISTINCT n.chunk_id, n.source_id, s.author, s.year, n.claim, n.position",
@@ -195,13 +278,15 @@ def find_notes(
             "LEFT JOIN sources s ON s.source_id = n.source_id",
             "WHERE nn.canonical = ?",
         ]
-        params: list[Any] = [_resolve(about, names_dir)]
+        params: list[Any] = [resolution.canonical]
         if opposing is not None:
             sql.append(
                 "AND n.source_id IN (SELECT source_id FROM note_arguing_against "
                 "WHERE resolved_canonical = ?)"
             )
-            params.append(_resolve(opposing, names_dir))
+            params.append(
+                resolve_name(opposing, vault_dir=vault_dir, names_dir=names_dir).canonical
+            )
         if published_after is not None:
             sql.append("AND s.year > ?")
             params.append(published_after)
@@ -213,7 +298,7 @@ def find_notes(
     finally:
         connection.close()
     spread = _spread_by_source([(row.source_id or "", row) for row in rows])
-    return spread[:limit], len(rows)
+    return spread[:limit], len(rows), resolution
 
 
 def names_arguing_against(
@@ -222,10 +307,10 @@ def names_arguing_against(
     *,
     vault_dir: Path | None = None,
     names_dir: Path | None = None,
-) -> tuple[list[CoName], int]:
+) -> tuple[list[CoName], int, Resolution | None]:
     """The names that co-occur, in the notes that argue against `target`,
     with that opposition -- plus `total`, the true pre-cap count of distinct
-    such names.
+    such names, and the `Resolution` `target` went through.
 
     This is the third relation `name_neighbors` cannot condition on.
     `name_neighbors` computes co-occurrence for one name over the WHOLE
@@ -239,12 +324,13 @@ def names_arguing_against(
     order, and the count is the plain measured one, with no weighting. (IDF
     weighting was measured to do nothing for a hub anchor, PR #522, and is
     not reintroduced here; conditioning on the opposition set is itself the
-    narrowing.) `target` resolves through the alias/fold layer; the target's
-    own canonical is excluded from its own co-occurrence list."""
+    narrowing.) `target` resolves through `resolve_name`; the target's own
+    canonical is excluded from its own co-occurrence list."""
     connection = _connect(vault_dir)
     if connection is None:
-        return [], 0
-    canonical = _resolve(target, names_dir)
+        return [], 0, None
+    resolution = resolve_name(target, vault_dir=vault_dir, names_dir=names_dir)
+    canonical = resolution.canonical
     try:
         rows = [
             CoName(*row)
@@ -264,7 +350,7 @@ def names_arguing_against(
         ]
     finally:
         connection.close()
-    return rows[:limit], len(rows)
+    return rows[:limit], len(rows), resolution
 
 
 def opposition_pairs(
@@ -273,11 +359,11 @@ def opposition_pairs(
     *,
     vault_dir: Path | None = None,
     names_dir: Path | None = None,
-) -> tuple[list[OppositionPair], list[str], int]:
-    """The cross-source opposition edge itself: `(pairs, chunk_ids, total)`,
-    where each pair is a note that argues against something resolving to
-    `canonical` alongside a note from a DIFFERENT source whose own passage is
-    about that same canonical.
+) -> tuple[list[OppositionPair], list[str], int, Resolution | None]:
+    """The cross-source opposition edge itself: `(pairs, chunk_ids, total,
+    resolution)`, where each pair is a note that argues against something
+    resolving to `canonical` alongside a note from a DIFFERENT source whose
+    own passage is about that same canonical.
 
     `chunk_ids` is both ends of every returned pair, deduplicated in pair
     order (the opposing note first), truncated at `limit` -- so `limit`
@@ -299,7 +385,8 @@ def opposition_pairs(
     spread across the opposing notes' sources in rotation."""
     connection = _connect(vault_dir)
     if connection is None:
-        return [], [], 0
+        return [], [], 0, None
+    resolution = resolve_name(canonical, vault_dir=vault_dir, names_dir=names_dir)
     try:
         rows = [
             OppositionPair(*row)
@@ -314,7 +401,7 @@ def opposition_pairs(
                   AND nn.source_id <> aa.source_id
                 ORDER BY aa.chunk_id, aa.target, n.chunk_id
                 """,
-                (_resolve(canonical, names_dir),),
+                (resolution.canonical,),
             )
         ]
     finally:
@@ -340,22 +427,25 @@ def opposition_pairs(
     chunk_ids = chunk_ids[:limit]
     kept = set(chunk_ids)
     pairs = [pair for pair in pairs if kept & {pair.opposing_chunk_id, pair.about_chunk_id}]
-    return pairs, chunk_ids, total
+    return pairs, chunk_ids, total, resolution
 
 
 def chunk_ids_for_name(
     canonical: str, *, vault_dir: Path | None = None, names_dir: Path | None = None
-) -> set[str]:
+) -> tuple[set[str], Resolution | None]:
     """Every note whose own `names` answer carries `canonical`, as a bare id
-    set -- the join key `axial.argmap.ask.positions_on` intersects the
-    argument map's positions against. An empty set for a vault with no
-    store, or a name it does not carry."""
+    set, and the `Resolution` that name went through -- the join key
+    `axial.argmap.ask.positions_on` intersects the argument map's positions
+    against, plus what it can say when the intersection is empty. An empty
+    set for a vault with no store (and a `None` resolution: none was
+    attempted), or for a name the store does not carry."""
     connection = _connect(vault_dir)
     if connection is None:
-        return set()
+        return set(), None
+    resolution = resolve_name(canonical, vault_dir=vault_dir, names_dir=names_dir)
     try:
         return {
-            row[0] for row in note_store.name_members(connection, _resolve(canonical, names_dir))
-        }
+            row[0] for row in note_store.name_members(connection, resolution.canonical)
+        }, resolution
     finally:
         connection.close()

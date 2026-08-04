@@ -44,6 +44,14 @@ Then  the loop keeps its shape: chunk-valued results land in the evidence
       set, name-valued ones never do, the set is ordered source round-robin,
       and an intake fork's ForkConstraint still drops and caps sources
 
+Given the same fixture and a model that writes a phrase, not a canonical
+When  the loop calls find_notes(about="the state as a cage of social
+      relations")
+Then  the notes about the state come back -- the phrase resolves through the
+      same tiers find_names uses, not the exact ones alone
+  And the result says what the phrase resolved to
+  And a phrase nothing resolves says that, instead of a bare zero
+
 Given a vault with NO note store (materialized before it existed)
 When  the same loop runs
 Then  find_names/get_name still answer from the name pages
@@ -485,6 +493,42 @@ def test_the_cross_source_opposition_edge_is_directly_retrievable(
     # Cross-source only: Mann's own two notes are never paired with each
     # other, only with Hall's.
     assert f"{MANN_NOTE} argues against" not in pairs["detail"]
+
+
+# ---------------------------------------------------------------------------
+# A descriptive phrase is what a model actually writes
+# ---------------------------------------------------------------------------
+
+
+def test_a_descriptive_phrase_reaches_the_notes_and_the_result_says_how(
+    fixture: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+):
+    """The live paired run's defect (issue #650's follow-up): `about`
+    resolved through the exact tiers alone, so 25 of 42 steps returned a
+    bare `0/0` and one phrase was re-asked six times in a row. The phrase
+    now resolves the way `find_names` resolves it, and the result says what
+    it looked for -- which is the half an empty result has left."""
+    vault_dir, names_dir = fixture
+    result = _walk(
+        monkeypatch,
+        [
+            {"tool": "find_notes", "args": {"about": "the state as a cage of social relations"}},
+            {"tool": "find_notes", "args": {"about": "zzqqx quorf"}},
+        ],
+        vault_dir,
+        names_dir,
+    )
+    phrase, unresolvable = result.trajectory
+
+    assert sorted(phrase["result_ids"]) == sorted(
+        [MANN_STATE_NOTE, HALL_STATE_NOTE, SMITH_STATE_NOTE]
+    )
+    assert "'the state as a cage of social relations' resolved to 'the state'" in phrase["detail"]
+    # And the honest other half: nothing matched, said as much.
+    assert unresolvable["result_ids"] == []
+    assert "matched no name this corpus carries" in unresolvable["detail"]
+    # Never a find_names turn in front of either -- the phrase IS the query.
+    assert not any(entry["tool"] == "find_names" for entry in result.trajectory)
 
 
 # ---------------------------------------------------------------------------

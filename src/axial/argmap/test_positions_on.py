@@ -30,12 +30,22 @@ HALL_NOTES = [f"{HALL}_00{i}_intro_00{i}" for i in (1, 2)]
 def vault(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # `positions_on` reads the store through `axial.query.relations`, whose
     # own default `vault_dir` is cwd-relative -- every call here passes one
-    # explicitly, and this closes the default anyway (issue #657).
+    # explicitly, and this closes the default anyway (issue #657). The same
+    # close for `names_dir`, which matters more since #650's follow-up: a
+    # name argument now falls through to `find_names`, whose embedding tier
+    # would read the operator's live `data/names/` -- vectors and a
+    # sentence-transformer -- for a phrase this fixture's own store cannot
+    # resolve.
+    from axial.query import names as names_module
     from axial.query import relations as relations_module
 
     empty = tmp_path / "vault-default"
     empty.mkdir()
+    empty_names = tmp_path / "names-default"
+    empty_names.mkdir()
     monkeypatch.setattr(relations_module, "default_vault_dir", lambda *a, **k: empty)
+    monkeypatch.setattr(names_module, "default_vault_dir", lambda *a, **k: empty)
+    monkeypatch.setattr(names_module, "default_names_dir", lambda *a, **k: empty_names)
 
     vault_dir = tmp_path / "vault"
     note_store.write_store(
@@ -93,7 +103,7 @@ def test_positions_a_name_reaches_rank_by_how_many_of_their_passages_carry_it(
         ],
     )
 
-    positions, ids, total = positions_on("the state", 10, map_dir=map_dir, vault_dir=vault)
+    positions, ids, total, _ = positions_on("the state", 10, map_dir=map_dir, vault_dir=vault)
 
     assert [p.position_id for p in positions] == ["p-0002", "p-0001"]
     assert positions[0].matched_note_count == 5
@@ -102,6 +112,28 @@ def test_positions_a_name_reaches_rank_by_how_many_of_their_passages_carry_it(
     # position contributes nothing.
     assert set(ids) == set(MANN_NOTES + HALL_NOTES)
     assert total == 5
+
+
+def test_a_descriptive_phrase_reaches_the_positions_a_bare_canonical_does(
+    vault: Path, tmp_path: Path
+):
+    """`positions_on` took the same exact-only resolution `find_notes` did
+    (issue #650's follow-up): a live run asked `positions_on(name=
+    "bellicist")` and got `0/0`. The phrase resolves the way `find_names`
+    resolves it now, and the resolution comes back so an empty result can
+    say what it looked for."""
+    map_dir = _write_map(
+        tmp_path / "map" / "pin",
+        [_position("p-0002", MANN_NOTES + HALL_NOTES, "The state is a protection racket.")],
+    )
+
+    positions, ids, _total, resolution = positions_on(
+        "what the modern state is", 10, map_dir=map_dir, vault_dir=vault
+    )
+
+    assert resolution.canonical == "the state"
+    assert [p.position_id for p in positions] == ["p-0002"]
+    assert set(ids) == set(MANN_NOTES + HALL_NOTES)
 
 
 def test_a_capped_window_spreads_across_positions_and_sources(vault: Path, tmp_path: Path):
@@ -113,7 +145,7 @@ def test_a_capped_window_spreads_across_positions_and_sources(vault: Path, tmp_p
         ],
     )
 
-    _positions, ids, total = positions_on("the state", 2, map_dir=map_dir, vault_dir=vault)
+    _positions, ids, total, _ = positions_on("the state", 2, map_dir=map_dir, vault_dir=vault)
 
     assert len(ids) == 2
     assert total == 5
@@ -125,16 +157,23 @@ def test_a_capped_window_spreads_across_positions_and_sources(vault: Path, tmp_p
 
 
 def test_no_map_and_no_match_are_both_empty_answers_not_errors(vault: Path, tmp_path: Path):
-    assert positions_on("the state", 10, map_dir=None, vault_dir=vault) == ([], [], 0)
+    # No map: nothing was resolved either, and the result says so with a
+    # `None` resolution rather than claiming the name matched nothing.
+    assert positions_on("the state", 10, map_dir=None, vault_dir=vault) == ([], [], 0, None)
     assert positions_on("the state", 10, map_dir=tmp_path / "absent", vault_dir=vault) == (
         [],
         [],
         0,
+        None,
     )
     map_dir = _write_map(
         tmp_path / "map" / "pin", [_position("p-0001", MANN_NOTES, "An argument.")]
     )
-    assert positions_on("nobody home", 10, map_dir=map_dir, vault_dir=vault) == ([], [], 0)
+    positions, ids, total, resolution = positions_on(
+        "nobody home", 10, map_dir=map_dir, vault_dir=vault
+    )
+    assert (positions, ids, total) == ([], [], 0)
+    assert resolution is not None and not resolution.resolved
 
 
 def test_resolve_pinned_map_dir_is_none_when_nothing_is_built(tmp_path: Path):
