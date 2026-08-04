@@ -103,7 +103,12 @@ from axial.analyze.synthesis import (
 from axial.answer.render import render_markdown
 from axial.answer.run_report import PassClock, build_run_report, persist_run_report
 from axial.answer.source_usage import compute_source_usage
-from axial.argmap.ask import DECOMPOSE_PASS_NAME, AskResult, run_map_ask_for_brief
+from axial.argmap.ask import (
+    DECOMPOSE_PASS_NAME,
+    AskResult,
+    resolve_pinned_map_dir,
+    run_map_ask_for_brief,
+)
 from axial.brief.fork import (
     ForkAnswer,
     ForkCheckError,
@@ -687,6 +692,19 @@ def run_brief(
                     interrogation_result,
                     vault_dir=vault_dir,
                     envelopes_dir=envelopes_dir,
+                    # The pinned argument map, when this corpus has one
+                    # built (issue #650): `positions_on` is a tool in the
+                    # loop's own set, so the map is read here as well as by
+                    # the `--map` arm above, and resolving it is tolerant --
+                    # no map means one tool returns nothing, never a failed
+                    # run.
+                    map_dir=resolve_pinned_map_dir(
+                        map_dir=map_dir,
+                        pin=map_pin,
+                        envelopes_dir=envelopes_dir,
+                        sources_dir=sources_dir,
+                        config_path=config_path,
+                    ),
                     config_path=config_path,
                     step_budget=step_budget,
                     thin_result_floor=thin_result_floor,

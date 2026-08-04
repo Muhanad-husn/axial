@@ -23,6 +23,14 @@ tools (`find_names`, `get_name`, `name_neighbors`, `who_cites`,
 `who_argues_against`, `where_names_meet`), defaulting to `None` so a caller
 passing nothing resolves against the query API's own default (`axial.paths.
 default_names_dir`), exactly as `vault_dir`/`envelopes_dir` already do.
+
+`map_dir` (issue #650) is the fourth and last of them: the PINNED argument-
+map directory `positions_on` reads its positions out of, already resolved
+by the caller (`axial.argmap.ask.resolve_pinned_map_dir`) rather than
+re-derived per call. `None` -- no map built for this corpus -- is not an
+error: `positions_on` returns an empty result and every other tool ignores
+the slot, so a vault with no map runs the same loop with one tool that
+honestly has nothing to say.
 """
 
 from __future__ import annotations
@@ -130,6 +138,7 @@ def dispatch(
     vault_dir: Path | None = None,
     envelopes_dir: Path | None = None,
     names_dir: Path | None = None,
+    map_dir: Path | None = None,
 ) -> ToolResult:
     spec = TOOL_REGISTRY.get(tool)
     if spec is None:
@@ -169,7 +178,7 @@ def dispatch(
         )
 
     try:
-        ids, count, total, detail = spec.call(args, vault_dir, envelopes_dir, names_dir)
+        ids, count, total, detail = spec.call(args, vault_dir, envelopes_dir, names_dir, map_dir)
     except reader.QueryError as exc:
         return ToolResult(ids=[], count=0, error=f"tool {tool!r} query failed: {exc}")
     return ToolResult(ids=ids, count=count, total=total, detail=detail)

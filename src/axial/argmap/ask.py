@@ -72,6 +72,7 @@ from axial.llm import LLMClient, LLMError, get_client
 from axial.model_json import ModelJsonError, parse_model_json
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_map_dir, default_sources_dir
 from axial.query.reader import MalformedChunkIdError, source_id_from_chunk_id
+from axial.query.relations import chunk_ids_for_name
 
 # The pass name `config/pipeline.yaml`'s `llm.reasoning_by_pass` keys off of.
 DECOMPOSE_PASS_NAME = "brief_decompose"
@@ -398,7 +399,9 @@ def round_robin_by_source(chunk_ids: Sequence[str]) -> list[str]:
 
 
 def assemble_map_evidence(
-    positions: Sequence[LandedPosition | CorridorPosition], *, cap: int = ASSEMBLE_CAP
+    positions: Sequence[LandedPosition | CorridorPosition | MatchedPosition],
+    *,
+    cap: int = ASSEMBLE_CAP,
 ) -> list[str]:
     """The assembly order (issue #572, PR 4 of 4) -- this IS the retrieval.
     `axial.analyze.synthesis.synthesize`'s own `evidence_char_budget` admits
@@ -435,6 +438,157 @@ def assemble_map_evidence(
             if len(assembled) >= cap:
                 break
     return assembled
+
+
+# `(envelopes_dir, sources_dir) -> pin`, process-lifetime, for
+# `resolve_pinned_map_dir` -- see its docstring for why a repeat call must
+# not re-hash the corpus.
+_PIN_CACHE: dict[tuple[Path, Path], str | None] = {}
+
+
+@dataclass(frozen=True)
+class MatchedPosition:
+    """One position the note store joined a name onto (issue #650): the map's
+    own `argument` sentence and passage set, plus `matched_note_count` -- how
+    many of the position's own passages carry the name asked about. This is
+    not `LandedPosition`: nothing here is encoded or scored, and no model
+    call is made. The join is `positions.chunk_ids` against `note_names`,
+    which is a table lookup."""
+
+    position_id: str
+    argument: str
+    size: int
+    sources: tuple[str, ...]
+    authors: tuple[str, ...]
+    chunk_ids: tuple[str, ...]
+    matched_note_count: int
+
+
+def positions_on(
+    name: str,
+    limit: int,
+    *,
+    map_dir: Path | None,
+    vault_dir: Path | None = None,
+    names_dir: Path | None = None,
+) -> tuple[list[MatchedPosition], list[str], int]:
+    """The argument map's positions that a given name reaches, as a
+    retrieval target in the §7.5 tool loop (issue #650, DEC-62).
+
+    A position is the unit a question can land on directly instead of hoping
+    the right proper noun was mentioned -- #572 measured the map's own
+    substrate stronger on citation grounding than the name layer (strong vs
+    adequate, half the defects) -- and until now it was reachable only
+    through `axial map ask`'s own arm, behind a model call and the encoder.
+    This reaches it the relational way the rest of issue #650 works: the map
+    already records which passages stand behind each position, and the note
+    store already records which notes carry a name, so the two join on
+    `chunk_id` with no encoder, no decompose call and no rebuild. The name
+    is a FILTER on positions, exactly as it is a filter on notes elsewhere.
+
+    Returns `(positions, chunk_ids, total)`. `chunk_ids` is assembled by
+    `assemble_map_evidence` -- one id per position per rotation, each
+    position's own ids spread across its sources -- capped at `limit`, and
+    `total` is the true pre-cap count of distinct ids across every matched
+    position. `positions` are the ones actually represented in `chunk_ids`.
+
+    **Determinism:** positions are ordered by `matched_note_count`
+    descending, ties by `position_id` ascending -- a total order. Ranking by
+    the position's own `size` is deliberately NOT used: size-ranking drifts
+    to the corpus's biggest objects regardless of relevance (measured, PR
+    #522 and issue #632's door slate), while the matched count is a count of
+    the thing actually asked for.
+
+    Empty is a real answer: no map built at `map_dir` (or `map_dir` `None`),
+    no store in the vault, or a name no position's passages carry, all
+    return `([], [], 0)` rather than raising."""
+    if map_dir is None:
+        return [], [], 0
+    try:
+        positions, _manifest = _load_map(Path(map_dir))
+    except MapNotBuiltError:
+        return [], [], 0
+
+    members = chunk_ids_for_name(name, vault_dir=vault_dir, names_dir=names_dir)
+    if not members:
+        return [], [], 0
+
+    matched: list[MatchedPosition] = []
+    for position in positions:
+        chunk_ids = tuple(position["chunk_ids"])
+        hits = len(members.intersection(chunk_ids))
+        if hits:
+            matched.append(
+                MatchedPosition(
+                    position_id=position["position_id"],
+                    argument=position["argument"],
+                    size=position["size"],
+                    sources=tuple(position["sources"]),
+                    authors=tuple(position["authors"]),
+                    chunk_ids=chunk_ids,
+                    matched_note_count=hits,
+                )
+            )
+    matched.sort(key=lambda p: (-p.matched_note_count, p.position_id))
+
+    total = len({chunk_id for position in matched for chunk_id in position.chunk_ids})
+    assembled = assemble_map_evidence(matched, cap=limit)
+    reached = set(assembled)
+    contributing = [p for p in matched if reached.intersection(p.chunk_ids)]
+    return contributing, assembled, total
+
+
+def resolve_pinned_map_dir(
+    *,
+    map_dir: Path | None = None,
+    pin: str | None = None,
+    envelopes_dir: Path | None = None,
+    sources_dir: Path | None = None,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+) -> Path | None:
+    """The built map directory for this corpus, or `None` when there is not
+    one (issue #650) -- the tolerant counterpart to the resolution
+    `run_map_ask_for_brief` does inline, which raises `MapNotBuiltError`
+    instead.
+
+    `positions_on` is one tool among fourteen in a retrieval loop that runs
+    with or without a built map, so "no map" must degrade to an empty tool
+    result, never to a failed run. Any failure to compute the pin at all --
+    no envelopes directory, a malformed envelope, a raw source file that has
+    moved -- means the same thing here, "there is no verified map for this
+    corpus", and is answered with `None` rather than raised: this is an
+    optional capability check, not a stage.
+
+    **Two costs are deliberately bounded.** The pin is computed only once the
+    map root actually exists, so a checkout with no map pays nothing. And the
+    result is cached for the process, because `compute_corpus_pin` reads and
+    hashes every raw source file (`axial.eval.corpus_pin._build_sources`) --
+    seconds over a real corpus, and `axial ask` calls `run_brief` once per
+    turn in a single process. **Taking the pin unverified is not the cheaper
+    option it looks like:** a map built from an older corpus carries chunk
+    ids the current vault no longer holds, which would put unresolvable ids
+    into an evidence set."""
+    root = Path(map_dir) if map_dir is not None else default_map_dir(config_path)
+    if not root.is_dir():
+        return None
+    if pin is None:
+        if envelopes_dir is None:
+            envelopes_dir = _default_envelopes_dir(config_path)
+        if sources_dir is None:
+            sources_dir = default_sources_dir(config_path)
+        key = (Path(envelopes_dir).resolve(), Path(sources_dir).resolve())
+        if key in _PIN_CACHE:
+            pin = _PIN_CACHE[key]
+        else:
+            try:
+                pin = compute_corpus_pin(envelopes_dir, sources_dir)
+            except Exception:
+                pin = None
+            _PIN_CACHE[key] = pin
+        if pin is None:
+            return None
+    outdir = root / pin
+    return outdir if (outdir / "positions.jsonl").is_file() else None
 
 
 def _load_map(outdir: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:

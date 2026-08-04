@@ -9,6 +9,21 @@ carries -- `ids`/`count` are exactly the §7.6 trajectory log's `result_ids`/
 `result_count`; `total` (issue #505) and `detail` (issue #517) both ride
 beside it, never inside it.
 
+**The entry point is `find_notes`, not `find_names` (DEC-62, issue #650).**
+The four tools registered first here -- `find_notes`, `opposition_pairs`,
+`names_arguing_against` (`axial.query.relations`) and `positions_on`
+(`axial.argmap.ask`) -- retrieve notes, disagreements and argument-map
+positions, taking names, publication years and sources as FILTERS on those.
+Every name-layer tool below walks exactly one relation from a name, and a
+historian's question chains two: measured
+(`data/logs/2026-08-04-relational-join-ceiling/`), 43,101 high-confidence
+cross-source opposition pairs across 343 scholars and works sit in the notes
+and the door-first surface reaches effectively none of them. `find_names`
+and `get_name` are unchanged and still registered -- a phrase that resolves
+to nothing, and a whole name page, are both still worth asking for -- they
+are simply no longer where the planning prompt sends every question first
+(`axial.retrieve.loop.compose_retrieval_prompt`).
+
 `query_by_tag`, `query_by_polity` and `follow_backlinks` were de-registered
 with the tools themselves (issue #487, D1/D5): each returned 0 or `[]` on
 every call against the v1 vault. The name-layer tools that replace them --
@@ -49,8 +64,10 @@ the dispatcher both need them and neither is free to assume the answer:
   arg types total -- `int_args` and `str_list_args` name the subsets of a
   tool's `allowed_args` that are int- and list-typed, every other allowed
   arg is str, and no JSON-schema library is pulled in for that.
-- **What kind of id a tool yields.** `find_names` and `name_neighbors`
-  return CANONICAL NAMES. `get_name`, `who_cites`, `who_argues_against`,
+- **What kind of id a tool yields.** `find_names`, `name_neighbors` and
+  `names_arguing_against` return CANONICAL NAMES. `find_notes`,
+  `opposition_pairs`, `positions_on`, `get_name`, `who_cites`,
+  `who_argues_against`,
   `where_names_meet`, `query_by_source`, `get_chunk` and `get_artifact`
   return CHUNK/ARTIFACT ids -- real vault ids a claim's grounds may cite.
   `get_envelope` returns a `source_id`, neither. `returns_chunk_ids` marks
@@ -125,21 +142,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from axial.query import names, reader
+from axial.query import names, reader, relations
 
-# `(args, vault_dir, envelopes_dir, names_dir) ->
-# (result_ids, result_count, total, detail)`. Every adapter takes all four
+# `(args, vault_dir, envelopes_dir, names_dir, map_dir) ->
+# (result_ids, result_count, total, detail)`. Every adapter takes all five
 # positional slots, even the four that ignore `names_dir` (`query_by_source`,
 # `get_envelope`, `get_chunk`, `get_artifact` -- the pre-name-layer tools) or
-# `envelopes_dir` (everything but `get_envelope`) -- one uniform shape the
-# dispatcher calls without branching on which tool it is calling. `get_name`
+# `envelopes_dir` (everything but `get_envelope`) or `map_dir` (everything
+# but `positions_on`, issue #650) -- one uniform shape the dispatcher calls
+# without branching on which tool it is calling. `get_name`
 # now resolves its own `canonical` through `names_dir` too, the same alias
 # resolution `find_names`/`name_neighbors`/`who_cites`/`who_argues_against`/
 # `where_names_meet` already apply. `total` is `None` for every tool but
-# `get_name`/`who_cites`/`who_argues_against`/`where_names_meet` (issues
-# #505, #517); `detail` is `None` for every tool but `find_names` (#517).
+# `get_name`/`who_cites`/`who_argues_against`/`where_names_meet` and the
+# store-backed tools of issue #650 (issues #505, #517); `detail` is `None`
+# for every tool but `find_names` (#517) and those (#650).
 ToolCall = Callable[
-    [dict[str, Any], Path | None, Path | None, Path | None],
+    [dict[str, Any], Path | None, Path | None, Path | None, Path | None],
     tuple[list[str], int, int | None, str | None],
 ]
 
@@ -221,6 +240,7 @@ def _query_by_source(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     _names_dir: Path | None,
+    _map_dir: Path | None,
 ) -> tuple[list[str], int, int | None, str | None]:
     ids = reader.query_by_source(args["source_id"], vault_dir=vault_dir)
     return ids, len(ids), None, None
@@ -231,6 +251,7 @@ def _get_envelope(
     _vault_dir: Path | None,
     envelopes_dir: Path | None,
     _names_dir: Path | None,
+    _map_dir: Path | None,
 ) -> tuple[list[str], int, int | None, str | None]:
     envelope = reader.get_envelope(args["source_id"], envelopes_dir=envelopes_dir)
     return [envelope.source_id], 1, None, None
@@ -241,6 +262,7 @@ def _get_chunk(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     _names_dir: Path | None,
+    _map_dir: Path | None,
 ) -> tuple[list[str], int, int | None, str | None]:
     """One or many prose notes (issue #542). `chunk_id` is a list of ids, or
     a single id as a bare string; the batch is truncated at `limit`, and
@@ -300,6 +322,7 @@ def _get_artifact(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     _names_dir: Path | None,
+    _map_dir: Path | None,
 ) -> tuple[list[str], int, int | None, str | None]:
     artifact = reader.get_artifact(args["artifact_id"], vault_dir=vault_dir)
     return [artifact.artifact_id], 1, None, None
@@ -310,6 +333,7 @@ def _find_names(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     names_dir: Path | None,
+    _map_dir: Path | None,
 ) -> tuple[list[str], int, int | None, str | None]:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     hits = names.find_names(args["query"], limit, names_dir=names_dir, vault_dir=vault_dir)
@@ -334,6 +358,7 @@ def _get_name(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     names_dir: Path | None,
+    _map_dir: Path | None,
 ) -> tuple[list[str], int, int | None, str | None]:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     page = names.get_name(args["canonical"], limit, vault_dir=vault_dir, names_dir=names_dir)
@@ -346,6 +371,7 @@ def _name_neighbors(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     names_dir: Path | None,
+    _map_dir: Path | None,
 ) -> tuple[list[str], int, int | None, str | None]:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     neighbors = names.name_neighbors(
@@ -360,6 +386,7 @@ def _who_cites(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     names_dir: Path | None,
+    _map_dir: Path | None,
 ) -> tuple[list[str], int, int | None, str | None]:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     edges, total = names.who_cites(
@@ -374,6 +401,7 @@ def _who_argues_against(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     names_dir: Path | None,
+    _map_dir: Path | None,
 ) -> tuple[list[str], int, int | None, str | None]:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     edges, total = names.who_argues_against(
@@ -388,6 +416,7 @@ def _where_names_meet(
     vault_dir: Path | None,
     _envelopes_dir: Path | None,
     names_dir: Path | None,
+    _map_dir: Path | None,
 ) -> tuple[list[str], int, int | None, str | None]:
     limit = args.get("limit", names.DEFAULT_LIMIT)
     members, total = names.where_names_meet(
@@ -397,7 +426,206 @@ def _where_names_meet(
     return ids, len(ids), total, _source_span_detail(members)
 
 
+def _note_span_detail(rows: list[relations.NoteRow]) -> str | None:
+    """`find_notes`' own `detail`: the same `"<N> notes across <M> sources"`
+    span `_source_span_detail` gives a name page, plus the DISTINCT stated
+    positions the returned notes carry. The positions are the answer to
+    "positions on X held by authors who disagree with Y" -- the question
+    this tool exists for -- and they are a note field no other tool's
+    feedback surfaces (§7.5's own per-id metadata carries author, year and
+    claim, never `position`). Deduplicated in return order, so a window of
+    ten notes from one school states that school once."""
+    if not rows:
+        return None
+    source_count = len({row.source_id for row in rows})
+    detail = f"{len(rows)} notes across {source_count} sources"
+    positions = list(dict.fromkeys(row.position for row in rows if row.position))
+    if positions:
+        detail += "; positions: " + "; ".join(positions)
+    return detail
+
+
+def _find_notes(
+    args: dict[str, Any],
+    vault_dir: Path | None,
+    _envelopes_dir: Path | None,
+    names_dir: Path | None,
+    _map_dir: Path | None,
+) -> tuple[list[str], int, int | None, str | None]:
+    rows, total = relations.find_notes(
+        args["about"],
+        args.get("limit", names.DEFAULT_LIMIT),
+        opposing=args.get("opposing"),
+        published_after=args.get("published_after"),
+        published_before=args.get("published_before"),
+        vault_dir=vault_dir,
+        names_dir=names_dir,
+    )
+    ids = [row.chunk_id for row in rows]
+    return ids, len(ids), total, _note_span_detail(rows)
+
+
+def _names_arguing_against(
+    args: dict[str, Any],
+    vault_dir: Path | None,
+    _envelopes_dir: Path | None,
+    names_dir: Path | None,
+    _map_dir: Path | None,
+) -> tuple[list[str], int, int | None, str | None]:
+    rows, total = relations.names_arguing_against(
+        args["target"],
+        args.get("limit", names.DEFAULT_LIMIT),
+        vault_dir=vault_dir,
+        names_dir=names_dir,
+    )
+    canonicals = [row.canonical for row in rows]
+    detail = (
+        "; ".join(
+            f"{row.canonical} (kind={row.kind}, note_count={row.note_count}, "
+            f"source_count={row.source_count})"
+            for row in rows
+        )
+        or None
+    )
+    return canonicals, len(canonicals), total, detail
+
+
+def _opposition_pairs(
+    args: dict[str, Any],
+    vault_dir: Path | None,
+    _envelopes_dir: Path | None,
+    names_dir: Path | None,
+    _map_dir: Path | None,
+) -> tuple[list[str], int, int | None, str | None]:
+    """The opposition edge itself. `detail` states which returned id opposes
+    which -- the pairing is the whole result, and `result_ids` alone is a
+    flat list that cannot say which end of which edge an id is."""
+    pairs, ids, total = relations.opposition_pairs(
+        args["canonical"],
+        args.get("limit", names.DEFAULT_LIMIT),
+        vault_dir=vault_dir,
+        names_dir=names_dir,
+    )
+    detail = (
+        "; ".join(
+            f"{pair.opposing_chunk_id} argues against {pair.target!r} -> "
+            f"{pair.about_chunk_id} ({pair.about_source_id})"
+            for pair in pairs
+        )
+        or None
+    )
+    return ids, len(ids), total, detail
+
+
+def _positions_on(
+    args: dict[str, Any],
+    vault_dir: Path | None,
+    _envelopes_dir: Path | None,
+    names_dir: Path | None,
+    map_dir: Path | None,
+) -> tuple[list[str], int, int | None, str | None]:
+    """The argument map's positions a name reaches (issue #650). `detail`
+    carries each position's own argument SENTENCE, which is the point of the
+    layer: a position states an argument several passages make, in words a
+    model can judge, where a bare chunk id cannot.
+
+    **`axial.argmap.ask` is imported here, not at module scope**: it pulls
+    `axial.argmap.build`, which pulls the whole ingestion stack
+    (`axial.extract`, `axial.intake`) and `axial.eval.corpus_pin`'s openpyxl,
+    taking this module's own warm import from 0.28s to ~1.5s for a build-side
+    dependency no tool here uses. The map's positions are plain JSON."""
+    from axial.argmap.ask import positions_on
+
+    positions, ids, total = positions_on(
+        args["name"],
+        args.get("limit", names.DEFAULT_LIMIT),
+        map_dir=map_dir,
+        vault_dir=vault_dir,
+        names_dir=names_dir,
+    )
+    detail = (
+        "; ".join(
+            f"{position.position_id} ({position.size} passages across "
+            f"{len(position.sources)} sources, {position.matched_note_count} naming it): "
+            f"{position.argument}"
+            for position in positions
+        )
+        or None
+    )
+    return ids, len(ids), total, detail
+
+
 TOOL_REGISTRY: dict[str, ToolSpec] = {
+    "find_notes": ToolSpec(
+        name="find_notes",
+        description=(
+            "The notes themselves, filtered. Every prose note whose own names answer "
+            "carries `about` (a concept, scholar, work, place or period -- written "
+            "however you like; it is resolved through the corpus's own alias and "
+            "spelling variants first, so 'Tilly' reaches 'Charles Tilly'), narrowed by "
+            "any of: `opposing`, keeping only notes from sources that argue against "
+            "that name somewhere -- 'positions on X held by authors who disagree with "
+            "Y'; `published_after` / `published_before`, keeping only sources published "
+            "strictly after / before that year. Returns the notes, spread across the "
+            "sources they come from, with how many sources they span and the distinct "
+            "positions they state. This is the first tool to reach for: it chains "
+            "relations a single name page cannot."
+        ),
+        required_args=frozenset({"about"}),
+        optional_args=frozenset({"opposing", "published_after", "published_before", "limit"}),
+        int_args=frozenset({"limit", "published_after", "published_before"}),
+        returns_chunk_ids=True,
+        call=_find_notes,
+    ),
+    "opposition_pairs": ToolSpec(
+        name="opposition_pairs",
+        description=(
+            "Disagreement across books, as pairs of real notes: one note argues against "
+            "something that resolves to this name, and another note FROM A DIFFERENT "
+            "SOURCE is itself about that same thing. Both ends come back as citable "
+            "notes, and the detail says which opposes which and in whose words. Reach "
+            "for this when the question is who disputes whom, rather than what a name "
+            "is discussed alongside."
+        ),
+        required_args=frozenset({"canonical"}),
+        optional_args=frozenset({"limit"}),
+        int_args=frozenset({"limit"}),
+        returns_chunk_ids=True,
+        call=_opposition_pairs,
+    ),
+    "names_arguing_against": ToolSpec(
+        name="names_arguing_against",
+        description=(
+            "What the notes that argue against this target ALSO talk about: the names "
+            "co-occurring in those notes' own names answers, with how many of those "
+            "notes and how many sources each spans. This is co-occurrence conditioned "
+            "on an opposition, not corpus-wide co-occurrence -- it names the terms a "
+            "disagreement is actually conducted in. Returns names, not passages: follow "
+            "them with find_notes."
+        ),
+        required_args=frozenset({"target"}),
+        optional_args=frozenset({"limit"}),
+        int_args=frozenset({"limit"}),
+        returns_chunk_ids=False,
+        call=_names_arguing_against,
+    ),
+    "positions_on": ToolSpec(
+        name="positions_on",
+        description=(
+            "The arguments the corpus makes about this name, as positions from the "
+            "argument map: each one is a single contestable sentence with the passages "
+            "from every book that make it standing behind it. A position says what is "
+            "argued, where a name page only says who mentioned what. Returns those "
+            "passages as citable notes, spread across books, with each position's own "
+            "argument sentence in the detail. Empty when this corpus has no argument "
+            "map built."
+        ),
+        required_args=frozenset({"name"}),
+        optional_args=frozenset({"limit"}),
+        int_args=frozenset({"limit"}),
+        returns_chunk_ids=True,
+        call=_positions_on,
+    ),
     "find_names": ToolSpec(
         name="find_names",
         description=(

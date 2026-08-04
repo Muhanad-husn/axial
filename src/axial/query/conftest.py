@@ -23,6 +23,7 @@ import pytest
 
 from axial.query import names as names_module
 from axial.query import reader as reader_module
+from axial.query import relations as relations_module
 
 
 @pytest.fixture(autouse=True)
@@ -36,3 +37,4 @@ def _isolate_default_vault_dir(tmp_path_factory, monkeypatch):
     empty = tmp_path_factory.mktemp("vault-default")
     monkeypatch.setattr(names_module, "default_vault_dir", lambda *args, **kwargs: empty)
     monkeypatch.setattr(reader_module, "default_vault_dir", lambda *args, **kwargs: empty)
+    monkeypatch.setattr(relations_module, "default_vault_dir", lambda *args, **kwargs: empty)

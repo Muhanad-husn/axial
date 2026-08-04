@@ -120,7 +120,9 @@ def test_name_neighbors_tool_call_carries_the_distribution_of_the_neighbours_dis
     _write_note(prose_dir, "src-2_1_a_001", ["Anchor", "Rare"])
 
     spec = TOOL_REGISTRY["name_neighbors"]
-    ids, count, total, detail = spec.call({"canonical": "Anchor"}, vault_dir, None, None)
+    # Five positional slots since issue #650: `map_dir` joined `vault_dir`/
+    # `envelopes_dir`/`names_dir` on every adapter, for `positions_on`.
+    ids, count, total, detail = spec.call({"canonical": "Anchor"}, vault_dir, None, None, None)
 
     assert count == 2
     assert set(ids) == {"Common", "Rare"}

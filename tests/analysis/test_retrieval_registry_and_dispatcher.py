@@ -74,7 +74,17 @@ from axial.retrieve.tools import TOOL_REGISTRY, tool_specs_for_provider
 # follow-up): de-registered for returning far too much -- see
 # `test_coverage_count_is_not_a_registered_tool` below. The function itself
 # is untouched (`axial.query.names.coverage_count`, §7.7's real consumer).
+# Issue #650 (DEC-62) adds the four store- and map-backed tools that take a
+# name, a year and a source as FILTERS rather than as the way in --
+# `find_notes`, `opposition_pairs`, `names_arguing_against` and
+# `positions_on`. `find_names`/`get_name` stay registered exactly as they
+# were; only the planning prompt stopped routing every question through them
+# first.
 EXPECTED_TOOL_NAMES = {
+    "find_notes",
+    "opposition_pairs",
+    "names_arguing_against",
+    "positions_on",
     "find_names",
     "get_name",
     "name_neighbors",
@@ -92,8 +102,11 @@ EXPECTED_TOOL_NAMES = {
 # yields a `source_id`, which is neither -- it belongs in this "not
 # chunk-valued" bucket too, but is asserted separately below since it is not
 # a name-layer tool.
-NAME_VALUED_TOOLS = {"find_names", "name_neighbors"}
+NAME_VALUED_TOOLS = {"find_names", "name_neighbors", "names_arguing_against"}
 CHUNK_VALUED_TOOLS = {
+    "find_notes",
+    "opposition_pairs",
+    "positions_on",
     "get_name",
     "who_cites",
     "who_argues_against",
@@ -135,27 +148,25 @@ def test_returns_chunk_ids_matches_the_issues_own_two_groups():
     assert TOOL_REGISTRY["get_envelope"].returns_chunk_ids is False
 
 
-def test_limit_is_the_one_declared_int_arg_in_the_whole_tool_set():
+def test_every_bounded_tool_declares_limit_as_its_int_arg():
     """Issue #505: `get_name`/`who_cites`/`who_argues_against` join
     `find_names`/`name_neighbors` in declaring `limit` as an int arg -- the
     whole name-layer tool set is now uniform (bounded, `limit`-taking).
     Issue #517 adds `where_names_meet` to the same uniform set, and issue
     #542 adds `get_chunk`, whose id list is bounded by the same mechanism
-    rather than by a second cap invented for it."""
-    limit_taking = {
-        "find_names",
-        "name_neighbors",
-        "get_name",
-        "who_cites",
-        "who_argues_against",
-        "where_names_meet",
-        "get_chunk",
-    }
+    rather than by a second cap invented for it. Issue #650's four
+    store-backed tools take the same one cap, and `find_notes` additionally
+    declares the two publication-year filters as ints -- a year is a number
+    and must reach the provider schema as one, which is the whole reason
+    `int_args` exists."""
+    unbounded = {"query_by_source", "get_envelope", "get_artifact"}
     for name, spec in TOOL_REGISTRY.items():
-        if name in limit_taking:
-            assert spec.int_args == frozenset({"limit"}), name
-        else:
+        if name in unbounded:
             assert spec.int_args == frozenset(), name
+        elif name == "find_notes":
+            assert spec.int_args == frozenset({"limit", "published_after", "published_before"})
+        else:
+            assert spec.int_args == frozenset({"limit"}), name
 
 
 def test_chunk_id_is_the_one_declared_list_arg_in_the_whole_tool_set():
