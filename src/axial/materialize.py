@@ -81,6 +81,7 @@ so the vault never accumulates orphans from a tightened merge.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -107,7 +108,14 @@ from axial.paths import (
     default_vault_dir,
     name_page_path,
 )
-from axial.query.reader import MalformedChunkIdError, source_id_from_chunk_id
+from axial.query import store as note_store
+from axial.query.names import _build_name_layer, as_string_list, fold_surface_form
+from axial.query.reader import (
+    NOT_IN_PASSAGE,
+    MalformedChunkIdError,
+    source_id_from_chunk_id,
+    stated_position,
+)
 from axial.vault import (
     VaultError,
     bibliographic_value,
@@ -681,6 +689,251 @@ def materialize_names(
 
 
 # ---------------------------------------------------------------------------
+# 4. The relational store -- the notes and their typed relations (DEC-62)
+# ---------------------------------------------------------------------------
+
+# A source id is `<author>-[...-]<year>-<hash>` (issue #268's rename): the
+# publication year is the rightmost token that is four digits and nothing
+# else, so `mann-v1-2012-5f90ead66c93` reads 2012 and the twelve-hex-digit
+# content hash can never be mistaken for one.
+_YEAR_TOKEN = re.compile(r"^\d{4}$")
+
+
+def _publication_year(source_id: str) -> int | None:
+    for token in reversed(source_id.split("-")):
+        if _YEAR_TOKEN.match(token):
+            return int(token)
+    return None
+
+
+def _text(value: Any) -> str | None:
+    """A free-text answer as a TEXT column: the corpus's own string, `None`
+    when it answered nothing, and JSON for the occasional record where a
+    field the frame asks for as a string came back as a list or an object.
+    Nothing is dropped and nothing raises on the way into the store."""
+    if value is None or isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _store_claim(value: Any) -> str | None:
+    """A note's `claim` answer as the store holds it: the corpus's own text
+    when it answered with text, `None` when the record carries no claim at
+    all, the bare abstention marker for D7's abstention in any of its shapes,
+    and JSON for anything else -- so `axial.query.names._render_claim` reads
+    back exactly what `_render_claim` above would have written on the page."""
+    if value is None or isinstance(value, str):
+        return value
+    if is_abstention(value):
+        return NOT_IN_PASSAGE
+    return _text(value)
+
+
+def _source_of(chunk_id: str) -> str:
+    """The `source_id` a chunk_id parses to, or `""` when it does not --
+    the same placement `_distinct_source_count` and the reader's own member
+    grouping give an unparsed member, so `note_names`' source count and the
+    name page's never disagree."""
+    try:
+        return source_id_from_chunk_id(chunk_id)
+    except MalformedChunkIdError:
+        return ""
+
+
+def _target_phrase_index(folded: dict[str, list[tuple[str, str]]]) -> dict[str, list[str]]:
+    """`folded surface phrase -> [canonical, ...]` over every surface form of
+    two or more tokens the name layer carries (its own `folded` map, so the
+    #642 transliteration fold applies here exactly as it does everywhere
+    else).
+
+    **Two tokens is the measured floor, not a knob**
+    (`data/logs/2026-08-04-relational-join-ceiling/` §1): matching
+    single-token surfaces against free-text targets lifts the apparent join
+    rate from 44% to 93% and is almost entirely noise from the corpus's own
+    one-word canonicals -- "the notion of Free French rule" resolving to the
+    canonical `Rule`, "many of his contemporaries" to `His`. A phrase is a
+    name; a word is not."""
+    index: dict[str, set[str]] = {}
+    for phrase, pairs in folded.items():
+        if len(phrase.split()) < 2:
+            continue
+        index.setdefault(phrase, set()).update(canonical for canonical, _surface in pairs)
+    return {phrase: sorted(canonicals) for phrase, canonicals in index.items()}
+
+
+def _resolve_target(target: str, phrases: dict[str, list[str]], longest: int) -> list[str]:
+    """Every canonical whose folded surface form appears inside `target` as a
+    whole-word phrase -- the conservative join. Walks the target's own word
+    n-grams rather than scanning the index, which is the same answer at a
+    fraction of the cost (49,555 substring scans per target against a few
+    hundred dictionary lookups)."""
+    tokens = fold_surface_form(target).split()
+    found: set[str] = set()
+    for size in range(2, min(len(tokens), longest) + 1):
+        for start in range(len(tokens) - size + 1):
+            found.update(phrases.get(" ".join(tokens[start : start + size]), ()))
+    return sorted(found)
+
+
+def build_note_store(
+    *,
+    alias_map_path: Path,
+    inventory_path: Path,
+    answers_dir: Path,
+    source_meta_dir: Path,
+    envelopes_dir: Path,
+    vault_dir: Path,
+) -> dict[str, int]:
+    """Build the vault's relational store (DEC-62, `axial.query.store`) from
+    the same already-persisted artifacts the name pages are written from: the
+    answer records, the lossless inventory, Reconcile's alias map, and the
+    source metadata. No model call, no re-extraction, no second source of
+    truth -- `note_names` is exactly the name-page membership
+    (`member_chunk_ids_for_node`), so a door query over the store and the
+    name page for the same name can never disagree about who its members are.
+
+    `chapter` is the one column here that is not already sitting in the
+    answer record: it is `chapter_for_section` read off the source's own
+    envelope, the same call `materialize_notes` makes for the note page, so
+    the store and the page can never disagree about which chapter a section
+    resolves to. The envelope is loaded once per source (issue #648's
+    comment measured 31 sources, ~2-6KB each) and cached across that
+    source's notes, never once per note.
+
+    The one relation the pages never carried is the resolved end of
+    `arguing_against`: each free-text target keeps a row with the canonical
+    it resolves to, or one row with `NULL` when it resolves to nothing, which
+    is the honest majority (56%) and must stay countable.
+
+    Written atomically over any existing store."""
+    nodes = load_alias_map(alias_map_path)
+    inventory = load_inventory(inventory_path)
+    layer = _build_name_layer(Path(alias_map_path).parent)
+    phrases = _target_phrase_index(layer.folded)
+    longest = max((len(phrase.split()) for phrase in phrases), default=0)
+
+    notes: list[tuple] = []
+    citations: list[tuple] = []
+    opposition: list[tuple] = []
+    source_ids: set[str] = set()
+    # `(chunk_id, surface) -> kind`, the label THIS note gave that name --
+    # first answer wins, so a note naming one surface twice under two kinds
+    # is read the same way on every run.
+    kind_by_occurrence: dict[tuple[str, str], str | None] = {}
+    # `source_id -> toc`, loaded once per source and reused across every one
+    # of its notes -- `load_answer_records` groups records by source (one
+    # `<source_id>.jsonl` at a time), so this is never re-read mid-source.
+    toc_by_source: dict[str, Any] = {}
+
+    for record in load_answer_records(answers_dir):
+        if "answers" not in record:
+            continue
+        chunk_id = record["chunk_id"]
+        source_id = record.get("source_id")
+        if source_id:
+            source_ids.add(source_id)
+            if source_id not in toc_by_source:
+                envelope = _read_json(
+                    envelope_path(source_id, envelopes_dir), source_id, "envelope", "axial envelope"
+                )
+                toc_by_source[source_id] = envelope.get("toc")
+        section = record.get("section")
+        chapter = chapter_for_section(toc_by_source.get(source_id), section) if source_id else None
+        answers = record["answers"]
+        position = stated_position(answers)
+        notes.append(
+            (
+                chunk_id,
+                source_id,
+                _text(section),
+                chapter,
+                _store_claim(answers.get("claim")),
+                position if isinstance(position, str) else None,
+            )
+        )
+        for entry in answers.get("names") or []:
+            if isinstance(entry, dict) and isinstance(entry.get("name"), str):
+                kind_by_occurrence.setdefault((chunk_id, entry["name"]), _text(entry.get("kind")))
+        for entry in answers.get("citations") or []:
+            if isinstance(entry, dict) and isinstance(entry.get("cited"), str):
+                citations.append(
+                    (
+                        chunk_id,
+                        source_id,
+                        entry["cited"],
+                        _text(entry.get("stance")),
+                        _text(entry.get("about")),
+                    )
+                )
+        targets = answers.get("arguing_against")
+        if is_abstention(targets):
+            continue
+        for target in dict.fromkeys(as_string_list(targets)):
+            resolved = _resolve_target(target, phrases, longest)
+            if not resolved:
+                opposition.append((chunk_id, source_id, target, None))
+            for canonical in resolved:
+                opposition.append((chunk_id, source_id, target, canonical))
+
+    names: list[tuple] = []
+    note_names: list[tuple] = []
+    for node in sorted(nodes, key=lambda node: node["canonical"]):
+        canonical = node["canonical"]
+        names.append((canonical, _text(node.get("kind")), fold_surface_form(canonical)))
+        kinds: dict[str, str | None] = {}
+        for surface in (canonical, *node.get("aliases", [])):
+            entry = inventory.get(surface)
+            if not entry:
+                continue
+            for chunk_id in entry["chunk_ids"]:
+                kind = kind_by_occurrence.get(
+                    (chunk_id, surface),
+                    kind_by_occurrence.get(
+                        (chunk_id, unscope_surface_form(surface, _source_of(chunk_id)))
+                    ),
+                )
+                if kinds.setdefault(chunk_id, kind) is None and kind is not None:
+                    kinds[chunk_id] = kind
+        note_names.extend(
+            (chunk_id, _source_of(chunk_id), canonical, kinds[chunk_id])
+            for chunk_id in sorted(kinds)
+        )
+
+    sources: list[tuple] = []
+    for source_id in sorted(source_ids):
+        try:
+            record = read_source_meta(source_id, source_meta_dir)
+        except VaultError as exc:
+            raise MissingNoteContextError(
+                source_id, "source-metadata record", "axial ingest"
+            ) from exc
+        sources.append(
+            (
+                source_id,
+                *(
+                    None if value is None else str(value)
+                    for value in (
+                        bibliographic_value(record, "author"),
+                        bibliographic_value(record, "title"),
+                        bibliographic_value(record, "date"),
+                    )
+                ),
+                _publication_year(source_id),
+            )
+        )
+
+    return note_store.write_store(
+        note_store.store_path(vault_dir),
+        sources=sources,
+        notes=sorted(notes, key=lambda row: row[0]),
+        names=names,
+        note_names=note_names,
+        note_arguing_against=opposition,
+        note_citations=citations,
+    )
+
+
+# ---------------------------------------------------------------------------
 # The pass
 # ---------------------------------------------------------------------------
 
@@ -734,10 +987,19 @@ def run_materialize(
         artifacts_dir=artifacts_dir,
         vault_dir=vault_dir,
     )
+    store_result = build_note_store(
+        alias_map_path=alias_map_path,
+        inventory_path=inventory_path,
+        answers_dir=answers_dir,
+        source_meta_dir=source_meta_dir,
+        envelopes_dir=envelopes_dir,
+        vault_dir=vault_dir,
+    )
 
     return {
         "vault_dir": str(vault_dir),
         **notes_result,
         **artifacts_result,
         **names_result,
+        **store_result,
     }

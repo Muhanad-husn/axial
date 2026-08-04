@@ -2816,6 +2816,10 @@ def _names_materialize() -> int:
         "name_pages_written",
         "name_pages_unchanged",
         "name_pages_deleted",
+        "store_notes",
+        "store_note_names",
+        "store_note_arguing_against",
+        "store_note_citations",
     ):
         print(f"{key}: {result[key]}")
     return 0
