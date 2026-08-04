@@ -129,7 +129,12 @@ def test_run_brief_announces_every_stage_live_in_order(
         events.append((message, dict(detail)))
 
     brief = Brief(brief_id="evfix-brief", case="Syria", request="What happened?", lens=None)
-    run_brief(brief, client=client, on_event=collector)
+    run_brief(
+        brief,
+        client=client,
+        vault_dir=fixture_root / "data" / "vault",
+        on_event=collector,
+    )
 
     stages_seen = [detail.get("stage") for _msg, detail in events]
     # Every named stage fired, in this relative order (a stage can repeat --
