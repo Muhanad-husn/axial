@@ -10,14 +10,17 @@ Also pins the pipeline-config memo behind every `default_*_dir` helper
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+import pytest
 import yaml
 
 import axial.paths
 from axial.paths import (
     NAMES_DIR,
     VAULT_DIR,
+    atomic_write_text,
     default_names_dir,
     default_vault_dir,
     name_page_filename,
@@ -167,3 +170,87 @@ def test_the_config_memo_does_not_leak_across_working_directories(tmp_path, monk
 
     monkeypatch.chdir(tmp_path / "second")
     assert default_names_dir() == Path("data/bbb")
+
+
+# --- `os.replace` retry on a Windows-only `PermissionError` (issue #653) ---
+#
+# A real open-handle test (holding `names.jsonl` open while the write runs)
+# lives in `tests/ingestion/test_materialize.py` against the actual
+# `_write_name_page_index`, since only Windows' `os.replace` ever raises
+# `PermissionError` for this reason -- on Linux/CI that test passes for a
+# different reason (the swap simply succeeds under the open handle). The
+# tests below force the `PermissionError` deterministically via monkeypatch
+# so the retry path and the give-up-and-raise path are exercised on every
+# platform.
+
+
+def test_atomic_write_text_retries_past_a_transient_permission_error(tmp_path, monkeypatch):
+    """A reader's handle on `path` is open for milliseconds -- a `Permission
+    Error` from `os.replace` that clears within the retry budget must not
+    fail the write."""
+    path = tmp_path / "names.jsonl"
+    path.write_text("old", encoding="utf-8")
+
+    real_replace = os.replace
+    calls = {"count": 0}
+
+    def flaky_replace(src, dst):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise PermissionError("[WinError 5] Access is denied")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(axial.paths.os, "replace", flaky_replace)
+    monkeypatch.setattr(axial.paths.time, "sleep", lambda seconds: None)
+
+    atomic_write_text(path, "new")
+
+    assert calls["count"] == 3
+    assert path.read_text(encoding="utf-8") == "new"
+
+
+def test_atomic_write_text_gives_up_and_raises_after_exhausting_retries(tmp_path, monkeypatch):
+    """A `PermissionError` that never clears (a reader that never lets go)
+    must surface loudly rather than being swallowed or retried forever, and
+    the destination must be left untouched -- the failed write is not
+    allowed to lose the prior content."""
+    path = tmp_path / "names.jsonl"
+    path.write_text("old", encoding="utf-8")
+
+    def always_denied(src, dst):
+        raise PermissionError("[WinError 5] Access is denied")
+
+    monkeypatch.setattr(axial.paths.os, "replace", always_denied)
+    monkeypatch.setattr(axial.paths.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(PermissionError):
+        atomic_write_text(path, "new")
+
+    assert path.read_text(encoding="utf-8") == "old"
+    leftover_tmp_files = list(tmp_path.glob(".names.jsonl.*.tmp"))
+    assert leftover_tmp_files == [], f"temp file(s) left behind: {leftover_tmp_files!r}"
+
+
+def test_atomic_write_text_does_not_retry_a_non_permission_oserror(tmp_path, monkeypatch):
+    """A missing parent directory or similar real failure must propagate on
+    the first attempt -- only `PermissionError` is treated as the transient,
+    Windows-reader case."""
+    path = tmp_path / "names.jsonl"
+    path.write_text("old", encoding="utf-8")
+
+    calls = {"count": 0}
+
+    def broken_replace(src, dst):
+        calls["count"] += 1
+        raise FileNotFoundError("parent directory vanished")
+
+    monkeypatch.setattr(axial.paths.os, "replace", broken_replace)
+    monkeypatch.setattr(axial.paths.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(FileNotFoundError):
+        atomic_write_text(path, "new")
+
+    assert calls["count"] == 1, "a non-PermissionError OSError must not be retried"
+    assert path.read_text(encoding="utf-8") == "old"
+    leftover_tmp_files = list(tmp_path.glob(".names.jsonl.*.tmp"))
+    assert leftover_tmp_files == [], f"temp file(s) left behind: {leftover_tmp_files!r}"

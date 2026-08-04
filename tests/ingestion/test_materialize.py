@@ -50,6 +50,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -517,6 +519,80 @@ def test_write_name_page_index_is_atomic_never_exposes_a_partial_write(tmp_path,
     )
     new_bytes = index_path.read_bytes()
     assert b"New Name" in new_bytes
+
+
+def test_write_name_page_index_survives_a_concurrent_reader_holding_it_open(tmp_path):
+    """Issue #653: #637 made the write atomic (`atomic_write_text`'s temp-
+    file-plus-`os.replace` swap, tested above) so a reader never sees a
+    truncated file, but it did not make the WRITER survive a reader.
+    `os.replace` swaps beneath an open handle on POSIX; on Windows it raises
+    `PermissionError: [WinError 5] Access is denied` while ANY process has
+    the destination open -- exactly what happened live on 2026-08-04, when a
+    concurrent `axial ask` query rebuilding its door-index cache (#636) held
+    `names.jsonl` open across the final rename of a full Materialize run
+    that had already written all 49,555 pages correctly, and the run still
+    exited 1.
+
+    A reader's handle lives milliseconds (open, read, close) -- not for the
+    write's whole duration -- so a background thread opens the destination,
+    signals it is holding it, briefly sleeps, then closes, while the main
+    thread calls `_write_name_page_index` the moment the signal fires. That
+    ordering reproduces the live race (confirmed to raise `PermissionError`
+    on this platform absent the #653 retry when the two overlap) without
+    depending on exact scheduling: the write's own retry budget (~1s) easily
+    outlasts the reader's brief hold. The assertion holds on every platform
+    either way: on Windows this exercises the retry path for real; on POSIX
+    `os.replace` simply succeeds under the open handle. Either way the write
+    must complete and the destination must hold the new content, never a
+    truncated or stale one."""
+    from axial.materialize import NAME_PAGE_INDEX_FILENAME, _write_name_page_index
+
+    vault_dir = tmp_path / "vault"
+    vault_dir.mkdir()
+    index_path = vault_dir / NAME_PAGE_INDEX_FILENAME
+
+    old_rows = [
+        {
+            "name": "Old Name",
+            "filename": "Old Name.md",
+            "kind": "person",
+            "member_count": 1,
+            "source_count": 1,
+        }
+    ]
+    _write_name_page_index(vault_dir, old_rows)
+    assert index_path.is_file(), "fixture setup: the first write must actually land"
+
+    new_rows = [
+        {
+            "name": "New Name",
+            "filename": "New Name.md",
+            "kind": "concept",
+            "member_count": 5,
+            "source_count": 3,
+        }
+    ]
+
+    reader_holding = threading.Event()
+
+    def hold_a_brief_reader_open():
+        with open(index_path, "r", encoding="utf-8") as reader_handle:
+            reader_handle.read()
+            reader_holding.set()
+            time.sleep(0.3)
+
+    reader_thread = threading.Thread(target=hold_a_brief_reader_open)
+    reader_thread.start()
+    assert reader_holding.wait(timeout=5), "fixture setup: the reader thread never opened the file"
+
+    _write_name_page_index(vault_dir, new_rows)
+    reader_thread.join(timeout=5)
+
+    new_bytes = index_path.read_bytes()
+    assert b"New Name" in new_bytes
+    assert b"Old Name" not in new_bytes
+    leftover_tmp_files = [p for p in vault_dir.iterdir() if p.name != NAME_PAGE_INDEX_FILENAME]
+    assert leftover_tmp_files == [], f"temp file(s) left behind: {leftover_tmp_files!r}"
     assert b"Old Name" not in new_bytes
 
 
