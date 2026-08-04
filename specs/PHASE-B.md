@@ -479,6 +479,21 @@ Alongside the JSON record, stage 6 renders a human-readable markdown answer. It 
 
 The CLI runs as one of two roles, `operator` (default, unchanged) or `analyst`, set by the `AXIAL_ROLE` environment variable (`axial.ask.role`) -- the same self-hosted env-var seam `AXIAL_SECRETS_PATH`/`AXIAL_LLM_PROVIDER` already use, not a new config file or an interactive prompt. Under `analyst`, `axial ask` (plus its own `--list`/`--reopen`, reading past turns by what they asked rather than by `brief_id`) is the whole reachable command surface: every other subcommand is absent from both `--help` and dispatch. **This is self-hosted only, and is a command-line surface restriction, not an authorization boundary**: the analyst and the operator are the same person on the same machine, sharing one filesystem and one OpenRouter key, so this stops the wrong command being run by accident and stops nothing a determined operator chooses to bypass. A real boundary -- the two roles as separate callers rather than a flag one process reads about itself -- arrives with the service `plans/multiuser-analyst-service/README.md` describes; this section is superseded when that ships.
 
+### 7.10c A question ends in a paper (issue #668) **[FIRM]**
+
+`axial ask` does not stop at the record. Once a turn's answer is rendered and persisted, the CLI drafts the paper that answer is the material for, and the analyst is shown both. This is PHASE-C §0's own "a call plus a mechanical module move", made in `axial.cli` rather than in either layer: nothing in `paper/` learns about Phase B, and Phase C is still never asked to run Phase B (PHASE-C §3 non-goal 1) — the record already exists on disk when the call is made.
+
+The paper brief is built from the turn, never authored by hand:
+
+- the analyst's **question is the `thesis`** — PHASE-C §7.1 defines thesis as "the paper's organizing question", which is exactly what was typed;
+- the record the turn just persisted is the single `analysis_ids` entry, so pin agreement is trivially satisfied;
+- **no lens is named**, so the drafting stage chooses one and records its choice (§7.1's own contract for an absent lens);
+- the id comes from `build_paper_brief`, the same `compute_paper_brief_id` a file-loaded brief goes through, so a paper is traceable to its question whichever way it was asked for.
+
+**`--no-paper` stops at the answer.** Drafting is the default because the paper is what Axial is for; the flag exists because an exploratory question should not have to pay for one. Drafting roughly doubles a question's cost ($0.08–$0.20 against a $0.11–$0.30 record, measured 2026-08-04).
+
+Two behaviors are deliberately not errors. **A refused question drafts nothing** and the turn still exits zero: §7.1 rejects a refused record at paper intake because it carries no claims, and a refusal is a valid Phase-B outcome, not a failure. **A `weak` shape check does not fail the turn** the way it fails `axial paper draft`: the analyst has the answer and the paper in front of them and the defects are already named on stderr. Only a drafting failure exits non-zero, and it never swallows the answer — that is already rendered and already on disk when drafting begins.
+
 ### 7.11 Per-pass model tiering & reasoning **[TENTATIVE]**
 
 Model choice and reasoning are per-pass settings, carried in the existing `model_by_pass` / `reasoning_by_pass` config seams (PRODUCT.md §7.9), never hardcoded. Tentative starting assignments, tunable like Phase A's:

@@ -248,6 +248,23 @@ def _validate_paper_brief_dict(path: Path, raw: Any) -> PaperBriefContent:
     return PaperBriefContent(thesis=thesis, analysis_ids=analysis_ids, lens=lens, title=title)
 
 
+def build_paper_brief(content: PaperBriefContent) -> PaperBrief:
+    """A `PaperBrief` over already-validated `content`, carrying the id
+    `compute_paper_brief_id` derives from it. The seam for a caller that
+    holds a paper brief in memory rather than on disk -- `axial ask` builds
+    one from the question it just answered (issue #668) -- so that caller
+    and `load_paper_brief` compute the id exactly one way. It validates
+    nothing: `PaperBriefContent` is the validated shape, and the file path
+    every §7.1 rejection names does not exist here."""
+    return PaperBrief(
+        paper_brief_id=compute_paper_brief_id(content),
+        thesis=content.thesis,
+        analysis_ids=content.analysis_ids,
+        lens=content.lens,
+        title=content.title,
+    )
+
+
 def load_paper_brief(path: str | Path) -> PaperBrief:
     """Load and validate the paper brief at `path`, returning a `PaperBrief`
     carrying its computed `paper_brief_id`. Raises a `PaperBriefError`
@@ -267,11 +284,4 @@ def load_paper_brief(path: str | Path) -> PaperBrief:
     if raw is None:
         raw = {}
 
-    content = _validate_paper_brief_dict(path, raw)
-    return PaperBrief(
-        paper_brief_id=compute_paper_brief_id(content),
-        thesis=content.thesis,
-        analysis_ids=content.analysis_ids,
-        lens=content.lens,
-        title=content.title,
-    )
+    return build_paper_brief(_validate_paper_brief_dict(path, raw))
