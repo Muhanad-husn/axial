@@ -625,6 +625,111 @@ def test_a_real_surface_form_always_beats_another_surfaces_rendering():
     assert nodes == [{"canonical": "Phelps-Brown and Hopkins (1956)", "aliases": ["Phelps-Brown"]}]
 
 
+def test_646_a_response_echoing_a_different_kind_label_still_resolves():
+    """Issue #646, cluster 14076 off the corpus of record. The model's
+    partition is correct and every surface form is verbatim, but each one is
+    echoed with a kind label this batch never rendered it with -- before the
+    fix this matched neither the bare nor the batch's own rendered form, so
+    the member resolved to nothing and, since it happened to every member,
+    the whole batch raised `MergeResponseError` ("placed none of the batch's
+    surface forms")."""
+    members = [
+        "Renaissance",
+        "cultural renaissance",
+        "post-Renaissance",
+        "the Renaissance",
+        "the Renaissance movement",
+    ]
+    kinds = {
+        "Renaissance": "era",
+        "cultural renaissance": "concept",
+        "post-Renaissance": "era",
+        "the Renaissance": "era",
+        "the Renaissance movement": "movement/religion",
+    }
+    raw = json.dumps(
+        {
+            "nodes": [
+                {
+                    "canonical": "'Renaissance' (period)",
+                    "aliases": [
+                        "'the Renaissance' (period)",
+                        "'the Renaissance movement' (movement/religion)",
+                    ],
+                },
+                {"canonical": "'post-Renaissance' (period)", "aliases": []},
+                {"canonical": "'cultural renaissance' (concept)", "aliases": []},
+            ],
+            "undecided": [],
+        }
+    )
+
+    nodes, escalated = parse_merge_response(raw, members, kinds)
+
+    assert escalated == []
+    placed = {member for node in nodes for member in [node["canonical"], *node["aliases"]]}
+    assert placed == set(members)
+    assert {n["canonical"] for n in nodes} == {
+        "Renaissance",
+        "post-Renaissance",
+        "cultural renaissance",
+    }
+    renaissance_node = next(n for n in nodes if n["canonical"] == "Renaissance")
+    assert set(renaissance_node["aliases"]) == {"the Renaissance", "the Renaissance movement"}
+
+
+def test_646_double_quoted_repr_shape_resolves():
+    """A surface containing an apostrophe reprs with double quotes
+    (`repr("the 'Final Solution'")` == `"the 'Final Solution'"`); the model
+    echoing that literal plus a relabeled kind must still resolve."""
+    members = ["the 'Final Solution'", "Final Solution"]
+    kinds = {"the 'Final Solution'": "concept", "Final Solution": "concept"}
+    raw = json.dumps(
+        {
+            "nodes": [
+                {
+                    "canonical": "\"the 'Final Solution'\" (event)",
+                    "aliases": ["'Final Solution' (concept)"],
+                }
+            ]
+        }
+    )
+
+    nodes, _escalated = parse_merge_response(raw, members, kinds)
+
+    assert nodes == [{"canonical": "the 'Final Solution'", "aliases": ["Final Solution"]}]
+
+
+def test_646_a_real_trailing_parenthetical_is_still_not_a_rendered_shape():
+    """The new fallback is anchored on a LEADING quoted-string literal, not
+    on any string that merely ends in parentheses -- `Phelps-Brown and
+    Hopkins (1956)` does not start with a quote character, so it never
+    matches `_resolve_rendered_shape` and an unrelated string ending in a
+    parenthetical is never resolved to some member by accident."""
+    members = ["Phelps-Brown and Hopkins (1956)", "Phelps-Brown"]
+    kinds = {"Phelps-Brown": "person"}
+
+    raw_bare = json.dumps(
+        {"nodes": [{"canonical": "Phelps-Brown and Hopkins (1956)", "aliases": ["Phelps-Brown"]}]}
+    )
+    nodes, _escalated = parse_merge_response(raw_bare, members, kinds)
+    assert nodes == [{"canonical": "Phelps-Brown and Hopkins (1956)", "aliases": ["Phelps-Brown"]}]
+
+    raw_unrelated = json.dumps(
+        {"nodes": [{"canonical": "Some Unrelated Thing (1956)", "aliases": ["Phelps-Brown"]}]}
+    )
+    nodes, _escalated = parse_merge_response(raw_unrelated, members, kinds)
+    placed = {node["canonical"] for node in nodes} | {
+        alias for node in nodes for alias in node["aliases"]
+    }
+    # "Some Unrelated Thing (1956)" is never minted as a member; only real
+    # members appear (issue #504's single-node fold folds the omitted
+    # "Phelps-Brown and Hopkins (1956)" into the surviving node, unrelated
+    # to this fix).
+    assert "Some Unrelated Thing (1956)" not in placed
+    assert placed <= set(members)
+
+
 def test_the_prompt_and_the_parse_share_one_renderer():
     """They cannot be allowed to drift: the parse only works because it knows
     exactly what the prompt put in front of the model."""
