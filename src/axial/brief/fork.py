@@ -64,6 +64,20 @@ asked, live, of the analyst (`axial.cli._fork_prompt`); `axial brief run`/
 fork found on that brief is recorded in the analysis record's `intake_fork`
 disclosure with `answer: null` and the run proceeds fully unconstrained --
 never guessed at, never blocked on.
+
+**A failed fork-check degrades to the same "unconstrained" place, never
+kills the run.** The check is advisory by construction: no fork found means
+nothing is asked and retrieval proceeds unconstrained. `assess_fork` still
+RAISES on a malformed response (`ForkCheckParseError`) or a transport
+failure (`ForkCheckFailedError`) -- that discipline stays available to its
+own callers and tests, the same "model proposes, code decides, and a schema
+miss is fatal" rule `axial.brief.interrogate` follows. It is `run_brief`'s
+own call site, and only there, that catches `ForkCheckError` and substitutes
+`ForkCheckResult(failed=...)`: a live run once lost an entire paid
+interrogation call to exactly this exception propagating unhandled, for an
+optional pre-pass that was never supposed to be able to do that (issue
+#649's own live-run finding). The `intake_fork` disclosure then says
+plainly that the check failed, not that no fork existed.
 """
 
 from __future__ import annotations
@@ -249,7 +263,16 @@ def render_measurement(
     total notes/sources, the publication-year span its sources cover, then
     each contributing source's own count, author and year), the silent
     terms, and the question's own stated period when interrogation (§7.2)
-    found one."""
+    found one.
+
+    **Each source line carries a small bracketed index, 1-based, scoped to
+    its own concept** (issue #649's live-run finding: a model asked to
+    retype a 24-char opaque `source_id` by hand into JSON mistyped one --
+    `heydemann-2000-66701ffbb36c` came back as `hey demann-2000-...`,
+    unparseable and fatal). The index is what an option's `drop_source_
+    indices` names instead; `parse_fork_response` resolves it back to the
+    real `source_id` deterministically, so this class of transcription
+    error stops being possible."""
     if not measurement.concepts:
         lines = ["(no concept in this question resolved to anything the corpus holds)"]
     else:
@@ -262,11 +285,12 @@ def render_measurement(
                 f"{concept.note_count} notes, {concept.source_count} source(s), "
                 f"years {year_span}, largest single source is {concept.top_share:.0%} of it"
             )
-            for source in concept.sources:
+            for index, source in enumerate(concept.sources, start=1):
                 year = source.year if source.year is not None else "year unknown"
                 author = source.author or source.source_id
                 lines.append(
-                    f"    - {source.source_id} ({author}, {year}): {source.note_count} notes"
+                    f"    [{index}] {source.source_id} ({author}, {year}): "
+                    f"{source.note_count} notes"
                 )
     if measurement.silent_terms:
         lines.append(
@@ -304,7 +328,18 @@ class ForkCheckResult:
     `measured` is `False` only when the measurement resolved no concept at
     all, in which case the model was never called (module docstring) --
     distinct from `is_fork=False`, which is the model's own real "no fork"
-    verdict after actually being asked."""
+    verdict after actually being asked.
+
+    `failed` (issue #649) is `None` on every legitimate outcome above --
+    a real "no fork found", a real fork, or the zero-call "nothing
+    measured" shape. It carries a reason string ONLY when the check itself
+    could not be completed (a malformed model response, or a transport
+    failure): `run_brief`'s own call site is the sole producer of that
+    shape, catching `ForkCheckError` and substituting this result so a
+    failed advisory pre-pass degrades to "unconstrained" rather than
+    aborting a run that already paid for interrogation. `assess_fork`
+    itself never returns this shape -- it still raises, for its own
+    callers and tests (module docstring's "batch vs interactive" note)."""
 
     is_fork: bool
     measured: bool = True
@@ -312,6 +347,7 @@ class ForkCheckResult:
     kind: str | None = None
     question: str | None = None
     options: tuple[ForkOption, ...] = ()
+    failed: str | None = None
 
 
 def compose_fork_prompt(
@@ -378,10 +414,12 @@ when a real choice exists that would change what gets retrieved.
 
 If you find a genuine fork, phrase ONE short question naming the measured \
 numbers (never a vague generality), and offer 2-4 options. Each option may \
-name specific source_ids from the measurement above, under drop_source_ids, \
-to exclude from evidence entirely, and/or a per_source_cap limiting how many \
-notes from any one source the evidence set may hold, plus guidance text \
-stating what that option means for how retrieval should read the corpus. \
+exclude sources from evidence entirely, under drop_source_indices -- the \
+small bracketed number(s) shown next to the fork's own concept above (e.g. \
+[1]), NEVER the source_id text itself -- and/or a per_source_cap limiting \
+how many notes from any one source the evidence set may hold, plus guidance \
+text stating what that option means for how retrieval should read the \
+corpus. \
 **Per DEC-62, dates assign roles, not cutoffs: a temporal fork's DEFAULT \
 option -- the one the analyst gets by choosing the first, most natural \
 reading -- must keep every source in and state what each era witnesses in \
@@ -395,7 +433,8 @@ Return ONLY this JSON object, no prose and no code fence:
 {{"is_fork": true|false, "concept": "<canonical from the measurement above, \
 or null>", "kind": "source_imbalance"|"temporal_role"|"temporal_consequence"\
 |null, "question": "<the question text, or null>", "options": [{{"label": \
-"<short option label>", "drop_source_ids": ["<source_id>", ...], \
+"<short option label>", "drop_source_indices": [<the bracketed number(s) \
+next to the sources this option excludes, e.g. 1>, ...], \
 "per_source_cap": <int or null>, "guidance": "<what this option means for \
 retrieval>"}}, ...]}}"""
 
@@ -406,9 +445,21 @@ def parse_fork_response(raw: str, measurement: QuestionMeasurement) -> ForkCheck
     `False` verdict short-circuits to the trivial result regardless of
     whatever else the model wrote. A `True` verdict must name a concept the
     measurement actually carries, a non-blank question, and at least one
-    option whose `drop_source_ids` are all real source ids of that
+    option whose `drop_source_indices` all resolve to a real source of that
     concept's own measurement -- any of these failing is a
-    `ForkCheckParseError`, never silently repaired."""
+    `ForkCheckParseError`, never silently repaired.
+
+    **An option names sources by INDEX, not by typing `source_id` text**
+    (issue #649's live-run finding: a model asked to retype a 24-char
+    opaque id mistyped one, `heydemann-2000-66701ffbb36c` came back with a
+    stray space, fatally unparseable). `render_measurement` numbers each
+    concept's own sources `[1]`, `[2]`, ... in the same order this function
+    reads `by_canonical[concept].sources`; `drop_source_indices` is resolved
+    against that same order, so the two can never drift apart. The
+    resolved `ForkOption.drop_source_ids` this function produces is real
+    `source_id`s throughout -- only the WIRE shape from the model changed,
+    every downstream reader (`compile_constraint`, the §7.3 record) is
+    unaffected."""
     data = parse_model_json(raw)
     if not isinstance(data, dict):
         raise ForkCheckParseError(
@@ -436,7 +487,11 @@ def parse_fork_response(raw: str, measurement: QuestionMeasurement) -> ForkCheck
     if not isinstance(question, str) or not question.strip():
         raise ForkCheckParseError("a genuine fork must carry a non-blank question")
 
-    known_source_ids = {source.source_id for source in by_canonical[concept].sources}
+    id_by_index = {
+        index: source.source_id
+        for index, source in enumerate(by_canonical[concept].sources, start=1)
+    }
+    known_source_ids = set(id_by_index.values())
 
     raw_options = data.get("options")
     if not isinstance(raw_options, list) or not raw_options:
@@ -448,17 +503,17 @@ def parse_fork_response(raw: str, measurement: QuestionMeasurement) -> ForkCheck
         label = entry.get("label")
         if not isinstance(label, str) or not label.strip():
             raise ForkCheckParseError(f"option entry missing a non-blank label: {entry!r}")
-        drop_raw = entry.get("drop_source_ids") or []
+        drop_raw = entry.get("drop_source_indices") or []
         if not isinstance(drop_raw, list):
-            raise ForkCheckParseError(f"drop_source_ids must be a list: {entry!r}")
+            raise ForkCheckParseError(f"drop_source_indices must be a list: {entry!r}")
         drop: list[str] = []
-        for source_id in drop_raw:
-            if not isinstance(source_id, str) or source_id not in known_source_ids:
+        for index in drop_raw:
+            if isinstance(index, bool) or not isinstance(index, int) or index not in id_by_index:
                 raise ForkCheckParseError(
-                    f"drop_source_ids names {source_id!r}, not a real source of "
-                    f"{concept!r}'s own measurement ({sorted(known_source_ids)!r})"
+                    f"drop_source_indices names {index!r}, not a real source index of "
+                    f"{concept!r}'s own measurement (1..{len(id_by_index)})"
                 )
-            drop.append(source_id)
+            drop.append(id_by_index[index])
         # Never offer dropping every source a concept has (module docstring
         # -- a live run offered dropping the ONLY source on a one-note
         # concept, the general case of which is this): a constraint that

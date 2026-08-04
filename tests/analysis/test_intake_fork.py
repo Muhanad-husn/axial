@@ -75,13 +75,17 @@ _FORK_FOUND_RESPONSE = json.dumps(
         "options": [
             {
                 "label": "background only",
-                "drop_source_ids": [SOURCE_DOMINANT],
+                # `SOURCE_DOMINANT` has 3 notes, `SOURCE_OLDER` has 1 --
+                # `concept_sources` ranks by note count descending, so
+                # `SOURCE_DOMINANT` is index 1 (issue #649: an option names
+                # a source by this rendered index, never the raw id text).
+                "drop_source_indices": [1],
                 "per_source_cap": None,
                 "guidance": "treat the 2021 monograph as background, not a full voice",
             },
             {
                 "label": "full voices",
-                "drop_source_ids": [],
+                "drop_source_indices": [],
                 "per_source_cap": None,
                 "guidance": "read every source as an equal voice",
             },
@@ -90,6 +94,29 @@ _FORK_FOUND_RESPONSE = json.dumps(
 )
 
 _NO_FORK_RESPONSE = json.dumps({"is_fork": False})
+
+# A well-formed JSON response whose `drop_source_indices` names an index the
+# concept's own measurement does not carry -- the well-formed-but-wrong-
+# content case `parse_fork_response` rejects with `ForkCheckParseError`
+# (never a mistyped `source_id` string post-issue #649's index-based wire
+# shape, but an out-of-range index is still possible and must fail the same
+# deterministic way).
+_BAD_INDEX_FORK_RESPONSE = json.dumps(
+    {
+        "is_fork": True,
+        "concept": "Syria",
+        "kind": "source_imbalance",
+        "question": "background only, or full voices?",
+        "options": [
+            {
+                "label": "background only",
+                "drop_source_indices": [99],
+                "per_source_cap": None,
+                "guidance": "treat the 2021 monograph as background",
+            }
+        ],
+    }
+)
 
 
 def _note_frontmatter(*, chunk_id: str, source_id: str, author: str, year: int) -> dict[str, Any]:
@@ -279,3 +306,62 @@ def test_no_fork_found_asks_nothing_and_measures_it(
     assert record["intake_fork"]["question"] is None
     assert record["intake_fork"]["effect"] is None
     assert record["evidence"]["assembled_count"] == 4
+
+
+def test_a_response_naming_an_unknown_index_fails_the_check_but_the_run_completes(
+    fixture_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A well-formed JSON fork-check response whose `drop_source_indices`
+    names an index the concept's own measurement does not carry --
+    `parse_fork_response` still rejects it (`ForkCheckParseError`), but
+    `run_brief`'s own call site is where that failure has to land now
+    (issue #649): the check is advisory, so a malformed answer degrades to
+    "unconstrained", with `intake_fork.failed` saying plainly that the
+    check itself failed -- never that no fork existed, and never a raise
+    that discards the interrogation call already paid for."""
+    monkeypatch.setenv(STUB_FORK_CHECK_RESPONSE_ENV_VAR, _BAD_INDEX_FORK_RESPONSE)
+    _script_retrieval_and_synthesis(monkeypatch)
+
+    result = run_brief(_brief(), client=StubLLMClient())
+    record = result.record
+
+    assert record["intake_fork"]["measured"] is False
+    assert record["intake_fork"]["is_fork"] is False
+    assert record["intake_fork"]["failed"] is not None
+    assert "drop_source_indices" in record["intake_fork"]["failed"]
+    assert record["intake_fork"]["answer"] is None
+    assert record["intake_fork"]["effect"] is None
+    # Unconstrained, exactly like a genuine "no fork" verdict -- every
+    # member is still reachable, and the run completed all the way through
+    # synthesis rather than dying on the fork-check.
+    assert record["evidence"]["assembled_count"] == 4
+    assert record["claims"]
+
+
+def test_a_fork_check_that_raises_still_completes_the_run_with_an_honest_disclosure(
+    fixture_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`assess_fork` itself still raises on a transport failure
+    (`ForkCheckFailedError`) -- that discipline stays available to its own
+    callers/tests. It is `run_brief`'s own call site that must degrade: a
+    real paid run once lost an entire interrogation call to exactly this
+    exception propagating unhandled through an optional pre-pass."""
+    import axial.answer.record as record_module
+    from axial.brief.fork import ForkCheckFailedError
+
+    def _raise(*_args, **_kwargs):
+        raise ForkCheckFailedError("simulated transport failure")
+
+    monkeypatch.setattr(record_module, "assess_fork", _raise)
+    _script_retrieval_and_synthesis(monkeypatch)
+
+    result = run_brief(_brief(), client=StubLLMClient())
+    record = result.record
+
+    assert record["intake_fork"]["measured"] is False
+    assert record["intake_fork"]["is_fork"] is False
+    assert record["intake_fork"]["failed"] == "simulated transport failure"
+    assert record["evidence"]["assembled_count"] == 4
+    # The interrogation call already paid for was not thrown away: the run
+    # completed all the way through synthesis.
+    assert record["claims"]

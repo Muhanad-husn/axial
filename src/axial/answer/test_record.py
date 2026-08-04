@@ -319,6 +319,7 @@ def test_intake_fork_defaults_to_the_honest_nothing_measured_shape():
     assert record["intake_fork"] == {
         "measured": False,
         "is_fork": False,
+        "failed": None,
         "concept": None,
         "kind": None,
         "question": None,

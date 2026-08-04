@@ -106,6 +106,7 @@ from axial.answer.source_usage import compute_source_usage
 from axial.argmap.ask import DECOMPOSE_PASS_NAME, AskResult, run_map_ask_for_brief
 from axial.brief.fork import (
     ForkAnswer,
+    ForkCheckError,
     ForkCheckResult,
     assess_fork,
     compile_constraint,
@@ -325,7 +326,10 @@ def build_record(
     analyst answered (or `None`, unanswered), and what the compiled
     constraint actually did to the assembled evidence set. `fork_result`
     defaults to the trivial "nothing measured" result (`_NO_FORK`) so every
-    existing caller keeps recording an honest, empty `intake_fork` block."""
+    existing caller keeps recording an honest, empty `intake_fork` block.
+    `intake_fork.failed` is `None` on that shape and on every real verdict;
+    `run_brief` is the sole caller that ever supplies a `fork_result` with
+    `failed` set, when the check itself could not be completed."""
     clock = clock if clock is not None else PassClock()
     claim_dicts = [_claim_to_dict(claim) for claim in claims]
     coverage_map = compute_coverage_map(claim_dicts, trajectory=trajectory, vault_dir=vault_dir)
@@ -374,6 +378,7 @@ def build_record(
         "intake_fork": {
             "measured": fork_result.measured,
             "is_fork": fork_result.is_fork,
+            "failed": fork_result.failed,
             "concept": fork_result.concept,
             "kind": fork_result.kind,
             "question": fork_result.question,
@@ -619,15 +624,39 @@ def run_brief(
                 "checking the question against the measured corpus",
                 {"stage": "fork_check"},
             )
-            with clock.time(FORK_CHECK_PASS_NAME):
-                fork_result = assess_fork(
-                    brief,
-                    client=client,
-                    vault_dir=vault_dir,
-                    question_scope=interrogation_result.question_scope,
-                )
-            if fork_result.measured:
+            try:
+                with clock.time(FORK_CHECK_PASS_NAME):
+                    fork_result = assess_fork(
+                        brief,
+                        client=client,
+                        vault_dir=vault_dir,
+                        question_scope=interrogation_result.question_scope,
+                    )
+            except ForkCheckError as exc:
+                # The fork-check is advisory by construction (module
+                # docstring): no fork found means nothing is asked and
+                # retrieval proceeds unconstrained. A malformed answer or a
+                # transport failure lands in that same place -- never
+                # propagated up to abort a run that already paid for
+                # interrogation (issue #649's own live-run finding: a model
+                # mistyped a source id on the third call of a live pass and
+                # the whole run died on it). `measured=False` here is
+                # deliberately the same shape `_NO_FORK` uses -- the run
+                # proceeds identically either way -- but `failed` is set so
+                # the record can say plainly the check FAILED, not that no
+                # fork existed.
+                fork_result = ForkCheckResult(is_fork=False, measured=False, failed=str(exc))
                 model_by_pass[FORK_CHECK_PASS_NAME] = client.model_for_pass(FORK_CHECK_PASS_NAME)
+                emit_event(
+                    on_event,
+                    f"the fork-check failed and is being skipped: {exc}",
+                    {"stage": "fork_check", "failed": True},
+                )
+            else:
+                if fork_result.measured:
+                    model_by_pass[FORK_CHECK_PASS_NAME] = client.model_for_pass(
+                        FORK_CHECK_PASS_NAME
+                    )
             fork_answer = None
             if fork_result.is_fork:
                 emit_event(

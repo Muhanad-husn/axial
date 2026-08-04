@@ -243,13 +243,13 @@ def test_parse_fork_response_true_parses_options():
             "options": [
                 {
                     "label": "background only",
-                    "drop_source_ids": [],
+                    "drop_source_indices": [],
                     "per_source_cap": 1,
                     "guidance": "treat as background",
                 },
                 {
                     "label": "full voices",
-                    "drop_source_ids": [],
+                    "drop_source_indices": [],
                     "per_source_cap": None,
                     "guidance": "read as equal",
                 },
@@ -275,13 +275,32 @@ def test_parse_fork_response_rejects_a_concept_the_measurement_does_not_carry():
         parse_fork_response(raw, _measurement())
 
 
-def test_parse_fork_response_rejects_a_drop_source_id_not_in_the_measurement():
+def test_parse_fork_response_rejects_a_drop_source_index_not_in_the_measurement():
+    """`_measurement()`'s "Syria" concept has exactly two sources, indices
+    1 and 2 -- index 5 names nothing (issue #649: an option names a source
+    by its rendered index, never the raw `source_id` text, so the failure
+    mode this guards is now an out-of-range number, not a typo in a
+    24-character string)."""
     raw = json.dumps(
         {
             "is_fork": True,
             "concept": "Syria",
             "question": "q",
-            "options": [{"label": "x", "drop_source_ids": ["not-a-real-source"]}],
+            "options": [{"label": "x", "drop_source_indices": [5]}],
+        }
+    )
+
+    with pytest.raises(ForkCheckParseError):
+        parse_fork_response(raw, _measurement())
+
+
+def test_parse_fork_response_rejects_a_non_integer_drop_source_index():
+    raw = json.dumps(
+        {
+            "is_fork": True,
+            "concept": "Syria",
+            "question": "q",
+            "options": [{"label": "x", "drop_source_indices": [SOURCE_A]}],
         }
     )
 
@@ -300,7 +319,7 @@ def test_parse_fork_response_rejects_an_option_that_drops_every_source_a_concept
             "concept": "Syria",
             "question": "q",
             "options": [
-                {"label": "x", "drop_source_ids": [SOURCE_A, SOURCE_B]},
+                {"label": "x", "drop_source_indices": [1, 2]},
             ],
         }
     )
@@ -315,7 +334,7 @@ def test_parse_fork_response_accepts_an_option_that_drops_only_some_sources():
             "is_fork": True,
             "concept": "Syria",
             "question": "q",
-            "options": [{"label": "background only", "drop_source_ids": [SOURCE_A]}],
+            "options": [{"label": "background only", "drop_source_indices": [1]}],
         }
     )
 
