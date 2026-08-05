@@ -52,7 +52,6 @@ construction.
 from __future__ import annotations
 
 import json
-import os
 import re
 import statistics
 import sys
@@ -78,6 +77,7 @@ from axial.llm import (
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
 from axial.nonprose_guard import MAX_NON_ALPHA_RATIO, garble_only_skip_reason
+from axial.paths import atomic_write_text
 from axial.router import (
     APPARATUS,
     CONTENT_APPARATUS_REASON,
@@ -804,23 +804,18 @@ def _write_chunk_sections(
             out_lines.append(json.dumps(record) + "\n")
         all_records.extend(section_records)
 
-    # Atomic (issue #185): accumulate the full artifact in memory, write it
-    # to a sibling temp file, then `os.replace` it over `out_path` ONCE.
-    # `open("w")` on `out_path` directly would truncate the prior complete
-    # artifact at the start of the run, so a hard kill mid-run left a torn
-    # file already in place of the good one; `os.replace` is a single
-    # filesystem rename, so a reader always sees either the complete prior
-    # file or the complete new one.
-    out_tmp_path = out_path.with_name(out_path.name + ".tmp")
-    out_tmp_path.write_text("".join(out_lines), encoding="utf-8")
-    os.replace(out_tmp_path, out_path)
+    # Atomic (issue #185, retried past a transient Windows `PermissionError`
+    # per #705): accumulate the full artifact in memory, then write it via
+    # `axial.paths.atomic_write_text` -- a sibling temp file with a unique
+    # name, `os.replace`d over `out_path` ONCE. `open("w")` on `out_path`
+    # directly would truncate the prior complete artifact at the start of
+    # the run, so a hard kill mid-run left a torn file already in place of
+    # the good one; the atomic rename means a reader always sees either the
+    # complete prior file or the complete new one.
+    atomic_write_text(out_path, "".join(out_lines))
 
     if skip_records:
-        skips_tmp_path = skips_path.with_name(skips_path.name + ".tmp")
-        skips_tmp_path.write_text(
-            "".join(json.dumps(record) + "\n" for record in skip_records), encoding="utf-8"
-        )
-        os.replace(skips_tmp_path, skips_path)
+        atomic_write_text(skips_path, "".join(json.dumps(record) + "\n" for record in skip_records))
     elif skips_path.exists():
         # A rerun on the same source bytes with zero skips this time must
         # not leave a stale sidecar from an earlier run (idempotency).

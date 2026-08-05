@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from axial.query import store as note_store
 
 SOURCE_A = "alpha-2005-aaaaaaaaaaaa"
@@ -233,3 +235,60 @@ def test_opposing_notes_returns_mode_and_self_referential_unfiltered(tmp_path: P
         (f"{SOURCE_A}_001_intro_002", SOURCE_A, "a same-book opposing claim", "blocked", 1),
     ]
     assert absent == []
+
+
+# ---------------------------------------------------------------------------
+# `os.replace` retry on a Windows-only `PermissionError` (issue #705, the
+# same #653 fix `axial.paths.atomic_write_text` already carries): `write_
+# store` swaps a freshly built sqlite file over `path` via `axial.paths.
+# replace_with_retry`, the same shared helper, rather than a bare `os.
+# replace` of its own.
+# ---------------------------------------------------------------------------
+
+
+def test_write_store_retries_past_a_transient_permission_error(tmp_path: Path, monkeypatch):
+    import axial.paths
+
+    path = tmp_path / "notes.db"
+    real_replace = axial.paths.os.replace
+    calls = {"count": 0}
+
+    def flaky_replace(src, dst):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise PermissionError("[WinError 5] Access is denied")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(axial.paths.os, "replace", flaky_replace)
+    monkeypatch.setattr(axial.paths.time, "sleep", lambda seconds: None)
+
+    _write_fixture_store(path)
+
+    assert calls["count"] == 3
+    assert path.is_file()
+    connection = note_store.connect(tmp_path)
+    try:
+        assert note_store.concept_sources(connection, "Syria") != []
+    finally:
+        connection.close()
+
+
+def test_write_store_gives_up_and_raises_after_exhausting_retries(tmp_path: Path, monkeypatch):
+    """A `PermissionError` that never clears must surface loudly, and the
+    temp database it built must not be left behind."""
+    import axial.paths
+
+    path = tmp_path / "notes.db"
+
+    def always_denied(src, dst):
+        raise PermissionError("[WinError 5] Access is denied")
+
+    monkeypatch.setattr(axial.paths.os, "replace", always_denied)
+    monkeypatch.setattr(axial.paths.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(PermissionError):
+        _write_fixture_store(path)
+
+    assert not path.exists()
+    leftover_tmp_files = list(tmp_path.glob(".notes.db.*.tmp"))
+    assert leftover_tmp_files == [], f"temp file(s) left behind: {leftover_tmp_files!r}"

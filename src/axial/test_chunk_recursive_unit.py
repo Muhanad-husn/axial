@@ -9,14 +9,18 @@ against a monkeypatched tree.
 
 from __future__ import annotations
 
+import pytest
+
 from axial.chunk import (
     CHUNK_MAX,
     CHUNK_MIN,
     _enforce_max_recursive,
     _recursive_section_chunks,
     _recursive_split_text,
+    chunks_checkpoint_path,
     run_chunk_recursive,
 )
+from axial.envelope import compute_source_id
 
 from .conftest import patch_tree, tree_with_sections
 
@@ -216,3 +220,70 @@ def test_run_chunk_recursive_never_needs_an_llm_client(monkeypatch, tmp_path):
 
     records = run_chunk_recursive(source, chunks_dir=tmp_path / "chunks")
     assert records
+
+
+# ---------------------------------------------------------------------------
+# `os.replace` retry on a Windows-only `PermissionError` (issue #705, the
+# same #653 fix `axial.paths.atomic_write_text` already carries): `_write_
+# chunk_sections`'s final rename went through that shared helper instead of
+# a hand-rolled fixed `<name>.tmp`-plus-`os.replace` of its own.
+# ---------------------------------------------------------------------------
+
+
+def test_run_chunk_recursive_retries_past_a_transient_permission_error(monkeypatch, tmp_path):
+    import axial.paths
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+    tree = tree_with_sections({"Introduction": ["Intro sentence one.\n\nIntro sentence two."]})
+    patch_tree(monkeypatch, tmp_path, tree)
+    chunks_dir = tmp_path / "chunks"
+
+    real_replace = axial.paths.os.replace
+    calls = {"count": 0}
+
+    def flaky_replace(src, dst):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise PermissionError("[WinError 5] Access is denied")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(axial.paths.os, "replace", flaky_replace)
+    monkeypatch.setattr(axial.paths.time, "sleep", lambda seconds: None)
+
+    records = run_chunk_recursive(source, chunks_dir=chunks_dir)
+
+    assert calls["count"] == 3
+    assert records
+    out_path = chunks_checkpoint_path(compute_source_id(source), chunks_dir)
+    assert out_path.is_file()
+    leftover_tmp_files = list(chunks_dir.glob("*.tmp"))
+    assert leftover_tmp_files == [], f"temp file(s) left behind: {leftover_tmp_files!r}"
+
+
+def test_run_chunk_recursive_gives_up_and_raises_after_exhausting_retries(monkeypatch, tmp_path):
+    """A `PermissionError` that never clears must surface loudly, and must
+    not leave a predictable `<name>.jsonl.tmp` orphan behind -- issue #705's
+    own bug report symptom from the hand-rolled fixed temp name."""
+    import axial.paths
+
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"fake pdf bytes")
+    tree = tree_with_sections({"Introduction": ["Intro sentence one.\n\nIntro sentence two."]})
+    patch_tree(monkeypatch, tmp_path, tree)
+    chunks_dir = tmp_path / "chunks"
+
+    def always_denied(src, dst):
+        raise PermissionError("[WinError 5] Access is denied")
+
+    monkeypatch.setattr(axial.paths.os, "replace", always_denied)
+    monkeypatch.setattr(axial.paths.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(PermissionError):
+        run_chunk_recursive(source, chunks_dir=chunks_dir)
+
+    out_path = chunks_checkpoint_path(compute_source_id(source), chunks_dir)
+    assert not out_path.exists()
+    assert not (chunks_dir / (out_path.name + ".tmp")).exists()
+    leftover_tmp_files = list(chunks_dir.glob("*.tmp")) if chunks_dir.exists() else []
+    assert leftover_tmp_files == [], f"temp file(s) left behind: {leftover_tmp_files!r}"

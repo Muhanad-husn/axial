@@ -41,10 +41,10 @@ record for an already-answered chunk_id would be double-counted by every one
 of them. So this pass loads the existing per-source checkpoint, merges
 `position`/`position_nearest` into the matching record's own `answers` dict
 in memory, and rewrites the whole (small, one-source) file atomically
-(write to a temp file, then `os.replace`) after each note completes -- a
-reader can only ever see the fully-old or the fully-new file, never a torn
-one, which is a stronger guarantee than the append-only convention's own
-"a torn tail can only be the last line" tolerance.
+(`axial.paths.atomic_write_text`) after each note completes -- a reader can
+only ever see the fully-old or the fully-new file, never a torn one, which
+is a stronger guarantee than the append-only convention's own "a torn tail
+can only be the last line" tolerance.
 
 **Resumable by construction, with no separate journal.** The selection
 predicate -- "this note has an `answers` record and no `position` key" --
@@ -58,7 +58,6 @@ own single-collecting-thread discipline, `run_interrogate`'s docstring).
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -112,6 +111,7 @@ from axial.llm import (
     get_client,
 )
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
+from axial.paths import atomic_write_text
 from axial.schema import SchemaError, load_schema
 
 # The label recorded in run-log rows and the JSON summary's own `pass`
@@ -274,17 +274,16 @@ def parse_position_backfill_response(
 
 
 def _rewrite_answers_file(path: Path, records: list[dict[str, Any]]) -> None:
-    """Rewrite `path` to hold exactly `records`, atomically: write to a
-    sibling temp file, then `os.replace` it over the original. A reader
-    opening `path` mid-write always sees either the fully-old or the
-    fully-new file, never a partial one -- stronger than the append-only
-    convention's own "a torn tail is at most the last line" tolerance,
-    which does not apply once a file is rewritten rather than appended to."""
-    tmp_path = path.with_name(path.name + ".tmp")
-    with tmp_path.open("w", encoding="utf-8") as handle:
-        for record in records:
-            handle.write(json.dumps(record) + "\n")
-    os.replace(tmp_path, path)
+    """Rewrite `path` to hold exactly `records`, atomically
+    (`axial.paths.atomic_write_text`, issue #705): a reader opening `path`
+    mid-write always sees either the fully-old or the fully-new file, never
+    a partial one -- stronger than the append-only convention's own "a torn
+    tail is at most the last line" tolerance, which does not apply once a
+    file is rewritten rather than appended to. `atomic_write_text` also
+    retries the final rename past a transient Windows `PermissionError`
+    (#653) -- issue #705's own bug -- rather than aborting a whole run on
+    the first antivirus/indexer handle."""
+    atomic_write_text(path, "".join(json.dumps(record) + "\n" for record in records))
 
 
 def notes_missing_position(records: list[dict[str, Any]]) -> list[int]:
