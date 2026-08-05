@@ -65,13 +65,19 @@ sits with whom even where nothing changed. `run_map_build` now persists each
 bag's own centroid alongside `map.json` (`bag_state.json`) and, when a later
 build's encoder/threshold/library version still match, keeps every already-
 seen passage's own bag label unchanged and places a genuinely new passage by
-NEAREST CENTROID at the same `BAG_DISTANCE_THRESHOLD` a full fit already
-clusters at -- agglomerative clustering has no `approximate_predict`, and
-nearest-centroid at the existing grain is the honest analogue, not a second
-hand-tuned constant. A passage nearest to no existing centroid within that
-grain falls to a residue, agglomeratively clustered exactly as a full build
-would and offset above the existing maximum label -- existing labels are
-never renumbered. `--force` still does a full re-bag.
+NEAREST CENTROID, under AVERAGE LINKAGE (`_average_linkage_distance`: `1 -
+dot(vector, centroid)` against the centroid AS STORED, an unnormalised mean
+-- the same criterion `_agglomerative_cluster`'s own average-linkage-under-
+cosine fit uses; dividing by the centroid's own norm instead, tried first,
+inflates acceptance and was measured to swallow 96.8% of a real delta into
+3 residue bags where average linkage swallows 78.1% into 22) at the same
+`BAG_DISTANCE_THRESHOLD` a full fit already clusters at -- agglomerative
+clustering has no `approximate_predict`, and nearest-centroid at the
+existing grain is the honest analogue, not a second hand-tuned constant. A
+passage nearest to no existing centroid within that grain falls to a
+residue, agglomeratively clustered exactly as a full build would and offset
+above the existing maximum label -- existing labels are never renumbered.
+`--force` still does a full re-bag.
 
 Each read record also carries its own `members_key` (a hash of its slice's
 ordered claims -- the content the model was actually shown, `render_claims_
@@ -528,15 +534,28 @@ def _write_bag_state(
     path.write_text(json.dumps(state, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def _cosine_distance(a: np.ndarray, b: np.ndarray) -> float:
-    """1 - cosine similarity, the same metric `_agglomerative_cluster`'s own
-    `metric="cosine"` fits bags with. `1.0` (maximally distant) for a
-    zero-vector, which never legitimately occurs here (the encoder returns
-    unit-normalised vectors) but must never raise a division error."""
-    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
-    if denom == 0.0:
-        return 1.0
-    return 1.0 - float(np.dot(a, b)) / denom
+def _average_linkage_distance(vector: np.ndarray, centroid: np.ndarray) -> float:
+    """The distance a candidate point's placement against `centroid` must
+    clear -- the SAME criterion `_agglomerative_cluster`'s own average
+    linkage under cosine fits bags with, not the cosine distance to the
+    centroid's own direction. For unit vectors `m_i` and their unnormalised
+    mean `centroid = (1/n) * sum_i(m_i)`, the mean distance from `vector` to
+    every member of the bag is:
+
+        (1/n) * sum_i(1 - vector.m_i) = 1 - vector.((1/n) * sum_i(m_i))
+                                       = 1 - vector.centroid
+
+    So this is exactly `1 - dot(vector, centroid)`, using `centroid` AS
+    STORED (an unnormalised mean, `norm(centroid) < 1` in general --
+    measured over this corpus's real bags, median 0.839, min 0.713).
+    Dividing by `norm(centroid)` (plain cosine distance to the centroid's
+    own direction, tried first) inflates acceptance: at `BAG_DISTANCE_
+    THRESHOLD=0.55` it accepts a `dot() >= 0.378` point instead of the
+    `dot() >= 0.45` average linkage itself demands -- measured to swallow
+    96.8% of a real 535-passage delta into 3 residue bags, where average
+    linkage swallows 78.1% into 22. Three new bags for three new books was
+    never plausible; twenty-two is."""
+    return 1.0 - float(np.dot(vector, centroid))
 
 
 def _incremental_bag_passages(
@@ -545,7 +564,10 @@ def _incremental_bag_passages(
     """Group `passages` into bags, keeping every already-seen passage's own
     prior bag label unchanged (issue #677) instead of re-fitting globally.
     A brand-new passage (its `chunk_id` absent from `prior_state`) is placed
-    into the bag whose centroid it is nearest to, PROVIDED that distance is
+    into the bag whose centroid it is nearest to BY AVERAGE LINKAGE
+    (`_average_linkage_distance` -- the same criterion `_agglomerative_
+    cluster`'s own average-linkage-under-cosine fit uses, not cosine
+    distance to the centroid's own direction), PROVIDED that distance is
     within `BAG_DISTANCE_THRESHOLD` -- the same grain a full fit already
     clusters at, reused rather than a second, hand-tuned constant; a new
     passage nearest to no existing bag within that grain falls to a
@@ -583,7 +605,7 @@ def _incremental_bag_passages(
         for passage, vector in zip(new, new_vectors):
             best_label, best_distance = None, None
             for label, centroid in prior_centroids.items():
-                distance = _cosine_distance(vector, centroid)
+                distance = _average_linkage_distance(vector, centroid)
                 if best_distance is None or distance < best_distance:
                     best_label, best_distance = label, distance
             if best_label is not None and best_distance <= BAG_DISTANCE_THRESHOLD:

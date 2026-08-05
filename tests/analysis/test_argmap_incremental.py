@@ -21,6 +21,10 @@ Covered here:
     label, accepts a near-duplicate new passage into the nearest existing
     bag, and offsets a genuinely new cluster's label above the existing
     maximum -- never renumbering what already existed;
+  - placement uses AVERAGE LINKAGE (the criterion the full fit's own
+    clustering uses), not cosine distance to the centroid's own
+    (renormalised) direction: a point built to pass the latter while
+    failing the former must go to residue;
   - `_seed_reads_from_prior_pin` only ever seeds a job that is both pending
     (not already on this pin's own ledger) and content-matched, and rewrites
     the seeded record's own `(bag, slice)` to the current job's numbering;
@@ -35,6 +39,7 @@ Covered here:
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -238,6 +243,43 @@ def test_incremental_bag_passages_with_no_new_passages_is_a_pure_relabel():
     assert set(bags) == {0}
     assert {p.chunk_id for p in bags[0]} == {p.chunk_id for p in known_a}
     assert centroids[0] == pytest.approx(np.mean(_GROUP_A, axis=0))
+
+
+def test_incremental_bag_passages_uses_average_linkage_not_cosine_to_centroid_direction():
+    """Pins the criterion (coordinator review, #677 slice B): placement
+    must be decided by AVERAGE LINKAGE -- the mean distance to the bag's
+    actual members, `1 - dot(vector, centroid)` against the centroid AS
+    STORED -- never by cosine distance to the centroid's own renormalised
+    direction. A bag whose two members sit 150 degrees apart has a
+    centroid whose OWN direction a candidate vector can match exactly
+    (cosine distance to that direction == 0, always passes) while the mean
+    distance to the bag's real members is still far over
+    `BAG_DISTANCE_THRESHOLD` (measured: 0.741). Accepting this point would
+    be the bug this fix closes -- it must go to residue instead."""
+    member_a = [1.0, 0.0]
+    member_b = [math.cos(math.radians(150)), math.sin(math.radians(150))]
+    known = [
+        _passage("c1", "alpha-2020-book", "Claim one."),
+        _passage("c2", "alpha-2020-book", "Claim two."),
+    ]
+    vectors_by_chunk_id = {"c1": member_a, "c2": member_b}
+    prior_state = _prior_state_from({0: known}, vectors_by_chunk_id)
+
+    # The centroid's own (renormalised) direction bisects the 150-degree
+    # angle, at 75 degrees -- a candidate placed exactly there has cosine
+    # distance 0 to that direction, but average-linkage distance 0.741.
+    centroid_direction = [math.cos(math.radians(75)), math.sin(math.radians(75))]
+    new_passage = _passage("c_new", "beta-2021-book", "Claim aligned with centroid direction.")
+    encode = _vector_lookup_encode({"Claim aligned with centroid direction.": centroid_direction})
+
+    bags, _centroids, new_count = _incremental_bag_passages(
+        [*known, new_passage], encode, prior_state
+    )
+
+    assert new_count == 1
+    assert new_passage not in bags[0]
+    residue_label = next(label for label, members in bags.items() if new_passage in members)
+    assert residue_label != 0
 
 
 # ---------------------------------------------------------------------------
