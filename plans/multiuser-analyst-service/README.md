@@ -48,12 +48,19 @@ which are still the cheap groundwork that is expensive to retrofit.
    URI. A published corpus is that one file, baked into a worker image and tagged
    with its pin.
 3. **The binding constraint is money.** ~$0.13 a paper; a thousand academics at
-   two a week is ~$1,100/month against no revenue. Quotas and a content-keyed
-   cache ship on day one (#686).
+   two a week is ~$1,100/month. Quotas and a content-keyed cache ship on day one
+   (#686).
 
-**One decision blocks going public** (#690): the papers quote passages from 34
-in-copyright books. Private use and publishing are the same mechanism at
-different exposure.
+**Built here, not deployed.** The founder is not running this as a service. The
+deliverable is a stack an investor can stand up: `docker compose up`, every
+setting an environment variable with a documented default, no founder path in the
+running service (#691). The operating decisions belong to whoever deploys.
+
+That includes copyright. The papers quote passages from 34 in-copyright books;
+reading them on your own machine is private use and serving them to a thousand
+readers is publishing. So both citation modes ship — `locator` by default so a
+fresh install is safe unconfigured, `passage` behind one config value — and the
+deployer picks (#690). Nothing in this layer waits on a founder decision.
 
 ---
 
