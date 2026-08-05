@@ -370,6 +370,20 @@ def build_parser() -> argparse.ArgumentParser:
             f"this build (default: {DEFAULT_MIN_SAMPLES}, D10's loosest)"
         ),
     )
+    names_build_parser.add_argument(
+        "--recluster",
+        action="store_true",
+        help=(
+            "force a full HDBSCAN re-fit over every surface form and refresh "
+            "the persisted fit (issue #677); by default, when a persisted fit "
+            "exists at these same model/dials/library versions, a surface form "
+            "already in the previous build keeps its cluster label unchanged "
+            "and only new surface forms are assigned into that fit -- a full "
+            "re-fit reshuffles which cluster everything sits in, which is what "
+            "made adding a handful of books re-ask the whole corpus's already-"
+            "decided merges (#623)"
+        ),
+    )
     names_examine_parser = names_subparsers.add_parser(
         "examine",
         help=(
@@ -2849,8 +2863,8 @@ def _distill_readiness_map() -> int:
     return 0
 
 
-def _names_build(min_cluster_size: int | None, min_samples: int | None) -> int:
-    kwargs: dict[str, int] = {}
+def _names_build(min_cluster_size: int | None, min_samples: int | None, recluster: bool) -> int:
+    kwargs: dict[str, Any] = {"recluster": recluster}
     if min_cluster_size is not None:
         kwargs["min_cluster_size"] = min_cluster_size
     if min_samples is not None:
@@ -2866,6 +2880,10 @@ def _names_build(min_cluster_size: int | None, min_samples: int | None) -> int:
     print(f"occurrence_count: {result.occurrence_count}")
     print(f"cluster_count: {result.cluster_count}")
     print(f"noise_count: {result.noise_count}")
+    print(f"units_total: {result.units_total}")
+    print(f"units_reused: {result.units_reused}")
+    print(f"units_asked: {result.units_asked}")
+    print(f"units_asked_touching_new: {result.units_asked_touching_new}")
     print(f"inventory_path: {result.inventory_path}")
     print(f"embeddings_dir: {result.embeddings_dir}")
     print(f"manifest_path: {result.manifest_path}")
@@ -3503,7 +3521,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.command == "names" and args.names_command == "build":
-        return _names_build(args.min_cluster_size, args.min_samples)
+        return _names_build(args.min_cluster_size, args.min_samples, args.recluster)
 
     if args.command == "names" and args.names_command == "examine":
         return _names_examine(args.min_cluster_sizes, args.min_samples)

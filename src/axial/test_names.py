@@ -24,13 +24,23 @@ import pytest
 lancedb = pytest.importorskip("lancedb")
 
 from axial.names import (  # noqa: E402
+    NOISE_LABEL,
     NameOccurrence,
     NoAnswersToEmbedError,
     NoNamesToClusterError,
     TABLE_NAME,
+    _approximate_predict,
     _borderline_pairs,
+    _cluster_floors,
+    _fit_cluster_reduced,
+    _fit_reduce_vectors,
+    _library_versions,
+    _manifest_reusable,
     _nearest_neighbour_pairs,
+    _read_fit_artifact,
     _relabel_from_tree,
+    _transform_vectors,
+    _write_fit_artifact,
     back_matter_anchor,
     back_matter_section_orders,
     build_inventory,
@@ -1506,3 +1516,362 @@ def test_borderline_pairs_respects_top_n():
 
     assert len(result) == 2
     assert result[0][2] == 0.9 and result[1][2] == 0.8
+
+
+# --- Issue #677: incremental assignment into a persisted fit -----------------
+#
+# Two dense, well-separated (opposite-direction) groups -- the same proven
+# fixture shape `_tightness_fixture_vectors` and `axial.distill.readiness`'s
+# own real-pipeline tests use (see their docstrings): a magnitude-only or
+# too-small fixture collapses unpredictably once StandardScaler sees
+# near-zero per-feature variance, so these tests reuse the one shape already
+# verified stable at small N through this exact normalise/standardise/PCA
+# pipeline.
+
+_GROUP_A = [[5.0 + i * 0.01, 5.0, 5.0] for i in range(6)]  # -> persisted label 0
+_GROUP_B = [[-5.0 + i * 0.01, -5.0, -5.0] for i in range(3)]  # -> persisted label 1
+# A near-duplicate of two GROUP_A points: `_approximate_predict`, measured
+# directly against this fixture, places these at membership strength
+# 0.9947/0.9960 -- clearing GROUP_A's own fitted floor (0.9947) -- so they
+# are accepted into the persisted label rather than sent to residue.
+_ACCEPTED_NEAR_A = [[5.0, 5.0, 5.0], [5.01, 5.0, 5.0]]
+# A direction distinct from both existing groups, in two internally-dense
+# sub-groups so the residue's own re-fit (measured directly) finds two real
+# clusters rather than collapsing to noise: verified against this repo's
+# exact HDBSCAN settings, isolated points at this spacing WITHOUT a second
+# contrasting sub-group inside the residue set land on `-1` throughout --
+# HDBSCAN is a density algorithm and needs a within-residue contrast, the
+# same reason `_GROUP_A`/`_GROUP_B` are only ever fit together above.
+_RESIDUE_X = [[5.0 + i * 0.01, -5.0, -5.0] for i in range(6)]
+_RESIDUE_Y = [[-5.0 + i * 0.01, 5.0, 5.0] for i in range(3)]
+
+
+def _vector_lookup_encoder(vectors_by_surface: dict[str, list[float]]):
+    """An `Encoder` that returns pre-assigned, real-geometry vectors by exact
+    surface form -- the seam this fixture needs that `_fake_encoder`'s
+    string-derived vectors cannot give: precise control over where a new
+    surface form lands relative to a persisted fit."""
+    calls: list[list[str]] = []
+
+    def encode(surface_forms: list[str]) -> list[list[float]]:
+        calls.append(list(surface_forms))
+        return [vectors_by_surface[surface_form] for surface_form in surface_forms]
+
+    encode.calls = calls  # type: ignore[attr-defined]
+    return encode
+
+
+def _write_named_answers(
+    answers_dir: Path, source_id: str, names_and_ids: list[tuple[str, str]]
+) -> None:
+    """One occurrence per `(surface_form, chunk_id)` pair, all in one
+    source's answers file."""
+    _write_answers(
+        answers_dir,
+        source_id,
+        [
+            _answer_record(chunk_id, source_id, _base_answers(names=[{"name": surface}]))
+            for surface, chunk_id in names_and_ids
+        ],
+    )
+
+
+def _run1_vectors() -> dict[str, list[float]]:
+    vectors: dict[str, list[float]] = {}
+    for i, vector in enumerate(_GROUP_A):
+        vectors[f"Alpha{i}"] = vector
+    for i, vector in enumerate(_GROUP_B):
+        vectors[f"Beta{i}"] = vector
+    return vectors
+
+
+def test_cluster_floors_returns_each_clusters_own_minimum_probability():
+    reduced, _scaler, _pca = _fit_reduce_vectors(_GROUP_A + _GROUP_B, pca_components=3)
+    clusterer = _fit_cluster_reduced(
+        reduced, min_cluster_size=2, min_samples=1, prediction_data=True
+    )
+
+    floors = _cluster_floors(clusterer)
+
+    assert set(floors) == {0, 1}
+    for label, floor in floors.items():
+        members = [
+            probability
+            for member_label, probability in zip(clusterer.labels_, clusterer.probabilities_)
+            if member_label == label
+        ]
+        assert floor == min(members)
+
+
+def test_transform_vectors_reproduces_the_fit_for_its_own_training_rows():
+    reduced, scaler, pca = _fit_reduce_vectors(_GROUP_A + _GROUP_B, pca_components=3)
+
+    retransformed = _transform_vectors(_GROUP_A + _GROUP_B, scaler, pca)
+
+    assert retransformed == pytest.approx(reduced)
+
+
+def test_approximate_predict_agrees_with_the_fit_for_its_own_training_points():
+    reduced, scaler, pca = _fit_reduce_vectors(_GROUP_A + _GROUP_B, pca_components=3)
+    clusterer = _fit_cluster_reduced(
+        reduced, min_cluster_size=2, min_samples=1, prediction_data=True
+    )
+
+    predicted_labels, strengths = _approximate_predict(clusterer, reduced)
+
+    assert predicted_labels == [int(label) for label in clusterer.labels_]
+    assert all(0.0 <= strength <= 1.0 for strength in strengths)
+
+
+def test_write_and_read_fit_artifact_round_trips_predictions(tmp_path: Path):
+    reduced, scaler, pca = _fit_reduce_vectors(_GROUP_A + _GROUP_B, pca_components=3)
+    clusterer = _fit_cluster_reduced(
+        reduced, min_cluster_size=2, min_samples=1, prediction_data=True
+    )
+    fit_path = tmp_path / "fit.joblib"
+
+    _write_fit_artifact(fit_path, scaler, pca, clusterer)
+    artifact = _read_fit_artifact(fit_path)
+
+    assert artifact is not None
+    new_reduced = _transform_vectors(_ACCEPTED_NEAR_A, artifact["scaler"], artifact["pca"])
+    labels, _strengths = _approximate_predict(artifact["clusterer"], new_reduced)
+    assert labels == [0, 0]
+
+
+def test_read_fit_artifact_missing_file_returns_none(tmp_path: Path):
+    assert _read_fit_artifact(tmp_path / "nope.joblib") is None
+
+
+def test_manifest_reusable_requires_dials_model_and_library_versions_to_match():
+    good = {
+        "config": {"min_cluster_size": 2, "min_samples": 1, "pca_components": 93},
+        "model_name": "m",
+        "library_versions": _library_versions(),
+    }
+    assert _manifest_reusable(good, "m", 2, 1, 93) is True
+    assert _manifest_reusable(good, "m", 3, 1, 93) is False  # dial moved
+    assert _manifest_reusable(good, "other-model", 2, 1, 93) is False  # model moved
+    assert _manifest_reusable(dict(good, library_versions={"hdbscan": "0"}), "m", 2, 1, 93) is False
+    assert _manifest_reusable(None, "m", 2, 1, 93) is False
+    assert _manifest_reusable({}, "m", 2, 1, 93) is False
+
+
+def test_run_names_persists_a_fit_artifact_when_the_real_pipeline_runs(tmp_path: Path):
+    """`cluster_fn=None` (the real pipeline) is the only path that ever
+    persists a fit -- an injected `cluster_fn` has no fitted transform chain
+    or clusterer behind it to save."""
+    answers_dir = tmp_path / "answers"
+    _write_named_answers(
+        answers_dir,
+        "s1",
+        [(f"Alpha{i}", f"c_a{i}") for i in range(6)] + [(f"Beta{i}", f"c_b{i}") for i in range(3)],
+    )
+    fit_path = tmp_path / "fit.joblib"
+
+    result = run_names(
+        answers_dir=answers_dir,
+        inventory_path=tmp_path / "inventory.jsonl",
+        embeddings_dir=tmp_path / "embeddings.lance",
+        manifest_path=tmp_path / "manifest.json",
+        trees_dir=tmp_path / "trees",
+        fit_path=fit_path,
+        encoder=_vector_lookup_encoder(_run1_vectors()),
+        pca_components=3,
+    )
+
+    assert fit_path.is_file()
+    assert result.units_total == 9
+    assert result.units_reused == 0
+    assert result.units_asked == 9
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["library_versions"] == _library_versions()
+    assert manifest["source_ids"] == ["s1"]
+
+
+def test_run_names_cluster_fn_override_never_writes_a_fit_artifact(tmp_path: Path):
+    answers_dir = tmp_path / "answers"
+    _write_named_answers(answers_dir, "s1", [("Kevin Attell", "c1")])
+    fit_path = tmp_path / "fit.joblib"
+
+    run_names(
+        answers_dir=answers_dir,
+        inventory_path=tmp_path / "inventory.jsonl",
+        embeddings_dir=tmp_path / "embeddings.lance",
+        manifest_path=tmp_path / "manifest.json",
+        trees_dir=tmp_path / "trees",
+        fit_path=fit_path,
+        encoder=_fake_encoder,
+        cluster_fn=_fake_cluster_fn,
+    )
+
+    assert not fit_path.exists()
+
+
+class _NamesBuildFixture:
+    """Shared setup for the run-1/run-2 incremental acceptance tests below:
+    a full build over `_GROUP_A`/`_GROUP_B`, then a second build over the
+    same paths with a new source added."""
+
+    def __init__(self, tmp_path: Path):
+        self.tmp_path = tmp_path
+        self.answers_dir = tmp_path / "answers"
+        self.inventory_path = tmp_path / "inventory.jsonl"
+        self.embeddings_dir = tmp_path / "embeddings.lance"
+        self.manifest_path = tmp_path / "manifest.json"
+        self.fit_path = tmp_path / "fit.joblib"
+        self.trees_dir = tmp_path / "trees"
+
+    def kwargs(self, **overrides) -> dict:
+        base = dict(
+            answers_dir=self.answers_dir,
+            inventory_path=self.inventory_path,
+            embeddings_dir=self.embeddings_dir,
+            manifest_path=self.manifest_path,
+            trees_dir=self.trees_dir,
+            fit_path=self.fit_path,
+            pca_components=3,
+        )
+        base.update(overrides)
+        return base
+
+    def run1(self):
+        _write_named_answers(
+            self.answers_dir,
+            "s1",
+            [(f"Alpha{i}", f"c_a{i}") for i in range(6)]
+            + [(f"Beta{i}", f"c_b{i}") for i in range(3)],
+        )
+        return run_names(**self.kwargs(encoder=_vector_lookup_encoder(_run1_vectors())))
+
+
+def _row_by_surface(embeddings_dir: Path) -> dict[str, dict]:
+    db = lancedb.connect(embeddings_dir)
+    return {row["surface_form"]: row for row in db.open_table(TABLE_NAME).to_arrow().to_pylist()}
+
+
+def test_run_names_keeps_a_known_surfaces_label_and_only_asks_about_new_ones(tmp_path: Path):
+    fixture = _NamesBuildFixture(tmp_path)
+    fixture.run1()
+    rows_after_run1 = _row_by_surface(fixture.embeddings_dir)
+    alpha_label = rows_after_run1["Alpha0"]["cluster_label"]
+    beta_label = rows_after_run1["Beta0"]["cluster_label"]
+    assert alpha_label != beta_label
+
+    # A second source: one more occurrence of an already-known surface
+    # (`Alpha0`), plus two brand new surface forms placed at a near-
+    # duplicate of GROUP_A's own vectors.
+    _write_named_answers(
+        fixture.answers_dir,
+        "s2",
+        [("Alpha0", "c_a0_again")] + [(f"AlphaDup{i}", f"c_dup{i}") for i in range(2)],
+    )
+    run2_vectors = dict(_run1_vectors())
+    run2_vectors["AlphaDup0"] = _ACCEPTED_NEAR_A[0]
+    run2_vectors["AlphaDup1"] = _ACCEPTED_NEAR_A[1]
+    encoder = _vector_lookup_encoder(run2_vectors)
+
+    result = run_names(**fixture.kwargs(encoder=encoder))
+
+    # Every known surface form's own label is untouched -- the acceptance
+    # property this issue exists for.
+    rows_after_run2 = _row_by_surface(fixture.embeddings_dir)
+    for surface in list(rows_after_run1):
+        assert (
+            rows_after_run2[surface]["cluster_label"] == rows_after_run1[surface]["cluster_label"]
+        )
+    # `Alpha0`'s occurrence count grew even though its label did not.
+    assert json.loads(rows_after_run2["Alpha0"]["chunk_ids_json"]) == ["c_a0", "c_a0_again"]
+
+    # The near-duplicate points are accepted into GROUP_A's own persisted
+    # label, not routed to a residue re-fit.
+    assert rows_after_run2["AlphaDup0"]["cluster_label"] == alpha_label
+    assert rows_after_run2["AlphaDup1"]["cluster_label"] == alpha_label
+
+    # 9 known + 2 new = 11 total; only the 2 new ones were asked about.
+    assert result.units_total == 11
+    assert result.units_reused == 9
+    assert result.units_asked == 2
+    # Both new surfaces arrived on `s2`, absent from run 1's own manifest.
+    assert result.units_asked_touching_new == 2
+
+    # No re-embedding of an already-known surface form (`Alpha0`'s new
+    # occurrence updates its count, never its vector): run 2's encoder is
+    # only ever asked about the 2 forms it did not already have a vector for.
+    assert set(encoder.calls[0]) == {"AlphaDup0", "AlphaDup1"}
+
+
+def test_run_names_a_genuinely_new_cluster_gets_a_label_disjoint_from_existing_ones(tmp_path: Path):
+    fixture = _NamesBuildFixture(tmp_path)
+    fixture.run1()
+    rows_after_run1 = _row_by_surface(fixture.embeddings_dir)
+    existing_labels = {row["cluster_label"] for row in rows_after_run1.values()}
+    assert existing_labels == {0, 1}
+
+    _write_named_answers(
+        fixture.answers_dir,
+        "s2",
+        [(f"ResX{i}", f"c_x{i}") for i in range(6)] + [(f"ResY{i}", f"c_y{i}") for i in range(3)],
+    )
+    run2_vectors = dict(_run1_vectors())
+    for i, vector in enumerate(_RESIDUE_X):
+        run2_vectors[f"ResX{i}"] = vector
+    for i, vector in enumerate(_RESIDUE_Y):
+        run2_vectors[f"ResY{i}"] = vector
+
+    result = run_names(**fixture.kwargs(encoder=_vector_lookup_encoder(run2_vectors)))
+
+    rows_after_run2 = _row_by_surface(fixture.embeddings_dir)
+    # The new, genuinely distinct direction is NOT silently swallowed into
+    # GROUP_A or GROUP_B's own persisted label (the #677 failure mode: a
+    # raw `approximate_predict` result placed 19 of 20 points of a real new
+    # cluster into an existing one at low confidence).
+    residue_labels = {rows_after_run2[f"ResX{i}"]["cluster_label"] for i in range(6)}
+    residue_labels |= {rows_after_run2[f"ResY{i}"]["cluster_label"] for i in range(3)}
+    assert residue_labels.isdisjoint(existing_labels)
+    # And ids stay disjoint from what already existed -- offset above it,
+    # never renumbered.
+    for label in residue_labels:
+        if label != NOISE_LABEL:
+            assert label > max(existing_labels)
+
+    assert result.units_reused == 9
+    assert result.units_asked == 9
+    assert result.units_asked_touching_new == 9
+
+
+def test_run_names_recluster_forces_a_full_refit_and_moves_labels(tmp_path: Path):
+    fixture = _NamesBuildFixture(tmp_path)
+    fixture.run1()
+    fit_mtime_before = fixture.fit_path.stat().st_mtime_ns
+
+    result = run_names(
+        **fixture.kwargs(encoder=_vector_lookup_encoder(_run1_vectors()), recluster=True)
+    )
+
+    assert result.units_reused == 0
+    assert result.units_asked == result.units_total == 9
+    assert fixture.fit_path.stat().st_mtime_ns != fit_mtime_before
+
+
+def test_run_names_dial_mismatch_falls_back_to_a_full_refit(tmp_path: Path):
+    fixture = _NamesBuildFixture(tmp_path)
+    fixture.run1()
+
+    result = run_names(
+        **fixture.kwargs(encoder=_vector_lookup_encoder(_run1_vectors()), min_cluster_size=5)
+    )
+
+    assert result.units_reused == 0
+    assert result.units_asked == result.units_total
+
+
+def test_run_names_rerun_with_no_corpus_change_asks_nothing(tmp_path: Path):
+    fixture = _NamesBuildFixture(tmp_path)
+    fixture.run1()
+
+    result = run_names(**fixture.kwargs(encoder=_vector_lookup_encoder(_run1_vectors())))
+
+    assert result.units_asked == 0
+    assert result.units_reused == result.units_total == 9
+    assert result.units_asked_touching_new == 0
