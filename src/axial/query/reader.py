@@ -105,13 +105,22 @@ def is_abstention(value: Any) -> bool:
 def stated_position(answers: Mapping[str, Any]) -> Any:
     """A note's stated position, read across issue #496's mixed frame: a note
     interrogated before frame 0.2 carries `position_of` and no `position`
-    key, a note interrogated after carries both, and no re-run is planned. So
-    `position` is read when the KEY IS PRESENT and `position_of` is the
-    fallback otherwise -- key presence, never truthiness (a note that
-    genuinely answered `position: null` has been asked the frame-0.2 question
-    and its answer is that null, not the older question's answer), and never
-    `frame_version` (a note's own keys say what it was asked; a version
-    string is a second source of truth that can disagree).
+    key, a note interrogated after carries both. So `position` is read when
+    the KEY IS PRESENT and `position_of` is the fallback otherwise -- key
+    presence, never truthiness (a note that genuinely answered `position:
+    null` has been asked the frame-0.2 question and its answer is that null,
+    not the older question's answer), and never `frame_version` (a note's
+    own keys say what it was asked; a version string is a second source of
+    truth that can disagree).
+
+    **Issue #697 backfills `position` onto every 0.1-era record** (a
+    targeted, one-question re-ask, not the full re-interrogation this
+    docstring used to say was not planned), so on the live corpus this
+    fallback eventually goes unused. It stays regardless: `position_of`
+    remains a legitimate answer on its own, and another domain may version
+    its own frame independently and never backfill at all -- this function
+    still has to do the right thing for a record that genuinely carries only
+    `position_of`.
 
     Lives here, next to `is_abstention`, because both readers of the rule --
     `axial.query.names._read_note_answers` reading a vault note and
@@ -236,9 +245,10 @@ class ChunkNote:
 
     **`position_of` and `position` are a mixed frame, and both are exposed
     raw** (§7.5/§7.15, issue #496): frame 0.2 split "whose position is this?"
-    (`position_of`) from "what is the position?" (`position`), a note
-    interrogated before it carries only the former, a note interrogated after
-    carries both, and no re-run is planned. A consumer wanting the stated
+    (`position_of`) from "what is the position?" (`position`); a note
+    interrogated before it carries only the former unless issue #697's
+    targeted backfill later patched `position` onto it, a note interrogated
+    after carries both from the start. A consumer wanting the stated
     position reads `position` when that KEY IS PRESENT and falls back to
     `position_of` otherwise -- key presence, never truthiness, and never
     `frame_version`. This reader deliberately does not resolve that for the

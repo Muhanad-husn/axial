@@ -46,9 +46,12 @@ draws field on the record.
 alone and answered both questions at once: measured over the 6,148 records
 on disk, 76% of it says some variant of "the author" and the other 24%
 names a school instead. Frame 0.2 splits it -- `position_of` still asks
-whose, and a new `position` asks what the position is. No re-run is planned,
-so records written before the split carry `position_of` and no `position`
-key at all, and records written after carry both. Every consumer branches on
+whose, and a new `position` asks what the position is. A full re-run is not
+planned (~$34 a pass), so a record written before the split carries
+`position_of` and no `position` key unless a later, narrower pass gave it
+one -- issue #697's `axial.position_backfill` asks just the `position`
+question over every such record, once, and patches the key in without
+touching this pass or its own `frame_version`. Every consumer branches on
 **key presence**, not on `frame_version` (another domain versions its frame
 independently), and reads `position` when it is there, `position_of`
 otherwise.

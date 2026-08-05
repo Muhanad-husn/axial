@@ -105,9 +105,16 @@ from axial.envelope import (
 )
 from axial.extract import ExtractError, extract, tree_path
 from axial.ingest import WorklistError, read_worklist
-from axial.interrogate import InterrogateError, run_interrogate
+from axial.interrogate import (
+    InterrogateError,
+    _default_answers_dir,
+    answers_checkpoint_path,
+    load_answer_checkpoint,
+    run_interrogate,
+)
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient, get_client, usage_and_cost_by_pass
 from axial.paths import DEFAULT_DOMAIN_DIR
+from axial.position_backfill import notes_missing_position, run_position_backfill
 from axial.runlog import format_duration, run_context
 from axial.vault import VaultError, run_vault_write
 
@@ -303,6 +310,20 @@ def _invoke_interrogate(source_path: str, client: LLMClient | None, config_path:
     )
 
 
+def _invoke_position_backfill(
+    source_path: str, client: LLMClient | None, config_path: Path, domain_dir
+):
+    """The `position` backfill pass (issue #697): one question over the
+    notes of `source_path` that lack the key. Resumable the same way
+    interrogate is -- `run_position_backfill` reads its own per-source
+    answer artifact and asks only what is missing -- so re-invoking an
+    already-complete source through this registry costs nothing beyond the
+    done-predicate's own cheap read below."""
+    return run_position_backfill(
+        source_path, client=client, config_path=config_path, domain_dir=domain_dir
+    )
+
+
 def _invoke_vault_write(source_path: str, client: LLMClient | None, config_path: Path, domain_dir):
     return run_vault_write(
         source_path, client=client, config_path=config_path, domain_dir=domain_dir
@@ -358,8 +379,25 @@ def _ledger_done_predicate(source_id: str, ledger_done_ids: set[str], config_pat
     return source_id in ledger_done_ids
 
 
+def _position_backfill_done_predicate(
+    source_id: str, ledger_done_ids: set[str], config_path: Path
+) -> bool:
+    """The position-backfill pass's own done-signal (issue #697), read off
+    its persisted output rather than the ledger (mechanism 2, the same one
+    extract/envelope/chunk use): a source is done when its own
+    `data/answers/<source_id>.jsonl` carries no record missing `position`.
+    This is a cheap file read, never a model call, so a corpus-wide rerun
+    after the backfill lands skips every already-backfilled source doing
+    zero work -- the ledger predicate above would need its own `--ledger`
+    file kept in lockstep instead, which this pass's own resumability
+    (`run_position_backfill`'s docstring) makes unnecessary."""
+    answers_dir = _default_answers_dir(config_path)
+    records = load_answer_checkpoint(answers_checkpoint_path(source_id, answers_dir))
+    return not notes_missing_position(records)
+
+
 # The pass registry (module docstring): a plain dict, not a plugin system --
-# six known passes, all in this repo, each with a `(source_path, client,
+# seven known passes, all in this repo, each with a `(source_path, client,
 # config_path, domain_dir)`-shaped invoker (via the `_invoke_*` adapters
 # above), the `*Error` base it declares, and its done-predicate. extract,
 # envelope and chunk declare their own persisted-output file as the
@@ -368,7 +406,9 @@ def _ledger_done_predicate(source_id: str, ledger_done_ids: set[str], config_pat
 # which resume from that checkpoint so re-invoking one costs nothing --
 # declare the runner's own ledger. `tag` and `xref` were retired (issue
 # #414, plans/phase-a-v1/README.md D4/D5): the interrogation pass above
-# replaces both.
+# replaces both. `position-backfill` (issue #697) declares its own
+# persisted-output predicate rather than the ledger, for the reason its own
+# `_position_backfill_done_predicate` docstring gives.
 PASS_REGISTRY: dict[str, PassDescriptor] = {
     "extract": PassDescriptor("extract", _invoke_extract, ExtractError, _tree_done_predicate),
     "envelope": PassDescriptor(
@@ -377,6 +417,12 @@ PASS_REGISTRY: dict[str, PassDescriptor] = {
     "chunk": PassDescriptor("chunk", _invoke_chunk, ChunkError, _chunks_done_predicate),
     "interrogate": PassDescriptor(
         "interrogate", _invoke_interrogate, InterrogateError, _ledger_done_predicate
+    ),
+    "position-backfill": PassDescriptor(
+        "position-backfill",
+        _invoke_position_backfill,
+        InterrogateError,
+        _position_backfill_done_predicate,
     ),
     "artifacts": PassDescriptor(
         "artifacts", _invoke_artifacts, ArtifactsError, _ledger_done_predicate

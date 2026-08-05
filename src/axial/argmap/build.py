@@ -234,6 +234,23 @@ ENCODER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 # English-language secondary sources") that happened to also carry a claim
 # sentence resembling other passages'. Already-validated exclusion rule
 # (issue #572 stage 0), reused here rather than re-derived.
+#
+# `position` deliberately does NOT join this list (issue #697 considered it
+# and left it out). Two reasons, and the first is binding until the backfill
+# actually lands: `is_abstention(None)` is `False`, so on a record that has
+# no `position` key at all -- every 0.1-era note, 91% of the corpus, until
+# #697's backfill runs -- adding `position` here would make the `all(...)`
+# check below unsatisfiable for those notes no matter how silent they truly
+# are, fail-OPEN rather than fail-closed, and quietly weaken this exclusion
+# for most of the corpus the moment this file merges, well before the
+# backfill that would make the field meaningful. Second, even once every
+# note carries the key, `position` and `position_of` are asked in the same
+# call with an explicit instruction to answer `position` even when the
+# holder is "the author's own" -- the two abstain together far more often
+# than independently, so adding `position` alongside `position_of` here
+# would mostly duplicate a signal already in the list rather than add one.
+# Revisit once the backfill has actually run against the corpus and the
+# correlation can be measured rather than assumed.
 _SILENT_KEYS = ("mechanism", "comparison", "concedes", "assumes", "position_of", "ranges_over")
 
 Encoder = Callable[[Sequence[str]], np.ndarray]
