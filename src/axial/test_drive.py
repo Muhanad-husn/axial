@@ -234,12 +234,32 @@ def test_list_all_candidates_paginates_to_exhaustion_and_filters():
 # --- _cache_path -------------------------------------------------------------
 
 
-def test_cache_path_preserves_extension_and_is_keyed_by_file_id(tmp_path):
-    record = {"id": "f-alpha", "name": "alpha.pdf"}
+def test_cache_path_keeps_the_drive_name_and_puts_the_id_in_the_directory(tmp_path):
+    """Issue #675: the file id used to BE the filename, and `source_id` is
+    `<filename stem>-<content hash>` -- so the same book ingested through Drive
+    and through the local folder got two different ids off identical bytes, and
+    a Drive ingest would have written a duplicate corpus under opaque ids. The
+    id stays as the directory (two Drive files may share a name); it just no
+    longer reaches `source_id`."""
+    record = {"id": "f-alpha", "name": "gelvin-1998.pdf"}
 
     path = _cache_path(tmp_path, record)
 
-    assert path == tmp_path / "f-alpha.pdf"
+    assert path == tmp_path / "f-alpha" / "gelvin-1998.pdf"
+    assert path.stem == "gelvin-1998"
+
+
+def test_cache_path_sanitises_only_what_the_filesystem_forbids(tmp_path):
+    record = {"id": "f-odd", "name": "we:ird/na*me.pdf"}
+
+    path = _cache_path(tmp_path, record)
+
+    assert path.name == "we_ird_na_me.pdf"
+    assert not set(path.name) & set(r'<>:"/\|?*')
+
+
+def test_cache_path_falls_back_to_the_id_when_the_name_is_empty(tmp_path):
+    assert _cache_path(tmp_path, {"id": "f-bare", "name": ""}).name == "f-bare"
 
 
 def test_cache_path_is_deterministic_across_calls(tmp_path):
@@ -288,7 +308,7 @@ def test_run_drive_ingest_writes_downloaded_bytes_and_calls_ingest_fn_once_per_c
     assert exit_code == 0
     assert len(calls) == 1
     local_path = calls[0]
-    assert local_path == cache_dir / "f-1.pdf"
+    assert local_path == cache_dir / "f-1" / "alpha.pdf"
     assert local_path.read_bytes() == b"bytes-for-f-1"
 
 
@@ -470,7 +490,7 @@ def test_run_drive_ingest_default_path_runs_the_full_chain_per_candidate(monkeyp
     assert [name for name, _ in order] == [
         *DEFAULT_INGEST_PASSES,
     ]
-    assert all(path == cache_dir / "f-1.pdf" for _, path in order)
+    assert all(path == cache_dir / "f-1" / "alpha.pdf" for _, path in order)
 
 
 @pytest.mark.parametrize("fail_at", list(DEFAULT_INGEST_PASSES))
@@ -516,7 +536,8 @@ def test_run_drive_ingest_isolates_a_per_candidate_chain_failure_and_continues(
     # Both candidates were attempted (cache path is keyed by Drive file id,
     # `_cache_path`) -- the failure did not abort the loop.
     processed_paths = {path.name for _, path in order}
-    assert processed_paths == {"f-bad.pdf", "f-good.pdf"}
+    # Cached under the Drive NAME now, not the file id (#675).
+    assert processed_paths == {"bad.pdf", "good.pdf"}
 
     captured = capsys.readouterr()
     assert "bad.pdf" in (captured.out + captured.err)
@@ -783,7 +804,7 @@ def test_pre_download_manifest_skip_composes_with_ingest_level_vault_status_skip
         },
     )
 
-    already_done_source_ids = {"f-vault-skip"}
+    already_done_source_ids = {"vault-skip"}
     processed = []
 
     def _ingest_with_vault_status_skip(local_path):
@@ -841,10 +862,10 @@ def test_pre_download_manifest_skip_composes_with_ingest_level_vault_status_skip
     # WAS downloaded (the manifest skip didn't know about it), but never
     # landed in `processed`.
     assert "f-vault-skip" in client.download_calls
-    assert all(path.stem != "f-vault-skip" for path in processed)
+    assert all(path.stem != "vault-skip" for path in processed)
     # The third candidate hit neither skip and was actually processed.
     assert "f-both-run" in client.download_calls
-    assert any(path.stem == "f-both-run" for path in processed)
+    assert any(path.stem == "both-run" for path in processed)
 
 
 # --- English-only language gate (issue #239, P0-11c) --------------------------
@@ -1152,7 +1173,7 @@ def test_unknown_language_passes_the_gate_and_reaches_the_ingest_handoff(monkeyp
     )
 
     assert exit_code == 0
-    local_path = cache_dir / "f-unparseable.pdf"
+    local_path = cache_dir / "f-unparseable" / "unparseable.pdf"
     # Sanity: the property this test locks actually holds for this input --
     # confirms the test is exercising the UNKNOWN path, not something else.
     assert _detect_language(

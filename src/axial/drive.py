@@ -133,6 +133,11 @@ CANDIDATE_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
 
+# Characters Windows forbids in a filename. The Drive name becomes the cached
+# file's name and therefore the source's `source_id` stem (`_cache_path`), so
+# only these are replaced -- nothing else about the name is touched.
+_FORBIDDEN_NAME_CHARS = frozenset(r'<>:"/\|?*')
+
 DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 
 # English-only language-gate tunables (issue #239, P0-11c). These are the
@@ -292,11 +297,45 @@ def _list_all_candidates(client: DriveClientProtocol, folder_id: str) -> list[di
 
 
 def _cache_path(cache_dir: Path, record: dict[str, Any]) -> Path:
-    """A deterministic local cache path for a candidate record: keyed by
-    Drive file id (stable across runs) and preserving the source name's
-    extension (downstream intake's format check reads it)."""
-    suffix = Path(record.get("name", "") or "").suffix
-    return cache_dir / f"{record['id']}{suffix}"
+    """A deterministic local cache path for a candidate record: the Drive
+    file id as a DIRECTORY, holding the file under its own Drive name.
+
+    The id used to be the filename (`<id>.pdf`), and that quietly decided
+    the source's identity for the whole pipeline. `axial.envelope.
+    compute_source_id` is `<filename stem>-<content hash>`, so the same book
+    ingested through Drive and through the local folder got two different
+    ids off identical bytes -- `1onBUC61oHvXkS_VkQ5JyQiONih0754VY-f7e1df5f9b1d`
+    against `gelvin-1998-f7e1df5f9b1d`. Nothing would have matched what was
+    already on disk: a Drive ingest of an already-ingested corpus would have
+    re-run every pass from scratch and written a duplicate corpus under
+    opaque ids, doubling every name page (issue #675, caught before any live
+    ingest ran).
+
+    The id stays as the directory so two Drive files sharing a name cannot
+    collide in the cache, and so the path is still stable across runs and
+    across renames. It just no longer reaches `source_id`.
+
+    The name is sanitised for characters Windows forbids in a filename;
+    everything else, including the extension downstream intake's format
+    check reads, is preserved exactly."""
+    name = str(record.get("name", "") or "").strip()
+    if not name:
+        name = str(record["id"])
+    return cache_dir / str(record["id"]) / _sanitize_cache_name(name)
+
+
+def _sanitize_cache_name(name: str) -> str:
+    """`name` with the characters Windows forbids in a filename replaced by
+    `_`, and any leading/trailing dots or spaces trimmed.
+
+    Deliberately conservative: it touches only what the filesystem refuses,
+    because whatever survives becomes the source's `source_id` stem and
+    therefore how the book is named everywhere downstream."""
+    cleaned = "".join(
+        "_" if character in _FORBIDDEN_NAME_CHARS else character for character in name
+    )
+    cleaned = cleaned.strip(" .")
+    return cleaned or "unnamed"
 
 
 def _load_fetch_state(fetch_state_path: Path) -> dict[str, dict[str, str]]:
@@ -676,6 +715,10 @@ def run_drive_sources(
 
         data = client.download(record["id"])
         local_path = _cache_path(cache_dir, record)
+        # The cache is now one directory per Drive file id, holding the file
+        # under its own Drive name (`_cache_path`), so the per-id directory
+        # has to exist before the write.
+        local_path.parent.mkdir(parents=True, exist_ok=True)
         local_path.write_bytes(data)
 
         detected_lang, confidence = _detect_language(probe_text_fn(local_path))

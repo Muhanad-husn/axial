@@ -53,11 +53,14 @@ per `uv.lock`); the slice's own definition of done still requires it (or
 an equivalent deterministic detector) to be added as a direct, stated
 dependency (plan Sec. "Definition of done").
 
-Keying convention: `_cache_path` (src/axial/drive.py, locked by slice 01)
-names each downloaded local path `f"{record['id']}{suffix}"`, so the fake
-below keys its probe-text map by Drive file `id` (`local_path.stem`) --
-the same stable identity slice 01/02 already rely on, not a new
-implementation detail this test invents.
+Keying convention: `_cache_path` (src/axial/drive.py) writes each download
+to `<cache>/<file id>/<drive name>`, so the fake below keys its probe-text
+map by the DRIVE NAME's stem (`local_path.stem`). It keyed on the file id
+until issue #675 moved the id out of the filename and into the directory --
+the id in the stem was reaching `compute_source_id`, so the same book got a
+different `source_id` through Drive than through the local folder. The id
+is still the directory (`local_path.parent.name`) if a test ever needs that
+identity.
 
 Non-goal here (left to inner unit tests, per the plan's own inner-loop
 list): the exact `language_accept_threshold` boundary (an English
@@ -193,13 +196,13 @@ def test_english_source_passes_and_non_english_source_is_rejected_and_logged(tmp
     _write_secrets(secrets_path, service_account_json=str(_fixture_key_path(tmp_path)))
     cache_dir = tmp_path / "cache"
 
-    # Keyed by Drive file id (`local_path.stem`, per `_cache_path`'s
+    # Keyed by the Drive NAME's stem (`local_path.stem`, per `_cache_path`'s
     # naming convention, src/axial/drive.py) so each candidate's downloaded
     # local path resolves to its OWN known-language probe text, regardless
     # of the on-disk bytes -- the probe never needs a real .pdf/.docx.
     probe_texts = {
-        "f-english": ENGLISH_PROBE_TEXT,
-        "f-french": FRENCH_PROBE_TEXT,
+        "english": ENGLISH_PROBE_TEXT,
+        "french": FRENCH_PROBE_TEXT,
     }
 
     def fake_probe_text(local_path: Path) -> str:
@@ -234,9 +237,9 @@ def test_english_source_passes_and_non_english_source_is_rejected_and_logged(tmp
         f"(french.pdf must never reach it), got {spy.calls!r}"
     )
     handed_off = spy.calls[0]
-    assert handed_off.stem == "f-english", (
+    assert handed_off.stem == "english", (
         f"expected the ONE source handed to the ingest callable to be the "
-        f"English candidate (f-english), got {handed_off!r}"
+        f"English candidate (english.pdf), got {handed_off!r}"
     )
     assert handed_off.read_bytes() == english_bytes, (
         "expected the source handed to the ingest callable to be the "
@@ -282,7 +285,7 @@ def test_english_only_source_still_passes_when_no_rejection_is_possible(tmp_path
     cache_dir = tmp_path / "cache"
 
     def fake_probe_text(local_path: Path) -> str:
-        assert Path(local_path).stem == "f-english"
+        assert Path(local_path).stem == "english"
         return ENGLISH_PROBE_TEXT
 
     exit_code = run_drive_ingest(
