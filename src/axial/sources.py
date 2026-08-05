@@ -43,11 +43,12 @@ long-filename form, before the author-year rename) that will never match
 what `compute_source_id` returns today. Per this project's own first
 principle, a rule that produces an obviously wrong answer loses to the
 obvious one: every one of those 31 sources has an envelope, a chunk
-checkpoint, a structural tree, and interrogation answers on disk, so
-`scan_local` now checks for those files directly and trusts the ledger's
-OK row only as a shortcut when it is present and agrees -- never as the
-sole signal. Checking is four `Path.exists()` calls per source, not a
-parse of any artifact's contents, so this stays cheap at corpus scale.
+checkpoint, a structural tree, interrogation answers and an artifact
+record on disk, so `scan_local` now checks for those files directly and
+trusts the ledger's OK row only as a shortcut when it is present and
+agrees -- never as the sole signal. Checking is five `Path.exists()` calls
+per source, not a parse of any artifact's contents, so this stays cheap at
+corpus scale.
 
 Ingesting means running the alive per-source pass chain
 (`DEFAULT_INGEST_PASSES`) over whatever scan reports NEW or CHANGED. A plain
@@ -56,13 +57,18 @@ done-predicate (`axial.run.PASS_REGISTRY`) already skips whatever the ledger
 shows as finished -- `sync_local` never reimplements that skip logic, it
 just calls `axial.run.run_pass` once per pass.
 
-`DEFAULT_DONE_PASS = "interrogate"`, not `"vault-write"`: `axial.vault.
+`DEFAULT_DONE_PASS = "artifacts"`, not `"vault-write"`: `axial.vault.
 run_vault_write` is currently retired (`VaultWriteRetiredError`, issue
 #411) and unconditionally fails, so treating it as the local backend's
 completion signal would mark every source `rejected` forever -- obviously
-wrong, not a real gate rejection. `interrogate` is the last pass in the
+wrong, not a real gate rejection. `artifacts` is the last pass in the
 registry that still does real per-source work end to end today; when
 vault-write is un-retired, moving this one constant is the whole fix.
+
+It was `"interrogate"` until issue #623, which is the same edit as adding
+`artifacts` to `DEFAULT_INGEST_PASSES` below: the done-pass and the chain
+have to name the same finish line, or the ledger fast path below reports a
+source `done` on a pass that is no longer the last one.
 
 `axial sources --check` (issue #528, CLI: `src/axial/cli.py`'s `_sources_
 local`/`_sources_drive`) asks the question without committing to the
@@ -85,6 +91,7 @@ from typing import Callable, Iterable
 
 import yaml
 
+import axial.artifacts as _artifacts_mod
 import axial.chunk as _chunk_mod
 import axial.envelope as _envelope_mod
 import axial.extract as _extract_mod
@@ -110,12 +117,20 @@ REJECTED = "rejected"
 
 # The last pass in axial.run.PASS_REGISTRY that still runs end to end (see
 # module docstring for why this is not "vault-write").
-DEFAULT_DONE_PASS = "interrogate"
+DEFAULT_DONE_PASS = "artifacts"
 
 # The alive per-source chain `sync_local` drives, in order -- every
 # registered pass up to and including DEFAULT_DONE_PASS, excluding the
 # retired "vault-write" (module docstring).
-DEFAULT_INGEST_PASSES = ("extract", "envelope", "chunk", "interrogate")
+#
+# `artifacts` joined this chain in issue #623, after the first real "add books
+# to a finished corpus" run left three new sources with no table/figure notes
+# while the other 31 had theirs: materialize reported `artifact_sources: 31`
+# against 34 sources. The pass was registered and alive the whole time, it was
+# simply never in the chain, so `axial sources` called a source `done` that had
+# no artifact record at all. It is deterministic and makes no model call
+# (issue #429 removed the classification call), so it costs nothing to include.
+DEFAULT_INGEST_PASSES = ("extract", "envelope", "chunk", "interrogate", "artifacts")
 
 # The operator's one-time backend choice (config/pipeline.yaml's `sources:`
 # block), falling back to "local" when the file or key is absent --
@@ -168,7 +183,7 @@ def _read_ledger_rows(ledger_path: Path, pass_name: str) -> list[dict[str, str]]
         return [row for row in reader if row.get("pass") == pass_name]
 
 
-# The four per-source artifacts a fully-processed source has on disk, in the
+# The five per-source artifacts a fully-processed source has on disk, in the
 # order §5's pipeline produces them (module docstring's "the artifacts are
 # the truth"). Each entry is a `(name, path_fn)` pair; `path_fn(source_id,
 # config_path)` returns that artifact's path -- never its parsed contents,
@@ -204,6 +219,12 @@ _ARTIFACT_PATH_FNS: tuple[tuple[str, Callable[[str, Path], Path]], ...] = (
         "answers",
         lambda source_id, config_path: _interrogate_mod.answers_checkpoint_path(
             source_id, _interrogate_mod._default_answers_dir(config_path)
+        ),
+    ),
+    (
+        "artifacts",
+        lambda source_id, config_path: _artifacts_mod.artifacts_checkpoint_path(
+            source_id, _artifacts_mod._default_artifacts_dir(config_path)
         ),
     ),
 )
