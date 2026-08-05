@@ -16,6 +16,8 @@ The consequence sets the entire bar. A production tool makes novel claims, and a
 
 The Phase-A ingestion pipeline in `PRODUCT.md` is the **substrate, not the product**. It builds the faceted corpus that the reasoning layers stand on: clean text, structural trees, chunks, multi-axis tags, and a gold-scored vocabulary. The product is the Phase B–E reasoning layers (lens application, axial-coding comparison, authorship). This charter governs those layers before they are built, so the substrate is built to serve them.
 
+**Phases A, B and C are built. D and E are future milestones, not a schedule** (DEC-63). They exist as GitHub milestones — [Phase D — format adaptation](https://github.com/Muhanad-husn/axial/milestone/1) and [Phase E — lens application](https://github.com/Muhanad-husn/axial/milestone/2) — and neither has a spec, a date, or an issue. Where the phase specs push work over the boundary to "Phase D", they are naming that milestone, not a queued next phase.
+
 ---
 
 ## 1. The five principles
