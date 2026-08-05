@@ -70,6 +70,7 @@ import json
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -293,6 +294,18 @@ class AnswerRecordCountMismatchError(InterrogateError):
             f"{expected} note(s) -- {expected - accounted_for} note(s) went missing "
             "without an answer, failure, or skip record"
         )
+
+
+# Bounded concurrent per-note workers (issue #623). This pass is I/O-bound --
+# it waits on the model rather than computing -- and it made one call at a time
+# until #623 measured a 234-note source taking 102 minutes at an effective
+# concurrency of 1.00, against 20-34 for every other model-backed pass. 12 is
+# deliberately below `axial.merge_names`/`axial.gather`'s 36: the note prompt
+# carries the whole passage plus its envelope context, so a note call is an
+# order of magnitude larger than a merge batch's, and the interrogation model
+# (glm-5.2) is the one measured to cold-start. A starting value on the same
+# footing as those two, to be moved on a measured worker curve, not a guess.
+DEFAULT_WORKERS = 12
 
 
 # ---------------------------------------------------------------------------
@@ -836,6 +849,7 @@ def run_interrogate(
     data_dir: Path | None = None,
     domain_dir: str | Path | None = None,
     limit: int | None = None,
+    workers: int = DEFAULT_WORKERS,
 ) -> dict[str, Any]:
     """Interrogate every note of `source_path` and return the run summary.
 
@@ -844,6 +858,21 @@ def run_interrogate(
     record. Each answer is appended to `<answers_dir>/<source_id>.jsonl` as it
     is produced, so an interrupted run resumes and a note already answered is
     never re-sent to the model.
+
+    `workers` bounds how many of those calls are in flight at once. This pass
+    is I/O-bound -- it waits on the model, it does not compute -- and it ran
+    strictly one call at a time until issue #623 measured what that costs: a
+    234-note source took 102 minutes at an effective concurrency of 1.00,
+    while every other model-backed pass in the pipeline was running at 20-34.
+    Parallelism across SOURCES existed (several `axial run` processes over
+    disjoint worklists), but a single source could not use it, so three books
+    could not be interrogated faster than the largest one of them.
+
+    The concurrency discipline is the one `axial.merge_names`, `axial.gather`
+    and `axial.argmap.build` already share: calls run on the pool, and every
+    checkpoint append happens on the single collecting thread, so a mid-run
+    kill can never race two threads onto the same line and each result is
+    durable the instant it returns.
 
     `data_dir`, when given, rebases all four directories this pass touches
     (`chunks/`, `envelopes/`, `source_meta/`, `answers/`) onto that one
@@ -927,15 +956,19 @@ def run_interrogate(
     failed = 0
     skipped = 0
     reused = 0
-    attempted = 0
     model: str | None = None
     total_notes = len(chunk_records)
-    for index, chunk_record in enumerate(chunk_records, start=1):
+
+    # The garble skip is a local text test, not a model call, so it is settled
+    # here rather than on the pool -- a skipped note must never occupy a worker
+    # slot, and its record is written on this thread like every other.
+    pending: list[dict[str, Any]] = []
+    for chunk_record in chunk_records:
         chunk_id = chunk_record["chunk_id"]
         if chunk_id in already_done:
             reused += 1
             continue
-        if limit is not None and attempted >= limit:
+        if limit is not None and len(pending) >= limit:
             break
 
         skip_reason = garble_only_skip_reason(chunk_record["text"])
@@ -949,7 +982,9 @@ def run_interrogate(
             )
             skipped += 1
             continue
+        pending.append(chunk_record)
 
+    if pending:
         if client is None:
             try:
                 client = get_client(config_path=config_path)
@@ -957,43 +992,67 @@ def run_interrogate(
                 raise LLMFailedError(exc) from exc
         model = client.model_for_pass(NOTE_INTERROGATE_PASS_NAME)
 
-        prompt = compose_interrogation_prompt(chunk_record, source_meta, envelope, examples)
-        attempted += 1
-        started = time.monotonic()
-        try:
-            raw = complete_json(
-                client,
-                prompt,
-                pass_name=NOTE_INTERROGATE_PASS_NAME,
-                validate=lambda response: parse_answer_response(response, examples),
-            )
-            answers = parse_answer_response(raw, examples)
-        except (ContentRefusedError, ModelJsonError, AnswerParseError) as exc:
-            # Content-shaped, not transient: re-sending the identical prompt
-            # to the same model cannot change the outcome, so this note is
-            # recorded as a failure and the source carries on (§7.15).
-            print(
-                f"note_interrogate: {chunk_id} failed ({index}/{total_notes}): {exc}",
-                file=sys.stderr,
-            )
-            append_answer_checkpoint(
-                checkpoint_path, _build_failure_record(chunk_id, source_id, str(exc))
-            )
-            failed += 1
-            continue
-        except (LLMError, httpx.HTTPError) as exc:
-            raise LLMFailedError(exc) from exc
+        def _interrogate_one(chunk_record: dict[str, Any]) -> tuple[dict[str, Any], Any, float]:
+            """One note's model call, run on the pool. Returns the record it
+            was for, either the parsed answers or the content-shaped exception
+            to record against it, and how long the call took. Raises only for
+            transport-level failures, which must still abort the source."""
+            prompt = compose_interrogation_prompt(chunk_record, source_meta, envelope, examples)
+            started = time.monotonic()
+            try:
+                raw = complete_json(
+                    client,
+                    prompt,
+                    pass_name=NOTE_INTERROGATE_PASS_NAME,
+                    validate=lambda response: parse_answer_response(response, examples),
+                )
+                return (
+                    chunk_record,
+                    parse_answer_response(raw, examples),
+                    time.monotonic() - started,
+                )
+            except (ContentRefusedError, ModelJsonError, AnswerParseError) as exc:
+                return chunk_record, exc, time.monotonic() - started
 
-        append_answer_checkpoint(
-            checkpoint_path,
-            build_answer_record(chunk_record, source_id, model, str(schema.version), answers),
-        )
-        answered += 1
-        print(
-            f"note_interrogate: {chunk_id} answered ({index}/{total_notes}) "
-            f"in {time.monotonic() - started:.1f}s",
-            file=sys.stderr,
-        )
+        with ThreadPoolExecutor(max_workers=max(workers, 1)) as pool:
+            futures = [pool.submit(_interrogate_one, record) for record in pending]
+            settled = 0
+            for future in as_completed(futures):
+                try:
+                    chunk_record, outcome, elapsed = future.result()
+                except (LLMError, httpx.HTTPError) as exc:
+                    raise LLMFailedError(exc) from exc
+
+                chunk_id = chunk_record["chunk_id"]
+                settled += 1
+                if isinstance(outcome, Exception):
+                    # Content-shaped, not transient: re-sending the identical
+                    # prompt to the same model cannot change the outcome, so
+                    # this note is recorded as a failure and the source carries
+                    # on (§7.15).
+                    print(
+                        f"note_interrogate: {chunk_id} failed "
+                        f"({settled}/{len(pending)}): {outcome}",
+                        file=sys.stderr,
+                    )
+                    append_answer_checkpoint(
+                        checkpoint_path, _build_failure_record(chunk_id, source_id, str(outcome))
+                    )
+                    failed += 1
+                    continue
+
+                append_answer_checkpoint(
+                    checkpoint_path,
+                    build_answer_record(
+                        chunk_record, source_id, model, str(schema.version), outcome
+                    ),
+                )
+                answered += 1
+                print(
+                    f"note_interrogate: {chunk_id} answered "
+                    f"({settled}/{len(pending)} of {total_notes}) in {elapsed:.1f}s",
+                    file=sys.stderr,
+                )
 
     records = load_answer_checkpoint(checkpoint_path)
     answer_records = [record for record in records if "answers" in record]

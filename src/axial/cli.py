@@ -55,6 +55,7 @@ from axial.drive import DEFAULT_SECRETS_PATH as DRIVE_SECRETS_PATH
 from axial.drive import DriveSecretsError, _load_drive_secrets, run_drive_ingest, run_drive_sources
 from axial.envelope import EnvelopeError, MissingSourceError, compute_source_id, run_envelope
 from axial.eval import EvalError, run_eval
+from axial.interrogate import DEFAULT_WORKERS as INTERROGATE_DEFAULT_WORKERS
 from axial.interrogate import InterrogateError, run_interrogate
 from axial.eval.corpus_pin import CorpusPinError, write_pin
 from axial.extract import ExtractError, extract
@@ -279,6 +280,15 @@ def build_parser() -> argparse.ArgumentParser:
             "stop after this many notes are interrogated this run -- the "
             "~50-output sample gate (D14): the outputs and the summary are "
             "read before the rest of the corpus is paid for"
+        ),
+    )
+    interrogate_parser.add_argument(
+        "--workers",
+        type=int,
+        default=INTERROGATE_DEFAULT_WORKERS,
+        help=(
+            "bounded concurrent per-note workers (this pass waits on the "
+            f"model, it does not compute) (default: {INTERROGATE_DEFAULT_WORKERS})"
         ),
     )
     interrogate_parser.add_argument(
@@ -1732,6 +1742,7 @@ def _interrogate(
     domain_dir: str | None,
     data_dir: str | None,
     limit: int | None,
+    workers: int = INTERROGATE_DEFAULT_WORKERS,
     *,
     root: Path | None = None,
     clock: Callable[[], str] | None = None,
@@ -1760,6 +1771,7 @@ def _interrogate(
                 data_dir=resolved_data_dir,
                 domain_dir=domain_dir,
                 limit=limit,
+                workers=workers,
             )
         except (InterrogateError, LLMError) as exc:
             run.record(
@@ -3486,7 +3498,9 @@ def main(argv: list[str] | None = None) -> int:
         return _chunk(args.source_path)
 
     if args.command == "interrogate":
-        return _interrogate(args.source_path, args.domain_dir, args.data_dir, args.limit)
+        return _interrogate(
+            args.source_path, args.domain_dir, args.data_dir, args.limit, args.workers
+        )
 
     if args.command == "names" and args.names_command == "build":
         return _names_build(args.min_cluster_size, args.min_samples)

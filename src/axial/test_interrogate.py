@@ -7,10 +7,12 @@ tests/ingestion/test_interrogate.py.
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
 
+import axial.interrogate as interrogate_mod
 from axial.codebook import load_codebook
 from axial.interrogate import (
     ANSWER_FIELDS,
@@ -370,7 +372,13 @@ def test_cost_report_reports_null_for_an_unpriced_model_never_zero():
 
 class _ScriptedClient:
     """A client whose responses are scripted per call, so one note can fail
-    while the next answers -- the fault-isolation contract §7.15 states."""
+    while the next answers -- the fault-isolation contract §7.15 states.
+
+    Responses are handed out BY CALL INDEX, so which note receives which
+    response is only defined while the calls are serial. Every test using
+    this client therefore passes `workers=1` (issue #623, which made the
+    pass concurrent by default); concurrency itself is pinned separately by
+    `test_notes_are_interrogated_concurrently`, below."""
 
     def __init__(self, responses: list[str]) -> None:
         self._responses = responses
@@ -430,7 +438,7 @@ def test_one_failing_note_is_recorded_and_the_source_continues(tmp_path):
     client = _ScriptedClient(["not json at all"] * 3 + [good])
     source_path, data_dir = _arrange_source(tmp_path)
 
-    summary = run_interrogate(source_path, client=client, data_dir=data_dir)
+    summary = run_interrogate(source_path, client=client, data_dir=data_dir, workers=1)
 
     assert summary["failed"] == 1
     assert summary["answered"] == 1
@@ -449,7 +457,7 @@ def test_a_source_whose_every_note_failed_raises_rather_than_reporting_success(t
     source_path, data_dir = _arrange_source(tmp_path)
 
     with pytest.raises(AllNotesFailedError):
-        run_interrogate(source_path, client=client, data_dir=data_dir)
+        run_interrogate(source_path, client=client, data_dir=data_dir, workers=1)
 
 
 def test_rerunning_after_a_total_failure_raises_again_instead_of_reporting_success(tmp_path):
@@ -460,11 +468,16 @@ def test_rerunning_after_a_total_failure_raises_again_instead_of_reporting_succe
     on disk, and slice 04 would read an empty answer set for the whole book."""
     source_path, data_dir = _arrange_source(tmp_path)
     with pytest.raises(AllNotesFailedError):
-        run_interrogate(source_path, client=_ScriptedClient(["not json at all"]), data_dir=data_dir)
+        run_interrogate(
+            source_path,
+            client=_ScriptedClient(["not json at all"]),
+            data_dir=data_dir,
+            workers=1,
+        )
 
     second = _ScriptedClient([json.dumps(_answers())])
     with pytest.raises(AllNotesFailedError):
-        run_interrogate(source_path, client=second, data_dir=data_dir)
+        run_interrogate(source_path, client=second, data_dir=data_dir, workers=1)
     assert second.call_count == 0
 
 
@@ -489,8 +502,85 @@ def test_a_source_whose_every_note_is_a_garble_skip_is_not_a_failure(tmp_path):
     )
     client = _ScriptedClient([json.dumps(_answers())])
 
-    summary = run_interrogate(source_path, client=client, data_dir=data_dir)
+    summary = run_interrogate(source_path, client=client, data_dir=data_dir, workers=1)
 
     assert client.call_count == 0
     assert summary["skipped"] == 1
     assert summary["answer_records"] == 0
+
+
+class _BarrierClient:
+    """A client whose calls block until `expected` of them are simultaneously
+    in flight, so the pass can only finish if it really overlaps them (issue
+    #623). Serial code deadlocks here and trips the barrier's own timeout --
+    which is the point: this test cannot pass without concurrency."""
+
+    def __init__(self, expected: int, answer: str) -> None:
+        self._barrier = threading.Barrier(expected, timeout=10)
+        self._answer = answer
+        self.max_in_flight = 0
+        self._in_flight = 0
+        self._lock = threading.Lock()
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        with self._lock:
+            self._in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self._in_flight)
+        self._barrier.wait()
+        with self._lock:
+            self._in_flight -= 1
+        return self._answer
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "barrier"
+
+    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
+        return None
+
+
+def test_notes_are_interrogated_concurrently(tmp_path):
+    """Issue #623: this pass made one call at a time, so a 234-note source took
+    102 minutes at an effective concurrency of 1.00 while every other
+    model-backed pass ran at 20-34. The barrier only releases once all four
+    notes are in flight together."""
+    source_path, data_dir = _arrange_source(tmp_path, note_count=4)
+    client = _BarrierClient(expected=4, answer=json.dumps(_answers()))
+
+    summary = run_interrogate(source_path, client=client, data_dir=data_dir, workers=4)
+
+    assert summary["answered"] == 4
+    assert client.max_in_flight == 4
+
+
+def test_every_note_is_still_recorded_exactly_once_when_run_concurrently(tmp_path):
+    """Concurrency must not cost the checkpoint's one-record-per-note
+    guarantee: every append happens on the single collecting thread."""
+    source_path, data_dir = _arrange_source(tmp_path, note_count=12)
+    client = _BarrierClient(expected=12, answer=json.dumps(_answers()))
+
+    summary = run_interrogate(source_path, client=client, data_dir=data_dir, workers=12)
+
+    lines = (
+        (data_dir / "answers" / f"{summary['source_id']}.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    chunk_ids = [json.loads(line)["chunk_id"] for line in lines]
+    assert len(chunk_ids) == 12
+    assert len(set(chunk_ids)) == 12
+    assert summary["answered"] == 12
+
+
+def test_pass_worker_defaults_are_concurrent_by_default():
+    """Issue #623: the founder's standing requirement that a pass is fast by
+    DEFAULT, not only when an operator remembers a flag."""
+    import axial.argmap.build as argmap_build
+    import axial.argmap.residue as argmap_residue
+    import axial.gather as gather_mod
+    import axial.merge_names as merge_mod
+
+    assert interrogate_mod.DEFAULT_WORKERS == 12
+    assert gather_mod.DEFAULT_WORKERS == 48
+    assert argmap_build.WORKERS == 40
+    assert argmap_residue.WORKERS == argmap_build.WORKERS
+    assert merge_mod.DEFAULT_WORKERS == 36

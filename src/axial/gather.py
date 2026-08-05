@@ -252,7 +252,13 @@ DEFAULT_MIN_GATHER_MEMBERS = 10
 # serial pass over tens of thousands of independent short calls is a
 # multi-hour job for a few dollars of spend), and 36 is the value that run
 # settled on. Inherited rather than re-derived; `--workers` moves it.
-DEFAULT_WORKERS = 36
+#
+# Raised 36 -> 48 by issue #623 on this pass's own measurement: a corpus pass
+# of 2,082 calls ran 103.8 minutes at an EFFECTIVE concurrency of 20.9, and a
+# Gather call's summed latency over that run was 2,171 minutes -- by far the
+# largest model-latency pool of any pass in the pipeline. It is the wall-clock
+# leader, and it was not saturating even the slots it had.
+DEFAULT_WORKERS = 48
 
 # The heading Gather owns on a name page. Everything from this line to the
 # end of the page is Gather's; `upsert_disagreement_section` replaces it
