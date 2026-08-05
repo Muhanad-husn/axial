@@ -57,6 +57,7 @@ from axial.envelope import EnvelopeError, MissingSourceError, compute_source_id,
 from axial.eval import EvalError, run_eval
 from axial.interrogate import DEFAULT_WORKERS as INTERROGATE_DEFAULT_WORKERS
 from axial.interrogate import InterrogateError, run_interrogate
+from axial.position_backfill import POSITION_BACKFILL_PASS_NAME, run_position_backfill
 from axial.eval.corpus_pin import CorpusPinError, write_pin
 from axial.extract import ExtractError, extract
 from axial.gates import (
@@ -303,6 +304,54 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     interrogate_parser.add_argument(
+        "--domain",
+        dest="domain_dir",
+        default=None,
+        help=(
+            "path to a domain directory containing schema.yaml and codebook.yaml "
+            "(default: resolved from config/pipeline.yaml's paths.domain_dir, "
+            f"falling back to {DEFAULT_DOMAIN_DIR} when absent)"
+        ),
+    )
+
+    position_backfill_parser = subparsers.add_parser(
+        "position-backfill",
+        help=(
+            "backfill the `position` field onto every note of a source that "
+            "was interrogated under frame 0.1 and lacks it (issue #697): one "
+            "question, keeping the frame's examples and showing the note its "
+            "own recorded position_of, patching <data>/answers/<source_id>"
+            ".jsonl in place -- a note that already carries the key is never "
+            "re-asked, so a rerun resumes for free"
+        ),
+    )
+    position_backfill_parser.add_argument("source_path", help="path to a .pdf or .docx source file")
+    position_backfill_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="stop after this many notes are backfilled this run -- a smoke arm before the corpus",
+    )
+    position_backfill_parser.add_argument(
+        "--workers",
+        type=int,
+        default=INTERROGATE_DEFAULT_WORKERS,
+        help=(
+            "bounded concurrent per-note workers (default: "
+            f"{INTERROGATE_DEFAULT_WORKERS}, mirrors `interrogate`'s own)"
+        ),
+    )
+    position_backfill_parser.add_argument(
+        "--data-dir",
+        dest="data_dir",
+        default=None,
+        help=(
+            "rebase the four directories this pass touches (chunks/, "
+            "envelopes/, source_meta/, answers/) onto this parent (default: "
+            "each resolved from config/pipeline.yaml)"
+        ),
+    )
+    position_backfill_parser.add_argument(
         "--domain",
         dest="domain_dir",
         default=None,
@@ -1802,6 +1851,65 @@ def _interrogate(
         run.record(
             source_id=summary["source_id"],
             pass_name=NOTE_INTERROGATE_PASS_NAME,
+            model=summary["model"],
+            status="ok",
+            duration_sec=time.monotonic() - start,
+            error=None,
+        )
+
+    print(json.dumps(summary))
+    return 0
+
+
+def _position_backfill(
+    source_path: str,
+    domain_dir: str | None,
+    data_dir: str | None,
+    limit: int | None,
+    workers: int = INTERROGATE_DEFAULT_WORKERS,
+    *,
+    root: Path | None = None,
+    clock: Callable[[], str] | None = None,
+) -> int:
+    """Run the `position` backfill pass on `source_path` (issue #697):
+    mirrors `_interrogate`'s own run-logging wrapper -- one `run.jsonl`
+    record per invocation, not per note. The run summary (missing/backfilled
+    counts, `position`'s own abstention rate, measured cost) is the stdout
+    payload."""
+    resolved_data_dir = Path(data_dir) if data_dir else None
+    if root is None and resolved_data_dir is not None:
+        root = resolved_data_dir / "logs"
+    with run_context("position-backfill", root=root, clock=clock) as run:
+        start = time.monotonic()
+        try:
+            client = get_client()
+        except LLMError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        try:
+            summary = run_position_backfill(
+                source_path,
+                client=client,
+                data_dir=resolved_data_dir,
+                domain_dir=domain_dir,
+                limit=limit,
+                workers=workers,
+            )
+        except (InterrogateError, LLMError) as exc:
+            run.record(
+                source_id=_safe_source_id(source_path),
+                pass_name=POSITION_BACKFILL_PASS_NAME,
+                model=None,
+                status="error",
+                duration_sec=time.monotonic() - start,
+                error=str(exc),
+            )
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        run.record(
+            source_id=summary["source_id"],
+            pass_name=POSITION_BACKFILL_PASS_NAME,
             model=summary["model"],
             status="ok",
             duration_sec=time.monotonic() - start,
@@ -3525,6 +3633,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "interrogate":
         return _interrogate(
+            args.source_path, args.domain_dir, args.data_dir, args.limit, args.workers
+        )
+
+    if args.command == "position-backfill":
+        return _position_backfill(
             args.source_path, args.domain_dir, args.data_dir, args.limit, args.workers
         )
 

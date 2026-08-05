@@ -40,9 +40,17 @@ domain: syria
 # lands in every answer record's `frame_version`, which makes a record
 # self-identifying about which frame produced it. Consumers must still
 # branch on KEY PRESENCE (`"position" in answers`), never on this string:
-# another domain versions its own frame independently, and the corpus is a
-# permanent mix of both shapes -- the 6,148 records written under 0.1 are
-# not being re-interrogated.
+# another domain versions its own frame independently, and disk still holds
+# both record shapes (a full 0.2 interrogation call writes both keys in one
+# pass; issue #697's position-only backfill patches `position` onto an
+# existing 0.1 record without touching `frame_version`, so a patched record
+# reads `frame_version: 0.1` and carries `position` all the same -- key
+# presence, never this string, is still the only correct read). The 6,148
+# records written under 0.1 are NOT being re-interrogated (that remains
+# ~$34 and out of scope), but they ARE being backfilled: issue #697 asks
+# just the `position` question against every one of them, once, and this
+# frame's own `theory_school` examples (below) are what that backfill call
+# uses too.
 version: 0.2
 
 axes:
