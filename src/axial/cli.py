@@ -2765,6 +2765,9 @@ def _print_paper(paper_brief_id: str, record: dict[str, Any]) -> bool:
     print(f"claims cited: {len(record['claims'])}")
     print(f"confidence: {record['confidence']['overall_band']}")
     print(f"shape: {shape.get('band')}")
+    repetition = shape.get("repetition") or {}
+    if "fraction" in repetition:
+        print(f"cross-section repetition: {repetition['fraction']:.2%}")
     print(f"persisted: {record_path}")
     print(f"paper: {markdown_path}")
 
