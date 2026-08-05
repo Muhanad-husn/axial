@@ -1800,6 +1800,9 @@ def test_every_model_the_two_eval_arms_wire_is_priced():
         "moonshotai/kimi-k3",
         "openai/gpt-5.4",
         "openai/gpt-5.6-sol",
+        # Wired live 2026-08-05: `production_synthesis` and
+        # `production_paper_draft` both resolve here now.
+        "openai/gpt-5.6-luna",
     )
 
     for model in arms:

@@ -47,6 +47,13 @@ llm:
     # model cards) as the starting, unmeasured pick balancing quality against
     # latency/cost -- not yet tuned against real briefs, like every other
     # §7.11 tier/effort choice.
+    #
+    # The "no medium" premise above was about glm/deepseek, and this pass no
+    # longer runs on either (secrets.toml, 2026-08-05). "high" is still an
+    # explicit, accepted choice on the model that serves it now -- the whole
+    # 2026-08-05 measurement ran at this setting -- but the REASON stated
+    # above no longer applies to it, and nobody has compared effort levels on
+    # the new model. Left as-is on purpose rather than retuned on no evidence.
     synthesize: high
     # Brief-interrogation pre-pass (§7.2, issue #252): same experiment,
     # paired with routing this pass onto production_high below -- the
@@ -264,8 +271,10 @@ llm:
     # (#549), so planning and drafting can move independently.
     paper_plan: production_paper_plan
     # Phase A v1 per-note interrogation (§7.9/§7.15, D14, issue #419): its
-    # own tier, resolving to z-ai/glm-5.2 in secrets.toml. Not
-    # production_high (deepseek-v4-pro, the envelope pass) and not
+    # own tier. Which concrete model backs it lives in secrets.toml and is
+    # deliberately NOT named here (DEC-26) -- this comment said
+    # "resolving to z-ai/glm-5.2" and was wrong within the day the tier
+    # moved. Not production_high (deepseek-v4-pro, the envelope pass) and not
     # production_synthesis (Phase B), so swapping this model never moves
     # either of those. An operator whose secrets.toml has no
     # production_interrogate key fails loudly on THIS pass alone, never on
