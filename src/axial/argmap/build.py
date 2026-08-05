@@ -150,7 +150,12 @@ MERGE_DISTANCE_THRESHOLD = 0.30
 # (network, not CPU), and 20 workers measured 705 calls in 27 minutes wall
 # time on the real corpus -- a serial pass would be ~9 hours for the same
 # call count at the same per-call latency.
-WORKERS = 20
+# Raised 20 -> 40 by issue #623, on this pipeline's own measurement rather than
+# a guess: a full build of 1,058 calls ran 98.8 minutes at an EFFECTIVE
+# concurrency of 16.7 against a nominal 20 -- 83% utilisation, so the pass was
+# waiting on the model with slots to spare, not saturated. The residue pass
+# imports this constant and moves with it (`axial.argmap.residue.WORKERS`).
+WORKERS = 40
 
 # The pass name `config/pipeline.yaml`'s `llm.reasoning_by_pass` /
 # `llm.model_by_pass` key off of, and what every extraction call is tagged
