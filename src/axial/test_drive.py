@@ -32,6 +32,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import axial.drive as drive_mod
+from axial.sources import DEFAULT_INGEST_PASSES
 from axial.drive import (
     DEFAULT_LANGUAGE_ACCEPT_THRESHOLD,
     DEFAULT_LANGUAGE_PROBE_CHARS,
@@ -373,51 +375,52 @@ def test_build_drive_client_returns_a_drive_client_instance(tmp_path, monkeypatc
     assert isinstance(client, DriveClient)
 
 
-# --- default ingest_fn runs the full source-to-vault chain --------------------
+# --- default ingest_fn runs the shared ingest chain ---------------------------
 #
-# `run_vault_write` alone is only the pipeline TAIL (it reads a pre-existing
-# stored envelope and pre-built chunks, never recomputing either -- see
-# axial.vault.run_vault_write's docstring); a freshly-downloaded Drive source
-# has never been through extract/envelope/chunk, so the default `ingest_fn`
-# must drive the whole chain. These tests mock every stage (extract,
-# run_envelope, run_chunk_recursive, run_vault_write) where `axial.drive`
-# imports them -- never touching real docling/LLM calls.
+# The default `ingest_fn` drives `axial.sources.DEFAULT_INGEST_PASSES` through
+# `axial.run.PASS_REGISTRY` -- the SAME pass list the local backend runs. These
+# tests patch the registry where `axial.drive` imports it, so no real
+# docling/LLM call happens, and they assert against the shared constant rather
+# than a literal list: a pass added to the chain must reach the Drive doorway
+# too, which is exactly what issue #675 found had stopped being true.
 
 
-def _patch_chain(monkeypatch, *, order: list[str] | None = None, fail_at: str | None = None):
-    """Patch the four chain stages, where `axial.drive` imports them, to
-    record call order (and each call's `source_path` argument) into
-    `order` when given, optionally raising that stage's own typed error
-    when `fail_at` names it -- so callers can assert both the happy-path
-    sequencing and the per-candidate isolation behaviour."""
-    import axial.drive as drive_mod
-    from axial.chunk import ChunkError
-    from axial.envelope import EnvelopeError
-    from axial.extract import ExtractError
-    from axial.vault import VaultError
+def _patch_chain(monkeypatch, *, order: list | None = None, fail_at: str | None = None):
+    """Replace `axial.run.run_pass` where `axial.drive` imports it, recording
+    each (pass_name, source_path) into `order` when given and reporting a
+    failed run for the pass `fail_at` names -- so callers can assert both the
+    happy-path sequencing and the per-candidate isolation behaviour.
+
+    The chain drives `run_pass` rather than the registry's invokers because
+    that is what consults each pass's done-predicate (issue #675); faking at
+    the same seam keeps the test honest about which contract is being used."""
+    from axial.run import FAIL_STATUS, OK_STATUS, Outcome, RunSummary
 
     if order is None:
         order = []
 
-    def _make(name, error_cls, return_value):
-        def _stage(source_path, *args, **kwargs):
-            order.append((name, source_path))
-            if fail_at == name:
-                raise error_cls(f"synthetic {name} failure")
-            return return_value
+    def _fake_run_pass(pass_name, worklist_path=None, **kwargs):
+        raw = Path(worklist_path).read_text(encoding="utf-8").split()
+        for line in raw:
+            order.append((pass_name, Path(line)))
+        failed = fail_at == pass_name
+        outcome = Outcome(
+            raw[0],
+            "fake-source-id",
+            FAIL_STATUS if failed else OK_STATUS,
+            f"synthetic {pass_name} failure" if failed else "",
+        )
+        summary = RunSummary(
+            pass_name=pass_name,
+            outcomes=[outcome],
+            total=1,
+            ok_count=0 if failed else 1,
+            fail_count=1 if failed else 0,
+            skip_count=0,
+        )
+        return summary, (1 if failed else 0)
 
-        return _stage
-
-    monkeypatch.setattr(drive_mod, "extract", _make("extract", ExtractError, {}))
-    monkeypatch.setattr(drive_mod, "run_envelope", _make("run_envelope", EnvelopeError, {}))
-    monkeypatch.setattr(
-        drive_mod, "run_chunk_recursive", _make("run_chunk_recursive", ChunkError, [])
-    )
-    monkeypatch.setattr(
-        drive_mod,
-        "run_vault_write",
-        _make("run_vault_write", VaultError, [Path("data/vault/prose/x.md")]),
-    )
+    monkeypatch.setattr(drive_mod, "run_pass", _fake_run_pass)
     return order
 
 
@@ -429,23 +432,14 @@ def test_default_ingest_fn_runs_the_full_chain_in_order_for_one_source(monkeypat
         client=None,
         config_path=Path("config/pipeline.yaml"),
         domain_dir="config/domains/syria",
-        envelopes_dir=None,
-        chunks_dir=None,
-        artifacts_dir=None,
-        vault_dir=None,
     )
     source_path = tmp_path / "alpha.pdf"
 
     result = ingest_fn(source_path)
 
-    assert [name for name, _ in order] == [
-        "extract",
-        "run_envelope",
-        "run_chunk_recursive",
-        "run_vault_write",
-    ]
+    assert [name for name, _ in order] == list(DEFAULT_INGEST_PASSES)
     assert all(path == source_path for _, path in order)
-    assert result == [Path("data/vault/prose/x.md")]
+    assert result is None
 
 
 def test_run_drive_ingest_default_path_runs_the_full_chain_per_candidate(monkeypatch, tmp_path):
@@ -474,17 +468,12 @@ def test_run_drive_ingest_default_path_runs_the_full_chain_per_candidate(monkeyp
 
     assert exit_code == 0
     assert [name for name, _ in order] == [
-        "extract",
-        "run_envelope",
-        "run_chunk_recursive",
-        "run_vault_write",
+        *DEFAULT_INGEST_PASSES,
     ]
     assert all(path == cache_dir / "f-1.pdf" for _, path in order)
 
 
-@pytest.mark.parametrize(
-    "fail_at", ["extract", "run_envelope", "run_chunk_recursive", "run_vault_write"]
-)
+@pytest.mark.parametrize("fail_at", list(DEFAULT_INGEST_PASSES))
 def test_run_drive_ingest_isolates_a_per_candidate_chain_failure_and_continues(
     monkeypatch, tmp_path, capsys, fail_at
 ):
@@ -1296,7 +1285,12 @@ def test_genuinely_textless_source_is_ultimately_rejected_and_logged_via_intake(
         f"UNKNOWN-probe candidate through); got stdout={captured.out!r} "
         f"stderr={captured.err!r}"
     )
-    assert message.startswith("error:"), (
+    # Presence, not position (issue #675): the chain now reports through
+    # `axial.run.run_pass`, which prints its own per-pass report table to
+    # stdout first, so the isolation's line is no longer the first thing
+    # emitted. What the test is about -- that the isolation line appears at
+    # all, and the gate's does not -- is unchanged.
+    assert "error:" in message, (
         f"expected the per-candidate CHAIN_ERRORS isolation's own 'error: "
         f"...' line (not the gate's 'reject: ...' line); got stdout="
         f"{captured.out!r} stderr={captured.err!r}"
@@ -1691,3 +1685,35 @@ def test_main_drive_ingest_without_folder_id_and_missing_secrets_returns_nonzero
     assert calls == []
     captured = capsys.readouterr()
     assert "drive" in (captured.out + captured.err).lower()
+
+
+def test_the_drive_chain_is_the_local_chain_not_a_copy_of_it(monkeypatch, tmp_path):
+    """Issue #675, the regression this fix exists for. The Drive connector
+    hand-wrote its own chain (extract -> envelope -> chunk -> vault write) and
+    it rotted: `run_vault_write` has raised unconditionally since #411, and the
+    copy never gained `interrogate` (#419) or `artifacts` (#674). A book
+    ingested through Drive would have failed on its last step while missing the
+    two passes that give it content at all -- and nothing caught it, because the
+    connector had never talked to real Google.
+
+    Naming the shared constant is the fix, so this asserts the chain the Drive
+    backend drives IS `axial.sources.DEFAULT_INGEST_PASSES`, not a list that
+    merely matches it today."""
+    from axial.drive import _default_ingest_fn
+
+    order = _patch_chain(monkeypatch)
+    ingest_fn = _default_ingest_fn(
+        client=None,
+        config_path=Path("config/pipeline.yaml"),
+        domain_dir="config/domains/syria",
+    )
+
+    ingest_fn(tmp_path / "alpha.pdf")
+
+    assert [name for name, _ in order] == list(DEFAULT_INGEST_PASSES)
+    # The two passes whose absence was the bug, named explicitly so a future
+    # edit that drops either fails here rather than in a paid corpus run.
+    assert "interrogate" in [name for name, _ in order]
+    assert "artifacts" in [name for name, _ in order]
+    # And the retired pass must never be in it.
+    assert "vault-write" not in [name for name, _ in order]

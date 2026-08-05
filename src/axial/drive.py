@@ -37,18 +37,28 @@ write-after-success discipline. `language_probe_chars` and
 this module's own `DEFAULT_LANGUAGE_PROBE_CHARS` /
 `DEFAULT_LANGUAGE_ACCEPT_THRESHOLD` when the block/keys are absent.
 
-By default, `ingest_fn` runs the FULL source-to-vault chain for a freshly
-downloaded file -- `axial.extract.extract` -> `axial.envelope.run_envelope`
--> `axial.chunk.run_chunk_recursive` -> `axial.vault.run_vault_write`.
-`run_vault_write` alone is only the pipeline TAIL: it reads a pre-existing
-stored envelope (raising `MissingEnvelopeError` if one hasn't been produced
-yet) and pre-built chunks (`axial.chunk.read_chunks`, never recomputed) --
-it never runs extraction, the envelope pass, or the chunk pass itself. A
-Drive-downloaded source has been through none of those yet, so the default
-handoff must drive the whole chain, not just its tail (issue #237 review
-finding). Each candidate's chain runs in isolation: a failure at any stage
-is caught, logged to stderr, and the loop continues to the next candidate --
-one bad source never aborts the whole folder (mirrors
+By default, `ingest_fn` runs **the same pass chain the local backend
+runs** -- `axial.sources.DEFAULT_INGEST_PASSES`, driven through
+`axial.run.run_pass` -- for a freshly downloaded file. It is the constant
+that is shared, not a copy of its contents, so the two doorways into the
+pipeline cannot drift apart. `run_pass` rather than the registry's invoker
+directly, because `run_pass` is what consults each pass's done-predicate:
+skipping those would re-chunk an already-ingested source, the defect issue
+#672 closed on the local side.
+
+They had drifted (issue #675). This module used to hand-write the chain as
+extract -> envelope -> chunk -> `run_vault_write`, and by 2026-08-05 that
+copy was wrong at both ends: `run_vault_write` has been retired since issue
+#411 and raises unconditionally, so every Drive candidate would have failed
+on its last step; and the copy never ran `interrogate` (issue #419, where a
+note's answers come from) or `artifacts` (issue #674), so a book ingested
+this way would have been missing the passes that give it content at all.
+The connector had never once talked to real Google, so nothing had exercised
+it.
+
+Each candidate's chain runs in isolation: a failure at any stage is caught
+(`CHAIN_ERRORS`), logged to stderr, and the loop continues to the next
+candidate -- one bad source never aborts the whole folder (mirrors
 `axial.ingest.run_ingest`'s per-source `FAIL` isolation). When `ingest_fn`
 is injected (tests), it is used as-is -- the chain orchestrator never
 overrides an explicit injection.
@@ -69,7 +79,9 @@ injectable-client code path stay runnable without those libraries installed
 from __future__ import annotations
 
 import json
+import shutil
 import sys
+import tempfile
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -78,14 +90,24 @@ from typing import Any, Callable, Protocol
 import yaml
 from langdetect import DetectorFactory, LangDetectException, detect_langs
 
-from axial.chunk import ChunkError, run_chunk_recursive
-from axial.envelope import EnvelopeError, run_envelope
-from axial.extract import ExtractError, extract
+from axial.artifacts import ArtifactsError
+from axial.chunk import ChunkError
+from axial.envelope import EnvelopeError
+from axial.extract import ExtractError
 from axial.intake import check_extension, extract_text_layer
 from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient
 from axial.paths import DEFAULT_DOMAIN_DIR
-from axial.sources import CHANGED, DONE, NEW, REJECTED, SourceRecord
-from axial.vault import VaultError, run_vault_write
+from axial.interrogate import InterrogateError
+from axial.run import run_pass
+from axial.sources import (
+    CHANGED,
+    DEFAULT_INGEST_PASSES,
+    DONE,
+    NEW,
+    REJECTED,
+    SourceRecord,
+)
+from axial.vault import VaultError
 from axial.yaml_loader import SAFE_LOADER
 
 # Deterministic language detection (issue #239, P0-11c): langdetect is not
@@ -94,12 +116,6 @@ from axial.yaml_loader import SAFE_LOADER
 # process is then reproducible, matching the module's "deterministic
 # detector" requirement (Sec. 7.10).
 DetectorFactory.seed = 0
-
-# The full taxonomy of errors any stage of the default source-to-vault chain
-# (extract -> envelope -> chunk -> vault write) can raise. Caught per
-# candidate so one bad source never aborts the whole folder (module
-# docstring).
-CHAIN_ERRORS = (ExtractError, EnvelopeError, ChunkError, VaultError)
 
 # Default locations, mirroring the module-level default conventions already
 # used across the codebase (e.g. `axial.llm.DEFAULT_SECRETS_PATH`,
@@ -144,12 +160,46 @@ class DriveSecretsError(DriveError):
     secret so the halt reason is actionable (P0-11)."""
 
 
+class DriveIngestPassError(DriveError):
+    """Raised when a pass in the shared ingest chain failed for a downloaded
+    candidate (issue #675). `axial.run.run_pass` reports failures through its
+    exit code rather than raising, and the fetch-state manifest must only be
+    written after a clean ingest -- so a reported failure is turned back into
+    a raise, and this candidate is re-fetched next run instead of being
+    recorded as a false success."""
+
+    def __init__(self, pass_name: str, source_path: Path, reasons: str):
+        self.pass_name = pass_name
+        self.source_path = Path(source_path)
+        super().__init__(
+            f"ingest pass {pass_name!r} failed for {self.source_path}"
+            + (f": {reasons}" if reasons else "")
+        )
+
+
 class FetchStateError(DriveError):
     """Raised when the fetch-state manifest at `fetch_state_path` exists
     but cannot be read as the expected JSON object shape (issue #238,
     P0-11b). Malformed state is reported, never silently treated as empty
     -- silently discarding it would trigger a full, possibly expensive,
     re-fetch of the whole folder without telling the operator why."""
+
+
+# The full taxonomy of errors any pass in `DEFAULT_INGEST_PASSES` can raise,
+# caught per candidate so one bad source never aborts the whole folder
+# (module docstring). VaultError stays in the list although `vault-write` is
+# not in the chain: the pass is still registered, and its retirement is a
+# VaultError subclass that this must keep catching if anything ever puts it
+# back.
+CHAIN_ERRORS = (
+    DriveIngestPassError,
+    ExtractError,
+    EnvelopeError,
+    ChunkError,
+    InterrogateError,
+    ArtifactsError,
+    VaultError,
+)
 
 
 class DriveClientProtocol(Protocol):
@@ -390,32 +440,69 @@ def _run_full_ingest_chain(
     client: LLMClient | None,
     config_path: Path,
     domain_dir: str | Path,
-    envelopes_dir: Path | None,
-    chunks_dir: Path | None,
-    artifacts_dir: Path | None,
-    vault_dir: Path | None,
-) -> list[Path]:
-    """Run the full source-to-vault chain for one freshly-downloaded Drive
-    source: extract -> envelope -> chunk -> vault write (module docstring).
-    `run_vault_write` alone only reads pre-existing artifacts from the three
-    passes ahead of it; a Drive-downloaded source has never been through
-    them, so the default handoff must run every stage, not just the tail.
-    Each pass persists its own artifact by `source_id`, so this is safe to
-    call even when an earlier pass already ran for this source (e.g. a
-    partial prior attempt) -- every pass is itself no-recompute/cached."""
-    extract(source_path)
-    run_envelope(source_path, client=client, envelopes_dir=envelopes_dir, config_path=config_path)
-    run_chunk_recursive(source_path, chunks_dir=chunks_dir, config_path=config_path, client=client)
-    return run_vault_write(
-        source_path,
-        client=client,
-        envelopes_dir=envelopes_dir,
-        vault_dir=vault_dir,
-        config_path=config_path,
-        domain_dir=domain_dir,
-        chunks_dir=chunks_dir,
-        artifacts_dir=artifacts_dir,
-    )
+) -> None:
+    """Run the ingest chain for one freshly-downloaded Drive source by
+    driving `axial.sources.DEFAULT_INGEST_PASSES` through the pass registry
+    -- **the same pass list, in the same order, that the local backend
+    runs** (`axial.sources.sync_local`).
+
+    It used to be a hand-written copy of that chain, and it rotted (issue
+    #675). The copy read extract -> envelope -> chunk -> `run_vault_write`,
+    which by 2026-08-05 was wrong at both ends: `run_vault_write` has been
+    retired since issue #411 and raises `VaultWriteRetiredError`
+    unconditionally, so every Drive candidate would have failed on its last
+    step; and the chain never ran `interrogate` (where every note's answers
+    come from, issue #419) or `artifacts` (added to the local chain by issue
+    #674), so a Drive-ingested book would have been missing the two passes
+    that give it content in the first place.
+
+    Naming the shared constant instead of repeating its contents is the
+    whole fix: the two backends cannot drift again without the drift being
+    a change to one list.
+
+    Each pass runs through `axial.run.run_pass`, not through the registry's
+    invoker directly, because `run_pass` is what consults each pass's
+    done-predicate. Invoking directly would skip them, and `chunk` has no
+    internal skip of its own -- it would rewrite the artifact and re-pay the
+    router's classification calls for a source already ingested, which is
+    exactly the defect issue #672 closed on the local side. A doorway that
+    reintroduces it is not a fix.
+
+    `run_pass` reports failures rather than raising them, so a pass that
+    failed for this source is turned back into a raise here: the fetch-state
+    manifest is written only after `ingest_fn` returns cleanly (module
+    docstring), and a silent failure would record a false success and never
+    re-fetch.
+
+    The signal is `summary.fail_count`, NOT the exit code. `run_pass`
+    returns 0 whenever it ran at all -- a per-source failure is isolated by
+    design and reserves the exit code for fatal setup errors (an unknown
+    pass, an invalid source set). Reading the exit code here would let every
+    failed candidate be recorded as fetched.
+
+    The chain also stops at the first failing pass rather than running the
+    rest: each pass reads the previous one's artifact, so continuing past a
+    failure just produces a cascade of "run `axial extract` first" errors
+    that bury the real cause."""
+    worklist_dir = Path(tempfile.mkdtemp(prefix="axial-drive-"))
+    worklist_path = worklist_dir / "worklist.txt"
+    worklist_path.write_text(f"{source_path}\n", encoding="utf-8")
+    try:
+        for pass_name in DEFAULT_INGEST_PASSES:
+            summary, _exit_code = run_pass(
+                pass_name,
+                worklist_path,
+                client=client,
+                config_path=config_path,
+                domain_dir=domain_dir,
+            )
+            if summary.fail_count:
+                reasons = "; ".join(
+                    outcome.reason for outcome in summary.outcomes if outcome.reason
+                )
+                raise DriveIngestPassError(pass_name, source_path, reasons)
+    finally:
+        shutil.rmtree(worklist_dir, ignore_errors=True)
 
 
 def _default_ingest_fn(
@@ -423,25 +510,25 @@ def _default_ingest_fn(
     client: LLMClient | None,
     config_path: Path,
     domain_dir: str | Path,
-    envelopes_dir: Path | None,
-    chunks_dir: Path | None,
-    artifacts_dir: Path | None,
-    vault_dir: Path | None,
-) -> Callable[[Path], list[Path]]:
+) -> Callable[[Path], None]:
     """Build the default `ingest_fn`: a closure over the threaded LLM
-    client/config/dirs that runs `_run_full_ingest_chain` for one
-    downloaded local path."""
+    client and config that runs `_run_full_ingest_chain` for one downloaded
+    local path.
 
-    def _ingest_one(local_path: Path) -> list[Path]:
-        return _run_full_ingest_chain(
+    The four per-artifact directory overrides this used to thread
+    (`envelopes_dir`/`chunks_dir`/`artifacts_dir`/`vault_dir`) are gone with
+    the hand-written chain that consumed them: the registry's own invokers
+    resolve every directory from `config_path`, exactly as they do for the
+    local backend. Nothing ever set them -- the CLI passed none and the one
+    test that named them passed `None` -- so they were a seam with no
+    users."""
+
+    def _ingest_one(local_path: Path) -> None:
+        _run_full_ingest_chain(
             local_path,
             client=client,
             config_path=config_path,
             domain_dir=domain_dir,
-            envelopes_dir=envelopes_dir,
-            chunks_dir=chunks_dir,
-            artifacts_dir=artifacts_dir,
-            vault_dir=vault_dir,
         )
 
     return _ingest_one
@@ -460,10 +547,6 @@ def run_drive_sources(
     llm_client: LLMClient | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     domain_dir: str | Path = DEFAULT_DOMAIN_DIR,
-    envelopes_dir: Path | None = None,
-    chunks_dir: Path | None = None,
-    artifacts_dir: Path | None = None,
-    vault_dir: Path | None = None,
 ) -> tuple[list[SourceRecord], int]:
     """`axial sources`'s Drive backend (issue #528). Lists the WHOLE folder
     (every file, not just `.pdf`/`.docx` candidates) and returns one
@@ -566,10 +649,6 @@ def run_drive_sources(
             client=llm_client,
             config_path=config_path,
             domain_dir=domain_dir,
-            envelopes_dir=envelopes_dir,
-            chunks_dir=chunks_dir,
-            artifacts_dir=artifacts_dir,
-            vault_dir=vault_dir,
         )
 
     probe_chars, accept_threshold = _language_gate_config(config_path)
