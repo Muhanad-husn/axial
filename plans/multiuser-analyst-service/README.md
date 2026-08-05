@@ -1,12 +1,59 @@
 # Plan: Multiuser Analyst Service
 
-**Status:** Not started. Deferred by design.
-**Prerequisite:** Phase B is built and stable. Do not start this before then.
-**Drafted:** 2026-07-23, from a design discussion. Nothing here is committed to code yet.
+**Status:** Started 2026-08-05. Issues #681–#690. See the 2026-08-05 amendment
+below, which supersedes parts of the original draft.
+**Prerequisite:** met — Phases A, B and C are built.
+**Drafted:** 2026-07-23, from a design discussion.
 
 This is a forward-looking plan, written in plain language. When work begins, the
 first step is to turn the sequence below into GitHub issues and record the core
 decision in `docs/DECISIONS.md` as a `DEC-` row.
+
+---
+
+## Amendment, 2026-08-05: the analyst UI is a real web app, and CLI-first is off
+
+Founder adjudication, recorded as **DEC-65**. Read this before anything below it.
+
+**What is superseded.** Decision 5 ("client is the CLI first") and "Explicitly
+deferred: a web UI" no longer hold for the analyst domain. The open question at
+the bottom of this plan — *are the first invited analysts technical enough for a
+CLI?* — is answered **no**. Academics use the product themselves; the ceiling is
+hundreds to thousands of them, not a handful.
+
+**What the two clients are.**
+
+| Domain | Users | Stack |
+|---|---|---|
+| Operator | 1, local | Streamlit shelling out to the `axial` CLI, tailing `run.jsonl`. No API, no auth, no Docker |
+| Analyst | hundreds–thousands, hosted | Next.js + TS + Tailwind + shadcn/ui on Vercel; FastAPI; Postgres job queue with worker processes; Supabase for auth and Postgres |
+
+Streamlit holds a Python process per browser session. That is free at one user
+and a thousand processes at a thousand — which is exactly why it is the right
+answer on the left and the wrong one on the right.
+
+**What still holds from the original plan.** The two-worlds isolation, the
+read-only corpus, the snapshot model, invitation-only access, two roles, rented
+login, and steps 2–4 (`RequestContext`, per-principal paths, `can_access`) —
+which are still the cheap groundwork that is expensive to retrofit.
+
+**Three things the draft did not know.**
+
+1. **The endpoints are jobs, not request/response.** An ask is ~3 minutes and an
+   ingest is hours. The job row carries a `kind` so chat mode
+   ([milestone 5](https://github.com/Muhanad-husn/axial/milestone/5)) is a second
+   kind, not a second system.
+2. **"The one genuinely hard part" is mostly already built.**
+   `src/axial/query/store.py` already opens the corpus read-only over a SQLite
+   URI. A published corpus is that one file, baked into a worker image and tagged
+   with its pin.
+3. **The binding constraint is money.** ~$0.13 a paper; a thousand academics at
+   two a week is ~$1,100/month against no revenue. Quotas and a content-keyed
+   cache ship on day one (#686).
+
+**One decision blocks going public** (#690): the papers quote passages from 34
+in-copyright books. Private use and publishing are the same mechanism at
+different exposure.
 
 ---
 
