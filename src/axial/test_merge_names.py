@@ -535,6 +535,50 @@ def test_manifest_escalated_surfaces_defaults_to_zero(tmp_path: Path):
     assert json.loads(path.read_text(encoding="utf-8"))["escalated_surfaces"] == 0
 
 
+def test_manifest_carries_this_runs_source_ids_sorted(tmp_path: Path):
+    """Issue #677: `source_ids` is what a LATER run reads back to decide
+    `units_asked_touching_new` -- written sorted, and absent entirely when
+    the caller passes none (the pre-#677 shape, still a valid manifest)."""
+    path = tmp_path / "merge_manifest.json"
+
+    write_merge_manifest(
+        path,
+        complete=True,
+        batches_total=1,
+        batches_decided=1,
+        batches_reused=0,
+        batches_failed=0,
+        source_ids=["zed-2020", "abc-2019"],
+    )
+
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    assert manifest["source_ids"] == ["abc-2019", "zed-2020"]
+
+
+def test_manifest_source_ids_defaults_to_empty(tmp_path: Path):
+    path = tmp_path / "merge_manifest.json"
+
+    write_merge_manifest(
+        path, complete=True, batches_total=1, batches_decided=1, batches_reused=0, batches_failed=0
+    )
+
+    assert json.loads(path.read_text(encoding="utf-8"))["source_ids"] == []
+
+
+def test_source_ids_of_resolves_chunk_ids_and_skips_malformed_ones():
+    from axial.merge_names import _source_ids_of
+
+    assert _source_ids_of(
+        [
+            "abc-2019_000_intro_001",
+            "abc-2019_001_body_002",
+            "zed-2020_000_intro_001",
+            "not-a-chunk-id",
+        ]
+    ) == frozenset({"abc-2019", "zed-2020"})
+    assert _source_ids_of([]) == frozenset()
+
+
 def test_merge_tightness_comes_from_config_and_falls_back_to_the_loosest(tmp_path: Path):
     configured = tmp_path / "pipeline.yaml"
     configured.write_text("names:\n  merge_min_cluster_size: 7\n  merge_min_samples: 3\n", "utf-8")

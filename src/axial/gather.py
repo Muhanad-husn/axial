@@ -187,6 +187,7 @@ from axial.names import (
     load_answer_records,
 )
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_vault_dir, split_source_id
+from axial.query.reader import MalformedChunkIdError, source_id_from_chunk_id
 from axial.vault import VaultError, bibliographic_value, read_source_meta
 from axial.yaml_loader import SAFE_LOADER
 
@@ -671,6 +672,19 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _source_ids_of(chunk_ids: list[str]) -> frozenset[str]:
+    """The distinct `source_id`s `chunk_ids` resolve to (issue #677's
+    `units_asked_touching_new`), mirroring `axial.merge_names._source_ids_
+    of` -- a malformed chunk_id simply contributes nothing."""
+    ids: set[str] = set()
+    for chunk_id in chunk_ids:
+        try:
+            ids.add(source_id_from_chunk_id(chunk_id))
+        except MalformedChunkIdError:
+            continue
+    return frozenset(ids)
+
+
 @dataclass(frozen=True)
 class GatherJob:
     """One name's whole Gather unit of work: the member packets, already
@@ -910,6 +924,21 @@ def run_gather(
 
     `client`, when given, is used by every worker; otherwise one real client
     is built here and shared the same way.
+
+    **Issue #677: `units_total`/`units_reused`/`units_asked`/`units_asked_
+    touching_new`.** `units_total` is `len(jobs)` (every name in scope, past
+    the member-count gates); `units_reused` is how many of those already had
+    a disagreement record on disk BEFORE this run's own worker pool started
+    (the `reused` count already returned under `"reused"`, computed the
+    moment `pending` is); `units_asked` is `units_total - units_reused`,
+    i.e. `len(pending)`. `units_asked_touching_new` is the subset of
+    `pending` whose own member `chunk_ids` touch a source absent from
+    EVERY disagreement record already on disk at the start of this run --
+    `disagreements.jsonl` is read for this directly (issue #678: a
+    disagreement record already carries the `chunk_ids` it was written
+    from), so no separate manifest is needed to answer "which sources has a
+    prior run of this pass already seen". Empty (a first-ever run, nothing
+    recorded yet) means every asked name counts as touching new.
     """
     answers_dir = (
         Path(answers_dir) if answers_dir is not None else _default_answers_dir(config_path)
@@ -960,6 +989,25 @@ def run_gather(
     pending = [job for job in jobs if job.key not in records]
     reused = len(jobs) - len(pending)
     to_attempt = pending if limit is None else pending[:limit]
+
+    # Issue #677: the four `units_*` counters, computed from `records` --
+    # the ledger's own state loaded above, before this run's `--limit` trims
+    # `pending` down to `to_attempt`, let alone before a single call goes
+    # out. `prev_source_ids` is every source id ANY disagreement record
+    # already on disk was written from (issue #678: the record's own
+    # `chunk_ids` already carries this, so no new manifest is needed).
+    prev_source_ids: set[str] = set()
+    for record in records.values():
+        prev_source_ids.update(_source_ids_of(record.get("chunk_ids") or []))
+
+    units_total = len(jobs)
+    units_reused = reused
+    units_asked = units_total - units_reused
+    units_asked_touching_new = sum(
+        1
+        for job in pending
+        if not prev_source_ids or not _source_ids_of(job.chunk_ids).issubset(prev_source_ids)
+    )
 
     # Every record ever appended for this name, oldest first -- the write
     # loop below selects from this per canonical, not per the current job
@@ -1034,6 +1082,10 @@ def run_gather(
         "asked": called,
         "reused": reused,
         "failed": failed,
+        "units_total": units_total,
+        "units_reused": units_reused,
+        "units_asked": units_asked,
+        "units_asked_touching_new": units_asked_touching_new,
         "batch_calls": batch_calls,
         "merge_calls": merge_calls,
         "pages_written": written,
