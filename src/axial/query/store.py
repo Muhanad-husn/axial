@@ -105,6 +105,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
+from axial.paths import replace_with_retry
+
 # The store's own filename, a sibling of `vault_dir/names/` (the same
 # placement `axial.materialize.NAME_PAGE_INDEX_FILENAME` uses, and for the
 # same reason: a `*.md` glob over `names/` must never pick it up).
@@ -260,11 +262,14 @@ def write_store(
     note_opposed_position: Iterable[Sequence] = (),
 ) -> dict[str, int]:
     """Write the whole store to `path` atomically: a fresh database is built
-    beside it and `os.replace`d over it in one filesystem rename, so a
-    concurrent reader always observes either the complete prior store or the
-    complete new one and never a half-written one. Same shape, and the same
-    reason, as `axial.paths.atomic_write_text` -- which cannot be reused
-    directly because SQLite writes the file itself.
+    beside it and replaced over it in one filesystem rename
+    (`axial.paths.replace_with_retry`, issue #705), so a concurrent reader
+    always observes either the complete prior store or the complete new one
+    and never a half-written one, and a transient Windows `PermissionError`
+    on that rename (#653) is retried rather than aborting the write. Same
+    shape, and the same reason, as `axial.paths.atomic_write_text` -- which
+    cannot be reused directly because SQLite writes the file itself; this
+    shares its retry helper instead of re-deriving the loop.
 
     Returns one row count per table, for the materialize summary."""
     path = Path(path)
@@ -311,7 +316,7 @@ def write_store(
             connection.commit()
         finally:
             connection.close()
-        os.replace(temporary, path)
+        replace_with_retry(temporary, path)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(temporary)

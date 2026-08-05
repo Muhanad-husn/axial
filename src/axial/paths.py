@@ -211,6 +211,29 @@ _REPLACE_RETRY_ATTEMPTS = 10
 _REPLACE_RETRY_DELAY_SECONDS = 0.1
 
 
+def replace_with_retry(source: str | Path, destination: str | Path) -> None:
+    """`os.replace(source, destination)`, retried on Windows'
+    `PermissionError` (issue #653): `MoveFileEx` refuses the rename while
+    ANY process holds `destination` open, and a concurrent reader's handle
+    (antivirus, the search indexer, another axial process, per #636/#653) is
+    typically open for milliseconds -- so a short bounded retry wins almost
+    immediately. Retried up to `_REPLACE_RETRY_ATTEMPTS` times,
+    `_REPLACE_RETRY_DELAY_SECONDS` apart, before giving up and letting the
+    `PermissionError` propagate -- POSIX `os.replace` never hits this case,
+    so the retry loop is a no-op there. `source` is left in place when this
+    finally raises, so the caller's own cleanup (removing its temp file)
+    still applies; this function never touches `source` itself, only the
+    rename."""
+    for attempt in range(_REPLACE_RETRY_ATTEMPTS):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_RETRY_ATTEMPTS - 1:
+                raise
+            time.sleep(_REPLACE_RETRY_DELAY_SECONDS)
+
+
 def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
     """Write `text` to `path` atomically: a temp file in `path`'s own
     directory is written and closed first, then `os.replace`d over `path` in
@@ -224,10 +247,9 @@ def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None
 
     On Windows, `os.replace` itself can raise `PermissionError` for a reason
     that has nothing to do with the write being wrong: another process
-    (a concurrent reader, per #636/#653) merely has `path` open. That is
-    retried up to `_REPLACE_RETRY_ATTEMPTS` times, `_REPLACE_RETRY_DELAY_
-    SECONDS` apart, before giving up and raising -- POSIX `os.replace` never
-    hits this case, so the retry loop is a no-op there.
+    (a concurrent reader, per #636/#653) merely has `path` open. `replace_
+    with_retry` above absorbs that; POSIX `os.replace` never hits this case,
+    so the retry loop is a no-op there.
 
     Raises whatever `OSError` the write hits (e.g. `path`'s parent directory
     is missing or read-only, or every `PermissionError` retry above was
@@ -241,14 +263,7 @@ def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None
     try:
         with os.fdopen(fd, "w", encoding=encoding) as handle:
             handle.write(text)
-        for attempt in range(_REPLACE_RETRY_ATTEMPTS):
-            try:
-                os.replace(tmp_name, path)
-                break
-            except PermissionError:
-                if attempt == _REPLACE_RETRY_ATTEMPTS - 1:
-                    raise
-                time.sleep(_REPLACE_RETRY_DELAY_SECONDS)
+        replace_with_retry(tmp_name, path)
     except OSError:
         with contextlib.suppress(OSError):
             os.unlink(tmp_name)
