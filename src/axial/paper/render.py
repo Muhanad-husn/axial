@@ -157,7 +157,9 @@ def _render_shape(record: dict[str, Any]) -> list[str]:
     and, whenever it is not `strong`, the named defects that justify it. This
     check reports and never blocks -- a `weak` band still renders here, next
     to what it says is wrong, exactly like a confidence band never renders
-    without the counts behind it (§7.10)."""
+    without the counts behind it (§7.10). `repetition` (issue #700) is the
+    mechanical cross-section verbatim-overlap figure -- rendered whenever
+    present, never gating."""
     shape = record.get("shape")
     if not isinstance(shape, dict):
         return []
@@ -168,6 +170,10 @@ def _render_shape(record: dict[str, Any]) -> list[str]:
         f"**Band:** {shape.get('band')}.",
         "",
     ]
+    repetition = shape.get("repetition")
+    if isinstance(repetition, dict):
+        lines.append(f"**Cross-section repetition:** {repetition.get('fraction'):.2%}.")
+        lines.append("")
     defects = shape.get("defects") or []
     if defects:
         lines.append("| section | defect |")
