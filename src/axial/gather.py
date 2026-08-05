@@ -53,11 +53,13 @@ tail truncation -- only the number moves, and it stays one constant.
 **This deliberately breaks the pre-0.2 byte-for-byte render guarantee** the
 paragraph above used to make: a packet that hits the cap now renders
 differently than it did before D1, whether or not it carries `position`,
-because the truncation point moved. `GatherJob.key` changes for every
-packet that used to be truncated, which is the corpus re-key issue #500
-exists to pay for -- see `plans/name-layer-rekey/README.md`. A packet that
-never hit the cap is untouched, since there was nothing to truncate either
-way.
+because the truncation point moved. At the time, `GatherJob.key` changed for
+every packet that used to be truncated, which is the corpus re-key issue
+#500 exists to pay for -- see `plans/name-layer-rekey/README.md`. A packet
+that never hit the cap was untouched, since there was nothing to truncate
+either way. **Superseded by issue #678**: `GatherJob.key` no longer hashes
+packet renders at all (see its own docstring below), so a render-only change
+like this one would not re-key a single name today.
 
 **The budget is two constants, both stated by §7.18 itself.**
 `MEMBER_PACKET_CHARS` caps one rendered member (§7.18: "roughly 800
@@ -144,13 +146,24 @@ shortcut -- already runs through, rather than in the prompt: wording cannot
 be trusted not to re-trigger the same priming.
 
 **Every finding is persisted before it is used**, keyed by a content hash of
-the name's own rendered packets -- the same content-addressing
-`axial.merge_names` uses, and for the same two reasons: this pass costs real
-money per name, so an interrupted run must resume; and a changed upstream (a
-re-merged alias map, a re-run interrogation) re-asks exactly the names whose
-packets actually changed. Re-running `axial names materialize` wipes the
-disagreement sections (it rewrites a page whose content differs); re-running
-`axial names gather` restores them from the record at zero model cost.
+the name's own SOURCE SET, not its rendered packets (issue #678). This pass
+costs real money per name, so an interrupted run must resume; and a changed
+upstream re-asks exactly the names whose source set actually moved -- a
+member note joining from a book already on the page reuses the recorded
+finding, and one from a genuinely new book re-asks it. (`axial.merge_names`
+still content-addresses its own decision log on the rendered member list,
+because a merge cluster's evidence IS its members' rendered text; a
+disagreement's evidence is which books are in the room, not how any one
+member's claim happened to render this run -- see `GatherJob.key`.)
+**The #678 rollout costs nothing**: `load_disagreements` recomputes each
+record's key from its own persisted `canonical`/`chunk_ids` rather than
+trusting whatever the file's own `name_key` field says, so a record written
+under the retired rendered-packets key is found under today's key on the
+very next run -- no rewrite of `disagreements.jsonl`, no migration pass, no
+re-ask of a name whose source set never moved.
+Re-running `axial names materialize` wipes the disagreement sections (it
+rewrites a page whose content differs); re-running `axial names gather`
+restores them from the record at zero model cost.
 """
 
 from __future__ import annotations
@@ -685,6 +698,25 @@ def _source_ids_of(chunk_ids: list[str]) -> frozenset[str]:
     return frozenset(ids)
 
 
+def _source_set_key(canonical: str, chunk_ids: list[str]) -> str:
+    """The content-addressed key issue #678 keys `disagreements.jsonl` on:
+    the canonical name plus the sorted `source_id`s `chunk_ids` resolve to.
+    Shared by `GatherJob.key` (computed from the CURRENT alias map and
+    inventory) and `load_disagreements` (recomputed from a PERSISTED
+    record's own `canonical`/`chunk_ids`) so the two always agree on what a
+    name's key is today, whatever key format the record was originally
+    written under. This is what makes the #678 rollout free: an existing
+    record already carries the `chunk_ids` it was written from (§7.18), so
+    every record on disk -- including one written before this issue, under
+    the old content-hash-of-rendered-packets key -- is found under its
+    correct new key on the very next run, with no rewrite of
+    `disagreements.jsonl` and no re-ask of a single name whose source set
+    did not actually move."""
+    source_ids = sorted(_source_ids_of(chunk_ids))
+    payload = json.dumps([canonical, source_ids], ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 @dataclass(frozen=True)
 class GatherJob:
     """One name's whole Gather unit of work: the member packets, already
@@ -699,17 +731,24 @@ class GatherJob:
 
     @property
     def key(self) -> str:
-        """Content hash of this name's own rendered packets -- the record's
-        key. Content-addressed on purpose: a name whose packets are
-        unchanged reuses its recorded finding, and one whose membership or
-        whose members' answers changed is re-asked, without anyone tracking
-        which upstream run produced what."""
-        payload = json.dumps(
-            [[render_packet(packet) for packet in batch] for batch in self.batches],
-            ensure_ascii=False,
-            sort_keys=False,
-        )
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        """Content hash of this name's own SOURCE SET (issue #678, via
+        `_source_set_key`) -- the record's key. A disagreement is a property
+        of who is in the room: a page gaining its 201st note from an author
+        already on it cannot change who is arguing with whom, so it must
+        reuse its recorded finding rather than re-key on the new note. A
+        page gaining a note from a genuinely new book might change the
+        disagreement, so it is re-asked. Hashing the sorted `source_id`s the
+        packets resolve to plus the canonical name itself -- two names that
+        happen to share an identical source set are not the same job --
+        means a re-interrogation of an already-represented note, a
+        re-render (e.g. issue #500's truncation-point move), or a merge
+        reshuffling which notes land on this page all leave the key alone;
+        only the set of books actually changing does not. `load_
+        disagreements` recomputes this same key from each persisted
+        record's own `chunk_ids`, so an existing record is found under it
+        with no rewrite, whatever key format it was originally written
+        under."""
+        return _source_set_key(self.canonical, self.chunk_ids)
 
 
 def _gather_one(
@@ -834,10 +873,25 @@ def _resolve_min_gather_members(config_path: Path) -> int:
 
 
 def load_disagreements(path: Path) -> dict[str, dict[str, Any]]:
-    """Every recorded disagreement, keyed by `name_key` -- the inverse of
-    the append, `{}` before the first run."""
+    """Every recorded disagreement, keyed by its SOURCE-SET key (issue
+    #678, `_source_set_key`) -- recomputed from each record's own
+    `canonical` and `chunk_ids`, NOT trusted from its persisted `name_key`
+    field. This is deliberate, not a stricter validation: it is what makes
+    the #678 rollout free. A record written before this issue existed
+    carries a `name_key` computed under the old content-hash-of-rendered-
+    packets formula, which will never again equal a fresh `GatherJob.key`.
+    Recomputing from the record's own `chunk_ids` (which the record has
+    always carried, per §7.18) reproduces exactly what `GatherJob.key`
+    would compute today for an unchanged source set, so an already-recorded
+    name is reused on the very next run whether its own on-disk `name_key`
+    predates this issue or not -- no migration pass, no rewrite of
+    `disagreements.jsonl`, and no re-ask of a name whose source set never
+    moved. `{}` before the first run."""
     records = load_checkpoint_records(path, DisagreementRecordsCorruptError)
-    return {record["name_key"]: record for record in records}
+    return {
+        _source_set_key(record["canonical"], record.get("chunk_ids") or []): record
+        for record in records
+    }
 
 
 def _select_by_canonical(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

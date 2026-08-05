@@ -47,10 +47,28 @@ real improvement, not a fix to reliable: the same content still draws a
 different band across replicates for two of the three defect classes. That
 is expected of a single-draw check (§7.16) and is not a regression to chase
 here -- multi-draw agreement is what the §10.2 panel is for.
+
+**Cross-section verbatim repetition is measured mechanically, issue #700.**
+Six live drafts across two models were pulled up by judges for repeating
+whole sentences and citation blocks across sections; the model-graded band
+above returned `strong` on all six, because the check reads each section
+against its own assigned role, which a repetitive draft still satisfies --
+it simply never looks across sections for shared prose. `compute_repetition`
+below adds that measurement with zero model calls: it shingles each
+section's prose into overlapping word 8-grams and reports what fraction of
+the paper's distinct shingles recur in more than one section. Eight words is
+the one threshold this adds, chosen because it is long enough that a shared
+citation phrase or the paper's own key terms -- a few words, repeated by
+any two sections on the same thesis -- essentially never collide by chance,
+while a copied sentence or citation block, which is what the six drafts were
+actually flagged for, is many multiples of that length and matches exactly.
+This is a measurement, not a gate: it reports onto `shape.repetition` and
+never blocks, exactly like the band above.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -59,6 +77,72 @@ from axial.llm import estimate_cost as _estimate_cost
 from axial.model_json import complete_json, parse_model_json
 
 BANDS: tuple[str, ...] = ("strong", "adequate", "weak")
+
+# Word n-gram length for the mechanical repetition check (issue #700). See
+# the module docstring for why eight: long enough that shared citation
+# phrasing or the paper's own recurring key terms do not collide by chance,
+# short enough to catch a duplicated sentence or citation block without
+# requiring a whole paragraph to line up.
+REPETITION_NGRAM_SIZE = 8
+
+_WORD_RE = re.compile(r"[a-z0-9']+")
+
+
+def _shingles(text: str, n: int) -> set[str]:
+    """The distinct word n-grams in `text`, lowercased and punctuation-
+    stripped so `[pc-003]. Heydemann` and `[pc-003] Heydemann` shingle the
+    same. Order-preserving within each shingle, so this catches only
+    verbatim runs, never bag-of-words overlap."""
+    words = _WORD_RE.findall(text.lower())
+    if len(words) < n:
+        return set()
+    return {" ".join(words[i : i + n]) for i in range(len(words) - n + 1)}
+
+
+@dataclass(frozen=True)
+class RepetitionResult:
+    """Cross-section verbatim overlap, measured with zero model calls
+    (issue #700). `fraction` is the share of the paper's distinct word
+    8-grams that recur in two or more sections -- 0.0 when no section
+    shares an 8-word run with another. `pairs` names every section pair
+    that shares at least one shingle, so a report can point at which
+    sections to look at, not just how much."""
+
+    fraction: float
+    pairs: tuple[dict[str, Any], ...]
+    n: int
+
+    def to_json(self) -> dict[str, Any]:
+        return {"fraction": self.fraction, "n": self.n, "pairs": [dict(p) for p in self.pairs]}
+
+
+def compute_repetition(
+    sections: list[dict[str, str]], *, n: int = REPETITION_NGRAM_SIZE
+) -> RepetitionResult:
+    """Shingle every section's prose into word n-grams and report how much
+    of the paper's distinct shingle vocabulary is shared across two or more
+    sections. Pure function, no model call: `sections` is `[{section_id,
+    prose}, ...]` -- the same shape `run_shape_check` already takes (extra
+    keys like `heading`/`role` are ignored), so this also runs directly over
+    a persisted paper record's `drafts` list."""
+    shingles_by_section = {s["section_id"]: _shingles(s.get("prose") or "", n) for s in sections}
+    section_ids = list(shingles_by_section)
+
+    all_shingles: set[str] = set()
+    shared_shingles: set[str] = set()
+    pairs: list[dict[str, Any]] = []
+    for a in shingles_by_section.values():
+        all_shingles |= a
+    for i in range(len(section_ids)):
+        for j in range(i + 1, len(section_ids)):
+            id_a, id_b = section_ids[i], section_ids[j]
+            shared = shingles_by_section[id_a] & shingles_by_section[id_b]
+            if shared:
+                shared_shingles |= shared
+                pairs.append({"section_a": id_a, "section_b": id_b, "shared_ngrams": len(shared)})
+
+    fraction = len(shared_shingles) / len(all_shingles) if all_shingles else 0.0
+    return RepetitionResult(fraction=fraction, pairs=tuple(pairs), n=n)
 
 
 class ShapeCheckError(Exception):
@@ -109,12 +193,14 @@ class ShapeResult:
     the named defects, which model judged, and what the call cost. `cost` is
     `None` when the client cannot report per-pass usage (mirrors
     `axial.llm.estimate_cost`'s own null-for-unpriced convention -- never a
-    fabricated zero)."""
+    fabricated zero). `repetition` (issue #700) is mechanical, computed with
+    zero model calls -- see `compute_repetition` above."""
 
     band: str
     defects: tuple[ShapeDefect, ...]
     model: str
     cost: float | None
+    repetition: RepetitionResult
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -122,6 +208,7 @@ class ShapeResult:
             "defects": [defect.to_json() for defect in self.defects],
             "model": self.model,
             "cost": self.cost,
+            "repetition": self.repetition.to_json(),
         }
 
 
@@ -205,7 +292,8 @@ def run_shape_check(
     """One call, over the whole paper regardless of section count. Raises
     `SelfGradingError` before any call is made when `judge_pass_name` resolves
     to the same model as `drafting_pass_name`; raises `ShapeParseError` on a
-    malformed or incomplete response."""
+    malformed or incomplete response. `repetition` (issue #700) is computed
+    mechanically over `sections` and costs no additional call."""
     drafting_model = client.model_for_pass(drafting_pass_name)
     judge_model = client.model_for_pass(judge_pass_name)
     if judge_model == drafting_model:
@@ -214,6 +302,7 @@ def run_shape_check(
     prompt = compose_shape_prompt(thesis_statement, sections)
     raw = complete_json(client, prompt, pass_name=judge_pass_name)
     band, defects = parse_shape_response(raw)
+    repetition = compute_repetition(sections)
 
     usage_for_pass = getattr(client, "usage_for_pass", None)
     usage = usage_for_pass(judge_pass_name) if usage_for_pass is not None else None
@@ -225,4 +314,6 @@ def run_shape_check(
         else None
     )
 
-    return ShapeResult(band=band, defects=tuple(defects), model=judge_model, cost=cost)
+    return ShapeResult(
+        band=band, defects=tuple(defects), model=judge_model, cost=cost, repetition=repetition
+    )
