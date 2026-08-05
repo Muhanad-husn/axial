@@ -1,4 +1,9 @@
-secrets/secrets.toml
+# Everything under secrets/ is ignored except the committed example. A
+# deny-by-default rule rather than a list of filenames: the Drive service-account
+# key arrived as a new file nobody had listed, and it was one `git add .` from
+# being committed.
+secrets/*
+!secrets/secrets.example.toml
 .env
 __pycache__/
 *.pyc
