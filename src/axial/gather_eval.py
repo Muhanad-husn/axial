@@ -331,8 +331,9 @@ def eval_key(record: dict[str, Any], client: LLMClient) -> str:
     what was shown to the judge AND who the judge was, on both sides.
 
     Re-asks (INPUT side): the disagreement record's `name_key` (itself a
-    hash of the rendered packets Gather saw, `axial.gather.GatherJob.key`)
-    together with the disagreement TEXT. The text alone can change across a
+    hash of the name's own SOURCE SET, `axial.gather.GatherJob.key`, issue
+    #678) together with the disagreement TEXT. The text alone can change
+    across a
     Gather re-run over unchanged packets (DEC-54: `France` flipped
     null<->finding on identical packets at temperature 1), so `name_key`
     alone would under-invalidate.
