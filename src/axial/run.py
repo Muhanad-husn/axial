@@ -22,11 +22,11 @@ ledger.tsv` by default, keyed by `(pass, source_id)` -- and a
 "is this source_id already done for this pass?" Before invoking a pass, the
 loop asks the predicate; a source it reports done is skipped doing zero
 pipeline work -- no invocation, no LLM call, no output rewrite -- logging
-one `skip: <source> already done (<pass>)` line. `extract` and `envelope`
-declare a file-exists predicate over their own persisted-output cache (the
-README's mechanism 2); every other registered pass declares the ledger
-predicate (the README's mechanisms 1 and 3, now unified into one ledger the
-runner owns). Every non-skipped source appends exactly one outcome row to
+one `skip: <source> already done (<pass>)` line. `extract`, `envelope` and
+`chunk` declare a file-exists predicate over their own persisted-output
+cache (the README's mechanism 2); every other registered pass declares the
+ledger predicate (the README's mechanisms 1 and 3, now unified into one
+ledger the runner owns). Every non-skipped source appends exactly one outcome row to
 the ledger -- an APPEND, never an overwrite, reusing `axial.ingest`'s TSV
 discipline (`_append_result_row`/`_load_completed_source_ids`) verbatim in
 shape.
@@ -89,7 +89,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from axial.artifacts import ArtifactsError, _default_artifacts_dir, run_artifacts
-from axial.chunk import ChunkError, run_chunk_recursive
+from axial.chunk import (
+    ChunkError,
+    _default_chunks_dir,
+    chunks_checkpoint_path,
+    run_chunk_recursive,
+)
 from axial.envelope import (
     EnvelopeError,
     MissingSourceError,
@@ -317,6 +322,34 @@ def _envelope_done_predicate(source_id: str, ledger_done_ids: set[str], config_p
     return envelope_path(source_id, envelopes_dir).exists()
 
 
+def _chunks_done_predicate(source_id: str, ledger_done_ids: set[str], config_path: Path) -> bool:
+    """chunk's own done-signal: its persisted chunk artifact already exists
+    at `data/chunks/<source_id>.jsonl` (module docstring's mechanism 2, the
+    same one extract and envelope declare).
+
+    chunk used to declare the ledger predicate, on the reasoning that it
+    checkpoints per note and so has no single atomic per-source output. It
+    does have one -- `run_chunk_recursive` writes the whole artifact in one
+    go -- and the ledger is the wrong signal for it in practice (issue
+    #623): `data/run/ledger.tsv` has never been written on the real corpus,
+    so every one of the 31 already-chunked sources came back not-done, and
+    `axial sources` would re-chunk all of them right after reporting them
+    `done`. `run_chunk_recursive` has no internal skip -- unlike
+    `run_interrogate`, which resumes from its own checkpoint and so costs
+    nothing to re-invoke -- so that re-chunk rewrites every artifact and
+    pays the router's content-apparatus classification calls again.
+
+    Measured on `agamben-2005` before this predicate existed: the rewrite
+    was byte-identical (53 chunks, same ids, same text) but cost seven
+    model calls. Identical output is not guaranteed in general, though --
+    those calls are what decide which lines get routed out of a section,
+    and a classification that lands differently would renumber that
+    source's notes and orphan every analysis pinned to them.
+    """
+    chunks_dir = _default_chunks_dir(config_path)
+    return chunks_checkpoint_path(source_id, chunks_dir).exists()
+
+
 def _ledger_done_predicate(source_id: str, ledger_done_ids: set[str], config_path: Path) -> bool:
     """The runner-owned ledger's own done-signal (module docstring's
     mechanisms 1 and 3, now unified): an OK row already recorded for this
@@ -328,19 +361,20 @@ def _ledger_done_predicate(source_id: str, ledger_done_ids: set[str], config_pat
 # The pass registry (module docstring): a plain dict, not a plugin system --
 # six known passes, all in this repo, each with a `(source_path, client,
 # config_path, domain_dir)`-shaped invoker (via the `_invoke_*` adapters
-# above), the `*Error` base it declares, and its done-predicate. extract and
-# envelope declare their own persisted-output file as the done-signal; every
-# other pass -- lacking a single atomic per-source output file, since
-# chunk/interrogate/artifacts checkpoint per-note, a finer granularity this
-# runner does not reach into (module docstring) -- declares the runner's own
-# ledger. `tag` and `xref` were retired (issue #414, plans/phase-a-v1/
-# README.md D4/D5): the interrogation pass above replaces both.
+# above), the `*Error` base it declares, and its done-predicate. extract,
+# envelope and chunk declare their own persisted-output file as the
+# done-signal; interrogate and artifacts -- which checkpoint per note, a
+# finer granularity this runner does not reach into (module docstring), and
+# which resume from that checkpoint so re-invoking one costs nothing --
+# declare the runner's own ledger. `tag` and `xref` were retired (issue
+# #414, plans/phase-a-v1/README.md D4/D5): the interrogation pass above
+# replaces both.
 PASS_REGISTRY: dict[str, PassDescriptor] = {
     "extract": PassDescriptor("extract", _invoke_extract, ExtractError, _tree_done_predicate),
     "envelope": PassDescriptor(
         "envelope", _invoke_envelope, EnvelopeError, _envelope_done_predicate
     ),
-    "chunk": PassDescriptor("chunk", _invoke_chunk, ChunkError, _ledger_done_predicate),
+    "chunk": PassDescriptor("chunk", _invoke_chunk, ChunkError, _chunks_done_predicate),
     "interrogate": PassDescriptor(
         "interrogate", _invoke_interrogate, InterrogateError, _ledger_done_predicate
     ),

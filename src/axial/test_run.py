@@ -611,16 +611,57 @@ def test_envelope_done_predicate_reports_done_iff_envelope_file_exists(tmp_path,
     assert run_mod._envelope_done_predicate("abc", set(), Path("config/pipeline.yaml")) is True
 
 
+def test_chunks_done_predicate_reports_done_iff_chunk_artifact_exists(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_mod, "_default_chunks_dir", lambda config_path: tmp_path)
+
+    assert run_mod._chunks_done_predicate("abc", set(), Path("config/pipeline.yaml")) is False
+
+    (tmp_path / "abc.jsonl").write_text("", encoding="utf-8")
+    assert run_mod._chunks_done_predicate("abc", set(), Path("config/pipeline.yaml")) is True
+
+
 def test_ledger_done_predicate_reports_done_iff_source_id_in_done_set():
     assert run_mod._ledger_done_predicate("abc", {"abc"}, Path("config/pipeline.yaml")) is True
     assert run_mod._ledger_done_predicate("abc", {"xyz"}, Path("config/pipeline.yaml")) is False
 
 
-def test_extract_and_envelope_use_file_exists_predicate_every_other_pass_uses_ledger():
+def test_extract_envelope_and_chunk_use_file_exists_predicate_the_rest_use_ledger():
     assert run_mod.PASS_REGISTRY["extract"].done_predicate is run_mod._tree_done_predicate
     assert run_mod.PASS_REGISTRY["envelope"].done_predicate is run_mod._envelope_done_predicate
-    for name in ("chunk", "interrogate", "artifacts", "vault-write"):
+    assert run_mod.PASS_REGISTRY["chunk"].done_predicate is run_mod._chunks_done_predicate
+    for name in ("interrogate", "artifacts", "vault-write"):
         assert run_mod.PASS_REGISTRY[name].done_predicate is run_mod._ledger_done_predicate
+
+
+def test_already_chunked_source_is_skipped_when_the_ledger_does_not_exist(tmp_path, monkeypatch):
+    """Issue #623, the regression this predicate change exists for. The real
+    corpus has 31 chunked sources and no `data/run/ledger.tsv` at all, so the
+    ledger predicate reported every one of them not-done and `axial sources`
+    re-chunked the lot right after reporting them `done`. `run_chunk_
+    recursive` has no internal skip, so that rewrite is real work and real
+    model calls."""
+    chunks_dir = tmp_path / "chunks"
+    chunks_dir.mkdir()
+    monkeypatch.setattr(run_mod, "_default_chunks_dir", lambda config_path: chunks_dir)
+    monkeypatch.setattr(run_mod, "compute_source_id", lambda path: "already-chunked")
+    (chunks_dir / "already-chunked.jsonl").write_text("", encoding="utf-8")
+
+    invoked: list[str] = []
+    monkeypatch.setattr(run_mod, "run_chunk_recursive", lambda *a, **k: invoked.append("chunked"))
+
+    ledger_path = _ledger_path(tmp_path)
+    assert not ledger_path.exists()
+
+    summary, exit_code = run_pass(
+        "chunk",
+        _write_worklist(tmp_path, ["/fake/already-chunked.pdf"]),
+        client=_FakeClient(),
+        ledger_path=ledger_path,
+    )
+
+    assert exit_code == 0
+    assert invoked == []
+    assert [outcome.status for outcome in summary.outcomes] == [SKIP_STATUS]
 
 
 # ---------------------------------------------------------------------------
