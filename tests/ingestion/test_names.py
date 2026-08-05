@@ -429,3 +429,42 @@ def test_names_build_drops_every_locator_shaped_surface(isolated_vault_root):
         "src1_000_intro_001",
         "src2_000_intro_001",
     ]
+
+
+def test_names_build_reports_unit_counters_and_recluster_forces_a_refit(isolated_vault_root):
+    """Issue #677 end to end through the real CLI: the four `units_*`
+    counters `axial names build` reports, and `--recluster`'s own contract
+    (a forced full re-fit, never `units_reused`)."""
+    root = isolated_vault_root
+    _build_fixture_answers(root)
+    _build_fixture_trees(root)
+
+    first = _run_axial(root, "names", "build")
+    _assert_ran_the_real_subcommand(first)
+    assert first.returncode == 0, first.stderr
+    assert "units_total: 3" in first.stdout
+    assert "units_reused: 0" in first.stdout
+    assert "units_asked: 3" in first.stdout
+    fit_path = root / "data" / "names" / "fit.joblib"
+    assert fit_path.is_file(), "a full fit over the real pipeline must persist a fit artifact"
+    fit_mtime_after_first = fit_path.stat().st_mtime_ns
+
+    # A second build with no corpus change: every entry keeps the label the
+    # first build already gave it, so nothing is asked about.
+    second = _run_axial(root, "names", "build")
+    assert second.returncode == 0, second.stderr
+    assert "units_total: 3" in second.stdout
+    assert "units_reused: 3" in second.stdout
+    assert "units_asked: 0" in second.stdout
+    assert "units_asked_touching_new: 0" in second.stdout
+    assert fit_path.stat().st_mtime_ns == fit_mtime_after_first, (
+        "an incremental run with nothing new must not touch the persisted fit"
+    )
+
+    # `--recluster` forces a full re-fit regardless -- every entry is asked
+    # about again, and the persisted fit artifact is refreshed.
+    reclustered = _run_axial(root, "names", "build", "--recluster")
+    assert reclustered.returncode == 0, reclustered.stderr
+    assert "units_reused: 0" in reclustered.stdout
+    assert "units_asked: 3" in reclustered.stdout
+    assert fit_path.stat().st_mtime_ns != fit_mtime_after_first

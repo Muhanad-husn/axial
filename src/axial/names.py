@@ -137,6 +137,14 @@ DEFAULT_NAMES_DATA_DIR = Path("data/names")
 DEFAULT_INVENTORY_PATH = DEFAULT_NAMES_DATA_DIR / "inventory.jsonl"
 DEFAULT_EMBEDDINGS_DIR = DEFAULT_NAMES_DATA_DIR / "embeddings.lance"
 DEFAULT_MANIFEST_PATH = DEFAULT_NAMES_DATA_DIR / "similarity_manifest.json"
+# Issue #677: the fitted transform chain (StandardScaler + PCA) and the
+# fitted HDBSCAN clusterer (`prediction_data=True`) a full build produces,
+# so a later incremental build can place a new vector in the SAME space
+# rather than re-fitting globally. `joblib` (already an installed
+# scikit-learn/hdbscan transitive dependency) is the library's own pickling
+# convention for exactly this kind of fitted-estimator artifact -- reused
+# rather than a bespoke format.
+DEFAULT_FIT_PATH = DEFAULT_NAMES_DATA_DIR / "fit.joblib"
 TABLE_NAME = "names"
 
 # HDBSCAN's own noise label (never cluster 0) -- named so no caller has to
@@ -746,12 +754,19 @@ class InventoryEntry:
     """One distinct name surface form: `{surface, kind, count, chunk_ids[]}`
     (§7.16). `kind` is the single most frequent one seen for it, ties broken
     by first occurrence -- `None` when the surface never appeared with a
-    kind at all (a citation-only surface form)."""
+    kind at all (a citation-only surface form).
+
+    `source_ids` (issue #677) is not part of §7.16's own persisted shape
+    (`write_inventory` below still writes only the four documented fields)
+    -- it exists so `run_names` can tell an entry whose occurrences are all
+    in sources the previous build already saw from one touched by a source
+    that is new, without re-deriving that from `chunk_ids` a second time."""
 
     surface_form: str
     kind: str | None
     count: int
     chunk_ids: tuple[str, ...]
+    source_ids: tuple[str, ...] = ()
 
 
 def build_inventory(occurrences: Iterable[NameOccurrence]) -> list[InventoryEntry]:
@@ -784,10 +799,18 @@ def build_inventory(occurrences: Iterable[NameOccurrence]) -> list[InventoryEntr
         scope_key = occurrence.source_id if is_locator_shaped(occurrence.surface_form) else None
         bucket = grouped.setdefault(
             (occurrence.surface_form, scope_key),
-            {"count": 0, "kind_counts": {}, "kind_first_seen": {}, "chunk_ids": set()},
+            {
+                "count": 0,
+                "kind_counts": {},
+                "kind_first_seen": {},
+                "chunk_ids": set(),
+                "source_ids": set(),
+            },
         )
         bucket["count"] += 1
         bucket["chunk_ids"].add(occurrence.chunk_id)
+        if occurrence.source_id:
+            bucket["source_ids"].add(occurrence.source_id)
         if occurrence.kind:
             bucket["kind_counts"][occurrence.kind] = (
                 bucket["kind_counts"].get(occurrence.kind, 0) + 1
@@ -825,6 +848,7 @@ def build_inventory(occurrences: Iterable[NameOccurrence]) -> list[InventoryEntr
                 kind=resolved_kind,
                 count=bucket["count"],
                 chunk_ids=tuple(sorted(bucket["chunk_ids"])),
+                source_ids=tuple(sorted(bucket["source_ids"])),
             )
         )
     entries.sort(key=lambda entry: entry.surface_form)
@@ -873,7 +897,7 @@ def _default_encoder(model_name: str) -> Encoder:
     return encode
 
 
-def _reduce_vectors(vectors: list[list[float]], pca_components: int = DEFAULT_PCA_COMPONENTS):
+def _fit_reduce_vectors(vectors: list[list[float]], pca_components: int = DEFAULT_PCA_COMPONENTS):
     """L2-normalise -> standardise -> PCA, the shared, tightness-independent
     half of the pipeline (reusing `axial.distill.readiness`'s own measured
     shape -- see module docstring for the real timing this step buys on this
@@ -881,28 +905,65 @@ def _reduce_vectors(vectors: list[list[float]], pca_components: int = DEFAULT_PC
     same reduced array at several `min_cluster_size`/`min_samples` settings
     rather than re-running this reduction (let alone re-embedding, which the
     real 835s-vs-~50s gap between embedding and clustering makes the one
-    cost a sweep must never repeat) once per candidate."""
+    cost a sweep must never repeat) once per candidate.
+
+    Returns the reduced array **and the fitted `StandardScaler`/`PCA`**
+    (issue #677): a later incremental build transforms a new vector through
+    these same fitted objects (`_transform_vectors`) rather than fitting a
+    second, different space that a persisted cluster label would no longer
+    mean anything in."""
     import numpy as np
     from sklearn.decomposition import PCA
     from sklearn.preprocessing import StandardScaler, normalize
 
     array = np.asarray(vectors, dtype=np.float64)
     array = normalize(array)
-    array = StandardScaler().fit_transform(array)
+    scaler = StandardScaler()
+    array = scaler.fit_transform(array)
 
     n_components = max(1, min(pca_components, array.shape[0], array.shape[1]))
-    return PCA(n_components=n_components, svd_solver="full", random_state=0).fit_transform(array)
+    pca = PCA(n_components=n_components, svd_solver="full", random_state=0)
+    return pca.fit_transform(array), scaler, pca
 
 
-def _cluster_reduced(reduced, min_cluster_size: int, min_samples: int) -> list[int]:
-    """HDBSCAN over an already-PCA-reduced array -- the tightness-dependent
-    half of the pipeline, cheap enough to call once per sweep candidate.
+def _reduce_vectors(vectors: list[list[float]], pca_components: int = DEFAULT_PCA_COMPONENTS):
+    """`_fit_reduce_vectors`, discarding the fitted `scaler`/`pca` -- every
+    caller that only ever re-clusters the SAME build's own vectors
+    (`examine_names`, `sweep_tightness`) and has no later vector to place
+    into this space."""
+    reduced, _scaler, _pca = _fit_reduce_vectors(vectors, pca_components)
+    return reduced
+
+
+def _transform_vectors(vectors: list[list[float]], scaler, pca):
+    """Project new vectors into an ALREADY-FITTED reduction space -- the
+    incremental counterpart to `_fit_reduce_vectors` (issue #677): `.
+    transform`, never `.fit_transform`, so a new surface form's reduced
+    vector lands in exactly the space the persisted HDBSCAN fit was built
+    over."""
+    import numpy as np
+    from sklearn.preprocessing import normalize
+
+    array = np.asarray(vectors, dtype=np.float64)
+    array = normalize(array)
+    array = scaler.transform(array)
+    return pca.transform(array)
+
+
+def _fit_cluster_reduced(
+    reduced, min_cluster_size: int, min_samples: int, *, prediction_data: bool = False
+):
+    """Fit HDBSCAN over an already-PCA-reduced array and return the fitted
+    clusterer itself (not just its labels) -- the tightness-dependent half
+    of the pipeline, cheap enough to call once per sweep candidate.
     `cluster_selection_method="leaf"`/`allow_single_cluster=True`:
     `axial.distill.readiness` measured `eom` (HDBSCAN's own implicit
     default) collapsing the whole corpus to one blob regardless of PCA dims,
     for this same embedding model family; `leaf` is reused for the same
-    reason. Returns one integer label per row, in input order, unrelabelled:
-    `-1` is `NOISE_LABEL`, real clusters start at `0`."""
+    reason. `prediction_data=True` (issue #677) is what lets a later
+    incremental build call `hdbscan.approximate_predict` against this fit
+    without re-fitting; `False` by default since most callers only need the
+    labels."""
     import hdbscan
 
     clusterer = hdbscan.HDBSCAN(
@@ -910,24 +971,52 @@ def _cluster_reduced(reduced, min_cluster_size: int, min_samples: int) -> list[i
         min_samples=min_samples,
         cluster_selection_method="leaf",
         allow_single_cluster=True,
+        prediction_data=prediction_data,
     )
-    labels = clusterer.fit_predict(reduced)
-    return [int(label) for label in labels]
+    clusterer.fit(reduced)
+    return clusterer
 
 
-def _default_cluster_fn(
-    vectors: list[list[float]],
-    *,
-    pca_components: int = DEFAULT_PCA_COMPONENTS,
-    min_cluster_size: int = DEFAULT_MIN_CLUSTER_SIZE,
-    min_samples: int = DEFAULT_MIN_SAMPLES,
-) -> list[int]:
-    """`run_names`'s default single-setting `cluster_fn`: reduce once,
-    cluster once. `sweep_tightness` (below) calls `_reduce_vectors`/
-    `_fit_and_relabel` directly instead, to reduce once and cluster many
-    times over the same persisted vectors."""
-    reduced = _reduce_vectors(vectors, pca_components)
-    return _cluster_reduced(reduced, min_cluster_size, min_samples)
+def _cluster_reduced(reduced, min_cluster_size: int, min_samples: int) -> list[int]:
+    """`_fit_cluster_reduced`, discarding the fitted clusterer -- returns one
+    integer label per row, in input order, unrelabelled: `-1` is
+    `NOISE_LABEL`, real clusters start at `0`."""
+    clusterer = _fit_cluster_reduced(reduced, min_cluster_size, min_samples)
+    return [int(label) for label in clusterer.labels_]
+
+
+def _approximate_predict(clusterer, reduced) -> tuple[list[int], list[float]]:
+    """`hdbscan.approximate_predict` against an already-fitted clusterer
+    (`prediction_data=True`) -- one label and one membership-strength score
+    per row of `reduced`, in input order. The strength is what
+    `_cluster_floors` compares a prediction against before trusting it
+    (issue #677 module docstring: a genuinely new cluster's points predict
+    into an existing one at low strength, an accepted assignment doesn't)."""
+    import hdbscan
+
+    labels, strengths = hdbscan.approximate_predict(clusterer, reduced)
+    return [int(label) for label in labels], [float(strength) for strength in strengths]
+
+
+def _cluster_floors(clusterer) -> dict[int, float]:
+    """Per existing non-noise cluster, its own fitted members' MINIMUM
+    membership probability (`clusterer.probabilities_`) -- the floor a new
+    point's `approximate_predict` strength must clear to be trusted as
+    belonging to that cluster rather than routed to the residue re-fit
+    (issue #677). Derived from the fit itself rather than a hand-tuned
+    constant: a cluster whose own members were never confidently placed
+    (a low floor) should not refuse a new point either, and a tightly
+    coherent cluster's high floor is exactly what should reject a
+    would-be new cluster's points landing on it by approximation error."""
+    floors: dict[int, float] = {}
+    for label, probability in zip(clusterer.labels_, clusterer.probabilities_):
+        label = int(label)
+        if label == NOISE_LABEL:
+            continue
+        probability = float(probability)
+        if label not in floors or probability < floors[label]:
+            floors[label] = probability
+    return floors
 
 
 def _relabel_from_tree(reduced, single_linkage_tree_numpy, min_cluster_size: int) -> list[int]:
@@ -961,13 +1050,132 @@ def _relabel_from_tree(reduced, single_linkage_tree_numpy, min_cluster_size: int
 
 
 # ---------------------------------------------------------------------------
+# Issue #677: persisting and reusing a fit, so a later build assigns new
+# vectors into the existing clustering instead of re-fitting the whole
+# corpus. `run_names` is the only caller of everything in this section.
+# ---------------------------------------------------------------------------
+
+
+def _library_versions() -> dict[str, str]:
+    """The installed `hdbscan`/`scikit-learn`/`numpy` versions -- recorded
+    alongside a persisted fit (in the manifest, checked BEFORE the joblib
+    file is even opened) so a later run on a different environment falls
+    back to a full re-fit instead of unpickling an estimator a different
+    library version may not deserialise correctly."""
+    import importlib.metadata
+
+    import numpy as np
+    import sklearn
+
+    return {
+        "hdbscan": importlib.metadata.version("hdbscan"),
+        "sklearn": sklearn.__version__,
+        "numpy": np.__version__,
+    }
+
+
+def _load_manifest(path: Path) -> dict[str, Any] | None:
+    """`similarity_manifest.json`'s own JSON, or `None` when it does not
+    exist or fails to parse -- either way this run cannot tell whether a
+    persisted fit is reusable, so it always falls back to a full fit rather
+    than trusting a manifest it cannot read."""
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+def _manifest_reusable(
+    manifest: dict[str, Any] | None,
+    model_name: str,
+    min_cluster_size: int,
+    min_samples: int,
+    pca_components: int,
+) -> bool:
+    """Whether a persisted fit's own manifest says it was built at exactly
+    this run's embedding model and tightness dials, AND under library
+    versions this run's own installed `hdbscan`/`scikit-learn`/`numpy`
+    match -- the three things that have to hold for a fitted transform
+    chain and clusterer to mean the same thing here that they meant when
+    they were pickled. A `False` here means `run_names` never attempts to
+    read the joblib artifact at all."""
+    if not manifest:
+        return False
+    config = manifest.get("config")
+    if not isinstance(config, dict):
+        return False
+    return (
+        config.get("min_cluster_size") == min_cluster_size
+        and config.get("min_samples") == min_samples
+        and config.get("pca_components") == pca_components
+        and manifest.get("model_name") == model_name
+        and manifest.get("library_versions") == _library_versions()
+    )
+
+
+def _write_fit_artifact(fit_path: Path, scaler, pca, clusterer) -> None:
+    """Persist the fitted transform chain and clusterer via `joblib`
+    (already an installed scikit-learn/hdbscan transitive dependency, and
+    the library's own convention for pickling a fitted estimator -- not a
+    bespoke format)."""
+    import joblib
+
+    fit_path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump({"scaler": scaler, "pca": pca, "clusterer": clusterer}, fit_path)
+
+
+def _read_fit_artifact(fit_path: Path) -> dict[str, Any] | None:
+    """The persisted `{scaler, pca, clusterer}` dict, or `None` when the
+    file does not exist or fails to unpickle. Only ever called after
+    `_manifest_reusable` has already confirmed the model/dials/library
+    versions match -- this is not the compatibility check, it is a second,
+    defensive guard against a truncated or otherwise corrupt file."""
+    if not fit_path.is_file():
+        return None
+    import joblib
+
+    try:
+        return joblib.load(fit_path)
+    except Exception:
+        return None
+
+
+def _load_existing_names_rows(embeddings_dir: Path) -> dict[str, dict[str, Any]]:
+    """The persisted `names` LanceDB table from the previous build, keyed by
+    `surface_form` -- `{}` when no table exists yet or it is empty (a first
+    build has nothing to reuse)."""
+    if not embeddings_dir.exists():
+        return {}
+    import lancedb
+
+    db = lancedb.connect(embeddings_dir)
+    if TABLE_NAME not in db.list_tables().tables:
+        return {}
+    rows = db.open_table(TABLE_NAME).to_arrow().to_pylist()
+    return {row["surface_form"]: row for row in rows}
+
+
+# ---------------------------------------------------------------------------
 # The pass: collect -> write inventory -> embed -> cluster -> persist
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class NamesResult:
-    """The outcome of one `run_names` call."""
+    """The outcome of one `run_names` call.
+
+    The four `units_*` counters (issue #677) describe how much of this run's
+    work was actually new: `units_total` is the size of the inventory this
+    run produced, `units_reused` is how many entries kept a cluster label
+    persisted by an earlier build with no clustering work spent on them this
+    run, `units_asked` is `units_total - units_reused` -- the entries a
+    label had to be computed for this run, whether by incremental
+    assignment or a full re-fit -- and `units_asked_touching_new` is the
+    subset of those that involve a source absent from the previous build's
+    own manifest (or every asked entry, when there is no previous manifest
+    to compare against)."""
 
     inventory_path: Path
     embeddings_dir: Path
@@ -978,6 +1186,10 @@ class NamesResult:
     embedding_dim: int
     cluster_count: int
     noise_count: int
+    units_total: int
+    units_reused: int
+    units_asked: int
+    units_asked_touching_new: int
 
 
 def run_names(
@@ -993,6 +1205,8 @@ def run_names(
     pca_components: int = DEFAULT_PCA_COMPONENTS,
     min_cluster_size: int = DEFAULT_MIN_CLUSTER_SIZE,
     min_samples: int = DEFAULT_MIN_SAMPLES,
+    recluster: bool = False,
+    fit_path: Path | None = None,
 ) -> NamesResult:
     """Build the name inventory over every interrogation answer record under
     `answers_dir` (default resolved via `axial.interrogate._default_answers_
@@ -1002,11 +1216,31 @@ def run_names(
     `DEFAULT_EMBEDDINGS_DIR`), plus a small JSON manifest at `manifest_path`
     (default `DEFAULT_MANIFEST_PATH`).
 
+    **Issue #677: a surface form already present in the previous build keeps
+    its persisted `cluster_label` unchanged.** When a persisted fit exists
+    at `fit_path` (default `DEFAULT_FIT_PATH`), its manifest's model/dials/
+    library-versions match this run's own, `recluster` is not set, and
+    `cluster_fn` was not overridden, `run_names` does not re-fit: every
+    surface form the previous build already saw keeps its label, and only
+    the NEW ones are placed, via `hdbscan.approximate_predict` against the
+    persisted transform chain and clusterer. A prediction is trusted only
+    when its membership strength clears that cluster's own fitted floor
+    (`_cluster_floors`) -- a prediction that does not clear the floor, or
+    lands on noise, falls into a residue, which gets its own fresh HDBSCAN
+    fit at the same dials, offset above the existing maximum label so ids
+    stay disjoint. Existing labels are never renumbered. Any mismatch (moved
+    dials, a different embedding model, an incompatible library version, no
+    persisted fit at all, or `recluster=True`) falls back to a full re-fit,
+    reported on stderr, and refreshes the persisted fit artifact -- a full
+    fit is never unavailable.
+
     `encoder`/`cluster_fn`, when given, replace the default sentence-
     transformer/HDBSCAN pipeline -- the seam this module's own inner unit
     tests use to exercise the collect/persist path without a real model or
     clustering run, mirroring `axial.distill.embed`'s own `encoder`
-    injection seam.
+    injection seam. Passing `cluster_fn` always takes the full-fit path (an
+    injected callable has no fitted transform chain to persist or predict
+    against) and never writes a fit artifact.
 
     **Still LLM-free**, as it has always been: the cut set filters the
     surfaces this pass reads, and every rule is either a shape test or, for
@@ -1034,6 +1268,9 @@ def run_names(
     if trees_dir is None:
         trees_dir = TREES_DIR
     trees_dir = Path(trees_dir)
+    if fit_path is None:
+        fit_path = DEFAULT_FIT_PATH
+    fit_path = Path(fit_path)
 
     records = load_answer_records(answers_dir)
     if not records:
@@ -1063,19 +1300,138 @@ def run_names(
 
     write_inventory(entries, inventory_path)
 
+    prev_manifest = _load_manifest(manifest_path)
+    prev_source_ids = set(prev_manifest.get("source_ids", [])) if prev_manifest else set()
+
+    # Decide, before touching the encoder at all, whether this run can place
+    # only its NEW surface forms into a persisted fit -- so an incremental
+    # run never re-embeds a surface form it already has a vector for either.
+    existing_rows: dict[str, dict[str, Any]] = {}
+    fit_artifact: dict[str, Any] | None = None
+    use_incremental = False
+    if cluster_fn is None and not recluster:
+        if _manifest_reusable(
+            prev_manifest, model_name, min_cluster_size, min_samples, pca_components
+        ):
+            existing_rows = _load_existing_names_rows(embeddings_dir)
+            fit_artifact = _read_fit_artifact(fit_path)
+            if existing_rows and fit_artifact is not None:
+                use_incremental = True
+            else:
+                missing = "embeddings.lance" if not existing_rows else "fit.joblib"
+                print(
+                    f"names: settings match {manifest_path} but {missing} is missing or "
+                    "unreadable -- falling back to a full re-fit",
+                    file=sys.stderr,
+                )
+        elif prev_manifest is not None:
+            print(
+                f"names: this run's model/dials/library versions do not match the "
+                f"persisted fit at {manifest_path} -- falling back to a full re-fit "
+                "(pass --recluster to make this deliberate)",
+                file=sys.stderr,
+            )
+
     if encoder is None:
         encoder = _default_encoder(model_name)
-    vectors = encoder([entry.surface_form for entry in entries])
 
-    if cluster_fn is None:
-        labels = _default_cluster_fn(
-            vectors,
-            pca_components=pca_components,
-            min_cluster_size=min_cluster_size,
-            min_samples=min_samples,
+    scaler_to_persist = pca_to_persist = clusterer_to_persist = None
+
+    if use_incremental:
+        known_indices = [
+            i for i, entry in enumerate(entries) if entry.surface_form in existing_rows
+        ]
+        new_indices = [
+            i for i, entry in enumerate(entries) if entry.surface_form not in existing_rows
+        ]
+
+        vectors: list[list[float]] = [[] for _ in entries]
+        for i in known_indices:
+            vectors[i] = list(existing_rows[entries[i].surface_form]["vector"])
+
+        new_vectors = encoder([entries[i].surface_form for i in new_indices]) if new_indices else []
+        for i, vector in zip(new_indices, new_vectors):
+            vectors[i] = vector
+
+        labels: list[int] = [NOISE_LABEL] * len(entries)
+        for i in known_indices:
+            labels[i] = int(existing_rows[entries[i].surface_form]["cluster_label"])
+
+        residue_count = 0
+        if new_indices:
+            scaler, pca, clusterer = (
+                fit_artifact["scaler"],
+                fit_artifact["pca"],
+                fit_artifact["clusterer"],
+            )
+            reduced_new = _transform_vectors(new_vectors, scaler, pca)
+            predicted_labels, strengths = _approximate_predict(clusterer, reduced_new)
+            floors = _cluster_floors(clusterer)
+
+            residue_positions = {
+                pos
+                for pos, (predicted, strength) in enumerate(zip(predicted_labels, strengths))
+                if predicted == NOISE_LABEL or strength < floors.get(predicted, 1.0)
+            }
+            for pos, predicted in enumerate(predicted_labels):
+                if pos not in residue_positions:
+                    labels[new_indices[pos]] = predicted
+
+            residue_count = len(residue_positions)
+            if residue_positions:
+                ordered_residue_positions = sorted(residue_positions)
+                residue_reduced = reduced_new[ordered_residue_positions]
+                residue_labels = _cluster_reduced(residue_reduced, min_cluster_size, min_samples)
+                existing_max_label = max(
+                    (
+                        int(row["cluster_label"])
+                        for row in existing_rows.values()
+                        if int(row["cluster_label"]) != NOISE_LABEL
+                    ),
+                    default=NOISE_LABEL,
+                )
+                offset = existing_max_label + 1
+                for pos, raw_label in zip(ordered_residue_positions, residue_labels):
+                    entry_index = new_indices[pos]
+                    labels[entry_index] = (
+                        NOISE_LABEL if raw_label == NOISE_LABEL else offset + raw_label
+                    )
+
+            print(
+                f"names: {len(new_indices)} new surface form(s) placed into the persisted "
+                f"fit ({len(new_indices) - residue_count} assigned to an existing cluster, "
+                f"{residue_count} sent to a residue re-fit)",
+                file=sys.stderr,
+            )
+
+        units_reused = len(known_indices)
+        units_asked_touching_new = sum(
+            1
+            for i in new_indices
+            if not prev_source_ids or not set(entries[i].source_ids).issubset(prev_source_ids)
         )
     else:
-        labels = cluster_fn(vectors)
+        vectors = encoder([entry.surface_form for entry in entries])
+        if cluster_fn is None:
+            reduced, scaler_to_persist, pca_to_persist = _fit_reduce_vectors(
+                vectors, pca_components
+            )
+            clusterer_to_persist = _fit_cluster_reduced(
+                reduced, min_cluster_size, min_samples, prediction_data=True
+            )
+            labels = [int(label) for label in clusterer_to_persist.labels_]
+        else:
+            labels = cluster_fn(vectors)
+
+        units_reused = 0
+        units_asked_touching_new = sum(
+            1
+            for entry in entries
+            if not prev_source_ids or not set(entry.source_ids).issubset(prev_source_ids)
+        )
+
+    units_total = len(entries)
+    units_asked = units_total - units_reused
 
     rows = [
         {
@@ -1095,6 +1451,9 @@ def run_names(
     db = lancedb.connect(embeddings_dir)
     db.create_table(TABLE_NAME, data=rows, mode="overwrite")
 
+    if clusterer_to_persist is not None:
+        _write_fit_artifact(fit_path, scaler_to_persist, pca_to_persist, clusterer_to_persist)
+
     embedding_dim = len(rows[0]["vector"])
     cluster_count = len({label for label in labels if label != NOISE_LABEL})
     noise_count = sum(1 for label in labels if label == NOISE_LABEL)
@@ -1113,6 +1472,8 @@ def run_names(
             "min_cluster_size": min_cluster_size,
             "min_samples": min_samples,
         },
+        "library_versions": _library_versions(),
+        "source_ids": sorted({source_id for entry in entries for source_id in entry.source_ids}),
     }
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(
@@ -1130,6 +1491,10 @@ def run_names(
         embedding_dim=embedding_dim,
         cluster_count=cluster_count,
         noise_count=noise_count,
+        units_total=units_total,
+        units_reused=units_reused,
+        units_asked=units_asked,
+        units_asked_touching_new=units_asked_touching_new,
     )
 
 
