@@ -428,22 +428,28 @@ def test_a_rendered_packet_carries_the_five_fields_and_nothing_else():
 # -- issue #496: the old packet format is frozen, byte for byte -- ONLY when
 # it fits under the cap untouched ---------------------------------------------
 #
-# THESE TWO LITERALS ARE A PIN, NOT A FIXTURE. They are what `main` rendered
-# and hashed for a member note whose answer record carries no `position` key,
-# short enough that neither `main`'s tail truncation nor #500/D1's
-# claim-remainder truncation ever engages. That untruncated case is still
-# frozen after D1: nothing was truncated either way, so there is nothing for
-# the render order to change. A packet old OR new format that DOES hit the
-# cap is a different story -- see
+# THIS LITERAL IS A PIN, NOT A FIXTURE. It is what `main` rendered for a
+# member note whose answer record carries no `position` key, short enough
+# that neither `main`'s tail truncation nor #500/D1's claim-remainder
+# truncation ever engages. That untruncated case is still frozen after D1:
+# nothing was truncated either way, so there is nothing for the render order
+# to change. A packet old OR new format that DOES hit the cap is a different
+# story -- see
 # `test_a_packet_over_the_cap_no_longer_renders_byte_for_byte_this_is_the_500_re_key`
 # below, which pins that #500 deliberately breaks the byte-for-byte guarantee
-# once truncation is in play. Do not "update" the two literals below to match
-# new behaviour: a diff in an UNTRUNCATED case means the change is wrong.
+# once truncation is in play. Do not "update" this literal to match new
+# behaviour: a diff in an UNTRUNCATED case means the change is wrong.
+#
+# There used to be a second pinned literal here, `OLD_FORMAT_JOB_KEY`:
+# `GatherJob.key` was a sha256 over the rendered packets above, so the old
+# render pinned the key too. Issue #678 retired that -- the key is now a
+# hash of the name's SOURCE SET, not its render -- so pinning a render no
+# longer says anything about the key. See the `GatherJob.key` tests below
+# (issue #678) for what the key contract is now.
 OLD_FORMAT_MEMBER_RENDER = (
     "Charles Tilly (1990): War made the state and the state made war. "
     "[position of: bellicist historical sociology; arguing against: modernization theory]"
 )
-OLD_FORMAT_JOB_KEY = "c04e6eccf1aef04f45c680e24b07f9bfb7fbfb981baa5e0b2d0ee6043f12cb45"
 
 
 def _old_format_packets() -> list[MemberPacket]:
@@ -469,15 +475,15 @@ def _old_format_packets() -> list[MemberPacket]:
     ]
 
 
-def test_an_old_format_member_renders_and_keys_exactly_as_it_did_before_position_existed():
-    """The one thing #496 must not break. `GatherJob.key` is a sha256 over
-    the name's rendered packets, and every recorded disagreement finding is
-    filed under it, so an old-format render is a frozen wire format."""
+def test_an_old_format_member_renders_exactly_as_it_did_before_position_existed():
+    """The one thing #496 must not break: an old-format render is a frozen
+    wire format. (What used to be this test's second half -- that the same
+    render also pinned `GatherJob.key` -- is retired by #678, which keys on
+    the source set, not the render; see the `GatherJob.key` tests below.)"""
     packets = _old_format_packets()
 
     assert packets[0].position is None
     assert render_packet(packets[0]) == OLD_FORMAT_MEMBER_RENDER
-    assert GatherJob(canonical="war making", batches=(tuple(packets),)).key == OLD_FORMAT_JOB_KEY
 
 
 def test_an_answer_record_with_no_position_key_builds_a_packet_with_no_position():
@@ -502,6 +508,59 @@ def test_an_answer_record_with_no_position_key_builds_a_packet_with_no_position(
 
     assert packet.position is None
     assert render_packet(packet) == OLD_FORMAT_MEMBER_RENDER
+
+
+# -- issue #678: `GatherJob.key` is the name's SOURCE SET, not its rendered
+# packets -----------------------------------------------------------------
+
+
+def test_gather_job_key_is_unchanged_by_a_content_only_edit_to_an_existing_member():
+    """The core #678 contract at the `GatherJob.key` level: revising an
+    already-represented member's answers -- a re-interrogation, a re-render
+    -- must not move the key, because the disagreement's evidence is which
+    books are in the room, not how one member's claim happened to render
+    this run."""
+    packets = _old_format_packets()
+    revised = [
+        replace(packets[0], claim="A totally different sentence about the same book."),
+        replace(packets[1], author="M. Centeno", claim="Also revised, same book."),
+    ]
+
+    key_before = GatherJob(canonical="war making", batches=(tuple(packets),)).key
+    key_after = GatherJob(canonical="war making", batches=(tuple(revised),)).key
+
+    assert key_before == key_after
+
+
+def test_gather_job_key_changes_when_a_member_from_a_new_source_joins():
+    """The other half: a member whose `chunk_id` resolves to a `source_id`
+    neither existing member came from DOES move the key -- a genuinely new
+    book might change who is arguing with whom."""
+    packets = _old_format_packets()
+    new_book_member = MemberPacket(
+        chunk_id="hobsbawm-1990_000_intro_001",
+        author="Eric Hobsbawm",
+        year=1990,
+        claim="Nations and nationalism, not war alone, forged the modern state.",
+        position_of="the author's own",
+        arguing_against="Charles Tilly",
+    )
+
+    key_before = GatherJob(canonical="war making", batches=(tuple(packets),)).key
+    key_after = GatherJob(canonical="war making", batches=(tuple([*packets, new_book_member]),)).key
+
+    assert key_before != key_after
+
+
+def test_gather_job_key_differs_across_canonicals_sharing_the_same_source_set():
+    """Two names named by exactly the same two books are not the same job --
+    the canonical has to be part of the key, or they would collide."""
+    packets = _old_format_packets()
+
+    key_a = GatherJob(canonical="war making", batches=(tuple(packets),)).key
+    key_b = GatherJob(canonical="state formation", batches=(tuple(packets),)).key
+
+    assert key_a != key_b
 
 
 def test_a_name_mixing_both_frames_renders_the_new_field_only_on_the_members_that_have_it():
@@ -886,6 +945,45 @@ def test_re_running_gather_reuses_the_recorded_decision_and_calls_nothing(tmp_pa
     assert "They disagree about scope." in _page(tmp_path, "war making")
 
 
+def test_a_record_written_under_an_earlier_key_format_is_still_reused_no_migration_needed(
+    tmp_path,
+):
+    """The #678 rollout-safety guarantee: `load_disagreements` recomputes a
+    record's key from its own `canonical`/`chunk_ids` rather than trusting
+    whatever format its persisted `name_key` happens to be in -- the same
+    fields §7.18 already guarantees every record carries. A record written
+    under the retired content-hash-of-rendered-packets key (or any other
+    string) is still found, with no migration pass and no rewrite of
+    `disagreements.jsonl`."""
+    _build_small_fixture(tmp_path)
+    _materialize(tmp_path)
+
+    _write_jsonl(
+        _disagreements_path(tmp_path),
+        [
+            {
+                "name_key": "not-a-real-source-set-key-this-is-the-old-pre-678-format",
+                "canonical": "war making",
+                "chunk_ids": ["tilly-1990_000_intro_001", "centeno-2002_000_intro_001"],
+                "batches": [],
+                "merged": False,
+                "disagreement": "A finding recorded before issue #678.",
+                "names": [],
+                "pass": "gather",
+                "model": "stub",
+                "gathered_at": "2026-01-01T00:00:00Z",
+            }
+        ],
+    )
+
+    client = FakeClient(batch=[_response("Nobody should ever see this.", [])])
+    result = _gather(tmp_path, client)
+
+    assert client.prompts == [], "an old-format record must still resolve as a reuse"
+    assert result["reused"] == 1
+    assert "A finding recorded before issue #678." in _page(tmp_path, "war making")
+
+
 # -- acceptance 2: over budget, one call per batch, then one merge call -------
 
 
@@ -955,11 +1053,13 @@ def test_re_running_gather_reuses_a_recorded_null_and_calls_nothing(tmp_path):
 
 
 def _revise_centeno_claim(root: Path, claim: str) -> None:
-    """Re-renders `centeno-2002`'s one packet field, so the "war making" job's
-    content-addressed key (§7.18) changes and the name is genuinely re-asked
-    on the next `_gather` call, not reused from the checkpoint -- the same
-    shape PR #474 produced for 520 real names by relabelling one book's
-    author."""
+    """Re-renders `centeno-2002`'s one packet field -- under issue #678's
+    source-set key this does NOT change the "war making" job's key, since
+    `centeno-2002` was already on the page: see
+    `test_revising_an_existing_members_claim_reuses_the_recorded_decision`
+    below, which is the direct fix for the behaviour PR #474 documented
+    (520 real names re-asked for exactly this reason, back when the key was
+    a hash of the rendered packets)."""
     _write_jsonl(
         root / "data" / "answers" / "centeno-2002.jsonl",
         [
@@ -975,9 +1075,74 @@ def _revise_centeno_claim(root: Path, claim: str) -> None:
     )
 
 
+def _read_jsonl(path: Path) -> list[dict]:
+    return [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+
+
+def _add_member_note(
+    root: Path,
+    *,
+    chunk_id: str,
+    source_id: str,
+    claim: str,
+    name: str = "war making",
+    author: str = "New Author",
+    year: int = 2010,
+    new_source: bool,
+) -> None:
+    """Add one more member note naming `name` on top of `_build_small_
+    fixture`'s corpus -- either from a source already represented on the
+    page (`new_source=False`: `source_id` must be one of the fixture's own,
+    e.g. `tilly-1990`) or from a genuinely new book (`new_source=True`,
+    which also writes the chunk/envelope/source-metadata `_write_source`
+    needs). Appends to that source's own answers file and to the name's
+    `chunk_ids` in `inventory.jsonl`, the same shape a real re-
+    interrogation or a re-run of `axial names build` produces -- the
+    fixture-level lever issue #678's acceptance bar is written against."""
+    if new_source:
+        _write_source(root, source_id, author, year, [chunk_id])
+
+    answers_path = root / "data" / "answers" / f"{source_id}.jsonl"
+    existing = _read_jsonl(answers_path) if answers_path.is_file() else []
+    existing.append(
+        _answer_record(
+            chunk_id,
+            source_id,
+            claim=claim,
+            position_of="a later position",
+            arguing_against=["someone else"],
+            names=[{"name": name, "kind": "concept"}],
+        )
+    )
+    _write_jsonl(answers_path, existing)
+
+    inventory_path = root / "data" / "names" / "inventory.jsonl"
+    rows = _read_jsonl(inventory_path)
+    for row in rows:
+        if row["surface"] == name:
+            row["chunk_ids"] = sorted(set(row["chunk_ids"]) | {chunk_id})
+            row["count"] = len(row["chunk_ids"])
+    _write_jsonl(inventory_path, rows)
+
+
+def _add_new_book_member(root: Path) -> None:
+    """A brand-new book's note joining "war making" -- the one lever that
+    still changes `GatherJob.key` under issue #678 (a source neither
+    `tilly-1990` nor `centeno-2002` was on the page for before)."""
+    _add_member_note(
+        root,
+        chunk_id="hobsbawm-1990_000_intro_001",
+        source_id="hobsbawm-1990",
+        claim="Nations and nationalism, not war alone, forged the modern state.",
+        new_source=True,
+    )
+
+
 def test_a_name_whose_section_existed_survives_a_later_null_re_ask(tmp_path):
     """#495: the write loop unions a canonical's whole record history rather
-    than reading only the record under its CURRENT packet hash, so an older
+    than reading only the record under its CURRENT key, so an older
     non-null record outlives a later null one at the same name."""
     _build_small_fixture(tmp_path)
     _materialize(tmp_path)
@@ -986,13 +1151,14 @@ def test_a_name_whose_section_existed_survives_a_later_null_re_ask(tmp_path):
     _gather(tmp_path, first)
     assert DISAGREEMENT_HEADING in _page(tmp_path, "war making")
 
-    _revise_centeno_claim(tmp_path, "Limited war produced limited states -- revised.")
+    _add_new_book_member(tmp_path)
 
     second = FakeClient(batch=[_response(None, [])])
     result = _gather(tmp_path, second)
 
-    # The resume path is unaffected: the current packets have no record of
-    # their own, so the name is asked, exactly as before this fix.
+    # A genuinely new source joined the page, so the job's key changed and
+    # the name is asked -- exactly as before this fix, only the trigger
+    # moved from "any content changed" to "the source set changed" (#678).
     assert result["asked"] == 1
     assert len(_records(tmp_path)) == 2, "both records stay on disk -- history is untouched"
 
@@ -1009,7 +1175,7 @@ def test_two_non_null_records_write_the_newer_finding(tmp_path):
     _gather(tmp_path, first)
     assert "The original reading." in _page(tmp_path, "war making")
 
-    _revise_centeno_claim(tmp_path, "Limited war produced limited states -- revised.")
+    _add_new_book_member(tmp_path)
 
     second = FakeClient(batch=[_response("The revised reading.", [])])
     result = _gather(tmp_path, second)
@@ -1030,7 +1196,7 @@ def test_two_null_records_still_write_no_section(tmp_path):
     _gather(tmp_path, first)
     assert DISAGREEMENT_HEADING not in _page(tmp_path, "war making")
 
-    _revise_centeno_claim(tmp_path, "Limited war produced limited states -- revised.")
+    _add_new_book_member(tmp_path)
 
     second = FakeClient(batch=[_response(None, [])])
     result = _gather(tmp_path, second)
@@ -1040,6 +1206,75 @@ def test_two_null_records_still_write_no_section(tmp_path):
     assert len(records) == 2
     assert all(record["disagreement"] is None for record in records)
     assert DISAGREEMENT_HEADING not in _page(tmp_path, "war making")
+
+
+# -- issue #678 acceptance: re-ask on a new SOURCE, not a new note ------------
+
+
+def test_a_page_gaining_a_note_from_an_existing_source_is_not_re_asked(tmp_path):
+    """The acceptance bar's first half: a note joining from a book already
+    on the page (a second `tilly-1990` passage) must reuse the recorded
+    disagreement, with no model call."""
+    _build_small_fixture(tmp_path)
+    _materialize(tmp_path)
+
+    first = FakeClient(batch=[_response("They disagree about scope.", [])])
+    _gather(tmp_path, first)
+
+    _add_member_note(
+        tmp_path,
+        chunk_id="tilly-1990_001_intro_002",
+        source_id="tilly-1990",
+        claim="A second passage, same book, also naming war making.",
+        new_source=False,
+    )
+
+    second = FakeClient(batch=[_response("A different answer nobody should see.", [])])
+    result = _gather(tmp_path, second)
+
+    assert second.prompts == [], "a note from an already-represented book must not trigger a call"
+    assert result["reused"] == 1
+    assert result["asked"] == 0
+    assert "They disagree about scope." in _page(tmp_path, "war making")
+
+
+def test_a_page_gaining_a_note_from_a_new_book_is_re_asked(tmp_path):
+    """The acceptance bar's second half: a note joining from a book NOT
+    already on the page changes the source set, so the name is re-asked."""
+    _build_small_fixture(tmp_path)
+    _materialize(tmp_path)
+
+    first = FakeClient(batch=[_response("They disagree about scope.", [])])
+    _gather(tmp_path, first)
+
+    _add_new_book_member(tmp_path)
+
+    second = FakeClient(batch=[_response("A newly expanded disagreement.", [])])
+    result = _gather(tmp_path, second)
+
+    assert len(second.prompts) == 1
+    assert result["asked"] == 1
+    assert "A newly expanded disagreement." in _page(tmp_path, "war making")
+
+
+def test_revising_an_existing_members_claim_reuses_the_recorded_decision(tmp_path):
+    """A re-interrogation or a re-render that changes an already-represented
+    member's answer text -- same book, same source -- must not re-key the
+    name either: the key no longer looks at content at all (issue #678)."""
+    _build_small_fixture(tmp_path)
+    _materialize(tmp_path)
+
+    first = FakeClient(batch=[_response("They disagree about scope.", [])])
+    _gather(tmp_path, first)
+
+    _revise_centeno_claim(tmp_path, "Limited war produced limited states -- revised.")
+
+    second = FakeClient(batch=[_response("A different answer nobody should see.", [])])
+    result = _gather(tmp_path, second)
+
+    assert second.prompts == []
+    assert result["reused"] == 1
+    assert "They disagree about scope." in _page(tmp_path, "war making")
 
 
 def test_limit_zero_makes_no_model_calls(tmp_path):
@@ -1640,6 +1875,54 @@ def test_unit_counters_reuse_the_second_run_and_flag_a_genuinely_new_source(tmp_
     assert third["units_asked_touching_new"] == 1
     assert third["units_asked_touching_new"] <= third["units_asked"]
     assert third["units_asked"] + third["units_reused"] == third["units_total"]
+
+
+def test_unit_counters_a_note_from_an_existing_source_is_reused_not_touching_new(tmp_path):
+    """Issue #678's own bar on top of #677's counters: a page gaining a note
+    from a source it already had must count as reused, and
+    `units_asked_touching_new` must stay at zero for it -- the second bucket
+    the founder's validation comment (2026-08-05) asks be reported and be
+    zero."""
+    root = tmp_path
+    alpha = _write_units_fixture_name(root, "Alpha Claim", "units-src-1", "units-src-2")
+    _write_units_fixture_index(root, {"Alpha Claim": alpha})
+
+    first_client = _NameKeyedGatherClient({"Alpha Claim": _response("Alpha disagreement.")})
+    first = _gather(root, first_client)
+    assert first["units_asked"] == 1
+
+    # A second note from `units-src-1`, a source already on the page.
+    chunk_a2 = "units-src-1_001_intro_002"
+    answers_path = root / "data" / "answers" / "units-src-1.jsonl"
+    _write_jsonl(
+        answers_path,
+        _read_jsonl(answers_path)
+        + [
+            _answer_record(
+                chunk_a2,
+                "units-src-1",
+                claim="Alpha Claim: a second passage, same book.",
+                position_of="position A2",
+                arguing_against=["z"],
+                names=[{"name": "Alpha Claim", "kind": "concept"}],
+            )
+        ],
+    )
+    inventory_path = root / "data" / "names" / "inventory.jsonl"
+    rows = _read_jsonl(inventory_path)
+    for row in rows:
+        if row["surface"] == "Alpha Claim":
+            row["chunk_ids"].append(chunk_a2)
+    _write_jsonl(inventory_path, rows)
+
+    second_client = _NameKeyedGatherClient({"Alpha Claim": _response("Nobody should see this.")})
+    second = _gather(root, second_client)
+
+    assert second_client.prompts == [], "an existing-source note must not trigger a call"
+    assert second["units_total"] == 1
+    assert second["units_reused"] == 1
+    assert second["units_asked"] == 0
+    assert second["units_asked_touching_new"] == 0
 
 
 # -- CLI wiring smoke test -----------------------------------------------------
