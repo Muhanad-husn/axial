@@ -1501,6 +1501,147 @@ def test_the_batched_path_records_which_batch_each_finding_came_from(tmp_path):
     assert all(batch["finding"] for batch in record["batches"])
 
 
+# ---------------------------------------------------------------------------
+# Issue #677: the four `units_*` counters -- reused/asked/touching_new,
+# derived from `disagreements.jsonl` itself (issue #678: a record already
+# carries the `chunk_ids` it was written from), with no new manifest file.
+# ---------------------------------------------------------------------------
+
+
+class _NameKeyedGatherClient:
+    """One scripted disagreement per name, keyed by whichever canonical
+    name appears in the prompt. Every name in these fixtures has exactly two
+    member notes -- always one call, never a merge -- so this sidesteps the
+    shared `FakeClient`'s author-based batch/merge routing entirely."""
+
+    def __init__(self, replies: dict[str, str]):
+        self._replies = replies
+        self.prompts: list[str] = []
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.prompts.append(prompt)
+        for name, reply in self._replies.items():
+            if name in prompt:
+                return reply
+        raise AssertionError(f"unexpected prompt, no scripted name matched: {prompt!r}")
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake"
+
+
+def _write_units_fixture_name(
+    root: Path, name: str, source_a: str, source_b: str
+) -> tuple[str, str]:
+    """One two-member name, its members drawn from two dedicated,
+    never-reused source ids -- so a later test can add a genuinely new pair
+    of sources without disturbing an earlier name's own provenance."""
+    chunk_a = f"{source_a}_000_intro_001"
+    chunk_b = f"{source_b}_000_intro_001"
+    _write_source(root, source_a, "Author A", 2001, [chunk_a])
+    _write_source(root, source_b, "Author B", 2002, [chunk_b])
+    _write_jsonl(
+        root / "data" / "answers" / f"{source_a}.jsonl",
+        [
+            _answer_record(
+                chunk_a,
+                source_a,
+                claim=f"{name}: claim A.",
+                position_of="position A",
+                arguing_against=["x"],
+                names=[{"name": name, "kind": "concept"}],
+            )
+        ],
+    )
+    _write_jsonl(
+        root / "data" / "answers" / f"{source_b}.jsonl",
+        [
+            _answer_record(
+                chunk_b,
+                source_b,
+                claim=f"{name}: claim B.",
+                position_of="position B",
+                arguing_against=["y"],
+                names=[{"name": name, "kind": "concept"}],
+            )
+        ],
+    )
+    return chunk_a, chunk_b
+
+
+def _write_units_fixture_index(root: Path, names: dict[str, tuple[str, str]]) -> None:
+    """`inventory.jsonl`/`alias_map.json` covering exactly `names` (issue
+    #677's tests rewrite the whole index each time a name is added, the same
+    way a real `axial names build`/`merge` re-run would)."""
+    _write_jsonl(
+        root / "data" / "names" / "inventory.jsonl",
+        [
+            {"surface": name, "kind": "concept", "count": 2, "chunk_ids": list(chunk_ids)}
+            for name, chunk_ids in names.items()
+        ],
+    )
+    _write_json(
+        root / "data" / "names" / "alias_map.json",
+        {
+            "version": 1,
+            "generated_at": "2026-01-01T00:00:00Z",
+            "nodes": [{"canonical": name, "kind": "concept", "aliases": []} for name in names],
+        },
+    )
+
+
+def test_unit_counters_reuse_the_second_run_and_flag_a_genuinely_new_source(tmp_path):
+    """Issue #677's own acceptance bar, end to end:
+    - a first-ever run (nothing in `disagreements.jsonl` yet) reports
+      `units_asked == units_total` and does not crash
+    - the same corpus run twice reports `units_asked: 0` and `units_reused
+      == units_total`
+    - adding a name whose members are genuinely new sources reports a
+      non-zero `units_asked_touching_new`, a subset of `units_asked`
+    - `units_asked + units_reused == units_total` throughout
+    """
+    root = tmp_path
+    alpha = _write_units_fixture_name(root, "Alpha Claim", "units-src-1", "units-src-2")
+    _write_units_fixture_index(root, {"Alpha Claim": alpha})
+
+    # First-ever run: `disagreements.jsonl` does not exist yet.
+    assert not _disagreements_path(root).is_file()
+    first_client = _NameKeyedGatherClient({"Alpha Claim": _response("Alpha disagreement.")})
+    first = _gather(root, first_client)
+    assert len(first_client.prompts) == 1
+    assert first["units_total"] == 1
+    assert first["units_reused"] == 0
+    assert first["units_asked"] == 1
+    assert first["units_asked_touching_new"] == 1
+    assert first["units_asked"] + first["units_reused"] == first["units_total"]
+
+    # Second run, same corpus: "Alpha Claim" is already recorded.
+    second_client = _NameKeyedGatherClient(
+        {"Alpha Claim": _response("A different answer nobody should see.")}
+    )
+    second = _gather(root, second_client)
+    assert second_client.prompts == []
+    assert second["units_total"] == 1
+    assert second["units_reused"] == 1
+    assert second["units_asked"] == 0
+    assert second["units_asked_touching_new"] == 0
+    assert second["units_asked"] + second["units_reused"] == second["units_total"]
+
+    # A genuinely new name, whose two members are BOTH brand-new sources
+    # (never part of any recorded disagreement). "Alpha Claim" stays reused.
+    beta = _write_units_fixture_name(root, "Beta Claim", "units-src-3", "units-src-4")
+    _write_units_fixture_index(root, {"Alpha Claim": alpha, "Beta Claim": beta})
+
+    third_client = _NameKeyedGatherClient({"Beta Claim": _response("Beta disagreement.")})
+    third = _gather(root, third_client)
+    assert len(third_client.prompts) == 1, "only the new name is asked about"
+    assert third["units_total"] == 2
+    assert third["units_reused"] == 1
+    assert third["units_asked"] == 1
+    assert third["units_asked_touching_new"] == 1
+    assert third["units_asked_touching_new"] <= third["units_asked"]
+    assert third["units_asked"] + third["units_reused"] == third["units_total"]
+
+
 # -- CLI wiring smoke test -----------------------------------------------------
 
 

@@ -489,6 +489,20 @@ def _resolve_merge_tightness(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -
 # ---------------------------------------------------------------------------
 
 
+def _source_ids_of(chunk_ids: Iterable[str]) -> frozenset[str]:
+    """The distinct `source_id`s `chunk_ids` resolve to (issue #677's
+    `units_asked_touching_new`), a malformed chunk_id simply contributing
+    nothing -- the same tolerant read `build_evidence_index` already gives
+    a chunk_id it cannot parse."""
+    ids: set[str] = set()
+    for chunk_id in chunk_ids:
+        try:
+            ids.add(source_id_from_chunk_id(chunk_id))
+        except MalformedChunkIdError:
+            continue
+    return frozenset(ids)
+
+
 def build_evidence_index(
     chunk_ids_by_surface: dict[str, tuple[str, ...]],
 ) -> dict[str, str]:
@@ -1348,6 +1362,7 @@ def write_merge_manifest(
     batches_failed: int,
     stale_evidence_tier_reasked: int = 0,
     escalated_surfaces: int = 0,
+    source_ids: Iterable[str] = (),
 ) -> None:
     """The one place a partial run says so on disk (issue #416, founder
     correction). `alias_map.json`/`index.json` are rewritten whole from
@@ -1371,7 +1386,16 @@ def write_merge_manifest(
     off the manifest alone, without re-parsing the whole of
     `merge_decisions.jsonl` to sum it. The escalated surfaces themselves are
     addressable by name only in the decision log, which is the one copy;
-    this is a count, not a list."""
+    this is a count, not a list.
+
+    `source_ids` (issue #677) is this run's own inventory's source coverage
+    -- sorted and written whole, the same convention `axial.names.run_names`
+    and `axial.argmap.build` already use for their own manifests. `run_
+    merge_names` reads THIS field back, from the manifest this call is about
+    to overwrite, before it writes a new one -- that is what lets a LATER
+    run tell an asked batch that only touches sources already seen apart
+    from one that touches a book absent from the previous run
+    (`units_asked_touching_new`)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
@@ -1384,6 +1408,7 @@ def write_merge_manifest(
                 "batches_failed": batches_failed,
                 "stale_evidence_tier_reasked": stale_evidence_tier_reasked,
                 "escalated_surfaces": escalated_surfaces,
+                "source_ids": sorted(source_ids),
             },
             indent=2,
             ensure_ascii=False,
@@ -1717,6 +1742,21 @@ def run_merge_names(
     not exist -- running this before `axial names build` is a misconfigured
     invocation, not an empty map.
 
+    **Issue #677: `units_total`/`units_reused`/`units_asked`/`units_asked_
+    touching_new`.** `units_total` is `len(batches)` (this run's own cluster
+    batches, HDBSCAN's plus candidate generation's); `units_reused` is how
+    many of those already had a decision on disk BEFORE this run's own
+    worker pool started (the `reused` count the stderr summary and the
+    manifest already carry, computed the moment `pending` is); `units_asked`
+    is `units_total - units_reused`, i.e. `len(pending)` -- every batch not
+    yet decided, whether or not this run's own `limit` actually lets the
+    pool reach it; and `units_asked_touching_new` is the subset of `pending`
+    whose members touch a source absent from `merge_manifest.json`'s own
+    `source_ids` as of the START of this run (before this call's own write
+    overwrites it) -- or every asked batch, when there is no prior manifest.
+    Source ids come from the same evidence join #449 already built
+    (`build_evidence_index`'s own `chunk_ids_by_surface`), never re-derived.
+
     `failures_path` (issue #469, default `DEFAULT_FAILURES_PATH`) is where a
     batch that exhausted `complete_json`'s own re-ask budget without ever
     producing a parseable/well-shaped answer gets a durable record -- see
@@ -1741,7 +1781,31 @@ def run_merge_names(
     if min_samples is None:
         min_samples = configured_min_samples
 
+    # Issue #677: the PREVIOUS run's own source coverage, read from the
+    # manifest THIS call is about to overwrite -- before that write happens,
+    # never after. Empty (no prior manifest, or one that predates this
+    # field) reads as "no prior run to compare against", which is what makes
+    # every asked batch count as touching new below.
+    prev_manifest: dict[str, Any] | None = None
+    if manifest_path.is_file():
+        try:
+            prev_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            prev_manifest = None
+    prev_source_ids = set(prev_manifest.get("source_ids", [])) if prev_manifest else set()
+
     rows = _load_name_rows(embeddings_dir)
+    # This run's own inventory-wide source coverage (issue #677), over the
+    # WHOLE similarity view -- before the fold-away filter below drops any
+    # rows -- so a source that only ever named a fold-duplicate surface is
+    # still counted as part of what this run's inventory produced.
+    run_source_ids = sorted(
+        {
+            source_id
+            for row in rows
+            for source_id in _source_ids_of(json.loads(row["chunk_ids_json"]))
+        }
+    )
     full_entries = [(row["surface_form"], row["kind"] or None, int(row["count"])) for row in rows]
     all_surface_forms = [surface_form for surface_form, _kind, _count in full_entries]
     kinds = {surface_form: kind for surface_form, kind, _count in full_entries}
@@ -1782,6 +1846,13 @@ def run_merge_names(
         row["surface_form"]: tuple(json.loads(row["chunk_ids_json"])) for row in rows
     }
     evidence = build_evidence_index(chunk_ids_by_surface)
+    # Issue #677: the same join, read as source ids rather than a rendered
+    # evidence string -- what `units_asked_touching_new` checks a pending
+    # batch's own members against, below.
+    sources_by_surface = {
+        surface_form: _source_ids_of(chunk_ids)
+        for surface_form, chunk_ids in chunk_ids_by_surface.items()
+    }
 
     vectors = [row["vector"] for row in rows]
     if cluster_fn is not None:
@@ -1838,6 +1909,24 @@ def run_merge_names(
     pending = [batch for batch in batches if batch.key not in decisions]
     reused = len(batches) - len(pending)
     to_attempt = pending if limit is None else pending[:limit]
+
+    # Issue #677: the four `units_*` counters, computed here -- from the
+    # decision log's own state before this run's `--limit` even trims it
+    # down to `to_attempt`, let alone before a single call goes out -- so
+    # `units_reused` is exactly `reused` above and `units_asked` is exactly
+    # `len(pending)`, matching the sibling passes' own timing rule.
+    units_total = len(batches)
+    units_reused = reused
+    units_asked = units_total - units_reused
+    units_asked_touching_new = sum(
+        1
+        for batch in pending
+        if not prev_source_ids
+        or any(
+            not sources_by_surface.get(member, frozenset()).issubset(prev_source_ids)
+            for member in batch.members
+        )
+    )
 
     # Issue #449's rollout hazard: a batch pending only because it was
     # decided before evidence existed is indistinguishable, BY KEY, from a
@@ -1968,6 +2057,7 @@ def run_merge_names(
         batches_failed=failed,
         stale_evidence_tier_reasked=len(stale_batches),
         escalated_surfaces=escalated_surfaces,
+        source_ids=run_source_ids,
     )
 
     merged = sum(len(node["aliases"]) for node in nodes)
@@ -1987,6 +2077,10 @@ def run_merge_names(
         "decided": called,
         "reused": reused,
         "failed": failed,
+        "units_total": units_total,
+        "units_reused": units_reused,
+        "units_asked": units_asked,
+        "units_asked_touching_new": units_asked_touching_new,
         "workers": max(workers, 1),
         "canonical_names": len(nodes),
         "merged_surface_forms": merged,

@@ -1719,3 +1719,150 @@ def test_clustering_prints_a_startup_line_and_a_running_heartbeat(isolated_vault
         f"heartbeat line while it is still running -- got {heartbeat_lines!r}"
     )
     assert len(finished_lines) == 1
+
+
+# ---------------------------------------------------------------------------
+# Issue #677: the four `units_*` counters -- reused/asked/touching_new.
+# ---------------------------------------------------------------------------
+
+ALPHA_ONE = "Alpha One"
+ALPHA_TWO = "Alpha Two"
+BETA_ONE = "Beta One"
+BETA_TWO = "Beta Two"
+
+
+def _write_source_answers(root: Path, source_id: str, names: list[str]) -> None:
+    answers_dir = root / "data" / "answers"
+    answers_dir.mkdir(parents=True, exist_ok=True)
+    (answers_dir / f"{source_id}.jsonl").write_text(
+        json.dumps(
+            {
+                "chunk_id": f"{source_id}_000_intro_001",
+                "source_id": source_id,
+                "section": "Introduction",
+                "pass": "note_interrogate",
+                "model": "stub",
+                "frame_version": "0.1",
+                "answered_at": "2026-01-01T00:00:00Z",
+                "answers": _answers(names),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+class _MergeAlphaBetaClient:
+    """Merges each pair it is actually asked about; never called for a
+    pair already decided on a prior run (the test itself checks that)."""
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        if ALPHA_ONE in prompt:
+            return json.dumps({"nodes": [{"canonical": ALPHA_ONE, "aliases": [ALPHA_TWO]}]})
+        if BETA_ONE in prompt:
+            return json.dumps({"nodes": [{"canonical": BETA_ONE, "aliases": [BETA_TWO]}]})
+        return json.dumps({"nodes": []})
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake"
+
+
+def test_unit_counters_reuse_the_second_run_and_flag_a_genuinely_new_source(
+    isolated_vault_root,
+):
+    """Issue #677's own acceptance bar, end to end:
+    - a first-ever run (no prior manifest) reports `units_asked ==
+      units_total` and does not crash
+    - the same corpus run twice reports `units_asked: 0` and `units_reused
+      == units_total`
+    - adding a genuinely new source reports a non-zero `units_asked_
+      touching_new`, a subset of `units_asked`
+    - `units_asked + units_reused == units_total` throughout
+    """
+    from axial.merge_names import run_merge_names
+    from axial.names import run_names
+
+    root = isolated_vault_root
+    _write_source_answers(root, "src1", [ALPHA_ONE, ALPHA_TWO])
+    names_dir = root / "data" / "names"
+    answers_dir = root / "data" / "answers"
+    embeddings_dir = names_dir / "embeddings.lance"
+    decisions_path = names_dir / "merge_decisions.jsonl"
+    manifest_path = names_dir / "merge_manifest.json"
+    client = _MergeAlphaBetaClient()
+
+    run_names(
+        answers_dir=answers_dir,
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=embeddings_dir,
+        manifest_path=names_dir / "similarity_manifest.json",
+    )
+
+    # First-ever run: no prior manifest at all.
+    assert not manifest_path.is_file()
+    first = run_merge_names(
+        embeddings_dir=embeddings_dir,
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=decisions_path,
+        manifest_path=manifest_path,
+        domain_dir=root / "no-such-domain",
+        client=client,
+        cluster_fn=lambda vectors: [0] * len(vectors),
+    )
+    assert first["units_total"] == 1  # one batch: {Alpha One, Alpha Two}
+    assert first["units_reused"] == 0
+    assert first["units_asked"] == 1
+    assert first["units_asked_touching_new"] == 1
+    assert first["units_asked"] + first["units_reused"] == first["units_total"]
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))["source_ids"] == ["src1"]
+
+    # Second run, same corpus: the one batch is already decided, so nothing
+    # is asked.
+    second = run_merge_names(
+        embeddings_dir=embeddings_dir,
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=decisions_path,
+        manifest_path=manifest_path,
+        domain_dir=root / "no-such-domain",
+        client=client,
+        cluster_fn=lambda vectors: [0] * len(vectors),
+    )
+    assert second["units_total"] == 1
+    assert second["units_reused"] == 1
+    assert second["units_asked"] == 0
+    assert second["units_asked_touching_new"] == 0
+    assert second["units_asked"] + second["units_reused"] == second["units_total"]
+
+    # A genuinely new source: src2 introduces a second, never-before-seen
+    # cluster. The first cluster stays reused; only the second is asked, and
+    # it is the one that touches a source absent from the prior manifest.
+    _write_source_answers(root, "src2", [BETA_ONE, BETA_TWO])
+    run_names(
+        answers_dir=answers_dir,
+        inventory_path=names_dir / "inventory.jsonl",
+        embeddings_dir=embeddings_dir,
+        manifest_path=names_dir / "similarity_manifest.json",
+    )
+    third = run_merge_names(
+        embeddings_dir=embeddings_dir,
+        alias_map_path=names_dir / "alias_map.json",
+        index_path=names_dir / "index.json",
+        decisions_path=decisions_path,
+        manifest_path=manifest_path,
+        domain_dir=root / "no-such-domain",
+        client=client,
+        # Alphabetical row order: Alpha One, Alpha Two, Beta One, Beta Two.
+        cluster_fn=lambda vectors: [0, 0, 1, 1],
+    )
+    assert third["units_total"] == 2
+    assert third["units_reused"] == 1
+    assert third["units_asked"] == 1
+    assert third["units_asked_touching_new"] == 1
+    assert third["units_asked_touching_new"] <= third["units_asked"]
+    assert third["units_asked"] + third["units_reused"] == third["units_total"]
+    assert sorted(json.loads(manifest_path.read_text(encoding="utf-8"))["source_ids"]) == [
+        "src1",
+        "src2",
+    ]
