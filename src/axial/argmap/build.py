@@ -57,6 +57,34 @@ new. `run_map_build(force=True)` (`axial map build --force`) moves the
 existing `reads.jsonl` aside to a timestamped sibling and re-asks every read
 under the pin; the old ledger is never deleted.
 
+**Incremental bagging (issue #677): a new pin reuses the prior pin's own
+bags instead of re-fitting the whole corpus.** Measured directly (#623): 3
+new books into 31 made every one of 665 reads re-ask, because `bag_passages`
+re-clusters every passage from scratch and a global re-fit reshuffles who
+sits with whom even where nothing changed. `run_map_build` now persists each
+bag's own centroid alongside `map.json` (`bag_state.json`) and, when a later
+build's encoder/threshold/library version still match, keeps every already-
+seen passage's own bag label unchanged and places a genuinely new passage by
+NEAREST CENTROID at the same `BAG_DISTANCE_THRESHOLD` a full fit already
+clusters at -- agglomerative clustering has no `approximate_predict`, and
+nearest-centroid at the existing grain is the honest analogue, not a second
+hand-tuned constant. A passage nearest to no existing centroid within that
+grain falls to a residue, agglomeratively clustered exactly as a full build
+would and offset above the existing maximum label -- existing labels are
+never renumbered. `--force` still does a full re-bag.
+
+Each read record also carries its own `members_key` (a hash of its slice's
+ordered claims -- the content the model was actually shown, `render_claims_
+blind` never renders anything else): a new pin's `reads.jsonl` is seeded,
+before any call is made, with the prior pin's own read for every slice whose
+composition matches exactly, under `(bag, slice)` (the resume key, keyed on
+THIS run's own numbering) so `run_extraction`'s existing resume mechanism
+picks the seeded record up and never spends a call on it. A bag that gained
+one new member re-cuts every `EXTRACT_SLICE` boundary downstream of it
+(`author_spread` rotates one author at a time), so most of a grown bag's
+slices still get re-asked -- this seeding recovers the slices genuinely
+unaffected, not every slice in an affected bag.
+
 **Stage 2 (issue #572, PR 2 of 4): relations between positions.** The same
 command continues past `positions.jsonl` into `relations.jsonl` -- a port
 of the scratchpad's own `stage2_relations.py`, already run and measured over
@@ -374,6 +402,217 @@ def bag_passages(
     return dict(bags)
 
 
+# ---------------------------------------------------------------------------
+# Issue #677: persisting and reusing bag state, so a later pin places its new
+# passages into the SAME bags a full fit already found instead of re-fitting
+# the whole corpus. Mirrors `axial.names`'s own fit-persistence pattern
+# (`_write_fit_artifact`/`_read_fit_artifact`/`_manifest_reusable`), adapted
+# to agglomerative clustering, which has no `approximate_predict`: nearest-
+# centroid at the same `BAG_DISTANCE_THRESHOLD` a full fit already clusters
+# at is the honest analogue, not a second, hand-tuned constant. `run_map_
+# build` is the only caller of everything in this section.
+# ---------------------------------------------------------------------------
+
+BAG_STATE_FILENAME = "bag_state.json"
+
+
+def _bag_state_path(outdir: Path) -> Path:
+    return outdir / BAG_STATE_FILENAME
+
+
+def _load_json_or_none(path: Path) -> dict[str, Any] | None:
+    """A tolerant JSON read: `None` when `path` does not exist or fails to
+    parse, either way meaning "cannot be trusted, fall back". Shared by
+    `bag_state.json` and, for reading a prior pin's own `source_ids`,
+    `map.json` -- both are plain JSON objects a torn or absent file should
+    never crash over."""
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+def _bag_state_reusable(state: dict[str, Any] | None) -> bool:
+    """Whether a persisted bag state's own config matches this run's
+    encoder/threshold/library version, and its shape is intact -- the things
+    that have to hold for a prior centroid to mean the same thing here that
+    it meant when it was written. `False` means `run_map_build` never
+    attempts nearest-centroid assignment at all, and re-bags globally."""
+    if not state:
+        return False
+    config = state.get("config")
+    if not isinstance(config, dict):
+        return False
+    if not isinstance(state.get("assignments"), dict) or not isinstance(
+        state.get("centroids"), dict
+    ):
+        return False
+    return (
+        config.get("encoder") == ENCODER_MODEL
+        and config.get("bag_distance_threshold") == BAG_DISTANCE_THRESHOLD
+        and config.get("sklearn_version") == _sklearn_version()
+    )
+
+
+def _sklearn_version() -> str:
+    """The installed scikit-learn version, or a stable sentinel when it is
+    not installed at all. `scikit-learn` is an optional dependency
+    (`pyproject.toml`'s `distill` group) that `_agglomerative_cluster`
+    itself only ever lazy-imports when it actually clusters 2+ vectors --
+    recording a version here must not force it to be present just to
+    persist or read back bag state for a run whose bags never needed a real
+    fit (a one-passage corpus, or a test's injected `_agglomerative_cluster`
+    monkeypatch)."""
+    try:
+        import sklearn
+    except ImportError:
+        return "not-installed"
+    return sklearn.__version__
+
+
+def _bag_centroids(
+    bags: dict[int, list[Passage]], vectors_by_chunk_id: dict[str, np.ndarray]
+) -> dict[int, np.ndarray]:
+    """Each bag's own centroid -- the mean of its members' embedding
+    vectors. The nearest-centroid assignment target a later incremental
+    build compares a new passage's vector against."""
+    return {
+        label: np.mean(
+            np.stack([vectors_by_chunk_id[member.chunk_id] for member in members]), axis=0
+        )
+        for label, members in bags.items()
+    }
+
+
+def _bag_passages_with_centroids(
+    passages: Sequence[Passage], encode: Encoder
+) -> tuple[dict[int, list[Passage]], dict[int, np.ndarray]]:
+    """`bag_passages`'s own clustering, but paying for exactly one `encode`
+    call and returning each bag's centroid alongside it -- the full-rebag
+    path `run_map_build` takes when there is no reusable prior bag state.
+    Duplicates `bag_passages`' own clustering call rather than reusing it
+    directly, because `bag_passages` discards its vectors once labelled and
+    a second `encode` call over the same claims is the one cost this module
+    already measured as too expensive to repeat (module docstring)."""
+    if not passages:
+        return {}, {}
+    vectors = [np.asarray(v, dtype=np.float64) for v in encode([p.claim for p in passages])]
+    labels = _agglomerative_cluster(np.stack(vectors), BAG_DISTANCE_THRESHOLD)
+    bags: dict[int, list[Passage]] = collections.defaultdict(list)
+    for label, passage in zip(labels, passages):
+        bags[label].append(passage)
+    vectors_by_chunk_id = {passage.chunk_id: vector for passage, vector in zip(passages, vectors)}
+    return dict(bags), _bag_centroids(dict(bags), vectors_by_chunk_id)
+
+
+def _write_bag_state(
+    path: Path, bags: dict[int, list[Passage]], centroids: dict[int, np.ndarray]
+) -> None:
+    """Persist this build's own bag assignment and centroids so a LATER pin
+    can place its new passages into THIS pin's clustering instead of
+    re-bagging the whole corpus. `config` records exactly what a later run
+    must match before trusting this file (`_bag_state_reusable`)."""
+    assignments = {member.chunk_id: label for label, members in bags.items() for member in members}
+    state = {
+        "config": {
+            "encoder": ENCODER_MODEL,
+            "bag_distance_threshold": BAG_DISTANCE_THRESHOLD,
+            "sklearn_version": _sklearn_version(),
+        },
+        "assignments": assignments,
+        "centroids": {str(label): centroid.tolist() for label, centroid in centroids.items()},
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _cosine_distance(a: np.ndarray, b: np.ndarray) -> float:
+    """1 - cosine similarity, the same metric `_agglomerative_cluster`'s own
+    `metric="cosine"` fits bags with. `1.0` (maximally distant) for a
+    zero-vector, which never legitimately occurs here (the encoder returns
+    unit-normalised vectors) but must never raise a division error."""
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    if denom == 0.0:
+        return 1.0
+    return 1.0 - float(np.dot(a, b)) / denom
+
+
+def _incremental_bag_passages(
+    passages: Sequence[Passage], encode: Encoder, prior_state: dict[str, Any]
+) -> tuple[dict[int, list[Passage]], dict[int, np.ndarray], int]:
+    """Group `passages` into bags, keeping every already-seen passage's own
+    prior bag label unchanged (issue #677) instead of re-fitting globally.
+    A brand-new passage (its `chunk_id` absent from `prior_state`) is placed
+    into the bag whose centroid it is nearest to, PROVIDED that distance is
+    within `BAG_DISTANCE_THRESHOLD` -- the same grain a full fit already
+    clusters at, reused rather than a second, hand-tuned constant; a new
+    passage nearest to no existing bag within that grain falls to a
+    residue, agglomeratively clustered exactly as a full build would and
+    offset above the existing maximum label -- existing labels are never
+    renumbered.
+
+    Returns the resulting bags, each bag's own centroid (an accepted bag's
+    updated by a running weighted mean -- this pass never retains an
+    already-seen passage's own vector, only the centroid it was folded
+    into; an unaffected bag's is untouched), and how many passages were
+    genuinely new work (needed an embedding + placement)."""
+    prior_assignments: dict[str, int] = {
+        chunk_id: int(label) for chunk_id, label in prior_state["assignments"].items()
+    }
+    prior_centroids: dict[int, np.ndarray] = {
+        int(label): np.asarray(vector, dtype=np.float64)
+        for label, vector in prior_state["centroids"].items()
+    }
+    prior_bag_sizes = collections.Counter(prior_assignments.values())
+
+    known = [passage for passage in passages if passage.chunk_id in prior_assignments]
+    new = [passage for passage in passages if passage.chunk_id not in prior_assignments]
+
+    bags: dict[int, list[Passage]] = collections.defaultdict(list)
+    for passage in known:
+        bags[prior_assignments[passage.chunk_id]].append(passage)
+
+    centroids = dict(prior_centroids)
+    if new:
+        new_vectors = [np.asarray(v, dtype=np.float64) for v in encode([p.claim for p in new])]
+
+        accepted_vectors_by_label: dict[int, list[np.ndarray]] = collections.defaultdict(list)
+        residue: list[tuple[Passage, np.ndarray]] = []
+        for passage, vector in zip(new, new_vectors):
+            best_label, best_distance = None, None
+            for label, centroid in prior_centroids.items():
+                distance = _cosine_distance(vector, centroid)
+                if best_distance is None or distance < best_distance:
+                    best_label, best_distance = label, distance
+            if best_label is not None and best_distance <= BAG_DISTANCE_THRESHOLD:
+                bags[best_label].append(passage)
+                accepted_vectors_by_label[best_label].append(vector)
+            else:
+                residue.append((passage, vector))
+
+        for label, vectors in accepted_vectors_by_label.items():
+            prior_size = prior_bag_sizes.get(label, 0)
+            prior_centroid = prior_centroids.get(label, np.zeros_like(vectors[0]))
+            total = prior_size + len(vectors)
+            centroids[label] = (prior_centroid * prior_size + np.sum(vectors, axis=0)) / total
+
+        if residue:
+            residue_vectors = np.stack([vector for _passage, vector in residue])
+            residue_labels = _agglomerative_cluster(residue_vectors, BAG_DISTANCE_THRESHOLD)
+            offset = max(prior_assignments.values(), default=-1) + 1
+            residue_vectors_by_label: dict[int, list[np.ndarray]] = collections.defaultdict(list)
+            for (passage, vector), raw_label in zip(residue, residue_labels):
+                label = offset + raw_label
+                bags[label].append(passage)
+                residue_vectors_by_label[label].append(vector)
+            for label, vectors in residue_vectors_by_label.items():
+                centroids[label] = np.mean(np.stack(vectors), axis=0)
+
+    return dict(bags), centroids, len(new)
+
+
 def author_spread(members: Sequence[Passage]) -> list[Passage]:
     """`members` reordered one author at a time in rotation, so any prefix
     -- and so every slice `build_jobs` cuts -- carries as many different
@@ -447,14 +686,31 @@ def render_claims_blind(members: Sequence[Passage]) -> tuple[str, dict[str, Pass
     return listing, handles
 
 
+def _members_key(members: Sequence[Passage]) -> str:
+    """sha256 (first 16 hex chars) over `members`' own claim texts, in
+    order -- the content identity of one extraction slice (issue #677).
+    Two slices with the SAME ordered claims were shown the exact same blind
+    prompt (`render_claims_blind` never renders author, book, chunk id or
+    anything else), so the model's answer for one is a valid stand-in for
+    the other regardless of which bag/slice number either happens to land
+    at under whichever pin's own numbering produced it. `run_map_build`
+    uses this both to record what a read was actually asked about and to
+    seed a later pin's ledger from a matching earlier one
+    (`_seed_reads_from_prior_pin`)."""
+    canonical = "\n".join(member.claim for member in members)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
 def extract_positions_for_slice(
     job: ExtractJob, client: LLMClient, pass_name: str = PASS_NAME
 ) -> dict[str, Any]:
     """One model call for `job`'s slice. Returns a read record: `bag`,
-    `slice`, `shown` (passages offered), `positions` (each carrying
-    `argument`, `chunk_ids`, `sources`, `authors`, `size`), `unassigned`
-    (count of handles the model itself named as making no argument), and --
-    only on failure -- `error`.
+    `slice`, `members_key` (issue #677: a hash of the slice's own ordered
+    claims, the content identity `_seed_reads_from_prior_pin` matches a
+    later pin's job against), `shown` (passages offered), `positions` (each
+    carrying `argument`, `chunk_ids`, `sources`, `authors`, `size`),
+    `unassigned` (count of handles the model itself named as making no
+    argument), and -- only on failure -- `error`.
 
     A handle the model invents (not among the ones offered) is dropped,
     never repaired: `entry.get("handles")` is filtered through `handles`
@@ -468,6 +724,7 @@ def extract_positions_for_slice(
     record: dict[str, Any] = {
         "bag": job.bag,
         "slice": job.slice_index,
+        "members_key": _members_key(job.members),
         "shown": len(job.members),
         "positions": [],
     }
@@ -874,6 +1131,75 @@ def _force_aside_suffix() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
 
 
+def _prior_pin_dir(map_dir: Path, current_pin: str) -> Path | None:
+    """The most recently written sibling pin directory under `map_dir` (by
+    its own `map.json` mtime), excluding `current_pin` -- "the newest prior
+    pin" issue #677 seeds a new pin's bag state and reads ledger from.
+    `None` when `map_dir` does not exist or holds no other completed pin
+    (`map.json` is written last, at the very end of a build, so a directory
+    without one was never a completed build to seed from)."""
+    root = Path(map_dir)
+    if not root.is_dir():
+        return None
+    candidates = [
+        child
+        for child in root.iterdir()
+        if child.is_dir() and child.name != current_pin and (child / "map.json").is_file()
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda child: (child / "map.json").stat().st_mtime_ns)
+
+
+def _seed_reads_from_prior_pin(
+    jobs: Sequence[ExtractJob],
+    reads_path: Path,
+    prior_reads_path: Path,
+    log: Callable[[str], None],
+) -> None:
+    """Seed `reads_path` with a prior pin's own read record for every job in
+    `jobs` whose slice composition (`_members_key`) exactly matches one --
+    issue #677: adding books should not re-ask a slice whose content did not
+    change. Only ever adds a record for a `(bag, slice)` not already on
+    `reads_path` (an in-progress resume of THIS pin is left untouched), and
+    the seeded record's own `bag`/`slice` fields are rewritten to the
+    CURRENT job's numbering -- `run_extraction`'s resume lookup stays keyed
+    by `(bag, slice)`, unchanged; only how that ledger gets pre-populated is
+    new. A prior record carrying no `members_key` (written before this
+    issue) is simply never a match, the same "no reusable state" fallback
+    every other guard in this module takes."""
+    if not prior_reads_path.is_file():
+        return
+    prior_records = load_checkpoint_records(prior_reads_path, CorruptReadsLedgerError)
+    prior_by_key = {
+        record["members_key"]: record for record in prior_records if record.get("members_key")
+    }
+    if not prior_by_key:
+        return
+
+    already_done = {
+        (record["bag"], record["slice"])
+        for record in load_checkpoint_records(reads_path, CorruptReadsLedgerError)
+    }
+    seeded = 0
+    for job in jobs:
+        if (job.bag, job.slice_index) in already_done:
+            continue
+        prior = prior_by_key.get(_members_key(job.members))
+        if prior is None:
+            continue
+        seeded_record = dict(prior)
+        seeded_record["bag"] = job.bag
+        seeded_record["slice"] = job.slice_index
+        append_checkpoint_record(reads_path, seeded_record)
+        seeded += 1
+    if seeded:
+        log(
+            f"map: seeded {seeded} read(s) from {prior_reads_path.parent.name}'s own "
+            "matching slice(s)"
+        )
+
+
 def run_map_build(
     *,
     answers_dir: Path | None = None,
@@ -913,7 +1239,20 @@ def run_map_build(
     timestamped sibling -- never deletes it, a paid ledger stays on disk --
     and re-asks every read under this pin. The founder's chosen escape
     hatch for a prompt change is one whole rebuild by hand; this is what
-    that rebuild fires."""
+    that rebuild fires.
+
+    **Issue #677: a corpus change that moves the pin does not re-bag or
+    re-ask everything.** When `map_dir` holds a completed prior pin whose
+    own persisted bag state (`bag_state.json`) matches this run's encoder,
+    `BAG_DISTANCE_THRESHOLD`, and installed scikit-learn version, this run
+    keeps every already-seen passage's own bag label and places a new one
+    by nearest centroid (`_incremental_bag_passages`) instead of re-fitting
+    the whole corpus; a bag centroid no new passage is nearest to is never
+    touched. `reads.jsonl` is then seeded, before any call is made, with
+    the prior pin's own read for every slice whose ordered claims match
+    exactly (`_seed_reads_from_prior_pin`), so `run_extraction`'s existing
+    `(bag, slice)` resume skips those with no model call. `force=True`
+    skips both -- a full re-bag is always available and never automatic."""
     started = time.monotonic()
     if answers_dir is None:
         answers_dir = _default_answers_dir(config_path)
@@ -939,9 +1278,34 @@ def run_map_build(
     passages = select_passages(answers_dir, trees_dir)
     log(f"passages {len(passages)} | authors {len({p.author for p in passages})}")
 
-    bags = bag_passages(passages, encode)
+    # Issue #677: `--force` always re-bags globally (the founder's chosen
+    # escape hatch), so a forced run never even looks for a prior pin.
+    prior_pin_dir = None if force else _prior_pin_dir(Path(map_dir), pin)
+    prior_bag_state = (
+        _load_json_or_none(_bag_state_path(prior_pin_dir)) if prior_pin_dir is not None else None
+    )
+    if prior_bag_state is not None and not _bag_state_reusable(prior_bag_state):
+        log(
+            f"map: prior bag state at {prior_pin_dir} does not match this run's "
+            "encoder/threshold/library version -- falling back to a full re-bag"
+        )
+        prior_bag_state = None
+
+    if prior_bag_state is not None:
+        bags, centroids, new_count = _incremental_bag_passages(passages, encode, prior_bag_state)
+        log(
+            f"bags {len(bags)} (incremental against {prior_pin_dir.name}: "
+            f"{new_count} new passage(s) placed, {len(passages) - new_count} kept "
+            "their prior bag)"
+        )
+    else:
+        bags, centroids = _bag_passages_with_centroids(passages, encode)
+        log(f"bags {len(bags)} (full re-bag)")
+
+    _write_bag_state(_bag_state_path(outdir), bags, centroids)
+
     jobs = build_jobs(bags)
-    log(f"bags {len(bags)} | reads {len(jobs)} (every passage shown once)")
+    log(f"reads {len(jobs)} (every passage shown once)")
 
     if client is None:
         client = get_client(config_path=config_path)
@@ -955,6 +1319,35 @@ def run_map_build(
             f"--force: set aside {len(prior)} prior read(s) to {aside_path.name}; "
             f"re-asking all {len(jobs)} read(s) under this pin"
         )
+    elif prior_pin_dir is not None:
+        _seed_reads_from_prior_pin(jobs, reads_path, prior_pin_dir / "reads.jsonl", log)
+
+    # The four #677 counters: computed from the ledger's own state right
+    # before `run_extraction` spends a single call, so "reused" always means
+    # "already on disk, whether by this pin's own resume or by a prior
+    # pin's seeded match" and "asked" is exactly what `run_extraction`'s own
+    # `pending` list is about to work through.
+    already_on_disk = {
+        (record["bag"], record["slice"])
+        for record in load_checkpoint_records(reads_path, CorruptReadsLedgerError)
+    }
+    prior_source_ids: set[str] = set()
+    if prior_pin_dir is not None:
+        prior_manifest = _load_json_or_none(prior_pin_dir / "map.json")
+        if prior_manifest is not None:
+            prior_source_ids = set(prior_manifest.get("source_ids", []))
+    units_total = len(jobs)
+    units_reused = sum(1 for job in jobs if (job.bag, job.slice_index) in already_on_disk)
+    units_asked_touching_new = sum(
+        1
+        for job in jobs
+        if (job.bag, job.slice_index) not in already_on_disk
+        and (
+            not prior_source_ids
+            or any(member.source_id not in prior_source_ids for member in job.members)
+        )
+    )
+
     reads = run_extraction(jobs, client=client, reads_path=reads_path, workers=workers, log=log)
 
     raw_positions = [position for read in reads for position in read["positions"]]
@@ -1050,10 +1443,29 @@ def run_map_build(
 
     manifest = {
         "corpus_pin": pin,
+        # Issue #677: which sources this pin's own passages came from --
+        # what a LATER pin reads back (`prior_source_ids` above) to decide
+        # whether an asked read is "touching new" material or just a
+        # re-cut slice of books already seen.
+        "source_ids": sorted({passage.source_id for passage in passages}),
         "counts": {
             "passages_selected": len(passages),
             "bags": len(bags),
             "reads": len(jobs),
+            # Issue #677: how much of this run's own reads work was
+            # actually new. `units_total` is `reads` again, kept alongside
+            # it under the name the issue's own acceptance bar names;
+            # `units_reused` is how many needed no model call this run
+            # (already on disk, whether by this pin's own resume or a
+            # prior pin's seeded match), `units_asked` is what
+            # `run_extraction` actually had to call the model for, and
+            # `units_asked_touching_new` is the subset of those touching a
+            # source absent from the previous pin's own manifest (or every
+            # asked read, when there is no previous pin to compare against).
+            "units_total": units_total,
+            "units_reused": units_reused,
+            "units_asked": units_total - units_reused,
+            "units_asked_touching_new": units_asked_touching_new,
             "raw_positions": len(raw_positions),
             "merged_positions": len(stamped),
             "passages_placed": placed,
