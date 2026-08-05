@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import axial.artifacts as artifacts_mod
 import axial.chunk as chunk_mod
 import axial.envelope as envelope_mod
 import axial.extract as extract_mod
@@ -20,6 +21,7 @@ from axial.envelope import compute_source_id
 from axial.run import FAIL_STATUS, OK_STATUS, RunSummary, _append_ledger_row
 from axial.sources import (
     CHANGED,
+    DEFAULT_DONE_PASS,
     DEFAULT_INGEST_PASSES,
     DONE,
     NEW,
@@ -65,6 +67,7 @@ def _isolate_artifact_dirs(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(envelope_mod, "ENVELOPES_DIR", tmp_path / "envelopes")
     monkeypatch.setattr(chunk_mod, "CHUNKS_DIR", tmp_path / "chunks")
     monkeypatch.setattr(interrogate_mod, "ANSWERS_DIR", tmp_path / "answers")
+    monkeypatch.setattr(artifacts_mod, "ARTIFACTS_DIR", tmp_path / "artifacts")
 
 
 def _write_artifacts(tmp_path: Path, source_id: str, *, skip: tuple[str, ...] = ()) -> None:
@@ -76,6 +79,7 @@ def _write_artifacts(tmp_path: Path, source_id: str, *, skip: tuple[str, ...] = 
         "envelope": tmp_path / "envelopes" / f"{source_id}.json",
         "chunks": tmp_path / "chunks" / f"{source_id}.jsonl",
         "answers": tmp_path / "answers" / f"{source_id}.jsonl",
+        "artifacts": tmp_path / "artifacts" / f"{source_id}.jsonl",
     }
     for name, path in paths.items():
         if name in skip:
@@ -117,7 +121,7 @@ def test_scan_local_ok_ledger_row_for_current_bytes_is_done(tmp_path):
     path = _write_source(sources_dir, "alpha.pdf")
     source_id = compute_source_id(path)
     ledger_path = tmp_path / "ledger.tsv"
-    _append_ledger_row(ledger_path, _ledger_row("interrogate", path, source_id, OK_STATUS))
+    _append_ledger_row(ledger_path, _ledger_row(DEFAULT_DONE_PASS, path, source_id, OK_STATUS))
 
     records = scan_local(sources_dir, ledger_path)
 
@@ -129,7 +133,7 @@ def test_scan_local_edited_file_with_stale_ledger_row_is_changed(tmp_path):
     path = _write_source(sources_dir, "alpha.pdf", content=b"original bytes")
     stale_id = compute_source_id(path)
     ledger_path = tmp_path / "ledger.tsv"
-    _append_ledger_row(ledger_path, _ledger_row("interrogate", path, stale_id, OK_STATUS))
+    _append_ledger_row(ledger_path, _ledger_row(DEFAULT_DONE_PASS, path, stale_id, OK_STATUS))
 
     # Re-save with different content -- source_id changes, the ledger row
     # for this path now names a different source_id.
@@ -149,7 +153,7 @@ def test_scan_local_prior_fail_under_current_bytes_stays_new_not_rejected(tmp_pa
     source_id = compute_source_id(path)
     ledger_path = tmp_path / "ledger.tsv"
     _append_ledger_row(
-        ledger_path, _ledger_row("interrogate", path, source_id, FAIL_STATUS, "boom")
+        ledger_path, _ledger_row(DEFAULT_DONE_PASS, path, source_id, FAIL_STATUS, "boom")
     )
 
     records = scan_local(sources_dir, ledger_path)
@@ -162,7 +166,7 @@ def test_scan_local_re_running_immediately_reports_all_done(tmp_path):
     path = _write_source(sources_dir, "alpha.pdf")
     source_id = compute_source_id(path)
     ledger_path = tmp_path / "ledger.tsv"
-    _append_ledger_row(ledger_path, _ledger_row("interrogate", path, source_id, OK_STATUS))
+    _append_ledger_row(ledger_path, _ledger_row(DEFAULT_DONE_PASS, path, source_id, OK_STATUS))
 
     first = scan_local(sources_dir, ledger_path)
     second = scan_local(sources_dir, ledger_path)
@@ -178,7 +182,7 @@ def test_scan_local_reports_new_changed_done_and_rejected_together(tmp_path):
     ledger_path = tmp_path / "ledger.tsv"
     _append_ledger_row(
         ledger_path,
-        _ledger_row("interrogate", done_path, compute_source_id(done_path), OK_STATUS),
+        _ledger_row(DEFAULT_DONE_PASS, done_path, compute_source_id(done_path), OK_STATUS),
     )
 
     records = {record.name: record for record in scan_local(sources_dir, ledger_path)}
@@ -268,7 +272,7 @@ def test_scan_local_ledger_ok_row_skips_artifact_checks_entirely(tmp_path, monke
     path = _write_source(sources_dir, "alpha.pdf")
     source_id = compute_source_id(path)
     ledger_path = tmp_path / "ledger.tsv"
-    _append_ledger_row(ledger_path, _ledger_row("interrogate", path, source_id, OK_STATUS))
+    _append_ledger_row(ledger_path, _ledger_row(DEFAULT_DONE_PASS, path, source_id, OK_STATUS))
 
     def _boom(*args, **kwargs):
         raise AssertionError("artifact stats must not run when the ledger already agrees")
@@ -531,3 +535,33 @@ def test_main_sources_drive_backend_halts_on_missing_secrets(monkeypatch, capsys
     assert drive_calls == []
     captured = capsys.readouterr()
     assert "drive" in (captured.out + captured.err).lower()
+
+
+def test_a_source_without_its_artifact_record_is_partial_not_done(tmp_path, monkeypatch):
+    """Issue #623: `artifacts` was registered and alive but was not in
+    `DEFAULT_INGEST_PASSES`, so `axial sources` reported a source `done` that
+    had never had the pass run. Three books were ingested that way and
+    materialize reported `artifact_sources: 31` against 34 sources -- their
+    tables and figures were simply absent while every other book had them."""
+    _isolate_artifact_dirs(monkeypatch, tmp_path)
+    sources_dir = tmp_path / "sources"
+    source_path = _write_source(sources_dir, "alpha.pdf")
+    source_id = compute_source_id(source_path)
+    _write_artifacts(tmp_path, source_id, skip=("artifacts",))
+
+    records = scan_local(
+        sources_dir, tmp_path / "ledger.tsv", config_path=tmp_path / "no-such-config.yaml"
+    )
+
+    assert records[0].status == PARTIAL
+    assert "artifacts" in records[0].reason
+
+
+def test_the_ingest_chain_runs_artifacts_and_the_done_pass_names_its_end():
+    """The chain and the done-pass have to name the same finish line: the
+    ledger fast path in `scan_local` trusts an OK row for `DEFAULT_DONE_PASS`
+    and skips the artifact checks entirely, so a done-pass naming anything
+    earlier than the chain's last pass reports `done` on a half-run source."""
+    assert DEFAULT_INGEST_PASSES == ("extract", "envelope", "chunk", "interrogate", "artifacts")
+    assert DEFAULT_DONE_PASS == DEFAULT_INGEST_PASSES[-1]
+    assert "vault-write" not in DEFAULT_INGEST_PASSES
