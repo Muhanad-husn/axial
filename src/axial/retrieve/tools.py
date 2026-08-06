@@ -661,9 +661,9 @@ def _positions_on(
 
     **`axial.argmap.ask` is imported here, not at module scope**: it pulls
     `axial.argmap.build`, which pulls the whole ingestion stack
-    (`axial.extract`, `axial.intake`) and `axial.eval.corpus_pin`'s openpyxl,
-    taking this module's own warm import from 0.28s to ~1.5s for a build-side
-    dependency no tool here uses. The map's positions are plain JSON."""
+    (`axial.extract`, `axial.intake`), taking this module's own warm import
+    from ~0.27s to ~1.1s for a build-side dependency no tool here uses. The
+    map's positions are plain JSON."""
     from axial.argmap.ask import positions_on
 
     positions, ids, total, resolution = positions_on(

@@ -275,10 +275,10 @@ def _slugify(label: str) -> str:
 
 
 # The back-matter vocabulary and classifier (issue #113) are promoted to
-# `axial.back_matter` (issue #661), which `axial.gold`'s broader evidence-
-# frame rule and the store's retrieval filter also import -- `_is_back_matter`
-# is re-exported here under its original name so `axial.artifacts`'s existing
-# import and this module's own call sites are unaffected.
+# `axial.back_matter` (issue #661), which the store's retrieval filter also
+# imports -- `_is_back_matter` is re-exported here under its original name
+# so `axial.artifacts`'s existing import and this module's own call sites
+# are unaffected.
 
 
 def _section_nodes(tree: dict) -> list[dict]:

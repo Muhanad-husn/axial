@@ -45,31 +45,26 @@ never makes a merge decision itself:
      record, 52 of 358 locator-shaped surfaces, never the 306 that are
      already single-source.
   2. **The similarity view (LLM-free).** Every distinct surface form is
-     embedded with the same local, deterministic, CPU sentence-transformer
-     `axial.distill.embed` uses (`DEFAULT_MODEL_NAME`, lazy-imported --
-     mirrors that module's own lazy-import pattern, never `run_embed`/
-     `_flatten_metadata`, which are chunk-shaped and keyed on the closed tag
-     axes slice 03 retired), then clustered with HDBSCAN
-     (`axial.distill.readiness`'s own PCA + StandardScaler + HDBSCAN
-     pipeline, reused as a pattern, not called: that module clusters chunk
-     embeddings for a different question, "is this tag value ready to
-     graduate off the LLM"). PCA first is not optional at this embedding
-     dimensionality (384): raw-space HDBSCAN measured directly against
-     20,000 real surface forms from this corpus took 316s; PCA(93, the same
-     component count `axial.distill.readiness` measured against this same
-     embedding model's chunk-embedding spectrum) then HDBSCAN cuts that to
-     49s -- roughly 6x, from the same curse-of-dimensionality cause that
-     module's own docstring names. `min_cluster_size=2`/`min_samples=1` --
-     the loosest values HDBSCAN accepts -- rather than that module's tuned
-     15/5: D10 says start loose, and a merge-hint viewing aid must not
-     itself discard a real 2-member alias pair as noise before the founder
-     ever sees it.
+     embedded with a local, deterministic, CPU sentence-transformer
+     (`DEFAULT_MODEL_NAME`, lazy-imported so importing this module never
+     requires the optional embedding dependency until it is actually used),
+     then clustered with HDBSCAN over an L2-normalise -> standardise -> PCA
+     reduction (`_fit_reduce_vectors`/`_fit_cluster_reduced` below). PCA first
+     is not optional at this embedding dimensionality (384): raw-space
+     HDBSCAN measured directly against 20,000 real surface forms from this
+     corpus took 316s; PCA(93, the Kaiser-criterion component count measured
+     against this same embedding model's spectrum -- see `DEFAULT_PCA_
+     COMPONENTS` below) then HDBSCAN cuts that to 49s -- roughly 6x, the
+     curse-of-dimensionality cost PCA is there to cut. `min_cluster_size=2`/
+     `min_samples=1` -- the loosest values HDBSCAN accepts: D10 says start
+     loose, and a merge-hint viewing aid must not itself discard a real
+     2-member alias pair as noise before the founder ever sees it.
   3. Both artifacts persist under `data/names/` (§6's directory layout,
      `data/names/ # inventory, similarity view, alias map, index`):
      `inventory.jsonl` (one JSON object per surface form, the exact §7.16
      shape) and `embeddings.lance` (vectors + cluster labels, LanceDB,
-     `axial.distill.embed`'s own write convention: `mode="overwrite"`,
-     embedded/local/no server) plus a small manifest.
+     written with `mode="overwrite"`, embedded/local/no server) plus a
+     small manifest.
   4. `examine_names`/`format_names_report` read the persisted vectors back
      (zero model/embedding calls, mirroring `axial.chunk.examine_chunks`'s
      own read-only-over-persisted-data shape) and RE-CLUSTER them at a
@@ -95,8 +90,7 @@ never makes a merge decision itself:
      -- the founder's own dial, not a heuristic's magic number.
 
 Out of scope (this slice only): making any merge decision (05, the alias
-map), any LLM call, and touching `axial.distill.embed`'s existing
-chunk-embedding behaviour, which this module never imports from.
+map), and any LLM call.
 
 **Fix (2026-07-29): `is_numeral_only_surface` gates locator residue -- a
 bare page number or a plain century -- out of every model call, in both
@@ -124,10 +118,10 @@ from axial.extract import TREES_DIR
 from axial.interrogate import _default_answers_dir, is_abstention
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 
-# The same local, deterministic, CPU sentence-transformer `axial.distill.
-# embed` embeds vault chunks with (DEC-35) -- one shared default so a name's
-# vector and a chunk's vector live in the same embedding space, should a
-# later slice ever want to compare them.
+# A local, deterministic, CPU sentence-transformer (DEC-35's choice for this
+# pipeline): light enough to embed 78,115 real surface forms with no GPU and
+# no paid API call, and small enough (384-dim) that PCA keeps HDBSCAN fast
+# (see the module docstring's 316s-vs-49s finding).
 DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
 # §6's directory layout: `data/names/ # inventory, similarity view, alias
@@ -148,23 +142,23 @@ DEFAULT_FIT_PATH = DEFAULT_NAMES_DATA_DIR / "fit.joblib"
 TABLE_NAME = "names"
 
 # HDBSCAN's own noise label (never cluster 0) -- named so no caller has to
-# remember the magic number (mirrors `axial.distill.readiness.NOISE_LABEL`).
+# remember the magic number.
 NOISE_LABEL = -1
 
 # The loosest values HDBSCAN accepts (D10: "start loose, tighten by
-# inspection") -- not `axial.distill.readiness`'s tuned 15/5, which answers a
-# different question (tag-value readiness) over chunk embeddings, not
-# name-alias candidates over name embeddings.
+# inspection") -- deliberately not a tighter tuned pair: this is a
+# merge-hint viewing aid, not a decision, so it must not itself discard a
+# real 2-member alias pair as noise before the founder ever sees it.
 DEFAULT_MIN_CLUSTER_SIZE = 2
 DEFAULT_MIN_SAMPLES = 1
 
-# Reused from `axial.distill.readiness.DEFAULT_PCA_COMPONENTS`: measured
-# against the real 18,410-chunk corpus's own 384-dim embedding spectrum
-# (Kaiser criterion), for the same embedding model this module uses. Not
-# re-derived for the name-surface-form distribution specifically (a
-# different, shorter-text population) -- reusing an already-measured
-# reduction for the same model beats leaving PCA off entirely (see module
-# docstring's 316s-vs-49s finding) or inventing a second untested constant.
+# Measured (Kaiser criterion) against the real 18,410-chunk corpus's own
+# 384-dim embedding spectrum, for the same embedding model this module uses
+# (`DEFAULT_MODEL_NAME`). Not re-derived for the name-surface-form
+# distribution specifically (a different, shorter-text population) --
+# reusing an already-measured reduction for the same model beats leaving PCA
+# off entirely (see module docstring's 316s-vs-49s finding) or inventing a
+# second untested constant.
 DEFAULT_PCA_COMPONENTS = 93
 
 # `examine_names`'s default tightness sweep (founder-requested, P0-12):
@@ -476,8 +470,7 @@ class NoAnswersToEmbedError(NamesError):
     """Raised when `answers_dir` holds no interrogation answer records, or
     none of them name anything -- running this pass before slice 02
     (`axial interrogate`) is a misconfigured invocation, not a valid empty
-    inventory (mirrors `axial.distill.embed.NoChunksToEmbedError`'s own
-    loud-failure convention)."""
+    inventory: a loud failure, not a silent empty result."""
 
     def __init__(self, answers_dir: Path):
         self.answers_dir = answers_dir
@@ -718,9 +711,8 @@ def iter_name_occurrences(
 
 def load_answer_records(answers_dir: Path) -> list[dict[str, Any]]:
     """Every record (answer, failure, or skip) across every
-    `<source_id>.jsonl` under `answers_dir`, sorted by filename -- the same
-    "filesystem order never leaks into the result" determinism convention
-    `axial.distill.embed._load_chunk_records` uses. Blank lines are
+    `<source_id>.jsonl` under `answers_dir`, sorted by filename so
+    filesystem order never leaks into the result. Blank lines are
     tolerated (mirrors the checkpoint reader's own tolerance)."""
     if not answers_dir.is_dir():
         return []
@@ -878,15 +870,16 @@ def write_inventory(entries: list[InventoryEntry], path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Embedding (the `axial.distill.embed` pattern, not its chunk-shaped code)
+# Embedding
 # ---------------------------------------------------------------------------
 
 
 def _default_encoder(model_name: str) -> Encoder:
     """Lazily build the real sentence-transformer encoder (imports
-    `sentence_transformers` here, never at module level, mirroring
-    `axial.distill.embed._default_encoder`). CPU-only, eval-mode inference:
-    deterministic given the same model checkpoint and input text."""
+    `sentence_transformers` here, never at module level, so importing this
+    module never requires the optional embedding dependency until it is
+    actually used). CPU-only, eval-mode inference: deterministic given the
+    same model checkpoint and input text."""
     from sentence_transformers import SentenceTransformer
 
     model = SentenceTransformer(model_name)
@@ -899,13 +892,13 @@ def _default_encoder(model_name: str) -> Encoder:
 
 def _fit_reduce_vectors(vectors: list[list[float]], pca_components: int = DEFAULT_PCA_COMPONENTS):
     """L2-normalise -> standardise -> PCA, the shared, tightness-independent
-    half of the pipeline (reusing `axial.distill.readiness`'s own measured
-    shape -- see module docstring for the real timing this step buys on this
-    corpus). Computed ONCE per embedding set: a tightness sweep clusters the
-    same reduced array at several `min_cluster_size`/`min_samples` settings
-    rather than re-running this reduction (let alone re-embedding, which the
-    real 835s-vs-~50s gap between embedding and clustering makes the one
-    cost a sweep must never repeat) once per candidate.
+    half of the pipeline (see module docstring for the real timing this step
+    buys on this corpus). Computed ONCE per embedding set: a tightness sweep
+    clusters the same reduced array at several `min_cluster_size`/
+    `min_samples` settings rather than re-running this reduction (let alone
+    re-embedding, which the real 835s-vs-~50s gap between embedding and
+    clustering makes the one cost a sweep must never repeat) once per
+    candidate.
 
     Returns the reduced array **and the fitted `StandardScaler`/`PCA`**
     (issue #677): a later incremental build transforms a new vector through
@@ -956,14 +949,13 @@ def _fit_cluster_reduced(
     """Fit HDBSCAN over an already-PCA-reduced array and return the fitted
     clusterer itself (not just its labels) -- the tightness-dependent half
     of the pipeline, cheap enough to call once per sweep candidate.
-    `cluster_selection_method="leaf"`/`allow_single_cluster=True`:
-    `axial.distill.readiness` measured `eom` (HDBSCAN's own implicit
-    default) collapsing the whole corpus to one blob regardless of PCA dims,
-    for this same embedding model family; `leaf` is reused for the same
-    reason. `prediction_data=True` (issue #677) is what lets a later
-    incremental build call `hdbscan.approximate_predict` against this fit
-    without re-fitting; `False` by default since most callers only need the
-    labels."""
+    `cluster_selection_method="leaf"`/`allow_single_cluster=True`: measured
+    directly against this same embedding model family, `eom` (HDBSCAN's own
+    implicit default) collapses the whole corpus to one blob regardless of
+    PCA dims; `leaf` avoids that. `prediction_data=True` (issue #677) is
+    what lets a later incremental build call `hdbscan.approximate_predict`
+    against this fit without re-fitting; `False` by default since most
+    callers only need the labels."""
     import hdbscan
 
     clusterer = hdbscan.HDBSCAN(
@@ -1033,9 +1025,9 @@ def _relabel_from_tree(reduced, single_linkage_tree_numpy, min_cluster_size: int
     `HDBSCAN.fit_predict` calls internally after building the tree) rather
     than reimplementing tree condensation -- the public API has no
     "relabel only" entry point, and hand-rolling one would duplicate a
-    correctness-critical piece of the library `axial.distill.readiness`
-    already trusts. Verified directly (this module's own inner unit tests)
-    to reproduce byte-for-byte the same partition a fresh fit at the same
+    correctness-critical piece of the library this module already trusts
+    elsewhere. Verified directly (this module's own inner unit tests) to
+    reproduce byte-for-byte the same partition a fresh fit at the same
     `min_cluster_size`/`min_samples` produces."""
     from hdbscan.hdbscan_ import _tree_to_labels
 
@@ -1237,8 +1229,7 @@ def run_names(
     `encoder`/`cluster_fn`, when given, replace the default sentence-
     transformer/HDBSCAN pipeline -- the seam this module's own inner unit
     tests use to exercise the collect/persist path without a real model or
-    clustering run, mirroring `axial.distill.embed`'s own `encoder`
-    injection seam. Passing `cluster_fn` always takes the full-fit path (an
+    clustering run. Passing `cluster_fn` always takes the full-fit path (an
     injected callable has no fitted transform chain to persist or predict
     against) and never writes a fit artifact.
 

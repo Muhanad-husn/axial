@@ -45,16 +45,9 @@ from axial.chunk import (
     run_chunk_recursive,
 )
 from axial.codebook import CodebookError, load_codebook
-from axial.distill.classify import AXES as DISTILL_CLASSIFY_AXES
-from axial.distill.classify import ClassifyError, run_classify
-from axial.distill.classify_embedding import AXES as DISTILL_CLASSIFY_EMBEDDING_AXES
-from axial.distill.classify_embedding import ClassifyEmbeddingError, run_classify_embedding
-from axial.distill.embed import EmbedError, run_embed
-from axial.distill.readiness import ReadinessError, run_readiness
 from axial.drive import DEFAULT_SECRETS_PATH as DRIVE_SECRETS_PATH
 from axial.drive import DriveSecretsError, _load_drive_secrets, run_drive_ingest, run_drive_sources
 from axial.envelope import EnvelopeError, MissingSourceError, compute_source_id, run_envelope
-from axial.eval import EvalError, run_eval
 from axial.interrogate import DEFAULT_WORKERS as INTERROGATE_DEFAULT_WORKERS
 from axial.interrogate import InterrogateError, run_interrogate
 from axial.position_backfill import POSITION_BACKFILL_PASS_NAME, run_position_backfill
@@ -79,15 +72,6 @@ from axial.gates import (
     resolve_trusted,
     run_gate,
     write_report,
-)
-from axial.gold import (
-    DEFAULT_MAX_SIZE,
-    DEFAULT_MIN_SIZE,
-    DEFAULT_SEED,
-    GoldError,
-    run_gold_deliver,
-    run_gold_sample,
-    run_gold_sheet,
 )
 from axial.ingest import run_ingest
 from axial.intake import IntakeError, intake
@@ -738,61 +722,9 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    gold_parser = subparsers.add_parser("gold", help="gold-set (Academic labeling) operations")
-    gold_subparsers = gold_parser.add_subparsers(dest="gold_command")
-
-    gold_sample_parser = gold_subparsers.add_parser(
-        "sample",
-        help=(
-            "select a stratified set of tagged prose chunks from the vault and "
-            "write one chunk record per selection to data/gold/chunks/"
-        ),
-    )
-    gold_sample_parser.add_argument(
-        "--min-size",
-        type=int,
-        default=DEFAULT_MIN_SIZE,
-        help=f"target lower bound of the sample band (default: {DEFAULT_MIN_SIZE})",
-    )
-    gold_sample_parser.add_argument(
-        "--max-size",
-        type=int,
-        default=DEFAULT_MAX_SIZE,
-        help=f"target upper bound of the sample band (default: {DEFAULT_MAX_SIZE})",
-    )
-    gold_sample_parser.add_argument(
-        "--seed",
-        type=int,
-        default=DEFAULT_SEED,
-        help=f"seed for deterministic selection (default: {DEFAULT_SEED})",
-    )
-
-    gold_subparsers.add_parser(
-        "sheet",
-        help=(
-            "render the sampled chunk records under data/gold/chunks/ into "
-            "data/gold/label_sheet.xlsx with codebook dropdowns"
-        ),
-    )
-
-    gold_subparsers.add_parser(
-        "deliver",
-        help=(
-            "package data/gold/label_sheet.xlsx into a dated handoff bundle "
-            "under data/gold/delivery/<date>/ for the Academic (sheet copy, "
-            "README, and manifest.json)"
-        ),
-    )
-
     eval_parser = subparsers.add_parser(
         "eval",
-        help=(
-            "score the Academic's returned label_sheet.xlsx under "
-            "data/gold/labels/ against the tagger's own chunk records, "
-            "writing data/gold/labels/eval_report.json (bare `eval`); or "
-            "run the argument-coherence eval track (`eval coherence`, "
-            "specs/PHASE-C.md §10.2)"
-        ),
+        help=("run the argument-coherence eval track (`eval coherence`, specs/PHASE-C.md §10.2)"),
     )
     eval_subparsers = eval_parser.add_subparsers(dest="eval_command")
 
@@ -1334,48 +1266,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pin_write_parser.add_argument(
         "name", help="pin name, e.g. 'baseline' -> evals/corpus_pin/baseline.json"
-    )
-
-    distill_parser = subparsers.add_parser(
-        "distill", help="stage-5 distillation-eval operations (DEC-35, issue #296)"
-    )
-    distill_subparsers = distill_parser.add_subparsers(dest="distill_command")
-
-    distill_subparsers.add_parser(
-        "embed",
-        help=(
-            "embed every vault prose chunk once via a local sentence-transformer "
-            "and persist the vectors + filterable metadata (source_id, tag axes) "
-            "in a LanceDB store (data/distill/embeddings.lance), recording the "
-            "corpus-pin id/hash this pass ran against (data/distill/embedding_manifest.json)"
-        ),
-    )
-
-    distill_subparsers.add_parser(
-        "readiness-map",
-        help=(
-            "cluster every persisted chunk embedding (PCA + HDBSCAN, DEC-35, zero "
-            "LLM spend) and emit the readiness map: per tag, whether it sits in a "
-            "tight cluster or smears as noise (HDBSCAN's own -1 label, never "
-            "cluster 0, is the LLM-routed tail) -- data/distill/readiness_manifest.json"
-        ),
-    )
-
-    classify_parser = distill_subparsers.add_parser(
-        "classify",
-        help=(
-            "stage-5d classifier eval: TF-IDF + LogisticRegression for claim_type/"
-            "theory_school (DEC-37/38), LogisticRegression on dense embeddings for "
-            "field (DEC-39) -- trains on the corpus's existing tags (gold chunks "
-            "excluded), scores against the independent gold sheet at a confidence-"
-            "threshold sweep -- data/distill/classify_<axis>_manifest.json. Eval "
-            "artifact only; never wired into the production tag pass."
-        ),
-    )
-    classify_parser.add_argument(
-        "axis",
-        choices=list(DISTILL_CLASSIFY_AXES) + list(DISTILL_CLASSIFY_EMBEDDING_AXES),
-        help="the tag axis to train a classifier for",
     )
 
     panel_parser = subparsers.add_parser(
@@ -1931,39 +1821,6 @@ def _artifacts(source_path: str) -> int:
     return 0
 
 
-def _gold_sample(min_size: int, max_size: int, seed: int) -> int:
-    try:
-        written = run_gold_sample(min_size=min_size, max_size=max_size, seed=seed)
-    except GoldError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    print(json.dumps([str(path) for path in written]))
-    return 0
-
-
-def _gold_sheet() -> int:
-    try:
-        path = run_gold_sheet()
-    except GoldError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    print(json.dumps(str(path)))
-    return 0
-
-
-def _gold_deliver() -> int:
-    try:
-        delivery_dir = run_gold_deliver()
-    except GoldError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    print(json.dumps(str(delivery_dir)))
-    return 0
-
-
 def _gather_eval_sheet(sample_size: int, seed: int) -> int:
     try:
         path = run_gather_eval_sheet(sample_size=sample_size, seed=seed)
@@ -2012,56 +1869,6 @@ def _gather_eval_score(
         )
 
     print(json.dumps(result, indent=2, sort_keys=True))
-    return 0
-
-
-def _eval(
-    *,
-    root: Path | None = None,
-    clock: Callable[[], str] | None = None,
-) -> int:
-    """Score the gold set, wrapped in a run-logging context (issue #270
-    slice 02). Two deliberate departures from the other three passes, both
-    because `run_eval` genuinely differs from them, not by oversight:
-
-    - `model=None` always -- `run_eval` is an offline join over two on-disk
-      inputs (the tagger's own sampled chunk records and the Academic's
-      returned answer key) and makes no LLM call at all (see
-      `axial.eval.run_eval`'s own docstring: "Offline and deterministic: no
-      LLM call, no network"). This mirrors slice 01's own `extract`
-      precedent for a model-free pass (`plans/run-logging/README.md`: "The
-      model field is nullable ... that is a feature, not a gap").
-    - One record per invocation, `source_id=""` -- `axial eval` takes no
-      source_path (unlike extract/envelope/tag); it scores the WHOLE gold
-      set in one atomic pass, so "one record per source" does not apply.
-      `source_id=""` mirrors `_safe_source_id`'s own no-source-resolved
-      fallback."""
-    with run_context("eval", root=root, clock=clock) as run:
-        start = time.monotonic()
-        try:
-            path = run_eval()
-        except (EvalError, GoldError, PolityCanonicalError) as exc:
-            run.record(
-                source_id="",
-                pass_name="eval",
-                model=None,
-                status="error",
-                duration_sec=time.monotonic() - start,
-                error=str(exc),
-            )
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
-
-        run.record(
-            source_id="",
-            pass_name="eval",
-            model=None,
-            status="ok",
-            duration_sec=time.monotonic() - start,
-            error=None,
-        )
-
-    print(json.dumps(str(path)))
     return 0
 
 
@@ -2946,34 +2753,6 @@ def _pin_write(name: str) -> int:
     return 0
 
 
-def _distill_embed() -> int:
-    try:
-        result = run_embed()
-    except EmbedError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    print(f"chunk_count: {result.chunk_count}")
-    print(f"embeddings_dir: {result.embeddings_dir}")
-    print(f"manifest_path: {result.manifest_path}")
-    return 0
-
-
-def _distill_readiness_map() -> int:
-    try:
-        result = run_readiness()
-    except ReadinessError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    print(f"chunk_count: {result.chunk_count}")
-    print(f"cluster_count: {result.cluster_count}")
-    print(f"noise_count: {result.noise_count}")
-    print(f"noise_fraction: {result.noise_fraction}")
-    print(f"manifest_path: {result.manifest_path}")
-    return 0
-
-
 def _names_build(min_cluster_size: int | None, min_samples: int | None, recluster: bool) -> int:
     kwargs: dict[str, Any] = {"recluster": recluster}
     if min_cluster_size is not None:
@@ -3341,26 +3120,6 @@ def _map_residue(*, workers: int = MAP_RESIDUE_DEFAULT_WORKERS) -> int:
     return 0
 
 
-def _distill_classify(axis: str) -> int:
-    try:
-        if axis in DISTILL_CLASSIFY_EMBEDDING_AXES:
-            result = run_classify_embedding(axis)
-        else:
-            result = run_classify(axis)
-    except (ClassifyError, ClassifyEmbeddingError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    print(f"axis: {result.axis}")
-    print(f"train_chunk_count: {result.train_chunk_count}")
-    print(f"dropped_classes: {result.dropped_classes}")
-    print(f"gold_chunk_count: {result.gold_chunk_count}")
-    print(f"full_coverage_accuracy: {result.full_coverage_accuracy}")
-    print(f"teacher_gold_agreement: {result.teacher_gold_agreement}")
-    print(f"manifest_path: {result.manifest_path}")
-    return 0
-
-
 def _eval_coherence(sample_path: str, *, reviewers: int, out_path: str | None) -> int:
     """The §10.2 coherence eval track: a committed sample spec in, a per-
     stratum report out. Offline instrument, same as `_panel_run` below:
@@ -3682,15 +3441,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "artifacts":
         return _artifacts(args.source_path)
 
-    if args.command == "gold" and args.gold_command == "sample":
-        return _gold_sample(args.min_size, args.max_size, args.seed)
-
-    if args.command == "gold" and args.gold_command == "sheet":
-        return _gold_sheet()
-
-    if args.command == "gold" and args.gold_command == "deliver":
-        return _gold_deliver()
-
     if args.command == "gather-eval" and args.gather_eval_command == "sheet":
         return _gather_eval_sheet(sample_size=args.sample_size, seed=args.seed)
 
@@ -3701,9 +3451,6 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             workers=args.workers,
         )
-
-    if args.command == "eval" and not getattr(args, "eval_command", None):
-        return _eval()
 
     if args.command == "eval" and args.eval_command == "coherence":
         return _eval_coherence(args.sample, reviewers=args.reviewers, out_path=args.out)
@@ -3769,15 +3516,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "pin" and args.pin_command == "write":
         return _pin_write(args.name)
-
-    if args.command == "distill" and args.distill_command == "embed":
-        return _distill_embed()
-
-    if args.command == "distill" and args.distill_command == "readiness-map":
-        return _distill_readiness_map()
-
-    if args.command == "distill" and args.distill_command == "classify":
-        return _distill_classify(args.axis)
 
     if args.command == "panel" and args.panel_command == "run":
         return _panel_run(args.records, args.control_record, args.reviewers, args.out)
