@@ -4,6 +4,8 @@ Nine drawings of one pipeline. The first shows the whole of it; the rest open ea
 a model is handed a judgment, and show the deterministic code standing on both sides of
 it.
 
+Rendered: [muhanad-husn.github.io/axial](https://muhanad-husn.github.io/axial/) (opens on this plate set).
+
 These are a **reading of the specs, not a second source of truth.** Where a diagram and a
 spec disagree, the spec is right: [`specs/CHARTER.md`](../specs/CHARTER.md) governs
 behaviour product-wide, [`specs/PRODUCT.md`](../specs/PRODUCT.md) is Phase A,

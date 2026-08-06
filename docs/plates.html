@@ -1,0 +1,1015 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Axial — the system, and where the model actually decides</title>
+<base target="_parent">
+</head>
+<body>
+
+<style>
+  :root {
+    --paper:      #F0F1EC;
+    --paper-2:    #E8EAE3;
+    --ink:        #1A1C19;
+    --muted:      #5D625A;
+    --rule:       #D2D5CA;
+    --rule-2:     #B9BDB1;
+    --c-code:     #14646A;
+    --c-model:    #7C3A5E;
+    --c-gate:     #8A6B15;
+    --c-line:     #85897F;
+    --fill-code:  rgba(20,100,106,0.07);
+    --fill-model: rgba(124,58,94,0.08);
+    --fill-slab:  rgba(120,124,112,0.09);
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", "Hoefler Text", Georgia, serif;
+    --mono: "Iosevka", "SF Mono", "Cascadia Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:      #14171A;
+      --paper-2:    #1B1F22;
+      --ink:        #E6E7DF;
+      --muted:      #9AA096;
+      --rule:       #2B2F33;
+      --rule-2:     #3D4247;
+      --c-code:     #55BEC4;
+      --c-model:    #DE8FB5;
+      --c-gate:     #D9B551;
+      --c-line:     #7C827C;
+      --fill-code:  rgba(85,190,196,0.11);
+      --fill-model: rgba(222,143,181,0.11);
+      --fill-slab:  rgba(150,158,150,0.09);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:      #14171A;
+    --paper-2:    #1B1F22;
+    --ink:        #E6E7DF;
+    --muted:      #9AA096;
+    --rule:       #2B2F33;
+    --rule-2:     #3D4247;
+    --c-code:     #55BEC4;
+    --c-model:    #DE8FB5;
+    --c-gate:     #D9B551;
+    --c-line:     #7C827C;
+    --fill-code:  rgba(85,190,196,0.11);
+    --fill-model: rgba(222,143,181,0.11);
+    --fill-slab:  rgba(150,158,150,0.09);
+  }
+  :root[data-theme="light"] {
+    --paper:      #F0F1EC;
+    --paper-2:    #E8EAE3;
+    --ink:        #1A1C19;
+    --muted:      #5D625A;
+    --rule:       #D2D5CA;
+    --rule-2:     #B9BDB1;
+    --c-code:     #14646A;
+    --c-model:    #7C3A5E;
+    --c-gate:     #8A6B15;
+    --c-line:     #85897F;
+    --fill-code:  rgba(20,100,106,0.07);
+    --fill-model: rgba(124,58,94,0.08);
+    --fill-slab:  rgba(120,124,112,0.09);
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 17px;
+    line-height: 1.62;
+    margin: 0;
+    padding: 0 20px 120px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1020px; margin: 0 auto; }
+  .prose { max-width: 66ch; }
+
+  header.mast {
+    border-bottom: 1.5px solid var(--rule-2);
+    padding: 64px 0 28px;
+    margin-bottom: 44px;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 18px;
+  }
+  h1 {
+    font-family: var(--serif);
+    font-size: clamp(34px, 5.2vw, 52px);
+    line-height: 1.08;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    margin: 0 0 20px;
+    max-width: 20ch;
+  }
+  .standfirst { font-size: 19px; color: var(--muted); max-width: 60ch; margin: 0; }
+
+  h2 {
+    font-family: var(--serif);
+    font-size: 27px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    margin: 0 0 6px;
+  }
+  h2 .num {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    color: var(--c-gate);
+    display: block;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+  }
+  h3 {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+    margin: 0 0 14px;
+  }
+  p { margin: 0 0 16px; }
+  section { margin-bottom: 76px; }
+  .lede { margin-bottom: 26px; }
+  code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    background: var(--paper-2);
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+
+  figure {
+    margin: 0 0 20px;
+    border: 1px solid var(--rule);
+    background: var(--paper-2);
+    border-radius: 3px;
+    padding: 20px 18px 14px;
+    overflow-x: auto;
+  }
+  figure svg { display: block; width: 100%; min-width: 640px; height: auto; }
+  figcaption {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--muted);
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--rule);
+    max-width: 88ch;
+  }
+
+  svg text { font-family: var(--mono); fill: var(--ink); }
+  .n  { fill: var(--fill-code);  stroke: var(--c-code);  stroke-width: 1.6; }
+  .m  { fill: var(--fill-model); stroke: var(--c-model); stroke-width: 1.6; }
+  .g  { fill: none;              stroke: var(--c-gate);  stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .a  { fill: var(--fill-slab);  stroke: var(--rule-2);  stroke-width: 1.3; }
+  .grp{ fill: none;              stroke: var(--rule-2);  stroke-width: 1; stroke-dasharray: 2 3; }
+  .ln { stroke: var(--c-line); stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+  .lnd{ stroke: var(--c-line); stroke-width: 1.3; fill: none; stroke-dasharray: 4 4; marker-end: url(#ah); }
+  .lnp{ stroke: var(--c-line); stroke-width: 1.2; fill: none; }
+  .dot{ fill: var(--c-model); }
+  .t  { font-size: 12px; }
+  .tt { font-size: 11px; }
+  .ts { font-size: 10.5px; fill: var(--muted); }
+  .tk { font-size: 10.5px; letter-spacing: 0.13em; fill: var(--muted); }
+
+  .legend {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 14px 26px;
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--c-gate);
+    padding: 20px 22px;
+    margin-bottom: 60px;
+    background: var(--paper-2);
+    border-radius: 2px;
+  }
+  .key { display: flex; gap: 11px; align-items: flex-start; }
+  .key svg { flex: 0 0 auto; width: 34px; height: 22px; min-width: 0; margin-top: 2px; }
+  .key div { font-family: var(--mono); font-size: 11.5px; line-height: 1.5; }
+  .key b { display: block; font-weight: 600; letter-spacing: 0.04em; }
+  .key span { color: var(--muted); }
+
+  .notes { border-left: 2px solid var(--rule-2); padding-left: 18px; margin: 22px 0 0; max-width: 68ch; }
+  .notes p { font-size: 15.5px; color: var(--muted); margin-bottom: 10px; }
+  .notes p:last-child { margin-bottom: 0; }
+  .notes strong { color: var(--ink); font-weight: 600; }
+
+  a { color: var(--c-code); }
+  :focus-visible { outline: 2px solid var(--c-gate); outline-offset: 3px; }
+</style>
+
+<svg width="0" height="0" aria-hidden="true" style="position:absolute">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--c-line)"></path>
+    </marker>
+  </defs>
+</svg>
+
+<div class="wrap">
+
+<header class="mast">
+  <p class="eyebrow">Axial · architecture plates · 2026-08-06</p>
+  <h1>The system, and where the model actually decides</h1>
+  <p class="standfirst">Nine drawings of one pipeline. The first shows the whole of it; the rest open each place a model is handed a judgment, and show the deterministic code standing on both sides of it.</p>
+</header>
+
+<div class="legend">
+  <div class="key">
+    <svg viewBox="0 0 34 22" aria-hidden="true"><rect class="n" x="1" y="1" width="32" height="20" rx="3"></rect></svg>
+    <div><b>Deterministic</b><span>Code. Zero model calls. Same input, same output.</span></div>
+  </div>
+  <div class="key">
+    <svg viewBox="0 0 34 22" aria-hidden="true"><rect class="m" x="1" y="1" width="32" height="20" rx="3"></rect><circle class="dot" cx="27" cy="6" r="3.2"></circle></svg>
+    <div><b>Model call</b><span>A judgment. The dot marks every one.</span></div>
+  </div>
+  <div class="key">
+    <svg viewBox="0 0 34 22" aria-hidden="true"><rect class="g" x="1" y="1" width="32" height="20" rx="3"></rect></svg>
+    <div><b>Gate</b><span>A blocking check the model cannot reach.</span></div>
+  </div>
+  <div class="key">
+    <svg viewBox="0 0 34 22" aria-hidden="true"><rect class="a" x="1" y="1" width="32" height="20" rx="3"></rect></svg>
+    <div><b>Artifact</b><span>Persisted on disk. Resumable, inspectable.</span></div>
+  </div>
+</div>
+
+
+<!-- ============ FIGURE 1 ============ -->
+<section>
+  <h2><span class="num">Plate I · the whole</span>One corpus, three phases, and the artifacts between them</h2>
+  <div class="prose lede">
+    <p>Phase A reads the books once and writes everything down. Phase B answers a question by walking what A wrote. Phase C assembles a paper out of B's answers. Nothing downstream ever reopens a source: every phase after extraction reads persisted artifacts.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 980 760" role="img" aria-label="Axial end to end: Google Drive sources feed Phase A's seven stages, which write chunks, answers, the vault and the argument map; Phase B reads those artifacts through an LLM-free query API to produce analysis records; Phase C assembles papers from those records; an offline panel samples finished papers.">
+      <!-- charter -->
+      <rect class="g" x="40" y="14" width="900" height="46" rx="3"></rect>
+      <text class="tt" x="490" y="34" text-anchor="middle">CHARTER — every claim witnessed by the corpus, never by training memory</text>
+      <text class="ts" x="490" y="50" text-anchor="middle">each assertion marked (a) source-says · (b) tool-infers-across-sources · (c) the analyst's judgment · counter-position mandatory · confidence disclosed</text>
+      <path class="lnp" d="M200 60 V 76"></path><path class="lnp" d="M490 60 V 76"></path><path class="lnp" d="M790 60 V 76"></path>
+
+      <!-- sources -->
+      <rect class="n" x="40" y="80" width="900" height="42" rx="3"></rect>
+      <text class="t" x="490" y="106" text-anchor="middle">Google Drive connector → intake: text-layer check, English gate, holdings-completeness, bibliographic read</text>
+      <path class="ln" d="M490 122 V 146"></path>
+
+      <!-- phase A -->
+      <rect class="grp" x="40" y="150" width="900" height="104" rx="3"></rect>
+      <text class="tk" x="52" y="168">PHASE A — THE MODEL READS THE CORPUS, ONCE</text>
+      <rect class="n" x="52" y="178" width="114" height="60" rx="3"></rect>
+      <text class="tt" x="109" y="203" text-anchor="middle">extract<tspan x="109" dy="14">+ route</tspan></text>
+      <path class="ln" d="M166 208 H 178"></path>
+      <rect class="n" x="180" y="178" width="114" height="60" rx="3"></rect>
+      <text class="tt" x="237" y="203" text-anchor="middle">chunk<tspan x="237" dy="14">3.5–9k chars</tspan></text>
+      <path class="ln" d="M294 208 H 306"></path>
+      <rect class="m" x="308" y="178" width="114" height="60" rx="3"></rect><circle class="dot" cx="414" cy="185" r="3.2"></circle>
+      <text class="tt" x="365" y="203" text-anchor="middle">interrogate<tspan x="365" dy="14">1 / note</tspan></text>
+      <path class="ln" d="M422 208 H 434"></path>
+      <rect class="m" x="436" y="178" width="114" height="60" rx="3"></rect><circle class="dot" cx="542" cy="185" r="3.2"></circle>
+      <text class="tt" x="493" y="203" text-anchor="middle">reconcile<tspan x="493" dy="14">names merge</tspan></text>
+      <path class="ln" d="M550 208 H 562"></path>
+      <rect class="n" x="564" y="178" width="114" height="60" rx="3"></rect>
+      <text class="tt" x="621" y="203" text-anchor="middle">materialize<tspan x="621" dy="14">writes the vault</tspan></text>
+      <path class="ln" d="M678 208 H 690"></path>
+      <rect class="m" x="692" y="178" width="114" height="60" rx="3"></rect><circle class="dot" cx="798" cy="185" r="3.2"></circle>
+      <text class="tt" x="749" y="203" text-anchor="middle">gather<tspan x="749" dy="14">1 / name</tspan></text>
+      <path class="ln" d="M806 208 H 818"></path>
+      <rect class="m" x="820" y="178" width="114" height="60" rx="3"></rect><circle class="dot" cx="926" cy="185" r="3.2"></circle>
+      <text class="tt" x="877" y="203" text-anchor="middle">argument map<tspan x="877" dy="14">positions</tspan></text>
+
+      <path class="ln" d="M490 254 V 288"></path>
+      <text class="ts" x="500" y="276">writes</text>
+
+      <!-- artifacts -->
+      <rect class="grp" x="40" y="292" width="900" height="98" rx="3"></rect>
+      <text class="tk" x="52" y="310">PERSISTED — A RE-CUT RE-RUNS EVERYTHING BELOW EXTRACTION AND RE-READS NO BOOK</text>
+      <rect class="a" x="52" y="320" width="210" height="56" rx="3"></rect>
+      <text class="tt" x="157" y="343" text-anchor="middle">data/chunks/</text><text class="ts" x="157" y="359" text-anchor="middle">6,166 notes, bounded by construction</text>
+      <rect class="a" x="276" y="320" width="210" height="56" rx="3"></rect>
+      <text class="tt" x="381" y="343" text-anchor="middle">data/answers/</text><text class="ts" x="381" y="359" text-anchor="middle">one open-answer record per note</text>
+      <rect class="a" x="500" y="320" width="210" height="56" rx="3"></rect>
+      <text class="tt" x="605" y="343" text-anchor="middle">data/vault/</text><text class="ts" x="605" y="359" text-anchor="middle">49,558 name pages + notes.db</text>
+      <rect class="a" x="724" y="320" width="210" height="56" rx="3"></rect>
+      <text class="tt" x="829" y="343" text-anchor="middle">data/map/</text><text class="ts" x="829" y="359" text-anchor="middle">685 positions + their relations</text>
+
+      <path class="ln" d="M490 390 V 424"></path>
+      <text class="ts" x="500" y="412">read through the LLM-free query API</text>
+
+      <!-- phase B -->
+      <rect class="grp" x="40" y="428" width="900" height="106" rx="3"></rect>
+      <text class="tk" x="52" y="446">PHASE B — ONE QUESTION IN, ONE AUDITABLE ANSWER OUT</text>
+      <rect class="m" x="52" y="456" width="156" height="62" rx="3"></rect><circle class="dot" cx="200" cy="463" r="3.2"></circle>
+      <text class="tt" x="130" y="482" text-anchor="middle">interrogate<tspan x="130" dy="14">the brief</tspan></text>
+      <path class="ln" d="M208 487 H 230"></path>
+      <rect class="m" x="232" y="456" width="156" height="62" rx="3"></rect><circle class="dot" cx="380" cy="463" r="3.2"></circle>
+      <text class="tt" x="310" y="482" text-anchor="middle">intake fork-check<tspan x="310" dy="14">ask only at a real fork</tspan></text>
+      <path class="ln" d="M388 487 H 410"></path>
+      <rect class="m" x="412" y="456" width="156" height="62" rx="3"></rect><circle class="dot" cx="560" cy="463" r="3.2"></circle>
+      <text class="tt" x="490" y="482" text-anchor="middle">agentic query loop<tspan x="490" dy="14">plate VII</tspan></text>
+      <path class="ln" d="M568 487 H 590"></path>
+      <rect class="m" x="592" y="456" width="156" height="62" rx="3"></rect><circle class="dot" cx="740" cy="463" r="3.2"></circle>
+      <text class="tt" x="670" y="482" text-anchor="middle">synthesis<tspan x="670" dy="14">claims + grounds</tspan></text>
+      <path class="ln" d="M748 487 H 770"></path>
+      <rect class="g" x="772" y="456" width="156" height="62" rx="3"></rect>
+      <text class="tt" x="850" y="482" text-anchor="middle">validators<tspan x="850" dy="14">block release</tspan></text>
+
+      <path class="ln" d="M490 534 V 560"></path>
+      <rect class="a" x="300" y="564" width="380" height="42" rx="3"></rect>
+      <text class="tt" x="490" y="590" text-anchor="middle">data/analyses/&lt;brief_id&gt;.json — claims, grounds, coverage, trajectory</text>
+      <path class="ln" d="M490 606 V 630"></path>
+
+      <!-- phase C -->
+      <rect class="grp" x="40" y="634" width="900" height="72" rx="3"></rect>
+      <text class="tk" x="52" y="652">PHASE C — A PAPER, ASSEMBLED FROM SETTLED CLAIMS</text>
+      <rect class="n" x="52" y="660" width="156" height="36" rx="3"></rect><text class="tt" x="130" y="683" text-anchor="middle">claim inventory</text>
+      <path class="ln" d="M208 678 H 230"></path>
+      <rect class="m" x="232" y="660" width="156" height="36" rx="3"></rect><circle class="dot" cx="380" cy="667" r="3.2"></circle><text class="tt" x="310" y="683" text-anchor="middle">arc plan</text>
+      <path class="ln" d="M388 678 H 410"></path>
+      <rect class="m" x="412" y="660" width="156" height="36" rx="3"></rect><circle class="dot" cx="560" cy="667" r="3.2"></circle><text class="tt" x="490" y="683" text-anchor="middle">draft, per section</text>
+      <path class="ln" d="M568 678 H 590"></path>
+      <rect class="n" x="592" y="660" width="156" height="36" rx="3"></rect><text class="tt" x="670" y="683" text-anchor="middle">index + render</text>
+      <path class="ln" d="M748 678 H 770"></path>
+      <rect class="g" x="772" y="660" width="156" height="36" rx="3"></rect><text class="tt" x="850" y="683" text-anchor="middle">four run gates</text>
+
+      <path class="ln" d="M490 706 V 726"></path>
+      <rect class="a" x="240" y="726" width="300" height="34" rx="3"></rect>
+      <text class="tt" x="390" y="748" text-anchor="middle">data/papers/ — record + rendered markdown</text>
+      <path class="lnd" d="M540 743 H 610"></path>
+      <text class="ts" x="575" y="736" text-anchor="middle">sampled</text>
+      <rect class="a" x="612" y="726" width="328" height="34" rx="3"></rect>
+      <text class="tt" x="776" y="748" text-anchor="middle">offline panel — measures, never blocks (plate IX)</text>
+    </svg>
+    <figcaption>The corpus is read once and written down; every later phase reads artifacts, not books. Model calls concentrate in six places — interrogate, reconcile, gather, the map build, the query loop, and the drafter — and each sits between deterministic code on the way in and a gate on the way out.</figcaption>
+  </figure>
+</section>
+
+
+<!-- ============ FIGURE 2 ============ -->
+<section>
+  <h2><span class="num">Plate II · Phase A</span>The ingestion ledger, and the one classification everything downstream shares</h2>
+  <div class="prose lede">
+    <p>Ten stages, with what each one costs and what it leaves on disk. The two expensive rows are stage 6 (once per note) and stage 9 (once per name). Everything else is either free or once per source.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 980 800" role="img" aria-label="A ledger of Phase A's ten stages with model-call cost and the artifact each writes, followed by the source router's three-way classification of every tree block into prose, artifact or apparatus.">
+      <text class="tk" x="46" y="34">STAGE</text>
+      <text class="tk" x="600" y="34">MODEL CALLS</text>
+      <text class="tk" x="790" y="34">WRITES</text>
+      <path class="lnp" d="M40 44 H 940"></path>
+
+      <rect class="n" x="40" y="56" width="530" height="42" rx="3"></rect>
+      <text class="t" x="56" y="82">1 · Intake — text layer, language, holdings, bibliography</text>
+      <text class="tt" x="600" y="82">1 per source</text><text class="ts" x="790" y="82">data/source_meta/</text>
+
+      <rect class="n" x="40" y="106" width="530" height="42" rx="3"></rect>
+      <text class="t" x="56" y="132">2 · Extract (docling) → normalize text → route</text>
+      <text class="tt" x="600" y="132">0 *</text><text class="ts" x="790" y="132">data/trees/</text>
+
+      <rect class="m" x="40" y="156" width="530" height="42" rx="3"></rect><circle class="dot" cx="558" cy="164" r="3.2"></circle>
+      <text class="t" x="56" y="182">3 · Envelope — thesis, scope, stated argument, TOC</text>
+      <text class="tt" x="600" y="182">1 per source</text><text class="ts" x="790" y="182">data/envelopes/</text>
+
+      <rect class="n" x="40" y="206" width="530" height="42" rx="3"></rect>
+      <text class="t" x="56" y="232">4 · Chunk — recursive / structural, band [3500, 9000]</text>
+      <text class="tt" x="600" y="232">0</text><text class="ts" x="790" y="232">data/chunks/</text>
+
+      <rect class="n" x="40" y="256" width="530" height="42" rx="3"></rect>
+      <text class="t" x="56" y="282">5 · Artifacts — tables, figures, captions</text>
+      <text class="tt" x="600" y="282">0</text><text class="ts" x="790" y="282">artifact pool</text>
+
+      <rect class="m" x="40" y="306" width="530" height="42" rx="3"></rect><circle class="dot" cx="558" cy="314" r="3.2"></circle>
+      <text class="t" x="56" y="332">6 · Interrogate — fourteen open questions, one reading</text>
+      <text class="tt" x="600" y="332">1 per note (~6,100)</text><text class="ts" x="790" y="332">data/answers/</text>
+
+      <rect class="m" x="40" y="356" width="530" height="42" rx="3"></rect><circle class="dot" cx="558" cy="364" r="3.2"></circle>
+      <text class="t" x="56" y="382">7 · Reconcile — inventory, fold, cluster, merge</text>
+      <text class="tt" x="600" y="382">1 per merge batch</text><text class="ts" x="790" y="382">data/names/</text>
+
+      <rect class="n" x="40" y="406" width="530" height="42" rx="3"></rect>
+      <text class="t" x="56" y="432">8 · Materialize — name pages, prose notes, note store</text>
+      <text class="tt" x="600" y="432">0</text><text class="ts" x="790" y="432">data/vault/</text>
+
+      <rect class="m" x="40" y="456" width="530" height="42" rx="3"></rect><circle class="dot" cx="558" cy="464" r="3.2"></circle>
+      <text class="t" x="56" y="482">9 · Gather — what the authors at this name disagree about</text>
+      <text class="tt" x="600" y="482">1 per name + merge</text><text class="ts" x="790" y="482">disagreements.jsonl</text>
+
+      <rect class="m" x="40" y="506" width="530" height="42" rx="3"></rect><circle class="dot" cx="558" cy="514" r="3.2"></circle>
+      <text class="t" x="56" y="532">10 · Pairwise verbatim support — optional, on demand</text>
+      <text class="tt" x="600" y="532">1 per pair</text><text class="ts" x="790" y="532">on demand</text>
+
+      <text class="ts" x="40" y="572">* plus one bounded call per block on the small set of content-flagged apparatus candidates. Clean prose never reaches it.</text>
+
+      <path class="lnp" d="M40 592 H 940"></path>
+      <text class="tk" x="40" y="616">STEP 2b — THE SOURCE ROUTER: ONE CLASSIFICATION, CONSUMED BY EVERY LATER PASS</text>
+
+      <rect class="a" x="40" y="640" width="150" height="120" rx="3"></rect>
+      <text class="tt" x="115" y="694" text-anchor="middle">every block of<tspan x="115" dy="14">the persisted tree</tspan></text>
+
+      <path class="ln" d="M190 700 H 240 V 656 H 300"></path>
+      <path class="ln" d="M190 700 H 300"></path>
+      <path class="ln" d="M190 700 H 240 V 744 H 300"></path>
+
+      <rect class="n" x="302" y="636" width="180" height="40" rx="3"></rect>
+      <text class="tt" x="392" y="661" text-anchor="middle">prose → the chunk stage</text>
+      <rect class="n" x="302" y="680" width="180" height="40" rx="3"></rect>
+      <text class="tt" x="392" y="705" text-anchor="middle">artifact → the pool</text>
+      <rect class="g" x="302" y="724" width="180" height="40" rx="3"></rect>
+      <text class="tt" x="392" y="749" text-anchor="middle">apparatus → dropped</text>
+
+      <text class="ts" x="502" y="655">text · section_header · title · in-body list_item — and an unknown label, which fails open to prose</text>
+      <text class="ts" x="502" y="699">table · picture · caption — a caption attaches to its figure</text>
+      <text class="ts" x="502" y="737">document_index · footnote · page_header / page_footer · a list_item under back matter.</text>
+      <text class="ts" x="502" y="752">Every drop is recorded with its reason: the router never drops on uncertainty.</text>
+    </svg>
+    <figcaption>The router is the one place the prose / non-prose decision is made. Because it is shared, no later pass re-derives it, and because every drop carries a reason, a deliberate drop is always distinguishable from a silent loss.</figcaption>
+  </figure>
+</section>
+
+
+<!-- ============ FIGURE 3 ============ -->
+<section>
+  <h2><span class="num">Plate III · agentic pass</span>Interrogate — one reading, fourteen open questions, and an explicit right to abstain</h2>
+  <div class="prose lede">
+    <p>The pass that produces everything else. Closed vocabularies return bins; open questions return specifics, and specifics are what two passages can share. The frame's example lists reach the model only after it has answered in its own words, and code never bridges the two fields.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 980 600" role="img" aria-label="Interrogate: five inputs converge on one model call per note, producing a seventeen-field answer record; the free answer is asked before examples are shown and code never bridges the free field to the nearest-example field; three record kinds reconcile against the source's chunk count.">
+      <rect class="a" x="40" y="52" width="200" height="38" rx="3"></rect><text class="tt" x="140" y="76" text-anchor="middle">the note — 3,500–9,000 chars</text>
+      <rect class="a" x="40" y="100" width="200" height="38" rx="3"></rect><text class="tt" x="140" y="124" text-anchor="middle">author · title · date</text>
+      <rect class="a" x="40" y="148" width="200" height="38" rx="3"></rect><text class="tt" x="140" y="172" text-anchor="middle">thesis · scope · argument</text>
+      <rect class="a" x="40" y="196" width="200" height="38" rx="3"></rect><text class="tt" x="140" y="220" text-anchor="middle">chapter + section heading</text>
+      <rect class="a" x="40" y="244" width="200" height="38" rx="3"></rect><text class="tt" x="140" y="268" text-anchor="middle">domain frame examples</text>
+
+      <path class="ln" d="M240 71 H 280 V 160 H 326"></path>
+      <path class="ln" d="M240 119 H 280 V 160 H 326"></path>
+      <path class="ln" d="M240 167 H 326"></path>
+      <path class="ln" d="M240 215 H 280 V 170 H 326"></path>
+      <path class="ln" d="M240 263 H 280 V 172 H 326"></path>
+
+      <rect class="m" x="328" y="106" width="230" height="122" rx="3"></rect><circle class="dot" cx="548" cy="116" r="3.5"></circle>
+      <text class="t" x="443" y="150" text-anchor="middle">note_interrogate<tspan class="ts" x="443" dy="20">one call per note</tspan><tspan class="ts" x="443" dy="16">no web, no external lookup,</tspan><tspan class="ts" x="443" dy="16">no memory of the book</tspan></text>
+
+      <rect class="g" x="328" y="244" width="230" height="56" rx="3"></rect>
+      <text class="ts" x="443" y="266" text-anchor="middle">abstention is explicit: not-in-passage.</text>
+      <text class="ts" x="443" y="282" text-anchor="middle">An empty list is an answer, not a blank.</text>
+
+      <path class="ln" d="M558 167 H 596"></path>
+
+      <rect class="a" x="598" y="52" width="342" height="248" rx="3"></rect>
+      <text class="tk" x="614" y="74">THE ANSWER RECORD</text>
+      <text class="tt" x="614" y="98">about<tspan x="614" dy="16">claim</tspan><tspan x="614" dy="16">move</tspan><tspan x="614" dy="16">ranges_over</tspan><tspan x="614" dy="16">stops_holding</tspan><tspan x="614" dy="16">position_of</tspan><tspan x="614" dy="16">position</tspan><tspan x="614" dy="16">arguing_against</tspan><tspan x="614" dy="16">names {name, kind}</tspan></text>
+      <text class="tt" x="784" y="98">citations {cited, stance}<tspan x="784" dy="16">mechanism</tspan><tspan x="784" dy="16">evidence</tspan><tspan x="784" dy="16">comparison</tspan><tspan x="784" dy="16">defines / uses</tspan><tspan x="784" dy="16">concedes</tspan><tspan x="784" dy="16">assumes</tspan></text>
+      <text class="ts" x="614" y="288">names is where cross-book edges come from. citations is the author's own.</text>
+
+      <path class="lnp" d="M40 330 H 940"></path>
+      <text class="tk" x="40" y="356">THE ORDERING THAT KEEPS THE EXAMPLES FROM CAPTURING THE ANSWER</text>
+
+      <rect class="n" x="40" y="370" width="250" height="46" rx="3"></rect>
+      <text class="tt" x="165" y="390" text-anchor="middle">1 — the free answer is asked for</text><text class="tt" x="165" y="405" text-anchor="middle">first, in the model's own words</text>
+      <path class="ln" d="M290 393 H 322"></path>
+      <rect class="n" x="324" y="370" width="250" height="46" rx="3"></rect>
+      <text class="tt" x="449" y="390" text-anchor="middle">2 — only now is the example</text><text class="tt" x="449" y="405" text-anchor="middle">list for that question shown</text>
+      <path class="ln" d="M574 393 H 606"></path>
+      <rect class="n" x="608" y="370" width="250" height="46" rx="3"></rect>
+      <text class="tt" x="733" y="390" text-anchor="middle">3 — &lt;field&gt;_nearest, a separate</text><text class="tt" x="733" y="405" text-anchor="middle">field, marked as an example</text>
+
+      <path class="lnd" d="M165 420 Q 449 478 733 420"></path>
+      <path class="lnp" d="M441 456 l 16 16 M457 456 l -16 16" stroke="var(--c-gate)" stroke-width="2"></path>
+      <text class="ts" x="449" y="492" text-anchor="middle">code never bridges the two: no normalization, no rewriting, no filling one from the other</text>
+
+      <path class="lnp" d="M40 512 H 940"></path>
+      <rect class="a" x="40" y="530" width="170" height="40" rx="3"></rect><text class="tt" x="125" y="555" text-anchor="middle">answers</text>
+      <rect class="a" x="222" y="530" width="170" height="40" rx="3"></rect><text class="tt" x="307" y="555" text-anchor="middle">failure_reason</text>
+      <rect class="a" x="404" y="530" width="170" height="40" rx="3"></rect><text class="tt" x="489" y="555" text-anchor="middle">skip_reason</text>
+      <path class="ln" d="M574 550 H 606"></path>
+      <rect class="g" x="608" y="530" width="332" height="40" rx="3"></rect>
+      <text class="tt" x="774" y="547" text-anchor="middle">answered + failed + skipped must equal</text>
+      <text class="tt" x="774" y="562" text-anchor="middle">this source's own chunk count, or the pass raises</text>
+    </svg>
+    <figcaption>Three record kinds share one file per source, so a skip can never again be a silent loss and the file is also the resume point — a note carrying any of the three is never re-sent. A guessed answer is worse than an abstention, because nothing downstream can tell it from a read one.</figcaption>
+  </figure>
+</section>
+
+
+<!-- ============ FIGURE 4 ============ -->
+<section>
+  <h2><span class="num">Plate IV · agentic pass</span>Reconcile — clustering is a hint, the fold needs no model, and every merge is reversible data</h2>
+  <div class="prose lede">
+    <p>Names come out of the corpus and have to meet each other. Three things are deliberately separated here: what a shape rule can decide alone, what a clustering can only suggest, and what actually needs a judgment.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 980 660" role="img" aria-label="Reconcile: answer records are filtered into an inventory by a cut set, folded by string shape directly into the alias map without a model call, embedded and clustered as a hint, batched with candidate rules, and only then handed to a merge call whose outcomes are nodes, escalations or a recorded failure.">
+      <rect class="a" x="40" y="40" width="200" height="44" rx="3"></rect><text class="tt" x="140" y="67" text-anchor="middle">data/answers/*.jsonl</text>
+      <path class="ln" d="M240 62 H 278"></path>
+      <rect class="n" x="280" y="40" width="230" height="44" rx="3"></rect>
+      <text class="tt" x="395" y="59" text-anchor="middle">iter_name_occurrences</text><text class="ts" x="395" y="74" text-anchor="middle">one place, ten shape rules</text>
+      <text class="ts" x="532" y="58">The cut set drops citation-only surfaces, back matter, dates, locators,</text>
+      <text class="ts" x="532" y="73">bare numerals: 61,612 surfaces → 44,382 pages. A page disappears only</text>
+      <text class="ts" x="532" y="88">when every surface that would have been its member matches.</text>
+
+      <path class="ln" d="M395 84 V 106"></path>
+      <rect class="a" x="280" y="108" width="230" height="40" rx="3"></rect><text class="tt" x="395" y="133" text-anchor="middle">inventory.jsonl</text>
+
+      <path class="ln" d="M395 148 V 172"></path>
+      <rect class="n" x="280" y="174" width="230" height="48" rx="3"></rect>
+      <text class="tt" x="395" y="194" text-anchor="middle">fold — case, whitespace,</text><text class="tt" x="395" y="209" text-anchor="middle">punctuation, transliteration</text>
+
+      <path class="ln" d="M280 198 H 252"></path>
+      <rect class="n" x="40" y="174" width="210" height="48" rx="3"></rect>
+      <text class="tt" x="145" y="194" text-anchor="middle">unioned straight into</text><text class="tt" x="145" y="209" text-anchor="middle">the alias map</text>
+      <text class="ts" x="145" y="240" text-anchor="middle">no model call —</text>
+      <text class="ts" x="145" y="254" text-anchor="middle">whether two strings differ</text>
+      <text class="ts" x="145" y="268" text-anchor="middle">only by case is not a judgment</text>
+      <path class="lnp" d="M145 278 V 576"></path>
+      <path class="ln" d="M145 576 H 276"></path>
+
+      <path class="ln" d="M395 222 V 246"></path>
+      <rect class="n" x="280" y="248" width="230" height="48" rx="3"></rect>
+      <text class="tt" x="395" y="268" text-anchor="middle">embed + HDBSCAN</text><text class="tt" x="395" y="283" text-anchor="middle">(the fit is persisted)</text>
+      <text class="ts" x="532" y="268">A surface the previous build already saw keeps its label and its vector.</text>
+      <text class="ts" x="532" y="283">Only a genuinely new one is placed, by approximate_predict.</text>
+
+      <path class="ln" d="M395 296 V 320"></path>
+      <rect class="g" x="280" y="322" width="230" height="48" rx="3"></rect>
+      <text class="tt" x="395" y="342" text-anchor="middle">below the cluster's own</text><text class="tt" x="395" y="357" text-anchor="middle">fitted membership floor?</text>
+      <text class="ts" x="532" y="342">→ the residue, freshly fit at the same dials, its labels offset above the</text>
+      <text class="ts" x="532" y="357">existing maximum. Existing labels are never renumbered.</text>
+
+      <path class="ln" d="M395 370 V 394"></path>
+      <rect class="n" x="280" y="396" width="230" height="48" rx="3"></rect>
+      <text class="tt" x="395" y="416" text-anchor="middle">batches = clusters</text><text class="tt" x="395" y="431" text-anchor="middle">+ candidate rules</text>
+      <text class="ts" x="532" y="416">C. Tilly ↔ Charles Tilly · Abercrombie ↔ Nikolas Abercrombie · (AANS) ↔ its</text>
+      <text class="ts" x="532" y="431">expansion — and every rule refuses outright the moment there are two candidates.</text>
+
+      <path class="ln" d="M395 444 V 468"></path>
+      <rect class="m" x="280" y="470" width="230" height="56" rx="3"></rect><circle class="dot" cx="500" cy="480" r="3.2"></circle>
+      <text class="tt" x="395" y="492" text-anchor="middle">the merge call — one per batch,</text>
+      <text class="tt" x="395" y="507" text-anchor="middle">clusters as hints, joined to</text>
+      <text class="tt" x="395" y="521" text-anchor="middle">the books each surface came from</text>
+
+      <path class="ln" d="M395 526 V 552"></path>
+      <path class="lnp" d="M160 552 H 830"></path>
+      <path class="ln" d="M160 552 V 566"></path><path class="ln" d="M395 552 V 566"></path><path class="ln" d="M700 552 V 566"></path><path class="ln" d="M830 552 V 566"></path>
+
+      <rect class="n" x="278" y="558" width="200" height="36" rx="3"></rect><text class="tt" x="378" y="581" text-anchor="middle">nodes → aliases folded</text>
+      <rect class="g" x="600" y="558" width="200" height="36" rx="3"></rect><text class="tt" x="700" y="581" text-anchor="middle">undecided → stands alone</text>
+
+      <text class="ts" x="40" y="618">Nothing else on disk records that a merge happened, so deleting one node undoes exactly that merge. merge_decisions.jsonl is keyed on the batch's</text>
+      <text class="ts" x="40" y="634">rendered members, so a re-run reproduces the same merges for free; a batch nothing could be parsed from is never written at all, and is retried later.</text>
+      <text class="ts" x="850" y="581" text-anchor="middle">failure →</text>
+      <text class="ts" x="850" y="595" text-anchor="middle">retried later</text>
+    </svg>
+    <figcaption>Three tiers of decision, kept apart on purpose: a string fold decides alone and never asks; clustering only chooses what is put in front of the model at once; the model makes every merge, and may say it cannot tell — which is recorded as a third outcome, not silently collapsed into "different".</figcaption>
+  </figure>
+</section>
+
+
+<!-- ============ FIGURE 5 ============ -->
+<section>
+  <h2><span class="num">Plate V · agentic pass</span>Gather — the model never fetches, so it cannot blow the window</h2>
+  <div class="prose lede">
+    <p>For every name big enough to hold an argument, what do the authors gathered there actually disagree about? The budget is a constant in code rather than an instruction in the prompt: a prompt-side budget is a request, a code-side budget is a guarantee.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 980 640" role="img" aria-label="Gather: a name passes two member-count gates, then code assembles a fixed packet under a hard character budget, splits it into batches when needed, calls the model per batch, drops null findings, and merges two or more survivors into one disagreement keyed by the name's source set.">
+      <rect class="a" x="370" y="34" width="240" height="42" rx="3"></rect>
+      <text class="tt" x="490" y="60" text-anchor="middle">a canonical name and its member notes</text>
+      <path class="ln" d="M490 76 V 106"></path>
+
+      <rect class="g" x="330" y="108" width="320" height="48" rx="3"></rect>
+      <text class="tt" x="490" y="128" text-anchor="middle">two members at least — a disagreement needs</text>
+      <text class="tt" x="490" y="143" text-anchor="middle">two parties — and gather.min_members (10)</text>
+      <path class="ln" d="M650 132 H 692"></path>
+      <rect class="a" x="694" y="112" width="246" height="40" rx="3"></rect>
+      <text class="ts" x="817" y="130" text-anchor="middle">skipped before a packet exists or a</text>
+      <text class="ts" x="817" y="144" text-anchor="middle">call is made — counted in the summary</text>
+
+      <path class="ln" d="M490 156 V 184"></path>
+      <rect class="n" x="250" y="186" width="480" height="72" rx="3"></rect>
+      <text class="tt" x="490" y="208" text-anchor="middle">code assembles the packet: author, year, the one-sentence claim,</text>
+      <text class="tt" x="490" y="223" text-anchor="middle">position_of, arguing_against, position — roughly 800 chars a member.</text>
+      <text class="ts" x="490" y="243" text-anchor="middle">The bracket is rendered in full first; claim alone is truncated into whatever remains.</text>
+
+      <path class="ln" d="M490 258 V 282"></path>
+      <path class="lnp" d="M295 282 H 685"></path>
+      <path class="ln" d="M295 282 V 300"></path>
+      <path class="ln" d="M685 282 V 300"></path>
+      <text class="ts" x="240" y="298">under budget</text>
+      <text class="ts" x="700" y="298">over budget</text>
+
+      <rect class="m" x="180" y="302" width="230" height="48" rx="3"></rect><circle class="dot" cx="400" cy="311" r="3.2"></circle>
+      <text class="tt" x="295" y="331" text-anchor="middle">one call</text>
+      <rect class="n" x="570" y="302" width="230" height="48" rx="3"></rect>
+      <text class="tt" x="685" y="323" text-anchor="middle">split into batches — a designed</text>
+      <text class="tt" x="685" y="338" text-anchor="middle">path, since big names are the good ones</text>
+      <path class="ln" d="M685 350 V 374"></path>
+      <rect class="m" x="570" y="376" width="230" height="44" rx="3"></rect><circle class="dot" cx="790" cy="385" r="3.2"></circle>
+      <text class="tt" x="685" y="403" text-anchor="middle">one call per batch</text>
+
+      <path class="ln" d="M295 350 V 446"></path>
+      <path class="ln" d="M685 420 V 446"></path>
+      <rect class="n" x="250" y="448" width="480" height="40" rx="3"></rect>
+      <text class="tt" x="490" y="473" text-anchor="middle">null findings are dropped — a null carries no evidence to merge</text>
+
+      <path class="ln" d="M490 488 V 506"></path>
+      <path class="lnp" d="M180 506 H 800"></path>
+      <path class="ln" d="M180 506 V 522"></path><path class="ln" d="M490 506 V 522"></path><path class="ln" d="M800 506 V 522"></path>
+
+      <rect class="n" x="40" y="524" width="280" height="48" rx="3"></rect>
+      <text class="tt" x="180" y="544" text-anchor="middle">all null → the name is null,</text><text class="tt" x="180" y="559" text-anchor="middle">and no merge call is made at all</text>
+      <rect class="n" x="350" y="524" width="280" height="48" rx="3"></rect>
+      <text class="tt" x="490" y="544" text-anchor="middle">exactly one survives → that</text><text class="tt" x="490" y="559" text-anchor="middle">finding is the name's disagreement</text>
+      <rect class="m" x="660" y="524" width="280" height="48" rx="3"></rect><circle class="dot" cx="930" cy="533" r="3.2"></circle>
+      <text class="tt" x="800" y="544" text-anchor="middle">two or more → a merge call over</text><text class="tt" x="800" y="559" text-anchor="middle">the findings, never over packets</text>
+
+      <path class="ln" d="M490 572 V 592"></path>
+      <rect class="a" x="230" y="594" width="520" height="42" rx="3"></rect>
+      <text class="tt" x="490" y="612" text-anchor="middle">disagreements.jsonl → the name page's own section</text>
+      <text class="ts" x="490" y="628" text-anchor="middle">keyed by the name's SOURCE SET: a 201st note from an author already in the room changes nothing</text>
+    </svg>
+    <figcaption>Every bound here is arithmetic rather than instruction — a per-member cap makes the block budget provable at any corpus size, and a name too large for one packet is batched by design rather than by exception. A merge call handed real evidence can never honestly return nothing, so a null merge is treated as a failure and re-asked.</figcaption>
+  </figure>
+</section>
+
+
+<!-- ============ FIGURE 6 ============ -->
+<section>
+  <h2><span class="num">Plate VI · agentic pass</span>The argument map — reaching a passage by what it argues, not by what it happened to name</h2>
+  <div class="prose lede">
+    <p>Name-keyed retrieval only reaches a passage through a proper noun it mentions. The position layer groups passages that make the same argument, once and offline, so a question can land on the argument directly. Both model passes here are deliberately blind to authorship.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 980 470" role="img" aria-label="The argument map build: passages are selected, bagged by a local encoder, cut into author-spread slices, read by a blind extraction call, and merged into positions; a second stage clusters positions into neighbourhoods and asks one blind relation call per neighbourhood.">
+      <text class="tk" x="20" y="34">STAGE 1 — POSITIONS</text>
+      <rect class="a" x="20" y="46" width="130" height="56" rx="3"></rect><text class="tt" x="85" y="70" text-anchor="middle">data/answers/</text><text class="ts" x="85" y="86" text-anchor="middle">*.jsonl</text>
+      <path class="ln" d="M150 74 H 168"></path>
+      <rect class="n" x="170" y="46" width="110" height="56" rx="3"></rect><text class="tt" x="225" y="70" text-anchor="middle">select</text><text class="ts" x="225" y="86" text-anchor="middle">argues something</text>
+      <path class="ln" d="M280 74 H 298"></path>
+      <rect class="n" x="300" y="46" width="110" height="56" rx="3"></rect><text class="tt" x="355" y="70" text-anchor="middle">bag</text><text class="ts" x="355" y="86" text-anchor="middle">local encoder</text>
+      <path class="ln" d="M410 74 H 428"></path>
+      <rect class="n" x="430" y="46" width="120" height="56" rx="3"></rect><text class="tt" x="490" y="70" text-anchor="middle">author-spread</text><text class="ts" x="490" y="86" text-anchor="middle">slices</text>
+      <path class="ln" d="M550 74 H 568"></path>
+      <rect class="m" x="570" y="46" width="110" height="56" rx="3"></rect><circle class="dot" cx="670" cy="55" r="3.2"></circle>
+      <text class="tt" x="625" y="70" text-anchor="middle">extract</text><text class="ts" x="625" y="86" text-anchor="middle">1 / slice</text>
+      <path class="ln" d="M680 74 H 698"></path>
+      <rect class="n" x="700" y="46" width="110" height="56" rx="3"></rect><text class="tt" x="755" y="70" text-anchor="middle">merge</text><text class="ts" x="755" y="86" text-anchor="middle">near-duplicates</text>
+      <path class="ln" d="M810 74 H 828"></path>
+      <rect class="a" x="830" y="46" width="110" height="56" rx="3"></rect><text class="tt" x="885" y="70" text-anchor="middle">positions</text><text class="ts" x="885" y="86" text-anchor="middle">.jsonl — 685</text>
+
+      <text class="ts" x="20" y="126">Selected: a claim that is not abstained, sitting before its source's back-matter boundary, and not silent on all six of mechanism, comparison, concedes, assumes, position_of, ranges_over.</text>
+
+      <path class="lnp" d="M20 148 H 940"></path>
+      <text class="tk" x="20" y="176">STAGE 2 — RELATIONS</text>
+      <rect class="a" x="20" y="188" width="130" height="52" rx="3"></rect><text class="tt" x="85" y="218" text-anchor="middle">positions.jsonl</text>
+      <path class="ln" d="M150 214 H 168"></path>
+      <rect class="n" x="170" y="188" width="180" height="52" rx="3"></rect>
+      <text class="tt" x="260" y="209" text-anchor="middle">neighbourhoods</text><text class="ts" x="260" y="225" text-anchor="middle">target 8, max 12, singletons skipped</text>
+      <path class="ln" d="M350 214 H 368"></path>
+      <rect class="m" x="370" y="188" width="160" height="52" rx="3"></rect><circle class="dot" cx="520" cy="197" r="3.2"></circle>
+      <text class="tt" x="450" y="209" text-anchor="middle">relate</text><text class="ts" x="450" y="225" text-anchor="middle">1 call per neighbourhood</text>
+      <path class="ln" d="M530 214 H 548"></path>
+      <rect class="a" x="550" y="188" width="180" height="52" rx="3"></rect>
+      <text class="tt" x="640" y="209" text-anchor="middle">relations.jsonl</text><text class="ts" x="640" y="225" text-anchor="middle">direction is meaningful</text>
+      <path class="ln" d="M730 214 H 748"></path>
+      <rect class="g" x="750" y="188" width="190" height="52" rx="3"></rect>
+      <text class="tt" x="845" y="209" text-anchor="middle">an invented or self-</text><text class="tt" x="845" y="225" text-anchor="middle">pointing handle is dropped</text>
+
+      <path class="lnp" d="M20 268 H 940"></path>
+      <text class="tk" x="20" y="294">THREE THINGS THAT LOOK LIKE DETAILS AND ARE NOT</text>
+
+      <rect class="n" x="20" y="308" width="292" height="86" rx="3"></rect>
+      <text class="tt" x="36" y="330">Blind on purpose</text>
+      <text class="ts" x="36" y="350">The prompt shows a bare handle and the</text>
+      <text class="ts" x="36" y="365">claim, never the author — so the later</text>
+      <text class="ts" x="36" y="380">cross-author balance count measures the</text>
+      <text class="ts" x="36" y="394">corpus and not its own input.</text>
+
+      <rect class="n" x="324" y="308" width="292" height="86" rx="3"></rect>
+      <text class="tt" x="340" y="330">No menu of relation types</text>
+      <text class="ts" x="340" y="350">The model coins its own label and says</text>
+      <text class="ts" x="340" y="365">what the relation is. An engine told to</text>
+      <text class="ts" x="340" y="380">look for opposition finds opposition;</text>
+      <text class="ts" x="340" y="394">"unrelated" stays cheap to say.</text>
+
+      <rect class="n" x="628" y="308" width="312" height="86" rx="3"></rect>
+      <text class="tt" x="644" y="330">The pin hashes raw sources only</text>
+      <text class="ts" x="644" y="350">A prompt, model or reasoning change does</text>
+      <text class="ts" x="644" y="365">not force a rebuild; a corpus change does.</text>
+      <text class="ts" x="644" y="380">Two ledgers are flushed the instant a call</text>
+      <text class="ts" x="644" y="394">returns, so no paid call is ever lost.</text>
+
+      <text class="ts" x="20" y="430">The grain is a stated choice, not a fitted one: the same corpus yields 1,636 positions at a tight threshold and 234 at a loose one. No correct number is hiding in the data.</text>
+      <text class="ts" x="20" y="450">Measured on 31 sources: 705 calls, 45 minutes at 20 workers, $0.75 for both stages together.</text>
+    </svg>
+    <figcaption>The extraction call is told that producing roughly as many arguments as passages is a failed read — the job is what recurs across passages, not a restatement of each. Relations key on position id and never on the argument sentence, because a sentence-keyed rejoin silently drops any relation whose sentence was not unique.</figcaption>
+  </figure>
+</section>
+
+
+<!-- ============ FIGURE 7 ============ -->
+<section>
+  <h2><span class="num">Plate VII · the agent</span>Phase B — a model-driven query agent inside deterministic hard gates</h2>
+  <div class="prose lede">
+    <p>This is the one genuinely agentic loop in the system, and the shape of it is the whole architecture: the model plans and re-queries freely in the middle, and code it cannot reach stands on both sides. A fixed retrieval pipeline was rejected because thin results demand a second look only an agent can decide to take.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 980 850" role="img" aria-label="The Phase B agentic loop: brief interrogation and a deterministic disposition wrapper, an optional fork check compiling a constraint, then a bounded loop in which the model proposes one tool call, a validating dispatcher checks it, an LLM-free query API answers from the vault, and feedback returns to the model; evidence is then assembled deterministically, synthesized, and checked by three validators.">
+      <rect class="a" x="20" y="40" width="150" height="50" rx="3"></rect>
+      <text class="tt" x="95" y="62" text-anchor="middle">the brief</text><text class="ts" x="95" y="78" text-anchor="middle">case · request · lens?</text>
+      <path class="ln" d="M170 65 H 198"></path>
+      <rect class="m" x="200" y="40" width="170" height="50" rx="3"></rect><circle class="dot" cx="360" cy="49" r="3.2"></circle>
+      <text class="tt" x="285" y="62" text-anchor="middle">interrogate the brief</text><text class="ts" x="285" y="78" text-anchor="middle">premises · bounds · refusal</text>
+      <path class="ln" d="M370 65 H 398"></path>
+      <rect class="n" x="400" y="40" width="170" height="50" rx="3"></rect>
+      <text class="tt" x="485" y="62" text-anchor="middle">disposition wrapper</text><text class="ts" x="485" y="78" text-anchor="middle">total; never the model's own</text>
+      <path class="ln" d="M570 65 H 598"></path>
+      <rect class="m" x="600" y="40" width="160" height="50" rx="3"></rect><circle class="dot" cx="750" cy="49" r="3.2"></circle>
+      <text class="tt" x="680" y="62" text-anchor="middle">fork-check</text><text class="ts" x="680" y="78" text-anchor="middle">measured, never a form</text>
+      <path class="ln" d="M760 65 H 788"></path>
+      <rect class="n" x="790" y="40" width="150" height="50" rx="3"></rect>
+      <text class="tt" x="865" y="62" text-anchor="middle">ForkConstraint</text><text class="ts" x="865" y="78" text-anchor="middle">one compiled shape</text>
+
+      <path class="ln" d="M485 90 V 118"></path>
+      <text class="ts" x="495" y="108">refuse</text>
+      <rect class="g" x="360" y="120" width="250" height="38" rx="3"></rect>
+      <text class="tt" x="485" y="144" text-anchor="middle">a completed run. No synthesis call.</text>
+
+      <path class="ln" d="M865 90 V 184 H 686"></path>
+      <rect class="n" x="300" y="186" width="384" height="44" rx="3"></rect>
+      <text class="tt" x="492" y="205" text-anchor="middle">compose the retrieval prompt — the fork's guidance folded in once</text>
+      <text class="ts" x="492" y="221" text-anchor="middle">guidance shapes reading, and can never be a reason to call fewer tools</text>
+      <path class="ln" d="M492 230 V 262"></path>
+
+      <rect class="grp" x="50" y="266" width="880" height="222" rx="4"></rect>
+      <text class="tk" x="66" y="288">THE AGENTIC QUERY LOOP — BOUNDED STEP BUDGET</text>
+
+      <rect class="m" x="80" y="300" width="190" height="66" rx="3"></rect><circle class="dot" cx="260" cy="310" r="3.2"></circle>
+      <text class="tt" x="175" y="328" text-anchor="middle">the model proposes</text><text class="tt" x="175" y="343" text-anchor="middle">one tool call</text>
+      <text class="ts" x="175" y="359" text-anchor="middle">native tool-calling</text>
+      <path class="ln" d="M270 333 H 306"></path>
+      <rect class="g" x="308" y="300" width="180" height="66" rx="3"></rect>
+      <text class="tt" x="398" y="325" text-anchor="middle">validating dispatcher</text>
+      <text class="ts" x="398" y="342" text-anchor="middle">checked against the registry</text>
+      <text class="ts" x="398" y="356" text-anchor="middle">and its schema, before the vault</text>
+      <path class="ln" d="M488 333 H 524"></path>
+      <rect class="n" x="526" y="300" width="180" height="66" rx="3"></rect>
+      <text class="tt" x="616" y="325" text-anchor="middle">the vault query API</text>
+      <text class="ts" x="616" y="342" text-anchor="middle">ten tools, zero model calls,</text>
+      <text class="ts" x="616" y="356" text-anchor="middle">same query → same ids, same order</text>
+      <path class="ln" d="M706 333 H 742"></path>
+      <rect class="a" x="744" y="300" width="166" height="66" rx="3"></rect>
+      <text class="ts" x="827" y="324" text-anchor="middle">notes.db</text><text class="ts" x="827" y="339" text-anchor="middle">name pages</text><text class="ts" x="827" y="354" text-anchor="middle">positions.jsonl</text>
+
+      <path class="ln" d="M827 366 V 404 H 175 V 366"></path>
+      <text class="ts" x="500" y="424" text-anchor="middle">ToolResult{ids, total, detail} → one trajectory entry per call → next turn's feedback</text>
+      <text class="ts" x="500" y="440" text-anchor="middle">what the evidence set now holds and which books it spans · every returned id's own author, year and claim</text>
+      <text class="ts" x="500" y="462" text-anchor="middle">Never the budget, the cap or what would still fit: a cap the model can see gets widened on purpose.</text>
+      <text class="ts" x="500" y="478" text-anchor="middle">And never "you already asked this" — telling it so was measured to raise repeats, not lower them.</text>
+
+      <path class="ln" d="M492 488 V 514"></path>
+      <rect class="n" x="240" y="516" width="500" height="58" rx="3"></rect>
+      <text class="tt" x="490" y="538" text-anchor="middle">assemble the evidence — dedupe in call order, apply the fork constraint,</text>
+      <text class="tt" x="490" y="553" text-anchor="middle">then round-robin by source, with the analyst's weights biasing the rotation</text>
+      <text class="ts" x="490" y="568" text-anchor="middle">a first-seen prefix is whichever tool the model happened to call first</text>
+
+      <path class="ln" d="M490 574 V 598"></path>
+      <rect class="g" x="290" y="600" width="400" height="40" rx="3"></rect>
+      <text class="tt" x="490" y="618" text-anchor="middle">prefix by the synthesis char budget</text>
+      <text class="ts" x="490" y="633" text-anchor="middle">measured across seven runs: 506 assembled, 146 composed — the funnel is disclosed on the record</text>
+
+      <path class="ln" d="M490 640 V 664"></path>
+      <rect class="m" x="290" y="666" width="400" height="56" rx="3"></rect><circle class="dot" cx="680" cy="676" r="3.2"></circle>
+      <text class="tt" x="490" y="688" text-anchor="middle">synthesis — evidence offered under opaque handles [c3],</text>
+      <text class="tt" x="490" y="703" text-anchor="middle">each claim marked (a) / (b) / (c) with grounds</text>
+      <text class="ts" x="490" y="717" text-anchor="middle">there is no real id in the prompt to transcribe, truncate or blend</text>
+
+      <path class="ln" d="M490 722 V 744"></path>
+      <path class="lnp" d="M180 744 H 800"></path>
+      <path class="ln" d="M180 744 V 760"></path><path class="ln" d="M490 744 V 760"></path><path class="ln" d="M800 744 V 760"></path>
+      <rect class="g" x="40" y="762" width="280" height="44" rx="3"></rect>
+      <text class="tt" x="180" y="782" text-anchor="middle">attribution — every claim has a</text><text class="tt" x="180" y="797" text-anchor="middle">kind, every (a)/(b) resolvable grounds</text>
+      <rect class="g" x="350" y="762" width="280" height="44" rx="3"></rect>
+      <text class="tt" x="490" y="782" text-anchor="middle">counter-position — present, or</text><text class="tt" x="490" y="797" text-anchor="middle">one-sidedness explicitly disclosed</text>
+      <rect class="g" x="660" y="762" width="280" height="44" rx="3"></rect>
+      <text class="tt" x="800" y="782" text-anchor="middle">coverage + confidence — a per-name</text><text class="tt" x="800" y="797" text-anchor="middle">map and a disclosed band</text>
+
+      <text class="ts" x="490" y="832" text-anchor="middle">A failed mechanical check blocks release. Where a check is genuinely not mechanical, it is a separate bounded call — never the generating model grading itself.</text>
+    </svg>
+    <figcaption>The model's freedom is real and bounded on both sides: it decides what to ask and when to ask again, but it cannot reach the dispatcher that validates its call, the code that orders the evidence, or the validators that can refuse the answer. Every tool call and every returned id lands in the trajectory log, so a right answer reached by a lucky guess is distinguishable from one reached by sound retrieval.</figcaption>
+  </figure>
+
+  <div class="notes">
+    <p><strong>What the tools return.</strong> Notes, opposition edges and argument-map positions are the destination; a name, a publication year and a source are filters on them. The entry point is <code>find_notes</code>, not a door lookup — a historian's question chains two relations and every name-layer tool walks exactly one.</p>
+    <p><strong>An empty result is a real answer.</strong> A tool that resolved nothing says the phrase it tried and each of its words, so a zero has somewhere to go other than the same query again.</p>
+  </div>
+</section>
+
+
+<!-- ============ FIGURE 8 ============ -->
+<section>
+  <h2><span class="num">Plate VIII · the second arm</span>Retrieval over the argument map — door, landing, corridor, assembly</h2>
+  <div class="prose lede">
+    <p>An opt-in path that replaces the loop in plate VII and nothing else: same lens, same synthesis prompt, same budget, same model. If an answer improves here, the improvement is the substrate rather than a changed prompt.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 980 340" role="img" aria-label="The map retrieval arm: a blind door call states the arguments a brief is about, the landing matches them to positions by cosine similarity, the corridor pulls in every position related to a landed one in both directions, and assembly rotates across positions and then across each position's sources into the same synthesis stage.">
+      <rect class="a" x="20" y="44" width="140" height="54" rx="3"></rect>
+      <text class="tt" x="90" y="70" text-anchor="middle">the brief</text><text class="ts" x="90" y="86" text-anchor="middle">case + request</text>
+      <path class="ln" d="M160 71 H 188"></path>
+      <rect class="m" x="190" y="44" width="160" height="54" rx="3"></rect><circle class="dot" cx="340" cy="53" r="3.2"></circle>
+      <text class="tt" x="270" y="66" text-anchor="middle">the door</text>
+      <text class="ts" x="270" y="82" text-anchor="middle">states the arguments the question</text>
+      <text class="ts" x="270" y="94" text-anchor="middle">is about — never sees the corpus</text>
+      <path class="ln" d="M350 71 H 378"></path>
+      <rect class="n" x="380" y="44" width="160" height="54" rx="3"></rect>
+      <text class="tt" x="460" y="66" text-anchor="middle">the landing</text>
+      <text class="ts" x="460" y="82" text-anchor="middle">cosine against position</text>
+      <text class="ts" x="460" y="94" text-anchor="middle">sentences, top 4 apiece</text>
+      <path class="ln" d="M540 71 H 568"></path>
+      <rect class="n" x="570" y="44" width="160" height="54" rx="3"></rect>
+      <text class="tt" x="650" y="66" text-anchor="middle">the corridor</text>
+      <text class="ts" x="650" y="82" text-anchor="middle">every relation touching a</text>
+      <text class="ts" x="650" y="94" text-anchor="middle">landed position, both ways</text>
+      <path class="ln" d="M730 71 H 758"></path>
+      <rect class="n" x="760" y="44" width="180" height="54" rx="3"></rect>
+      <text class="tt" x="850" y="66" text-anchor="middle">assembly</text>
+      <text class="ts" x="850" y="82" text-anchor="middle">round-robin across positions,</text>
+      <text class="ts" x="850" y="94" text-anchor="middle">then across each one's sources</text>
+
+      <path class="ln" d="M850 98 V 130 H 690"></path>
+      <rect class="m" x="290" y="132" width="400" height="44" rx="3"></rect><circle class="dot" cx="680" cy="141" r="3.2"></circle>
+      <text class="tt" x="490" y="152" text-anchor="middle">the same stage-4 synthesis, unchanged</text>
+      <text class="ts" x="490" y="168" text-anchor="middle">same lens, same prompt, same char budget, same model</text>
+
+      <path class="lnp" d="M20 206 H 940"></path>
+      <rect class="g" x="20" y="226" width="292" height="86" rx="3"></rect>
+      <text class="tt" x="36" y="248">The encoder is checked</text>
+      <text class="ts" x="36" y="268">A cosine between two different embedding</text>
+      <text class="ts" x="36" y="283">spaces returns a number and never raises,</text>
+      <text class="ts" x="36" y="298">so a mismatch is a stated refusal.</text>
+
+      <rect class="n" x="324" y="226" width="292" height="86" rx="3"></rect>
+      <text class="tt" x="340" y="248">It makes no tool call</text>
+      <text class="ts" x="340" y="268">So it produces no trajectory — an honest</text>
+      <text class="ts" x="340" y="283">empty list, with the record carrying a</text>
+      <text class="ts" x="340" y="298">map_retrieval audit trail instead.</text>
+
+      <rect class="n" x="628" y="226" width="312" height="86" rx="3"></rect>
+      <text class="tt" x="644" y="248">The opposition arrives on its own</text>
+      <text class="ts" x="644" y="268">A corridor position is reached because it</text>
+      <text class="ts" x="644" y="283">argues with what landed, never because the</text>
+      <text class="ts" x="644" y="298">brief happened to name it.</text>
+    </svg>
+    <figcaption>The door is blind to the corpus on purpose: it states what the question is about before anything shows it what happens to be there, which is the failure mode this arm exists to escape one layer up. Widening the landing was measured to change nothing, because assembly's first rotation already fills the synthesis budget.</figcaption>
+  </figure>
+</section>
+
+
+<!-- ============ FIGURE 9 ============ -->
+<section>
+  <h2><span class="num">Plate IX · Phase C</span>Authorship, and the strangers who measure it</h2>
+  <div class="prose lede">
+    <p>Two halves on two different clocks. The paper is assembled and gated on every run; the system is measured on a sample, by reviewers from a different training lab, and only after a positive control proves the panel is still reading.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 980 640" role="img" aria-label="Phase C: a paper brief passes a deterministic intake, builds a claim inventory, is planned then drafted one section at a time with no tools, indexed and rendered, and checked by four per-run gates; separately and offline, sampled papers become sealed packets read by at least three reviewers from different training labs, whose numbers are untrusted until a positive control passes.">
+      <text class="tk" x="20" y="30">THE PER-RUN PIPELINE — CHEAP, AND RUN ON EVERY PAPER</text>
+
+      <rect class="a" x="20" y="44" width="140" height="54" rx="3"></rect>
+      <text class="tt" x="90" y="68" text-anchor="middle">paper brief</text><text class="ts" x="90" y="84" text-anchor="middle">thesis · analysis_ids[]</text>
+      <path class="ln" d="M160 71 H 188"></path>
+      <rect class="g" x="190" y="44" width="160" height="54" rx="3"></rect>
+      <text class="tt" x="270" y="66" text-anchor="middle">intake</text>
+      <text class="ts" x="270" y="82" text-anchor="middle">one shared corpus pin,</text>
+      <text class="ts" x="270" y="94" text-anchor="middle">and no refused record</text>
+      <path class="ln" d="M350 71 H 378"></path>
+      <rect class="n" x="380" y="44" width="150" height="54" rx="3"></rect>
+      <text class="tt" x="455" y="66" text-anchor="middle">claim inventory</text>
+      <text class="ts" x="455" y="82" text-anchor="middle">keyed (brief_id, claim_id)</text>
+      <text class="ts" x="455" y="94" text-anchor="middle">— the drafter's whole world</text>
+      <path class="ln" d="M530 71 H 558"></path>
+      <rect class="m" x="560" y="44" width="150" height="54" rx="3"></rect><circle class="dot" cx="700" cy="53" r="3.2"></circle>
+      <text class="tt" x="635" y="66" text-anchor="middle">arc plan</text>
+      <text class="ts" x="635" y="82" text-anchor="middle">sections, roles, and which</text>
+      <text class="ts" x="635" y="94" text-anchor="middle">claims each one may cite</text>
+      <path class="ln" d="M710 71 H 738"></path>
+      <rect class="m" x="740" y="44" width="200" height="54" rx="3"></rect><circle class="dot" cx="930" cy="53" r="3.2"></circle>
+      <text class="tt" x="840" y="66" text-anchor="middle">draft — one call per section</text>
+      <text class="ts" x="840" y="82" text-anchor="middle">sees that section's claims and what</text>
+      <text class="ts" x="840" y="94" text-anchor="middle">earlier sections cited. No tools at all.</text>
+
+      <text class="ts" x="20" y="126">The drafter cannot introduce evidence, because it has no path to any: generate-then-cite is made structurally impossible rather than forbidden by instruction.</text>
+
+      <path class="ln" d="M840 98 V 148 H 470"></path>
+      <rect class="n" x="250" y="150" width="200" height="46" rx="3"></rect>
+      <text class="tt" x="350" y="170" text-anchor="middle">citation index</text><text class="ts" x="350" y="186" text-anchor="middle">an unknown marker is fatal here</text>
+      <path class="ln" d="M250 173 H 210"></path>
+      <rect class="n" x="20" y="150" width="188" height="46" rx="3"></rect>
+      <text class="tt" x="114" y="170" text-anchor="middle">bibliography + render</text><text class="ts" x="114" y="186" text-anchor="middle">exactly the cited sources</text>
+      <path class="ln" d="M114 196 V 222"></path>
+      <rect class="a" x="20" y="224" width="188" height="40" rx="3"></rect>
+      <text class="tt" x="114" y="249" text-anchor="middle">data/papers/</text>
+
+      <text class="tk" x="250" y="222">FOUR PER-RUN GATES</text>
+      <rect class="g" x="250" y="230" width="164" height="40" rx="3"></rect><text class="ts" x="332" y="248" text-anchor="middle">every marker</text><text class="ts" x="332" y="262" text-anchor="middle">resolves</text>
+      <rect class="g" x="426" y="230" width="164" height="40" rx="3"></rect><text class="ts" x="508" y="248" text-anchor="middle">every ground</text><text class="ts" x="508" y="262" text-anchor="middle">resolves</text>
+      <rect class="g" x="602" y="230" width="164" height="40" rx="3"></rect><text class="ts" x="684" y="248" text-anchor="middle">no band</text><text class="ts" x="684" y="262" text-anchor="middle">escalation</text>
+      <rect class="g" x="778" y="230" width="162" height="40" rx="3"></rect><text class="ts" x="859" y="248" text-anchor="middle">counter-position</text><text class="ts" x="859" y="262" text-anchor="middle">present</text>
+
+      <path class="lnp" d="M20 302 H 940"></path>
+      <text class="tk" x="20" y="326">OFF THE PIPELINE, ON ITS OWN CLOCK — THIS MEASURES THE SYSTEM, AND HOLDS BACK NO PAPER</text>
+
+      <rect class="a" x="20" y="344" width="160" height="60" rx="3"></rect>
+      <text class="ts" x="100" y="368" text-anchor="middle">a stratified sample</text><text class="ts" x="100" y="383" text-anchor="middle">of finished papers</text>
+      <path class="ln" d="M180 374 H 208"></path>
+      <rect class="n" x="210" y="344" width="170" height="60" rx="3"></rect>
+      <text class="tt" x="295" y="366" text-anchor="middle">the sealed packet</text>
+      <text class="ts" x="295" y="383" text-anchor="middle">the paper, its cited evidence,</text>
+      <text class="ts" x="295" y="396" text-anchor="middle">the bibliography. Nothing else.</text>
+      <path class="ln" d="M380 374 H 408"></path>
+      <rect class="m" x="410" y="344" width="170" height="60" rx="3"></rect><circle class="dot" cx="570" cy="353" r="3.2"></circle>
+      <text class="tt" x="495" y="366" text-anchor="middle">N ≥ 3 reviewers</text>
+      <text class="ts" x="495" y="383" text-anchor="middle">each from a different training</text>
+      <text class="ts" x="495" y="396" text-anchor="middle">lab; no tools, structurally</text>
+      <path class="ln" d="M580 374 H 608"></path>
+      <rect class="n" x="610" y="344" width="160" height="60" rx="3"></rect>
+      <text class="tt" x="690" y="366" text-anchor="middle">verdicts</text>
+      <text class="ts" x="690" y="383" text-anchor="middle">four dimensions; coherence</text>
+      <text class="ts" x="690" y="396" text-anchor="middle">reported as mean and spread</text>
+      <path class="ln" d="M770 374 H 798"></path>
+      <rect class="g" x="800" y="344" width="140" height="60" rx="3"></rect>
+      <text class="ts" x="870" y="368" text-anchor="middle">trusted: false</text><text class="ts" x="870" y="383" text-anchor="middle">until the control</text><text class="ts" x="870" y="397" text-anchor="middle">has passed</text>
+
+      <path class="ln" d="M870 460 V 408"></path>
+      <rect class="n" x="610" y="462" width="330" height="66" rx="3"></rect>
+      <text class="tt" x="775" y="484" text-anchor="middle">the positive control — three planted defects</text>
+      <text class="ts" x="775" y="502" text-anchor="middle">a mis-grounded claim · a strawman counter-position ·</text>
+      <text class="ts" x="775" y="516" text-anchor="middle">a band raised over a thinly covered name</text>
+
+      <rect class="n" x="20" y="462" width="560" height="66" rx="3"></rect>
+      <text class="tt" x="40" y="484">Why a panel at all</text>
+      <text class="ts" x="40" y="503">Every property cheap to check is checked on every paper. The one none of them reach —</text>
+      <text class="ts" x="40" y="517">whether the argument holds together — is measured, on a sample, and gates nothing.</text>
+
+      <text class="ts" x="20" y="562">Isolation is enforced by the harness that builds the call, not by anything written in the prompt: a model with file tools reads the repository regardless of what its instructions say.</text>
+      <text class="ts" x="20" y="582">A plant that cannot be applied is an error, never a skip — a control that quietly plants two defects and then passes is worse than no control at all.</text>
+      <text class="ts" x="20" y="602">The dependency runs one way: panel/ learns to read a paper record, and the pipeline never learns that a panel exists.</text>
+      <text class="ts" x="20" y="622">Reviewers dispatch through the plain completion seam, which has no tools parameter to pass — stronger than a check that can be forgotten.</text>
+    </svg>
+    <figcaption>Release is a per-paper decision and stays cheap; accuracy is a property of the system and only appears across many papers, several tiers and more than one model pairing. Collapsing the second into the first would make every paper pay for a measurement a single paper cannot produce.</figcaption>
+  </figure>
+</section>
+
+
+<section>
+  <h3>The shape all nine share</h3>
+  <div class="prose">
+    <p>Every model call in this system is surrounded the same way. Code assembles what the model sees, so a packet cannot overflow and a prompt cannot be talked into fetching more. Code reads what comes back, so an invented handle is dropped rather than repaired and a batch nothing could be parsed from is never recorded as a verdict. And code holds a ledger beside every paid pass, so an interrupted run resumes instead of paying twice.</p>
+    <p>The model does the judgment. The code holds the line.</p>
+  </div>
+</section>
+
+</div>
+
+<script>
+(function(){
+  function reportSize(){
+    var h = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
+    parent.postMessage({axialPlatesHeight: h}, '*');
+  }
+  window.addEventListener('load', reportSize);
+  window.addEventListener('resize', reportSize);
+  new ResizeObserver(reportSize).observe(document.body);
+  document.addEventListener('DOMContentLoaded', reportSize);
+  setTimeout(reportSize, 300);
+
+  window.addEventListener('message', function(e){
+    if (e.data && (e.data.axialTheme === 'light' || e.data.axialTheme === 'dark')) {
+      document.documentElement.dataset.theme = e.data.axialTheme;
+    }
+  });
+})();
+</script>
+</body>
+</html>

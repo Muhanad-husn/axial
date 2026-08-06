@@ -40,10 +40,10 @@ Specs: [`specs/PRODUCT.md`](specs/PRODUCT.md) (A) · [`specs/PHASE-B.md`](specs/
 [`specs/PHASE-C.md`](specs/PHASE-C.md). The 65-row decision log is
 [`docs/DECISIONS.md`](docs/DECISIONS.md). GitHub issues and PRs are the system of record.
 
-**Drawn:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) indexes nine diagrams — the whole
-system, the Phase A ingestion ledger, and each pass where a model is handed a judgment.
-The same nine are rendered as one page
-[here](https://claude.ai/code/artifact/15019e36-8b6e-4c8a-a499-3169c8db0582).
+**Reports:** [muhanad-husn.github.io/axial](https://muhanad-husn.github.io/axial/) is a
+three-panel page — the nine architecture plates, the research report, and the engineering
+report — built from the same sources as
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`data/reports/`](data/reports/).
 
 ### How Phase A works
 

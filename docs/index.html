@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Axial — reports</title>
+<meta name="description" content="Axial: architecture plates, the research report, and the engineering report.">
+<link rel="icon" href="axial-logo.png">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --paper:      #F0F1EC;
+    --paper-2:    #E8EAE3;
+    --ink:        #1A1C19;
+    --muted:      #5D625A;
+    --rule:       #D2D5CA;
+    --rule-2:     #B9BDB1;
+    --c-code:     #14646A;
+    --c-model:    #7C3A5E;
+    --c-gate:     #8A6B15;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", "Hoefler Text", Georgia, serif;
+    --mono: "Iosevka", "SF Mono", "Cascadia Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:      #14171A;
+      --paper-2:    #1B1F22;
+      --ink:        #E6E7DF;
+      --muted:      #9AA096;
+      --rule:       #2B2F33;
+      --rule-2:     #3D4247;
+      --c-code:     #55BEC4;
+      --c-model:    #DE8FB5;
+      --c-gate:     #D9B551;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:      #14171A;
+    --paper-2:    #1B1F22;
+    --ink:        #E6E7DF;
+    --muted:      #9AA096;
+    --rule:       #2B2F33;
+    --rule-2:     #3D4247;
+    --c-code:     #55BEC4;
+    --c-model:    #DE8FB5;
+    --c-gate:     #D9B551;
+  }
+  :root[data-theme="light"] {
+    --paper:      #F0F1EC;
+    --paper-2:    #E8EAE3;
+    --ink:        #1A1C19;
+    --muted:      #5D625A;
+    --rule:       #D2D5CA;
+    --rule-2:     #B9BDB1;
+    --c-code:     #14646A;
+    --c-model:    #7C3A5E;
+    --c-gate:     #8A6B15;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 0 20px; }
+  .wrap-wide { max-width: 1060px; margin: 0 auto; padding: 0 20px; }
+  a { color: var(--c-code); }
+  img { max-width: 100%; }
+
+  header.mast {
+    border-bottom: 1.5px solid var(--rule-2);
+    padding: 40px 0 0;
+  }
+  .mast-row { display: flex; align-items: center; gap: 18px; margin-bottom: 20px; }
+  .mast-row img { width: 52px; height: 52px; border-radius: 8px; flex: none; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 6px;
+  }
+  h1.title {
+    font-family: var(--serif);
+    font-size: clamp(28px, 4.6vw, 42px);
+    line-height: 1.1;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    margin: 0;
+  }
+  .theme-toggle {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    background: var(--paper-2);
+    border: 1px solid var(--rule-2);
+    color: var(--ink);
+    border-radius: 4px;
+    padding: 7px 12px;
+    cursor: pointer;
+    flex: none;
+  }
+  .theme-toggle:hover { border-color: var(--c-code); }
+
+  nav.tabs {
+    display: flex;
+    gap: 4px;
+    padding: 18px 0 0;
+    flex-wrap: wrap;
+  }
+  nav.tabs button {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    background: transparent;
+    border: none;
+    border-bottom: 2.5px solid transparent;
+    color: var(--muted);
+    padding: 10px 16px 12px;
+    cursor: pointer;
+  }
+  nav.tabs button:hover { color: var(--ink); }
+  nav.tabs button.active { color: var(--ink); border-bottom-color: var(--c-gate); }
+
+  main { padding: 40px 0 120px; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .panel-intro {
+    color: var(--muted);
+    max-width: 68ch;
+    margin: 0 0 28px;
+    font-size: 16px;
+  }
+
+  #panel-plates iframe {
+    width: 100%;
+    border: none;
+    display: block;
+  }
+
+  .loading, .error {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--muted);
+    padding: 40px 0;
+  }
+  .error { color: var(--c-model); }
+
+  /* rendered markdown report styling */
+  .report h1 { font-size: clamp(30px, 4.6vw, 44px); line-height: 1.1; letter-spacing: -0.015em; margin: 0 0 18px; }
+  .report h2 { font-size: 26px; margin: 52px 0 14px; letter-spacing: -0.01em; border-top: 1px solid var(--rule); padding-top: 34px; }
+  .report h2:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+  .report h3 { font-size: 20px; margin: 30px 0 10px; }
+  .report h4 { font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin: 24px 0 8px; }
+  .report p, .report li { margin: 0 0 14px; }
+  .report ul, .report ol { padding-left: 26px; }
+  .report hr { border: none; border-top: 1px solid var(--rule); margin: 40px 0; }
+  .report strong { color: var(--ink); }
+  .report em { color: var(--ink); }
+  .report code { font-family: var(--mono); font-size: 0.86em; background: var(--paper-2); padding: 1px 5px; border-radius: 2px; }
+  .report pre { background: var(--paper-2); border: 1px solid var(--rule); border-radius: 4px; padding: 14px 16px; overflow-x: auto; }
+  .report pre code { background: none; padding: 0; }
+  .report blockquote {
+    border-left: 3px solid var(--c-gate);
+    background: var(--paper-2);
+    margin: 0 0 18px;
+    padding: 14px 20px;
+    color: var(--muted);
+    border-radius: 0 3px 3px 0;
+  }
+  .report blockquote strong { color: var(--ink); }
+  .report .table-wrap { overflow-x: auto; margin: 0 0 20px; }
+  .report table { border-collapse: collapse; width: 100%; font-size: 15px; }
+  .report th, .report td { border: 1px solid var(--rule); padding: 7px 12px; text-align: left; vertical-align: top; }
+  .report th { background: var(--paper-2); font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+  .report tr:nth-child(even) td { background: rgba(120,124,112,0.05); }
+  .report .mermaid { background: var(--paper-2); border: 1px solid var(--rule); border-radius: 4px; padding: 16px; overflow-x: auto; margin: 0 0 20px; }
+  .report .mermaid svg { max-width: none; }
+  .report img { border-radius: 6px; }
+  .report a { text-decoration: underline; text-decoration-color: var(--rule-2); text-underline-offset: 2px; }
+  .report a:hover { text-decoration-color: var(--c-code); }
+
+  footer {
+    border-top: 1px solid var(--rule-2);
+    padding: 24px 0 60px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header class="mast">
+  <div class="wrap-wide">
+    <div class="mast-row">
+      <img src="axial-logo.png" alt="Axial">
+      <div>
+        <p class="eyebrow">Axial · reports</p>
+        <h1 class="title">The system, and what it produced</h1>
+      </div>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark theme">theme</button>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button data-tab="plates" class="active">Architecture plates</button>
+      <button data-tab="research">Research report</button>
+      <button data-tab="technical">Technical report</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap-wide">
+
+    <section id="panel-plates" class="panel active">
+      <p class="panel-intro">Nine drawings of one pipeline: what the corpus produces, and the nine places a model call sits between deterministic code on both sides. Rendered from the architecture-plates artifact, unchanged.</p>
+      <iframe id="plates-frame" src="plates.html" title="Axial architecture plates" loading="lazy" height="800"></iframe>
+    </section>
+
+    <section id="panel-research" class="panel">
+      <p class="panel-intro">Version 2.1, 6 August 2026. What Axial is, how it was tested, and what the tests showed — for readers who do not build software.</p>
+      <div class="report" id="report-research"><p class="loading">Loading…</p></div>
+    </section>
+
+    <section id="panel-technical" class="panel">
+      <p class="panel-intro">The engineering companion: architecture, measurement discipline, caching, evaluation machinery, and the one-operator agentic process that built it.</p>
+      <div class="report" id="report-technical"><p class="loading">Loading…</p></div>
+    </section>
+
+  </div>
+</main>
+
+<footer>
+  <div class="wrap-wide">
+    Axial · <a href="https://github.com/Muhanad-husn/axial">source on GitHub</a> · reports also readable as plain markdown in <a href="https://github.com/Muhanad-husn/axial/tree/main/data/reports">data/reports/</a>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- theme ----------
+  var root = document.documentElement;
+  var stored = null;
+  try { stored = localStorage.getItem('axial-theme'); } catch(e) {}
+  if (stored === 'light' || stored === 'dark') root.dataset.theme = stored;
+
+  function currentTheme() {
+    if (root.dataset.theme) return root.dataset.theme;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  function syncFrame() {
+    var f = document.getElementById('plates-frame');
+    if (f && f.contentWindow) f.contentWindow.postMessage({ axialTheme: currentTheme() }, '*');
+  }
+  document.getElementById('theme-toggle').addEventListener('click', function(){
+    var next = currentTheme() === 'dark' ? 'light' : 'dark';
+    root.dataset.theme = next;
+    try { localStorage.setItem('axial-theme', next); } catch(e) {}
+    syncFrame();
+  });
+  document.getElementById('plates-frame').addEventListener('load', syncFrame);
+
+  // ---------- tabs ----------
+  var tabs = document.querySelectorAll('#tabs button');
+  var panels = document.querySelectorAll('.panel');
+  function activate(name) {
+    tabs.forEach(function(b){ b.classList.toggle('active', b.dataset.tab === name); });
+    panels.forEach(function(p){ p.classList.toggle('active', p.id === 'panel-' + name); });
+    if (name === 'research') loadReport('research', 'reports/axial-report.md');
+    if (name === 'technical') loadReport('technical', 'reports/axialtechnicalreport.md');
+  }
+  tabs.forEach(function(b){
+    b.addEventListener('click', function(){ activate(b.dataset.tab); });
+  });
+
+  // ---------- report loading ----------
+  var loaded = {};
+  function slugify(text, used) {
+    var base = text.toLowerCase().replace(/[^\w\s-]/g, '').trim().replace(/\s/g, '-');
+    var slug = base, i = 1;
+    while (used.has(slug)) { slug = base + '-' + i; i++; }
+    used.add(slug);
+    return slug;
+  }
+  function loadReport(key, file) {
+    if (loaded[key]) return;
+    loaded[key] = true;
+    var container = document.getElementById('report-' + key);
+    fetch(file).then(function(res){
+      if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+      return res.text();
+    }).then(function(text){
+      text = text.replace(/^!\[Axial\]\(axial-logo\.png\)\s*\n+/, '');
+      var html = marked.parse(text, { gfm: true });
+      container.innerHTML = html;
+
+      var used = new Set();
+      container.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(function(h){
+        h.id = slugify(h.textContent, used);
+      });
+
+      container.querySelectorAll('table').forEach(function(t){
+        var w = document.createElement('div');
+        w.className = 'table-wrap';
+        t.parentNode.insertBefore(w, t);
+        w.appendChild(t);
+      });
+
+      var mermaidNodes = [];
+      container.querySelectorAll('pre > code.language-mermaid').forEach(function(code){
+        var div = document.createElement('div');
+        div.className = 'mermaid';
+        div.textContent = code.textContent;
+        code.parentElement.replaceWith(div);
+        mermaidNodes.push(div);
+      });
+
+      container.addEventListener('click', function(e){
+        var a = e.target.closest('a[href^="#"]');
+        if (!a) return;
+        var id = decodeURIComponent(a.getAttribute('href').slice(1));
+        var target = document.getElementById(id);
+        if (target && container.contains(target)) {
+          e.preventDefault();
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+
+      if (mermaidNodes.length && window.mermaid) {
+        mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
+        mermaid.run({ nodes: mermaidNodes });
+      }
+    }).catch(function(err){
+      loaded[key] = false;
+      container.innerHTML = '<p class="error">Could not load ' + file + ': ' + err + '</p>';
+    });
+  }
+
+  // ---------- init ----------
+  activate('plates');
+  window.addEventListener('message', function(e){
+    if (e.data && typeof e.data.axialPlatesHeight === 'number') {
+      var f = document.getElementById('plates-frame');
+      f.style.height = Math.max(400, e.data.axialPlatesHeight + 20) + 'px';
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
