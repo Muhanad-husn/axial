@@ -1,59 +1,37 @@
 """Outer acceptance test for issue #270, slice 02 (run-logging seam fan-out):
-`axial.runlog.run_context` driving the `envelope` and `eval` passes
-end-to-end -- model-bearing (or, for `eval`, model-free) passes `extract`
-(slice 01, tests/test_runlog.py) did not cover. This file originally also
-covered the `tag` pass; that section (and `axial.cli._tag`) is retired along
-with the tag pass itself (issue #414, `plans/phase-a-v1/README.md` D4/D5).
+`axial.runlog.run_context` driving the `envelope` pass end-to-end --
+model-bearing passes `extract` (slice 01, tests/test_runlog.py) did not
+cover. This file originally also covered the `tag` pass (retired along with
+the tag pass itself, issue #414, `plans/phase-a-v1/README.md` D4/D5) and the
+`eval` pass (retired along with the gold-set scoring harness it wrapped,
+issue #710).
 
 Locked behavioral contract (DEC-1) -- do not edit once committed red, except
-for the two documented deviations below (CLAUDE.local.md: tests are
-contracts owned by the product, not locked artifacts -- an edit needs a
-justification, not a rewrite).
+for a documented deviation (CLAUDE.local.md: tests are contracts owned by the
+product, not locked artifacts -- an edit needs a justification, not a
+rewrite).
 
 Restates plans/run-logging/02-wire-remaining-passes.md's Acceptance
 criterion gherkin: given a fixture source with a stored envelope and chunk
 records, AXIAL_LLM_PROVIDER=stub, an explicit run directory, and a fixed
-clock, when each of the envelope, tag, and eval passes runs through its
-run_context, then each writes a data/logs/<pass>-<fixed-ts>/ containing
-run.jsonl and console.log; each run.jsonl holds one record per source with
-pass set to that pass name; each record carries a non-null model (the stub
-provider's id), a status, and a numeric duration_sec; a source that fails
-its pass records status="error" with a short error string; no run.jsonl
-record contains source text (DEC-23); and each pass's existing stdout is
-unchanged.
-
-Two documented deviations for `eval` (both because `axial.eval.run_eval`
-genuinely differs from `extract`/`envelope`/`tag`, discovered while building
-this slice, not because the plan's intent was contested):
-
-1. `model=None` for `eval`'s record, not the stub's id. `run_eval` makes no
-   LLM call at all -- its own docstring says so verbatim ("Offline and
-   deterministic: no LLM call, no network") and tests/eval/test_eval.py's
-   own arrange step runs it under AXIAL_LLM_PROVIDER=explode specifically to
-   prove that ("any run that reaches an LLM is a bug"). A non-null model
-   here would be fabricated telemetry. This mirrors slice 01's own
-   established precedent for a model-free pass (`extract`, `model=null` --
-   plans/run-logging/README.md: "That is a feature, not a gap").
-2. One record per `axial eval` invocation, not one per source. Unlike
-   extract/envelope/tag, `axial eval` takes no source_path argument -- it
-   is not source-scoped, it scores the WHOLE gold set (every sampled chunk
-   across however many sources) in one atomic offline join, so "one record
-   per source" does not apply. The single record's `source_id` is `""`,
-   mirroring the CLI's own `_safe_source_id` no-source-resolved fallback.
+clock, when the envelope pass runs through its run_context, it writes a
+data/logs/envelope-<fixed-ts>/ containing run.jsonl and console.log; the
+run.jsonl record carries a non-null model (the stub provider's id), a status,
+and a numeric duration_sec; a source that fails the pass records
+status="error" with a short error string; no run.jsonl record contains
+source text (DEC-23); and the pass's existing stdout is unchanged.
 
 In-process, not a subprocess CLI run (mirrors tests/test_runlog.py, slice
-01): this test injects `root`/`clock` directly into `axial.cli._envelope` /
-`axial.cli._eval`, the same determinism seam slice 01 established for
-`_extract`. Production (`axial envelope|eval` from the real CLI) passes
-neither and gets the real `data/logs/<name>-<now>/`.
+01): this test injects `root`/`clock` directly into `axial.cli._envelope`,
+the same determinism seam slice 01 established for `_extract`. Production
+(`axial envelope` from the real CLI) passes neither and gets the real
+`data/logs/<name>-<now>/`.
 
 Fixture reuse: tests/fixtures/envelope/thesis_paper.pdf +
 thesis_paper_tree.json (already the shared envelope/tag fixture pair --
 tests/ingestion/test_tag.py's own arrange step reuses the identical fixture
 for the same reason: a real Introduction/Conclusion pair the envelope pass
-needs, and prose the chunk pass splits cleanly). `eval` needs no PDF at all
--- it reads two on-disk inputs directly, seeded here as minimal JSON/xlsx
-fixtures mirroring tests/eval/test_eval.py's own arrange helpers.
+needs, and prose the chunk pass splits cleanly).
 """
 
 from __future__ import annotations
@@ -62,13 +40,9 @@ import json
 from pathlib import Path
 
 import axial.envelope as envelope_mod
-import axial.eval as eval_mod
 import axial.extract as extract_mod
-from axial.cli import _envelope, _eval
+from axial.cli import _envelope
 from axial.envelope import compute_source_id
-from axial.eval import _axis_vocabularies
-from axial.gold import RECORD_FIELDS, SHEET_COLUMNS, build_workbook
-from axial.paths import DEFAULT_DOMAIN_DIR
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_ENVELOPE = REPO_ROOT / "tests" / "fixtures" / "envelope"
@@ -93,50 +67,6 @@ def _place_tree_fixture(trees_dir: Path) -> str:
     tree_path.parent.mkdir(parents=True, exist_ok=True)
     tree_path.write_bytes(FIXTURE_TREE.read_bytes())
     return source_id
-
-
-# --- eval fixture: a single tagger chunk record + a returned label sheet
-# that agrees with it on every axis. This test's purpose is the run-logging
-# wire, not eval's own scoring correctness (tests/eval/test_eval.py owns
-# that contract), so one fully-agreeing record is enough. -------------------
-
-EVAL_TAGGER_RECORD = {
-    "chunk_id": "runlog-eval-fixture-c1",
-    "source": "runlog-eval-fixture-source",
-    "section": "Introduction",
-    "chunk_text": "Synthetic prose for the run-logging eval fixture.",
-    "field": "state",
-    "empirical_scope": "scope:general",
-    "polities_touched": [],
-    "role_in_argument": "role:claim",
-    "claim_type": "state-formation",
-    "theory_school": "bellicist",
-}
-
-_AXIS_COLUMN_INDEX = {
-    name: idx + 1
-    for idx, name in enumerate(SHEET_COLUMNS)
-    if name in ("field", "empirical_scope", "claim_type", "theory_school")
-}
-
-
-def _seed_eval_fixture(gold_dir: Path) -> None:
-    chunks_dir = gold_dir / "chunks"
-    chunks_dir.mkdir(parents=True, exist_ok=True)
-    ordered = {key: EVAL_TAGGER_RECORD.get(key) for key in RECORD_FIELDS}
-    (chunks_dir / f"{EVAL_TAGGER_RECORD['chunk_id']}.json").write_text(
-        json.dumps(ordered, indent=2, sort_keys=True), encoding="utf-8"
-    )
-
-    vocabularies = _axis_vocabularies(str(DEFAULT_DOMAIN_DIR))
-    workbook = build_workbook([EVAL_TAGGER_RECORD], vocabularies)
-    worksheet = workbook.worksheets[0]
-    for axis, column in _AXIS_COLUMN_INDEX.items():
-        worksheet.cell(row=2, column=column).value = EVAL_TAGGER_RECORD[axis]
-
-    labels_dir = gold_dir / "labels"
-    labels_dir.mkdir(parents=True, exist_ok=True)
-    workbook.save(labels_dir / "label_sheet.xlsx")
 
 
 def _one_record(jsonl_path: Path) -> dict:
@@ -200,49 +130,4 @@ def test_envelope_pass_error_path_records_status_error(monkeypatch, tmp_path):
     assert record["pass"] == "envelope"
     assert record["status"] == "error"
     assert record["error"], "expected a short, non-empty error string"
-    assert record["duration_sec"] >= 0
-
-
-# ---------------------------------------------------------------------------
-# eval -- see the module docstring's two documented deviations
-# ---------------------------------------------------------------------------
-
-
-def test_eval_pass_writes_one_record_with_null_model(monkeypatch, tmp_path, capsys):
-    gold_dir = tmp_path / "gold"
-    logs_root = tmp_path / "logs"
-    monkeypatch.setattr(eval_mod, "_default_gold_dir", lambda config_path: gold_dir)
-    _seed_eval_fixture(gold_dir)
-
-    exit_code = _eval(root=logs_root, clock=lambda: FIXED_TS)
-
-    assert exit_code == 0
-
-    run_dir = logs_root / f"eval-{FIXED_TS}"
-    record = _one_record(run_dir / "run.jsonl")
-    assert record["source_id"] == ""
-    assert record["pass"] == "eval"
-    assert record["model"] is None, "eval makes no LLM call -- see module docstring deviation 1"
-    assert record["status"] == "ok"
-    assert record["duration_sec"] >= 0
-    assert record["error"] is None
-
-    captured = capsys.readouterr()
-    assert captured.out.strip(), "expected the eval CLI's own stdout print to be unchanged"
-
-
-def test_eval_pass_error_path_records_status_error(monkeypatch, tmp_path):
-    gold_dir = tmp_path / "gold"  # deliberately empty: no chunks, no sheet
-    logs_root = tmp_path / "logs"
-    monkeypatch.setattr(eval_mod, "_default_gold_dir", lambda config_path: gold_dir)
-
-    exit_code = _eval(root=logs_root, clock=lambda: FIXED_TS)
-
-    assert exit_code == 1
-    run_dir = logs_root / f"eval-{FIXED_TS}"
-    record = _one_record(run_dir / "run.jsonl")
-    assert record["pass"] == "eval"
-    assert record["model"] is None
-    assert record["status"] == "error"
-    assert record["error"]
     assert record["duration_sec"] >= 0

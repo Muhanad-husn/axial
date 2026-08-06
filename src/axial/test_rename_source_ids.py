@@ -11,14 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from openpyxl import Workbook, load_workbook
-from openpyxl.worksheet.datavalidation import DataValidation
 
 from axial.envelope import compute_source_id, content_digest
-from axial.gold import LABEL_SHEET_NAME, VOCAB_SHEET_NAME
 from axial.paths import (
     artifact_note_path,
-    budgeted_chunk_filename,
     chunk_note_path,
     path_overage,
 )
@@ -77,7 +73,6 @@ class Corpus:
     sources_dir: Path
     data_dir: Path
     vault_dir: Path
-    gold_dir: Path
     cases_dir: Path
     analyses_dir: Path
     pin_path: Path
@@ -88,14 +83,12 @@ class Corpus:
     old_artifact_id: str
     prose_note: Path
     artifact_note: Path
-    gold_record: Path
 
     def plan(self):
         return build_plan(
             sources_dir=self.sources_dir,
             data_dir=self.data_dir,
             vault_dir=self.vault_dir,
-            gold_dir=self.gold_dir,
             cases_dir=self.cases_dir,
             analyses_dir=self.analyses_dir,
             pin_path=self.pin_path,
@@ -124,57 +117,6 @@ def _write_jsonl(path: Path, records: list[dict]) -> None:
     )
 
 
-def _write_gold_record(gold_dir: Path, source_id: str, chunk_id: str) -> Path:
-    """One sampled gold chunk record, written the way `run_gold_sample` writes
-    it: named by chunk_id, budgeted down when that would blow the path limit
-    (which it does here, by construction), so its id lives only inside."""
-    chunks_dir = gold_dir / "chunks"
-    chunks_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{chunk_id}.json"
-    if path_overage(chunks_dir, filename) > 0:
-        filename = budgeted_chunk_filename(chunks_dir, source_id, chunk_id, extension=".json")
-    path = chunks_dir / filename
-    path.write_text(
-        json.dumps(
-            {"chunk_id": chunk_id, "source": source_id, "section": "Abstract"},
-            indent=2,
-            sort_keys=True,
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    return path
-
-
-def _write_label_sheet(path: Path, source_id: str, chunk_id: str) -> None:
-    """A label sheet shaped like the real one: a `label_sheet` worksheet whose
-    first two columns are the id provenance and whose later columns hold the
-    merged human labels, plus the hidden `vocab` sheet its dropdown data
-    validation points at."""
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = LABEL_SHEET_NAME
-    for column, name in enumerate(("chunk_id", "source", "section", "claim_type_gold"), start=1):
-        sheet.cell(row=1, column=column, value=name)
-    for column, value in enumerate((chunk_id, source_id, "Abstract", "ideology"), start=1):
-        sheet.cell(row=2, column=column, value=value)
-
-    vocab = workbook.create_sheet(VOCAB_SHEET_NAME)
-    vocab.sheet_state = "hidden"
-    vocab.cell(row=1, column=1, value="claim_type")
-    for row, value in enumerate(("ideology", "coercion"), start=2):
-        vocab.cell(row=row, column=1, value=value)
-
-    validation = DataValidation(
-        type="list", formula1=f"{VOCAB_SHEET_NAME}!$A$2:$A$3", allow_blank=True
-    )
-    sheet.add_data_validation(validation)
-    validation.add("D2:D2")
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    workbook.save(path)
-
-
 def _build_corpus(
     tmp_path: Path,
     *,
@@ -184,8 +126,7 @@ def _build_corpus(
 ) -> Corpus:
     """A miniature but structurally faithful corpus: one renamed raw source,
     one derived file per pipeline directory, one prose note, one artifact
-    note, the gold set (chunk record, dispatch, completed labelling output,
-    label sheet), one sim eval case, one benchmark analysis log, and a pin."""
+    note, one sim eval case, one benchmark analysis log, and a pin."""
     sources_dir = tmp_path / "sources"
     sources_dir.mkdir()
     raw = sources_dir / f"{new_stem}.pdf"
@@ -195,7 +136,6 @@ def _build_corpus(
 
     data_dir = tmp_path / "data"
     vault_dir = data_dir / "vault"
-    gold_dir = data_dir / "gold"
     slug = _slug_over_budget(vault_dir / "prose", old_id, _OVER_BUDGET_BY)
     chunk_id = f"{old_id}_2_{slug}_001"
     other_chunk_id = f"{old_id}_3_introduction_001"
@@ -261,18 +201,6 @@ def _build_corpus(
         encoding="utf-8",
     )
 
-    gold_record = _write_gold_record(gold_dir, old_id, chunk_id)
-    _write_json(
-        gold_dir / "dispatch" / "blind_full_120.json",
-        [{"chunk_id": chunk_id, "chunk_text": "prose", "source": old_id}],
-    )
-    # completed human labelling: the chunk_id is the object KEY here
-    _write_json(
-        gold_dir / "dispatch" / "out" / "blind_draw_1.json",
-        {chunk_id: {"claim_type": "ideology-as-system", "notes": "human judgement"}},
-    )
-    _write_label_sheet(gold_dir / "label_sheet.xlsx", old_id, chunk_id)
-
     cases_dir = tmp_path / "cases"
     _write_json(
         cases_dir / "P1-01.json",
@@ -298,7 +226,6 @@ def _build_corpus(
         sources_dir=sources_dir,
         data_dir=data_dir,
         vault_dir=vault_dir,
-        gold_dir=gold_dir,
         cases_dir=cases_dir,
         analyses_dir=analyses_dir,
         pin_path=pin_path,
@@ -309,7 +236,6 @@ def _build_corpus(
         old_artifact_id=artifact_id,
         prose_note=prose_note,
         artifact_note=artifact_note,
-        gold_record=gold_record,
     )
 
 
@@ -559,100 +485,6 @@ def test_existing_destination_is_never_overwritten(tmp_path: Path):
     assert json.loads(squatter.read_text(encoding="utf-8")) == {"do": "not clobber"}
 
 
-# ----------------------------------------------------------------- gold set
-
-
-def test_budgeted_gold_record_is_renamed_by_the_id_inside_it(tmp_path: Path):
-    corpus = _build_corpus(tmp_path)
-    chunks_dir = corpus.gold_dir / "chunks"
-    # precondition, same shape as the vault note's: this record's filename was
-    # shortened at write time, so its id is only recoverable from the record
-    assert path_overage(chunks_dir, f"{corpus.old_chunk_id}.json") > 0
-    assert corpus.gold_record.name != f"{corpus.old_chunk_id}.json"
-
-    corpus.migrate()
-
-    assert not corpus.gold_record.exists()
-    new_record = chunks_dir / f"{corpus.rename(corpus.old_chunk_id)}.json"
-    assert new_record.is_file()
-    payload = json.loads(new_record.read_text(encoding="utf-8"))
-    assert payload["chunk_id"] == corpus.rename(corpus.old_chunk_id)
-    assert payload["source"] == corpus.new_id
-    assert payload["section"] == "Abstract"
-
-
-def test_gold_dispatch_and_completed_labelling_are_rewritten(tmp_path: Path):
-    corpus = _build_corpus(tmp_path)
-
-    corpus.migrate()
-
-    dispatch = json.loads(
-        (corpus.gold_dir / "dispatch" / "blind_full_120.json").read_text(encoding="utf-8")
-    )
-    assert dispatch[0]["chunk_id"] == corpus.rename(corpus.old_chunk_id)
-    assert dispatch[0]["source"] == corpus.new_id
-
-    out = json.loads(
-        (corpus.gold_dir / "dispatch" / "out" / "blind_draw_1.json").read_text(encoding="utf-8")
-    )
-    # the human labels are keyed by chunk_id; the key moves, the labels do not
-    assert list(out) == [corpus.rename(corpus.old_chunk_id)]
-    assert out[corpus.rename(corpus.old_chunk_id)] == {
-        "claim_type": "ideology-as-system",
-        "notes": "human judgement",
-    }
-
-
-def test_label_sheet_round_trip_preserves_vocab_and_validations(tmp_path: Path):
-    corpus = _build_corpus(tmp_path)
-    sheet_path = corpus.gold_dir / "label_sheet.xlsx"
-    before = load_workbook(sheet_path)
-
-    corpus.migrate()
-
-    after = load_workbook(sheet_path)
-    assert after.sheetnames == before.sheetnames
-    assert after[VOCAB_SHEET_NAME].sheet_state == "hidden"
-    assert [[cell.value for cell in row] for row in after[VOCAB_SHEET_NAME].iter_rows()] == [
-        [cell.value for cell in row] for row in before[VOCAB_SHEET_NAME].iter_rows()
-    ]
-    assert [
-        (dv.type, dv.formula1, str(dv.sqref))
-        for dv in after[LABEL_SHEET_NAME].data_validations.dataValidation
-    ] == [
-        (dv.type, dv.formula1, str(dv.sqref))
-        for dv in before[LABEL_SHEET_NAME].data_validations.dataValidation
-    ]
-
-
-def test_label_sheet_rewrites_only_the_id_columns(tmp_path: Path):
-    corpus = _build_corpus(tmp_path)
-
-    corpus.migrate()
-
-    sheet = load_workbook(corpus.gold_dir / "label_sheet.xlsx")[LABEL_SHEET_NAME]
-    header = [cell.value for cell in sheet[1]]
-    row = [cell.value for cell in sheet[2]]
-    assert header == ["chunk_id", "source", "section", "claim_type_gold"]
-    assert row == [
-        corpus.rename(corpus.old_chunk_id),
-        corpus.new_id,
-        "Abstract",
-        "ideology",  # the merged human label is untouched
-    ]
-
-
-def test_gold_record_whose_id_belongs_to_no_known_source_is_refused(tmp_path: Path):
-    corpus = _build_corpus(tmp_path)
-    stray = corpus.gold_dir / "chunks" / "stray.json"
-    stray.write_text(json.dumps({"chunk_id": "ghost-000000000000_1_x_001"}), encoding="utf-8")
-
-    with pytest.raises(MalformedRecordError) as excinfo:
-        corpus.plan()
-
-    assert "ghost-000000000000_1_x_001" in str(excinfo.value)
-
-
 # ------------------------------------------------------- dry run + idempotency
 
 
@@ -670,8 +502,6 @@ def test_dry_run_writes_nothing_but_reports_the_full_plan(tmp_path: Path):
     assert corpus.new_id in rendered
     assert str(corpus.data_dir / "chunks") in rendered
     assert str(corpus.vault_dir / "prose") in rendered
-    assert str(corpus.gold_dir / "chunks") in rendered
-    assert str(corpus.gold_dir / "label_sheet.xlsx") in rendered
 
 
 def test_second_apply_is_a_no_op(tmp_path: Path):
