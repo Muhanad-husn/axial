@@ -29,9 +29,9 @@ retired as history; a fresh one is generated from the rebuilt corpus with
 rebuild is done.
 
 Not a product feature -- no `axial` subcommand, no permanent home. One-off,
-to be deleted once the real remap has been run against the rebuilt corpus
-(see docs/sim-academic/merge_gold_labels.py for the same precedent: a small
-standalone script under version control for exactly as long as it's needed).
+to be deleted once the real remap has been run against the rebuilt corpus: a
+small standalone script under version control for exactly as long as it's
+needed, and no longer.
 
 Usage (dry run by default; nothing is written without --apply):
     python -m axial.remap_sim_source_ids --sources-dir data/sources

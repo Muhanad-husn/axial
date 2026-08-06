@@ -63,8 +63,8 @@ leaves old and new filenames side by side, which surfaces as
 
 Not a product feature -- no `axial` subcommand, no permanent home. One-off,
 to be deleted once the rename has been run (same precedent as
-`axial.remap_sim_source_ids` and docs/sim-academic/merge_gold_labels.py). It
-already has: the 2026-07-26 rename applied this script against the full
+`axial.remap_sim_source_ids`). It already
+has: the 2026-07-26 rename applied this script against the full
 corpus (source-id-author-year-rename). It also used to migrate the
 human-labelled gold corpus under `data/gold/` and the `chunk_id`/`source`
 columns of `label_sheet.xlsx`; that handling was removed in #710 when the
