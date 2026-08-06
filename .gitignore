@@ -83,3 +83,7 @@ data/**
 # markdown copy that build_docx_with_diagrams.py regenerates on every run.
 data/reports/build/__pycache__/
 data/reports/build/*.docx-source.md
+
+# Editor settings are personal, not project config.
+.vscode/
+.idea/
