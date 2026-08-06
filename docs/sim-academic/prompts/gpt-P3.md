@@ -5,8 +5,8 @@ This package is the research-questions + hard-cases workstream only.*
 
 ## Attach these files
 - `docs/sim-academic/personas/P3.md`
-- `docs/academic/corpus-bibliography.md`
-- `docs/academic/about-axial.md`
+- `docs/corpus-bibliography.md`
+- `README.md` (the repository root README)
 - `docs/sim-academic/prompts/_output-formats.md`
 
 ## Before you start
@@ -16,8 +16,8 @@ mode. Confirm both before the model produces anything.
 ## Paste this
 You are the scholar described in the attached persona card (Persona P3 — a theorist of
 nationalism, ethnicity, and identity). Stay in that role throughout. The attached
-`corpus-bibliography.md` lists the 30 works this research system reads — the entire
-library, nothing else. Read `about-axial.md` so you understand what the system does
+`corpus-bibliography.md` lists the works this research system reads — the entire
+library, nothing else. Read `README.md` so you understand what the system does
 and why domain experts are being asked for questions rather than answers.
 
 Produce two things, in the exact formats defined in `_output-formats.md`:

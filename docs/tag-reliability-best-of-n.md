@@ -170,7 +170,7 @@ agreement for a blind axis to be kept.
 ### 2.2 Phase 1 — external cross-family baseline (GLM 5.2 vs GPT-5.6)
 
 Two frontier models on two platforms, persona-neutral shared coder prompt
-(`docs/sim-academic/prompts/gold-coder.md`), codebook v1 (placeholder definitions).
+(`docs/_archive/gold-coder.md`), codebook v1 (placeholder definitions).
 
 | Axis | GLM vs GPT | Kind |
 |---|---|---|
@@ -392,7 +392,9 @@ own re-ask is a spoiled ballot the vote ignores; the P0-6 hard error stands only
 - `docs/DECISIONS.md` — DEC-29 (simulated academic path), DEC-30 (in-harness Sonnet
   labeling + ceiling), DEC-31 (best-of-N measured), DEC-32 (Phase A completion plan),
   DEC-33 (abstention record shape).
-- `docs/sim-academic/README.md` — full method, all raw tables, run tracker.
+- `docs/_archive/sim-academic-gold-labelling.md` — full method, all raw tables, and
+  the gold rows of the run tracker. Retired 2026-08-06 with the gold set; the live
+  half of that path (personas, briefs, hard cases) stays at `docs/sim-academic/`.
 - `specs/PRODUCT.md` — the sections that specified best-of-N, the bounded re-ask and
   the tag survival bar were retired with the tag pass on 2026-08-06; see git history
   and `docs/DECISIONS.md`. Appendix E survives as prompt examples. What outlives the

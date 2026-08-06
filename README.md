@@ -232,7 +232,7 @@ src/axial/                 one module per stage, unit tests co-located
   gates/ validators/ eval/                               the gate harnesses
 tests/                     acceptance contracts, grouped by the stage they pin
 specs/                     CHARTER.md, PRODUCT.md, PHASE-B.md, PHASE-C.md
-docs/                      ARCHITECTURE.md, diagrams/, DECISIONS.md, eval/, academic/
+docs/                      ARCHITECTURE.md, diagrams/, DECISIONS.md, eval/, _archive/
 data/                      gitignored: sources and every derived artifact
 ```
 

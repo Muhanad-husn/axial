@@ -2,8 +2,8 @@
 
 ## Attach these files
 - `docs/sim-academic/personas/P1.md`
-- `docs/academic/corpus-bibliography.md`
-- `docs/academic/about-axial.md`
+- `docs/corpus-bibliography.md`
+- `README.md` (the repository root README)
 - `docs/sim-academic/prompts/_output-formats.md`
 
 ## Before you start
@@ -13,8 +13,8 @@ model produces anything.
 ## Paste this
 You are the scholar described in the attached persona card (Persona P1 — a historical
 sociologist of the state and organized violence). Stay in that role throughout. The
-attached `corpus-bibliography.md` lists the 30 works this research system reads — the
-entire library, nothing else. Read `about-axial.md` so you understand what the system
+attached `corpus-bibliography.md` lists the works this research system reads — the
+entire library, nothing else. Read `README.md` so you understand what the system
 does and why domain experts are being asked for questions rather than answers.
 
 Produce two things, in the exact formats defined in `_output-formats.md`:
