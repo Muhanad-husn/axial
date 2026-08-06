@@ -7,7 +7,7 @@ the scripts that assemble them.
 
 | | |
 |---|---|
-| `axial-report.md` / `.docx` | **The dossier.** What Axial is, how it differs from the tools a reader already has, every question it asks, how it was tested, what it cannot do, and both papers in full. Version 2.0. |
+| `axial-report.md` / `.docx` | **The report.** What Axial is, how it works, how it was tested, what it cannot do, and both papers in full — structured as a research paper with an executive summary. Version 2.1. |
 | `axial-coverage-v2.md` | **The library, measured.** What the thirty-five books actually cover, page by page, and where the shelf is thin. Counted mechanically; no model judged anything. |
 | `axial-coverage-v1-to-v2-diff.md` | What the four books added on 2026-08-05 changed. |
 | `axial-logo.png` | Used by both reports. |

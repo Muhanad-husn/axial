@@ -10,11 +10,11 @@ The original plan was to collect research questions from working scholars and te
 
 An earlier design did have such an answer key, a pre-written "expected answer" per case. **It was retired as a referee**, on the grounds that scoring against it measures agreement with one model's opinion rather than quality, and it is now barred from ever being placed in a reviewer packet, because showing a reviewer a pre-written answer anchors it to that answer.
 
-So the honest statement is the one made in section 8.1: the questions are machine-written, and **that bounds what the numbers mean rather than what they are anchored to.** It also names the gap a scholarly contribution would fill.
+So the honest statement is the one made in section 7.1: the questions are machine-written, and **that bounds what the numbers mean rather than what they are anchored to.** It also names the gap a scholarly contribution would fill.
 
 ### A.2 The two question sets, and why they are different
 
-**Six short briefs, run on every change.** These exist to catch regressions cheaply, so each is short and each exercises exactly one retrieval shape: a hub anchor at the library's centre of gravity, scholar against scholar, a contested concept, a concept whose founding book is on the shelf, thin coverage, and single-source concentration. Their anchors were measured against the live index before they landed, book by book, and are printed in section 8.2.
+**Six short briefs, run on every change.** These exist to catch regressions cheaply, so each is short and each exercises exactly one retrieval shape: a hub anchor at the library's centre of gravity, scholar against scholar, a contested concept, a concept whose founding book is on the shelf, thin coverage, and single-source concentration. Their anchors were measured against the live index before they landed, book by book, and are printed in section 7.2.
 
 The set was **rebuilt from scratch on 2026-07-30** for a reason that says something about how this project handles its own convenience. All five original briefs were Syria briefs. Twenty-five of the then thirty-one books are not about Syria, so the set was leaving most of the library unexercised and scoring well on the part it did reach. The replacements were authored **by a model with no access to this repository**, working from the measured index alone, then verified anchor by anchor before being accepted. One Syria brief was deliberately retained, because the source-concentration inspection needs a hub name to bite on.
 
@@ -50,9 +50,9 @@ An important property of this layer: **a check with nothing to measure reports a
 
 **The five engine gates.** Attribution fidelity, grounding, counter-position presence and steelman quality, band-wise calibration, and adversarial premise-catching. Each judged check runs under its own identity and **must resolve to a different model than the pass it grades**; the guard raises before any judging call is made. Confidence is checked band by band — do the claims marked high actually hold up at the rate high implies — rather than as an error over a continuous score, because the three-band vocabulary deliberately does not produce a number to compute an error over.
 
-**The four paper gates**, described in section 8.3.
+**The four paper gates**, described in section 7.3.
 
-**The panel**, described in section 8.4.
+**The panel**, described in section 7.4.
 
 ### B.2 Why several obvious metrics are deliberately not gates
 
@@ -104,7 +104,58 @@ The full bibliography, with publishers, editions, translation notes and per-file
 
 <!--PAPERS-->
 
-## Appendix F — Glossary
+## Appendix F — Every question Axial asks
+
+Inside the pipeline, a model is consulted in sixteen places, plus a set of judges that sit outside it. Nowhere is it asked to pick from a list. Every one of the sixteen is an open question with an explicit right to answer "I cannot tell from this", and in every one code assembles what the model sees and reads what comes back.
+
+The inventory below is complete. The questions are quoted from the working system, lightly trimmed for length.
+
+### F.1 Reading the corpus
+
+| | Asked of | How often | The question |
+|---|---|---|---|
+| **1. Envelope** | Each book's own opening and closing prose | Once per book | What is the author's stated thesis, the scope of the argument, the argument as restated, and the table of contents? *Based only on the supplied text. Do not infer from the title, the filename, or any outside knowledge.* |
+| **2. Interrogation** | One passage | Once per passage | The fourteen questions in section 3. *Answer only from the passage. If it does not support an answer, say so. A guessed answer is worse than an abstention, because a reader cannot tell it from one you actually read.* |
+| **3. Name merging** | A cluster of similar-looking name forms | Once per cluster | "They were grouped together by a clustering algorithm because their wordings are similar. **That grouping is a hint, and it is often wrong.** Decide which of them name the same thing… Where what is shown does not let you tell, say so instead of guessing." |
+| **4. Gather** | Every passage that names one thing | Once per name | "Say what the disagreement actually is, in a few sentences, naming who holds which side… **null is a last resort, not the default answer.**" |
+| **5. Gather merge** | The partial findings for one very large name | Only when one call could not hold the name | "Treat them as partial evidence about one name, never as competing claims to weigh against each other." |
+| **6. Position extraction** | A group of passages with similar claims, shown **without their authors** | Once per group | "Find the arguments running through these passages. Your job is to find **what RECURS**… If you are producing roughly as many arguments as there are passages, you are restating the passages rather than finding the arguments in them, and **you have not done the task**." |
+| **7. Relating positions** | A neighbourhood of arguments, again **without authors** | Once per neighbourhood | "Say how these arguments actually stand to one another… **There is no list of allowed relations.** Do not pick from a menu and do not reach for opposition by default… **Most pairs have no relationship, and saying so costs nothing.**" |
+
+**Questions 6 and 7 are asked blind.** The model is shown the claims and never the authors. If it could see who wrote what, it could decide that Mann and Tilly meet because they are Mann and Tilly. The count of how often the map joins different books would then be measuring the model's sense of who *ought* to argue, not the corpus. Hiding the authors costs nothing and makes that count mean something.
+
+**Question 7 is asked with no vocabulary at all.** Not "is this support or opposition?" but "what is actually there?" The consequence is measurable: because nothing asked for opposition, opposition came back at 6.6% rather than at whatever rate a leading question would have produced. The model invented 504 labels of its own.
+
+### F.2 Answering a question
+
+| | Asked of | How often | The question |
+|---|---|---|---|
+| **8. Brief interrogation** | Your question, against the library's measured coverage | Once | "Find every premise smuggled into this brief's case and request, and test each one against the corpus coverage stated below — **never against what you recall or assume about the world**." Each premise comes back supported, contradicted, or the corpus is silent. Refusal is available. |
+| **9. Fork check** | Your question, against a measured imbalance | Once, and usually finds nothing | Is there a real fork here — a source imbalance, or a mismatch between the period you asked about and the years the books were published — that would change what evidence gets assembled? If so, ask the analyst. If not, do not. |
+| **10. Retrieval** | The library, through ten deterministic tools | Many turns, bounded | Which passages bear on this? The model proposes one query at a time and is told back only what the evidence set now holds and which books it spans. |
+| **11. The door** *(optional map path)* | Your question alone, **before anything shows it the corpus** | Once | "Say what arguments this question is actually about. Write each one as a standalone sentence that a scholar could assert and another could deny… **Name no authors and no books.** Do not hedge and do not balance. Each account gets its strongest statement, **including the one the question may end up rejecting**." |
+| **12. Synthesis** | The assembled evidence | Once | "Answer this question, using the evidence below as your grounds… Where this question asks you to choose between positions, **your answer must commit to one of them and defend it**, rather than surveying the positions without settling anything. **At least one claim must also state plainly where the account you commit to is weak or fails.**" Every claim is marked (a), (b) or (c) and carries its grounds. |
+| **13. Counter-position** | The same evidence, when the question is contested | Once | "State the **strongest** opposing position the corpus itself supports, or say plainly that it does not — **never to invent one**." |
+
+The synthesis instruction forbids the failure mode a careful assistant defaults to. A model asked to weigh two accounts will usually produce a balanced summary in which both have a point, because that is the safest-sounding output. Axial requires a verdict, and then requires the verdict's own weakness to be stated as a claim in its own right.
+
+### F.3 Writing the paper
+
+| | Asked of | How often | The question |
+|---|---|---|---|
+| **14. Arc plan** | The inventory of claims that survived | Once | "Plan an arc. Order the sections so each earns the next, and assign each claim to the section that uses it… **At least one section must state the opposing position at its strongest**, unless the records themselves report the corpus is one-sided. A paper that quietly drops the side it disagrees with is the failure this pass most needs to avoid." |
+| **15. Drafting** | One section's assigned claims | Once per section | "Write ONE section of a paper. **You have no tools, no retrieval, and no access to any source: the claims below are the whole world**, and you may not assert anything that is not traceable to one of them." |
+| **16. Shape check** | The finished paper | Once | Does this read as an argument or as a list? Reported, never blocking. |
+
+### F.4 The judges, which sit outside the pipeline
+
+Five bounded checks — does a cited passage support its claim, is an inference contradicted by its own evidence, is the opposing case stated at its strongest (a *steelman*) or knocked down in a weakened form nobody actually holds (a *strawman*), did the pre-pass catch the planted premise, did the answer do something the case declares disqualifying — plus the sealed review panel.
+
+**None of them may be run by the model that produced the thing being judged.** The guard raises before the call is made, not after. The panel goes further and requires a different training lab, because a family-mate's agreement is weak evidence.
+
+---
+
+## Appendix G — Glossary
 
 **Passage.** The unit Axial reads: a few paragraphs cut along the author's own boundaries, 3,500 to 9,000 characters. One to four printed pages.
 
@@ -128,7 +179,7 @@ The full bibliography, with publishers, editions, translation notes and per-file
 
 **Confidence band.** High, medium or low. Capped by the least-covered name the output relies on, and never raisable by the writing model.
 
-**Tag (retired).** A label from a closed list, attached to a passage. Axial's first version used five such lists and they were measured and abandoned (section 5). They survive only as *examples*, shown after the free answer and never checked against it.
+**Tag (retired).** A label from a closed list, attached to a passage. Axial's first version used five such lists and they were measured and abandoned (section 4). They survive only as *examples*, shown after the free answer and never checked against it.
 
 **Blind pass.** A model call deliberately denied information it would otherwise use. Position extraction and relation-finding never see the author of a passage, so a count of how often the map joins different books measures the corpus rather than the model's sense of who ought to argue.
 
