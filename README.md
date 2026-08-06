@@ -40,6 +40,11 @@ Specs: [`specs/PRODUCT.md`](specs/PRODUCT.md) (A) · [`specs/PHASE-B.md`](specs/
 [`specs/PHASE-C.md`](specs/PHASE-C.md). The 65-row decision log is
 [`docs/DECISIONS.md`](docs/DECISIONS.md). GitHub issues and PRs are the system of record.
 
+**Drawn:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) indexes nine diagrams — the whole
+system, the Phase A ingestion ledger, and each pass where a model is handed a judgment.
+The same nine are rendered as one page
+[here](https://claude.ai/code/artifact/15019e36-8b6e-4c8a-a499-3169c8db0582).
+
 ### How Phase A works
 
 A structural tree is extracted **once per source**, persisted, and reused by every later
@@ -227,7 +232,7 @@ src/axial/                 one module per stage, unit tests co-located
   gates/ validators/ eval/                               the gate harnesses
 tests/                     acceptance contracts, grouped by the stage they pin
 specs/                     CHARTER.md, PRODUCT.md, PHASE-B.md, PHASE-C.md
-docs/                      DECISIONS.md, eval/, academic/, postmortem/
+docs/                      ARCHITECTURE.md, diagrams/, DECISIONS.md, eval/, academic/
 data/                      gitignored: sources and every derived artifact
 ```
 
