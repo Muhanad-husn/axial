@@ -1,0 +1,12 @@
+flowchart LR
+    smp["stratified sample<br/>of finished papers"] --> pkt["sealed packet — the paper,<br/>its cited evidence,<br/>the bibliography.<br/>Nothing else."] --> rev["N ≥ 3 reviewers, each from<br/>a different training lab —<br/>no tools, structurally"] --> ver["structured verdicts —<br/>ordinal bands + named defects,<br/>spread reported as the error bar"] --> tr["trusted: false until the<br/>positive control has passed"]
+    ctl["positive control — three planted defects;<br/>reviewers are not told a control is running"] --> tr
+
+    classDef code fill:#E4EFF0,stroke:#14646A,stroke-width:2px,color:#0F3339;
+    classDef model fill:#F5E7EE,stroke:#7C3A5E,stroke-width:2px,color:#3C1B2C;
+    classDef gate fill:#FBF4E2,stroke:#8A6B15,stroke-width:2px,stroke-dasharray:6 4,color:#4A3A0B;
+    classDef store fill:#ECEDE7,stroke:#8B8F84,stroke-width:1.5px,color:#2A2C28;
+    class pkt,ver,ctl code;
+    class rev model;
+    class tr gate;
+    class smp store;

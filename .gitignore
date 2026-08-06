@@ -79,3 +79,7 @@ data/**
 # Word writes a lock file beside any .docx it has open. By-directory means it
 # would otherwise be swept in the moment someone reads the report.
 ~$*
+# Build cruft: Python bytecode cache, and the mermaid-diagrams-spliced-in
+# markdown copy that build_docx_with_diagrams.py regenerates on every run.
+data/reports/build/__pycache__/
+data/reports/build/*.docx-source.md
