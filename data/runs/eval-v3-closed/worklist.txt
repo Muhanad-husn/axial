@@ -1,0 +1,2 @@
+data\logs\2026-08-04-smoke-v7\closed-briefs\B.yaml
+data\logs\2026-08-04-smoke-v7\closed-briefs\C.yaml

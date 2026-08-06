@@ -1,0 +1,148 @@
+{
+  "briefs": [
+    {
+      "brief_id": "080d9e472fc56a34",
+      "brief_path": "data\\logs\\2026-08-04-smoke-v7\\closed-briefs\\B.yaml",
+      "brief_stem": "B",
+      "cost": {
+        "by_pass": {
+          "counter_position_generate": {
+            "completion_tokens": 2495,
+            "prompt_tokens": 5095,
+            "total_tokens": 7590,
+            "usd": 0.0501625
+          },
+          "fork_check": {
+            "completion_tokens": 360,
+            "prompt_tokens": 3728,
+            "total_tokens": 4088,
+            "usd": 0.0006227199999999999
+          },
+          "interrogate": {
+            "completion_tokens": 5077,
+            "prompt_tokens": 625,
+            "total_tokens": 5702,
+            "usd": 0.0777175
+          },
+          "retrieve": {
+            "completion_tokens": 10113,
+            "prompt_tokens": 45864,
+            "total_tokens": 55977,
+            "usd": 0.266355
+          },
+          "synthesize": {
+            "completion_tokens": 5376,
+            "prompt_tokens": 10504,
+            "total_tokens": 15880,
+            "usd": 0.2138
+          }
+        },
+        "total_tokens": 89237,
+        "total_usd": 0.60865772
+      },
+      "draws": [
+        {
+          "brief_id": "080d9e472fc56a34",
+          "brief_path": "data\\logs\\2026-08-04-smoke-v7\\closed-briefs\\B.yaml",
+          "brief_stem": "B",
+          "draw_index": 0,
+          "latency_seconds": 462.41792340000393,
+          "reason": "",
+          "record_path": "data\\runs\\eval-v3-closed\\analyses\\B\\draw0\\080d9e472fc56a34.json",
+          "report_path": "data\\runs\\eval-v3-closed\\analyses\\B\\draw0\\runs\\080d9e472fc56a34.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": 1.0,
+        "claim_kind_counts": [
+          {
+            "a": 5,
+            "b": 2,
+            "c": 6
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded"
+        ],
+        "n_draws": 1
+      }
+    },
+    {
+      "brief_id": "6678f15a71f15ac0",
+      "brief_path": "data\\logs\\2026-08-04-smoke-v7\\closed-briefs\\C.yaml",
+      "brief_stem": "C",
+      "cost": {
+        "by_pass": {
+          "counter_position_generate": {
+            "completion_tokens": 4000,
+            "prompt_tokens": 25818,
+            "total_tokens": 29818,
+            "usd": 0.124545
+          },
+          "fork_check": {
+            "completion_tokens": 459,
+            "prompt_tokens": 9631,
+            "total_tokens": 10090,
+            "usd": 0.00147686
+          },
+          "interrogate": {
+            "completion_tokens": 4224,
+            "prompt_tokens": 655,
+            "total_tokens": 4879,
+            "usd": 0.0649975
+          },
+          "retrieve": {
+            "completion_tokens": 10026,
+            "prompt_tokens": 208949,
+            "total_tokens": 218975,
+            "usd": 0.6727625
+          },
+          "synthesize": {
+            "completion_tokens": 7563,
+            "prompt_tokens": 93620,
+            "total_tokens": 101183,
+            "usd": 0.69499
+          }
+        },
+        "total_tokens": 364945,
+        "total_usd": 1.55877186
+      },
+      "draws": [
+        {
+          "brief_id": "6678f15a71f15ac0",
+          "brief_path": "data\\logs\\2026-08-04-smoke-v7\\closed-briefs\\C.yaml",
+          "brief_stem": "C",
+          "draw_index": 0,
+          "latency_seconds": 618.4355820000055,
+          "reason": "",
+          "record_path": "data\\runs\\eval-v3-closed\\analyses\\C\\draw0\\6678f15a71f15ac0.json",
+          "report_path": "data\\runs\\eval-v3-closed\\analyses\\C\\draw0\\runs\\6678f15a71f15ac0.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": 1.0,
+        "claim_kind_counts": [
+          {
+            "a": 4,
+            "b": 11,
+            "c": 3
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded"
+        ],
+        "n_draws": 1
+      }
+    }
+  ],
+  "fail_count": 0,
+  "ok_count": 2,
+  "skip_count": 0,
+  "total_draws": 2
+}

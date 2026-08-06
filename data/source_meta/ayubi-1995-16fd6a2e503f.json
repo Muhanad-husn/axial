@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Ayubi, Nazih N.;"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "1995"
+  },
+  "file_hash": "16fd6a2e503f7b8df9ac8fd811e6a251695137d583665c5ad8eb17b89374e452",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9781850438281"
+  },
+  "physical_page_count": 529,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "I. B. Tauris"
+  },
+  "source_id": "ayubi-1995-16fd6a2e503f",
+  "title": {
+    "provenance": "open_library",
+    "value": "Over-stating the Arab State"
+  }
+}

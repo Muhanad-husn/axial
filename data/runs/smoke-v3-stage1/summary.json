@@ -1,0 +1,72 @@
+{
+  "briefs": [
+    {
+      "brief_id": "c2afb6d42f713e1c",
+      "brief_path": "data\\runs\\stage1-briefs\\S-05.yaml",
+      "brief_stem": "S-05",
+      "cost": {
+        "by_pass": {
+          "counter_position_generate": {
+            "completion_tokens": 1066,
+            "prompt_tokens": 22034,
+            "total_tokens": 23100,
+            "usd": 0.019865742000000002
+          },
+          "interrogate": {
+            "completion_tokens": 1580,
+            "prompt_tokens": 467,
+            "total_tokens": 2047,
+            "usd": 0.0015777450000000002
+          },
+          "retrieve": {
+            "completion_tokens": 19287,
+            "prompt_tokens": 76873,
+            "total_tokens": 96160,
+            "usd": 0.050219445
+          },
+          "synthesize": {
+            "completion_tokens": 3389,
+            "prompt_tokens": 36988,
+            "total_tokens": 40377,
+            "usd": 0.0372823932
+          }
+        },
+        "total_tokens": 161684,
+        "total_usd": 0.1089453252
+      },
+      "draws": [
+        {
+          "brief_id": "c2afb6d42f713e1c",
+          "brief_path": "data\\runs\\stage1-briefs\\S-05.yaml",
+          "brief_stem": "S-05",
+          "draw_index": 0,
+          "latency_seconds": 1116.9848394000146,
+          "reason": "",
+          "record_path": "data\\runs\\smoke-v3-stage1\\analyses\\S-05\\draw0\\c2afb6d42f713e1c.json",
+          "report_path": "data\\runs\\smoke-v3-stage1\\analyses\\S-05\\draw0\\runs\\c2afb6d42f713e1c.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": 1.0,
+        "claim_kind_counts": [
+          {
+            "a": 15,
+            "b": 3,
+            "c": 0
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded"
+        ],
+        "n_draws": 1
+      }
+    }
+  ],
+  "fail_count": 0,
+  "ok_count": 1,
+  "skip_count": 0,
+  "total_draws": 1
+}

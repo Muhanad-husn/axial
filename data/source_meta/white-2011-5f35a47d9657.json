@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "White, Benjamin Thomas."
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2011"
+  },
+  "file_hash": "5f35a47d9657a5b527b9af7dec5d8db255b6ae15aaebb695db8a42f4b634269e",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9780748641871"
+  },
+  "physical_page_count": 254,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Edinburgh University Press"
+  },
+  "source_id": "white-2011-5f35a47d9657",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "Emergence of Minorities in the Middle East"
+  }
+}

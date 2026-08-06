@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Beshara, Adel;"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2011"
+  },
+  "file_hash": "8410a9059300a22b883d8816d3e5104fa3a1967b5c6ffa3ed33c36dd117bc2ac",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9780203816776"
+  },
+  "physical_page_count": 398,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Routledge"
+  },
+  "source_id": "beshara-2011-8410a9059300",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "The Origins of Syrian Nationhood"
+  }
+}

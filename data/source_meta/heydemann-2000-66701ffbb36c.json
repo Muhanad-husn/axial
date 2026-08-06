@@ -1,0 +1,24 @@
+{
+  "author": {
+    "provenance": "title page",
+    "value": "Steven Heydemann"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2000"
+  },
+  "file_hash": "66701ffbb36c8ffd8838c1c524431116ff92f5168c1cd99bacb437db03fe370a",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": null,
+  "physical_page_count": 203,
+  "publisher": {
+    "provenance": "title page",
+    "value": "University of California Press"
+  },
+  "source_id": "heydemann-2000-66701ffbb36c",
+  "title": {
+    "provenance": "title page",
+    "value": "War, Institutions, and Social Change in the Middle East"
+  }
+}

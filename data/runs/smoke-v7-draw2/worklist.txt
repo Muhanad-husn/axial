@@ -1,0 +1,3 @@
+data\logs\2026-08-04-smoke-v7\redraw-briefs\A.yaml
+data\logs\2026-08-04-smoke-v7\redraw-briefs\P3-04.yaml
+data\logs\2026-08-04-smoke-v7\redraw-briefs\S-01.yaml

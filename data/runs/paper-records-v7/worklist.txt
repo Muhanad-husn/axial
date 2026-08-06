@@ -1,0 +1,4 @@
+data\logs\2026-08-04-smoke-v7\paper-briefs\P1-01.yaml
+data\logs\2026-08-04-smoke-v7\paper-briefs\P1-02.yaml
+data\logs\2026-08-04-smoke-v7\paper-briefs\P2-02.yaml
+data\logs\2026-08-04-smoke-v7\paper-briefs\P4-01.yaml

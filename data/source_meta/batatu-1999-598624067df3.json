@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "title page",
+    "value": "Hanna Batatu"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "1999"
+  },
+  "file_hash": "598624067df3025b8cef3f82fb691a1843bba5aa34dbff59014c8cad9c215565",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "0691002541"
+  },
+  "physical_page_count": 432,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Princeton University Press"
+  },
+  "source_id": "batatu-1999-598624067df3",
+  "title": {
+    "provenance": "title page",
+    "value": "Syria\u2019s Peasantry, the Descendants of Its Lesser Rural Notables, and Their Politics"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "title page",
+    "value": "John A. Hall and Ralph Schroeder"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2006"
+  },
+  "file_hash": "449559bfe4dcd5b5a23e7d6de20c65062d1c10a42910a06dda529f07a867e5c5",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "0521615186"
+  },
+  "physical_page_count": 432,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Cambridge University Press"
+  },
+  "source_id": "hall-2006-449559bfe4dc",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "An anatomy of power : the social theory of Michael Mann"
+  }
+}

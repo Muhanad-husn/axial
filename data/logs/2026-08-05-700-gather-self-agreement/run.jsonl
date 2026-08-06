@@ -1,0 +1,157 @@
+{"event": "context_loaded", "ts": 1785951413.4597077, "notes": 6733, "sources": 34, "elapsed": 3.5}
+{"event": "disagreements_loaded", "ts": 1785951415.7466989, "count": 5408}
+{"event": "eligible", "ts": 1785951425.3351076, "reproducible": 2427, "multi_batch": 903, "key_moved": 1947, "no_packets": 0, "resplit": 131}
+{"event": "sampled", "ts": 1785951425.4039168, "n": 150, "stride": 16, "of": 2427}
+{"event": "arm_start", "ts": 1785951425.8815942, "model": "deepseek/deepseek-v4-flash", "members_note": "single-batch names only"}
+{"event": "reask", "ts": 1785951431.0020006, "canonical": "Michael Oakeshott", "member_count": 10, "agrees": true}
+{"event": "reask", "ts": 1785951432.854173, "canonical": "Bilad Al-Sham", "member_count": 28, "agrees": true}
+{"event": "reask", "ts": 1785951434.3968403, "canonical": "Chiapas", "member_count": 10, "agrees": true}
+{"event": "reask", "ts": 1785951434.6773517, "canonical": "Brett Kavanaugh", "member_count": 13, "agrees": true}
+{"event": "reask", "ts": 1785951438.2928777, "canonical": "sixteenth century", "member_count": 23, "agrees": true}
+{"event": "reask", "ts": 1785951441.7853742, "canonical": "Qalamun", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951443.4590592, "canonical": "Islamic Republic", "member_count": 10, "agrees": true}
+{"event": "reask", "ts": 1785951444.6253698, "canonical": "Venezuela", "member_count": 21, "agrees": true}
+{"event": "reask", "ts": 1785951447.4803126, "canonical": "Russell", "member_count": 12, "agrees": true}
+{"event": "reask", "ts": 1785951452.6695173, "canonical": "Phoenicia", "member_count": 19, "agrees": true}
+{"event": "reask", "ts": 1785951459.6375704, "canonical": "Jamil Mardam Bek", "member_count": 19, "agrees": false}
+{"event": "reask", "ts": 1785951459.9885807, "canonical": "Dave Grossman", "member_count": 11, "agrees": false}
+{"event": "reask", "ts": 1785951462.015161, "canonical": "Frank Trentmann", "member_count": 19, "agrees": true}
+{"event": "reask", "ts": 1785951465.602643, "canonical": "Christian Church", "member_count": 21, "agrees": true}
+{"event": "reask", "ts": 1785951466.5290058, "canonical": "Henry VIII", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951466.6635902, "canonical": "Fruma Zachs", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951466.962459, "canonical": "Sati al-Husri", "member_count": 16, "agrees": true}
+{"event": "reask", "ts": 1785951474.4370453, "canonical": "Salah Jadid", "member_count": 26, "agrees": true}
+{"event": "reask", "ts": 1785951476.816128, "canonical": "Nidaa Tounes", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951477.3736057, "canonical": "Spanish", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951486.7691915, "canonical": "Marxists", "member_count": 35, "agrees": false}
+{"event": "reask", "ts": 1785951486.869155, "canonical": "Thailand", "member_count": 21, "agrees": true}
+{"event": "reask", "ts": 1785951493.1884747, "canonical": "Elie Kedourie", "member_count": 14, "agrees": false}
+{"event": "reask", "ts": 1785951496.964991, "canonical": "empire", "member_count": 16, "agrees": true}
+{"event": "reask", "ts": 1785951498.6983798, "canonical": "Arab Socialist Union", "member_count": 12, "agrees": true}
+{"event": "reask", "ts": 1785951501.5698628, "canonical": "Simon Chesterman", "member_count": 10, "agrees": true}
+{"event": "reask", "ts": 1785951507.4205978, "canonical": "David M. Malone", "member_count": 12, "agrees": true}
+{"event": "reask", "ts": 1785951513.8993056, "canonical": "Maghreb", "member_count": 20, "agrees": true}
+{"event": "reask", "ts": 1785951516.4654336, "canonical": "Ath-Thawrah", "member_count": 15, "agrees": true}
+{"event": "reask", "ts": 1785951518.0046217, "canonical": "'Ali Rida al-Rikabi", "member_count": 19, "agrees": true}
+{"event": "reask", "ts": 1785951520.808331, "canonical": "Sufism", "member_count": 36, "agrees": true}
+{"event": "reask", "ts": 1785951523.730333, "canonical": "Saddam Husain", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951523.9722958, "canonical": "Salah Jedid", "member_count": 12, "agrees": true}
+{"event": "reask", "ts": 1785951528.76761, "canonical": "emotional capitalism", "member_count": 15, "agrees": true}
+{"event": "reask", "ts": 1785951529.1807334, "canonical": "al-Muqtataf", "member_count": 14, "agrees": true}
+{"event": "reask", "ts": 1785951536.8649218, "canonical": "millet system", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951542.505366, "canonical": "rationalism", "member_count": 14, "agrees": true}
+{"event": "reask", "ts": 1785951549.718695, "canonical": "Adams", "member_count": 15, "agrees": false}
+{"event": "reask", "ts": 1785951557.725268, "canonical": "Sayyid Qutb", "member_count": 13, "agrees": true}
+{"event": "reask", "ts": 1785951561.5649805, "canonical": "Kashmir", "member_count": 13, "agrees": false}
+{"event": "reask", "ts": 1785951567.040993, "canonical": "Kurdistan", "member_count": 26, "agrees": true}
+{"event": "reask", "ts": 1785951575.6679194, "canonical": "infitah", "member_count": 15, "agrees": true}
+{"event": "reask", "ts": 1785951577.2000804, "canonical": "Elisabeth Wood", "member_count": 15, "agrees": true}
+{"event": "reask", "ts": 1785951579.6103015, "canonical": "Tehran", "member_count": 30, "agrees": true}
+{"event": "reask", "ts": 1785951580.2337523, "canonical": "John Shy", "member_count": 12, "agrees": true}
+{"event": "reask", "ts": 1785951580.3987322, "canonical": "Vladimir Brovkin", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951584.1486692, "canonical": "the fifties", "member_count": 10, "agrees": true}
+{"event": "reask", "ts": 1785951584.6156256, "canonical": "Defense Companies", "member_count": 14, "agrees": true}
+{"event": "reask", "ts": 1785951591.5683517, "canonical": "Department of State", "member_count": 16, "agrees": true}
+{"event": "reask", "ts": 1785951595.9995673, "canonical": "Bill Domhoff", "member_count": 16, "agrees": false}
+{"event": "reask", "ts": 1785951596.3484466, "canonical": "Namibia", "member_count": 15, "agrees": true}
+{"event": "reask", "ts": 1785951599.924132, "canonical": "Gorski", "member_count": 19, "agrees": true}
+{"event": "reask", "ts": 1785951601.4850454, "canonical": "Verso", "member_count": 17, "agrees": true}
+{"event": "reask", "ts": 1785951604.8680038, "canonical": "Herder", "member_count": 16, "agrees": true}
+{"event": "reask", "ts": 1785951604.9909418, "canonical": "Nicholas Sambanis", "member_count": 19, "agrees": false}
+{"event": "reask", "ts": 1785951614.6774602, "canonical": "Italians", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951616.6831317, "canonical": "John F. Kennedy", "member_count": 30, "agrees": true}
+{"event": "reask", "ts": 1785951618.2693925, "canonical": "Sati al-Husri", "member_count": 17, "agrees": true}
+{"event": "reask", "ts": 1785951621.0415578, "canonical": "al-Sham", "member_count": 12, "agrees": true}
+{"event": "reask", "ts": 1785951627.7839859, "canonical": "Eric Olin Wright", "member_count": 13, "agrees": false}
+{"event": "reask", "ts": 1785951630.006451, "canonical": "early modern period", "member_count": 18, "agrees": true}
+{"event": "reask", "ts": 1785951632.6141198, "canonical": "'Abdallah", "member_count": 15, "agrees": true}
+{"event": "reask", "ts": 1785951634.2823687, "canonical": "Henri Bergson", "member_count": 10, "agrees": true}
+{"event": "reask", "ts": 1785951635.447576, "canonical": "Berbers", "member_count": 37, "agrees": true}
+{"event": "reask", "ts": 1785951642.5361562, "canonical": "2011 uprising", "member_count": 13, "agrees": true}
+{"event": "reask", "ts": 1785951648.1536849, "canonical": "Gellately", "member_count": 10, "agrees": true}
+{"event": "reask", "ts": 1785951652.480834, "canonical": "Poor Law", "member_count": 10, "agrees": true}
+{"event": "reask", "ts": 1785951669.298791, "canonical": "ethnic cleansing", "member_count": 13, "agrees": false}
+{"event": "reask", "ts": 1785951669.329821, "canonical": "Shabbiha", "member_count": 11, "agrees": false}
+{"event": "reask", "ts": 1785951671.8172498, "canonical": "Ta'if Accord", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951690.1432881, "canonical": "HC", "member_count": 21, "agrees": true}
+{"event": "reask", "ts": 1785951692.4638062, "canonical": "Béatrice Hibou", "member_count": 13, "agrees": true}
+{"event": "reask", "ts": 1785951700.3249462, "canonical": "Victorian period", "member_count": 12, "agrees": true}
+{"event": "reask", "ts": 1785951700.9949598, "canonical": "nation", "member_count": 27, "agrees": true}
+{"event": "reask", "ts": 1785951715.618874, "canonical": "Barack Obama", "member_count": 22, "agrees": true}
+{"event": "reask", "ts": 1785951716.8876672, "canonical": "Nepal", "member_count": 17, "agrees": false}
+{"event": "reask", "ts": 1785951720.5537028, "canonical": "Brendan O'Leary", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951726.4384387, "canonical": "Stalinism", "member_count": 17, "agrees": true}
+{"event": "reask", "ts": 1785951728.604308, "canonical": "Al Jazeera", "member_count": 19, "agrees": true}
+{"event": "reask", "ts": 1785951736.8562317, "canonical": "Gustav Ratzenhofer", "member_count": 13, "agrees": true}
+{"event": "reask", "ts": 1785951738.3757842, "canonical": "Alawis", "member_count": 34, "agrees": true}
+{"event": "reask", "ts": 1785951773.579535, "canonical": "Syrianism", "member_count": 12, "agrees": true}
+{"event": "reask", "ts": 1785951776.4832525, "canonical": "Patrick Seale", "member_count": 28, "agrees": false}
+{"event": "reask", "ts": 1785951779.9259756, "canonical": "Wales", "member_count": 24, "agrees": false}
+{"event": "reask", "ts": 1785951788.7799907, "canonical": "Hunt", "member_count": 13, "agrees": false}
+{"event": "reask", "ts": 1785951790.3379595, "canonical": "Doreen Warriner", "member_count": 23, "agrees": false}
+{"event": "reask", "ts": 1785951794.8896842, "canonical": "Friedrich Nietzsche", "member_count": 16, "agrees": true}
+{"event": "reask", "ts": 1785951799.169715, "canonical": "diaspora", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951802.6286438, "canonical": "Mustafa Kemal", "member_count": 10, "agrees": true}
+{"event": "reask", "ts": 1785951803.0411491, "canonical": "London School of Economics and Political Science", "member_count": 17, "agrees": true}
+{"event": "reask", "ts": 1785951810.656367, "canonical": "Zone 4", "member_count": 12, "agrees": true}
+{"event": "reask", "ts": 1785951810.8225753, "canonical": "University of Oxford", "member_count": 15, "agrees": true}
+{"event": "reask", "ts": 1785951813.193589, "canonical": "Cilicia", "member_count": 10, "agrees": false}
+{"event": "reask", "ts": 1785951813.666423, "canonical": "Haifa", "member_count": 11, "agrees": false}
+{"event": "reask", "ts": 1785951813.9178364, "canonical": "Rif'at al-Asad", "member_count": 17, "agrees": false}
+{"event": "reask", "ts": 1785951819.5263157, "canonical": "International Society and the De Facto State", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951820.002614, "canonical": "North Carolina", "member_count": 22, "agrees": true}
+{"event": "reask", "ts": 1785951825.0306613, "canonical": "Kalyvas", "member_count": 30, "agrees": true}
+{"event": "reask", "ts": 1785951830.9885273, "canonical": "Vendée", "member_count": 14, "agrees": true}
+{"event": "reask", "ts": 1785951832.290495, "canonical": "I.B. Tauris", "member_count": 25, "agrees": true}
+{"event": "reask", "ts": 1785951832.9257238, "canonical": "Faysali government", "member_count": 12, "agrees": true}
+{"event": "reask", "ts": 1785951836.3019454, "canonical": "Zoroastrianism", "member_count": 12, "agrees": true}
+{"event": "reask", "ts": 1785951838.631463, "canonical": "Axis powers", "member_count": 14, "agrees": true}
+{"event": "reask", "ts": 1785951849.3444731, "canonical": "Communist", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951857.2183464, "canonical": "Assad", "member_count": 15, "agrees": true}
+{"event": "reask", "ts": 1785951873.4479454, "canonical": "Ministry of Defense", "member_count": 10, "agrees": true}
+{"event": "reask", "ts": 1785951878.0198028, "canonical": "PYD", "member_count": 14, "agrees": true}
+{"event": "reask", "ts": 1785951878.6641319, "canonical": "Robert Thompson", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951882.890935, "canonical": "social democracy", "member_count": 27, "agrees": true}
+{"event": "reask", "ts": 1785951892.9279914, "canonical": "Taliban", "member_count": 31, "agrees": true}
+{"event": "reask", "ts": 1785951895.8991003, "canonical": "Jesus Christ", "member_count": 30, "agrees": true}
+{"event": "reask", "ts": 1785951937.8744216, "canonical": "Louis Althusser", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951944.1186943, "canonical": "trade unions", "member_count": 15, "agrees": false}
+{"event": "reask", "ts": 1785951953.0551863, "canonical": "Ottoman Syria", "member_count": 21, "agrees": true}
+{"event": "reask", "ts": 1785951955.8815243, "canonical": "Missouri", "member_count": 28, "agrees": true}
+{"event": "reask", "ts": 1785951956.1890767, "canonical": "J. P. Morgan", "member_count": 11, "agrees": true}
+{"event": "reask", "ts": 1785951959.462012, "canonical": "al-Salt", "member_count": 10, "agrees": false}
+{"event": "reask", "ts": 1785951964.1258054, "canonical": "Agnès Favier", "member_count": 10, "agrees": true}
+{"event": "reask", "ts": 1785951974.4945314, "canonical": "Moshe Ma'oz", "member_count": 15, "agrees": false}
+{"event": "reask", "ts": 1785951975.0868425, "canonical": "Americas", "member_count": 33, "agrees": true}
+{"event": "reask", "ts": 1785951978.9055254, "canonical": "Mark Haugaard", "member_count": 32, "agrees": true}
+{"event": "reask", "ts": 1785951982.628484, "canonical": "Republican Party", "member_count": 29, "agrees": true}
+{"event": "reask", "ts": 1785951986.8780668, "canonical": "minority", "member_count": 17, "agrees": true}
+{"event": "reask", "ts": 1785951992.987987, "canonical": "Greek", "member_count": 16, "agrees": true}
+{"event": "reask", "ts": 1785951994.4878495, "canonical": "Muhammad Abduh", "member_count": 19, "agrees": true}
+{"event": "reask", "ts": 1785951995.1103172, "canonical": "Salah ad-Din Bitar", "member_count": 14, "agrees": true}
+{"event": "reask", "ts": 1785951999.9929366, "canonical": "Arab Spring uprisings of 2011", "member_count": 10, "agrees": false}
+{"event": "reask", "ts": 1785952001.7918935, "canonical": "Duma", "member_count": 15, "agrees": true}
+{"event": "reask", "ts": 1785952002.522245, "canonical": "Assad", "member_count": 16, "agrees": true}
+{"event": "reask", "ts": 1785952004.716865, "canonical": "sharifians", "member_count": 18, "agrees": true}
+{"event": "reask", "ts": 1785952020.8990314, "canonical": "Central America", "member_count": 16, "agrees": false}
+{"event": "reask", "ts": 1785952021.1035388, "canonical": "Soviets", "member_count": 24, "agrees": true}
+{"event": "reask", "ts": 1785952025.116863, "canonical": "George Antonius", "member_count": 16, "agrees": false}
+{"event": "reask", "ts": 1785952028.879488, "canonical": "International Journal of Middle East Studies", "member_count": 26, "agrees": true}
+{"event": "reask", "ts": 1785952032.7501094, "canonical": "Donald Trump", "member_count": 30, "agrees": true}
+{"event": "reask", "ts": 1785952033.194166, "canonical": "Al-Hayat", "member_count": 13, "agrees": true}
+{"event": "reask", "ts": 1785952038.6715894, "canonical": "South Yemen", "member_count": 15, "agrees": true}
+{"event": "reask", "ts": 1785952053.1033103, "canonical": "'Alawi", "member_count": 17, "agrees": true}
+{"event": "reask", "ts": 1785952055.0863123, "canonical": "privatization", "member_count": 20, "agrees": false}
+{"event": "reask", "ts": 1785952055.4800892, "canonical": "American Empire", "member_count": 31, "agrees": false}
+{"event": "reask", "ts": 1785952058.92624, "canonical": "East Africa", "member_count": 10, "agrees": true}
+{"event": "reask", "ts": 1785952061.2701705, "canonical": "Malaysia", "member_count": 15, "agrees": true}
+{"event": "reask", "ts": 1785952063.2712622, "canonical": "Kheder Khaddour", "member_count": 13, "agrees": true}
+{"event": "reask", "ts": 1785952091.4113116, "canonical": "Michael Schwartz", "member_count": 10, "agrees": false}
+{"event": "reask", "ts": 1785952113.9796107, "canonical": "Roger Owen", "member_count": 17, "agrees": true}
+{"event": "reask", "ts": 1785952127.2077014, "canonical": "Arab Uprisings", "member_count": 19, "agrees": false}
+{"event": "reask", "ts": 1785952145.820045, "canonical": "Machiavelli", "member_count": 23, "agrees": true}
+{"event": "reask", "ts": 1785952210.652448, "canonical": "industrialization", "member_count": 13, "agrees": true}
+{"event": "reask", "ts": 1785952234.8348272, "canonical": "Jan T. Gross", "member_count": 10, "agrees": true}
+{"event": "reask", "ts": 1785952380.5862179, "canonical": "Intissar Kherigi", "member_count": 17, "agrees": true}
+{"event": "arm_done", "ts": 1785952380.5885127, "judged": 150, "failures": 0, "self_disagreement": 0.19333333333333333, "recorded_disagreement_now_null": 13, "recorded_null_now_disagreement": 16, "recorded_non_null": 36, "by_member_count": {"10+": {"n": 150, "flips": 29}}, "elapsed_s": 954.7}
+{"event": "done", "ts": 1785952380.5961978}

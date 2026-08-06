@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Steven Heydemann"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2004"
+  },
+  "file_hash": "72a4a9a9b3b01a8e53728a60bc7e6902af41b42684f2f494376a1c69f999c6fb",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "1403963525"
+  },
+  "physical_page_count": 343,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Palgrave Macmillan"
+  },
+  "source_id": "heydemann-2004-72a4a9a9b3b0",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "Networks of Privilege in the Middle East"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Giorgio Agamben"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2005"
+  },
+  "file_hash": "b22edc40e0fc9948406f5c21ea63da14d96d80cedfa5be9c15b49fba483f7a01",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "0226009246"
+  },
+  "physical_page_count": 106,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "University Of Chicago Press, University of Chicago Press"
+  },
+  "source_id": "agamben-2005-b22edc40e0fc",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "State of Exception"
+  }
+}

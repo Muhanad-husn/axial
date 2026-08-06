@@ -1,0 +1,18 @@
+{"event": "sources", "ts": 1785938177.8838892, "total": 34, "old": 31, "new": 3}
+{"event": "records_loaded", "ts": 1785938178.6663346, "all": 6751, "old": 6166, "elapsed": 0.7822575569152832}
+{"event": "inventories_built", "ts": 1785938182.633118, "old_entries": 53502, "full_entries": 57834}
+{"event": "persisted_vectors_loaded", "ts": 1785938197.7898192, "rows": 57834}
+{"event": "vector_coverage", "ts": 1785938197.8397877, "missing_for_old": 0, "missing_for_full": 0}
+{"event": "fit_31_books", "ts": 1785938634.7942767, "entries": 53502, "elapsed": 436.9007821083069}
+{"event": "baseline_batches", "ts": 1785938635.2414546, "count": 12458, "unique_keys": 12458}
+{"event": "delta", "ts": 1785938635.31988, "known": 53502, "new": 4332}
+{"event": "approximate_predict", "ts": 1785938686.3089795, "new": 4332, "accepted": 580, "residue": 3752, "elapsed": 50.93512034416199}
+{"event": "residue_refit", "ts": 1785938688.25684, "elapsed": 1.9367809295654297, "residue_cluster_count": 847}
+{"event": "incremental_batches", "ts": 1785938688.7129798, "count": 13305, "unique_keys": 13305}
+{"event": "comparison_incremental_vs_baseline", "ts": 1785938688.7165139, "baseline": 12458, "identical_free": 11103, "new_batches": 2202, "disturbed_old_batches": 1355}
+{"event": "evidence_changed_known_surfaces", "ts": 1785938689.1029382, "count": 1460}
+{"event": "disturbance_breakdown", "ts": 1785938689.211821, "total": 1355, "cluster_grew": 459, "split_amplified_of_grew": 0, "evidence_only": 896, "unexplained": 0}
+{"event": "fresh_fit_34_books", "ts": 1785939222.8594582, "entries": 57834, "elapsed": 533.6475043296814}
+{"event": "fresh_batches", "ts": 1785939223.9036868, "count": 13458, "unique_keys": 13458}
+{"event": "comparison_incremental_vs_fresh_34", "ts": 1785939223.9105732, "identical": 11172, "incremental_only": 2133, "fresh_only": 2286}
+{"event": "done", "ts": 1785939223.9118083}

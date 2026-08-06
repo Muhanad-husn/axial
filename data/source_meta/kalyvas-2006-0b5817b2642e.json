@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "STATHIS N. KALYVAS"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2006"
+  },
+  "file_hash": "0b5817b2642ed71cb1a8b49bc03f9ebd6cecfcaa5403d65f99fce165aab6f252",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9780521854092"
+  },
+  "physical_page_count": 510,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Cambridge University Press"
+  },
+  "source_id": "kalyvas-2006-0b5817b2642e",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "The Logic of Violence in Civil War"
+  }
+}

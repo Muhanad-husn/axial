@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "title page",
+    "value": "Sini\u0161a Male\u0161evi\u0107 and Mark Haugaard"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2007"
+  },
+  "file_hash": "323a2518e61b6b83d026558598980ad5e79db691669068fef7305aba685bdcaf",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "0511371381"
+  },
+  "physical_page_count": 290,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Cambridge University Press"
+  },
+  "source_id": "malesevic-2007-323a2518e61b",
+  "title": {
+    "provenance": "title page",
+    "value": "Ernest Gellner and Contemporary Social Thought"
+  }
+}

@@ -1,0 +1,1126 @@
+[
+ {
+  "sweep": "smoke-v5",
+  "case": "P3-04",
+  "usd": 0.1192,
+  "lat": 1289.5,
+  "lat_by": {
+   "counter_position_generate": 33,
+   "interrogate": 336,
+   "retrieve": 799,
+   "synthesize": 122
+  },
+  "models": {
+   "counter_position_generate": "z-ai/glm-5.2",
+   "interrogate": "deepseek/deepseek-v4-pro",
+   "retrieve": "deepseek/deepseek-v4-pro",
+   "synthesize": "z-ai/glm-5.2"
+  },
+  "assembled": 97,
+  "composed": 23,
+  "steps": 14,
+  "toolcalls": 14,
+  "claims": 18,
+  "words": 1616,
+  "mix": {
+   "a": 15,
+   "b": 3,
+   "c": 0
+  },
+  "hit": "2/7",
+  "missed": [
+   "caspersen-2012-fbc0efe4fffc",
+   "kalyvas-2006-0b5817b2642e",
+   "malesevic-2026-4faeb528594d",
+   "mann-v4-2013-1b7e828e0199",
+   "vignal-2021-c7005c2bf8ef"
+  ],
+  "attr": 1.0,
+  "disposition": "proceed_bounded",
+  "other": {
+   "concentration": {
+    "hhi": 0.125,
+    "top_1_share": 0.15
+   },
+   "coverage_bands": {
+    "dense": 1,
+    "moderate": 2,
+    "thin": 3
+   },
+   "cross_source_rate": {
+    "denominator": 3,
+    "numerator": 3,
+    "value": 1.0
+   },
+   "disagreement_reuse": {
+    "names_whose_notes_were_reached": 3,
+    "names_with_findings": 3,
+    "reached": true
+   },
+   "grounds_per_claim": {
+    "mean": 2.1666666666666665,
+    "median": 1.0,
+    "share_with_two_or_more": 0.3333333333333333
+   },
+   "name_reach": {
+    "grounds_note_count": 20,
+    "grounds_notes_in_a_covered_name": 20,
+    "name_pages_touched": 294,
+    "names_in_coverage_scope": 6,
+    "share": 1.0
+   },
+   "per_source_share": {
+    "ayubi-1995-16fd6a2e503f": 0.15,
+    "batatu-1999-598624067df3": 0.15,
+    "bayat-2017-ce6bb0643cfb": 0.05,
+    "beshara-2011-8410a9059300": 0.15,
+    "heydemann-2000-66701ffbb36c": 0.05,
+    "kandiah-2018-454c87b22e16": 0.15,
+    "kao-2025-ab19e646ab7d": 0.15,
+    "ungor-2020-ae5701dcc706": 0.05,
+    "white-2011-5f35a47d9657": 0.05,
+    "wimmer-2013-a67941b77943": 0.05
+   },
+   "retrieval_precision": {
+    "cited_note_count": 20,
+    "retrieved_note_count": 97,
+    "value": 0.20618556701030927
+   },
+   "sources_cited": 10,
+   "usage_ratio": {
+    "ayubi-1995-16fd6a2e503f": 1.6747252747252748,
+    "batatu-1999-598624067df3": 1.0438356164383562,
+    "bayat-2017-ce6bb0643cfb": 2.208695652173913,
+    "beshara-2011-8410a9059300": 0.736231884057971,
+    "heydemann-2000-66701ffbb36c": 0.39687500000000003,
+    "kandiah-2018-454c87b22e16": 8.021052631578947,
+    "kao-2025-ab19e646ab7d": 4.010526315789473,
+    "ungor-2020-ae5701dcc706": 3.907692307692308,
+    "white-2011-5f35a47d9657": 0.4305084745762712,
+    "wimmer-2013-a67941b77943": 6.3500000000000005
+   }
+  }
+ },
+ {
+  "sweep": "smoke-v5",
+  "case": "S-01",
+  "usd": 0.176,
+  "lat": 466.3,
+  "lat_by": {
+   "counter_position_generate": 102,
+   "interrogate": 21,
+   "retrieve": 304,
+   "synthesize": 39
+  },
+  "models": {
+   "counter_position_generate": "z-ai/glm-5.2",
+   "interrogate": "deepseek/deepseek-v4-pro",
+   "retrieve": "deepseek/deepseek-v4-pro",
+   "synthesize": "z-ai/glm-5.2"
+  },
+  "assembled": 133,
+  "composed": 20,
+  "steps": 14,
+  "toolcalls": 14,
+  "claims": 12,
+  "words": 972,
+  "mix": {
+   "a": 6,
+   "b": 6,
+   "c": 0
+  },
+  "hit": "2/5",
+  "missed": [
+   "malesevic-2010-fd2cbe41384f",
+   "mann-v2-1993-ec759675dcbd",
+   "tilly-1978-f908c910464c"
+  ],
+  "attr": 1.0,
+  "disposition": "proceed_bounded",
+  "other": {
+   "concentration": {
+    "hhi": 0.12396694214876033,
+    "top_1_share": 0.18181818181818182
+   },
+   "coverage_bands": {
+    "dense": 2,
+    "moderate": 2,
+    "thin": 0
+   },
+   "cross_source_rate": {
+    "denominator": 6,
+    "numerator": 4,
+    "value": 0.6666666666666666
+   },
+   "disagreement_reuse": {
+    "names_whose_notes_were_reached": 4,
+    "names_with_findings": 4,
+    "reached": true
+   },
+   "grounds_per_claim": {
+    "mean": 1.8333333333333333,
+    "median": 1.0,
+    "share_with_two_or_more": 0.4166666666666667
+   },
+   "name_reach": {
+    "grounds_note_count": 11,
+    "grounds_notes_in_a_covered_name": 11,
+    "name_pages_touched": 224,
+    "names_in_coverage_scope": 4,
+    "share": 1.0
+   },
+   "per_source_share": {
+    "ayubi-1995-16fd6a2e503f": 0.18181818181818182,
+    "hall-2006-449559bfe4dc": 0.09090909090909091,
+    "heydemann-2000-66701ffbb36c": 0.18181818181818182,
+    "malesevic-2007-323a2518e61b": 0.09090909090909091,
+    "malesevic-2013-5d3ec1809b12": 0.09090909090909091,
+    "malesevic-2026-4faeb528594d": 0.09090909090909091,
+    "mann-v3-2012-3e9f48ff605a": 0.09090909090909091,
+    "ungor-2020-ae5701dcc706": 0.09090909090909091,
+    "wimmer-2013-a67941b77943": 0.09090909090909091
+   },
+   "retrieval_precision": {
+    "cited_note_count": 11,
+    "retrieved_note_count": 133,
+    "value": 0.08270676691729323
+   },
+   "sources_cited": 9,
+   "usage_ratio": {
+    "ayubi-1995-16fd6a2e503f": 22.954545454545453,
+    "hall-2006-449559bfe4dc": 0.2593733949666153,
+    "heydemann-2000-66701ffbb36c": 3.8257575757575757,
+    "malesevic-2007-323a2518e61b": 2.5505050505050506,
+    "malesevic-2013-5d3ec1809b12": 1.5830721003134796,
+    "malesevic-2026-4faeb528594d": 9.181818181818182,
+    "mann-v3-2012-3e9f48ff605a": 1.7657342657342658,
+    "ungor-2020-ae5701dcc706": 15.303030303030303,
+    "wimmer-2013-a67941b77943": 2.186147186147186
+   }
+  }
+ },
+ {
+  "sweep": "smoke-v5",
+  "case": "S-02",
+  "usd": 0.1343,
+  "lat": 338.7,
+  "lat_by": {
+   "counter_position_generate": 35,
+   "interrogate": 25,
+   "retrieve": 201,
+   "synthesize": 78
+  },
+  "models": {
+   "counter_position_generate": "z-ai/glm-5.2",
+   "interrogate": "deepseek/deepseek-v4-pro",
+   "retrieve": "deepseek/deepseek-v4-pro",
+   "synthesize": "z-ai/glm-5.2"
+  },
+  "assembled": 152,
+  "composed": 22,
+  "steps": 14,
+  "toolcalls": 14,
+  "claims": 24,
+  "words": 1845,
+  "mix": {
+   "a": 18,
+   "b": 6,
+   "c": 0
+  },
+  "hit": "2/5",
+  "missed": [
+   "malesevic-2007-323a2518e61b",
+   "malesevic-2013-5d3ec1809b12",
+   "smith-2009-cba7b6f3dfba"
+  ],
+  "attr": 1.0,
+  "disposition": "proceed_bounded",
+  "other": {
+   "concentration": {
+    "hhi": 0.1020408163265306,
+    "top_1_share": 0.14285714285714285
+   },
+   "coverage_bands": {
+    "dense": 2,
+    "moderate": 3,
+    "thin": 0
+   },
+   "cross_source_rate": {
+    "denominator": 6,
+    "numerator": 5,
+    "value": 0.8333333333333334
+   },
+   "disagreement_reuse": {
+    "names_whose_notes_were_reached": 5,
+    "names_with_findings": 5,
+    "reached": true
+   },
+   "grounds_per_claim": {
+    "mean": 1.2916666666666667,
+    "median": 1.0,
+    "share_with_two_or_more": 0.20833333333333334
+   },
+   "name_reach": {
+    "grounds_note_count": 14,
+    "grounds_notes_in_a_covered_name": 14,
+    "name_pages_touched": 421,
+    "names_in_coverage_scope": 5,
+    "share": 1.0
+   },
+   "per_source_share": {
+    "ayubi-1995-16fd6a2e503f": 0.14285714285714285,
+    "batatu-1999-598624067df3": 0.07142857142857142,
+    "bayat-2017-ce6bb0643cfb": 0.07142857142857142,
+    "beshara-2011-8410a9059300": 0.07142857142857142,
+    "gellner-1981-a8b0206cb566": 0.14285714285714285,
+    "hall-2006-449559bfe4dc": 0.14285714285714285,
+    "heydemann-2000-66701ffbb36c": 0.07142857142857142,
+    "malesevic-2010-fd2cbe41384f": 0.07142857142857142,
+    "mann-v2-1993-ec759675dcbd": 0.07142857142857142,
+    "white-2011-5f35a47d9657": 0.07142857142857142,
+    "wimmer-2013-a67941b77943": 0.07142857142857142
+   },
+   "retrieval_precision": {
+    "cited_note_count": 14,
+    "retrieved_note_count": 152,
+    "value": 0.09210526315789473
+   },
+   "sources_cited": 11,
+   "usage_ratio": {
+    "ayubi-1995-16fd6a2e503f": 5.8999999999999995,
+    "batatu-1999-598624067df3": 29.499999999999996,
+    "bayat-2017-ce6bb0643cfb": 29.499999999999996,
+    "beshara-2011-8410a9059300": 2.107142857142857,
+    "gellner-1981-a8b0206cb566": 3.6874999999999996,
+    "hall-2006-449559bfe4dc": 1.9032258064516125,
+    "heydemann-2000-66701ffbb36c": 7.374999999999999,
+    "malesevic-2010-fd2cbe41384f": 0.6145833333333333,
+    "mann-v2-1993-ec759675dcbd": 2.9499999999999997,
+    "white-2011-5f35a47d9657": 2.9499999999999997,
+    "wimmer-2013-a67941b77943": 1.4749999999999999
+   }
+  }
+ },
+ {
+  "sweep": "smoke-v5",
+  "case": "S-03",
+  "usd": 0.115,
+  "lat": 387.7,
+  "lat_by": {
+   "counter_position_generate": 119,
+   "interrogate": 17,
+   "retrieve": 185,
+   "synthesize": 67
+  },
+  "models": {
+   "counter_position_generate": "z-ai/glm-5.2",
+   "interrogate": "deepseek/deepseek-v4-pro",
+   "retrieve": "deepseek/deepseek-v4-pro",
+   "synthesize": "z-ai/glm-5.2"
+  },
+  "assembled": 46,
+  "composed": 21,
+  "steps": 10,
+  "toolcalls": 10,
+  "claims": 16,
+  "words": 1338,
+  "mix": {
+   "a": 6,
+   "b": 10,
+   "c": 0
+  },
+  "hit": "3/3",
+  "missed": [],
+  "attr": 1.0,
+  "disposition": "proceed_bounded",
+  "other": {
+   "concentration": {
+    "hhi": 0.26000000000000006,
+    "top_1_share": 0.4
+   },
+   "coverage_bands": {
+    "dense": 0,
+    "moderate": 2,
+    "thin": 1
+   },
+   "cross_source_rate": {
+    "denominator": 10,
+    "numerator": 9,
+    "value": 0.9
+   },
+   "disagreement_reuse": {
+    "names_whose_notes_were_reached": 3,
+    "names_with_findings": 3,
+    "reached": true
+   },
+   "grounds_per_claim": {
+    "mean": 1.875,
+    "median": 2.0,
+    "share_with_two_or_more": 0.625
+   },
+   "name_reach": {
+    "grounds_note_count": 10,
+    "grounds_notes_in_a_covered_name": 10,
+    "name_pages_touched": 277,
+    "names_in_coverage_scope": 3,
+    "share": 1.0
+   },
+   "per_source_share": {
+    "ayubi-1995-16fd6a2e503f": 0.1,
+    "caspersen-2012-fbc0efe4fffc": 0.2,
+    "heydemann-2000-66701ffbb36c": 0.1,
+    "jackson-1990-7eb3f39a639f": 0.4,
+    "zaum-2007-834d3343aa95": 0.2
+   },
+   "retrieval_precision": {
+    "cited_note_count": 10,
+    "retrieved_note_count": 46,
+    "value": 0.21739130434782608
+   },
+   "sources_cited": 5,
+   "usage_ratio": {
+    "ayubi-1995-16fd6a2e503f": 3.6333333333333333,
+    "caspersen-2012-fbc0efe4fffc": 0.8074074074074075,
+    "heydemann-2000-66701ffbb36c": 2.18,
+    "jackson-1990-7eb3f39a639f": 1.117948717948718,
+    "zaum-2007-834d3343aa95": 0.990909090909091
+   }
+  }
+ },
+ {
+  "sweep": "smoke-v5",
+  "case": "S-04",
+  "usd": 0.1237,
+  "lat": 737.5,
+  "lat_by": {
+   "counter_position_generate": 180,
+   "interrogate": 31,
+   "retrieve": 270,
+   "synthesize": 257
+  },
+  "models": {
+   "counter_position_generate": "z-ai/glm-5.2",
+   "interrogate": "deepseek/deepseek-v4-pro",
+   "retrieve": "deepseek/deepseek-v4-pro",
+   "synthesize": "z-ai/glm-5.2"
+  },
+  "assembled": 45,
+  "composed": 20,
+  "steps": 14,
+  "toolcalls": 14,
+  "claims": 25,
+  "words": 1624,
+  "mix": {
+   "a": 18,
+   "b": 7,
+   "c": 0
+  },
+  "hit": "1/2",
+  "missed": [
+   "ungor-2020-ae5701dcc706"
+  ],
+  "attr": 1.0,
+  "disposition": "proceed_bounded",
+  "other": {
+   "concentration": {
+    "hhi": 1.0,
+    "top_1_share": 1.0
+   },
+   "coverage_bands": {
+    "dense": 0,
+    "moderate": 2,
+    "thin": 2
+   },
+   "cross_source_rate": {
+    "denominator": 7,
+    "numerator": 0,
+    "value": 0.0
+   },
+   "disagreement_reuse": {
+    "names_whose_notes_were_reached": 0,
+    "names_with_findings": 0,
+    "reached": false
+   },
+   "grounds_per_claim": {
+    "mean": 1.32,
+    "median": 1,
+    "share_with_two_or_more": 0.24
+   },
+   "name_reach": {
+    "grounds_note_count": 18,
+    "grounds_notes_in_a_covered_name": 18,
+    "name_pages_touched": 191,
+    "names_in_coverage_scope": 4,
+    "share": 1.0
+   },
+   "per_source_share": {
+    "caspersen-2012-fbc0efe4fffc": 1.0
+   },
+   "retrieval_precision": {
+    "cited_note_count": 18,
+    "retrieved_note_count": 45,
+    "value": 0.4
+   },
+   "sources_cited": 1,
+   "usage_ratio": {
+    "caspersen-2012-fbc0efe4fffc": 1.0227272727272727
+   }
+  }
+ },
+ {
+  "sweep": "smoke-v5",
+  "case": "S-05",
+  "usd": 0.1031,
+  "lat": 401.0,
+  "lat_by": {
+   "counter_position_generate": 93,
+   "interrogate": 24,
+   "retrieve": 196,
+   "synthesize": 87
+  },
+  "models": {
+   "counter_position_generate": "z-ai/glm-5.2",
+   "interrogate": "deepseek/deepseek-v4-pro",
+   "retrieve": "deepseek/deepseek-v4-pro",
+   "synthesize": "z-ai/glm-5.2"
+  },
+  "assembled": 57,
+  "composed": 21,
+  "steps": 14,
+  "toolcalls": 14,
+  "claims": 26,
+  "words": 1839,
+  "mix": {
+   "a": 21,
+   "b": 5,
+   "c": 0
+  },
+  "hit": "1/1",
+  "missed": [],
+  "attr": 1.0,
+  "disposition": "proceed_bounded",
+  "other": {
+   "concentration": {
+    "hhi": 1.0,
+    "top_1_share": 1.0
+   },
+   "coverage_bands": {
+    "dense": 0,
+    "moderate": 2,
+    "thin": 1
+   },
+   "cross_source_rate": {
+    "denominator": 5,
+    "numerator": 0,
+    "value": 0.0
+   },
+   "disagreement_reuse": {
+    "names_whose_notes_were_reached": 1,
+    "names_with_findings": 1,
+    "reached": true
+   },
+   "grounds_per_claim": {
+    "mean": 1.3076923076923077,
+    "median": 1.0,
+    "share_with_two_or_more": 0.23076923076923078
+   },
+   "name_reach": {
+    "grounds_note_count": 19,
+    "grounds_notes_in_a_covered_name": 19,
+    "name_pages_touched": 219,
+    "names_in_coverage_scope": 3,
+    "share": 1.0
+   },
+   "per_source_share": {
+    "caspersen-2012-fbc0efe4fffc": 1.0
+   },
+   "retrieval_precision": {
+    "cited_note_count": 19,
+    "retrieved_note_count": 57,
+    "value": 0.3333333333333333
+   },
+   "sources_cited": 1,
+   "usage_ratio": {
+    "caspersen-2012-fbc0efe4fffc": 1.2295081967213115
+   }
+  }
+ },
+ {
+  "sweep": "eval-A-C-14",
+  "case": "A",
+  "usd": 0.1438,
+  "lat": 519.8,
+  "lat_by": {
+   "counter_position_generate": 67,
+   "interrogate": 38,
+   "retrieve": 364,
+   "synthesize": 51
+  },
+  "models": {
+   "counter_position_generate": "z-ai/glm-5.2",
+   "interrogate": "deepseek/deepseek-v4-pro",
+   "retrieve": "deepseek/deepseek-v4-pro",
+   "synthesize": "z-ai/glm-5.2"
+  },
+  "assembled": 56,
+  "composed": 17,
+  "steps": 14,
+  "toolcalls": 14,
+  "claims": 15,
+  "words": 1247,
+  "mix": {
+   "a": 8,
+   "b": 7,
+   "c": 0
+  },
+  "hit": "4/5",
+  "missed": [
+   "tilly-1978-f908c910464c"
+  ],
+  "attr": 1.0,
+  "disposition": "proceed_bounded",
+  "other": {
+   "concentration": {
+    "hhi": 0.14,
+    "top_1_share": 0.2
+   },
+   "coverage_bands": {
+    "dense": 2,
+    "moderate": 0,
+    "thin": 3
+   },
+   "cross_source_rate": {
+    "denominator": 7,
+    "numerator": 7,
+    "value": 1.0
+   },
+   "disagreement_reuse": {
+    "names_whose_notes_were_reached": 3,
+    "names_with_findings": 3,
+    "reached": true
+   },
+   "grounds_per_claim": {
+    "mean": 1.6,
+    "median": 1,
+    "share_with_two_or_more": 0.4666666666666667
+   },
+   "name_reach": {
+    "grounds_note_count": 10,
+    "grounds_notes_in_a_covered_name": 10,
+    "name_pages_touched": 323,
+    "names_in_coverage_scope": 5,
+    "share": 1.0
+   },
+   "per_source_share": {
+    "ayubi-1995-16fd6a2e503f": 0.2,
+    "bayat-2017-ce6bb0643cfb": 0.1,
+    "caspersen-2012-fbc0efe4fffc": 0.2,
+    "hall-2006-449559bfe4dc": 0.1,
+    "heydemann-2000-66701ffbb36c": 0.1,
+    "jackson-1990-7eb3f39a639f": 0.1,
+    "malesevic-2026-4faeb528594d": 0.1,
+    "mann-v4-2013-1b7e828e0199": 0.1
+   },
+   "retrieval_precision": {
+    "cited_note_count": 10,
+    "retrieved_note_count": 56,
+    "value": 0.17857142857142858
+   },
+   "sources_cited": 8,
+   "usage_ratio": {
+    "ayubi-1995-16fd6a2e503f": 1.3925,
+    "bayat-2017-ce6bb0643cfb": 1.3925,
+    "caspersen-2012-fbc0efe4fffc": 37.13333333333333,
+    "hall-2006-449559bfe4dc": 3.48125,
+    "heydemann-2000-66701ffbb36c": 0.7233766233766235,
+    "jackson-1990-7eb3f39a639f": 3.48125,
+    "malesevic-2026-4faeb528594d": 6.9625,
+    "mann-v4-2013-1b7e828e0199": 1.9892857142857143
+   }
+  }
+ },
+ {
+  "sweep": "eval-A-C-14",
+  "case": "C",
+  "usd": 0.1706,
+  "lat": 410.6,
+  "lat_by": {
+   "counter_position_generate": 25,
+   "interrogate": 29,
+   "retrieve": 243,
+   "synthesize": 113
+  },
+  "models": {
+   "counter_position_generate": "z-ai/glm-5.2",
+   "interrogate": "deepseek/deepseek-v4-pro",
+   "retrieve": "deepseek/deepseek-v4-pro",
+   "synthesize": "z-ai/glm-5.2"
+  },
+  "assembled": 107,
+  "composed": 21,
+  "steps": 14,
+  "toolcalls": 14,
+  "claims": 24,
+  "words": 2004,
+  "mix": {
+   "a": 16,
+   "b": 8,
+   "c": 0
+  },
+  "hit": "2/6",
+  "missed": [
+   "malesevic-2013-5d3ec1809b12",
+   "mann-v2-1993-ec759675dcbd",
+   "smith-2009-cba7b6f3dfba",
+   "white-2011-5f35a47d9657"
+  ],
+  "attr": 1.0,
+  "disposition": "proceed_bounded",
+  "other": {
+   "concentration": {
+    "hhi": 0.15625,
+    "top_1_share": 0.1875
+   },
+   "coverage_bands": {
+    "dense": 2,
+    "moderate": 0,
+    "thin": 1
+   },
+   "cross_source_rate": {
+    "denominator": 8,
+    "numerator": 8,
+    "value": 1.0
+   },
+   "disagreement_reuse": {
+    "names_whose_notes_were_reached": 3,
+    "names_with_findings": 3,
+    "reached": true
+   },
+   "grounds_per_claim": {
+    "mean": 2.1666666666666665,
+    "median": 1.0,
+    "share_with_two_or_more": 0.3333333333333333
+   },
+   "name_reach": {
+    "grounds_note_count": 16,
+    "grounds_notes_in_a_covered_name": 16,
+    "name_pages_touched": 424,
+    "names_in_coverage_scope": 3,
+    "share": 1.0
+   },
+   "per_source_share": {
+    "ayubi-1995-16fd6a2e503f": 0.1875,
+    "batatu-1999-598624067df3": 0.0625,
+    "bayat-2017-ce6bb0643cfb": 0.0625,
+    "beshara-2011-8410a9059300": 0.0625,
+    "gellner-1981-a8b0206cb566": 0.1875,
+    "hall-2006-449559bfe4dc": 0.1875,
+    "heydemann-2000-66701ffbb36c": 0.0625,
+    "malesevic-2007-323a2518e61b": 0.1875
+   },
+   "retrieval_precision": {
+    "cited_note_count": 16,
+    "retrieved_note_count": 107,
+    "value": 0.14953271028037382
+   },
+   "sources_cited": 8,
+   "usage_ratio": {
+    "ayubi-1995-16fd6a2e503f": 8.484375,
+    "batatu-1999-598624067df3": 22.625,
+    "bayat-2017-ce6bb0643cfb": 45.25,
+    "beshara-2011-8410a9059300": 3.7708333333333335,
+    "gellner-1981-a8b0206cb566": 7.144736842105264,
+    "hall-2006-449559bfe4dc": 0.7298387096774194,
+    "heydemann-2000-66701ffbb36c": 4.525,
+    "malesevic-2007-323a2518e61b": 1.1602564102564101
+   }
+  }
+ },
+ {
+  "sweep": "eval-A-C-20",
+  "case": "A",
+  "usd": 0.2366,
+  "lat": 625.2,
+  "lat_by": {
+   "counter_position_generate": 84,
+   "interrogate": 56,
+   "retrieve": 426,
+   "synthesize": 59
+  },
+  "models": {
+   "counter_position_generate": "z-ai/glm-5.2",
+   "interrogate": "deepseek/deepseek-v4-pro",
+   "retrieve": "deepseek/deepseek-v4-pro",
+   "synthesize": "z-ai/glm-5.2"
+  },
+  "assembled": 62,
+  "composed": 18,
+  "steps": 20,
+  "toolcalls": 20,
+  "claims": 18,
+  "words": 1621,
+  "mix": {
+   "a": 12,
+   "b": 6,
+   "c": 0
+  },
+  "hit": "4/5",
+  "missed": [
+   "tilly-1978-f908c910464c"
+  ],
+  "attr": 1.0,
+  "disposition": "proceed_bounded",
+  "other": {
+   "concentration": {
+    "hhi": 0.12396694214876033,
+    "top_1_share": 0.18181818181818182
+   },
+   "coverage_bands": {
+    "dense": 2,
+    "moderate": 0,
+    "thin": 4
+   },
+   "cross_source_rate": {
+    "denominator": 6,
+    "numerator": 6,
+    "value": 1.0
+   },
+   "disagreement_reuse": {
+    "names_whose_notes_were_reached": 3,
+    "names_with_findings": 3,
+    "reached": true
+   },
+   "grounds_per_claim": {
+    "mean": 1.5,
+    "median": 1.0,
+    "share_with_two_or_more": 0.3333333333333333
+   },
+   "name_reach": {
+    "grounds_note_count": 11,
+    "grounds_notes_in_a_covered_name": 11,
+    "name_pages_touched": 212,
+    "names_in_coverage_scope": 6,
+    "share": 1.0
+   },
+   "per_source_share": {
+    "ayubi-1995-16fd6a2e503f": 0.18181818181818182,
+    "bayat-2017-ce6bb0643cfb": 0.09090909090909091,
+    "caspersen-2012-fbc0efe4fffc": 0.09090909090909091,
+    "hall-2006-449559bfe4dc": 0.09090909090909091,
+    "heydemann-2000-66701ffbb36c": 0.18181818181818182,
+    "jackson-1990-7eb3f39a639f": 0.09090909090909091,
+    "malesevic-2026-4faeb528594d": 0.09090909090909091,
+    "mann-v4-2013-1b7e828e0199": 0.09090909090909091,
+    "wimmer-2013-a67941b77943": 0.09090909090909091
+   },
+   "retrieval_precision": {
+    "cited_note_count": 11,
+    "retrieved_note_count": 62,
+    "value": 0.1774193548387097
+   },
+   "sources_cited": 9,
+   "usage_ratio": {
+    "ayubi-1995-16fd6a2e503f": 8.409090909090908,
+    "bayat-2017-ce6bb0643cfb": 5.6060606060606055,
+    "caspersen-2012-fbc0efe4fffc": 5.6060606060606055,
+    "hall-2006-449559bfe4dc": 1.121212121212121,
+    "heydemann-2000-66701ffbb36c": 1.2457912457912457,
+    "jackson-1990-7eb3f39a639f": 3.3636363636363638,
+    "malesevic-2026-4faeb528594d": 2.4025974025974026,
+    "mann-v4-2013-1b7e828e0199": 16.818181818181817,
+    "wimmer-2013-a67941b77943": 0.9343434343434344
+   }
+  }
+ },
+ {
+  "sweep": "eval-A-C-20",
+  "case": "C",
+  "usd": 0.1675,
+  "lat": 400.2,
+  "lat_by": {
+   "counter_position_generate": 61,
+   "interrogate": 57,
+   "retrieve": 187,
+   "synthesize": 96
+  },
+  "models": {
+   "counter_position_generate": "z-ai/glm-5.2",
+   "interrogate": "deepseek/deepseek-v4-pro",
+   "retrieve": "deepseek/deepseek-v4-pro",
+   "synthesize": "z-ai/glm-5.2"
+  },
+  "assembled": 181,
+  "composed": 20,
+  "steps": 13,
+  "toolcalls": 13,
+  "claims": 28,
+  "words": 2283,
+  "mix": {
+   "a": 20,
+   "b": 8,
+   "c": 0
+  },
+  "hit": "3/6",
+  "missed": [
+   "malesevic-2013-5d3ec1809b12",
+   "smith-2009-cba7b6f3dfba",
+   "white-2011-5f35a47d9657"
+  ],
+  "attr": 1.0,
+  "disposition": "proceed_bounded",
+  "other": {
+   "concentration": {
+    "hhi": 0.0703125,
+    "top_1_share": 0.125
+   },
+   "coverage_bands": {
+    "dense": 2,
+    "moderate": 1,
+    "thin": 4
+   },
+   "cross_source_rate": {
+    "denominator": 8,
+    "numerator": 8,
+    "value": 1.0
+   },
+   "disagreement_reuse": {
+    "names_whose_notes_were_reached": 6,
+    "names_with_findings": 6,
+    "reached": true
+   },
+   "grounds_per_claim": {
+    "mean": 1.3571428571428572,
+    "median": 1.0,
+    "share_with_two_or_more": 0.32142857142857145
+   },
+   "name_reach": {
+    "grounds_note_count": 16,
+    "grounds_notes_in_a_covered_name": 16,
+    "name_pages_touched": 408,
+    "names_in_coverage_scope": 7,
+    "share": 1.0
+   },
+   "per_source_share": {
+    "ayubi-1995-16fd6a2e503f": 0.125,
+    "batatu-1999-598624067df3": 0.0625,
+    "bayat-2017-ce6bb0643cfb": 0.0625,
+    "beshara-2011-8410a9059300": 0.0625,
+    "chouliaraki-2024-91e7fc84f05c": 0.0625,
+    "elcheroth-2017-78f0cccef5b9": 0.0625,
+    "gellner-1981-a8b0206cb566": 0.0625,
+    "hall-2006-449559bfe4dc": 0.0625,
+    "heydemann-2000-66701ffbb36c": 0.0625,
+    "kalyvas-2006-0b5817b2642e": 0.0625,
+    "malesevic-2007-323a2518e61b": 0.0625,
+    "malesevic-2010-fd2cbe41384f": 0.0625,
+    "mann-v1-2012-5f90ead66c93": 0.0625,
+    "mann-v2-1993-ec759675dcbd": 0.0625,
+    "wimmer-2013-a67941b77943": 0.0625
+   },
+   "retrieval_precision": {
+    "cited_note_count": 16,
+    "retrieved_note_count": 181,
+    "value": 0.08839779005524862
+   },
+   "sources_cited": 15,
+   "usage_ratio": {
+    "ayubi-1995-16fd6a2e503f": 5.859375,
+    "batatu-1999-598624067df3": 23.4375,
+    "bayat-2017-ce6bb0643cfb": 11.71875,
+    "beshara-2011-8410a9059300": 1.6741071428571428,
+    "chouliaraki-2024-91e7fc84f05c": 11.71875,
+    "elcheroth-2017-78f0cccef5b9": 46.875,
+    "gellner-1981-a8b0206cb566": 2.7573529411764706,
+    "hall-2006-449559bfe4dc": 0.24933510638297873,
+    "heydemann-2000-66701ffbb36c": 4.261363636363637,
+    "kalyvas-2006-0b5817b2642e": 23.4375,
+    "malesevic-2007-323a2518e61b": 0.40409482758620685,
+    "malesevic-2010-fd2cbe41384f": 0.8223684210526316,
+    "mann-v1-2012-5f90ead66c93": 1.7361111111111112,
+    "mann-v2-1993-ec759675dcbd": 1.1160714285714286,
+    "wimmer-2013-a67941b77943": 1.8028846153846154
+   }
+  }
+ },
+ {
+  "sweep": "eval-B-open",
+  "case": "B",
+  "usd": 0.3905,
+  "lat": 694.3,
+  "lat_by": {
+   "counter_position_generate": 232,
+   "interrogate": 12,
+   "retrieve": 362,
+   "synthesize": 88
+  },
+  "models": {
+   "counter_position_generate": "moonshotai/kimi-k3",
+   "interrogate": "z-ai/glm-5.2",
+   "retrieve": "deepseek/deepseek-v4-pro",
+   "synthesize": "moonshotai/kimi-k3"
+  },
+  "assembled": 31,
+  "composed": 23,
+  "steps": 20,
+  "toolcalls": 20,
+  "claims": 16,
+  "words": 1626,
+  "mix": {
+   "a": 10,
+   "b": 5,
+   "c": 1
+  },
+  "hit": "4/5",
+  "missed": [
+   "elcheroth-2017-78f0cccef5b9"
+  ],
+  "attr": 1.0,
+  "disposition": "proceed_bounded",
+  "other": {
+   "concentration": {
+    "hhi": 0.2,
+    "top_1_share": 0.26666666666666666
+   },
+   "coverage_bands": {
+    "dense": 0,
+    "moderate": 0,
+    "thin": 5
+   },
+   "cross_source_rate": {
+    "denominator": 5,
+    "numerator": 4,
+    "value": 0.8
+   },
+   "disagreement_reuse": {
+    "names_whose_notes_were_reached": 0,
+    "names_with_findings": 0,
+    "reached": false
+   },
+   "grounds_per_claim": {
+    "mean": 2.0625,
+    "median": 1.0,
+    "share_with_two_or_more": 0.4375
+   },
+   "name_reach": {
+    "grounds_note_count": 15,
+    "grounds_notes_in_a_covered_name": 15,
+    "name_pages_touched": 325,
+    "names_in_coverage_scope": 5,
+    "share": 1.0
+   },
+   "per_source_share": {
+    "beshara-2011-8410a9059300": 0.2,
+    "kalyvas-2006-0b5817b2642e": 0.26666666666666666,
+    "kandiah-2018-454c87b22e16": 0.06666666666666667,
+    "kao-2025-ab19e646ab7d": 0.26666666666666666,
+    "ungor-2020-ae5701dcc706": 0.06666666666666667,
+    "vignal-2021-c7005c2bf8ef": 0.06666666666666667,
+    "white-2011-5f35a47d9657": 0.06666666666666667
+   },
+   "retrieval_precision": {
+    "cited_note_count": 15,
+    "retrieved_note_count": 31,
+    "value": 0.4838709677419355
+   },
+   "sources_cited": 7,
+   "usage_ratio": {
+    "beshara-2011-8410a9059300": 0.9846153846153847,
+    "kalyvas-2006-0b5817b2642e": 0.7757575757575758,
+    "kandiah-2018-454c87b22e16": 4.266666666666667,
+    "kao-2025-ab19e646ab7d": 2.8444444444444446,
+    "ungor-2020-ae5701dcc706": 2.1333333333333333,
+    "vignal-2021-c7005c2bf8ef": 1.0666666666666667,
+    "white-2011-5f35a47d9657": 2.1333333333333333
+   }
+  }
+ },
+ {
+  "sweep": "eval-B-closed",
+  "case": "B",
+  "usd": 0.8893,
+  "lat": 981.7,
+  "lat_by": {
+   "counter_position_generate": 33,
+   "interrogate": 51,
+   "retrieve": 782,
+   "synthesize": 116
+  },
+  "models": {
+   "counter_position_generate": "openai/gpt-5.4",
+   "interrogate": "openai/gpt-5.4",
+   "retrieve": "openai/gpt-5.4",
+   "synthesize": "openai/gpt-5.6-sol"
+  },
+  "assembled": 37,
+  "composed": 22,
+  "steps": 14,
+  "toolcalls": 14,
+  "claims": 17,
+  "words": 1378,
+  "mix": {
+   "a": 8,
+   "b": 9,
+   "c": 0
+  },
+  "hit": "3/5",
+  "missed": [
+   "elcheroth-2017-78f0cccef5b9",
+   "kao-2025-ab19e646ab7d"
+  ],
+  "attr": 1.0,
+  "disposition": "proceed_bounded",
+  "other": {
+   "concentration": {
+    "hhi": 0.3333333333333333,
+    "top_1_share": 0.5
+   },
+   "coverage_bands": {
+    "dense": 1,
+    "moderate": 1,
+    "thin": 3
+   },
+   "cross_source_rate": {
+    "denominator": 9,
+    "numerator": 9,
+    "value": 1.0
+   },
+   "disagreement_reuse": {
+    "names_whose_notes_were_reached": 1,
+    "names_with_findings": 1,
+    "reached": true
+   },
+   "grounds_per_claim": {
+    "mean": 2.0,
+    "median": 2,
+    "share_with_two_or_more": 0.5882352941176471
+   },
+   "name_reach": {
+    "grounds_note_count": 12,
+    "grounds_notes_in_a_covered_name": 12,
+    "name_pages_touched": 343,
+    "names_in_coverage_scope": 5,
+    "share": 1.0
+   },
+   "per_source_share": {
+    "beshara-2011-8410a9059300": 0.08333333333333333,
+    "kalyvas-2006-0b5817b2642e": 0.5,
+    "kandiah-2018-454c87b22e16": 0.08333333333333333,
+    "ungor-2020-ae5701dcc706": 0.08333333333333333,
+    "vignal-2021-c7005c2bf8ef": 0.25
+   },
+   "retrieval_precision": {
+    "cited_note_count": 12,
+    "retrieved_note_count": 37,
+    "value": 0.32432432432432434
+   },
+   "sources_cited": 5,
+   "usage_ratio": {
+    "beshara-2011-8410a9059300": 0.4150246305418719,
+    "kalyvas-2006-0b5817b2642e": 31.59375,
+    "kandiah-2018-454c87b22e16": 4.2125,
+    "ungor-2020-ae5701dcc706": 6.017857142857142,
+    "vignal-2021-c7005c2bf8ef": 2.038306451612903
+   }
+  }
+ }
+]

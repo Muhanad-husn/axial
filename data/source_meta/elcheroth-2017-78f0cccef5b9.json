@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "title page",
+    "value": "Guy Elcheroth and Stephen Reicher"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2017"
+  },
+  "file_hash": "78f0cccef5b97b039471733352edbe50fd6294006dbb91eebac51839380c4974",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9780230272606"
+  },
+  "physical_page_count": 281,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Palgrave Macmillan"
+  },
+  "source_id": "elcheroth-2017-78f0cccef5b9",
+  "title": {
+    "provenance": "title page",
+    "value": "Identity, Violence and Power: Mobilising Hatred, Demobilising Dissent"
+  }
+}

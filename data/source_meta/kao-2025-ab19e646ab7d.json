@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Kristen Kao (Editor)"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2025"
+  },
+  "file_hash": "ab19e646ab7dd65c9977f0bce8a0dd9b57f9bfd7714a80eda5de40326e469cfd",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9780472077137"
+  },
+  "physical_page_count": 347,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "University of Michigan Press"
+  },
+  "source_id": "kao-2025-ab19e646ab7d",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "Decentralization, Local Governance, and Inequality in the Middle East and North Africa"
+  }
+}

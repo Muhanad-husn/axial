@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Tilly, Charles"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "1978"
+  },
+  "file_hash": "f908c910464c572dfd4f5e72a0267b7bed6e0c07ca3859f5a313c24f7028f1e1",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "0394349415"
+  },
+  "physical_page_count": 364,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Random House"
+  },
+  "source_id": "tilly-1978-f908c910464c",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "From Mobilization to Revolution"
+  }
+}

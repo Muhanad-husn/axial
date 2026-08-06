@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "title page",
+    "value": "U\u011fur \u00dcmit \u00dcng\u00f6r"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2020"
+  },
+  "file_hash": "ae5701dcc70607ab8ee8d2692e0337457cbe7354186fe7cb7cfefb8aeec1b9fa",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9780198825241"
+  },
+  "physical_page_count": 216,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Oxford University Press"
+  },
+  "source_id": "ungor-2020-ae5701dcc706",
+  "title": {
+    "provenance": "title page",
+    "value": "Paramilitarism: Mass Violence in the Shadow of the State"
+  }
+}

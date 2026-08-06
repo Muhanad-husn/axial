@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Wimmer, Andreas"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2013"
+  },
+  "file_hash": "a67941b7794331621b9259bd13395ef0aba609351031689c75cf1b7c09a1d440",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9781107025554"
+  },
+  "physical_page_count": 346,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Cambridge University Press"
+  },
+  "source_id": "wimmer-2013-a67941b77943",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "Waves of War"
+  }
+}
