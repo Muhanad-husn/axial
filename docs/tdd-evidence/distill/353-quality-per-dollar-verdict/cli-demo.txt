@@ -1,2 +1,0 @@
-overall_verdict: hybrid
-manifest_path: data\distill\quality_per_dollar_manifest.json

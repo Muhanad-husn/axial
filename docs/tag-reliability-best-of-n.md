@@ -393,8 +393,10 @@ own re-ask is a spoiled ballot the vote ignores; the P0-6 hard error stands only
   labeling + ceiling), DEC-31 (best-of-N measured), DEC-32 (Phase A completion plan),
   DEC-33 (abstention record shape).
 - `docs/sim-academic/README.md` — full method, all raw tables, run tracker.
-- `specs/PRODUCT.md` §7.14 (best-of-N), §7.1 / P0-6 (bounded re-ask), §10 (tag survival
-  bar), Appendix E (absence markers).
+- `specs/PRODUCT.md` — the sections that specified best-of-N, the bounded re-ask and
+  the tag survival bar were retired with the tag pass on 2026-08-06; see git history
+  and `docs/DECISIONS.md`. Appendix E survives as prompt examples. What outlives the
+  pass is §2.11's lesson 4, still applied in `src/axial/merge_names.py`.
 - Issues: #294 (best-of-N implementation), #302 (abstention record, DEC-33). #250 and
   #295 (the academic backlog and the sim-path teardown) were closed **not planned** on
   2026-07-24 — see DEC-44.

@@ -1,9 +1,0 @@
-usage: axial gold sample [-h] [--min-size MIN_SIZE] [--max-size MAX_SIZE]
-                         [--seed SEED]
-
-options:
-  -h, --help           show this help message and exit
-  --min-size MIN_SIZE  target lower bound of the sample band (default: 100)
-  --max-size MAX_SIZE  target upper bound of the sample band (default: 120)
-  --seed SEED          seed for deterministic selection (default: 0)
-exit=0

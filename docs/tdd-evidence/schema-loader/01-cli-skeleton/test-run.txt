@@ -1,4 +1,0 @@
-PS D:\axial> uv run pytest -q
-.....                                                                    [100%]
-5 passed in 0.37s
-exit code: 0
