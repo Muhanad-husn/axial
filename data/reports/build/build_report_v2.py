@@ -1,11 +1,11 @@
 """Assemble the v2 Axial dossier: prose body + generated appendices.
 
-Reads the two hand-written prose files, splices in the library table (counted
-from the live index) and the two paper appendices (read from the live paper
-records), and writes data/reports/axial-report.md.
+Reads the two hand-written prose files under `source/`, splices in the library
+table (counted from the live index) and the two paper appendices (read from the
+live paper records), and writes `data/reports/axial-report.md`.
 
-    uv run python data/reports/build_report_v2.py
-    uv run python data/reports/md_to_docx.py axial-report
+    uv run python data/reports/build/build_report_v2.py
+    uv run python data/reports/build/md_to_docx.py axial-report
 """
 
 from __future__ import annotations
@@ -15,12 +15,13 @@ import re
 import sqlite3
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-OUT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[3]
+REPORTS = Path(__file__).resolve().parents[1]
+SOURCE = REPORTS / "source"
 
-BODY = OUT / "report_v2_body.md"
-APPENDICES = OUT / "report_v2_appendices.md"
-DEST = OUT / "axial-report.md"
+BODY = SOURCE / "report_v2_body.md"
+APPENDICES = SOURCE / "report_v2_appendices.md"
+DEST = REPORTS / "axial-report.md"
 
 NOTES_DB = ROOT / "data" / "vault" / "notes.db"
 SOURCE_META = ROOT / "data" / "source_meta"

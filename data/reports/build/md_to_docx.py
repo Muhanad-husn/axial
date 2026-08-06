@@ -15,12 +15,13 @@ from docx.enum.section import WD_SECTION
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt, RGBColor
 
-ROOT = Path(__file__).resolve().parents[2]
 import sys
 
+REPORTS = Path(__file__).resolve().parents[1]
+
 _stem = sys.argv[1] if len(sys.argv) > 1 else "axial-report"
-SRC = ROOT / "data" / "reports" / f"{_stem}.md"
-DST = ROOT / "data" / "reports" / f"{_stem}.docx"
+SRC = REPORTS / f"{_stem}.md"
+DST = REPORTS / f"{_stem}.docx"
 
 INK = RGBColor(0x1F, 0x29, 0x33)
 ACCENT = RGBColor(0xC8, 0x55, 0x3D)
