@@ -2,124 +2,308 @@
 
 ![Axial](axial_logo.svg)
 
-Axial is a single-operator pipeline that turns a corpus of born-digital academic
-sources (PDF / DOCX) into a **tagged Obsidian knowledge graph**, and validates the
-tagging against a small human-labeled **gold corpus** so tagging reliability becomes a
-measured number rather than an assumption. The corpus is comparative-historical
-political sociology, heavily weighted toward Syria and the surrounding literature
-(Mann, Kalyvas, Brubaker, Hinnebusch, Migdal, Skocpol, Tilly, Wedeen, Malešević).
+Axial turns a corpus of born-digital academic books into original comparative-historical
+scholarship. You hand it a case and a question; it returns an analysis, or a paper, in
+which every claim is marked for what kind of claim it is, points at the passages that
+ground it, and carries a disclosed confidence band.
 
-The pipeline is **domain-general in mechanism, Syria-specific in content**: no
-country-specific logic lives in code. Every piece of domain content — the axes, the
-controlled vocabularies, the codebook definitions — is one versioned schema loaded at
-runtime (`config/domains/syria/`). Porting to another country is a schema edit, not a
-code change. This repository builds **Phase A (ingestion + the gold/eval loop)**: the
-clean, tagged substrate that downstream research-production phases will consume. The
-full build specification lives in [`specs/PRODUCT.md`](specs/PRODUCT.md).
+This is the opposite of retrieval. A librarian returns what a source already said. Axial
+reads every passage once with open questions (what it claims, whose position it is, who it
+argues against, who it cites, what it names), lets passages meet each other at the names
+they share, and states what follows from many sources read together. The claim no single
+source made is the product, and it is also the risk, so that seam is labeled everywhere it
+appears.
 
-## The pipeline
+The corpus is comparative-historical political sociology, weighted toward Syria and the
+surrounding literature: Mann, Kalyvas, Brubaker, Hinnebusch, Migdal, Skocpol, Tilly,
+Wedeen, Malešević. The mechanism is domain-general, and no country-specific logic lives in
+`src/`. The domain frame is data in `config/domains/<domain>/`, reaching the model as
+context and examples, never as a gate. Porting to another literature is a config edit.
 
-Seven stages, each an independently testable module. A structural tree is extracted
-**once per source**, persisted, and reused by every later stage.
+**The governing standard is not correctness. It is auditability.** A novel claim has no
+answer key, so the constitution ([`specs/CHARTER.md`](specs/CHARTER.md)) enforces one
+sentence instead: *accountability to grounds, with honest confidence.*
 
-1. **Intake** — accept PDF/DOCX, verify a real text layer, reject scanned files. No
-   OCR path.
-2. **Structural extraction + normalization + routing** — docling builds a hierarchical
-   tree (Unstructured is the fallback); a deterministic, model-free normalization pass
-   repairs decoding defects (soft-hyphens, whitespace damage, glyph-name leaks); then a
-   **source router** classifies every block into one of three routes — **prose**
-   (→ chunking), **artifact** (→ artifact pass), or **apparatus** (TOC, endnotes,
-   reference lists — dropped and recorded). The route is computed once and shared by
-   every downstream pass.
-3. **Structural envelope** — one API call per source extracts the author's thesis, TOC,
-   scope, and stated argument, grounded only in a substantive slice of the source's own
-   prose. Reused by tagging.
-4. **Chunking** — a **recursive/structural splitter** (paragraph → line → sentence →
-   character) finds boundaries and bounds every chunk into a two-sided size band. Fully
-   deterministic and **LLM-free**: no embedding model, no generative call. Chunks are
-   written to disk before any inference spend, so quality is inspectable with
-   `axial chunk examine`.
-5. **Artifact classification** — tables, figures, and captions get a role tag and route
-   to a separate artifact pool with provenance and back-references.
-6. **Tagging** — each prose chunk is tagged on the schema's axes (claim-type, field,
-   empirical-scope, candidate theory-school), a role-in-argument tag, and the
-   many-valued `polities_touched` facet.
-7. **Cross-reference + vault write** — prose→artifact references become bidirectional
-   links; everything is written to the Obsidian vault (separate prose and artifact
-   pools).
+---
 
-The **gold-corpus and eval loop** wraps stages 4–6: sampled chunks are emitted into a
-label sheet, handed to the Academic offline, labeled, and scored per axis.
+## The three phases
 
-## Command surface
+All three are built, run end to end, and measured.
 
-The pipeline is driven through the `axial` CLI (`uv run axial <command>`). The main
-commands, roughly in pipeline order:
+| Phase | What it does | Input → output |
+|---|---|---|
+| **A. Corpus ingestion** | Ten stages: intake, structural extraction, routing, envelope, chunking, artifacts, interrogate, reconcile, materialize, gather | PDF/DOCX → an Obsidian vault of passages and name pages |
+| **B. Analysis engine** | Brief interrogation, an LLM-free query API, an agentic retrieval loop, synthesis, five deterministic validators | a question → a structured analysis record and markdown answer |
+| **C. Paper authorship** | Brief intake, arc planning, section-by-section drafting, citation indexing, apparatus | analysis records → a paper record and rendered paper |
+
+Specs: [`specs/PRODUCT.md`](specs/PRODUCT.md) (A) · [`specs/PHASE-B.md`](specs/PHASE-B.md) ·
+[`specs/PHASE-C.md`](specs/PHASE-C.md). The 65-row decision log is
+[`docs/DECISIONS.md`](docs/DECISIONS.md). GitHub issues and PRs are the system of record.
+
+### How Phase A works
+
+A structural tree is extracted **once per source**, persisted, and reused by every later
+stage. Chunking is fully deterministic, with no embedding model and no generative call, and
+it writes to disk before any inference spend, so passage quality is inspectable for free.
+Then one model call per passage asks the open questions. Nothing is picked off a closed
+vocabulary; the name layer is grown from what the corpus said, not decided in advance.
+
+Links live on the name pages, not in the passages. Obsidian treats a link as bidirectional,
+so the graph draws identically and the whole link layer is regenerable: a changed merge
+rewrites a few hundred name pages instead of six thousand notes.
+
+### Where the guarantees live
+
+Gates sit **outside** the model's control. A model never grades its own output, and no
+judged check runs on the same model family that produced what it judges.
+
+- **Phase B.** Brief interrogation may bound or refuse a request before any spend, and
+  post-pass validators check attribution, counter-position presence, and coverage. A failed
+  mechanical check blocks release.
+- **Phase C.** Four gates run on every paper: provenance integrity and counter-position
+  presence, both mechanical and hard, plus two narrow judged checks on the grounding and
+  the labeling of the paper's own new cross-source claims.
+- **Offline.** A sealed-packet reviewer panel measures argument coherence on a sample.
+  Reviewers see the rendered output and the resolved text of every cited passage, and
+  nothing else. The panel's numbers count for nothing until it catches deliberately planted
+  defects.
+
+---
+
+## Where it stands
+
+### The corpus, measured 2026-08-06
+
+| | |
+|---|---:|
+| Sources ingested | 35 |
+| Passages | 6,842 |
+| Name pages | 47,584 |
+| Name mentions | 137,276 |
+| Pages that can carry a comparison | 329 |
+
+A page carries a comparison when it holds roughly 30 to 200 passages drawn from five or
+more books. Below thirty there is too little, above two hundred no reader can hold it, and
+under five books it is one author talking. 329 of 47,584 pages clear that bar, seven in ten
+thousand. Full report: `data/reports/axial-coverage-v2.md`.
+
+### What a run costs
+
+| Operation | Measured |
+|---|---|
+| Interrogate one passage | $0.0021 |
+| Add 3 books to a 31-book corpus, map rebuilt | ~$10.26, zero failures |
+| One analysis, over a nine-brief sweep | $0.12 to $0.43; $2.57 for nine |
+| One paper | $0.08 to $0.20 |
+
+Adding books does not re-ingest the corpus. Extract, envelope and chunk each skip on their
+own artifact, and the incremental passes cut merge re-asks from 5,143 to 2,202 and map
+reads from 665 to 148.
+
+### The release bar
+
+Both dev papers pass all four Phase C gates, on two separate builds:
+
+| Gate | Metric | Value |
+|---|---|---|
+| provenance-integrity | `provenance_completeness` | 1.0000 (n=215) |
+| provenance-integrity | `confidence_upgrade_count` | 0 (n=105) |
+| counter-position | `paper_counter_position_presence_rate` | 1.0000 (n=2) |
+| paper-grounding | `b_claim_noncontradiction_rate` | 1.0000 (n=5) |
+| paper-attribution-fidelity | `b_seam_mislabel_rate` | 0.0000 (n=32) |
+| paper-attribution-fidelity | `c_seam_mislabel_rate` | 0.0000 (n=19) |
+
+Twelve sealed reviewers, three per packet. The positive control passed unanimously: three
+planted defects (a fabricated cause cited to an unrelated passage, a section replaced with
+hand-waving, and a confidence band above the coverage the paper itself discloses as thin)
+were all caught by all three reviewers. Reviewer spread was zero on seven of eight cells,
+which is what makes the bands a measurement rather than a sorting.
+
+**The honest caveat.** The research briefs and gold labels driving the answer-quality
+evaluations were authored by frontier models playing scholarly personas, not by real
+academics (DEC-29). Those figures measure the engine. They do not measure answer quality
+against a real academic question, and they never will: that path is permanent, not a
+placeholder.
+
+---
+
+## What measurement changed
+
+Every one of these cost money to learn, and each is why some part of the code looks the way
+it does.
+
+- **Attributes are not edges.** v0 tagged passages on closed vocabularies and produced
+  18,761 notes with 584 edges, all intra-book and bipartite by construction. No threshold
+  could have fixed it. The design was rewritten around open interrogation and a grown name
+  layer (DEC-55).
+- **A green suite is not evidence.** Two runs of the artifact-role classifier over the same
+  source disagreed on 48.5% of artifacts and flipped the keep/discard bit on 13.1%. The
+  axis and its model call were deleted, and a caption-presence rule in code predicts that
+  bit far better. Corpus-facing heuristics are now validated against real sources before
+  promotion, never against fixtures alone.
+- **Bibliographies were being cited as evidence.** Back matter was 8.1% of passages but
+  14.2% of name answers. It is now cut structurally, by where a section sits in the book,
+  read off the cached tree, with no heading vocabulary and no model call (DEC-58).
+- **Retrieval was filtering bins that no longer existed.** Four of eight query tools
+  returned zero results. After the rewrite over the name layer, ten of ten return (DEC-59).
+- **Model self-agreement is the floor, not the finding.** Merge disagrees with itself on
+  13.3% of large clusters, though every flip is a singular/plural or article variant and it
+  moves 0.4% of the material. Gather fails to reproduce 36.1% of its own recorded
+  disagreements on byte-identical input. Any before/after comparison needs a margin wider
+  than that noise floor.
+- **The reviewers found what the gates cannot.** Four of six independently diagnosed that
+  the keystone Syrian claim in both papers is carried by Moroccan and Egyptian evidence.
+  The corpus holds no Syria-specific passage on that mechanism, so the drafter argues by
+  analogy. That is a corpus gap presenting as a citation defect, and no amount of retrieval
+  work fixes it.
+- **The argument map scales but densifies.** Growth is near-linear (k=1.04) while
+  cross-book arguments went from 8.7% to 38.4% and are not plateauing. Selection becomes
+  necessary somewhere near a hundred sources.
+
+---
+
+## Quick start
+
+```bash
+uv sync                 # Python 3.13+, uv
+uv run pytest           # 3,498 tests
+uv run axial --help
+```
+
+`uv run axial key set` writes an OpenRouter key to `secrets/secrets.toml`, and
+`secrets.example.toml` shows the shape. `axial key check` spends one cheap call to prove it
+works. Model tiering is per pass in config, never hardcoded.
+
+A first pass over one source, then a question:
+
+```bash
+SRC=data/sources/mann-v2-1993.pdf
+uv run axial intake      $SRC   # verify a real text layer
+uv run axial extract     $SRC   # structural tree, persisted, reused by everything after
+uv run axial envelope    $SRC   # what this book argues; threaded into every later call
+uv run axial chunk       $SRC   # deterministic, zero model calls
+uv run axial interrogate $SRC --limit 50   # read 50 passages before paying for the rest
+uv run axial names build && uv run axial names merge && uv run axial names materialize
+uv run axial names gather       # what the authors at each name disagree about
+uv run axial ask                # state the case, ask, watch the walk, read the answer
+```
+
+`axial sources` does the whole ingestion arc over whatever is new in the configured
+backend, a local folder or Google Drive, and skips what is already done.
+
+### Command surface
 
 | Command | Does |
-|---------|------|
-| `schema show` / `schema validate` | Inspect a domain schema; cross-check schema against codebook |
-| `intake <src>` | Validate a source and probe for a real text layer |
-| `extract <src>` | Structural extraction → persisted normalized JSON tree |
-| `envelope <src>` | Structural-envelope pass → `data/envelopes/<id>.json` |
-| `chunk <src>` | Recursive/structural chunk stage → `data/chunks/<id>.jsonl` (LLM-free) |
-| `chunk examine` | Report chunk-quality stats over `data/chunks/` (zero LLM/embedding calls) |
-| `tag <src>` | Tagging pass |
-| `artifacts <src>` | Artifact-classification pass |
-| `xref <src>` | Cross-reference detection |
-| `vault write <src>` | Chunk + artifact passes → prose and artifact notes under `data/vault/` |
-| `ingest <worklist>` | Batch vault-write over a worklist, skipping already-ingested sources |
-| `gold sample` / `gold sheet` / `gold deliver` | Sample gold chunks, render the label sheet, package the offline Academic handoff |
-| `eval` | Score returned Academic labels against the tagger → `eval_report.json` |
-| `polity build` / `polity report` | Offline, model-free canonical polity-map operations |
-| `pipeline-ready --manifest` | Run the canary gate (single-attempt completion, quarantine budget, time envelope) |
+|---|---|
+| `schema` | inspect a domain frame, cross-check it against the codebook |
+| `intake` · `extract` · `envelope` · `chunk` · `artifacts` | Phase A stages 1 to 5; chunking is LLM-free |
+| `interrogate` | one open-question call per passage |
+| `names build / merge / materialize / gather` | the inventory, the merge calls, the vault write, the disagreements |
+| `map build` | the argument map: passages bagged by claim similarity, then read |
+| `sources` · `ingest` · `run` · `drive` | batch and incremental corpus operations |
+| `status` · `runs` | one screen of pipeline state; watch a live run |
+| `ask` · `brief` | Phase B, as a session or from a brief file |
+| `paper` | Phase C: plan, draft, render |
+| `gate` · `panel` · `eval` · `gather-eval` · `distill` | the eval and gate harnesses |
+| `pin` · `reconcile` · `polity` · `key` | corpus pins, orphan GC, canonical maps, credentials |
+
+`uv run axial <command> --help` for the rest.
+
+---
 
 ## Repository layout
 
 ```
 config/
-  pipeline.yaml              # providers, model-per-pass, paths
-  domains/syria/             # schema.yaml, codebook.yaml, polity_canonical.yaml
-src/axial/                   # one module per stage + co-located unit tests
-  intake, extract, router, envelope, chunk, artifacts, tag, xref, vault,
-  gold, eval, llm, schema, ...
-tests/                       # outer acceptance contracts (locked, committed red first)
-data/                        # trees/, envelopes/, chunks/, vault/, gold/ (gitignored)
-specs/PRODUCT.md             # the complete build specification
-docs/                        # DECISIONS.md, eval/, tdd-evidence/, postmortem/
+  pipeline.yaml            providers, model-per-pass, paths
+  domains/syria/           schema.yaml, codebook.yaml, polity_canonical.yaml
+  briefs/ paper_briefs/    the smoke, eval and dev question sets
+  lenses/                  theoretical lenses a brief can apply
+src/axial/                 one module per stage, unit tests co-located
+  intake extract router envelope chunk artifacts interrogate
+  names merge_names materialize gather argmap
+  query/ retrieve/ analyze/ brief/ answer/ ask/          Phase B
+  paper/ distill/ panel/                                 Phase C
+  gates/ validators/ eval/                               the gate harnesses
+tests/                     acceptance contracts, grouped by the stage they pin
+specs/                     CHARTER.md, PRODUCT.md, PHASE-B.md, PHASE-C.md
+docs/                      DECISIONS.md, eval/, academic/, postmortem/
+data/                      gitignored: sources and every derived artifact
 ```
 
-## Status
+`data/` is gitignored in full and stays that way. The sources are in-copyright books and
+every derived artifact carries verbatim passages of them (DEC-23).
 
-The Phase A pipeline is **built end-to-end** — intake through vault write, plus the
-gold-set generation and eval harness. It has been **validated at scale**: the corpus was
-rebuilt from ~30 processable sources into ~17k chunks, with a healthy chunk-size
-distribution and the routing/normalization passes holding across new table- and
-OCR-heavy sources.
+---
 
-Two things gate the remaining work, by design:
+## Tests and gates
 
-- **Eval runs against placeholder labels.** The real per-axis agreement numbers wait on
-  the Academic's labeling pass (§11 of the PRD). When the labels arrive it is a data
-  swap plus an `axial eval` run — never a code change.
-- **No full-corpus run until the eval closes.** v0 processes only the sample needed to
-  build and score the gold set; generalizing to all sources waits on a passing eval.
+3,498 tests across 241 files. Cost is proportional to blast radius:
 
-GitHub issues and PRs are the system of record; [`docs/DECISIONS.md`](docs/DECISIONS.md)
-holds the decision log.
+- **Pre-commit.** The `src/` unit tier plus ruff, about six seconds. A red commit cannot
+  land, and code cannot land directly on `main`.
+- **CI.** The full tree on every PR, as the required check.
+- **Real-corpus validation.** Any corpus-facing heuristic is measured against
+  `data/sources/` before promotion. This is a norm rather than a hook because a green suite
+  has twice failed to catch a defect the corpus caught immediately.
+
+Acceptance contracts live in `tests/`; inner unit tests sit beside the code they test under
+`src/`.
+
+---
+
+## What's next
+
+Eleven open issues in two subprojects, plus two future milestones.
+
+**Analyst service** (#681 to #688, #690, #691) is the engine behind a real web application:
+a job store, FastAPI over it, progress streaming as events rather than a spinner, a
+published corpus as a read-only SQLite snapshot pinned to its build, sign-in and per-analyst
+history, quotas and a content-keyed paper cache, and the whole stack standing up from one
+compose file. **Built, not deployed** (DEC-65): the deliverable is a stack someone else can
+stand up, with no founder path in the running service. Cost, copyright and quota are the
+deployer's decisions, and at roughly $0.13 a paper they are real ones.
+
+**Operator console** (#689) is a local Streamlit console over the `axial` CLI, tailing the
+run log. One user, one machine, no API and no auth. The two clients are deliberately
+different stacks because they have different user counts.
+
+**[Phase D, format adaptation](https://github.com/Muhanad-husn/axial/milestone/1)** covers
+venue conventions, house style, length targets, and citation style. Phases B and C push
+styling work over that boundary.
+
+**[Phase E, lens application](https://github.com/Muhanad-husn/axial/milestone/2)** is a
+milestone, not a queued phase. Neither D nor E has a spec, a date, or an issue (DEC-63).
+
+Nearer term, the corpus itself is the binding constraint. The coverage report names three
+concept-level gaps (sovereignty, a critic of Mann, an answer to Chouliaraki and Agamben),
+and the next book added should not be about Syria.
+
+---
 
 ## How this repository is built
 
-Axial is built with a behavior-first, test-driven workflow: every change lands behind a
-locked acceptance test, is reviewed, and merges via pull request only on explicit human
-approval — no change lands on a red test suite. Development is AI-assisted with
-[Claude Code](https://claude.com/claude-code), with a single human holding architecture
-and approval authority.
+One operator, one AI engineering org. Work lands as a PR from a builder subagent working in
+its own git worktree: acceptance test first, then code to green, spec updated in the same
+change when behavior moves. Deterministic hooks hold the line. Subagents are blocked from
+merging entirely, red commits are blocked, and code cannot reach `main` without a PR. The
+human merges, and only the human.
 
-## Quick start
+964 commits, 364 merged PRs, 328 closed issues to date. Development is AI-assisted with
+[Claude Code](https://claude.com/claude-code); architecture and approval authority are
+human.
 
-```bash
-uv sync            # install dependencies
-uv run pytest      # run the suite
-uv run axial --help
-```
+---
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE). Use it, modify it, redistribute it, build on it,
+for research, teaching, study, or any other noncommercial purpose. Charities, universities,
+public research bodies and government institutions are covered regardless of how they are
+funded. Commercial use needs a separate license; open an issue.
+
+Two caveats. This is **source-available, not OSI open source**: the noncommercial
+restriction is exactly what the OSI definition forbids, and calling it otherwise would be
+inaccurate. And it licenses the *code* only. The books in `data/` are other people's
+copyright, none of them ship here, and anything Axial produces from a corpus inherits that
+corpus's terms.
