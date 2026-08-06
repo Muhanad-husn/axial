@@ -12,7 +12,8 @@
 # still runs. Branch protection declares no required status checks, so a skipped
 # run cannot leave a PR blocked on a check that never reports. The filter is by
 # extension rather than by directory on purpose: `docs/` also holds real Python
-# (`docs/sim-academic/merge_gold_labels.py`), and `ruff check .` lints it.
+# (`docs/postmortem/gold-run-2026-07/parse_run.py` and `waste_breakdown.py`), and
+# `ruff check .` lints it.
 name: CI
 
 on:
