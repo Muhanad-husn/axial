@@ -1,0 +1,11 @@
+flowchart LR
+    iss["GitHub issue<br/>one issue = one worktree<br/>= one branch = one PR"] --> bld["builder agent<br/>test, code and spec<br/>in one dispatch"] --> cg["commit gate<br/>~6 s src tier + lint;<br/>parses the tool call from stdin —<br/>compound commands cannot dodge it"] --> pr["pull request + CI<br/>full acceptance suite,<br/>~8 min"] --> f["founder approval —<br/>the only path to main"] --> mg["merge<br/>agents are hook-blocked<br/>from this edge, twice over"]
+
+    classDef code fill:#E4EFF0,stroke:#14646A,stroke-width:2px,color:#0F3339;
+    classDef model fill:#F5E7EE,stroke:#7C3A5E,stroke-width:2px,color:#3C1B2C;
+    classDef gate fill:#FBF4E2,stroke:#8A6B15,stroke-width:2px,stroke-dasharray:6 4,color:#4A3A0B;
+    classDef store fill:#ECEDE7,stroke:#8B8F84,stroke-width:1.5px,color:#2A2C28;
+    class pr code;
+    class bld model;
+    class cg,f,mg gate;
+    class iss store;

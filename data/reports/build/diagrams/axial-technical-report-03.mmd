@@ -1,0 +1,17 @@
+flowchart TB
+    subgraph v0["v0 — attributes · 18,761 passages"]
+        direction LR
+        t1["passage"] --> t2["five closed<br/>vocabularies"] --> t3["bins — 584 edges, all intra-book;<br/>a cross-book link impossible<br/>by construction"]
+    end
+    subgraph v1["v1 — open questions · the same books"]
+        direction LR
+        q1["passage"] --> q2["fourteen open questions<br/>own words · abstention allowed"] --> q3["specifics that can meet:<br/>9,505 cross-book shared names ·<br/>447 stated disagreements"]
+    end
+
+    classDef model fill:#F5E7EE,stroke:#7C3A5E,stroke-width:2px,color:#3C1B2C;
+    classDef store fill:#ECEDE7,stroke:#8B8F84,stroke-width:1.5px,color:#2A2C28;
+    classDef gate fill:#FBF4E2,stroke:#8A6B15,stroke-width:2px,stroke-dasharray:6 4,color:#4A3A0B;
+    class t2,q2 model;
+    class t1,q1 store;
+    class t3 gate;
+    class q3 store;

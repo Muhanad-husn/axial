@@ -19,30 +19,30 @@ import sys
 
 REPORTS = Path(__file__).resolve().parents[1]
 
-_stem = sys.argv[1] if len(sys.argv) > 1 else "axial-report"
-SRC = REPORTS / f"{_stem}.md"
-DST = REPORTS / f"{_stem}.docx"
-
 INK = RGBColor(0x1F, 0x29, 0x33)
 ACCENT = RGBColor(0xC8, 0x55, 0x3D)
 
 INLINE = re.compile(r"(\*\*.+?\*\*|\*[^*]+?\*|`[^`]+?`|\[[^\]]+?\]\([^)]+?\))")
 
 
-def add_runs(par, text: str, base_italic: bool = False):
+def add_runs(par, text: str, base_italic: bool = False, base_bold: bool = False):
     for part in INLINE.split(text):
         if not part:
             continue
         if part.startswith("**") and part.endswith("**"):
-            r = par.add_run(part[2:-2])
-            r.bold = True
-        elif part.startswith("`") and part.endswith("`"):
+            # Recurse so a link or code span nested inside **bold** still
+            # renders as a link or code span, just also bold.
+            add_runs(par, part[2:-2], base_italic=base_italic, base_bold=True)
+            continue
+        if part.startswith("*") and part.endswith("*") and len(part) > 2:
+            # Same, for *italic* — this is what a link nested inside an
+            # italic lead-in paragraph needs to still render as a link.
+            add_runs(par, part[1:-1], base_italic=True, base_bold=base_bold)
+            continue
+        if part.startswith("`") and part.endswith("`"):
             r = par.add_run(part[1:-1])
             r.font.name = "Consolas"
             r.font.size = Pt(9)
-        elif part.startswith("*") and part.endswith("*") and len(part) > 2:
-            r = par.add_run(part[1:-1])
-            r.italic = True
         elif part.startswith("["):
             m = re.match(r"\[([^\]]+?)\]\(([^)]+?)\)", part)
             r = par.add_run(m.group(1))
@@ -51,6 +51,8 @@ def add_runs(par, text: str, base_italic: bool = False):
             r = par.add_run(part)
         if base_italic:
             r.italic = True
+        if base_bold:
+            r.bold = True
 
 
 def style_document(doc: Document):
@@ -99,8 +101,8 @@ def split_row(line: str):
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
-def main():
-    text = SRC.read_text(encoding="utf-8")
+def convert(src: Path, dst: Path):
+    text = src.read_text(encoding="utf-8")
     doc = Document()
     style_document(doc)
     sec = doc.sections[0]
@@ -113,6 +115,23 @@ def main():
     while i < len(lines):
         line = lines[i]
         stripped = line.strip()
+
+        if stripped.startswith("```"):
+            # A fenced block that survived substitution (e.g. inline code
+            # samples). Render as a monospace paragraph rather than letting
+            # each line fall through as its own prose paragraph.
+            i += 1
+            code_lines = []
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                code_lines.append(lines[i])
+                i += 1
+            i += 1  # closing fence
+            if code_lines:
+                par = doc.add_paragraph()
+                r = par.add_run("\n".join(code_lines))
+                r.font.name = "Consolas"
+                r.font.size = Pt(9)
+            continue
 
         if stripped.startswith("|"):
             table_buf.append(split_row(stripped))
@@ -128,11 +147,15 @@ def main():
 
         m = re.match(r"!\[([^\]]*)\]\(([^)]+)\)", stripped)
         if m:
-            img = SRC.parent / m.group(2)
+            # Resolved against REPORTS, not src.parent: a spliced build copy
+            # under build/ still references images by their path from REPORTS.
+            img = REPORTS / m.group(2)
             if img.exists():
+                # Diagrams get the full content width; the logo stays small.
+                width = Inches(6.35) if "diagrams/" in m.group(2) else Inches(1.1)
                 par = doc.add_paragraph()
                 par.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                par.add_run().add_picture(str(img), width=Inches(1.1))
+                par.add_run().add_picture(str(img), width=width)
             i += 1
             continue
 
@@ -173,8 +196,13 @@ def main():
     if table_buf:
         flush_table(doc, table_buf)
 
-    doc.save(DST)
-    print("wrote", DST)
+    doc.save(dst)
+    print("wrote", dst)
+
+
+def main():
+    stem = sys.argv[1] if len(sys.argv) > 1 else "axial-report"
+    convert(REPORTS / f"{stem}.md", REPORTS / f"{stem}.docx")
 
 
 if __name__ == "__main__":

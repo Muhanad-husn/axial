@@ -1,0 +1,11 @@
+flowchart LR
+    inv["claim inventory —<br/>the drafter's<br/>whole world"] --> draft["draft, one call per section<br/>no retrieval tools, no vault access:<br/>generate-then-cite is structurally<br/>impossible, not forbidden"] --> cidx["citation index<br/>an unknown marker<br/>is fatal, never repaired"] --> gates["four gates — every marker resolves ·<br/>every ground resolves · no band<br/>escalation · counter-position present"]
+
+    classDef code fill:#E4EFF0,stroke:#14646A,stroke-width:2px,color:#0F3339;
+    classDef model fill:#F5E7EE,stroke:#7C3A5E,stroke-width:2px,color:#3C1B2C;
+    classDef gate fill:#FBF4E2,stroke:#8A6B15,stroke-width:2px,stroke-dasharray:6 4,color:#4A3A0B;
+    classDef store fill:#ECEDE7,stroke:#8B8F84,stroke-width:1.5px,color:#2A2C28;
+    class cidx code;
+    class draft model;
+    class gates gate;
+    class inv store;

@@ -1,0 +1,16 @@
+flowchart LR
+    nb["one new book"] --> ing["extract · envelope · chunk · interrogate<br/>new source only —<br/>the only full-price step"]
+    ing --> mrg["merge<br/>persisted HDBSCAN fit,<br/>approximate_predict under each<br/>cluster's own fitted floor"]
+    ing --> gth["gather<br/>key = name + sorted<br/>source-id set"]
+    ing --> map["map<br/>persisted bag centroids,<br/>average-linkage placement"]
+    mrg --- r1["re-ask rate<br/>37.0% → 10.9%"]
+    gth --- r2["92.2% of reads reused<br/>on the 35th book"]
+    map --- r3["77.7% of extraction<br/>reads reused, was 0"]
+
+    classDef code fill:#E4EFF0,stroke:#14646A,stroke-width:2px,color:#0F3339;
+    classDef model fill:#F5E7EE,stroke:#7C3A5E,stroke-width:2px,color:#3C1B2C;
+    classDef store fill:#ECEDE7,stroke:#8B8F84,stroke-width:1.5px,color:#2A2C28;
+    classDef note fill:none,stroke:none,color:#5D625A;
+    class ing,mrg,gth,map model;
+    class nb store;
+    class r1,r2,r3 note;

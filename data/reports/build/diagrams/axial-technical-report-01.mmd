@@ -1,0 +1,42 @@
+flowchart TB
+    src["intake — Google Drive or disk<br/>text-layer check · holdings check · bibliographic read"]
+
+    subgraph A["PHASE A — the model reads the corpus, once"]
+        direction LR
+        a1["extract<br/>+ route"] --> a2["chunk<br/>3.5–9k chars"] --> a3["interrogate<br/>1 call / passage"] --> a4["reconcile<br/>names"] --> a5["materialize<br/>the vault"] --> a6["gather<br/>1 call / name"] --> a7["argument map<br/>positions + relations"]
+    end
+
+    subgraph P["PERSISTED — every later phase reads artifacts, never books"]
+        direction LR
+        p1["data/chunks/<br/>6,842 passages"]
+        p2["data/answers/<br/>17 answers per passage"]
+        p3["data/vault/<br/>47,584 name pages + notes.db"]
+        p4["data/map/<br/>1,937 positions · 1,472 relations"]
+    end
+
+    subgraph B["PHASE B — one question in, one auditable answer out"]
+        direction LR
+        b1["interrogate<br/>the brief"] --> b2["fork-check"] --> b3["agentic query loop<br/>14 deterministic tools"] --> b4["synthesis<br/>claims + grounds"] --> b5["validators<br/>block release"]
+    end
+
+    subgraph C["PHASE C — the paper, from settled claims"]
+        direction LR
+        c1["claim<br/>inventory"] --> c2["arc plan"] --> c3["draft<br/>per section"] --> c4["cite<br/>+ render"] --> c5["four<br/>gates"]
+    end
+
+    pan["offline panel — measures the system, never blocks a paper"]
+
+    src --> A
+    A -->|"writes"| P
+    P -->|"read through the LLM-free query API"| B
+    B --> C
+    C -.->|"sampled"| pan
+
+    classDef code fill:#E4EFF0,stroke:#14646A,stroke-width:2px,color:#0F3339;
+    classDef model fill:#F5E7EE,stroke:#7C3A5E,stroke-width:2px,color:#3C1B2C;
+    classDef gate fill:#FBF4E2,stroke:#8A6B15,stroke-width:2px,stroke-dasharray:6 4,color:#4A3A0B;
+    classDef store fill:#ECEDE7,stroke:#8B8F84,stroke-width:1.5px,color:#2A2C28;
+    class src,a1,a2,a5,c1,c4 code;
+    class a3,a4,a6,a7,b1,b2,b3,b4,c2,c3 model;
+    class b5,c5 gate;
+    class p1,p2,p3,p4,pan store;

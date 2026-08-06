@@ -1,0 +1,10 @@
+flowchart LR
+    ans["data/answers/"] --> sel["select<br/>argues something<br/>6,010 of 6,842"] --> bag["bag by claim similarity<br/>local encoder,<br/>zero model calls"] --> ext["extract recurring arguments<br/>blind — bare handles,<br/>never an author"] --> mrg["merge near-duplicate<br/>namings"] --> pos["1,937 positions"]
+    pos --> nb["neighbourhoods<br/>8–12, never all-pairs"] --> rel["relate<br/>no menu of<br/>relation types"] --> out["1,472 relations<br/>504 coined labels ·<br/>invented handles dropped"]
+
+    classDef code fill:#E4EFF0,stroke:#14646A,stroke-width:2px,color:#0F3339;
+    classDef model fill:#F5E7EE,stroke:#7C3A5E,stroke-width:2px,color:#3C1B2C;
+    classDef store fill:#ECEDE7,stroke:#8B8F84,stroke-width:1.5px,color:#2A2C28;
+    class sel,bag,mrg,nb code;
+    class ext,rel model;
+    class ans,pos,out store;
