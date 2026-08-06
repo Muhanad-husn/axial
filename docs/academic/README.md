@@ -10,5 +10,5 @@ sim-academic persona prompts under `docs/sim-academic/prompts/` read both.
 | File | What it is |
 |---|---|
 | [`corpus-bibliography.md`](corpus-bibliography.md) | The corpus as a standalone bibliography, with `source_id`s and holdings notes. |
-| [`about-axial.md`](about-axial.md) | Point by point on how this differs from RAG, hybrid RAG, ChatGPT-upload, and web "deep research". |
+| [`about-axial.md`](about-axial.md) | The product in plain language: how it reads a library, how it differs from a chatbot upload, hybrid retrieval and web "deep research", what the honesty layer holds it to, and where it stands. |
 
