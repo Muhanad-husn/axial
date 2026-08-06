@@ -660,10 +660,10 @@ def _positions_on(
     model can judge, where a bare chunk id cannot.
 
     **`axial.argmap.ask` is imported here, not at module scope**: it pulls
-    `axial.argmap.build`, which pulls the whole ingestion stack (`axial.
-    extract`, `axial.intake`), taking this module's own warm import from
-    ~0.27s to ~1.1s for a build-side dependency no tool here uses. The map's
-    positions are plain JSON."""
+    `axial.argmap.build`, which pulls the whole ingestion stack
+    (`axial.extract`, `axial.intake`), taking this module's own warm import
+    from ~0.27s to ~1.1s for a build-side dependency no tool here uses. The
+    map's positions are plain JSON."""
     from axial.argmap.ask import positions_on
 
     positions, ids, total, resolution = positions_on(
