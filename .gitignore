@@ -60,9 +60,22 @@ data/**
 !data/runs/**/summary.json
 !data/runs/**/worklist.txt
 
-# The coverage and system reports, their metrics, and the scripts that build
-# them. Checked: the only block quotes are Axial's own prompts and eval briefs.
+# The coverage and system reports, the prose they are assembled from, the
+# scripts that build them, and the rendered .docx and logo a reader needs.
+# This directory is the ONE place the by-filename rule above is relaxed to a
+# by-directory one (founder ruling 2026-08-06: the reports belong on GitHub),
+# so the copyright test moves onto whoever adds a file here.
+#
+# What may live in data/reports/: the operator's own prose, counts, prices,
+# model names, source_ids, chunk_ids, section headings, and Axial's OWN
+# generated output — a rendered paper is Axial's writing, not a book's. What
+# may NOT: passage text, note bodies, name-page evidence, or any other
+# verbatim run of a source. Checked at v2.0 — every block quote in
+# axial-report.md is Axial's own prompt, brief, or explanatory note, and the
+# appendix papers cite by id and heading, never by quotation.
 !data/reports/
-!data/reports/*.md
-!data/reports/*.py
-!data/reports/metrics.json
+!data/reports/**/
+!data/reports/**
+# Word writes a lock file beside any .docx it has open. By-directory means it
+# would otherwise be swept in the moment someone reads the report.
+~$*

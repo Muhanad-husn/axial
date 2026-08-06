@@ -1,6 +1,6 @@
 """Mechanical corpus-shape counts, over any subset of sources.
 
-Reproduces every figure in data/reports/axial-coverage.md from data/vault/notes.db,
+Reproduces every figure in data/reports/axial-coverage-v2.md from data/vault/notes.db,
 so a 31-book baseline and a 35-book index can be counted the same way.
 
     uv run python scratchpad/coverage_counts.py --out scratchpad/shape-35.json

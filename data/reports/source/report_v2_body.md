@@ -1,33 +1,48 @@
 ![Axial](axial-logo.png)
 
-# Axial — a dossier for readers, researchers and institutions
+# Axial — a research report
 
-**What it is, how it differs from the tools you already have, how it was tested, and what the tests showed**
+**What it is, how it works, how it was tested, and what the tests showed**
 
-Version 2.0 · 6 August 2026 · Muhanad Abulhusn
+Version 2.1 · 6 August 2026 · Muhanad Abulhusn
 
-*Supersedes version 1.0 (1 August 2026). Version 1.0 described a system whose retrieval layer and final deliverable have both since been replaced. This version describes what exists.*
+*Version 2.1 restructures the dossier of 6 August 2026 as a research paper: an executive summary at the front, the full question inventory moved to an appendix, and the closing section recast as a final word. The system it describes is unchanged. Version 1.0 (1 August 2026) remains superseded: it described a retrieval layer and a final deliverable that have both since been replaced.*
+
+---
+
+## Executive summary
+
+Axial reads a shelf of academic books once, in full, and writes from the reading. It works passage by passage — a passage being a few paragraphs, about one complete move in an argument — and records what each passage claims, whose position that is, who it argues against, whom it cites, and every person, place, institution, event and concept it names. From that single reading it builds three things: an encyclopaedia in which every named thing has its own page; a map of the arguments running through the library, including where books that never cite each other disagree; and, on request, a research paper in which every citation can be traced, link by machine-checkable link, to a passage in a real book.
+
+That makes it different in kind from the tools most readers already have. A chat assistant with PDFs attached, like every "chat with your documents" product, searches first and reads second: it sees only the fragments a question happens to retrieve, and nothing in its output separates what a source asserted from what the model composed on top. Axial reads everything before any question is asked. Every assertion in its output is marked as exactly one of three kinds — a source says it, Axial inferred it across sources, or the analyst's judgment — and the marking is enforced by checks that block release, not requested in a prompt. The model that drafts the final paper has no access to the library at all: its whole world is the list of claims that already passed the checks, so citing invented evidence is not forbidden by instruction but impossible by construction.
+
+The current library is thirty-five works of scholarship on state formation, nationalism and political violence, built around Syria as a case. Reading it produced 6,842 passages, an encyclopaedia of 47,584 name pages, and an argument map of 1,937 positions joined by 1,472 stated relations — 328 of them connecting positions with no author in common. The map cost $0.75 to build and $0 to update when four books were added. A complete run, from question to finished paper, costs well under a dollar.
+
+Four instruments test it. Mechanical gates pass at 1.00 on every paper: every citation resolves, no confidence claim was inflated, and the opposing case is present or its absence disclosed. On a nine-question test of reach, the engine's citations met 26 of 37 evidence demands. A sealed panel of reviewer models — each from a different lab than the model that wrote the paper, each shown only the paper and the passages it cites — caught all three defects planted as a control and rated both development papers adequate to strong. The panel also found the two defects no mechanical check could: a citation that resolves to a publisher's catalogue page, and a keystone Syrian claim carried by Moroccan and Egyptian evidence because the library lacks the Syrian book that should carry it. In a paired trial, open-weight models matched proprietary ones on quality at three and a half times less cost.
+
+One limit bounds every figure: the test questions were written by an AI model, and no output has yet been judged by a human expert. The numbers measure the engine, not answer quality against a real scholarly question. Closing that gap needs people rather than code, and this report ends with a request for exactly that: a few real research questions, one refereed reading of one paper, and the names of the books the shelf is missing.
 
 ---
 
 ## Contents
 
+- [Executive summary](#executive-summary)
 - [1. What Axial is](#1-what-axial-is)
 - [2. Why the tools you already have do not do this](#2-why-the-tools-you-already-have-do-not-do-this)
 - [3. How it works](#3-how-it-works)
-- [4. Every question Axial asks](#4-every-question-axial-asks)
-- [5. Why questions, and not tags](#5-why-questions-and-not-tags)
-- [6. Why any of it can be checked](#6-why-any-of-it-can-be-checked)
-- [7. What is actually in the library](#7-what-is-actually-in-the-library)
-- [8. How it was tested, and what the tests showed](#8-how-it-was-tested-and-what-the-tests-showed)
-- [9. What Axial does badly](#9-what-axial-does-badly)
-- [10. Where this stands, and what we are asking for](#10-where-this-stands-and-what-we-are-asking-for)
+- [4. Why questions, and not tags](#4-why-questions-and-not-tags)
+- [5. Why any of it can be checked](#5-why-any-of-it-can-be-checked)
+- [6. What is actually in the library](#6-what-is-actually-in-the-library)
+- [7. How it was tested, and what the tests showed](#7-how-it-was-tested-and-what-the-tests-showed)
+- [8. Known limits and open problems](#8-known-limits-and-open-problems)
+- [Final word](#final-word)
 - [Appendix A — How the test questions were designed](#appendix-a--how-the-test-questions-were-designed)
 - [Appendix B — How answers and papers are judged](#appendix-b--how-answers-and-papers-are-judged)
 - [Appendix C — The library](#appendix-c--the-library)
 - [Appendix D — The first paper, and the questions behind it](#appendix-d--the-first-paper-and-the-questions-behind-it)
 - [Appendix E — The second paper, and the questions behind it](#appendix-e--the-second-paper-and-the-questions-behind-it)
-- [Appendix F — Glossary](#appendix-f--glossary)
+- [Appendix F — Every question Axial asks](#appendix-f--every-question-axial-asks)
+- [Appendix G — Glossary](#appendix-g--glossary)
 
 ---
 
@@ -41,7 +56,13 @@ What the reading produces is three things, in layers.
 
 **An encyclopaedia of names.** Every scholar, country, institution, event and concept any passage mentions gets a page. The page lists the passages that mention it and, where the page is big enough to hold an argument, states what the authors gathered there disagree about. Two books that never cite each other meet on the page for the name they both use.
 
-**A map of arguments.** Passages that make the same argument are grouped into a **position**, once, offline. Then every position is asked how it stands to its neighbours. The result is a graph of what supports, qualifies, exemplifies and contradicts what, across the whole library, stated in the corpus's own words. Nobody handed the model a menu of relationship types; it coined 504 distinct labels on this corpus, of which the four commonest are *supports*, *exemplifies*, *qualifies* and *contradicts*.
+> **Name, and name page.** A *name* in Axial is any specific thing a passage names: a person (Charles Tilly), a place (Aleppo), an institution (the French Mandate), an event (the 1925 revolt), a concept (infrastructural power), or a book. It is whatever the passage itself named, in the passage's own words, not a category chosen from a list. A *name page* is the page Axial builds for one such name, and it works like an encyclopaedia entry that writes itself: it holds every passage in the library that mentioned that name, from whichever book, and it is the place where two authors who never read each other end up side by side. The library currently has 47,584 of them.
+
+**A map of arguments.** Passages that make the same argument are grouped into a **position**, once, offline.
+
+> **Position.** A *position* is one argument, held by however many passages make it. If eleven passages spread over five books all argue that states build bureaucracies in order to pay for war, those eleven passages are one position, and the position is stated in a single sentence drawn from their own wording. It is not a topic and not a category. It is a claim someone could disagree with, and the disagreement is exactly what the map is built to find. A position keeps every passage behind it, so it can always be opened back up into the books it came from.
+
+Then every position is asked how it stands to its neighbours. The result is a graph of what supports, qualifies, exemplifies and contradicts what, across the whole library, stated in the corpus's own words. Nobody handed the model a menu of relationship types; it coined 504 distinct labels on this corpus, of which the four commonest are *supports*, *exemplifies*, *qualifies* and *contradicts*.
 
 **A paper.** You give Axial a case and a request. It interrogates the question before answering it, walks the two layers above for evidence, writes an answer as a list of claims each marked for what kind of claim it is and pointed at the passages behind it, runs a set of mechanical checks the model cannot reach, and then drafts a paper from the claims that survived. One command does all of it.
 
@@ -63,7 +84,19 @@ Axial reads everything before anything is asked. Retrieval then runs over a reco
 
 **Against uploading books to a chat assistant.** The assistant retrieves a few passages and paraphrases them. It rarely separates what a source *claims* from what it is *inferring*, it attributes unreliably, and it will produce a confident paragraph whether or not the sources support one. It never tells you what it left out. In Axial every assertion in an answer is marked as exactly one of three kinds, and the marking is enforced by a check that blocks release, not requested in a prompt.
 
-**Against RAG and knowledge-graph systems.** Those improve retrieval: they find better passages, and some of them build a graph of entities to find them by. Axial builds that layer too, and then does the thing retrieval systems do not attempt, which is **synthesis** — producing an argument no single source made, across sources, the way a scholar writes a review essay, held to the attribution a scholar is held to. A knowledge graph tells you that Tilly and Mann are both connected to "state formation". Axial's argument map records that a specific claim of Mann's *qualifies* a specific claim of Tilly's, in a sentence, with the passages on both sides. Axial was built the attribute-and-query way first, and [section 5](#5-why-questions-and-not-tags) reports what that produced: 18,761 tagged passages and zero connections between any two books.
+**Against RAG and knowledge-graph systems.**
+
+> **RAG.** Short for *retrieval-augmented generation*, and it is the standard way almost every "chat with your documents" product works. The documents are cut into fragments and indexed. When you ask a question, the system searches that index, pulls out the handful of fragments that look most similar to your wording, pastes them invisibly above your question, and asks a language model to answer using them. It is a genuine improvement on a model answering from memory alone, because at least something real is in front of it. Its two limits are structural rather than fixable by a better search: the model only ever sees what your question happened to retrieve, and nothing in the arrangement distinguishes a sentence a source actually asserted from a sentence the model composed on top of it. A *knowledge-graph* system is a more sophisticated relative — it first extracts entities and the links between them, then searches that structure instead of raw text — but the order of operations, and therefore both limits, are the same.
+
+Those systems improve retrieval: they find better passages, and some of them build a graph of entities to find them by. Axial builds that layer too, and then does the thing retrieval systems do not attempt, which is **synthesis** — producing an argument no single source made, across sources, the way a scholar writes a review essay, held to the attribution a scholar is held to. A knowledge graph tells you that Tilly and Mann are both connected to "state formation". Axial's argument map records that a specific claim of Mann's *qualifies* a specific claim of Tilly's, in a sentence, with the passages on both sides.
+
+> **Tilly and Mann.** The two scholars this report keeps returning to, because they are the two the library's own passages meet over most often.
+>
+> **Charles Tilly** (1929–2008) was an American sociologist and historian, at his death the Joseph L. Buttenwieser Professor of Social Science at Columbia, holding a joint appointment in sociology and political science. He published over fifty books and some six hundred articles, and effectively created the field now called contentious politics — the study of strikes, riots, revolutions and social movements as one family of behaviour. He is best known outside that field for the argument compressed into the phrase *war made the state, and the state made war*: rulers who needed to fight had to extract taxes to pay for it, extracting taxes required a bureaucracy, resisting subjects had to be bargained with, and the modern European state is what came out the other end. Tilly himself put the comparison bluntly, likening the arrangement to a protection racket. The library holds his *From Mobilization to Revolution* (1978).
+>
+> **Michael Mann** (b. 1942, Manchester) is Distinguished Research Professor Emeritus of Sociology at UCLA, where he taught from 1987, after a decade at the London School of Economics. His principal work is the four-volume *The Sources of Social Power* (1986, 1993, 2012, 2013), a history of power in human societies built on the claim that power runs through four channels — ideological, economic, military and political — which interact but never reduce to one another. His 1984 paper on the autonomous power of the state introduced the distinction between *despotic* power (what a ruler can do to people without negotiating) and *infrastructural* power (how deeply the state can actually reach into the society it governs to collect a tax or enforce a law). That distinction runs through both papers in the appendices. All four volumes are in the library, along with a volume of critical essays on his work.
+>
+> The two are not opponents in any simple sense, and the map does not treat them as such. Mann's later work concedes that war no longer makes states the way it once did, which is one of the qualifications the library records. Axial was built the attribute-and-query way first, and [section 4](#4-why-questions-and-not-tags) reports what that produced: 18,761 tagged passages and zero connections between any two books.
 
 **Against "deep research" on the open web.** Those tools scrape whatever the web offers, weigh a preprint the same as a blog post, and sometimes cite sources that do not exist. Axial works on a curated shelf of real scholarship and cannot reach outside it. The grounding is not a policy. It is structural: the drafting model that writes the final paper has **no retrieval tools at all**. Its whole world is the list of claims that already passed the checks. It cannot introduce evidence because it has no path to any.
 
@@ -123,7 +156,7 @@ Two of the seventeen answers carry most of the later weight. **Names** is how pa
 Reaching a passage through a name it happens to mention is a narrow door. A passage that makes exactly the argument you need but names nobody you thought to ask about is unreachable. So the map is built the other way round:
 
 1. **Select** every passage that actually argues something. Passages that abstain on every argumentative question — bibliographies, acknowledgements, method throat-clearing — are dropped. On the current library that leaves 6,010 of 6,842.
-2. **Bag** them by the similarity of their own one-sentence claims, using a local sentence encoder. Zero model calls, and the grain is a stated choice rather than a fitted one.
+2. **Bag** them by the similarity of their own one-sentence claims, using a local sentence encoder. A *bag* is a rough pile of passages whose claims are worded alike, assembled by arithmetic rather than by reading — the working tray a model is later handed, never a finding in itself. Zero model calls, and the grain is a stated choice rather than a fitted one.
 3. **Extract.** Every bag is read in full, never sampled. The model is asked to name the arguments that *recur* across passages, and told explicitly that producing roughly as many arguments as passages is a failed read. The reading is **blind**: it sees the claims under bare handles, never the authors. Authorship visible during extraction would let the model decide what meets, which would make the later cross-author counts measure their own input.
 4. **Merge** the near-duplicate namings, keeping every raw phrasing and how many times each argument was independently named.
 
@@ -141,7 +174,9 @@ Where the question's own terms produce a genuine, *measured* fork — a real sou
 
 The feedback the model gets back states what the evidence set now holds and which books it spans, and nothing else. It is never told the budget or the cap, because a cap a model can see is a cap it argues with. It is also never told "you already asked that", because saying so was measured to *raise* repeat queries from 14% to 20%.
 
-A second, optional path replaces this loop entirely. The **door** states, from the question alone and without ever seeing the corpus, what arguments the question is actually about. Those land on the map by similarity, and then the **corridor** pulls in every position that argues with what landed, in both directions. **The opposition arrives because it argues with what landed, never because the question happened to name it.**
+A second, optional path replaces this loop entirely, walking the map of arguments instead of the name pages. It has three steps, and the names for them are the report's own shorthand.
+
+> **Door, landing, corridor.** The *door* is the first step: Axial reads your question and states, in plain contestable sentences, what arguments the question is actually about. It does this before it has looked at the library at all, so what happens to be on the shelf cannot bend what the question is taken to mean. The *landing* is where those stated arguments come to rest on the map: the positions that match them. The *corridor* is what opens off the landing: every position that argues with something that landed, followed in both directions. The corridor is the point of the whole arrangement. It is how the account your answer has to reject arrives — because it argues with what you landed on, and not because your question happened to mention it.
 
 **Synthesis.** The evidence is assembled deterministically, interleaved across sources so one book cannot spend the whole budget, and shown to the writing model under opaque short handles rather than real identifiers, so there is no long id in the prompt to transcribe or blend. The answer comes back as numbered claims, each marked:
 
@@ -149,9 +184,11 @@ A second, optional path replaces this loop entirely. The **door** states, from t
 - **(b) tool-infers-across-sources** — Axial's own inference relating what different books say. **This is the new knowledge, and it is also the whole risk**, so it is never allowed to appear in a source's voice;
 - **(c) the analyst's judgment** — reasoning that runs past what the corpus grounds, marked as such.
 
+> **Grounds, and the confidence band.** A claim's *grounds* are the specific passages it rests on — not a book, not a page range, but the exact passages, recorded as pointers a machine can follow back to the text. Every claim of the first two kinds must carry them, and every pointer must resolve, or the claim is rejected. The *confidence band* is Axial's own statement of how much weight a claim will bear, in three steps: high, medium or low. It is deliberately three words and never a number, because a decimal like 0.87 implies a precision nothing here could justify.
+
 **Checking.** Mechanical checks then run outside the model's control. Does every claim carry a kind? Do its cited passages actually resolve? Is there a counter-position stating the opposing case at its strongest, or an explicit statement that the library is one-sided here? Is there a coverage map saying how much evidence each name in the answer rests on, and a confidence band that cannot exceed what that coverage supports? A failed check blocks release.
 
-That last mechanism is worth stating plainly. If an answer leans on a name the library holds three passages about, the answer's stated confidence is pulled down to match, whatever the writing model thought of itself. **Confidence is capped by evidence, not by tone.**
+If an answer leans on a name the library holds three passages about, the answer's stated confidence is pulled down to match, whatever the writing model thought of itself. **Confidence is capped by evidence, not by tone.**
 
 **The paper.** The answer is not the deliverable. Once it is written and persisted, Axial drafts the paper it is the material for: it takes an inventory of the claims that survived, plans a narrative arc with a role for each section, drafts one section at a time, builds a citation index, and renders the paper with a bibliography of exactly the books it actually cited.
 
@@ -159,72 +196,27 @@ The drafter sees the claim inventory and what earlier sections already cited. Th
 
 Drafting roughly doubles the cost of a question, from $0.11–$0.30 for the answer to a further $0.08–$0.20 for the paper. A flag stops at the answer for exploratory work.
 
----
+### 3.3 The rules every model call answers under
 
-## 4. Every question Axial asks
+Across the whole pipeline, a model is consulted in sixteen places, plus a set of judges that sit outside it. Three rules hold everywhere. Every question is open: nowhere is the model asked to pick from a list, and every question carries an explicit right to answer "I cannot tell from this". Where a count downstream depends on the answer, the question is asked blind: the models that group arguments and relate them never see the authors, so a count of how often the map joins different books measures the corpus rather than the model's sense of who ought to argue. And code stands on both sides of every call: code assembles what the model sees, and code reads what comes back.
 
-Inside the pipeline, a model is consulted in sixteen places, plus a set of judges that sit outside it. Nowhere is it asked to pick from a list. Every one of the sixteen is an open question with an explicit right to answer "I cannot tell from this", and in every one code assembles what the model sees and reads what comes back.
+The judges add a rule of their own: **none may be run by the model that produced the thing being judged**, and the sealed review panel goes further and requires a different training lab, because a family-mate's agreement is weak evidence.
 
-The inventory below is complete. The questions are quoted from the working system, lightly trimmed for length.
-
-### 4.1 Reading the corpus
-
-| | Asked of | How often | The question |
-|---|---|---|---|
-| **1. Envelope** | Each book's own opening and closing prose | Once per book | What is the author's stated thesis, the scope of the argument, the argument as restated, and the table of contents? *Based only on the supplied text. Do not infer from the title, the filename, or any outside knowledge.* |
-| **2. Interrogation** | One passage | Once per passage | The fourteen questions in section 3.1. *Answer only from the passage. If it does not support an answer, say so. A guessed answer is worse than an abstention, because a reader cannot tell it from one you actually read.* |
-| **3. Name merging** | A cluster of similar-looking name forms | Once per cluster | "They were grouped together by a clustering algorithm because their wordings are similar. **That grouping is a hint, and it is often wrong.** Decide which of them name the same thing… Where what is shown does not let you tell, say so instead of guessing." |
-| **4. Gather** | Every passage that names one thing | Once per name | "Say what the disagreement actually is, in a few sentences, naming who holds which side… **null is a last resort, not the default answer.**" |
-| **5. Gather merge** | The partial findings for one very large name | Only when one call could not hold the name | "Treat them as partial evidence about one name, never as competing claims to weigh against each other." |
-| **6. Position extraction** | A group of passages with similar claims, shown **without their authors** | Once per group | "Find the arguments running through these passages. Your job is to find **what RECURS**… If you are producing roughly as many arguments as there are passages, you are restating the passages rather than finding the arguments in them, and **you have not done the task**." |
-| **7. Relating positions** | A neighbourhood of arguments, again **without authors** | Once per neighbourhood | "Say how these arguments actually stand to one another… **There is no list of allowed relations.** Do not pick from a menu and do not reach for opposition by default… **Most pairs have no relationship, and saying so costs nothing.**" |
-
-Two of these deserve a note a non-technical reader would not otherwise catch.
-
-**Questions 6 and 7 are asked blind.** The model is shown the claims and never the authors. If it could see who wrote what, it could decide that Mann and Tilly meet because they are Mann and Tilly. The count of how often the map joins different books would then be measuring the model's sense of who *ought* to argue, not the corpus. Hiding the authors costs nothing and makes that count mean something.
-
-**Question 7 is asked with no vocabulary at all.** Not "is this support or opposition?" but "what is actually there?" The consequence is measurable: because nothing asked for opposition, opposition came back at 6.6% rather than at whatever rate a leading question would have produced. The model invented 504 labels of its own.
-
-### 4.2 Answering a question
-
-| | Asked of | How often | The question |
-|---|---|---|---|
-| **8. Brief interrogation** | Your question, against the library's measured coverage | Once | "Find every premise smuggled into this brief's case and request, and test each one against the corpus coverage stated below — **never against what you recall or assume about the world**." Each premise comes back supported, contradicted, or the corpus is silent. Refusal is available. |
-| **9. Fork check** | Your question, against a measured imbalance | Once, and usually finds nothing | Is there a real fork here — a source imbalance, or a mismatch between the period you asked about and the years the books were published — that would change what evidence gets assembled? If so, ask the analyst. If not, do not. |
-| **10. Retrieval** | The library, through ten deterministic tools | Many turns, bounded | Which passages bear on this? The model proposes one query at a time and is told back only what the evidence set now holds and which books it spans. |
-| **11. The door** *(optional map path)* | Your question alone, **before anything shows it the corpus** | Once | "Say what arguments this question is actually about. Write each one as a standalone sentence that a scholar could assert and another could deny… **Name no authors and no books.** Do not hedge and do not balance. Each account gets its strongest statement, **including the one the question may end up rejecting**." |
-| **12. Synthesis** | The assembled evidence | Once | "Answer this question, using the evidence below as your grounds… Where this question asks you to choose between positions, **your answer must commit to one of them and defend it**, rather than surveying the positions without settling anything. **At least one claim must also state plainly where the account you commit to is weak or fails.**" Every claim is marked (a), (b) or (c) and carries its grounds. |
-| **13. Counter-position** | The same evidence, when the question is contested | Once | "State the **strongest** opposing position the corpus itself supports, or say plainly that it does not — **never to invent one**." |
-
-The synthesis instruction is worth reading twice. It forbids the failure mode a careful assistant defaults to. A model asked to weigh two accounts will usually produce a balanced summary in which both have a point, because that is the safest-sounding output. Axial requires a verdict, and then requires the verdict's own weakness to be stated as a claim in its own right.
-
-### 4.3 Writing the paper
-
-| | Asked of | How often | The question |
-|---|---|---|---|
-| **14. Arc plan** | The inventory of claims that survived | Once | "Plan an arc. Order the sections so each earns the next, and assign each claim to the section that uses it… **At least one section must state the opposing position at its strongest**, unless the records themselves report the corpus is one-sided. A paper that quietly drops the side it disagrees with is the failure this pass most needs to avoid." |
-| **15. Drafting** | One section's assigned claims | Once per section | "Write ONE section of a paper. **You have no tools, no retrieval, and no access to any source: the claims below are the whole world**, and you may not assert anything that is not traceable to one of them." |
-| **16. Shape check** | The finished paper | Once | Does this read as an argument or as a list? Reported, never blocking. |
-
-### 4.4 The judges, which sit outside the pipeline
-
-Five bounded checks — does a cited passage support its claim, is an inference contradicted by its own evidence, is the counter-position a steelman or a strawman, did the pre-pass catch the planted premise, did the answer do something the case declares disqualifying — plus the sealed review panel.
-
-**None of them may be run by the model that produced the thing being judged.** The guard raises before the call is made, not after. The panel goes further and requires a different training lab, because a family-mate's agreement is weak evidence.
+The complete inventory — all sixteen questions, quoted from the working system — is in [Appendix F](#appendix-f--every-question-axial-asks).
 
 ---
 
-## 5. Why questions, and not tags
+## 4. Why questions, and not tags
 
 Axial's first version did the standard thing, and the standard thing failed in a way worth reporting, because the same approach is what most document-intelligence and knowledge-graph products are built on today.
 
-### 5.1 What the first version did
+### 4.1 What the first version did
 
 Every passage was **tagged** against five closed vocabularies: what field it belonged to, what kind of claim it made, which theoretical school it spoke from, what its empirical scope was, and what role it played in the argument. A separate pass looked for cross-references. This is the mechanical version of axial coding, and it is exactly what a knowledge-graph pipeline does: turn text into attributes, then query the attributes.
 
 For months the tags looked fine. A model read a passage, produced a sensible label, and moved on. Nobody had measured whether the labels were *right*, because measuring requires an answer key.
 
-### 5.2 The measurement
+### 4.2 The measurement
 
 Two frontier models from two different labs were given the same neutral instructions and independently labelled the same 120 passages. Two independent labellers means agreement can be measured.
 
@@ -238,7 +230,7 @@ The three obvious reactions were each tested, and each did nothing.
 | "The definitions are vague, rewrite them." | A codebook rewrite costing 55% more prompt moved agreement by **roughly zero**. An explicit rule about what unit to label added **0.02**. |
 | "Give it more context." | Feeding the book's own thesis and stated argument into the labelling call scored **−0.01** on the full sample. |
 
-### 5.3 The finding that ended the approach
+### 4.3 The finding that ended the approach
 
 Then the ceiling was measured, and there was nothing left to fix.
 
@@ -248,11 +240,11 @@ Then the ceiling was measured, and there was nothing left to fix.
 
 A majority vote across several draws was built and shipped, and it did raise reliability. It did not repair anything, because the reliability was never the real problem.
 
-### 5.4 The structural failure underneath
+### 4.4 The structural failure underneath
 
 At the end of that version, over 31 books, the corpus looked like this:
 
-| | |
+| What was counted | The count |
 |---|---|
 | Passages tagged | 18,761 |
 | Connections between passages | **584** |
@@ -264,7 +256,7 @@ Not one connection across the library. And the cause was not a bad setting. The 
 
 **The diagnosis is one sentence: an attribute is not a relation.** A tag sorts a passage into a bin. Two passages in the same bin have been sorted the same way; they have not met. What actually makes two books argue is that one of them names Charles Tilly and so does the other, or that one says whom it argues against and the other is that target. **A closed vocabulary cannot record either, because it has to know the answer before it reads.**
 
-### 5.5 What replaced it
+### 4.5 What replaced it
 
 The fix is the question, not a better detector. Ask what the passage says, in the passage's own words, and specifics come back rather than bins. Over the same books:
 
@@ -277,13 +269,13 @@ The fix is the question, not a better detector. Ask what the passage says, in th
 
 The passage count fell because the passages got bigger, deliberately, to fit whole arguments. Everything else appeared for the first time.
 
-### 5.6 The same lesson, twice more
+### 4.6 The same lesson, twice more
 
 **Once at retrieval.** Interrogation produced a graph, and then materialisation threw most of it away by grouping passages into pages by their surface string. Whom a passage argues against was answered on **76.4%** of passages, and only **4.7%** of those targets joined to anything a question could actually reach. The opposition was recorded and not indexed. Loading the same passages into a relational store lifted that to **44%** and exposed **43,101 cross-source opposition pairs**. That is the redesign that made this version of the report necessary.
 
-**Once at the argument map.** The relation pass could have been given a tidy list of relationship types. It was not, for the reason stated in section 4.1: an engine told to look for opposition finds opposition. Given no menu it coined 504 labels, and the shapes that recur were named afterwards from what came back.
+**Once at the argument map.** The relation pass could have been given a tidy list of relationship types. It was not, for the reason stated in section 3: an engine told to look for opposition finds opposition. Given no menu it coined 504 labels, and the shapes that recur were named afterwards from what came back.
 
-### 5.7 What the old vocabularies are still good for
+### 4.7 What the old vocabularies are still good for
 
 They did not disappear. They survive as **examples**, and the design around them is the single most important guard in the reading pass.
 
@@ -293,7 +285,7 @@ That ordering is the whole difference between this design and the one it replace
 
 ---
 
-## 6. Why any of it can be checked
+## 5. Why any of it can be checked
 
 A production tool makes novel claims, and a novel claim has no answer key. There is no gold standard for "the right synthesis of thirty-five books". So Axial does not claim correctness. It claims **auditability**, and organises everything around one sentence: *accountability to grounds, with honest confidence.*
 
@@ -301,7 +293,7 @@ Five commitments follow, and each is enforced somewhere a model cannot reach.
 
 **Every claim is witnessed by the corpus, never by training memory.** The model's job is to reason *across* grounded material, never to supply facts *from itself*. Where the corpus is silent the output says so.
 
-**Outputs are assembled from grounded moves, never written and then fitted with citations.** The three-kind marking makes the seam visible. The (b) seam is where the value is and where the risk is, in the same place, so it is checked first.
+**Outputs are assembled from grounded moves, never written and then fitted with citations.** Marking every assertion as one of three kinds makes the join visible — the *seam*, in this report's shorthand, being the line where what a source said stops and what Axial concluded begins. The (b) seam is where the value is and where the risk is, in the same place, so it is checked first.
 
 **The brief is interrogated, not obeyed.** A research brief is a claim about what is worth asking, and it can be wrong. Bounding and refusal are first-class outputs.
 
@@ -317,17 +309,17 @@ Two structural properties support all five.
 
 ---
 
-## 7. What is actually in the library
+## 6. What is actually in the library
 
 The current library is **35 books**, listed in full in [Appendix C](#appendix-c--the-library). It is deliberately built around one case, Syria, set inside the comparative-historical literature on state formation, nationalism and political violence — Mann's four volumes, Tilly, Gellner, Wimmer, Smith, Kalyvas, Jackson, Caspersen, alongside Batatu, Ayubi, Heydemann, White, Hinnebusch, Gelvin, Wedeen, Üngör and Vignal.
 
 Reading it produced **6,842 passages** and **47,584 name pages** carrying 137,276 mentions.
 
-A separate report, [*Axial — what the library covers, and what it does not*](axial-coverage-v2.md), measures that index page by page. Its central finding is stated here because it is the sort of thing a marketing document normally omits.
+A separate report, [*Axial — what the library covers, and what it does not*](axial-coverage-v2.md), measures that index page by page. Its central finding is repeated here.
 
 **A page is useful for research when it holds enough passages to compare and enough different books for the comparison to be between authors rather than within one.** That means roughly thirty to two hundred passages from five or more books. **329 of the 47,584 pages meet that bar.** Seven in ten thousand.
 
-| | |
+| What was counted | The count |
 |---|---|
 | Median passages per page, every kind of name | **1** |
 | Pages mentioned exactly once and never again | 32,447 of 47,584 |
@@ -337,7 +329,7 @@ A separate report, [*Axial — what the library covers, and what it does not*](a
 
 Three readings follow from this, and all three are useful.
 
-**The tail is real and it is mostly bibliography.** Two in three pages are a name a passage mentioned once. Works cited are the extreme case: 94.2% appear in one book only, which is what a bibliography looks like when you index it.
+**The tail is real and it is mostly bibliography.** The *tail* is the long, thin end of the distribution: the enormous number of name pages that carry almost nothing, as against the small number that carry a great deal. Two in three pages are a name a passage mentioned once. Works cited are the extreme case: 94.2% appear in one book only, which is what a bibliography looks like when you index it.
 
 **Places, not concepts, are this library's strongest entry points.** Countries and places hold 35,493 mentions off 4,670 pages, more than twice the density of any other kind, and 129 of the 329 research-grade pages. That is a genuine property of a case-organised shelf. Its authors meet each other over Syria, Iraq, Britain and France far more often than over any idea.
 
@@ -347,9 +339,9 @@ That measurement is what tells us which book to add next, and it is computed mec
 
 ---
 
-## 8. How it was tested, and what the tests showed
+## 7. How it was tested, and what the tests showed
 
-### 8.1 The principle: no single number, and no number without its frame
+### 7.1 The principle: no single number, and no number without its frame
 
 Axial computes no aggregate accuracy score and must not. A single figure lets a strong layer average away a weak one, which is precisely the failure the design exists to avoid. Instead there are four instruments, on different clocks, each reported on its own terms.
 
@@ -362,9 +354,11 @@ Axial computes no aggregate accuracy score and must not. A single figure lets a 
 
 Every number below is stated with the conditions that produced it. Where a figure is one draw of one question, it says so.
 
-**The overriding caveat, stated once and permanently.** Every test question in this report was written by an AI model, not by a working academic. That was an interim arrangement and is now a permanent decision: no academic-authored question set is coming, and no gate waits on one. **Every figure here measures the engine. None of them measures answer quality against a real scholarly question.** This limit is not softened anywhere in this document, and it is carried in the specification so that no future run can quietly drop it.
+**The caveat that bounds every figure below.** Every test question in this report was written by an AI model, not by a working scholar. **Every figure here therefore measures the engine. None of them measures answer quality against a real scholarly question.**
 
-### 8.2 The engine test: nine questions, run end to end
+That arrangement was chosen so the engine could be built and hardened without waiting on anyone, and it did its job: a machine-written question exercises retrieval perfectly well, and nothing simulated was ever used as an answer key ([Appendix A](#appendix-a--how-the-test-questions-were-designed)). What it cannot do is tell us whether an answer is any good to a scholar who knows the field. That is the one instrument this project does not have, and closing the gap needs people rather than code. It is the substance of the request in the [final word](#final-word), and the limit is carried in the specification so that no future run can quietly drop it while it stands.
+
+### 7.2 The engine test: nine questions, run end to end
 
 Six short briefs and three hard ones, each chosen to stress a different shape of search.
 
@@ -384,22 +378,22 @@ Six short briefs and three hard ones, each chosen to stress a different shape of
 
 **S-04 and S-05 deliberately do not name what they are testing.** An earlier draft asked about "the library's thin evidence on Transnistria". Naming the finding in the question would make a pass prove only that the model follows instructions.
 
-The scoring instrument is a **required-source oracle**: for each demand a question makes, which books carry material that could satisfy it, and did this run's citations reach any of them. It is mechanical, needs no model call, and is the only real recall number the project has.
+The scoring instrument is a **required-source oracle**. An *oracle*, in testing, is a rule that says what a correct result looks like, so a machine can mark the answer without a person reading it. This one is a list, written per question before the run: for each demand the question makes, which books carry material capable of satisfying it. A demand is met when the run's citations reach any book on its list. It is purely mechanical, needs no model call, and is the only measure of reach the project has.
 
 The most recent full run, on 2026-08-04 across all nine questions on the 31-book library:
 
-| | |
+| What was measured | The result |
 |---|---|
 | Demands reached | **26 of 37** |
 | Total cost, nine questions | **$2.57** |
 | Cost per question | $0.18 – $0.43 |
 | Evidence composed per question | 40 – 61 passages |
 
-That run was the first on a rewritten retrieval layer, and it produced the single most useful negative result the project has: **the model was shown two to three times more evidence than the previous run and the oracle went down, not up.** A second draw settled which of the losses were real. One question that appeared to regress badly scored its best result ever on the re-run, retiring the regression. Two single-demand losses reproduced leg for leg across both draws, and are recorded as real.
+That run was the first on a rewritten retrieval layer, and it produced the single most useful negative result the project has: **the model was shown two to three times more evidence than the previous run and the oracle went down, not up.** A second draw settled which of the losses were real. One question that appeared to regress badly scored its best result ever on the re-run, retiring the regression. Two single-demand losses reproduced exactly, demand for demand, across both draws, and are recorded as real.
 
 The lesson generalised, and it is the one that governs how every figure in this report is read: **one draw of one question is not a measurement.** One of the six short briefs has been measured moving 39% between two runs of identical code on the identical question. Differences smaller than that are noise until a second draw says otherwise.
 
-### 8.3 The four paper gates
+### 7.3 The four paper gates
 
 The paper is the deliverable, so it is gated on every run. All four checks are cheap by design. Two are purely mechanical and two are narrow judged checks scoped to the paper's own new inferences.
 
@@ -410,29 +404,31 @@ The paper is the deliverable, so it is gated on every run. All four checks are c
 | **Seam fidelity** | No cross-source inference is dressed as something a source said; no speculation credits a source with the paper's own verdict | Judged, same call, two questions |
 | **Counter-position presence** | A contested paper carries an opposing position with grounds, or explicitly discloses that the library is one-sided and why | Mechanical, **hard** |
 
-On the two development papers reproduced in Appendices D and E, redrafted on the current build:
+On the two development papers reproduced in Appendices D and E, redrafted on the current build.
 
-| Gate | Metric | Value |
-|---|---|---|
-| Provenance integrity | citation markers resolving | **1.0000** (n=215) |
-| Provenance integrity | confidence upgrades | **0** (n=105) |
-| Counter-position | presence rate | **1.0000** (n=2) |
-| Paper grounding | new inferences not contradicted | **1.0000** (n=5) |
-| Attribution fidelity | claims carrying a valid kind | **1.0000** (n=105) |
-| Attribution fidelity | inference-seam mislabel rate | **0.0000** (n=32) |
-| Attribution fidelity | speculation-seam mislabel rate | **0.0000** (n=19) |
+**How to read the table.** Each row is one check. The **value** is the share that passed, on a scale where 1.0000 is everything and 0.0000 is nothing — so a rate reads 1.0000 when the check found no fault anywhere, and a count reads 0 when nothing was flagged. **n** is how many things were actually examined: 215 citation markers, 105 claims, 32 cross-source inferences, 2 papers. A perfect score over a small n is a small piece of evidence, which is why n is printed beside every figure rather than left out.
+
+| Gate | What was checked | Value | n |
+|---|---|---|---|
+| Provenance integrity | citation markers resolving to a real claim | **1.0000** | 215 |
+| Provenance integrity | claims whose confidence was raised | **0** | 105 |
+| Counter-position | contested papers carrying the opposing case | **1.0000** | 2 |
+| Paper grounding | new inferences not contradicted by their own evidence | **1.0000** | 5 |
+| Attribution fidelity | claims carrying a valid kind | **1.0000** | 105 |
+| Attribution fidelity | inferences wrongly dressed as a source's words | **0.0000** | 32 |
+| Attribution fidelity | judgments wrongly credited to a source | **0.0000** | 19 |
 
 The judging model is never the model that wrote the paper, and the guard raises before any judging call is made rather than checking afterwards.
 
-The denominators are small and they are printed for that reason. Five new inferences is five, not a rate.
+The denominators are small, which is why they are printed. Five new inferences is five, not a rate.
 
-### 8.4 The panel: strangers who read the paper and nothing else
+### 7.4 The panel: strangers who read the paper and nothing else
 
 The cheap checks catch everything cheap to catch. The one thing none of them reaches is whether the argument holds together. That is measured by an offline panel, on a sample, and it blocks nothing.
 
 A reviewer receives one **sealed packet**: the rendered paper, plus the resolved text of every passage its claims cite, plus the bibliography. Nothing else. No repository, no specifications, no prompts, no other reviewer's verdict, no pre-written model answer to anchor to.
 
-The isolation is enforced by the harness that builds the call, never by an instruction in the prompt. A model holding file tools will read the repository regardless of what its instructions say, so reviewers are dispatched down a code path that **has no parameter for tools to be passed through**. Isolation you ask for is not isolation.
+The isolation is enforced by the code that builds the call, never by an instruction in the prompt. A model that has been handed file access will read the repository whatever its instructions say, so reviewers are dispatched down a path that **has no parameter for tools to be passed through in the first place**. The distinction is the whole point: an instruction to stay sealed can be disregarded, and a capability that was never granted cannot be.
 
 Each reviewer must come from a **different training lab** than the model that wrote the paper — a stricter bar than a different model id, because shared training priors survive within a family and a family-mate's agreement is weak evidence. A model whose lab is not declared is a hard error, never assumed distinct. Reviewers return a fixed structure, never free prose: three ordinal bands plus a list of named defects tied to specific claims.
 
@@ -466,21 +462,19 @@ Twelve sealed reviewers ran in that round, three per packet — three on the con
 | *Privilege and the Contracted-Out Militia* | adequate ×3 | adequate ×3 | **strong ×3** |
 | *What the Mandate Built* | **strong ×3** | strong ×1, adequate ×2 | **strong ×3** |
 
-Spread is zero on seven of the eight cells. That is itself the finding worth recording: an earlier round ran one reviewer per packet, which made the bands a sorting rather than a measurement. At three reviewers they reproduce.
+Spread is zero on seven of the eight cells. An earlier round ran one reviewer per packet, which made the bands a sorting rather than a measurement. At three reviewers they reproduce.
 
 #### The two things the reviewers found that the gates could not
-
-This is the part of the evaluation that earned the panel its cost.
 
 **Five of six reviewers independently flagged the same citation.** Both papers use a passage from Bayat 2017 to tie Heydemann's networks-of-privilege framework to Syria. The passage is a publisher's book-series list — the line "Bassam Haddad, *Business Networks in Syria*" inside a catalogue. It resolves. It passes every mechanical check, because the machinery can verify that a marker points at a real passage and cannot judge that the passage is a catalogue entry.
 
 **Four reviewers reached the same diagnosis unprompted: the keystone Syrian claim in both papers is carried by Moroccan and Egyptian evidence.** The library holds no Syria-specific networks-of-privilege passage, so the drafter reached for the nearest thing and argued by analogy.
 
-That second finding is the important one, and it is not a retrieval bug. **It is a corpus gap presenting as a citation defect, and no amount of retrieval work fixes it.** The fix is a book. This is exactly what the library measurement in section 7 is for.
+That second finding is the important one, and it is not a retrieval bug. **It is a corpus gap presenting as a citation defect, and no amount of retrieval work fixes it.** The fix is a book. This is exactly what the library measurement in section 6 is for.
 
 Two further defects the four gates do not see: the rendered paper repeated a section heading verbatim, and its citation table listed identifiers that never appear as markers in the body. Both were found by reviewers, both were real, and both have since been fixed. The papers in Appendices D and E are reproduced as they were rendered, with the duplicate heading still visible in Appendix D. It is left there rather than tidied.
 
-### 8.5 Open-weight models against proprietary ones
+### 7.5 Open-weight models against proprietary ones
 
 The same two hard questions were run twice against the same library at the same moment, in two sealed processes that could not read each other's configuration. One used only open-weight models. The other used only proprietary ones. Six blind reviewers judged the outputs, three per question, with the arm order flipped between the two so no judge could learn a position bias.
 
@@ -504,9 +498,9 @@ The practical reading: the arms are close on quality, split by question type, an
 
 Three limits bound this comparison and none of them is soft. The test questions are AI-written. Every model in an arm moved at once, so the comparison measures two complete wirings and cannot say which swap produced the result. And it is one draw per cell.
 
-### 8.6 The measurements that were uncomfortable
+### 7.6 The measurements that were uncomfortable
 
-These are reported because they change how the rest of the report should be read, and because a dossier that only carries its good numbers is not evidence of anything.
+These are reported because they change how the rest of the report should be read, and because a report that only carries its good numbers is not evidence of anything.
 
 **Gather does not fully reproduce.** Asked twice about the same name, on byte-identical input, the pass agrees with itself 53% of the time, and **36.1% of the disagreements it records come back null on the second reading**. This was investigated and accepted as model variance. Its consequence is enforced in the design rather than hoped away: **a Gather finding is a retrieval hint and never a citation.** No gate scores an answer against one, and no answer is credited for repeating one.
 
@@ -520,13 +514,13 @@ These are reported because they change how the rest of the report should be read
 
 ---
 
-## 9. What Axial does badly
+## 8. Known limits and open problems
 
-Stated plainly, in one place.
+Every limit the evidence in this report exposes, collected in one place.
 
-**The test questions are simulated, permanently.** Every question in this report was written by an AI model working from a description of the library. It is a real limit and it is not going away.
+**The test questions are machine-written.** Every question in this report was written by an AI model working from a description of the library. This is the project's largest single limit, and it is the one that most needs outside help to close.
 
-**There is no human referee anywhere in the loop, and there never will be.** Answer quality is judged by a panel of models. No number in this report may be described as measured against human expert judgment, because none of it is.
+**There is no human referee in the loop yet.** Answer quality is currently judged by a panel of models. **No number in this report may be described as measured against human expert judgment, because none of it is** — and the specification forbids relabelling one that way. That constraint stays in force for as long as the panel is the only referee, and it is exactly what a scholar's questions and a scholar's reading would begin to relax.
 
 **The library is thin where it matters most.** Concepts are the weakest kind of page in it. 83% of all pages exist inside a single book. Several of the largest concept pages are one author's vocabulary that nobody else on the shelf uses.
 
@@ -542,7 +536,7 @@ Stated plainly, in one place.
 
 ---
 
-## 10. Where this stands, and what we are asking for
+## Final word
 
 Three phases are built and working: reading the corpus, answering a question from it, and writing the paper. The full chain runs end to end on one command, on a real library of thirty-five scholarly books, for well under a dollar a paper.
 
@@ -555,7 +549,13 @@ What the evidence in this report supports, and no more:
 
 What it does not support: any claim about answer quality against a real scholarly question. That gap is the shape of what we are asking for.
 
-**If you are a scholar or a researcher**, the useful contribution is small: a few genuine research questions from your area of expertise, of the kind you would actually set a doctoral student. Three is a real contribution. The value is not that we cannot invent questions; it is that a question written by someone who knows the field is the only thing that can test whether the answers are any good, and that is the one instrument this project does not have.
+**If you are a scholar or a researcher**, there are three contributions, in ascending order of commitment, and the first is genuinely small.
+
+*Set the questions.* A few real research questions from your area of expertise, of the kind you would actually put to a doctoral student. Three is a real contribution. A machine can invent a question that exercises the engine; only someone who knows the field can write one whose answer is worth judging.
+
+*Read an answer.* A paper and the passages it cites, judged the way you would referee a submission. That is the instrument section 7.4 currently fills with a panel of models, and a human verdict beside those would be the first of its kind here.
+
+*Say what the shelf is missing.* The library measurement in section 6 names which topics have only one voice. Which book should answer Jackson on sovereignty, or Mann on infrastructural power, is a question a specialist answers in a sentence and we cannot answer at all.
 
 **If you are an institution or a funder**, the interesting property is that everything here is checkable. There is no aggregate score to take on faith. Every claim in every output walks back to a passage in a book, every intermediate artifact is on disk, every model call has a recorded cost, and the limits are written into the specification rather than into a footnote.
 
