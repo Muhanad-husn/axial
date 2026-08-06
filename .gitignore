@@ -76,3 +76,6 @@ data/**
 !data/reports/
 !data/reports/**/
 !data/reports/**
+# Word writes a lock file beside any .docx it has open. By-directory means it
+# would otherwise be swept in the moment someone reads the report.
+~$*
