@@ -1,6 +1,6 @@
 # CHARTER — Axial: Product-Wide Behavioural Constitution
 
-**Project:** Axial · **Version:** 1.0 · **Status:** Ratified · **Scope:** All phases (A build → B–E) · **Owner:** Operator (single-operator system)
+**Project:** Axial · **Version:** 1.1 · **Status:** Ratified, revised 2026-08-06 · **Scope:** All phases (A build → B–E) · **Owner:** Operator (single-operator system)
 
 **What this is.** This is the behavioural constitution for the whole Axial product. It sits above every phase PRD. `specs/PRODUCT.md` is the Phase-A (corpus ingestion) PRD; it and every later phase spec inherit this charter and cite it as the parent of their P0 criteria. The charter is never patched into a phase spec, and no phase spec restates or overrides it.
 
@@ -14,7 +14,7 @@ Axial is a knowledge-production tool. You give it a case and a request for analy
 
 The consequence sets the entire bar. A production tool makes novel claims, and a novel claim has no answer key. So the governing standard is not correctness but **auditability**: every claim must be traceable to its grounds, marked for what kind of claim it is, and carried with disclosed confidence. Correctness is unknowable at the frontier of a synthesis. Accountability to grounds is always checkable. The spine of this constitution is one sentence: **accountability to grounds, with honest confidence.**
 
-The Phase-A ingestion pipeline in `PRODUCT.md` is the **substrate, not the product**. It builds the faceted corpus that the reasoning layers stand on: clean text, structural trees, chunks, multi-axis tags, and a gold-scored vocabulary. The product is the Phase B–E reasoning layers (lens application, axial-coding comparison, authorship). This charter governs those layers before they are built, so the substrate is built to serve them.
+The Phase-A ingestion pipeline in `PRODUCT.md` is the **substrate, not the product**. It builds the corpus the reasoning layers stand on: clean text, structural trees, chunks, the interrogation's open answers, and the name layer those answers meet at. The product is the Phase B–E reasoning layers (lens application, axial-coding comparison, authorship). This charter governs those layers before they are built, so the substrate is built to serve them.
 
 **Phases A, B and C are built. D and E are future milestones, not a schedule** (DEC-63). They exist as GitHub milestones — [Phase D — format adaptation](https://github.com/Muhanad-husn/axial/milestone/1) and [Phase E — lens application](https://github.com/Muhanad-husn/axial/milestone/2) — and neither has a spec, a date, or an issue. Where the phase specs push work over the boundary to "Phase D", they are naming that milestone, not a queued next phase.
 
@@ -49,7 +49,7 @@ Each principle states what it is, why it exists, and how it binds. "How it binds
 **How it binds.**
 - *Forbids:* emitting a claim whose kind is unmarked; presenting a (b) cross-source inference in the voice of a source; generate-then-cite assembly of any kind.
 - *Requires:* the (b) seam is always visible. It is the product's whole value and its whole risk in one place. The synthesis no source made is exactly the claim most likely to be wrong and least able to be checked against an answer key. Making that seam explicit is non-negotiable, and it is the first thing the attribution-fidelity eval gate (§2) checks.
-- *Substrate instance:* `PRODUCT.md`'s "grounded by construction" envelope language (P0-3) is the conceptual child of this principle. Appendix F's `role_in_argument` axis tags each chunk by the argument *move* it makes (setup, claim, evidence, counter-position, synthesis), which is the substrate that makes grounded assembly mechanizable: a downstream pass can build from evidence and claim moves rather than paraphrasing whole chunks.
+- *Substrate instance:* `PRODUCT.md`'s "grounded by construction" envelope language (P0-3) is the conceptual child of this principle. The interrogation's `move` question (`PRODUCT.md` §7.15, with Appendix F's seven role-words kept only as prompt examples, not a tag set) asks what each passage is *doing* in the argument, in the model's own words, which is the substrate that makes grounded assembly mechanizable: a downstream pass can build from evidence and claim moves rather than paraphrasing whole chunks.
 
 ### 1.3 Principle III — The brief is interrogated, not obeyed
 
@@ -71,7 +71,7 @@ Each principle states what it is, why it exists, and how it binds. "How it binds
 **How it binds.**
 - *Forbids:* presenting one school's position as consensus on a question the corpus shows to be contested; dropping or strawmanning the opposing view.
 - *Requires:* the opposing school is stated at its strongest, from corpus grounds (Principle I), and marked as counter-position. When the corpus is genuinely one-sided, the output says so explicitly and attributes the one-sidedness to the corpus. It distinguishes "the sources agree" from "we read only one side."
-- *Substrate instance:* Appendix F's `role:counter-position` tag makes counter-position material findable per chunk, which is what lets a Phase-B pass verify a synthesis actually included it.
+- *Substrate instance:* the interrogation's `arguing_against` question (`PRODUCT.md` §7.15) names who or what each passage argues against, and the name pages the opposed names get make counter-position material findable, which is what lets a Phase-B pass verify a synthesis actually included it.
 
 ### 1.5 Principle V — Confidence is calibrated and disclosed; eval is layered and compositional
 
@@ -80,7 +80,7 @@ Each principle states what it is, why it exists, and how it binds. "How it binds
 **Why it exists.** With no answer key, one aggregate "quality" number is meaningless. Trust has to be decomposed into layers that can each be checked, and a failure in a lower layer poisons every layer above it. A flawless synthesis over a mis-attributed substrate is worthless. The layers compose multiplicatively: the system is only as trustworthy as its weakest rung.
 
 **The layers, bottom to top.**
-1. **Substrate fidelity** — is the corpus cleanly extracted, correctly chunked, reliably tagged? Phase-A's κ / agreement eval (`PRODUCT.md` §10) is this rung, and only this rung.
+1. **Substrate fidelity** — is the corpus cleanly extracted, correctly chunked, and are its per-name findings honestly grounded? Phase-A's grounding measurement (`axial gather-eval`, `PRODUCT.md` §10) is this rung, and only this rung.
 2. **Attribution fidelity** — is every claim marked with the right kind (Principle II a/b/c), and is the (b) seam honest?
 3. **Synthesis quality** — does the argument follow from its grounds, and is the counter-position present (Principle IV)?
 4. **Calibration** — does disclosed confidence track actual reliability?
@@ -89,7 +89,7 @@ To these four add **adversarial red-teaming of the brief** (Principle III): does
 
 **How it binds.**
 - *Forbids:* reporting a single aggregate score as system quality; shipping a phase whose confidence disclosures are absent or uncalibrated.
-- *Requires:* each output carries calibrated, disclosed confidence, and system trust is reported as the composition of the per-layer pass rates, so a weak rung cannot be averaged away by a strong one. `PRODUCT.md` §10's tunable κ cutoffs are the rung-1 instance of this principle. The Phase-A κ eval is only rung 1 of the ladder.
+- *Requires:* each output carries calibrated, disclosed confidence, and system trust is reported as the composition of the per-layer pass rates, so a weak rung cannot be averaged away by a strong one. `PRODUCT.md` §10's grounding-rate measurement (`axial gather-eval`) is the rung-1 instance of this principle, its ship-blocking bar not yet set. Phase A's own substrate-fidelity check is only rung 1 of the ladder; the rung-3 gates for the attribution, synthesis, and calibration layers above it are `specs/PHASE-B.md` §10.1.
 
 ---
 
@@ -100,9 +100,9 @@ The reason this is a spec and not a memory note: principles bind only where the 
 - **Rung 0 — memory.** Insufficient. Subagent roles read specs, not memory.
 - **Rung 1 — this charter.** The behavioural contract, product-wide, cited by every phase spec.
 - **Rung 2 — per-phase P0 acceptance criteria that cite the charter.** Each phase spec turns the relevant principles into concrete, testable P0 lines, as `PRODUCT.md` already does at the substrate layer.
-- **Rung 3 — eval gates.** Attribution-fidelity, grounding, and calibration checks that are **ship-blocking pass/fail gates, "hooks not advice,"** in the phase that builds them. This mirrors how Phase A already treats its κ cutoffs as pass/fail (`PRODUCT.md` §10): a rung-3 gate exists today at the substrate layer. The rung-3 gates for the attribution, synthesis, and calibration layers are **built in the Phase-B–E specs, not here.**
+- **Rung 3 — eval gates.** Attribution-fidelity, grounding, and calibration checks that are **ship-blocking pass/fail gates, "hooks not advice,"** in the phase that builds them. This mirrors how Phase B already treats its five gates as pass/fail (`specs/PHASE-B.md` §10.1): rung-3 gates exist today at every layer above the substrate — attribution, grounding, synthesis quality, calibration, and adversarial brief red-teaming. Phase A's own substrate-fidelity measurement (`PRODUCT.md` §10) has not yet set its ship-blocking bar — a stated gap, not a repeal.
 
-**Standing rule: the principles are FIRM; the thresholds are TUNABLE.** The five principles do not change to fit a build. The numeric cutoffs that operationalize them (what agreement counts as passing attribution fidelity, what calibration error is tolerable) are tunable starting hypotheses, exactly as `PRODUCT.md` §10's κ cutoffs are tunable. This charter **names the layers and mandates that they become gates.** It deliberately sets no numeric threshold. The thresholds land in the phase specs and the eval harness, where enforcement lives. The charter is the contract; the phase specs and the eval harness are where enforcement lands.
+**Standing rule: the principles are FIRM; the thresholds are TUNABLE.** The five principles do not change to fit a build. The numeric cutoffs that operationalize them (what agreement counts as passing attribution fidelity, what calibration error is tolerable) are tunable starting hypotheses, exactly as `specs/PHASE-B.md` §10.1's five gate thresholds are tunable. This charter **names the layers and mandates that they become gates.** It deliberately sets no numeric threshold. The thresholds land in the phase specs and the eval harness, where enforcement lives. The charter is the contract; the phase specs and the eval harness are where enforcement lands.
 
 ---
 
@@ -112,7 +112,7 @@ This section is **not Phase-A scope.** It records the retrieval and analysis beh
 
 - **Case-as-anchor, not case-as-fence.** A `scope:country-case` request anchors retrieval on the case but does not fence analysis to it. Corpus-grounded material about other polities that bears on the case is in scope. A brief about Syria answered only from Syria-scoped chunks has under-read the corpus, not stayed disciplined.
 - **Surface unrequested, corpus-grounded analogues.** The tool may raise comparisons the brief did not ask for, bounded strictly by Principle II: only genuinely corpus-witnessed analogues, each labeled as the tool's cross-source inference (the (b) seam), never a training-memory analogy dressed as a finding.
-- **Per-polity coverage-map disclosure.** The tool discloses how well the corpus actually covers each polity it touches, and feeds that into the calibration layer (Principle V). A claim about a thinly-covered polity is disclosed as such, not stated with the confidence of a claim over a densely-covered case. This is computable from the many-valued `polities_touched` facet (`PRODUCT.md` Appendix C and G; tracked in issue #194): because `polities_touched` records every polity a chunk *substantively engages*, the corpus-wide coverage of each polity is countable, and a per-polity map falls out of it. The single-valued empirical-scope axis cannot serve this; the facet is the substrate that makes the coverage map possible.
+- **Per-polity coverage-map disclosure.** The tool discloses how well the corpus actually covers each polity it touches, and feeds that into the calibration layer (Principle V). A claim about a thinly-covered polity is disclosed as such, not stated with the confidence of a claim over a densely-covered case. This is computable from the interrogation's `names` answer (`PRODUCT.md` §7.15; tracked in issue #194): every polity a passage *substantively engages* is recorded there as a name of `kind: country/state/place` (`PRODUCT.md` Appendix C), so the corpus-wide coverage of each polity is countable from name membership, and a per-polity map falls out of it. The single-valued empirical-scope axis cannot serve this; the name layer is the substrate that makes the coverage map possible. Wiring the map itself is Phase B's, not yet built.
 
 ---
 
@@ -120,7 +120,7 @@ This section is **not Phase-A scope.** It records the retrieval and analysis beh
 
 **Inheritance.** Every phase spec cites this charter and derives its P0 acceptance criteria from the five principles. The principles are the parent of those criteria; the phase spec is where they become concrete and testable. A phase spec does not restate the charter and cannot override it.
 
-**Relationship to `PRODUCT.md`.** `PRODUCT.md` is the Phase-A substrate PRD. It inherits this charter like any phase spec; the charter is not Phase-A-specific, and its principles govern the reasoning layers Phase A only prepares the ground for. The Phase-A grounding rule (P0-3, §7.3), the `role_in_argument` axis (Appendix F), the §10 κ eval, and the `polities_touched` facet (Appendix C) are the substrate instances of Principles I/II, II/IV, V, and the §3 coverage map respectively.
+**Relationship to `PRODUCT.md`.** `PRODUCT.md` is the Phase-A substrate PRD. It inherits this charter like any phase spec; the charter is not Phase-A-specific, and its principles govern the reasoning layers Phase A only prepares the ground for. The Phase-A grounding rule (P0-3, §7.3), the interrogation's `move` and `arguing_against` questions (§7.15, examples at Appendix F), the §10 grounding measurement (`axial gather-eval`), and the `names` answer's `country/state/place` entries (§7.15, Appendix C) are the substrate instances of Principles I/II, II/IV, V, and the §3 coverage map respectively.
 
 **Amendment.** The charter changes only through the same discipline as any spec: a spec-drift issue, founder adjudication, and a deliberate spec-mode authoring pass. It is frozen during implementation like every other spec, and it is never patched in place mid-build.
 
