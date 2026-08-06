@@ -15,8 +15,6 @@ import re
 import sqlite3
 from pathlib import Path
 
-import yaml
-
 ROOT = Path(__file__).resolve().parents[2]
 OUT = Path(__file__).resolve().parent
 
@@ -28,15 +26,9 @@ NOTES_DB = ROOT / "data" / "vault" / "notes.db"
 SOURCE_META = ROOT / "data" / "source_meta"
 ANALYSES = ROOT / "data" / "analyses"
 PAPERS = ROOT / "data" / "papers"
-PAPER_BRIEFS = ROOT / "config" / "paper_briefs" / "dev"
 
 # The two papers, in the order they appear as appendices D and E.
 PAPER_FILES = ["b02d747edc0bb416", "d5f983eafb05f8d6"]
-PAPER_BRIEF_FILES = {
-    "b02d747edc0bb416": "hollow-or-durable.yaml",
-    "d5f983eafb05f8d6": "the-long-arc.yaml",
-}
-
 # Short cites for the library table, in the report's own house style.
 SHORT = {
     "agamben-2005": "Agamben, *State of Exception* (2005)",
@@ -152,9 +144,6 @@ def paper_appendix(letter: str, paper_id: str, ordinal: str) -> str:
     record = json.loads((PAPERS / f"{paper_id}.json").read_text(encoding="utf-8"))
     rendered = (PAPERS / f"{paper_id}.md").read_text(encoding="utf-8")
     brief = record["paper_brief"]
-    brief_path = PAPER_BRIEFS / PAPER_BRIEF_FILES[paper_id]
-    brief_yaml = yaml.safe_load(brief_path.read_text(encoding="utf-8"))
-
     questions = []
     for analysis_id in brief["analysis_ids"]:
         rec = json.loads((ANALYSES / f"{analysis_id}.json").read_text(encoding="utf-8"))
@@ -170,7 +159,7 @@ def paper_appendix(letter: str, paper_id: str, ordinal: str) -> str:
     shape = record.get("shape", {}) or {}
 
     parts = [f"## Appendix {letter} — {ordinal} paper, and the questions behind it", ""]
-    parts.append(f"### The paper brief")
+    parts.append("### The paper brief")
     parts.append("")
     parts.append(f"**Title.** {brief['title']}")
     parts.append("")
@@ -203,7 +192,7 @@ def paper_appendix(letter: str, paper_id: str, ordinal: str) -> str:
 
     parts.append("### What the paper came out as")
     parts.append("")
-    parts.append("| | |")
+    parts.append("| What was counted | The count |")
     parts.append("|---|---|")
     parts.append(f"| Claims | {len(claims)} |")
     parts.append(

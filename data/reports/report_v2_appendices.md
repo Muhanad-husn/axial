@@ -1,16 +1,16 @@
 ## Appendix A — How the test questions were designed
 
-This appendix answers the question a referee would ask first: who wrote the tests, and could they have been written to be passed?
+Who wrote the tests, and could they have been written to be passed?
 
-### A.1 Why the questions are AI-written, and why that is permanent
+### A.1 Why the questions are machine-written, and what would change that
 
-The original plan was to collect research questions from working academics and test Axial against those. That plan was closed deliberately on 2026-07-24, and the AI-simulated question set became permanent rather than an interim stand-in.
+The original plan was to collect research questions from working scholars and test Axial against those. When none had arrived, the project stopped waiting and built its own set, so that the engine could be developed and hardened rather than blocked. That is where things stand today: the question set is machine-written, and it is the standing arrangement rather than a settled end state. A set of questions from people who know the field is the single contribution that would most change what this report can claim, and asking for it is the reason this document exists.
 
-The reasoning is narrow and worth stating, because "we used AI to write our own test" invites exactly the suspicion it should. A test question does two jobs here. It is an **input** that exercises a retrieval shape, and it is an **answer key** against which quality is scored. Axial's evaluation uses simulated questions only for the first job. **Nothing simulated is ever an answer key.** Every judgment in every gate is anchored to material the library actually holds — the resolved text of a cited passage, a premise a test brief states plainly about itself, the paper's own coverage counts. Not one of them compares an output against a model's opinion of a good answer.
+"We used AI to write our own test" invites a suspicion it should invite, so here is what the machine-written questions are and are not used for. A test question does two jobs here. It is an **input** that exercises a retrieval shape, and it is an **answer key** against which quality is scored. Axial's evaluation uses simulated questions only for the first job. **Nothing simulated is ever an answer key.** Every judgment in every gate is anchored to material the library actually holds — the resolved text of a cited passage, a premise a test brief states plainly about itself, the paper's own coverage counts. Not one of them compares an output against a model's opinion of a good answer.
 
 An earlier design did have such an answer key, a pre-written "expected answer" per case. **It was retired as a referee**, on the grounds that scoring against it measures agreement with one model's opinion rather than quality, and it is now barred from ever being placed in a reviewer packet, because showing a reviewer a pre-written answer anchors it to that answer.
 
-So the honest statement is the one made in section 8.1 and repeated here: the questions are simulated, that limit is permanent, and **it bounds what the numbers mean rather than what they are anchored to.**
+So the honest statement is the one made in section 8.1: the questions are machine-written, and **that bounds what the numbers mean rather than what they are anchored to.** It also names the gap a scholarly contribution would fill.
 
 ### A.2 The two question sets, and why they are different
 
@@ -76,7 +76,7 @@ The same discipline retired a check that had been asserted and never fired: a th
 
 **Every panel figure travels with its frame**: which papers, drawn from which performance tiers, under which model wirings, at which corpus version, judged by how many reviewers from which labs, with what spread. A number without its frame is a different claim.
 
-**No panel figure may ever be reported as measured against human expert judgment.** There is no human expert in this loop. A model-refereed score relabelled as a human-validated one is manufactured precision wearing a different costume, and it is the one way this project could launder its own limits.
+**No panel figure may be reported as measured against human expert judgment.** There is no human expert in this loop today. A model-refereed score relabelled as a human-validated one is manufactured precision wearing a different costume, and it is the one way this project could launder its own limits. If human referees do join, their verdicts are a separate instrument with its own frame, reported as such and never merged into the panel's numbers.
 
 **No paper waits on a panel and no gate reads one.** A gate that named a missing panel verdict as its reason for being untrusted would be wrong by construction, because most papers will never receive one by design.
 
@@ -92,7 +92,7 @@ Bibliographic data was recovered from the files themselves — embedded metadata
 
 <!--LIBRARY_TABLE-->
 
-The full bibliography, with publishers, editions, translation notes and per-file provenance caveats, is in `docs/academic/corpus-bibliography.md`.
+The full bibliography, with publishers, editions, translation notes and per-file provenance caveats, is in `docs/corpus-bibliography.md`.
 
 **Two entries are small enough to question.** Kandiah 2018 and Malešević 2026 are a master's research paper and a journal article rather than books, and both are close to invisible in the index. Gould 2003 now joins them at the thin end.
 
