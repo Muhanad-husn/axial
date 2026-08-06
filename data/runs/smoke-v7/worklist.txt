@@ -1,0 +1,6 @@
+config\briefs\smoke\P3-04.yaml
+config\briefs\smoke\S-01.yaml
+config\briefs\smoke\S-02.yaml
+config\briefs\smoke\S-03.yaml
+config\briefs\smoke\S-04.yaml
+config\briefs\smoke\S-05.yaml

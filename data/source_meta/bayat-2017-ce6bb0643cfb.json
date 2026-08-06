@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Asef Bayat"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2017"
+  },
+  "file_hash": "ce6bb0643cfb12dbfcdfce752cf06ec17f3a02cc6778acfdfd2ad8a222bc59e2",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9780804799027"
+  },
+  "physical_page_count": 359,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Stanford University Press"
+  },
+  "source_id": "bayat-2017-ce6bb0643cfb",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "Revolution Without Revolutionaries"
+  }
+}

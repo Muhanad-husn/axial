@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Males\u030cevic\u0301, Sinis\u030ca"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2010"
+  },
+  "file_hash": "fd2cbe41384fed633c58d5299219638d04a53c90bb48457c1c758842e8942ed1",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9780521516518"
+  },
+  "physical_page_count": 380,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Cambridge University Press"
+  },
+  "source_id": "malesevic-2010-fd2cbe41384f",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "The sociology of war and violence"
+  }
+}

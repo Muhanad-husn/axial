@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Zaum, Dominik."
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2007"
+  },
+  "file_hash": "834d3343aa95a99b91a63e1deb6d89121d9f8a2df5838d939f82c38782f36f85",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9780199207435"
+  },
+  "physical_page_count": 297,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "OXFORD UNIVERSITY PRESS"
+  },
+  "source_id": "zaum-2007-834d3343aa95",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "Sovereignty Paradox : The Norms and Politics of International Statebuilding"
+  }
+}

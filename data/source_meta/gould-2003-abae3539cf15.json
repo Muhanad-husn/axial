@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "title page",
+    "value": "Roger V. Gould"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2003"
+  },
+  "file_hash": "abae3539cf156309a6f908907acb382ca588e6ccf096f6dbefdc0be5531c287f",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "0226305481"
+  },
+  "physical_page_count": 219,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "University Of Chicago Press"
+  },
+  "source_id": "gould-2003-abae3539cf15",
+  "title": {
+    "provenance": "title page",
+    "value": "Collision of Wills: How Ambiguity about Social Rank Breeds Conflict"
+  }
+}

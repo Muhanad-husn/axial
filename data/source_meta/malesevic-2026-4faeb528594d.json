@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "title page",
+    "value": "Sini\u0161a Male\u0161evi\u0107"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2026"
+  },
+  "file_hash": "4faeb528594d25be3ac4932b53c51da7342b42c1d49a141c54825a8f97fa9088",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "doi",
+    "value": "10.1007/s11186-025-09677-5"
+  },
+  "physical_page_count": 24,
+  "publisher": {
+    "provenance": "crossref",
+    "value": "Springer Science and Business Media LLC"
+  },
+  "source_id": "malesevic-2026-4faeb528594d",
+  "title": {
+    "provenance": "title page",
+    "value": "Do civil wars make or break states? Towards a historical sociology of intra-state conflicts"
+  }
+}

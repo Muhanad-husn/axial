@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Leila Vignal ;"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2021"
+  },
+  "file_hash": "c7005c2bf8ef67c1e1c3841ab5f8eb38d1dc1998b7caf5f41bfebf328c92b90a",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9781787384767"
+  },
+  "physical_page_count": 298,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "C. Hurst and Company (Publishers) Limited"
+  },
+  "source_id": "vignal-2021-c7005c2bf8ef",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "War-Torn"
+  }
+}

@@ -70,3 +70,6 @@ markers = [
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
+# Scripts under data/ are archived run artefacts, not project source. Linting
+# them would mean editing the exact code a recorded measurement ran (DEC-66).
+extend-exclude = ["data"]

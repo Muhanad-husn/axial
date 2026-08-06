@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Wedeen, Lisa;"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2019"
+  },
+  "file_hash": "3ae1f7af318df611efa49fbf364ff6ccbd10828624b2811adea1c77d420f7feb",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9780226650579"
+  },
+  "physical_page_count": 286,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "University of Chicago Press"
+  },
+  "source_id": "wedeen-2019-3ae1f7af318d",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "Authoritarian Apprehensions"
+  }
+}

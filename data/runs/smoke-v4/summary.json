@@ -1,0 +1,386 @@
+{
+  "briefs": [
+    {
+      "brief_id": "92d2d85745ecaa2d",
+      "brief_path": "config\\briefs\\smoke\\P3-04.yaml",
+      "brief_stem": "P3-04",
+      "cost": {
+        "by_pass": {
+          "counter_position_generate": {
+            "completion_tokens": 1434,
+            "prompt_tokens": 23085,
+            "total_tokens": 24519,
+            "usd": 0.021593387400000004
+          },
+          "interrogate": {
+            "completion_tokens": 1701,
+            "prompt_tokens": 468,
+            "total_tokens": 2169,
+            "usd": 0.0016834500000000002
+          },
+          "retrieve": {
+            "completion_tokens": 13239,
+            "prompt_tokens": 61206,
+            "total_tokens": 74445,
+            "usd": 0.03814254
+          },
+          "synthesize": {
+            "completion_tokens": 4557,
+            "prompt_tokens": 39591,
+            "total_tokens": 44148,
+            "usd": 0.042192313800000006
+          }
+        },
+        "total_tokens": 145281,
+        "total_usd": 0.10361169120000001
+      },
+      "draws": [
+        {
+          "brief_id": "92d2d85745ecaa2d",
+          "brief_path": "config\\briefs\\smoke\\P3-04.yaml",
+          "brief_stem": "P3-04",
+          "draw_index": 0,
+          "latency_seconds": 688.7503683999821,
+          "reason": "",
+          "record_path": "data\\runs\\smoke-v4\\analyses\\P3-04\\draw0\\92d2d85745ecaa2d.json",
+          "report_path": "data\\runs\\smoke-v4\\analyses\\P3-04\\draw0\\runs\\92d2d85745ecaa2d.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": 1.0,
+        "claim_kind_counts": [
+          {
+            "a": 16,
+            "b": 4,
+            "c": 0
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded"
+        ],
+        "n_draws": 1
+      }
+    },
+    {
+      "brief_id": "ec94042430910584",
+      "brief_path": "config\\briefs\\smoke\\S-01.yaml",
+      "brief_stem": "S-01",
+      "cost": {
+        "by_pass": {
+          "counter_position_generate": {
+            "completion_tokens": 1857,
+            "prompt_tokens": 21153,
+            "total_tokens": 23010,
+            "usd": 0.021121815
+          },
+          "interrogate": {
+            "completion_tokens": 1416,
+            "prompt_tokens": 471,
+            "total_tokens": 1887,
+            "usd": 0.0014368049999999998
+          },
+          "retrieve": {
+            "completion_tokens": 13825,
+            "prompt_tokens": 106910,
+            "total_tokens": 120735,
+            "usd": 0.058533600000000005
+          },
+          "synthesize": {
+            "completion_tokens": 5127,
+            "prompt_tokens": 77910,
+            "total_tokens": 83037,
+            "usd": 0.0735827352
+          }
+        },
+        "total_tokens": 228669,
+        "total_usd": 0.1546749552
+      },
+      "draws": [
+        {
+          "brief_id": "ec94042430910584",
+          "brief_path": "config\\briefs\\smoke\\S-01.yaml",
+          "brief_stem": "S-01",
+          "draw_index": 0,
+          "latency_seconds": 414.41619269998046,
+          "reason": "",
+          "record_path": "data\\runs\\smoke-v4\\analyses\\S-01\\draw0\\ec94042430910584.json",
+          "report_path": "data\\runs\\smoke-v4\\analyses\\S-01\\draw0\\runs\\ec94042430910584.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": 1.0,
+        "claim_kind_counts": [
+          {
+            "a": 6,
+            "b": 5,
+            "c": 0
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded"
+        ],
+        "n_draws": 1
+      }
+    },
+    {
+      "brief_id": "e7d6a2646523cb1d",
+      "brief_path": "config\\briefs\\smoke\\S-02.yaml",
+      "brief_stem": "S-02",
+      "cost": {
+        "by_pass": {
+          "counter_position_generate": {
+            "completion_tokens": 2427,
+            "prompt_tokens": 19654,
+            "total_tokens": 22081,
+            "usd": 0.021350669600000004
+          },
+          "interrogate": {
+            "completion_tokens": 1398,
+            "prompt_tokens": 472,
+            "total_tokens": 1870,
+            "usd": 0.0014215799999999998
+          },
+          "retrieve": {
+            "completion_tokens": 13242,
+            "prompt_tokens": 136647,
+            "total_tokens": 149889,
+            "usd": 0.07096198499999999
+          },
+          "synthesize": {
+            "completion_tokens": 13237,
+            "prompt_tokens": 129699,
+            "total_tokens": 142936,
+            "usd": 0.13406016260000003
+          }
+        },
+        "total_tokens": 316776,
+        "total_usd": 0.22779439720000003
+      },
+      "draws": [
+        {
+          "brief_id": "e7d6a2646523cb1d",
+          "brief_path": "config\\briefs\\smoke\\S-02.yaml",
+          "brief_stem": "S-02",
+          "draw_index": 0,
+          "latency_seconds": 592.2935094999848,
+          "reason": "",
+          "record_path": "data\\runs\\smoke-v4\\analyses\\S-02\\draw0\\e7d6a2646523cb1d.json",
+          "report_path": "data\\runs\\smoke-v4\\analyses\\S-02\\draw0\\runs\\e7d6a2646523cb1d.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": 1.0,
+        "claim_kind_counts": [
+          {
+            "a": 21,
+            "b": 8,
+            "c": 0
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded"
+        ],
+        "n_draws": 1
+      }
+    },
+    {
+      "brief_id": "fa44475aaaa90a48",
+      "brief_path": "config\\briefs\\smoke\\S-03.yaml",
+      "brief_stem": "S-03",
+      "cost": {
+        "by_pass": {
+          "counter_position_generate": {
+            "completion_tokens": 2748,
+            "prompt_tokens": 22382,
+            "total_tokens": 25130,
+            "usd": 0.024275134000000004
+          },
+          "interrogate": {
+            "completion_tokens": 708,
+            "prompt_tokens": 479,
+            "total_tokens": 1187,
+            "usd": 0.0008243249999999999
+          },
+          "retrieve": {
+            "completion_tokens": 13399,
+            "prompt_tokens": 91763,
+            "total_tokens": 105162,
+            "usd": 0.051574035000000004
+          },
+          "synthesize": {
+            "completion_tokens": 2113,
+            "prompt_tokens": 46247,
+            "total_tokens": 48360,
+            "usd": 0.041390037000000005
+          }
+        },
+        "total_tokens": 179839,
+        "total_usd": 0.11806353100000001
+      },
+      "draws": [
+        {
+          "brief_id": "fa44475aaaa90a48",
+          "brief_path": "config\\briefs\\smoke\\S-03.yaml",
+          "brief_stem": "S-03",
+          "draw_index": 0,
+          "latency_seconds": 548.1158068999939,
+          "reason": "",
+          "record_path": "data\\runs\\smoke-v4\\analyses\\S-03\\draw0\\fa44475aaaa90a48.json",
+          "report_path": "data\\runs\\smoke-v4\\analyses\\S-03\\draw0\\runs\\fa44475aaaa90a48.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": 1.0,
+        "claim_kind_counts": [
+          {
+            "a": 8,
+            "b": 6,
+            "c": 0
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded"
+        ],
+        "n_draws": 1
+      }
+    },
+    {
+      "brief_id": "be50533708e44f33",
+      "brief_path": "config\\briefs\\smoke\\S-04.yaml",
+      "brief_stem": "S-04",
+      "cost": {
+        "by_pass": {
+          "interrogate": {
+            "completion_tokens": 1170,
+            "prompt_tokens": 478,
+            "total_tokens": 1648,
+            "usd": 0.00122583
+          },
+          "retrieve": {
+            "completion_tokens": 8141,
+            "prompt_tokens": 39602,
+            "total_tokens": 47743,
+            "usd": 0.024309539999999998
+          },
+          "synthesize": {
+            "completion_tokens": 3039,
+            "prompt_tokens": 36849,
+            "total_tokens": 39888,
+            "usd": 0.0363127518
+          }
+        },
+        "total_tokens": 89279,
+        "total_usd": 0.061848121799999996
+      },
+      "draws": [
+        {
+          "brief_id": "be50533708e44f33",
+          "brief_path": "config\\briefs\\smoke\\S-04.yaml",
+          "brief_stem": "S-04",
+          "draw_index": 0,
+          "latency_seconds": 293.2050074999861,
+          "reason": "",
+          "record_path": "data\\runs\\smoke-v4\\analyses\\S-04\\draw0\\be50533708e44f33.json",
+          "report_path": "data\\runs\\smoke-v4\\analyses\\S-04\\draw0\\runs\\be50533708e44f33.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": 1.0,
+        "claim_kind_counts": [
+          {
+            "a": 12,
+            "b": 6,
+            "c": 0
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded"
+        ],
+        "n_draws": 1
+      }
+    },
+    {
+      "brief_id": "c2afb6d42f713e1c",
+      "brief_path": "config\\briefs\\smoke\\S-05.yaml",
+      "brief_stem": "S-05",
+      "cost": {
+        "by_pass": {
+          "counter_position_generate": {
+            "completion_tokens": 2718,
+            "prompt_tokens": 21577,
+            "total_tokens": 24295,
+            "usd": 0.023571353000000003
+          },
+          "interrogate": {
+            "completion_tokens": 1624,
+            "prompt_tokens": 467,
+            "total_tokens": 2091,
+            "usd": 0.001616025
+          },
+          "retrieve": {
+            "completion_tokens": 6695,
+            "prompt_tokens": 41721,
+            "total_tokens": 48416,
+            "usd": 0.023973285
+          },
+          "synthesize": {
+            "completion_tokens": 3079,
+            "prompt_tokens": 36989,
+            "total_tokens": 40068,
+            "usd": 0.0365206998
+          }
+        },
+        "total_tokens": 114870,
+        "total_usd": 0.08568136280000001
+      },
+      "draws": [
+        {
+          "brief_id": "c2afb6d42f713e1c",
+          "brief_path": "config\\briefs\\smoke\\S-05.yaml",
+          "brief_stem": "S-05",
+          "draw_index": 0,
+          "latency_seconds": 357.7127141999954,
+          "reason": "",
+          "record_path": "data\\runs\\smoke-v4\\analyses\\S-05\\draw0\\c2afb6d42f713e1c.json",
+          "report_path": "data\\runs\\smoke-v4\\analyses\\S-05\\draw0\\runs\\c2afb6d42f713e1c.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": 1.0,
+        "claim_kind_counts": [
+          {
+            "a": 16,
+            "b": 4,
+            "c": 0
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded"
+        ],
+        "n_draws": 1
+      }
+    }
+  ],
+  "fail_count": 0,
+  "ok_count": 6,
+  "skip_count": 0,
+  "total_draws": 6
+}

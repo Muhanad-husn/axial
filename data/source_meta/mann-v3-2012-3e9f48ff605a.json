@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Mann, Michael"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2012"
+  },
+  "file_hash": "3e9f48ff605adb695efe80d1551717b248995c06950f1d3aead9c86b6f22fdc8",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9781107028654"
+  },
+  "physical_page_count": 520,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Cambridge University Press"
+  },
+  "source_id": "mann-v3-2012-3e9f48ff605a",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "The Sources of Social Power, Volume 3"
+  }
+}

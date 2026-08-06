@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "title page",
+    "value": "Robert H. Jackson"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "1990"
+  },
+  "file_hash": "7eb3f39a639f79c0090b224ce6beccb3a9eef7dccd7381e278e23777ae9bf09e",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9780521447836"
+  },
+  "physical_page_count": 237,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Cambridge University Press"
+  },
+  "source_id": "jackson-1990-7eb3f39a639f",
+  "title": {
+    "provenance": "title page",
+    "value": "Quasi-states: sovereignty, international relations, and the third world"
+  }
+}

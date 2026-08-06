@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Raymond A. Hinnebusch"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "1990"
+  },
+  "file_hash": "ac29981e616e403d2abd67b9d6bcfd392e11e37ad60d90e23882cc75906afd12",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9780367012656"
+  },
+  "physical_page_count": 476,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Taylor & Francis Group"
+  },
+  "source_id": "hinnebusch-1990-ac29981e616e",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "Authoritarian Power and State Formation in Ba`thist Syria: Army, Party, and Peasant"
+  }
+}

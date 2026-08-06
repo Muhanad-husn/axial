@@ -1,0 +1,72 @@
+{
+  "briefs": [
+    {
+      "brief_id": "ec94042430910584",
+      "brief_path": "C:\\Users\\mou97\\AppData\\Local\\Temp\\claude\\D--axial\\7e55e555-2d05-4937-8e3f-c78674c8235d\\scratchpad\\s01-only\\S-01.yaml",
+      "brief_stem": "S-01",
+      "cost": {
+        "by_pass": {
+          "counter_position_generate": {
+            "completion_tokens": 2033,
+            "prompt_tokens": 20792,
+            "total_tokens": 22825,
+            "usd": 0.021272186000000002
+          },
+          "interrogate": {
+            "completion_tokens": 1000,
+            "prompt_tokens": 471,
+            "total_tokens": 1471,
+            "usd": 0.001074885
+          },
+          "retrieve": {
+            "completion_tokens": 14512,
+            "prompt_tokens": 234784,
+            "total_tokens": 249296,
+            "usd": 0.11475648
+          },
+          "synthesize": {
+            "completion_tokens": 2358,
+            "prompt_tokens": 42316,
+            "total_tokens": 44674,
+            "usd": 0.038916238400000004
+          }
+        },
+        "total_tokens": 318266,
+        "total_usd": 0.1760197894
+      },
+      "draws": [
+        {
+          "brief_id": "ec94042430910584",
+          "brief_path": "C:\\Users\\mou97\\AppData\\Local\\Temp\\claude\\D--axial\\7e55e555-2d05-4937-8e3f-c78674c8235d\\scratchpad\\s01-only\\S-01.yaml",
+          "brief_stem": "S-01",
+          "draw_index": 0,
+          "latency_seconds": 816.3531962999987,
+          "reason": "",
+          "record_path": "data\\runs\\smoke-v5\\analyses\\S-01\\draw0\\ec94042430910584.json",
+          "report_path": "data\\runs\\smoke-v5\\analyses\\S-01\\draw0\\runs\\ec94042430910584.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": 1.0,
+        "claim_kind_counts": [
+          {
+            "a": 6,
+            "b": 6,
+            "c": 0
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded"
+        ],
+        "n_draws": 1
+      }
+    }
+  ],
+  "fail_count": 0,
+  "ok_count": 1,
+  "skip_count": 0,
+  "total_draws": 1
+}

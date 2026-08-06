@@ -22,10 +22,47 @@ PR_BODY.generated.md
 .tdd-branch-cleanup.log
 # --- COPYRIGHT: never commit source books or any book-derived content ---
 # The source PDFs and every ingested artefact (vault notes, extraction trees,
-# envelopes, chunk/tag/artifact/xref records, run logs) contain VERBATIM
-# copyrighted text. The whole of data/ is ignored so book text can never be
-# swept in by `git add -A`. If a gold LABEL SHEET that is safe to commit is
-# ever produced (chunk_ids + human labels ONLY, never full chunk_text), it
-# must be un-ignored by its specific path below, e.g.:
-#   !data/gold/labels.csv
-data/
+# envelopes, chunk/tag/artifact/xref records, raw console logs) contain VERBATIM
+# copyrighted text. Everything under data/ is ignored by default so book text
+# can never be swept in by `git add -A`.
+#
+# The exceptions below are the audit trail: what was run, what it cost, what it
+# measured. They are allow-listed BY FILENAME, never by directory, so a new file
+# dropped into an allow-listed folder stays ignored until someone names it here.
+#
+# The rule for adding one: it may carry counts, hashes, timings, prices, model
+# names, source_ids and the operator's own prose. It may NOT carry passage text,
+# note bodies, name-page evidence, model answers, or generated papers.
+data/**
+
+# Run logs (see "Run logging" in the handbook): the operator's write-up of the
+# run, the per-unit event stream, and the throwaway scripts that measured it.
+# `console.log` stays out — it is raw stdout, 8 MB of it is progress lines, and
+# it echoes prompts.
+!data/logs/
+!data/logs/**/
+!data/logs/**/summary.md
+!data/logs/**/run.jsonl
+!data/logs/**/*.py
+!data/logs/**/*.sh
+# Everything else in a log dir is a corpus snapshot or model output:
+# `*-before.jsonl`, `alias_map*.json`, analyses, papers. Those stay ignored.
+
+# What corpus a number was measured on: author, title, year, publisher, ISBN,
+# page count, file hash. Bibliography, not text.
+!data/source_meta/
+!data/source_meta/*.json
+
+# Eval and sweep roll-ups: cost, latency and model wiring per brief. The
+# `analyses/` and `papers/` beside them stay ignored.
+!data/runs/
+!data/runs/**/
+!data/runs/**/summary.json
+!data/runs/**/worklist.txt
+
+# The coverage and system reports, their metrics, and the scripts that build
+# them. Checked: the only block quotes are Axial's own prompts and eval briefs.
+!data/reports/
+!data/reports/*.md
+!data/reports/*.py
+!data/reports/metrics.json

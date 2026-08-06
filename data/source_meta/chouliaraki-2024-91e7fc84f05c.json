@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Lilie Chouliaraki;"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2024"
+  },
+  "file_hash": "91e7fc84f05ca226ef96479ad5ae745f65385e3e5ddde274e900529fd9ba8918",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9780231193283"
+  },
+  "physical_page_count": 262,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Columbia University Press"
+  },
+  "source_id": "chouliaraki-2024-91e7fc84f05c",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "Wronged"
+  }
+}

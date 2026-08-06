@@ -1,0 +1,21 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Gellner, Ernest"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "1981"
+  },
+  "file_hash": "a8b0206cb566264d4cfc1013702497f4161d0cf295e04338b7fc13e17673d4b7",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": null,
+  "physical_page_count": 276,
+  "publisher": "unavailable",
+  "source_id": "gellner-1981-a8b0206cb566",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "Muslim society"
+  }
+}

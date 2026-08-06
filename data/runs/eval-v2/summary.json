@@ -1,0 +1,200 @@
+{
+  "briefs": [
+    {
+      "brief_id": "dae632c369c18ffc",
+      "brief_path": "config\\briefs\\eval\\A.yaml",
+      "brief_stem": "A",
+      "cost": {
+        "by_pass": {
+          "counter_position_generate": {
+            "completion_tokens": 2143,
+            "prompt_tokens": 24196,
+            "total_tokens": 26339,
+            "usd": 0.03464288
+          },
+          "interrogate": {
+            "completion_tokens": 1923,
+            "prompt_tokens": 542,
+            "total_tokens": 2465,
+            "usd": 0.00190878
+          },
+          "retrieve": {
+            "completion_tokens": 10254,
+            "prompt_tokens": 146873,
+            "total_tokens": 157127,
+            "usd": 0.07281073499999999
+          },
+          "synthesize": {
+            "completion_tokens": 3823,
+            "prompt_tokens": 42526,
+            "total_tokens": 46349,
+            "usd": 0.06108608
+          }
+        },
+        "total_tokens": 232280,
+        "total_usd": 0.170448475
+      },
+      "draws": [
+        {
+          "brief_id": "dae632c369c18ffc",
+          "brief_path": "config\\briefs\\eval\\A.yaml",
+          "brief_stem": "A",
+          "draw_index": 0,
+          "latency_seconds": 723.3480215000018,
+          "reason": "",
+          "record_path": "data\\runs\\eval-v2\\analyses\\A\\draw0\\dae632c369c18ffc.json",
+          "report_path": "data\\runs\\eval-v2\\analyses\\A\\draw0\\runs\\dae632c369c18ffc.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": 1.0,
+        "claim_kind_counts": [
+          {
+            "a": 15,
+            "b": 7,
+            "c": 0
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded"
+        ],
+        "n_draws": 1
+      }
+    },
+    {
+      "brief_id": "080d9e472fc56a34",
+      "brief_path": "config\\briefs\\eval\\B.yaml",
+      "brief_stem": "B",
+      "cost": {
+        "by_pass": {
+          "counter_position_generate": {
+            "completion_tokens": 1756,
+            "prompt_tokens": 21429,
+            "total_tokens": 23185,
+            "usd": 0.030181599999999996
+          },
+          "interrogate": {
+            "completion_tokens": 1937,
+            "prompt_tokens": 535,
+            "total_tokens": 2472,
+            "usd": 0.001917915
+          },
+          "retrieve": {
+            "completion_tokens": 14266,
+            "prompt_tokens": 77489,
+            "total_tokens": 91755,
+            "usd": 0.046119135
+          },
+          "synthesize": {
+            "completion_tokens": 4455,
+            "prompt_tokens": 44698,
+            "total_tokens": 49153,
+            "usd": 0.06574336
+          }
+        },
+        "total_tokens": 166565,
+        "total_usd": 0.14396201
+      },
+      "draws": [
+        {
+          "brief_id": "080d9e472fc56a34",
+          "brief_path": "config\\briefs\\eval\\B.yaml",
+          "brief_stem": "B",
+          "draw_index": 0,
+          "latency_seconds": 734.3758372000011,
+          "reason": "",
+          "record_path": "data\\runs\\eval-v2\\analyses\\B\\draw0\\080d9e472fc56a34.json",
+          "report_path": "data\\runs\\eval-v2\\analyses\\B\\draw0\\runs\\080d9e472fc56a34.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": 1.0,
+        "claim_kind_counts": [
+          {
+            "a": 18,
+            "b": 8,
+            "c": 0
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded"
+        ],
+        "n_draws": 1
+      }
+    },
+    {
+      "brief_id": "6678f15a71f15ac0",
+      "brief_path": "config\\briefs\\eval\\C.yaml",
+      "brief_stem": "C",
+      "cost": {
+        "by_pass": {
+          "counter_position_generate": {
+            "completion_tokens": 1046,
+            "prompt_tokens": 22154,
+            "total_tokens": 23200,
+            "usd": 0.0284944
+          },
+          "interrogate": {
+            "completion_tokens": 1967,
+            "prompt_tokens": 563,
+            "total_tokens": 2530,
+            "usd": 0.001956195
+          },
+          "retrieve": {
+            "completion_tokens": 12727,
+            "prompt_tokens": 99552,
+            "total_tokens": 112279,
+            "usd": 0.05437761000000001
+          },
+          "synthesize": {
+            "completion_tokens": 4107,
+            "prompt_tokens": 44419,
+            "total_tokens": 48526,
+            "usd": 0.06420592
+          }
+        },
+        "total_tokens": 186535,
+        "total_usd": 0.14903412500000002
+      },
+      "draws": [
+        {
+          "brief_id": "6678f15a71f15ac0",
+          "brief_path": "config\\briefs\\eval\\C.yaml",
+          "brief_stem": "C",
+          "draw_index": 0,
+          "latency_seconds": 723.722004100011,
+          "reason": "",
+          "record_path": "data\\runs\\eval-v2\\analyses\\C\\draw0\\6678f15a71f15ac0.json",
+          "report_path": "data\\runs\\eval-v2\\analyses\\C\\draw0\\runs\\6678f15a71f15ac0.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": 1.0,
+        "claim_kind_counts": [
+          {
+            "a": 17,
+            "b": 8,
+            "c": 0
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded"
+        ],
+        "n_draws": 1
+      }
+    }
+  ],
+  "fail_count": 0,
+  "ok_count": 3,
+  "skip_count": 0,
+  "total_draws": 3
+}

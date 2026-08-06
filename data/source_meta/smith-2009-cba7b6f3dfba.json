@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Anthony D. Smith"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2009"
+  },
+  "file_hash": "cba7b6f3dfbaf895936fa7c7693647a3d9fa64bea7d063ea0d1faef782f7cded",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "0203876555"
+  },
+  "physical_page_count": 193,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Routledge"
+  },
+  "source_id": "smith-2009-cba7b6f3dfba",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "Ethno-Symbolism and Nationalism: A Cultural Approach"
+  }
+}

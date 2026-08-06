@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Michael Mann"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "1993"
+  },
+  "file_hash": "ec759675dcbd1637a462acdd93ad02c9eb1ce02c2ba2370462ac9113f95def15",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "0521440157"
+  },
+  "physical_page_count": 824,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Cambridge University Press"
+  },
+  "source_id": "mann-v2-1993-ec759675dcbd",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "The Sources of Social Power: Volume 2, The Rise of Classes and Nation States 1760-1914"
+  }
+}

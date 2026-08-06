@@ -1,0 +1,29 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Caspersen, Nina"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2012"
+  },
+  "file_hash": "fbc0efe4fffcbeda1993da6bee97d5c49d3b639e62e3a0abb9d958eb61d7ea9a",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "abstained": true,
+    "candidates": [
+      "9780745653426",
+      "9780745653433"
+    ],
+    "type": "isbn",
+    "value": null
+  },
+  "physical_page_count": 220,
+  "publisher": "unavailable",
+  "source_id": "caspersen-2012-fbc0efe4fffc",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "Unrecognized States"
+  }
+}

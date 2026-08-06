@@ -1,0 +1,218 @@
+{
+  "briefs": [
+    {
+      "brief_id": "dae632c369c18ffc",
+      "brief_path": "data\\logs\\2026-08-04-smoke-v7\\redraw-briefs\\A.yaml",
+      "brief_stem": "A",
+      "cost": {
+        "by_pass": {
+          "counter_position_generate": {
+            "completion_tokens": 2138,
+            "prompt_tokens": 23266,
+            "total_tokens": 25404,
+            "usd": 0.03358368
+          },
+          "fork_check": {
+            "completion_tokens": 343,
+            "prompt_tokens": 7924,
+            "total_tokens": 8267,
+            "usd": 0.0012054
+          },
+          "interrogate": {
+            "completion_tokens": 1538,
+            "prompt_tokens": 648,
+            "total_tokens": 2186,
+            "usd": 0.00161994
+          },
+          "retrieve": {
+            "completion_tokens": 14042,
+            "prompt_tokens": 133084,
+            "total_tokens": 147126,
+            "usd": 0.07010808
+          },
+          "synthesize": {
+            "completion_tokens": 3409,
+            "prompt_tokens": 99707,
+            "total_tokens": 103116,
+            "usd": 0.12367151999999998
+          }
+        },
+        "total_tokens": 286099,
+        "total_usd": 0.23018861999999998
+      },
+      "draws": [
+        {
+          "brief_id": "dae632c369c18ffc",
+          "brief_path": "data\\logs\\2026-08-04-smoke-v7\\redraw-briefs\\A.yaml",
+          "brief_stem": "A",
+          "draw_index": 0,
+          "latency_seconds": 487.4426970999921,
+          "reason": "",
+          "record_path": "data\\runs\\smoke-v7-draw2\\analyses\\A\\draw0\\dae632c369c18ffc.json",
+          "report_path": "data\\runs\\smoke-v7-draw2\\analyses\\A\\draw0\\runs\\dae632c369c18ffc.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": 1.0,
+        "claim_kind_counts": [
+          {
+            "a": 15,
+            "b": 1,
+            "c": 3
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded"
+        ],
+        "n_draws": 1
+      }
+    },
+    {
+      "brief_id": "92d2d85745ecaa2d",
+      "brief_path": "data\\logs\\2026-08-04-smoke-v7\\redraw-briefs\\P3-04.yaml",
+      "brief_stem": "P3-04",
+      "cost": {
+        "by_pass": {
+          "counter_position_generate": {
+            "completion_tokens": 1322,
+            "prompt_tokens": 17138,
+            "total_tokens": 18460,
+            "usd": 0.023848
+          },
+          "fork_check": {
+            "completion_tokens": 35,
+            "prompt_tokens": 3175,
+            "total_tokens": 3210,
+            "usd": 0.0004543
+          },
+          "interrogate": {
+            "completion_tokens": 2220,
+            "prompt_tokens": 574,
+            "total_tokens": 2794,
+            "usd": 0.00218109
+          },
+          "retrieve": {
+            "completion_tokens": 14117,
+            "prompt_tokens": 94385,
+            "total_tokens": 108502,
+            "usd": 0.053339265000000004
+          },
+          "synthesize": {
+            "completion_tokens": 2730,
+            "prompt_tokens": 59314,
+            "total_tokens": 62044,
+            "usd": 0.07604127999999999
+          }
+        },
+        "total_tokens": 195010,
+        "total_usd": 0.15586393499999998
+      },
+      "draws": [
+        {
+          "brief_id": "92d2d85745ecaa2d",
+          "brief_path": "data\\logs\\2026-08-04-smoke-v7\\redraw-briefs\\P3-04.yaml",
+          "brief_stem": "P3-04",
+          "draw_index": 0,
+          "latency_seconds": 526.9067886999983,
+          "reason": "",
+          "record_path": "data\\runs\\smoke-v7-draw2\\analyses\\P3-04\\draw0\\92d2d85745ecaa2d.json",
+          "report_path": "data\\runs\\smoke-v7-draw2\\analyses\\P3-04\\draw0\\runs\\92d2d85745ecaa2d.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": 1.0,
+        "claim_kind_counts": [
+          {
+            "a": 14,
+            "b": 1,
+            "c": 2
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded"
+        ],
+        "n_draws": 1
+      }
+    },
+    {
+      "brief_id": "ec94042430910584",
+      "brief_path": "data\\logs\\2026-08-04-smoke-v7\\redraw-briefs\\S-01.yaml",
+      "brief_stem": "S-01",
+      "cost": {
+        "by_pass": {
+          "counter_position_generate": {
+            "completion_tokens": 2193,
+            "prompt_tokens": 21689,
+            "total_tokens": 23882,
+            "usd": 0.03201104
+          },
+          "fork_check": {
+            "completion_tokens": 356,
+            "prompt_tokens": 4426,
+            "total_tokens": 4782,
+            "usd": 0.00071932
+          },
+          "interrogate": {
+            "completion_tokens": 1020,
+            "prompt_tokens": 577,
+            "total_tokens": 1597,
+            "usd": 0.001138395
+          },
+          "retrieve": {
+            "completion_tokens": 16679,
+            "prompt_tokens": 229525,
+            "total_tokens": 246204,
+            "usd": 0.114354105
+          },
+          "synthesize": {
+            "completion_tokens": 2574,
+            "prompt_tokens": 105643,
+            "total_tokens": 108217,
+            "usd": 0.12738064
+          }
+        },
+        "total_tokens": 384682,
+        "total_usd": 0.2756035
+      },
+      "draws": [
+        {
+          "brief_id": "ec94042430910584",
+          "brief_path": "data\\logs\\2026-08-04-smoke-v7\\redraw-briefs\\S-01.yaml",
+          "brief_stem": "S-01",
+          "draw_index": 0,
+          "latency_seconds": 455.64765840000473,
+          "reason": "",
+          "record_path": "data\\runs\\smoke-v7-draw2\\analyses\\S-01\\draw0\\ec94042430910584.json",
+          "report_path": "data\\runs\\smoke-v7-draw2\\analyses\\S-01\\draw0\\runs\\ec94042430910584.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": 1.0,
+        "claim_kind_counts": [
+          {
+            "a": 10,
+            "b": 1,
+            "c": 2
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded"
+        ],
+        "n_draws": 1
+      }
+    }
+  ],
+  "fail_count": 0,
+  "ok_count": 3,
+  "skip_count": 0,
+  "total_draws": 3
+}

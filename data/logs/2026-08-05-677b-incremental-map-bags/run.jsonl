@@ -1,0 +1,14 @@
+{"event": "sources", "ts": 1785945659.3087883, "total": 34, "old": 31, "new": 3, "elapsed": 0.9642300605773926}
+{"event": "passages", "ts": 1785945659.3101451, "all": 5911, "old": 5376}
+{"event": "baseline_passage_count_mismatch", "ts": 1785945659.3103945, "this_run": 5376, "paid_build_08_04": 5726, "note": "data/answers for the 31 old books differs from the #623 paid build -- the old books' own answers changed between the two runs. Every comparison below still uses the SAME data/answers on both sides, so the mechanism validation is unaffected; never quote a '700 -> N' figure from this report, quote baseline_31_books.reads instead."}
+{"event": "embedded_all_distinct_claims", "ts": 1785945700.5055618, "distinct": 5911, "elapsed": 41.19508671760559}
+{"event": "baseline_31_books", "ts": 1785945705.3770392, "passages": 5376, "bags": 596, "reads": 612, "unique_keys": 612, "elapsed": 4.859295845031738}
+{"event": "incremental_34_books", "ts": 1785945705.982651, "passages": 5911, "new_passages_placed": 535, "bags": 645, "reads": 663, "elapsed": 0.5886127948760986}
+{"event": "reuse_vs_31_book_baseline", "ts": 1785945705.9829297, "baseline_reads": 612, "this_pin_reads": 663, "reused": 515, "asked": 148}
+{"event": "disturbance_breakdown", "ts": 1785945705.9845698, "asked": 148, "genuinely_new_content": 89, "author_spread_recut": 10, "rebagged_new_bag": 49}
+{"event": "units_asked_touching_new", "ts": 1785945705.9847503, "count": 138, "of_asked": 148}
+{"event": "fresh_34_books", "ts": 1785945711.975052, "bags": 647, "reads": 665, "unique_keys": 665, "elapsed": 5.977477550506592}
+{"event": "drift_incremental_vs_fresh_34_DEMOTED_NOT_THE_ACCEPTANCE_BAR", "ts": 1785945711.9752653, "incremental_reads": 663, "fresh_reads": 665, "agree": 476, "agree_pct": 0.7157894736842105}
+{"event": "coherence_fresh_reference", "ts": 1785945712.0504131, "all_bags": {"mean": 0.8084039044178566, "p10": 0.7388150095939636, "n": 473}, "bags_with_new_passage": {"mean": 0.7928373753270016, "p10": 0.7324703097343445, "n": 79}}
+{"event": "coherence_incremental", "ts": 1785945712.0505784, "unaffected": {"mean": 0.809954253349515, "p10": 0.7388138175010681, "n": 362}, "grown": {"mean": 0.7761214863170277, "p10": 0.7292716681957245, "n": 88}, "residue": {"mean": 0.8402297496795654, "p10": 0.7717426002025605, "n": 22}}
+{"event": "done", "ts": 1785945712.051577}

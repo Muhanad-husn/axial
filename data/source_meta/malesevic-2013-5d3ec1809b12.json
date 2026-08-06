@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "embedded metadata",
+    "value": "Malesevic, Sinisa"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "2013"
+  },
+  "file_hash": "5d3ec1809b1282590b41d99f8daacc9d08529ae4cec10eab2ecef055a9e068e9",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "9780745653389"
+  },
+  "physical_page_count": 248,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "Polity Press, Wiley-Interscience, Polity"
+  },
+  "source_id": "malesevic-2013-5d3ec1809b12",
+  "title": {
+    "provenance": "embedded metadata",
+    "value": "Nation-States and Nationalisms : Organization, Ideology and Solidarity"
+  }
+}

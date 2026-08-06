@@ -1,0 +1,3 @@
+config\briefs\eval\A.yaml
+config\briefs\eval\B.yaml
+config\briefs\eval\C.yaml

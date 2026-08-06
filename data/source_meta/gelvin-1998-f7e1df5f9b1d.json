@@ -1,0 +1,27 @@
+{
+  "author": {
+    "provenance": "title page",
+    "value": "James L. Gelvin"
+  },
+  "date": {
+    "provenance": "title page",
+    "value": "1998"
+  },
+  "file_hash": "f7e1df5f9b1da0639a83c495e8ba6b9ec068e7c11572504322dba010c484b2a9",
+  "holdings_checked": true,
+  "holdings_flag": null,
+  "identifier": {
+    "type": "isbn",
+    "value": "0520210697"
+  },
+  "physical_page_count": 343,
+  "publisher": {
+    "provenance": "open_library",
+    "value": "University of California Press"
+  },
+  "source_id": "gelvin-1998-f7e1df5f9b1d",
+  "title": {
+    "provenance": "title page",
+    "value": "Divided Loyalties: Nationalism and Mass Politics in Syria at the Close of Empire"
+  }
+}
