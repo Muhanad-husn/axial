@@ -45,7 +45,7 @@ def _title(record: dict[str, Any]) -> str:
     supplied `title` in the paper brief (an explicit override always wins),
     the §7.16 shape check's own title of the finished paper, the plan's
     thesis statement, the brief's raw thesis, and finally a placeholder. The
-    shape check's title is `None` on any record written before issue #712 or
+    shape check's title is `None` on any record written before issue #717 or
     when the judge's response carried no usable one, so this falls straight
     through to the thesis on old records -- no record needs to be
     re-rendered for this to stay deterministic."""

@@ -65,7 +65,7 @@ actually flagged for, is many multiples of that length and matches exactly.
 This is a measurement, not a gate: it reports onto `shape.repetition` and
 never blocks, exactly like the band above.
 
-**It also names the paper, at zero additional cost, issue #712.** This is
+**It also names the paper, at zero additional cost, issue #717.** This is
 the only pass that reads the whole drafted paper, already runs on a model
 guaranteed different from the drafter, and already returns structured JSON
 -- so asking it for a title is one more field on a call already being made,
@@ -207,7 +207,7 @@ class ShapeResult:
     `None` when the client cannot report per-pass usage (mirrors
     `axial.llm.estimate_cost`'s own null-for-unpriced convention -- never a
     fabricated zero). `repetition` (issue #700) is mechanical, computed with
-    zero model calls -- see `compute_repetition` above. `title` (issue #712)
+    zero model calls -- see `compute_repetition` above. `title` (issue #717)
     is the check's own naming of the finished paper, `None` when the judge's
     response carried no usable one -- the renderer falls back further from
     there (`axial.paper.render._title`), never raising on a missing title."""
