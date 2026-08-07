@@ -41,8 +41,24 @@ _BAND_NOTE = "band shown with the coverage counts that justify it"
 
 
 def _title(record: dict[str, Any]) -> str:
+    """The rendered `#` title (§7.10). Precedence, highest first: a human-
+    supplied `title` in the paper brief (an explicit override always wins),
+    the §7.16 shape check's own title of the finished paper, the plan's
+    thesis statement, the brief's raw thesis, and finally a placeholder. The
+    shape check's title is `None` on any record written before issue #717 or
+    when the judge's response carried no usable one, so this falls straight
+    through to the thesis on old records -- no record needs to be
+    re-rendered for this to stay deterministic."""
     brief = record.get("paper_brief") or {}
-    return str(brief.get("title") or brief.get("thesis") or "Untitled paper")
+    shape = record.get("shape") or {}
+    plan = record.get("plan") or {}
+    return str(
+        brief.get("title")
+        or shape.get("title")
+        or plan.get("thesis_statement")
+        or brief.get("thesis")
+        or "Untitled paper"
+    )
 
 
 def _sections(record: dict[str, Any]) -> list[dict[str, Any]]:
