@@ -57,6 +57,10 @@ flowchart TB
   201st note from an author already in the room cannot change who is arguing with whom.
   Of 1,128 names one incremental run re-asked under the old key, 615 (55%) contained no
   note from any of the new books at all.
-- **Gather findings are only 53% reproducible between two reads of the same name**, and
-  36.1% of recorded disagreements come back null on byte-identical input. This is why a
-  finding is a retrieval hint downstream and never a citation.
+- **Gather does not reproduce.** Two numbers, two frames, and they must not be traded for
+  each other. On *byte-identical* input the pass returns a different answer for 19.3% of
+  names, and 36.1% of the disagreements it recorded come back null (#700, n=150). Under a
+  *changed* packet — one book's rendered author relabelled — 53% of decided calls reversed
+  (#495, n=176), which is why the write loop keeps a name's newest non-null record rather
+  than the record under its current key. This is why a finding is a retrieval hint
+  downstream and never a citation.
