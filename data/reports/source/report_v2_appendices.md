@@ -104,13 +104,15 @@ The full bibliography, with publishers, editions, translation notes and per-file
 
 <!--PAPERS-->
 
-## Appendix F — Every question Axial asks
+<!--PAPER_INDEX-->
+
+## Appendix G — Every question Axial asks
 
 Inside the pipeline, a model is consulted in sixteen places, plus a set of judges that sit outside it. Nowhere is it asked to pick from a list. Every one of the sixteen is an open question with an explicit right to answer "I cannot tell from this", and in every one code assembles what the model sees and reads what comes back.
 
 The inventory below is complete. The questions are quoted from the working system, lightly trimmed for length.
 
-### F.1 Reading the corpus
+### G.1 Reading the corpus
 
 | | Asked of | How often | The question |
 |---|---|---|---|
@@ -126,7 +128,7 @@ The inventory below is complete. The questions are quoted from the working syste
 
 **Question 7 is asked with no vocabulary at all.** Not "is this support or opposition?" but "what is actually there?" The consequence is measurable: because nothing asked for opposition, opposition came back at 6.6% rather than at whatever rate a leading question would have produced. The model invented 504 labels of its own.
 
-### F.2 Answering a question
+### G.2 Answering a question
 
 | | Asked of | How often | The question |
 |---|---|---|---|
@@ -139,7 +141,7 @@ The inventory below is complete. The questions are quoted from the working syste
 
 The synthesis instruction forbids the failure mode a careful assistant defaults to. A model asked to weigh two accounts will usually produce a balanced summary in which both have a point, because that is the safest-sounding output. Axial requires a verdict, and then requires the verdict's own weakness to be stated as a claim in its own right.
 
-### F.3 Writing the paper
+### G.3 Writing the paper
 
 | | Asked of | How often | The question |
 |---|---|---|---|
@@ -147,7 +149,7 @@ The synthesis instruction forbids the failure mode a careful assistant defaults 
 | **15. Drafting** | One section's assigned claims | Once per section | "Write ONE section of a paper. **You have no tools, no retrieval, and no access to any source: the claims below are the whole world**, and you may not assert anything that is not traceable to one of them." |
 | **16. Shape check** | The finished paper | Once | Does this read as an argument or as a list? Reported, never blocking. |
 
-### F.4 The judges, which sit outside the pipeline
+### G.4 The judges, which sit outside the pipeline
 
 Five bounded checks — does a cited passage support its claim, is an inference contradicted by its own evidence, is the opposing case stated at its strongest (a *steelman*) or knocked down in a weakened form nobody actually holds (a *strawman*), did the pre-pass catch the planted premise, did the answer do something the case declares disqualifying — plus the sealed review panel.
 
@@ -155,7 +157,7 @@ Five bounded checks — does a cited passage support its claim, is an inference 
 
 ---
 
-## Appendix G — Glossary
+## Appendix H — Glossary
 
 **Passage.** The unit Axial reads: a few paragraphs cut along the author's own boundaries, 3,500 to 9,000 characters. One to four printed pages.
 

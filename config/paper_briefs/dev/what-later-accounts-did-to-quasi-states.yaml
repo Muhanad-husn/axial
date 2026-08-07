@@ -1,0 +1,28 @@
+# Paper brief over the S-03 smoke analysis (specs/PHASE-C.md §7.1).
+#
+# Not Syria. S-03 asks what later work did to Jackson's quasi-states: narrow
+# it, extend it, or contest what it was meant to explain. The record commits
+# to "contest" and then files two weaknesses against its own commitment --
+# that the contestation runs on Jackson's categories, and that Jackson's book
+# already argued the political economy the later accounts claim he omitted.
+# A paper over this record has to keep the verdict and both objections.
+#
+# Record: data/analyses/fa44475aaaa90a48.json, corpus pin sim-2026-07-30,
+# from data/runs/smoke-v7/analyses/S-03/draw0/.
+#
+# No `title` key on purpose: the pipeline names the paper from the finished
+# prose (§7.16).
+
+thesis: >-
+  Later accounts of sovereignty and statebuilding contest what Jackson's
+  quasi-states were meant to explain rather than merely narrowing or extending
+  the concept: Zaum contests the persistence of the negative-sovereignty
+  regime, Caspersen contests the one-way direction of the juridical-empirical
+  gap, and Ayubi contests the sufficiency of a normative-legal frame. The
+  contestation is self-limiting, because each account argues in the vocabulary
+  Jackson built.
+
+analysis_ids:
+  - fa44475aaaa90a48
+
+lens: political-economy

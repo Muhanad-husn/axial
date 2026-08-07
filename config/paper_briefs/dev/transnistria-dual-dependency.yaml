@@ -1,0 +1,29 @@
+# Paper brief over the S-04 smoke analysis (specs/PHASE-C.md §7.1).
+#
+# Not Syria. S-04 is the single-case discipline test: what can be established
+# about Transnistria specifically, rather than about post-Soviet unrecognized
+# states in general. The record answers with a dual-dependency structure it
+# says is not found elsewhere, and then names what its own evidence cannot
+# settle -- how the resource inflows became institutions, and whether the
+# post-2005 reforms were real pluralism.
+#
+# Record: data/analyses/be50533708e44f33.json, corpus pin sim-2026-07-30,
+# from data/runs/smoke-v7/analyses/S-04/draw0/. 24 claims, the second-largest
+# inventory of the five briefs filed together here.
+#
+# No `title` key on purpose: the pipeline names the paper from the finished
+# prose (§7.16).
+
+thesis: >-
+  Non-recognition built Transnistria through a dual dependency -- Russia for
+  security, energy and credit, Moldova for customs and trade access -- that no
+  other post-Soviet unrecognized state carries. That structure funded real
+  institutions and a militarized hybrid regime at the same time, and it made
+  the entity's domestic politics turn on business interests that pay the cost
+  of isolation. What it does not explain is how the inflows were converted
+  into working institutions.
+
+analysis_ids:
+  - be50533708e44f33
+
+lens: political-economy

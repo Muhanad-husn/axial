@@ -1,0 +1,28 @@
+# Paper brief over the S-05 smoke analysis (specs/PHASE-C.md §7.1).
+#
+# Not Syria. S-05 asks two things at once: how non-recognition shaped
+# Somaliland's state-building, and how secure the evidence for that account
+# is. The record answers both and is blunt about the second -- it stands
+# almost entirely on one comparative study that treats Somaliland as one case
+# in ten. The paper has to carry that admission, not bury it in a confidence
+# band.
+#
+# Record: data/analyses/c2afb6d42f713e1c.json, corpus pin sim-2026-07-30,
+# from data/runs/smoke-v7/analyses/S-05/draw0/. 32 claims, the largest
+# inventory of the five briefs filed together here.
+#
+# No `title` key on purpose: the pipeline names the paper from the finished
+# prose (§7.16).
+
+thesis: >-
+  Somaliland substituted diaspora remittances for a patron state and inter-clan
+  consensus for imposed unity, and that substitution produced statehood that
+  works relative to its collapsed parent while carrying its own structural
+  strain: clan-skewed remittance flows, militarized spending, and democratic
+  backsliding after 2006. The account rests on a thin evidential base, and
+  saying so is part of the finding rather than a caveat attached to it.
+
+analysis_ids:
+  - c2afb6d42f713e1c
+
+lens: political-economy

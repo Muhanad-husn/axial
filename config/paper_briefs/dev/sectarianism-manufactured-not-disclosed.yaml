@@ -1,0 +1,27 @@
+# Paper brief over the P3-04 smoke analysis (specs/PHASE-C.md §7.1).
+#
+# This one is Syria, filed alongside four that are not. P3-04 asks whether
+# sectarian exclusion after 2011 was a strategy of political order or a
+# by-product of civil-war violence. The record commits to strategy, and its
+# own stated weakness is the strongest objection to it: once activated,
+# sectarian identification took on its own momentum, which a political-economy
+# lens explains badly.
+#
+# Record: data/analyses/92d2d85745ecaa2d.json, corpus pin sim-2026-07-30,
+# from data/runs/smoke-v7/analyses/P3-04/draw0/.
+#
+# No `title` key on purpose: the pipeline names the paper from the finished
+# prose (§7.16).
+
+thesis: >-
+  Sectarian exclusion in Syria after 2011 was a strategy of political order,
+  not a by-product of the war. Selective repression, shabbiha deployment,
+  spatial fragmentation and a war economy that dispossessed whole populations
+  politicized sectarian difference from above; the uprising's own origins were
+  cross-communal. Sectarianism's long history in Syria made it available to be
+  activated, and does not show it was waiting to surface.
+
+analysis_ids:
+  - 92d2d85745ecaa2d
+
+lens: political-economy

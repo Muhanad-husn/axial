@@ -4,7 +4,9 @@
 
 **Building a production instance of the LLM-wiki pattern, and what it took to make the numbers honest**
 
-Version 1.0 · 6 August 2026 · Muhanad Abulhusn
+Version 1.1 · 7 August 2026 · Muhanad Abulhusn
+
+*Version 1.1 adds §8.4, the cost and latency of a paper measured across eight of them, and the limit that exercise exposed. Nothing else has changed.*
 
 *This is the technical companion to [Axial — a research report](axial-report.md). That document explains what the system does and what the evaluation showed, for readers who do not build software. This one is for engineers. It covers the architecture, the measurement discipline that shaped it, the caching and incremental-computation design, the evaluation machinery, and the one-operator agentic process that built all of it in 31 days. Nothing here is repeated from the other report except where a number needs its context restated.*
 
@@ -14,7 +16,7 @@ Version 1.0 · 6 August 2026 · Muhanad Abulhusn
 
 Axial reads a shelf of academic books once, passage by passage, and materialises the reading as an Obsidian wiki, an argument graph, and, on demand, a research paper whose every citation is machine-checkable back to a passage. The pattern is the one Andrej Karpathy sketched in his April 2026 "LLM Wiki" idea file: compile sources into a persistent, interlinked knowledge base once, then query the compilation instead of the raw text. Axial is what that sketch looks like after a production hardening pass: 57,000 lines of Python surrounded by 93,000 lines of tests, a deterministic core with model calls confined to sixteen audited seams, content-keyed decision logs that make every paid model call resumable and every re-run free, and an evaluation stack that assumes large-language-model judges are generous liars until a planted-defect control proves otherwise.
 
-The engineering results worth the reader's time: a closed-vocabulary tagging layer was retired after measurement showed a 0.73 intra-annotator ceiling that no prompt, model, or context change could move, and its replacement (open interrogation) produced the cross-book structure tagging structurally could not; retrieval was rediagnosed from a ranking problem to a join problem, lifting resolvable opposition links from 4.7% to 60.2% of targets; incremental corpus growth was taken from 93% wasted spend to 92% reuse by keying caches on what actually changes an answer; and a nine-model evaluation panel is trusted only because it caught three planted defects unanimously before any of its clean verdicts were reported. Full-corpus ingestion costs about $34, the argument map $0.75, and a finished paper $0.12–0.16. The entire system was designed, built, measured, and documented by one person orchestrating AI agents under deterministic gates, between 6 July and 6 August 2026.
+The engineering results worth the reader's time: a closed-vocabulary tagging layer was retired after measurement showed a 0.73 intra-annotator ceiling that no prompt, model, or context change could move, and its replacement (open interrogation) produced the cross-book structure tagging structurally could not; retrieval was rediagnosed from a ranking problem to a join problem, lifting resolvable opposition links from 4.7% to 60.2% of targets; incremental corpus growth was taken from 93% wasted spend to 92% reuse by keying caches on what actually changes an answer; and a nine-model evaluation panel is trusted only because it caught three planted defects unanimously before any of its clean verdicts were reported. Full-corpus ingestion costs about $34, the argument map $0.75, and a finished paper $0.008–0.20 depending entirely on how many claims the drafter is handed. The entire system was designed, built, measured, and documented by one person orchestrating AI agents under deterministic gates, between 6 July and 6 August 2026.
 
 ---
 
@@ -402,6 +404,27 @@ Model, reasoning effort, temperature, and vote count are all per-pass configurat
 
 **The reverted switch.** The envelope pass was moved to a new model on a 5-source A/B, then reverted when the full-corpus regeneration produced 6 degenerate outputs where the incumbent's run had 0 — the A/B had sampled the sources the challenger handled well, and one source going clean-run/garbage-run under the same model proved the variable was the roll, not the model. The decision was deferred behind a model-independent robustness fix so that a future comparison measures quality rather than single-shot variance.
 
+### 8.4 What a paper actually costs, measured across eight
+
+Eight papers now exist on one corpus pin, six of them drafted on 7 August 2026 to widen the set past the Syrian case the library is built around. They span a 26× cost range, and the spread is not noise.
+
+| Analysis records the paper stands on | Claims handed to the drafter | Cost |
+|---:|---:|---:|
+| 1 | 15 | $0.008 |
+| 1 | 15 | $0.008 |
+| 1 | 19 | $0.010 |
+| 1 | 22 | $0.010 |
+| 1 | 46 | $0.019 |
+| 1 | 29 | $0.019 |
+| 2 | 39 | $0.082 |
+| 3 | 66 | $0.199 |
+
+**Cost tracks the claim inventory and nothing else.** The drafter has no retrieval, so its prompt is the inventory plus the plan; a paper over one analysis record is roughly a tenth the price of one over three. The practical consequence is that widening the paper set is nearly free while widening the *question* set is not — the analysis runs underneath these papers cost more than an order of magnitude more than the drafting on top of them.
+
+**Drafting dominates spend; a single planning call dominates worst-case latency.** Drafting is 44–69% of the bill on the batch of five and 86–95% on the two large papers, spread over one call per section — the bigger the inventory, the more completely drafting swallows the total. The plan is one call — but its output length is the least predictable thing in the pipeline: across those five papers, on one model, it ran from 811 to 6,247 completion tokens and from 9 to 95 seconds. The 95-second plan was the slowest single call in the batch by a factor of four over the slowest draft call, and prompt size does not explain it (the longest prompt produced a 1,871-token plan in 35 seconds). Anything that budgets paper latency should budget the plan pass as a fat tail, not a mean.
+
+**One section retried and recovered.** A draft call cited a derivation the inventory did not contain, `UnknownDerivationError` fired, and the retry (1 of 3 allowed) produced a valid section. The validator is the hard gate on the drafter's only real failure mode — inventing a link between claims — and it fired once in 35 draft calls over 34 sections rather than never.
+
 ---
 
 ## 9. Evaluation without ground truth
@@ -533,7 +556,8 @@ The companion report states the product-level limits (machine-written test quest
 - **Single-machine, single-operator.** There is no service, no multi-user boundary, and no deployment; a deployment architecture is designed (jobs in Postgres via `SKIP LOCKED`, read-only SQLite snapshots baked into worker images, per-analyst quotas) but deliberately unbuilt, because cost, quota, and copyright decisions belong to whoever deploys.
 - **Reproducibility floors are managed, not solved.** Merge, Gather, and the map all carry measured self-disagreement; the design accepts and routes around it (hints not citations, surface-vs-material distinctions, pre-registered acceptance bars) rather than eliminating it.
 - **Some checks are structurally blind.** A citation resolving to a publisher's catalogue page passes every mechanical gate; only a reader catches it, and the reader panel's false-positive rate is itself unmeasured — the control proves it catches planted defects, not that it never invents one.
-- **Small denominators throughout.** The paper gates pass at 1.00 over 215 markers and 105 claims across two papers; five new cross-source inferences is five, not a rate. The numbers are printed with their n so nobody mistakes a clean small sample for a strong claim.
+- **Small denominators throughout.** The paper gates pass at 1.00 over 215 markers and 105 claims across two papers; five new cross-source inferences is five, not a rate. The numbers are printed with their n so nobody mistakes a clean small sample for a strong claim. The six papers added on 7 August (§8.4) widen the *cost* sample and not the *quality* one: none went to the sealed panel, and the gate rates above still stand on two.
+- **Widening the question set exposes the shelf, not the engine.** Five of the six new papers were drafted deliberately off the Syrian case the library is built around. Two of them cite exactly one book, because the shelf holds a single comparative study of unrecognised states and no monograph on either territory they ask about. Every mechanical gate passes on both, and the shape check rates both `strong`. This is the clearest available demonstration that the gates measure construction and not evidential sufficiency — a paper can be perfectly constructed over a shelf that cannot support it, and only the coverage disclosure and a reader say so.
 - **The price table is a ceiling.** Every dollar figure derives from a hand-maintained price table measured to run ~14% high against a real invoice.
 
 ---
