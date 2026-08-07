@@ -229,7 +229,7 @@
     </section>
 
     <section id="panel-research" class="panel">
-      <p class="panel-intro">Version 2.1, 6 August 2026. What Axial is, how it was tested, and what the tests showed — for readers who do not build software.</p>
+      <p class="panel-intro">Version 2.2, 7 August 2026. What Axial is, how it was tested, and what the tests showed — for readers who do not build software.</p>
       <div class="report" id="report-research"><p class="loading">Loading…</p></div>
     </section>
 
@@ -280,7 +280,7 @@
     tabs.forEach(function(b){ b.classList.toggle('active', b.dataset.tab === name); });
     panels.forEach(function(p){ p.classList.toggle('active', p.id === 'panel-' + name); });
     if (name === 'research') loadReport('research', 'reports/axial-report.md');
-    if (name === 'technical') loadReport('technical', 'reports/axialtechnicalreport.md');
+    if (name === 'technical') loadReport('technical', 'reports/axial-technical-report.md');
   }
   tabs.forEach(function(b){
     b.addEventListener('click', function(){ activate(b.dataset.tab); });

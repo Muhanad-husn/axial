@@ -28,8 +28,17 @@ SOURCE_META = ROOT / "data" / "source_meta"
 ANALYSES = ROOT / "data" / "analyses"
 PAPERS = ROOT / "data" / "papers"
 
-# The two papers, in the order they appear as appendices D and E.
+# The two papers reproduced in full, in the order they appear as appendices D and E.
 PAPER_FILES = ["b02d747edc0bb416", "d5f983eafb05f8d6"]
+# The papers listed in appendix F rather than reproduced. Order is the report's.
+FURTHER_PAPERS = [
+    "9f449f41b88e5c70",  # S-02, nationalism and the fiscal-military nexus
+    "a1039fad4da31320",  # S-01, Mann against Tilly
+    "f5ae5ff2f09766af",  # S-03, what later work did to quasi-states
+    "408378f2e286fff2",  # S-04, Transnistria
+    "273aea05df54e2df",  # S-05, Somaliland
+    "5d866ef2ce4971ae",  # P3-04, sectarian exclusion in Syria
+]
 # Short cites for the library table, in the report's own house style.
 SHORT = {
     "agamben-2005": "Agamben, *State of Exception* (2005)",
@@ -225,6 +234,119 @@ def paper_appendix(letter: str, paper_id: str, ordinal: str) -> str:
     return "\n".join(parts)
 
 
+def paper_title(record: dict) -> str:
+    """What the paper is called: the brief's override, else the shape check's own."""
+    brief_title = (record.get("paper_brief", {}) or {}).get("title")
+    if brief_title:
+        return brief_title
+    return (record.get("shape", {}) or {}).get("title") or "Untitled paper"
+
+
+def paper_index() -> str:
+    """Appendix F: the papers that are listed rather than reproduced."""
+    rows = []
+    for paper_id in FURTHER_PAPERS:
+        record = json.loads((PAPERS / f"{paper_id}.json").read_text(encoding="utf-8"))
+        brief = record["paper_brief"]
+        analyses = []
+        for analysis_id in brief["analysis_ids"]:
+            rec = json.loads((ANALYSES / f"{analysis_id}.json").read_text(encoding="utf-8"))
+            q = rec.get("brief", {}) or {}
+            analyses.append((analysis_id, q.get("case", ""), q.get("request", "")))
+        rows.append(
+            {
+                "id": paper_id,
+                "title": paper_title(record),
+                "thesis": brief["thesis"].strip(),
+                "lens": brief.get("lens", "—"),
+                "analyses": analyses,
+                "claims": len(record.get("claims", [])),
+                "new_claims": len([c for c in record.get("claims", []) if not c.get("origin")]),
+                "books": len(record.get("bibliography", []) or []),
+                "confidence": (record.get("confidence", {}) or {}).get("overall_band", "—"),
+                "shape": (record.get("shape", {}) or {}).get("band", "—"),
+                "usd": (record.get("cost", {}) or {}).get("total_usd"),
+                "pin": record.get("corpus_pin", "—"),
+            }
+        )
+
+    single_source = [r for r in rows if r["books"] == 1]
+    total = sum(r["usd"] or 0.0 for r in rows)
+
+    parts = [
+        "## Appendix F — The other papers, listed rather than reproduced",
+        "",
+        "Appendices D and E carry two papers in full because a reader has to see at least "
+        "one end to end. Reproducing every paper would treble this document, so the rest "
+        "are indexed here: what each was asked, what it argued, and what it cost. Each "
+        "renders to `data/papers/<id>.md`, with the record that produced it beside it.",
+        "",
+        f"All {len(rows)} were drafted on corpus pin `{rows[0]['pin']}`, the same pin as the "
+        "two papers above, so the whole set is comparable. Each stands on one prior analysis "
+        "record, where the papers in D and E stand on two and three.",
+        "",
+        "| Paper | The case it was asked about | Lens | Claims | Books cited | Confidence | Shape | Cost |",
+        "|---|---|---|---:|---:|---|---|---:|",
+    ]
+    for r in rows:
+        case = r["analyses"][0][1] if r["analyses"] else "—"
+        usd = f"${r['usd']:.4f}" if r["usd"] is not None else "—"
+        parts.append(
+            f"| {r['title']} | {case} | {r['lens']} | {r['claims']} | {r['books']} | "
+            f"{r['confidence']} | {r['shape']} | {usd} |"
+        )
+    parts.append("")
+    parts.append(
+        f"**The whole set cost ${total:.2f} to draft.** A paper standing on one analysis "
+        "record is roughly a tenth the price of the multi-record papers in D and E, because "
+        "cost tracks the size of the claim inventory the drafter is handed and nothing else."
+    )
+    parts.append("")
+
+    if single_source:
+        named = ", ".join(f"*{r['title']}*" for r in single_source)
+        parts.append(
+            f"**Read the books-cited column before anything else.** "
+            f"{len(single_source)} of these papers — {named} — cite exactly **one book**. "
+            "That is not a drafting failure; it is the library reporting its own shape. The "
+            "shelf holds one comparative study of unrecognised states and no monograph on "
+            "either territory, so a question about one of them has one source to stand on and "
+            "the paper says so in its own coverage disclosure. It is the same corpus gap the "
+            "sealed panel found in section 7.4, showing up before any reviewer was asked. A "
+            "paper carried by a single book should be read as a well-formed argument over a "
+            "thin shelf, never as a finding."
+        )
+        parts.append("")
+
+    parts.append(
+        "**None of these were put to the sealed panel.** The panel figures in section 7.4 "
+        "cover the two papers in D and E and their planted-defect control, and adding papers "
+        "to the shelf does not extend them. The four mechanical gates ran on every paper here, "
+        "as they run on every paper by construction."
+    )
+    parts.append("")
+
+    for r in rows:
+        parts.append(f"### {r['title']}")
+        parts.append("")
+        parts.append(
+            f"*`data/papers/{r['id']}.md` · lens: {r['lens']} · {r['claims']} claims, "
+            f"{r['new_claims']} of them the paper's own · {r['books']} "
+            f"{'book' if r['books'] == 1 else 'books'} cited*"
+        )
+        parts.append("")
+        parts.append(f"**The thesis put to it.** {r['thesis']}")
+        parts.append("")
+        for analysis_id, case, request in r["analyses"]:
+            parts.append(f"**The question behind it** — `{analysis_id}`")
+            parts.append("")
+            parts.append(f"> **Case.** {case}")
+            parts.append(">")
+            parts.append(f"> **Request.** {request}")
+            parts.append("")
+    return "\n".join(parts)
+
+
 def main() -> None:
     body = BODY.read_text(encoding="utf-8")
     appendices = APPENDICES.read_text(encoding="utf-8")
@@ -238,6 +360,7 @@ def main() -> None:
         ]
     )
     appendices = appendices.replace("<!--PAPERS-->", papers)
+    appendices = appendices.replace("<!--PAPER_INDEX-->", paper_index())
 
     DEST.write_text(body + "\n" + appendices, encoding="utf-8")
     words = len(DEST.read_text(encoding="utf-8").split())

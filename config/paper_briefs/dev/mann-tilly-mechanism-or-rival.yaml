@@ -1,0 +1,33 @@
+# Paper brief over the S-01 smoke analysis (specs/PHASE-C.md §7.1).
+#
+# Not Syria. S-01 is the corpus's European theory question: does Mann's
+# infrastructural/despotic distinction overturn Tilly's war-centred account of
+# nation-state formation, or specify its mechanisms? The record commits to
+# "specifies" and then names the case that breaks the bellicist model, so the
+# paper has a verdict and its own limit to carry.
+#
+# Record: data/analyses/ec94042430910584.json, corpus pin sim-2026-07-30,
+# from data/runs/smoke-v7/analyses/S-01/draw0/.
+#
+# Lens is `state-formation` rather than the record's own `political-economy`.
+# §7.1 says a paper carries its own lens, and the question is about how
+# coercive and infrastructural capacity got built, which is that lens's
+# subject. The record's lens is disclosed on the paper record as a source
+# lens, so the difference is visible to a reader.
+#
+# No `title` key on purpose: the pipeline names the paper from the finished
+# prose (§7.16).
+
+thesis: >-
+  Mann's distinction between infrastructural and despotic power specifies
+  Tilly's war-centred account of European nation-state formation rather than
+  displacing it: war remains the driver, and the distinction explains why the
+  same war pressure produced effective bureaucratic capacity in some states
+  and hollow coercion in others. The specification fails where external rent
+  substitutes for domestic extraction and severs the war-taxation-
+  representation link the model runs on.
+
+analysis_ids:
+  - ec94042430910584
+
+lens: state-formation

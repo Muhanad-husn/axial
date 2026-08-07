@@ -4,9 +4,9 @@
 
 **What it is, how it works, how it was tested, and what the tests showed**
 
-Version 2.1 · 6 August 2026 · Muhanad Abulhusn
+Version 2.2 · 7 August 2026 · Muhanad Abulhusn
 
-*Version 2.1 restructures the dossier of 6 August 2026 as a research paper: an executive summary at the front, the full question inventory moved to an appendix, and the closing section recast as a final word. The system it describes is unchanged. Version 1.0 (1 August 2026) remains superseded: it described a retrieval layer and a final deliverable that have both since been replaced.*
+*Version 2.2 adds Appendix F, an index of the six further papers drafted since — five of them deliberately off the Syrian case the library is built around — and records what that exercise exposed about the shelf. Nothing in the system or its evaluation has changed; the panel figures in section 7.4 still cover the two papers in Appendices D and E and nothing else. Version 2.1 (6 August 2026) restructured the dossier as a research paper: an executive summary at the front, the full question inventory moved to an appendix, and the closing section recast as a final word. Version 1.0 (1 August 2026) remains superseded: it described a retrieval layer and a final deliverable that have both since been replaced.*
 
 ---
 
@@ -19,6 +19,8 @@ That makes it different in kind from the tools most readers already have. A chat
 The current library is thirty-five works of scholarship on state formation, nationalism and political violence, built around Syria as a case. Reading it produced 6,842 passages, an encyclopaedia of 47,584 name pages, and an argument map of 1,937 positions joined by 1,472 stated relations — 328 of them connecting positions with no author in common. The map cost $0.75 to build and $0 to update when four books were added. A complete run, from question to finished paper, costs well under a dollar.
 
 Four instruments test it. Mechanical gates pass at 1.00 on every paper: every citation resolves, no confidence claim was inflated, and the opposing case is present or its absence disclosed. On a nine-question test of reach, the engine's citations met 26 of 37 evidence demands. A sealed panel of reviewer models — each from a different lab than the model that wrote the paper, each shown only the paper and the passages it cites — caught all three defects planted as a control and rated both development papers adequate to strong. The panel also found the two defects no mechanical check could: a citation that resolves to a publisher's catalogue page, and a keystone Syrian claim carried by Moroccan and Egyptian evidence because the library lacks the Syrian book that should carry it. In a paired trial, open-weight models matched proprietary ones on quality at three and a half times less cost.
+
+Eight papers now exist, and the shape of the set is itself a finding. The two reproduced in full are on Syria, because the library is. Six more, listed in Appendix F, move off it: European nation-state formation, the quasi-states concept, Transnistria, Somaliland, nationalism and war, and one further Syrian question. Two of the six cite exactly one book each, which is the library reporting its own shape rather than the engine failing — the shelf holds one comparative study of unrecognised states and no monograph on either territory. A paper carried by a single book is a well-formed argument over a thin shelf, and should never be read as a finding.
 
 One limit bounds every figure: the test questions were written by an AI model, and no output has yet been judged by a human expert. The numbers measure the engine, not answer quality against a real scholarly question. Closing that gap needs people rather than code, and this report ends with a request for exactly that: a few real research questions, one refereed reading of one paper, and the names of the books the shelf is missing.
 
@@ -41,8 +43,9 @@ One limit bounds every figure: the test questions were written by an AI model, a
 - [Appendix C — The library](#appendix-c--the-library)
 - [Appendix D — The first paper, and the questions behind it](#appendix-d--the-first-paper-and-the-questions-behind-it)
 - [Appendix E — The second paper, and the questions behind it](#appendix-e--the-second-paper-and-the-questions-behind-it)
-- [Appendix F — Every question Axial asks](#appendix-f--every-question-axial-asks)
-- [Appendix G — Glossary](#appendix-g--glossary)
+- [Appendix F — The other papers, listed rather than reproduced](#appendix-f--the-other-papers-listed-rather-than-reproduced)
+- [Appendix G — Every question Axial asks](#appendix-g--every-question-axial-asks)
+- [Appendix H — Glossary](#appendix-h--glossary)
 
 ---
 
@@ -202,7 +205,7 @@ Across the whole pipeline, a model is consulted in sixteen places, plus a set of
 
 The judges add a rule of their own: **none may be run by the model that produced the thing being judged**, and the sealed review panel goes further and requires a different training lab, because a family-mate's agreement is weak evidence.
 
-The complete inventory — all sixteen questions, quoted from the working system — is in [Appendix F](#appendix-f--every-question-axial-asks).
+The complete inventory — all sixteen questions, quoted from the working system — is in [Appendix G](#appendix-g--every-question-axial-asks).
 
 ---
 
@@ -525,6 +528,8 @@ Every limit the evidence in this report exposes, collected in one place.
 **The library is thin where it matters most.** Concepts are the weakest kind of page in it. 83% of all pages exist inside a single book. Several of the largest concept pages are one author's vocabulary that nobody else on the shelf uses.
 
 **A corpus gap looks exactly like a citation defect.** When the library has no passage on the specific thing a paper needs, the drafter reaches for the nearest thing and argues by analogy. The panel caught this. The mechanical gates cannot.
+
+**The shelf is built around Syria, and every paper inherits that.** Six of the eight papers written so far were drafted deliberately off the Syrian case to test how far the library reaches (Appendix F). Two of them ended up citing a single book, because one comparative study is all the shelf holds on unrecognised states. Topic balance in the questions does not produce topic balance in the evidence, and only new books close that gap.
 
 **Some checks are structurally blind.** A citation marker that resolves to a publisher's catalogue page passes every automated check there is. Whether a passage is the *right kind of thing* to cite is a judgment, and only a reader makes it.
 

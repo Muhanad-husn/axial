@@ -4,9 +4,9 @@
 
 **What it is, how it works, how it was tested, and what the tests showed**
 
-Version 2.1 · 6 August 2026 · Muhanad Abulhusn
+Version 2.2 · 7 August 2026 · Muhanad Abulhusn
 
-*Version 2.1 restructures the dossier of 6 August 2026 as a research paper: an executive summary at the front, the full question inventory moved to an appendix, and the closing section recast as a final word. The system it describes is unchanged. Version 1.0 (1 August 2026) remains superseded: it described a retrieval layer and a final deliverable that have both since been replaced.*
+*Version 2.2 adds Appendix F, an index of the six further papers drafted since — five of them deliberately off the Syrian case the library is built around — and records what that exercise exposed about the shelf. Nothing in the system or its evaluation has changed; the panel figures in section 7.4 still cover the two papers in Appendices D and E and nothing else. Version 2.1 (6 August 2026) restructured the dossier as a research paper: an executive summary at the front, the full question inventory moved to an appendix, and the closing section recast as a final word. Version 1.0 (1 August 2026) remains superseded: it described a retrieval layer and a final deliverable that have both since been replaced.*
 
 ---
 
@@ -19,6 +19,8 @@ That makes it different in kind from the tools most readers already have. A chat
 The current library is thirty-five works of scholarship on state formation, nationalism and political violence, built around Syria as a case. Reading it produced 6,842 passages, an encyclopaedia of 47,584 name pages, and an argument map of 1,937 positions joined by 1,472 stated relations — 328 of them connecting positions with no author in common. The map cost $0.75 to build and $0 to update when four books were added. A complete run, from question to finished paper, costs well under a dollar.
 
 Four instruments test it. Mechanical gates pass at 1.00 on every paper: every citation resolves, no confidence claim was inflated, and the opposing case is present or its absence disclosed. On a nine-question test of reach, the engine's citations met 26 of 37 evidence demands. A sealed panel of reviewer models — each from a different lab than the model that wrote the paper, each shown only the paper and the passages it cites — caught all three defects planted as a control and rated both development papers adequate to strong. The panel also found the two defects no mechanical check could: a citation that resolves to a publisher's catalogue page, and a keystone Syrian claim carried by Moroccan and Egyptian evidence because the library lacks the Syrian book that should carry it. In a paired trial, open-weight models matched proprietary ones on quality at three and a half times less cost.
+
+Eight papers now exist, and the shape of the set is itself a finding. The two reproduced in full are on Syria, because the library is. Six more, listed in Appendix F, move off it: European nation-state formation, the quasi-states concept, Transnistria, Somaliland, nationalism and war, and one further Syrian question. Two of the six cite exactly one book each, which is the library reporting its own shape rather than the engine failing — the shelf holds one comparative study of unrecognised states and no monograph on either territory. A paper carried by a single book is a well-formed argument over a thin shelf, and should never be read as a finding.
 
 One limit bounds every figure: the test questions were written by an AI model, and no output has yet been judged by a human expert. The numbers measure the engine, not answer quality against a real scholarly question. Closing that gap needs people rather than code, and this report ends with a request for exactly that: a few real research questions, one refereed reading of one paper, and the names of the books the shelf is missing.
 
@@ -41,8 +43,9 @@ One limit bounds every figure: the test questions were written by an AI model, a
 - [Appendix C — The library](#appendix-c--the-library)
 - [Appendix D — The first paper, and the questions behind it](#appendix-d--the-first-paper-and-the-questions-behind-it)
 - [Appendix E — The second paper, and the questions behind it](#appendix-e--the-second-paper-and-the-questions-behind-it)
-- [Appendix F — Every question Axial asks](#appendix-f--every-question-axial-asks)
-- [Appendix G — Glossary](#appendix-g--glossary)
+- [Appendix F — The other papers, listed rather than reproduced](#appendix-f--the-other-papers-listed-rather-than-reproduced)
+- [Appendix G — Every question Axial asks](#appendix-g--every-question-axial-asks)
+- [Appendix H — Glossary](#appendix-h--glossary)
 
 ---
 
@@ -202,7 +205,7 @@ Across the whole pipeline, a model is consulted in sixteen places, plus a set of
 
 The judges add a rule of their own: **none may be run by the model that produced the thing being judged**, and the sealed review panel goes further and requires a different training lab, because a family-mate's agreement is weak evidence.
 
-The complete inventory — all sixteen questions, quoted from the working system — is in [Appendix F](#appendix-f--every-question-axial-asks).
+The complete inventory — all sixteen questions, quoted from the working system — is in [Appendix G](#appendix-g--every-question-axial-asks).
 
 ---
 
@@ -525,6 +528,8 @@ Every limit the evidence in this report exposes, collected in one place.
 **The library is thin where it matters most.** Concepts are the weakest kind of page in it. 83% of all pages exist inside a single book. Several of the largest concept pages are one author's vocabulary that nobody else on the shelf uses.
 
 **A corpus gap looks exactly like a citation defect.** When the library has no passage on the specific thing a paper needs, the drafter reaches for the nearest thing and argues by analogy. The panel caught this. The mechanical gates cannot.
+
+**The shelf is built around Syria, and every paper inherits that.** Six of the eight papers written so far were drafted deliberately off the Syrian case to test how far the library reaches (Appendix F). Two of them ended up citing a single book, because one comparative study is all the shelf holds on unrecognised states. Topic balance in the questions does not produce topic balance in the evidence, and only new books close that gap.
 
 **Some checks are structurally blind.** A citation marker that resolves to a publisher's catalogue page passes every automated check there is. Whether a passage is the *right kind of thing* to cite is a judgment, and only a reader makes it.
 
@@ -1116,13 +1121,107 @@ overall confidence is 'low', bounded by the least-covered name the paper cites (
 ---
 
 
-## Appendix F — Every question Axial asks
+## Appendix F — The other papers, listed rather than reproduced
+
+Appendices D and E carry two papers in full because a reader has to see at least one end to end. Reproducing every paper would treble this document, so the rest are indexed here: what each was asked, what it argued, and what it cost. Each renders to `data/papers/<id>.md`, with the record that produced it beside it.
+
+All 6 were drafted on corpus pin `sim-2026-07-30`, the same pin as the two papers above, so the whole set is comparable. Each stands on one prior analysis record, where the papers in D and E stand on two and three.
+
+| Paper | The case it was asked about | Lens | Claims | Books cited | Confidence | Shape | Cost |
+|---|---|---|---:|---:|---|---|---:|
+| Extraction Bargains Make Nations, Rent Breaks Them | Comparative: nationalism and nation-state formation, nineteenth and twentieth centuries | political-economy | 15 | 8 | low | strong | $0.0081 |
+| War, Extraction, and the Rent Rupture | Comparative: European nation-state formation, 1760-1914 | state-formation | 15 | 10 | low | strong | $0.0077 |
+| Material Contests Over Juridical Arrangements | Comparative: quasi-states, recognition and international statebuilding, 1945-2012 | political-economy | 19 | 4 | medium | strong | $0.0101 |
+| Dual Dependency and the Conversion Gap | Transnistria in the post-Soviet space, 1991-2012 | political-economy | 29 | 1 | low | strong | $0.0190 |
+| Viable but Strained Diaspora Statehood | Somaliland, 1991-2012 | political-economy | 46 | 1 | low | strong | $0.0188 |
+| Sectarian Exclusion as Political Order | Syria, 2011–2024 | political-economy | 22 | 8 | low | strong | $0.0098 |
+
+**The whole set cost $0.07 to draft.** A paper standing on one analysis record is roughly a tenth the price of the multi-record papers in D and E, because cost tracks the size of the claim inventory the drafter is handed and nothing else.
+
+**Read the books-cited column before anything else.** 2 of these papers — *Dual Dependency and the Conversion Gap*, *Viable but Strained Diaspora Statehood* — cite exactly **one book**. That is not a drafting failure; it is the library reporting its own shape. The shelf holds one comparative study of unrecognised states and no monograph on either territory, so a question about one of them has one source to stand on and the paper says so in its own coverage disclosure. It is the same corpus gap the sealed panel found in section 7.4, showing up before any reviewer was asked. A paper carried by a single book should be read as a well-formed argument over a thin shelf, never as a finding.
+
+**None of these were put to the sealed panel.** The panel figures in section 7.4 cover the two papers in D and E and their planted-defect control, and adding papers to the shelf does not extend them. The four mechanical gates ran on every paper here, as they run on every paper by construction.
+
+### Extraction Bargains Make Nations, Rent Breaks Them
+
+*`data/papers/9f449f41b88e5c70.md` · lens: political-economy · 15 claims, 0 of them the paper's own · 8 books cited*
+
+**The thesis put to it.** Nationalism is best explained as a boundary-making force that ties state formation to war. Industrial modernity and reconstructed ethnic symbols describe what nationalism looked like; the fiscal-military nexus of extraction, conscription and the citizenship bargains they forced explains why it took hold. Where external rent replaces domestic extraction, the mechanism fails and so does the nationalism it was supposed to produce.
+
+**The question behind it** — `e7d6a2646523cb1d`
+
+> **Case.** Comparative: nationalism and nation-state formation, nineteenth and twentieth centuries
+>
+> **Request.** Is nationalism best explained as a product of modernity, a reconstruction of inherited symbols, an organized ideology of the nation-state, or a boundary-making force linking state formation to war?
+
+### War, Extraction, and the Rent Rupture
+
+*`data/papers/a1039fad4da31320.md` · lens: state-formation · 15 claims, 2 of them the paper's own · 10 books cited*
+
+**The thesis put to it.** Mann's distinction between infrastructural and despotic power specifies Tilly's war-centred account of European nation-state formation rather than displacing it: war remains the driver, and the distinction explains why the same war pressure produced effective bureaucratic capacity in some states and hollow coercion in others. The specification fails where external rent substitutes for domestic extraction and severs the war-taxation- representation link the model runs on.
+
+**The question behind it** — `ec94042430910584`
+
+> **Case.** Comparative: European nation-state formation, 1760-1914
+>
+> **Request.** Does Michael Mann's distinction between infrastructural and despotic power overturn Charles Tilly's war-centred account of European nation-state formation, or merely specify its mechanisms?
+
+### Material Contests Over Juridical Arrangements
+
+*`data/papers/f5ae5ff2f09766af.md` · lens: political-economy · 19 claims, 7 of them the paper's own · 4 books cited*
+
+**The thesis put to it.** Later accounts of sovereignty and statebuilding contest what Jackson's quasi-states were meant to explain rather than merely narrowing or extending the concept: Zaum contests the persistence of the negative-sovereignty regime, Caspersen contests the one-way direction of the juridical-empirical gap, and Ayubi contests the sufficiency of a normative-legal frame. The contestation is self-limiting, because each account argues in the vocabulary Jackson built.
+
+**The question behind it** — `fa44475aaaa90a48`
+
+> **Case.** Comparative: quasi-states, recognition and international statebuilding, 1945-2012
+>
+> **Request.** How do later accounts of sovereignty, recognition and international statebuilding modify Jackson's concept of quasi-states: do they narrow it, extend it, or contest what it was meant to explain?
+
+### Dual Dependency and the Conversion Gap
+
+*`data/papers/408378f2e286fff2.md` · lens: political-economy · 29 claims, 6 of them the paper's own · 1 book cited*
+
+**The thesis put to it.** Non-recognition built Transnistria through a dual dependency -- Russia for security, energy and credit, Moldova for customs and trade access -- that no other post-Soviet unrecognized state carries. That structure funded real institutions and a militarized hybrid regime at the same time, and it made the entity's domestic politics turn on business interests that pay the cost of isolation. What it does not explain is how the inflows were converted into working institutions.
+
+**The question behind it** — `be50533708e44f33`
+
+> **Case.** Transnistria in the post-Soviet space, 1991-2012
+>
+> **Request.** How has non-recognition shaped Transnistria's internal state-building, and what can be established about that case specifically rather than about post-Soviet unrecognized states in general?
+
+### Viable but Strained Diaspora Statehood
+
+*`data/papers/273aea05df54e2df.md` · lens: political-economy · 46 claims, 15 of them the paper's own · 1 book cited*
+
+**The thesis put to it.** Somaliland substituted diaspora remittances for a patron state and inter-clan consensus for imposed unity, and that substitution produced statehood that works relative to its collapsed parent while carrying its own structural strain: clan-skewed remittance flows, militarized spending, and democratic backsliding after 2006. The account rests on a thin evidential base, and saying so is part of the finding rather than a caveat attached to it.
+
+**The question behind it** — `c2afb6d42f713e1c`
+
+> **Case.** Somaliland, 1991-2012
+>
+> **Request.** How does the absence of international recognition shape Somaliland's internal state-building and its claim to sovereignty, and how secure is the evidential basis for that account?
+
+### Sectarian Exclusion as Political Order
+
+*`data/papers/5d866ef2ce4971ae.md` · lens: political-economy · 22 claims, 2 of them the paper's own · 8 books cited*
+
+**The thesis put to it.** Sectarian exclusion in Syria after 2011 was a strategy of political order, not a by-product of the war. Selective repression, shabbiha deployment, spatial fragmentation and a war economy that dispossessed whole populations politicized sectarian difference from above; the uprising's own origins were cross-communal. Sectarianism's long history in Syria made it available to be activated, and does not show it was waiting to surface.
+
+**The question behind it** — `92d2d85745ecaa2d`
+
+> **Case.** Syria, 2011–2024
+>
+> **Request.** Did the war politicize sectarian difference primarily through elite organization, coercive networks, and territorial rule, or did it disclose pre-existing mass sectarian solidarities?
+
+
+## Appendix G — Every question Axial asks
 
 Inside the pipeline, a model is consulted in sixteen places, plus a set of judges that sit outside it. Nowhere is it asked to pick from a list. Every one of the sixteen is an open question with an explicit right to answer "I cannot tell from this", and in every one code assembles what the model sees and reads what comes back.
 
 The inventory below is complete. The questions are quoted from the working system, lightly trimmed for length.
 
-### F.1 Reading the corpus
+### G.1 Reading the corpus
 
 | | Asked of | How often | The question |
 |---|---|---|---|
@@ -1138,7 +1237,7 @@ The inventory below is complete. The questions are quoted from the working syste
 
 **Question 7 is asked with no vocabulary at all.** Not "is this support or opposition?" but "what is actually there?" The consequence is measurable: because nothing asked for opposition, opposition came back at 6.6% rather than at whatever rate a leading question would have produced. The model invented 504 labels of its own.
 
-### F.2 Answering a question
+### G.2 Answering a question
 
 | | Asked of | How often | The question |
 |---|---|---|---|
@@ -1151,7 +1250,7 @@ The inventory below is complete. The questions are quoted from the working syste
 
 The synthesis instruction forbids the failure mode a careful assistant defaults to. A model asked to weigh two accounts will usually produce a balanced summary in which both have a point, because that is the safest-sounding output. Axial requires a verdict, and then requires the verdict's own weakness to be stated as a claim in its own right.
 
-### F.3 Writing the paper
+### G.3 Writing the paper
 
 | | Asked of | How often | The question |
 |---|---|---|---|
@@ -1159,7 +1258,7 @@ The synthesis instruction forbids the failure mode a careful assistant defaults 
 | **15. Drafting** | One section's assigned claims | Once per section | "Write ONE section of a paper. **You have no tools, no retrieval, and no access to any source: the claims below are the whole world**, and you may not assert anything that is not traceable to one of them." |
 | **16. Shape check** | The finished paper | Once | Does this read as an argument or as a list? Reported, never blocking. |
 
-### F.4 The judges, which sit outside the pipeline
+### G.4 The judges, which sit outside the pipeline
 
 Five bounded checks — does a cited passage support its claim, is an inference contradicted by its own evidence, is the opposing case stated at its strongest (a *steelman*) or knocked down in a weakened form nobody actually holds (a *strawman*), did the pre-pass catch the planted premise, did the answer do something the case declares disqualifying — plus the sealed review panel.
 
@@ -1167,7 +1266,7 @@ Five bounded checks — does a cited passage support its claim, is an inference 
 
 ---
 
-## Appendix G — Glossary
+## Appendix H — Glossary
 
 **Passage.** The unit Axial reads: a few paragraphs cut along the author's own boundaries, 3,500 to 9,000 characters. One to four printed pages.
 
