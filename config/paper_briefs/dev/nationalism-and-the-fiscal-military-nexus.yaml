@@ -1,0 +1,24 @@
+# Paper brief over the S-02 smoke analysis (specs/PHASE-C.md §7.1).
+#
+# S-02 asked which of four accounts explains nationalism best: modernity,
+# reconstructed symbols, state ideology, or boundary-making tied to war. The
+# record commits to the last one and then says where its own commitment
+# breaks, which is what a paper over it has to carry rather than smooth over.
+#
+# Record: data/analyses/e7d6a2646523cb1d.json, corpus pin sim-2026-07-30.
+#
+# No `title` key on purpose: the pipeline names the paper from the finished
+# prose (§7.16).
+
+thesis: >-
+  Nationalism is best explained as a boundary-making force that ties state
+  formation to war. Industrial modernity and reconstructed ethnic symbols
+  describe what nationalism looked like; the fiscal-military nexus of
+  extraction, conscription and the citizenship bargains they forced explains
+  why it took hold. Where external rent replaces domestic extraction, the
+  mechanism fails and so does the nationalism it was supposed to produce.
+
+analysis_ids:
+  - e7d6a2646523cb1d
+
+lens: political-economy
