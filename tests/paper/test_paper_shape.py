@@ -57,13 +57,14 @@ class _StubClient:
 
 
 def test_a_strong_band_needs_no_defects():
-    band, defects = parse_shape_response(json.dumps({"band": "strong", "defects": []}))
+    band, defects, title = parse_shape_response(json.dumps({"band": "strong", "defects": []}))
     assert band == "strong"
     assert defects == []
+    assert title is None
 
 
 def test_a_weak_band_with_a_named_defect_parses():
-    band, defects = parse_shape_response(
+    band, defects, _title = parse_shape_response(
         json.dumps(
             {"band": "weak", "defects": [{"section_id": "s2", "note": "reads as a summary"}]}
         )
@@ -158,7 +159,7 @@ def test_a_response_carrying_section_review_still_parses_to_only_band_and_defect
             "defects": [{"section_id": "s2", "note": "weak foil, not the strongest case"}],
         }
     )
-    band, defects = parse_shape_response(raw)
+    band, defects, _title = parse_shape_response(raw)
     assert band == "weak"
     assert defects == [ShapeDefect(section_id="s2", note="weak foil, not the strongest case")]
 
@@ -192,3 +193,56 @@ def test_a_different_model_lets_the_check_run_and_reports_model_and_cost():
     # `None` -- never a fabricated zero (mirrors `estimate_cost`'s own
     # unpriced-model convention).
     assert result.cost is None
+    # No title in this response -- lenient parsing, not a raise (issue #712).
+    assert result.title is None
+
+
+# -- Title (issue #712): the shape check names the finished paper -----------
+#
+# `compose_shape_prompt` asks for a title costing zero additional model
+# calls; `parse_shape_response` never raises on a bad one, because a title
+# is not worth turning a graded paper into a failed run (§7.16 reports, it
+# never blocks).
+
+
+def test_the_prompt_asks_for_a_title_after_band_and_defects():
+    prompt = compose_shape_prompt("thesis", _sections())
+    assert "title" in prompt.lower()
+    band_pos = prompt.rindex('"band"')
+    defects_pos = prompt.rindex('"defects"')
+    title_pos = prompt.rindex('"title"')
+    assert band_pos < title_pos
+    assert defects_pos < title_pos
+
+
+def test_a_present_title_is_parsed_and_stripped():
+    band, defects, title = parse_shape_response(
+        json.dumps({"band": "strong", "defects": [], "title": "  Organized Challengers Win  "})
+    )
+    assert band == "strong"
+    assert defects == []
+    assert title == "Organized Challengers Win"
+
+
+def test_run_shape_check_carries_the_judges_title_onto_the_result():
+    client = _StubClient(
+        {"paper_draft": "drafter/model", "paper_shape": "judge/model"},
+        {"band": "strong", "defects": [], "title": "Organized Challengers Win"},
+    )
+    result = run_shape_check(client, "thesis", _sections())
+    assert result.title == "Organized Challengers Win"
+    assert result.to_json()["title"] == "Organized Challengers Win"
+
+
+@pytest.mark.parametrize(
+    "raw_title",
+    [None, "", "   ", 42, [], {"text": "a title"}],
+    ids=["missing", "empty", "blank", "non-string-int", "non-string-list", "non-string-dict"],
+)
+def test_a_missing_or_unusable_title_falls_back_to_none_without_raising(raw_title):
+    response = {"band": "strong", "defects": []}
+    if raw_title is not None:
+        response["title"] = raw_title
+    band, defects, title = parse_shape_response(json.dumps(response))
+    assert band == "strong"
+    assert title is None

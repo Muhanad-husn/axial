@@ -614,6 +614,61 @@ def test_the_rendered_output_is_byte_identical_but_for_the_added_shape_block(
     assert stripped == without_shape
 
 
+def test_the_shape_checks_title_becomes_the_rendered_title(tmp_path, analyses_dir, lenses_dir):
+    """Issue #712: the shape check names the finished paper, and the
+    renderer's `#` title uses it when the brief carries no override."""
+    record, _ = _run(
+        tmp_path,
+        analyses_dir,
+        lenses_dir,
+        shape={"band": "strong", "defects": [], "title": "Organized Challengers Win"},
+    )
+    assert record["shape"]["title"] == "Organized Challengers Win"
+    rendered = render_paper(record)
+    assert rendered.startswith("# Organized Challengers Win\n")
+
+
+def test_a_missing_shape_title_falls_back_to_the_plans_thesis_statement(
+    tmp_path, analyses_dir, lenses_dir
+):
+    """No brief title and no usable shape title: the renderer falls back to
+    the plan's own thesis statement rather than raising or leaving `shape`
+    unusable (issue #712)."""
+    record, _ = _run(tmp_path, analyses_dir, lenses_dir)  # SHAPE_RESPONSE carries no title
+    assert record["shape"]["title"] is None
+    rendered = render_paper(record)
+    assert rendered.startswith(f"# {PLAN['thesis_statement']}\n")
+
+
+def test_a_brief_supplied_title_beats_the_shape_checks_generated_one(
+    tmp_path, analyses_dir, lenses_dir
+):
+    """An explicit human override in the brief always wins (§7.10)."""
+    client = StubClient(
+        PLAN,
+        list(DRAFTS),
+        shape={"band": "strong", "defects": [], "title": "Organized Challengers Win"},
+    )
+    brief = PaperBrief(
+        paper_brief_id="pb-test",
+        thesis="Which account explains the outcome?",
+        analysis_ids=("brief-a", "brief-b"),
+        lens="state-formation",
+        title="The Founder's Own Title",
+    )
+    record = run_paper(
+        client,
+        brief,
+        analyses_dir=analyses_dir,
+        lenses_dir=lenses_dir,
+        source_meta_dir=tmp_path / "source_meta",
+        papers_dir=tmp_path / "papers",
+    )
+    assert record["shape"]["title"] == "Organized Challengers Win"
+    rendered = render_paper(record)
+    assert rendered.startswith("# The Founder's Own Title\n")
+
+
 def test_the_lens_reaches_the_model_with_its_description(tmp_path, analyses_dir, lenses_dir):
     """§0: a lens is not a filename."""
     _, client = _run(tmp_path, analyses_dir, lenses_dir)

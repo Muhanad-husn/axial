@@ -64,6 +64,19 @@ while a copied sentence or citation block, which is what the six drafts were
 actually flagged for, is many multiples of that length and matches exactly.
 This is a measurement, not a gate: it reports onto `shape.repetition` and
 never blocks, exactly like the band above.
+
+**It also names the paper, at zero additional cost, issue #712.** This is
+the only pass that reads the whole drafted paper, already runs on a model
+guaranteed different from the drafter, and already returns structured JSON
+-- so asking it for a title is one more field on a call already being made,
+not a new pass. `compose_shape_prompt` asks for the title last, after `band`
+and `defects`, so it cannot displace the section-by-section-before-band
+ordering issue #600 measured. `parse_shape_response` parses it leniently: a
+missing, blank, non-string, or otherwise unusable title yields `None` and
+never raises -- a title is not worth turning a graded paper into a failed
+run. The rendered paper's own title precedence (`axial.paper.render._title`)
+tries a brief-supplied override first, this field second, and falls
+through to the thesis when both are absent.
 """
 
 from __future__ import annotations
@@ -194,13 +207,17 @@ class ShapeResult:
     `None` when the client cannot report per-pass usage (mirrors
     `axial.llm.estimate_cost`'s own null-for-unpriced convention -- never a
     fabricated zero). `repetition` (issue #700) is mechanical, computed with
-    zero model calls -- see `compute_repetition` above."""
+    zero model calls -- see `compute_repetition` above. `title` (issue #712)
+    is the check's own naming of the finished paper, `None` when the judge's
+    response carried no usable one -- the renderer falls back further from
+    there (`axial.paper.render._title`), never raising on a missing title."""
 
     band: str
     defects: tuple[ShapeDefect, ...]
     model: str
     cost: float | None
     repetition: RepetitionResult
+    title: str | None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -209,6 +226,7 @@ class ShapeResult:
             "model": self.model,
             "cost": self.cost,
             "repetition": self.repetition.to_json(),
+            "title": self.title,
         }
 
 
@@ -244,14 +262,22 @@ Before naming a band, work through EVERY section against its own bar above: for 
 
 Only after that section-by-section review, return a band -- "strong", "adequate", or "weak" -- for the paper as a whole. If the band is not "strong", you MUST name at least one defect: which section_id failed its role and, in one sentence, what went wrong. A "weak" or "adequate" verdict naming no defects is not a valid answer.
 
+Finally, title the paper: 5-7 words naming what it actually argues -- its answer to the thesis above, drawn from the prose you just read, not the thesis restated verbatim. No subtitle, no colon-clause, no trailing period.
+
 Return JSON only, in this order:
-{{"section_review": [{{"section_id": "s1", "meets_bar": true, "reason": "..."}}, ...one entry per section...], "band": "strong", "defects": [{{"section_id": "s2", "note": "..."}}]}}"""
+{{"section_review": [{{"section_id": "s1", "meets_bar": true, "reason": "..."}}, ...one entry per section...], "band": "strong", "defects": [{{"section_id": "s2", "note": "..."}}], "title": "..."}}"""
 
 
-def parse_shape_response(raw: str) -> tuple[str, list[ShapeDefect]]:
+def parse_shape_response(raw: str) -> tuple[str, list[ShapeDefect], str | None]:
     """Parse and validate one shape-check response. A band below `strong`
     with an empty (or missing) `defects` list is a parse error, not a pass
-    (§7.16, issue #578 acceptance criterion 3)."""
+    (§7.16, issue #578 acceptance criterion 3).
+
+    `title` is parsed leniently and never raises: a missing, blank,
+    non-string, or otherwise unusable title yields `None` rather than
+    failing the whole check. The shape check reports and never blocks
+    (§7.16); a title is not worth turning a graded paper into a failed run.
+    """
     parsed = parse_model_json(raw)
     if not isinstance(parsed, dict):
         raise ShapeParseError(f"expected an object, got {type(parsed).__name__}")
@@ -278,7 +304,11 @@ def parse_shape_response(raw: str) -> tuple[str, list[ShapeDefect]]:
             "least one section_id and what went wrong"
         )
 
-    return str(band), defects
+    raw_title = parsed.get("title")
+    title = raw_title.strip() if isinstance(raw_title, str) else ""
+    title = title or None
+
+    return str(band), defects, title
 
 
 def run_shape_check(
@@ -301,7 +331,7 @@ def run_shape_check(
 
     prompt = compose_shape_prompt(thesis_statement, sections)
     raw = complete_json(client, prompt, pass_name=judge_pass_name)
-    band, defects = parse_shape_response(raw)
+    band, defects, title = parse_shape_response(raw)
     repetition = compute_repetition(sections)
 
     usage_for_pass = getattr(client, "usage_for_pass", None)
@@ -315,5 +345,10 @@ def run_shape_check(
     )
 
     return ShapeResult(
-        band=band, defects=tuple(defects), model=judge_model, cost=cost, repetition=repetition
+        band=band,
+        defects=tuple(defects),
+        model=judge_model,
+        cost=cost,
+        repetition=repetition,
+        title=title,
     )
