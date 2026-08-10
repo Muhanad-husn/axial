@@ -39,11 +39,25 @@ the run's own record -- never from a hand-picked constant:
   idle-and-empty for longer than its own cadence. So `overdue` is the
   conjunction: quiet past the run's own cadence AND nothing in flight.
 
-- **Spend** is read from the end-of-run `report.json`'s `tokens_and_cost`
-  and is `None` whenever that file does not exist yet or its `total_usd` is
-  null. A live run's spend is genuinely not on disk (`axial.run` accumulates
-  it on the in-process client), and a fabricated estimate would be worse
-  than a blank.
+- **Spend** (issue #734, precedence revised by #738). `run.jsonl`'s own
+  per-record `usd` field (`axial.runlog.RunHandle.record`'s issue #734
+  addition) wins whenever at least one record has priced -- summed straight
+  off the log, the same number a live run's own progress line already
+  prints, now readable from a second process too, and (issue #738 defect 2)
+  the PROVIDER'S OWN charge per source when it reported one, not
+  `estimate_cost`'s price-table figure. A record whose `usd` is `null` (a
+  model-bearing call whose response carried no `usage` object, or an
+  unpriced model) is excluded from the sum, never coerced to zero.
+  `spend_partial` is `True` exactly when the sum is real but incomplete --
+  at least one model-bearing record's own `usd` is unknown -- so the
+  aggregate itself reads as qualified rather than a confident total.
+
+  `report.json`'s `tokens_and_cost.total_usd` (`axial.llm
+  .usage_and_cost_by_pass`, still `estimate_cost`-only -- issue #738 did not
+  touch it) is the fallback, used only when no record has priced at all --
+  a run directory from before issue #734 added the per-record fields, most
+  concretely. Records win over the report whenever they can, because they
+  are now the more accurate number, not merely the live one.
 """
 
 from __future__ import annotations
@@ -122,6 +136,7 @@ class RunSnapshot:
     workers: int | None
     effective_concurrency: float | None
     spend_usd: float | None
+    spend_partial: bool
     passes: list[PassRow]
     quiet: Quiet | None
     report: dict[str, Any] | None
@@ -206,12 +221,34 @@ def _pass_rows(records: list[dict[str, Any]], events: list[dict[str, Any]]) -> l
     return rows
 
 
-def _spend_usd(report: dict[str, Any] | None) -> float | None:
+def _spend_from_report(report: dict[str, Any] | None) -> float | None:
     if not report:
         return None
     tokens_and_cost = report.get("tokens_and_cost") or {}
     total = tokens_and_cost.get("total_usd")
     return float(total) if isinstance(total, (int, float)) else None
+
+
+def _spend_from_records(records: list[dict[str, Any]]) -> tuple[float | None, bool]:
+    """This run's own spend, summed straight from `run.jsonl`'s per-record
+    `usd` field (issue #734) -- the live-run path (module docstring). Every
+    record whose `usd` is not a real number is excluded from the sum rather
+    than treated as zero; the sum itself is `None` when no record has
+    priced. `partial` is `True` when a model-bearing record's `usd` is
+    unknown alongside at least one that IS known -- a real but incomplete
+    total, distinguished from "no spend data at all". A record's `model`
+    is populated whenever `axial.run` observed a real call for it
+    (`calls_for_pass` moved, `_source_usage_and_cost`), so this also catches
+    the case the issue is about: a call whose response carried no `usage`
+    object reads as `model` set, `usd: null` -- exactly what fires
+    `partial` here, never a silent `$0.00`."""
+    known = [record["usd"] for record in records if isinstance(record.get("usd"), (int, float))]
+    partial = any(
+        record.get("model") is not None and not isinstance(record.get("usd"), (int, float))
+        for record in records
+    )
+    total = sum(known) if known else None
+    return total, (partial and total is not None)
 
 
 def _read_report(run_dir: Path) -> dict[str, Any] | None:
@@ -296,6 +333,18 @@ def snapshot(run_dir: Path, *, now: datetime | None = None) -> RunSnapshot:
     report = _read_report(run_dir)
     passes = _pass_rows(view.records, view.events)
 
+    # Issue #738: records win whenever they can price at all -- they now
+    # carry the provider's own real cost, more accurate than
+    # `report.json`'s `estimate_cost`-only total (module docstring). The
+    # report is the fallback, for a run directory old enough to predate
+    # #734's per-record fields.
+    records_total, spend_partial = _spend_from_records(view.records)
+    if records_total is not None:
+        spend_usd = records_total
+    else:
+        spend_usd = _spend_from_report(report)
+        spend_partial = False
+
     return RunSnapshot(
         run_id=str(meta.get("run_id") or run_dir.name),
         status=str(meta.get("status") or "unknown"),
@@ -308,7 +357,8 @@ def snapshot(run_dir: Path, *, now: datetime | None = None) -> RunSnapshot:
         failures=sum(1 for record in view.records if record.get("status") != "ok"),
         workers=int(workers_match.group(1)) if workers_match else None,
         effective_concurrency=(busy_sec / elapsed_sec) if elapsed_sec else None,
-        spend_usd=_spend_usd(report),
+        spend_usd=spend_usd,
+        spend_partial=spend_partial,
         passes=passes,
         quiet=(
             _quiet(

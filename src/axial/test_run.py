@@ -39,6 +39,7 @@ from axial.run import (
     SKIP_STATUS,
     _append_ledger_row,
     _load_done_source_ids,
+    _source_usage_and_cost,
     resolve_corpus_source_paths,
     run_pass,
 )
@@ -49,20 +50,28 @@ class _FakeClient:
     threaded unchanged into every pass invocation) without touching the real
     LLM provider machinery.
 
-    `model_for_pass`/`usage_for_pass` (issue #526): `run_pass` now calls
-    both on whatever client it holds -- to render the live progress line's
-    spend figure, to decide whether a source's own `record()` carries a
-    real model id, and to build the end-of-run report's token/cost totals
-    -- so a client passed to it must satisfy at least this much of the real
+    `model_for_pass`/`usage_for_pass`/`calls_for_pass`/`cost_for_pass` (issue
+    #526, extended by issue #734 and #738): `run_pass` now calls all four on
+    whatever client it holds -- to render the live progress line's spend
+    figure, to decide whether a source's own `record()` carries a real model
+    id, and to build the end-of-run report's token/cost totals -- so a
+    client passed to it must satisfy at least this much of the real
     `LLMClient` protocol even when, as here, it never actually completes
-    anything. `usage_for_pass` returning `None` unconditionally is the same
-    "nothing to report" case a real client reports before its first call
+    anything. `usage_for_pass`/`cost_for_pass` returning `None` and
+    `calls_for_pass` returning `0` unconditionally is the same "nothing to
+    report" case a real client reports before its first call
     (`axial.llm._accumulate_usage`'s own docstring)."""
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         return "fake-model"
 
     def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
+        return None
+
+    def calls_for_pass(self, pass_name: str | None = None) -> int:
+        return 0
+
+    def cost_for_pass(self, pass_name: str | None = None) -> float | None:
         return None
 
 
@@ -867,3 +876,166 @@ def test_empty_corpus_source_set_exits_zero_with_total_zero(tmp_path, monkeypatc
     assert exit_code == 0
     assert summary.total == 0
     assert summary.outcomes == []
+
+
+# --- _source_usage_and_cost (issue #734) -----------------------------------
+#
+# Three cases, resolved from TWO accumulators (`usage_for_pass`,
+# `calls_for_pass`) taken before/after a source's own invocation -- see the
+# function's own docstring for why one accumulator cannot tell them apart.
+
+
+def test_source_usage_and_cost_is_unknown_when_the_pass_has_never_captured_anything():
+    """No call happened for this source (`calls` unchanged) AND the pass has
+    never captured usage at all (`usage_after is None`) -- fully unknown,
+    every field `None`."""
+    prompt, completion, total, usd = _source_usage_and_cost(None, None, None, 0, 0)
+
+    assert (prompt, completion, total, usd) == (None, None, None, None)
+
+
+def test_source_usage_and_cost_no_call_after_other_sources_priced_is_a_real_zero():
+    """Case 1, the other branch: no call happened for THIS source (`calls`
+    unchanged), but the pass DOES have real captured usage from earlier
+    sources -- a real, honest zero, not unknown."""
+    usage = {"prompt_tokens": 1000, "completion_tokens": 200, "total_tokens": 1200}
+
+    prompt, completion, total, usd = _source_usage_and_cost(None, usage, usage, 3, 3)
+
+    assert (prompt, completion, total, usd) == (0, 0, 0, 0.0)
+
+
+def test_source_usage_and_cost_deltas_a_real_call_and_prices_it():
+    """Case 2: calls moved AND usage moved with them -- a real delta,
+    priced."""
+    before = {"prompt_tokens": 1000, "completion_tokens": 200, "total_tokens": 1200}
+    after = {"prompt_tokens": 1100, "completion_tokens": 250, "total_tokens": 1350}
+
+    prompt, completion, total, usd = _source_usage_and_cost("z-ai/glm-5.2", before, after, 3, 4)
+
+    assert (prompt, completion, total) == (100, 50, 150)
+    assert usd == pytest.approx(100 / 1000 * 0.00112 + 50 / 1000 * 0.00352)
+
+
+def test_source_usage_and_cost_first_call_in_the_pass_deltas_against_zero():
+    """`usage_before is None` but `usage_after` is not: this source's own
+    call is the first one this pass has ever captured usage for -- the
+    delta is the full `usage_after` value, not unknown."""
+    after = {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
+
+    prompt, completion, total, usd = _source_usage_and_cost("z-ai/glm-5.2", None, after, 0, 1)
+
+    assert (prompt, completion, total) == (100, 50, 150)
+    assert usd == pytest.approx(100 / 1000 * 0.00112 + 50 / 1000 * 0.00352)
+
+
+def test_source_usage_and_cost_unpriced_model_reports_tokens_but_null_usd():
+    """A model absent from `PRICE_TABLE_USD_PER_1K` still reports real token
+    counts -- `estimate_cost` itself returns `None` for the price, never a
+    silent zero standing in for "nobody has priced this model yet"."""
+    before = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    after = {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
+
+    prompt, completion, total, usd = _source_usage_and_cost(
+        "some/unpriced-model", before, after, 0, 1
+    )
+
+    assert (prompt, completion, total) == (100, 50, 150)
+    assert usd is None
+
+
+def test_source_usage_and_cost_a_call_with_no_usage_object_is_visibly_missing_not_free():
+    """Case 3, the issue's own subject: a call happened for this source
+    (`calls` moved) but its response carried no `usage` object, so
+    `usage_after == usage_before` -- tokens and `usd` must read `None`
+    (visibly missing), never a fabricated zero standing in for "nothing was
+    spent"."""
+    usage = {"prompt_tokens": 1000, "completion_tokens": 200, "total_tokens": 1200}
+
+    prompt, completion, total, usd = _source_usage_and_cost(
+        "z-ai/glm-5.2", usage, usage, calls_before=3, calls_after=4
+    )
+
+    assert (prompt, completion, total, usd) == (None, None, None, None)
+
+
+def test_source_usage_and_cost_a_first_ever_call_with_no_usage_object_is_also_missing():
+    """The same case 3, but as the very first call this pass has ever
+    attempted -- `usage_before` and `usage_after` are both `None`, so they
+    are equal too. Still a real call (`calls` moved), still visibly
+    missing, not the "pass has captured nothing at all" unknown of case
+    1 -- distinguished from it purely by `calls_for_pass` having moved."""
+    prompt, completion, total, usd = _source_usage_and_cost(
+        "z-ai/glm-5.2", None, None, calls_before=0, calls_after=1
+    )
+
+    assert (prompt, completion, total, usd) == (None, None, None, None)
+
+
+# --- _source_usage_and_cost real cost (issue #738 defect 2) ----------------
+#
+# The provider's own `cost_for_pass` delta wins over `estimate_cost` whenever
+# the provider has reported a real cost for the pass at all; `estimate_cost`
+# is the fallback, not the default, once real numbers exist.
+
+
+def test_source_usage_and_cost_prefers_the_providers_real_cost_over_the_estimate():
+    before = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    after = {"prompt_tokens": 11, "completion_tokens": 6, "total_tokens": 17}
+
+    prompt, completion, total, usd = _source_usage_and_cost(
+        "deepseek/deepseek-v4-pro",
+        before,
+        after,
+        calls_before=0,
+        calls_after=1,
+        cost_before=None,
+        cost_after=2.001e-05,
+    )
+
+    assert (prompt, completion, total) == (11, 6, 17)
+    # The real charge, not `estimate_cost("deepseek/deepseek-v4-pro", 11, 6)`
+    # -- measured 0.50x of it for this exact call (issue #738 defect 2).
+    assert usd == pytest.approx(2.001e-05)
+
+
+def test_source_usage_and_cost_deltas_the_providers_real_cost_across_sources():
+    """A second source in the same pass: the real cost delta, not the
+    running total -- mirrors the token delta exactly."""
+    usage_before = {"prompt_tokens": 11, "completion_tokens": 6, "total_tokens": 17}
+    usage_after = {"prompt_tokens": 22, "completion_tokens": 31, "total_tokens": 53}
+
+    prompt, completion, total, usd = _source_usage_and_cost(
+        "deepseek/deepseek-v4-pro",
+        usage_before,
+        usage_after,
+        calls_before=1,
+        calls_after=2,
+        cost_before=2.001e-05,
+        cost_after=2.001e-05 + 2.57725e-05,
+    )
+
+    assert (prompt, completion, total) == (11, 25, 36)
+    assert usd == pytest.approx(2.57725e-05)
+
+
+def test_source_usage_and_cost_falls_back_to_the_estimate_when_the_provider_reports_no_cost():
+    """`cost_after is None`: no response for this pass has ever reported a
+    real cost (a stub/record client, or a real provider response missing
+    `usage.cost`) -- `estimate_cost` is the fallback, exactly the behavior
+    before issue #738 defect 2."""
+    before = {"prompt_tokens": 1000, "completion_tokens": 200, "total_tokens": 1200}
+    after = {"prompt_tokens": 1100, "completion_tokens": 250, "total_tokens": 1350}
+
+    prompt, completion, total, usd = _source_usage_and_cost(
+        "z-ai/glm-5.2",
+        before,
+        after,
+        calls_before=3,
+        calls_after=4,
+        cost_before=None,
+        cost_after=None,
+    )
+
+    assert (prompt, completion, total) == (100, 50, 150)
+    assert usd == pytest.approx(100 / 1000 * 0.00112 + 50 / 1000 * 0.00352)

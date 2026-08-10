@@ -694,26 +694,78 @@ def usage_and_cost_by_pass(client: LLMClient, model_by_pass: dict[str, str]) -> 
 
 
 def _accumulate_usage(
-    store: dict[str | None, dict[str, int]], pass_name: str | None, usage: dict[str, Any] | None
+    calls_store: dict[str | None, int],
+    usage_store: dict[str | None, dict[str, int]],
+    cost_store: dict[str | None, float],
+    pass_name: str | None,
+    usage: dict[str, Any] | None,
 ) -> None:
     """Fold one completion call's `usage` object (issue #363) into
-    `store[pass_name]` in place, creating the entry on first use. `usage`
-    absent/falsy (a malformed response, or a test client with nothing to
-    report) is a silent no-op -- `usage_for_pass` then correctly reports
-    `None` for a pass no call ever supplied tokens for, never a fabricated
-    zero. Shared by every `LLMClient` implementation in this module so
-    `usage_for_pass`'s accumulation semantics never drift between them."""
+    `usage_store[pass_name]` in place, creating the entry on first use.
+    `usage` absent/falsy (a malformed response, or a test client with
+    nothing to report) leaves `usage_store` untouched -- `usage_for_pass`
+    then correctly reports `None` for a pass no call ever supplied tokens
+    for, never a fabricated zero.
+
+    `calls_store[pass_name]` (issue #734) is incremented on EVERY call this
+    is invoked for, including the falsy-`usage` ones the block above skips
+    -- this is the one call site every real completion (and the stub/record
+    clients' canned one) already passes through with its own `pass_name`,
+    which is what makes it the single choke point to count from, rather
+    than a second counter each `.complete()`/`.complete_with_tools()`
+    maintains by hand. `calls_for_pass` (exposed by every `LLMClient`
+    below) is what lets a caller (`axial.run._source_usage_and_cost`)
+    distinguish "no call happened for this source" (calls unchanged) from
+    "a call happened but its response carried no `usage` object" (calls
+    moved, usage did not) -- an ambiguity `usage_for_pass` alone cannot
+    resolve, since both look identical to it.
+
+    `cost_store[pass_name]` (issue #738 defect 2) sums the PROVIDER'S OWN
+    `usage["cost"]` when the response reports one -- a real OpenRouter
+    response already carries its own exact charge on this same object
+    (measured: `estimate_cost`'s price-table estimate landed anywhere from
+    3% high to 100% low per call against it, a per-request floor the table
+    does not model, not a stale price). `cost_for_pass` is `None` until a
+    response for `pass_name` has actually reported a `cost` -- the same
+    "unmeasured, not free" rule `usage_for_pass` already follows, so a
+    caller (`axial.run._source_usage_and_cost`) falls back to
+    `estimate_cost` only when the provider genuinely never told it.
+
+    Shared by every `LLMClient` implementation in this module so none of
+    these three accumulations' semantics ever drift between them."""
+    calls_store[pass_name] = calls_store.get(pass_name, 0) + 1
     if not usage:
         return
     prompt_tokens = int(usage.get("prompt_tokens") or 0)
     completion_tokens = int(usage.get("completion_tokens") or 0)
     total_tokens = int(usage.get("total_tokens") or (prompt_tokens + completion_tokens))
-    entry = store.setdefault(
+    entry = usage_store.setdefault(
         pass_name, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     )
     entry["prompt_tokens"] += prompt_tokens
     entry["completion_tokens"] += completion_tokens
     entry["total_tokens"] += total_tokens
+    cost = usage.get("cost")
+    if isinstance(cost, (int, float)):
+        cost_store[pass_name] = cost_store.get(pass_name, 0.0) + float(cost)
+
+
+def _usage_snapshot(
+    store: dict[str | None, dict[str, int]], pass_name: str | None
+) -> dict[str, int] | None:
+    """A COPY of `store[pass_name]`, never the live dict `_accumulate_usage`
+    mutates in place (issue #738 defect 1). Every `usage_for_pass`
+    implementation below must return through this, not `store.get
+    (pass_name)` directly -- returning the live dict means a caller's own
+    "before" snapshot (`axial.run.run_pass`'s `usage_before`) silently
+    aliases the "after" one the moment the accumulator moves for the SAME
+    pass again, which reads as "no call happened" for every source past
+    the first. This predates issue #734 -- the `model = ... if usage_after
+    != usage_before else None` line it replaced had the identical bug, so
+    every shipped run log has recorded `model: null` for every source past
+    a pass's first."""
+    entry = store.get(pass_name)
+    return dict(entry) if entry is not None else None
 
 
 # Per-pass best-of-N voting (DEC-31, issue #294): how many times a pass draws
@@ -1022,6 +1074,29 @@ class LLMClient(Protocol):
         it calls this interface."""
         ...
 
+    def calls_for_pass(self, pass_name: str | None = None) -> int:
+        """Return how many `.complete()`/`.complete_with_tools()` calls this
+        client has made for `pass_name` so far, `0` when none yet (issue
+        #734). Counts every call, including one whose response carried no
+        `usage` object -- unlike `usage_for_pass`, which stays blind to
+        that call entirely. This is what lets a caller tell "no call
+        happened" (this count unchanged) apart from "a call happened but
+        reported no usage" (this count moved, `usage_for_pass` did not) --
+        see `axial.llm._accumulate_usage`, the one place both accumulators
+        are folded in together."""
+        ...
+
+    def cost_for_pass(self, pass_name: str | None = None) -> float | None:
+        """Return the provider's own accumulated dollar cost for `pass_name`
+        so far -- the real `usage["cost"]` field summed across every call
+        that reported one (issue #738 defect 2), or `None` when no response
+        for `pass_name` has reported a cost yet. This is the ground truth a
+        caller (`axial.run._source_usage_and_cost`) prefers over
+        `axial.llm.estimate_cost`'s price-table estimate, falling back to
+        that estimate only when the provider genuinely never supplied a
+        real number."""
+        ...
+
     def complete_with_tools(
         self, prompt: str, tools: list[dict[str, Any]], pass_name: str | None = None
     ) -> dict[str, Any] | None:
@@ -1115,6 +1190,15 @@ class StubLLMClient:
         # reports the same fixed `_STUB_USAGE_PER_CALL` (see its own
         # comment), folded in via the shared `_accumulate_usage` helper.
         self._usage_by_pass: dict[str | None, dict[str, int]] = {}
+        # Issue #734: per-pass call counter, folded in by the same
+        # `_accumulate_usage` call -- see `calls_for_pass`'s own docstring.
+        self._calls_by_pass: dict[str | None, int] = {}
+        # Issue #738 defect 2: per-pass accumulated real cost. Always empty
+        # for this client -- `_STUB_USAGE_PER_CALL` carries no `cost` key,
+        # there being no real model behind this client to charge for
+        # anything -- so `cost_for_pass` stays `None` and a caller falls
+        # back to `estimate_cost`, exactly as before this issue.
+        self._cost_usd_by_pass: dict[str | None, float] = {}
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         # Locked (see `_stub_dispatch_lock`'s own comment): `call_count` and
@@ -1123,7 +1207,13 @@ class StubLLMClient:
         # at once.
         with _stub_dispatch_lock:
             self.call_count += 1
-            _accumulate_usage(self._usage_by_pass, pass_name, _STUB_USAGE_PER_CALL)
+            _accumulate_usage(
+                self._calls_by_pass,
+                self._usage_by_pass,
+                self._cost_usd_by_pass,
+                pass_name,
+                _STUB_USAGE_PER_CALL,
+            )
             return _canned_response_for(pass_name)
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
@@ -1140,8 +1230,21 @@ class StubLLMClient:
         `pass_name` (issue #363) -- there is no real model behind this
         client, but the accumulation mechanism itself (summing across every
         call tagged with `pass_name`) is exercised exactly as it would be
-        under a real provider, e.g. the retrieval loop's several turns."""
-        return self._usage_by_pass.get(pass_name)
+        under a real provider, e.g. the retrieval loop's several turns.
+        Returns a COPY (`_usage_snapshot`, issue #738 defect 1) -- never the
+        live dict `_accumulate_usage` mutates in place."""
+        return _usage_snapshot(self._usage_by_pass, pass_name)
+
+    def calls_for_pass(self, pass_name: str | None = None) -> int:
+        """Mirrors `usage_for_pass`'s own accumulation, from the same
+        `_calls_by_pass` store `_accumulate_usage` folds into (issue
+        #734)."""
+        return self._calls_by_pass.get(pass_name, 0)
+
+    def cost_for_pass(self, pass_name: str | None = None) -> float | None:
+        """Always `None` (issue #738 defect 2) -- see `self._cost_usd_by_pass`'s
+        own comment."""
+        return self._cost_usd_by_pass.get(pass_name)
 
     def complete_with_tools(
         self, prompt: str, tools: list[dict[str, Any]], pass_name: str | None = None
@@ -1154,7 +1257,13 @@ class StubLLMClient:
             self.call_count += 1
             index = self._tool_call_index
             self._tool_call_index += 1
-            _accumulate_usage(self._usage_by_pass, pass_name, _STUB_USAGE_PER_CALL)
+            _accumulate_usage(
+                self._calls_by_pass,
+                self._usage_by_pass,
+                self._cost_usd_by_pass,
+                pass_name,
+                _STUB_USAGE_PER_CALL,
+            )
         return _scripted_tool_call_for(index)
 
 
@@ -1635,6 +1744,11 @@ class RecordLLMClient:
         # fixed `_STUB_USAGE_PER_CALL`, since `record`'s completion
         # responses are indistinguishable from `stub`'s, module docstring).
         self._usage_by_pass: dict[str | None, dict[str, int]] = {}
+        # Issue #734: mirrors `StubLLMClient._calls_by_pass` exactly.
+        self._calls_by_pass: dict[str | None, int] = {}
+        # Issue #738 defect 2: mirrors `StubLLMClient._cost_usd_by_pass`
+        # exactly -- always empty, same reason.
+        self._cost_usd_by_pass: dict[str | None, float] = {}
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         # Locked (see `_stub_dispatch_lock`'s own comment): `call_count`,
@@ -1647,7 +1761,13 @@ class RecordLLMClient:
             self._record_path.parent.mkdir(parents=True, exist_ok=True)
             with self._record_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(prompt) + "\n")
-            _accumulate_usage(self._usage_by_pass, pass_name, _STUB_USAGE_PER_CALL)
+            _accumulate_usage(
+                self._calls_by_pass,
+                self._usage_by_pass,
+                self._cost_usd_by_pass,
+                pass_name,
+                _STUB_USAGE_PER_CALL,
+            )
             return _canned_response_for(pass_name)
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
@@ -1658,8 +1778,18 @@ class RecordLLMClient:
         return _model_for_pass_from_stub_mapping(pass_name)
 
     def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
-        """Mirrors `StubLLMClient.usage_for_pass` exactly (issue #363)."""
-        return self._usage_by_pass.get(pass_name)
+        """Mirrors `StubLLMClient.usage_for_pass` exactly (issue #363), a
+        copy, never the live dict (issue #738 defect 1)."""
+        return _usage_snapshot(self._usage_by_pass, pass_name)
+
+    def calls_for_pass(self, pass_name: str | None = None) -> int:
+        """Mirrors `StubLLMClient.calls_for_pass` exactly (issue #734)."""
+        return self._calls_by_pass.get(pass_name, 0)
+
+    def cost_for_pass(self, pass_name: str | None = None) -> float | None:
+        """Mirrors `StubLLMClient.cost_for_pass` exactly (issue #738 defect
+        2) -- always `None`."""
+        return self._cost_usd_by_pass.get(pass_name)
 
     def complete_with_tools(
         self, prompt: str, tools: list[dict[str, Any]], pass_name: str | None = None
@@ -1675,7 +1805,13 @@ class RecordLLMClient:
                 handle.write(json.dumps(prompt) + "\n")
             index = self._tool_call_index
             self._tool_call_index += 1
-            _accumulate_usage(self._usage_by_pass, pass_name, _STUB_USAGE_PER_CALL)
+            _accumulate_usage(
+                self._calls_by_pass,
+                self._usage_by_pass,
+                self._cost_usd_by_pass,
+                pass_name,
+                _STUB_USAGE_PER_CALL,
+            )
         return _scripted_tool_call_for(index)
 
 
@@ -1713,6 +1849,16 @@ class ExplodingLLMClient:
     def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
         """Always `None` (issue #363), never raising -- this client never
         completes, so it never has real usage to report."""
+        return None
+
+    def calls_for_pass(self, pass_name: str | None = None) -> int:
+        """Always `0` (issue #734), never raising -- this client never
+        completes, so it never makes a call to count."""
+        return 0
+
+    def cost_for_pass(self, pass_name: str | None = None) -> float | None:
+        """Always `None` (issue #738 defect 2), never raising -- this
+        client never completes, so it never has a real cost to report."""
         return None
 
 
@@ -2091,6 +2237,13 @@ class OpenRouterClient:
         # `_accumulate_usage` from the real `usage` object every OpenRouter
         # response carries (see `.complete()`/`.complete_with_tools()`).
         self._usage_by_pass: dict[str | None, dict[str, int]] = {}
+        # Issue #734: per-pass call counter, folded in by the same
+        # `_accumulate_usage` call -- see `calls_for_pass`'s own docstring.
+        self._calls_by_pass: dict[str | None, int] = {}
+        # Issue #738 defect 2: per-pass accumulated real dollar cost, summed
+        # from the provider's own `usage["cost"]` -- see `cost_for_pass`'s
+        # own docstring.
+        self._cost_usd_by_pass: dict[str | None, float] = {}
         # Follow-up to #362's benchmark sweep: which brief/run this client
         # instance's calls belong to, carried on every `llm_call_request`/
         # `llm_call_response` line (`_log_call_request`/`_log_call_response`)
@@ -2142,8 +2295,37 @@ class OpenRouterClient:
         `_accumulate_usage` from every response's real `usage` object
         (`.complete()`, `.complete_with_tools()`, and the content_filter
         fallback reroute all feed the same accumulator). `None` when no
-        response tagged with `pass_name` has carried a `usage` object yet."""
-        return self._usage_by_pass.get(pass_name)
+        response tagged with `pass_name` has carried a `usage` object yet.
+
+        Returns a COPY (`_usage_snapshot`, issue #738 defect 1) -- the real
+        bug this fixes: `self._usage_by_pass[pass_name]` is a dict
+        `_accumulate_usage` mutates in place, so returning it directly meant
+        a caller's own "before" snapshot silently aliased the "after" one
+        the instant the SAME pass accumulated again, reading as "unchanged"
+        for every source past a pass's first."""
+        return _usage_snapshot(self._usage_by_pass, pass_name)
+
+    def calls_for_pass(self, pass_name: str | None = None) -> int:
+        """How many completion attempts (issue #734) `_accumulate_usage` has
+        counted for `pass_name`, `self._calls_by_pass`'s running total --
+        incremented for EVERY response tagged with `pass_name`, including
+        one whose body carried no `usage` object at all (a real, observed
+        OpenRouter failure mode, not a hypothetical one). `0` when this
+        client has never attempted a call for `pass_name`."""
+        return self._calls_by_pass.get(pass_name, 0)
+
+    def cost_for_pass(self, pass_name: str | None = None) -> float | None:
+        """The provider's own accumulated dollar cost for `pass_name` so far
+        (issue #738 defect 2): `self._cost_usd_by_pass`'s running total,
+        summed by `_accumulate_usage` from every response's real
+        `usage["cost"]` -- the exact charge OpenRouter itself reports,
+        measured against `axial.llm.estimate_cost`'s price-table estimate
+        as anywhere from 3% high to 100% low per call (a per-request floor
+        the table does not model). `None` when no response tagged with
+        `pass_name` has reported a `cost` yet -- the caller
+        (`axial.run._source_usage_and_cost`) falls back to `estimate_cost`
+        only then."""
+        return self._cost_usd_by_pass.get(pass_name)
 
     def _post_with_deadline(
         self,
@@ -2354,7 +2536,13 @@ class OpenRouterClient:
             # of whether it is ultimately retried -- a retried attempt still
             # consumed (and was billed for) real tokens, so undercounting it
             # would understate the run's true dollar cost.
-            _accumulate_usage(self._usage_by_pass, pass_name, data.get("usage"))
+            _accumulate_usage(
+                self._calls_by_pass,
+                self._usage_by_pass,
+                self._cost_usd_by_pass,
+                pass_name,
+                data.get("usage"),
+            )
             try:
                 choice = data["choices"][0]
                 content = choice["message"]["content"]
@@ -2505,7 +2693,13 @@ class OpenRouterClient:
                 continue
             # Issue #363: mirrors `complete()`'s own accumulation -- every
             # real attempt's tokens are billed, retried or not.
-            _accumulate_usage(self._usage_by_pass, pass_name, data.get("usage"))
+            _accumulate_usage(
+                self._calls_by_pass,
+                self._usage_by_pass,
+                self._cost_usd_by_pass,
+                pass_name,
+                data.get("usage"),
+            )
             try:
                 choice = data["choices"][0]
                 message = choice["message"]
@@ -2611,7 +2805,13 @@ class OpenRouterClient:
         # rate even for the rare reroute -- content_filter refusals are a
         # measured <1% event (docs/postmortem/gold-run-2026-07), so a
         # per-(pass, model) cost split is not worth the added bookkeeping.
-        _accumulate_usage(self._usage_by_pass, pass_name, data.get("usage"))
+        _accumulate_usage(
+            self._calls_by_pass,
+            self._usage_by_pass,
+            self._cost_usd_by_pass,
+            pass_name,
+            data.get("usage"),
+        )
         try:
             choice = data["choices"][0]
             content = choice["message"]["content"]

@@ -74,10 +74,77 @@ def test_record_appends_one_json_line_per_call_with_the_locked_keys(tmp_path):
 
     lines = (tmp_path / f"demo-{FIXED_TS}" / "run.jsonl").read_text(encoding="utf-8").strip()
     record = json.loads(lines)
-    assert set(record) == {"source_id", "pass", "model", "status", "duration_sec", "error"}
+    # Issue #734 adds four numeric-only keys ADDITIVE to the locked set --
+    # tokens/cost, never a passage (DEC-23 guard, unmoved). Justified in the
+    # PR body: this is the schema addition the issue asks for, not a drift.
+    assert set(record) == {
+        "source_id",
+        "pass",
+        "model",
+        "status",
+        "duration_sec",
+        "error",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "usd",
+    }
     assert record["source_id"] == "src-1"
     assert record["pass"] == "extract"
     assert record["duration_sec"] == 1.25
+
+
+def test_record_carries_usage_and_cost_when_supplied(tmp_path):
+    """Issue #734: `record()` gains four numeric-only keyword-only fields
+    for a source's own token usage and dollar cost -- an addition to the
+    DEC-23-locked shape, not a loosening of it (still no field that could
+    carry a chunk or source passage)."""
+    with run_context("demo", root=tmp_path, clock=lambda: FIXED_TS) as run:
+        run.record(
+            source_id="src-1",
+            pass_name="interrogate",
+            model="z-ai/glm-5.2",
+            status="ok",
+            duration_sec=2.0,
+            error=None,
+            prompt_tokens=100,
+            completion_tokens=50,
+            total_tokens=150,
+            usd=0.001,
+        )
+
+    record = json.loads(
+        (tmp_path / f"demo-{FIXED_TS}" / "run.jsonl").read_text(encoding="utf-8").strip()
+    )
+    assert record["prompt_tokens"] == 100
+    assert record["completion_tokens"] == 50
+    assert record["total_tokens"] == 150
+    assert record["usd"] == 0.001
+
+
+def test_record_usage_and_cost_default_to_null_when_not_supplied(tmp_path):
+    """Every existing single-source CLI caller (`extract`, `envelope`,
+    `tag`, `eval`, ...) keeps calling `record()` exactly as before -- issue
+    #734 must not force them to start reporting a number they never
+    measured. `null` here means "not measured by this call site", never a
+    fabricated zero."""
+    with run_context("demo", root=tmp_path, clock=lambda: FIXED_TS) as run:
+        run.record(
+            source_id="src-1",
+            pass_name="extract",
+            model=None,
+            status="ok",
+            duration_sec=1.0,
+            error=None,
+        )
+
+    record = json.loads(
+        (tmp_path / f"demo-{FIXED_TS}" / "run.jsonl").read_text(encoding="utf-8").strip()
+    )
+    assert record["prompt_tokens"] is None
+    assert record["completion_tokens"] is None
+    assert record["total_tokens"] is None
+    assert record["usd"] is None
 
 
 def test_record_with_model_none_serializes_as_json_null(tmp_path):

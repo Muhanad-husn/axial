@@ -160,11 +160,236 @@ def test_a_live_run_keeping_its_own_cadence_is_not_overdue(
 
 
 def test_a_finished_run_has_no_quiet_band(finished_run: Path) -> None:
+    """`finished_run`'s records carry no `usd` field at all (they predate
+    issue #734's schema addition), so this also pins the fallback half of
+    issue #738's precedence flip: `report.json`'s total is still read when
+    the records have nothing to sum."""
     snap = monitor.snapshot(finished_run)
 
     assert snap.alive is False
     assert snap.quiet is None
     assert snap.spend_usd == pytest.approx(1.25)
+    assert snap.spend_partial is False
+
+
+def test_a_finished_run_prefers_the_records_real_cost_over_the_reports_estimate(
+    logs_root: Path, now: datetime, write_run_dir
+) -> None:
+    """Issue #738: once a run carries per-record `usd`, that sum is the more
+    accurate number (the provider's own real cost) -- it must win over
+    `report.json`'s `estimate_cost`-only total even for a FINISHED run, not
+    only a live one."""
+    run_dir = write_run_dir(
+        logs_root,
+        "run-envelope-finished",
+        status="ok",
+        started_at=now - timedelta(minutes=10),
+        finished_at=now - timedelta(minutes=1),
+        command="axial run envelope --corpus --workers 4",
+        records=[
+            {
+                "source_id": "src-a",
+                "pass": "envelope",
+                "model": "deepseek/deepseek-v4-pro",
+                "status": "ok",
+                "duration_sec": 30.0,
+                "error": None,
+                "prompt_tokens": 11,
+                "completion_tokens": 6,
+                "total_tokens": 17,
+                "usd": 2.001e-05,
+            }
+        ],
+        # A deliberately different, ESTIMATE-based total -- the number
+        # `report.json` would carry from `usage_and_cost_by_pass`, unchanged
+        # by issue #738. The record's real cost above must win over it.
+        report={"tokens_and_cost": {"total_usd": 1.0005e-05}},
+    )
+
+    snap = monitor.snapshot(run_dir)
+
+    assert snap.spend_usd == pytest.approx(2.001e-05)
+    assert snap.spend_partial is False
+
+
+def test_a_live_run_reads_spend_straight_from_run_jsonl_records(
+    logs_root: Path, now: datetime, write_run_dir
+) -> None:
+    """Issue #734: `report.json` does not exist until a run finishes, so a
+    live run's spend has to come from `run.jsonl`'s own per-record `usd`
+    field -- the thing the console showed `n/a` for on every real run
+    before this."""
+    run_dir = write_run_dir(
+        logs_root,
+        "run-interrogate-live",
+        status="running",
+        started_at=now - timedelta(seconds=120),
+        heartbeat_at=now - timedelta(seconds=2),
+        command="axial run interrogate --corpus --workers 4",
+        records=[
+            {
+                "source_id": "src-a",
+                "pass": "interrogate",
+                "model": "z-ai/glm-5.2",
+                "status": "ok",
+                "duration_sec": 60.0,
+                "error": None,
+                "prompt_tokens": 1000,
+                "completion_tokens": 200,
+                "total_tokens": 1200,
+                "usd": 0.5,
+            },
+            {
+                "source_id": "src-b",
+                "pass": "interrogate",
+                "model": "z-ai/glm-5.2",
+                "status": "ok",
+                "duration_sec": 60.0,
+                "error": None,
+                "prompt_tokens": 1000,
+                "completion_tokens": 200,
+                "total_tokens": 1200,
+                "usd": 0.75,
+            },
+        ],
+    )
+
+    snap = monitor.snapshot(run_dir)
+
+    assert snap.spend_usd == pytest.approx(1.25)
+    assert snap.spend_partial is False
+
+
+def test_a_live_run_with_an_unpriced_record_reads_as_a_partial_sum(
+    logs_root: Path, now: datetime, write_run_dir
+) -> None:
+    """A model-bearing record whose own `usd` is null (an unpriced model, or
+    a response with no `usage` object) must not be treated as zero and
+    silently folded into the sum -- the aggregate itself has to read as
+    incomplete, not a confident total."""
+    run_dir = write_run_dir(
+        logs_root,
+        "run-interrogate-partial",
+        status="running",
+        started_at=now - timedelta(seconds=120),
+        heartbeat_at=now - timedelta(seconds=2),
+        command="axial run interrogate --corpus --workers 4",
+        records=[
+            {
+                "source_id": "src-a",
+                "pass": "interrogate",
+                "model": "z-ai/glm-5.2",
+                "status": "ok",
+                "duration_sec": 60.0,
+                "error": None,
+                "prompt_tokens": 1000,
+                "completion_tokens": 200,
+                "total_tokens": 1200,
+                "usd": 0.5,
+            },
+            {
+                "source_id": "src-b",
+                "pass": "interrogate",
+                "model": "some/unpriced-model",
+                "status": "ok",
+                "duration_sec": 60.0,
+                "error": None,
+                "prompt_tokens": 900,
+                "completion_tokens": 150,
+                "total_tokens": 1050,
+                "usd": None,
+            },
+        ],
+    )
+
+    snap = monitor.snapshot(run_dir)
+
+    assert snap.spend_usd == pytest.approx(0.5)
+    assert snap.spend_partial is True
+
+
+def test_a_live_run_with_no_priced_records_reads_spend_as_n_a(
+    logs_root: Path, now: datetime, write_run_dir
+) -> None:
+    """A pass that never touches the LLM (e.g. `chunk`) writes records with
+    `usd: null` throughout -- the sum must read `None` (n/a), not a
+    fabricated `$0.00`."""
+    run_dir = write_run_dir(
+        logs_root,
+        "run-chunk-live",
+        status="running",
+        started_at=now - timedelta(seconds=60),
+        heartbeat_at=now - timedelta(seconds=2),
+        command="axial run chunk --corpus --workers 4",
+        records=[
+            {
+                "source_id": "src-a",
+                "pass": "chunk",
+                "model": None,
+                "status": "ok",
+                "duration_sec": 30.0,
+                "error": None,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "total_tokens": None,
+                "usd": None,
+            }
+        ],
+    )
+
+    snap = monitor.snapshot(run_dir)
+
+    assert snap.spend_usd is None
+    assert snap.spend_partial is False
+
+
+def test_a_call_with_no_usage_object_reads_as_partial_not_free(
+    logs_root: Path, now: datetime, write_run_dir
+) -> None:
+    """The issue's own subject: a call happened for `src-b` (`axial.run`
+    reports its real `model`, per `calls_for_pass` moving) but the response
+    carried no `usage` object, so `usd` is `null` -- this must fire
+    `spend_partial`, exactly like an unpriced model does, and must not read
+    as `src-b` having cost nothing."""
+    run_dir = write_run_dir(
+        logs_root,
+        "run-interrogate-missing-usage",
+        status="running",
+        started_at=now - timedelta(seconds=120),
+        heartbeat_at=now - timedelta(seconds=2),
+        command="axial run interrogate --corpus --workers 4",
+        records=[
+            {
+                "source_id": "src-a",
+                "pass": "interrogate",
+                "model": "z-ai/glm-5.2",
+                "status": "ok",
+                "duration_sec": 60.0,
+                "error": None,
+                "prompt_tokens": 1000,
+                "completion_tokens": 200,
+                "total_tokens": 1200,
+                "usd": 0.5,
+            },
+            {
+                "source_id": "src-b",
+                "pass": "interrogate",
+                "model": "z-ai/glm-5.2",
+                "status": "ok",
+                "duration_sec": 60.0,
+                "error": None,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "total_tokens": None,
+                "usd": None,
+            },
+        ],
+    )
+
+    snap = monitor.snapshot(run_dir)
+
+    assert snap.spend_usd == pytest.approx(0.5)
+    assert snap.spend_partial is True
 
 
 def test_pass_rows_read_their_total_from_the_run_s_own_progress_detail(

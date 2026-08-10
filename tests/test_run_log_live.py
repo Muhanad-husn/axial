@@ -171,6 +171,13 @@ def test_run_pass_writes_the_run_log_seam_with_live_progress_and_a_report(isolat
         assert record["status"] == "ok"
         assert record["error"] is None
         assert isinstance(record["duration_sec"], (int, float)) and record["duration_sec"] >= 0
+        # Issue #734: `chunk` is LLM-free by design (module docstring), so
+        # this pass never captures usage at all -- every new field reads as
+        # unmeasured (`None`), never a fabricated zero.
+        assert record["prompt_tokens"] is None
+        assert record["completion_tokens"] is None
+        assert record["total_tokens"] is None
+        assert record["usd"] is None
 
     # --- report.json: the end-of-run report, re-readable after the fact ---
     report = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
@@ -219,3 +226,52 @@ def test_run_pass_records_a_real_model_id_when_a_source_actually_calls_the_llm(
     assert record["source_id"] == source_id
     assert record["status"] == "ok"
     assert record["model"] == "stub", "expected the stub provider's real model id, not null"
+    # Issue #734: the stub client's fixed per-call usage
+    # (`axial.llm._STUB_USAGE_PER_CALL`) round-trips as this source's own
+    # token counts. `"stub"` carries no `PRICE_TABLE_USD_PER_1K` entry, so
+    # `usd` is null -- real tokens, an honestly unpriced cost, never a
+    # silent $0.00 standing in for "nobody has priced this model".
+    assert record["prompt_tokens"] == 100
+    assert record["completion_tokens"] == 50
+    assert record["total_tokens"] == 150
+    assert record["usd"] is None
+
+
+def test_run_pass_records_real_tokens_for_every_source_not_only_the_first(
+    isolated_vault_root,
+):
+    """Issue #738 defect 1's exact reproduction: TWO envelope sources
+    through ONE client. Before the fix, `usage_for_pass` returned the live
+    accumulator dict, so the "before" snapshot for source 2 silently
+    aliased its "after" one and every field after the first source recorded
+    `null` -- exactly what the real-corpus validation against this branch
+    caught (`data/logs/2026-08-11-runlog-spend-734/summary.md`). Every
+    existing single-source envelope test above this one passed throughout
+    that bug's lifetime -- it can only be seen with a second source."""
+    root = isolated_vault_root
+    source_id_1 = _place_tree_fixture(SOURCE_1_OK, SOURCE_1_TREE, root)
+    source_id_2 = _place_tree_fixture(SOURCE_2_OK, SOURCE_2_TREE, root)
+
+    worklist_path = root / "worklist.txt"
+    _write_worklist(worklist_path, [SOURCE_1_OK, SOURCE_2_OK])
+
+    result = _run_axial(["run", "envelope", "--worklist", str(worklist_path)], "stub", cwd=root)
+
+    assert result.returncode == 0, (
+        f"expected exit 0, got {result.returncode}\n"
+        f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+    )
+
+    run_dir = _find_run_dir("envelope")
+    records = _read_jsonl(run_dir / "run.jsonl")
+    assert len(records) == 2
+    records_by_source = {record["source_id"]: record for record in records}
+
+    for source_id in (source_id_1, source_id_2):
+        record = records_by_source[source_id]
+        assert record["model"] == "stub", (
+            f"{source_id}: expected the stub provider's real model id, not null"
+        )
+        assert record["prompt_tokens"] == 100, f"{source_id}: expected real tokens, not null"
+        assert record["completion_tokens"] == 50, f"{source_id}: expected real tokens, not null"
+        assert record["total_tokens"] == 150, f"{source_id}: expected real tokens, not null"
