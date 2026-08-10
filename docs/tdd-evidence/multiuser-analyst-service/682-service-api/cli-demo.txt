@@ -1,0 +1,34 @@
+INFO:     Started server process [66612]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:50099 (Press CTRL+C to quit)
+INFO:     127.0.0.1:50109 - "GET /asks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50109 - "POST /asks HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:50109 - "POST /asks HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:50109 - "GET /asks/777938d4c20b4d86b5cb23c7f7c193d0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50109 - "GET /asks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50109 - "GET /asks/777938d4c20b4d86b5cb23c7f7c193d0/paper HTTP/1.1" 409 Conflict
+INFO:     127.0.0.1:50109 - "GET /asks/777938d4c20b4d86b5cb23c7f7c193d0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50109 - "GET /asks/777938d4c20b4d86b5cb23c7f7c193d0/paper HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50109 - "GET /asks/unknown-id HTTP/1.1" 404 Not Found
+$ docker run -d --name axial-api-demo-8d4ed66f -p 50098:5432 -e POSTGRES_PASSWORD=demo postgres:16-alpine
+>>> store.create_schema() -- jobs table created
+$ uvicorn axial.service.api:app --factory --port 50099
+>>> server is up (the `app()` factory built it from DATABASE_URL)
+$ POST http://127.0.0.1:50099/asks {"case": "Syria, 2011-2024", "request": "Who does Batatu argue against on the rural origins of the Ba'th?"}
+>>> first POST /asks (cold: first request through the route) -> 33ms
+>>> POST /asks -> 202 {"id": "777938d4c20b4d86b5cb23c7f7c193d0", "state": "queued"}
+>>> POST /asks returned in 30ms (the issue's bar is 100ms)
+>>> GET /asks/777938d4c20b4d86b5cb23c7f7c193d0 -> 200 {"id": "777938d4c20b4d86b5cb23c7f7c193d0", "state": "queued", "corpus_pin": null, "created_at": "2026-08-10T16:28:41.799396Z", "claimed_at": null, "finished_at": null, "result_ref": null, "error": null}
+>>> GET /asks -> 200 [{"id": "777938d4c20b4d86b5cb23c7f7c193d0", "state": "queued", "corpus_pin": null, "created_at": "2026-08-10T16:28:41.799396Z", "claimed_at": null, "finished_at": null, "result_ref": null, "error": null}, {"id": "0b12066bf583499e9b01ee5f1814a869", "state": "queued", "corpus_pin": null, "created_at": "2026-08-10T16:28:41.767454Z", "claimed_at": null, "finished_at": null, "result_ref": null, "error": null}]
+>>> GET /asks/777938d4c20b4d86b5cb23c7f7c193d0/paper while queued -> 409 {"detail": "ask '777938d4c20b4d86b5cb23c7f7c193d0' is queued, not finished"}
+>>> running one Worker (job body stubbed -- a real ask costs model calls)
+>>> worker claimed 0b12066bf583499e9b01ee5f1814a869: payload={"case": "Syria, 2011-2024", "lens": null, "weights": null, "question": "Who does Batatu argue against on the rural origins of the Ba'th?", "session_id": null}
+>>> worker claimed 777938d4c20b4d86b5cb23c7f7c193d0: payload={"case": "Syria, 2011-2024", "lens": null, "weights": null, "question": "Who does Batatu argue against on the rural origins of the Ba'th?", "session_id": null}
+>>> GET /asks/777938d4c20b4d86b5cb23c7f7c193d0 -> 200 {"id": "777938d4c20b4d86b5cb23c7f7c193d0", "state": "done", "corpus_pin": "sim-2026-08-10", "created_at": "2026-08-10T16:28:41.799396Z", "claimed_at": "2026-08-10T16:28:42.016056Z", "finished_at": "2026-08-10T16:28:42.043045Z", "result_ref": "D:\\axial\\.claude\\worktrees\\682-service-api\\demo-record-777938d4c20b4d86b5cb23c7f7c193d0.json", "error": null}
+>>> GET /asks/777938d4c20b4d86b5cb23c7f7c193d0/paper -> 200 {"brief_id": "demo", "corpus_pin": "sim-2026-08-10", "brief": {"case": "Syria, 2011-2024", "request": "Who does Batatu argue against on the rural origins of the Ba'th?"}, "claims": [{"kind": "stated", "text": "A claim the engine reached."}]}
+>>> GET /asks/unknown-id -> 404
+
+The live server queued an ask in milliseconds, reported its state, timings and pin, listed it, and served the finished record as JSON.
+$ docker rm -f axial-api-demo-8d4ed66f
+exit: 0
