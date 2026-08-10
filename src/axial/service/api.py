@@ -193,7 +193,18 @@ def _check_quota(store: JobStore, quotas: QuotaStore, principal: str) -> None:
     connection (`store.connection()`) -- `POST /asks` has its own <100ms
     budget (`test_api_under_load.py`), and three separate `psycopg.connect()`
     calls measured ~25ms each on this stack; batched onto one, this check
-    costs roughly what one of them used to."""
+    costs roughly what one of them used to.
+
+    **Not atomic.** This reads the count, then returns; nothing locks the
+    window between the read here and the `store.enqueue` call after it, so
+    two simultaneous requests from the same principal can both read
+    `limit - 1` and both pass, landing the window one-or-a-few over its
+    stated limit -- bounded by how many requests are genuinely concurrent
+    at that instant, never unbounded. Acceptable as shipped: a quota here
+    is an economic guardrail, not a security boundary. A `SELECT ... FOR
+    UPDATE` scoped to `principal`, or folding the count and the enqueue
+    into one serializable transaction, would close this if it ever
+    mattered."""
     now = datetime.now(timezone.utc)
     with store.connection() as conn:
         limits = quotas.limits_for(principal, conn=conn)
