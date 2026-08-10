@@ -50,16 +50,17 @@ class _FakeClient:
     threaded unchanged into every pass invocation) without touching the real
     LLM provider machinery.
 
-    `model_for_pass`/`usage_for_pass`/`calls_for_pass` (issue #526, extended
-    by issue #734): `run_pass` now calls all three on whatever client it
-    holds -- to render the live progress line's spend figure, to decide
-    whether a source's own `record()` carries a real model id, and to build
-    the end-of-run report's token/cost totals -- so a client passed to it
-    must satisfy at least this much of the real `LLMClient` protocol even
-    when, as here, it never actually completes anything. `usage_for_pass`
-    returning `None` and `calls_for_pass` returning `0` unconditionally is
-    the same "nothing to report" case a real client reports before its
-    first call (`axial.llm._accumulate_usage`'s own docstring)."""
+    `model_for_pass`/`usage_for_pass`/`calls_for_pass`/`cost_for_pass` (issue
+    #526, extended by issue #734 and #738): `run_pass` now calls all four on
+    whatever client it holds -- to render the live progress line's spend
+    figure, to decide whether a source's own `record()` carries a real model
+    id, and to build the end-of-run report's token/cost totals -- so a
+    client passed to it must satisfy at least this much of the real
+    `LLMClient` protocol even when, as here, it never actually completes
+    anything. `usage_for_pass`/`cost_for_pass` returning `None` and
+    `calls_for_pass` returning `0` unconditionally is the same "nothing to
+    report" case a real client reports before its first call
+    (`axial.llm._accumulate_usage`'s own docstring)."""
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         return "fake-model"
@@ -69,6 +70,9 @@ class _FakeClient:
 
     def calls_for_pass(self, pass_name: str | None = None) -> int:
         return 0
+
+    def cost_for_pass(self, pass_name: str | None = None) -> float | None:
+        return None
 
 
 class _DeclaredError(Exception):
@@ -966,3 +970,72 @@ def test_source_usage_and_cost_a_first_ever_call_with_no_usage_object_is_also_mi
     )
 
     assert (prompt, completion, total, usd) == (None, None, None, None)
+
+
+# --- _source_usage_and_cost real cost (issue #738 defect 2) ----------------
+#
+# The provider's own `cost_for_pass` delta wins over `estimate_cost` whenever
+# the provider has reported a real cost for the pass at all; `estimate_cost`
+# is the fallback, not the default, once real numbers exist.
+
+
+def test_source_usage_and_cost_prefers_the_providers_real_cost_over_the_estimate():
+    before = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    after = {"prompt_tokens": 11, "completion_tokens": 6, "total_tokens": 17}
+
+    prompt, completion, total, usd = _source_usage_and_cost(
+        "deepseek/deepseek-v4-pro",
+        before,
+        after,
+        calls_before=0,
+        calls_after=1,
+        cost_before=None,
+        cost_after=2.001e-05,
+    )
+
+    assert (prompt, completion, total) == (11, 6, 17)
+    # The real charge, not `estimate_cost("deepseek/deepseek-v4-pro", 11, 6)`
+    # -- measured 0.50x of it for this exact call (issue #738 defect 2).
+    assert usd == pytest.approx(2.001e-05)
+
+
+def test_source_usage_and_cost_deltas_the_providers_real_cost_across_sources():
+    """A second source in the same pass: the real cost delta, not the
+    running total -- mirrors the token delta exactly."""
+    usage_before = {"prompt_tokens": 11, "completion_tokens": 6, "total_tokens": 17}
+    usage_after = {"prompt_tokens": 22, "completion_tokens": 31, "total_tokens": 53}
+
+    prompt, completion, total, usd = _source_usage_and_cost(
+        "deepseek/deepseek-v4-pro",
+        usage_before,
+        usage_after,
+        calls_before=1,
+        calls_after=2,
+        cost_before=2.001e-05,
+        cost_after=2.001e-05 + 2.57725e-05,
+    )
+
+    assert (prompt, completion, total) == (11, 25, 36)
+    assert usd == pytest.approx(2.57725e-05)
+
+
+def test_source_usage_and_cost_falls_back_to_the_estimate_when_the_provider_reports_no_cost():
+    """`cost_after is None`: no response for this pass has ever reported a
+    real cost (a stub/record client, or a real provider response missing
+    `usage.cost`) -- `estimate_cost` is the fallback, exactly the behavior
+    before issue #738 defect 2."""
+    before = {"prompt_tokens": 1000, "completion_tokens": 200, "total_tokens": 1200}
+    after = {"prompt_tokens": 1100, "completion_tokens": 250, "total_tokens": 1350}
+
+    prompt, completion, total, usd = _source_usage_and_cost(
+        "z-ai/glm-5.2",
+        before,
+        after,
+        calls_before=3,
+        calls_after=4,
+        cost_before=None,
+        cost_after=None,
+    )
+
+    assert (prompt, completion, total) == (100, 50, 150)
+    assert usd == pytest.approx(100 / 1000 * 0.00112 + 50 / 1000 * 0.00352)

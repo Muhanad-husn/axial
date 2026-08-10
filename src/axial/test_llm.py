@@ -461,6 +461,175 @@ def test_openrouter_client_calls_for_pass_counts_every_attempt():
     assert client.calls_for_pass("synthesize") == 0
 
 
+# --- Issue #738 defect 1: usage_for_pass must return a SNAPSHOT, never the
+# live dict `_accumulate_usage` mutates in place. Every test above this point
+# drove exactly one call per pass, which cannot see this bug -- it only shows
+# once a SECOND call for the SAME pass follows a snapshot already taken. ----
+
+
+def test_stub_client_usage_for_pass_snapshot_survives_a_later_call():
+    from axial.llm import StubLLMClient
+
+    client = StubLLMClient()
+
+    client.complete("first", pass_name="envelope")
+    snapshot = client.usage_for_pass("envelope")
+    client.complete("second", pass_name="envelope")
+
+    assert snapshot == {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
+    assert client.usage_for_pass("envelope") == {
+        "prompt_tokens": 200,
+        "completion_tokens": 100,
+        "total_tokens": 300,
+    }
+
+
+def test_record_client_usage_for_pass_snapshot_survives_a_later_call(tmp_path):
+    from axial.llm import RecordLLMClient
+
+    client = RecordLLMClient(tmp_path / "record.jsonl")
+
+    client.complete("first", pass_name="envelope")
+    snapshot = client.usage_for_pass("envelope")
+    client.complete("second", pass_name="envelope")
+
+    assert snapshot == {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
+    assert client.usage_for_pass("envelope") == {
+        "prompt_tokens": 200,
+        "completion_tokens": 100,
+        "total_tokens": 300,
+    }
+
+
+def test_openrouter_client_usage_for_pass_snapshot_survives_a_later_call():
+    """The real bug (issue #738 defect 1), pinned against the real client: a
+    "before" snapshot taken between two calls for the same pass must not
+    silently become an alias of the "after" one. Before the fix this failed
+    -- `snapshot` read `{200, 100, 300}` instead of `{100, 50, 150}`, which is
+    exactly why every source after a pass's first recorded `null`."""
+    from axial.llm import OpenRouterClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "model reply"}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    client.complete("first", pass_name="envelope")
+    snapshot = client.usage_for_pass("envelope")
+    client.complete("second", pass_name="envelope")
+
+    assert snapshot == {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
+    assert client.usage_for_pass("envelope") == {
+        "prompt_tokens": 200,
+        "completion_tokens": 100,
+        "total_tokens": 300,
+    }
+
+
+# --- Issue #738 defect 2: the provider's own usage["cost"], not the
+# price-table estimate -----------------------------------------------------
+
+
+def test_stub_client_cost_for_pass_is_always_none():
+    """No real model behind this client, so no real cost to report --
+    `estimate_cost` is the only figure a caller can ever get for it."""
+    from axial.llm import StubLLMClient
+
+    client = StubLLMClient()
+    client.complete("prompt", pass_name="envelope")
+
+    assert client.cost_for_pass("envelope") is None
+
+
+def test_record_client_cost_for_pass_is_always_none(tmp_path):
+    from axial.llm import RecordLLMClient
+
+    client = RecordLLMClient(tmp_path / "record.jsonl")
+    client.complete("prompt", pass_name="envelope")
+
+    assert client.cost_for_pass("envelope") is None
+
+
+def test_exploding_client_cost_for_pass_returns_none_without_raising():
+    from axial.llm import ExplodingLLMClient
+
+    client = ExplodingLLMClient()
+
+    assert client.cost_for_pass("envelope") is None
+
+
+def test_openrouter_client_cost_for_pass_is_none_before_any_call():
+    from axial.llm import OpenRouterClient
+
+    client = OpenRouterClient(api_key="test-key", model="test-model")
+
+    assert client.cost_for_pass("envelope") is None
+
+
+def test_openrouter_client_cost_for_pass_accumulates_the_providers_real_cost():
+    """The exact fix: `usage["cost"]` is the provider's own charge, summed
+    per pass -- not read off the token counts through `estimate_cost`."""
+    from axial.llm import OpenRouterClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "model reply"}}],
+                "usage": {
+                    "prompt_tokens": 11,
+                    "completion_tokens": 6,
+                    "total_tokens": 17,
+                    "cost": 2.001e-05,
+                },
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    client.complete("first", pass_name="envelope")
+    client.complete("second", pass_name="envelope")
+
+    assert client.cost_for_pass("envelope") == pytest.approx(4.002e-05)
+    assert client.cost_for_pass("synthesize") is None
+
+
+def test_openrouter_client_cost_for_pass_is_none_when_the_response_reports_no_cost():
+    """A response can carry real token usage with no `cost` key at all --
+    `cost_for_pass` must stay `None` (never a fabricated zero), so a caller
+    falls back to `estimate_cost`."""
+    from axial.llm import OpenRouterClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "model reply"}}],
+                "usage": {"prompt_tokens": 11, "completion_tokens": 6, "total_tokens": 17},
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenRouterClient(api_key="test-key", model="test-model", transport=transport)
+
+    client.complete("hello world", pass_name="envelope")
+
+    assert client.usage_for_pass("envelope") == {
+        "prompt_tokens": 11,
+        "completion_tokens": 6,
+        "total_tokens": 17,
+    }
+    assert client.cost_for_pass("envelope") is None
+
+
 def test_estimate_cost_computes_dollars_for_a_priced_model():
     from axial.llm import PRICE_TABLE_USD_PER_1K, estimate_cost
 

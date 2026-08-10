@@ -160,11 +160,55 @@ def test_a_live_run_keeping_its_own_cadence_is_not_overdue(
 
 
 def test_a_finished_run_has_no_quiet_band(finished_run: Path) -> None:
+    """`finished_run`'s records carry no `usd` field at all (they predate
+    issue #734's schema addition), so this also pins the fallback half of
+    issue #738's precedence flip: `report.json`'s total is still read when
+    the records have nothing to sum."""
     snap = monitor.snapshot(finished_run)
 
     assert snap.alive is False
     assert snap.quiet is None
     assert snap.spend_usd == pytest.approx(1.25)
+    assert snap.spend_partial is False
+
+
+def test_a_finished_run_prefers_the_records_real_cost_over_the_reports_estimate(
+    logs_root: Path, now: datetime, write_run_dir
+) -> None:
+    """Issue #738: once a run carries per-record `usd`, that sum is the more
+    accurate number (the provider's own real cost) -- it must win over
+    `report.json`'s `estimate_cost`-only total even for a FINISHED run, not
+    only a live one."""
+    run_dir = write_run_dir(
+        logs_root,
+        "run-envelope-finished",
+        status="ok",
+        started_at=now - timedelta(minutes=10),
+        finished_at=now - timedelta(minutes=1),
+        command="axial run envelope --corpus --workers 4",
+        records=[
+            {
+                "source_id": "src-a",
+                "pass": "envelope",
+                "model": "deepseek/deepseek-v4-pro",
+                "status": "ok",
+                "duration_sec": 30.0,
+                "error": None,
+                "prompt_tokens": 11,
+                "completion_tokens": 6,
+                "total_tokens": 17,
+                "usd": 2.001e-05,
+            }
+        ],
+        # A deliberately different, ESTIMATE-based total -- the number
+        # `report.json` would carry from `usage_and_cost_by_pass`, unchanged
+        # by issue #738. The record's real cost above must win over it.
+        report={"tokens_and_cost": {"total_usd": 1.0005e-05}},
+    )
+
+    snap = monitor.snapshot(run_dir)
+
+    assert snap.spend_usd == pytest.approx(2.001e-05)
     assert snap.spend_partial is False
 
 

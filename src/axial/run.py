@@ -88,6 +88,23 @@ happened" without `calls_for_pass` (issue #734, `axial.llm
 or a call happened whose response carried no usage -- never a fabricated
 zero; a real zero means a call genuinely did not happen for this source.
 See `_source_usage_and_cost`'s own docstring for the three cases.
+
+**Issue #738 fixed two defects a real-corpus validation of #734 found before
+merge, both inside `_source_usage_and_cost`.** Defect 1: `usage_for_pass`
+used to return the live dict `_accumulate_usage` mutates in place, so the
+"before" snapshot silently aliased "after" the moment the SAME pass
+accumulated again -- every source past a pass's first read as "no call
+happened" and recorded `null`. Fixed in `axial.llm` (`usage_for_pass` now
+returns a copy); this predates #734 entirely -- the `model = ... if
+usage_after != usage_before else None` line it replaced had the identical
+bug, so every shipped run log has recorded `model: null` for every source
+past a pass's first. Defect 2: `usd` priced through `estimate_cost`'s
+price-table estimate, measured 3% high to 100% low per call against the
+real charge OpenRouter reports on every response (`usage["cost"]`). `usd`
+now prefers that real, accumulated cost (`client.cost_for_pass`, threaded
+through `_source_usage_and_cost` the same way `usage_for_pass` already
+was), falling back to `estimate_cost` only when the provider genuinely
+never reported one.
 """
 
 from __future__ import annotations
@@ -634,19 +651,27 @@ def _source_usage_and_cost(
     usage_after: dict[str, int] | None,
     calls_before: int,
     calls_after: int,
+    cost_before: float | None = None,
+    cost_after: float | None = None,
 ) -> tuple[int | None, int | None, int | None, float | None]:
     """This one source's own token usage and dollar cost (issue #734): the
     delta between `client.usage_for_pass(pass_name)`/`client.calls_for_pass
-    (pass_name)`, each taken right before and right after this source's own
-    `descriptor.invoke` call -- both already computed by the loop below,
-    never a second accounting.
+    (pass_name)`/`client.cost_for_pass(pass_name)`, each taken right before
+    and right after this source's own `descriptor.invoke` call -- all three
+    already computed by the loop below, never a second accounting.
 
-    Two accumulators, not one, because `usage_for_pass` alone cannot tell
-    "no call happened for this source" apart from "a call happened but its
-    response carried no `usage` object" -- both leave `usage_after ==
-    usage_before`. `calls_for_pass` (issue #734, `axial.llm._accumulate_usage`)
-    moves on EVERY call regardless of whether its response carried usage, so
-    the two accumulators together resolve three cases:
+    `usage_for_pass`/`cost_for_pass` (issue #738 defect 1) return a COPY of
+    their accumulator, never the live dict/float `axial.llm._accumulate_usage`
+    updates -- a caller here relies on that: comparing an aliased "before"
+    against the "after" it silently became would read every source past a
+    pass's first as having made no call at all.
+
+    Two token/call accumulators, not one, because `usage_for_pass` alone
+    cannot tell "no call happened for this source" apart from "a call
+    happened but its response carried no `usage` object" -- both leave
+    `usage_after == usage_before`. `calls_for_pass` (issue #734) moves on
+    EVERY call regardless of whether its response carried usage, so the two
+    together resolve three cases:
 
     1. `calls_after == calls_before` -- no call happened for this source.
        `usage_after is None` (the pass has captured no usage at all yet,
@@ -655,9 +680,14 @@ def _source_usage_and_cost(
        already renders as `spent=n/a`. Otherwise a real, honest zero: this
        source spent nothing.
     2. `calls_after != calls_before` and usage moved with it -- a real
-       (possibly multi-call) delta, priced through `axial.llm.estimate_cost`
-       (`None` there too when the model has no `PRICE_TABLE_USD_PER_1K`
-       entry -- real tokens, an honestly unpriced cost).
+       (possibly multi-call) token delta. Priced from `cost_for_pass`'s own
+       delta (issue #738 defect 2) when the provider has reported a real
+       cost for this pass at all -- the provider's own exact charge, not an
+       estimate (`axial.llm.estimate_cost`'s price-table figure measured
+       3% high to 100% low per call against it). Falls back to
+       `estimate_cost` only when the provider never reported one; `None`
+       there too when the model has no `PRICE_TABLE_USD_PER_1K` entry
+       either -- real tokens, an honestly unpriced cost.
     3. `calls_after != calls_before` but usage did NOT move -- a call
        happened and its response carried no `usage` object. This is the
        "visibly missing" case the issue is about: tokens and `usd` come back
@@ -672,7 +702,10 @@ def _source_usage_and_cost(
     prompt_tokens = usage_after["prompt_tokens"] - before["prompt_tokens"]
     completion_tokens = usage_after["completion_tokens"] - before["completion_tokens"]
     total_tokens = usage_after["total_tokens"] - before["total_tokens"]
-    usd = estimate_cost(model, prompt_tokens, completion_tokens) if model is not None else None
+    if cost_after is not None:
+        usd = cost_after - (cost_before or 0.0)
+    else:
+        usd = estimate_cost(model, prompt_tokens, completion_tokens) if model is not None else None
     return prompt_tokens, completion_tokens, total_tokens, usd
 
 
@@ -939,6 +972,7 @@ def run_pass(
 
                 usage_before = client.usage_for_pass(pass_name)
                 calls_before = client.calls_for_pass(pass_name)
+                cost_before = client.cost_for_pass(pass_name)
                 try:
                     descriptor.invoke(str(source_path), client, config_path, domain_dir)
                 except descriptor.error as exc:
@@ -965,9 +999,16 @@ def run_pass(
                 # `usage` object) still real, and still names a real model.
                 usage_after = client.usage_for_pass(pass_name)
                 calls_after = client.calls_for_pass(pass_name)
+                cost_after = client.cost_for_pass(pass_name)
                 model = client.model_for_pass(pass_name) if calls_after != calls_before else None
                 prompt_tokens, completion_tokens, total_tokens, usd = _source_usage_and_cost(
-                    model, usage_before, usage_after, calls_before, calls_after
+                    model,
+                    usage_before,
+                    usage_after,
+                    calls_before,
+                    calls_after,
+                    cost_before,
+                    cost_after,
                 )
                 run.record(
                     source_id=source_id,

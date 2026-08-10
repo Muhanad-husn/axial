@@ -39,21 +39,25 @@ the run's own record -- never from a hand-picked constant:
   idle-and-empty for longer than its own cadence. So `overdue` is the
   conjunction: quiet past the run's own cadence AND nothing in flight.
 
-- **Spend** (issue #734). `report.json`'s `tokens_and_cost.total_usd` wins
-  when the file exists -- it is the pass-wide total `axial.llm
-  .usage_and_cost_by_pass` computed at the run's real end, already
-  null-safe. While a run is still live, that file does not exist yet, so
-  spend is instead summed straight from `run.jsonl`'s own per-record `usd`
-  field (`axial.runlog.RunHandle.record`'s issue #734 addition) -- the same
-  number a live run's own progress line already prints, now readable from a
-  second process too. A record whose `usd` is `null` (a model-bearing call
-  whose response carried no `usage` object, or an unpriced model) is
-  excluded from the sum, never coerced to zero; `spend_usd` is `None` only
-  when NOT ONE record has priced yet, matching the report path's own "never
-  a fabricated zero" rule. `spend_partial` is `True` exactly when the sum is
-  real but incomplete -- at least one model-bearing record's own `usd` is
-  unknown -- so the aggregate itself reads as qualified rather than a
-  confident total.
+- **Spend** (issue #734, precedence revised by #738). `run.jsonl`'s own
+  per-record `usd` field (`axial.runlog.RunHandle.record`'s issue #734
+  addition) wins whenever at least one record has priced -- summed straight
+  off the log, the same number a live run's own progress line already
+  prints, now readable from a second process too, and (issue #738 defect 2)
+  the PROVIDER'S OWN charge per source when it reported one, not
+  `estimate_cost`'s price-table figure. A record whose `usd` is `null` (a
+  model-bearing call whose response carried no `usage` object, or an
+  unpriced model) is excluded from the sum, never coerced to zero.
+  `spend_partial` is `True` exactly when the sum is real but incomplete --
+  at least one model-bearing record's own `usd` is unknown -- so the
+  aggregate itself reads as qualified rather than a confident total.
+
+  `report.json`'s `tokens_and_cost.total_usd` (`axial.llm
+  .usage_and_cost_by_pass`, still `estimate_cost`-only -- issue #738 did not
+  touch it) is the fallback, used only when no record has priced at all --
+  a run directory from before issue #734 added the per-record fields, most
+  concretely. Records win over the report whenever they can, because they
+  are now the more accurate number, not merely the live one.
 """
 
 from __future__ import annotations
@@ -329,11 +333,17 @@ def snapshot(run_dir: Path, *, now: datetime | None = None) -> RunSnapshot:
     report = _read_report(run_dir)
     passes = _pass_rows(view.records, view.events)
 
-    spend_from_report = _spend_from_report(report)
-    if spend_from_report is not None:
-        spend_usd, spend_partial = spend_from_report, False
+    # Issue #738: records win whenever they can price at all -- they now
+    # carry the provider's own real cost, more accurate than
+    # `report.json`'s `estimate_cost`-only total (module docstring). The
+    # report is the fallback, for a run directory old enough to predate
+    # #734's per-record fields.
+    records_total, spend_partial = _spend_from_records(view.records)
+    if records_total is not None:
+        spend_usd = records_total
     else:
-        spend_usd, spend_partial = _spend_from_records(view.records)
+        spend_usd = _spend_from_report(report)
+        spend_partial = False
 
     return RunSnapshot(
         run_id=str(meta.get("run_id") or run_dir.name),
