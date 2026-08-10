@@ -15,11 +15,13 @@ from __future__ import annotations
 
 import threading
 import uuid
+from pathlib import Path
 from typing import Any, Callable
 
 from axial.ask.engine import ask as run_ask
 from axial.llm import LLMClient
 from axial.service.jobs import JobStore
+from axial.service.snapshot import Snapshot, SnapshotPinMismatchError
 
 # How often a claimed job's heartbeat is refreshed while `run_job` is still
 # running. One constant, not a config system -- no caller has needed a
@@ -30,12 +32,37 @@ DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 5.0
 JobRunner = Callable[[dict[str, Any]], tuple[str, str]]
 
 
-def run_ask_job(job: dict[str, Any], *, client: LLMClient, store: JobStore) -> tuple[str, str]:
+def run_ask_job(
+    job: dict[str, Any],
+    *,
+    client: LLMClient,
+    store: JobStore,
+    snapshot: Snapshot,
+    work_dir: Path,
+) -> tuple[str, str]:
     """The `"ask"`-kind job body: run the full ask engine in-process over
     `job["payload"]` and return `(result_ref, corpus_pin)` for
     `JobStore.complete`. `payload` carries the same arguments `axial ask`
     itself collects (`question`, `case`, and the optional `session_id`,
     `lens`, `weights` a follow-up or a weighted query supplies).
+
+    `snapshot` (issue #684) is the published corpus this worker process was
+    started on and stays on for its whole life. The process is already bound
+    to it (`Snapshot.bind`), so the engine reads it without being told; what
+    the snapshot is passed for here is the two things binding cannot supply:
+    `map_pin`, which otherwise would be derived by hashing raw source files
+    a hosted worker must not hold, and the pin the row is stamped with.
+
+    **The pin has one source of truth, the snapshot.** `resolve_pin_id`
+    reads `evals/corpus_pin/` from inside the bound snapshot, so the run's
+    own recorded pin and `snapshot.corpus_pin` are the same string by
+    construction. When they are not, the binding leaked and the answer was
+    computed against a corpus this row would misname:
+    `SnapshotPinMismatchError` fails the job rather than record it.
+
+    `work_dir` is where the analyst's own records land (`analyses/`,
+    `runs/`). Passed explicitly because it is not corpus -- the snapshot is
+    read-only, and nothing a query produces belongs inside it.
 
     `on_event` (issue #683) is the same seam `axial ask` wires to its live
     printer -- here it appends each call to `store` instead, under this
@@ -55,8 +82,14 @@ def run_ask_job(job: dict[str, Any], *, client: LLMClient, store: JobStore) -> t
         lens=payload.get("lens"),
         weights=payload.get("weights"),
         on_event=on_event,
+        analyses_dir=Path(work_dir) / "analyses",
+        runs_dir=Path(work_dir) / "runs",
+        map_pin=snapshot.map_pin,
     )
-    return str(turn.result.path), turn.result.record["corpus_pin"]
+    recorded = turn.result.record["corpus_pin"]
+    if recorded != snapshot.corpus_pin:
+        raise SnapshotPinMismatchError(snapshot.version, snapshot.corpus_pin, recorded)
+    return str(turn.result.path), snapshot.corpus_pin
 
 
 class Worker:

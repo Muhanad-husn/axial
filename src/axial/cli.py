@@ -1268,6 +1268,34 @@ def build_parser() -> argparse.ArgumentParser:
         "name", help="pin name, e.g. 'baseline' -> evals/corpus_pin/baseline.json"
     )
 
+    publish_parser = subparsers.add_parser(
+        "publish",
+        help=(
+            "publish the built corpus as an immutable, read-only snapshot "
+            "(issue #684): the vault, name layer, envelopes, argument map, "
+            "config and corpus-pin manifest, copied under "
+            "<snapshots-dir>/<version>/ and never overwritten. The raw "
+            "source files are deliberately NOT included"
+        ),
+    )
+    publish_parser.add_argument(
+        # `snapshot_version`, NOT `version`: the parser carries a global
+        # `--version` store_true flag whose dest is `version`, and `main`
+        # checks `args.version` before any command dispatch. A positional
+        # spelled `version` writes the snapshot name into that same dest, so
+        # `axial publish 2026-08-10` printed "axial 0.1.0" and exited 0
+        # having published nothing. `metavar` keeps the command's own
+        # surface syntax unchanged.
+        "snapshot_version",
+        metavar="version",
+        help="the snapshot version, e.g. '2026-08-10' -> data/snapshots/2026-08-10/",
+    )
+    publish_parser.add_argument(
+        "--snapshots-dir",
+        default=None,
+        help="where snapshots land (default: data/snapshots)",
+    )
+
     panel_parser = subparsers.add_parser(
         "panel",
         help=(
@@ -2753,6 +2781,25 @@ def _pin_write(name: str) -> int:
     return 0
 
 
+def _publish(version: str, snapshots_dir: str | None) -> int:
+    """`axial publish <version>` (issue #684). Imported inside the handler
+    so the CLI's own import does not pull `axial.service`, which needs the
+    optional `service` dependency group."""
+    from axial.service.snapshot import SnapshotError, publish
+
+    try:
+        snapshot = publish(version, snapshots_dir=Path(snapshots_dir) if snapshots_dir else None)
+    except (SnapshotError, CorpusPinError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"published {snapshot.version} to {snapshot.root}")
+    print(f"corpus_pin: {snapshot.corpus_pin}")
+    print(f"map_pin: {snapshot.map_pin or '(no argument map built)'}")
+    print(f"sources: {len(snapshot.sources)}")
+    return 0
+
+
 def _names_build(min_cluster_size: int | None, min_samples: int | None, recluster: bool) -> int:
     kwargs: dict[str, Any] = {"recluster": recluster}
     if min_cluster_size is not None:
@@ -3516,6 +3563,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "pin" and args.pin_command == "write":
         return _pin_write(args.name)
+
+    if args.command == "publish":
+        return _publish(args.snapshot_version, args.snapshots_dir)
 
     if args.command == "panel" and args.panel_command == "run":
         return _panel_run(args.records, args.control_record, args.reviewers, args.out)

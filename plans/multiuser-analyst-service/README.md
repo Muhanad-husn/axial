@@ -45,8 +45,10 @@ which are still the cheap groundwork that is expensive to retrofit.
    kind, not a second system.
 2. **"The one genuinely hard part" is mostly already built.**
    `src/axial/query/store.py` already opens the corpus read-only over a SQLite
-   URI. A published corpus is that one file, baked into a worker image and tagged
-   with its pin.
+   URI. A published corpus is that file, baked into a worker image and tagged
+   with its pin. (Corrected while building #684: the store is the read-only
+   *primitive*, but it is not the whole query surface — see the amendment under
+   "The one genuinely hard part" below.)
 3. **The binding constraint is money.** ~$0.13 a paper; a thousand academics at
    two a week is ~$1,100/month. Quotas and a content-keyed cache ship on day one
    (#686).
@@ -213,7 +215,9 @@ more GitHub issues when starting.
    invited analyst logs in from the CLI and runs a query end to end.
 6. **Publish corpora as immutable snapshots.** The one real engineering piece —
    see below. *Done when:* an operator can publish a new corpus version while an
-   analyst is mid-query, and the analyst's results are undisturbed.
+   analyst is mid-query, and the analyst's results are undisturbed. **Shipped in
+   #684** (`axial publish <version>`); see the 2026-08-10 amendment under "The
+   one genuinely hard part" for what a snapshot turned out to contain.
 7. **Simulate it all in Docker locally.** Package the service in a container with
    the corpus as a read-only volume and Supabase for login. *Done when:* the full
    flow — invite, log in, query — works against the local container.
@@ -232,6 +236,37 @@ changing the live one. Each query pins to a snapshot when it starts and reads
 that snapshot to the end. Old snapshots retire once no query is using them. The
 corpus is already content-addressed, which makes this natural. This is the real
 engineering; everything else is plumbing.
+
+### Amendment, 2026-08-10: what shipped in #684
+
+**A snapshot is a whole corpus root, not one SQLite file.** The plan and the
+issue both assumed the vault markdown was the human view and the store was the
+query surface. It is both. `assemble_evidence` quotes every cited passage out of
+`<vault>/prose/<chunk_id>.md`, and `get_name` reads the Gather disagreement
+section off `<vault>/names/<name>.md` — `notes.db` is the index, the markdown is
+the text. So `<snapshots_dir>/<version>/` carries `manifest.json`, `config/`,
+`evals/corpus_pin/`, `vault/`, `names/`, `envelopes/` and `map/<map_pin>/`.
+
+**It deliberately does not carry `data/sources/`.** The only thing on the ask
+path that needs the raw books is the hash that derives the argument map's
+directory name. That is computed once, at publish time on the operator's own
+machine, recorded as `map_pin`, and handed to the engine — so a hosted worker
+never holds a byte of an in-copyright book.
+
+**Binding is `os.chdir` into the snapshot root, once, at worker process start.**
+Threading the snapshot's directories through the engine cannot be made total:
+`axial.query.names` resolves the name layer with `default_names_dir()` and no
+config path, `run_brief` has no `names_dir` parameter to thread one through, and
+the lens and corpus-pin directories are cwd-relative literals. Missing one of
+those sites fails silently, by reading the operator's live `data/`. A snapshot
+that is a corpus root with relative `paths.*` closes all of them at once, and
+matches this plan's own model: rolling a new corpus is a new worker image.
+Analyst writes (`analyses/`, `runs/`) are passed explicitly, because they are not
+corpus and the snapshot is read-only.
+
+**One pin, one source of truth.** The snapshot ships the pin manifest, so
+`resolve_pin_id` inside a bound worker returns the snapshot's own pin. A job
+whose run recorded a different pin is failed, not relabelled.
 
 ## Explicitly deferred (do NOT build early)
 
