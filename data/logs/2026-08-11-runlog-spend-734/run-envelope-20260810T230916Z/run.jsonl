@@ -1,0 +1,2 @@
+{"source_id": "smith-2009-cba7b6f3dfba", "pass": "envelope", "model": "deepseek/deepseek-v4-pro", "status": "ok", "duration_sec": 50.5990376000409, "error": null, "prompt_tokens": 4129, "completion_tokens": 5453, "total_tokens": 9582, "usd": 0.006540225}
+{"source_id": "zaum-2007-834d3343aa95", "pass": "envelope", "model": "deepseek/deepseek-v4-pro", "status": "ok", "duration_sec": 93.04723879997618, "error": null, "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "usd": null}
