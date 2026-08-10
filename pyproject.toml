@@ -69,6 +69,15 @@ service = [
     "psycopg[binary]>=3.2",
     "uvicorn>=0.32",
 ]
+# The local operator console (issue #689): Streamlit, and nothing else. It is
+# a face on the `axial` CLI for one operator on one machine -- no pipeline pass
+# imports it and the #691 service worker image must not carry it, so it gets
+# its own group rather than `dependencies`. `uv sync --group operator`, then
+# `axial console`. >=1.45 is where `st.context.theme` (what the browser asked
+# for, which the console's "System" theme setting reads) landed.
+operator = [
+    "streamlit>=1.45",
+]
 
 # tests/ holds only outer acceptance contracts (test-author, locked once red);
 # inner unit tests are co-located under src/ (implementer's domain) - DEC-20.

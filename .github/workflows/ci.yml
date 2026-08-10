@@ -129,9 +129,11 @@ jobs:
       # `service` (issue #681: psycopg for the job-store's Postgres tests) is
       # needed here, not in the `unit` job above -- nothing under `src/axial`
       # core imports `axial.service`, only `tests/service` (part of the
-      # `rest` shard by exclusion, see the note above) does.
+      # `rest` shard by exclusion, see the note above) does. `operator`
+      # (issue #689: streamlit) is what `tests/operator` runs the console
+      # against, also part of `rest`.
       - name: Install dependencies
-        run: uv sync --group distill --group service
+        run: uv sync --group distill --group service --group operator
 
       - name: Run acceptance tests (serial within the shard)
         run: uv run pytest ${{ matrix.paths }} -q -m "not slow" --durations=15

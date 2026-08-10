@@ -998,6 +998,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    subparsers.add_parser(
+        "console",
+        help=(
+            "open the local operator console in a browser -- sources and "
+            "ingest, a live run monitor, and status, over this same CLI "
+            "(issue #689; needs `uv sync --group operator`)"
+        ),
+    )
+
     runs_parser = subparsers.add_parser(
         "runs", help="watch a run's own log directory (issue #530; reads what CLI-1/#526 writes)"
     )
@@ -2058,6 +2067,26 @@ def _run(
 def _status() -> int:
     print(render_status(compute_status()))
     return 0
+
+
+def _console() -> int:
+    """`axial console` (issue #689): hand `streamlit run` the console app and
+    stay out of the way. Deliberately a wrapper with no options of its own --
+    the app takes none, and Streamlit's own flags are one `streamlit run`
+    away for the rare case that wants them. Run from the checkout, so the
+    console resolves `data/` and `.streamlit/config.toml` the same way every
+    other `axial` command resolves its paths."""
+    import importlib.util
+    import subprocess
+
+    if importlib.util.find_spec("streamlit") is None:
+        print(
+            "error: streamlit is not installed -- run `uv sync --group operator`",
+            file=sys.stderr,
+        )
+        return 1
+    app_path = Path(__file__).resolve().parent / "operator" / "app.py"
+    return subprocess.call([sys.executable, "-m", "streamlit", "run", str(app_path)])
 
 
 def _runs_list() -> int:
@@ -3594,6 +3623,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "status":
         return _status()
+
+    if args.command == "console":
+        return _console()
 
     if args.command == "runs" and args.runs_command == "list":
         return _runs_list()
