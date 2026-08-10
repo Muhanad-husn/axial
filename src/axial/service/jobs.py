@@ -15,6 +15,13 @@ library -- Postgres already does this correctly at the scale this needs.
 today: the issue is explicit that this is deliberate generality, so that a
 second job kind (chat mode) reuses this table later instead of a migration
 on live rows.
+
+`job_events` (issue #683) is a second, append-only table beside `jobs`: one
+row per `on_event(message, detail)` call the engine makes while a job runs,
+keyed by a monotonic per-job `seq`. It lives in Postgres rather than a file
+because the API and the worker are separate processes -- under #691,
+separate containers -- so nothing but the database is guaranteed shared
+between them.
 """
 
 from __future__ import annotations
@@ -54,6 +61,14 @@ CREATE TABLE IF NOT EXISTS jobs (
     error TEXT,
     corpus_pin TEXT
 );
+CREATE TABLE IF NOT EXISTS job_events (
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,
+    message TEXT NOT NULL,
+    detail JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (job_id, seq)
+);
 """
 
 _COLUMNS = (
@@ -73,9 +88,9 @@ class JobStore:
         self._dsn = dsn
 
     def create_schema(self) -> None:
-        """Create the `jobs` table if it does not already exist. Idempotent,
-        so a worker or a test fixture can call it unconditionally on
-        startup."""
+        """Create the `jobs` and `job_events` tables if they do not already
+        exist. Idempotent, so a worker or a test fixture can call it
+        unconditionally on startup."""
         with psycopg.connect(self._dsn) as conn:
             conn.execute(_SCHEMA_SQL)
 
@@ -175,3 +190,33 @@ class JobStore:
         """Fetch one job row by id, or `None` if it does not exist."""
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
             return conn.execute(f"SELECT {_COLUMNS} FROM jobs WHERE id = %s", (job_id,)).fetchone()
+
+    def append_event(self, job_id: str, message: str, detail: dict[str, Any] | None = None) -> int:
+        """Append one `on_event(message, detail)` call as a `job_events` row
+        (issue #683) and return its `seq`, monotonic per job starting at 1.
+        Locks the parent job row for the duration: a worker only ever runs
+        one job at a time so this never contends in production, but it
+        keeps a concurrent caller (a test) from racing two rows onto the
+        same seq."""
+        with psycopg.connect(self._dsn) as conn:
+            conn.execute("SELECT id FROM jobs WHERE id = %s FOR UPDATE", (job_id,))
+            (next_seq,) = conn.execute(
+                "SELECT COALESCE(MAX(seq), 0) + 1 FROM job_events WHERE job_id = %s", (job_id,)
+            ).fetchone()
+            conn.execute(
+                "INSERT INTO job_events (job_id, seq, message, detail) VALUES (%s, %s, %s, %s)",
+                (job_id, next_seq, message, Jsonb(detail or {})),
+            )
+            return next_seq
+
+    def events_since(self, job_id: str, after_seq: int = 0) -> list[dict[str, Any]]:
+        """Every event for `job_id` with `seq > after_seq`, oldest first --
+        the replay a newly-connected `GET /asks/{id}/events` client gets
+        before it starts tailing live, and what a `Last-Event-ID` reconnect
+        resumes from."""
+        with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
+            return conn.execute(
+                "SELECT seq, message, detail, created_at FROM job_events "
+                "WHERE job_id = %s AND seq > %s ORDER BY seq",
+                (job_id, after_seq),
+            ).fetchall()

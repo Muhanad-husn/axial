@@ -102,7 +102,7 @@ def test_the_cli_and_the_api_produce_the_same_paper_for_the_same_brief(
         job_id = client.post("/asks", json={"case": CASE, "request": QUESTION}).json()["id"]
         worker = Worker(
             job_store,
-            run_job=lambda job: run_ask_job(job, client=_StubClient()),
+            run_job=lambda job: run_ask_job(job, client=_StubClient(), store=job_store),
             heartbeat_interval=0.1,
         )
         assert worker.run_once() is True

@@ -30,13 +30,23 @@ DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 5.0
 JobRunner = Callable[[dict[str, Any]], tuple[str, str]]
 
 
-def run_ask_job(job: dict[str, Any], *, client: LLMClient) -> tuple[str, str]:
+def run_ask_job(job: dict[str, Any], *, client: LLMClient, store: JobStore) -> tuple[str, str]:
     """The `"ask"`-kind job body: run the full ask engine in-process over
     `job["payload"]` and return `(result_ref, corpus_pin)` for
     `JobStore.complete`. `payload` carries the same arguments `axial ask`
     itself collects (`question`, `case`, and the optional `session_id`,
-    `lens`, `weights` a follow-up or a weighted query supplies)."""
+    `lens`, `weights` a follow-up or a weighted query supplies).
+
+    `on_event` (issue #683) is the same seam `axial ask` wires to its live
+    printer -- here it appends each call to `store` instead, under this
+    job's own id, so `GET /asks/{id}/events` has something to stream. No new
+    emitter: the engine already narrates every stage in analyst-readable
+    prose (`axial.llm.emit_event`'s callers), this only persists it."""
     payload = job["payload"]
+
+    def on_event(message: str, detail: dict[str, Any]) -> None:
+        store.append_event(job["id"], message, detail)
+
     turn = run_ask(
         payload["question"],
         payload["case"],
@@ -44,6 +54,7 @@ def run_ask_job(job: dict[str, Any], *, client: LLMClient) -> tuple[str, str]:
         session_id=payload.get("session_id"),
         lens=payload.get("lens"),
         weights=payload.get("weights"),
+        on_event=on_event,
     )
     return str(turn.result.path), turn.result.record["corpus_pin"]
 

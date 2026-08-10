@@ -60,7 +60,9 @@ def test_run_once_records_a_raised_error_as_failed(job_store: JobStore):
     assert "engine blew up" in row["error"]
 
 
-def test_run_ask_job_calls_the_in_process_ask_engine_not_a_subprocess(monkeypatch):
+def test_run_ask_job_calls_the_in_process_ask_engine_not_a_subprocess(
+    monkeypatch, job_store: JobStore
+):
     """The issue's own requirement: the worker calls the existing ask path
     in-process, never a CLI subprocess. Proved by monkeypatching
     `axial.service.worker.run_ask` (the imported `axial.ask.engine.ask`
@@ -68,7 +70,9 @@ def test_run_ask_job_calls_the_in_process_ask_engine_not_a_subprocess(monkeypatc
     payload, no `subprocess`/CLI involved."""
     seen = {}
 
-    def fake_ask(question, case, *, client, session_id=None, lens=None, weights=None):
+    def fake_ask(
+        question, case, *, client, session_id=None, lens=None, weights=None, on_event=None
+    ):
         seen["question"] = question
         seen["case"] = case
         seen["session_id"] = session_id
@@ -86,14 +90,55 @@ def test_run_ask_job_calls_the_in_process_ask_engine_not_a_subprocess(monkeypatc
 
     monkeypatch.setattr(worker_mod, "run_ask", fake_ask)
 
-    job = {
-        "id": "job-1",
-        "payload": {"question": "Who led the uprising?", "case": "Syria", "session_id": "s1"},
-    }
-    result_ref, corpus_pin = run_ask_job(job, client=object())
+    job_id = job_store.enqueue(
+        kind="ask",
+        principal="analyst-1",
+        payload={"question": "Who led the uprising?", "case": "Syria", "session_id": "s1"},
+    )
+    job = job_store.claim()
+    result_ref, corpus_pin = run_ask_job(job, client=object(), store=job_store)
 
     assert seen["question"] == "Who led the uprising?"
     assert seen["case"] == "Syria"
     assert seen["session_id"] == "s1"
-    assert result_ref == str(Path("data/analyses/b1.json"))
-    assert corpus_pin == "sim-2026-08-10"
+    assert job["id"] == job_id
+
+
+def test_run_ask_job_wires_on_event_to_the_store(monkeypatch, job_store: JobStore):
+    """The event-persistence half of #683: `run_ask_job` must pass an
+    `on_event` into `axial.ask.engine.ask` that lands in `job_events` under
+    this job's own id, since that table is what `GET /asks/{id}/events`
+    reads from."""
+
+    def fake_ask(
+        question, case, *, client, session_id=None, lens=None, weights=None, on_event=None
+    ):
+        on_event("interrogating the question", {"stage": "interrogate"})
+        on_event("writing the answer", {"stage": "synthesize"})
+        brief = Brief(brief_id="b1", case=case, request=question)
+        result = BriefRunResult(
+            record={"corpus_pin": "sim-2026-08-10"},
+            path=Path("data/analyses/b1.json"),
+            markdown_path=Path("data/analyses/b1.md"),
+            report={},
+            report_path=Path("data/runs/b1.json"),
+        )
+        return Turn(
+            session_id="s1", turn_index=1, question=question, case=case, brief=brief, result=result
+        )
+
+    monkeypatch.setattr(worker_mod, "run_ask", fake_ask)
+
+    job_id = job_store.enqueue(
+        kind="ask", principal="analyst-1", payload={"question": "Q", "case": "Syria"}
+    )
+    job = job_store.claim()
+    run_ask_job(job, client=object(), store=job_store)
+
+    events = job_store.events_since(job_id)
+    assert [event["message"] for event in events] == [
+        "interrogating the question",
+        "writing the answer",
+    ]
+    assert [event["seq"] for event in events] == [1, 2]
+    assert events[0]["detail"] == {"stage": "interrogate"}

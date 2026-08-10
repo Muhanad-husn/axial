@@ -1,0 +1,50 @@
+$ docker run -d --name axial-events-demo-f2787eed -p 57425:5432 -e POSTGRES_PASSWORD=demo postgres:16-alpine
+>>> store.create_schema() -- jobs and job_events tables created
+$ uvicorn axial.service.api:app --factory --port 57426
+INFO:     Started server process [155232]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:57426 (Press CTRL+C to quit)
+INFO:     127.0.0.1:57436 - "GET /asks HTTP/1.1" 200 OK
+>>> server is up (the `app()` factory built it from DATABASE_URL)
+
+$ POST http://127.0.0.1:57426/asks {"case": "Syria, 2011-2024", "request": "Who does Batatu argue against on the rural origins of the Ba'th?"}
+INFO:     127.0.0.1:57440 - "POST /asks HTTP/1.1" 202 Accepted
+>>> 202 Accepted, id=34e548e4877248de8d0152f7aa58c372
+
+>>> starting one Worker (job body stubbed -- a real ask costs model calls)
+$ curl -N http://127.0.0.1:57426/asks/34e548e4877248de8d0152f7aa58c372/events
+INFO:     127.0.0.1:57444 - "GET /asks/34e548e4877248de8d0152f7aa58c372/events HTTP/1.1" 200 OK
+>>> 200 text/event-stream; charset=utf-8
+>>> first event after 1461ms
+    id: 1  data: interrogating the question
+    id: 2  data: retrieving evidence through the argument map
+    id: 3  data: retrieved 48 notes on French Mandate
+>>> client disconnects mid-run (tab closed) after 3 events
+
+$ curl -N -H 'Last-Event-ID: 3' http://127.0.0.1:57426/asks/34e548e4877248de8d0152f7aa58c372/events
+INFO:     127.0.0.1:57456 - "GET /asks/34e548e4877248de8d0152f7aa58c372/events HTTP/1.1" 200 OK
+    id: 4  data: 12 opposition edges across 5 books
+    id: 5  data: writing the answer
+    id: 6  data: checking the answer
+>>> stream closed by the server: the job reached `done`
+
+>>> 6 events stored, 6 delivered across the two connections
+>>> no loss, no duplication: True
+>>> the whole narration, in order: ['interrogating the question', 'retrieving evidence through the argument map', 'retrieved 48 notes on French Mandate', '12 opposition edges across 5 books', 'writing the answer', 'checking the answer']
+
+$ POST /asks (a second ask, whose job will fail mid-retrieval)
+INFO:     127.0.0.1:57471 - "POST /asks HTTP/1.1" 202 Accepted
+$ curl -N http://127.0.0.1:57426/asks/55173c1250fd4334a4264d5f5f582b77/events
+INFO:     127.0.0.1:57475 - "GET /asks/55173c1250fd4334a4264d5f5f582b77/events HTTP/1.1" 200 OK
+    id: 1  data: interrogating the question
+    id: 2  data: retrieving evidence through the argument map
+    id: 3  data: retrieved 48 notes on French Mandate
+    id: None  data: the corpus snapshot went away mid-retrieval
+>>> stream ended with the failure, not a hang: 'the corpus snapshot went away mid-retrieval'
+INFO:     127.0.0.1:57488 - "GET /asks/55173c1250fd4334a4264d5f5f582b77 HTTP/1.1" 200 OK
+>>> GET /asks/55173c1250fd4334a4264d5f5f582b77 -> state='failed'
+
+An analyst watched the system read, closed the tab, came back, and lost nothing.
+
+$ docker rm -f axial-events-demo-f2787eed
