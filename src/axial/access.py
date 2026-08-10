@@ -3,12 +3,21 @@ pure, table-driven policy function in the style of `axial.brief.interrogate.
 disposition_for` -- the decision comes from this one place, never from an
 accident of how a caller happened to shape a database query.
 
-Reuses `axial.ask.role`'s own `OPERATOR`/`ANALYST` constants (issue #536)
-rather than a second, competing role enum -- that module's docstring already
-names this exact gap: role there is "a command-line surface restriction...
-[a] real boundary needs the service... where the two roles are separate
-callers rather than a flag one process reads about itself." This is that
-boundary.
+The two role values, `OPERATOR`/`ANALYST`, are the same two names
+`axial.ask.role` already uses for the CLI's own operator/analyst surface
+restriction (issue #536; that module's docstring names this exact gap: role
+there is "a command-line surface restriction... [a] real boundary needs the
+service... where the two roles are separate callers rather than a flag one
+process reads about itself" -- this is that boundary). The literals are
+repeated here rather than imported: `axial.ask.role` lives inside the
+`axial.ask` package, whose `__init__` eagerly imports the whole engine (the
+answer/record/LLM stack) to build its own `ask()` seam, and pulling that into
+`axial.service.api` (measured: adds ~1.3s to the API's own import, which its
+module docstring is explicit stays "small enough that nothing about
+retrieval, composition or evidence lives here") for two string constants is
+not a trade this module makes. The same repeated-literal call is already
+made in `axial.paths` for `NAMES_DIR` versus `axial.names`, for the same
+reason.
 
 Two roles, and the plan is explicit: resist a third. An operator can do
 anything -- they built and published the corpus, and on their own machine
@@ -23,7 +32,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from axial.ask.role import ANALYST, OPERATOR
+# Mirrors `axial.ask.role.OPERATOR`/`.ANALYST` (module docstring: repeated,
+# not imported, to keep this module and its callers import-light).
+OPERATOR = "operator"
+ANALYST = "analyst"
 
 READ = "read"
 WRITE = "write"

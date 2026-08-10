@@ -51,8 +51,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, StringConstraints
 
-from axial.access import READ, WORK, Resource, can_access
-from axial.ask.role import ANALYST
+from axial.access import ANALYST, READ, WORK, Resource, can_access
 from axial.context import DEFAULT_PRINCIPAL
 from axial.service.jobs import DONE, FAILED, JobStore
 
