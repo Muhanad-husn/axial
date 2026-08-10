@@ -238,8 +238,9 @@ def _run_monitor() -> None:
         else f'<span class="dead">{snap.status}</span>'
     )
     elapsed = format_duration(snap.elapsed_sec) if snap.elapsed_sec is not None else "--"
+    pin = f'<span class="pname">{snap.corpus_pin}</span>' if snap.corpus_pin else ""
     st.html(
-        f'<div class="monbar"><span class="runname">{snap.run_id}</span>'
+        f'<div class="monbar"><span class="runname">{snap.run_id}</span>{pin}'
         f"<span>{liveness} &middot; {elapsed}</span></div>"
     )
 

@@ -111,7 +111,6 @@ class RunSnapshot:
     """One run, as the monitor screen shows it."""
 
     run_id: str
-    name: str
     status: str
     alive: bool
     command: str
@@ -299,7 +298,6 @@ def snapshot(run_dir: Path, *, now: datetime | None = None) -> RunSnapshot:
 
     return RunSnapshot(
         run_id=str(meta.get("run_id") or run_dir.name),
-        name=str(meta.get("name") or ""),
         status=str(meta.get("status") or "unknown"),
         alive=view.alive,
         command=command,
