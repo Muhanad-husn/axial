@@ -39,7 +39,6 @@ ANALYST = "analyst"
 
 READ = "read"
 WRITE = "write"
-ACTIONS = (READ, WRITE)
 
 # The corpus (vault, names, map, envelopes) is global and has no owner; a
 # `WORK` resource is one principal's own saved brief/analysis/run/paper.
