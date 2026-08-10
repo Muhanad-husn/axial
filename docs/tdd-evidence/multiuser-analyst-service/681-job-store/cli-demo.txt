@@ -1,0 +1,16 @@
+$ docker run -d --name axial-demo-pg-540baa04 -p 60058:5432 -e POSTGRES_PASSWORD=demo postgres:16-alpine
+>>> store.create_schema() -- jobs table created
+>>> store.enqueue(kind='ask', principal='analyst-demo', ...) -> 20ac182391854b20bd0cbcc52c795b31
+>>> store.get('20ac182391854b20bd0cbcc52c795b31') -> {'id': '20ac182391854b20bd0cbcc52c795b31', 'kind': 'ask', 'principal': 'analyst-demo', 'payload': {'case': 'demo case', 'question': 'who argues against X?'}, 'state': 'queued', 'created_at': datetime.datetime(2026, 8, 10, 16, 1, 17, 272503, tzinfo=datetime.timezone.utc), 'claimed_at': None, 'heartbeat_at': None, 'finished_at': None, 'result_ref': None, 'error': None, 'corpus_pin': None}
+>>> store.claim() -> id=20ac182391854b20bd0cbcc52c795b31 state=running
+>>> store.claim() again (queue now empty) -> None
+>>> store.heartbeat('20ac182391854b20bd0cbcc52c795b31') -> heartbeat_at refreshed: 2026-08-10 16:01:17.411445+00:00
+>>> store.complete(...) -> state=done corpus_pin=sha256:demo-pin result_ref=s3://demo/results/abc123.json
+>>> enqueue+claim a second job b6330874d31741e38fcff453493b22c3 -> state=running (worker now 'dies', never heartbeats)
+>>> store.reclaim_stale(stale_after_seconds=0.0) -> 1 row(s) reclaimed
+>>> store.get('b6330874d31741e38fcff453493b22c3') after reclaim -> state=queued claimed_at=None
+>>> a second worker calls store.claim() -> id=b6330874d31741e38fcff453493b22c3 state=running
+
+All boundary assertions held: enqueue -> claim -> heartbeat -> complete records corpus_pin; a dead worker's job is reclaimed and re-claimed by another worker.
+$ docker rm -f axial-demo-pg-540baa04
+exit: 0

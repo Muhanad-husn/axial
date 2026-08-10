@@ -126,8 +126,12 @@ jobs:
           restore-keys: |
             hf-cache-
 
+      # `service` (issue #681: psycopg for the job-store's Postgres tests) is
+      # needed here, not in the `unit` job above -- nothing under `src/axial`
+      # core imports `axial.service`, only `tests/service` (part of the
+      # `rest` shard by exclusion, see the note above) does.
       - name: Install dependencies
-        run: uv sync --group distill
+        run: uv sync --group distill --group service
 
       - name: Run acceptance tests (serial within the shard)
         run: uv run pytest ${{ matrix.paths }} -q -m "not slow" --durations=15
