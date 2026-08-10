@@ -14,6 +14,13 @@ produces; the Phase-C paper is a separate pipeline that runs off an
 analysis record. The route path is the issue's own and #687's client is
 written against it.
 
+**The record is rendered through this deployment's citation mode before it
+is served** (issue #690, `axial.service.citation`): `locator` (the
+default) serves the record exactly as persisted -- its `grounds` already
+carry no passage text -- and `passage` additionally resolves each `chunk`
+ground into a quoted `citation.quote`. The mode is `AXIAL_CITATION_MODE`,
+resolved once at `create_app`, never a request field a client could set.
+
 **`GET /asks/{id}/events` streams progress as Server-Sent Events** (issue
 #683), replacing a client-side spinner with the same `on_event` narration
 `axial ask` already prints (`axial.llm.emit_event`'s callers) -- the worker
@@ -64,6 +71,8 @@ from pydantic import BaseModel, StringConstraints
 
 from axial.access import ANALYST, READ, WORK, Resource, can_access
 from axial.context import DEFAULT_PRINCIPAL
+from axial.paths import default_vault_dir
+from axial.service.citation import render_record_for_serving, resolve_citation_mode
 from axial.service.jobs import DONE, FAILED, JobStore
 from axial.service.quotas import (
     QuotaStore,
@@ -277,7 +286,13 @@ def _event_stream(store: JobStore, ask_id: str, after_seq: int) -> Iterator[str]
         return
 
 
-def create_app(store: JobStore, quotas: QuotaStore | None = None) -> FastAPI:
+def create_app(
+    store: JobStore,
+    quotas: QuotaStore | None = None,
+    *,
+    citation_mode: str | None = None,
+    vault_dir: Path | None = None,
+) -> FastAPI:
     """Build the app over `store`. The store is an argument rather than a
     module global so a test drives the same app the deployment does.
 
@@ -289,7 +304,21 @@ def create_app(store: JobStore, quotas: QuotaStore | None = None) -> FastAPI:
     (left to a fixture or an ops migration, matching the pre-existing
     convention), a `quotas` table is new enough, and this check runs on
     EVERY `POST /asks`, that not creating it here would break every existing
-    caller of `create_app(store)` the moment this issue landed."""
+    caller of `create_app(store)` the moment this issue landed.
+
+    `citation_mode` (issue #690) defaults to `AXIAL_CITATION_MODE`
+    (`axial.service.citation.resolve_citation_mode`), resolved and
+    validated HERE, at app construction -- an unrecognised value is a
+    startup error naming the two valid modes, never a silent fallback to
+    `locator`. `vault_dir` is where `GET /asks/{id}/paper` reads
+    `notes.db`/prose from to resolve a citation (`axial.service.citation`);
+    `None` (the default here, always the case in a test that does not pass
+    one) means no resolution happens and every ground is served exactly as
+    the record already had it -- `locator` mode's own "no book text" bar is
+    already met by the untouched record (that module's docstring), so this
+    is a silent no-op, not a startup error. `app()` below supplies the real
+    default."""
+    citation_mode = resolve_citation_mode(citation_mode)
     if quotas is None:
         quotas = QuotaStore(store.dsn)
     quotas.create_schema()
@@ -343,15 +372,17 @@ def create_app(store: JobStore, quotas: QuotaStore | None = None) -> FastAPI:
     @app.get("/asks/{ask_id}/paper")
     def get_paper(ask_id: str, principal: Principal) -> dict[str, Any]:
         """The finished ask's §7.3 analysis record, as JSON (module
-        docstring). A job that has not reached `done` has no record to
-        serve, so it is a 409 naming the state it is actually in rather
-        than an empty 200."""
+        docstring), rendered through this deployment's own citation mode
+        (issue #690, `axial.service.citation.render_record_for_serving`) --
+        the record on disk never carries a quote either way, so `locator`
+        mode returns it untouched and `passage` mode adds one."""
         job = _require_own_job(store, ask_id, principal)
         if job["state"] != DONE:
             raise HTTPException(
                 status_code=409, detail=f"ask {ask_id!r} is {job['state']}, not finished"
             )
-        return json.loads(Path(job["result_ref"]).read_text(encoding="utf-8"))
+        record = json.loads(Path(job["result_ref"]).read_text(encoding="utf-8"))
+        return render_record_for_serving(record, citation_mode=citation_mode, vault_dir=vault_dir)
 
     return app
 
@@ -360,6 +391,16 @@ def app() -> FastAPI:
     """The deployment entry point: `uvicorn axial.service.api:app
     --factory`. `DATABASE_URL` is the one setting, the same variable
     `tests/service/conftest.py` already honours; the quota env vars are
-    `axial.service.quotas`'s own (`AXIAL_QUOTA_ASKS_PER_DAY`/`_MONTH`)."""
+    `axial.service.quotas`'s own (`AXIAL_QUOTA_ASKS_PER_DAY`/`_MONTH`); the
+    citation mode is `AXIAL_CITATION_MODE` (`axial.service.citation`).
+
+    `vault_dir` (issue #690) is `axial.paths.default_vault_dir()` -- the
+    same `config/pipeline.yaml`-relative-to-cwd convention every other read
+    in this codebase already resolves through, so a deployment that mounts
+    a published snapshot at this process's cwd (matching how a worker binds
+    to one, `axial.service.snapshot.Snapshot.bind`) resolves citations with
+    no second path to configure. Flipping `AXIAL_CITATION_MODE=passage`
+    genuinely needs no code change here -- it needs that mount, a
+    deployment detail #691 wires, not a setting this factory adds."""
     dsn = os.environ["DATABASE_URL"]
-    return create_app(JobStore(dsn), QuotaStore(dsn))
+    return create_app(JobStore(dsn), QuotaStore(dsn), vault_dir=default_vault_dir())

@@ -313,6 +313,47 @@ of this issue's scope. The job row's `cost_usd` stays `None` for an
 unpriced model's pass and a real `0.0` for a cache hit; the two are never
 allowed to collapse into each other.
 
+### Amendment, 2026-08-10: what shipped in #690 (citation mode)
+
+Two premise corrections turned out to shrink this slice from what the
+issue assumed.
+
+**There is no page number anywhere in this system.** Neither `axial.chunk`
+nor the extract path persists one; the finest per-note location the corpus
+carries is `axial.query.store`'s `notes.section`/`notes.chapter` (chapter
+is derived from a source's own table of contents at materialize time,
+`axial.materialize.chapter_for_section`). A locator is `{source_id,
+author, title, date, chapter, section}` — built from `notes`/`sources`,
+never a fabricated page.
+
+**The §7.3 analysis record already carried no passage text.** A claim's
+`grounds` and a `counter_position`'s own `grounds` are both `{ref_type,
+ref_id}` pointers (`axial.answer.record`, `axial.analyze.synthesis`) — `GET
+/asks/{id}/paper` already met `locator` mode's "no book text" bar with the
+record untouched, before this issue did anything. `passage` mode is
+therefore additive, not `locator` mode subtractive: `axial.service.
+citation.render_record_for_serving` attaches a `citation` block to every
+`chunk` ground it can resolve (the locator fields, in both modes), with a
+`quote` key added only when `AXIAL_CITATION_MODE=passage`. The whole served
+surface was checked, not just claim grounds: `interrogation`'s
+`premises_found`/`bounds_applied` are the model's own summarizing prose,
+`trajectory` entries carry tool names/args/chunk ids, and the SSE event
+stream (`GET /asks/{id}/events`) narrates tool actions and counts — none of
+it ever carried book text either.
+
+**The API process is not bound to a snapshot the way a worker is (#684's
+own binding model), and does not need to be for this.** `axial.query.
+reader.get_chunk`/`axial.query.store.connect` both take an explicit
+`vault_dir` argument and need no `os.chdir` binding to work correctly — the
+narrow read this issue needs was never one of the cwd-relative call sites
+`Snapshot.bind`'s own docstring lists. `create_app` takes `vault_dir`
+explicitly (`None` by default, a safe no-op); `app()`, the real deployment
+entry point, resolves it with `axial.paths.default_vault_dir()` — the same
+`config/pipeline.yaml`-relative-to-cwd convention every other read in this
+codebase already uses, so `AXIAL_CITATION_MODE=passage` needs no second
+setting once #691 mounts a snapshot at the API container's cwd the same
+way it will at a worker's.
+
 ## Explicitly deferred (do NOT build early)
 
 Building these before a real need is the over-engineering tripwire the handbook

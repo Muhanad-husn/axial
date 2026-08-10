@@ -103,7 +103,7 @@ import sqlite3
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 from axial.paths import replace_with_retry
 
@@ -439,6 +439,43 @@ def name_members(connection: sqlite3.Connection, canonical: str) -> list[tuple]:
             (canonical,),
         )
     ]
+
+
+def note_locator(connection: sqlite3.Connection, chunk_id: str) -> dict[str, Any] | None:
+    """The locator for one note (issue #690): its own `section`/`chapter`
+    (`notes`) and its source's own `author`/`title`/`date` (`sources`),
+    joined by `source_id` -- everything a citation needs to name WHERE a
+    claim rests, deliberately never `chunk_text` (that lives only in the
+    vault prose file, `axial.query.reader.get_chunk`; passage-mode
+    citation rendering reads it separately, `axial.service.citation`).
+
+    There is no page number anywhere in this system -- `chapter` (derived
+    at materialize time from a source's own table of contents,
+    `axial.materialize.chapter_for_section`) is the finest location this
+    store carries below the source itself, so it is what a locator states.
+
+    `None` when `chunk_id` has no row -- a fixture record, a note from a
+    vault with no store yet, or a ref that does not resolve."""
+    row = connection.execute(
+        """
+        SELECT n.section, n.chapter, n.source_id, s.author, s.title, s.date
+        FROM notes n
+        LEFT JOIN sources s ON s.source_id = n.source_id
+        WHERE n.chunk_id = ?
+        """,
+        (chunk_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    section, chapter, source_id, author, title, date = row
+    return {
+        "source_id": source_id,
+        "author": author,
+        "title": title,
+        "date": date,
+        "chapter": chapter,
+        "section": section,
+    }
 
 
 def opposing_notes(connection: sqlite3.Connection, position_id: str) -> list[tuple]:
