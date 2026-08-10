@@ -339,8 +339,18 @@ def test_main_names_escalations_json_flag_emits_machine_readable_array(tmp_path,
 
     assert exit_code == 0
     payload = json.loads(captured.out)
+    # Issue #735: escalations_to_json now carries a `stale` flag (the
+    # surface isn't in the inventory here, so it's stale) -- updated to
+    # match the new shape, not a behavior regression.
     assert payload == [
-        {"surface": "a", "kind": None, "cluster_label": 0, "co_members": ["b"], "source_ids": []}
+        {
+            "surface": "a",
+            "kind": None,
+            "cluster_label": 0,
+            "co_members": ["b"],
+            "source_ids": [],
+            "stale": True,
+        }
     ]
 
 
