@@ -23,6 +23,7 @@ from axial.ask.engine import (
     new_session_id,
 )
 from axial.brief.intake import Brief
+from axial.context import RequestContext
 
 
 class _FakeClient:
@@ -262,3 +263,73 @@ def test_ask_is_reachable_as_a_function_without_the_cli():
         run_brief_fn=_recording_run_brief([]),
     )
     assert turn.result.record == {"claims": []}
+
+
+# -- RequestContext (issue #685) ---------------------------------------------
+
+
+def test_ask_with_no_context_resolves_the_same_dirs_as_before_685(tmp_path):
+    """`context=None` (every call site before this parameter existed,
+    `axial ask` among them) must resolve to exactly the same directories a
+    caller who never heard of `RequestContext` would get."""
+    from axial.paths import default_analyses_dir, default_runs_dir
+
+    config = tmp_path / "pipeline.yaml"
+    config.write_text(
+        "paths:\n  analyses_dir: data/analyses\n  runs_dir: data/runs\n", encoding="utf-8"
+    )
+    calls: list[dict[str, Any]] = []
+
+    ask(
+        "Q",
+        "Case",
+        client=_FakeClient(),
+        config_path=config,
+        run_brief_fn=_recording_run_brief(calls),
+    )
+
+    assert calls[0]["analyses_dir"] == default_analyses_dir(config)
+    assert calls[0]["runs_dir"] == default_runs_dir(config)
+
+
+def test_ask_with_a_context_scopes_analyses_and_runs_dirs_to_its_principal(tmp_path):
+    config = tmp_path / "pipeline.yaml"
+    config.write_text(
+        "paths:\n  analyses_dir: data/analyses\n  runs_dir: data/runs\n", encoding="utf-8"
+    )
+    calls: list[dict[str, Any]] = []
+
+    ask(
+        "Q",
+        "Case",
+        client=_FakeClient(),
+        config_path=config,
+        context=RequestContext(principal="analyst-42"),
+        run_brief_fn=_recording_run_brief(calls),
+    )
+
+    assert calls[0]["analyses_dir"] == Path("data/analyses") / "analyst-42"
+    assert calls[0]["runs_dir"] == Path("data/runs") / "analyst-42"
+
+
+def test_ask_context_never_overrides_explicit_directories(tmp_path):
+    """A caller that already supplies its own `analyses_dir`/`runs_dir`
+    (the worker, bound to a published snapshot, per
+    `axial.service.worker.run_ask_job`) is unaffected by `context` --
+    those directories are never corpus-config-relative."""
+    calls: list[dict[str, Any]] = []
+    explicit_analyses = tmp_path / "work" / "analyses"
+    explicit_runs = tmp_path / "work" / "runs"
+
+    ask(
+        "Q",
+        "Case",
+        client=_FakeClient(),
+        analyses_dir=explicit_analyses,
+        runs_dir=explicit_runs,
+        context=RequestContext(principal="analyst-42"),
+        run_brief_fn=_recording_run_brief(calls),
+    )
+
+    assert calls[0]["analyses_dir"] == explicit_analyses
+    assert calls[0]["runs_dir"] == explicit_runs

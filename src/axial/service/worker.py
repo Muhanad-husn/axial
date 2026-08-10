@@ -20,6 +20,7 @@ from typing import Any, Callable
 
 from axial.ask.engine import ask as run_ask
 from axial.llm import LLMClient
+from axial.paths import scoped_for_principal
 from axial.service.jobs import JobStore
 from axial.service.snapshot import Snapshot, SnapshotPinMismatchError
 
@@ -62,7 +63,12 @@ def run_ask_job(
 
     `work_dir` is where the analyst's own records land (`analyses/`,
     `runs/`). Passed explicitly because it is not corpus -- the snapshot is
-    read-only, and nothing a query produces belongs inside it.
+    read-only, and nothing a query produces belongs inside it. Each is
+    further scoped to the job's own `principal` (issue #685,
+    `axial.paths.scoped_for_principal`), so two principals asking against
+    the same worker never see each other's saved work -- the default
+    principal (today's single pre-login analyst) keeps landing directly
+    under `work_dir`, unchanged.
 
     `on_event` (issue #683) is the same seam `axial ask` wires to its live
     printer -- here it appends each call to `store` instead, under this
@@ -82,8 +88,8 @@ def run_ask_job(
         lens=payload.get("lens"),
         weights=payload.get("weights"),
         on_event=on_event,
-        analyses_dir=Path(work_dir) / "analyses",
-        runs_dir=Path(work_dir) / "runs",
+        analyses_dir=scoped_for_principal(Path(work_dir) / "analyses", job["principal"]),
+        runs_dir=scoped_for_principal(Path(work_dir) / "runs", job["principal"]),
         map_pin=snapshot.map_pin,
     )
     recorded = turn.result.record["corpus_pin"]

@@ -36,6 +36,7 @@ from typing import Any
 
 import yaml
 
+from axial.context import DEFAULT_PRINCIPAL
 from axial.yaml_loader import SAFE_LOADER
 
 DEFAULT_PIPELINE_CONFIG_PATH = Path("config/pipeline.yaml")
@@ -158,16 +159,42 @@ def default_names_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
     return _read_configured_dir(config_path, "names_dir", NAMES_DIR)
 
 
-def default_analyses_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
+def scoped_for_principal(base: Path, principal: str = DEFAULT_PRINCIPAL) -> Path:
+    """`base`, scoped to `principal`'s own subdirectory (issue #685 step 3):
+    `base/<principal>`. `principal == DEFAULT_PRINCIPAL` (the single local
+    user every caller got before request identity existed) maps to `base`
+    itself, unchanged -- so the dozens of existing `default_analyses_dir()`/
+    `default_runs_dir()` callers across `cli.py`, `axial.brief`,
+    `axial.gates`, `axial.paper`, which never pass a `principal` at all,
+    keep writing exactly where they always have. Any other principal gets
+    its own subdirectory, so two principals' saved work under the same base
+    never collides."""
+    if principal == DEFAULT_PRINCIPAL:
+        return base
+    return base / principal
+
+
+def default_analyses_dir(
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH, *, principal: str = DEFAULT_PRINCIPAL
+) -> Path:
     """Read `paths.analyses_dir` from `config_path`, falling back to
-    `ANALYSES_DIR` when the file or key is absent."""
-    return _read_configured_dir(config_path, "analyses_dir", ANALYSES_DIR)
+    `ANALYSES_DIR` when the file or key is absent, then scope it to
+    `principal` (`scoped_for_principal`) -- `DEFAULT_PRINCIPAL`, the
+    default, resolves to the bare configured directory, byte-identical to
+    every call site before `principal` existed."""
+    return scoped_for_principal(
+        _read_configured_dir(config_path, "analyses_dir", ANALYSES_DIR), principal
+    )
 
 
-def default_runs_dir(config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH) -> Path:
+def default_runs_dir(
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH, *, principal: str = DEFAULT_PRINCIPAL
+) -> Path:
     """Read `paths.runs_dir` from `config_path`, falling back to `RUNS_DIR`
-    when the file or key is absent."""
-    return _read_configured_dir(config_path, "runs_dir", RUNS_DIR)
+    when the file or key is absent, then scope it to `principal`
+    (`scoped_for_principal`) -- see `default_analyses_dir`'s own docstring
+    for what the default preserves."""
+    return scoped_for_principal(_read_configured_dir(config_path, "runs_dir", RUNS_DIR), principal)
 
 
 # The default location of the argument map (issue #572): one pin directory

@@ -17,14 +17,20 @@ import pytest
 import yaml
 
 import axial.paths
+from axial.context import DEFAULT_PRINCIPAL
 from axial.paths import (
+    ANALYSES_DIR,
     NAMES_DIR,
+    RUNS_DIR,
     VAULT_DIR,
     atomic_write_text,
+    default_analyses_dir,
     default_names_dir,
+    default_runs_dir,
     default_vault_dir,
     name_page_filename,
     name_page_path,
+    scoped_for_principal,
 )
 
 # Low enough that `path_overage` is positive for any real name under a real
@@ -99,6 +105,53 @@ def test_name_page_path_joins_the_vault_names_directory(tmp_path):
     vault_dir = tmp_path / "vault"
     path = name_page_path(vault_dir, "Kevin Attell")
     assert path == vault_dir / "names" / "Kevin Attell.md"
+
+
+# --- Per-principal working-set resolution (issue #685) ---------------------
+
+
+def test_scoped_for_principal_is_unscoped_for_the_default_principal(tmp_path):
+    base = tmp_path / "analyses"
+    assert scoped_for_principal(base) == base
+    assert scoped_for_principal(base, DEFAULT_PRINCIPAL) == base
+
+
+def test_scoped_for_principal_gets_its_own_subdirectory_for_any_other_principal(tmp_path):
+    base = tmp_path / "analyses"
+    assert scoped_for_principal(base, "analyst-42") == base / "analyst-42"
+
+
+def test_two_principals_scope_to_different_directories_under_the_same_base(tmp_path):
+    base = tmp_path / "analyses"
+    alice = scoped_for_principal(base, "alice")
+    bob = scoped_for_principal(base, "bob")
+    assert alice != bob
+    assert alice.parent == bob.parent == base
+
+
+def test_default_analyses_dir_with_no_principal_is_unchanged_from_before_685():
+    """Every existing caller (`cli.py`, `axial.brief`, `axial.gates`,
+    `axial.paper`) calls `default_analyses_dir()`/`default_runs_dir()` with
+    no `principal` argument at all -- this must keep resolving to the same
+    bare directory it always has."""
+    assert default_analyses_dir() == ANALYSES_DIR
+    assert default_runs_dir() == RUNS_DIR
+
+
+def test_default_analyses_dir_scopes_a_non_default_principal(tmp_path):
+    config = tmp_path / "pipeline.yaml"
+    _write_config_paths(config, analyses_dir="data/analyses", runs_dir="data/runs")
+
+    assert (
+        default_analyses_dir(config, principal="analyst-42") == Path("data/analyses") / "analyst-42"
+    )
+    assert default_runs_dir(config, principal="analyst-42") == Path("data/runs") / "analyst-42"
+
+
+def _write_config_paths(path: Path, *, analyses_dir: str, runs_dir: str) -> None:
+    path.write_text(
+        f"paths:\n  analyses_dir: {analyses_dir}\n  runs_dir: {runs_dir}\n", encoding="utf-8"
+    )
 
 
 # --- The pipeline-config memo (issue #541) ---------------------------------

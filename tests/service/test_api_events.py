@@ -23,7 +23,7 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 
-from axial.service.api import _event_stream, create_app
+from axial.service.api import DEFAULT_PRINCIPAL, _event_stream, create_app
 from axial.service.jobs import JobStore
 
 # Generous relative to `EVENTS_POLL_INTERVAL_SECONDS` (0.5s) so a slow CI
@@ -62,8 +62,12 @@ def test_events_stream_is_404_for_an_unknown_id(client):
 def test_events_stream_delivers_events_live_and_closes_when_the_job_is_done(
     client, job_store: JobStore
 ):
+    # `DEFAULT_PRINCIPAL` (issue #685): a job read through `client` must be
+    # owned by the same principal the client's own dependency authenticates
+    # as, or `_require_own_job` refuses it -- this test is about the stream
+    # itself, so it stays the owner rather than exercising that refusal.
     job_id = job_store.enqueue(
-        kind="ask", principal="analyst-1", payload={"case": "Syria", "question": "Q"}
+        kind="ask", principal=DEFAULT_PRINCIPAL, payload={"case": "Syria", "question": "Q"}
     )
     job_store.claim()
 
@@ -162,7 +166,7 @@ def test_event_stream_does_not_drop_an_event_written_between_the_last_read_and_f
 
 def test_a_failed_job_ends_the_stream_with_its_error(client, job_store: JobStore):
     job_id = job_store.enqueue(
-        kind="ask", principal="analyst-1", payload={"case": "Syria", "question": "Q"}
+        kind="ask", principal=DEFAULT_PRINCIPAL, payload={"case": "Syria", "question": "Q"}
     )
     job_store.claim()
     job_store.append_event(job_id, "interrogating the question")
@@ -183,7 +187,7 @@ def test_reconnecting_with_last_event_id_resumes_with_no_gap_or_duplicate(
     client, job_store: JobStore
 ):
     job_id = job_store.enqueue(
-        kind="ask", principal="analyst-1", payload={"case": "Syria", "question": "Q"}
+        kind="ask", principal=DEFAULT_PRINCIPAL, payload={"case": "Syria", "question": "Q"}
     )
     job_store.claim()
     job_store.append_event(job_id, "one")
@@ -211,7 +215,7 @@ def test_reconnecting_with_last_event_id_resumes_with_no_gap_or_duplicate(
 
 def test_a_completed_job_replays_its_full_history_and_closes(client, job_store: JobStore):
     job_id = job_store.enqueue(
-        kind="ask", principal="analyst-1", payload={"case": "Syria", "question": "Q"}
+        kind="ask", principal=DEFAULT_PRINCIPAL, payload={"case": "Syria", "question": "Q"}
     )
     job_store.claim()
     job_store.append_event(job_id, "interrogating the question")

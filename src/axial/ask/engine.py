@@ -41,8 +41,9 @@ from typing import Callable
 from axial.answer.record import BriefRunResult, run_brief
 from axial.brief.fork import ForkAnswer, ForkCheckResult
 from axial.brief.intake import Brief, BriefContent, compute_brief_id
+from axial.context import RequestContext
 from axial.llm import EventCallback, LLMClient
-from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
+from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_analyses_dir, default_runs_dir
 
 
 class AskError(Exception):
@@ -139,6 +140,7 @@ def ask(
     map_pin: str | None = None,
     run_brief_fn: Callable[..., BriefRunResult] = run_brief,
     on_fork: Callable[[ForkCheckResult], ForkAnswer | None] | None = None,
+    context: RequestContext | None = None,
 ) -> Turn:
     """Ask one question against one case and run the full engine over it.
     `axial ask` is this function's first caller (module docstring); a
@@ -181,6 +183,15 @@ def ask(
     answer is available -- a fork found on this turn is recorded unanswered
     and the turn proceeds unconstrained, exactly as a batch brief run does.
 
+    `context` (issue #685) is who is asking. `None` (the default, and every
+    call site before this parameter existed -- `axial ask` among them) is
+    `RequestContext()`, the single local user, which resolves to exactly the
+    same `analyses_dir`/`runs_dir` as before this parameter existed. It is
+    consulted only to fill in `analyses_dir`/`runs_dir` when a caller leaves
+    them `None`; a caller that supplies its own directories explicitly (a
+    worker bound to a published snapshot, per `axial.service.worker`, whose
+    directories are never corpus-config-relative) is unaffected by it.
+
     Raises `BlankCaseError`/`BlankQuestionError` for its own precondition;
     every engine error `run_brief_fn` raises propagates unchanged."""
     if not case or not case.strip():
@@ -190,6 +201,12 @@ def ask(
 
     if session_id is None:
         session_id = new_session_id()
+    if context is None:
+        context = RequestContext()
+    if analyses_dir is None:
+        analyses_dir = default_analyses_dir(config_path, principal=context.principal)
+    if runs_dir is None:
+        runs_dir = default_runs_dir(config_path, principal=context.principal)
 
     request_text = _followup_request(question, previous) if previous is not None else question
     weights = dict(weights) if weights else {}
