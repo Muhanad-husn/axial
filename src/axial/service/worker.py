@@ -19,6 +19,13 @@ reports a fourth thing back to `Worker.run_once`: whether the row it
 completed was a cache hit and what it cost, so those two land on the job
 row (`JobStore.complete`) the same way `result_ref`/`corpus_pin` always
 have.
+
+**`run_job` reports a fifth thing, `tokens` (issue #724)**: the run's own
+total token count, read off the exact same `record["cost"]["by_pass"]`
+dict `cost_usd` already comes from -- never a second read of the record,
+and never a re-derivation from anything `GET /me/usage` reads later. Same
+rule as `cost_usd`: `0` on a cache hit (this job made no model call), and
+`None` when the record carried no `cost` block to sum at all.
 """
 
 from __future__ import annotations
@@ -42,9 +49,25 @@ from axial.service.snapshot import Snapshot, SnapshotPinMismatchError
 # well above this so a live worker's heartbeat never races a reaper pass.
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 5.0
 
-# result_ref, corpus_pin, cached, cost_usd -- exactly what `JobStore.complete`
-# needs to record (issue #686 added the last two).
-JobRunner = Callable[[dict[str, Any]], tuple[str, str, bool, float | None]]
+# result_ref, corpus_pin, cached, cost_usd, tokens -- exactly what
+# `JobStore.complete` needs to record (issue #686 added `cached`/`cost_usd`,
+# issue #724 added `tokens`).
+JobRunner = Callable[[dict[str, Any]], tuple[str, str, bool, float | None, int | None]]
+
+
+def _tokens_used(record: dict[str, Any]) -> int | None:
+    """The run's total token count, summed across `record["cost"]["by_pass"]`
+    (issue #724) -- the same `cost` dict `cost_usd` is already read from
+    below, never a second read of the record. `None` when the record
+    carries no `cost` block at all (an unpriced or uncaptured run, §7.14's
+    own rule for `cost_usd` applied identically here); a real `0` when
+    `by_pass` exists but every pass's own `total_tokens` is genuinely `0`
+    (`axial.llm.usage_and_cost_by_pass` never reports a negative or missing
+    count once a pass is named in it)."""
+    by_pass = ((record.get("cost") or {}).get("by_pass")) or None
+    if by_pass is None:
+        return None
+    return sum(entry.get("total_tokens", 0) for entry in by_pass.values())
 
 
 def run_ask_job(
@@ -55,20 +78,21 @@ def run_ask_job(
     snapshot: Snapshot,
     work_dir: Path,
     cache: PaperCache | None = None,
-) -> tuple[str, str, bool, float | None]:
+) -> tuple[str, str, bool, float | None, int | None]:
     """The `"ask"`-kind job body: run the full ask engine in-process over
-    `job["payload"]` and return `(result_ref, corpus_pin, cached, cost_usd)`
-    for `JobStore.complete`. `payload` carries the same arguments `axial ask`
-    itself collects (`question`, `case`, and the optional `session_id`,
-    `lens`, `weights` a follow-up or a weighted query supplies).
+    `job["payload"]` and return `(result_ref, corpus_pin, cached, cost_usd,
+    tokens)` for `JobStore.complete`. `payload` carries the same arguments
+    `axial ask` itself collects (`question`, `case`, and the optional
+    `session_id`, `lens`, `weights` a follow-up or a weighted query
+    supplies).
 
     `cache` (issue #686), when given, is checked BEFORE the engine runs at
     all: this payload's own `(brief_id, snapshot.corpus_pin)` -- the exact
     key `axial.ask.engine.ask` would compute for a first turn, via the same
     `compute_brief_id` -- is looked up, and a hit short-circuits straight to
-    `(cached_result_ref, snapshot.corpus_pin, True, 0.0)`: no model call, no
-    `run_ask`, and one appended event so `GET /asks/{id}/events` still ends
-    with something rather than jumping straight to `done`
+    `(cached_result_ref, snapshot.corpus_pin, True, 0.0, 0)`: no model call,
+    no `run_ask`, and one appended event so `GET /asks/{id}/events` still
+    ends with something rather than jumping straight to `done`
     (`axial.service.cache`'s own module docstring covers the cross-principal
     materialisation a hit relies on). `None` (the default, and every call
     site before this parameter existed) skips the cache entirely -- always a
@@ -79,7 +103,11 @@ def run_ask_job(
     The returned `cost_usd` (issue #686, §7.14) is the run's own
     `record["cost"]["total_usd"]` -- `None`-preserving for an unpriced
     model's pass, never coerced to `0.0` (a cache hit's own, genuinely known
-    zero, returned above instead).
+    zero, returned above instead). `tokens` (issue #724) is
+    `_tokens_used(record)`, the same `record["cost"]["by_pass"]` dict summed
+    instead of read for its `total_usd` -- identical null-preserving rule,
+    and `0` (not `None`) on the cache-hit branch above for the same reason
+    `cost_usd` is `0.0` there: this job itself made no model call.
 
     `snapshot` (issue #684) is the published corpus this worker process was
     started on and stays on for its whole life. The process is already bound
@@ -129,7 +157,7 @@ def run_ask_job(
                 "served from cache, no model call made",
                 {"stage": "cache", "brief_id": brief_id, "corpus_pin": snapshot.corpus_pin},
             )
-            return cached_ref, snapshot.corpus_pin, True, 0.0
+            return cached_ref, snapshot.corpus_pin, True, 0.0, 0
 
     def on_event(message: str, detail: dict[str, Any]) -> None:
         store.append_event(job["id"], message, detail)
@@ -154,7 +182,8 @@ def run_ask_job(
         cache.store(brief_id, snapshot.corpus_pin, turn.result.path, Path(work_dir) / "cache")
 
     cost_usd = (turn.result.record.get("cost") or {}).get("total_usd")
-    return str(turn.result.path), snapshot.corpus_pin, False, cost_usd
+    tokens = _tokens_used(turn.result.record)
+    return str(turn.result.path), snapshot.corpus_pin, False, cost_usd, tokens
 
 
 class Worker:
@@ -192,7 +221,7 @@ class Worker:
         )
         heartbeat_thread.start()
         try:
-            result_ref, corpus_pin, cached, cost_usd = self.run_job(job)
+            result_ref, corpus_pin, cached, cost_usd, tokens = self.run_job(job)
         except Exception as exc:  # noqa: BLE001 - any job failure is recorded, not swallowed
             stop.set()
             heartbeat_thread.join()
@@ -206,6 +235,7 @@ class Worker:
                 corpus_pin=corpus_pin,
                 cached=cached,
                 cost_usd=cost_usd,
+                tokens=tokens,
             )
         return True
 

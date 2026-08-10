@@ -68,6 +68,11 @@ service = [
     "fastapi>=0.115",
     "psycopg[binary]>=3.2",
     "uvicorn>=0.32",
+    # `GET /asks/{id}/export?format=odt` (issue #724): pure Python, no
+    # binary -- `python-docx` (already a main dependency) covers `docx`
+    # the same way; together they keep every export format's conversion
+    # off a pandoc binary #691's image would otherwise have to carry.
+    "odfpy>=1.4.1",
 ]
 
 # tests/ holds only outer acceptance contracts (test-author, locked once red);

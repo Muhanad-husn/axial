@@ -1,0 +1,21 @@
+record:      080d9e472fc56a34.json
+case:        
+request:     
+claims:      25
+
+--- metrics block served beside the record ---
+confidence:      {'overall_band': 'low', 'rationale': "overall confidence is 'low', bounded by 17 evidence note(s), median note band 'thin' capped at 'medium' because coverage_map discloses a thin name; coverage by name: Kalyvas 2006 (thin: 1 corpus notes, 1 evidence notes); Stathis N. Kalyvas (moderate: 23 corpus notes, 7 evidence notes); Syrian Civil War (thin: 9 corpus notes, 6 evidence notes); Syrian conflict (moderate: 22 corpus notes, 1 evidence notes); The Culture of Sectarianism (thin: 5 corpus notes, 2 evidence notes)"}
+model_by_pass:   ['counter_position_generate', 'fork_check', 'interrogate', 'retrieve', 'synthesize']
+cost.total_usd:  0.17633940499999998
+coverage_map:    ['Kalyvas 2006', 'Stathis N. Kalyvas', 'Syrian Civil War', 'Syrian conflict', 'The Culture of Sectarianism']
+phase-C fields:  retries=False  shape=False
+
+--- three containers, one rendering path ---
+export.md        17,639 bytes
+export.docx      41,839 bytes
+export.odt        6,645 bytes
+
+--- locator bar: 41 cited chunks ---
+probes checked: 82
+book-text leaks in the locator export: 0
+markdown bytes: 17,639  docx: 41,839  odt: 6,645
