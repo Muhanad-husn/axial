@@ -74,6 +74,15 @@ slow outliers named, total tokens/cost, failures grouped by their own
 generated. None of this changes the printed TSV table, the tally line, the
 resume ledger, or the exit-code contract -- see the outer acceptance tests
 under `tests/test_run*.py`, all pinned before #526 and unedited by it.
+
+**Issue #734 wires that same before/after `usage_for_pass` comparison into
+`record()` itself** (`_source_usage_and_cost`): each attempted source's own
+token usage and dollar cost, so `run.jsonl` -- not only the end-of-run
+`report.json` -- carries spend, readable while the run is still in flight
+and attributable to a pass and a source. `None` there means "not
+measured" (no usage captured yet for this pass in this run), never a
+fabricated zero; see that function's own docstring for the exact
+null/zero rules.
 """
 
 from __future__ import annotations
@@ -112,7 +121,13 @@ from axial.interrogate import (
     load_answer_checkpoint,
     run_interrogate,
 )
-from axial.llm import DEFAULT_PIPELINE_CONFIG_PATH, LLMClient, get_client, usage_and_cost_by_pass
+from axial.llm import (
+    DEFAULT_PIPELINE_CONFIG_PATH,
+    LLMClient,
+    estimate_cost,
+    get_client,
+    usage_and_cost_by_pass,
+)
 from axial.paths import DEFAULT_DOMAIN_DIR
 from axial.position_backfill import notes_missing_position, run_position_backfill
 from axial.runlog import format_duration, run_context
@@ -608,6 +623,47 @@ def _spent_so_far(client: LLMClient, pass_name: str) -> float | None:
     return report["by_pass"][pass_name]["usd"]
 
 
+def _source_usage_and_cost(
+    model: str | None,
+    usage_before: dict[str, int] | None,
+    usage_after: dict[str, int] | None,
+) -> tuple[int | None, int | None, int | None, float | None]:
+    """This one source's own token usage and dollar cost (issue #734): the
+    delta between `client.usage_for_pass(pass_name)` taken right before and
+    right after this source's own `descriptor.invoke` call -- both already
+    computed by the loop below to decide `record()`'s `model` field, never
+    a second accounting.
+
+    `usage_after is None` means the pass has captured no usage at all yet
+    across every source attempted so far in this run -- an unknown, the
+    same "not on disk yet" case `_render_progress_line`'s own `spent=n/a`
+    already renders -- so every field comes back `None` rather than a
+    fabricated zero.
+
+    Once usage exists, the delta is real numbers, including an honest zero
+    when nothing NEW moved the accumulator for this source -- the same
+    ambiguity ("no call" vs. "a call whose response carried no `usage`
+    object") the loop's own `model = ... if usage_after != usage_before
+    else None` already accepts for the model field, not a new one invented
+    here. `model` is `None` in exactly that unchanged-delta case, so the
+    zero-token branch below never needs to price against it; a non-`None`
+    model always pairs with a real (possibly zero) token delta, priced
+    through `axial.llm.estimate_cost` -- `None` there too when the model
+    has no `PRICE_TABLE_USD_PER_1K` entry, never a silent zero standing in
+    for an unpriced model."""
+    if usage_after is None:
+        return None, None, None, None
+    before = usage_before or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    prompt_tokens = usage_after["prompt_tokens"] - before["prompt_tokens"]
+    completion_tokens = usage_after["completion_tokens"] - before["completion_tokens"]
+    total_tokens = usage_after["total_tokens"] - before["total_tokens"]
+    if model is None:
+        usd = 0.0
+    else:
+        usd = estimate_cost(model, prompt_tokens, completion_tokens)
+    return prompt_tokens, completion_tokens, total_tokens, usd
+
+
 def _label_corpus_pin(
     worklist_path: str | Path | None, corpus: bool, sources_dir: Path | None
 ) -> str | None:
@@ -894,6 +950,9 @@ def run_pass(
                 # tests/test_runlog_passes.py).
                 usage_after = client.usage_for_pass(pass_name)
                 model = client.model_for_pass(pass_name) if usage_after != usage_before else None
+                prompt_tokens, completion_tokens, total_tokens, usd = _source_usage_and_cost(
+                    model, usage_before, usage_after
+                )
                 run.record(
                     source_id=source_id,
                     pass_name=pass_name,
@@ -901,6 +960,10 @@ def run_pass(
                     status="ok" if outcome.status == OK_STATUS else "error",
                     duration_sec=duration,
                     error=outcome.reason or None,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
+                    usd=usd,
                 )
 
                 outcomes.append(outcome)

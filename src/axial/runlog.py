@@ -29,10 +29,14 @@ loguru, no config DSL). It creates `data/logs/<name>-<ts>/` containing:
   `list_runs`/`load_run`'s `alive` computation.
 - `run.jsonl` -- one JSON record per `RunHandle.record(...)` call, the
   existing one-per-unit-of-work granularity: `source_id`, `pass`, `model`
-  (nullable), `status`, `duration_sec`, `error`. Ids and values only --
+  (nullable), `status`, `duration_sec`, `error`, plus (issue #734)
+  `prompt_tokens`/`completion_tokens`/`total_tokens`/`usd` -- this source's
+  own token usage and dollar cost, all nullable. Ids and values only --
   DEC-23 is why `record`'s signature is a fixed set of keyword-only scalars
-  with no field that could carry a chunk or source passage. Unchanged by
-  #526 (its schema is a locked contract, `src/axial/test_runlog.py`).
+  with no field that could carry a chunk or source passage; #734 adds to
+  that fixed set of scalars, it does not loosen it. Unchanged by #526 (its
+  schema is a locked contract, `src/axial/test_runlog.py`) except for this
+  additive four-field extension.
 - `events.jsonl` -- one JSON record per `RunHandle.event(...)` call, finer
   than `record()`: a source's own start, finish, or failure, or any other
   named `kind`, each carrying its own timestamp. This is what lets a
@@ -177,11 +181,27 @@ class RunHandle:
         status: str,
         duration_sec: float,
         error: str | None = None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        total_tokens: int | None = None,
+        usd: float | None = None,
     ) -> None:
         """Append one JSON line to `run.jsonl`. The keyword-only, fixed
         signature is the DEC-23 guard: there is no parameter this shape
         could carry a chunk or source passage through -- only ids, values,
-        and status."""
+        and status.
+
+        `prompt_tokens`/`completion_tokens`/`total_tokens`/`usd` (issue
+        #734) are the same guard's addition, not its loosening: four more
+        numeric-only keyword scalars, this source's own token usage and
+        dollar cost, so a run's own spend is readable from `run.jsonl`
+        while the run is still in flight rather than only from the
+        end-of-run report. All four default to `None` -- a caller that
+        never measured them (every single-source CLI pass, unchanged) still
+        writes a valid record, and `None` here always means "not measured",
+        never a fabricated zero (`axial.run._source_usage_and_cost` is the
+        one caller that computes real values, from the same before/after
+        `usage_for_pass` comparison the live progress line already uses)."""
         row = {
             "source_id": source_id,
             "pass": pass_name,
@@ -189,6 +209,10 @@ class RunHandle:
             "status": status,
             "duration_sec": duration_sec,
             "error": error,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "usd": usd,
         }
         with (self.run_dir / "run.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row) + "\n")

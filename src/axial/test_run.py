@@ -39,6 +39,7 @@ from axial.run import (
     SKIP_STATUS,
     _append_ledger_row,
     _load_done_source_ids,
+    _source_usage_and_cost,
     resolve_corpus_source_paths,
     run_pass,
 )
@@ -867,3 +868,63 @@ def test_empty_corpus_source_set_exits_zero_with_total_zero(tmp_path, monkeypatc
     assert exit_code == 0
     assert summary.total == 0
     assert summary.outcomes == []
+
+
+# --- _source_usage_and_cost (issue #734) -----------------------------------
+
+
+def test_source_usage_and_cost_is_unknown_when_the_pass_has_never_captured_usage():
+    """`usage_after is None`: no source attempted so far in this run has
+    had a response carry a `usage` object for this pass. An unknown, not a
+    zero -- every field comes back `None`."""
+    prompt, completion, total, usd = _source_usage_and_cost(None, None, None)
+
+    assert (prompt, completion, total, usd) == (None, None, None, None)
+
+
+def test_source_usage_and_cost_deltas_a_real_call_and_prices_it():
+    before = {"prompt_tokens": 1000, "completion_tokens": 200, "total_tokens": 1200}
+    after = {"prompt_tokens": 1100, "completion_tokens": 250, "total_tokens": 1350}
+
+    prompt, completion, total, usd = _source_usage_and_cost("z-ai/glm-5.2", before, after)
+
+    assert (prompt, completion, total) == (100, 50, 150)
+    assert usd == pytest.approx(100 / 1000 * 0.00112 + 50 / 1000 * 0.00352)
+
+
+def test_source_usage_and_cost_first_call_in_the_pass_deltas_against_zero():
+    """`usage_before is None` but `usage_after` is not: this source's own
+    call is the first one this pass has ever captured usage for -- the
+    delta is the full `usage_after` value, not unknown."""
+    after = {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
+
+    prompt, completion, total, usd = _source_usage_and_cost("z-ai/glm-5.2", None, after)
+
+    assert (prompt, completion, total) == (100, 50, 150)
+    assert usd == pytest.approx(100 / 1000 * 0.00112 + 50 / 1000 * 0.00352)
+
+
+def test_source_usage_and_cost_no_new_usage_is_a_real_zero_not_unknown():
+    """Mirrors the loop's own `model = ... if usage_after != usage_before
+    else None` rule: when this source made no NEW call the accumulator
+    moved for, `model` is `None` and the delta is an honest zero -- not a
+    fabricated cost, but not `None` either, since the pass DOES have real
+    captured usage overall."""
+    usage = {"prompt_tokens": 1000, "completion_tokens": 200, "total_tokens": 1200}
+
+    prompt, completion, total, usd = _source_usage_and_cost(None, usage, usage)
+
+    assert (prompt, completion, total, usd) == (0, 0, 0, 0.0)
+
+
+def test_source_usage_and_cost_unpriced_model_reports_tokens_but_null_usd():
+    """A model absent from `PRICE_TABLE_USD_PER_1K` still reports real token
+    counts -- `estimate_cost` itself returns `None` for the price, never a
+    silent zero standing in for "nobody has priced this model yet"."""
+    before = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    after = {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
+
+    prompt, completion, total, usd = _source_usage_and_cost("some/unpriced-model", before, after)
+
+    assert (prompt, completion, total) == (100, 50, 150)
+    assert usd is None

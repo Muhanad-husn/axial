@@ -39,11 +39,21 @@ the run's own record -- never from a hand-picked constant:
   idle-and-empty for longer than its own cadence. So `overdue` is the
   conjunction: quiet past the run's own cadence AND nothing in flight.
 
-- **Spend** is read from the end-of-run `report.json`'s `tokens_and_cost`
-  and is `None` whenever that file does not exist yet or its `total_usd` is
-  null. A live run's spend is genuinely not on disk (`axial.run` accumulates
-  it on the in-process client), and a fabricated estimate would be worse
-  than a blank.
+- **Spend** (issue #734). `report.json`'s `tokens_and_cost.total_usd` wins
+  when the file exists -- it is the pass-wide total `axial.llm
+  .usage_and_cost_by_pass` computed at the run's real end, already
+  null-safe. While a run is still live, that file does not exist yet, so
+  spend is instead summed straight from `run.jsonl`'s own per-record `usd`
+  field (`axial.runlog.RunHandle.record`'s issue #734 addition) -- the same
+  number a live run's own progress line already prints, now readable from a
+  second process too. A record whose `usd` is `null` (a model-bearing call
+  whose response carried no `usage` object, or an unpriced model) is
+  excluded from the sum, never coerced to zero; `spend_usd` is `None` only
+  when NOT ONE record has priced yet, matching the report path's own "never
+  a fabricated zero" rule. `spend_partial` is `True` exactly when the sum is
+  real but incomplete -- at least one model-bearing record's own `usd` is
+  unknown -- so the aggregate itself reads as qualified rather than a
+  confident total.
 """
 
 from __future__ import annotations
@@ -122,6 +132,7 @@ class RunSnapshot:
     workers: int | None
     effective_concurrency: float | None
     spend_usd: float | None
+    spend_partial: bool
     passes: list[PassRow]
     quiet: Quiet | None
     report: dict[str, Any] | None
@@ -206,12 +217,29 @@ def _pass_rows(records: list[dict[str, Any]], events: list[dict[str, Any]]) -> l
     return rows
 
 
-def _spend_usd(report: dict[str, Any] | None) -> float | None:
+def _spend_from_report(report: dict[str, Any] | None) -> float | None:
     if not report:
         return None
     tokens_and_cost = report.get("tokens_and_cost") or {}
     total = tokens_and_cost.get("total_usd")
     return float(total) if isinstance(total, (int, float)) else None
+
+
+def _spend_from_records(records: list[dict[str, Any]]) -> tuple[float | None, bool]:
+    """This run's own spend, summed straight from `run.jsonl`'s per-record
+    `usd` field (issue #734) -- the live-run path (module docstring). Every
+    record whose `usd` is not a real number is excluded from the sum rather
+    than treated as zero; the sum itself is `None` when no record has
+    priced. `partial` is `True` when a model-bearing record's `usd` is
+    unknown alongside at least one that IS known -- a real but incomplete
+    total, distinguished from "no spend data at all"."""
+    known = [record["usd"] for record in records if isinstance(record.get("usd"), (int, float))]
+    partial = any(
+        record.get("model") is not None and not isinstance(record.get("usd"), (int, float))
+        for record in records
+    )
+    total = sum(known) if known else None
+    return total, (partial and total is not None)
 
 
 def _read_report(run_dir: Path) -> dict[str, Any] | None:
@@ -296,6 +324,12 @@ def snapshot(run_dir: Path, *, now: datetime | None = None) -> RunSnapshot:
     report = _read_report(run_dir)
     passes = _pass_rows(view.records, view.events)
 
+    spend_from_report = _spend_from_report(report)
+    if spend_from_report is not None:
+        spend_usd, spend_partial = spend_from_report, False
+    else:
+        spend_usd, spend_partial = _spend_from_records(view.records)
+
     return RunSnapshot(
         run_id=str(meta.get("run_id") or run_dir.name),
         status=str(meta.get("status") or "unknown"),
@@ -308,7 +342,8 @@ def snapshot(run_dir: Path, *, now: datetime | None = None) -> RunSnapshot:
         failures=sum(1 for record in view.records if record.get("status") != "ok"),
         workers=int(workers_match.group(1)) if workers_match else None,
         effective_concurrency=(busy_sec / elapsed_sec) if elapsed_sec else None,
-        spend_usd=_spend_usd(report),
+        spend_usd=spend_usd,
+        spend_partial=spend_partial,
         passes=passes,
         quiet=(
             _quiet(
