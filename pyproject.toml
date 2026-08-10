@@ -59,11 +59,15 @@ distill = [
     "sentence-transformers>=3.0",
 ]
 
-# The analyst service layer's job store (issue #681): a Postgres driver only
-# the service worker and its tests need, never the Phase A/B/C pipeline --
-# same rationale as `distill`/`experiment` above. `uv sync --group service`.
+# The analyst service layer (issues #681, #682): a Postgres driver, the HTTP
+# framework and the ASGI server that only the service and its tests need,
+# never the Phase A/B/C pipeline -- same rationale as `distill`/`experiment`
+# above. `uv sync --group service`. `uvicorn` is how the app is served at all
+# (`uvicorn axial.service.api:app --factory`); #691's deployment runs it.
 service = [
+    "fastapi>=0.115",
     "psycopg[binary]>=3.2",
+    "uvicorn>=0.32",
 ]
 
 # tests/ holds only outer acceptance contracts (test-author, locked once red);
