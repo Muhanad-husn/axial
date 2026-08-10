@@ -13,7 +13,21 @@ from axial.ask.engine import Turn
 from axial.brief.intake import Brief
 from axial.service import worker as worker_mod
 from axial.service.jobs import DONE, FAILED, JobStore
+from axial.service.snapshot import Snapshot
 from axial.service.worker import Worker, run_ask_job
+
+# The snapshot a worker process is bound to (issue #684). Built directly
+# rather than published, because these two tests are about `run_ask_job`'s
+# own wiring, not about what a published snapshot contains -- that is
+# `test_snapshot.py`'s job.
+_SNAPSHOT = Snapshot(
+    root=Path("data/snapshots/v1"),
+    version="v1",
+    corpus_pin="sim-2026-08-10",
+    map_pin="a1b2c3",
+    sources=("alpha-0123456789ab",),
+    built_at="2026-08-10T00:00:00Z",
+)
 
 
 def test_run_once_returns_false_when_queue_is_empty(job_store: JobStore):
@@ -70,12 +84,12 @@ def test_run_ask_job_calls_the_in_process_ask_engine_not_a_subprocess(
     payload, no `subprocess`/CLI involved."""
     seen = {}
 
-    def fake_ask(
-        question, case, *, client, session_id=None, lens=None, weights=None, on_event=None
-    ):
+    def fake_ask(question, case, *, client, session_id=None, on_event=None, **kwargs):
         seen["question"] = question
         seen["case"] = case
         seen["session_id"] = session_id
+        seen["map_pin"] = kwargs.get("map_pin")
+        seen["analyses_dir"] = kwargs.get("analyses_dir")
         brief = Brief(brief_id="b1", case=case, request=question)
         result = BriefRunResult(
             record={"corpus_pin": "sim-2026-08-10"},
@@ -96,12 +110,21 @@ def test_run_ask_job_calls_the_in_process_ask_engine_not_a_subprocess(
         payload={"question": "Who led the uprising?", "case": "Syria", "session_id": "s1"},
     )
     job = job_store.claim()
-    result_ref, corpus_pin = run_ask_job(job, client=object(), store=job_store)
+    result_ref, corpus_pin = run_ask_job(
+        job, client=object(), store=job_store, snapshot=_SNAPSHOT, work_dir=Path("data/work")
+    )
 
     assert seen["question"] == "Who led the uprising?"
     assert seen["case"] == "Syria"
     assert seen["session_id"] == "s1"
     assert job["id"] == job_id
+    # The snapshot supplies what binding cannot: the map pin, and a
+    # writable place for the analyst's own records outside the read-only
+    # snapshot (issue #684).
+    assert seen["map_pin"] == "a1b2c3"
+    assert seen["analyses_dir"] == Path("data/work/analyses")
+    assert corpus_pin == "sim-2026-08-10"
+    assert result_ref
 
 
 def test_run_ask_job_wires_on_event_to_the_store(monkeypatch, job_store: JobStore):
@@ -110,9 +133,7 @@ def test_run_ask_job_wires_on_event_to_the_store(monkeypatch, job_store: JobStor
     this job's own id, since that table is what `GET /asks/{id}/events`
     reads from."""
 
-    def fake_ask(
-        question, case, *, client, session_id=None, lens=None, weights=None, on_event=None
-    ):
+    def fake_ask(question, case, *, client, session_id=None, on_event=None, **kwargs):
         on_event("interrogating the question", {"stage": "interrogate"})
         on_event("writing the answer", {"stage": "synthesize"})
         brief = Brief(brief_id="b1", case=case, request=question)
@@ -133,7 +154,9 @@ def test_run_ask_job_wires_on_event_to_the_store(monkeypatch, job_store: JobStor
         kind="ask", principal="analyst-1", payload={"question": "Q", "case": "Syria"}
     )
     job = job_store.claim()
-    run_ask_job(job, client=object(), store=job_store)
+    run_ask_job(
+        job, client=object(), store=job_store, snapshot=_SNAPSHOT, work_dir=Path("data/work")
+    )
 
     events = job_store.events_since(job_id)
     assert [event["message"] for event in events] == [

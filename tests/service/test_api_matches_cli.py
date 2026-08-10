@@ -34,6 +34,7 @@ from axial.ask.engine import ask as real_ask
 from axial.service import worker as worker_mod
 from axial.service.api import create_app
 from axial.service.jobs import JobStore
+from axial.service.snapshot import Snapshot
 from axial.service.worker import Worker, run_ask_job
 
 CASE = "Syria, 2011-2024"
@@ -89,8 +90,21 @@ def engine_calls(monkeypatch, record_file: Path) -> list[dict[str, Any]]:
     return calls
 
 
+# The snapshot the service worker is bound to (issue #684). Its pin is the
+# stub record's own pin, which is what `run_ask_job` reconciles the run
+# against; the CLI path is unbound and unaffected.
+_SNAPSHOT = Snapshot(
+    root=Path("data/snapshots/v1"),
+    version="v1",
+    corpus_pin="sim-2026-08-10",
+    map_pin=None,
+    sources=(),
+    built_at="2026-08-10T00:00:00Z",
+)
+
+
 def test_the_cli_and_the_api_produce_the_same_paper_for_the_same_brief(
-    job_store: JobStore, engine_calls: list[dict[str, Any]]
+    job_store: JobStore, engine_calls: list[dict[str, Any]], tmp_path: Path
 ):
     # `--no-paper` stops at the answer: an ask produces a §7.3 analysis
     # record, and the Phase-C paper draft `axial ask` adds on top is a
@@ -102,7 +116,13 @@ def test_the_cli_and_the_api_produce_the_same_paper_for_the_same_brief(
         job_id = client.post("/asks", json={"case": CASE, "request": QUESTION}).json()["id"]
         worker = Worker(
             job_store,
-            run_job=lambda job: run_ask_job(job, client=_StubClient(), store=job_store),
+            run_job=lambda job: run_ask_job(
+                job,
+                client=_StubClient(),
+                store=job_store,
+                snapshot=_SNAPSHOT,
+                work_dir=tmp_path / "work",
+            ),
             heartbeat_interval=0.1,
         )
         assert worker.run_once() is True

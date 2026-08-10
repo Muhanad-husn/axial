@@ -136,6 +136,7 @@ def ask(
     analyses_dir: Path | None = None,
     runs_dir: Path | None = None,
     lenses_dir: Path | None = None,
+    map_pin: str | None = None,
     run_brief_fn: Callable[..., BriefRunResult] = run_brief,
     on_fork: Callable[[ForkCheckResult], ForkAnswer | None] | None = None,
 ) -> Turn:
@@ -164,6 +165,14 @@ def ask(
     inferred and never asked for (DEC-61): a follow-up does not inherit a
     prior turn's weights automatically, since a follow-up is its own full
     brief and the analyst supplies weights with the question they go with.
+
+    `map_pin` (issue #684) names the built argument map `positions_on`
+    reads, skipping `resolve_pinned_map_dir`'s own derivation of it --
+    which hashes every raw source file. `None` (the default, and every call
+    site before this parameter existed) leaves that derivation exactly as it
+    was. A worker bound to a published snapshot passes the pin its manifest
+    recorded at publish time, because a hosted worker holds no source bytes
+    to hash and would otherwise silently lose the map tool.
 
     `on_fork` (issue #649, specs/PHASE-B.md §7, DEC-62) is forwarded
     verbatim to `run_brief_fn`: the interactive hook a genuine intake fork
@@ -202,6 +211,7 @@ def ask(
         analyses_dir=analyses_dir,
         runs_dir=runs_dir,
         lenses_dir=lenses_dir,
+        map_pin=map_pin,
         on_event=on_event,
         session_id=session_id,
         on_fork=on_fork,
