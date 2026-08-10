@@ -1533,13 +1533,23 @@ class EscalationEntry:
     form escalated in two different batches -- a real HDBSCAN cluster and
     issue #446's candidate generation both proposing it, say -- yields two
     entries, since the co-members differ and that difference is exactly
-    what the operator is judging."""
+    what the operator is judging.
+
+    `stale` (issue #735): the decision log is content-keyed and permanent,
+    so it outlives every re-chunk/re-fit of the inventory it is joined
+    against here. `stale=True` means the surface form is not in the
+    inventory at all -- the corpus no longer produces it, so this is a log
+    row about history, not live backlog. That is a different fact from
+    `kind is None`, which means the surface *is* in the inventory but was
+    never seen with a kind (a citation-only surface, per `InventoryEntry`).
+    Conflating the two under one `(no kind)` label was the defect."""
 
     surface_form: str
     kind: str | None
     cluster_label: int
     co_members: tuple[str, ...]
     source_ids: tuple[str, ...]
+    stale: bool
 
 
 def list_escalations(
@@ -1562,6 +1572,7 @@ def list_escalations(
             continue
         members = record.get("members", [])
         for surface_form in escalated:
+            stale = surface_form not in inventory
             kind, chunk_ids = inventory.get(surface_form, (None, ()))
             source_ids: list[str] = []
             for chunk_id in chunk_ids:
@@ -1578,6 +1589,7 @@ def list_escalations(
                     cluster_label=record["cluster_label"],
                     co_members=tuple(member for member in members if member != surface_form),
                     source_ids=tuple(sorted(source_ids)),
+                    stale=stale,
                 )
             )
     entries.sort(key=lambda entry: (entry.surface_form, entry.cluster_label))
@@ -1588,7 +1600,10 @@ def escalations_to_json(entries: list[EscalationEntry]) -> list[dict[str, Any]]:
     """The machine-readable form of `list_escalations`' own output -- the
     same data `format_escalations_report` renders as text, so a caller that
     wants to filter or re-ask programmatically (issue #460's "re-ask exactly
-    these" option) never has to re-parse the human report."""
+    these" option) never has to re-parse the human report. `stale` (issue
+    #735) carries the live/historical distinction so #730's console and any
+    re-ask tooling can filter on it without re-deriving it from the
+    inventory themselves."""
     return [
         {
             "surface": entry.surface_form,
@@ -1596,17 +1611,48 @@ def escalations_to_json(entries: list[EscalationEntry]) -> list[dict[str, Any]]:
             "cluster_label": entry.cluster_label,
             "co_members": list(entry.co_members),
             "source_ids": list(entry.source_ids),
+            "stale": entry.stale,
         }
         for entry in entries
     ]
+
+
+def _format_escalation_lines(entries: list[EscalationEntry]) -> list[str]:
+    lines: list[str] = []
+    for entry in entries:
+        kind = f" ({entry.kind})" if entry.kind else ""
+        co_members = ", ".join(entry.co_members) if entry.co_members else "(none)"
+        sources = ", ".join(entry.source_ids) if entry.source_ids else "(none)"
+        lines.append(
+            f"  {entry.surface_form!r}{kind} -- proposed with: {co_members} -- source(s): {sources}"
+        )
+    return lines
 
 
 def format_escalations_report(entries: list[EscalationEntry]) -> str:
     """Human-readable rendering of `list_escalations`' output: a per-kind
     count (falls out of the same data at no extra cost -- the cheapest
     answer to "one problem or five") followed by one line per escalated
-    surface with its co-members and source book(s)."""
+    surface with its co-members and source book(s).
+
+    Issue #735: the decision log is permanent and outlives every re-chunk/
+    re-fit of the inventory, so a third of the total is routinely about
+    surface forms the corpus no longer produces -- history, not backlog.
+    The headline states live and stale as separate counts so neither reads
+    as the other, and the two sets are rendered under their own headings
+    rather than filtered out of the default listing -- an operator working
+    the backlog still needs to see which surface a given stale row was
+    about. The by-kind breakdown stays live-only: a stale entry has no kind
+    by construction (its surface isn't in the inventory to have one), so
+    folding it into `(no kind)` would just reintroduce the same conflation
+    under a new name."""
+    live = [entry for entry in entries if not entry.stale]
+    stale = [entry for entry in entries if entry.stale]
+
     lines: list[str] = [f"names escalations: {len(entries)} escalated surface occurrence(s)"]
+    lines.append(
+        f"  {len(live)} live, {len(stale)} stale (surface no longer in data/names/inventory.jsonl)"
+    )
 
     distinct = len({entry.surface_form for entry in entries})
     if distinct != len(entries):
@@ -1615,27 +1661,23 @@ def format_escalations_report(entries: list[EscalationEntry]) -> str:
         )
 
     by_kind: dict[str, int] = {}
-    for entry in entries:
+    for entry in live:
         key = entry.kind or "(no kind)"
         by_kind[key] = by_kind.get(key, 0) + 1
     lines.append("")
-    lines.append("by kind:")
+    lines.append("by kind (live only):")
     if not by_kind:
         lines.append("  (none)")
     for kind, count in sorted(by_kind.items(), key=lambda item: (-item[1], item[0])):
         lines.append(f"  {kind}: {count}")
 
     lines.append("")
-    lines.append("escalated surfaces:")
-    if not entries:
-        lines.append("  (none)")
-    for entry in entries:
-        kind = f" ({entry.kind})" if entry.kind else ""
-        co_members = ", ".join(entry.co_members) if entry.co_members else "(none)"
-        sources = ", ".join(entry.source_ids) if entry.source_ids else "(none)"
-        lines.append(
-            f"  {entry.surface_form!r}{kind} -- proposed with: {co_members} -- source(s): {sources}"
-        )
+    lines.append("escalated surfaces (live):")
+    lines.extend(_format_escalation_lines(live) or ["  (none)"])
+
+    lines.append("")
+    lines.append("escalated surfaces (stale -- surface no longer in inventory):")
+    lines.extend(_format_escalation_lines(stale) or ["  (none)"])
 
     return "\n".join(lines)
 

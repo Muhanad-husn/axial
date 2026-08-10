@@ -1339,5 +1339,109 @@ def test_escalations_to_json_is_the_same_data_the_report_renders(tmp_path: Path)
             "cluster_label": 7,
             "co_members": ["b"],
             "source_ids": [],
+            "stale": True,
         }
     ]
+
+
+def test_a_surface_gone_from_the_inventory_is_stale_not_just_unkinded(tmp_path: Path):
+    """Issue #735: a surface absent from the inventory (the decision log
+    outlived a re-chunk/re-fit) and a surface present with no `kind` (a
+    citation-only surface, per `InventoryEntry`'s own docstring) both used
+    to render as `(no kind)` -- indistinguishable. They must not be."""
+    decisions_path = tmp_path / "merge_decisions.jsonl"
+    inventory_path = tmp_path / "inventory.jsonl"
+    _write_jsonl(
+        decisions_path,
+        [
+            {
+                "batch_key": "k1",
+                "cluster_label": 0,
+                "members": ["Ghost Surface", "Present No Kind"],
+                "nodes": [],
+                "escalated": ["Ghost Surface", "Present No Kind"],
+            }
+        ],
+    )
+    _write_jsonl(
+        inventory_path,
+        [
+            # Present in the inventory, but never seen with a kind --
+            # citation-only. Not stale.
+            {
+                "surface": "Present No Kind",
+                "kind": None,
+                "count": 1,
+                "chunk_ids": ["book-one_1_a_001"],
+            },
+        ],
+    )
+
+    entries = list_escalations(decisions_path, inventory_path)
+    by_surface = {entry.surface_form: entry for entry in entries}
+
+    assert by_surface["Ghost Surface"].stale is True
+    assert by_surface["Ghost Surface"].kind is None
+
+    assert by_surface["Present No Kind"].stale is False
+    assert by_surface["Present No Kind"].kind is None
+
+
+def test_report_and_json_split_live_and_stale_counts(tmp_path: Path):
+    """Issue #735: the operator asking "how much is escalated" must not be
+    handed one number that silently mixes live and stale. Pin the pre-#463
+    case-fold shape specifically: it lands on the stale side through the
+    general "surface absent from inventory" rule, with no date check and no
+    special case."""
+    decisions_path = tmp_path / "merge_decisions.jsonl"
+    inventory_path = tmp_path / "inventory.jsonl"
+    _write_jsonl(
+        decisions_path,
+        [
+            {
+                "batch_key": "k1",
+                "cluster_label": 0,
+                "members": ["Adam Smith", "Anthony D. Smith"],
+                "nodes": [],
+                "escalated": ["Adam Smith"],
+            },
+            {
+                # Pre-#463: a case-fold pair the corpus can no longer
+                # produce -- neither "Party" nor "party" survives in a
+                # rebuilt inventory. Stale through the general rule alone.
+                "batch_key": "k2",
+                "cluster_label": 1,
+                "members": ["Party", "party"],
+                "nodes": [],
+                "escalated": ["Party", "party"],
+            },
+        ],
+    )
+    _write_jsonl(
+        inventory_path,
+        [
+            {
+                "surface": "Adam Smith",
+                "kind": "person",
+                "count": 1,
+                "chunk_ids": ["book-one_1_a_001"],
+            },
+        ],
+    )
+
+    entries = list_escalations(decisions_path, inventory_path)
+    assert len(entries) == 3
+    live = [entry for entry in entries if not entry.stale]
+    stale = [entry for entry in entries if entry.stale]
+    assert len(live) == 1
+    assert len(stale) == 2
+    assert {entry.surface_form for entry in stale} == {"Party", "party"}
+
+    payload = escalations_to_json(entries)
+    assert sum(1 for row in payload if not row["stale"]) == 1
+    assert sum(1 for row in payload if row["stale"]) == 2
+
+    report = format_escalations_report(entries)
+    assert "3 escalated surface occurrence(s)" in report
+    assert "1 live" in report
+    assert "2 stale" in report
