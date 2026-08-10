@@ -35,6 +35,17 @@ lands. `GET /asks` filters on it, and every by-id route below (`GET /asks/
 that are not the caller's: a job id is guessable, so the refusal has to come
 from the policy, not from an accident of how `JobStore.get` happens to be
 called.
+
+**`POST /asks` checks the caller's quota BEFORE `store.enqueue`** (issue
+#686, `axial.service.quotas.QuotaStore`): an over-quota ask returns `429`
+naming the window, the limit, and the exact UTC instant it resets, and
+creates no job row at all -- the issue's own criterion. The content-keyed
+paper cache that makes a duplicate ask free is NOT checked here: only the
+worker holds the bound snapshot's pin (`axial.service.snapshot`), so a
+cache hit still enqueues a `queued` row exactly like a miss and is resolved
+in `axial.service.worker.run_ask_job` instead (that module's own docstring).
+`AskStatus.cached` is `True` once the worker records a hit, so a client can
+say the paper it is showing cost nothing to produce.
 """
 
 from __future__ import annotations
@@ -43,7 +54,7 @@ import json
 import os
 import time
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -54,6 +65,13 @@ from pydantic import BaseModel, StringConstraints
 from axial.access import ANALYST, READ, WORK, Resource, can_access
 from axial.context import DEFAULT_PRINCIPAL
 from axial.service.jobs import DONE, FAILED, JobStore
+from axial.service.quotas import (
+    QuotaStore,
+    next_daily_reset,
+    next_monthly_reset,
+    start_of_day_utc,
+    start_of_month_utc,
+)
 
 ASK_KIND = "ask"
 
@@ -118,11 +136,15 @@ class AskAccepted(BaseModel):
 
 class AskStatus(BaseModel):
     """One job row as the client sees it: state, corpus pin, timings, and
-    the result reference once it is done."""
+    the result reference once it is done. `cached` (issue #686) is `True`
+    once the worker has served this row from the content-keyed paper cache
+    instead of calling the engine -- "marked as such" is the issue's own
+    acceptance line, and this field is that mark."""
 
     id: str
     state: str
     corpus_pin: str | None = None
+    cached: bool = False
     created_at: datetime
     claimed_at: datetime | None = None
     finished_at: datetime | None = None
@@ -135,6 +157,67 @@ def _require_job(store: JobStore, ask_id: str) -> dict[str, Any]:
     if job is None:
         raise HTTPException(status_code=404, detail=f"no ask with id {ask_id!r}")
     return job
+
+
+_WINDOW_LABEL = {"day": "daily", "month": "monthly"}
+
+
+def _reject_quota_exceeded(window: str, limit: int, reset_at: datetime) -> None:
+    """Raise the `429` the issue's third "done when" describes: a clear
+    refusal naming the limit that was hit and the exact UTC instant it
+    resets, worded so a UI can show it to an academic verbatim -- never a
+    bare status code with no explanation."""
+    raise HTTPException(
+        status_code=429,
+        detail={
+            "message": (
+                f"You've reached your {_WINDOW_LABEL[window]} limit of {limit} ask(s). "
+                f"It resets at {reset_at.isoformat()} (UTC)."
+            ),
+            "window": window,
+            "limit": limit,
+            "reset_at": reset_at.isoformat(),
+        },
+    )
+
+
+def _check_quota(store: JobStore, quotas: QuotaStore, principal: str) -> None:
+    """Refuse `principal` before a job row is ever created (issue #686's
+    own criterion) when either the daily or the monthly calendar-UTC window
+    (`axial.service.quotas` module docstring) is already at its limit. The
+    count comes from `JobStore.count_since`, which excludes a `cached` row
+    -- a cache hit spends nothing, so it must never count against the
+    budget that exists to bound spend.
+
+    All three reads (limits, daily count, monthly count) share ONE physical
+    connection (`store.connection()`) -- `POST /asks` has its own <100ms
+    budget (`test_api_under_load.py`), and three separate `psycopg.connect()`
+    calls measured ~25ms each on this stack; batched onto one, this check
+    costs roughly what one of them used to.
+
+    **Not atomic.** This reads the count, then returns; nothing locks the
+    window between the read here and the `store.enqueue` call after it, so
+    two simultaneous requests from the same principal can both read
+    `limit - 1` and both pass, landing the window one-or-a-few over its
+    stated limit -- bounded by how many requests are genuinely concurrent
+    at that instant, never unbounded. Acceptable as shipped: a quota here
+    is an economic guardrail, not a security boundary. A `SELECT ... FOR
+    UPDATE` scoped to `principal`, or folding the count and the enqueue
+    into one serializable transaction, would close this if it ever
+    mattered."""
+    now = datetime.now(timezone.utc)
+    with store.connection() as conn:
+        limits = quotas.limits_for(principal, conn=conn)
+        daily_count = store.count_since(
+            principal, kind=ASK_KIND, since=start_of_day_utc(now), conn=conn
+        )
+        monthly_count = store.count_since(
+            principal, kind=ASK_KIND, since=start_of_month_utc(now), conn=conn
+        )
+    if daily_count >= limits.daily:
+        _reject_quota_exceeded("day", limits.daily, next_daily_reset(now))
+    if monthly_count >= limits.monthly:
+        _reject_quota_exceeded("month", limits.monthly, next_monthly_reset(now))
 
 
 def _sse_frame(*, seq: int | None, data: dict[str, Any]) -> str:
@@ -194,14 +277,31 @@ def _event_stream(store: JobStore, ask_id: str, after_seq: int) -> Iterator[str]
         return
 
 
-def create_app(store: JobStore) -> FastAPI:
+def create_app(store: JobStore, quotas: QuotaStore | None = None) -> FastAPI:
     """Build the app over `store`. The store is an argument rather than a
-    module global so a test drives the same app the deployment does."""
+    module global so a test drives the same app the deployment does.
+
+    `quotas` (issue #686) defaults to a `QuotaStore` over `store`'s own DSN
+    (`JobStore.dsn`) -- a caller that only ever passed a `JobStore` before
+    this parameter existed still gets quota enforcement for free, with the
+    environment's default limits (`axial.service.quotas` module docstring).
+    Its schema is created here, unconditionally: unlike `jobs`/`job_events`
+    (left to a fixture or an ops migration, matching the pre-existing
+    convention), a `quotas` table is new enough, and this check runs on
+    EVERY `POST /asks`, that not creating it here would break every existing
+    caller of `create_app(store)` the moment this issue landed."""
+    if quotas is None:
+        quotas = QuotaStore(store.dsn)
+    quotas.create_schema()
+
     app = FastAPI(title="Axial analyst service")
 
     @app.post("/asks", status_code=202, response_model=AskAccepted)
     def submit_ask(ask: AskRequest, principal: Principal) -> AskAccepted:
-        """Queue an ask and return its id. Does not run it."""
+        """Queue an ask and return its id. Does not run it. Refuses with
+        `429` before enqueuing anything when `principal` is over quota
+        (module docstring, `_check_quota`)."""
+        _check_quota(store, quotas, principal)
         job_id = store.enqueue(
             kind=ASK_KIND,
             principal=principal,
@@ -259,5 +359,7 @@ def create_app(store: JobStore) -> FastAPI:
 def app() -> FastAPI:
     """The deployment entry point: `uvicorn axial.service.api:app
     --factory`. `DATABASE_URL` is the one setting, the same variable
-    `tests/service/conftest.py` already honours."""
-    return create_app(JobStore(os.environ["DATABASE_URL"]))
+    `tests/service/conftest.py` already honours; the quota env vars are
+    `axial.service.quotas`'s own (`AXIAL_QUOTA_ASKS_PER_DAY`/`_MONTH`)."""
+    dsn = os.environ["DATABASE_URL"]
+    return create_app(JobStore(dsn), QuotaStore(dsn))

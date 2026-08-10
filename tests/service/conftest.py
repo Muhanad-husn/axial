@@ -26,7 +26,9 @@ from collections.abc import Iterator
 import psycopg
 import pytest
 
+from axial.service.cache import PaperCache
 from axial.service.jobs import JobStore
+from axial.service.quotas import QuotaStore
 
 _IMAGE = "postgres:16-alpine"
 
@@ -111,3 +113,32 @@ def job_store(postgres_dsn: str) -> JobStore:
         # the referencing table is truncated along with it.
         conn.execute("TRUNCATE jobs CASCADE")
     return store
+
+
+@pytest.fixture(autouse=True)
+def quota_store(postgres_dsn: str) -> QuotaStore:
+    """A `QuotaStore` (issue #686) over a fresh, empty `quotas` table --
+    same shape as `job_store` above, but `autouse`: `create_app` builds its
+    own `QuotaStore` over `store.dsn` whenever a test's own `client` fixture
+    doesn't pass one (every pre-#686 test in this package), so an override
+    `set_limits` writes in one test (`test_api_quota.py`) would otherwise
+    silently outlive it and leak into any later test asking as the same
+    default principal -- the same isolation `TRUNCATE jobs` already gives
+    `job_store`, just not opt-in here since the table is touched whether or
+    not a test names it."""
+    store = QuotaStore(postgres_dsn)
+    store.create_schema()
+    with psycopg.connect(postgres_dsn) as conn:
+        conn.execute("TRUNCATE quotas")
+    return store
+
+
+@pytest.fixture
+def paper_cache(postgres_dsn: str) -> PaperCache:
+    """A `PaperCache` (issue #686) over a fresh, empty `paper_cache` table
+    -- same shape as `job_store` above."""
+    cache = PaperCache(postgres_dsn)
+    cache.create_schema()
+    with psycopg.connect(postgres_dsn) as conn:
+        conn.execute("TRUNCATE paper_cache")
+    return cache

@@ -268,6 +268,51 @@ corpus and the snapshot is read-only.
 `resolve_pin_id` inside a bound worker returns the snapshot's own pin. A job
 whose run recorded a different pin is failed, not relabelled.
 
+### Amendment, 2026-08-10: what shipped in #686 (quotas and the paper cache)
+
+DEC-65 already named quotas and a content-keyed cache as day-one work, not
+deferred; #686 is what they turned out to be.
+
+**Cache key is `(brief_id, corpus_pin)`, not the issue's own third
+component.** The issue's prose names `(brief_id, corpus_pin, source
+weights)`, but `axial.brief.intake.compute_brief_id` already folds `weights`
+(and `lens`) into `brief_id` itself (issue #639) — a separate weights column
+would be dead, since two briefs with different weights already compute
+different ids and never collide.
+
+**The cache resolves in the worker, not the API.** Only the worker holds the
+bound snapshot's own pin (#684's own binding model), so the API stays
+pin-free — a cache hit still creates a `queued` job row exactly like a miss,
+and `axial.service.worker.run_ask_job` is the one place a lookup happens,
+before the engine ever runs.
+
+**A hit crosses the per-principal boundary on purpose, and survives the
+originating analyst's directory changing later.** The served paper is
+corpus-derived and content-identical for anyone asking the same brief
+against the same pin, not analyst A's private work. `axial.service.cache.
+PaperCache` materialises a private copy of the finished record under a
+shared, principal-free directory at generation time rather than pointing at
+analyst A's own `analyses_dir` entry — the cheaper, "just record A's path"
+alternative does not meet the bar this plan needs ("must not silently break
+if the originating analyst's working set is gone"), so it was not a
+cost/robustness trade.
+
+**Quota windows are calendar UTC day and month, read from one environment
+variable pair with a documented default** (`AXIAL_QUOTA_ASKS_PER_DAY`/
+`_MONTH`, `axial.service.quotas`), matching #691's "every setting is an
+env var with a documented default" shape rather than a config file. The
+operator raises one analyst's limit with a plain `QuotaStore.set_limits`
+call — no admin HTTP surface, no CLI command, per the issue's own scope.
+`POST /asks` checks quota before `store.enqueue`, so an over-quota ask
+creates no row, and a cache hit never counts against the budget (the row's
+own `cached` flag is what a quota window's count excludes).
+
+**Per-analyst spend is queryable via `JobStore.sum_spend_for_principal`,
+not a new HTTP surface** — the metrics/usage/export endpoint is #724, out
+of this issue's scope. The job row's `cost_usd` stays `None` for an
+unpriced model's pass and a real `0.0` for a cache hit; the two are never
+allowed to collapse into each other.
+
 ## Explicitly deferred (do NOT build early)
 
 Building these before a real need is the over-engineering tripwire the handbook
@@ -275,8 +320,9 @@ warns about. Add each only when something concrete demands it:
 
 - A web UI (build when a non-technical analyst actually needs one).
 - Public self-serve sign-up, email verification, abuse protection.
-- Per-analyst cost accounting and rate limits (enabled by having identities, but
-  not required day one).
+- ~~Per-analyst cost accounting and rate limits~~ — shipped in #686 (quotas
+  and per-analyst spend); the metrics/usage/export HTTP surface over that
+  spend is still deferred, to #724.
 - More than the two roles.
 - Sharing or collaboration between analysts.
 - One-corpus-per-tenant (a different product; not this plan).

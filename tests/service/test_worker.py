@@ -31,7 +31,7 @@ _SNAPSHOT = Snapshot(
 
 
 def test_run_once_returns_false_when_queue_is_empty(job_store: JobStore):
-    worker = Worker(job_store, run_job=lambda job: ("ref", "pin"))
+    worker = Worker(job_store, run_job=lambda job: ("ref", "pin", False, None))
 
     assert worker.run_once() is False
 
@@ -44,7 +44,7 @@ def test_run_once_completes_a_job_and_records_its_corpus_pin(job_store: JobStore
 
     def fake_run_job(job):
         calls.append(job["id"])
-        return "data/analyses/xyz.json", "sim-2026-08-10"
+        return "data/analyses/xyz.json", "sim-2026-08-10", False, 0.13
 
     worker = Worker(job_store, run_job=fake_run_job, heartbeat_interval=0.05)
 
@@ -56,6 +56,8 @@ def test_run_once_completes_a_job_and_records_its_corpus_pin(job_store: JobStore
     assert row["state"] == DONE
     assert row["corpus_pin"] == "sim-2026-08-10"
     assert row["result_ref"] == "data/analyses/xyz.json"
+    assert row["cached"] is False
+    assert row["cost_usd"] == 0.13
 
 
 def test_run_once_records_a_raised_error_as_failed(job_store: JobStore):
@@ -110,7 +112,7 @@ def test_run_ask_job_calls_the_in_process_ask_engine_not_a_subprocess(
         payload={"question": "Who led the uprising?", "case": "Syria", "session_id": "s1"},
     )
     job = job_store.claim()
-    result_ref, corpus_pin = run_ask_job(
+    result_ref, corpus_pin, cached, cost_usd = run_ask_job(
         job, client=object(), store=job_store, snapshot=_SNAPSHOT, work_dir=Path("data/work")
     )
 
@@ -127,6 +129,10 @@ def test_run_ask_job_calls_the_in_process_ask_engine_not_a_subprocess(
     # than landing directly under `work_dir`.
     assert seen["analyses_dir"] == Path("data/work/analyses/analyst-1")
     assert corpus_pin == "sim-2026-08-10"
+    # No cache was passed in (issue #686): always a miss, always generates,
+    # and the record above carries no `cost` key so it is unknown, not zero.
+    assert cached is False
+    assert cost_usd is None
     assert result_ref
 
 
