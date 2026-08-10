@@ -1,0 +1,36 @@
+### 1. `axial publish` against the real corpus (D:/axial, 34 books)
+
+$ axial publish 2026-08-10-v1
+start: 2026-08-10T20:47:09+02:00
+published 2026-08-10-v1 to D:\axial\data\snapshots\2026-08-10-v1
+corpus_pin: sim-2026-07-30
+map_pin: 9b796b3a6312b329
+sources: 31
+exit: 0
+elapsed_seconds: 92
+end: 2026-08-10T20:48:41+02:00
+
+### 2. the same version again -- immutability is refusal, not overwrite
+
+$ axial publish 2026-08-10-v1
+error: snapshot version '2026-08-10-v1' is already published at data\snapshots\2026-08-10-v1 -- a published snapshot is immutable; publish a new version instead
+>>> exit 1
+
+### 3. a version name that would push a name page past the path budget
+
+$ axial publish 2026-08-10-a-deliberately-long-version-name-for-the-budget-check
+error: data\snapshots\2026-08-10-a-deliberately-long-version-name-for-the-budget-check\vault\names\L'autre et nous- «Scènes et types». Anthropologues et historiens devant les représentations des populations colonisées, des «ethnies», des «tribus» et des «races» depuis les conquêtes coloniales.md is 48 character(s) over the path budget a snapshot must fit -- publish to a shorter --snapshots-dir, or use a shorter version name
+>>> exit 1
+
+### 4. the published snapshot binds, and every read path lands inside it
+
+$ python -c "Snapshot.open('data/snapshots/2026-08-10-v1').bind(); ..."
+>>> version=2026-08-10-v1 corpus_pin=sim-2026-07-30 map_pin=9b796b3a6312b329
+>>> vault    -> D:\axial\data\snapshots\2026-08-10-v1\vault  exists=True
+>>> names    -> D:\axial\data\snapshots\2026-08-10-v1\names  exists=True
+>>> sources  -> D:\axial\data\snapshots\2026-08-10-v1\sources  exists=False
+>>> resolve_pin_id() -> sim-2026-07-30
+>>> notes.db notes=6842 names=47584
+>>>   find_names("Ba'th") -> Ba'th Party (280 members, 13 sources)
+>>>   find_names("Ba'th") -> Ba'th regime (15 members, 6 sources)
+>>>   find_names("Ba'th") -> Syrian Ba'ath party (5 members, 4 sources)
