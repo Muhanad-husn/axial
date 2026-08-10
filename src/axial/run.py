@@ -75,14 +75,19 @@ generated. None of this changes the printed TSV table, the tally line, the
 resume ledger, or the exit-code contract -- see the outer acceptance tests
 under `tests/test_run*.py`, all pinned before #526 and unedited by it.
 
-**Issue #734 wires that same before/after `usage_for_pass` comparison into
-`record()` itself** (`_source_usage_and_cost`): each attempted source's own
-token usage and dollar cost, so `run.jsonl` -- not only the end-of-run
-`report.json` -- carries spend, readable while the run is still in flight
-and attributable to a pass and a source. `None` there means "not
-measured" (no usage captured yet for this pass in this run), never a
-fabricated zero; see that function's own docstring for the exact
-null/zero rules.
+**Issue #734 wires a before/after `usage_for_pass`/`calls_for_pass`
+comparison into `record()` itself** (`_source_usage_and_cost`): each
+attempted source's own token usage and dollar cost, so `run.jsonl` -- not
+only the end-of-run `report.json` -- carries spend, readable while the run
+is still in flight and attributable to a pass and a source. Two
+accumulators, not one, because a response with no `usage` object is a
+silent no-op for `usage_for_pass` alone -- indistinguishable from "no call
+happened" without `calls_for_pass` (issue #734, `axial.llm
+._accumulate_usage`) moving alongside it. `None` in the new fields means
+"visibly unmeasured" -- either nothing has been captured for this pass yet,
+or a call happened whose response carried no usage -- never a fabricated
+zero; a real zero means a call genuinely did not happen for this source.
+See `_source_usage_and_cost`'s own docstring for the three cases.
 """
 
 from __future__ import annotations
@@ -627,40 +632,47 @@ def _source_usage_and_cost(
     model: str | None,
     usage_before: dict[str, int] | None,
     usage_after: dict[str, int] | None,
+    calls_before: int,
+    calls_after: int,
 ) -> tuple[int | None, int | None, int | None, float | None]:
     """This one source's own token usage and dollar cost (issue #734): the
-    delta between `client.usage_for_pass(pass_name)` taken right before and
-    right after this source's own `descriptor.invoke` call -- both already
-    computed by the loop below to decide `record()`'s `model` field, never
-    a second accounting.
+    delta between `client.usage_for_pass(pass_name)`/`client.calls_for_pass
+    (pass_name)`, each taken right before and right after this source's own
+    `descriptor.invoke` call -- both already computed by the loop below,
+    never a second accounting.
 
-    `usage_after is None` means the pass has captured no usage at all yet
-    across every source attempted so far in this run -- an unknown, the
-    same "not on disk yet" case `_render_progress_line`'s own `spent=n/a`
-    already renders -- so every field comes back `None` rather than a
-    fabricated zero.
+    Two accumulators, not one, because `usage_for_pass` alone cannot tell
+    "no call happened for this source" apart from "a call happened but its
+    response carried no `usage` object" -- both leave `usage_after ==
+    usage_before`. `calls_for_pass` (issue #734, `axial.llm._accumulate_usage`)
+    moves on EVERY call regardless of whether its response carried usage, so
+    the two accumulators together resolve three cases:
 
-    Once usage exists, the delta is real numbers, including an honest zero
-    when nothing NEW moved the accumulator for this source -- the same
-    ambiguity ("no call" vs. "a call whose response carried no `usage`
-    object") the loop's own `model = ... if usage_after != usage_before
-    else None` already accepts for the model field, not a new one invented
-    here. `model` is `None` in exactly that unchanged-delta case, so the
-    zero-token branch below never needs to price against it; a non-`None`
-    model always pairs with a real (possibly zero) token delta, priced
-    through `axial.llm.estimate_cost` -- `None` there too when the model
-    has no `PRICE_TABLE_USD_PER_1K` entry, never a silent zero standing in
-    for an unpriced model."""
-    if usage_after is None:
+    1. `calls_after == calls_before` -- no call happened for this source.
+       `usage_after is None` (the pass has captured no usage at all yet,
+       across every source attempted so far) means fully unknown -- every
+       field `None`, the same "not on disk yet" case `_render_progress_line`
+       already renders as `spent=n/a`. Otherwise a real, honest zero: this
+       source spent nothing.
+    2. `calls_after != calls_before` and usage moved with it -- a real
+       (possibly multi-call) delta, priced through `axial.llm.estimate_cost`
+       (`None` there too when the model has no `PRICE_TABLE_USD_PER_1K`
+       entry -- real tokens, an honestly unpriced cost).
+    3. `calls_after != calls_before` but usage did NOT move -- a call
+       happened and its response carried no `usage` object. This is the
+       "visibly missing" case the issue is about: tokens and `usd` come back
+       `None`, never a fabricated zero standing in for "nothing was spent"."""
+    if calls_after == calls_before:
+        if usage_after is None:
+            return None, None, None, None
+        return 0, 0, 0, 0.0
+    if usage_after == usage_before:
         return None, None, None, None
     before = usage_before or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     prompt_tokens = usage_after["prompt_tokens"] - before["prompt_tokens"]
     completion_tokens = usage_after["completion_tokens"] - before["completion_tokens"]
     total_tokens = usage_after["total_tokens"] - before["total_tokens"]
-    if model is None:
-        usd = 0.0
-    else:
-        usd = estimate_cost(model, prompt_tokens, completion_tokens)
+    usd = estimate_cost(model, prompt_tokens, completion_tokens) if model is not None else None
     return prompt_tokens, completion_tokens, total_tokens, usd
 
 
@@ -926,6 +938,7 @@ def run_pass(
                 )
 
                 usage_before = client.usage_for_pass(pass_name)
+                calls_before = client.calls_for_pass(pass_name)
                 try:
                     descriptor.invoke(str(source_path), client, config_path, domain_dir)
                 except descriptor.error as exc:
@@ -944,14 +957,17 @@ def run_pass(
                 duration = time.monotonic() - source_start
                 durations[str(source_path)] = duration
                 # A model is reported only when THIS source's own invocation
-                # actually moved the shared client's per-pass accumulator --
-                # never a fabricated model id for a pass (or a cache hit)
-                # that made no call (mirrors the eval pass's own precedent,
-                # tests/test_runlog_passes.py).
+                # actually made a call -- never a fabricated model id for a
+                # pass (or a cache hit) that made no call (mirrors the eval
+                # pass's own precedent, tests/test_runlog_passes.py). Issue
+                # #734: gated on `calls_for_pass`, not `usage_for_pass` --  a
+                # call that made no NEW usage (its response carried no
+                # `usage` object) still real, and still names a real model.
                 usage_after = client.usage_for_pass(pass_name)
-                model = client.model_for_pass(pass_name) if usage_after != usage_before else None
+                calls_after = client.calls_for_pass(pass_name)
+                model = client.model_for_pass(pass_name) if calls_after != calls_before else None
                 prompt_tokens, completion_tokens, total_tokens, usd = _source_usage_and_cost(
-                    model, usage_before, usage_after
+                    model, usage_before, usage_after, calls_before, calls_after
                 )
                 run.record(
                     source_id=source_id,

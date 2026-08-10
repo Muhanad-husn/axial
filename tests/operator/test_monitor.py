@@ -299,6 +299,55 @@ def test_a_live_run_with_no_priced_records_reads_spend_as_n_a(
     assert snap.spend_partial is False
 
 
+def test_a_call_with_no_usage_object_reads_as_partial_not_free(
+    logs_root: Path, now: datetime, write_run_dir
+) -> None:
+    """The issue's own subject: a call happened for `src-b` (`axial.run`
+    reports its real `model`, per `calls_for_pass` moving) but the response
+    carried no `usage` object, so `usd` is `null` -- this must fire
+    `spend_partial`, exactly like an unpriced model does, and must not read
+    as `src-b` having cost nothing."""
+    run_dir = write_run_dir(
+        logs_root,
+        "run-interrogate-missing-usage",
+        status="running",
+        started_at=now - timedelta(seconds=120),
+        heartbeat_at=now - timedelta(seconds=2),
+        command="axial run interrogate --corpus --workers 4",
+        records=[
+            {
+                "source_id": "src-a",
+                "pass": "interrogate",
+                "model": "z-ai/glm-5.2",
+                "status": "ok",
+                "duration_sec": 60.0,
+                "error": None,
+                "prompt_tokens": 1000,
+                "completion_tokens": 200,
+                "total_tokens": 1200,
+                "usd": 0.5,
+            },
+            {
+                "source_id": "src-b",
+                "pass": "interrogate",
+                "model": "z-ai/glm-5.2",
+                "status": "ok",
+                "duration_sec": 60.0,
+                "error": None,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "total_tokens": None,
+                "usd": None,
+            },
+        ],
+    )
+
+    snap = monitor.snapshot(run_dir)
+
+    assert snap.spend_usd == pytest.approx(0.5)
+    assert snap.spend_partial is True
+
+
 def test_pass_rows_read_their_total_from_the_run_s_own_progress_detail(
     stalled_run: Path,
 ) -> None:

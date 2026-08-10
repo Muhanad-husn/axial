@@ -232,7 +232,12 @@ def _spend_from_records(records: list[dict[str, Any]]) -> tuple[float | None, bo
     than treated as zero; the sum itself is `None` when no record has
     priced. `partial` is `True` when a model-bearing record's `usd` is
     unknown alongside at least one that IS known -- a real but incomplete
-    total, distinguished from "no spend data at all"."""
+    total, distinguished from "no spend data at all". A record's `model`
+    is populated whenever `axial.run` observed a real call for it
+    (`calls_for_pass` moved, `_source_usage_and_cost`), so this also catches
+    the case the issue is about: a call whose response carried no `usage`
+    object reads as `model` set, `usd: null` -- exactly what fires
+    `partial` here, never a silent `$0.00`."""
     known = [record["usd"] for record in records if isinstance(record.get("usd"), (int, float))]
     partial = any(
         record.get("model") is not None and not isinstance(record.get("usd"), (int, float))
