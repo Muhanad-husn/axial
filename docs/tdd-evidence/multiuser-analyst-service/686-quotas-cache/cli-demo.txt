@@ -1,0 +1,59 @@
+D:\axial\.claude\worktrees\686-quotas-cache\.venv\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa
+========================================================================
+1. An analyst over quota is refused at the boundary, and no row is created
+========================================================================
+operator set this analyst to 2 asks/day, 50/month
+
+POST /asks  (ask 1) -> 202
+{
+  "id": "7173423abc604f7781257dce85643127",
+  "state": "queued"
+}
+
+POST /asks  (ask 2) -> 202
+{
+  "id": "499e8a8e00354239bca8231ba2373726",
+  "state": "queued"
+}
+
+POST /asks  (ask 3) -> 429
+{
+  "detail": {
+    "message": "You've reached your daily limit of 2 ask(s). It resets at 2026-08-11T00:00:00+00:00 (UTC).",
+    "window": "day",
+    "limit": 2,
+    "reset_at": "2026-08-11T00:00:00+00:00"
+  }
+}
+
+job rows now in the table: 2  <- the refused ask created none
+
+========================================================================
+2. Two analysts, one identical brief: one generation, the second free
+========================================================================
+engine generations for two identical asks: 1
+
+analyst-a: state=done cached=False cost_usd=0.13 pin=pin-v1
+analyst-b: state=done cached=True cost_usd=0.0 pin=pin-v1
+
+the paper each analyst is served, byte for byte:
+  analyst-a: {"corpus_pin": "pin-v1", "claims": [{"text": "a claim generated against pin-v1"}], "cost": {"total_usd": 0.13}}
+  analyst-b: {"corpus_pin": "pin-v1", "claims": [{"text": "a claim generated against pin-v1"}], "cost": {"total_usd": 0.13}}
+
+what analyst-b's event stream says (GET /asks/{id}/events):
+  [1] this exact brief has already been answered against this corpus -- served from cache, no model call made
+
+========================================================================
+3. A newer corpus pin is a different paper and regenerates
+========================================================================
+same brief, newer pin -> generations=1 cached=False cost_usd=0.13 pin=pin-v2
+
+========================================================================
+4. Spend per analyst is queryable
+========================================================================
+  analyst-a: 0.13
+  analyst-b: 0.0
+  analyst-c: 0.13
+
+  analyst-b spent a real 0.0 (served free), not an unknown None.
