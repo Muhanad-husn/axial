@@ -1,0 +1,51 @@
+$ uv run axial ask --help
+usage: axial ask [-h] [--case CASE] [--list] [--reopen N] [--no-paper]
+                 [--weight SOURCE_ID=FLOAT]
+                 [question]
+
+positional arguments:
+  question              the question to ask; omit to be prompted for it
+                        interactively
+
+options:
+  -h, --help            show this help message and exit
+  --case CASE           the case (§7.1): a polity or set of polities, written
+                        as the corpus writes them. Supplying both QUESTION and
+                        --case runs one turn and exits, with no follow-up
+                        prompt; omit either (or both) to be prompted, and to
+                        keep the session open for follow-ups
+  --list                list past questions (issue #536): when each was asked,
+                        what case, what happened, and the headline cross-book
+                        number -- never spends money and never calls the
+                        engine
+  --reopen N            reopen past question N from `--list`'s own numbering
+                        (1 is most recent) and render it exactly like a fresh
+                        answer -- never spends money and never calls the
+                        engine
+  --no-paper            stop at the answer instead of drafting the paper it
+                        would otherwise end in (issue #668). Every turn drafts
+                        one by default; this is the way to ask a cheap
+                        exploratory question
+  --weight SOURCE_ID=FLOAT
+                        give a source more or fewer rotation slots in the
+                        evidence round-robin, repeatable (issue #639); every
+                        source defaults to 1.0 and this is never a filter -- a
+                        source at any weight, including 0, stays reachable
+exit=0
+
+$ uv run python -c "<identity demo>"
+CLI today, no principal passed:
+  analyses -> data\analyses
+  runs     -> data\runs
+
+two analysts, same corpus:
+  analyst-a: analyses -> data\analyses\analyst-a
+  analyst-b: analyses -> data\analyses\analyst-b
+
+context: RequestContext(principal='analyst-a', corpus_pin='pin-abc123')
+
+A reads B's paper, by its correct id: False
+B reads B's paper:                     True
+A reads the shared corpus:             True
+A writes the shared corpus:            False
+exit=0
