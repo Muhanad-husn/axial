@@ -2,7 +2,12 @@
 section, no book text) or a full quoted `passage`, picked once by the
 deployer through `AXIAL_CITATION_MODE` and applied at the API boundary
 (`axial.service.api`) -- no request field lets a client choose it, and no
-"third mode for later" (#690's own tripwire).
+"third mode for later" (#690's own tripwire). Issue #732 reuses
+`render_record_for_serving` for the persisted `.md` `axial ask`/`axial
+brief run` writes at the end of a run (`axial.answer.record.
+persist_markdown`, imported lazily there) -- the same function, the same
+env var, so a local run's citation mode matches an unconfigured API
+deployment's.
 
 **Two premise corrections shaped this module.** First, there is no page
 number anywhere in this system: neither `axial.chunk` nor the extract path

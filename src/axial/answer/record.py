@@ -68,7 +68,12 @@ The rendered markdown answer (§7.10, issue #261) is written alongside the
 JSON: `run_brief` calls `persist_markdown`, which renders the just-built
 record through `axial.answer.render.render_markdown` (a pure function of
 the record -- no model call, no vault read, no clock) and writes it to
-`<analyses_dir>/<brief_id>.md`.
+`<analyses_dir>/<brief_id>.md`. Since issue #732, `persist_markdown` first
+resolves each ground's citation for this deployment's `AXIAL_CITATION_MODE`
+(`axial.service.citation.render_record_for_serving`, the same function
+`GET /asks/{id}/paper` calls at serve time) on a deep copy of the record --
+`render_markdown` itself stays pure; the record `run_brief` persists as
+JSON and returns to its own caller never carries a quote either way.
 
 `evidence` (§7.3, issue #545) carries `assembled_count`/`composed_count`:
 how many notes the retrieval loop assembled (`EvidenceSet.chunk_ids`) versus
@@ -84,6 +89,7 @@ correct on a `refuse` disposition where stage 3/4 never ran.
 
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from dataclasses import dataclass, replace
@@ -131,7 +137,7 @@ from axial.llm import (
     emit_event,
     usage_and_cost_by_pass,
 )
-from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_analyses_dir
+from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_analyses_dir, default_vault_dir
 from axial.retrieve.loop import assemble_evidence_ids, run_planned_retrieval
 from axial.validators.coverage import compute_confidence, compute_coverage_map
 
@@ -439,18 +445,41 @@ def persist_markdown(
     *,
     analyses_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    vault_dir: Path | None = None,
 ) -> Path:
     """Render `record` to markdown (§7.10, `axial.answer.render.render_markdown`)
     and write it to `<analyses_dir>/<brief_id>.md`, alongside the JSON record
     written by `persist_record` -- keyed on `brief_id` the same way, so
     re-running the same brief overwrites the same file rather than
-    accumulating one per run."""
+    accumulating one per run.
+
+    Issue #732: `axial ask`/`axial brief run` writes this file at the end
+    of a run, the same way `GET /asks/{id}/paper` serves the record at
+    request time (issue #690) -- so citations are resolved here through
+    the SAME `axial.service.citation.render_record_for_serving` the API
+    calls, on a deep copy of `record`, never `record` itself: `persist_record`
+    (called by `run_brief` just before this) has already written the
+    unresolved JSON, and the record `run_brief` returns to its own caller
+    must stay exactly what `build_record` produced, quote-free regardless
+    of citation mode. `citation_mode` reads `AXIAL_CITATION_MODE` the same
+    way the API does, defaulting to `locator` -- a local run is unconfigured
+    exactly like a fresh API deployment. Imported lazily so the base
+    pipeline does not require the optional `service` dependency group
+    (mirrors `axial.cli`'s own `_publish` handler, issue #684)."""
+    from axial.service.citation import render_record_for_serving, resolve_citation_mode
+
     if analyses_dir is None:
         analyses_dir = default_analyses_dir(config_path)
     analyses_dir = Path(analyses_dir)
     analyses_dir.mkdir(parents=True, exist_ok=True)
     path = analyses_dir / f"{brief_id}.md"
-    path.write_text(render_markdown(record), encoding="utf-8")
+    resolved_vault_dir = vault_dir if vault_dir is not None else default_vault_dir(config_path)
+    rendered_record = render_record_for_serving(
+        copy.deepcopy(record),
+        citation_mode=resolve_citation_mode(),
+        vault_dir=resolved_vault_dir,
+    )
+    path.write_text(render_markdown(rendered_record), encoding="utf-8")
     return path
 
 
@@ -831,7 +860,11 @@ def run_brief(
         brief.brief_id, record, analyses_dir=analyses_dir, config_path=config_path
     )
     markdown_path = persist_markdown(
-        brief.brief_id, record, analyses_dir=analyses_dir, config_path=config_path
+        brief.brief_id,
+        record,
+        analyses_dir=analyses_dir,
+        config_path=config_path,
+        vault_dir=vault_dir,
     )
     report = build_run_report(
         record,

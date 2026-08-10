@@ -28,6 +28,12 @@ counter-position/coverage_map/confidence/source_usage CONTENT (this module
 only presents what `analysis-validators`/`compute_source_usage` already
 computed), any venue/length/style adaptation (Phase D), and any output
 format other than markdown.
+
+A ground's `citation.quote` (issue #732), when present, renders under its
+`grounds:` line. `record` on disk never carries one -- a caller resolves it
+in first (`axial.service.citation.render_record_for_serving`, `passage`
+mode only) -- so this stays additive and purity holds: this module still
+reads only whatever `record` already carries, never a vault itself.
 """
 
 from __future__ import annotations
@@ -70,11 +76,31 @@ def _render_refusal(record: dict[str, Any]) -> list[str]:
     return ["", "## Refusal", "", f"The corpus does not support this request: {reason}"]
 
 
+def _quote_for_ground(ground: dict[str, Any]) -> str | None:
+    """A ground's resolved `citation.quote` (issue #732), or `None` when
+    it carries no `citation` block at all (the record persisted on disk),
+    or a `citation` block with no `quote` key (`locator` mode's own
+    resolved block, `axial.service.citation.render_record_for_serving`).
+    Additive by construction: neither shape existed before #690, and
+    `locator` mode never adds a `quote` key, so this renders nothing extra
+    unless a `passage`-mode caller resolved one in."""
+    citation = ground.get("citation")
+    if not isinstance(citation, dict):
+        return None
+    quote = citation.get("quote")
+    return quote if isinstance(quote, str) and quote else None
+
+
 def _render_grounds(grounds: list[dict[str, Any]]) -> str | None:
     if not grounds:
         return None
     refs = ", ".join(f"{g.get('ref_type')}:{g.get('ref_id')}" for g in grounds)
-    return f"  grounds: {refs}"
+    lines = [f"  grounds: {refs}"]
+    for ground in grounds:
+        quote = _quote_for_ground(ground)
+        if quote is not None:
+            lines.append(f'    quote ({ground.get("ref_type")}:{ground.get("ref_id")}): "{quote}"')
+    return "\n".join(lines)
 
 
 def _render_confidence_for_claim(claim: dict[str, Any], coverage_map: dict[str, Any]) -> str:

@@ -416,6 +416,45 @@ locator-only grounds a `locator` deployment's does. Verified against the
 generated file's own bytes in `tests/service/test_api_export.py`, per the
 issue's own instruction, not against the JSON or a UI.
 
+**Superseded by #732 below**: the gap this paragraph names was pinned as
+honest current behaviour, not accepted as correct. It closed in the next
+slice.
+
+### Amendment, 2026-08-11: what shipped in #732 (the quote reaches the reader)
+
+**The gap #724 pinned was a real bug, not a design choice.** Picking
+`passage` mode bought a `quote` key on the JSON record and changed
+nothing an analyst actually reads — the persisted `.md` `axial ask`
+writes and #724's export (markdown, docx, odt all convert from that same
+markdown) both dropped it on the floor. `render_markdown` (§7.10) now
+surfaces a resolved ground's `citation.quote` when the record carries
+one, and renders exactly as before when it does not — the record on disk
+never carries a quote either way, so `locator` mode is untouched by
+construction, not by a second code path that has to agree with the
+first.
+
+**Where citation resolution happens for the persisted `.md`, decided:**
+at `persist_markdown` (`axial.answer.record`), the same function that
+already writes the file, immediately before it renders — mirroring
+`GET /asks/{id}/paper`'s own serve-time resolution (#690) rather than
+inventing a second one. Both callers resolve through the identical
+`axial.service.citation.render_record_for_serving`, on a deep copy of the
+record: the JSON `persist_record` writes, and the record `run_brief`
+returns to its own caller, stay exactly what `build_record` produced,
+quote-free regardless of citation mode. `persist_markdown` imports
+`axial.service.citation` lazily, the same way `axial.cli`'s `_publish`
+handler already imports `axial.service.snapshot` (#684) — so the base
+pipeline still does not require the optional `service` dependency group
+just to write a markdown answer. `AXIAL_CITATION_MODE` is read the same
+way in both places: unset resolves to `locator`, so a local run is
+unconfigured exactly like a fresh API deployment.
+
+`GET /asks/{id}/export` needed no change at all: `_paper_payload` already
+resolved the record through `render_record_for_serving` before handing
+it to `render_export_markdown`, so fixing `render_markdown` alone made
+the export carry the quote for free — proving the "one rendering path"
+line was already true in practice, not just in the docstring.
+
 ## Explicitly deferred (do NOT build early)
 
 Building these before a real need is the over-engineering tripwire the handbook

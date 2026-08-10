@@ -146,6 +146,76 @@ def test_c_claim_with_empty_grounds_renders_without_raising_or_a_grounds_list():
     assert not lines[c_line_idx + 1].strip().startswith("grounds:")
 
 
+def test_a_grounds_citation_quote_is_rendered_when_the_ground_carries_one():
+    """Issue #732: `passage`-mode serving (`axial.service.citation.
+    render_record_for_serving`) attaches a `citation` block -- `quote`
+    included -- to a `chunk` ground before handing the record to this
+    renderer. The record on disk never carries one; this is the additive
+    surface that reads it when it is there."""
+    record = _base_record(
+        claims=[
+            _claim(
+                "clm_a",
+                "a",
+                "The corpus states displacement reshaped local authority.",
+                [
+                    {
+                        "ref_type": "chunk",
+                        "ref_id": "syr_001_intro_001",
+                        "citation": {
+                            "source_id": "syr_001",
+                            "author": "Author A",
+                            "title": "The Book",
+                            "date": "1999",
+                            "chapter": "Chapter 1",
+                            "section": "Introduction",
+                            "quote": "Displacement reshaped local authority after 1979.",
+                        },
+                    }
+                ],
+            )
+        ]
+    )
+    markdown = render_markdown(record)
+    assert "chunk:syr_001_intro_001" in markdown
+    assert "Displacement reshaped local authority after 1979." in markdown
+
+
+def test_a_grounds_citation_with_no_quote_key_renders_exactly_as_before():
+    """`locator` mode attaches a `citation` block with no `quote` key at
+    all (module docstring, `axial.service.citation`) -- the additive
+    surface must render nothing extra when the key is simply absent, not
+    just when the whole `citation` block is."""
+    record = _base_record(
+        claims=[
+            _claim(
+                "clm_a",
+                "a",
+                "The corpus states displacement reshaped local authority.",
+                [
+                    {
+                        "ref_type": "chunk",
+                        "ref_id": "syr_001_intro_001",
+                        "citation": {
+                            "source_id": "syr_001",
+                            "author": "Author A",
+                            "title": "The Book",
+                            "date": "1999",
+                            "chapter": "Chapter 1",
+                            "section": "Introduction",
+                        },
+                    }
+                ],
+            )
+        ]
+    )
+    markdown = render_markdown(record)
+    grounds_line = next(
+        line for line in markdown.splitlines() if line.strip().startswith("grounds:")
+    )
+    assert grounds_line.strip() == "grounds: chunk:syr_001_intro_001"
+
+
 def test_counter_position_present_renders_stance_and_grounds():
     markdown = render_markdown(_base_record())
     assert "Displacement entrenched" in markdown

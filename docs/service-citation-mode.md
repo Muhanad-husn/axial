@@ -18,7 +18,10 @@ book yourself.
 ## `passage` — one environment variable, no code change
 
 Set `AXIAL_CITATION_MODE=passage`. Every claim now also carries the exact
-passage it was drawn from, quoted in full.
+passage it was drawn from, quoted in full — in `GET /asks/{id}/paper`'s JSON,
+in the rendered markdown answer (whether served by the API or written to disk
+by `axial ask`), and in the markdown/docx/odt download from `GET
+/asks/{id}/export`. One resolution, every surface an analyst reads.
 
 ## The tradeoff
 
