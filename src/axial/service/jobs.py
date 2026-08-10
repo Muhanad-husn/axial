@@ -162,6 +162,15 @@ class JobStore:
             )
             return cursor.rowcount
 
+    def list_for_principal(self, principal: str) -> list[dict[str, Any]]:
+        """Every job belonging to `principal`, newest first -- what `GET
+        /asks` serves (issue #682)."""
+        with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
+            return conn.execute(
+                f"SELECT {_COLUMNS} FROM jobs WHERE principal = %s ORDER BY created_at DESC",
+                (principal,),
+            ).fetchall()
+
     def get(self, job_id: str) -> dict[str, Any] | None:
         """Fetch one job row by id, or `None` if it does not exist."""
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
