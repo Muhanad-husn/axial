@@ -1,0 +1,35 @@
+# The operator console's base theme (issue #689): the design mockup's own
+# palette, converted from oklch to the hex Streamlit's config accepts, in
+# Streamlit's two-palette form.
+#
+# `theme.base` is deliberately absent. Unset, Streamlit follows what the
+# browser asked for -- which is the console's "System" default. The app's
+# Light/Dark control (src/axial/operator/app.py) overrides it for the
+# session by re-declaring the same values as CSS variables.
+
+[theme]
+font = "Helvetica Neue, Helvetica, sans-serif"
+headingFont = "Helvetica Neue, Helvetica, sans-serif"
+codeFont = "ui-monospace, SF Mono, Menlo, monospace"
+
+[theme.light]
+backgroundColor = "#f2f0ec"
+secondaryBackgroundColor = "#f8f7f4"
+textColor = "#221f19"
+borderColor = "#dedcd8"
+primaryColor = "#4273b0"
+linkColor = "#4273b0"
+codeBackgroundColor = "#e8e6e2"
+greenColor = "#318454"
+orangeColor = "#a25e2b"
+
+[theme.dark]
+backgroundColor = "#191613"
+secondaryBackgroundColor = "#1e1b17"
+textColor = "#eae7e3"
+borderColor = "#383531"
+primaryColor = "#7eafee"
+linkColor = "#7eafee"
+codeBackgroundColor = "#282521"
+greenColor = "#73c08f"
+orangeColor = "#e4a86c"
