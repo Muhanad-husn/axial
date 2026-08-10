@@ -1279,7 +1279,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     publish_parser.add_argument(
-        "version", help="the snapshot version, e.g. '2026-08-10' -> data/snapshots/2026-08-10/"
+        # `snapshot_version`, NOT `version`: the parser carries a global
+        # `--version` store_true flag whose dest is `version`, and `main`
+        # checks `args.version` before any command dispatch. A positional
+        # spelled `version` writes the snapshot name into that same dest, so
+        # `axial publish 2026-08-10` printed "axial 0.1.0" and exited 0
+        # having published nothing. `metavar` keeps the command's own
+        # surface syntax unchanged.
+        "snapshot_version",
+        metavar="version",
+        help="the snapshot version, e.g. '2026-08-10' -> data/snapshots/2026-08-10/",
     )
     publish_parser.add_argument(
         "--snapshots-dir",
@@ -3556,7 +3565,7 @@ def main(argv: list[str] | None = None) -> int:
         return _pin_write(args.name)
 
     if args.command == "publish":
-        return _publish(args.version, args.snapshots_dir)
+        return _publish(args.snapshot_version, args.snapshots_dir)
 
     if args.command == "panel" and args.panel_command == "run":
         return _panel_run(args.records, args.control_record, args.reviewers, args.out)

@@ -55,7 +55,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -70,6 +69,7 @@ from axial.paths import (
     default_map_dir,
     default_names_dir,
     default_vault_dir,
+    path_overage,
     replace_with_retry,
 )
 from axial.yaml_loader import SAFE_LOADER
@@ -81,6 +81,19 @@ from axial.yaml_loader import SAFE_LOADER
 SNAPSHOTS_DIR = Path("data/snapshots")
 
 MANIFEST_FILENAME = "manifest.json"
+
+# The staging directory a snapshot is built in before it is renamed into
+# place. A fixed, SHORT name, not `<version>`-derived and not uuid-suffixed:
+# a note filename was budgeted against the vault's own directory at write
+# time (`axial.paths.chunk_note_path`), so every character the staging path
+# is longer than the final one can push a real, correctly-written note over
+# Windows' MAX_PATH mid-copy. The first cut used
+# `.{version}.{uuid4().hex}.tmp` and did exactly that on the live corpus: 33
+# characters of staging overhead, and three name pages (the longest is 203
+# characters) failed with `[WinError 3]` after 148 seconds of copying. This
+# name is shorter than any plausible version string, so a target that fits
+# guarantees a staging path that fits.
+_STAGING_DIRNAME = ".publishing"
 
 # The snapshot's own directory names. Relative, so a snapshot can be copied
 # or mounted anywhere and still resolve against itself once bound.
@@ -113,6 +126,23 @@ class SnapshotNotFoundError(SnapshotError):
     def __init__(self, root: Path) -> None:
         super().__init__(f"no snapshot manifest at {root / MANIFEST_FILENAME}")
         self.root = root
+
+
+class SnapshotPathTooLongError(SnapshotError):
+    """Raised when a file would not fit Windows' path budget at its place
+    inside the snapshot. Checked BEFORE anything is copied, and checked with
+    `axial.paths.path_overage` -- the same function the vault writer budgeted
+    the filename with and the reader resolves it with -- so a published
+    snapshot is guaranteed readable by the same rule, rather than failing
+    halfway through a 200 MB copy with `[WinError 3]`."""
+
+    def __init__(self, path: Path, overage: int) -> None:
+        super().__init__(
+            f"{path} is {overage} character(s) over the path budget a snapshot must fit -- "
+            "publish to a shorter --snapshots-dir, or use a shorter version name"
+        )
+        self.path = path
+        self.overage = overage
 
 
 class SnapshotPinMismatchError(SnapshotError):
@@ -175,6 +205,25 @@ class Snapshot:
 def _copy_tree(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source, destination)
+
+
+def _check_path_budget(source: Path, destination: Path) -> None:
+    """Every file under `source` must still fit the path budget once it sits
+    under `destination`. One `path_overage` call per directory (on that
+    directory's longest filename), so this is a metadata walk, not 55,000
+    `Path.resolve()` calls.
+
+    Checked up front, because the alternative was measured: the live corpus
+    failed 148 seconds into a copy with three `[WinError 3]`s that never
+    mentioned path length."""
+    for dirpath, _dirs, files in os.walk(source):
+        if not files:
+            continue
+        target_dir = destination / Path(dirpath).relative_to(source)
+        longest = max(files, key=len)
+        overage = path_overage(target_dir, longest)
+        if overage > 0:
+            raise SnapshotPathTooLongError(target_dir / longest, overage)
 
 
 def _snapshot_pipeline_config(config_path: Path) -> str:
@@ -252,18 +301,34 @@ def publish(
     pin_path = EVALS_DIR / f"{corpus_pin}.json"
     pin_manifest = json.loads(pin_path.read_text(encoding="utf-8"))
 
+    # The budget is checked against the TARGET, not the staging directory:
+    # the target is where these files have to be readable for the rest of
+    # the snapshot's life, and `_STAGING_DIRNAME` is shorter than any
+    # version string, so a target that fits guarantees a staging path that
+    # fits too.
+    trees = [
+        (default_vault_dir(config_path), _VAULT),
+        (default_names_dir(config_path), _NAMES),
+        (_default_envelopes_dir(config_path), _ENVELOPES),
+        (config_path.parent, "config"),
+        (EVALS_DIR, EVALS_DIR),
+    ]
+    for source, relative in trees:
+        _check_path_budget(source, target / relative)
+
     snapshots_dir.mkdir(parents=True, exist_ok=True)
-    staging = snapshots_dir / f".{version}.{uuid.uuid4().hex}.tmp"
+    staging = snapshots_dir / _STAGING_DIRNAME
+    # A leftover staging directory is garbage by definition: a snapshot only
+    # exists once it has been renamed to its version, so anything still
+    # sitting here is a crashed run's debris.
+    shutil.rmtree(staging, ignore_errors=True)
     try:
         staging.mkdir()
-        _copy_tree(default_vault_dir(config_path), staging / _VAULT)
-        _copy_tree(default_names_dir(config_path), staging / _NAMES)
-        _copy_tree(_default_envelopes_dir(config_path), staging / _ENVELOPES)
-        _copy_tree(config_path.parent, staging / "config")
+        for source, relative in trees:
+            _copy_tree(source, staging / relative)
         (staging / "config" / config_path.name).write_text(
             _snapshot_pipeline_config(config_path), encoding="utf-8"
         )
-        _copy_tree(EVALS_DIR, staging / EVALS_DIR)
         map_pin = _resolve_map(config_path, staging)
 
         manifest = {

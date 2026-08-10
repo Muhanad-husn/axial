@@ -18,6 +18,7 @@ from axial.service.snapshot import (
     MANIFEST_FILENAME,
     Snapshot,
     SnapshotExistsError,
+    SnapshotPathTooLongError,
     publish,
 )
 from _corpus import CANONICAL, CHUNK_ID, PIN_NAME, build_corpus_root, write_map
@@ -146,6 +147,41 @@ def test_a_half_written_publish_is_never_observable_as_a_snapshot(
     assert list(snapshots_dir.iterdir()) == []
 
 
+def test_a_note_that_would_not_fit_under_the_snapshot_refuses_before_copying(
+    corpus_root: Path, tmp_path: Path
+):
+    """Found on the live corpus, not in a fixture: a note filename is
+    budgeted against the VAULT's directory at write time, so publishing into
+    a deeper directory can push a real, correctly-written note over Windows'
+    path budget. The first cut discovered this 148 seconds into a 213 MB
+    copy, as three `[WinError 3]`s that never said "too long". Now it is
+    refused up front, by name."""
+    from axial.paths import path_overage
+
+    snapshots_dir = tmp_path / "snapshots"
+    version = "2026-08-10-v1"
+    names_dir = corpus_root / "data" / "vault" / "names"
+    landing_dir = snapshots_dir / version / "vault" / "names"
+
+    # A filename calibrated to the exact case: it FITS where the vault
+    # writer put it, and does not fit where the snapshot would land it. The
+    # length is computed from the two directories rather than hardcoded, so
+    # this is the same test on Windows and on CI's Linux.
+    # One character past the longest name that would fit at the landing site.
+    length = len("x") - path_overage(landing_dir, "x") + 1
+    long_name = "L" + "o" * (length - 4) + ".md"
+    assert path_overage(names_dir, long_name) <= 0 < path_overage(landing_dir, long_name)
+    (names_dir / long_name).write_text("---\nname: Long\n---\n", encoding="utf-8")
+
+    with pytest.raises(SnapshotPathTooLongError) as caught:
+        publish(version, snapshots_dir=snapshots_dir)
+
+    assert long_name in str(caught.value.path)
+    assert caught.value.overage > 0
+    # Nothing was copied: the check runs before the first byte moves.
+    assert not snapshots_dir.exists()
+
+
 def test_binding_a_snapshot_resolves_every_read_path_inside_it(
     corpus_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -210,6 +246,66 @@ def test_a_corpus_with_no_argument_map_publishes_with_a_null_map_pin(
 
     assert snapshot.map_pin is None
     assert not (snapshot.root / "map").exists()
+
+
+def test_the_publish_command_actually_publishes(
+    corpus_root: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    """Through `main()`, not `publish()`. The first cut of this command was
+    a silent no-op: its positional was spelled `version`, which is the dest
+    of the parser's global `--version` store_true flag, and `main` checks
+    `args.version` before dispatching -- so `axial publish 2026-08-10-v1`
+    printed "axial 0.1.0", exited 0, and wrote nothing. Only a test that
+    goes through the CLI surface can see that."""
+    from axial.cli import main
+
+    snapshots_dir = tmp_path / "snapshots"
+
+    assert main(["publish", "v1", "--snapshots-dir", str(snapshots_dir)]) == 0
+
+    assert (snapshots_dir / "v1" / MANIFEST_FILENAME).is_file()
+    assert Snapshot.open(snapshots_dir / "v1").corpus_pin == PIN_NAME
+    assert "axial 0.1.0" not in capsys.readouterr().out
+
+
+def test_the_publish_command_reports_a_refused_overwrite_as_a_failure(
+    corpus_root: Path, tmp_path: Path
+):
+    from axial.cli import main
+
+    snapshots_dir = tmp_path / "snapshots"
+    assert main(["publish", "v1", "--snapshots-dir", str(snapshots_dir)]) == 0
+
+    assert main(["publish", "v1", "--snapshots-dir", str(snapshots_dir)]) == 1
+
+
+def test_no_subcommand_argument_shadows_a_global_flag():
+    """The bug above is a whole class, not one typo: `axial`'s only global
+    option is `--version` (dest `version`), `main` reads it before any
+    dispatch, and ANY subcommand argument that lands in a global dest turns
+    that subcommand into a silent no-op. Pinned here for every subcommand at
+    once rather than one command at a time."""
+    import argparse
+
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    global_dests = {
+        action.dest
+        for action in parser._actions
+        if not isinstance(action, argparse._SubParsersAction)
+    } - {"help"}
+
+    shadowed = []
+    for action in parser._actions:
+        if not isinstance(action, argparse._SubParsersAction):
+            continue
+        for name, subparser in action.choices.items():
+            for sub_action in subparser._actions:
+                if sub_action.dest in global_dests:
+                    shadowed.append(f"{name}.{sub_action.dest}")
+
+    assert shadowed == []
 
 
 def test_open_reads_a_published_snapshot_back(corpus_root: Path, tmp_path: Path):
