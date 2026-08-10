@@ -106,5 +106,8 @@ def job_store(postgres_dsn: str) -> JobStore:
     store = JobStore(postgres_dsn)
     store.create_schema()
     with psycopg.connect(postgres_dsn) as conn:
-        conn.execute("TRUNCATE jobs")
+        # CASCADE: `job_events` (issue #683) carries a foreign key onto
+        # `jobs`, so a plain `TRUNCATE jobs` is rejected by Postgres unless
+        # the referencing table is truncated along with it.
+        conn.execute("TRUNCATE jobs CASCADE")
     return store
