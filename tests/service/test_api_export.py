@@ -10,15 +10,21 @@ other by-id route.
 
 The #690 citation mode applies at this boundary too: an export from a
 `locator` deployment carries no book text, verified against the
-generated FILE bytes, not the JSON or a UI (the issue's own line).
+generated FILE bytes, not the JSON or a UI (the issue's own line). Since
+#732, a `passage` deployment's export carries the quoted passage instead
+of dropping it on the floor -- also verified against file bytes.
 """
 
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from odf.opendocument import load as load_odt
+from odf.text import P
 
 from axial.query import store as note_store
 from axial.service.api import create_app
@@ -239,18 +245,32 @@ def test_locator_mode_export_carries_no_book_text_verified_against_the_file(
     assert PASSAGE_TEXT.encode("utf-8") not in odt_bytes
 
 
-def test_passage_mode_export_also_carries_no_book_text(job_store: JobStore, tmp_path: Path):
-    """`render_markdown` (§7.10, the rendered-answer path this export
-    reuses) never surfaces a ground's `citation.quote` in either citation
-    mode -- the same limitation the persisted analyst markdown answer
-    already carries. Pinned here so a future change to the renderer that
-    starts leaking a quote is caught by BOTH citation modes, not only
-    `locator`'s own "must never leak" bar."""
+def test_passage_mode_export_carries_the_quoted_passage(job_store: JobStore, tmp_path: Path):
+    """Issue #732: `render_markdown` (§7.10) now surfaces a resolved
+    ground's `citation.quote`, so a `passage` deployment's export carries
+    the book text behind a cited chunk -- verified against the file bytes
+    of all three containers, the same probe this file already uses for the
+    `locator` bar below. This inverts the honest-gap test #724 pinned
+    (`test_passage_mode_export_also_carries_no_book_text`): the gap is
+    closed, not merely re-described."""
     vault_dir = _build_vault(tmp_path)
     record_path = _write_record(tmp_path)
 
     with TestClient(create_app(job_store, citation_mode=PASSAGE, vault_dir=vault_dir)) as client:
         job_id = _submit_and_complete(client, job_store, record_path)
         md = client.get(f"/asks/{job_id}/export", params={"format": "md"}).content
+        docx_bytes = client.get(f"/asks/{job_id}/export", params={"format": "docx"}).content
+        odt_bytes = client.get(f"/asks/{job_id}/export", params={"format": "odt"}).content
 
-    assert PASSAGE_TEXT.encode("utf-8") not in md
+    assert PASSAGE_TEXT.encode("utf-8") in md
+    # docx/odt are zip containers, so the raw passage bytes are not a
+    # direct member of the archive bytes the way they are in markdown --
+    # the `render_docx`/`render_odt` walk is exercised for real instead,
+    # by round-tripping the actual paragraph text back out.
+    with zipfile.ZipFile(io.BytesIO(docx_bytes)) as archive:
+        document_xml = archive.read("word/document.xml").decode("utf-8")
+    assert PASSAGE_TEXT in document_xml
+
+    odt_doc = load_odt(io.BytesIO(odt_bytes))
+    odt_text = "\n".join(str(p) for p in odt_doc.getElementsByType(P))
+    assert PASSAGE_TEXT in odt_text
