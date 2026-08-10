@@ -22,11 +22,24 @@ keyed by a monotonic per-job `seq`. It lives in Postgres rather than a file
 because the API and the worker are separate processes -- under #691,
 separate containers -- so nothing but the database is guaranteed shared
 between them.
+
+`cached` and `cost_usd` (issue #686) are two more facts a completed row
+carries. `cached` defaults `FALSE` and is set `TRUE` only when
+`axial.service.worker.run_ask_job` served the row from the content-keyed
+paper cache (`axial.service.cache.PaperCache`) instead of calling the
+engine -- what `count_since` excludes from a quota window's count, since a
+cache hit spends nothing. `cost_usd` is the run's own `record["cost"]
+["total_usd"]` (§7.14): `None`-preserving for an unpriced model's pass,
+`0.0` (a real, known zero) on a cache hit -- the two must never collapse
+into each other, which is why `sum_spend_for_principal` below leans on
+SQL's own `NULL`-skipping `SUM` rather than coercing anything itself.
 """
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -69,11 +82,17 @@ CREATE TABLE IF NOT EXISTS job_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (job_id, seq)
 );
+-- Added by issue #686, after `jobs` already existed in deployed databases --
+-- `ADD COLUMN IF NOT EXISTS` upgrades an existing table the same
+-- `CREATE TABLE IF NOT EXISTS` above only handles for a fresh one.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cached BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cost_usd DOUBLE PRECISION;
 """
 
 _COLUMNS = (
     "id, kind, principal, payload, state, created_at, "
-    "claimed_at, heartbeat_at, finished_at, result_ref, error, corpus_pin"
+    "claimed_at, heartbeat_at, finished_at, result_ref, error, corpus_pin, "
+    "cached, cost_usd"
 )
 
 
@@ -86,6 +105,28 @@ class JobStore:
 
     def __init__(self, dsn: str) -> None:
         self._dsn = dsn
+
+    @property
+    def dsn(self) -> str:
+        """The Postgres connection string this store was built with -- a
+        composition-root convenience (issue #686) so a caller building a
+        small sibling store over the same database
+        (`axial.service.quotas.QuotaStore`, `axial.service.cache.
+        PaperCache`) doesn't need its own copy of the setting."""
+        return self._dsn
+
+    @contextmanager
+    def connection(self) -> Iterator[psycopg.Connection]:
+        """One physical connection to this store's database, for a caller
+        that needs to batch more than one call onto it (issue #686:
+        `axial.service.api._check_quota` reads a principal's limits and
+        both its usage windows before every `POST /asks`, and each fresh
+        `psycopg.connect()` measured ~25ms on this stack -- three of those
+        alone would burn most of that route's own <100ms budget). Every
+        other method on this class still opens and closes its own
+        connection; this is only for a caller batching several of them."""
+        with psycopg.connect(self._dsn) as conn:
+            yield conn
 
     def create_schema(self) -> None:
         """Create the `jobs` and `job_events` tables if they do not already
@@ -139,15 +180,34 @@ class JobStore:
                 (datetime.now(timezone.utc), job_id, RUNNING),
             )
 
-    def complete(self, job_id: str, *, result_ref: str, corpus_pin: str) -> None:
-        """Mark a job `done`, recording where its result lives and the
-        corpus pin it ran against (the issue's third acceptance
-        criterion)."""
+    def complete(
+        self,
+        job_id: str,
+        *,
+        result_ref: str,
+        corpus_pin: str,
+        cached: bool = False,
+        cost_usd: float | None = None,
+    ) -> None:
+        """Mark a job `done`, recording where its result lives, the corpus
+        pin it ran against (the issue's third acceptance criterion), and
+        (issue #686) whether it was served from the content-keyed paper
+        cache plus its dollar cost -- `0.0` on a cache hit, `None`
+        (the default, and every call site before these two parameters
+        existed) for a run whose model was unpriced."""
         with psycopg.connect(self._dsn) as conn:
             conn.execute(
-                "UPDATE jobs SET state = %s, finished_at = %s, result_ref = %s, corpus_pin = %s "
-                "WHERE id = %s",
-                (DONE, datetime.now(timezone.utc), result_ref, corpus_pin, job_id),
+                "UPDATE jobs SET state = %s, finished_at = %s, result_ref = %s, corpus_pin = %s, "
+                "cached = %s, cost_usd = %s WHERE id = %s",
+                (
+                    DONE,
+                    datetime.now(timezone.utc),
+                    result_ref,
+                    corpus_pin,
+                    cached,
+                    cost_usd,
+                    job_id,
+                ),
             )
 
     def fail(self, job_id: str, *, error: str) -> None:
@@ -190,6 +250,44 @@ class JobStore:
         """Fetch one job row by id, or `None` if it does not exist."""
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
             return conn.execute(f"SELECT {_COLUMNS} FROM jobs WHERE id = %s", (job_id,)).fetchone()
+
+    def count_since(
+        self, principal: str, *, kind: str, since: datetime, conn: psycopg.Connection | None = None
+    ) -> int:
+        """How many NOT-`cached` `kind` jobs `principal` created at or after
+        `since` -- the count a quota window checks (issue #686,
+        `axial.service.quotas`): a cache hit costs nothing and must never
+        count against a budget that exists to bound spend, so `cached`
+        rows are excluded; a row still `queued` or `running` (`cached`
+        defaults `FALSE`) counts conservatively until a hit is proven.
+
+        `conn`, when given (`self.connection()`), reuses an already-open
+        connection instead of opening a new one -- a quota check calls this
+        twice (day, month) plus `QuotaStore.limits_for` once, and batching
+        all three onto one connection is what keeps `POST /asks` under its
+        own latency budget (`connection`'s own docstring)."""
+        with self.connection() if conn is None else nullcontext(conn) as active_conn:
+            (count,) = active_conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE principal = %s AND kind = %s "
+                "AND created_at >= %s AND cached = FALSE",
+                (principal, kind, since),
+            ).fetchone()
+        return count
+
+    def sum_spend_for_principal(self, principal: str) -> float | None:
+        """The sum of `cost_usd` across every `done` job `principal` has
+        run (issue #686's fourth "done when": spend per analyst is
+        queryable). `None`-preserving: SQL `SUM` already skips individual
+        `NULL`s and returns `NULL` only when every row is -- a principal
+        with no finished jobs, or whose every finished job's cost is
+        unknown (an unpriced model, §7.14), reports `None` rather than a
+        misleading `0.0`."""
+        with psycopg.connect(self._dsn) as conn:
+            (total,) = conn.execute(
+                "SELECT SUM(cost_usd) FROM jobs WHERE principal = %s AND state = %s",
+                (principal, DONE),
+            ).fetchone()
+        return float(total) if total is not None else None
 
     def append_event(self, job_id: str, message: str, detail: dict[str, Any] | None = None) -> int:
         """Append one `on_event(message, detail)` call as a `job_events` row

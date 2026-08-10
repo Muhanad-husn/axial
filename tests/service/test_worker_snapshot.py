@@ -169,12 +169,13 @@ def test_run_ask_job_records_the_snapshots_own_pin(
     job_store.enqueue(kind="ask", principal="a", payload={"question": "Q", "case": "Syria"})
     job = job_store.claim()
 
-    result_ref, corpus_pin = run_ask_job(
+    result_ref, corpus_pin, cached, cost_usd = run_ask_job(
         job, client=None, store=job_store, snapshot=snapshot, work_dir=tmp_path / "work"
     )
 
     assert corpus_pin == snapshot.corpus_pin == PIN_NAME
     assert result_ref == str(tmp_path / "r.json")
+    assert cached is False
 
 
 def test_a_job_whose_engine_read_a_different_corpus_is_refused_not_mislabelled(

@@ -9,6 +9,16 @@ never the `axial` CLI as a subprocess. `Worker.run_job` is a seam over that
 call (mirrors `axial.ask.engine.ask`'s own `run_brief_fn` seam) so a test can
 stand in a fast, free stub instead of a real, paid engine run; production
 code always wires the real `run_ask_job`.
+
+**The content-keyed paper cache (issue #686) is checked here, before the
+engine ever runs** -- `axial.service.cache.PaperCache`'s own module
+docstring covers the key and the cross-principal materialisation; this
+module only wires it into `run_ask_job`'s own flow, a lookup on entry, a
+`store` call on a fresh generation's way out. A `run_job` callable now
+reports a fourth thing back to `Worker.run_once`: whether the row it
+completed was a cache hit and what it cost, so those two land on the job
+row (`JobStore.complete`) the same way `result_ref`/`corpus_pin` always
+have.
 """
 
 from __future__ import annotations
@@ -19,8 +29,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from axial.ask.engine import ask as run_ask
+from axial.brief.intake import BriefContent, compute_brief_id
 from axial.llm import LLMClient
 from axial.paths import scoped_for_principal
+from axial.service.cache import PaperCache
 from axial.service.jobs import JobStore
 from axial.service.snapshot import Snapshot, SnapshotPinMismatchError
 
@@ -30,7 +42,9 @@ from axial.service.snapshot import Snapshot, SnapshotPinMismatchError
 # well above this so a live worker's heartbeat never races a reaper pass.
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 5.0
 
-JobRunner = Callable[[dict[str, Any]], tuple[str, str]]
+# result_ref, corpus_pin, cached, cost_usd -- exactly what `JobStore.complete`
+# needs to record (issue #686 added the last two).
+JobRunner = Callable[[dict[str, Any]], tuple[str, str, bool, float | None]]
 
 
 def run_ask_job(
@@ -40,12 +54,32 @@ def run_ask_job(
     store: JobStore,
     snapshot: Snapshot,
     work_dir: Path,
-) -> tuple[str, str]:
+    cache: PaperCache | None = None,
+) -> tuple[str, str, bool, float | None]:
     """The `"ask"`-kind job body: run the full ask engine in-process over
-    `job["payload"]` and return `(result_ref, corpus_pin)` for
-    `JobStore.complete`. `payload` carries the same arguments `axial ask`
+    `job["payload"]` and return `(result_ref, corpus_pin, cached, cost_usd)`
+    for `JobStore.complete`. `payload` carries the same arguments `axial ask`
     itself collects (`question`, `case`, and the optional `session_id`,
     `lens`, `weights` a follow-up or a weighted query supplies).
+
+    `cache` (issue #686), when given, is checked BEFORE the engine runs at
+    all: this payload's own `(brief_id, snapshot.corpus_pin)` -- the exact
+    key `axial.ask.engine.ask` would compute for a first turn, via the same
+    `compute_brief_id` -- is looked up, and a hit short-circuits straight to
+    `(cached_result_ref, snapshot.corpus_pin, True, 0.0)`: no model call, no
+    `run_ask`, and one appended event so `GET /asks/{id}/events` still ends
+    with something rather than jumping straight to `done`
+    (`axial.service.cache`'s own module docstring covers the cross-principal
+    materialisation a hit relies on). `None` (the default, and every call
+    site before this parameter existed) skips the cache entirely -- always a
+    miss, always generates, byte-identical to before this issue. On a fresh
+    generation, the just-written record is handed to `cache.store` so the
+    NEXT identical brief against this same pin is a hit.
+
+    The returned `cost_usd` (issue #686, §7.14) is the run's own
+    `record["cost"]["total_usd"]` -- `None`-preserving for an unpriced
+    model's pass, never coerced to `0.0` (a cache hit's own, genuinely known
+    zero, returned above instead).
 
     `snapshot` (issue #684) is the published corpus this worker process was
     started on and stays on for its whole life. The process is already bound
@@ -76,6 +110,26 @@ def run_ask_job(
     emitter: the engine already narrates every stage in analyst-readable
     prose (`axial.llm.emit_event`'s callers), this only persists it."""
     payload = job["payload"]
+    weights = payload.get("weights") or {}
+    brief_id = compute_brief_id(
+        BriefContent(
+            case=payload["case"],
+            request=payload["question"],
+            lens=payload.get("lens"),
+            weights=weights,
+        )
+    )
+
+    if cache is not None:
+        cached_ref = cache.lookup(brief_id, snapshot.corpus_pin)
+        if cached_ref is not None:
+            store.append_event(
+                job["id"],
+                "this exact brief has already been answered against this corpus -- "
+                "served from cache, no model call made",
+                {"stage": "cache", "brief_id": brief_id, "corpus_pin": snapshot.corpus_pin},
+            )
+            return cached_ref, snapshot.corpus_pin, True, 0.0
 
     def on_event(message: str, detail: dict[str, Any]) -> None:
         store.append_event(job["id"], message, detail)
@@ -95,7 +149,12 @@ def run_ask_job(
     recorded = turn.result.record["corpus_pin"]
     if recorded != snapshot.corpus_pin:
         raise SnapshotPinMismatchError(snapshot.version, snapshot.corpus_pin, recorded)
-    return str(turn.result.path), snapshot.corpus_pin
+
+    if cache is not None:
+        cache.store(brief_id, snapshot.corpus_pin, turn.result.path, Path(work_dir) / "cache")
+
+    cost_usd = (turn.result.record.get("cost") or {}).get("total_usd")
+    return str(turn.result.path), snapshot.corpus_pin, False, cost_usd
 
 
 class Worker:
@@ -133,7 +192,7 @@ class Worker:
         )
         heartbeat_thread.start()
         try:
-            result_ref, corpus_pin = self.run_job(job)
+            result_ref, corpus_pin, cached, cost_usd = self.run_job(job)
         except Exception as exc:  # noqa: BLE001 - any job failure is recorded, not swallowed
             stop.set()
             heartbeat_thread.join()
@@ -141,7 +200,13 @@ class Worker:
         else:
             stop.set()
             heartbeat_thread.join()
-            self.store.complete(job["id"], result_ref=result_ref, corpus_pin=corpus_pin)
+            self.store.complete(
+                job["id"],
+                result_ref=result_ref,
+                corpus_pin=corpus_pin,
+                cached=cached,
+                cost_usd=cost_usd,
+            )
         return True
 
     def _heartbeat_loop(self, job_id: str, stop: threading.Event) -> None:
