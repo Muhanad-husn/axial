@@ -127,30 +127,51 @@ def _sse_frame(*, seq: int | None, data: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n\n"
 
 
+def _drain(store: JobStore, ask_id: str, last_seq: int) -> tuple[list[str], int]:
+    """Every event past `last_seq`, as SSE frames, plus the new `last_seq`
+    past them. A plain function rather than inline in `_event_stream` so the
+    terminal branch below can call it a second time without repeating the
+    loop body."""
+    frames = []
+    for event in store.events_since(ask_id, last_seq):
+        last_seq = event["seq"]
+        frames.append(
+            _sse_frame(seq=last_seq, data={"message": event["message"], "detail": event["detail"]})
+        )
+    return frames, last_seq
+
+
 def _event_stream(store: JobStore, ask_id: str, after_seq: int) -> Iterator[str]:
     """Replay every event past `after_seq`, then keep polling and tailing
     until the job reaches a terminal state (module docstring on the poll
-    constant). `done` closes with no extra frame; `failed` sends the job's
-    error as one final, unstored frame so the stream ends with the failure
-    rather than hanging on an event that will never arrive."""
+    constant).
+
+    The worker's last `on_event` call and its `store.complete`/`store.fail`
+    land back-to-back, so the state read below can observe `done`/`failed`
+    before this generator has re-read the event that call just wrote --
+    `_drain` runs once more after the state read to close exactly that
+    window, rather than trusting the read that raced it. `done` then closes
+    with no extra frame; `failed` sends the job's error as one final,
+    unstored frame after that drain, so the error stays the last thing the
+    stream sends."""
     last_seq = after_seq
     while True:
-        for event in store.events_since(ask_id, last_seq):
-            last_seq = event["seq"]
-            yield _sse_frame(
-                seq=last_seq, data={"message": event["message"], "detail": event["detail"]}
-            )
+        frames, last_seq = _drain(store, ask_id, last_seq)
+        yield from frames
 
         job = store.get(ask_id)
-        if job is None or job["state"] == DONE:
-            return
-        if job["state"] == FAILED:
-            yield _sse_frame(
-                seq=None, data={"message": job["error"], "detail": {"error": job["error"]}}
-            )
-            return
+        if job is not None and job["state"] not in (DONE, FAILED):
+            time.sleep(EVENTS_POLL_INTERVAL_SECONDS)
+            continue
 
-        time.sleep(EVENTS_POLL_INTERVAL_SECONDS)
+        if job is not None:
+            frames, last_seq = _drain(store, ask_id, last_seq)
+            yield from frames
+            if job["state"] == FAILED:
+                yield _sse_frame(
+                    seq=None, data={"message": job["error"], "detail": {"error": job["error"]}}
+                )
+        return
 
 
 def create_app(store: JobStore) -> FastAPI:

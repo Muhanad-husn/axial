@@ -6,7 +6,10 @@ below is appended straight to the store, the same way `run_ask_job`
 so these tests are the endpoint's own three "done when"s: a live event
 reaches the client quickly, a reconnect with `Last-Event-ID` resumes with no
 gap and no duplicate, and a failed job ends the stream with its error rather
-than hanging.
+than hanging -- plus a regression for the terminal-drain race a review found:
+the worker's last event and its `done`/`failed` write land back-to-back, and
+an early version of this endpoint could observe the terminal state before
+re-reading that event, dropping it.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 
-from axial.service.api import create_app
+from axial.service.api import _event_stream, create_app
 from axial.service.jobs import JobStore
 
 # Generous relative to `EVENTS_POLL_INTERVAL_SECONDS` (0.5s) so a slow CI
@@ -94,6 +97,67 @@ def test_events_stream_delivers_events_live_and_closes_when_the_job_is_done(
         "writing the answer",
     ]
     assert frames[0]["data"]["detail"] == {"stage": "interrogate"}
+
+
+def _frame_messages(frames: list[str]) -> list[str]:
+    return [json.loads(frame.split("data: ", 1)[1])["message"] for frame in frames]
+
+
+def test_event_stream_does_not_drop_an_event_written_between_the_last_read_and_done(
+    job_store: JobStore, monkeypatch
+):
+    """Regression: the worker's final `on_event` call and its `store.complete`
+    land back-to-back, so `_event_stream`'s state check can observe `done`
+    before it has re-read the event that call just wrote. Driven at
+    `_event_stream` directly, not through `TestClient` -- an HTTP round trip
+    has no hook precise enough to land the append+complete inside the
+    generator's own `store.get` call; monkeypatching `job_store.get` does,
+    deterministically, with no sleeping."""
+    job_id = job_store.enqueue(kind="ask", principal="analyst-1", payload={})
+    job_store.claim()
+    job_store.append_event(job_id, "interrogating the question")
+
+    real_get = job_store.get
+
+    def get_then_finish_the_job(ask_id: str):
+        # The exact race: one more event, then done, landing in the window
+        # between this generator's last `events_since` read and this call.
+        job_store.append_event(job_id, "checking the answer")
+        job_store.complete(job_id, result_ref="data/analyses/x.json", corpus_pin="sim-2026-08-10")
+        return real_get(ask_id)
+
+    monkeypatch.setattr(job_store, "get", get_then_finish_the_job)
+
+    frames = list(_event_stream(job_store, job_id, after_seq=0))
+
+    assert _frame_messages(frames) == ["interrogating the question", "checking the answer"]
+
+
+def test_event_stream_does_not_drop_an_event_written_between_the_last_read_and_failed(
+    job_store: JobStore, monkeypatch
+):
+    """Same race, the `failed` path: the drain must still surface the last
+    event, and the error frame must still come after it, not before."""
+    job_id = job_store.enqueue(kind="ask", principal="analyst-1", payload={})
+    job_store.claim()
+    job_store.append_event(job_id, "interrogating the question")
+
+    real_get = job_store.get
+
+    def get_then_fail_the_job(ask_id: str):
+        job_store.append_event(job_id, "retrieving evidence through the argument map")
+        job_store.fail(ask_id, error="engine blew up")
+        return real_get(ask_id)
+
+    monkeypatch.setattr(job_store, "get", get_then_fail_the_job)
+
+    frames = list(_event_stream(job_store, job_id, after_seq=0))
+
+    assert _frame_messages(frames) == [
+        "interrogating the question",
+        "retrieving evidence through the argument map",
+        "engine blew up",
+    ]
 
 
 def test_a_failed_job_ends_the_stream_with_its_error(client, job_store: JobStore):
