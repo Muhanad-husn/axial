@@ -33,6 +33,23 @@ cache hit spends nothing. `cost_usd` is the run's own `record["cost"]
 `0.0` (a real, known zero) on a cache hit -- the two must never collapse
 into each other, which is why `sum_spend_for_principal` below leans on
 SQL's own `NULL`-skipping `SUM` rather than coercing anything itself.
+
+`tokens` (issue #724) is a fourth fact, added for `GET /me/usage`: the
+run's own total token count, summed by `axial.service.worker.run_ask_job`
+across `record["cost"]["by_pass"]` -- the same dict `cost_usd` is already
+read from, never a second read of the record. Same null-preserving rule as
+`cost_usd`: `None` when the record carried no `cost` block at all (an
+unpriced or uncaptured run), a real `0` on a cache hit (this job made no
+model call, so it used none of its own), never coerced into each other.
+
+`count_since` and `sum_spend_for_principal` both grew two optional filters
+for issue #724's usage endpoint: `session_id` (`payload->>'session_id'`,
+a session is identified by that id alone, never a time window) and, on
+`count_since`, `exclude_cached` (default `True`, preserving every existing
+caller's behaviour) -- `GET /me/usage` needs the OPPOSITE count too
+("asks made" including a cache hit, versus "asks charged against quota"
+excluding one, the founder's own naming), which no existing caller of
+this method has ever needed before.
 """
 
 from __future__ import annotations
@@ -87,12 +104,15 @@ CREATE TABLE IF NOT EXISTS job_events (
 -- `CREATE TABLE IF NOT EXISTS` above only handles for a fresh one.
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cached BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cost_usd DOUBLE PRECISION;
+-- Added by issue #724, after both columns above already existed in
+-- deployed databases -- same idiom, same reason.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS tokens BIGINT;
 """
 
 _COLUMNS = (
     "id, kind, principal, payload, state, created_at, "
     "claimed_at, heartbeat_at, finished_at, result_ref, error, corpus_pin, "
-    "cached, cost_usd"
+    "cached, cost_usd, tokens"
 )
 
 
@@ -188,17 +208,22 @@ class JobStore:
         corpus_pin: str,
         cached: bool = False,
         cost_usd: float | None = None,
+        tokens: int | None = None,
     ) -> None:
         """Mark a job `done`, recording where its result lives, the corpus
         pin it ran against (the issue's third acceptance criterion), and
         (issue #686) whether it was served from the content-keyed paper
         cache plus its dollar cost -- `0.0` on a cache hit, `None`
         (the default, and every call site before these two parameters
-        existed) for a run whose model was unpriced."""
+        existed) for a run whose model was unpriced. `tokens` (issue #724)
+        follows the identical rule: `0` on a cache hit (this job made no
+        model call), `None` for a run whose record carried no `cost` block
+        at all, and every call site before this parameter existed keeps
+        defaulting to that same `None`."""
         with psycopg.connect(self._dsn) as conn:
             conn.execute(
                 "UPDATE jobs SET state = %s, finished_at = %s, result_ref = %s, corpus_pin = %s, "
-                "cached = %s, cost_usd = %s WHERE id = %s",
+                "cached = %s, cost_usd = %s, tokens = %s WHERE id = %s",
                 (
                     DONE,
                     datetime.now(timezone.utc),
@@ -206,6 +231,7 @@ class JobStore:
                     corpus_pin,
                     cached,
                     cost_usd,
+                    tokens,
                     job_id,
                 ),
             )
@@ -252,42 +278,108 @@ class JobStore:
             return conn.execute(f"SELECT {_COLUMNS} FROM jobs WHERE id = %s", (job_id,)).fetchone()
 
     def count_since(
-        self, principal: str, *, kind: str, since: datetime, conn: psycopg.Connection | None = None
+        self,
+        principal: str,
+        *,
+        kind: str,
+        since: datetime | None = None,
+        session_id: str | None = None,
+        exclude_cached: bool = True,
+        conn: psycopg.Connection | None = None,
     ) -> int:
-        """How many NOT-`cached` `kind` jobs `principal` created at or after
-        `since` -- the count a quota window checks (issue #686,
-        `axial.service.quotas`): a cache hit costs nothing and must never
-        count against a budget that exists to bound spend, so `cached`
-        rows are excluded; a row still `queued` or `running` (`cached`
-        defaults `FALSE`) counts conservatively until a hit is proven.
+        """How many `kind` jobs `principal` created, filtered by whichever
+        of `since`/`session_id` is given.
+
+        The quota check's own call (`axial.service.api._check_quota`) is
+        the original shape: `since` a calendar-UTC window start, no
+        `session_id`, `exclude_cached` at its default `True` -- a cache
+        hit costs nothing and must never count against a budget that
+        exists to bound spend, so a `cached` row is excluded; a row still
+        `queued` or `running` (`cached` defaults `FALSE`) counts
+        conservatively until a hit is proven.
+
+        `session_id` and `exclude_cached=False` (issue #724, `GET
+        /me/usage`) are the two additions: a session is identified by that
+        id alone, never a time window, and a usage panel's "asks made"
+        needs the OPPOSITE count from "asks charged against quota" -- the
+        founder's own naming for why one count must never be mislabelled
+        as the other.
 
         `conn`, when given (`self.connection()`), reuses an already-open
         connection instead of opening a new one -- a quota check calls this
         twice (day, month) plus `QuotaStore.limits_for` once, and batching
         all three onto one connection is what keeps `POST /asks` under its
         own latency budget (`connection`'s own docstring)."""
+        conditions = ["principal = %s", "kind = %s"]
+        params: list[Any] = [principal, kind]
+        if since is not None:
+            conditions.append("created_at >= %s")
+            params.append(since)
+        if session_id is not None:
+            conditions.append("payload->>'session_id' = %s")
+            params.append(session_id)
+        if exclude_cached:
+            conditions.append("cached = FALSE")
+        where = " AND ".join(conditions)
         with self.connection() if conn is None else nullcontext(conn) as active_conn:
             (count,) = active_conn.execute(
-                "SELECT COUNT(*) FROM jobs WHERE principal = %s AND kind = %s "
-                "AND created_at >= %s AND cached = FALSE",
-                (principal, kind, since),
+                f"SELECT COUNT(*) FROM jobs WHERE {where}", params
             ).fetchone()
         return count
 
-    def sum_spend_for_principal(self, principal: str) -> float | None:
+    def sum_spend_for_principal(
+        self, principal: str, *, since: datetime | None = None, session_id: str | None = None
+    ) -> float | None:
         """The sum of `cost_usd` across every `done` job `principal` has
         run (issue #686's fourth "done when": spend per analyst is
         queryable). `None`-preserving: SQL `SUM` already skips individual
         `NULL`s and returns `NULL` only when every row is -- a principal
         with no finished jobs, or whose every finished job's cost is
         unknown (an unpriced model, §7.14), reports `None` rather than a
-        misleading `0.0`."""
+        misleading `0.0`.
+
+        `since`/`session_id` (issue #724, `GET /me/usage`) narrow the sum
+        to a calendar window (month-to-date) or a session
+        (`payload->>'session_id'`, no time bound) -- both default `None`,
+        the original unbounded "all time" sum every caller before this
+        issue relied on."""
+        conditions = ["principal = %s", "state = %s"]
+        params: list[Any] = [principal, DONE]
+        if since is not None:
+            conditions.append("created_at >= %s")
+            params.append(since)
+        if session_id is not None:
+            conditions.append("payload->>'session_id' = %s")
+            params.append(session_id)
+        where = " AND ".join(conditions)
         with psycopg.connect(self._dsn) as conn:
             (total,) = conn.execute(
-                "SELECT SUM(cost_usd) FROM jobs WHERE principal = %s AND state = %s",
-                (principal, DONE),
+                f"SELECT SUM(cost_usd) FROM jobs WHERE {where}", params
             ).fetchone()
         return float(total) if total is not None else None
+
+    def sum_tokens_for_principal(
+        self, principal: str, *, since: datetime | None = None, session_id: str | None = None
+    ) -> int | None:
+        """`sum_spend_for_principal`'s exact mirror over `tokens` instead of
+        `cost_usd` (issue #724) -- same `None`-preserving `SUM`, same two
+        optional filters, because a usage window's cost and token figures
+        are read off the same rows the same way and must never disagree on
+        which rows counted."""
+        conditions = ["principal = %s", "state = %s"]
+        params: list[Any] = [principal, DONE]
+        if since is not None:
+            conditions.append("created_at >= %s")
+            params.append(since)
+        if session_id is not None:
+            conditions.append("payload->>'session_id' = %s")
+            params.append(session_id)
+        where = " AND ".join(conditions)
+        with psycopg.connect(self._dsn) as conn:
+            (total,) = conn.execute(
+                f"SELECT SUM(tokens) FROM jobs WHERE {where}", params
+            ).fetchone()
+        return int(total) if total is not None else None
 
     def append_event(self, job_id: str, message: str, detail: dict[str, Any] | None = None) -> int:
         """Append one `on_event(message, detail)` call as a `job_events` row

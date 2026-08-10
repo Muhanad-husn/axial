@@ -53,7 +53,7 @@ def test_a_worker_killed_mid_job_leaves_its_row_reclaimable(job_store: JobStore,
 
     def fake_run_job(job):
         second_worker_calls.append(job["id"])
-        return "data/analyses/recovered.json", "sim-2026-08-10", False, None
+        return "data/analyses/recovered.json", "sim-2026-08-10", False, None, None
 
     second_worker = Worker(job_store, run_job=fake_run_job)
     picked_up = second_worker.run_once()

@@ -18,10 +18,10 @@ from axial.service.jobs import JobStore
 from axial.service.worker import Worker
 
 
-def _never_finishes(job: dict) -> tuple[str, str, bool, float | None]:
+def _never_finishes(job: dict) -> tuple[str, str, bool, float | None, int | None]:
     time.sleep(3600)
     # pragma: no cover - never reached, the test kills this process first
-    return "unused", "unused", False, None
+    return "unused", "unused", False, None, None
 
 
 def main() -> None:

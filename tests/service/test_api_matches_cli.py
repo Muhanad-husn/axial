@@ -138,6 +138,7 @@ def test_the_cli_and_the_api_produce_the_same_paper_for_the_same_brief(
     # content-keyed brief_id that decides which record the run belongs to.
     assert api_call["turn"].brief == cli_call["turn"].brief
 
-    # And the paper the API serves is the record that run produced.
+    # And the paper the API serves is the record that run produced --
+    # inside the `record` key issue #724 wraps it beside a metrics block.
     assert paper.status_code == 200
-    assert paper.json() == cli_call["turn"].result.record
+    assert paper.json()["record"] == cli_call["turn"].result.record

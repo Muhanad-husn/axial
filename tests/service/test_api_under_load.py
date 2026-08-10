@@ -57,7 +57,7 @@ def test_post_asks_returns_under_100ms_while_an_ask_is_running(client, job_store
     def long_running_ask(job):
         occupied.set()
         release.wait(60)
-        return "data/analyses/long.json", "sim-2026-08-10", False, None
+        return "data/analyses/long.json", "sim-2026-08-10", False, None, None
 
     running_id = job_store.enqueue(
         kind="ask", principal="analyst-1", payload={"case": "Syria", "question": "A long one"}

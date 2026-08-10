@@ -354,6 +354,68 @@ codebase already uses, so `AXIAL_CITATION_MODE=passage` needs no second
 setting once #691 mounts a snapshot at the API container's cwd the same
 way it will at a worker's.
 
+### Amendment, 2026-08-10: what shipped in #724 (metrics, usage, export)
+
+**An ask is not a paper run — the premise the founder's original #682
+comment carried had to be corrected first.** That comment named the
+metrics block "straight off the Phase-C record"
+(`src/axial/paper/record.py`), but an ask produces a §7.3 analysis record
+(`src/axial/answer/record.py`), a different pipeline. `retries` and a
+shape band exist only on the Phase-C record; `cost`, `model_by_pass`,
+`coverage_map` and `confidence` exist on both, so those four are what
+`GET /asks/{id}/paper` now serves beside the record (`{"record": ...,
+"metrics": {...}}`, never merged into it) — dropping the two that would
+have required chaining a paper draft onto every ~$0.13 ask.
+
+**Tokens needed a new column; cost already had one with no time
+window.** `axial.service.jobs.JobStore.sum_spend_for_principal` gained an
+optional `since` and `session_id`; a new `tokens` column (same
+`ALTER TABLE ... IF NOT EXISTS` idiom `cached`/`cost_usd` already used)
+is filled by the worker from the exact `record["cost"]["by_pass"]` dict
+`cost_usd` was already reading, never a second pass over the record. Its
+own null-preserving rule is identical to `cost_usd`'s: `None` when the
+record carried no `cost` block, a real `0` on a cache hit (this job made
+no model call). `JobStore.count_since` grew `session_id` and
+`exclude_cached=False` for the same reason: `GET /me/usage` needs "asks
+made" (every ask) alongside "asks charged against quota" (a cache hit
+excluded) — the founder's own naming for why one count must never stand
+in for the other. Extending the `JobRunner` seam's own tuple shape from
+four elements to five (adding `tokens`) rippled through every stub
+`run_job` in `tests/service` — a real but bounded blast radius, not a
+second abstraction.
+
+**`GET /me/usage` has no notion of "the current session"**, because the
+server has none — `session_id` is a query parameter, and its block is
+absent, not an error, when the caller supplies none. It reuses the same
+`QuotaStore.limits_for`/`count_since` calendar-UTC-window pair the `429`
+path on `POST /asks` already assembles, so `quota["month"].used` is
+literally `month_to_date.asks_charged`, not a second query for the same
+count.
+
+**Export is one rendering path, three containers.** Markdown is the only
+place record content turns into text (`axial.service.export.
+render_export_markdown`, reusing §7.10's own `render_markdown` plus this
+issue's own metrics appendix); `docx` and `odt` each walk that SAME
+markdown string's bounded set of constructs into their own binary
+format, never re-reading the record. **The conversion library is
+pure Python on both sides, not pandoc**: `docx` via `python-docx`
+(already a dependency, for the extract path's own `.docx` reading), `odt`
+via `odfpy` (added here, in the new `service` dependency group — pure
+Python, no binary, so #691's image carries nothing extra and
+`.env.example` needs no new binary path). A five-construct line walk
+covers everything either format needs for this issue's own "done when"s,
+so pandoc would have bought nothing worth its binary.
+
+**The #690 citation mode's "no book text" bar holds for export by
+construction, in both modes, for a reason worth stating plainly:**
+`render_markdown` (§7.10) never surfaces a ground's `citation.quote` at
+all — that gap predates this issue, in the persisted analyst markdown
+answer `axial ask` already writes. Export inherits it rather than fixing
+it: a `passage`-mode deployment's exported file carries the same
+locator-only grounds a `locator` deployment's does. Verified against the
+generated file's own bytes in `tests/service/test_api_export.py`, per the
+issue's own instruction, not against the JSON or a UI.
+
 ## Explicitly deferred (do NOT build early)
 
 Building these before a real need is the over-engineering tripwire the handbook
@@ -362,8 +424,8 @@ warns about. Add each only when something concrete demands it:
 - A web UI (build when a non-technical analyst actually needs one).
 - Public self-serve sign-up, email verification, abuse protection.
 - ~~Per-analyst cost accounting and rate limits~~ — shipped in #686 (quotas
-  and per-analyst spend); the metrics/usage/export HTTP surface over that
-  spend is still deferred, to #724.
+  and per-analyst spend) and #724 (the metrics/usage/export HTTP surface
+  over that spend).
 - More than the two roles.
 - Sharing or collaboration between analysts.
 - One-corpus-per-tenant (a different product; not this plan).

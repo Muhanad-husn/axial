@@ -14,6 +14,12 @@ claim's `grounds` (`axial.answer.record._claim_to_dict`) and a
 already meets `locator` mode's "no book text" bar with the record
 untouched. `passage` mode is therefore additive: it attaches a `citation`
 block to each `chunk` ground, `quote` included only in `passage` mode.
+
+**Issue #724 wrapped `GET /asks/{id}/paper`'s response as `{"record":
+..., "metrics": ...}`** -- every assertion below that used to read the
+response body directly now reads `response["record"]` instead; the
+citation rendering itself is unchanged, still applied to the record
+before this issue's wrapping ever happens.
 """
 
 from __future__ import annotations
@@ -105,15 +111,17 @@ def test_default_mode_is_locator_and_carries_no_book_text(job_store: JobStore, t
     with TestClient(create_app(job_store, vault_dir=vault_dir)) as client:
         job_id = _submit_and_complete(client, job_store, record_path)
         paper = client.get(f"/asks/{job_id}/paper").json()
+    record = paper["record"]
 
-    citation = paper["claims"][0]["grounds"][0]["citation"]
+    citation = record["claims"][0]["grounds"][0]["citation"]
     assert citation["chapter"] == "Chapter 1: Origins"
     assert citation["section"] == "Introduction"
     assert citation["author"] == "Author A"
     assert citation["title"] == "The Book"
     assert "quote" not in citation
     # Verified against the response BODY, not the UI, per the issue's own
-    # "done when" -- the passage text is nowhere in the served JSON.
+    # "done when" -- the passage text is nowhere in the served JSON,
+    # record or metrics block alike.
     assert PASSAGE_TEXT not in json.dumps(paper)
 
 
@@ -125,10 +133,10 @@ def test_passage_mode_adds_the_quoted_text_on_claims_and_counter_position(
 
     with TestClient(create_app(job_store, citation_mode=PASSAGE, vault_dir=vault_dir)) as client:
         job_id = _submit_and_complete(client, job_store, record_path)
-        paper = client.get(f"/asks/{job_id}/paper").json()
+        record = client.get(f"/asks/{job_id}/paper").json()["record"]
 
-    assert paper["claims"][0]["grounds"][0]["citation"]["quote"] == PASSAGE_TEXT
-    assert paper["counter_position"]["grounds"][0]["citation"]["quote"] == PASSAGE_TEXT
+    assert record["claims"][0]["grounds"][0]["citation"]["quote"] == PASSAGE_TEXT
+    assert record["counter_position"]["grounds"][0]["citation"]["quote"] == PASSAGE_TEXT
 
 
 def test_flipping_to_passage_is_one_env_var_no_code_change(
@@ -140,9 +148,9 @@ def test_flipping_to_passage_is_one_env_var_no_code_change(
 
     with TestClient(create_app(job_store, vault_dir=vault_dir)) as client:
         job_id = _submit_and_complete(client, job_store, record_path)
-        paper = client.get(f"/asks/{job_id}/paper").json()
+        record = client.get(f"/asks/{job_id}/paper").json()["record"]
 
-    assert paper["claims"][0]["grounds"][0]["citation"]["quote"] == PASSAGE_TEXT
+    assert record["claims"][0]["grounds"][0]["citation"]["quote"] == PASSAGE_TEXT
 
 
 def test_unrecognised_citation_mode_is_a_startup_error_naming_both_modes(
@@ -172,19 +180,19 @@ def test_a_client_cannot_override_the_mode_on_the_request(job_store: JobStore, t
         job_id = response.json()["id"]
         job_store.claim()
         job_store.complete(job_id, result_ref=str(record_path), corpus_pin="sim-2026-08-10")
-        paper = client.get(f"/asks/{job_id}/paper").json()
+        record = client.get(f"/asks/{job_id}/paper").json()["record"]
 
-    assert "quote" not in paper["claims"][0]["grounds"][0]["citation"]
+    assert "quote" not in record["claims"][0]["grounds"][0]["citation"]
 
 
 def test_a_record_with_no_grounds_is_served_unchanged(job_store: JobStore, tmp_path: Path):
     """The pre-#690 shape (mirrors `test_api.py`'s own
     `test_get_paper_serves_the_persisted_record_as_json`): a record whose
     claims carry no `grounds` key at all has nothing to resolve, and comes
-    back byte-for-byte."""
+    back byte-for-byte -- inside the `record` key issue #724 wraps it in."""
     record = {"brief_id": "b1", "corpus_pin": "p", "claims": [{"text": "A claim"}]}
     record_path = _write_record(tmp_path, record)
 
     with TestClient(create_app(job_store)) as client:
         job_id = _submit_and_complete(client, job_store, record_path)
-        assert client.get(f"/asks/{job_id}/paper").json() == record
+        assert client.get(f"/asks/{job_id}/paper").json()["record"] == record

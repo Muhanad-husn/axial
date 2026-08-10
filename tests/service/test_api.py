@@ -8,6 +8,12 @@ the paid engine run itself.
 Phase-C paper -- that is a separate pipeline that runs off an analysis
 record. The route path is the issue's own, and #687's client is written
 against it.
+
+**Issue #724 wrapped the response as `{"record": ..., "metrics": ...}`**
+(a metrics block beside the record, not inside it) -- every assertion
+below that used to compare the bare record now reads `response["record"]`
+instead. This is a genuine shape change these tests pin, not a rewrite of
+what they assert.
 """
 
 from __future__ import annotations
@@ -105,7 +111,17 @@ def test_get_paper_serves_the_persisted_record_as_json(client, job_store: JobSto
     response = client.get(f"/asks/{job_id}/paper")
 
     assert response.status_code == 200
-    assert response.json() == record
+    body = response.json()
+    assert body["record"] == record
+    # The metrics block sits beside the record, never inside it (issue
+    # #724) -- this record carries none of the four fields, so every one
+    # comes back `None` rather than the key being absent.
+    assert body["metrics"] == {
+        "cost": None,
+        "model_by_pass": None,
+        "coverage_map": None,
+        "confidence": None,
+    }
 
 
 def test_get_paper_is_409_while_the_ask_is_not_finished(client):
@@ -224,4 +240,4 @@ def test_analyst_b_can_still_read_their_own_ask_and_paper(job_store: JobStore, t
         assert client_b.get(f"/asks/{bs_ask_id}").status_code == 200
         paper = client_b.get(f"/asks/{bs_ask_id}/paper")
         assert paper.status_code == 200
-        assert paper.json() == record
+        assert paper.json()["record"] == record

@@ -14,6 +14,18 @@ produces; the Phase-C paper is a separate pipeline that runs off an
 analysis record. The route path is the issue's own and #687's client is
 written against it.
 
+**The response carries the record and a `metrics` block beside it, never
+merged into one** (issue #724): `{"record": ..., "metrics": {...}}`. The
+metrics block is exactly the four fields the §7.3 record already carries
+-- `cost`, `model_by_pass`, `coverage_map`, `confidence` -- pulled out
+into their own sibling key so #687's client reads them without hunting
+through `record` for which top-level keys are "the answer" and which are
+"the bill." `retries` and a shape band are Phase-C-only
+(`src/axial/paper/record.py`) and are never served here: an ask is not a
+paper run, and chaining a paper draft onto every ask to manufacture them
+would turn a ~$0.13 ask into a paper run nobody asked for. `GET
+/asks/{id}/export` (below) reuses this same pair.
+
 **The record is rendered through this deployment's citation mode before it
 is served** (issue #690, `axial.service.citation`): `locator` (the
 default) serves the record exactly as persisted -- its `grounds` already
@@ -53,6 +65,38 @@ cache hit still enqueues a `queued` row exactly like a miss and is resolved
 in `axial.service.worker.run_ask_job` instead (that module's own docstring).
 `AskStatus.cached` is `True` once the worker records a hit, so a client can
 say the paper it is showing cost nothing to produce.
+
+**`GET /me/usage` reports cost, tokens and quota state for the caller**
+(issue #724, semantics from #686): a `month_to_date` block always present,
+and an optional `session` block when `session_id` is given as a query
+parameter -- the server holds no notion of a "current" session, so a
+client that wants one names it itself. Both blocks carry the same four
+figures: `cost_usd` (`JobStore.sum_spend_for_principal`, `None`-preserving
+-- unknown is never rendered or summed as `$0.00`), `tokens`
+(`JobStore.sum_tokens_for_principal`, the same rule), `asks_made` (every
+ask, `JobStore.count_since(..., exclude_cached=False)`) and
+`asks_charged` (the same count with a cache hit excluded -- what a quota
+window actually counts). The founder's own naming: "asks made" and "asks
+charged against quota" are two different counts, and a client that reads
+one while it is labelled the other would misreport an analyst's own cache
+hits as consuming their budget. `quota` reuses exactly what the `429`
+path already assembles (`QuotaStore.limits_for`, `count_since` over the
+calendar-UTC day window, `next_daily_reset`/`next_monthly_reset`) -- no
+new query for the numbers `_check_quota` already knows how to read, and
+`quota["month"].used` is `month_to_date.asks_charged` itself, not a second
+count of the same window.
+
+**`GET /asks/{id}/export?format=md|docx|odt` serves the brief, the
+rendered answer and the metrics block as one file** (issue #724,
+`axial.service.export`): markdown is the one rendering path, and `docx`/
+`odt` are converted from that same markdown string, never re-derived from
+the record. Exporting is free -- no model call, no job row touched, no
+quota consulted -- and goes through `_require_own_job` exactly like every
+other by-id route, so an export is exactly as private as the paper it
+comes from. The citation mode applies here too, for the same reason it
+applies to `GET /asks/{id}/paper`: the record this route renders is the
+SAME already-mode-rendered record that route serves, so a `locator`
+deployment's export carries no book text either.
 """
 
 from __future__ import annotations
@@ -66,13 +110,20 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, StringConstraints
 
 from axial.access import ANALYST, READ, WORK, Resource, can_access
 from axial.context import DEFAULT_PRINCIPAL
 from axial.paths import default_vault_dir
 from axial.service.citation import render_record_for_serving, resolve_citation_mode
+from axial.service.export import (
+    EXPORT_FORMATS,
+    metrics_block,
+    render_docx,
+    render_export_markdown,
+    render_odt,
+)
 from axial.service.jobs import DONE, FAILED, JobStore
 from axial.service.quotas import (
     QuotaStore,
@@ -166,6 +217,44 @@ def _require_job(store: JobStore, ask_id: str) -> dict[str, Any]:
     if job is None:
         raise HTTPException(status_code=404, detail=f"no ask with id {ask_id!r}")
     return job
+
+
+class UsageWindow(BaseModel):
+    """One usage window's own four figures (issue #724, `GET /me/usage`):
+    `cost_usd`/`tokens` are `None`-preserving sums (`JobStore.
+    sum_spend_for_principal`/`sum_tokens_for_principal`) -- unknown, never
+    rendered as a zero. `asks_made` counts every ask in the window,
+    `asks_charged` excludes a cache hit -- two different counts, named so
+    neither can be mislabelled as the other (the founder's own line)."""
+
+    cost_usd: float | None
+    tokens: int | None
+    asks_made: int
+    asks_charged: int
+
+
+class QuotaWindowStatus(BaseModel):
+    """One quota window's limit, how much of it this UTC window has used
+    (`JobStore.count_since`, cache hits excluded -- the same count a
+    quota check itself makes), and the exact instant it resets."""
+
+    limit: int
+    used: int
+    reset_at: datetime
+
+
+class UsageResponse(BaseModel):
+    """`GET /me/usage`'s whole body: the caller's own principal, an
+    optional `session` window (present only when the caller supplied a
+    `session_id`, since the server holds no notion of a "current"
+    session), the `month_to_date` window that is always present, and
+    `quota` -- the same limits and calendar-UTC usage the `429` path on
+    `POST /asks` already assembles."""
+
+    principal: str
+    session: UsageWindow | None
+    month_to_date: UsageWindow
+    quota: dict[str, QuotaWindowStatus]
 
 
 _WINDOW_LABEL = {"day": "daily", "month": "monthly"}
@@ -369,20 +458,118 @@ def create_app(
             _event_stream(store, ask_id, after_seq), media_type="text/event-stream"
         )
 
-    @app.get("/asks/{ask_id}/paper")
-    def get_paper(ask_id: str, principal: Principal) -> dict[str, Any]:
-        """The finished ask's §7.3 analysis record, as JSON (module
-        docstring), rendered through this deployment's own citation mode
-        (issue #690, `axial.service.citation.render_record_for_serving`) --
-        the record on disk never carries a quote either way, so `locator`
-        mode returns it untouched and `passage` mode adds one."""
+    def _paper_payload(ask_id: str, principal: str) -> dict[str, Any]:
+        """The finished ask's §7.3 analysis record, rendered through this
+        deployment's own citation mode (issue #690,
+        `axial.service.citation.render_record_for_serving` -- the record on
+        disk never carries a quote either way, so `locator` mode returns it
+        untouched and `passage` mode adds one), plus the metrics block
+        pulled out beside it (issue #724, `axial.service.export.
+        metrics_block`). Shared by `GET /asks/{id}/paper` and `GET
+        /asks/{id}/export` so the two routes can never disagree on what
+        "the record" or "the metrics" are."""
         job = _require_own_job(store, ask_id, principal)
         if job["state"] != DONE:
             raise HTTPException(
                 status_code=409, detail=f"ask {ask_id!r} is {job['state']}, not finished"
             )
         record = json.loads(Path(job["result_ref"]).read_text(encoding="utf-8"))
-        return render_record_for_serving(record, citation_mode=citation_mode, vault_dir=vault_dir)
+        record = render_record_for_serving(record, citation_mode=citation_mode, vault_dir=vault_dir)
+        return {"record": record, "metrics": metrics_block(record)}
+
+    @app.get("/asks/{ask_id}/paper")
+    def get_paper(ask_id: str, principal: Principal) -> dict[str, Any]:
+        """The finished ask's §7.3 analysis record and its metrics block,
+        as `{"record": ..., "metrics": ...}` (module docstring, issue
+        #724) -- the metrics block sits beside the record, never merged
+        into it, so a client reads the two without ambiguity."""
+        return _paper_payload(ask_id, principal)
+
+    def _usage_window(
+        principal: str, *, since: datetime | None, session_id: str | None
+    ) -> UsageWindow:
+        return UsageWindow(
+            cost_usd=store.sum_spend_for_principal(principal, since=since, session_id=session_id),
+            tokens=store.sum_tokens_for_principal(principal, since=since, session_id=session_id),
+            asks_made=store.count_since(
+                principal,
+                kind=ASK_KIND,
+                since=since,
+                session_id=session_id,
+                exclude_cached=False,
+            ),
+            asks_charged=store.count_since(
+                principal, kind=ASK_KIND, since=since, session_id=session_id
+            ),
+        )
+
+    @app.get("/me/usage", response_model=UsageResponse)
+    def get_usage(principal: Principal, session_id: str | None = None) -> UsageResponse:
+        """Cost, tokens and quota state for the caller (module docstring,
+        issue #724). `session_id`, when given as a query parameter, adds a
+        `session` window scoped to that id alone (no time bound) -- this
+        server has no notion of a "current" session, so a client that
+        wants one names it. `month_to_date` is always present."""
+        now = datetime.now(timezone.utc)
+        session = (
+            _usage_window(principal, since=None, session_id=session_id)
+            if session_id is not None
+            else None
+        )
+        month_to_date = _usage_window(principal, since=start_of_month_utc(now), session_id=None)
+        with store.connection() as conn:
+            limits = quotas.limits_for(principal, conn=conn)
+            daily_used = store.count_since(
+                principal, kind=ASK_KIND, since=start_of_day_utc(now), conn=conn
+            )
+        return UsageResponse(
+            principal=principal,
+            session=session,
+            month_to_date=month_to_date,
+            quota={
+                "day": QuotaWindowStatus(
+                    limit=limits.daily, used=daily_used, reset_at=next_daily_reset(now)
+                ),
+                "month": QuotaWindowStatus(
+                    limit=limits.monthly,
+                    # The same count as `month_to_date.asks_charged` above --
+                    # both are "asks charged against quota this calendar
+                    # month" -- reused rather than a second `count_since`
+                    # call for the identical window.
+                    used=month_to_date.asks_charged,
+                    reset_at=next_monthly_reset(now),
+                ),
+            },
+        )
+
+    @app.get("/asks/{ask_id}/export")
+    def export_paper(ask_id: str, principal: Principal, format: str = "md") -> Response:
+        """The brief, the rendered answer and the metrics block as one
+        downloadable file (module docstring, issue #724,
+        `axial.service.export`). Free: no model call, no job row touched,
+        no quota consulted -- `_paper_payload` above is a read of an
+        already-persisted record, the same one `GET /asks/{id}/paper`
+        reads."""
+        if format not in EXPORT_FORMATS:
+            raise HTTPException(
+                status_code=422, detail=f"format must be one of {EXPORT_FORMATS!r}, got {format!r}"
+            )
+        payload = _paper_payload(ask_id, principal)
+        markdown_text = render_export_markdown(payload["record"], payload["metrics"])
+        if format == "md":
+            content: bytes = markdown_text.encode("utf-8")
+            media_type = "text/markdown; charset=utf-8"
+        elif format == "docx":
+            content = render_docx(markdown_text)
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        else:
+            content = render_odt(markdown_text)
+            media_type = "application/vnd.oasis.opendocument.text"
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{ask_id}.{format}"'},
+        )
 
     return app
 
