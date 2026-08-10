@@ -25,11 +25,16 @@ missing or repeating an event.
 and dicts; the models below are the wire contract at this boundary, not a
 record shape.
 
-Auth is not in this issue. `current_principal` is the whole identity seam:
-one FastAPI dependency returning a single local user, which issue #685
-replaces with real identity. `GET /asks` filters on it today -- with one
-principal that is every row, but the filter is where it will be when there
-is more than one.
+Auth is not in this issue (#685 built the request-path shape and the access
+policy; #688 is where a token turns into a real, distinct principal).
+`current_principal` is the identity seam: one FastAPI dependency, still
+returning the single local `DEFAULT_PRINCIPAL` (`axial.context`) until #688
+lands. `GET /asks` filters on it, and every by-id route below (`GET /asks/
+{id}`, its `/events`, its `/paper`) now goes through `can_access`
+(`axial.access`) rather than trusting that a query naturally excluded rows
+that are not the caller's: a job id is guessable, so the refusal has to come
+from the policy, not from an accident of how `JobStore.get` happens to be
+called.
 """
 
 from __future__ import annotations
@@ -46,6 +51,9 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, StringConstraints
 
+from axial.access import READ, WORK, Resource, can_access
+from axial.ask.role import ANALYST
+from axial.context import DEFAULT_PRINCIPAL
 from axial.service.jobs import DONE, FAILED, JobStore
 
 ASK_KIND = "ask"
@@ -59,10 +67,6 @@ ASK_KIND = "ask"
 # no caller has needed a different cadence.
 EVENTS_POLL_INTERVAL_SECONDS = 0.5
 
-# The single local user every request is until issue #685 lands real
-# identity.
-DEFAULT_PRINCIPAL = "local-analyst"
-
 # Blank-or-whitespace is rejected at the boundary rather than enqueued and
 # left to fail in a worker three minutes later -- the same precondition
 # `axial.ask.engine.ask` enforces (`BlankCaseError`/`BlankQuestionError`).
@@ -70,12 +74,29 @@ NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)
 
 
 def current_principal() -> str:
-    """Who is asking. Issue #685 replaces this dependency with real
-    identity; until then every request is the same local analyst."""
+    """Who is asking. Still the single local analyst (`DEFAULT_PRINCIPAL`)
+    until #688 lands a real identity provider behind this same dependency --
+    #685's own scope is the request-path shape (`RequestContext`), the
+    per-principal working set (`axial.paths`), and the access policy
+    (`axial.access.can_access`) that consult it, not login itself."""
     return DEFAULT_PRINCIPAL
 
 
 Principal = Annotated[str, Depends(current_principal)]
+
+
+def _require_own_job(store: JobStore, ask_id: str, principal: str) -> dict[str, Any]:
+    """The job at `ask_id`, only when `principal` may read it. `can_access`
+    (`axial.access`, table-driven, in `disposition_for`'s own style) makes
+    the call -- every request into this service is the `ANALYST` role, so a
+    job owned by someone else is refused exactly as if it did not exist:
+    guessing another analyst's id correctly proves nothing, because the
+    refusal comes from the policy, never from `JobStore.get` merely never
+    having been asked to filter."""
+    job = _require_job(store, ask_id)
+    if not can_access(principal, ANALYST, READ, Resource(WORK, owner=job["principal"])):
+        raise HTTPException(status_code=404, detail=f"no ask with id {ask_id!r}")
+    return job
 
 
 class AskRequest(BaseModel):
@@ -200,18 +221,18 @@ def create_app(store: JobStore) -> FastAPI:
         return [AskStatus(**job) for job in store.list_for_principal(principal)]
 
     @app.get("/asks/{ask_id}", response_model=AskStatus)
-    def get_ask(ask_id: str) -> AskStatus:
-        return AskStatus(**_require_job(store, ask_id))
+    def get_ask(ask_id: str, principal: Principal) -> AskStatus:
+        return AskStatus(**_require_own_job(store, ask_id, principal))
 
     @app.get("/asks/{ask_id}/events")
-    def stream_events(ask_id: str, request: Request) -> StreamingResponse:
+    def stream_events(ask_id: str, request: Request, principal: Principal) -> StreamingResponse:
         """Server-Sent Events over the job's `on_event` history (issue
         #683): every missed event first, on connect or reconnect, then live
         ones on the same response, until the job reaches a terminal state.
         `Last-Event-ID` (SSE's own reconnect header) is where a client
         resumes from -- absent, or unparseable, is treated as `0`, a fresh
         connection starting from the beginning."""
-        _require_job(store, ask_id)
+        _require_own_job(store, ask_id, principal)
         try:
             after_seq = int(request.headers.get("last-event-id", "0"))
         except ValueError:
@@ -221,12 +242,12 @@ def create_app(store: JobStore) -> FastAPI:
         )
 
     @app.get("/asks/{ask_id}/paper")
-    def get_paper(ask_id: str) -> dict[str, Any]:
+    def get_paper(ask_id: str, principal: Principal) -> dict[str, Any]:
         """The finished ask's §7.3 analysis record, as JSON (module
         docstring). A job that has not reached `done` has no record to
         serve, so it is a 409 naming the state it is actually in rather
         than an empty 200."""
-        job = _require_job(store, ask_id)
+        job = _require_own_job(store, ask_id, principal)
         if job["state"] != DONE:
             raise HTTPException(
                 status_code=409, detail=f"ask {ask_id!r} is {job['state']}, not finished"

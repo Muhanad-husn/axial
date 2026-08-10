@@ -122,7 +122,10 @@ def test_run_ask_job_calls_the_in_process_ask_engine_not_a_subprocess(
     # writable place for the analyst's own records outside the read-only
     # snapshot (issue #684).
     assert seen["map_pin"] == "a1b2c3"
-    assert seen["analyses_dir"] == Path("data/work/analyses")
+    # Scoped to the job's own principal (issue #685): "analyst-1" is not
+    # the default local principal, so it gets its own subdirectory rather
+    # than landing directly under `work_dir`.
+    assert seen["analyses_dir"] == Path("data/work/analyses/analyst-1")
     assert corpus_pin == "sim-2026-08-10"
     assert result_ref
 
@@ -165,3 +168,40 @@ def test_run_ask_job_wires_on_event_to_the_store(monkeypatch, job_store: JobStor
     ]
     assert [event["seq"] for event in events] == [1, 2]
     assert events[0]["detail"] == {"stage": "interrogate"}
+
+
+def test_two_principals_asking_against_the_same_worker_get_separate_analyses_dirs(
+    monkeypatch, job_store: JobStore
+):
+    """The plan's own "done when" for paths.py's per-principal scoping
+    (#685 step 3): two principals querying the same worker get separate
+    saved work under the same `work_dir`, the same corpus."""
+    seen_dirs: list[Path] = []
+
+    def fake_ask(question, case, *, client, session_id=None, on_event=None, **kwargs):
+        seen_dirs.append(kwargs["analyses_dir"])
+        brief = Brief(brief_id="b1", case=case, request=question)
+        result = BriefRunResult(
+            record={"corpus_pin": "sim-2026-08-10"},
+            path=Path("data/analyses/b1.json"),
+            markdown_path=Path("data/analyses/b1.md"),
+            report={},
+            report_path=Path("data/runs/b1.json"),
+        )
+        return Turn(
+            session_id="s1", turn_index=1, question=question, case=case, brief=brief, result=result
+        )
+
+    monkeypatch.setattr(worker_mod, "run_ask", fake_ask)
+
+    for principal in ("alice", "bob"):
+        job_store.enqueue(
+            kind="ask", principal=principal, payload={"question": "Q", "case": "Syria"}
+        )
+        job = job_store.claim()
+        run_ask_job(
+            job, client=object(), store=job_store, snapshot=_SNAPSHOT, work_dir=Path("data/work")
+        )
+
+    assert seen_dirs == [Path("data/work/analyses/alice"), Path("data/work/analyses/bob")]
+    assert seen_dirs[0] != seen_dirs[1]

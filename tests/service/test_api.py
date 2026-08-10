@@ -151,9 +151,9 @@ def test_list_asks_excludes_another_principals_asks(client, job_store: JobStore)
 
 
 def test_the_principal_comes_from_an_overridable_dependency(job_store: JobStore):
-    """#685 lands real identity by replacing this one dependency. Until
+    """#688 lands real identity by replacing this one dependency. Until
     then every request is the same local analyst -- proved here by
-    overriding it, which is exactly the seam #685 takes over."""
+    overriding it, which is exactly the seam #688 takes over."""
     app = create_app(job_store)
     app.dependency_overrides[current_principal] = lambda: "analyst-42"
 
@@ -161,3 +161,67 @@ def test_the_principal_comes_from_an_overridable_dependency(job_store: JobStore)
         job_id = client.post("/asks", json={"case": "Syria", "request": "Q"}).json()["id"]
 
     assert job_store.get(job_id)["principal"] == "analyst-42"
+
+
+# -- ownership (issue #685) --------------------------------------------------
+
+
+def _client_as(job_store: JobStore, principal: str) -> TestClient:
+    app = create_app(job_store)
+    app.dependency_overrides[current_principal] = lambda: principal
+    return TestClient(app)
+
+
+def test_analyst_a_cannot_read_analyst_bs_ask_by_id_even_guessing_it_correctly(
+    job_store: JobStore,
+):
+    """The issue's own acceptance line, verbatim. B's ask id is not
+    secret here -- A gets it exactly right -- and the refusal still has to
+    come from `can_access` (ownership), never from an accident of how the
+    row was queried."""
+    with _client_as(job_store, "analyst-b") as client_b:
+        bs_ask_id = client_b.post(
+            "/asks", json={"case": "Syria", "request": "B's question"}
+        ).json()["id"]
+
+    with _client_as(job_store, "analyst-a") as client_a:
+        assert client_a.get(f"/asks/{bs_ask_id}").status_code == 404
+        assert client_a.get(f"/asks/{bs_ask_id}/events").status_code == 404
+
+
+def test_analyst_a_cannot_read_analyst_bs_paper_by_id(job_store: JobStore, tmp_path):
+    record = {"brief_id": "b1", "corpus_pin": "sim-2026-08-10", "claims": [{"text": "B's claim"}]}
+    record_path = tmp_path / "b1.json"
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+
+    with _client_as(job_store, "analyst-b") as client_b:
+        bs_ask_id = client_b.post(
+            "/asks", json={"case": "Syria", "request": "B's question"}
+        ).json()["id"]
+    job_store.claim()
+    job_store.complete(bs_ask_id, result_ref=str(record_path), corpus_pin="sim-2026-08-10")
+
+    with _client_as(job_store, "analyst-a") as client_a:
+        response = client_a.get(f"/asks/{bs_ask_id}/paper")
+
+    assert response.status_code == 404
+
+
+def test_analyst_b_can_still_read_their_own_ask_and_paper(job_store: JobStore, tmp_path):
+    """The refusal above is about ownership, not a blanket ban on by-id
+    reads -- the owner themself must still be able to read it."""
+    record = {"brief_id": "b1", "corpus_pin": "sim-2026-08-10", "claims": [{"text": "B's claim"}]}
+    record_path = tmp_path / "b1.json"
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+
+    with _client_as(job_store, "analyst-b") as client_b:
+        bs_ask_id = client_b.post(
+            "/asks", json={"case": "Syria", "request": "B's question"}
+        ).json()["id"]
+        job_store.claim()
+        job_store.complete(bs_ask_id, result_ref=str(record_path), corpus_pin="sim-2026-08-10")
+
+        assert client_b.get(f"/asks/{bs_ask_id}").status_code == 200
+        paper = client_b.get(f"/asks/{bs_ask_id}/paper")
+        assert paper.status_code == 200
+        assert paper.json() == record
