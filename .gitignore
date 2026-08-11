@@ -94,6 +94,7 @@ web/*.tsbuildinfo
 web/test-results/
 web/playwright-report/
 web/blob-report/
+web/*.log
 # Next generates this one and rewrites it to point at whichever of `next dev`
 # or `next build` ran last, so tracking it means every run dirties the tree
 # (#748). `create-next-app` ignores it by default; it was committed by mistake.

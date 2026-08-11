@@ -3,13 +3,18 @@
 import { useState } from "react";
 
 import { Composer } from "@/components/Composer";
+import { ExportControl } from "@/components/ExportControl";
+import { MetricsPanel } from "@/components/MetricsPanel";
+import { Paper } from "@/components/Paper";
 import { TopBar } from "@/components/TopBar";
 import { Walk } from "@/components/Walk";
 import { useAsk, type Brief } from "@/lib/useAsk";
+import { usePaper } from "@/lib/usePaper";
 
 export default function AskPage() {
   const ask = useAsk();
   const [startedAt, setStartedAt] = useState<number | null>(null);
+  const paperState = usePaper(ask.askId, ask.walk.phase === "done");
 
   const start = (brief: Brief) => {
     setStartedAt(Date.now());
@@ -47,15 +52,32 @@ export default function AskPage() {
           </section>
         )}
 
-        {ask.walk.phase === "done" && (
-          <section
-            data-testid="answer-placeholder"
-            className="rounded-lg border border-rule bg-panel px-4 py-3.5 text-[12.5px] leading-[1.5] text-ink2"
-          >
-            Axial has answered
-            {ask.status?.cached ? " from cache, at no cost" : ""}. The paper, its evidence
-            markers, the metrics panel and export land in the next slice.
-          </section>
+        {ask.walk.phase === "done" && ask.askId && (
+          <>
+            {paperState.paper ? (
+              <>
+                <Paper record={paperState.paper.record} />
+                <MetricsPanel metrics={paperState.paper.metrics} />
+                <ExportControl askId={ask.askId} />
+              </>
+            ) : paperState.error ? (
+              <section
+                role="alert"
+                data-testid="paper-error"
+                className="rounded-lg border border-rule bg-sunken px-4 py-3 text-[12.5px] leading-[1.5]"
+              >
+                {paperState.error}
+              </section>
+            ) : (
+              <section
+                data-testid="paper-loading"
+                className="rounded-lg border border-rule bg-panel px-4 py-3.5 text-[12.5px] leading-[1.5] text-ink2"
+              >
+                Loading the paper
+                {ask.status?.cached ? " (from cache, at no cost)" : ""}…
+              </section>
+            )}
+          </>
         )}
 
         {!ask.brief && (

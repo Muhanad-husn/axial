@@ -117,6 +117,117 @@ export async function getAsk(id: string, signal?: AbortSignal): Promise<AskStatu
   return (await expectOk(response)).json();
 }
 
+/** `note_locator` (`axial.query.store`) plus, in `passage` citation mode
+ * only, the resolved `quote` (`axial.service.citation`). Attached to a
+ * `chunk` ground when it resolves; absent otherwise -- never a placeholder
+ * full of nulls. The citation mode itself is a deployment setting this
+ * client never sees or branches on (#690): whatever keys are present here
+ * are whatever this deployment chose to send. */
+export interface Citation {
+  source_id: string;
+  author: string | null;
+  title: string | null;
+  date: string | null;
+  chapter: string | null;
+  section: string | null;
+  quote?: string;
+}
+
+/** One claim's evidence pointer (`axial.answer.record._claim_to_dict`).
+ * `citation` is present only when the server resolved it. */
+export interface Ground {
+  ref_type: string;
+  ref_id: string;
+  citation?: Citation;
+}
+
+/** One §7.4 claim. `kind` is `"a"` (a source states it), `"b"` (Axial
+ * concluded it across sources) or `"c"` (Axial's own judgment, past the
+ * books) -- the marker text and accent for each live in `src/lib/paper.ts`,
+ * a lookup table, never a decision made here. */
+export interface Claim {
+  claim_id: string;
+  text: string;
+  kind: string;
+  grounds: Ground[];
+  confidence: string | null;
+  names_touched: string[];
+}
+
+export interface CoverageEntry {
+  corpus_note_count: number | null;
+  evidence_note_count: number;
+  coverage_band: string;
+}
+
+export interface ConfidenceBlock {
+  overall_band: string;
+  rationale: string;
+}
+
+export interface CostByPass {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  usd: number | null;
+}
+
+export interface CostBlock {
+  by_pass: Record<string, CostByPass>;
+  total_usd: number | null;
+}
+
+/** The §7.3 analysis record, as `GET /asks/{id}/paper` serves it. This
+ * client reads `brief`, `interrogation` and `claims` to render the paper;
+ * every other key (`trajectory`, `source_usage`, `counter_position`, ...)
+ * rides along untouched -- nothing here re-derives what the record already
+ * states. */
+export interface AnalysisRecord {
+  brief_id: string;
+  brief: { case: string; request: string };
+  interrogation: { disposition: string; refusal?: { reason?: string } | null };
+  claims: Claim[];
+  [key: string]: unknown;
+}
+
+/** The metrics sibling (issue #724): exactly `cost`, `model_by_pass`,
+ * `coverage_map`, `confidence` -- never merged into `record`, never
+ * `retries` or a shape band, which this endpoint does not send. */
+export interface Metrics {
+  cost: CostBlock | null;
+  model_by_pass: Record<string, string> | null;
+  coverage_map: Record<string, CoverageEntry> | null;
+  confidence: ConfidenceBlock | null;
+}
+
+export interface PaperResponse {
+  record: AnalysisRecord;
+  metrics: Metrics;
+}
+
+export async function getPaper(id: string, signal?: AbortSignal): Promise<PaperResponse> {
+  const response = await fetch(`${API_BASE}/asks/${encodeURIComponent(id)}/paper`, { signal });
+  return (await expectOk(response)).json();
+}
+
+/** `GET /asks/{id}/export`'s three formats, verbatim. */
+export const EXPORT_FORMATS = ["md", "docx", "odt"] as const;
+export type ExportFormat = (typeof EXPORT_FORMATS)[number];
+
+export const EXPORT_FORMAT_LABELS: Record<ExportFormat, string> = {
+  md: "Markdown (.md)",
+  docx: "Word (.docx)",
+  odt: "OpenDocument (.odt)",
+};
+
+/** The download URL for one format. A plain anchor with `download` is the
+ * whole client-side mechanism -- the server sets `Content-Disposition` and
+ * does the rendering, so there is nothing here to fetch, convert or hold an
+ * opinion about. */
+export function exportUrl(id: string, format: ExportFormat): string {
+  return `${API_BASE}/asks/${encodeURIComponent(id)}/export?format=${format}`;
+}
+
 /** Open the event stream, resuming after `lastSeq` when reconnecting.
  * `Last-Event-ID` is SSE's own reconnect header and the service honours it,
  * so a resume misses nothing and repeats nothing. */
