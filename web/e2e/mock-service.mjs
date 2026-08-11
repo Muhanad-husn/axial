@@ -1,16 +1,16 @@
 /** A stand-in for `axial.service.api`, for the end-to-end spec only.
  *
- * It speaks the routes the app uses -- `POST /asks`, `GET /asks/{id}`,
- * `GET /asks/{id}/events`, `GET /asks/{id}/paper`, `GET /asks/{id}/export`
- * -- with the same shapes and the same SSE framing (`id:` line,
- * `{"message", "detail"}` payload, stream closes at a terminal state).
- * Three things it does deliberately: it drops the first event connection
- * halfway, so a resume through `Last-Event-ID` is exercised for real;
- * `POST /__kill` makes it stop answering, which is what "the API died
- * mid-ask" looks like from a browser; and the case `quiet` holds the
- * stream open and silent mid-ask, which is what a real fourteen-minute ask
- * looks like and the only way a buffering hop between the browser and the
- * service is visible at all.
+ * It speaks the routes the app uses -- `POST /asks`, `GET /asks`, `GET
+ * /asks/{id}`, `GET /asks/{id}/events`, `GET /asks/{id}/paper`, `GET
+ * /asks/{id}/export`, `GET /me/usage` -- with the same shapes and the same
+ * SSE framing (`id:` line, `{"message", "detail"}` payload, stream closes
+ * at a terminal state). Three things it does deliberately: it drops the
+ * first event connection halfway, so a resume through `Last-Event-ID` is
+ * exercised for real; `POST /__kill` makes it stop answering, which is
+ * what "the API died mid-ask" looks like from a browser; and the case
+ * `quiet` holds the stream open and silent mid-ask, which is what a real
+ * fourteen-minute ask looks like and the only way a buffering hop between
+ * the browser and the service is visible at all.
  *
  * `/paper` renders one of two fixed §7.3 records, picked by the ask's own
  * `case` (`paperFor`) -- the default is shaped like `locator` citation mode
@@ -19,7 +19,16 @@
  * mode is a deployment setting the client never sees or chooses (#690);
  * this mock picks a fixture by case only because it has no deployment
  * setting of its own to read -- the client under test is exercised against
- * both shapes exactly as it would be against two real deployments.
+ * both shapes exactly as it would be against two real deployments. A
+ * cached job (`job.cached`) renders its cost as `0`, not the usual `0.13`
+ * -- the real worker persists `cost_usd = 0.0` for a cache hit
+ * (`axial.service.worker`), and issue #746's own bar is that this reads as
+ * zero, not as unknown and not as a repeat charge.
+ *
+ * `/__reset` also seeds three fixed history rows (issue #746) so `GET
+ * /asks` and reopening have something to show without driving a live ask
+ * through the SSE flow first: a plain `done` row, a `cached` (free) one,
+ * and a `failed` one carrying the service's own error text.
  */
 
 import { createServer } from "node:http";
@@ -137,15 +146,19 @@ function paperFor(job) {
     claims,
   };
 
+  // A cache hit made no model call, so its own record's cost reads as a
+  // real zero -- never the fixture's usual $0.13, and never "unknown".
   const metrics = {
-    cost: {
-      by_pass: {
-        interrogate: { prompt_tokens: 1200, completion_tokens: 300, total_tokens: 1500, usd: 0.02 },
-        retrieve: { prompt_tokens: 4000, completion_tokens: 900, total_tokens: 4900, usd: 0.06 },
-        synthesize: { prompt_tokens: 3000, completion_tokens: 1100, total_tokens: 4100, usd: 0.05 },
-      },
-      total_usd: 0.13,
-    },
+    cost: job.cached
+      ? { by_pass: {}, total_usd: 0 }
+      : {
+          by_pass: {
+            interrogate: { prompt_tokens: 1200, completion_tokens: 300, total_tokens: 1500, usd: 0.02 },
+            retrieve: { prompt_tokens: 4000, completion_tokens: 900, total_tokens: 4900, usd: 0.06 },
+            synthesize: { prompt_tokens: 3000, completion_tokens: 1100, total_tokens: 4100, usd: 0.05 },
+          },
+          total_usd: 0.13,
+        },
     model_by_pass: {
       interrogate: "glm-5.2",
       retrieve: "glm-5.2",
@@ -201,6 +214,65 @@ async function streamEvents(req, res, job) {
   res.end();
 }
 
+// One `AskStatus` row (`src/axial/service/api.py`) for `job`. Shared by the
+// list route and the single-job route so the two can never disagree about
+// what a row looks like.
+function askStatusFor(job) {
+  return {
+    id: job.id,
+    state: job.state,
+    corpus_pin: "3c49f2e5aa11bb22",
+    cached: Boolean(job.cached),
+    created_at: job.created_at ?? new Date().toISOString(),
+    claimed_at: job.claimed_at ?? null,
+    finished_at:
+      job.finished_at ??
+      (job.state === "done" || job.state === "failed" ? new Date().toISOString() : null),
+    result_ref: null,
+    error: job.error ?? null,
+  };
+}
+
+// Three fixed history rows (issue #746): a plain finished ask, a cached one
+// that cost nothing, and a failed one -- so `GET /asks` and reopening have
+// something to show without a live ask first.
+function seedHistory() {
+  jobs.set("hist-done", {
+    id: "hist-done",
+    state: "done",
+    connections: 0,
+    quiet: false,
+    cached: false,
+    case: "Damascus",
+    request: "Did Mandate recruitment shape later rule?",
+    created_at: "2026-08-01T09:00:00.000Z",
+    finished_at: "2026-08-01T09:03:12.000Z",
+  });
+  jobs.set("hist-cached", {
+    id: "hist-cached",
+    state: "done",
+    connections: 0,
+    quiet: false,
+    cached: true,
+    case: "Aleppo",
+    request: "The same question, asked a second time",
+    created_at: "2026-08-02T10:00:00.000Z",
+    finished_at: "2026-08-02T10:00:01.000Z",
+  });
+  jobs.set("hist-failed", {
+    id: "hist-failed",
+    state: "failed",
+    connections: 0,
+    quiet: false,
+    cached: false,
+    case: "Homs",
+    request: "A question the corpus could not answer",
+    created_at: "2026-08-03T11:00:00.000Z",
+    finished_at: "2026-08-03T11:01:00.000Z",
+    error: "The corpus snapshot could not be bound.",
+  });
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const path = url.pathname;
@@ -209,6 +281,7 @@ const server = createServer(async (req, res) => {
   if (path === "/__reset") {
     dead = false;
     jobs.clear();
+    seedHistory();
     return json(res, 200, { dead });
   }
   if (dead) {
@@ -221,6 +294,31 @@ const server = createServer(async (req, res) => {
     json(res, 200, { dead });
     for (const socket of openSockets) socket.destroy();
     return;
+  }
+
+  if (req.method === "GET" && path === "/asks") {
+    return json(res, 200, [...jobs.values()].map(askStatusFor));
+  }
+
+  if (req.method === "GET" && path === "/me/usage") {
+    // The session window is `null` here only when the client sends no
+    // `session_id` at all -- the app under test always does
+    // (`currentSessionId()`), so this exercises the "present" branch and
+    // uses a `null` cost/tokens pair to prove unknown never renders as
+    // `$0.00`. `month_to_date` carries a real estimate with `asks_charged`
+    // short of `asks_made`, the cache-hit exclusion the issue names.
+    const sessionId = url.searchParams.get("session_id");
+    return json(res, 200, {
+      principal: "local-analyst",
+      session: sessionId
+        ? { cost_usd: null, tokens: null, asks_made: 2, asks_charged: 1 }
+        : null,
+      month_to_date: { cost_usd: 4.82, tokens: 128000, asks_made: 9, asks_charged: 7 },
+      quota: {
+        day: { limit: 20, used: 3, reset_at: "2026-08-12T00:00:00+00:00" },
+        month: { limit: 300, used: 7, reset_at: "2026-09-01T00:00:00+00:00" },
+      },
+    });
   }
 
   if (req.method === "POST" && path === "/asks") {
@@ -276,17 +374,7 @@ const server = createServer(async (req, res) => {
     return res.end(content);
   }
 
-  return json(res, 200, {
-    id: job.id,
-    state: job.state,
-    corpus_pin: "3c49f2e5aa11bb22",
-    cached: false,
-    created_at: new Date().toISOString(),
-    claimed_at: null,
-    finished_at: job.state === "done" ? new Date().toISOString() : null,
-    result_ref: null,
-    error: null,
-  });
+  return json(res, 200, askStatusFor(job));
 });
 
 server.on("connection", (socket) => {
