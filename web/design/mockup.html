@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="./support.js"></script>
+  </head>
+  <body>
+    <x-dc>
+      <helmet data-dc-atomics>
+        <meta name="design_doc_mode" content="canvas" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap" rel="stylesheet" />
+        <style>
+          :root {
+            --bg: oklch(0.955 0.006 84);
+            --panel: oklch(0.995 0.003 84);
+            --sunken: oklch(0.925 0.005 84);
+            --lcolbg: oklch(0.975 0.004 84);
+            --barbg: oklch(0.915 0.005 84);
+            --ink: oklch(0.24 0.012 80);
+            --ink2: oklch(0.47 0.010 80);
+            --ink3: oklch(0.65 0.008 80);
+            --rule: oklch(0.895 0.006 80);
+            --rule2: oklch(0.945 0.004 80);
+            --stated: oklch(0.55 0.11 155);
+            --concluded: oklch(0.55 0.11 255);
+            --spec: oklch(0.55 0.11 55);
+            --stated-bg: oklch(0.55 0.11 155 / 0.10);
+            --concluded-bg: oklch(0.55 0.11 255 / 0.10);
+            --spec-bg: oklch(0.55 0.11 55 / 0.12);
+            --warnbg: oklch(0.55 0.11 55 / 0.07);
+            --warnline: oklch(0.55 0.11 55 / 0.35);
+            --sans: "Helvetica Neue", Helvetica, sans-serif;
+            --serif: "Newsreader", Georgia, serif;
+            --mono: ui-monospace, "SF Mono", Menlo, monospace;
+          }
+
+          .dark {
+            --panel: oklch(0.225 0.009 80);
+            --sunken: oklch(0.267 0.009 80);
+            --lcolbg: oklch(0.203 0.008 80);
+            --barbg: oklch(0.305 0.008 80);
+            --ink: oklch(0.930 0.007 80);
+            --ink2: oklch(0.745 0.007 80);
+            --ink3: oklch(0.570 0.007 80);
+            --rule: oklch(0.330 0.008 80);
+            --rule2: oklch(0.288 0.008 80);
+            --stated: oklch(0.745 0.105 155);
+            --concluded: oklch(0.745 0.105 255);
+            --spec: oklch(0.775 0.105 65);
+            --stated-bg: oklch(0.745 0.105 155 / 0.16);
+            --concluded-bg: oklch(0.745 0.105 255 / 0.16);
+            --spec-bg: oklch(0.775 0.105 65 / 0.17);
+            --warnbg: oklch(0.775 0.105 65 / 0.10);
+            --warnline: oklch(0.775 0.105 65 / 0.40);
+          }
+
+          body {
+            margin: 0;
+            background: var(--bg);
+            font-family: var(--sans);
+            color: var(--ink);
+            -webkit-font-smoothing: antialiased;
+            text-wrap: pretty;
+          }
+          a { color: var(--concluded); text-decoration: none; }
+          a:hover { color: var(--ink); }
+
+          .dv-turn { padding: 44px 48px 36px; border-bottom: 1px solid oklch(0.895 0.006 80); }
+          .dv-thd { display: flex; align-items: baseline; gap: 10px; margin: 0 0 6px; }
+          .dv-tid { font: 600 10px var(--mono); padding: 3px 7px; background: oklch(0.24 0.012 80); color: oklch(0.995 0.003 84); border-radius: 4px; text-decoration: none; }
+          .dv-tname { font: 600 13px/1.2 var(--sans); color: oklch(0.24 0.012 80); }
+          .dv-tsub { font: 400 12px/1.55 var(--sans); color: oklch(0.47 0.010 80); max-width: 700px; margin: 0 0 24px; }
+          .dv-opts { display: flex; flex-wrap: wrap; gap: 30px; align-items: flex-start; }
+          .dv-opt { flex: none; display: flex; flex-direction: column; gap: 9px; scroll-margin-top: 16px; }
+          .dv-oid { font: 600 10.5px var(--mono); padding: 3px 7px; background: oklch(0.90 0.006 80); color: oklch(0.24 0.012 80); border-radius: 5px; text-decoration: none; }
+          .dv-olabel { display: flex; align-items: baseline; gap: 8px; font: 400 11px/1.3 var(--sans); color: oklch(0.47 0.010 80); }
+          .dv-card { background: var(--panel); color: var(--ink); border: 1px solid var(--rule); border-radius: 10px; box-shadow: 0 1px 3px oklch(0.24 0.012 80 / 0.09); overflow: hidden; }
+          .dv-opt:target .dv-oid { background: oklch(0.55 0.11 255); color: oklch(0.995 0.003 84); }
+          .dv-next { margin: 26px 0 0; font: 12px/1.6 var(--sans); color: oklch(0.47 0.010 80); max-width: 780px; }
+
+          .app { display: flex; flex-direction: column; }
+          .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 16px 11px 20px; border-bottom: 1px solid var(--rule2); }
+          .wordmark { font: 600 13px var(--sans); letter-spacing: 0.14em; text-transform: uppercase; }
+          .tbright { display: flex; align-items: center; gap: 14px; }
+          .pin { font: 10.5px var(--mono); color: var(--ink3); }
+
+          .themectl { display: flex; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+          .tseg { font: 600 9px var(--mono); letter-spacing: 0.09em; text-transform: uppercase; padding: 5px 9px; color: var(--ink3); border-right: 1px solid var(--rule); }
+          .tseg:last-child { border-right: 0; }
+          .tseg.on { background: var(--ink); color: var(--panel); }
+
+          .thread { padding: 26px 30px 20px; display: flex; flex-direction: column; gap: 22px; }
+          .asklabel { font: 600 9.5px var(--mono); letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink3); margin-bottom: 7px; }
+          .askbody { margin: 0; font: 400 17px/1.5 var(--serif); color: var(--ink); }
+
+          .walk { border-left: 2px solid var(--rule); padding-left: 18px; display: flex; flex-direction: column; gap: 13px; }
+          .walkhead { display: flex; align-items: center; gap: 9px; font: 600 11px var(--sans); color: var(--ink2); }
+          .walktime { font: 10.5px var(--mono); color: var(--ink3); margin-left: auto; }
+          .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--concluded); display: inline-block; flex: none; }
+          .events { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+          .ev { font: 400 12.5px/1.45 var(--sans); color: var(--ink2); display: flex; gap: 9px; align-items: baseline; }
+          .ev b { color: var(--ink); font-weight: 600; }
+          .ev em { font-style: normal; color: var(--ink); border-bottom: 1px solid var(--rule); }
+          .tick { font: 10px var(--mono); color: var(--ink3); flex: none; width: 9px; }
+          .ev.live { color: var(--ink); }
+          .ev.live .tick { color: var(--concluded); }
+          .ev.queued { color: var(--ink3); }
+
+          .composer { margin: 4px 30px 26px; border: 1px solid var(--rule); border-radius: 9px; padding: 13px 15px; display: flex; align-items: center; justify-content: space-between; }
+          .cplace { font: 13px var(--sans); color: var(--ink3); }
+          .cbtn { font: 600 11px var(--sans); padding: 7px 13px; border-radius: 6px; background: var(--ink); color: var(--panel); }
+          .cbtn.ghost { background: transparent; color: var(--ink3); border: 1px solid var(--rule); }
+          .ctools { display: flex; gap: 8px; align-items: center; }
+
+          .paper { padding: 4px 0 0; }
+          .ptitle { font: 500 22px/1.28 var(--serif); margin: 0 0 9px; letter-spacing: -0.005em; }
+          .pmeta { font: 10.5px var(--mono); color: var(--ink3); margin: 0 0 22px; display: flex; gap: 14px; flex-wrap: wrap; }
+          .phead { font: 600 9.5px var(--mono); letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink3); margin: 24px 0 11px; }
+          .claim { display: flex; gap: 13px; padding: 0 0 17px; }
+          .rail { flex: none; width: 3px; border-radius: 2px; }
+          .rail.stated { background: var(--stated); }
+          .rail.concluded { background: var(--concluded); }
+          .rail.spec { background: var(--spec); }
+          .ctext { font: 400 15.5px/1.62 var(--serif); color: var(--ink); margin: 0 0 7px; }
+          .cfoot { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+          .mark { font: 600 9px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; padding: 2.5px 6px; border-radius: 3px; }
+          .mark.stated { color: var(--stated); background: var(--stated-bg); }
+          .mark.concluded { color: var(--concluded); background: var(--concluded-bg); }
+          .mark.spec { color: var(--spec); background: var(--spec-bg); }
+          .cite { font: 11px var(--mono); color: var(--ink2); }
+          .cite s { text-decoration: none; color: var(--ink3); }
+
+          .legend { margin: 12px 30px 0; padding: 14px 16px; background: var(--sunken); border-radius: 8px; display: flex; flex-direction: column; gap: 8px; }
+          .lrow { display: flex; gap: 10px; align-items: baseline; font: 11.5px/1.45 var(--sans); color: var(--ink2); }
+
+          .split { display: grid; grid-template-columns: 340px 1fr; }
+          .lcol { border-right: 1px solid var(--rule2); padding: 22px 22px 26px; display: flex; flex-direction: column; gap: 18px; background: var(--lcolbg); }
+          .rcol { padding: 26px 34px 26px; }
+          .turnq { font: 400 14.5px/1.45 var(--serif); margin: 0; }
+          .hist { display: flex; flex-direction: column; gap: 3px; }
+          .histitem { font: 11.5px/1.4 var(--sans); color: var(--ink3); padding: 7px 9px; border-radius: 6px; }
+          .histitem.on { background: var(--panel); color: var(--ink); border: 1px solid var(--rule); }
+
+          .monbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 16px 11px 22px; border-bottom: 1px solid var(--rule2); }
+          .runname { font: 600 12px var(--mono); }
+          .live { font: 10px var(--mono); color: var(--stated); display: flex; align-items: center; gap: 6px; }
+          .live .dot { background: var(--stated); }
+          .stats { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--rule2); }
+          .stat { padding: 16px 22px; border-right: 1px solid var(--rule2); }
+          .stat:last-child { border-right: 0; }
+          .snum { font: 500 21px/1 var(--sans); letter-spacing: -0.01em; }
+          .slab { font: 9.5px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink3); margin-top: 7px; }
+          .passes { padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 13px; }
+          .pass { display: grid; grid-template-columns: 108px 1fr 132px; gap: 14px; align-items: center; }
+          .pname { font: 11.5px var(--mono); color: var(--ink2); }
+          .bar { display: block; height: 7px; border-radius: 4px; background: var(--barbg); overflow: hidden; }
+          .fill { display: block; height: 100%; border-radius: 4px; background: var(--ink3); }
+          .fill.on { background: var(--concluded); }
+          .fill.ok { background: var(--stated); }
+          .pnum { font: 10.5px var(--mono); color: var(--ink3); text-align: right; }
+          .quiet { margin: 0 22px 22px; padding: 12px 15px; border: 1px solid var(--warnline); background: var(--warnbg); border-radius: 7px; font: 11.5px/1.5 var(--sans); color: var(--ink); }
+          .quiet b { color: var(--spec); }
+          .decs { border-top: 1px solid var(--rule2); padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 11px; }
+          .dec { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 13px; border: 1px solid var(--rule); border-radius: 7px; }
+          .dectext { font: 12px/1.4 var(--sans); }
+          .dectext s { text-decoration: none; color: var(--ink3); font-family: var(--mono); font-size: 10.5px; }
+          .decbtns { display: flex; gap: 7px; flex: none; }
+          .db { font: 600 10.5px var(--sans); padding: 6px 11px; border-radius: 5px; border: 1px solid var(--rule); color: var(--ink2); }
+          .db.yes { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+
+          @media (prefers-reduced-motion: no-preference) {
+            .dot.pulse { animation: pulse 1.6s ease-in-out infinite; }
+          }
+          @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.28; } }
+        </style>
+      </helmet>
+
+      <section class="dv-turn" id="t2">
+        <div class="dv-thd">
+          <a class="dv-tid" href="#t2">2</a><span class="dv-tname">Theme &mdash; light, dark, system</span>
+        </div>
+        <p class="dv-tsub">Single column confirmed from <a class="dv-oid" href="#1a">1a</a>. Both themes are the same twelve variables re-declared &mdash; every colour in both UIs already resolves through them, so nothing else changes. In production the switch is <b>system by default</b>: <span style="font-family:var(--mono);font-size:11px">prefers-color-scheme</span> sets it, an explicit choice writes <span style="font-family:var(--mono);font-size:11px">data-theme</span> on the root and wins. The canvas below is pinned light so the pair stays comparable whatever your own machine is set to.</p>
+
+        <div class="dv-opts">
+
+          <div class="dv-opt" id="2a" data-screen-label="Analyst chat — light">
+            <div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>Light &mdash; the default when the machine says light</div>
+            <div class="dv-card" style="width:700px">
+              <div class="app">
+                <div class="topbar">
+                  <span class="wordmark">Axial</span>
+                  <span class="tbright">
+                    <span class="pin">2m 58s &middot; $0.13</span>
+                    <span class="themectl"><span class="tseg">Light</span><span class="tseg">Dark</span><span class="tseg on">System</span></span>
+                  </span>
+                </div>
+                <div class="thread">
+                  <div class="walk">
+                    <div class="walkhead">
+                      <span class="tick">&#10003;</span>
+                      <span>Read 48 notes from 5 books &mdash; 12 opposition edges</span>
+                      <span class="walktime">show the walk</span>
+                    </div>
+                  </div>
+                  <div class="paper">
+                    <h2 class="ptitle">Administrative precedent and its limits</h2>
+                    <p class="pmeta"><span>4 sections</span><span>11 claims</span><span>5 of 34 sources</span></p>
+                    <div class="phead">2 &middot; The Troupes Sp&eacute;ciales as precedent</div>
+                    <div class="claim">
+                      <div class="rail stated"></div>
+                      <div>
+                        <p class="ctext">Batatu records that Mandate recruitment into the Troupes Sp&eacute;ciales drew disproportionately from the Alawi highlands, and that the practice was administrative convenience before it was policy.</p>
+                        <div class="cfoot"><span class="mark stated">stated</span><span class="cite">batatu-1999 &middot; ch. 8 &middot; pp. 144&ndash;147</span></div>
+                      </div>
+                    </div>
+                    <div class="claim">
+                      <div class="rail concluded"></div>
+                      <div>
+                        <p class="ctext">Read together, Batatu and Vignal describe the same pattern but disagree on what it explains: one treats it as a residue the Ba&rsquo;th inherited, the other as a structure it reproduced.</p>
+                        <div class="cfoot"><span class="mark concluded">concluded across 3 sources</span><span class="cite">3 passages</span></div>
+                      </div>
+                    </div>
+                    <div class="claim">
+                      <div class="rail spec"></div>
+                      <div>
+                        <p class="ctext">Whether the same mechanism operated in the officer corps after 1963 is not settled by anything in this corpus.</p>
+                        <div class="cfoot"><span class="mark spec">runs past the books</span><span class="cite">no supporting passage</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="legend">
+                  <div class="lrow"><span class="mark stated">stated</span><span>A source says this directly.</span></div>
+                  <div class="lrow"><span class="mark concluded">concluded</span><span>Axial put sources together. Most likely to be wrong.</span></div>
+                  <div class="lrow"><span class="mark spec">runs past</span><span>Beyond what the books support. Labelled, not removed.</span></div>
+                </div>
+                <div class="composer">
+                  <span class="cplace">Ask another question&hellip;</span>
+                  <div class="ctools"><span class="cbtn ghost">Export</span><span class="cbtn">Ask</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dv-opt" id="2b" data-screen-label="Analyst chat — dark">
+            <div class="dv-olabel"><a class="dv-oid" href="#2b">2b</a>Dark &mdash; markers lift to L 0.745 so they still read against the panel</div>
+            <div class="dv-card dark" style="width:700px">
+              <div class="app">
+                <div class="topbar">
+                  <span class="wordmark">Axial</span>
+                  <span class="tbright">
+                    <span class="pin">2m 58s &middot; $0.13</span>
+                    <span class="themectl"><span class="tseg">Light</span><span class="tseg on">Dark</span><span class="tseg">System</span></span>
+                  </span>
+                </div>
+                <div class="thread">
+                  <div class="walk">
+                    <div class="walkhead">
+                      <span class="tick">&#10003;</span>
+                      <span>Read 48 notes from 5 books &mdash; 12 opposition edges</span>
+                      <span class="walktime">show the walk</span>
+                    </div>
+                  </div>
+                  <div class="paper">
+                    <h2 class="ptitle">Administrative precedent and its limits</h2>
+                    <p class="pmeta"><span>4 sections</span><span>11 claims</span><span>5 of 34 sources</span></p>
+                    <div class="phead">2 &middot; The Troupes Sp&eacute;ciales as precedent</div>
+                    <div class="claim">
+                      <div class="rail stated"></div>
+                      <div>
+                        <p class="ctext">Batatu records that Mandate recruitment into the Troupes Sp&eacute;ciales drew disproportionately from the Alawi highlands, and that the practice was administrative convenience before it was policy.</p>
+                        <div class="cfoot"><span class="mark stated">stated</span><span class="cite">batatu-1999 &middot; ch. 8 &middot; pp. 144&ndash;147</span></div>
+                      </div>
+                    </div>
+                    <div class="claim">
+                      <div class="rail concluded"></div>
+                      <div>
+                        <p class="ctext">Read together, Batatu and Vignal describe the same pattern but disagree on what it explains: one treats it as a residue the Ba&rsquo;th inherited, the other as a structure it reproduced.</p>
+                        <div class="cfoot"><span class="mark concluded">concluded across 3 sources</span><span class="cite">3 passages</span></div>
+                      </div>
+                    </div>
+                    <div class="claim">
+                      <div class="rail spec"></div>
+                      <div>
+                        <p class="ctext">Whether the same mechanism operated in the officer corps after 1963 is not settled by anything in this corpus.</p>
+                        <div class="cfoot"><span class="mark spec">runs past the books</span><span class="cite">no supporting passage</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="legend">
+                  <div class="lrow"><span class="mark stated">stated</span><span>A source says this directly.</span></div>
+                  <div class="lrow"><span class="mark concluded">concluded</span><span>Axial put sources together. Most likely to be wrong.</span></div>
+                  <div class="lrow"><span class="mark spec">runs past</span><span>Beyond what the books support. Labelled, not removed.</span></div>
+                </div>
+                <div class="composer">
+                  <span class="cplace">Ask another question&hellip;</span>
+                  <div class="ctools"><span class="cbtn ghost">Export</span><span class="cbtn">Ask</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dv-opt" id="2c" data-screen-label="Analyst chat — dark, mid-run">
+            <div class="dv-olabel"><a class="dv-oid" href="#2c">2c</a>The wait, in dark &mdash; the screen an analyst stares at for three minutes</div>
+            <div class="dv-card dark" style="width:700px">
+              <div class="app">
+                <div class="topbar">
+                  <span class="wordmark">Axial</span>
+                  <span class="tbright">
+                    <span class="pin">corpus 3c49f2e5</span>
+                    <span class="themectl"><span class="tseg">Light</span><span class="tseg on">Dark</span><span class="tseg">System</span></span>
+                  </span>
+                </div>
+                <div class="thread">
+                  <div class="ask">
+                    <div class="asklabel">Question</div>
+                    <p class="askbody">Did the French Mandate&rsquo;s administrative practices shape the Ba&rsquo;th party&rsquo;s later strategies of rule, or is that continuity read backward?</p>
+                  </div>
+                  <div class="walk">
+                    <div class="walkhead">
+                      <span class="dot pulse"></span>
+                      <span>Reading</span>
+                      <span class="walktime">2m 41s</span>
+                    </div>
+                    <ol class="events">
+                      <li class="ev"><span class="tick">&#10003;</span><span>Interrogated the question against the corpus &mdash; one fork resolved: <em>consequences, not causes</em></span></li>
+                      <li class="ev"><span class="tick">&#10003;</span><span><b>French Mandate</b> &mdash; 55 notes across 8 sources</span></li>
+                      <li class="ev"><span class="tick">&#10003;</span><span><b>Ba&rsquo;th Party</b> &mdash; 126 notes across 11 sources</span></li>
+                      <li class="ev"><span class="tick">&#10003;</span><span>Walked the relations &mdash; <b>48 notes</b> retrieved from 5 books</span></li>
+                      <li class="ev"><span class="tick">&#10003;</span><span><b>12 opposition edges</b> &mdash; Batatu argues against Vignal on recruitment</span></li>
+                      <li class="ev live"><span class="tick">&rarr;</span><span>Drafting section 2 of 4 &mdash; <em>the Troupes Sp&eacute;ciales as precedent</em></span></li>
+                      <li class="ev queued"><span class="tick">&middot;</span><span>Checking every claim against the passage it rests on</span></li>
+                    </ol>
+                  </div>
+                </div>
+                <div class="composer">
+                  <span class="cplace">Ask another question&hellip;</span>
+                  <div class="ctools"><span class="cbtn ghost">Weight sources</span><span class="cbtn">Ask</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dv-opt" id="2d" data-screen-label="Operator console — dark">
+            <div class="dv-olabel"><a class="dv-oid" href="#2d">2d</a>Operator console in dark &mdash; same twelve variables, no separate theme</div>
+            <div class="dv-card dark" style="width:960px">
+              <div class="app">
+                <div class="monbar">
+                  <span class="runname">2026-08-05-623-new-books</span>
+                  <span class="tbright">
+                    <span class="live"><span class="dot pulse"></span>running &middot; 6h 12m</span>
+                    <span class="themectl"><span class="tseg">Light</span><span class="tseg on">Dark</span><span class="tseg">System</span></span>
+                  </span>
+                </div>
+                <div class="stats">
+                  <div class="stat"><div class="snum">8,971</div><div class="slab">model calls</div></div>
+                  <div class="stat"><div class="snum">$10.26</div><div class="slab">spent</div></div>
+                  <div class="stat"><div class="snum">34</div><div class="slab">sources</div></div>
+                  <div class="stat"><div class="snum">28.4&times;</div><div class="slab">effective concurrency / 36</div></div>
+                </div>
+                <div class="passes">
+                  <div class="pass"><span class="pname">extract</span><span class="bar"><span class="fill ok" style="width:100%"></span></span><span class="pnum">34 / 34 &middot; done</span></div>
+                  <div class="pass"><span class="pname">chunk</span><span class="bar"><span class="fill ok" style="width:100%"></span></span><span class="pnum">34 / 34 &middot; done</span></div>
+                  <div class="pass"><span class="pname">interrogate</span><span class="bar"><span class="fill on" style="width:71%"></span></span><span class="pnum">6,341 / 8,971</span></div>
+                  <div class="pass"><span class="pname">merge names</span><span class="bar"></span><span class="pnum">queued</span></div>
+                  <div class="pass"><span class="pname">gather</span><span class="bar"></span><span class="pnum">queued</span></div>
+                  <div class="pass"><span class="pname">materialize</span><span class="bar"></span><span class="pnum">queued</span></div>
+                </div>
+                <div class="quiet"><b>Quiet 4m 20s.</b> Last event was chunk 6,341. Expected one every ~9s. Silence is not health &mdash; check the worker before assuming progress.</div>
+                <div class="decs">
+                  <div class="dec">
+                    <div class="dectext">Merge <b>Ba&rsquo;th Party</b> with <b>Baath Party</b>? <s>11 sources &middot; 126 notes &middot; model escalated</s></div>
+                    <div class="decbtns"><span class="db yes">Merge</span><span class="db">Keep apart</span><span class="db">Show notes</span></div>
+                  </div>
+                  <div class="dec">
+                    <div class="dectext">Quarantine: <b>wedeen-2019 ch. 3</b> &mdash; non-prose page detected <s>3 of 412 chunks</s></div>
+                    <div class="decbtns"><span class="db yes">Drop chunks</span><span class="db">Keep</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <p class="dv-next">Try next: &ldquo;dark is too warm, cool it down&rdquo; &middot; &ldquo;drop the running cost from the analyst&rsquo;s top bar&rdquo; &middot; &ldquo;show <a class="dv-oid" href="#2b">2b</a> in locator mode, no book text on screen&rdquo; &middot; &ldquo;the operator console needs a sources screen&rdquo;</p>
+      </section>
+
+      <section class="dv-turn" id="t1">
+        <div class="dv-thd">
+          <a class="dv-tid" href="#t1">1</a><span class="dv-tname">The two UIs — first pass</span>
+        </div>
+        <p class="dv-tsub">Real corpus, real numbers. Aesthetic assumed from &ldquo;like a Claude chat interface, not fancy&rdquo;: warm paper-white, Helvetica for the interface, Newsreader for anything Axial wrote, and three accent hues that carry the evidence markers rather than decorate.</p>
+
+        <div class="dv-opts">
+
+          <div class="dv-opt" id="1a" data-screen-label="Analyst chat — the wait">
+            <div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Analyst chat, mid-run &mdash; chosen shape</div>
+            <div class="dv-card" style="width:740px">
+              <div class="app">
+                <div class="topbar">
+                  <span class="wordmark">Axial</span>
+                  <span class="pin">corpus 3c49f2e5 &middot; 34 sources &middot; 6,733 notes</span>
+                </div>
+                <div class="thread">
+                  <div class="ask">
+                    <div class="asklabel">Question</div>
+                    <p class="askbody">Did the French Mandate&rsquo;s administrative practices shape the Ba&rsquo;th party&rsquo;s later strategies of rule, or is that continuity read backward?</p>
+                  </div>
+                  <div class="walk">
+                    <div class="walkhead">
+                      <span class="dot pulse"></span>
+                      <span>Reading</span>
+                      <span class="walktime">2m 41s &middot; $0.09 so far</span>
+                    </div>
+                    <ol class="events">
+                      <li class="ev"><span class="tick">&#10003;</span><span>Interrogated the question against the corpus &mdash; one fork resolved: <em>consequences, not causes</em></span></li>
+                      <li class="ev"><span class="tick">&#10003;</span><span><b>French Mandate</b> &mdash; 55 notes across 8 sources</span></li>
+                      <li class="ev"><span class="tick">&#10003;</span><span><b>Ba&rsquo;th Party</b> &mdash; 126 notes across 11 sources</span></li>
+                      <li class="ev"><span class="tick">&#10003;</span><span>Walked the relations &mdash; <b>48 notes</b> retrieved from 5 books</span></li>
+                      <li class="ev"><span class="tick">&#10003;</span><span><b>12 opposition edges</b> &mdash; Batatu argues against Vignal on confessional recruitment</span></li>
+                      <li class="ev live"><span class="tick">&rarr;</span><span>Drafting section 2 of 4 &mdash; <em>the Troupes Sp&eacute;ciales as precedent</em></span></li>
+                      <li class="ev queued"><span class="tick">&middot;</span><span>Checking every claim against the passage it rests on</span></li>
+                    </ol>
+                  </div>
+                </div>
+                <div class="composer">
+                  <span class="cplace">Ask another question&hellip;</span>
+                  <div class="ctools">
+                    <span class="cbtn ghost">Weight sources</span>
+                    <span class="cbtn">Ask</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dv-opt" id="1b" data-screen-label="Analyst chat — the answer">
+            <div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Same screen, answered &mdash; evidence markers do the colour work</div>
+            <div class="dv-card" style="width:740px">
+              <div class="app">
+                <div class="topbar">
+                  <span class="wordmark">Axial</span>
+                  <span class="pin">corpus 3c49f2e5 &middot; 2m 58s &middot; $0.13</span>
+                </div>
+                <div class="thread">
+                  <div class="walk">
+                    <div class="walkhead">
+                      <span class="tick">&#10003;</span>
+                      <span>Read 48 notes from 5 books &mdash; 12 opposition edges</span>
+                      <span class="walktime">show the walk</span>
+                    </div>
+                  </div>
+                  <div class="paper">
+                    <h2 class="ptitle">Administrative precedent and its limits: the Mandate&rsquo;s recruitment practice in later Ba&rsquo;thist rule</h2>
+                    <p class="pmeta"><span>4 sections</span><span>11 claims</span><span>5 of 34 sources cited</span><span>pin 3c49f2e5</span></p>
+
+                    <div class="phead">2 &middot; The Troupes Sp&eacute;ciales as precedent</div>
+
+                    <div class="claim">
+                      <div class="rail stated"></div>
+                      <div>
+                        <p class="ctext">Batatu records that Mandate recruitment into the Troupes Sp&eacute;ciales drew disproportionately from the Alawi highlands, and that the practice was administrative convenience before it was policy.</p>
+                        <div class="cfoot">
+                          <span class="mark stated">stated</span>
+                          <span class="cite">batatu-1999 &middot; ch. 8 &middot; pp. 144&ndash;147 <s>&mdash; open passage</s></span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="claim">
+                      <div class="rail concluded"></div>
+                      <div>
+                        <p class="ctext">Read together, Batatu and Vignal describe the same recruitment pattern but disagree on what it explains: one treats it as a residue the Ba&rsquo;th inherited, the other as a structure it deliberately reproduced.</p>
+                        <div class="cfoot">
+                          <span class="mark concluded">concluded across 3 sources</span>
+                          <span class="cite">batatu-1999, vignal-2022, hinnebusch-2001 <s>&mdash; 3 passages</s></span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="claim">
+                      <div class="rail spec"></div>
+                      <div>
+                        <p class="ctext">Whether the same mechanism operated in the officer corps after 1963 is not settled by anything in this corpus &mdash; no source here follows recruitment past the Mandate&rsquo;s own institutions.</p>
+                        <div class="cfoot">
+                          <span class="mark spec">runs past the books</span>
+                          <span class="cite">no supporting passage &mdash; flagged, not hidden</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="legend">
+                  <div class="lrow"><span class="mark stated">stated</span><span>A source says this directly. The citation points at the passage.</span></div>
+                  <div class="lrow"><span class="mark concluded">concluded</span><span>Axial put sources together. This is where it is most likely to be wrong.</span></div>
+                  <div class="lrow"><span class="mark spec">runs past</span><span>Beyond what the books support. Labelled rather than removed.</span></div>
+                </div>
+                <div class="composer">
+                  <span class="cplace">Ask another question&hellip;</span>
+                  <div class="ctools">
+                    <span class="cbtn ghost">Export</span>
+                    <span class="cbtn">Ask</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dv-opt" id="1c" data-screen-label="Analyst chat — split view">
+            <div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Alternative, not taken &mdash; history left, paper right</div>
+            <div class="dv-card" style="width:1000px">
+              <div class="app">
+                <div class="topbar">
+                  <span class="wordmark">Axial</span>
+                  <span class="pin">m.abulhusn@&hellip; &middot; 12 of 20 asks this month</span>
+                </div>
+                <div class="split">
+                  <div class="lcol">
+                    <div>
+                      <div class="asklabel">This question</div>
+                      <p class="turnq">Did the French Mandate&rsquo;s administrative practices shape the Ba&rsquo;th party&rsquo;s later strategies of rule?</p>
+                    </div>
+                    <div class="walk">
+                      <div class="walkhead"><span class="dot"></span><span>What it read</span></div>
+                      <ol class="events">
+                        <li class="ev"><span class="tick">&#10003;</span><span>48 notes &middot; 5 books</span></li>
+                        <li class="ev"><span class="tick">&#10003;</span><span>12 opposition edges</span></li>
+                        <li class="ev"><span class="tick">&#10003;</span><span>20 notes composed into 4 positions</span></li>
+                        <li class="ev"><span class="tick">&#10003;</span><span>29 of 34 sources unused</span></li>
+                      </ol>
+                    </div>
+                    <div>
+                      <div class="asklabel">Earlier</div>
+                      <div class="hist">
+                        <div class="histitem on">Mandate practice &amp; Ba&rsquo;thist rule</div>
+                        <div class="histitem">Was the 1963 coup a class event?</div>
+                        <div class="histitem">Wedeen on compliance without belief</div>
+                        <div class="histitem">Tilly&rsquo;s bellicist account, applied</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="rcol">
+                    <div class="paper">
+                      <h2 class="ptitle">Administrative precedent and its limits</h2>
+                      <p class="pmeta"><span>4 sections</span><span>11 claims</span><span>5 sources cited</span></p>
+                      <div class="phead">1 &middot; What the Mandate actually built</div>
+                      <div class="claim">
+                        <div class="rail stated"></div>
+                        <div>
+                          <p class="ctext">The Mandate administration recruited its auxiliary forces along lines it found convenient rather than lines it designed, and Batatu is explicit that the resulting composition was not a plan.</p>
+                          <div class="cfoot"><span class="mark stated">stated</span><span class="cite">batatu-1999 &middot; ch. 8</span></div>
+                        </div>
+                      </div>
+                      <div class="claim">
+                        <div class="rail concluded"></div>
+                        <div>
+                          <p class="ctext">Vignal and Hinnebusch both trace a continuity here, but neither shows the mechanism carrying across the 1946 break &mdash; the continuity they describe is of outcome, not of institution.</p>
+                          <div class="cfoot"><span class="mark concluded">concluded across 3 sources</span><span class="cite">3 passages</span></div>
+                        </div>
+                      </div>
+                      <div class="phead">2 &middot; The Troupes Sp&eacute;ciales as precedent</div>
+                      <div class="claim">
+                        <div class="rail stated"></div>
+                        <div>
+                          <p class="ctext">Gelvin dates the shift in officer recruitment to the last Mandate decade, against Hinnebusch&rsquo;s later dating.</p>
+                          <div class="cfoot"><span class="mark stated">stated</span><span class="cite">gelvin-2020 &middot; ch. 5</span></div>
+                        </div>
+                      </div>
+                      <div class="claim">
+                        <div class="rail spec"></div>
+                        <div>
+                          <p class="ctext">Neither dating can be checked against the party&rsquo;s own records, which this corpus does not contain.</p>
+                          <div class="cfoot"><span class="mark spec">runs past the books</span><span class="cite">no supporting passage</span></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dv-opt" id="1d" data-screen-label="Operator console — run monitor">
+            <div class="dv-olabel"><a class="dv-oid" href="#1d">1d</a>Operator console &mdash; a different product, not an alternative to the three above</div>
+            <div class="dv-card" style="width:1000px">
+              <div class="app">
+                <div class="monbar">
+                  <span class="runname">2026-08-05-623-new-books</span>
+                  <span class="live"><span class="dot pulse"></span>running &middot; 6h 12m elapsed</span>
+                </div>
+                <div class="stats">
+                  <div class="stat"><div class="snum">8,971</div><div class="slab">model calls</div></div>
+                  <div class="stat"><div class="snum">$10.26</div><div class="slab">spent</div></div>
+                  <div class="stat"><div class="snum">34</div><div class="slab">sources</div></div>
+                  <div class="stat"><div class="snum">28.4&times;</div><div class="slab">effective concurrency / 36</div></div>
+                </div>
+                <div class="passes">
+                  <div class="pass"><span class="pname">extract</span><span class="bar"><span class="fill ok" style="width:100%"></span></span><span class="pnum">34 / 34 &middot; done</span></div>
+                  <div class="pass"><span class="pname">chunk</span><span class="bar"><span class="fill ok" style="width:100%"></span></span><span class="pnum">34 / 34 &middot; done</span></div>
+                  <div class="pass"><span class="pname">interrogate</span><span class="bar"><span class="fill on" style="width:71%"></span></span><span class="pnum">6,341 / 8,971</span></div>
+                  <div class="pass"><span class="pname">merge names</span><span class="bar"></span><span class="pnum">queued</span></div>
+                  <div class="pass"><span class="pname">gather</span><span class="bar"></span><span class="pnum">queued</span></div>
+                  <div class="pass"><span class="pname">materialize</span><span class="bar"></span><span class="pnum">queued</span></div>
+                </div>
+                <div class="quiet"><b>Quiet 4m 20s.</b> Last event was chunk 6,341. Expected one every ~9s. Silence is not health &mdash; check the worker before assuming progress.</div>
+                <div class="decs">
+                  <div class="dec">
+                    <div class="dectext">Merge <b>Ba&rsquo;th Party</b> with <b>Baath Party</b>? <s>11 sources &middot; 126 notes &middot; model escalated</s></div>
+                    <div class="decbtns"><span class="db yes">Merge</span><span class="db">Keep apart</span><span class="db">Show notes</span></div>
+                  </div>
+                  <div class="dec">
+                    <div class="dectext">Quarantine: <b>wedeen-2019 ch. 3</b> &mdash; non-prose page detected <s>3 of 412 chunks</s></div>
+                    <div class="decbtns"><span class="db yes">Drop chunks</span><span class="db">Keep</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <p class="dv-next">Superseded by turn <a class="dv-oid" href="#t2">2</a>, which adds the theme and settles the single-column shape.</p>
+      </section>
+    </x-dc>
+
+    <script
+      type="text/x-dc"
+      data-dc-script
+      data-props='{}'
+    >
+      class Component extends DCLogic {
+        renderVals() { return {}; }
+      }
+    </script>
+  </body>
+</html>

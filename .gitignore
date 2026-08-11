@@ -84,6 +84,17 @@ data/**
 data/reports/build/__pycache__/
 data/reports/build/*.docx-source.md
 
+# The web client (issue #744): npm's tree, Next's build output, and the
+# artefacts Playwright writes on a failing run. `web/` is otherwise fully
+# tracked -- it is source, not data.
+web/node_modules/
+web/.next/
+web/out/
+web/*.tsbuildinfo
+web/test-results/
+web/playwright-report/
+web/blob-report/
+
 # Editor settings are personal, not project config.
 .vscode/
 .idea/

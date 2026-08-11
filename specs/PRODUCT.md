@@ -163,6 +163,12 @@ axial/
       names/                   # name pages (.md, one per surviving name, §7.17)
       names.jsonl              # the name-page index (§7.17, issue #634): derived, rebuildable
   tests/
+  web/                         # the analyst web client (DEC-65, issue #744): Next.js +
+                               # TypeScript + Tailwind, calling the analyst service's HTTP
+                               # API and rendering what it returns. The first non-Python
+                               # code in this repo, in the same repo on purpose so the API
+                               # contract and its client cannot drift apart; invisible to
+                               # ruff and pytest, gated by its own CI job.
 ```
 
 **Dead code, now deleted.** `src/axial/tag/` and `src/axial/xref/` were already gone from this tree (D4, D5). `src/axial/distill/`, the gold-set scoring harness that lived in `src/axial/eval/__init__.py`, and `axial.gold` (which wrote and read the `data/gold/` tree) are deleted as of issue #710 (D15, D16). `src/axial/eval/` itself stays: it now holds only the corpus-pin manifest (§7.12) and the answer-quality eval support (`cases.py`, `classification.py`), neither of which ever depended on the gold set.
