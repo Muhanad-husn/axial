@@ -492,6 +492,11 @@ class CostReportingStubClient(StubClient):
     def usage_for_pass(self, pass_name=None):
         return {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500}
 
+    def cost_for_pass(self, pass_name=None):
+        # No provider-reported cost (issue #740) -- `usage_and_cost_by_pass`
+        # falls back to `estimate_cost`, same figures this test already pins.
+        return None
+
 
 def test_the_cost_field_carries_real_usage_scoped_to_the_papers_own_passes(
     tmp_path, analyses_dir, lenses_dir

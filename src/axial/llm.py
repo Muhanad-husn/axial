@@ -665,23 +665,40 @@ def usage_and_cost_by_pass(client: LLMClient, model_by_pass: dict[str, str]) -> 
     A pass whose usage was never captured (a client that reports none, or a
     real response that carried no `usage` object) contributes zero token
     counts and a `null` `usd` -- never zero cost pretending to be real. A
-    pass whose model has no `PRICE_TABLE_USD_PER_1K` entry likewise gets a
-    `null` `usd` (`estimate_cost` itself logs that gap once). `total_usd` is
-    the sum of whatever per-pass costs ARE known; it is `null` only when NONE
-    of the passes priced, so one unpriced/uncaptured pass does not blank out
-    an otherwise-real total for a multi-pass run.
+    pass whose model has no `PRICE_TABLE_USD_PER_1K` entry AND no
+    provider-reported cost likewise gets a `null` `usd` (`estimate_cost`
+    itself logs that gap once). `total_usd` is the sum of whatever per-pass
+    costs ARE known; it is `null` only when NONE of the passes priced, so one
+    unpriced/uncaptured pass does not blank out an otherwise-real total for a
+    multi-pass run.
 
-    **The price table is a ceiling, not a measurement**: `PRICE_TABLE_USD_PER_1K`
-    runs about 14% high against at least one measured real invoice, so every
-    `usd`/`total_usd` figure this returns is an upper bound on real spend, not
-    a reading of it."""
+    **`usd` prefers the provider's own charge over the price-table estimate**
+    (issue #740, mirroring `axial.run._source_usage_and_cost`'s rule): when
+    `client.cost_for_pass(pass_name)` has a real number -- the summed
+    `usage["cost"]` OpenRouter reports on every response (issue #738 defect
+    2) -- that IS the figure, not an estimate of it. On a run where every
+    pass priced this way, this function's `total_usd` is a reading of real
+    spend and matches what that run's own `run.jsonl` sums to, not an upper
+    bound on it. `estimate_cost`'s `PRICE_TABLE_USD_PER_1K` figure is used
+    only as a fallback, for a pass whose provider/model never reported a
+    cost at all; that fallback alone is the one measured as an upper bound
+    (about 14% high against at least one real invoice, and off by as much as
+    2x on single calls) -- not a reading of real spend."""
     by_pass: dict[str, Any] = {}
     for pass_name, model in model_by_pass.items():
         usage = client.usage_for_pass(pass_name)
         prompt_tokens = usage["prompt_tokens"] if usage else 0
         completion_tokens = usage["completion_tokens"] if usage else 0
         total_tokens = usage["total_tokens"] if usage else 0
-        usd = estimate_cost(model, prompt_tokens, completion_tokens) if usage else None
+        if not usage:
+            usd = None
+        else:
+            provider_cost = client.cost_for_pass(pass_name)
+            usd = (
+                provider_cost
+                if provider_cost is not None
+                else estimate_cost(model, prompt_tokens, completion_tokens)
+            )
         by_pass[pass_name] = {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,

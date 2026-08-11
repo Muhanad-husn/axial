@@ -53,11 +53,12 @@ the run's own record -- never from a hand-picked constant:
   aggregate itself reads as qualified rather than a confident total.
 
   `report.json`'s `tokens_and_cost.total_usd` (`axial.llm
-  .usage_and_cost_by_pass`, still `estimate_cost`-only -- issue #738 did not
-  touch it) is the fallback, used only when no record has priced at all --
-  a run directory from before issue #734 added the per-record fields, most
-  concretely. Records win over the report whenever they can, because they
-  are now the more accurate number, not merely the live one.
+  .usage_and_cost_by_pass`, now provider-cost-first too -- issue #740) is the
+  fallback, used only when no record has priced at all -- a run directory
+  from before issue #734 added the per-record fields, most concretely.
+  Records win over the report whenever they can, because they read straight
+  off the log rather than a client's in-process accumulator, not because the
+  report's own number is a lesser estimate now.
 """
 
 from __future__ import annotations

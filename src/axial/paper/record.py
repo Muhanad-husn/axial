@@ -33,8 +33,9 @@ is computed by `axial.llm.usage_and_cost_by_pass`, the same function
 `axial.answer.record.build_record` uses for its own §7.14 field (promoted
 there from a private helper by #591 rather than reimplemented here, without
 importing `axial.answer.record` itself -- see the non-import note above).
-Its dollar figures are a priced CEILING, not a measurement: `llm.py`'s own
-price table runs about 14% high.
+Its dollar figures are the provider's own reported charge whenever `client`
+captured one, falling back to `llm.py`'s price-table estimate -- a ceiling,
+not a measurement -- only when it did not (issue #740).
 
 **`retries` is recorded alongside them** (§7.17, issue #598): `run_plan` and
 `draft_section` each carry their own bounded retry now, and this is where
