@@ -31,6 +31,25 @@ test("the analyst's own past asks render, and a cached one is marked as costing 
   await expect(list.getByRole("button", { name: "Reopen" })).toHaveCount(2);
 });
 
+test("each row shows the case and question that produced it, not just its state and timestamp (#759)", async ({
+  page,
+}) => {
+  const list = await openHistory(page);
+
+  // Three fixed rows in `mock-service.mjs`, each with a distinct case and
+  // question -- rendered, not just carried in the API response.
+  await expect(list.getByText("Damascus")).toBeVisible();
+  await expect(list.getByText("Did Mandate recruitment shape later rule?")).toBeVisible();
+  await expect(list.getByText("Aleppo")).toBeVisible();
+  await expect(list.getByText("The same question, asked a second time")).toBeVisible();
+  await expect(list.getByText("Homs")).toBeVisible();
+  await expect(list.getByText("A question the corpus could not answer")).toBeVisible();
+
+  // The corpus chip is gone (#759): eight characters of a pin that is
+  // constant across every row distinguished nothing.
+  await expect(list.getByText(/^corpus /)).toHaveCount(0);
+});
+
 test("reopening a finished ask shows its paper, not a fresh walk", async ({ page }) => {
   const list = await openHistory(page);
   await list.getByRole("button", { name: "Reopen" }).first().click();

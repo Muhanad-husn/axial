@@ -4,14 +4,20 @@ function formatTimestamp(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString() : "—";
 }
 
-/** This analyst's own past asks (`GET /asks`, issue #746): id, state,
- * corpus pin, whether it cost anything, its own timings and, on a failure,
- * the service's own error -- rendered exactly as the server named them,
- * with no duration computed and no count re-derived here. A `cached` row
- * cost nothing to produce and is marked as such rather than looking like
- * any other finished ask (`--color-stated`/`concluded`/`spec` are reserved
- * for the paper's own evidence markers per `globals.css`, so this badge is
- * a plain neutral chip, not evidence colour repurposed).
+/** This analyst's own past asks (`GET /asks`, issue #746, brief per #759):
+ * id, state, the case and question that produced it, whether it cost
+ * anything, its own timings and, on a failure, the service's own error --
+ * rendered exactly as the server named them, with no duration computed and
+ * no count re-derived here. A `cached` row cost nothing to produce and is
+ * marked as such rather than looking like any other finished ask
+ * (`--color-stated`/`concluded`/`spec` are reserved for the paper's own
+ * evidence markers per `globals.css`, so this badge is a plain neutral
+ * chip, not evidence colour repurposed).
+ *
+ * No corpus chip (issue #759): every pin in this deployment starts with
+ * the same prefix (`TopBar` already names the current one, once), so an
+ * eight-character truncation of it distinguished nothing and a row here
+ * has no better use for the space.
  *
  * Only a `done` row can be reopened -- `GET /asks/{id}/paper` refuses
  * anything else with a `409`, so the button simply does not appear for one. */
@@ -46,12 +52,17 @@ export function HistoryList({
                   cached · no cost
                 </span>
               )}
-              {ask.corpus_pin && (
-                <span className="font-mono text-[10px] text-ink3">
-                  corpus {ask.corpus_pin.slice(0, 8)}
-                </span>
-              )}
             </div>
+            {ask.case && (
+              <p data-testid="ask-case" className="m-0 break-words font-semibold text-ink">
+                {ask.case}
+              </p>
+            )}
+            {ask.question && (
+              <p data-testid="ask-question" className="m-0 break-words text-ink2">
+                {ask.question}
+              </p>
+            )}
             <div className="text-ink3">
               {formatTimestamp(ask.created_at)} &rarr; {formatTimestamp(ask.finished_at)}
             </div>
