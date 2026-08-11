@@ -21,7 +21,7 @@ function useElapsed(startedAt: number | null, running: boolean): number {
 }
 
 /** What Axial is doing, in its own words. This is the screen an analyst
- * stares at for three minutes, so it is never a bare spinner: every
+ * stares at for a quarter of an hour, so it is never a bare spinner: every
  * `on_event` the service has sent is on it, in order, with the elapsed
  * clock running. The messages are the service's -- nothing is composed here. */
 export function Walk({ walk, startedAt }: { walk: WalkState; startedAt: number | null }) {

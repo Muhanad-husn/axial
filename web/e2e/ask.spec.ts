@@ -30,6 +30,25 @@ test("an ask runs to completion and the walk is visible the whole time", async (
   await expect(page.getByTestId("ask-error")).toHaveCount(0);
 });
 
+// A real ask runs for minutes and is quiet for most of them. Any hop between
+// the browser and the service that buffers -- Next's own gzip did, #748 -- is
+// invisible to a mock that answers instantly, because the buffer flushes when
+// the stream closes and every event lands at once. So the assertion is that
+// the early events are on screen *while the ask is still running*.
+test("the walk shows what has happened while the stream is still open and quiet", async ({
+  page,
+}) => {
+  await ask(page, "quiet", "Did the Mandate's administration shape later Ba'thist rule?");
+
+  const events = page.getByTestId("walk-events").getByRole("listitem");
+  await expect(events).toHaveCount(2);
+  await expect(page.getByTestId("answer-placeholder")).toHaveCount(0);
+
+  // And the silence is a pause, not the end: the rest still arrives.
+  await expect(events).toHaveCount(4, { timeout: 20_000 });
+  await expect(page.getByTestId("answer-placeholder")).toBeVisible();
+});
+
 test("killing the API mid-ask shows an error, not a permanent spinner", async ({
   page,
   request,

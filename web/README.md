@@ -14,6 +14,11 @@ npm run dev          # http://localhost:3000
 origin, which `next.config.ts` proxies onto it — so the service needs no CORS
 configuration and its address is never baked into the bundle.
 
+This server sends nothing compressed (`compress: false`, issue #748): gzip
+buffers, and a buffered `text/event-stream` means the walk of a fourteen-minute
+ask arrives fourteen minutes late. Compress the bundle at the CDN or reverse
+proxy in front of it instead.
+
 ```
 npm run lint         # eslint
 npm run typecheck    # tsc --noEmit
