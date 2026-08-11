@@ -16,18 +16,32 @@ from axial.llm import PRICE_TABLE_USD_PER_1K, estimate_cost
 
 class _FakeUsageClient:
     """A minimal `LLMClient` double: `build_record` only ever calls
-    `usage_for_pass` on the client it is given -- never a completion
-    method -- so this double implements exactly that. `model_for_pass`
-    is answered too (a fixed string, never asserted on by the existing
-    `cost`-field tests below): `build_record` consults it only when
-    `counter_position_result.model_called` is `True`, which every existing
-    test here never reaches (each passes `claims=[]`, uncontested)."""
+    `usage_for_pass`/`cost_for_pass` on the client it is given -- never a
+    completion method -- so this double implements exactly that.
+    `model_for_pass` is answered too (a fixed string, never asserted on by
+    the existing `cost`-field tests below): `build_record` consults it only
+    when `counter_position_result.model_called` is `True`, which every
+    existing test here never reaches (each passes `claims=[]`, uncontested).
 
-    def __init__(self, usage_by_pass: dict[str, dict[str, int] | None]) -> None:
+    `cost_by_pass` (issue #740) defaults to empty -- every pre-#740 test
+    below constructs this double without it, so `cost_for_pass` answers
+    `None` for every pass exactly like a client that never saw a
+    provider-reported cost, and `usage_and_cost_by_pass` falls back to
+    `estimate_cost` unchanged."""
+
+    def __init__(
+        self,
+        usage_by_pass: dict[str, dict[str, int] | None],
+        cost_by_pass: dict[str, float | None] | None = None,
+    ) -> None:
         self._usage_by_pass = usage_by_pass
+        self._cost_by_pass = cost_by_pass or {}
 
     def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
         return self._usage_by_pass.get(pass_name)
+
+    def cost_for_pass(self, pass_name: str | None = None) -> float | None:
+        return self._cost_by_pass.get(pass_name)
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         return "test-double-model"
@@ -150,6 +164,66 @@ def test_cost_defaults_to_zero_tokens_and_null_usd_when_the_client_reports_no_us
         "usd": None,
     }
     assert record["cost"]["total_usd"] is None
+
+
+def test_cost_prefers_the_providers_real_charge_over_the_price_table_estimate():
+    """Issue #740: when the client's `cost_for_pass` reports a real number,
+    that IS `usd` -- not `estimate_cost`'s price-table figure. The two are
+    deliberately far apart here so this can only pass for the right reason
+    (the estimate for this usage is on the order of $0.0013, nowhere near
+    the provider's reported $9.99)."""
+    model_by_pass = {"interrogate": "deepseek/deepseek-v4-pro"}
+    client = _FakeUsageClient(
+        {"interrogate": {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500}},
+        cost_by_pass={"interrogate": 9.99},
+    )
+    estimate = estimate_cost("deepseek/deepseek-v4-pro", 1000, 500)
+    assert estimate is not None
+    assert abs(estimate - 9.99) > 1.0
+
+    record = _build(model_by_pass, client)
+
+    assert record["cost"]["by_pass"]["interrogate"]["usd"] == 9.99
+    assert record["cost"]["total_usd"] == 9.99
+
+
+def test_cost_falls_back_to_the_estimate_when_the_provider_reports_no_cost():
+    """The provider-cost preference (#740) is a preference, not a
+    requirement: a client whose `cost_for_pass` is `None` for a pass still
+    gets `estimate_cost`'s price-table figure, unchanged from before #740."""
+    model_by_pass = {"interrogate": "deepseek/deepseek-v4-pro"}
+    client = _FakeUsageClient(
+        {"interrogate": {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500}},
+        cost_by_pass={},
+    )
+    expected = estimate_cost("deepseek/deepseek-v4-pro", 1000, 500)
+
+    record = _build(model_by_pass, client)
+
+    assert record["cost"]["by_pass"]["interrogate"]["usd"] == expected
+
+
+def test_cost_is_null_when_both_provider_and_price_table_are_silent():
+    """Both sources absent (#740's third bar item) -- `usd` stays `null`,
+    and a second, priced pass in the same run still contributes to
+    `total_usd`."""
+    model_by_pass = {
+        "interrogate": "some-vendor/never-priced-model",
+        "synthesize": "deepseek/deepseek-v4-pro",
+    }
+    client = _FakeUsageClient(
+        {
+            "interrogate": {"prompt_tokens": 500, "completion_tokens": 200, "total_tokens": 700},
+            "synthesize": {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500},
+        },
+        cost_by_pass={"synthesize": 3.5},
+    )
+
+    record = _build(model_by_pass, client)
+
+    assert record["cost"]["by_pass"]["interrogate"]["usd"] is None
+    assert record["cost"]["by_pass"]["synthesize"]["usd"] == 3.5
+    assert record["cost"]["total_usd"] == 3.5
 
 
 def test_evidence_field_defaults_to_zero_when_the_caller_passes_none():
