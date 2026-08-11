@@ -31,5 +31,14 @@ npm run test:e2e     # playwright, against e2e/mock-service.mjs
 against a stand-in service, and drives a real browser through submit → walk →
 answer, a resume across a dropped connection, a killed API, and the theme.
 
+On Windows, `browser.close()` can hang forever during Chromium's temp-profile
+cleanup (`microsoft/playwright#42109`: an ACL on one subfolder makes it
+permanently unreadable, and Node's `fs.rm()` retries without ever giving up).
+Every spec imports `test`/`expect` from `./fixtures`, not `@playwright/test`
+directly — that file's `browser` fixture override closes the browser itself
+with a bounded timeout and exits the worker, instead of waiting on the stuck
+cleanup. A spec that imports from `@playwright/test` instead reintroduces the
+hang on Windows only; CI's Linux runner never hits this.
+
 The twelve theme custom properties live in `src/app/globals.css`; the approved
 design they come from is `design/mockup.html`.
