@@ -61,7 +61,7 @@ export default function AskPage() {
         {!ask.brief && (
           <section className="text-[12.5px] leading-[1.6] text-ink2">
             State a case, ask a question, and watch Axial read the corpus. An ask takes
-            about three minutes.
+            fifteen minutes or so, and the walk shows what it is doing the whole way.
           </section>
         )}
       </main>

@@ -3,10 +3,13 @@
  * It speaks exactly the three routes the app uses -- `POST /asks`,
  * `GET /asks/{id}`, `GET /asks/{id}/events` -- with the same shapes and the
  * same SSE framing (`id:` line, `{"message", "detail"}` payload, stream closes
- * at a terminal state). Two things it does deliberately: it drops the first
+ * at a terminal state). Three things it does deliberately: it drops the first
  * event connection halfway, so a resume through `Last-Event-ID` is exercised
- * for real, and `POST /__kill` makes it stop answering, which is what "the API
- * died mid-ask" looks like from a browser.
+ * for real; `POST /__kill` makes it stop answering, which is what "the API
+ * died mid-ask" looks like from a browser; and the case `quiet` holds the
+ * stream open and silent mid-ask, which is what a real fourteen-minute ask
+ * looks like and the only way a buffering hop between the browser and the
+ * service is visible at all.
  */
 
 import { createServer } from "node:http";
@@ -19,6 +22,11 @@ const MESSAGES = [
   "Walked the relations -- 48 notes retrieved from 5 books",
   "Checked every claim against the passage it rests on",
 ];
+
+/** How long a `quiet` job says nothing between its second and third event.
+ * Longer than the spec's patience for the early events, so an assertion that
+ * they are on screen can only pass while the stream is still open and silent. */
+const QUIET_MS = 10_000;
 
 const jobs = new Map();
 let nextId = 1;
@@ -49,11 +57,12 @@ async function streamEvents(req, res, job) {
     Connection: "keep-alive",
   });
   // The first connection is cut halfway through, with the job still running.
-  const stopAfter = job.connections === 0 ? 2 : MESSAGES.length;
+  // A quiet job keeps its one connection instead: it is here to go silent.
+  const stopAfter = job.quiet || job.connections > 0 ? MESSAGES.length : 2;
   job.connections += 1;
 
   for (let seq = lastSeq + 1; seq <= stopAfter; seq += 1) {
-    await sleep(120);
+    await sleep(job.quiet && seq === 3 ? QUIET_MS : 120);
     if (res.writableEnded || dead) return;
     res.write(`id: ${seq}\ndata: ${JSON.stringify({ message: MESSAGES[seq - 1], detail: {} })}\n\n`);
   }
@@ -96,7 +105,7 @@ const server = createServer(async (req, res) => {
       });
     }
     const id = `ask-${nextId++}`;
-    jobs.set(id, { id, state: "running", connections: 0 });
+    jobs.set(id, { id, state: "running", connections: 0, quiet: ask.case === "quiet" });
     return json(res, 202, { id, state: "queued" });
   }
 
