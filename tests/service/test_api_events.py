@@ -164,6 +164,37 @@ def test_event_stream_does_not_drop_an_event_written_between_the_last_read_and_f
     ]
 
 
+def test_event_stream_emits_a_keepalive_comment_on_the_quiet_path(job_store: JobStore, monkeypatch):
+    """Issue #751: a stage with nothing new to say used to poll silently --
+    no bytes crossed the wire while `store.get` kept coming back `running`.
+    Real asks measured 35-54s gaps there, long enough that a browser, a
+    proxy, or an edge network reaps the connection before it ever gets a
+    real frame. Every quiet poll must now put an SSE comment (`: keepalive`)
+    on the wire -- invisible to a client's own parser (no `data:` line, so
+    `parseFrames`/`EventSource` both drop it) but enough to keep the
+    connection warm."""
+    job_id = job_store.enqueue(kind="ask", principal="analyst-1", payload={})
+    job_store.claim()
+
+    real_get = job_store.get
+    calls = {"n": 0}
+
+    def get_then_finish_after_two_quiet_polls(ask_id: str):
+        calls["n"] += 1
+        if calls["n"] >= 3:
+            job_store.complete(
+                ask_id, result_ref="data/analyses/x.json", corpus_pin="sim-2026-08-10"
+            )
+        return real_get(ask_id)
+
+    monkeypatch.setattr(job_store, "get", get_then_finish_after_two_quiet_polls)
+    monkeypatch.setattr(time, "sleep", lambda seconds: None)
+
+    frames = list(_event_stream(job_store, job_id, after_seq=0))
+
+    assert frames.count(": keepalive\n\n") == 2
+
+
 def test_a_failed_job_ends_the_stream_with_its_error(client, job_store: JobStore):
     job_id = job_store.enqueue(
         kind="ask", principal=DEFAULT_PRINCIPAL, payload={"case": "Syria", "question": "Q"}

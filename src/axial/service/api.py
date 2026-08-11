@@ -362,6 +362,14 @@ def _event_stream(store: JobStore, ask_id: str, after_seq: int) -> Iterator[str]
 
         job = store.get(ask_id)
         if job is not None and job["state"] not in (DONE, FAILED):
+            # A stage can stay quiet for 40-55s on a real ask (issue #751) --
+            # long enough that a browser, a proxy, or Vercel's edge reaps a
+            # connection with no bytes on it well before the job has anything
+            # new to say. An SSE comment frame is the wire convention for
+            # exactly this: the client's own parser drops any line with no
+            # `data:`, so this is invisible to `parseFrames`/`EventSource`
+            # and carries no `id:`, so it can never collide with a real seq.
+            yield ": keepalive\n\n"
             time.sleep(EVENTS_POLL_INTERVAL_SECONDS)
             continue
 
