@@ -26,7 +26,7 @@ test("an ask runs to completion and the walk is visible the whole time", async (
   await expect(events).toHaveCount(4);
   await expect(events.nth(3)).toContainText("Checked every claim");
 
-  await expect(page.getByTestId("answer-placeholder")).toBeVisible();
+  await expect(page.getByTestId("paper")).toBeVisible();
   await expect(page.getByTestId("ask-error")).toHaveCount(0);
 });
 
@@ -42,11 +42,11 @@ test("the walk shows what has happened while the stream is still open and quiet"
 
   const events = page.getByTestId("walk-events").getByRole("listitem");
   await expect(events).toHaveCount(2);
-  await expect(page.getByTestId("answer-placeholder")).toHaveCount(0);
+  await expect(page.getByTestId("paper")).toHaveCount(0);
 
   // And the silence is a pause, not the end: the rest still arrives.
   await expect(events).toHaveCount(4, { timeout: 20_000 });
-  await expect(page.getByTestId("answer-placeholder")).toBeVisible();
+  await expect(page.getByTestId("paper")).toBeVisible();
 });
 
 test("killing the API mid-ask shows an error, not a permanent spinner", async ({
