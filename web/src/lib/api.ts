@@ -117,6 +117,26 @@ export async function getAsk(id: string, signal?: AbortSignal): Promise<AskStatu
   return (await expectOk(response)).json();
 }
 
+/** `GET /asks` -- every ask this caller has made, in the store's own order.
+ * The service already filters on the identity seam (`current_principal`),
+ * so this is this analyst's own list with nothing further to ask for. */
+export async function listAsks(signal?: AbortSignal): Promise<AskStatus[]> {
+  const response = await fetch(`${API_BASE}/asks`, { signal });
+  return (await expectOk(response)).json();
+}
+
+/** `GET /me/usage`. `sessionId` is this browser's own session
+ * (`src/lib/session.ts`) -- omitted, the server sends no `session` window at
+ * all, since it holds no notion of a "current" session (#724/#746). */
+export async function getUsage(
+  sessionId: string | null,
+  signal?: AbortSignal,
+): Promise<UsageResponse> {
+  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+  const response = await fetch(`${API_BASE}/me/usage${query}`, { signal });
+  return (await expectOk(response)).json();
+}
+
 /** `note_locator` (`axial.query.store`) plus, in `passage` citation mode
  * only, the resolved `quote` (`axial.service.citation`). Attached to a
  * `chunk` ground when it resolves; absent otherwise -- never a placeholder
