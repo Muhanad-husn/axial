@@ -170,6 +170,55 @@ def _interrogation_conclusion_message(result: InterrogationResult) -> str:
     return f"interrogation concluded: found {n_premises} {premise_word}, applied {n_bounds} {bound_word}"
 
 
+_FORK_KIND_LABELS = {
+    "source_imbalance": "one source dominating the evidence",
+    "temporal_role": "sources split unevenly across a period",
+    "temporal_consequence": "sources split unevenly across an event",
+}
+
+
+def _fork_declined_message(fork: ForkCheckResult) -> str:
+    """The walk line for a genuine fork found with no way to answer it
+    (issue #750): neither `brief.fork_answer` nor `on_fork` is available --
+    the service worker, and every batch caller (`axial brief run`/`smoke`/
+    `sweep`), declare a single policy, decline, rather than opening a
+    mid-run prompt no caller can answer (DEC-62's interactive path stays
+    `axial ask`-only). States what was measured (the concept and the shape
+    of the imbalance) and what was on offer, then discloses the decision --
+    never repeats the model's own `question` text on screen, which is
+    phrased to be answered and reads as a broken control when nobody can
+    (a live run's question ended in "...or would you prefer to cap
+    Hinnebusch's notes..."). Nothing this composes ends in a question
+    addressed to the analyst."""
+    kind_label = _FORK_KIND_LABELS.get(fork.kind, "an imbalance in the evidence")
+    option_labels = ", ".join(f'"{option.label}"' for option in fork.options)
+    n = len(fork.options)
+    option_word = "option was" if n == 1 else "options were"
+    return (
+        f'the intake fork-check measured {kind_label} on "{fork.concept}" -- '
+        f"{n} {option_word} available ({option_labels}) -- but the service declines "
+        "every fork under its declared policy: it does not answer, and the run "
+        "proceeds unconstrained, every source read as a full voice"
+    )
+
+
+def _fork_disclosure_message(
+    fork: ForkCheckResult, *, fork_answer_supplied: bool, has_on_fork: bool
+) -> str:
+    """The walk line for a genuine, found fork (issue #750): a pure
+    decision, isolated from `run_brief`'s own wiring so it is unit-
+    testable without the full engine fixture. `axial ask` (`on_fork`
+    given) and a batch run with `brief.fork_answer` already on file both
+    still see the model's own question text verbatim -- unchanged from
+    before this issue, and the only two paths that can actually act on it.
+    Every other caller (the service worker; `axial brief run`/`smoke`/
+    `sweep` with no pre-supplied answer) has no way to answer at all, and
+    gets `_fork_declined_message`'s honest disclosure instead."""
+    if fork_answer_supplied or has_on_fork:
+        return f"a clarifying question was found: {fork.question}"
+    return _fork_declined_message(fork)
+
+
 def _brief_to_dict(brief: Brief) -> dict[str, Any]:
     """The brief, verbatim (§7.1, §7.3: "the brief (§7.1), verbatim").
     `weights` (issue #639) is `{}`, never `None`, when the brief carried
@@ -696,10 +745,27 @@ def run_brief(
                     )
             fork_answer = None
             if fork_result.is_fork:
+                fork_answer_supplied = brief.fork_answer is not None
+                # No answering mechanism at all (issue #750): the service
+                # worker and every batch caller (`axial brief run`/`smoke`/
+                # `sweep`) declare a single policy, decline, rather than a
+                # mid-run prompt neither has a client for. `axial ask`
+                # (`on_fork` given) and a batch run with a pre-supplied
+                # `brief.fork_answer` are both unchanged -- they still see
+                # the model's own question, either to ask it live or
+                # alongside the answer already on file.
                 emit_event(
                     on_event,
-                    f"a clarifying question was found: {fork_result.question}",
-                    {"stage": "fork_check", "concept": fork_result.concept},
+                    _fork_disclosure_message(
+                        fork_result,
+                        fork_answer_supplied=fork_answer_supplied,
+                        has_on_fork=on_fork is not None,
+                    ),
+                    {
+                        "stage": "fork_check",
+                        "concept": fork_result.concept,
+                        "declined": not (fork_answer_supplied or on_fork is not None),
+                    },
                 )
                 if brief.fork_answer is not None:
                     fork_answer = ForkAnswer(

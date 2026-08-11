@@ -505,3 +505,103 @@ def test_brief_dict_carries_none_fork_answer_when_none_supplied():
     record = _build({}, client)
 
     assert record["brief"]["fork_answer"] is None
+
+
+# --- issue #750: the declared decline policy's own walk disclosure ----------
+
+
+def _hinnebusch_fork():
+    from axial.brief.fork import ForkCheckResult, ForkOption
+
+    return ForkCheckResult(
+        is_fork=True,
+        concept="Ba'th Party",
+        kind="temporal_role",
+        question=(
+            "Should retrieval treat Hinnebusch (1990) as a witness to pre-coup roots "
+            "and later sources as witnesses to consequences, reading both eras as "
+            "complementary evidence of change, or would you prefer to cap "
+            "Hinnebusch's notes to prevent its dominant voice from overshadowing the "
+            "later witnesses?"
+        ),
+        options=(
+            ForkOption(label="keep all, assign temporal roles"),
+            ForkOption(label="cap the dominant 1990 source", per_source_cap=80),
+            ForkOption(
+                label="exclude the dominant 1990 source", drop_source_ids=("hinnebusch-1990-x",)
+            ),
+        ),
+    )
+
+
+def test_fork_declined_message_never_ends_in_a_question():
+    from axial.answer.record import _fork_declined_message
+
+    message = _fork_declined_message(_hinnebusch_fork())
+
+    assert not message.rstrip().endswith("?")
+
+
+def test_fork_declined_message_discloses_concept_options_and_policy():
+    from axial.answer.record import _fork_declined_message
+
+    message = _fork_declined_message(_hinnebusch_fork())
+
+    # The imbalance measured: which concept, and its shape.
+    assert "Ba'th Party" in message
+    assert "period" in message
+    # The options that were available, by label.
+    assert "keep all, assign temporal roles" in message
+    assert "cap the dominant 1990 source" in message
+    assert "exclude the dominant 1990 source" in message
+    # That the service declined under its declared policy, and the run
+    # proceeded unconstrained.
+    assert "declines" in message
+    assert "unconstrained" in message
+
+
+def test_fork_declined_message_never_quotes_the_models_own_question_text():
+    from axial.answer.record import _fork_declined_message
+
+    message = _fork_declined_message(_hinnebusch_fork())
+
+    assert "or would you prefer" not in message
+
+
+def test_fork_disclosure_message_declines_with_no_answering_mechanism():
+    """The service worker, and every batch caller with no pre-supplied
+    `brief.fork_answer` (`axial brief run`/`smoke`/`sweep`), have neither
+    an `on_fork` callback nor an answer on file -- the declared policy's
+    disclosure applies."""
+    from axial.answer.record import _fork_declined_message, _fork_disclosure_message
+
+    fork = _hinnebusch_fork()
+
+    message = _fork_disclosure_message(fork, fork_answer_supplied=False, has_on_fork=False)
+
+    assert message == _fork_declined_message(fork)
+
+
+def test_fork_disclosure_message_unchanged_when_axial_ask_can_prompt():
+    """`axial ask` passes `on_fork` -- its interactive path is unchanged by
+    this issue: the walk still shows the model's own question, which
+    `_fork_prompt` (src/axial/cli.py) then asks live."""
+    from axial.answer.record import _fork_disclosure_message
+
+    fork = _hinnebusch_fork()
+
+    message = _fork_disclosure_message(fork, fork_answer_supplied=False, has_on_fork=True)
+
+    assert message == f"a clarifying question was found: {fork.question}"
+
+
+def test_fork_disclosure_message_unchanged_when_a_batch_answer_is_on_file():
+    """A batch run with `brief.fork_answer` already supplied (§7.1) is a
+    real, pre-known answer, not a decline -- unchanged by this issue."""
+    from axial.answer.record import _fork_disclosure_message
+
+    fork = _hinnebusch_fork()
+
+    message = _fork_disclosure_message(fork, fork_answer_supplied=True, has_on_fork=False)
+
+    assert message == f"a clarifying question was found: {fork.question}"
