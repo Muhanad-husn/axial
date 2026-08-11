@@ -65,6 +65,63 @@ test("killing the API mid-ask shows an error, not a permanent spinner", async ({
   await expect(page.getByRole("button", { name: "Ask" })).toBeEnabled();
 });
 
+// Issue #760: the API dying mid-ask does not strand it. The worker survives
+// the restart and keeps running the ask; a reload has to reattach through
+// the id `sessionStorage` remembered, replay everything the service has,
+// and land on the paper -- missing no event, repeating none.
+test("the service dying and coming back doesn't strand a running ask -- reload picks the walk back up", async ({
+  page,
+  request,
+}) => {
+  await ask(page, "quiet", "Did the Mandate's administration shape later Ba'thist rule?");
+
+  const events = page.getByTestId("walk-events").getByRole("listitem");
+  await expect(events).toHaveCount(2);
+
+  await request.post(`${MOCK}/__kill`);
+  await expect(page.getByTestId("ask-error")).toContainText("Lost contact with the Axial service", {
+    timeout: 20_000,
+  });
+
+  // The worker kept running; the restart loses no job state (`__revive`
+  // does not `jobs.clear()`, unlike `__reset`).
+  await request.post(`${MOCK}/__revive`);
+  await page.reload();
+
+  // No button, no re-typed brief: the reload alone resumes the walk, in
+  // order, with none of it repeated and none of it missing.
+  await expect(events).toHaveCount(4, { timeout: 20_000 });
+  await expect(events.nth(0)).toContainText("Interrogated the question");
+  await expect(events.nth(3)).toContainText("Checked every claim");
+  await expect(page.getByTestId("paper")).toBeVisible();
+  await expect(page.getByTestId("ask-error")).toHaveCount(0);
+});
+
+// The other way in (issue #760): a `running` row in History, opened directly,
+// with no reload-time reattachment to lean on.
+test("a running row in history opens back into the walk, not a paper fetch that would 409", async ({
+  page,
+}) => {
+  await ask(page, "quiet", "Did the Mandate's administration shape later Ba'thist rule?");
+  await expect(page.getByTestId("walk-events").getByRole("listitem")).toHaveCount(2);
+
+  // Drop what this tab remembers, so the reload does not auto-reattach --
+  // this test is about the History row's own button, not the automatic path
+  // the test above already covers.
+  await page.evaluate(() => window.sessionStorage.removeItem("axial.liveAsk"));
+  await page.reload();
+  await expect(page.getByPlaceholder("A polity or set of polities")).toHaveValue("");
+
+  await page.getByTestId("history").getByText("History", { exact: true }).click();
+  const row = page.getByTestId("history-list").locator("li").filter({ hasText: "quiet" });
+  await expect(row.getByText("running")).toBeVisible();
+  await row.getByRole("button", { name: "Resume" }).click();
+
+  const events = page.getByTestId("walk-events").getByRole("listitem");
+  await expect(events).toHaveCount(4, { timeout: 20_000 });
+  await expect(page.getByTestId("paper")).toBeVisible();
+});
+
 test("a refusal is shown in the service's own words", async ({ page }) => {
   await ask(page, "over quota", "One ask too many");
   await expect(page.getByTestId("ask-error")).toContainText(
