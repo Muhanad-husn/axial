@@ -45,6 +45,7 @@ from axial.argmap.ask import (
     run_map_ask,
 )
 from axial.brief.intake import Brief, load_brief
+from axial.llm import StubLLMClient
 
 # ---------------------------------------------------------------------------
 # fixtures
@@ -88,10 +89,10 @@ def _write_map(
     return tmp_path / "map"
 
 
-class _ScriptedClient:
+class _ScriptedClient(StubLLMClient):
     def __init__(self, response: str) -> None:
+        super().__init__()
         self._response = response
-        self.call_count = 0
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         self.call_count += 1
@@ -99,9 +100,6 @@ class _ScriptedClient:
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         return "scripted"
-
-    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
-        return None
 
 
 # ---------------------------------------------------------------------------

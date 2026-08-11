@@ -15,6 +15,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
+from axial.llm import StubLLMClient
 from axial.argmap.residue import (
     CANDIDATE_TOP_K,
     ModeResult,
@@ -61,13 +62,13 @@ def _hashing_encode(texts: Sequence[str]) -> np.ndarray:
     return vectors
 
 
-class _ScriptedClient:
+class _ScriptedClient(StubLLMClient):
     """Mirrors `tests.analysis.test_argmap_positions._ScriptedClient`: a
     fixed response (or one popped per call), never a real request."""
 
     def __init__(self, responses: str | list[str]) -> None:
+        super().__init__()
         self._responses = [responses] if isinstance(responses, str) else list(responses)
-        self.call_count = 0
         self.prompts: list[str] = []
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
@@ -411,7 +412,7 @@ def test_load_decisions_is_empty_before_any_run(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-class _CountingScriptedClient:
+class _CountingScriptedClient(StubLLMClient):
     """Like `_ScriptedClient`, but `call_count` is incremented under a lock
     -- several worker threads call `complete` concurrently here, and a bare
     `+= 1` is not guaranteed atomic."""
@@ -419,9 +420,9 @@ class _CountingScriptedClient:
     def __init__(self, response: str) -> None:
         import threading
 
+        super().__init__()
         self._response = response
         self._lock = threading.Lock()
-        self.call_count = 0
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         with self._lock:

@@ -33,6 +33,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from axial.llm import StubLLMClient
 from axial.argmap.build import (
     ExtractJob,
     Passage,
@@ -147,13 +148,13 @@ def test_extraction_prompt_carries_no_author_label() -> None:
 # ---------------------------------------------------------------------------
 
 
-class _ScriptedClient:
+class _ScriptedClient(StubLLMClient):
     """A client whose response is scripted, mirroring
     `tests.test_interrogate._ScriptedClient`'s own local-fixture pattern."""
 
     def __init__(self, response: str) -> None:
+        super().__init__()
         self._response = response
-        self.call_count = 0
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         self.call_count += 1
@@ -161,9 +162,6 @@ class _ScriptedClient:
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         return "scripted"
-
-    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
-        return None
 
 
 def _job(*claims: str) -> ExtractJob:
@@ -334,9 +332,9 @@ def test_position_ids_are_stable_across_two_runs_on_identical_input() -> None:
 # ---------------------------------------------------------------------------
 
 
-class _CountingClient:
+class _CountingClient(StubLLMClient):
     def __init__(self) -> None:
-        self.call_count = 0
+        super().__init__()
         self.seen_prompts: list[str] = []
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
@@ -346,9 +344,6 @@ class _CountingClient:
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         return "counting"
-
-    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
-        return None
 
 
 def test_resume_makes_no_call_for_a_bag_slice_already_on_disk(tmp_path: Path) -> None:

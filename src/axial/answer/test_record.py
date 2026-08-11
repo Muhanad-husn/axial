@@ -11,10 +11,10 @@ from axial.analyze.synthesis import Claim, CounterPositionGenerationFailedError
 from axial.answer.record import build_record
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult
-from axial.llm import PRICE_TABLE_USD_PER_1K, estimate_cost
+from axial.llm import PRICE_TABLE_USD_PER_1K, StubLLMClient, estimate_cost
 
 
-class _FakeUsageClient:
+class _FakeUsageClient(StubLLMClient):
     """A minimal `LLMClient` double: `build_record` only ever calls
     `usage_for_pass`/`cost_for_pass` on the client it is given -- never a
     completion method -- so this double implements exactly that.
@@ -34,6 +34,7 @@ class _FakeUsageClient:
         usage_by_pass: dict[str, dict[str, int] | None],
         cost_by_pass: dict[str, float | None] | None = None,
     ) -> None:
+        super().__init__()
         self._usage_by_pass = usage_by_pass
         self._cost_by_pass = cost_by_pass or {}
 

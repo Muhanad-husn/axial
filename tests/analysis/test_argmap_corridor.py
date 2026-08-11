@@ -50,7 +50,12 @@ from axial.argmap.ask import (
     round_robin_by_source,
 )
 from axial.brief.intake import Brief
-from axial.llm import INTERROGATE_PASS_NAME, RETRIEVE_PASS_NAME, SYNTHESIZE_PASS_NAME
+from axial.llm import (
+    INTERROGATE_PASS_NAME,
+    RETRIEVE_PASS_NAME,
+    SYNTHESIZE_PASS_NAME,
+    StubLLMClient,
+)
 from axial.retrieve.loop import RetrievalResult
 from axial.validators.coverage import NOT_MEASURED_BAND
 
@@ -312,7 +317,7 @@ def _write_vault(root: Path, chunk_ids: list[str]) -> Path:
     return root / "vault"
 
 
-class _ScriptedClient:
+class _ScriptedClient(StubLLMClient):
     """A minimal `LLMClient` double keyed by pass name -- the interrogation
     call always resolves `proceed`, and the synthesis call cites whatever
     handle the test wires in. `model_for_pass`/`usage_for_pass` answer every
@@ -320,6 +325,7 @@ class _ScriptedClient:
     them here."""
 
     def __init__(self, synthesize_response: str) -> None:
+        super().__init__()
         self._synthesize_response = synthesize_response
         self.calls: list[str] = []
 
@@ -333,9 +339,6 @@ class _ScriptedClient:
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         return "test-double-model"
-
-    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
-        return None
 
 
 def _brief() -> Brief:

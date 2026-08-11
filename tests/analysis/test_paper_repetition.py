@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 
+from axial.llm import StubLLMClient
 from axial.paper.shape import RepetitionResult, compute_repetition, run_shape_check
 from axial.paper.render import render_paper
 
@@ -149,8 +150,9 @@ def test_the_repetitive_draft_scores_higher_than_the_clean_one():
 # -- wired onto the shape report, with zero extra model calls ---------------
 
 
-class _StubClient:
+class _StubClient(StubLLMClient):
     def __init__(self, model_by_pass, response):
+        super().__init__()
         self.model_by_pass = model_by_pass
         self._response = response
         self.prompts: list[tuple[str, str]] = []

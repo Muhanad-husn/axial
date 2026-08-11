@@ -14,6 +14,7 @@ import json
 
 import pytest
 
+from axial.llm import StubLLMClient
 from axial.paper.shape import (
     ShapeDefect,
     ShapeParseError,
@@ -36,11 +37,12 @@ def _sections():
     ]
 
 
-class _StubClient:
+class _StubClient(StubLLMClient):
     """Mirrors the paper-pipeline tests' own stub shape (model_for_pass,
     usage_for_pass, complete) without depending on that file."""
 
     def __init__(self, model_by_pass, response):
+        super().__init__()
         self.model_by_pass = model_by_pass
         self._response = response
         self.prompts: list[tuple[str, str]] = []

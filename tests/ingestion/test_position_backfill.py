@@ -38,7 +38,7 @@ import pytest
 from axial.cli import main
 from axial.envelope import compute_source_id
 from axial.interrogate import answers_checkpoint_path
-from axial.llm import PROVIDER_ENV_VAR
+from axial.llm import PROVIDER_ENV_VAR, StubLLMClient
 from axial.position_backfill import (
     compose_position_backfill_prompt,
     run_position_backfill,
@@ -46,12 +46,13 @@ from axial.position_backfill import (
 from axial.run import PASS_REGISTRY
 
 
-class FakeClient:
+class FakeClient(StubLLMClient):
     """Records every prompt, replies with a scripted position answer for
     each call in order (last entry repeats if more calls arrive than
     scripted)."""
 
     def __init__(self, responses: list[dict[str, Any]]):
+        super().__init__()
         self._responses = list(responses)
         self.prompts: list[str] = []
         self.pass_names: list[str | None] = []

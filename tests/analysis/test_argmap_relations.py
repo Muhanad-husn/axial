@@ -34,6 +34,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from axial.llm import StubLLMClient
 from axial.argmap.build import (
     MAX_NEIGHBOURHOOD,
     Neighbourhood,
@@ -172,10 +173,10 @@ def test_render_positions_blind_carries_no_author_or_source() -> None:
 # ---------------------------------------------------------------------------
 
 
-class _ScriptedClient:
+class _ScriptedClient(StubLLMClient):
     def __init__(self, response: str) -> None:
+        super().__init__()
         self._response = response
-        self.call_count = 0
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         self.call_count += 1
@@ -183,9 +184,6 @@ class _ScriptedClient:
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         return "scripted"
-
-    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
-        return None
 
 
 def test_an_invented_handle_and_a_self_relation_are_both_dropped_and_counted() -> None:
@@ -236,19 +234,13 @@ def test_a_malformed_response_is_recorded_as_a_failed_read_not_a_crash() -> None
 # ---------------------------------------------------------------------------
 
 
-class _CountingClient:
-    def __init__(self) -> None:
-        self.call_count = 0
-
+class _CountingClient(StubLLMClient):
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         self.call_count += 1
         return json.dumps({"relations": []})
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         return "counting"
-
-    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
-        return None
 
 
 def test_resume_makes_no_call_for_a_neighbourhood_already_on_disk(tmp_path: Path) -> None:
@@ -320,12 +312,13 @@ def _write_four_passages(answers_dir: Path) -> None:
             )
 
 
-class _TwoStageClient:
+class _TwoStageClient(StubLLMClient):
     """Routes to a canned response per `pass_name`, so one client can drive
     both the extraction pass and the relate pass of a full `run_map_build`
     in one scripted test."""
 
     def __init__(self) -> None:
+        super().__init__()
         self.calls: collections.Counter[str] = collections.Counter()
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
@@ -355,9 +348,6 @@ class _TwoStageClient:
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         return "scripted"
-
-    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
-        return None
 
 
 def _fake_encode_any(texts: Any) -> np.ndarray:

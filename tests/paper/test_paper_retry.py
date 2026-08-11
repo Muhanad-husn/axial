@@ -15,6 +15,7 @@ import json
 
 import pytest
 
+from axial.llm import StubLLMClient
 from axial.paper.draft import (
     DraftParseError,
     InvalidNewClaimKindError,
@@ -118,11 +119,12 @@ def _no_counter_position_plan_json() -> str:
     )
 
 
-class _QueueClient:
+class _QueueClient(StubLLMClient):
     """Returns one queued response per call to a given `pass_name`, in
     order, and records every prompt sent."""
 
     def __init__(self, responses: dict[str, list[str]]):
+        super().__init__()
         self._responses = {name: list(queue) for name, queue in responses.items()}
         self.prompts: list[tuple[str, str]] = []
 
@@ -132,9 +134,6 @@ class _QueueClient:
 
     def model_for_pass(self, pass_name=None):
         return f"stub/{pass_name}"
-
-    def usage_for_pass(self, pass_name=None):
-        return None
 
 
 # ---------------------------------------------------------------------------
