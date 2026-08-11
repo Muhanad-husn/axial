@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+/* The twelve custom properties, taken verbatim from the approved mockup
+   (`web/design/mockup.html`). One declaration set per mode and nothing else:
+   dark is these twelve re-declared. `data-theme` on the root is always the
+   RESOLVED mode -- `light` or `dark`, never `system` -- which is why there is
+   no `prefers-color-scheme` block here. `resolveTheme` (src/lib/theme.ts) is
+   the one place the machine's preference and the analyst's choice meet, and an
+   explicit choice therefore wins in both directions by construction.
+
+   Colour only ever means evidence: `--stated`, `--concluded` and `--spec` are
+   the three evidence markers, at L 0.55 in light and L 0.745 in dark with the
+   same chroma and hue, and nothing else in the interface is coloured. */
+:root {
+  color-scheme: light;
+
+  --bg: oklch(0.955 0.006 84);
+  --panel: oklch(0.995 0.003 84);
+  --sunken: oklch(0.925 0.005 84);
+  --barbg: oklch(0.915 0.005 84);
+  --ink: oklch(0.24 0.012 80);
+  --ink2: oklch(0.47 0.01 80);
+  --ink3: oklch(0.65 0.008 80);
+  --rule: oklch(0.895 0.006 80);
+  --rule2: oklch(0.945 0.004 80);
+  --stated: oklch(0.55 0.11 155);
+  --concluded: oklch(0.55 0.11 255);
+  --spec: oklch(0.55 0.11 55);
+
+  /* Type, not theme: identical in both modes, so declared once. */
+  --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --serif: var(--font-newsreader), Georgia, serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* The mockup's dark block declares no `--bg` -- its dark screens are cards
+     on a light canvas, so the page behind them never showed. This is its
+     `--lcolbg`, the one dark surface it defines below `--panel`, reused rather
+     than a new number invented. */
+  --bg: oklch(0.203 0.008 80);
+  --panel: oklch(0.225 0.009 80);
+  --sunken: oklch(0.267 0.009 80);
+  --barbg: oklch(0.305 0.008 80);
+  --ink: oklch(0.93 0.007 80);
+  --ink2: oklch(0.745 0.007 80);
+  --ink3: oklch(0.57 0.007 80);
+  --rule: oklch(0.33 0.008 80);
+  --rule2: oklch(0.288 0.008 80);
+  --stated: oklch(0.745 0.105 155);
+  --concluded: oklch(0.745 0.105 255);
+  --spec: oklch(0.775 0.105 65);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-sunken: var(--sunken);
+  --color-barbg: var(--barbg);
+  --color-ink: var(--ink);
+  --color-ink2: var(--ink2);
+  --color-ink3: var(--ink3);
+  --color-rule: var(--rule);
+  --color-rule2: var(--rule2);
+  --color-stated: var(--stated);
+  --color-concluded: var(--concluded);
+  --color-spec: var(--spec);
+
+  --font-sans: var(--sans);
+  --font-serif: var(--serif);
+  --font-mono: var(--mono);
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  text-wrap: pretty;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pulse {
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.28;
+  }
+}

@@ -137,3 +137,56 @@ jobs:
 
       - name: Run acceptance tests (serial within the shard)
         run: uv run pytest ${{ matrix.paths }} -q -m "not slow" --durations=15
+
+  # The `web/` client (issue #744). The two jobs above never look at it -- they
+  # run pytest and ruff, both of which are blind to TypeScript -- so without
+  # this one a frontend that does not compile would sail through the PR check.
+  # It is deliberately the whole gate for that directory: lint, typecheck, unit
+  # tests, build, then the Playwright spec that drives a real browser against a
+  # mock service (`web/e2e/mock-service.mjs`, no Postgres and no worker).
+  #
+  # It runs on every CI run rather than only when `web/` changes: a job-level
+  # path filter needs a third-party action, and this job is ~2 minutes.
+  web:
+    name: web (lint + typecheck + tests + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # Only Chromium, and cached across runs -- the download is ~110 MB and
+      # nothing here is browser-specific.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('web/package-lock.json') }}
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: npm run test:e2e

@@ -1,0 +1,79 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+import type { WalkState } from "@/lib/events";
+
+function elapsedLabel(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`;
+}
+
+function useElapsed(startedAt: number | null, running: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [running]);
+  return startedAt === null ? 0 : Math.max(0, Math.floor((now - startedAt) / 1000));
+}
+
+/** What Axial is doing, in its own words. This is the screen an analyst
+ * stares at for three minutes, so it is never a bare spinner: every
+ * `on_event` the service has sent is on it, in order, with the elapsed
+ * clock running. The messages are the service's -- nothing is composed here. */
+export function Walk({ walk, startedAt }: { walk: WalkState; startedAt: number | null }) {
+  const running = walk.phase === "queued" || walk.phase === "running";
+  const elapsed = useElapsed(startedAt, running);
+
+  return (
+    <section className="flex flex-col gap-3 border-l-2 border-rule pl-4">
+      <div className="flex items-center gap-2.5 text-[11px] font-semibold text-ink2">
+        {running ? (
+          <span className="pulse inline-block size-[7px] flex-none rounded-full bg-concluded" />
+        ) : (
+          <span className="w-[9px] flex-none font-mono text-[10px] text-ink3">
+            {walk.phase === "done" ? "✓" : "×"}
+          </span>
+        )}
+        <span>
+          {walk.phase === "queued" && walk.events.length === 0
+            ? "Queued"
+            : walk.phase === "done"
+              ? "Read the corpus"
+              : walk.phase === "failed"
+                ? "Stopped"
+                : "Reading"}
+        </span>
+        <span className="ml-auto font-mono text-[10.5px] text-ink3" aria-label="Elapsed">
+          {elapsedLabel(elapsed)}
+        </span>
+      </div>
+
+      <ol className="flex list-none flex-col gap-2.5 p-0" data-testid="walk-events">
+        {walk.events.map((event, index) => {
+          const live = running && index === walk.events.length - 1;
+          return (
+            <li
+              key={event.seq ?? `final-${index}`}
+              className={`flex items-baseline gap-2.5 text-[12.5px] leading-[1.45] ${
+                live ? "text-ink" : "text-ink2"
+              }`}
+            >
+              <span
+                className={`w-[9px] flex-none font-mono text-[10px] ${
+                  live ? "text-concluded" : "text-ink3"
+                }`}
+              >
+                {live ? "→" : "✓"}
+              </span>
+              <span>{event.message}</span>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
+  );
+}
