@@ -46,6 +46,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from axial.llm import StubLLMClient
 from axial.argmap.build import (
     BAG_DISTANCE_THRESHOLD,
     ENCODER_MODEL,
@@ -377,13 +378,13 @@ def test_seed_reads_from_prior_pin_no_op_when_prior_ledger_is_absent(tmp_path: P
 # ---------------------------------------------------------------------------
 
 
-class _RecordingClient:
+class _RecordingClient(StubLLMClient):
     """Returns an empty `arguments`/`unassigned` response for every call --
     these tests assert on which (bag, slice) got CALLED, not on position
     content, which `test_argmap_positions.py` already covers."""
 
     def __init__(self) -> None:
-        self.call_count = 0
+        super().__init__()
         self.seen_prompts: list[str] = []
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
@@ -393,9 +394,6 @@ class _RecordingClient:
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         return "recording"
-
-    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
-        return None
 
 
 def _write_answer(answers_dir: Path, source_id: str, chunk_id: str, claim: str) -> None:

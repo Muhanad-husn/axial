@@ -14,6 +14,7 @@ import pytest
 
 import axial.interrogate as interrogate_mod
 from axial.codebook import load_codebook
+from axial.llm import StubLLMClient
 from axial.interrogate import (
     ANSWER_FIELDS,
     DEFAULT_DOMAIN_DIR,
@@ -370,7 +371,7 @@ def test_cost_report_reports_null_for_an_unpriced_model_never_zero():
 # --- Per-note fault isolation -----------------------------------------------
 
 
-class _ScriptedClient:
+class _ScriptedClient(StubLLMClient):
     """A client whose responses are scripted per call, so one note can fail
     while the next answers -- the fault-isolation contract §7.15 states.
 
@@ -381,8 +382,8 @@ class _ScriptedClient:
     `test_notes_are_interrogated_concurrently`, below."""
 
     def __init__(self, responses: list[str]) -> None:
+        super().__init__()
         self._responses = responses
-        self.call_count = 0
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         response = self._responses[min(self.call_count, len(self._responses) - 1)]
@@ -391,9 +392,6 @@ class _ScriptedClient:
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         return "scripted"
-
-    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
-        return None
 
 
 def _arrange_source(tmp_path: Path, note_count: int = 2) -> tuple[Path, Path]:
@@ -509,13 +507,14 @@ def test_a_source_whose_every_note_is_a_garble_skip_is_not_a_failure(tmp_path):
     assert summary["answer_records"] == 0
 
 
-class _BarrierClient:
+class _BarrierClient(StubLLMClient):
     """A client whose calls block until `expected` of them are simultaneously
     in flight, so the pass can only finish if it really overlaps them (issue
     #623). Serial code deadlocks here and trips the barrier's own timeout --
     which is the point: this test cannot pass without concurrency."""
 
     def __init__(self, expected: int, answer: str) -> None:
+        super().__init__()
         self._barrier = threading.Barrier(expected, timeout=10)
         self._answer = answer
         self.max_in_flight = 0
@@ -533,9 +532,6 @@ class _BarrierClient:
 
     def model_for_pass(self, pass_name: str | None = None) -> str:
         return "barrier"
-
-    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
-        return None
 
 
 def test_notes_are_interrogated_concurrently(tmp_path):

@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 
 import axial.run as run_mod
+from axial.llm import StubLLMClient
 from axial.run import (
     FAIL_STATUS,
     LEDGER_COLUMNS,
@@ -45,7 +46,7 @@ from axial.run import (
 )
 
 
-class _FakeClient:
+class _FakeClient(StubLLMClient):
     """A sentinel client so tests can assert identity (constructed once,
     threaded unchanged into every pass invocation) without touching the real
     LLM provider machinery.
@@ -57,22 +58,12 @@ class _FakeClient:
     id, and to build the end-of-run report's token/cost totals -- so a
     client passed to it must satisfy at least this much of the real
     `LLMClient` protocol even when, as here, it never actually completes
-    anything. `usage_for_pass`/`cost_for_pass` returning `None` and
-    `calls_for_pass` returning `0` unconditionally is the same "nothing to
-    report" case a real client reports before its first call
-    (`axial.llm._accumulate_usage`'s own docstring)."""
-
-    def model_for_pass(self, pass_name: str | None = None) -> str:
-        return "fake-model"
-
-    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
-        return None
-
-    def calls_for_pass(self, pass_name: str | None = None) -> int:
-        return 0
-
-    def cost_for_pass(self, pass_name: str | None = None) -> float | None:
-        return None
+    anything. Inherited from `StubLLMClient` unchanged (issue #742): this
+    client's `.complete()` is never invoked, so `usage_for_pass`/
+    `cost_for_pass` stay `None` and `calls_for_pass` stays `0` -- the same
+    "nothing to report" a real client gives before its first call
+    (`axial.llm._accumulate_usage`'s own docstring); `model_for_pass` still
+    answers with the stub's fixed id, never asserted on by these tests."""
 
 
 class _DeclaredError(Exception):

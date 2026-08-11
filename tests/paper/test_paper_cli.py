@@ -177,13 +177,14 @@ def _run_paper_cli(
     script = f"""
 import json, sys
 import axial.cli as cli
+from axial.llm import StubLLMClient
 
 PLAN = {json.dumps(plan if plan is not None else PLAN)}
 DRAFTS = {json.dumps(drafts if drafts is not None else DRAFTS)}
 SHAPE = {json.dumps(shape if shape is not None else SHAPE_RESPONSE)}
 
 
-class StubClient:
+class StubClient(StubLLMClient):
     # `paper_shape` deliberately resolves to a DIFFERENT model than
     # `paper_draft` -- the shape check's own self-grading guard (issue #578)
     # raises if the two ever match.
@@ -194,6 +195,7 @@ class StubClient:
     }}
 
     def __init__(self):
+        super().__init__()
         self._drafts = list(DRAFTS)
         self.calls = []
 
@@ -209,9 +211,6 @@ class StubClient:
 
     def model_for_pass(self, pass_name=None):
         return self.model_by_pass.get(pass_name)
-
-    def usage_for_pass(self, pass_name=None):
-        return None
 
 
 client = StubClient()
@@ -473,13 +472,14 @@ import axial.cli as cli
 from axial.answer.record import BriefRunResult
 from axial.ask.engine import Turn
 from axial.brief.intake import Brief
+from axial.llm import StubLLMClient
 
 PLAN = {json.dumps(ASK_PLAN)}
 DRAFTS = {json.dumps(ASK_DRAFTS)}
 SHAPE = {json.dumps(SHAPE_RESPONSE)}
 
 
-class StubClient:
+class StubClient(StubLLMClient):
     model_by_pass = {{
         "paper_plan": "stub/plan",
         "paper_draft": "stub/draft",
@@ -487,6 +487,7 @@ class StubClient:
     }}
 
     def __init__(self):
+        super().__init__()
         self._drafts = list(DRAFTS)
         self.calls = []
 
@@ -502,9 +503,6 @@ class StubClient:
 
     def model_for_pass(self, pass_name=None):
         return self.model_by_pass.get(pass_name)
-
-    def usage_for_pass(self, pass_name=None):
-        return None
 
 
 def _fake_ask(question, case, **kwargs):

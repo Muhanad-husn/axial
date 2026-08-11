@@ -15,17 +15,19 @@ from __future__ import annotations
 
 import json
 
+from axial.llm import StubLLMClient
 from axial.paper.draft import Section as DraftSection, draft_section
 from axial.paper.lens import resolve_lens
 
 LENS = resolve_lens("political-economy")
 
 
-class _QueueClient:
+class _QueueClient(StubLLMClient):
     """Returns one queued response per call, in order, and records every
     prompt sent -- same shape as `tests/paper/test_paper_retry.py`."""
 
     def __init__(self, responses):
+        super().__init__()
         self._responses = list(responses)
         self.prompts: list[tuple[str, str]] = []
 
@@ -35,9 +37,6 @@ class _QueueClient:
 
     def model_for_pass(self, pass_name=None):
         return f"stub/{pass_name}"
-
-    def usage_for_pass(self, pass_name=None):
-        return None
 
 
 SECTION = DraftSection(

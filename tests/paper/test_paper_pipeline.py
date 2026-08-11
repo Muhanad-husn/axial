@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from axial.llm import StubLLMClient
 from axial.paper.brief import PaperBrief
 from axial.paper.intake import (
     MixedCorpusPinError,
@@ -136,7 +137,7 @@ def lenses_dir(tmp_path: Path) -> Path:
 SHAPE_RESPONSE = {"band": "strong", "defects": []}
 
 
-class StubClient:
+class StubClient(StubLLMClient):
     """Returns scripted JSON per pass, and records what it was asked."""
 
     # `paper_shape` deliberately resolves to a DIFFERENT model than
@@ -149,6 +150,7 @@ class StubClient:
     }
 
     def __init__(self, plan, drafts, shape=None):
+        super().__init__()
         self._plan = plan
         self._drafts = list(drafts)
         self._shape = shape if shape is not None else SHAPE_RESPONSE
@@ -164,9 +166,6 @@ class StubClient:
 
     def model_for_pass(self, pass_name=None):
         return self.model_by_pass.get(pass_name)
-
-    def usage_for_pass(self, pass_name=None):
-        return None
 
 
 PLAN = {
@@ -491,11 +490,6 @@ class CostReportingStubClient(StubClient):
 
     def usage_for_pass(self, pass_name=None):
         return {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500}
-
-    def cost_for_pass(self, pass_name=None):
-        # No provider-reported cost (issue #740) -- `usage_and_cost_by_pass`
-        # falls back to `estimate_cost`, same figures this test already pins.
-        return None
 
 
 def test_the_cost_field_carries_real_usage_scoped_to_the_papers_own_passes(
