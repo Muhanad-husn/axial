@@ -32,10 +32,15 @@ export interface AskAccepted {
 }
 
 /** `AskStatus` -- one job row. `cached` is true when the worker served the
- * paper from the content-keyed cache and the ask cost nothing. */
+ * paper from the content-keyed cache and the ask cost nothing. `case`/
+ * `question` (issue #759) are the brief that produced this row, read off
+ * the job's own payload server-side -- present for every state, not just
+ * `done`. */
 export interface AskStatus {
   id: string;
   state: string;
+  case: string | null;
+  question: string | null;
   corpus_pin: string | null;
   cached: boolean;
   created_at: string;

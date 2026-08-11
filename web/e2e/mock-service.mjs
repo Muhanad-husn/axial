@@ -221,6 +221,8 @@ function askStatusFor(job) {
   return {
     id: job.id,
     state: job.state,
+    case: job.case ?? null,
+    question: job.request ?? null,
     corpus_pin: "3c49f2e5aa11bb22",
     cached: Boolean(job.cached),
     created_at: job.created_at ?? new Date().toISOString(),

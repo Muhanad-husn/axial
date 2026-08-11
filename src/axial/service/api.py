@@ -199,10 +199,20 @@ class AskStatus(BaseModel):
     the result reference once it is done. `cached` (issue #686) is `True`
     once the worker has served this row from the content-keyed paper cache
     instead of calling the engine -- "marked as such" is the issue's own
-    acceptance line, and this field is that mark."""
+    acceptance line, and this field is that mark.
+
+    `case`/`question` (issue #759) are the brief that produced this row,
+    read off the job's own payload (`POST /asks` writes it at `enqueue`
+    time) rather than the finished analysis record -- a `queued`, `running`
+    or `failed` row has no record yet, but it always has the payload it was
+    enqueued with. This is additive: every existing consumer of this shape
+    (`web/src/lib/api.ts`, `tests/service/`) reads a strict superset of what
+    it already read."""
 
     id: str
     state: str
+    case: str | None = None
+    question: str | None = None
     corpus_pin: str | None = None
     cached: bool = False
     created_at: datetime
@@ -210,6 +220,16 @@ class AskStatus(BaseModel):
     finished_at: datetime | None = None
     result_ref: str | None = None
     error: str | None = None
+
+
+def _ask_status(job: dict[str, Any]) -> AskStatus:
+    """Build the served `AskStatus` for one job row, pulling `case`/
+    `question` out of `job["payload"]` (issue #759) -- the brief this
+    principal's own request enqueued, present on every row regardless of
+    state, unlike the analysis record `GET /asks/{id}/paper` only has once
+    a job is `done`."""
+    payload = job.get("payload") or {}
+    return AskStatus(**job, case=payload.get("case"), question=payload.get("question"))
 
 
 def _require_job(store: JobStore, ask_id: str) -> dict[str, Any]:
@@ -443,11 +463,11 @@ def create_app(
 
     @app.get("/asks", response_model=list[AskStatus])
     def list_asks(principal: Principal) -> list[AskStatus]:
-        return [AskStatus(**job) for job in store.list_for_principal(principal)]
+        return [_ask_status(job) for job in store.list_for_principal(principal)]
 
     @app.get("/asks/{ask_id}", response_model=AskStatus)
     def get_ask(ask_id: str, principal: Principal) -> AskStatus:
-        return AskStatus(**_require_own_job(store, ask_id, principal))
+        return _ask_status(_require_own_job(store, ask_id, principal))
 
     @app.get("/asks/{ask_id}/events")
     def stream_events(ask_id: str, request: Request, principal: Principal) -> StreamingResponse:

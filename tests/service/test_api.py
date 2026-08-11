@@ -155,6 +155,37 @@ def test_list_asks_returns_the_callers_own_asks_newest_first(client):
     assert [ask["id"] for ask in listed] == [third, second, first]
 
 
+def test_list_and_get_ask_carry_the_brief_for_a_running_row_and_a_done_one(
+    client, job_store: JobStore
+):
+    """Issue #759: a history row is unreadable without the case and
+    question that produced it, and the gap was `GET /asks` never carrying
+    the brief at all -- not just a `done` row missing it, a `running` one
+    too, since only a `done` job has an analysis record to read a brief
+    off of. The brief comes from the job's own payload instead, so it is
+    on the row in every state."""
+    job_id = client.post("/asks", json={"case": "Aleppo", "request": "Who governed it?"}).json()[
+        "id"
+    ]
+    job_store.claim()
+
+    running_row = next(row for row in client.get("/asks").json() if row["id"] == job_id)
+    assert running_row["state"] == "running"
+    assert running_row["case"] == "Aleppo"
+    assert running_row["question"] == "Who governed it?"
+
+    single = client.get(f"/asks/{job_id}").json()
+    assert single["case"] == "Aleppo"
+    assert single["question"] == "Who governed it?"
+
+    job_store.complete(job_id, result_ref="data/analyses/ignored.json", corpus_pin="sim-2026")
+
+    done_row = next(row for row in client.get("/asks").json() if row["id"] == job_id)
+    assert done_row["state"] == DONE
+    assert done_row["case"] == "Aleppo"
+    assert done_row["question"] == "Who governed it?"
+
+
 def test_list_asks_excludes_another_principals_asks(client, job_store: JobStore):
     job_store.enqueue(
         kind="ask", principal="someone-else", payload={"case": "Syria", "question": "Theirs"}
