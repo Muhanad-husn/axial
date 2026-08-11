@@ -4,11 +4,14 @@
  * /asks/{id}`, `GET /asks/{id}/events`, `GET /asks/{id}/paper`, `GET
  * /asks/{id}/export`, `GET /me/usage` -- with the same shapes and the same
  * SSE framing (`id:` line, `{"message", "detail"}` payload, stream closes
- * at a terminal state). Three things it does deliberately: it drops the
+ * at a terminal state). Four things it does deliberately: it drops the
  * first event connection halfway, so a resume through `Last-Event-ID` is
  * exercised for real; `POST /__kill` makes it stop answering, which is
- * what "the API died mid-ask" looks like from a browser; and the case
- * `quiet` holds the stream open and silent mid-ask, which is what a real
+ * what "the API died mid-ask" looks like from a browser; `POST /__revive`
+ * brings it back WITHOUT clearing any job -- an API restart loses no job
+ * state because the worker that runs the ask is a separate process (issue
+ * #760), and this is the mock's stand-in for that; and the case `quiet`
+ * holds the stream open and silent mid-ask, which is what a real
  * fourteen-minute ask looks like and the only way a buffering hop between
  * the browser and the service is visible at all.
  *
@@ -279,11 +282,19 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const path = url.pathname;
 
-  // Reviving has to answer even while dead; nothing else does.
+  // Reviving has to answer even while dead; nothing else does. `__revive`
+  // is the same revival `__reset` does, minus `jobs.clear()` -- an API
+  // restart in the real deployment loses no job state, since the worker
+  // that runs the ask is a separate process the restart never touches
+  // (issue #760).
   if (path === "/__reset") {
     dead = false;
     jobs.clear();
     seedHistory();
+    return json(res, 200, { dead });
+  }
+  if (path === "/__revive") {
+    dead = false;
     return json(res, 200, { dead });
   }
   if (dead) {

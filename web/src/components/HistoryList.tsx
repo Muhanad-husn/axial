@@ -19,8 +19,15 @@ function formatTimestamp(iso: string | null): string {
  * eight-character truncation of it distinguished nothing and a row here
  * has no better use for the space.
  *
- * Only a `done` row can be reopened -- `GET /asks/{id}/paper` refuses
- * anything else with a `409`, so the button simply does not appear for one. */
+ * A `done` row reopens straight into its paper -- `GET /asks/{id}/paper`
+ * refuses anything else with a `409`. A `queued`/`running` row instead
+ * resumes the walk (issue #760): the service survives an API restart and
+ * keeps running the ask on its worker, so a row still in flight is not a
+ * dead end, it is one `Resume` away from picking up exactly where the
+ * stream left off. Only `failed` gets no button -- its own error is already
+ * on the row, and there is nothing left to open. Which button appears is a
+ * straight read of `ask.state`, decided here; what either button actually
+ * does lives in `onReopen`'s caller. */
 export function HistoryList({
   asks,
   onReopen,
@@ -75,6 +82,15 @@ export function HistoryList({
               className="cursor-pointer flex-none rounded-md border border-rule px-2.5 py-1 text-[11px] font-semibold text-ink2"
             >
               Reopen
+            </button>
+          )}
+          {(ask.state === "queued" || ask.state === "running") && (
+            <button
+              type="button"
+              onClick={() => onReopen(ask)}
+              className="cursor-pointer flex-none rounded-md border border-rule px-2.5 py-1 text-[11px] font-semibold text-ink2"
+            >
+              Resume
             </button>
           )}
         </li>

@@ -17,12 +17,14 @@ import { useUsage } from "@/lib/useUsage";
 
 export default function AskPage() {
   const ask = useAsk();
-  const [startedAt, setStartedAt] = useState<number | null>(null);
   // Reopening a past ask (issue #746) shows that ask's paper -- its own
   // `AskStatus` row from `GET /asks`, already scoped to this analyst, is
   // everything needed; no second fetch of the row and no read of a
   // `session_id` off anything served, which on a cached row belongs to
-  // whoever asked first (#686's trap, carried into this slice).
+  // whoever asked first (#686's trap, carried into this slice). A row still
+  // `queued`/`running` has no paper to reopen into -- it reattaches to the
+  // walk instead (issue #760), through `useAsk` itself, so it is never
+  // routed through `reopened`/`usePaper` at all.
   const [reopened, setReopened] = useState<AskStatus | null>(null);
 
   // A finished ask -- live or reopened -- is what makes the history list and
@@ -38,8 +40,18 @@ export default function AskPage() {
 
   const start = (brief: Brief) => {
     setReopened(null);
-    setStartedAt(Date.now());
     ask.submit(brief);
+  };
+
+  // `done` rows still reopen into a paper fetch; anything else has no paper
+  // yet, so it reattaches to the walk instead (issue #760).
+  const reopen = (row: AskStatus) => {
+    if (row.state === "done") {
+      setReopened(row);
+    } else {
+      setReopened(null);
+      ask.reattach(row.id, row);
+    }
   };
 
   const status = viewingHistory ? reopened : ask.status;
@@ -60,7 +72,7 @@ export default function AskPage() {
             History
           </summary>
           <div className="border-t border-rule2 px-4 py-3.5">
-            <HistoryList asks={history.asks} onReopen={setReopened} />
+            <HistoryList asks={history.asks} onReopen={reopen} />
           </div>
         </details>
 
@@ -73,7 +85,7 @@ export default function AskPage() {
           </section>
         )}
 
-        {!viewingHistory && ask.askId && <Walk walk={ask.walk} startedAt={startedAt} />}
+        {!viewingHistory && ask.askId && <Walk walk={ask.walk} startedAt={ask.startedAt} />}
 
         {refusal && (
           <section
