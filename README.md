@@ -1,6 +1,6 @@
 # Axial
 
-![Axial](axial_logo.svg)
+![Axial](https://github.com/Muhanad-husn/axial/blob/main/docs/axial-logo.png))
 
 Axial turns a corpus of born-digital academic books into original comparative-historical
 scholarship. You hand it a case and a question; it returns an analysis, or a paper, in
