@@ -41,6 +41,15 @@ explicit = true
 torch = [
     { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
 ]
+# torchvision travels with torch or not at all: it links against torch's own
+# libraries, so a PyPI (CUDA-built) torchvision against a `+cpu` torch fails
+# to import. Measured in CI: pinning torch alone moved Linux to
+# torch 2.13.0+cpu and torchvision 0.28.0 (PyPI), which broke
+# `transformers`' lazy `AutoProcessor` import, so docling fell back to
+# unstructured and extraction stopped finding tables at all.
+torchvision = [
+    { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
+]
 
 [dependency-groups]
 dev = [
@@ -59,6 +68,12 @@ dev = [
 # opts out (`--no-default-groups --group service`).
 ingest = [
     "docling>=2.110.0",
+    # Listed here only so `[tool.uv.sources]` above can redirect it -- uv
+    # applies a source override to direct requirements only, the same reason
+    # `torch` is named in `service`. docling and unstructured are its real
+    # callers; the service image never installs this group and so never
+    # carries torchvision at all.
+    "torchvision",
     "google-api-python-client>=2.100.0",
     "google-auth>=2.30.0",
     "unstructured-inference>=1.6.13",
