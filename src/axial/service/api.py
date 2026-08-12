@@ -139,7 +139,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, StringConstraints
 
 from axial.access import ANALYST, READ, WORK, Resource, can_access
-from axial.context import DEFAULT_PRINCIPAL  # noqa: F401 -- re-exported; tests/service imports it from here
+from axial.context import (
+    DEFAULT_PRINCIPAL,  # noqa: F401 -- re-exported; tests/service imports it from here
+)
 from axial.paths import default_vault_dir
 from axial.service.auth import verify_bearer_token
 from axial.service.citation import render_record_for_serving, resolve_citation_mode
