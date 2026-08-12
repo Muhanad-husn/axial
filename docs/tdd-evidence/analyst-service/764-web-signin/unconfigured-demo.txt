@@ -1,0 +1,26 @@
+=== An unconfigured deployment: NEXT_PUBLIC_SUPABASE_URL / _ANON_KEY unset ===
+--- npm run build (must succeed with neither variable set) ---
+  Generating static pages using 5 workers (0/4) ...
+  Generating static pages using 5 workers (1/4) 
+  Generating static pages using 5 workers (2/4) 
+  Generating static pages using 5 workers (3/4) 
+✓ Generating static pages using 5 workers (4/4) in 1193ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+└ ○ /icon.svg
+
+
+○  (Static)  prerendered as static content
+
+build exit: 0
+
+--- the served page, with neither variable set (curl, not a browser) ---
+HTTP 200, 7541 bytes
+
+grep for the sign-in gate and the honest unconfigured copy:
+NEXT_PUBLIC_SUPABASE_ANON_KEY
+NEXT_PUBLIC_SUPABASE_URL
+not configured for this deployment. Set
