@@ -7,15 +7,36 @@ import { ExportControl } from "@/components/ExportControl";
 import { HistoryList } from "@/components/HistoryList";
 import { MetricsPanel } from "@/components/MetricsPanel";
 import { Paper } from "@/components/Paper";
+import { SignIn } from "@/components/SignIn";
 import { TopBar } from "@/components/TopBar";
 import { Walk } from "@/components/Walk";
 import type { AskStatus } from "@/lib/api";
 import { useAsk, type Brief } from "@/lib/useAsk";
 import { useHistory } from "@/lib/useHistory";
 import { usePaper } from "@/lib/usePaper";
+import { useSession } from "@/lib/useSession";
+import { useTheme } from "@/lib/useTheme";
 import { useUsage } from "@/lib/useUsage";
 
-export default function AskPage() {
+/** The gate every route sits behind (issue #764): signed out or unconfigured
+ * shows `SignIn` instead of any part of the app underneath, and a fresh
+ * `SignedInApp` mounts on every sign-in -- a full remount, so nothing a
+ * previous analyst's history/usage/paper hooks fetched can survive into the
+ * next analyst's session on the same browser. `theme.ready` gates the same
+ * way for the same reason: the app never paints with one analyst's cached
+ * theme and then repaints with another's a moment later. */
+export default function RootPage() {
+  const session = useSession();
+
+  if (session.status === "unconfigured") return <SignIn unconfigured />;
+  if (session.status === "loading") return null;
+  if (session.status === "signedOut") return <SignIn />;
+
+  return <SignedInApp key={session.userId} userId={session.userId} onSignOut={session.signOut} />;
+}
+
+function SignedInApp({ onSignOut }: { userId: string; onSignOut: () => void }) {
+  const theme = useTheme();
   const ask = useAsk();
   // Reopening a past ask (issue #746) shows that ask's paper -- its own
   // `AskStatus` row from `GET /asks`, already scoped to this analyst, is
@@ -62,9 +83,21 @@ export default function AskPage() {
       (ask.askId !== null && (ask.walk.phase === "queued" || ask.walk.phase === "running")));
   const refusal = viewingHistory ? null : (ask.submitError ?? ask.walk.error);
 
+  // The signed-in app is held off screen until the analyst's own theme is
+  // known (`useTheme`'s own docstring) -- an empty body is the whole
+  // mechanism, since `layout.tsx`'s inline boot script has already painted a
+  // reasonable guess and there is nothing themed to flash yet.
+  if (!theme.ready) return null;
+
   return (
     <>
-      <TopBar corpusPin={status?.corpus_pin ?? null} usage={usage.usage} />
+      <TopBar
+        corpusPin={status?.corpus_pin ?? null}
+        usage={usage.usage}
+        theme={theme.choice}
+        onThemeChange={theme.setChoice}
+        onSignOut={onSignOut}
+      />
 
       <main className="mx-auto flex w-full max-w-[760px] flex-1 flex-col gap-6 px-4 pt-6 pb-5 sm:px-8">
         <details data-testid="history" className="rounded-lg border border-rule bg-panel">

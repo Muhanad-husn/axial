@@ -25,6 +25,16 @@ export default defineConfig({
       env: {
         PORT: String(APP_PORT),
         AXIAL_API_BASE: `http://127.0.0.1:${MOCK_PORT}`,
+        // A syntactically real, never-contacted project (issue #764): no live
+        // Supabase project exists for this suite (the issue's own hazard), so
+        // this only has to be well-formed enough for `createBrowserClient` to
+        // construct -- every spec seeds its own session directly
+        // (`e2e/auth.ts`) rather than driving a real sign-in against it. Port
+        // 9 (`discard`) refuses fast on this box, so `signOut`'s own best-
+        // effort server call (`@supabase/auth-js`) fails quickly rather than
+        // waiting out a DNS timeout.
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:9",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "e2e-anon-key",
       },
       url: `http://127.0.0.1:${APP_PORT}`,
       timeout: 180_000,

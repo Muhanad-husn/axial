@@ -9,9 +9,31 @@
  * FastAPI app installs no CORS middleware, and a rewrite also means the API's
  * address is a deployment setting rather than something baked into the
  * browser bundle at build time.
+ *
+ * **One fetch path** (issue #764): every call below goes through
+ * `authorizedFetch`, which attaches `Authorization: Bearer <token>`
+ * (`@/lib/auth`'s own seam) and, on a `401`, tells `useSession` the token is
+ * no longer good for anything (`notifyUnauthorized`) -- so a token expiring
+ * mid-walk surfaces as a sign-in prompt from whichever call noticed first,
+ * never a silently-broken screen.
  */
 
+import { getAccessToken, notifyUnauthorized } from "@/lib/auth";
+
 export const API_BASE = "/api";
+
+async function authorizedFetch(
+  path: string,
+  init: RequestInit = {},
+  signal?: AbortSignal,
+): Promise<Response> {
+  const token = await getAccessToken();
+  const headers = new Headers(init.headers);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(`${API_BASE}${path}`, { ...init, headers, signal });
+  if (response.status === 401) notifyUnauthorized();
+  return response;
+}
 
 /** `AskRequest`. `weights` is the analyst's own instruction and is never
  * inferred (DEC-61). `session_id` is this browser's session
@@ -108,17 +130,16 @@ async function expectOk(response: Response): Promise<Response> {
 }
 
 export async function submitAsk(ask: AskRequest, signal?: AbortSignal): Promise<AskAccepted> {
-  const response = await fetch(`${API_BASE}/asks`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(ask),
+  const response = await authorizedFetch(
+    "/asks",
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(ask) },
     signal,
-  });
+  );
   return (await expectOk(response)).json();
 }
 
 export async function getAsk(id: string, signal?: AbortSignal): Promise<AskStatus> {
-  const response = await fetch(`${API_BASE}/asks/${encodeURIComponent(id)}`, { signal });
+  const response = await authorizedFetch(`/asks/${encodeURIComponent(id)}`, {}, signal);
   return (await expectOk(response)).json();
 }
 
@@ -126,7 +147,7 @@ export async function getAsk(id: string, signal?: AbortSignal): Promise<AskStatu
  * The service already filters on the identity seam (`current_principal`),
  * so this is this analyst's own list with nothing further to ask for. */
 export async function listAsks(signal?: AbortSignal): Promise<AskStatus[]> {
-  const response = await fetch(`${API_BASE}/asks`, { signal });
+  const response = await authorizedFetch("/asks", {}, signal);
   return (await expectOk(response)).json();
 }
 
@@ -138,7 +159,28 @@ export async function getUsage(
   signal?: AbortSignal,
 ): Promise<UsageResponse> {
   const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
-  const response = await fetch(`${API_BASE}/me/usage${query}`, { signal });
+  const response = await authorizedFetch(`/me/usage${query}`, {}, signal);
+  return (await expectOk(response)).json();
+}
+
+/** `GET`/`PUT /me/profile` (issue #763) -- the caller's own theme.
+ * `src/lib/theme.ts`'s `loadThemeChoice`/`saveThemeChoice` are the seam that
+ * calls these; nothing else in the client reads or writes a profile. */
+export interface ProfileResponse {
+  theme: string;
+}
+
+export async function getProfile(signal?: AbortSignal): Promise<ProfileResponse> {
+  const response = await authorizedFetch("/me/profile", {}, signal);
+  return (await expectOk(response)).json();
+}
+
+export async function putProfile(theme: string, signal?: AbortSignal): Promise<ProfileResponse> {
+  const response = await authorizedFetch(
+    "/me/profile",
+    { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ theme }) },
+    signal,
+  );
   return (await expectOk(response)).json();
 }
 
@@ -231,7 +273,7 @@ export interface PaperResponse {
 }
 
 export async function getPaper(id: string, signal?: AbortSignal): Promise<PaperResponse> {
-  const response = await fetch(`${API_BASE}/asks/${encodeURIComponent(id)}/paper`, { signal });
+  const response = await authorizedFetch(`/asks/${encodeURIComponent(id)}/paper`, {}, signal);
   return (await expectOk(response)).json();
 }
 
@@ -245,12 +287,39 @@ export const EXPORT_FORMAT_LABELS: Record<ExportFormat, string> = {
   odt: "OpenDocument (.odt)",
 };
 
-/** The download URL for one format. A plain anchor with `download` is the
- * whole client-side mechanism -- the server sets `Content-Disposition` and
- * does the rendering, so there is nothing here to fetch, convert or hold an
- * opinion about. */
+/** The export route's own URL, for display/copy only (`ExportControl`'s
+ * `href`) -- every route now requires a bearer token (issue #764), which a
+ * plain navigated anchor can never carry, so the actual download goes
+ * through `downloadExport` below instead. */
 export function exportUrl(id: string, format: ExportFormat): string {
   return `${API_BASE}/asks/${encodeURIComponent(id)}/export?format=${format}`;
+}
+
+/** Fetch the export with the caller's own bearer token, then hand it to the
+ * browser's download manager as a blob URL -- the server still does all the
+ * rendering and sets `Content-Disposition`; this is the least mechanism that
+ * can still attach `Authorization`, which a plain `<a href download>` cannot
+ * (issue #764's own constraint, once every route requires a token). */
+export async function downloadExport(
+  id: string,
+  format: ExportFormat,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await expectOk(
+    await authorizedFetch(`/asks/${encodeURIComponent(id)}/export?format=${format}`, {}, signal),
+  );
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${id}.${format}`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 /** Open the event stream, resuming after `lastSeq` when reconnecting.
@@ -263,9 +332,6 @@ export async function openEventStream(
 ): Promise<Response> {
   const headers: Record<string, string> = { Accept: "text/event-stream" };
   if (lastSeq > 0) headers["Last-Event-ID"] = String(lastSeq);
-  const response = await fetch(`${API_BASE}/asks/${encodeURIComponent(id)}/events`, {
-    headers,
-    signal,
-  });
+  const response = await authorizedFetch(`/asks/${encodeURIComponent(id)}/events`, { headers }, signal);
   return expectOk(response);
 }
