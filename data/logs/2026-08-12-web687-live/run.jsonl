@@ -1,0 +1,114 @@
+{"at":"2026-08-11T22:10:26.140Z","step":"stage-start","stage":"themes"}
+{"at":"2026-08-11T22:10:26.940Z","step":"theme-system","machine":"dark","body_bg":"lab(7.57493 0.51488 2.74023)","data_theme":"dark"}
+{"at":"2026-08-11T22:10:27.042Z","step":"screenshot","name":"10-theme-system-dark","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\10-theme-system-dark.png"}
+{"at":"2026-08-11T22:10:27.050Z","step":"theme-choice","choice":"Light","outcome":"no control"}
+{"at":"2026-08-11T22:10:27.054Z","step":"theme-choice","choice":"Dark","outcome":"no control"}
+{"at":"2026-08-11T22:10:27.058Z","step":"theme-choice","choice":"System","outcome":"no control"}
+{"at":"2026-08-11T22:10:27.783Z","step":"theme-system","machine":"light","body_bg":"lab(94.8031 0.200421 2.27988)","data_theme":"light"}
+{"at":"2026-08-11T22:10:27.858Z","step":"screenshot","name":"10-theme-system-light","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\10-theme-system-light.png"}
+{"at":"2026-08-11T22:10:27.867Z","step":"theme-choice","choice":"Light","outcome":"no control"}
+{"at":"2026-08-11T22:10:27.874Z","step":"theme-choice","choice":"Dark","outcome":"no control"}
+{"at":"2026-08-11T22:10:27.881Z","step":"theme-choice","choice":"System","outcome":"no control"}
+{"at":"2026-08-11T22:10:27.892Z","step":"stage-done","stage":"themes"}
+{"at":"2026-08-11T22:16:00.151Z","step":"stage-start","stage":"ask"}
+{"at":"2026-08-11T22:16:01.365Z","step":"screenshot","name":"01-home","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\01-home.png"}
+{"at":"2026-08-11T22:16:01.478Z","step":"submitted","case":"Late Ottoman and Mandate Iraq","question":"Did Ottoman land registration in the Iraqi provinces create the landholding class the British Mandate then governed through, or did the Mandate make it?"}
+{"at":"2026-08-11T22:16:06.508Z","step":"first-event","seconds_after_submit":5.091}
+{"at":"2026-08-11T22:16:06.588Z","step":"screenshot","name":"02-walk-first-events","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\02-walk-first-events.png"}
+{"at":"2026-08-11T22:16:06.620Z","step":"walk","events":1,"seconds":5.203,"latest":"→\ninterrogating the question"}
+{"at":"2026-08-11T22:16:31.706Z","step":"walk","events":3,"seconds":30.289,"latest":"→\nchecking the question against the measured corpus"}
+{"at":"2026-08-11T22:16:41.741Z","step":"walk","events":5,"seconds":40.324,"latest":"→\nretrieval turn 1 of 14: deciding what to look for next"}
+{"at":"2026-08-11T22:16:41.818Z","step":"screenshot","name":"03-walk-midway","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\03-walk-midway.png"}
+{"at":"2026-08-11T22:17:06.635Z","step":"stage-start","stage":"themes"}
+{"at":"2026-08-11T22:17:07.924Z","step":"theme-system","machine":"dark","body_bg":"lab(7.57493 0.51488 2.74023)","data_theme":"dark"}
+{"at":"2026-08-11T22:17:08.031Z","step":"screenshot","name":"10-theme-system-dark","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\10-theme-system-dark.png"}
+{"at":"2026-08-11T22:17:08.436Z","step":"theme-choice","machine":"dark","choice":"light","data_theme":"light","body_bg":"lab(94.8031 0.200421 2.27988)"}
+{"at":"2026-08-11T22:17:08.526Z","step":"screenshot","name":"11-theme-dark-machine-light-chosen","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\11-theme-dark-machine-light-chosen.png"}
+{"at":"2026-08-11T22:17:08.892Z","step":"theme-choice","machine":"dark","choice":"dark","data_theme":"dark","body_bg":"lab(7.57493 0.51488 2.74023)"}
+{"at":"2026-08-11T22:17:09.015Z","step":"screenshot","name":"11-theme-dark-machine-dark-chosen","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\11-theme-dark-machine-dark-chosen.png"}
+{"at":"2026-08-11T22:17:09.388Z","step":"theme-choice","machine":"dark","choice":"system","data_theme":"dark","body_bg":"lab(7.57493 0.51488 2.74023)"}
+{"at":"2026-08-11T22:17:09.453Z","step":"screenshot","name":"11-theme-dark-machine-system-chosen","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\11-theme-dark-machine-system-chosen.png"}
+{"at":"2026-08-11T22:17:10.458Z","step":"theme-system","machine":"light","body_bg":"lab(94.8031 0.200421 2.27988)","data_theme":"light"}
+{"at":"2026-08-11T22:17:10.540Z","step":"screenshot","name":"10-theme-system-light","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\10-theme-system-light.png"}
+{"at":"2026-08-11T22:17:10.903Z","step":"theme-choice","machine":"light","choice":"light","data_theme":"light","body_bg":"lab(94.8031 0.200421 2.27988)"}
+{"at":"2026-08-11T22:17:10.972Z","step":"screenshot","name":"11-theme-light-machine-light-chosen","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\11-theme-light-machine-light-chosen.png"}
+{"at":"2026-08-11T22:17:11.338Z","step":"theme-choice","machine":"light","choice":"dark","data_theme":"dark","body_bg":"lab(7.57493 0.51488 2.74023)"}
+{"at":"2026-08-11T22:17:11.411Z","step":"screenshot","name":"11-theme-light-machine-dark-chosen","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\11-theme-light-machine-dark-chosen.png"}
+{"at":"2026-08-11T22:17:11.774Z","step":"theme-choice","machine":"light","choice":"system","data_theme":"light","body_bg":"lab(94.8031 0.200421 2.27988)"}
+{"at":"2026-08-11T22:17:11.864Z","step":"screenshot","name":"11-theme-light-machine-system-chosen","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\11-theme-light-machine-system-chosen.png"}
+{"at":"2026-08-11T22:17:11.904Z","step":"stage-done","stage":"themes"}
+{"at":"2026-08-11T22:19:52.392Z","step":"walk","events":7,"seconds":230.975,"latest":"→\nretrieval turn 2 of 14: deciding what to look for next"}
+{"at":"2026-08-11T22:20:02.438Z","step":"walk","events":8,"seconds":241.021,"latest":"→\nlooking for the arguments the corpus makes about 'Ottoman Land Code of 1858' -- found 10 passages (of 20 total)"}
+{"at":"2026-08-11T22:20:07.473Z","step":"walk","events":9,"seconds":246.056,"latest":"→\nretrieval turn 3 of 14: deciding what to look for next"}
+{"at":"2026-08-11T22:20:22.524Z","step":"walk","events":11,"seconds":261.107,"latest":"→\nretrieval turn 4 of 14: deciding what to look for next"}
+{"at":"2026-08-11T22:20:37.582Z","step":"walk","events":13,"seconds":276.165,"latest":"→\nretrieval turn 5 of 14: deciding what to look for next"}
+{"at":"2026-08-11T22:20:52.637Z","step":"walk","events":15,"seconds":291.22,"latest":"→\nretrieval turn 6 of 14: deciding what to look for next"}
+{"at":"2026-08-11T22:21:07.684Z","step":"walk","events":17,"seconds":306.267,"latest":"→\nretrieval turn 7 of 14: deciding what to look for next"}
+{"at":"2026-08-11T22:21:22.771Z","step":"walk","events":19,"seconds":321.354,"latest":"→\nretrieval turn 8 of 14: deciding what to look for next"}
+{"at":"2026-08-11T22:21:37.825Z","step":"walk","events":21,"seconds":336.408,"latest":"→\nretrieval turn 9 of 14: deciding what to look for next"}
+{"at":"2026-08-11T22:21:52.891Z","step":"walk","events":23,"seconds":351.474,"latest":"→\nretrieval turn 10 of 14: deciding what to look for next"}
+{"at":"2026-08-11T22:22:02.916Z","step":"walk","events":25,"seconds":361.499,"latest":"→\nretrieval turn 11 of 14: deciding what to look for next"}
+{"at":"2026-08-11T22:22:17.967Z","step":"walk","events":27,"seconds":376.55,"latest":"→\nretrieval turn 12 of 14: deciding what to look for next"}
+{"at":"2026-08-11T22:22:33.016Z","step":"walk","events":29,"seconds":391.599,"latest":"→\nretrieval turn 13 of 14: deciding what to look for next"}
+{"at":"2026-08-11T22:22:43.044Z","step":"walk","events":31,"seconds":401.627,"latest":"→\nretrieval turn 14 of 14: deciding what to look for next"}
+{"at":"2026-08-11T22:23:08.108Z","step":"walk","events":35,"seconds":426.691,"latest":"→\nwriting the answer"}
+{"at":"2026-08-11T22:23:43.212Z","step":"walk","events":37,"seconds":461.795,"latest":"→\nchecking the answer"}
+{"at":"2026-08-11T22:25:48.595Z","step":"walk","events":38,"seconds":587.178,"latest":"✓\nchecked the answer -- confidence low"}
+{"at":"2026-08-11T22:25:48.598Z","step":"paper-visible","seconds_after_submit":587.181,"events":38}
+{"at":"2026-08-11T22:25:48.605Z","step":"walk-final","events":38,"texts":["✓\ninterrogating the question","✓\ninterrogation concluded: found 4 premises, applied 1 bound","✓\nchecking the question against the measured corpus","✓\nthe intake fork-check measured sources split unevenly across an event on \"British Mandate\" -- 2 options were available (\"Keep all sources — temporal consequence reading\", \"Focus on Mandate-era sources only\") -- but the service declines every fork under its declared policy: it does not answer, and the run proceeds unconstrained, every source read as a full voice","✓\nretrieval turn 1 of 14: deciding what to look for next","✓\nlooking for what the corpus says about 'Ottoman land registration in Iraq' -- found 1 passage","✓\nretrieval turn 2 of 14: deciding what to look for next","✓\nlooking for the arguments the corpus makes about 'Ottoman Land Code of 1858' -- found 10 passages (of 20 total)","✓\nretrieval turn 3 of 14: deciding what to look for next","✓\nlooking for what the corpus says about 'Ottoman Land Code of 1858' -- found 2 passages","✓\nretrieval turn 4 of 14: deciding what to look for next","✓\nlooking for where 'Iraq' and 'Ottoman Land Code of 1858' are discussed together -- found 0 passages","✓\nretrieval turn 5 of 14: deciding what to look for next","✓\nlooking for what the corpus says about 'Ottoman Land Code of 1858' -- found 2 passages","✓\nretrieval turn 6 of 14: deciding what to look for next","✓\nlooking for what the corpus says about 'Ottoman Land Code of 1858' -- found 2 passages","✓\nretrieval turn 7 of 14: deciding what to look for next","✓\nlooking at what the corpus says about 'Ottoman Land Code of 1858' -- found 2 passages","✓\nretrieval turn 8 of 14: deciding what to look for next","✓\nreading passages already found more closely -- found 3 passages","✓\nretrieval turn 9 of 14: deciding what to look for next","✓\nlooking for what the corpus says about 'land reform' -- found 4 passages","✓\nretrieval turn 10 of 14: deciding what to look for next","✓\nlooking for what the corpus says about 'Ottoman Land Code of 1858' -- found 2 passages","✓\nretrieval turn 11 of 14: deciding what to look for next","✓\nlooking for what the corpus says about 'Ottoman Land Code of 1858' -- found 2 passages","✓\nretrieval turn 12 of 14: deciding what to look for next","✓\nlooking for what the corpus says about 'Ottoman Land Code of 1858' -- found 2 passages","✓\nretrieval turn 13 of 14: deciding what to look for next","✓\nlooking for what the corpus says about 'Ottoman Land Code of 1858 Iraq' -- found 3 passages","✓\nretrieval turn 14 of 14: deciding what to look for next","✓\nreading passages already found more closely -- found 3 passages","✓\nassembling passages","✓\nassembled 19 passage(s)","✓\nwriting the answer","✓\nwrote the answer -- 9 claim(s)","✓\nchecking the answer","✓\nchecked the answer -- confidence low"]}
+{"at":"2026-08-11T22:25:48.854Z","step":"screenshot","name":"04-paper","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\04-paper.png"}
+{"at":"2026-08-11T22:25:48.880Z","step":"paper","list_items":0,"markers":[],"legend":"STATED\nA source says this directly.\nCONCLUDED\nAxial put sources together. Most likely to be wrong.\nRUNS PAST\nBeyond what the books support. Labelled, not removed.","chars":5522,"head":"My judgment is that Ottoman registration created the Mandate's landholding class in the stronger causal sense: it legally crystallized and enlarged an already emerging class of notables and tax farmers, while the Mandate chiefly consolidated and governed through that class rather than making it from scratch.\n\nRUNS PAST THE BOOKS\nAyubi, Nazih N.; (1995) · T H E O T T O M A N S AND T H E MILITARY/IQ"}
+{"at":"2026-08-11T22:25:48.885Z","step":"metrics-present","present":true}
+{"at":"2026-08-11T22:25:48.898Z","step":"metrics-collapsed","open":false}
+{"at":"2026-08-11T22:25:49.561Z","step":"screenshot","name":"05-metrics-open","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\05-metrics-open.png"}
+{"at":"2026-08-11T22:25:49.567Z","step":"metrics-open-text","text":"METRICS\nCOST\n\nTotal: $0.04\n\ncounter_position_generate: 7056 tokens, $0.0021\n\nfork_check: 4006 tokens, $0.0004\n\ninterrogate: 1918 tokens, $0.0018\n\nretrieve: 105524 tokens, $0.0311\n\nsynthesize: 37488 tokens, $0.0064\n\nMODEL BY PASS\n\ncounter_position_generate: z-ai/glm-5.2\n\nfork_check: deepseek/deepseek-v4-flash\n\ninterrogate: deepseek/deepseek-v4-pro\n\nretrieve: deepseek/deepseek-v4-pro\n\nsynthesize: openai/gpt-5.6-luna\n\nCOVERAGE MAP\n\n1858 Land Law: thin (3 of 3 notes)\n\nOttoman Land Code of 1858: thin (1 of 2 notes)\n\nCONFIDENCE\n\nlow\n\noverall confidence is 'low', bounded by 4 evidence note(s), median note band 'thin' capped at 'medium' because coverage_map discloses a thin name; coverage by name: 1858 Land Law (thin: 3 corpus notes, 3 evidence notes); Ottoman Land Code of 1858 (thin: 2 corpus notes, 1 evidence notes)"}
+{"at":"2026-08-11T22:25:50.123Z","step":"screenshot","name":"06-export-open","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\06-export-open.png"}
+{"at":"2026-08-11T22:25:50.129Z","step":"export-options","labels":["Markdown (.md)","Word (.docx)","OpenDocument (.odt)"]}
+{"at":"2026-08-11T22:25:50.509Z","step":"export","format":"md","outcome":"FAILED","error":"Error: download.saveAs: canceled"}
+{"at":"2026-08-11T22:25:50.706Z","step":"screenshot","name":"99-export-md-failed","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\99-export-md-failed.png"}
+{"at":"2026-08-11T22:25:51.003Z","step":"export","format":"docx","outcome":"FAILED","error":"Error: download.saveAs: canceled"}
+{"at":"2026-08-11T22:25:51.217Z","step":"screenshot","name":"99-export-docx-failed","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\99-export-docx-failed.png"}
+{"at":"2026-08-11T22:25:51.833Z","step":"export","format":"odt","outcome":"FAILED","error":"Error: download.saveAs: canceled"}
+{"at":"2026-08-11T22:25:52.101Z","step":"screenshot","name":"99-export-odt-failed","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\99-export-odt-failed.png"}
+{"at":"2026-08-11T22:25:52.970Z","step":"screenshot","name":"07-history","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\07-history.png"}
+{"at":"2026-08-11T22:25:52.975Z","step":"history","text":"HISTORY\nDONE\ncorpus sim-2026\n12/08/2026, 00:16:01 → 12/08/2026, 00:25:47\nReopen"}
+{"at":"2026-08-11T22:25:52.980Z","step":"meters","texts":["⏱\n$0.04","▤\n$0.04"]}
+{"at":"2026-08-11T22:25:53.195Z","step":"screenshot","name":"08-top-bar","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\08-top-bar.png"}
+{"at":"2026-08-11T22:25:53.197Z","step":"console-errors","errors":[]}
+{"at":"2026-08-11T22:25:53.208Z","step":"stage-done","stage":"ask"}
+{"at":"2026-08-11T22:28:19.997Z","step":"stage-start","stage":"export"}
+{"at":"2026-08-11T22:28:22.842Z","step":"export2","format":"md","outcome":"FAILED","error":"Error: download.saveAs: canceled"}
+{"at":"2026-08-11T22:28:23.054Z","step":"screenshot","name":"99-export2-md","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\99-export2-md.png"}
+{"at":"2026-08-11T22:28:25.453Z","step":"export2","format":"docx","outcome":"FAILED","error":"Error: download.saveAs: canceled"}
+{"at":"2026-08-11T22:28:25.713Z","step":"screenshot","name":"99-export2-docx","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\99-export2-docx.png"}
+{"at":"2026-08-11T22:28:28.078Z","step":"export2","format":"odt","outcome":"FAILED","error":"Error: download.saveAs: canceled"}
+{"at":"2026-08-11T22:28:28.348Z","step":"screenshot","name":"99-export2-odt","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\99-export2-odt.png"}
+{"at":"2026-08-11T22:28:28.357Z","step":"stage-done","stage":"export"}
+{"at":"2026-08-11T22:42:54.317Z","step":"stage-start","stage":"phone"}
+{"at":"2026-08-11T22:42:56.024Z","step":"phone-overflow","scrollWidth":390,"clientWidth":390,"horizontal_scroll":false}
+{"at":"2026-08-11T22:42:56.167Z","step":"screenshot","name":"20-phone-home","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\20-phone-home.png"}
+{"at":"2026-08-11T22:42:56.860Z","step":"screenshot","name":"21-phone-history","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\21-phone-history.png"}
+{"at":"2026-08-11T22:43:00.052Z","step":"screenshot","name":"22-phone-paper","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\22-phone-paper.png"}
+{"at":"2026-08-11T22:43:00.056Z","step":"phone-paper-overflow","scrollWidth":390,"clientWidth":390,"horizontal_scroll":false}
+{"at":"2026-08-11T22:43:00.102Z","step":"stage-done","stage":"phone"}
+{"at":"2026-08-11T22:48:21.695Z","step":"stage-start","stage":"phone"}
+{"at":"2026-08-11T22:48:22.988Z","step":"phone-overflow","scrollWidth":390,"clientWidth":390,"horizontal_scroll":false}
+{"at":"2026-08-11T22:48:23.107Z","step":"screenshot","name":"20-phone-home","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\20-phone-home.png"}
+{"at":"2026-08-11T22:48:23.749Z","step":"screenshot","name":"21-phone-history","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\21-phone-history.png"}
+{"at":"2026-08-11T22:48:25.501Z","step":"screenshot","name":"22-phone-paper","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\22-phone-paper.png"}
+{"at":"2026-08-11T22:48:25.507Z","step":"phone-paper-overflow","scrollWidth":390,"clientWidth":390,"horizontal_scroll":false}
+{"at":"2026-08-11T22:48:25.529Z","step":"stage-done","stage":"phone"}
+{"at":"2026-08-11T22:49:15.498Z","step":"stage-start","stage":"cache"}
+{"at":"2026-08-11T22:49:16.225Z","step":"cache-submitted"}
+{"at":"2026-08-11T22:49:18.294Z","step":"cache-result","seconds":2.184,"paper":true,"events":["✓\nthis exact brief has already been answered against this corpus -- served from cache, no model call made"],"error":null}
+{"at":"2026-08-11T22:49:18.582Z","step":"screenshot","name":"30-cache-hit","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\30-cache-hit.png"}
+{"at":"2026-08-11T22:49:19.513Z","step":"screenshot","name":"31-cache-history","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\31-cache-history.png"}
+{"at":"2026-08-11T22:49:19.525Z","step":"cache-badge","badges":1,"history":"HISTORY\nDONE\ncached · no cost\ncorpus sim-2026\n12/08/2026, 00:49:16 → 12/08/2026, 00:49:17\nReopen\nDONE\ncorpus sim-2026\n12/08/2026, 00:16:01 → 12/08/2026, 00:25:47\nReopen"}
+{"at":"2026-08-11T22:49:19.538Z","step":"cache-meters","texts":["⏱\n$0.00","▤\n$0.04"]}
+{"at":"2026-08-11T22:49:19.575Z","step":"stage-done","stage":"cache"}
+{"at":"2026-08-11T22:50:58.271Z","step":"stage-start","stage":"kill"}
+{"at":"2026-08-11T22:52:05.147Z","step":"kill-events-before","events":3}
+{"at":"2026-08-11T22:52:05.694Z","step":"killed-api","pid":"22524"}
+{"at":"2026-08-11T22:52:11.734Z","step":"kill-result","seconds_after_kill":6.028,"error":"Lost contact with the Axial service. The ask may still be running -- reload this page to pick it up.","ask_button_enabled":true}
+{"at":"2026-08-11T22:52:11.795Z","step":"screenshot","name":"40-api-killed","path":"D:\\axial\\data\\logs\\2026-08-12-web687-live\\shots\\40-api-killed.png"}
+{"at":"2026-08-11T22:52:11.805Z","step":"stage-done","stage":"kill"}
