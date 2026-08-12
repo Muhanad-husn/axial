@@ -110,7 +110,7 @@ function SignedInApp({ onSignOut }: { userId: string; onSignOut: () => void }) {
         </details>
 
         {brief && (
-          <section>
+          <section className="hero rounded-lg p-4">
             <div className="mb-1.5 font-mono text-[9.5px] font-semibold tracking-[0.13em] text-ink3 uppercase">
               {brief.case}
             </div>
@@ -159,7 +159,7 @@ function SignedInApp({ onSignOut }: { userId: string; onSignOut: () => void }) {
         )}
 
         {!brief && (
-          <section className="text-[12.5px] leading-[1.6] text-ink2">
+          <section className="hero rounded-lg p-4 text-[12.5px] leading-[1.6] text-ink2">
             State a case, ask a question, and watch Axial read the corpus. An ask takes
             fifteen minutes or so, and the walk shows what it is doing the whole way.
           </section>

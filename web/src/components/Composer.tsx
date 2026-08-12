@@ -40,6 +40,24 @@ export function Composer({
     return Object.keys(weights).length > 0 ? weights : null;
   };
 
+  // Folded to a compact bar while an ask is running (issue #770): the system
+  // doesn't support a follow-up mid-ask, so a live, inviting text box sitting
+  // on screen for fifteen minutes invites an interaction that can't work.
+  // Purely a function of `busy` -- no state of its own -- so it re-expands
+  // the instant `busy` goes false, whether that's the ask finishing or a
+  // history row being reopened.
+  if (busy) {
+    return (
+      <div
+        data-testid="composer-busy"
+        className="mx-4 mb-6 flex items-center gap-2.5 rounded-lg border border-rule bg-panel px-4 py-2.5 text-[11.5px] text-ink2 sm:mx-8"
+      >
+        <span className="pulse inline-block size-[7px] flex-none rounded-full bg-concluded" aria-hidden="true" />
+        Reading the corpus -- the walk above shows every step.
+      </div>
+    );
+  }
+
   return (
     <form
       className="mx-4 mb-6 rounded-lg border border-rule bg-panel p-4 sm:mx-8"

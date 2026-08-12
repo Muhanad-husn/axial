@@ -132,6 +132,13 @@ test("a refusal is shown in the service's own words", async ({ page }) => {
 test.describe("on a machine set to dark", () => {
   test.use({ colorScheme: "dark" });
 
+  // Issue #770: `ThemeControl` collapses to the current choice, so the
+  // three mode buttons are only in the DOM once its own `<summary>` is
+  // opened -- picking one closes it again, hence opening it back up before
+  // the second and third picks below.
+  const openThemeControl = (page: Page) =>
+    page.getByRole("group", { name: "Theme" }).locator("summary").click();
+
   test("system follows the machine and an explicit choice overrides it both ways", async ({
     page,
   }) => {
@@ -142,6 +149,7 @@ test.describe("on a machine set to dark", () => {
       () => getComputedStyle(document.body).backgroundColor,
     );
 
+    await openThemeControl(page);
     await page.getByRole("button", { name: "light" }).click();
     await expect(root).toHaveAttribute("data-theme", "light");
     const lightBackground = await page.evaluate(
@@ -153,6 +161,7 @@ test.describe("on a machine set to dark", () => {
     await page.reload();
     await expect(root).toHaveAttribute("data-theme", "light");
 
+    await openThemeControl(page);
     await page.getByRole("button", { name: "system" }).click();
     await expect(root).toHaveAttribute("data-theme", "dark");
   });

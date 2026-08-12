@@ -80,6 +80,9 @@ test("two analysts in turn on the same browser see two different histories and t
   await page.getByTestId("history").getByText("History", { exact: true }).click();
   await expect(page.getByTestId("history-list").getByText("Analyst A's own case")).toBeVisible();
 
+  // Issue #770: `ThemeControl` collapses to the current choice -- open it
+  // before its mode buttons are in the DOM to click.
+  await page.getByRole("group", { name: "Theme" }).locator("summary").click();
   await page.getByRole("button", { name: "dark" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 
@@ -99,6 +102,7 @@ test("two analysts in turn on the same browser see two different histories and t
   // the `dark` A just chose.
   await expect(page.locator("html")).not.toHaveAttribute("data-theme", "dark");
 
+  await page.getByRole("group", { name: "Theme" }).locator("summary").click();
   await page.getByRole("button", { name: "light" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 

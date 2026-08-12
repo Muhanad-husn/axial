@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import streamlit as st
 
@@ -33,6 +34,32 @@ from axial.runlog import RunNotFoundError, format_duration
 
 THEME_CHOICES = ("Light", "Dark", "System")
 SCREENS = ("Run monitor", "Sources and ingest", "Status")
+
+# src/axial/operator/app.py -> axial/operator -> axial -> src -> repo root.
+# The one canonical copy of the mark (issue #770): ink in it is already
+# `currentColor`, so wrapping it in a span coloured `var(--ink)` is all this
+# console needs to do to follow its own light/dark palette -- no second file.
+_LOGO_SVG_PATH = Path(__file__).resolve().parent.parent.parent.parent / "axial_logo.svg"
+
+
+def _axial_mark_html() -> str:
+    """The sidebar wordmark, mark plus text. Falls back to plain text if the
+    checkout doesn't have the asset where expected, rather than crashing the
+    console over a missing logo. 22px: under ~20px the mark's strokes get
+    thin enough to read as an asterisk (verified in the design pass for
+    issue #770)."""
+    try:
+        svg = _LOGO_SVG_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return "<div style='font:600 13px var(--mono); color: var(--ink);'>AXIAL</div>"
+    mark = svg.replace('width="120" height="120"', 'width="22" height="22"')
+    return (
+        "<div style='display:flex; align-items:center; gap:8px; color: var(--ink);'>"
+        f"{mark}"
+        "<span style='font:600 13px var(--sans); letter-spacing: 0.08em;'>AXIAL</span>"
+        "</div>"
+    )
+
 
 # The mockup's twelve theme values (frame 2d), verbatim in oklch, plus the
 # three font stacks. Dark leaves `--bg` to `--lcolbg`, the darkest value the
@@ -139,7 +166,10 @@ def _apply_theme(mode: str) -> None:
 
 def _sidebar() -> tuple[str, str]:
     with st.sidebar:
-        st.markdown("### Axial")
+        # `st.html()` sanitises `<svg>` out entirely (verified: an inline
+        # `<circle>` never reaches the DOM through it); `st.markdown` with
+        # `unsafe_allow_html` is the one of the two that actually renders it.
+        st.markdown(_axial_mark_html(), unsafe_allow_html=True)
         st.caption("operator console")
         screen = st.radio("Screen", SCREENS, key="screen", label_visibility="collapsed")
         st.divider()

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { WalkState } from "@/lib/events";
 
@@ -28,6 +28,15 @@ export function Walk({ walk, startedAt }: { walk: WalkState; startedAt: number |
   const running = walk.phase === "queued" || walk.phase === "running";
   const elapsed = useElapsed(startedAt, running);
 
+  // A fifteen-minute ask can log dozens of events; the box stays ~6 lines
+  // tall and scrolls, so it never pushes the paper below the fold. The whole
+  // history is still there on scroll -- this only auto-follows the newest.
+  const listRef = useRef<HTMLOListElement>(null);
+  useEffect(() => {
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [walk.events.length]);
+
   return (
     <section className="flex flex-col gap-3 border-l-2 border-rule pl-4">
       <div className="flex items-center gap-2.5 text-[11px] font-semibold text-ink2">
@@ -52,7 +61,11 @@ export function Walk({ walk, startedAt }: { walk: WalkState; startedAt: number |
         </span>
       </div>
 
-      <ol className="flex list-none flex-col gap-2.5 p-0" data-testid="walk-events">
+      <ol
+        ref={listRef}
+        className="flex max-h-[10.5em] list-none flex-col gap-2.5 overflow-y-auto p-0"
+        data-testid="walk-events"
+      >
         {walk.events.map((event, index) => {
           const live = running && index === walk.events.length - 1;
           return (
@@ -69,7 +82,13 @@ export function Walk({ walk, startedAt }: { walk: WalkState; startedAt: number |
               >
                 {live ? "→" : "✓"}
               </span>
-              <span>{event.message}</span>
+              {/* The running line reads as running: `.shim` (`globals.css`,
+                  issue #770) is a left-to-right wash in `--concluded` --
+                  the same marker as the arrow and the pulse dot above,
+                  never `--stated` (that's "grounded in the source"). It
+                  comes off the instant the step completes, and under
+                  `prefers-reduced-motion` it never applies at all. */}
+              <span className={live ? "shim" : undefined}>{event.message}</span>
             </li>
           );
         })}
