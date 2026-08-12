@@ -104,7 +104,7 @@ _SNAPSHOT = Snapshot(
 
 
 def test_the_cli_and_the_api_produce_the_same_paper_for_the_same_brief(
-    job_store: JobStore, engine_calls: list[dict[str, Any]], tmp_path: Path
+    job_store: JobStore, engine_calls: list[dict[str, Any]], tmp_path: Path, authed_app
 ):
     # `--no-paper` stops at the answer: an ask produces a §7.3 analysis
     # record, and the Phase-C paper draft `axial ask` adds on top is a
@@ -112,7 +112,7 @@ def test_the_cli_and_the_api_produce_the_same_paper_for_the_same_brief(
     assert cli.main(["ask", QUESTION, "--case", CASE, "--no-paper"]) == 0
     cli_call = engine_calls[-1]
 
-    with TestClient(create_app(job_store)) as client:
+    with TestClient(authed_app(create_app(job_store))) as client:
         job_id = client.post("/asks", json={"case": CASE, "request": QUESTION}).json()["id"]
         worker = Worker(
             job_store,

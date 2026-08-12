@@ -24,8 +24,8 @@ _PRINCIPAL = "local-analyst"  # axial.context.DEFAULT_PRINCIPAL, unauthenticated
 
 
 @pytest.fixture
-def client(job_store: JobStore, quota_store: QuotaStore):
-    with TestClient(create_app(job_store, quota_store)) as test_client:
+def client(job_store: JobStore, quota_store: QuotaStore, authed_app):
+    with TestClient(authed_app(create_app(job_store, quota_store))) as test_client:
         yield test_client
 
 

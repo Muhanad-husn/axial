@@ -33,8 +33,8 @@ _JOIN_TIMEOUT = 15.0
 
 
 @pytest.fixture
-def client(job_store: JobStore):
-    with TestClient(create_app(job_store)) as test_client:
+def client(job_store: JobStore, authed_app):
+    with TestClient(authed_app(create_app(job_store))) as test_client:
         yield test_client
 
 

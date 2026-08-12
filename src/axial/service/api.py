@@ -44,16 +44,40 @@ missing or repeating an event.
 and dicts; the models below are the wire contract at this boundary, not a
 record shape.
 
-Auth is not in this issue (#685 built the request-path shape and the access
-policy; #688 is where a token turns into a real, distinct principal).
-`current_principal` is the identity seam: one FastAPI dependency, still
-returning the single local `DEFAULT_PRINCIPAL` (`axial.context`) until #688
-lands. `GET /asks` filters on it, and every by-id route below (`GET /asks/
-{id}`, its `/events`, its `/paper`) now goes through `can_access`
-(`axial.access`) rather than trusting that a query naturally excluded rows
-that are not the caller's: a job id is guessable, so the refusal has to come
-from the policy, not from an accident of how `JobStore.get` happens to be
-called.
+**`current_principal` verifies a Supabase-issued JWT** (issue #763): the
+identity seam #685 built this dependency to be, now reading the
+`Authorization: Bearer` header, verifying it (`axial.service.auth.
+verify_bearer_token` -- JWKS, asymmetric, `AXIAL_SUPABASE_JWKS_URL` the one
+setting, no shared-secret path), and returning the token's own verified
+subject. A missing, malformed, expired or wrongly-signed token, or one
+whose subject fails the identity edge's own shape check, is `401` from this
+dependency -- refused before any route body runs, before the job store is
+opened. With `AXIAL_SUPABASE_JWKS_URL` unset, every request is `401`:
+unconfigured means closed here, the opposite default direction from
+`AXIAL_CITATION_MODE` below. There is no dev-principal environment
+escape hatch; `tests/service` instead overrides this dependency with
+`app.dependency_overrides[current_principal]`, the FastAPI-native seam,
+adding no production surface. `GET /asks` filters on the resolved
+principal, and every by-id route below (`GET /asks/{id}`, its `/events`,
+its `/paper`) goes through `can_access` (`axial.access`) rather than
+trusting that a query naturally excluded rows that are not the caller's: a
+job id is guessable, so the refusal has to come from the policy, not from
+an accident of how `JobStore.get` happens to be called.
+
+**Invitation-only is Supabase's own switch, not a second list here**: public
+sign-up is disabled in the Supabase project and the operator invites an
+email by hand. The service carries no parallel email allowlist -- two gates
+that must agree is exactly the config nobody sets. A deployment that leaves
+public sign-up on is an open door; that is a deployment-time decision, not
+one this module can see or close.
+
+**`GET`/`PUT /me/profile` carry the caller's own theme** (issue #763, the
+founder's own comment on #688): a `profiles` table beside `jobs` and
+`quotas` (`axial.service.profiles.ProfileStore`), keyed by principal, with
+`theme` constrained to `light`/`dark`/`system` (default `system`) by the
+table's own `CHECK` constraint. A principal with no row yet reads the
+default rather than a `404` -- the first sign-in should not need a write
+before a read works.
 
 **`POST /asks` checks the caller's quota BEFORE `store.enqueue`** (issue
 #686, `axial.service.quotas.QuotaStore`): an over-quota ask returns `429`
@@ -107,15 +131,17 @@ import time
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, StringConstraints
 
 from axial.access import ANALYST, READ, WORK, Resource, can_access
-from axial.context import DEFAULT_PRINCIPAL
+from axial.context import DEFAULT_PRINCIPAL  # noqa: F401 -- re-exported; tests/service imports it from here
 from axial.paths import default_vault_dir
+from axial.service.auth import verify_bearer_token
 from axial.service.citation import render_record_for_serving, resolve_citation_mode
 from axial.service.export import (
     EXPORT_FORMATS,
@@ -125,6 +151,7 @@ from axial.service.export import (
     render_odt,
 )
 from axial.service.jobs import DONE, FAILED, JobStore
+from axial.service.profiles import ProfileStore
 from axial.service.quotas import (
     QuotaStore,
     next_daily_reset,
@@ -150,13 +177,26 @@ EVENTS_POLL_INTERVAL_SECONDS = 0.5
 NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-def current_principal() -> str:
-    """Who is asking. Still the single local analyst (`DEFAULT_PRINCIPAL`)
-    until #688 lands a real identity provider behind this same dependency --
-    #685's own scope is the request-path shape (`RequestContext`), the
-    per-principal working set (`axial.paths`), and the access policy
-    (`axial.access.can_access`) that consult it, not login itself."""
-    return DEFAULT_PRINCIPAL
+# `auto_error=False`: a missing header is handled below as the same `401`
+# every other verification failure gets, rather than `HTTPBearer`'s own
+# generic "not authenticated" body -- one refusal shape for this whole
+# dependency, not two.
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def current_principal(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)],
+) -> str:
+    """Who is asking (issue #763): the verified `sub` of a Supabase-issued
+    JWT presented as `Authorization: Bearer <token>` (module docstring,
+    `axial.service.auth.verify_bearer_token`). A missing, malformed,
+    expired or wrongly-signed token, or a subject that fails the identity
+    edge's own shape check, is `401` -- this is the seam #685 built and
+    #688/#763 fill in, not a second place `RequestContext`, `axial.paths`
+    or `axial.access.can_access` need to change for."""
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="missing bearer token")
+    return verify_bearer_token(credentials.credentials)
 
 
 Principal = Annotated[str, Depends(current_principal)]
@@ -275,6 +315,25 @@ class UsageResponse(BaseModel):
     session: UsageWindow | None
     month_to_date: UsageWindow
     quota: dict[str, QuotaWindowStatus]
+
+
+class ProfileResponse(BaseModel):
+    """`GET`/`PUT /me/profile`'s own body (issue #763): the caller's own
+    theme, `system` by default (`axial.service.profiles.DEFAULT_THEME`) for
+    a principal that has never written one."""
+
+    theme: str
+
+
+class ProfileUpdate(BaseModel):
+    """`PUT /me/profile`'s request body. `Literal` rejects anything but the
+    three allowed values with a `422` at the boundary, ahead of the
+    `profiles` table's own `CHECK` constraint (`axial.service.profiles`
+    module docstring) -- the same value is validated at both, deliberately,
+    since a bad value from either seam should never reach the other
+    silently."""
+
+    theme: Literal["light", "dark", "system"]
 
 
 _WINDOW_LABEL = {"day": "daily", "month": "monthly"}
@@ -409,6 +468,7 @@ def create_app(
     *,
     citation_mode: str | None = None,
     vault_dir: Path | None = None,
+    profiles: ProfileStore | None = None,
 ) -> FastAPI:
     """Build the app over `store`. The store is an argument rather than a
     module global so a test drives the same app the deployment does.
@@ -434,11 +494,19 @@ def create_app(
     the record already had it -- `locator` mode's own "no book text" bar is
     already met by the untouched record (that module's docstring), so this
     is a silent no-op, not a startup error. `app()` below supplies the real
-    default."""
+    default.
+
+    `profiles` (issue #763) defaults to a `ProfileStore` over `store`'s own
+    DSN, the same "a caller that only ever passed a `JobStore` still gets
+    it for free" rule `quotas` above already follows; its schema is created
+    here, unconditionally, for the same reason `quotas`'s is."""
     citation_mode = resolve_citation_mode(citation_mode)
     if quotas is None:
         quotas = QuotaStore(store.dsn)
     quotas.create_schema()
+    if profiles is None:
+        profiles = ProfileStore(store.dsn)
+    profiles.create_schema()
 
     app = FastAPI(title="Axial analyst service")
 
@@ -570,6 +638,22 @@ def create_app(
             },
         )
 
+    @app.get("/me/profile", response_model=ProfileResponse)
+    def get_profile(principal: Principal) -> ProfileResponse:
+        """The caller's own theme (issue #763), `system` when they have
+        never written one (`ProfileStore.theme_for`'s own default) --
+        never a `404`, so a first sign-in can read before it ever writes."""
+        return ProfileResponse(theme=profiles.theme_for(principal))
+
+    @app.put("/me/profile", response_model=ProfileResponse)
+    def put_profile(update: ProfileUpdate, principal: Principal) -> ProfileResponse:
+        """Write the caller's own theme and echo it back. Scoped to the
+        caller by construction -- `principal` is this dependency's own
+        verified subject, never a field on the request body, so one
+        analyst can never write another's row."""
+        profiles.set_theme(principal, update.theme)
+        return ProfileResponse(theme=update.theme)
+
     @app.get("/asks/{ask_id}/export")
     def export_paper(ask_id: str, principal: Principal, format: str = "md") -> Response:
         """The brief, the rendered answer and the metrics block as one
@@ -607,7 +691,11 @@ def app() -> FastAPI:
     --factory`. `DATABASE_URL` is the one setting, the same variable
     `tests/service/conftest.py` already honours; the quota env vars are
     `axial.service.quotas`'s own (`AXIAL_QUOTA_ASKS_PER_DAY`/`_MONTH`); the
-    citation mode is `AXIAL_CITATION_MODE` (`axial.service.citation`).
+    citation mode is `AXIAL_CITATION_MODE` (`axial.service.citation`); token
+    verification is `AXIAL_SUPABASE_JWKS_URL` (issue #763,
+    `axial.service.auth`) -- unset means every request is `401`, so a
+    deployment that forgets it fails closed rather than serving one shared
+    account.
 
     `vault_dir` (issue #690) is `axial.paths.default_vault_dir()` -- the
     same `config/pipeline.yaml`-relative-to-cwd convention every other read
