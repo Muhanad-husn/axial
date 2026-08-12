@@ -15,9 +15,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from axial.service.api import create_app
+from axial.service.auth import verify_bearer_token
 from axial.service.jobs import JobStore
 
 _VALID_SUB = "11111111-1111-4111-8111-111111111111"
@@ -95,6 +97,35 @@ def test_an_expired_token_is_401(client: TestClient, supabase_jwt):
     )
 
     assert response.status_code == 401
+
+
+def test_a_token_a_few_seconds_ahead_of_the_verifiers_clock_is_still_accepted(supabase_jwt):
+    """Issue #767, live 2026-08-12: the verifying machine's clock trailed
+    Supabase's by 5.0s, so a freshly-issued token's `iat` (and `nbf`, which
+    Supabase also sets) landed a few seconds in the verifier's future and
+    every request 401'd. Calls `verify_bearer_token` directly -- no
+    `client`/`job_store` needed, since this is `leeway`'s own behaviour,
+    not anything downstream of it."""
+    now = datetime.now(timezone.utc)
+    drifted = supabase_jwt.mint(
+        sub=_VALID_SUB, iat=now + timedelta(seconds=5), nbf=now + timedelta(seconds=5)
+    )
+
+    assert verify_bearer_token(drifted) == _VALID_SUB
+
+
+def test_a_token_expired_well_beyond_the_leeway_is_still_401(supabase_jwt):
+    """Proves the 60s leeway added for #767 doesn't quietly widen into a
+    real expiry hole: an hour-old `exp` is far outside 60s and must still
+    be refused."""
+    now = datetime.now(timezone.utc)
+    expired = supabase_jwt.mint(
+        sub=_VALID_SUB, iat=now - timedelta(hours=2), exp=now - timedelta(hours=1)
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        verify_bearer_token(expired)
+    assert exc_info.value.status_code == 401
 
 
 def test_a_token_signed_by_the_wrong_key_is_401(client: TestClient, supabase_jwt):

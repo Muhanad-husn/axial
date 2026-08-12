@@ -51,6 +51,16 @@ _AUDIENCE = "authenticated"
 
 _JWKS_SUFFIX = "/.well-known/jwks.json"
 
+# Issue #767, live 2026-08-12: the verifying machine's clock trailed the
+# Supabase project's by 5.0s, so every freshly-issued token's `iat` (and
+# `nbf`) landed in the verifier's future and `jwt.decode` refused it --
+# every request 401'd, and the web client turns a 401 into a forced
+# sign-out, so the whole product looked unusable. 60s is the conventional
+# leeway: enough to absorb ordinary drift on a machine with no time daemon,
+# not enough to meaningfully extend a token's life (PyJWT applies the same
+# leeway to `exp`, so a token still expires at most 60s late).
+_CLOCK_SKEW_LEEWAY_SECONDS = 60
+
 
 def _issuer_from_jwks_url(jwks_url: str) -> str:
     """The `iss` a Supabase project's own tokens carry: the JWKS URL with
@@ -100,6 +110,7 @@ def verify_bearer_token(token: str) -> str:
             algorithms=[signing_key.algorithm_name],
             audience=_AUDIENCE,
             issuer=_issuer_from_jwks_url(jwks_url),
+            leeway=_CLOCK_SKEW_LEEWAY_SECONDS,
         )
     except jwt.PyJWTError as exc:
         # Covers a malformed token, an expired one, a bad signature, a
