@@ -121,6 +121,29 @@ different embedding model needs that model baked into a custom image
 instead -- this Dockerfile does not read a snapshot to decide what to
 pre-fetch, since the image is built before any snapshot is chosen.
 
+`axial.argmap.build`'s own encoder (`ENCODER_MODEL`, reached by
+`run_map_ask_for_brief` whenever a brief lands on a built argument map)
+names the identical model but, unlike the tier-4 fallback, does not pass
+`local_files_only` itself -- so the image sets `HF_HUB_OFFLINE=1` and
+`TRANSFORMERS_OFFLINE=1` (issue #772) rather than relying on every call
+site to opt out of the network individually: with the weights already on
+disk from the build-time pre-fetch, both readers are offline by
+construction, and a cache miss fails loudly at startup instead of quietly
+reaching huggingface.co mid-ask.
+
+## The image carries the ask path, not the ingest path
+
+`pyproject.toml` splits `docling`, `unstructured[pdf]`,
+`unstructured-inference` and the two Google Drive packages into their own
+`ingest` dependency group (issue #772) -- extraction is operational, run by
+the deployer locally from the repo against `data/sources/`, and the
+service never touches it. `Dockerfile` asks `uv sync` for
+`--no-default-groups --group service`, so none of that stack, and none of
+the CUDA runtime PyPI's default `torch` wheel bundles (redirected to the
+PyTorch CPU index on Linux, since this container has no GPU), ships in the
+image. A bare `uv sync` and CI are unaffected: `ingest` is a
+`default-groups` member.
+
 ## What this stack does not prove
 
 Real load with many concurrent analysts, real identity-provider redirect

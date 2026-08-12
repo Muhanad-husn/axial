@@ -4,17 +4,12 @@ version = "0.1.0"
 description = "Axial: corpus ingestion pipeline turning academic sources into a tagged Obsidian knowledge graph. Built by a one-person agentic engineering org."
 requires-python = ">=3.13"
 dependencies = [
-    "docling>=2.110.0",
-    "google-api-python-client>=2.100.0",
-    "google-auth>=2.30.0",
     "httpx>=0.28.1",
     "langdetect>=1.0.9",
     "openpyxl>=3.1.5",
     "pypdf>=6.14.2",
     "python-docx>=1.2.0",
     "pyyaml>=6.0.3",
-    "unstructured-inference>=1.6.13",
-    "unstructured[pdf]>=0.24.0",
 ]
 
 [project.scripts]
@@ -27,12 +22,47 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/axial"]
 
+# Issue #772: the shipping service image (Dockerfile, `uv sync --no-default-
+# groups --group service`) has no reason to carry the ingest/extract stack --
+# that runs locally from the repo, against `data/sources/`, never inside the
+# service. CPU-only torch resolution, Linux only: the founder's own Windows
+# install already resolves a CPU-only wheel from PyPI directly and must keep
+# doing so; only the Linux (container) resolution needs redirecting away from
+# PyPI's CUDA-bundled default wheel.
+[tool.uv]
+default-groups = ["dev", "ingest"]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
+]
+
 [dependency-groups]
 dev = [
     "filelock>=3",
     "pytest>=8",
     "pytest-xdist>=3",
     "ruff>=0.6",
+]
+# The ingest/extract stack (issue #772, split out of `dependencies`): docling
+# and unstructured convert a raw source into a structural tree, and the two
+# Google packages drive the Drive doorway (`axial.drive`) -- all of it runs
+# locally, from the repo, against `data/sources/`, and none of it is ever
+# imported by the served ask path (`axial.service.api`/`.worker`). A
+# `default-groups` member (`[tool.uv]` above), so a bare `uv sync` and CI
+# still install it exactly as before; the Dockerfile is the one caller that
+# opts out (`--no-default-groups --group service`).
+ingest = [
+    "docling>=2.110.0",
+    "google-api-python-client>=2.100.0",
+    "google-auth>=2.30.0",
+    "unstructured-inference>=1.6.13",
+    "unstructured[pdf]>=0.24.0",
 ]
 # Stage-5 distillation runtime deps (DEC-35, issue #296): a local
 # sentence-transformer for the embedding pass + LanceDB for the vector
@@ -91,6 +121,13 @@ service = [
     # offline and are never reached by a served ask.
     "lancedb>=0.15",
     "sentence-transformers>=3.0",
+    # `sentence-transformers`' own torch dependency, pinned here (not just
+    # via `[tool.uv.sources]` alone) because `uv` only applies a source
+    # override to a package that is a DIRECT requirement somewhere in the
+    # project -- measured: without this line, `torch` stayed on PyPI's
+    # default (CUDA-bundled) build even with the override declared. No
+    # version floor beyond what `sentence-transformers` already needs.
+    "torch",
 ]
 # The local operator console (issue #689): Streamlit, and nothing else. It is
 # a face on the `axial` CLI for one operator on one machine -- no pipeline pass
